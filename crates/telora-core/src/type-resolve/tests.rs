@@ -2,6 +2,25 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn newtype_reference_facets_preserve_declarations_and_reject_function_patterns() {
+    let mut mir = graph(&[("@src/main", "type Id = struct(Int); def make: Fn(Int) -> Id = Id; export def value = make(42);")]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let TypeState::Known(declaration) = symbol_type(&mir, "Id") else { panic!("type declaration") };
+    let TypeState::Known(constructor) = symbol_type(&mir, "make") else { panic!("constructor value") };
+    assert_eq!(mir.types[declaration.index()].constructor, TypeConstructor::Meta);
+    assert_eq!(mir.types[constructor.index()].constructor, TypeConstructor::Function);
+    assert_eq!(mir.types[declaration.index()].arguments[0], mir.types[constructor.index()].arguments[1]);
+    for constructor in ["def Make: Fn(Int) -> Id = fn(value) { Id(value) };", "def Make = Id;"] {
+        let source = format!("type Id = struct(Int); {constructor} export def value = do {{ let Make(payload) = Id(42); payload }};");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err());
+        assert!(mir.type_conflicts.iter().any(|conflict| conflict.message.contains("constructor pattern requires a type declaration")), "{}", mir.dump());
+    }
+}
+
+#[test]
 fn property_target_members_use_native_identity_and_ordinary_resolution() {
     let mut mir = graph(&[("@src/main", "import \"std/prelude\" {PropertyTarget as Target}; import Target.{Member as Both}; def target: Fn(Bool) -> Target = fn(enabled) { if enabled { Target.StructType } else { Target.EnumType } }; @property(target(True)) type Mark = struct {value: Int}; export def answer = (Target.Type, Target.StructType, Target.EnumType, Both, Target.Field, Target.Variant);")]);
     resolve(&mut mir);

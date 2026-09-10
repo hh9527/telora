@@ -416,6 +416,7 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
                 mir.member_selections[node.index()],
                 Some(
                     MemberSelection::EnumVariant { .. }
+                        | MemberSelection::NewtypeConstructor
                         | MemberSelection::TraitMember { .. }
                         | MemberSelection::Boolean(_)
                 )
@@ -1408,6 +1409,30 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn newtype_facets_and_patterns_consume_static_constructor_selections() {
+        for body in [
+            "let make = Box; (make(42).0, make(\"text\").0); 42",
+            "let make: Fn(Int) -> Id = Id; make(42).0",
+            "def make: for(T) Fn(T) -> Box(T) = Box; make@[Int](42).0",
+            "let Wrapped(payload) = Wrapped(42); payload",
+            "let wrapper: Box(Id) = Box(Id(42)); wrapper.0.0",
+        ] {
+            let mir = graph(&format!("type Id = struct(Int); type Box(T) = struct(T); type Wrapped = Id; export def answer = do {{ {body} }};"), "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{body}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{body}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{body}");
+        }
+        let mut mir = graph("type Id = struct(Int); export def answer = Id(42);", "");
+        mir.seal().unwrap();
+        let selection = mir.member_selections.iter().position(|selection| matches!(selection, Some(MemberSelection::NewtypeConstructor))).unwrap();
+        let TypeState::Known(signature) = mir.ty_slots[selection] else { unreachable!() };
+        let wrong_payload = mir.types[signature.index()].arguments[1];
+        mir.types[signature.index()].arguments[0] = wrong_payload;
+        assert!(mir.seal().is_err(), "a constructor signature must agree with its sealed payload layout");
+    }
+
     #[test]
     fn dyn_projection_uses_ordinary_generic_bindings_and_solved_witnesses() {
         for source in [
@@ -2464,7 +2489,7 @@ pub(crate) mod tests {
             def make: for(T) Fn(T) -> Wrapped(T) = fn(value) { Wrapped(T)(value) };
             export def answer = (make(42), make("ok"));
         "#, "");
-        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
         let expected = artifact.types.types[artifact.result_type.index()].arguments.clone();
         drop(mir);
         let result = execute(artifact).unwrap();

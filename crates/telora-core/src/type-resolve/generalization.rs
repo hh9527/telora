@@ -109,6 +109,7 @@ impl Solver<'_> {
                 Task::Fit { expected, actual, .. } | Task::ShapeEqual { left: expected, right: actual, .. }
                     | Task::ValueEqual { left: expected, right: actual, .. } => vec![*expected, *actual],
                 Task::Instantiate { target, .. } | Task::RefineInstance { target, .. } => vec![*target],
+                Task::TypeFacet { node, source } => vec![node.ty(), *source],
                 Task::Call { node, callee, .. } => vec![node.ty(), *callee],
                 Task::BoundContext { node, subject, bound } => vec![node.ty(), *subject, *bound],
                 Task::DiagnosticInput { node, input } => vec![node.ty(), *input],

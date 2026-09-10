@@ -5,6 +5,43 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Newtype facets and constructor patterns close in MIR (2026-09-11)
+
+Newtype references previously shared the declaration's Meta slot even in value
+positions. First-class constructor annotations therefore conflicted with the
+declaration, while codegen inspected declaration syntax to guess when a Meta
+expression should generate a constructor. The type pass now retains the
+declaration's skeleton and solves each value reference separately. Explicit
+type positions and type-application evidence select the type facet; otherwise
+a newtype reference obtains Fn(payload) -> Owner and a NewtypeConstructor
+selection. Generic type applications used as constructors use the same rule.
+The old Meta-call value-construction branch has been removed.
+
+Constructor patterns retain their newtype selection in MIR as well. Ordinary
+functions and value aliases remain invalid newtype patterns, preserving the
+existing declaration-resolved pattern contract. Type aliases and imported
+declarations retain their identities. Sealing checks constructor signatures
+against the owner's applied payload layout, including generic instance types.
+Codegen reads the selected signature or pattern operation; it no longer
+inspects a declaration initializer to discover a newtype constructor.
+
+Validation: 76 codegen, 55 type-resolve and 48 VM tests pass; CLI build passes.
+Tests cover first-class and inferred-polymorphic constructors, explicit generic
+aliases, type aliases, nested payloads, static rejection of function/value-alias
+patterns, and sealing rejection for a mismatched constructor payload signature.
+The actual newtype-constructors fixture passes 11/11 and newtype-tool-stage
+passes 2/2, including a final targeted run after pattern-contract validation.
+The newtype-metadata fixture executes 6 passing cases; its remaining schema
+case reports the existing unimplemented solved-witness schema generator.
+The negative value-alias pattern fixture now reports a static conflict with
+zero Unknown slots under check --only-types. No language fixture was changed.
+
+The full language aggregate still fails other codec/schema, diagnostic/query
+and runtime cases. Legacy module removal and complete acceptance remain
+unfinished. Logs: /tmp/mir-newtype-facets-{codegen,types,vm,build,language}.log,
+/tmp/mir-newtype-facets-final-{constructors,tools}.log and
+/tmp/mir-newtype-facets-pattern-alias.log. No performance measurement was made.
+
 ### Dyn projection is an ordinary generic function (2026-09-11)
 
 The parser previously rewrote any `namespace.project@[T](value)` by spelling

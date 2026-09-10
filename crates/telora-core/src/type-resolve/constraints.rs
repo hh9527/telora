@@ -73,6 +73,7 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::TypeFacet { node, source } => self.type_facet(node, source, false),
             Task::ValueEqual { node, left, right } => Some(Task::ValueEqual { node, left, right }),
             Task::Reference { node, symbol } => {
                 if self.generalizations[symbol.index()].is_some() {
@@ -445,22 +446,13 @@ impl Solver<'_> {
                         );
                         self.same(node, term.arguments[1]);
                     }
-                } else if let Some(payload) = payload {
-                    // A newtype is callable through its type witness.
-                    if term.constructor == TypeConstructor::Meta {
-                        self.tasks.push(Task::Call {
-                            node,
-                            callee: constructor,
-                            arguments: vec![payload],
-                        });
-                    } else {
-                        self.conflict(
-                            node.ty(),
-                            node.ty(),
-                            Some(self.mir.hir[node.index()].location),
-                            "nullary constructor has no payload".into(),
-                        );
-                    }
+                } else if payload.is_some() {
+                    self.conflict(
+                        node.ty(),
+                        node.ty(),
+                        Some(self.mir.hir[node.index()].location),
+                        "nullary constructor has no payload".into(),
+                    );
                 } else {
                     self.same(node, constructor);
                 }
@@ -485,6 +477,13 @@ impl Solver<'_> {
             return None;
         }
         let Some(term) = self.term(callee).cloned() else {
+            if self.term(node.ty()).is_some_and(|term| term.constructor == TypeConstructor::Meta)
+                || arguments.iter().any(|&argument| self.term(argument).is_some_and(|term| term.constructor == TypeConstructor::Meta)) {
+                let raw = self.fresh();
+                let meta = self.structure(TypeConstructor::Meta, vec![raw]);
+                self.equal(callee, meta, Some(self.mir.hir[node.index()].location));
+                return Some(Task::Call { node, callee, arguments });
+            }
             if self.value_slots[self.root(callee).index()] {
                 let mut signature = arguments;
                 signature.push(node.ty());
@@ -609,7 +608,7 @@ impl Solver<'_> {
                         let meta = self.structure(TypeConstructor::Meta, vec![parameter]);
                         self.equal(argument, meta, Some(self.mir.hir[node.index()].location));
                     }
-                    self.same(node, callee);
+                    self.type_result(node, callee);
                     return None;
                 }
                 let Some(raw) = self.term(term.arguments[0]).cloned() else {
@@ -633,12 +632,7 @@ impl Solver<'_> {
                             let meta = self.structure(TypeConstructor::Meta, vec![parameter]);
                             self.equal(argument, meta, Some(self.mir.hir[node.index()].location));
                         }
-                        self.same(node, callee);
-                    } else if definition.operation == TypeOperation::Newtype && arguments.len() == 1
-                    {
-                        let (_, members) = self.nominal_members(symbol, &raw.arguments).unwrap();
-                        self.fit(node, members[0].1.unwrap(), arguments[0]);
-                        self.same(node, term.arguments[0]);
+                        self.type_result(node, callee);
                     } else if arguments.iter().any(|&a| self.term(a).is_none()) {
                         return Some(Task::Call {
                             node,

@@ -33,11 +33,14 @@ mod metadata_joins;
 mod properties;
 #[path = "type-resolve/construction-origins.rs"]
 mod construction_origins;
+#[path = "type-resolve/type-facets.rs"]
+mod type_facets;
 #[cfg(test)]
 #[path = "type-resolve/tests.rs"]
 mod tests;
 
 enum Task {
+    TypeFacet { node: HirId, source: TypeSlotId },
     ValueEqual { node: HirId, left: TypeSlotId, right: TypeSlotId },
     Ordered { node: HirId, operand: TypeSlotId },
     Reference { node: HirId, symbol: SymbolId },
@@ -130,6 +133,7 @@ struct Solver<'a> {
     value_spreads: Vec<bool>,
     administrative: Vec<bool>,
     scheme_references: Vec<bool>,
+    type_uses: Vec<bool>,
     decorator_contexts: Vec<Option<TypeSlotId>>,
     property_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
     check_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
@@ -161,6 +165,7 @@ pub fn resolve(mir: &mut Mir) {
         solver.mir.symbol_types.push(slot);
     }
     solver.prepare_definitions();
+    solver.prepare_type_uses();
     solver.prepare_properties();
     solver.prepare_generalization();
     solver.prepare_construction_origins();
@@ -214,12 +219,13 @@ pub fn resolve(mir: &mut Mir) {
             }
         }
         if solver.revision == revision {
-            if !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms() && !solver.generalize_ready() {
+            if !solver.finish_type_facets() && !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms() && !solver.generalize_ready() {
                 break;
             }
         }
     }
     solver.validate_field_projections();
+    solver.resolve_constructor_patterns();
     solver.finalize();
     solver.finalize_properties();
     solver.finalize_checks();
@@ -249,6 +255,7 @@ impl Solver<'_> {
             pending_blocks: vec![false; mir.hir.len()],
             administrative: vec![false; mir.hir.len()],
             scheme_references: vec![false; mir.hir.len()],
+            type_uses: vec![false; mir.hir.len()],
             decorator_contexts: vec![None; mir.hir.len()],
             property_declarations: vec![],
             check_declarations: vec![],

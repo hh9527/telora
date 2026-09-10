@@ -156,8 +156,14 @@ impl Solver<'_> {
             return;
         }
         let parameters = self.mir.symbol_generics[symbol.index()].clone();
+        let target = if !self.type_uses[node.index()]
+            && matches!(self.mir.symbols[symbol.index()].kind, SymbolKind::Declaration(BindingKind::Type)) {
+            let source = self.fresh();
+            self.tasks.push(Task::TypeFacet { node, source });
+            source
+        } else { node.ty() };
         if parameters.is_empty() {
-            self.same(node, self.mir.symbol_types[symbol.index()]);
+            self.equal(target, self.mir.symbol_types[symbol.index()], Some(self.mir.hir[node.index()].location));
             return;
         }
         let arguments = parameters
@@ -186,7 +192,7 @@ impl Solver<'_> {
         }
         self.tasks.push(Task::Instantiate {
             source: self.mir.symbol_types[symbol.index()],
-            target: node.ty(),
+            target,
             arguments,
             location: Some(self.mir.hir[node.index()].location),
         });

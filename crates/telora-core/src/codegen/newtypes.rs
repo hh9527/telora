@@ -2,25 +2,14 @@ use super::*;
 
 impl Emitter<'_> {
     pub(super) fn newtype_owner(&self, node: HirId) -> Result<Option<TypeId>, Diagnostic> {
-        let ty = &self.mir.types[self.ty(node)?.index()];
-        if ty.constructor != TypeConstructor::Meta {
+        if !matches!(self.mir.member_selections[node.index()], Some(MemberSelection::NewtypeConstructor)) {
             return Ok(None);
         }
-        let Some(&owner) = ty.arguments.first() else {
-            return Ok(None);
-        };
-        let TypeConstructor::Nominal(symbol) = self.mir.types[owner.index()].constructor else {
-            return Ok(None);
-        };
-        let definition = self.mir.symbols[symbol.index()].declarations[0];
-        Ok(matches!(
-            self.mir.hir[definition.index()].kind,
-            HirKind::Binding {
-                initializer: Some(crate::ast::DeclaredInitializerKind::Newtype),
-                ..
-            }
-        )
-        .then_some(owner))
+        let signature = &self.mir.types[self.ty(node)?.index()];
+        if signature.constructor != TypeConstructor::Function || signature.arguments.len() != 2 {
+            return Err(self.error(node, "newtype constructor has no closed unary signature"));
+        }
+        Ok(Some(signature.arguments[1]))
     }
 
     pub(super) fn newtype_constructor(

@@ -118,10 +118,7 @@ impl Emitter<'_> {
                 );
             }
             HirKind::ConstructorPattern => {
-                if self
-                    .newtype_owner(self.child(node, Role::Callee))?
-                    .is_some()
-                {
+                if matches!(self.mir.member_selections[node.index()], Some(MemberSelection::NewtypePattern)) {
                     let dst = self.register();
                     self.emit(
                         node,

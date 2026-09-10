@@ -12,6 +12,23 @@ pub struct SealedMir<'a> {
 }
 
 impl Mir {
+    fn valid_newtype_selection(&self, node: HirId, ty: TypeId) -> bool {
+        let (owner, payload) = match self.member_selections.get(node.index()) {
+            Some(Some(MemberSelection::NewtypeConstructor)) => {
+                let Some(signature) = self.types.get(ty.index()) else { return false; };
+                if signature.constructor != TypeConstructor::Function || signature.arguments.len() != 2 { return false; }
+                (signature.arguments[1], Some(signature.arguments[0]))
+            }
+            Some(Some(MemberSelection::NewtypePattern)) => (ty, None),
+            _ => return true,
+        };
+        let Some(TypeConstructor::Nominal(symbol)) = self.types.get(owner.index()).map(|ty| &ty.constructor) else { return false; };
+        self.type_definitions.iter().any(|definition| definition.symbol == *symbol && definition.operation == TypeOperation::Newtype)
+            && self.type_layouts.get(owner.index()).and_then(Option::as_ref)
+                .is_some_and(|layout| layout.members.len() == 1 && layout.members[0].is_some()
+                    && payload.is_none_or(|payload| layout.members[0] == Some(payload)))
+    }
+
     pub fn seal(&self) -> Result<SealedMir<'_>, Vec<Diagnostic>> {
         if !self.symbols_closed
             || !self.types_solved
@@ -21,6 +38,14 @@ impl Mir {
             || self.reference_instances.len() != self.hir.len()
             || self.implementation_instances.len() != self.hir.len()
             || self.type_layouts.len() != self.types.len()
+            || self.member_selections.len() != self.hir.len()
+            || self.member_selections.iter().enumerate().any(|(node, selection)| {
+                if !matches!(selection, Some(MemberSelection::NewtypeConstructor | MemberSelection::NewtypePattern)) { return false; }
+                let Some(TypeState::Known(ty)) = self.ty_slots.get(node) else { return true; };
+                !self.valid_newtype_selection(HirId(node as u32), *ty)
+            })
+            || self.generic_instances.iter().any(|instance| instance.types.iter()
+                .any(|(node, ty)| !self.valid_newtype_selection(*node, *ty)))
             || self.value_adjustments.len() != self.hir.len()
             || self.propagation_boundaries.len() != self.hir.len()
             || self.hir.iter().enumerate().any(|(node, hir)| matches!(hir.kind, HirKind::Propagate)

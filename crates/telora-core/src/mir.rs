@@ -279,6 +279,10 @@ pub struct TypeLayout {
 
 #[derive(Clone, Copy, Debug)]
 pub enum MemberSelection {
+    /// A type declaration used as a value; the node has Fn(payload) -> Owner.
+    NewtypeConstructor,
+    /// A constructor pattern whose origin is a newtype declaration/type alias.
+    NewtypePattern,
     TraitMember {
         index: u32,
         implementation: Option<SymbolId>,
