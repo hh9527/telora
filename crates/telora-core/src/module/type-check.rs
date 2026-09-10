@@ -225,7 +225,7 @@ impl Engine {
         let resolved = StaticNames::new(&graph).resolve(graph.id(&root.id).expect("discovered root"));
         let native_ids = specs.iter().map(|spec|
             (ModuleCName::builtin(spec.name), spec.native_id)).collect();
-        if let Some(inputs) = resolved.diagnostic_inputs(&graph, &native_ids) {
+        if let Some(inputs) = resolved.diagnostic_inputs(&graph) {
             return Ok(WorkspaceSnapshot::build(sources, inputs));
         }
         let mut workspace = StaticWorkspace {

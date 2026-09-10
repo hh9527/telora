@@ -770,11 +770,14 @@ impl Engine {
             true,
             &mut sources,
         )?;
-        let mut main = MainWorld::with_modules(graph);
+        let resolved = StaticNames::new(&graph).resolve_all();
+        if let Some(inputs) = resolved.diagnostic_inputs(&graph) {
+            return Ok(WorkspaceSnapshot::build(sources, inputs));
+        }
+        let mut main = MainWorld::from_resolved(graph, resolved);
         let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,
-            resolver,
             overlays: &BTreeMap::new(),
             query: None,
             sources,
@@ -848,8 +851,12 @@ impl Engine {
                 "unknown built-in module {module_id:?}"
             )));
         }
-        let mut main = MainWorld::building();
         let mut sources = SourceDatabase::default();
+        let graph = ModuleGraph::discover(
+            &ModuleResolver::builtin_inventory(builtin_list()), Vec::new(),
+            &BTreeMap::new(), std::iter::empty(), None, false, &mut sources,
+        )?;
+        let mut main = MainWorld::with_modules(graph);
         let mut inputs = BTreeMap::new();
         install_native_modules_observed(
             &mut main,
@@ -895,11 +902,14 @@ impl Engine {
             true,
             &mut sources,
         )?;
-        let mut main = MainWorld::with_modules(graph);
+        let resolved = StaticNames::new(&graph).resolve_all();
+        if let Some(inputs) = resolved.diagnostic_inputs(&graph) {
+            return Ok(WorkspaceSnapshot::build(sources, inputs));
+        }
+        let mut main = MainWorld::from_resolved(graph, resolved);
         let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,
-            resolver,
             overlays: &BTreeMap::new(),
             query: None,
             sources,
@@ -988,11 +998,14 @@ impl Engine {
             true,
             &mut sources,
         )?;
-        let mut main = MainWorld::with_modules(graph);
+        let resolved = StaticNames::new(&graph).resolve_all();
+        if let Some(inputs) = resolved.diagnostic_inputs(&graph) {
+            return Ok(WorkspaceSnapshot::build(sources, inputs));
+        }
+        let mut main = MainWorld::from_resolved(graph, resolved);
         let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,
-            resolver,
             overlays,
             query: Some(context),
             sources,

@@ -20,27 +20,18 @@ struct ImportEdge {
     target: ModuleId,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ExportPlan {
-    public: String,
-    local: String,
-}
-
 #[derive(Debug)]
 struct ModuleSkeleton {
     id: ModuleId,
-    source: Option<crate::SourceId>,
     prepared: Option<PreparedModule>,
     cname: ModuleCName,
     imports: Vec<ImportEdge>,
-    exports: Vec<ExportPlan>,
     slots: Vec<StaticSlot>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct ModuleBlueprint {
     imports: Vec<(Option<String>, ModuleCName)>,
-    exports: Vec<ExportPlan>,
     slots: Vec<StaticSlot>,
 }
 
@@ -48,9 +39,9 @@ struct ModuleBlueprint {
 struct ModuleGraph {
     modules: Vec<ModuleSkeleton>,
     by_cname: HashMap<ModuleCName, ModuleId>,
-    undiscovered_prepared: HashMap<ModuleCName, PreparedModule>,
     resolved: Vec<Option<ResolvedModule>>,
     import_targets: ImportGraph,
+    host_symbols: HashMap<ModuleId, BTreeMap<String, u32>>,
 }
 
 // Session-owned input, including failed parses. A definition does not need to
@@ -81,33 +72,17 @@ impl PreparedModule {
 impl ModuleGraph {
     fn prepared(&self, cname: &ModuleCName) -> Option<&PreparedModule> {
         self.id(cname).and_then(|id| self.module(id).prepared.as_ref())
-            .or_else(|| self.undiscovered_prepared.get(cname))
-    }
-
-    fn publish_prepared(&mut self, cname: &ModuleCName, prepared: PreparedModule) {
-        if let Some(id) = self.id(cname) {
-            self.modules[id.index()].prepared = Some(prepared);
-        } else {
-            // Direct entry paths without discovery retain their existing source
-            // ownership; they do not invent a discovery identity during loading.
-            self.undiscovered_prepared.insert(cname.clone(), prepared);
-        }
     }
 
     fn resolve_import(
         &self,
-        resolver: &ModuleResolver,
-        importer: &ModuleCName,
         location: crate::Location,
-        target: &str,
     ) -> Result<ResolvedModule, ModuleError> {
         match self.import_targets.target(location) {
             Some(Ok(id)) => Ok(self.resolved[id.index()].as_ref()
                 .expect("discovered import has a registered module").clone()),
             Some(Err(message)) => Err(ModuleError::new(message)),
-            // Direct/synthetic entry paths may not have a discovery record.
-            None => resolver.resolve_import(importer, target)
-                .map_err(|error| ModuleError::new(error.to_string())),
+            None => Err(ModuleError::new("import is missing from the resolved session graph")),
         }
     }
 
@@ -148,6 +123,13 @@ impl ModuleGraph {
         recover: bool,
         scan_sources: &mut SourceDatabase,
     ) -> Result<Self, ModuleError> {
+        // Built-in source belongs to the same inventory as user source. Its
+        // exports must exist before either symbol resolution or VM creation.
+        let mut synthetic = synthetic.clone();
+        for spec in module_specs() {
+            synthetic.entry(ModuleCName::builtin(spec.name))
+                .or_insert_with(|| (PathBuf::from(spec.name), spec.source.to_owned()));
+        }
         let mut resolved = roots
             .into_iter()
             .map(|module| (module.id.clone(), module))
@@ -190,7 +172,7 @@ impl ModuleGraph {
             let mut blueprint = match parsed.program.as_ref() {
                 Some(program) => {
                     reject_nested_imports(program, &cname.to_string())?;
-                    if !recover
+                    if !recover && !matches!(cname, ModuleCName::Builtin(_))
                         && let Some(binding) = program.value.body.value.bindings.iter().find(
                             |binding| {
                                 matches!(
@@ -331,17 +313,16 @@ impl ModuleGraph {
                     .collect();
                 ModuleSkeleton {
                     id,
-                    source: prepared.get(&cname).map(|module| module.source_id),
                     prepared: prepared.remove(&cname),
                     cname,
                     imports,
-                    exports: blueprint.exports,
                     slots: blueprint.slots,
                 }
             })
             .collect();
         debug_assert!(prepared.is_empty());
-        Ok(Self { modules, by_cname, undiscovered_prepared: HashMap::new(), resolved: registered, import_targets })
+        Ok(Self { modules, by_cname, resolved: registered, import_targets,
+            host_symbols: HashMap::new() })
     }
 }
 
@@ -450,16 +431,6 @@ impl ModuleBlueprint {
                     });
                     next_type += 1;
                 }
-                BindingKind::Export => blueprint.exports.push(ExportPlan {
-                    public: binding.value.name.value.clone(),
-                    local: binding
-                        .value
-                        .imported_name
-                        .as_ref()
-                        .expect("parser exports retain their local name")
-                        .value
-                        .clone(),
-                }),
                 _ => {}
             }
         }
@@ -491,6 +462,7 @@ impl ModuleBlueprint {
 struct MainWorld {
     heap: Heap,
     modules: ModuleGraph,
+    resolved: ResolvedStaticGraph,
     types: TypeStore,
     failures: Vec<crate::RuntimeError>,
 }
@@ -501,6 +473,11 @@ impl MainWorld {
     }
 
     fn with_modules(modules: ModuleGraph) -> Self {
+        let resolved = StaticNames::new(&modules).resolve_all();
+        Self::from_resolved(modules, resolved)
+    }
+
+    fn from_resolved(modules: ModuleGraph, resolved: ResolvedStaticGraph) -> Self {
         let mut heap = Heap::main();
         for module in &modules.modules {
             for slot in module
@@ -533,6 +510,7 @@ impl MainWorld {
         Self {
             heap,
             modules,
+            resolved,
             types,
             failures: Vec::new(),
         }
@@ -596,7 +574,6 @@ fn declared_native_types(
 struct TrustedNativeModule {
     id: u32,
     name: String,
-    source: String,
     functions: Vec<(String, crate::NativeFunction)>,
 }
 
@@ -621,13 +598,16 @@ fn install_native_modules_observed(
     debug_sink: &Arc<dyn DebugSink>,
     mut semantic_inputs: Option<&mut BTreeMap<String, SemanticModuleInput>>,
 ) -> Result<HashMap<String, ModuleArtifact>, ModuleError> {
+    if let Some(inputs) = main.resolved.diagnostic_inputs(&main.modules) {
+        return Err(ModuleError::new(inputs.iter().flat_map(|input| &input.diagnostics)
+            .map(|diagnostic| sources.render(diagnostic)).collect::<Vec<_>>().join("\n")));
+    }
     let mut modules: HashMap<String, ModuleArtifact> = HashMap::new();
     let mut specs = module_specs()
         .into_iter()
         .map(|spec| TrustedNativeModule {
             id: spec.native_id,
             name: spec.name.to_owned(),
-            source: spec.source.to_owned(),
             functions: spec
                 .functions
                 .into_iter()
@@ -653,15 +633,14 @@ fn install_native_modules_observed(
     }
     let mut default_prelude: Option<BTreeMap<String, (PersistentValue, ModuleInterface)>> = None;
     for spec in specs {
-        // Semantic catalog queries can install built-ins before their selected
-        // graph is available. Keep those provisional identities distinct.
         let graph_module_id = main.modules.id(&ModuleCName::builtin(&spec.name));
         let module_id = graph_module_id
-            .unwrap_or_else(|| ModuleId::from_raw(u32::MAX - spec.id));
+            .ok_or_else(|| ModuleError::new("native installation requires a resolved module inventory"))?;
         let source_name = spec.name.clone();
-        let source_id = sources.add(source_name.clone(), &spec.source);
-        let parsed = parse_registered(sources, source_id);
-        let program = parsed.program.ok_or_else(|| {
+        let parsed = main.modules.module(module_id).prepared.as_ref()
+            .expect("native source belongs to the session inventory");
+        let source_id = parsed.source_id;
+        let program = parsed.program.clone().ok_or_else(|| {
             ModuleError::new(
                 parsed
                     .diagnostics
@@ -831,7 +810,8 @@ fn install_native_modules_observed(
                 defines_display_trait: spec.name == FMT_MODULE,
             },
             &program,
-            crate::types::resolve_module_hir_with_interfaces(&program, external_roots.keys().cloned(), &external_interfaces),
+            main.resolved.modules[module_id.index()].take()
+                .expect("native module has session-resolved HIR").hir,
             &mut account,
             &external_roots
                 .iter()

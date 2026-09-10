@@ -13,8 +13,7 @@ impl ModuleLoader {
         &mut self,
         module_id: &ModuleCName,
         external_bindings: &BTreeMap<String, crate::DataWorld>,
-        skeleton: Option<ModuleId>,
-        validate_imports: bool,
+        skeleton: ModuleId,
     ) -> Result<PreparedDependencies, ModuleError> {
         let source_name = module_id.to_string();
         let mut external_provenance = BTreeMap::new();
@@ -31,7 +30,6 @@ impl ModuleLoader {
             external_roots.insert(name.clone(), root);
         }
         let mut semantic_imports = Vec::new();
-        let mut graph_imports = Vec::new();
         let mut open_candidates: BTreeMap<String, Vec<OpenImportCandidate>> = BTreeMap::new();
         let mut direct_import_names = external_bindings.keys().cloned().collect::<HashSet<_>>();
 
@@ -41,10 +39,7 @@ impl ModuleLoader {
             // Keep only the import operands across recursive loading. The syntax
             // remains owned by the session, with no AST clone or retained borrow.
             let (kind, name, imported_name, relative, location) = {
-                let prepared = match skeleton {
-                    Some(id) => self.main.modules.module(id).prepared.as_ref(),
-                    None => self.main.modules.prepared(module_id),
-                };
+                let prepared = self.main.modules.module(skeleton).prepared.as_ref();
                 let program = prepared
                     .expect("session syntax")
                     .program
@@ -89,25 +84,13 @@ impl ModuleLoader {
             let imported = self
                 .main
                 .modules
-                .resolve_import(&self.resolver, module_id, location, &relative)
+                .resolve_import(location)
                 .map_err(|error| {
                     ModuleError::new(
                         self.sources
                             .render(&Diagnostic::error(error.to_string(), location)),
                     )
                 })?;
-            if validate_imports {
-                let imported_module_id = self.main.modules.id(&imported.id).ok_or_else(|| {
-                    ModuleError::new(format!(
-                        "imported module {} was not present during module graph discovery",
-                        imported.id
-                    ))
-                })?;
-                graph_imports.push(ImportEdge {
-                    local: (kind == BindingKind::Import).then(|| name.value.clone()),
-                    target: imported_module_id,
-                });
-            }
             if imported.vendor == ModuleVendor::Builtin {
                 let module = self.load_native_module(&relative).map_err(|error| {
                     ModuleError::new(
@@ -205,15 +188,6 @@ impl ModuleLoader {
             self.install_trait_impl_roots(module, &mut external_roots)?;
             self.install_type_property_roots(module, &mut external_roots)?;
             let provider = ModuleCName::Builtin(PRELUDE_MODULE.into());
-            if validate_imports {
-                let target = self.main.modules.id(&provider).ok_or_else(|| {
-                    ModuleError::new("prelude was not present during module graph discovery")
-                })?;
-                graph_imports.push(ImportEdge {
-                    local: None,
-                    target,
-                });
-            }
             for (name, candidate) in open_import_exports(
                 &provider,
                 module.root,
@@ -231,24 +205,7 @@ impl ModuleLoader {
             && let Some(module) = self.builtin_modules.get(FMT_MODULE)
         {
             self.install_trait_impl_roots(module, &mut external_roots)?;
-            let provider = ModuleCName::Builtin(FMT_MODULE.into());
-            if validate_imports {
-                let target = self.main.modules.id(&provider).ok_or_else(|| {
-                    ModuleError::new("std/fmt was not present during module graph discovery")
-                })?;
-                graph_imports.push(ImportEdge {
-                    local: Some(FMT_CAPABILITY_BINDING.into()),
-                    target,
-                });
-            }
             external_interfaces.insert(FMT_CAPABILITY_BINDING.into(), module.interface.clone());
-        }
-        if let Some(id) = skeleton.filter(|_| validate_imports)
-            && self.main.modules.module(id).imports != graph_imports
-        {
-            return Err(ModuleError::new(format!(
-                "module {module_id} import graph changed after static discovery"
-            )));
         }
         Ok(PreparedDependencies {
             external_provenance,

@@ -86,6 +86,11 @@ These are two graph-closure phases with distinct identity semantics. Merely
 indexing exports, retaining per-module solutions, or registering IDs without
 closing the code's references does not complete either phase.
 
+Implementation proceeds toward these two completion boundaries directly.
+Intermediate branch states need not keep all functionality available or even
+compile; maintaining each small migration as a working subsystem is not an
+additional constraint. Do not add compatibility paths for that purpose.
+
 0. Parse source modules into a module-name/ModuleId to HIR/CST inventory.
    A workspace name inventory does not require parsing every module body.
 1. Resolve the reachable graph from the entry. Build each module's export-name

@@ -26,11 +26,22 @@ fn session_discovery_source_is_reused_after_files_change() {
     .unwrap();
     let id = graph.id(&root.id).unwrap();
     let prepared = graph.module(id).prepared.as_ref().unwrap();
-    assert!(graph.undiscovered_prepared.is_empty());
     let source_id = prepared.source_id;
     let mut main = MainWorld::with_modules(graph);
+    assert!(main.resolved.diagnostic_inputs(&main.modules).is_none());
+    for module in main.resolved.modules.iter().flatten() {
+        assert_eq!(module.hir.unresolved().count(), 0);
+        for reference in module.hir.references() {
+            if reference.resolution == crate::hir::HirResolution::External {
+                assert!(module.hir.reference_import_origin(reference.id).is_some(),
+                    "external reference must have a source ID: {}", reference.name);
+            }
+        }
+    }
+    let source_count = main.modules.modules.iter().filter(|module| module.prepared.is_some()).count();
     let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
     let builtin_modules = install_native_modules(&mut main, &mut sources, &debug_sink).unwrap();
+    assert_eq!(sources.files().len(), source_count, "native installation must not parse sources again");
     let mut loader = ModuleLoader {
         resolver,
         cache: HashMap::new(),
@@ -59,7 +70,6 @@ fn session_discovery_source_is_reused_after_files_change() {
     );
     assert_eq!(loader.main.modules.id(&root.id), Some(id));
     assert_eq!(loader.main.modules.module(id).prepared.as_ref().unwrap().source_id, source_id);
-    assert!(loader.main.modules.undiscovered_prepared.is_empty());
     assert_eq!(
         loader.semantic_inputs[&root.id.to_string()].source,
         Some(source_id)
@@ -165,7 +175,7 @@ fn session_import_aliases_share_target_before_value_initialization() {
     fs::remove_file(&dependency).unwrap();
     assert_eq!(
         &graph
-            .resolve_import(&resolver, &root.id, first, "./shared")
+            .resolve_import(first)
             .unwrap(),
         target
     );
@@ -218,7 +228,7 @@ fn session_missing_import_remains_a_fact_when_catalog_changes() {
     );
     assert_eq!(
         graph
-            .resolve_import(&resolver, &root.id, location, "std/session-added")
+            .resolve_import(location)
             .unwrap_err()
             .to_string(),
         original_error

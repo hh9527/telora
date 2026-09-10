@@ -45,6 +45,8 @@ pub enum HirResolution {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum HirImportOrigin {
+    Bootstrap(u32),
+    Host { module: crate::ModuleId, index: u32 },
     Definition { module: crate::ModuleId, definition: HirDefinitionId },
     Export { module: crate::ModuleId, index: u32 },
     Namespace(crate::ModuleId),

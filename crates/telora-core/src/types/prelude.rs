@@ -12,6 +12,11 @@ const BOOTSTRAP_NAMES: &[&str] = &[
     "\0telora_pack_dyn", "\0telora_cast",
 ];
 
+pub(crate) fn bootstrap_symbol(name: &str) -> Option<crate::hir::HirImportOrigin> {
+    BOOTSTRAP_NAMES.iter().position(|candidate| *candidate == name)
+        .map(|index| crate::hir::HirImportOrigin::Bootstrap(index as u32))
+}
+
 pub(crate) fn resolve_module_hir(
     program: &Program,
     external_names: &BTreeSet<String>,

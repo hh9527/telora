@@ -128,8 +128,12 @@
         let directory = fixture_dir();
         let data = directory.join("data.json");
         fs::write(&data, r#"{"name":"Ada","items":[1,2,3]}"#).unwrap();
-        let mut main = MainWorld::building();
         let mut sources = SourceDatabase::default();
+        let graph = ModuleGraph::discover(
+            &ModuleResolver::builtin_inventory(builtin_list()), Vec::new(),
+            &BTreeMap::new(), std::iter::empty(), None, false, &mut sources,
+        ).unwrap();
+        let mut main = MainWorld::with_modules(graph);
         let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
         let builtin_modules = install_native_modules(&mut main, &mut sources, &debug_sink).unwrap();
         let mut loader = ModuleLoader {

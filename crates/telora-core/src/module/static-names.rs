@@ -51,7 +51,7 @@ struct ResolvedStaticGraph {
 }
 
 impl ResolvedStaticGraph {
-    fn diagnostic_inputs(&self, graph: &ModuleGraph, native_ids: &HashMap<ModuleCName, u32>)
+    fn diagnostic_inputs(&self, graph: &ModuleGraph)
         -> Option<Vec<SemanticModuleInput>>
     {
         let diagnostics = |id: ModuleId| graph.module(id).prepared.iter()
@@ -70,7 +70,7 @@ impl ResolvedStaticGraph {
                 key: module.cname.to_string(),
                 path: resolved.and_then(|module| module.path()).map(Path::to_owned),
                 kind: resolved.and_then(|module| static_data_kind(module.format)).unwrap_or_else(||
-                    if native_ids.contains_key(&module.cname) { WorkspaceModuleKind::Core }
+                    if matches!(module.cname, ModuleCName::Builtin(_)) { WorkspaceModuleKind::Core }
                     else { WorkspaceModuleKind::Telora }),
                 source: prepared.map(|prepared| prepared.source_id),
                 result_location: prepared.and_then(|prepared| prepared.program.as_ref())
@@ -109,6 +109,10 @@ struct StaticNames<'a> {
 }
 
 impl<'a> StaticNames<'a> {
+    fn resolve_all(self) -> ResolvedStaticGraph {
+        let roots = self.graph.modules.iter().map(|module| module.id).collect();
+        self.resolve_roots(roots)
+    }
     fn new(graph: &'a ModuleGraph) -> Self {
         let mut names = Self { graph, export_names: Vec::new(), exports: Vec::new(),
             scopes: Vec::new(), diagnostics: Vec::new() };
@@ -297,7 +301,8 @@ impl<'a> StaticNames<'a> {
         let mut queried = BTreeMap::<String, Vec<StaticImportTarget>>::new();
         let hir = crate::types::resolve_module_hir_with_lookup(program, |name| {
             let targets = queried.entry(name.to_owned()).or_insert_with(|| self.candidates(module, name));
-            crate::hir::HirExternalName { declared: !targets.is_empty(),
+            crate::hir::HirExternalName { declared: !targets.is_empty()
+                || self.graph.host_symbols.get(&module).is_some_and(|symbols| symbols.contains_key(name)),
                 member: targets.iter().any(|target| matches!(self.target_kind(*target),
                     StaticNameKind::Newtype | StaticNameKind::Member)) }
         });
@@ -322,10 +327,13 @@ impl<'a> StaticNames<'a> {
         Some(ResolvedStaticModule { hir, imports, diagnostics })
     }
 
-    fn resolve(mut self, root: ModuleId) -> ResolvedStaticGraph {
+    fn resolve(self, root: ModuleId) -> ResolvedStaticGraph {
+        self.resolve_roots(vec![root])
+    }
+
+    fn resolve_roots(mut self, mut pending: Vec<ModuleId>) -> ResolvedStaticGraph {
         let mut hir = std::iter::repeat_with(|| None).take(self.graph.modules.len()).collect::<Vec<_>>();
         let mut visited = vec![false; hir.len()];
-        let mut pending = vec![root];
         while let Some(id) = pending.pop() {
             if std::mem::replace(&mut visited[id.index()], true) { continue; }
             let module = self.graph.module(id);
@@ -341,8 +349,22 @@ impl<'a> StaticNames<'a> {
         let aliases = self.resolve_export_aliases(&mut hir);
         for index in 0..hir.len() {
             let Some(module) = &hir[index] else { continue; };
-            let origins = module.imports.iter().map(|(name, target)|
-                (name.clone(), self.import_origin(*target, &hir))).collect();
+            let mut origins = module.imports.iter().map(|(name, target)|
+                (name.clone(), self.import_origin(*target, &hir))).collect::<BTreeMap<_, _>>();
+            let module_id = ModuleId::from_index(index);
+            if let Some(symbols) = self.graph.host_symbols.get(&module_id) {
+                for (name, index) in symbols {
+                    origins.insert(name.clone(), crate::hir::HirImportOrigin::Host { module: module_id, index: *index });
+                }
+            }
+            for reference in module.hir.references() {
+                if reference.resolution == crate::hir::HirResolution::External
+                    && !origins.contains_key(&reference.name)
+                    && let Some(origin) = crate::types::bootstrap_symbol(&reference.name)
+                {
+                    origins.insert(reference.name.clone(), origin);
+                }
+            }
             hir[index].as_mut().unwrap().hir.set_import_origins(&origins);
         }
         for index in 0..hir.len() {
@@ -367,6 +389,18 @@ impl<'a> StaticNames<'a> {
             let module = hir[index].as_mut().unwrap();
             module.hir.set_expression_import_origins(origins);
             module.diagnostics.extend(diagnostics);
+            // Success means every nonlocal reference has a concrete source
+            // identity, including bootstrap symbols. No name-only externals
+            // may silently cross this boundary.
+            for reference in module.hir.references() {
+                if reference.resolution == crate::hir::HirResolution::External
+                    && module.hir.reference_import_origin(reference.id).is_none()
+                {
+                    module.diagnostics.push(Diagnostic::error(
+                        format!("binding {:?} has no resolved symbol identity", reference.name),
+                        reference.location));
+                }
+            }
         }
         ResolvedStaticGraph { modules: hir, reachable: self.graph.modules.iter()
             .filter(|module| visited[module.id.index()]).map(|module| module.id).collect() }

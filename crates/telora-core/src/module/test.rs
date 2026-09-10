@@ -108,11 +108,19 @@ impl Engine {
             true,
             &mut sources,
         )?;
-        let mut main = MainWorld::with_modules(graph);
+        let resolved = StaticNames::new(&graph).resolve_all();
+        if let Some(inputs) = resolved.diagnostic_inputs(&graph) {
+            let snapshot = WorkspaceSnapshot::build(sources.clone(), inputs);
+            return Ok(TestOutcome {
+                module: root.id.to_string(), sources,
+                diagnostics: snapshot.diagnostics().to_vec(),
+                cases: Vec::new(), notices: Vec::new(), aborted: true,
+            });
+        }
+        let mut main = MainWorld::from_resolved(graph, resolved);
         let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,
-            resolver,
             overlays: &BTreeMap::new(),
             query: None,
             sources,

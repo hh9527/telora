@@ -9,7 +9,7 @@ The controlling target is RFC 0280's session-wide typed IR.
 | --- | --- | --- |
 | Module scheduling | `module/type-check.rs::StaticWorkspace::solve` recursively solves dependencies and selects descriptor interfaces using pre-resolved module/export-row targets. | Connect those targets to session definition/type-slot IDs and schedule constraints over shared records. |
 | Slot ownership | `types/inference-context.rs::GenericInference::new` takes one HIR program and starts with an empty expression `records` map. `record_type` creates/replaces expression edges while inferring. | Preallocate syntax-owned slots in the session graph, with explicit evidence for contextual conversions. |
-| HIR identity | The types-only entry now prepares reachable HIR before any module solve, using `module/static-names.rs`. `HirProgram` still owns local definition/expression vectors. | Connect these source records to session definition IDs and preallocated type slots; extend the shared preparation to the ordinary loader. |
+| HIR identity | Both checking modes, module loading, generated entry loading and native installation consume HIR from `module/static-names.rs`. Local IDs are qualified by their session ModuleId; bootstrap and Host symbols also have explicit IDs. | Allocate type slots against these source identities without rebuilding HIR. |
 | Static handoff | `types/solved-module.rs::SolvedModulePlan` owns one module's arena/HIR/evidence. `types/type-check.rs::check_module_types` retains only interface and types. | One typed program retains every required syntax type and lowering fact; modules are ranges/namespaces within it. |
 | Completion | `types/inference-publication.rs::publish_program_expressions` visits recorded locations, rejects some failures, but omits other unsuccessful publications. | Full required-slot scan, conflict provenance and Unknown diagnostics; a success artifact cannot contain missing types. |
 | Consumer boundary | Ordinary analysis calls solve then execute per module. The types-only loader has a separate publication path. | Both entries obtain the same finalized session IR before any Telora execution; only their later consumers differ. |
@@ -29,54 +29,62 @@ session declaration/type arena remains part of the global migration.
 Two further dependencies are important for integration:
 
 - `types/dependency.rs::solve_module_plan` now takes already resolved HIR.
-  The types-only entry obtains constructor roles from the session source graph,
-  while ordinary loader callers still prepare HIR from their external interfaces.
-  Ordinary loading must migrate to the same session preparation boundary.
+  Module callers obtain constructor roles from the session source graph.
+  Ordinary loading and native installation take the prepared HIR by move.
 - `heap/type-graph-builder.rs::type_graph_values_in` already consumes graph IDs,
   retains a flat value table, and reserves nominal metadata before following
   recursive bodies. Reuse this conversion mechanism against the finalized
   session arena; it does not require another solver or evaluation of type syntax.
 
-## Replacement order
+## Two completion boundaries
 
-1. Build the session's reachable HIR inventory and declaration/reference index
-   before inference. Allocate stable syntax-slot identities and record each
-   module's ranges. Keep lexical binding identity separate from inferred type
-   equality. Native and data modules contribute static contracts, not VM values.
-2. Move constraint storage and type-term storage to that owner. Resolve imports,
-   aliases and re-exports to definition IDs, including pending definitions.
-   Integrate annotation/family/property contracts as graph inputs. Module queues
-   may order work but cannot own separate solutions or publish copied interfaces.
-3. Run body constraints against those slots, preserving per-instantiation generic
-   variables and contextual-conversion semantics. Record a conflict where its
-   evidence is available and continue solving independent constraints. Do not
-   replace an expression's contextual result by unifying its source declaration
-   indiscriminately; current `record_type` explicitly distinguishes those edges.
-4. Normalize and validate the whole graph. Canonicalize equal structural terms
-   after their argument representatives are known. Required Unknown/Conflicted
-   slots prevent creating the finalized typed-program artifact; bound parameters
-   and recursive nominal identities remain explicit valid type structure.
-5. Route both checking modes and tool/runtime compilation through that artifact.
-   Delete per-module solve/execute interleaving, descriptor import/export bridges
-   inside the session, open-shape fallbacks and late type-solving entries.
-   Preserve existing tool/runtime behavior; record-offset lowering is later work.
+1. Close resolve for the whole session: inventory source and exports, allocate
+   module/symbol identities, link every reference, and require all module
+   consumers to use that result. Source declarations determine constructor
+   roles; no type solving or VM execution is needed for this boundary.
+2. Close types for that same graph: preallocate required slots, apply evidence,
+   normalize and diagnose Unknown/Conflicted, then pass one finalized typed IR
+   to every tool/runtime compiler. Remove module-owned solutions, descriptor
+   bridges, solve/execute interleaving and late inference. Generic instances and
+   contextual conversions retain independent slots. Property values remain later
+   execution work; record-offset lowering is also later work.
 
-Steps are migration boundaries, not independent alternative end states. In
-particular, retaining `SolvedModulePlan`s in a session vector does not complete
-steps 1–4. Any transitional code must serve a used path toward the shared graph;
-an unused global table beside the old solver is not progress on ownership.
+Intermediate branch states need not preserve complete functionality or compile.
+There are no additional acceptance milestones for small interface migrations,
+and no compatibility fallback should be added to keep such a migration green.
 
 ## First integration dependency: resolve before solving
 
 The ordinary analysis entry now also requires an owned HirProgram argument.
 It no longer constructs HIR internally from execution roots and interfaces.
-Existing direct/loader callers explicitly prepare their HIR at ingress; no
-optional-HIR fallback was introduced. A Host-interface regression attaches a
-source origin before analysis and verifies it survives in the resulting HIR.
-This API boundary allows a session-resolved HIR to reach the ordinary solver
-without losing its reference identities, but does not by itself move ordinary
-loading to full-graph resolve. Native bootstrap still parses its sources during
-installation, so its source/HIR ownership must join shared preparation as well.
+Module loading now uses that boundary to consume the same session preparation
+as native installation and checking. Native sources enter discovery before
+MainWorld creation and are not reparsed during installation. Native catalog
+queries also build a real inventory, with no provisional ModuleId fallback.
+Missing session import records are errors; loaders no longer reparse missing
+syntax or retry name resolution against a live resolver.
+
+Every external HIR reference must carry a source origin, including bootstrap
+symbols and Host bindings registered before resolution. Ordinary recovery and
+test entry points stop at session resolve diagnostics before creating MainWorld;
+native installation also rejects a graph with resolve errors. Such a failed
+resolve returns diagnostics and source records, not partially solved type facts.
+This does not yet complete global type solving: module-owned inference and
+solve/execute interleaving remain the next boundary to replace.
+
+The resolve integration is not yet accepted as fully closed for all consumers.
+Two LSP completion regressions currently expect export completion through a
+solved dependency result type, even when the requesting source has parse/resolve
+errors. `semantic.rs::WorkspaceSnapshot::exports_of` still reads the module's
+result type. Replace that consumer with the static export-name inventory; do
+not restore early type inference to make these tests pass. The failed resolve
+projection currently retains sources and diagnostics but drops its symbol graph.
+Preserving that graph for editor queries is the remaining resolve handoff gap.
+
+Validation of this integration: 422 core tests pass, release builds, and the
+ontology `check @test/query` command passes in ordinary and types-only modes.
+The workspace suite stops at the two LSP export-completion failures described
+above; it is not green. No performance comparison was run for this change.
 
 Moving the old HIR constructor into discovery verbatim could not work: its
 member-pattern classification depended on solved external interfaces.

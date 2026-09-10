@@ -8,9 +8,7 @@ enum ModuleSourcePolicy {
 enum TeloraModuleSource<'a> {
     File(&'a Path),
     Synthetic {
-        name: &'a str,
         context_path: &'a Path,
-        source: &'a str,
     },
 }
 
@@ -66,7 +64,7 @@ fn load_module_with_resolver(
         .into_iter()
         .map(|(name, _)| ModuleCName::builtin(name));
     let mut sources = SourceDatabase::default();
-    let graph = ModuleGraph::discover(
+    let mut graph = ModuleGraph::discover(
         &resolver,
         vec![root_module.clone()],
         &BTreeMap::new(),
@@ -75,9 +73,12 @@ fn load_module_with_resolver(
         false,
         &mut sources,
     )?;
+    graph.host_symbols.insert(graph.id(&root_module.id).expect("root inventory"),
+        external_bindings.keys().enumerate().map(|(index, name)| (name.clone(), index as u32)).collect());
     let mut main = MainWorld::with_modules(graph);
     let builtin_modules = install_native_modules(&mut main, &mut sources, &debug_sink)?;
     let mut loader = ModuleLoader {
+        #[cfg(test)]
         resolver,
         cache: HashMap::new(),
         builtin_modules,

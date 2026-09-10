@@ -40,7 +40,6 @@ fn runtime_program_with_evidence(program: &Program, analysis: &crate::Analysis) 
 
 struct WorkspaceBuilder<'a> {
     engine: &'a Engine,
-    resolver: ModuleResolver,
     overlays: &'a BTreeMap<PathBuf, crate::document::DocumentText>,
     query: Option<&'a crate::query::QueryContext>,
     sources: SourceDatabase,
@@ -117,24 +116,6 @@ impl WorkspaceBuilder<'_> {
                     .extend(self.visiting[index..].iter().cloned());
                 self.cycle_members.insert(module_id.clone());
                 return None;
-            }
-            if self.main.modules.prepared(&module_id).is_none() {
-                let source = match self.overlays.get(&path).cloned() {
-                    Some(source) => source,
-                    None => match fs::read_to_string(&path) {
-                        Ok(source) => crate::document::DocumentText::new(source),
-                        Err(error) => {
-                            self.inputs.insert(
-                                key.clone(),
-                                unavailable_input(key, path.clone(), WorkspaceModuleKind::Telora),
-                            );
-                            let _ = error;
-                            return None;
-                        }
-                    },
-                };
-                let parsed = PreparedModule::parse(&mut self.sources, &module_id, source);
-                self.main.modules.publish_prepared(&module_id, parsed);
             }
             let parsed = self.main.modules.prepared(&module_id).expect("prepared syntax");
             let source_id = parsed.source_id;
@@ -224,7 +205,7 @@ impl WorkspaceBuilder<'_> {
             }
             for (name, imported_name, open, location, target) in imports {
                 let target_module = match self.main.modules.resolve_import(
-                    &self.resolver, &module_id, location, &target,
+                    location,
                 ) {
                     Ok(target) => target,
                     Err(error) => {
@@ -684,7 +665,8 @@ impl WorkspaceBuilder<'_> {
             module_id,
             ModuleAnalysisContext::Ordinary,
             program,
-            crate::types::resolve_module_hir_with_interfaces(program, external_roots.keys().cloned(), external_interfaces),
+            self.main.resolved.modules[module_id.index()].take()
+                .expect("source module has session-resolved HIR").hir,
             &mut account,
             &external_roots
                 .iter()

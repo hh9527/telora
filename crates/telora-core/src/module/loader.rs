@@ -46,6 +46,7 @@ fn prepare_selected_entry(
     let mut main = MainWorld::with_modules(graph);
     let builtin_modules = install_native_modules(&mut main, &mut sources, &debug_sink)?;
     let mut loader = ModuleLoader {
+        #[cfg(test)]
         resolver,
         cache: HashMap::new(),
         builtin_modules,
@@ -59,7 +60,7 @@ fn prepare_selected_entry(
         semantic_inputs: BTreeMap::new(),
         source_policy: ModuleSourcePolicy::ExplicitExports,
     };
-    let entry = loader.compile_entry(&main_path, entry_id, source, BTreeMap::new())?;
+    let entry = loader.compile_entry(&main_path, entry_id, BTreeMap::new())?;
     Ok(SelectedEntryLoader {
         loader,
         main_module,
@@ -69,6 +70,7 @@ fn prepare_selected_entry(
 }
 
 struct ModuleLoader {
+    #[cfg(test)]
     resolver: ModuleResolver,
     cache: HashMap<ModuleCName, ModuleState>,
     builtin_modules: HashMap<String, ModuleArtifact>,
@@ -137,18 +139,14 @@ impl ModuleLoader {
         &mut self,
         main_path: &Path,
         module_id: ModuleCName,
-        entry_source: &str,
         external_bindings: BTreeMap<String, crate::DataWorld>,
     ) -> Result<CompiledTeloraModule, ModuleError> {
         self.enter(&module_id)?;
         let mut account = QuotaAccount::new(self.module_quota);
-        let source_name = module_id.to_string();
         let result = self.compile_telora(
             &module_id,
             TeloraModuleSource::Synthetic {
-                name: &source_name,
                 context_path: main_path,
-                source: entry_source,
             },
             external_bindings,
             true,
@@ -344,22 +342,8 @@ impl ModuleLoader {
         let path = module_source.context_path();
         let synthetic = matches!(module_source, TeloraModuleSource::Synthetic { .. });
         let source_name = module_id.to_string();
-        if self.main.modules.prepared(module_id).is_none() {
-            let source = match module_source {
-                TeloraModuleSource::File(path) => read(path, &source_name)?,
-                TeloraModuleSource::Synthetic { name, source, .. } => {
-                    debug_assert_eq!(name, source_name);
-                    source.to_owned()
-                }
-            };
-            let prepared = PreparedModule::parse(&mut self.sources, module_id,
-                crate::document::DocumentText::new(source));
-            self.main.modules.publish_prepared(module_id, prepared);
-        }
         let prepared = self.main.modules.prepared(module_id).expect("prepared syntax");
         let source_id = prepared.source_id;
-        let discovered_source = self.main.modules.id(module_id).is_some_and(|id|
-            self.main.modules.module(id).source == Some(source_id));
         let program = prepared.program.as_ref().ok_or_else(|| {
             ModuleError::new(
                 prepared
@@ -373,36 +357,7 @@ impl ModuleLoader {
         if let Some(diagnostic) = module_binding_diagnostics(&program).into_iter().next() {
             return Err(ModuleError::new(self.sources.render(&diagnostic)));
         }
-        let skeleton = if self.main.modules.modules.is_empty() {
-            None
-        } else {
-            let id = self.main.modules.id(module_id).ok_or_else(|| {
-                ModuleError::new(format!(
-                    "module {module_id} was not present during module graph discovery"
-                ))
-            })?;
-            if !discovered_source {
-                let skeleton = self.main.modules.module(id);
-                let parsed_blueprint = ModuleBlueprint::from_program(&program).map_err(|message| {
-                    ModuleError::new(format!(
-                        "module {module_id} has an invalid skeleton: {message}"
-                    ))
-                })?;
-                if skeleton.id != id
-                    || skeleton.cname != *module_id
-                    || skeleton.exports != parsed_blueprint.exports
-                    || skeleton.slots != parsed_blueprint.slots
-                {
-                    return Err(ModuleError::new(format!(
-                        "module {module_id} changed after its static skeleton was assigned"
-                    )));
-                }
-            }
-            Some(id)
-        };
-        // A discovered source and its declarations are the same session facts,
-        // not two versions needing comparison. Only legacy inputs are checked.
-        let validate_imports = skeleton.is_some() && !discovered_source;
+        let skeleton = self.main.modules.id(module_id).expect("source module inventory");
         let has_explicit_exports = program
             .value
             .body
@@ -446,7 +401,7 @@ impl ModuleLoader {
             mut external_provenance, mut external_roots, semantic_imports,
             mut external_interfaces, open_candidates,
         } = self.prepare_telora_dependencies(
-            module_id, &external_bindings, skeleton, validate_imports,
+            module_id, &external_bindings, skeleton,
         )?;
         let program = self.main.modules.prepared(module_id)
             .expect("session syntax remains available after dependencies")
@@ -538,10 +493,11 @@ impl ModuleLoader {
         }
         let analysis = analyze_program_with_bindings_observed(
             &source_name,
-            skeleton.unwrap_or(ModuleId::ANONYMOUS),
+            skeleton,
             ModuleAnalysisContext::Ordinary,
             &program,
-            crate::types::resolve_module_hir_with_interfaces(&program, external_roots.keys().cloned(), &external_interfaces),
+            self.main.resolved.modules[skeleton.index()].take()
+                .expect("source module has session-resolved HIR").hir,
             account,
             &external_roots
                 .iter()
@@ -570,9 +526,7 @@ impl ModuleLoader {
             erased_metadata_bindings = metadata.erased_bindings;
             promoted_types.extend(metadata.type_names);
         }
-        let static_funcs = skeleton.map_or_else(HashMap::new, |id| {
-            self.main.modules.static_funcs(id)
-        });
+        let static_funcs = self.main.modules.static_funcs(skeleton);
         let function = if promoted_types.is_empty() {
             compile_program_analyzed_in_module(
                 source_file,

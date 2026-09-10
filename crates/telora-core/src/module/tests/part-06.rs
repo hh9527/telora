@@ -428,17 +428,21 @@
             r#"import "./a" as a; import "./b" as b; [a, b]"#,
         )
         .unwrap();
+        let resolver = ModuleResolver::for_root(&main).unwrap().with_builtins(builtin_list());
+        let mut sources = SourceDatabase::default();
+        let graph = ModuleGraph::discover(&resolver, vec![resolver.resolve_root(&main).unwrap()],
+            &BTreeMap::new(), std::iter::empty(), None, false, &mut sources).unwrap();
         let mut loader = ModuleLoader {
-            resolver: ModuleResolver::for_root(&main).unwrap(),
+            resolver,
             cache: HashMap::new(),
             builtin_modules: HashMap::new(),
-            main: MainWorld::building(),
+            main: MainWorld::with_modules(graph),
             visiting: Vec::new(),
             dependencies: BTreeSet::new(),
             module_quota: Quota::with_fuel(100_000),
             data_limits: DataLimits::default(),
             debug_sink: Arc::new(DiscardDebugSink),
-            sources: SourceDatabase::default(),
+            sources,
             semantic_inputs: BTreeMap::new(),
             source_policy: ModuleSourcePolicy::ExpressionHarness,
         };
@@ -522,7 +526,7 @@
     }
 
     #[test]
-    fn recoverable_workspace_blocks_failed_imports_and_keeps_independent_facts() {
+    fn unresolved_workspace_reports_diagnostics_without_starting_type_solving() {
         let directory = fixture_dir();
         let model = directory.join("model.telora");
         let main = directory.join("main.telora");
@@ -543,34 +547,11 @@
         let model = snapshot
             .module_by_path(&canonicalize(&model).unwrap())
             .unwrap();
-        assert_eq!(main.state, WorkspaceModuleState::Available);
-        assert_eq!(model.state, WorkspaceModuleState::Available);
-        let fact = |module, name: &str| {
-            &snapshot
-                .definitions()
-                .iter()
-                .find(|definition| definition.module == module && definition.name == name)
-                .unwrap()
-                .ty
-        };
-        assert_eq!(fact(main.id, "Local").state, crate::FactState::Known);
-        assert!(matches!(
-            fact(main.id, "Uses").state,
-            crate::FactState::Unknown(crate::UnknownReason::BlockedBy(_))
-        ));
-        assert!(matches!(
-            fact(main.id, "Down").state,
-            crate::FactState::Unknown(crate::UnknownReason::BlockedBy(_))
-        ));
-        assert_eq!(fact(model.id, "Good").state, crate::FactState::Known);
-        let broken = fact(model.id, "Broken");
-        let diagnostic = broken.diagnostics[0];
-        assert!(
-            snapshot.diagnostics()[diagnostic.index()]
-                .message
-                .contains("unknown binding")
-        );
-        assert!(main.imports.iter().any(|import| import.target == model.id));
+        assert_eq!(main.state, WorkspaceModuleState::Unavailable);
+        assert_eq!(model.state, WorkspaceModuleState::Unavailable);
+        assert!(snapshot.definitions().is_empty(), "resolve errors must not publish type-analysis facts");
+        assert!(snapshot.diagnostics().iter().any(|diagnostic|
+            diagnostic.message.contains("unknown binding \"missing\"")));
         assert_ne!(main.source, model.source);
         assert_eq!(model.name, "standalone/model");
         assert_eq!(
