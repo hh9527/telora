@@ -5,6 +5,39 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Solved regex preparation, string parsing and codec text decode (2026-09-10)
+
+regex.prepare now validates capture names and optionality against the already
+applied Struct body and uses the execution graph's property-presence records for
+nested parse capability. It returns the original compiled Regex handle. Nested
+ParseBy providers are not eagerly executed during preparation. Native callbacks
+get read-only access to the admitted TypeImage/ExecutionGraph for this check.
+
+string.parse uses a flat VM task stack carrying the original input Val, absolute
+capture ranges and solved member IDs. Nested ParseBy demands suspend/resume the
+same stack. Scalars and Struct/Option results materialize directly in the VM;
+whole-input String captures reuse the input handle, while proper substrings are
+new output strings. There is no Rust ParsedValue tree or legacy descriptor path.
+Syntax/scalar mismatches return Result errors; provider failures propagate the
+cached FailureId. String parse native calls admit provider dependencies in codegen.
+
+codec DecodeByParse now calls this parser through a native continuation. Parse
+mismatches become BlameError data failures and can participate in untagged
+alternative trials; provider failures never become candidate mismatches. Paired
+decode/encode marker validation remains required. Nested Service/Endpoint values
+roundtrip through the solved text decoder and prepared display encoder.
+
+Validation: all 42 codegen tests, 11 codec regressions, and two string-parse
+tests pass (overlapping selections). Coverage includes required/optional and
+missing/extra captures, unsupported member capability, nested lazy parsing,
+non-finite Float rejection, untagged ambiguity/fallback, cached provider failure,
+and original String handle/literal location retention in captures and ParseError.
+Logs: /tmp/mir-text-parse-codegen.log, /tmp/mir-text-decode.log,
+/tmp/mir-text-parse-handles.log. No full-suite or performance claim.
+Construction @check execution is still pending, including how its rejection
+participates in parse/untagged decoding; schema, generic evidence, remaining
+consumers and complete old-pipeline removal also remain open.
+
 ### Codec text encoding resumes through prepared DisplayBy (2026-09-10)
 
 The solved encoder now honors paired DecodeByParse/EncodeByDisplay markers,

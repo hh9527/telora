@@ -380,6 +380,30 @@ fn solved_dyn_member_access_preserves_payload_handles() {
 }
 
 #[test]
+fn solved_string_parse_reuses_whole_input_captures_and_error_subjects() {
+    let source = r#"
+        import "std/string" as string; import "std/regex" as regex;
+        @regex.parse_by(regex.compile(r"^(?P<value>.*)$")) type Item = struct { value: String };
+        def input = "a string deliberately longer than inline storage capacity";
+        def parsed = match string.parse(Item.type, input) { Ok(value) => value, Err(_) => fail!("parse") };
+        def rejected = match string.parse(Int.type, input) { Err(error) => error, Ok(_) => fail!("expected rejection") };
+        export def answer = (input, parsed, rejected);
+    "#;
+    let mir = crate::codegen::tests::graph(source, "");
+    let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    drop(mir);
+    let linked = crate::execution_link::link_entry(artifact).unwrap();
+    let result = Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
+    let input = result.value().sequence_get(0).unwrap().value;
+    for index in [1, 2] {
+        let value = result.value().sequence_get(index).unwrap().dict_get("value").unwrap().value;
+        assert_eq!(value.value(), input.value());
+        let loc = value.loc().expect("original input literal location");
+        assert_eq!(&source[loc.start as usize..loc.end as usize], "\"a string deliberately longer than inline storage capacity\"");
+    }
+}
+
+#[test]
 fn solved_codec_display_calls_fail_per_value_without_poisoning_provider() {
     let mir = crate::codegen::tests::graph(r#"
         import "std/codec" as codec; import "std/_rt" as rt;
@@ -435,6 +459,14 @@ fn solved_codec_failed_property_is_not_retried_or_reported_twice() {
         @string.decode_by_parse @string.encode_by_display @broken type Item = struct { value: Int };
         def attempt = rt.with_diagnostics(fn(n: Int) { let item: Item = {value: n}; codec.encode(codec.Value.type, item) });
         export def answer = (attempt(1), attempt(2));
+    "#, r#"
+        import "std/codec" as codec; import "std/_rt" as rt; import "std/regex" as regex;
+        import "std/string" as string; import "std/json" as json;
+        def broken: Fn(Type, Option(regex.ParseBy)) -> regex.ParseBy = fn(owner, previous) { fail!("parse provider failed") };
+        @string.decode_by_parse @string.encode_by_display @broken type Item = struct { value: Int };
+        @json.untagged type Choice = enum { Plain(String), Parsed(Item) };
+        def attempt = rt.with_diagnostics(fn(text: String) { codec.decode(Choice.type, codec.Value.String(text)) });
+        export def answer = (attempt("1"), attempt("2"));
     "#] {
     let mir = crate::codegen::tests::graph(source, "");
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);

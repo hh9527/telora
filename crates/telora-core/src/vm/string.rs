@@ -3,6 +3,9 @@ fn run_string_parse(
     arguments: &[Val], return_target: ReturnTarget, function: &BytecodeFunction,
     pc: usize, current: &mut Heap, background: &Heap, account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
+    if background.solved_types.is_some() {
+        return run_solved_string_parse(arguments, return_target, function, pc, current, background, account);
+    }
     let view = HeapView { current, background: Some(background) };
     let property = ValueRef { value: arguments[0], view }.declared_type_id()
         .ok_or_else(|| runtime_type_error("ParseBy Type", &arguments[0], &view, function, pc))?;

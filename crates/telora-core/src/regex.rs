@@ -305,6 +305,22 @@ fn validate_relation(
 
 pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let native_type = regex_type(context)?;
+    if let Some((types, graph)) = context.solved_image() {
+        let compiled = context
+            .value(context.argument(0)?)?
+            .as_opaque::<CompiledRegex>(&native_type)
+            .ok_or_else(|| NativeError::new("expected Regex"))?;
+        let property = context
+            .value(context.argument(1)?)?
+            .represented_type_id()
+            .ok_or_else(|| NativeError::new("expected solved ParseBy metadata"))?;
+        let owner = context
+            .value(context.argument(2)?)?
+            .represented_type_id()
+            .ok_or_else(|| NativeError::new("expected solved target metadata"))?;
+        solved_fields(compiled, owner, property, types, graph)?;
+        return context.copy(context.result(), context.argument(0)?);
+    }
     let compiled = compiled_argument(context, 0, &native_type)?;
     let property_type = context
         .value(context.argument(1)?)?
@@ -316,6 +332,95 @@ pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), Na
         property_type,
     )?;
     context.copy(context.result(), context.argument(0)?)
+}
+
+/// Capture validation consumes solved member identities and static property
+/// presence. It does not evaluate nested properties or reconstruct descriptors.
+fn solved_fields(
+    compiled: &CompiledRegex,
+    owner: crate::mir::TypeId,
+    property: crate::mir::TypeId,
+    types: &crate::type_image::TypeImage,
+    graph: &crate::execution_graph::ExecutionGraph,
+) -> Result<Vec<(String, crate::mir::TypeId)>, NativeError> {
+    use crate::mir::{PropertySite, TypeConstructor as T};
+    let body = types.layout(owner).map_or(owner, |layout| layout.body);
+    let shape = &types.types[body.index()];
+    let T::Record(names) = &shape.constructor else {
+        return Err(NativeError::new(
+            "std/regex.parse_by requires a struct type",
+        ));
+    };
+    let expected = names.iter().cloned().collect::<BTreeSet<_>>();
+    if expected != compiled.captures {
+        let missing = expected.difference(&compiled.captures).collect::<Vec<_>>();
+        let extra = compiled.captures.difference(&expected).collect::<Vec<_>>();
+        return Err(NativeError::new(format!(
+            "regex captures must match struct fields; missing captures {missing:?}, extra captures {extra:?}"
+        )));
+    }
+    for (name, &ty) in names.iter().zip(&shape.arguments) {
+        let field = &types.types[ty.index()];
+        let optional = field.constructor == T::Option;
+        let inner = if optional { field.arguments[0] } else { ty };
+        if !matches!(
+            types.types[inner.index()].constructor,
+            T::Int | T::Float | T::String
+        ) && graph
+            .property(crate::execution_graph::PropertyKey {
+                owner: inner,
+                site: PropertySite::Type,
+                property,
+            })
+            .is_none()
+        {
+            return Err(NativeError::new(format!(
+                "regex field {name:?} is not string-parsable"
+            )));
+        }
+        if optional == compiled.required.contains(name) {
+            return Err(NativeError::new(format!(
+                "regex capture {name:?} is {}, but its field is {}",
+                if optional { "required" } else { "optional" },
+                if optional { "optional" } else { "required" }
+            )));
+        }
+    }
+    Ok(names
+        .iter()
+        .cloned()
+        .zip(shape.arguments.iter().copied())
+        .collect())
+}
+
+/// Return offsets into the caller's original String. No captured payload is
+/// copied into a Rust value tree, and every capture already has its TypeId.
+pub(crate) fn solved_captures(
+    regex: crate::ValueRef<'_>,
+    input: &str,
+    owner: crate::mir::TypeId,
+    property: crate::mir::TypeId,
+    types: &crate::type_image::TypeImage,
+    graph: &crate::execution_graph::ExecutionGraph,
+) -> Result<Vec<(String, crate::mir::TypeId, Option<std::ops::Range<usize>>)>, NativeError> {
+    let native = regex
+        .opaque_native_type()
+        .ok_or_else(|| NativeError::new("ParseBy has no Regex value"))?;
+    let compiled = regex
+        .as_opaque::<CompiledRegex>(native)
+        .ok_or_else(|| NativeError::new("ParseBy has an invalid Regex value"))?;
+    let fields = solved_fields(compiled, owner, property, types, graph)?;
+    let captures = compiled
+        .regex
+        .captures(input)
+        .ok_or_else(|| NativeError::new("input does not match regular expression"))?;
+    Ok(fields
+        .into_iter()
+        .map(|(name, ty)| {
+            let range = captures.name(&name).map(|capture| capture.range());
+            (name, ty, range)
+        })
+        .collect())
 }
 
 fn execute_plan(plan: &ParsePlan, input: &str) -> Result<ParsedValue, String> {

@@ -194,6 +194,11 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .ok_or_else(|| NativeError::new("solved native closure has invalid signature metadata"))
     }
 
+    pub(crate) fn solved_image(&self) -> Option<(&crate::type_image::TypeImage, &crate::execution_graph::ExecutionGraph)> {
+        let heap = self.background?;
+        Some((heap.solved_types.as_ref()?, heap.solved_graph.as_ref()?))
+    }
+
     pub fn value(&self, register: RegisterId) -> Result<ValueRef<'_>, NativeError> {
         let index = usize::try_from(register.0)
             .map_err(|_| NativeError::new("register does not fit this platform"))?;

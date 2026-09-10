@@ -199,7 +199,7 @@ fn compile_root(
         || globals.iter().any(|s| {
             matches!(
                 native_abi(mir, *s),
-                Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop")) | Some((13, _))
+                Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop")) | Some((13, _)) | Some((7, "parse_with"))
             )
         });
     if queries_properties {
@@ -2058,6 +2058,78 @@ pub(crate) mod tests {
             let signature = &result.types().types[id.index()];
             assert_eq!(signature.constructor, TypeConstructor::Function);
             assert_eq!(result.types().types[signature.arguments[0].index()].constructor, expected);
+        }
+    }
+
+    #[test]
+    fn solved_codec_text_decode_roundtrips_and_composes_with_untagged_trials() {
+        let definitions = r#"
+            import "std/codec" as codec; import "std/json" as json;
+            import "std/regex" as regex; import "std/string" as string; import "std/fmt" as fmt;
+            @string.decode_by_parse @string.encode_by_display @fmt.display_by("{host}:{port}")
+            @regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
+            type Endpoint = struct { host: String, port: Int };
+            @string.decode_by_parse @string.encode_by_display @fmt.display_by("{name}@{endpoint}")
+            @regex.parse_by(regex.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
+            type Service = struct { name: String, endpoint: Endpoint };
+            @json.untagged type Choice = enum { Parsed(Endpoint), Text(String) };
+        "#;
+        for body in [
+            r#"def value = json.decode(Service.type, "\"api@local:42\"").unwrap!(); export def answer = if codec.encode(codec.Value.type, value) == codec.Value.String("api@local:42") { value.endpoint.port } else { 0 };"#,
+            r#"export def answer = match json.decode(Choice.type, "\"not-an-endpoint\"") { Ok(Choice.Text(value)) => if value == "not-an-endpoint" { 42 } else { 0 }, _ => 0 };"#,
+            r#"export def answer = match json.decode(Choice.type, "\"local:42\"") { Err(_) => 42, _ => 0 };"#,
+            r#"export def answer = match json.decode(Endpoint.type, "42") { Err(_) => 42, _ => 0 };"#,
+        ] {
+            let mir = graph(&format!("{definitions}{body}"), "");
+            assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{body}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{body}");
+        }
+    }
+
+    #[test]
+    fn solved_regex_prepare_checks_capture_contracts_without_type_reconstruction() {
+        for (field, pattern, expected) in [
+            ("value: Int", "^(?P<other>.*)$", "captures must match struct fields"),
+            ("value: Option(Int)", "^(?P<value>.*)$", "capture \"value\" is required"),
+            ("value: Int", "^(?P<value>.*)?$", "capture \"value\" is optional"),
+            ("value: Array(Int)", "^(?P<value>.*)$", "not string-parsable"),
+        ] {
+            let mir = graph(&format!(r#"import "std/string" as string; import "std/regex" as regex;
+                @regex.parse_by(regex.compile(r"{pattern}")) type Item = struct {{ {field} }};
+                export def answer = string.parse(Item.type, "42");"#), "");
+            assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            let error = execute(artifact).err().expect("invalid capture contract");
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn solved_string_parse_uses_capture_ranges_and_lazy_nested_properties() {
+        for source in [
+            r#"import "std/string" as string; export def answer = match string.parse(Int.type, "42") { Ok(value) => value, Err(_) => 0 };"#,
+            r#"import "std/string" as string; import "std/regex" as regex;
+                @regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
+                type Endpoint = struct { host: String, port: Int };
+                @regex.parse_by(regex.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
+                type Service = struct { name: String, endpoint: Endpoint };
+                export def answer = match string.parse(Service.type, "api@local:42") { Ok(value) => if value.name == "api" && value.endpoint.host == "local" { value.endpoint.port } else { 0 }, Err(_) => 0 };"#,
+            r#"import "std/string" as string; import "std/regex" as regex;
+                @regex.parse_by(regex.compile(r"^(?P<value>\d+)(?:/(?P<note>\w+))?$"))
+                type Item = struct { value: Int, note: Option(String) };
+                export def answer = match string.parse(Item.type, "42") { Ok(value) => if value.note == None { value.value } else { 0 }, Err(_) => 0 };"#,
+            r#"import "std/string" as string; export def answer = match string.parse(Int.type, "bad") { Err(error) => if error.value == "bad" { 42 } else { 0 }, _ => 0 };"#,
+            r#"import "std/string" as string; export def answer = match string.parse(Float.type, "NaN") { Err(_) => 42, _ => 0 };"#,
+        ] {
+            let mir = graph(source, "");
+            assert!(mir.diagnostics.is_empty(), "{source}\n{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{source}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
         }
     }
 

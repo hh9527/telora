@@ -45,6 +45,7 @@ enum SolvedDecodeTask {
 
 #[derive(Debug)]
 struct SolvedDecode {
+    rejection: Option<(String, Val)>,
     pending: Vec<SolvedDecodeTask>,
     output: Vec<Val>,
     arguments: Vec<Val>,
@@ -54,6 +55,94 @@ struct SolvedDecode {
     trace_frame: RuntimeFrame,
     function: Arc<BytecodeFunction>,
     pc: usize,
+}
+
+#[derive(Debug)]
+struct SolvedDecodeParse {
+    decoder: SolvedDecode,
+    input: Val,
+    path: String,
+}
+
+impl NativeContinuation for SolvedDecodeParse {
+    fn return_target(&self) -> &ReturnTarget {
+        &self.decoder.return_target
+    }
+    fn trace_frame(&self) -> &RuntimeFrame {
+        &self.decoder.trace_frame
+    }
+    fn resume(
+        self: Box<Self>,
+        result: Val,
+        current: &mut Heap,
+        background: &Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        let Self {
+            mut decoder,
+            input,
+            path,
+        } = *self;
+        let view = HeapView {
+            current,
+            background: Some(background),
+        };
+        let (tag, value) = (ValueRef {
+            value: result,
+            view,
+        })
+        .tagged_parts()
+        .ok_or_else(|| {
+            error(
+                RuntimeErrorKind::InvalidBytecode,
+                "text parser did not return Result",
+                &decoder.function,
+                decoder.pc,
+            )
+        })?;
+        if tag.as_atom().is_some_and(|tag| tag.as_str() == "Ok") {
+            decoder.output.push(value.value);
+        } else if tag.as_atom().is_some_and(|tag| tag.as_str() == "Err") {
+            let message = value.as_str().ok_or_else(|| {
+                error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "text parser error is not String",
+                    &decoder.function,
+                    decoder.pc,
+                )
+            })?;
+            decoder.rejection = Some((
+                format!(
+                    "{path}{}",
+                    message
+                        .as_str()
+                        .strip_prefix('$')
+                        .unwrap_or(message.as_str())
+                ),
+                input,
+            ));
+        } else {
+            return Err(error(
+                RuntimeErrorKind::InvalidBytecode,
+                "invalid text parser result tag",
+                &decoder.function,
+                decoder.pc,
+            ));
+        }
+        continue_solved_decode(decoder, current, background, account)
+    }
+    fn resume_failed(
+        self: Box<Self>,
+        failure: Val,
+        _: &mut Heap,
+        _: &Heap,
+        _: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        Ok(VmAction::Return {
+            value: failure,
+            return_target: self.decoder.return_target,
+        })
+    }
 }
 
 impl NativeContinuation for SolvedDecode {
@@ -146,6 +235,7 @@ fn run_solved_codec_decode(
             "encode_by_display",
             "json_rename_all",
             "json_untagged",
+            "parse_by",
         ]
         .into_iter()
         .map(|name| {
@@ -163,6 +253,7 @@ fn run_solved_codec_decode(
     };
     continue_solved_decode(
         SolvedDecode {
+            rejection: None,
             pending: vec![SolvedDecodeTask::Visit {
                 value: arguments[2],
                 ty: target,
@@ -196,6 +287,7 @@ fn continue_solved_decode(
     use crate::execution_graph::{EvaluationError, Request};
     use crate::mir::{TypeConstructor as T, TypeOperation};
     let SolvedDecode {
+        mut rejection,
         mut pending,
         mut output,
         arguments,
@@ -211,7 +303,6 @@ fn continue_solved_decode(
         .solved_types
         .as_ref()
         .expect("solved decode image");
-    let mut rejection = None::<(String, Val)>;
     loop {
         // Only data mismatches unwind to an alternative boundary. VM failures
         // leave through Result/NativeContinuation and are never trial failures.
@@ -419,9 +510,31 @@ fn continue_solved_decode(
         }
         let mut rename = false;
         let mut untagged = false;
+        let mut bridged = false;
         if matches!(types.types[ty.index()].constructor, T::Nominal(_)) {
             let graph = background.solved_graph.as_ref().expect("decode graph");
+            let has = |index: usize| {
+                graph
+                    .property(crate::execution_graph::PropertyKey {
+                        owner: ty,
+                        site: crate::mir::PropertySite::Type,
+                        property: property_ids[index],
+                    })
+                    .is_some()
+            };
+            bridged = has(0);
+            if bridged != has(1) {
+                return Err(error(
+                    RuntimeErrorKind::TypeMismatch,
+                    "std/string.decode_by_parse and std/string.encode_by_display must be used together",
+                    function,
+                    pc,
+                ));
+            }
             for (index, &property) in property_ids.iter().enumerate() {
+                if index == 4 || bridged && index >= 2 {
+                    continue;
+                }
                 let Some(node) = graph.property(crate::execution_graph::PropertyKey {
                     owner: ty,
                     site: crate::mir::PropertySite::Type,
@@ -429,14 +542,6 @@ fn continue_solved_decode(
                 }) else {
                     continue;
                 };
-                if index < 2 {
-                    return Err(error(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "solved decode parse/display rules are not implemented yet",
-                        function,
-                        pc,
-                    ));
-                }
                 let property = match current
                     .solved_evaluation
                     .as_mut()
@@ -465,6 +570,7 @@ fn continue_solved_decode(
                             call_function: Arc::clone(&caller),
                             call_pc: pc,
                             return_target: ReturnTarget::Native(Box::new(SolvedDecode {
+                                rejection,
                                 pending,
                                 output,
                                 arguments,
@@ -510,6 +616,9 @@ fn continue_solved_decode(
                         ));
                     }
                 };
+                if index < 2 {
+                    continue;
+                }
                 if index == 3 {
                     untagged = true;
                     continue;
@@ -550,6 +659,46 @@ fn continue_solved_decode(
             (reference.as_atom().map(|a| a.as_str().to_owned()), None)
         };
         let shape = &types.types[ty.index()];
+        if bridged {
+            if tag.as_deref() != Some("String") || payload.is_none() {
+                rejection = Some((
+                    format!("{path}: expected String text representation"),
+                    value,
+                ));
+                continue;
+            }
+            let parse_arguments = [
+                Val::new(DecodedValue::SolvedType(property_ids[4]), loc),
+                Val::new(DecodedValue::SolvedType(ty), loc),
+                payload.unwrap().value,
+            ];
+            let call_function = Arc::clone(&caller);
+            let decoder = SolvedDecode {
+                rejection,
+                pending,
+                output,
+                arguments,
+                source,
+                property_ids,
+                return_target,
+                trace_frame,
+                function: caller,
+                pc,
+            };
+            return run_solved_string_parse(
+                &parse_arguments,
+                ReturnTarget::Native(Box::new(SolvedDecodeParse {
+                    decoder,
+                    input: value,
+                    path,
+                })),
+                &call_function,
+                pc,
+                current,
+                background,
+                account,
+            );
+        }
         let mismatch = |expected: &str| Some((format!("{path}: expected {expected}"), value));
         match &shape.constructor {
             T::Int | T::Float | T::String | T::Bytes => {
