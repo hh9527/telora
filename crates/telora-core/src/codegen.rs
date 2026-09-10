@@ -15,6 +15,9 @@ mod newtypes;
 mod patterns;
 #[path = "codegen/properties.rs"]
 mod properties;
+#[path = "codegen/run.rs"]
+mod run;
+pub use run::{RunCalls, RunContract, compile_run};
 use properties::native_abi;
 
 pub struct CompiledEntry {
@@ -25,6 +28,7 @@ pub struct CompiledEntry {
     pub native_links: Vec<NativeLink>,
     pub types: crate::type_image::TypeImage,
     pub eval_call: Option<EvalCall>,
+    pub run_calls: Option<RunCalls>,
     pub data_links: Vec<DataLink>,
 }
 
@@ -312,6 +316,7 @@ fn compile_root(
         native_links: emitter.native_links,
         types,
         eval_call: None,
+        run_calls: None,
         data_links: emitter.data_links,
         graph,
     })

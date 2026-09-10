@@ -16,6 +16,7 @@ pub struct LinkedEntry {
     pub(crate) types: crate::type_image::TypeImage,
     pub(crate) result_type: crate::mir::TypeId,
     pub(crate) eval_call: Option<crate::codegen::EvalCall>,
+    pub(crate) run_calls: Option<crate::codegen::RunCalls>,
     pub(crate) data: Vec<(crate::codegen::DataLink, crate::EvalSource)>,
 }
 
@@ -51,6 +52,7 @@ pub fn link_entry_with_data(
         types: artifact.types,
         result_type: artifact.result_type,
         eval_call: artifact.eval_call,
+        run_calls: artifact.run_calls,
         data,
     })
 }

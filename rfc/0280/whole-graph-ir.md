@@ -5,6 +5,32 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Compiled policy callbacks retain one VM session (2026-09-10)
+
+compile_run now reads the closed policy adapter signature and records the
+TypeIds of Env, Caps, Resources, State, Event and Effects. It rejects inconsistent
+state identities, non-array effects, malformed callback shapes and remaining
+type parameters before a VM exists. The compiled artifact/link carries unary
+and binary callback adapters, without a second compilation during execution.
+
+The VM's private SolvedRunSession installs the execution graph and data once,
+then retains one WorkWorld, Main TypeImage and QuotaAccount across configuration,
+initialization and reducer calls. Capabilities, initializer, reducer and state
+are VM-local Val handles. Callback invocation moves the owning Rust container
+without relocating its heap. Configuration/initialization cannot be repeated;
+a failing callback terminates this session and cannot be retried with fresh fuel.
+
+A test runs the actual run policy through separate VM calls and checks original
+actor payload identity across three events, stable TypeImage storage, decreasing
+shared fuel and rejection of repeated initialization. Another checks callback
+failure and absence of retry/quota reset. These are the internal session mechanics;
+the host protocol adapter and CLI run/serve entry point are still not connected,
+so non-test builds currently report unused staged session code.
+
+Validation: 27 codegen tests, both VM session tests and cargo check -p telora
+pass. Logs: /tmp/mir-run-session-{codegen,tests,cli-check}.log. Diff/source-size
+checks pass with large-file review warnings. No performance claim is made.
+
 ### Run policy executes in a single graph; JSON borrows VM values (2026-09-10)
 
 The existing std/_entry/run policy now has assembly tests placing it and an
