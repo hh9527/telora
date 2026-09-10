@@ -946,7 +946,7 @@ fn solve_module_plan<'a>(
                 .or_else(|| dependency_facts.iter().find_map(|facts| facts.display_trait))
                 .map(|id| (id, "std/fmt.Display".to_owned()))
         });
-    let (mut inference, checked_environment, result_type) = solve_program_types(
+    let ProgramTypeOutcome { mut inference, environment: checked_environment, result: result_type, diagnostics } = solve_program_types(
         source_name, program, sources, &types, ProgramTypeInputs {
             module_id,
             declaration_locations: &declaration_locations,
@@ -969,6 +969,9 @@ fn solve_module_plan<'a>(
             query: query.clone(),
         }, &mut binding_types,
     )?;
+    if let Some(diagnostic) = diagnostics.into_iter().next() {
+        return Err(FrontendError::from_diagnostic(sources, diagnostic));
+    }
     let installed_named_types = types.install_named_descriptors(&named_types);
     // Preserve binding-first nominal reservations before publishing expressions.
     // Solving is complete: keep this projection for validation and interface/ID
