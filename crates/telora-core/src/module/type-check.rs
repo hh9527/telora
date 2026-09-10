@@ -84,7 +84,6 @@ impl StaticWorkspace<'_> {
             let resolution = self.resolved[id.index()].take()
                 .expect("module references were resolved before type solving");
             diagnostics.extend(resolution.diagnostics);
-            diagnostics.extend(module_binding_diagnostics(program));
             if !self.native_ids.contains_key(&module.cname) {
                 for binding in &program.value.body.value.bindings {
                     if matches!(
@@ -224,17 +223,19 @@ impl Engine {
         // Resolve every reachable source before solving any dependency. Module
         // solvers consume this inventory rather than rebuilding HIR from types.
         let resolved = StaticNames::new(&graph).resolve(graph.id(&root.id).expect("discovered root"));
+        let native_ids = specs.iter().map(|spec|
+            (ModuleCName::builtin(spec.name), spec.native_id)).collect();
+        if let Some(inputs) = resolved.diagnostic_inputs(&graph, &native_ids) {
+            return Ok(WorkspaceSnapshot::build(sources, inputs));
+        }
         let mut workspace = StaticWorkspace {
             graph: &graph,
-            resolved,
+            resolved: resolved.modules,
             sources: &mut sources,
             interfaces: HashMap::new(),
             visiting: HashSet::new(),
             inputs: BTreeMap::new(),
-            native_ids: specs
-                .iter()
-                .map(|spec| (ModuleCName::builtin(spec.name), spec.native_id))
-                .collect(),
+            native_ids,
             type_store: TypeStore::default(),
         };
         let result = workspace.solve(graph.id(&root.id).expect("discovered root"));

@@ -45,6 +45,45 @@ struct ResolvedStaticModule {
     diagnostics: Vec<Diagnostic>,
 }
 
+struct ResolvedStaticGraph {
+    modules: Vec<Option<ResolvedStaticModule>>,
+    reachable: Vec<ModuleId>,
+}
+
+impl ResolvedStaticGraph {
+    fn diagnostic_inputs(&self, graph: &ModuleGraph, native_ids: &HashMap<ModuleCName, u32>)
+        -> Option<Vec<SemanticModuleInput>>
+    {
+        let diagnostics = |id: ModuleId| graph.module(id).prepared.iter()
+            .flat_map(|prepared| prepared.diagnostics.iter())
+            .chain(self.modules[id.index()].iter().flat_map(|module| module.diagnostics.iter()));
+        if !self.reachable.iter().any(|id|
+            diagnostics(*id).any(|diagnostic| diagnostic.severity == crate::source::Severity::Error))
+        { return None; }
+        // Resolution errors are a session gate. Produce syntax/diagnostic inputs
+        // without creating a type store or starting any module's inference.
+        Some(self.reachable.iter().map(|id| {
+            let module = graph.module(*id);
+            let resolved = graph.resolved[id.index()].as_ref();
+            let prepared = module.prepared.as_ref();
+            SemanticModuleInput {
+                key: module.cname.to_string(),
+                path: resolved.and_then(|module| module.path()).map(Path::to_owned),
+                kind: resolved.and_then(|module| static_data_kind(module.format)).unwrap_or_else(||
+                    if native_ids.contains_key(&module.cname) { WorkspaceModuleKind::Core }
+                    else { WorkspaceModuleKind::Telora }),
+                source: prepared.map(|prepared| prepared.source_id),
+                result_location: prepared.and_then(|prepared| prepared.program.as_ref())
+                    .map(|program| program.value.body.value.result.location),
+                analysis: None, partial: None, interface: None,
+                state: WorkspaceModuleState::Unavailable,
+                imports: Vec::new(),
+                diagnostics: diagnostics(*id).cloned().collect(),
+            }
+        }).collect())
+    }
+}
+
 #[derive(Default)]
 struct StaticImportScope {
     direct: BTreeMap<String, StaticImportTarget>,
@@ -263,6 +302,9 @@ impl<'a> StaticNames<'a> {
                     StaticNameKind::Newtype | StaticNameKind::Member)) }
         });
         let mut diagnostics = std::mem::take(&mut self.diagnostics[module.index()]);
+        diagnostics.extend(module_binding_diagnostics(program));
+        diagnostics.extend(hir.unresolved().map(|reference|
+            Diagnostic::error(format!("unknown binding {:?}", reference.name), reference.location)));
         let mut imports = self.scopes[module.index()].direct.clone();
         for (name, targets) in queried {
             let Some(reference) = hir.references().iter().find(|reference|
@@ -280,7 +322,7 @@ impl<'a> StaticNames<'a> {
         Some(ResolvedStaticModule { hir, imports, diagnostics })
     }
 
-    fn resolve(mut self, root: ModuleId) -> Vec<Option<ResolvedStaticModule>> {
+    fn resolve(mut self, root: ModuleId) -> ResolvedStaticGraph {
         let mut hir = std::iter::repeat_with(|| None).take(self.graph.modules.len()).collect::<Vec<_>>();
         let mut visited = vec![false; hir.len()];
         let mut pending = vec![root];
@@ -326,7 +368,8 @@ impl<'a> StaticNames<'a> {
             module.hir.set_expression_import_origins(origins);
             module.diagnostics.extend(diagnostics);
         }
-        hir
+        ResolvedStaticGraph { modules: hir, reachable: self.graph.modules.iter()
+            .filter(|module| visited[module.id.index()]).map(|module| module.id).collect() }
     }
 
     fn import_origin(&self, target: StaticImportTarget, modules: &[Option<ResolvedStaticModule>]) -> crate::hir::HirImportOrigin {

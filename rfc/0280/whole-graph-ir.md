@@ -182,9 +182,24 @@ namespace member's slot has not yet been materialized, the existing descriptor
 interface supplies its scheme once to the source binding table. This transitional
 ingress still has to disappear with the shared type arena.
 
+The types-only entry now has a session-wide resolution gate. ResolvedStaticGraph
+retains the reachable module IDs, including sources with parse errors. Resolve
+collects every unresolved HIR reference, along with import/namespace diagnostics.
+If any reachable source has a parse/resolve error, the entry creates only syntax
+and diagnostic snapshot inputs: it neither constructs TypeStore nor calls a
+module solver. Unrelated type errors become diagnosable once resolution succeeds.
+A regression verifies two independent unknown names are reported together and
+no module exports a type solution across this gate.
+
 This is not yet the complete shared pre-type graph symbol table: ordinary
-checking still prepares HIR per module, and unresolved-name validation is not a
-single session-wide completion gate. Imported slots are still materialized from
+checking still prepares HIR per module and uses its existing name validation.
+Also, HIR type-parameter metadata retains names/locations while parameter
+references still pass through Resolver.parameter_names and External resolution.
+They must link to stable parameter-symbol identities to satisfy the all-symbols
+closure criterion. Audit imports (including wildcard scope records), exports,
+local declarations and generated binders against that same criterion; successful
+import-origin linkage alone does not prove every symbol class is closed.
+Imported slots are still materialized from
 descriptor interfaces in separate arenas. The shared session slot owner and
 final typed IR remain required; source identity alone does not complete them.
 

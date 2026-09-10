@@ -247,7 +247,7 @@ fn session_export_aliases_share_source_identity_without_merging_new_definitions(
         builtin_list().into_iter().map(|(name, _)| ModuleCName::builtin(name)),
         None, false, &mut sources).unwrap();
     let root = graph.id(&root.id).unwrap();
-    let modules = StaticNames::new(&graph).resolve(root);
+    let modules = StaticNames::new(&graph).resolve(root).modules;
     let resolved = modules[root.index()].as_ref().unwrap();
     assert!(resolved.diagnostics.is_empty(), "{:?}", resolved.diagnostics);
     assert_eq!(resolved.imports["original"], resolved.imports["alias"]);
@@ -292,9 +292,35 @@ fn namespace_missing_member_is_resolved_before_types_and_respects_shadowing() {
     let graph = ModuleGraph::discover(&resolver, vec![root.clone()], &BTreeMap::new(),
         builtin_list().into_iter().map(|(name, _)| ModuleCName::builtin(name)),
         None, false, &mut sources).unwrap();
-    let modules = StaticNames::new(&graph).resolve(graph.id(&root.id).unwrap());
+    let modules = StaticNames::new(&graph).resolve(graph.id(&root.id).unwrap()).modules;
     let resolved = modules[graph.id(&root.id).unwrap().index()].as_ref().unwrap();
     assert_eq!(resolved.diagnostics.len(), 1, "{:?}", resolved.diagnostics);
     assert!(resolved.diagnostics[0].message.contains("has no export \"absent\""));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn resolve_errors_are_collected_before_any_module_type_solution() {
+    let directory = fixture_dir();
+    fs::create_dir_all(directory.join("src")).unwrap();
+    fs::write(directory.join("src/provider.telora"), "export def value: Int = \"bad\";").unwrap();
+    fs::write(directory.join("src/main.telora"), r#"
+        import "./provider" as provider;
+        export def left = unknown_left;
+        export def right = unknown_right;
+    "#).unwrap();
+    let resolver = session_workspace_resolver(&directory, &["@src/main", "@src/provider"]);
+    let snapshot = recovery_engine().check_types_with_resolver(resolver.clone()).unwrap();
+    let messages = snapshot.diagnostics().iter().map(|diagnostic| diagnostic.message.as_str()).collect::<Vec<_>>();
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(messages.contains(&"unknown binding \"unknown_left\""));
+    assert!(messages.contains(&"unknown binding \"unknown_right\""));
+    assert!(snapshot.modules().iter().all(|module| module.export_schemes.is_empty()),
+        "a resolve failure must not publish a solution for any module");
+    fs::write(directory.join("src/main.telora"),
+        "import \"./provider\" as provider; export def result = provider.value;").unwrap();
+    let snapshot = recovery_engine().check_types_with_resolver(resolver).unwrap();
+    assert!(snapshot.diagnostics().iter().any(|diagnostic| diagnostic.message.contains("Int")),
+        "type diagnostics become available after resolve succeeds: {:?}", snapshot.diagnostics());
     fs::remove_dir_all(directory).unwrap();
 }

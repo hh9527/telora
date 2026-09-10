@@ -66,6 +66,26 @@ the acceptance criteria take precedence over earlier checkpoint next-step notes.
 
 ### Ordered phase contract
 
+The symbol phase is complete only when every module, export, import and local
+symbol has stable session identity, and every symbol reference in all reachable
+code is linked to its target. First inventory each module's exports globally;
+then close lexical and imported references against that inventory. Both named
+and wildcard imports use the same provider inventory; wildcard imports establish
+search scopes. Source aliases retain their own authored identity and link to the
+target declaration. Independent declarations must never merge because their
+values or inferred types happen to be equal.
+
+The type phase is complete only when every type has a stable finalized TypeId
+and all type references in the code are linked. First allocate all required
+reference slots, then apply evidence to fill and refine them. Equality evidence
+may merge type slots through proxies; normalize the graph and validate every
+required slot before producing the typed artifact. Generic instantiations have
+distinct inference slots even when they reference the same generic declaration.
+
+These are two graph-closure phases with distinct identity semantics. Merely
+indexing exports, retaining per-module solutions, or registering IDs without
+closing the code's references does not complete either phase.
+
 0. Parse source modules into a module-name/ModuleId to HIR/CST inventory.
    A workspace name inventory does not require parsing every module body.
 1. Resolve the reachable graph from the entry. Build each module's export-name
