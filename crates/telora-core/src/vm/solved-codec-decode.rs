@@ -12,6 +12,7 @@ enum SolvedDecodeTask {
         next: usize,
         output_start: usize,
         matches: Vec<Val>,
+        failures: Vec<Val>,
         awaiting: bool,
     },
     Visit {
@@ -385,11 +386,16 @@ fn continue_solved_decode(
                 mut next,
                 output_start,
                 mut matches,
+                mut failures,
                 awaiting,
             } => {
                 if awaiting {
-                    let rejected = rejection.take().is_some() | blame_rejection.take().is_some();
-                    if !rejected {
+                    if let Some(blame) = blame_rejection.take() {
+                        rejection = None;
+                        failures.push(blame);
+                    } else if let Some((message, subject)) = rejection.take() {
+                        failures.push(decode_blame(message, vec![subject], function, pc, current, account)?);
+                    } else {
                         matches.push(output.pop().expect("untagged candidate result"));
                     }
                     output.truncate(output_start);
@@ -411,6 +417,7 @@ fn continue_solved_decode(
                             next,
                             output_start,
                             matches: std::mem::take(&mut matches),
+                            failures: std::mem::take(&mut failures),
                             awaiting: true,
                         });
                         pending.push(SolvedDecodeTask::Variant {
@@ -448,17 +455,25 @@ fn continue_solved_decode(
                     if matches.len() == 1 {
                         output.push(matches.pop().unwrap());
                     } else {
-                        rejection = Some((
-                            format!(
-                                "{path}: {}",
-                                if matches.is_empty() {
-                                    "no matching untagged variant"
-                                } else {
-                                    "ambiguous untagged variants"
+                        let mut subjects = vec![value];
+                        let message = if matches.is_empty() {
+                            let view = HeapView { current, background: Some(background) };
+                            let mut messages = Vec::new();
+                            for (index, failure) in failures.iter().enumerate() {
+                                if let DecodedValue::Opaque(handle) = failure.value()
+                                    && let Ok(Object::Opaque(blame)) = view.object(handle)
+                                    && let Some(message) = blame.downcast_ref::<String>(&crate::core::blame_native_type()) {
+                                    messages.push(message.clone());
+                                    // Keep the first concrete rejection's
+                                    // subjects, including nested field origins.
+                                    if index == 0 { subjects = blame.traced.to_vec(); }
                                 }
-                            ),
-                            value,
-                        ));
+                            }
+                            format!("{path}: value matches no untagged Enum variant ({})", messages.join("; "))
+                        } else {
+                            format!("{path}: value ambiguously matches multiple untagged Enum variants")
+                        };
+                        blame_rejection = Some(decode_blame(message, subjects, function, pc, current, account)?);
                     }
                 }
                 continue;
@@ -922,6 +937,7 @@ fn continue_solved_decode(
                                         next: 0,
                                         output_start: output.len(),
                                         matches: vec![],
+                                        failures: vec![],
                                         awaiting: false,
                                     });
                                     continue;
@@ -1104,7 +1120,7 @@ fn continue_solved_decode(
                                             .with_type_id(crate::TypeId::solved(source))
                                     } else {
                                         rejection =
-                                            Some((format!("{path}.{name}: missing field"), value));
+                                            Some((format!("{path}.{name}: missing required field"), value));
                                         break;
                                     };
                                     pending.push(SolvedDecodeTask::Visit {

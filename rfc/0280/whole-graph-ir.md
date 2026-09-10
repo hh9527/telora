@@ -5,6 +5,33 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Decode diagnostics retain alternative failures and subjects (2026-09-11)
+
+The solved untagged decoder discarded every rejected candidate's reason and
+blame subjects. Its final no-match error therefore lost both the useful nested
+failure explanations and the original failing field location. Candidate trials
+now retain VM blame handles. A no-match result includes their messages and
+retains the first concrete failure's subjects; ambiguity retains the input as
+its subject. Successful alternatives still discard rejected candidates, and
+VM failures remain outside the alternative data-mismatch mechanism.
+
+The solved text parser also restores format-specific virtual source names
+(<json string>, <yaml string>, <toml string>), and missing-field/untagged
+messages retain the established diagnostic contract.
+
+Validation: 82 codegen tests, 48 VM tests and CLI build pass. The language
+aggregate now passes codec-construction-check (11/11), parse-construction-check
+(9/9), decode-errors (8/8), and the decode-provenance checker. The latter checks
+expected failing cases and their source positions, not successful decoding.
+Its untagged diagnostic retains input.json line 6 column 11 and reports both
+$.count: expected Int and $.count: expected Float.
+
+Remaining test-mode aggregate failures: codec-schema, initialization,
+interpreter, module-interfaces, runtime-failures, stdlib-collections and
+stdlib-semantics; other diagnostic/query gates and legacy removal also remain.
+Logs: /tmp/mir-decode-diagnostics-{codegen,vm,build,language}.log. No perf run
+or fixture changes. This does not claim full migration completion.
+
 ### Solved decoding accepts temporal data variants (2026-09-11)
 
 TOML parsing already produced correctly typed Value.LocalDate/LocalTime/

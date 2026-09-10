@@ -40,7 +40,13 @@ fn run_solved_parse(
         ));
     }
     let mut sources = SourceDatabase::default();
-    let source = sources.add("<parsed string>", text.as_str());
+    let source_name = match operation {
+        CoreJsonFunction::Parse => "<json string>",
+        CoreJsonFunction::ParseYaml => "<yaml string>",
+        CoreJsonFunction::ParseToml => "<toml string>",
+        _ => unreachable!("text parser operation"),
+    };
+    let source = sources.add(source_name, text.as_str());
     let plan = match operation {
         CoreJsonFunction::Parse => crate::json::validate_json_registered(&sources, source),
         CoreJsonFunction::ParseYaml => crate::yaml::validate_yaml_registered(&sources, source),
