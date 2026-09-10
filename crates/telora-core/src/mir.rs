@@ -38,6 +38,7 @@ id!(GenericInstanceId);
 #[derive(Debug)]
 pub struct GenericInstance {
     pub symbol: SymbolId,
+    pub concrete: bool,
     pub arguments: Vec<(SymbolId, TypeId)>,
     pub signature: TypeId,
     pub types: Vec<(HirId, TypeId)>,
@@ -520,6 +521,7 @@ pub struct Mir {
     pub type_instances: Vec<Vec<(SymbolId, TypeSlotId)>>,
     pub generic_instances: Vec<GenericInstance>,
     pub reference_instances: Vec<Option<GenericInstanceId>>,
+    pub implementation_instances: Vec<Option<GenericInstanceId>>,
     pub type_terms: Vec<TypeTerm>,
     pub types: Vec<ResolvedType>,
     pub member_selections: Vec<Option<MemberSelection>>,
@@ -653,6 +655,11 @@ impl Mir {
         for (id, instance) in self.reference_instances.iter().enumerate() {
             if let Some(instance) = instance {
                 writeln!(out, "reference-instance {id} {instance:?}").unwrap();
+            }
+        }
+        for (id, instance) in self.implementation_instances.iter().enumerate() {
+            if let Some(instance) = instance {
+                writeln!(out, "implementation-instance {id} {instance:?}").unwrap();
             }
         }
         for (id, ty) in self.types.iter().enumerate() {

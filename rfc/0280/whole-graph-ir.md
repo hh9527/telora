@@ -5,6 +5,32 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Codegen consumes static generic instance bodies (2026-09-10)
+
+Concrete generic declaration instances now have execution graph task IDs. Codegen
+emits their shared HIR using the instance's node TypeIds and reference-instance
+edges; nested closures retain this same static context. The VM's existing demand
+table stores each resulting closure. Recursive calls request the existing task,
+without runtime template inference, witness liveness optimization, or copying
+user data through host/world boundaries. Missing executable instances are explicit
+codegen diagnostics; uninstantiated generic runtime entries are rejected.
+
+Concrete generic implementation selections are linked from their existing static
+evidence argument maps to instance tasks. Pattern aliases use the selected tag
+but the current pattern reference's instantiated type. Neither path guesses a
+type from runtime payloads.
+
+Validation: 29 codegen tests, 27 type-pass tests, and 17 static-MIR CLI tests pass.
+New runtime tests cover Array(T).type through direct, higher-order and recursive
+calls, and generic newtype construction with distinct solved identities. They
+drop MIR before execution. Logs: /tmp/mir-instance-emission.log,
+/tmp/mir-instance-types-regression.log, /tmp/mir-instance-cli.log and
+/tmp/mir-instance-runtime-regressions.log. No full-suite/performance claim.
+
+Remaining gaps include generic local declarations with captured type contexts,
+specializing assumed trait/property evidence inside generic bodies, native codec
+type consumers, remaining commands, and complete legacy-pipeline removal.
+
 ### Static generic instance graph and per-body TypeIds (2026-09-10)
 
 The type pass now retains GenericInstance nodes keyed by resolved declaration

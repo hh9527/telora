@@ -25,6 +25,17 @@ impl Solver<'_> {
             })
             .collect();
         let mut indices = BTreeMap::<Key, GenericInstanceId>::new();
+        self.mir.implementation_instances.resize(self.mir.hir.len(), None);
+        for index in 0..self.mir.bound_requirements.len() {
+            let requirement = &self.mir.bound_requirements[index];
+            let reference = requirement.reference;
+            if !matches!(self.mir.member_selections[reference.index()], Some(MemberSelection::TraitMember { .. })) { continue; }
+            let Some(evidence) = requirement.evidence.map(|id| &self.mir.evidence[id]) else { continue; };
+            let Some(symbol) = evidence.implementation else { continue; };
+            if self.mir.symbol_generics[symbol.index()].is_empty() { continue; }
+            let key = (symbol, evidence.arguments.clone());
+            self.mir.implementation_instances[reference.index()] = self.admit_instance(key, &mut indices, &mut canonical);
+        }
         for index in 0..self.mir.hir.len() {
             if let Some(key) =
                 self.instance_key(HirId(index as u32), &BTreeMap::new(), &mut canonical)
@@ -143,8 +154,10 @@ impl Solver<'_> {
         let signature =
             self.substitute_resolved(signature, &key.1.iter().copied().collect(), canonical);
         let id = GenericInstanceId(self.mir.generic_instances.len() as u32);
+        let concrete = key.1.iter().all(|(_, ty)| !self.contains_parameter(*ty));
         self.mir.generic_instances.push(GenericInstance {
             symbol: key.0,
+            concrete,
             arguments: key.1.clone(),
             signature,
             types: vec![],

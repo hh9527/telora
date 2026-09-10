@@ -18,6 +18,7 @@ impl Mir {
             || !self.type_unknowns.is_empty()
             || !self.type_conflicts.is_empty()
             || self.reference_instances.len() != self.hir.len()
+            || self.implementation_instances.len() != self.hir.len()
             || self.type_instances.iter().enumerate().any(|(node, arguments)| {
                 !arguments.is_empty()
                     && (arguments.iter().any(|(_, slot)| !matches!(self.ty_slots[slot.index()], TypeState::Known(_)))

@@ -179,6 +179,9 @@ fn compile_root(
         (None, body, "<session check>".into())
     };
     let mut emitter = Emitter::new(mir, &graph, name);
+    if target.is_some_and(|symbol| !mir.symbol_generics[symbol.index()].is_empty()) {
+        return Err(vec![emitter.error(declaration, "runtime entry requires a concrete generic instance")]);
+    }
     let mut globals = if let Some(target) = target {
         reachable_globals(mir, target)
     } else {
@@ -223,11 +226,14 @@ fn compile_root(
             .expect("global declaration");
         emitter.expression(declaration).map_err(|d| vec![d])?;
     }
-    for global in globals {
+    for &global in &globals {
         if matches!(
             mir.symbols[global.index()].kind,
             SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl)
         ) {
+            continue;
+        }
+        if !mir.symbol_generics[global.index()].is_empty() {
             continue;
         }
         let declaration = *mir.symbols[global.index()]
@@ -260,6 +266,26 @@ fn compile_root(
             .ok_or_else(|| vec![emitter.error(declaration, "global has no execution slot")])?;
         emitter.emit(declaration, O::InstallTask { node, src: dst });
     }
+    for task in graph.nodes() {
+        let crate::execution_graph::Task::Instance { instance, symbol, declaration } = task.task else { continue; };
+        if !globals.contains(&symbol) { continue; }
+        let mut thunk = Emitter::new(mir, &graph, task.label.clone());
+        thunk.instance = Some(instance);
+        let mut captures = vec![];
+        for reference in referenced_globals(mir, declaration) {
+            if let Some(value) = emitter.lookup(reference) {
+                let register = thunk.register();
+                thunk.locals.push((reference, register));
+                captures.push(value);
+            }
+        }
+        thunk.function.capture_count = captures.len() as u32;
+        let result = thunk.expression(declaration).map_err(|d| vec![d])?;
+        thunk.emit(declaration, O::Return { src: result });
+        let dst = emitter.register();
+        emitter.emit(declaration, O::MakeClosure { dst, function: Box::new(thunk.function), captures });
+        emitter.emit(declaration, O::InstallTask { node: graph.instance(instance).expect("instance task"), src: dst });
+    }
     if queries_properties {
         for record in &mir.properties {
             emitter.property_thunk(record).map_err(|d| vec![d])?;
@@ -281,12 +307,13 @@ fn compile_root(
         for node in graph.nodes() {
             let demand = match node.task {
                 crate::execution_graph::Task::Global { symbol, .. } => {
-                    if emitter.lookup(symbol).is_some() {
+                    if emitter.lookup(symbol).is_some() || !mir.symbol_generics[symbol.index()].is_empty() {
                         None
                     } else {
                         graph.global(symbol)
                     }
                 }
+                crate::execution_graph::Task::Instance { instance, .. } => graph.instance(instance),
                 crate::execution_graph::Task::Property { key, .. } => graph.property(key),
             };
             if let Some(node) = demand {
@@ -416,6 +443,7 @@ fn referenced_globals(mir: &Mir, root: HirId) -> Vec<SymbolId> {
 struct Emitter<'a> {
     mir: &'a Mir,
     graph: &'a ExecutionGraph,
+    instance: Option<GenericInstanceId>,
     function: Function,
     locals: Vec<(SymbolId, R)>,
     next_label: u32,
@@ -428,6 +456,7 @@ impl<'a> Emitter<'a> {
         Self {
             mir,
             graph,
+            instance: None,
             function: Function {
                 name,
                 memoized_interpreter: false,
@@ -447,6 +476,10 @@ impl<'a> Emitter<'a> {
         Diagnostic::error(message, self.mir.hir[node.index()].location)
     }
     fn ty(&self, node: HirId) -> Result<TypeId, Diagnostic> {
+        if let Some(instance) = self.instance {
+            return self.mir.generic_instances[instance.index()].ty(node)
+                .ok_or_else(|| self.error(node, "instance has no closed type for this node"));
+        }
         match self.mir.ty_slots[node.ty().index()] {
             TypeState::Known(id) => Ok(id),
             _ => Err(self.error(node, "codegen encountered an unclosed type slot")),
@@ -509,6 +542,24 @@ impl<'a> Emitter<'a> {
         }
         if let Some(slot) = self.mir.hir[node.index()].resolution {
             if let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] {
+                let instance = if let Some(instance) = self.instance {
+                    self.mir.generic_instances[instance.index()].reference(node)
+                } else {
+                    self.mir.reference_instances[node.index()]
+                };
+                if let Some(instance) = instance
+                    && let Some(node_id) = self.graph.instance(instance)
+                {
+                    let dst = self.register();
+                    self.emit(node, O::Demand { dst, node: node_id });
+                    return Ok(dst);
+                }
+                if !self.mir.symbol_generics[symbol.index()].is_empty()
+                    && matches!(self.mir.symbols[symbol.index()].kind,
+                        SymbolKind::Declaration(BindingKind::Def | BindingKind::Let | BindingKind::Impl))
+                {
+                    return Err(self.error(node, "generic reference has no executable MIR instance"));
+                }
                 if self.lookup(symbol).is_none()
                     && let Some(node_id) = self.graph.global(symbol)
                 {
@@ -560,7 +611,13 @@ impl<'a> Emitter<'a> {
                         "generic trait dispatch requires a compiled evidence witness",
                     ));
                 };
-                let slot = self.graph.global(symbol).ok_or_else(|| {
+                let slot = if let Some(instance) = self.mir.implementation_instances[node.index()] {
+                    self.graph.instance(instance)
+                } else if self.mir.symbol_generics[symbol.index()].is_empty() {
+                    self.graph.global(symbol)
+                } else {
+                    None
+                }.ok_or_else(|| {
                     self.error(node, "selected implementation has no execution slot")
                 })?;
                 let dict = self.register();
@@ -969,6 +1026,7 @@ impl<'a> Emitter<'a> {
                 let parameters = self.children(node, Role::Parameter);
                 let mut nested =
                     Self::new(self.mir, self.graph, format!("closure:{}", node.index()));
+                nested.instance = self.instance;
                 nested.function.parameter_count = parameters.len() as u32;
                 for parameter in parameters {
                     let register = nested.register();
@@ -1508,6 +1566,44 @@ pub(crate) mod tests {
                 .as_int(),
             Some(42)
         );
+    }
+
+    #[test]
+    fn generic_metadata_uses_closed_mir_instances_through_calls_and_recursion() {
+        let mir = graph(r#"
+            def metadata: for(T) Fn(T) -> TypeOf(Array(T)) = fn(value) { Array(T).type };
+            def apply: for(A, B) Fn(Fn(A) -> B, A) -> B = fn(f, value) { f(value) };
+            def repeated: for(T) Fn(T, Int) -> TypeOf(Array(T)) = fn(value, n) {
+                if n > 0 { repeated(value, n - 1) } else { metadata(value) }
+            };
+            export def answer = (metadata(42), apply(metadata, "ok"), repeated(True, 3));
+        "#, "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let expected = artifact.types.types[artifact.result_type.index()].arguments.iter()
+            .map(|ty| artifact.types.types[ty.index()].arguments[0]).collect::<Vec<_>>();
+        assert!(artifact.graph.nodes().iter().any(|node| matches!(node.task, crate::execution_graph::Task::Instance { .. })));
+        // Neither HIR nor the solver survives into runtime execution.
+        drop(mir);
+        let result = execute(artifact).unwrap();
+        for (index, ty) in expected.into_iter().enumerate() {
+            assert_eq!(result.value().sequence_get(index).unwrap().represented_type_id(), Some(ty));
+        }
+    }
+
+    #[test]
+    fn generic_nominal_constructors_consume_instance_type_ids() {
+        let mir = graph(r#"
+            type Wrapped(T) = struct(T);
+            def make: for(T) Fn(T) -> Wrapped(T) = fn(value) { Wrapped(T)(value) };
+            export def answer = (make(42), make("ok"));
+        "#, "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let expected = artifact.types.types[artifact.result_type.index()].arguments.clone();
+        drop(mir);
+        let result = execute(artifact).unwrap();
+        for (index, ty) in expected.into_iter().enumerate() {
+            assert_eq!(result.value().sequence_get(index).unwrap().solved_type_id(), Some(ty));
+        }
     }
     fn execute(artifact: CompiledEntry) -> Result<crate::execution_link::SolvedExecution, String> {
         let linked = crate::execution_link::link_entry(artifact).map_err(|d| format!("{d:?}"))?;

@@ -4,7 +4,7 @@
 //! involved, and a property chain publishes only its final reduced value.
 use crate::{
     ast::BindingKind,
-    mir::{HirId, PropertySite, ResolveState, SealedMir, SymbolId, SymbolKind, TypeId, TypeState},
+    mir::{GenericInstanceId, HirId, PropertySite, ResolveState, SealedMir, SymbolId, SymbolKind, TypeId, TypeState},
     source::Location,
 };
 use std::collections::BTreeMap;
@@ -26,6 +26,11 @@ pub struct PropertyKey {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Task {
+    Instance {
+        instance: GenericInstanceId,
+        symbol: SymbolId,
+        declaration: HirId,
+    },
     Global {
         symbol: SymbolId,
         declaration: HirId,
@@ -50,6 +55,7 @@ pub struct Node {
 pub struct ExecutionGraph {
     nodes: Vec<Node>,
     globals: Vec<Option<NodeId>>,
+    instances: Vec<Option<NodeId>>,
     properties: BTreeMap<PropertyKey, NodeId>,
 }
 
@@ -59,6 +65,7 @@ impl ExecutionGraph {
         let mut graph = Self {
             nodes: vec![],
             globals: vec![None; mir.symbols.len()],
+            instances: vec![None; mir.generic_instances.len()],
             properties: BTreeMap::new(),
         };
         for (index, symbol) in mir.symbols.iter().enumerate() {
@@ -105,6 +112,22 @@ impl ExecutionGraph {
                 graph.globals[index] = graph.globals[target.index()];
             }
         }
+        for (index, instance) in mir.generic_instances.iter().enumerate() {
+            let symbol = &mir.symbols[instance.symbol.index()];
+            if !instance.concrete || graph.global(instance.symbol).is_none()
+                || !matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Let | BindingKind::Def | BindingKind::Impl))
+            {
+                continue;
+            }
+            let declaration = *symbol.declarations.last().expect("instance declaration");
+            let node = graph.push(Node {
+                label: format!("instance:{index}:{}", symbol.name),
+                task: Task::Instance { instance: GenericInstanceId(index as u32), symbol: instance.symbol, declaration },
+                ty: instance.signature,
+                location: mir.hir[declaration.index()].location,
+            });
+            graph.instances[index] = Some(node);
+        }
         for record in &mir.properties {
             let key = PropertyKey {
                 owner: record.owner,
@@ -142,6 +165,9 @@ impl ExecutionGraph {
     }
     pub fn global(&self, symbol: SymbolId) -> Option<NodeId> {
         self.globals.get(symbol.index()).copied().flatten()
+    }
+    pub fn instance(&self, instance: GenericInstanceId) -> Option<NodeId> {
+        self.instances.get(instance.index()).copied().flatten()
     }
     /// Absence is determined by static evidence; no provider is run to find it.
     pub fn property(&self, key: PropertyKey) -> Option<NodeId> {

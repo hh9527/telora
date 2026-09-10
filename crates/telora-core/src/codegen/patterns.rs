@@ -19,7 +19,9 @@ impl Emitter<'_> {
                     ));
                 }
                 Some(MemberSelection::EnumVariant { index }) => {
-                    let ty = self.ty(node)?;
+                    // The selected tag belongs to the aliased declaration,
+                    // but its applied type belongs to this pattern reference.
+                    let ty = self.ty(start)?;
                     let signature = &self.mir.types[ty.index()];
                     let payload = signature.constructor == TypeConstructor::Function;
                     let owner = if payload {
