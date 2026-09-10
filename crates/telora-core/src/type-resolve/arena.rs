@@ -11,6 +11,7 @@ impl Solver<'_> {
                 .expect("type slot capacity"),
         );
         self.mir.ty_slots.push(TypeState::Unknown);
+        self.value_slots.push(false);
         id
     }
     pub(super) fn structure(
@@ -18,6 +19,15 @@ impl Solver<'_> {
         constructor: TypeConstructor,
         arguments: Vec<TypeSlotId>,
     ) -> TypeSlotId {
+        if constructor == TypeConstructor::Function {
+            for &argument in &arguments {
+                let root = self.root(argument);
+                if !self.value_slots[root.index()] {
+                    self.value_slots[root.index()] = true;
+                    self.revision += 1;
+                }
+            }
+        }
         if constructor == TypeConstructor::Unchecked && arguments.len() == 1
             && self.term(arguments[0]).is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
         { return arguments[0]; }
@@ -131,6 +141,9 @@ impl Solver<'_> {
             if left == right {
                 continue;
             }
+            let value_slot = self.value_slots[left.index()] || self.value_slots[right.index()];
+            self.value_slots[left.index()] = value_slot;
+            self.value_slots[right.index()] = value_slot;
             let a = self.mir.ty_slots[left.index()];
             let b = self.mir.ty_slots[right.index()];
             match (a, b) {
@@ -155,6 +168,12 @@ impl Solver<'_> {
                 (TypeState::Structure(a), TypeState::Structure(b)) => {
                     let a = &self.mir.type_terms[a.index()];
                     let b = &self.mir.type_terms[b.index()];
+                    if a.constructor == TypeConstructor::ArrayLiteral && b.constructor == TypeConstructor::ArrayLiteral {
+                        // Array literal children are element evidence, not
+                        // positional type arguments, even at equal lengths.
+                        self.compatible_structure(left, right, location);
+                        continue;
+                    }
                     if a.constructor != b.constructor || a.arguments.len() != b.arguments.len() {
                         let message = format!(
                             "incompatible types {:?} and {:?}",

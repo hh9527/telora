@@ -1415,6 +1415,31 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn metadata_joins_execute_the_selected_original_witness() {
+        let mir = graph("def choose = fn(flag: Bool) { if flag { Int.type } else { String.type } }; export def answer = (choose(True), choose(False));", "");
+        let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+        let int = TypeId(artifact.types.types.iter().position(|ty| ty.constructor == TypeConstructor::Int).unwrap() as u32);
+        let string = TypeId(artifact.types.types.iter().position(|ty| ty.constructor == TypeConstructor::String).unwrap() as u32);
+        let result = execute(artifact).unwrap();
+        assert_eq!(result.value().sequence_get(0).unwrap().represented_type_id(), Some(int));
+        assert_eq!(result.value().sequence_get(1).unwrap().represented_type_id(), Some(string));
+    }
+
+    #[test]
+    fn nested_callable_results_use_closed_instances() {
+        for source in [
+            "def invoke = fn(factory) { factory()() }; export def answer = invoke(fn() { fn() { 42 } });",
+            "def invoke = fn(factory) { factory()() }; export def answer = if invoke(fn() { fn() { \"text\" } }) == \"text\" { invoke(fn() { fn() { 42 } }) } else { 0 };",
+            "def invoke = fn(callback, value) { let saved = callback; saved(value) }; export def answer = invoke(fn(value: Int) { value + 1 }, 41);",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            let artifact = compile(sealed, entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+        }
+    }
+
+    #[test]
     fn implicit_schemes_execute_closed_global_and_local_instances() {
         let mir = graph("import \"./math\" { identity }; export def answer = if identity(\"text\") == \"text\" { identity(42) } else { 0 };", "export def identity = fn(value) { value };");
         let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();

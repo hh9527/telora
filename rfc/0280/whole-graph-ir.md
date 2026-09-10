@@ -5,6 +5,43 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Callable value evidence, metadata joins and array bottom evidence (2026-09-11)
+
+Function parameter/result slots now carry provisional value-domain evidence in
+a dense solver table. Equality transfers this evidence through proxy roots.
+A call of an unknown value slot supplies its Function skeleton; an unknown
+type-level callee still waits for type evidence. This replaces the special case
+for syntactically direct parameter calls and closes factory()(), callable
+aliases and composed callbacks without requiring concrete call sites. The
+published MIR retains their solved types and instances, not the scratch table.
+
+Metadata joins compare represented-type structure without equating branch
+witnesses. Equal represented types preserve TypeOf(T); different witnesses or
+a Type branch produce Type. Never branches do not erase the surviving witness.
+Mixed ordinary/metadata branches and attempts to fit broad Type metadata to a
+specific TypeOf witness produce static conflicts. Codegen continues to select
+the original metadata value, retaining its represented TypeId.
+
+The actual inference-contracts query exposed an additional bottom bug:
+equal-length ArrayLiteral terms were merged as positional type arguments,
+retaining the first Never instead of the common live element. All literal
+merges now use homogeneous element evidence, and Never supplies only a deferred
+fallback. Both [stop(), 1] and [1, stop()] infer Array(Int), while all-bottom
+arrays infer Array(Never); original stop() expression slots remain Never.
+
+Validation: 49 type-resolve and 64 codegen tests pass. The actual
+query/inference-contracts fixture now passes all 46 expected exports, with no
+diagnostics. Its expectations use the current MIR surface rendering (Bool,
+Option, Array/Dict parentheses and singleton tuple commas), rather than the
+old expanded descriptor strings. The never_array requirement remains Int and
+was fixed in the solver, not weakened in the checker. Full language acceptance
+still fails elsewhere; checked-cast, tail-call, provenance and other semantic
+gaps, as well as old-path removal, remain unfinished.
+Logs: /tmp/mir-static-closure-final-types.log,
+/tmp/mir-static-closure-final-codegen.log and
+/tmp/mir-static-closure-final-language.log. No VM implementation or optimization
+pass was added, and no performance measurement was made.
+
 ### Implicit closure schemes and local instances share the static graph (2026-09-11)
 
 Unannotated closure-valued let/def declarations now participate in a resolved

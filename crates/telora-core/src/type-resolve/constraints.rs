@@ -188,6 +188,12 @@ impl Solver<'_> {
                 if self.pending_blocks.get(actual.index()).copied().unwrap_or(false) {
                     return Ok(Some(Task::Fit { node, expected, actual }));
                 }
+                if self.term(expected).is_some_and(|term| term.constructor == TypeConstructor::TypeOf)
+                    && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Type) {
+                    self.conflict(expected, actual, Some(self.mir.hir[node.index()].location),
+                        "Type metadata does not establish a specific TypeOf witness".into());
+                    return Ok(None);
+                }
                 if let (Some(expected_type), Some(actual_type)) = (self.term(expected).cloned(), self.term(actual).cloned())
                     && matches!(expected_type.constructor, TypeConstructor::Nominal(_))
                     && actual_type.constructor == TypeConstructor::Unchecked
@@ -235,6 +241,9 @@ impl Solver<'_> {
                 }
             }
             Task::Join { node, values } => {
+                if values.iter().any(|&value| self.term(value).is_some_and(|term| matches!(term.constructor, TypeConstructor::Type | TypeConstructor::TypeOf))) {
+                    return Ok(self.metadata_join(node, values));
+                }
                 // Completion is directional, not equality between branch slots.
                 // Prefer a checked branch as the join target, and leave each
                 // unchecked source intact with an explicit value adjustment.
@@ -406,6 +415,13 @@ impl Solver<'_> {
             return None;
         }
         let Some(term) = self.term(callee).cloned() else {
+            if self.value_slots[self.root(callee).index()] {
+                let mut signature = arguments;
+                signature.push(node.ty());
+                let signature = self.structure(TypeConstructor::Function, signature);
+                self.equal(callee, signature, Some(self.mir.hir[node.index()].location));
+                return None;
+            }
             return Some(Task::Call {
                 node,
                 callee,
@@ -617,7 +633,9 @@ impl Solver<'_> {
         {
             let element = self.fresh();
             for item in a.arguments.into_iter().chain(b.arguments) {
-                self.equal(element, item, location);
+                if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Never) {
+                    self.bottom_candidates.push(element);
+                } else { self.equal(element, item, location); }
             }
             let array = self.structure(TypeConstructor::Array, vec![element]);
             self.mir.ty_slots[left.index()] = TypeState::ProxyTo(array);
@@ -739,7 +757,9 @@ impl Solver<'_> {
                 .find(|(i, _)| self.root(TypeSlotId(*i as u32)) == slot)
                 .map(|(_, n)| n.location);
             for item in term.arguments {
-                self.equal(element, item, location);
+                if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Never) {
+                    self.bottom_candidates.push(element);
+                } else { self.equal(element, item, location); }
             }
             let array = self.structure(TypeConstructor::Array, vec![element]);
             self.mir.ty_slots[index] = TypeState::ProxyTo(array);

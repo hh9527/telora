@@ -27,6 +27,8 @@ mod sequence_spreads;
 mod propagation;
 #[path = "type-resolve/generalization.rs"]
 mod generalization;
+#[path = "type-resolve/metadata-joins.rs"]
+mod metadata_joins;
 #[path = "type-resolve/properties.rs"]
 mod properties;
 #[cfg(test)]
@@ -130,6 +132,10 @@ struct Solver<'a> {
     check_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
     bottom_candidates: Vec<TypeSlotId>,
     generalizations: Vec<Option<generalization::Candidate>>,
+    /// A Function's parameter/result slots belong to the value domain. This
+    /// evidence lets calls constrain unknown value slots without guessing that
+    /// an unresolved type-level callee is an ordinary function.
+    value_slots: Vec<bool>,
 }
 
 pub fn resolve(mir: &mut Mir) {
@@ -242,6 +248,7 @@ impl Solver<'_> {
             check_declarations: vec![],
             bottom_candidates: vec![],
             generalizations: vec![],
+            value_slots: vec![false; mir.hir.len()],
             mir,
             revision: 0,
             tasks: vec![],
@@ -694,11 +701,7 @@ impl Solver<'_> {
                     .into_iter()
                     .map(HirId::ty)
                     .collect::<Vec<_>>();
-                if self.mir.hir[callee.index()].resolution.is_some_and(|slot| matches!(self.mir.resolve_slots[slot.index()], ResolveState::Bound(symbol) if matches!(self.mir.symbols[symbol.index()].kind, SymbolKind::Parameter | SymbolKind::Pattern))) {
-                    let mut shape = args.clone(); shape.push(node.ty());
-                    let shape = self.structure(TypeConstructor::Function, shape);
-                    self.equal(callee.ty(), shape, Some(self.mir.hir[node.index()].location));
-                } else { self.tasks.push(Task::Call { node, callee: callee.ty(), arguments: args }); }
+                self.tasks.push(Task::Call { node, callee: callee.ty(), arguments: args });
             }
             HirKind::TypeApply => {
                 self.tasks.push(Task::TypeApply { node });

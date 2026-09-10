@@ -2,6 +2,73 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn nonreturning_array_items_supply_bottom_only_after_live_element_evidence() {
+    for (expression, expected) in [
+        ("[stop(), 1]", TypeConstructor::Int),
+        ("[1, stop()]", TypeConstructor::Int),
+        ("[stop(), stop()]", TypeConstructor::Never),
+        ("if True { [stop()] } else { [1] }", TypeConstructor::Int),
+        ("if True { [1] } else { [stop()] }", TypeConstructor::Int),
+    ] {
+        let source = format!("def stop: Fn() -> Never = fn() {{ fail!(\"stop\") }}; export def answer = {expression};");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+        let TypeState::Known(ty) = symbol_type(&mir, "answer") else { panic!("closed array") };
+        assert_eq!(mir.types[ty.index()].constructor, TypeConstructor::Array);
+        assert_eq!(mir.types[mir.types[ty.index()].arguments[0].index()].constructor, expected, "{source}");
+        for node in mir.hir.iter().enumerate().filter_map(|(index, node)| (node.module == ModuleId(0) && matches!(node.kind, HirKind::Call)).then_some(HirId(index as u32))) {
+            let TypeState::Known(ty) = mir.ty_slots[node.index()] else { continue; };
+            assert_eq!(mir.types[ty.index()].constructor, TypeConstructor::Never);
+        }
+    }
+}
+
+#[test]
+fn metadata_joins_preserve_witnesses_or_widen_without_equating_represented_types() {
+    for (expression, constructor) in [
+        ("if True { Int.type } else { String.type }", TypeConstructor::Type),
+        ("if True { Array(Int).type } else { Array(Int).type }", TypeConstructor::TypeOf),
+        ("if True { Int.type } else { fail!(\"stop\") }", TypeConstructor::TypeOf),
+        ("match 1 { 0 => Int.type, 1 => String.type, _ => Bool.type }", TypeConstructor::Type),
+        ("if True { if False { Int.type } else { String.type } } else { Bool.type }", TypeConstructor::Type),
+    ] {
+        let source = format!("export def answer = {expression};");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+        let TypeState::Known(ty) = symbol_type(&mir, "answer") else { panic!("closed metadata") };
+        assert_eq!(mir.types[ty.index()].constructor, constructor);
+    }
+    for source in [
+        "export def bad: TypeOf(Int) = if True { Int.type } else { String.type };",
+        "def broad: Type = Int.type; export def bad: TypeOf(Int) = broad;",
+        "export def bad = if True { Int.type } else { 42 };",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err(), "{source}");
+        assert!(!mir.type_conflicts.is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn callable_value_evidence_closes_nested_results_and_aliases_without_call_sites() {
+    let mut mir = graph(&[("@src/main", "export def invoke = fn(factory) { factory()() }; export def alias = fn(callback, value) { let saved = callback; saved(value) }; export def compose = fn(outer, inner, value) { outer(inner(value)) };")]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let query = crate::mir_query::MirQuery::new(&mir);
+    for (name, expected) in [
+        ("invoke", "for(A) Fn(Fn() -> Fn() -> A) -> A"),
+        ("alias", "for(A, B) Fn(Fn(A) -> B, A) -> B"),
+        ("compose", "for(A, B, C) Fn(Fn(A) -> B, Fn(C) -> A, C) -> B"),
+    ] {
+        let symbol = mir.symbols.iter().position(|symbol| symbol.name == name && symbol.kind == SymbolKind::Declaration(BindingKind::Def)).unwrap();
+        assert_eq!(query.symbol_signature(SymbolId(symbol as u32)).as_deref(), Some(expected));
+    }
+}
+
+#[test]
 fn implicit_schemes_fill_independent_reference_arguments_in_dependency_order() {
     for source in [
         "def identity = fn(value) { value }; export def answer = (identity(1), identity(\"text\"), identity@[Int](3));",
