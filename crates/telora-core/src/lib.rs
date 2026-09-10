@@ -22,6 +22,8 @@ pub mod lir;
 pub mod mir;
 #[path = "module-resolve.rs"]
 pub mod module_resolve;
+#[path = "symbol-resolve.rs"]
+pub mod symbol_resolve;
 pub mod module;
 pub mod module_id;
 pub mod package;

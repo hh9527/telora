@@ -62,9 +62,30 @@ performing resolution, proxy compression or evaluation. The dump shows Pending
 references and Unknown type slots before subsequent passes fill them.
 
 Two direct unit tests cover shared dependency loading/data exclusion and
-cycles/missing/ambiguous module targets. Symbol and type passes are not yet
-implemented. Do not infer full language or workspace integration from these
+cycles/missing/ambiguous module targets. Do not infer full language or workspace integration from these
 module-pass tests; final integration and exhaustive coverage remain later work.
+
+The second pass, `symbol-resolve.rs`, now populates the same MIR with lexical
+scopes, declaration/import/export SymbolIds and categorized conflict records.
+It indexes all providers before resolving consumers. Export and import aliases
+retain their own records while references bind to source declarations. Duplicate
+definitions are diagnosed even unused; wildcard candidates become ambiguous
+only on an actual reference. Missing/ambiguous module results are consumed as
+given, never retried against another loader.
+
+Module namespace fields bind to exported source symbols. Value fields instead
+retain an explicit `Member { receiver, name }` type constraint, not Pending name
+resolution. Declaration roles identify constructor patterns without evaluating
+types. Pattern scopes, sequential lets, closure parameters and generic type
+parameters are indexed from the flat HIR. Resolve errors do not interrupt the
+pass; its completion invariant is no Pending reference or symbol record.
+
+Four small unit tests cover canonical alias targets with unchanged HIR/type
+slot storage, lexical shadowing, unused duplicate declarations vs used wildcard
+ambiguity, unresolved references/member constraints, and constructor-pattern
+links. The new pass imports only MIR, syntax enums and diagnostics, with no old
+resolver or type solver dependency. `type-resolve` is the next independent pass;
+full language corner cases are still scheduled after integration.
 
 The `telora-core` example `mir-dump` accepts `ROOT NAME=PATH ...` and prints the
 first-pass MIR without constructing an Engine. Example:
@@ -77,6 +98,10 @@ The example was run with two Telora files and a deliberately absent JSON path:
 both CSTs and their HIR/type/reference slots appeared in the dump, and the data
 module appeared without any file read. This is an explicit-inventory debug
 driver, not the final workspace CLI or configuration integration.
+
+Use `mir-dump --symbols ROOT NAME=PATH ...` to run the symbol pass before dumping
+the same MIR. Intrinsic symbol names can be supplied with `--intrinsic=NAME`;
+ordinary/prelude exports come from the module inventory, not a VM environment.
 
 ## Current gaps
 

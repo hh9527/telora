@@ -25,6 +25,7 @@ id!(
     TypeId,
     ConflictId
 );
+id!(ScopeId);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModuleTarget {
@@ -74,6 +75,59 @@ pub enum ResolveState {
     Bound(SymbolId),
     Unresolved,
     Conflicted(ConflictId),
+    /// A type-directed member constraint, not an unperformed name lookup.
+    Member {
+        receiver: HirId,
+        name: HirId,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SymbolKind {
+    Declaration(BindingKind),
+    Parameter,
+    TypeParameter,
+    Pattern,
+    Import,
+    Export,
+    Namespace(ModuleId),
+    Data,
+    Builtin,
+}
+#[derive(Debug)]
+pub struct Symbol {
+    pub module: Option<ModuleId>,
+    pub name: String,
+    pub kind: SymbolKind,
+    pub declarations: Vec<HirId>,
+    pub scope: Option<ScopeId>,
+    pub resolution: ResolveState,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct ScopeBinding {
+    pub symbol: SymbolId,
+    pub after: Option<HirId>,
+}
+#[derive(Debug)]
+pub struct Scope {
+    pub parent: Option<ScopeId>,
+    pub module: ModuleId,
+    pub bindings: Vec<ScopeBinding>,
+    pub open_imports: Vec<usize>,
+}
+#[derive(Debug)]
+pub enum ResolveConflict {
+    DuplicateDefinition {
+        name: String,
+        definitions: Vec<SymbolId>,
+    },
+    AmbiguousImport {
+        name: String,
+        candidates: Vec<SymbolId>,
+    },
+    ModuleCandidates {
+        candidates: Vec<ModuleId>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,7 +188,7 @@ pub enum Role {
     Elaboration,
     Part,
 }
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Edge {
     pub role: Role,
     pub node: HirId,
@@ -218,6 +272,14 @@ pub struct Mir {
     pub imports: Vec<Import>,
     pub hir: Vec<HirNode>,
     pub resolve_slots: Vec<ResolveState>,
+    pub symbols: Vec<Symbol>,
+    pub scopes: Vec<Scope>,
+    pub hir_scopes: Vec<Option<ScopeId>>,
+    pub hir_symbols: Vec<Option<SymbolId>>,
+    pub module_scopes: Vec<Option<ScopeId>>,
+    pub exports: Vec<Vec<SymbolId>>,
+    pub resolve_conflicts: Vec<ResolveConflict>,
+    pub symbols_closed: bool,
     pub ty_slots: Vec<TypeState>,
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -235,17 +297,20 @@ impl Mir {
             self.ty_slots.len(),
             "syntax slots precede inference-only slots"
         );
-        let resolution =
-            matches!(kind, HirKind::Variable(_) | HirKind::PatternName(_)).then(|| {
-                let id = ResolveSlotId(
-                    self.resolve_slots
-                        .len()
-                        .try_into()
-                        .expect("resolve slot capacity"),
-                );
-                self.resolve_slots.push(ResolveState::Pending);
-                id
-            });
+        let resolution = matches!(
+            kind,
+            HirKind::Variable(_) | HirKind::PatternName(_) | HirKind::Field
+        )
+        .then(|| {
+            let id = ResolveSlotId(
+                self.resolve_slots
+                    .len()
+                    .try_into()
+                    .expect("resolve slot capacity"),
+            );
+            self.resolve_slots.push(ResolveState::Pending);
+            id
+        });
         let id = HirId(self.hir.len().try_into().expect("HIR capacity"));
         self.hir.push(HirNode {
             module,
@@ -261,6 +326,8 @@ impl Mir {
     /// A read-only dump: never resolves a name, shortens a proxy or evaluates code.
     pub fn dump(&self) -> String {
         let mut out = String::new();
+        writeln!(out, "mir modules={} hir={} resolve_slots={} ty_slots={} symbols_closed={}",
+            self.modules.len(), self.hir.len(), self.resolve_slots.len(), self.ty_slots.len(), self.symbols_closed).unwrap();
         writeln!(out, "roots {:?}", self.roots).unwrap();
         for (id, module) in self.modules.iter().enumerate() {
             let state = match &module.state {
@@ -280,6 +347,15 @@ impl Mir {
                 edge.owner, edge.request, edge.target, edge.syntax
             )
             .unwrap();
+        }
+        for (id, scope) in self.scopes.iter().enumerate() {
+            writeln!(out, "scope {id} {scope:?}").unwrap();
+        }
+        for (id, symbol) in self.symbols.iter().enumerate() {
+            writeln!(out, "symbol {id} {symbol:?}").unwrap();
+        }
+        for (id, conflict) in self.resolve_conflicts.iter().enumerate() {
+            writeln!(out, "resolve-conflict {id} {conflict:?}").unwrap();
         }
         for (id, node) in self.hir.iter().enumerate() {
             writeln!(
