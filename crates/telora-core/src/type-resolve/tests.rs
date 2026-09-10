@@ -2,6 +2,28 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn alias_cycles_are_conflicted_before_generic_expansion_without_blocking_other_types() {
+    let mut mir = graph(&[("@src/main", r#"
+        type Family(A) = (Concrete, A);
+        type Concrete = Family(Int);
+        type Direct(A) = Direct(A);
+        type Node = struct { next: Option(Link) };
+        type Link = Node;
+        export def healthy = 42;
+        export { Family, Concrete, Direct, Link };
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.types_solved);
+    for name in ["Family", "Concrete", "Direct"] {
+        assert!(matches!(symbol_type(&mir, name), TypeState::Conflicted(_)), "{name}: {:?}", symbol_type(&mir, name));
+    }
+    assert!(matches!(symbol_type(&mir, "Link"), TypeState::Known(_)));
+    assert!(matches!(symbol_type(&mir, "healthy"), TypeState::Known(_)));
+    assert_eq!(mir.diagnostics.iter().filter(|d| d.message == "recursive type alias component").count(), 3);
+    assert!(mir.ty_slots.len() < 10_000, "alias rejection must precede unbounded slot expansion");
+}
+
+#[test]
 fn tuple_completion_normalizes_literal_slots_without_erasing_source_identity() {
     let mut mir = graph(&[("@src/main", r#"
         type Point = struct {x: Int};

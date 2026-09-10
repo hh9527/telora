@@ -33,6 +33,15 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    pub fn sources(&self) -> &telora_core::SourceDatabase {
+        &self.mir.sources
+    }
+    pub fn source_by_path(&self, path: &Path) -> Option<telora_core::SourceId> {
+        match self.mir.modules[self.module_by_path(path)?.index()].state {
+            ModuleState::Source { source, .. } => Some(source),
+            _ => None,
+        }
+    }
     pub fn query(&self) -> MirQuery<'_> {
         MirQuery::new(&self.mir)
     }

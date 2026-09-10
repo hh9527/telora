@@ -155,10 +155,7 @@ fn definition(mir: &Mir, root: &str, id: SymbolId, kind: ShowKind) -> Value {
     let symbol = &mir.symbols[index];
     let (type_id, ty, state) = type_fields(mir, MirQuery::new(mir).symbol_type(id));
     let (resolution, target_id) = resolve_fields(&symbol.resolution);
-    let loc = symbol
-        .declarations
-        .first()
-        .map(|id| location(mir, mir.hir[id.index()].location));
+    let loc = MirQuery::new(mir).definition_locations(id).next().map(|loc| location(mir, loc));
     let target = match symbol.kind {
         SymbolKind::Namespace(id) => Some(mir.modules[id.index()].name.as_str()),
         _ => None,
@@ -182,7 +179,7 @@ fn position_range(
         let column = u32::try_from(column).map_err(|_| "column is outside module")?;
         let start = text
             .offset(TextPosition::new(line, column), PositionEncoding::Utf8)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("position is outside valid source coordinates: {e}"))?;
         (start, start)
     } else {
         text.line_content_offsets(line).map_err(|e| e.to_string())?

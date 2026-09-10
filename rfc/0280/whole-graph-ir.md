@@ -5,6 +5,39 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### LSP protocol consumes MIR; cyclic aliases terminate (2026-09-11)
+
+The LSP protocol now uses mir_workspace and MirQuery for diagnostics, hover,
+definitions, references and completion. Its production Engine and old
+WorkspaceSnapshot dependencies are removed. Generic signature display reads
+the original binders and bounds. Incomplete-dot parser recovery retains the
+receiver for the normal static passes; completion consumes that solved receiver
+without a second name-resolution or inference path. Syntax errors still prevent
+sealing. LSP tests verify that panic and division-by-zero initializers are not
+executed while serving static diagnostics.
+
+Broad CLI acceptance exposed nontermination when a generic transparent alias
+and a concrete alias expand each other. Before constraint generation, an
+iterative SCC traversal of resolved alias identities now marks cyclic aliases
+Conflicted. Nominal definitions remain recursion boundaries, and unrelated
+types continue solving. The original mixed-cycle fixture now terminates with
+diagnostics; the aggregate diagnostic graph also finishes. This is a termination
+fix, not a general performance measurement. Diagnostic fallout remains to be
+refined: the mixed-cycle fixture still includes dependent Unknown diagnostics.
+
+Validation after the fix: 36 type-resolve tests, 51 codegen tests, all 28 telora
+library tests (including 23 LSP tests), and the CLI UTF-8 source-position test
+pass. Earlier parser and MIR query checks passed (8 and 4 tests). The earlier
+full CLI run had 59 passes and 7 failures, including the stopped nonterminating
+language suite. Source-position handling and alias termination are now fixed;
+full acceptance has not yet been rerun. Remaining gaps include diagnostic
+suppression, query contract differences and language fixture type constraints.
+Legacy core compiler removal is still open.
+
+Codegen remains mechanical: it consumes sealed bindings, types and generic
+instances. Missing static information must be completed by the MIR passes;
+neither downstream inference nor an optimization pass is part of this assembly.
+
 ### Versioned editor workspace owns one MIR snapshot (2026-09-11)
 
 Added telora::mir_workspace, independent of Engine, WorkspaceSnapshot and the

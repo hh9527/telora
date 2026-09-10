@@ -1,4 +1,13 @@
 impl<'a> Lowerer<'a> {
+    fn recovered_expression_prefix(&self, node: NodeRef) -> Option<Expr> {
+        if let Ok(expression) = self.expression(node) { return Some(expression); }
+        if matches!(self.rule(node), Some(Rule::Expression | Rule::Primary | Rule::DotPostfixExpr)) {
+            let receiver = self.children(node).find(|&child| self.is_expression(child))?;
+            return self.recovered_expression_prefix(receiver);
+        }
+        None
+    }
+
     fn expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
         if let Node::Token(token, _) = self.cst.get(node) {
             let location = self.location(node);

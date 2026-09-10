@@ -86,6 +86,28 @@ impl<'a> Lowerer<'a> {
                     Err(diagnostic) => push_unique_diagnostic(diagnostics, diagnostic),
                 }
             }
+            // Preserve expression statements (and a malformed dot expression's
+            // intact receiver) so ordinary resolution can give editor queries
+            // real slots. Do not hoist expressions out of nested scopes.
+            let mut pending = vec![body.syntax().node_ref()];
+            while let Some(body) = pending.pop() {
+                for child in self.children(body) {
+                    if self.rule(child) == Some(Rule::Body) { pending.push(child); }
+                    else if self.is_expression(child) {
+                        let Some(expression) = self.recovered_expression_prefix(child) else { continue; };
+                        if result.as_ref().is_some_and(|result: &Expr| result.location == expression.location) { continue; }
+                        let location = expression.location;
+                        bindings.push(located(BindingData {
+                            decorators: vec![], kind: BindingKind::Let,
+                            declared_initializer: None, imported_name: None,
+                            name: located(format!("\0recovery_{}", location.start), location),
+                            type_parameters: vec![], type_parameter_bounds: vec![], annotation: None,
+                            value: expression,
+                        }, location));
+                    }
+                }
+            }
+            bindings.sort_by_key(|binding| binding.location.start);
         }
         diagnostics.sort_by_key(|diagnostic| {
             diagnostic

@@ -86,7 +86,7 @@
             .expect("generate workspace lock");
         spec.write_lock(&lock).expect("write workspace lock");
 
-        let workspace = lsp_workspace(&main, config()).expect("create configured LSP workspace");
+        let workspace = lsp_workspace(&main).expect("create configured LSP workspace");
         let context = workspace.context();
         workspace
             .rebuild(&context)
@@ -100,12 +100,12 @@
     fn applies_ordered_utf16_changes_transactionally() {
         let (root, state) = fixture();
         initialize_state(&root, &state);
-        let path = root.join("main.telora");
+        let path = root.join("src/main.telora");
         let uri = lsp::Url::from_file_path(&path).expect("document URI");
         {
             let mut state = state.borrow_mut();
             state.workspace = Some(Rc::new(
-                Workspace::new(&path, Engine::new(config())).expect("create document workspace"),
+                Workspace::new(&path).expect("create document workspace"),
             ));
             state
                 .workspace
@@ -159,7 +159,7 @@
             .run_until(async {
                 let (root, state) = fixture();
                 initialize_state(&root, &state);
-                let path = root.join("new.telora");
+                let path = root.join("src/new.telora");
                 let uri = lsp::Url::from_file_path(&path).expect("document URI");
                 let open: AnyNotification = serde_json::from_value(serde_json::json!({
                     "method": "textDocument/didOpen",
@@ -463,7 +463,23 @@
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn hover_reports_inferred_local_type_schemes() {
+    async fn language_server_solves_types_without_evaluating_user_initializers() {
+        let (_, state, uri) = semantic_fixture(
+            "def crash: Int = panic!(\"LSP must never execute\");\nexport def output: Int = crash + 1 / 0;"
+        ).await;
+        let snapshot = state.borrow().workspace.as_ref().unwrap().published().unwrap();
+        assert!(snapshot.mir.types_solved && snapshot.mir.symbols_closed);
+        assert!(snapshot.mir.diagnostics.is_empty(), "{:?}", snapshot.mir.diagnostics);
+        let hover: Option<lsp::Hover> = serde_json::from_value(dispatch_request(state,
+            request(56, lsp::request::HoverRequest::METHOD, serde_json::json!({
+                "textDocument": { "uri": uri }, "position": { "line": 1, "character": 25 }
+            }))).await.unwrap()).unwrap();
+        assert!(matches!(hover.unwrap().contents,
+            lsp::HoverContents::Scalar(lsp::MarkedString::String(ref text)) if text == "crash: Int"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hover_reports_the_solved_local_function_type() {
         let (_, state, uri) =
             semantic_fixture(
                 "let identity = fn(value) { value };\nlet result = identity(1); export { result as output };",
@@ -488,7 +504,7 @@
         assert!(matches!(
             hover.expect("scheme hover").contents,
             lsp::HoverContents::Scalar(lsp::MarkedString::String(ref text))
-                if text == "identity: for(A) Fn(A) -> A"
+                if text == "identity: Fn(Int) -> Int"
         ));
     }
 
@@ -588,7 +604,7 @@ export def output = render(1);"#;
             .expect("snapshot")
             .sources()
             .files()
-            .find(|file| file.name.as_ref() == "standalone/main")
+            .find(|file| file.name.as_ref() == "editor/main")
             .expect("main source")
             .text()
             .clone();
@@ -622,8 +638,8 @@ export def output = render(1);"#;
     #[tokio::test(flavor = "current_thread")]
     async fn lsp_completion_maps_module_exports() {
         let (root, state) = fixture();
-        let model = root.join("model.telora");
-        let main = root.join("main.telora");
+        let model = root.join("src/model.telora");
+        let main = root.join("src/main.telora");
         std::fs::write(&model, "export def alpha = 1; export def beta = \"x\";")
             .expect("write model");
         let source = "import \"./model\" as model; model.alpha";
@@ -631,7 +647,7 @@ export def output = render(1);"#;
             .expect("write main");
         initialize_state(&root, &state);
         let workspace = Rc::new(
-            Workspace::new(&main, Engine::new(config())).expect("create document workspace"),
+            Workspace::new(&main).expect("create document workspace"),
         );
         let context = workspace.context();
         workspace.rebuild(&context).await.expect("build snapshot");
@@ -647,8 +663,8 @@ export def output = render(1);"#;
     #[tokio::test(flavor = "current_thread")]
     async fn lsp_completion_supports_an_empty_prefix_in_recovered_source() {
         let (root, state) = fixture();
-        let model = root.join("model.telora");
-        let main = root.join("main.telora");
+        let model = root.join("src/model.telora");
+        let main = root.join("src/main.telora");
         std::fs::write(&model, "export def alpha = 1; export def beta = \"x\";")
             .expect("write model");
         let source = "import \"./model\" as model; model.";
@@ -656,7 +672,7 @@ export def output = render(1);"#;
             .expect("write main");
         initialize_state(&root, &state);
         let workspace = Rc::new(
-            Workspace::new(&main, Engine::new(config())).expect("create document workspace"),
+            Workspace::new(&main).expect("create document workspace"),
         );
         let context = workspace.context();
         workspace.rebuild(&context).await.expect("build snapshot");
@@ -672,7 +688,7 @@ export def output = render(1);"#;
             vec!["alpha", "beta"]
         );
         for item in list.items {
-            assert!(item.detail.is_none(), "export completion must not require type solving");
+            assert!(item.detail.is_some(), "completion consumes the type pass's existing result");
             let Some(lsp::CompletionTextEdit::Edit(edit)) = item.text_edit else {
                 panic!("expected completion text edit");
             };
@@ -769,15 +785,15 @@ export def output = render(1);"#;
     async fn diagnostics_publish_current_errors_and_an_empty_clear() {
         let (root, state, main_loop) = fixture_loop();
         initialize_state(&root, &state);
-        let path = root.join("main.telora");
+        let path = root.join("src/main.telora");
         let workspace = Rc::new(
-            Workspace::new(&path, Engine::new(config())).expect("create document workspace"),
+            Workspace::new(&path).expect("create document workspace"),
         );
         workspace
             .open(
                 &path,
                 DocumentVersion(1),
-                "def first = 1 / 0; def second = 2 / 0; export def output = 0;",
+                "def first: Int = \"wrong\"; def second: Bool = 2; export def output = 0;",
             )
             .expect("open invalid source");
         {
@@ -788,10 +804,10 @@ export def output = render(1);"#;
         let context = workspace.context();
         let invalid = workspace.rebuild(&context).await.expect("invalid snapshot");
         assert_eq!(
-            invalid
-                .diagnostics()
+            invalid.mir
+                .diagnostics
                 .iter()
-                .filter(|diagnostic| diagnostic.message.contains("division by zero"))
+                .filter(|diagnostic| diagnostic.message.contains("incompatible types"))
                 .count(),
             2
         );
@@ -808,7 +824,7 @@ export def output = render(1);"#;
         state.borrow_mut().documents.insert(path, 2);
         let context = workspace.context();
         let valid = workspace.rebuild(&context).await.expect("valid snapshot");
-        assert!(valid.diagnostics().is_empty());
+        assert!(valid.mir.diagnostics.is_empty());
         publish_diagnostics(&state, &valid).await;
 
         let mut input = Vec::new();
@@ -865,7 +881,7 @@ export def output = render(1);"#;
         })));
 
         let (main_loop, _) =
-            async_lsp::MainLoop::new_server(move |client| Server::new(root, config(), client));
+            async_lsp::MainLoop::new_server(move |client| Server::new(root, client));
         let mut output = futures::io::Cursor::new(Vec::new());
         main_loop
             .run_buffered(futures::io::Cursor::new(input), &mut output)

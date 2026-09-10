@@ -9,6 +9,8 @@ mod arena;
 mod constraints;
 #[path = "type-resolve/definitions.rs"]
 mod definitions;
+#[path = "type-resolve/alias-cycles.rs"]
+mod alias_cycles;
 #[path = "type-resolve/evidence.rs"]
 mod evidence;
 #[path = "type-resolve/instances.rs"]
@@ -156,6 +158,7 @@ pub fn resolve(mir: &mut Mir) {
             _ => {}
         }
     }
+    solver.reject_alias_cycles();
     for index in 0..solver.mir.hir.len() {
         solver.generate(HirId(index as u32));
     }

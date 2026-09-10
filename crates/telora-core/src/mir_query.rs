@@ -26,6 +26,11 @@ pub struct Member<'a> {
     pub symbol: Option<SymbolId>,
 }
 
+pub struct Completion<'a> {
+    pub replacement: crate::source::TextRange,
+    pub candidates: Vec<Member<'a>>,
+}
+
 impl<'a> MirQuery<'a> {
     pub fn new(mir: &'a Mir) -> Self {
         Self { mir }
@@ -60,7 +65,9 @@ impl<'a> MirQuery<'a> {
 
     pub fn definition_at(self, location: Location) -> Option<SymbolId> {
         self.symbols()
-            .filter(|(_, symbol)| symbol.kind != SymbolKind::Export)
+            .filter(|(_, symbol)| {
+                symbol.kind != SymbolKind::Export && !symbol.name.starts_with('\0')
+            })
             .flat_map(|(symbol, _)| {
                 self.definition_locations(symbol)
                     .map(move |span| (symbol, span))
@@ -170,6 +177,98 @@ impl<'a> MirQuery<'a> {
 
     pub fn type_name(self, id: TypeId) -> String {
         self.display_type(id, 0)
+    }
+
+    pub fn symbol_signature(self, symbol: SymbolId) -> Option<String> {
+        let TypeState::Known(ty) = self.symbol_type(symbol) else {
+            return None;
+        };
+        let parameters = &self.mir.symbol_generics[symbol.index()];
+        let signature = self.type_name(ty);
+        if parameters.is_empty() {
+            return Some(signature);
+        }
+        let parameters = parameters
+            .iter()
+            .map(|&parameter| {
+                let symbol = &self.mir.symbols[parameter.index()];
+                let mut bounds = vec![];
+                for &declaration in &symbol.declarations {
+                    for edge in &self.mir.hir[declaration.index()].children {
+                        if edge.role == Role::Bound {
+                            let location = self.mir.hir[edge.node.index()].location;
+                            if let Ok(text) = self.mir.sources.get(location.source).text().slice(
+                                crate::source::TextRange::from_usize(location.range())
+                                    .expect("HIR range"),
+                            ) {
+                                bounds.push(text.into_owned());
+                            }
+                        }
+                    }
+                }
+                if bounds.is_empty() {
+                    symbol.name.clone()
+                } else {
+                    format!("{}: {}", symbol.name, bounds.join(" + "))
+                }
+            })
+            .collect::<Vec<_>>();
+        Some(format!("for({}) {signature}", parameters.join(", ")))
+    }
+
+    pub fn completion_at(self, location: Location) -> Option<Completion<'a>> {
+        use crate::syntax::telora::lexer::Token;
+        if location.start != location.end {
+            return None;
+        }
+        let file = self.mir.sources.get(location.source);
+        let cursor = location.start as usize;
+        if cursor > file.text().byte_len() {
+            return None;
+        }
+        let (tokens, spans) =
+            crate::syntax::telora::lexer::tokenize_document(file.text(), &mut vec![]);
+        let significant = tokens
+            .iter()
+            .zip(&spans)
+            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::Comment))
+            .take_while(|(_, span)| span.end <= cursor)
+            .collect::<Vec<_>>();
+        let (dot, replacement, prefix) = match significant.as_slice() {
+            [.., (Token::Dot, dot)] if dot.end == cursor => (
+                *dot,
+                crate::source::TextRange::at(location.start),
+                String::new(),
+            ),
+            [.., (Token::Dot, dot), (Token::Identifier, prefix)]
+                if dot.end == prefix.start && prefix.end == cursor =>
+            {
+                let replacement = crate::source::TextRange::from_usize((*prefix).clone()).ok()?;
+                (
+                    *dot,
+                    replacement,
+                    file.text().slice(replacement).ok()?.into_owned(),
+                )
+            }
+            _ => return None,
+        };
+        let receiver = u32::try_from(dot.start).ok()?.checked_sub(1)?;
+        let ty = self.type_at(Location {
+            source: location.source,
+            start: receiver,
+            end: receiver,
+        });
+        let mut candidates = match ty {
+            Some(TypeState::Known(id)) => self.members(id),
+            _ => vec![],
+        };
+        candidates.retain(|member| member.name.starts_with(&prefix));
+        candidates.sort_by_key(|member| member.name);
+        candidates.dedup_by_key(|member| member.name);
+        Some(Completion {
+            replacement,
+            candidates,
+        })
     }
 
     /// Completion reads the solved skeleton, including concrete generic member

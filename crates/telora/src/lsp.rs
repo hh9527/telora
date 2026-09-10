@@ -7,6 +7,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 
+use crate::mir_workspace::{Snapshot, Workspace};
 use async_lsp::lsp_types as lsp;
 use async_lsp::{
     AnyEvent, AnyNotification, AnyRequest, ClientSocket, ErrorCode, LspService, RequestId,
@@ -16,20 +17,18 @@ use lsp::notification::Notification as _;
 use lsp::request::Request as _;
 use serde::de::DeserializeOwned;
 use telora_core::{
-    CONFIG_FILE, CancellationToken, CompletionKind, DocumentVersion, Engine, EngineConfig,
-    FactState, Location, PositionEncoding, QueryError, TextEdit, TextPosition, TextRange,
-    Workspace, WorkspaceSnapshot,
+    CancellationToken, DocumentVersion, Location, PositionEncoding, QueryError, TextEdit,
+    TextPosition, TextRange, mir::TypeState, mir_query::MemberKind,
 };
 use tower_service::Service;
 
-pub fn run_stdio(root: PathBuf, config: EngineConfig) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_stdio(root: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     let local = tokio::task::LocalSet::new();
     runtime.block_on(local.run_until(async move {
-        let (main_loop, _) =
-            async_lsp::MainLoop::new_server(|client| Server::new(root, config, client));
+        let (main_loop, _) = async_lsp::MainLoop::new_server(|client| Server::new(root, client));
 
         #[cfg(unix)]
         let (stdin, stdout) = (
@@ -67,7 +66,6 @@ enum NotificationOutcome {
 
 struct State {
     fallback_root: PathBuf,
-    engine_config: EngineConfig,
     workspace: Option<Rc<Workspace>>,
     client: ClientSocket,
     lifecycle: Lifecycle,
@@ -81,11 +79,10 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(root: PathBuf, engine_config: EngineConfig, client: ClientSocket) -> Self {
+    pub fn new(root: PathBuf, client: ClientSocket) -> Self {
         Self {
             state: Rc::new(RefCell::new(State {
                 fallback_root: root,
-                engine_config,
                 workspace: None,
                 client,
                 lifecycle: Lifecycle::Uninitialized,
@@ -204,39 +201,53 @@ async fn semantic_request(
         )
     };
 
+    context.checkpoint().await.map_err(query_error)?;
+    snapshot.ensure_current(&context).map_err(query_error)?;
+    let query = snapshot.query();
     if request.method == lsp::request::HoverRequest::METHOD {
         let params: lsp::HoverParams = decode(request.params)?;
         let location =
             request_location(&snapshot, &params.text_document_position_params, encoding)?;
-        let definition = definition_at(&snapshot, &context, location).await?;
-        let ty = snapshot
-            .query_type_at(&context, location)
-            .await
-            .map_err(query_error)?
-            .and_then(|ty| snapshot.types().display(ty));
+        let definition = query
+            .target_at(location)
+            .or_else(|| query.definition_at(location));
         let ty = definition
-            .and_then(|definition| definition.scheme.clone())
-            .or(ty);
+            .filter(|id| !snapshot.mir.symbol_generics[id.index()].is_empty())
+            .and_then(|id| query.symbol_signature(id))
+            .or_else(|| {
+                query.type_at(location).map(|state| match state {
+                    TypeState::Known(ty) => query.type_name(ty),
+                    other => fact_state_name(other).to_owned(),
+                })
+            });
         let contents = match (definition, ty) {
-            (Some(definition), Some(ty)) => Some(format!("{}: {ty}", definition.name)),
-            (Some(definition), None) => Some(format!("{}: unknown", definition.name)),
+            (Some(definition), Some(ty)) => Some(format!(
+                "{}: {ty}",
+                snapshot.mir.symbols[definition.index()].name
+            )),
+            (Some(definition), None) => Some(format!(
+                "{}: unknown",
+                snapshot.mir.symbols[definition.index()].name
+            )),
             (None, Some(ty)) => Some(ty),
-            (None, None) => snapshot
-                .expression_at(location)
-                .map(|expression| fact_state_name(&expression.ty.state).to_owned()),
+            (None, None) => None,
         };
-        let hover_range = snapshot
+        let hover_range = query
             .reference_at(location)
             .map(|reference| reference.location)
             .or_else(|| {
-                snapshot
-                    .definition_at(location)
-                    .map(|definition| definition.location)
+                query.definition_at(location).and_then(|definition| {
+                    query.definition_locations(definition).find(|span| {
+                        span.source == location.source
+                            && span.start <= location.start
+                            && location.start < span.end
+                    })
+                })
             })
             .or_else(|| {
-                snapshot
+                query
                     .expression_at(location)
-                    .map(|expression| expression.location)
+                    .map(|expression| snapshot.mir.hir[expression.index()].location)
             });
         let hover = contents.map(|contents| lsp::Hover {
             contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(contents)),
@@ -248,28 +259,29 @@ async fn semantic_request(
         let params: lsp::GotoDefinitionParams = decode(request.params)?;
         let location =
             request_location(&snapshot, &params.text_document_position_params, encoding)?;
-        let target = definition_at(&snapshot, &context, location)
-            .await?
-            .and_then(|definition| to_location(&snapshot, definition.location, encoding));
+        let target = query
+            .target_at(location)
+            .and_then(|definition| query.definition_locations(definition).next())
+            .and_then(|location| to_location(&snapshot, location, encoding));
         return encode(target.map(lsp::GotoDefinitionResponse::Scalar));
     }
     if request.method == lsp::request::References::METHOD {
         let params: lsp::ReferenceParams = decode(request.params)?;
         let location = request_location(&snapshot, &params.text_document_position, encoding)?;
-        let Some(definition) = definition_at(&snapshot, &context, location).await? else {
+        let Some(definition) = query.target_at(location) else {
             return encode(Vec::<lsp::Location>::new());
         };
-        let mut locations = snapshot
-            .query_references_of(&context, definition.id)
-            .await
-            .map_err(query_error)?
+        let mut locations = query
+            .references_of(definition)
             .into_iter()
             .filter_map(|reference| to_location(&snapshot, reference.location, encoding))
             .collect::<Vec<_>>();
-        if params.context.include_declaration
-            && let Some(location) = to_location(&snapshot, definition.location, encoding)
-        {
-            locations.push(location);
+        if params.context.include_declaration {
+            locations.extend(
+                query
+                    .definition_locations(definition)
+                    .filter_map(|location| to_location(&snapshot, location, encoding)),
+            );
         }
         locations.sort_by(|left, right| {
             left.uri
@@ -283,10 +295,7 @@ async fn semantic_request(
     if request.method == lsp::request::Completion::METHOD {
         let params: lsp::CompletionParams = decode(request.params)?;
         let location = request_location(&snapshot, &params.text_document_position, encoding)?;
-        let completion = snapshot
-            .query_completion_at(&context, location)
-            .await
-            .map_err(query_error)?;
+        let completion = query.completion_at(location);
         let items = completion.map_or_else(Vec::new, |completion| {
             let replacement = Location::new(location.source, completion.replacement);
             let range = to_lsp_range(&snapshot, replacement, encoding);
@@ -296,16 +305,19 @@ async fn semantic_request(
                 .filter_map(|candidate| {
                     let range = range?;
                     Some(lsp::CompletionItem {
-                        label: candidate.label.clone(),
+                        label: candidate.name.to_owned(),
                         kind: Some(match candidate.kind {
-                            CompletionKind::ModuleExport => lsp::CompletionItemKind::MODULE,
-                            CompletionKind::StructField => lsp::CompletionItemKind::FIELD,
+                            MemberKind::ModuleExport => lsp::CompletionItemKind::MODULE,
+                            MemberKind::StructField => lsp::CompletionItemKind::FIELD,
                         }),
-                        detail: candidate.ty.and_then(|ty| snapshot.types().display(ty)),
-                        sort_text: Some(candidate.label.clone()),
+                        detail: match candidate.ty {
+                            TypeState::Known(ty) => Some(query.type_name(ty)),
+                            _ => None,
+                        },
+                        sort_text: Some(candidate.name.to_owned()),
                         text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                             range,
-                            new_text: candidate.label,
+                            new_text: candidate.name.to_owned(),
                         })),
                         ..lsp::CompletionItem::default()
                     })
@@ -339,7 +351,7 @@ fn initialize(
     state.workspace = root
         .is_file()
         .then(|| {
-            lsp_workspace(&root, state.engine_config)
+            lsp_workspace(&root)
                 .map(Rc::new)
                 .map_err(|error| protocol_error(ErrorCode::INTERNAL_ERROR, error))
         })
@@ -421,9 +433,7 @@ fn dispatch_notification(
             return Err(format!("document is already open: {}", path.display()));
         }
         if borrowed.workspace.is_none() {
-            borrowed.workspace = Some(Rc::new(
-                lsp_workspace(&path, borrowed.engine_config).map_err(|error| error.to_string())?,
-            ));
+            borrowed.workspace = Some(Rc::new(lsp_workspace(&path)?));
         }
         borrowed
             .workspace
@@ -467,19 +477,8 @@ fn dispatch_notification(
     Ok(NotificationOutcome::Continue)
 }
 
-fn lsp_workspace(path: &Path, config: EngineConfig) -> Result<Workspace, String> {
-    let configured = path
-        .parent()
-        .unwrap_or(path)
-        .ancestors()
-        .any(|directory| directory.join(CONFIG_FILE).is_file());
-    if configured {
-        let packages = crate::package_host::prepare(path)?;
-        Workspace::new_in_workspace(path, Engine::new(config), packages)
-            .map_err(|error| error.to_string())
-    } else {
-        Workspace::new(path, Engine::new(config)).map_err(|error| error.to_string())
-    }
+fn lsp_workspace(path: &Path) -> Result<Workspace, String> {
+    Workspace::new(path).map_err(|error| error.to_string())
 }
 
 fn apply_changes(
@@ -551,7 +550,7 @@ fn schedule_rebuild(state: Rc<RefCell<State>>) {
     });
 }
 
-async fn publish_diagnostics(state: &Rc<RefCell<State>>, snapshot: &WorkspaceSnapshot) {
+async fn publish_diagnostics(state: &Rc<RefCell<State>>, snapshot: &Snapshot) {
     let (client, encoding, documents) = {
         let state = state.borrow();
         (
@@ -561,10 +560,7 @@ async fn publish_diagnostics(state: &Rc<RefCell<State>>, snapshot: &WorkspaceSna
         )
     };
     for (path, version) in documents {
-        let Some(source) = snapshot
-            .module_by_path(&path)
-            .and_then(|module| module.source)
-        else {
+        let Some(source) = snapshot.source_by_path(&path) else {
             continue;
         };
         let file = snapshot.sources().get(source);
@@ -572,7 +568,8 @@ async fn publish_diagnostics(state: &Rc<RefCell<State>>, snapshot: &WorkspaceSna
             continue;
         };
         let diagnostics = snapshot
-            .diagnostics()
+            .mir
+            .diagnostics
             .iter()
             .filter_map(|diagnostic| {
                 let primary = diagnostic.labels.iter().find(|label| label.primary)?;
@@ -613,35 +610,16 @@ async fn publish_diagnostics(state: &Rc<RefCell<State>>, snapshot: &WorkspaceSna
     }
 }
 
-async fn definition_at<'a>(
-    snapshot: &'a WorkspaceSnapshot,
-    context: &telora_core::QueryContext,
-    location: Location,
-) -> Result<Option<&'a telora_core::Definition>, ResponseError> {
-    if let Some(reference) = snapshot
-        .query_reference_at(context, location)
-        .await
-        .map_err(query_error)?
-    {
-        return Ok(reference.definition.and_then(|id| snapshot.definition(id)));
-    }
-    snapshot
-        .query_definition_at(context, location)
-        .await
-        .map_err(query_error)
-}
-
 fn request_location(
-    snapshot: &WorkspaceSnapshot,
+    snapshot: &Snapshot,
     params: &lsp::TextDocumentPositionParams,
     encoding: PositionEncoding,
 ) -> Result<Location, ResponseError> {
     let path = uri_path(&params.text_document.uri)
         .map_err(|message| protocol_error(ErrorCode::INVALID_PARAMS, message))?;
-    let module = snapshot
-        .module_by_path(&path)
+    let source = snapshot
+        .source_by_path(&path)
         .ok_or_else(content_modified)?;
-    let source = module.source.ok_or_else(content_modified)?;
     let offset = snapshot
         .sources()
         .get(source)
@@ -652,14 +630,11 @@ fn request_location(
 }
 
 fn to_location(
-    snapshot: &WorkspaceSnapshot,
+    snapshot: &Snapshot,
     location: Location,
     encoding: PositionEncoding,
 ) -> Option<lsp::Location> {
-    let path = snapshot
-        .module_by_source(location.source)?
-        .path
-        .as_deref()?;
+    let path = snapshot.path_by_source(location.source)?;
     Some(lsp::Location::new(
         lsp::Url::from_file_path(path).ok()?,
         to_lsp_range(snapshot, location, encoding)?,
@@ -667,7 +642,7 @@ fn to_location(
 }
 
 fn to_lsp_range(
-    snapshot: &WorkspaceSnapshot,
+    snapshot: &Snapshot,
     location: Location,
     encoding: PositionEncoding,
 ) -> Option<lsp::Range> {
@@ -761,12 +736,11 @@ fn protocol_error(code: ErrorCode, message: impl std::fmt::Display) -> ResponseE
     ResponseError::new(code, message)
 }
 
-fn fact_state_name(state: &FactState) -> &'static str {
+fn fact_state_name(state: TypeState) -> &'static str {
     match state {
-        FactState::Known => "known",
-        FactState::Unknown(_) => "unknown",
-        FactState::Conflicted(_) => "conflicted",
-        FactState::Incomputable(_) => "incomputable",
+        TypeState::Known(_) => "known",
+        TypeState::Conflicted(_) => "conflicted",
+        _ => "unknown",
     }
 }
 

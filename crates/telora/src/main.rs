@@ -813,7 +813,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
 }
 
 fn lsp_command(root: PathBuf) -> Result<(), String> {
-    telora::lsp::run_stdio(root, engine_config()).map_err(|error| error.to_string())
+    telora::lsp::run_stdio(root).map_err(|error| error.to_string())
 }
 
 async fn run_command(
