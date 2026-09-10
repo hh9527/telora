@@ -380,6 +380,24 @@ fn solved_dyn_member_access_preserves_payload_handles() {
 }
 
 #[test]
+fn solved_codec_construction_rejection_retains_the_original_blame_handle() {
+    let mir = crate::codegen::tests::graph(r#"
+        import "std/codec" as codec;
+        def original = blame!("rejected", 0);
+        @check(fn(value) { Err(original) }) type Item = struct(Int);
+        export def answer = (original, codec.decode(Item.type, codec.Value.Int(0)));
+    "#, "");
+    let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    let linked = crate::execution_link::link_entry(artifact).unwrap();
+    let result = Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
+    let original = result.value().sequence_get(0).unwrap();
+    let (tag, rejection) = result.value().sequence_get(1).unwrap().tagged_parts().unwrap();
+    assert_eq!(tag.as_atom().unwrap().as_str(), "Err");
+    assert_eq!(original.value.value(), rejection.value.value());
+    assert!(result.world.work.heap.solved_failures.is_empty());
+}
+
+#[test]
 fn solved_string_parse_reuses_whole_input_captures_and_error_subjects() {
     let source = r#"
         import "std/string" as string; import "std/regex" as regex;

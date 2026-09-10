@@ -1,5 +1,9 @@
 #[derive(Debug)]
 enum SolvedParseTask {
+    Check {
+        owner: crate::mir::TypeId,
+        argument: Val,
+    },
     Visit {
         ty: crate::mir::TypeId,
         range: Option<std::ops::Range<usize>>,
@@ -14,6 +18,7 @@ enum SolvedParseTask {
 
 #[derive(Debug)]
 struct SolvedStringParse {
+    codec_input: Option<Val>,
     input: Val,
     property: crate::mir::TypeId,
     pending: Vec<SolvedParseTask>,
@@ -22,6 +27,64 @@ struct SolvedStringParse {
     trace_frame: RuntimeFrame,
     function: Arc<BytecodeFunction>,
     pc: usize,
+}
+
+#[derive(Debug)]
+struct SolvedParseCheck(SolvedStringParse, crate::Loc);
+impl NativeContinuation for SolvedParseCheck {
+    fn return_target(&self) -> &ReturnTarget {
+        &self.0.return_target
+    }
+    fn trace_frame(&self) -> &RuntimeFrame {
+        &self.0.trace_frame
+    }
+    fn resume(
+        self: Box<Self>,
+        result: Val,
+        current: &mut Heap,
+        background: &Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        let state = self.0;
+        if let Some(blame) =
+            solved_check_rejection(result, current, background, &state.function, state.pc)?
+        {
+            if let Some(input) = state.codec_input {
+                return finish_codec_payload(
+                    BuiltinAtom::Err,
+                    CodecNode::Existing(blame),
+                    input,
+                    state.return_target,
+                    &state.function,
+                    state.pc,
+                    current,
+                    background,
+                    account,
+                );
+            }
+            return Err(solved_construction_blame(
+                blame,
+                self.1,
+                current,
+                background,
+                &state.function,
+                state.pc,
+            )?);
+        }
+        continue_solved_string_parse(state, current, background, account)
+    }
+    fn resume_failed(
+        self: Box<Self>,
+        failure: Val,
+        _: &mut Heap,
+        _: &Heap,
+        _: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        Ok(VmAction::Return {
+            value: failure,
+            return_target: self.0.return_target,
+        })
+    }
 }
 
 impl NativeContinuation for SolvedStringParse {
@@ -56,6 +119,7 @@ impl NativeContinuation for SolvedStringParse {
 
 fn run_solved_string_parse(
     arguments: &[Val],
+    codec: Option<(Val, String)>,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -83,12 +147,13 @@ fn run_solved_string_parse(
     .len();
     continue_solved_string_parse(
         SolvedStringParse {
+            codec_input: codec.as_ref().map(|(input, _)| *input),
             input,
             property,
             pending: vec![SolvedParseTask::Visit {
                 ty: target,
                 range: Some(0..length),
-                path: "$".into(),
+                path: codec.map_or_else(|| "$".into(), |(_, path)| path),
             }],
             output: vec![],
             return_target,
@@ -123,6 +188,24 @@ fn continue_solved_string_parse(
     while let Some(task) = state.pending.pop() {
         consume_fuel(account, &function, pc)?;
         let (ty, range, path) = match task {
+            SolvedParseTask::Check { owner, argument } => {
+                let Some(node) = graph.construction_check(owner, PropertySite::Type) else {
+                    continue;
+                };
+                return run_solved_construction_check(
+                    node,
+                    argument,
+                    ReturnTarget::Native(Box::new(SolvedParseCheck(
+                        state,
+                        graph.nodes()[node.index()].location,
+                    ))),
+                    &function,
+                    pc,
+                    current,
+                    background,
+                    account,
+                );
+            }
             SolvedParseTask::Some => {
                 let payload = state.output.pop().expect("optional parse payload");
                 state
@@ -150,6 +233,10 @@ fn continue_solved_string_parse(
                         )
                     })?
                     .with_loc(loc);
+                state.pending.push(SolvedParseTask::Check {
+                    owner: ty,
+                    argument: value,
+                });
                 state.output.push(
                     if matches!(types.types[ty.index()].constructor, T::Nominal(_)) {
                         value.with_type_id(crate::TypeId::solved(ty))
@@ -345,6 +432,20 @@ fn continue_solved_string_parse(
         }
     }
     if let Some(message) = rejection {
+        if let Some(input) = state.codec_input {
+            let blame = decode_blame(message, vec![input], &function, pc, current, account)?;
+            return finish_codec_payload(
+                BuiltinAtom::Err,
+                CodecNode::Existing(blame),
+                input,
+                state.return_target,
+                &function,
+                pc,
+                current,
+                background,
+                account,
+            );
+        }
         return finish_codec_payload(
             BuiltinAtom::Err,
             CodecNode::String(message, loc),

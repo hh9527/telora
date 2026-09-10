@@ -1,5 +1,10 @@
 #[derive(Debug)]
 enum SolvedDecodeTask {
+    Check {
+        owner: crate::mir::TypeId,
+        site: crate::mir::PropertySite,
+        argument: Val,
+    },
     Untagged {
         value: Val,
         owner: crate::mir::TypeId,
@@ -35,6 +40,7 @@ enum SolvedDecodeTask {
     },
     Variant {
         owner: crate::mir::TypeId,
+        variant: u32,
         name: String,
         loc: Option<crate::Loc>,
     },
@@ -45,6 +51,7 @@ enum SolvedDecodeTask {
 
 #[derive(Debug)]
 struct SolvedDecode {
+    blame_rejection: Option<Val>,
     rejection: Option<(String, Val)>,
     pending: Vec<SolvedDecodeTask>,
     output: Vec<Val>,
@@ -58,10 +65,43 @@ struct SolvedDecode {
 }
 
 #[derive(Debug)]
+struct SolvedDecodeCheck(SolvedDecode);
+impl NativeContinuation for SolvedDecodeCheck {
+    fn return_target(&self) -> &ReturnTarget {
+        &self.0.return_target
+    }
+    fn trace_frame(&self) -> &RuntimeFrame {
+        &self.0.trace_frame
+    }
+    fn resume(
+        self: Box<Self>,
+        result: Val,
+        current: &mut Heap,
+        background: &Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        let mut state = self.0;
+        state.blame_rejection =
+            solved_check_rejection(result, current, background, &state.function, state.pc)?;
+        continue_solved_decode(state, current, background, account)
+    }
+    fn resume_failed(
+        self: Box<Self>,
+        failure: Val,
+        _: &mut Heap,
+        _: &Heap,
+        _: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        Ok(VmAction::Return {
+            value: failure,
+            return_target: self.0.return_target,
+        })
+    }
+}
+
+#[derive(Debug)]
 struct SolvedDecodeParse {
     decoder: SolvedDecode,
-    input: Val,
-    path: String,
 }
 
 impl NativeContinuation for SolvedDecodeParse {
@@ -78,11 +118,7 @@ impl NativeContinuation for SolvedDecodeParse {
         background: &Heap,
         account: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError> {
-        let Self {
-            mut decoder,
-            input,
-            path,
-        } = *self;
+        let Self { mut decoder } = *self;
         let view = HeapView {
             current,
             background: Some(background),
@@ -103,24 +139,7 @@ impl NativeContinuation for SolvedDecodeParse {
         if tag.as_atom().is_some_and(|tag| tag.as_str() == "Ok") {
             decoder.output.push(value.value);
         } else if tag.as_atom().is_some_and(|tag| tag.as_str() == "Err") {
-            let message = value.as_str().ok_or_else(|| {
-                error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    "text parser error is not String",
-                    &decoder.function,
-                    decoder.pc,
-                )
-            })?;
-            decoder.rejection = Some((
-                format!(
-                    "{path}{}",
-                    message
-                        .as_str()
-                        .strip_prefix('$')
-                        .unwrap_or(message.as_str())
-                ),
-                input,
-            ));
+            decoder.blame_rejection = Some(value.value);
         } else {
             return Err(error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -253,6 +272,7 @@ fn run_solved_codec_decode(
     };
     continue_solved_decode(
         SolvedDecode {
+            blame_rejection: None,
             rejection: None,
             pending: vec![SolvedDecodeTask::Visit {
                 value: arguments[2],
@@ -287,6 +307,7 @@ fn continue_solved_decode(
     use crate::execution_graph::{EvaluationError, Request};
     use crate::mir::{TypeConstructor as T, TypeOperation};
     let SolvedDecode {
+        mut blame_rejection,
         mut rejection,
         mut pending,
         mut output,
@@ -306,7 +327,7 @@ fn continue_solved_decode(
     loop {
         // Only data mismatches unwind to an alternative boundary. VM failures
         // leave through Result/NativeContinuation and are never trial failures.
-        if rejection.is_some() {
+        if rejection.is_some() || blame_rejection.is_some() {
             if let Some(index) = pending
                 .iter()
                 .rposition(|task| matches!(task, SolvedDecodeTask::Untagged { .. }))
@@ -319,6 +340,44 @@ fn continue_solved_decode(
         let Some(task) = pending.pop() else { break };
         consume_fuel(account, function, pc)?;
         let (value, ty, path) = match task {
+            SolvedDecodeTask::Check {
+                owner,
+                site,
+                argument,
+            } => {
+                let Some(node) = background
+                    .solved_graph
+                    .as_ref()
+                    .expect("decode graph")
+                    .construction_check(owner, site)
+                else {
+                    continue;
+                };
+                let call_function = Arc::clone(&caller);
+                let state = SolvedDecode {
+                    blame_rejection,
+                    rejection,
+                    pending,
+                    output,
+                    arguments,
+                    source,
+                    property_ids,
+                    return_target,
+                    trace_frame,
+                    function: caller,
+                    pc,
+                };
+                return run_solved_construction_check(
+                    node,
+                    argument,
+                    ReturnTarget::Native(Box::new(SolvedDecodeCheck(state))),
+                    &call_function,
+                    pc,
+                    current,
+                    background,
+                    account,
+                );
+            }
             SolvedDecodeTask::Untagged {
                 value,
                 owner,
@@ -329,7 +388,8 @@ fn continue_solved_decode(
                 awaiting,
             } => {
                 if awaiting {
-                    if rejection.take().is_none() {
+                    let rejected = rejection.take().is_some() | blame_rejection.take().is_some();
+                    if !rejected {
                         matches.push(output.pop().expect("untagged candidate result"));
                     }
                     output.truncate(output_start);
@@ -355,6 +415,7 @@ fn continue_solved_decode(
                         });
                         pending.push(SolvedDecodeTask::Variant {
                             owner,
+                            variant: index as u32,
                             name: definition.members[index].name.clone(),
                             loc: value.loc(),
                         });
@@ -439,6 +500,13 @@ fn continue_solved_decode(
                         )
                     })?
                     .with_loc(loc);
+                if let Some(owner) = owner {
+                    pending.push(SolvedDecodeTask::Check {
+                        owner,
+                        site: crate::mir::PropertySite::Type,
+                        argument: value,
+                    });
+                }
                 output.push(if let Some(owner) = owner {
                     value.with_type_id(crate::TypeId::solved(owner))
                 } else {
@@ -463,6 +531,11 @@ fn continue_solved_decode(
             }
             SolvedDecodeTask::Newtype { owner, loc } => {
                 let payload = output.pop().expect("decoded newtype payload");
+                pending.push(SolvedDecodeTask::Check {
+                    owner,
+                    site: crate::mir::PropertySite::Type,
+                    argument: payload,
+                });
                 charge_allocation(
                     account,
                     logical_value_bytes(1)
@@ -481,8 +554,18 @@ fn continue_solved_decode(
                 );
                 continue;
             }
-            SolvedDecodeTask::Variant { owner, name, loc } => {
+            SolvedDecodeTask::Variant {
+                owner,
+                variant,
+                name,
+                loc,
+            } => {
                 let payload = output.pop().expect("decoded variant payload");
+                pending.push(SolvedDecodeTask::Check {
+                    owner,
+                    site: crate::mir::PropertySite::Variant(variant),
+                    argument: payload,
+                });
                 output.push(solved_codec_tag(
                     &name, payload, owner, loc, current, background, account, function, pc,
                 )?);
@@ -570,6 +653,7 @@ fn continue_solved_decode(
                             call_function: Arc::clone(&caller),
                             call_pc: pc,
                             return_target: ReturnTarget::Native(Box::new(SolvedDecode {
+                                blame_rejection,
                                 rejection,
                                 pending,
                                 output,
@@ -674,6 +758,7 @@ fn continue_solved_decode(
             ];
             let call_function = Arc::clone(&caller);
             let decoder = SolvedDecode {
+                blame_rejection,
                 rejection,
                 pending,
                 output,
@@ -687,11 +772,8 @@ fn continue_solved_decode(
             };
             return run_solved_string_parse(
                 &parse_arguments,
-                ReturnTarget::Native(Box::new(SolvedDecodeParse {
-                    decoder,
-                    input: value,
-                    path,
-                })),
+                Some((value, path)),
+                ReturnTarget::Native(Box::new(SolvedDecodeParse { decoder })),
                 &call_function,
                 pc,
                 current,
@@ -880,6 +962,7 @@ fn continue_solved_decode(
                                         (Some(payload_type), Some(value)) => {
                                             pending.push(SolvedDecodeTask::Variant {
                                                 owner: ty,
+                                                variant: index as u32,
                                                 name: definition.members[index].name.clone(),
                                                 loc,
                                             });
@@ -1021,6 +1104,19 @@ fn continue_solved_decode(
                 ));
             }
         }
+    }
+    if let Some(blame) = blame_rejection {
+        return finish_codec_payload(
+            BuiltinAtom::Err,
+            CodecNode::Existing(blame),
+            arguments[2],
+            return_target,
+            function,
+            pc,
+            current,
+            background,
+            account,
+        );
     }
     if let Some((message, input)) = rejection {
         return finish_decode_result(

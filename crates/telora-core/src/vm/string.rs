@@ -4,7 +4,7 @@ fn run_string_parse(
     pc: usize, current: &mut Heap, background: &Heap, account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     if background.solved_types.is_some() {
-        return run_solved_string_parse(arguments, return_target, function, pc, current, background, account);
+        return run_solved_string_parse(arguments, None, return_target, function, pc, current, background, account);
     }
     let view = HeapView { current, background: Some(background) };
     let property = ValueRef { value: arguments[0], view }.declared_type_id()

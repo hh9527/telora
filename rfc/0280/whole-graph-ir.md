@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Codec and text parsing invoke solved construction checks (2026-09-10)
+
+The solved codec and string parser now invoke the existing lazy checker tasks
+at Struct, newtype and payload-variant construction boundaries. Checker calls
+use original VM value handles; codec rejection returns the original BlameError
+handle without repackaging or registering a VM failure. Untagged decoding treats
+check rejection as a candidate mismatch, while checker execution failure escapes
+the trial and preserves the cached failure. Checker calls and standalone parse
+rejection retain the checker declaration as their rule location.
+
+Codegen's temporary codec/parser rejection gate is removed. This adds no type
+inference or specialization to codegen: it consumes sealed contracts, and generic
+checker specialization remains an explicit missing static capability. Other open
+items include CheckedCast/Unchecked paths and richer all-failed untagged diagnostics.
+
+Validation: 44 codegen tests and 12 solved VM tests pass, including rejection,
+untagged fallback/ambiguity, execution failure propagation, original BlameError
+identity, string input identity and provider failure caching. Logs:
+/tmp/mir-construction-final-codegen.log and /tmp/mir-construction-final-vm.log.
+No performance or full-suite acceptance claim; overall migration remains open.
+
 ### Ordinary construction invokes solved checker tasks (2026-09-10)
 
 ExecutionGraph now assigns a lazy task to each construction checker, indexed by

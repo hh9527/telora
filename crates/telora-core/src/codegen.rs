@@ -226,9 +226,6 @@ fn compile_root(
         }
         globals = all.into_iter().collect();
     }
-    if !mir.construction_checks.is_empty() && globals.iter().any(|s| matches!(native_abi(mir, *s), Some((13, "decode_with")) | Some((7, "parse_with")))) {
-        return Err(vec![emitter.error(declaration, "construction checks in codec/parser execution have not been lowered yet")]);
-    }
     // Native ABI values and injected data already exist before initialization.
     for &global in &globals {
         if !mir.symbol_generics[global.index()].is_empty() {
@@ -2112,6 +2109,41 @@ pub(crate) mod tests {
             let signature = &result.types().types[id.index()];
             assert_eq!(signature.constructor, TypeConstructor::Function);
             assert_eq!(result.types().types[signature.arguments[0].index()].constructor, expected);
+        }
+    }
+
+    #[test]
+    fn solved_codec_construction_checks_reject_values_and_preserve_trial_semantics() {
+        let definitions = r#"
+            import "std/json" as json; import "std/string" as string; import "std/regex" as regex;
+            import "std/_rt" as rt;
+            @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive count", value)) } }) type Count = struct(Int);
+            @string.decode_by_parse @string.encode_by_display
+            @regex.parse_by(regex.compile(r"^(?P<value>\d+)$"))
+            @check(fn(item) { if item.value > 0 { Ok(()) } else { Err(blame!("positive value", item.value)) } }) type Item = struct {value: Int};
+            @json.untagged type Choice = enum { @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive variant", value)) } }) Checked(Int), Plain(Int) };
+            @json.untagged type TextChoice = enum { Parsed(Item), Plain(String) };
+        "#;
+        for body in [
+            r#"export def answer = match json.decode(Count.type, "0") { Err(_) => 42, _ => 0 };"#,
+            r#"export def answer = match json.decode(Count.type, "42") { Ok(Count(value)) => value, _ => 0 };"#,
+            r#"export def answer = match json.decode(Choice.type, "0") { Ok(Choice.Plain(_)) => 42, _ => 0 };"#,
+            r#"export def answer = match json.decode(Choice.type, "1") { Err(_) => 42, _ => 0 };"#,
+            r#"export def answer = match json.decode(Item.type, "\"0\"") { Err(_) => 42, _ => 0 };"#,
+            r#"export def answer = match json.decode(TextChoice.type, "\"0\"") { Ok(TextChoice.Plain(_)) => 42, _ => 0 };"#,
+            r#"export def answer = match rt.with_diagnostics(fn(text: String) { string.parse(Item.type, text) })("0") { Err(errors) => if errors[0].message == "positive value" { 42 } else { 0 }, _ => 0 };"#,
+            r#"@check(fn(value) { fail!("checker execution failed") }) type Broken = struct(Int);
+                @json.untagged type BrokenChoice = enum { Plain(Int), Broken(Broken) };
+                export def answer = match rt.with_diagnostics(fn(text: String) { json.decode(BrokenChoice.type, text) })("1") { Err(errors) => if errors[0].message == "checker execution failed" { 42 } else { 0 }, _ => 0 };"#,
+            r#"@check(fn(value) { if value.number > 0 { Ok(()) } else { Err(blame!("positive record", value.number)) } }) type Record = struct {number: Int};
+                export def answer = match json.decode(Record.type, "{\"number\":0}") { Err(_) => 42, _ => 0 };"#,
+        ] {
+            let mir = graph(&format!("{definitions}{body}"), "");
+            assert!(mir.diagnostics.is_empty(), "{body}\n{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{body}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{body}");
         }
     }
 
