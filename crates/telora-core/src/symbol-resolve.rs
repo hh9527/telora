@@ -545,15 +545,26 @@ impl Pass<'_> {
             }
             let imports = self.mir.scopes[scope.index()].open_imports.clone();
             let mut candidates = vec![];
+            let mut implicit_candidates = vec![];
             for import in imports {
                 if let ModuleTarget::Bound(module) = self.mir.imports[import].target {
-                    candidates.extend(
+                    let selected = if self.mir.imports[import].syntax.is_none() {
+                        &mut implicit_candidates
+                    } else {
+                        &mut candidates
+                    };
+                    selected.extend(
                         self.mir.exports[module.index()]
                             .iter()
                             .copied()
                             .filter(|id| self.mir.symbols[id.index()].name == name),
                     );
                 }
+            }
+            // Implicit prelude imports supply the outer default scope. An
+            // explicitly written import participates at the current scope.
+            if candidates.is_empty() {
+                candidates = implicit_candidates;
             }
             if !candidates.is_empty() {
                 let mut targets = BTreeMap::new();

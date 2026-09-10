@@ -17,13 +17,19 @@ use properties::native_abi;
 
 pub struct CompiledEntry {
     pub graph: ExecutionGraph,
-    pub symbol: SymbolId,
+    pub root: CompilationRoot,
     pub result_type: TypeId,
     pub bytecode: BytecodeFunction,
     pub native_links: Vec<NativeLink>,
     pub types: crate::type_image::TypeImage,
     pub eval_call: Option<EvalCall>,
     pub data_links: Vec<DataLink>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompilationRoot {
+    Export(SymbolId),
+    Check,
 }
 
 #[derive(Debug)]
@@ -115,40 +121,76 @@ pub struct NativeLink {
 }
 
 pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, Vec<Diagnostic>> {
+    compile_root(sealed, CompilationRoot::Export(entry))
+}
+
+pub fn compile_check(sealed: SealedMir<'_>) -> Result<CompiledEntry, Vec<Diagnostic>> {
+    compile_root(sealed, CompilationRoot::Check)
+}
+
+fn compile_root(
+    sealed: SealedMir<'_>,
+    root: CompilationRoot,
+) -> Result<CompiledEntry, Vec<Diagnostic>> {
     let graph = ExecutionGraph::from_mir(&sealed);
     let (mir, types) = sealed.into_parts();
-    let Some(symbol) = mir.symbols.get(entry.index()) else {
-        return Err(vec![Diagnostic {
-            severity: Severity::Error,
-            message: "invalid codegen entry SymbolId".into(),
-            labels: vec![],
-            notes: vec![],
-        }]);
+    let (target, declaration, name) = if let CompilationRoot::Export(entry) = root {
+        let Some(symbol) = mir.symbols.get(entry.index()) else {
+            return Err(vec![Diagnostic {
+                severity: Severity::Error,
+                message: "invalid codegen entry SymbolId".into(),
+                labels: vec![],
+                notes: vec![],
+            }]);
+        };
+        let ResolveState::Bound(target) = symbol.resolution else {
+            return Err(vec![Diagnostic {
+                severity: Severity::Error,
+                message: "codegen entry is not bound".into(),
+                labels: vec![],
+                notes: vec![],
+            }]);
+        };
+        let Some(&declaration) = mir.symbols[target.index()].declarations.last() else {
+            return Err(vec![Diagnostic {
+                severity: Severity::Error,
+                message: "codegen entry has no declaration".into(),
+                labels: vec![],
+                notes: vec![],
+            }]);
+        };
+        (Some(target), declaration, symbol.name.clone())
+    } else {
+        let ModuleTarget::Bound(module) = mir.roots[0] else {
+            unreachable!("sealed root")
+        };
+        let (ModuleState::Source { body, .. } | ModuleState::Data { body }) =
+            mir.modules[module.index()].state
+        else {
+            unreachable!("sealed module")
+        };
+        (None, body, "<session check>".into())
     };
-    let ResolveState::Bound(target) = symbol.resolution else {
-        return Err(vec![Diagnostic {
-            severity: Severity::Error,
-            message: "codegen entry is not bound".into(),
-            labels: vec![],
-            notes: vec![],
-        }]);
+    let mut emitter = Emitter::new(mir, &graph, name);
+    let mut globals = if let Some(target) = target {
+        reachable_globals(mir, target)
+    } else {
+        graph
+            .nodes()
+            .iter()
+            .filter_map(|node| match node.task {
+                crate::execution_graph::Task::Global { symbol, .. } => Some(symbol),
+                _ => None,
+            })
+            .collect()
     };
-    let Some(&declaration) = mir.symbols[target.index()].declarations.last() else {
-        return Err(vec![Diagnostic {
-            severity: Severity::Error,
-            message: "codegen entry has no declaration".into(),
-            labels: vec![],
-            notes: vec![],
-        }]);
-    };
-    let mut emitter = Emitter::new(mir, &graph, symbol.name.clone());
-    let mut globals = reachable_globals(mir, target);
-    let queries_properties = globals.iter().any(|s| {
-        matches!(
-            native_abi(mir, *s),
-            Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop"))
-        )
-    });
+    let queries_properties = root == CompilationRoot::Check
+        || globals.iter().any(|s| {
+            matches!(
+                native_abi(mir, *s),
+                Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop"))
+            )
+        });
     if queries_properties {
         let mut all = globals
             .into_iter()
@@ -216,18 +258,45 @@ pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, 
             emitter.property_thunk(record).map_err(|d| vec![d])?;
         }
     }
-    let result = if let Some(value) = emitter.lookup(target) {
-        value
+    let (result, result_type) = if let Some(target) = target {
+        let result = if let Some(value) = emitter.lookup(target) {
+            value
+        } else {
+            let dst = emitter.register();
+            let node = graph
+                .global(target)
+                .ok_or_else(|| vec![emitter.error(declaration, "entry has no execution slot")])?;
+            emitter.emit(declaration, O::Demand { dst, node });
+            dst
+        };
+        (result, emitter.ty(declaration).map_err(|d| vec![d])?)
     } else {
+        for node in graph.nodes() {
+            let demand = match node.task {
+                crate::execution_graph::Task::Global { symbol, .. } => {
+                    if emitter.lookup(symbol).is_some() {
+                        None
+                    } else {
+                        graph.global(symbol)
+                    }
+                }
+                crate::execution_graph::Task::Property { key, .. } => graph.property(key),
+            };
+            if let Some(node) = demand {
+                let dst = emitter.register();
+                emitter.emit(declaration, O::Demand { dst, node });
+            }
+        }
+        let unit = mir
+            .types
+            .iter()
+            .position(|ty| ty.constructor == TypeConstructor::Tuple && ty.arguments.is_empty())
+            .ok_or_else(|| vec![emitter.error(declaration, "check root requires solved Unit")])?;
         let dst = emitter.register();
-        let node = graph
-            .global(target)
-            .ok_or_else(|| vec![emitter.error(declaration, "entry has no execution slot")])?;
-        emitter.emit(declaration, O::Demand { dst, node });
-        dst
+        emitter.emit(declaration, O::MakeTuple { dst, items: vec![] });
+        (dst, TypeId(unit as u32))
     };
     emitter.emit(declaration, O::Return { src: result });
-    let result_type = emitter.ty(declaration).map_err(|d| vec![d])?;
     let bytecode = lir::assemble(emitter.function).map_err(|e| {
         vec![Diagnostic::error(
             e.message,
@@ -235,7 +304,7 @@ pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, 
         )]
     })?;
     Ok(CompiledEntry {
-        symbol: entry,
+        root,
         result_type,
         bytecode,
         native_links: emitter.native_links,
@@ -923,6 +992,46 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn check_root_initializes_all_globals_and_properties_without_calling_functions() {
+        for (source, expected) in [
+            (
+                "def unused = 1 / 0; export def answer = 42;",
+                Some("division"),
+            ),
+            (
+                "def unused: Fn() -> Int = fn() { fail!(\"do not call\") }; export def answer = 42;",
+                None,
+            ),
+            (
+                "@property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!(\"property root sentinel\") }; @mark type Item = struct { x: Int }; export def answer = 42;",
+                Some("property root sentinel"),
+            ),
+            (
+                "def a: Int = b; def b: Int = a; export def answer = 42;",
+                Some("cyclic demand"),
+            ),
+        ] {
+            let mut mir = graph(source, "");
+            let artifact =
+                compile_check(mir.seal().unwrap()).unwrap_or_else(|d| panic!("{source}\n{d:?}"));
+            let linked = crate::execution_link::link_entry(artifact).unwrap();
+            let diagnostics = crate::Vm::new().check_linked(
+                linked,
+                crate::Quota::with_fuel(10000),
+                crate::DataLimits::default(),
+                &mut mir.sources,
+            );
+            if let Some(message) = expected {
+                assert!(
+                    diagnostics.iter().any(|d| d.message.contains(message)),
+                    "{source}\n{diagnostics:?}"
+                );
+            } else {
+                assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            }
+        }
+    }
+    #[test]
     fn solved_patterns_and_native_variants_execute_with_lexical_scopes() {
         for source in [
             "export def answer = match Some((20, 22)) { Some((x, y)) => x + y, None => 0 };",
@@ -952,9 +1061,18 @@ pub(crate) mod tests {
     }
     #[test]
     fn record_pattern_fields_are_checked_before_codegen() {
-        let mir = graph("type Rec = struct { x: Int }; def v: Rec = { x: 1 }; export def answer = match v { { missing: n } => n };", "");
+        let mir = graph(
+            "type Rec = struct { x: Int }; def v: Rec = { x: 1 }; export def answer = match v { { missing: n } => n };",
+            "",
+        );
         assert!(mir.seal().is_err());
-        assert!(mir.diagnostics.iter().any(|d| d.message.contains("missing")), "{:?}", mir.diagnostics);
+        assert!(
+            mir.diagnostics
+                .iter()
+                .any(|d| d.message.contains("missing")),
+            "{:?}",
+            mir.diagnostics
+        );
     }
     #[test]
     fn member_properties_receive_solved_skeleton_contexts() {

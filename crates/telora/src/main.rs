@@ -10,7 +10,7 @@ use std::sync::Arc;
 use telora_core::lir::RegisterId;
 use telora_core::{
     CallContext, DataLimits, DebugEvent, DebugSink, EesCall, EesReply, Engine, EngineConfig,
-    Location, ModuleResolver, NativeError, NativeFunction, PositionEncoding, Quota, RunHost,
+    Location, NativeError, NativeFunction, PositionEncoding, Quota, RunHost,
     RunHostFuture, RunTermination, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
     WorkspaceSnapshot,
 };
@@ -898,90 +898,7 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
 }
 
 fn check_command(context: PathBuf, arguments: CheckArgs, schema: &str) -> Result<i32, String> {
-    if arguments.types_only {
-        return static_cli::check(context, &arguments.module_id, schema);
-    }
-    let catalog_started = std::time::Instant::now();
-    let prepared = package_host::prepare(&context)?;
-    let resolver =
-        ModuleResolver::from_workspace(Arc::clone(&prepared), &context, &arguments.module_id)
-            .map_err(|error| error.to_string())?;
-    let module_name = resolver
-        .selected_root()
-        .map(|module| module.id.to_string())
-        .map_err(|error| error.to_string())?;
-    let check_started = std::time::Instant::now();
-    let catalog_seconds = catalog_started.elapsed().as_secs_f64();
-    let workspace = engine()
-        .recover_with_resolver(resolver)
-        .map_err(|error| error.to_string())?;
-    let check_seconds = check_started.elapsed().as_secs_f64();
-    for (crate_name, _) in prepared.crates() {
-        for undeclared in prepared
-            .undeclared_modules(crate_name)
-            .map_err(|error| error.to_string())?
-        {
-            emit(json!({
-                "schema": schema,
-                "module": module_name,
-                "record": "diagnostic",
-                "severity": "warning",
-                "message": format!(
-                    "crate {:?} contains undeclared module file {}; add {:?} to telora-crate.json modules",
-                    undeclared.crate_name,
-                    undeclared.relative_path.display(),
-                    undeclared.selector,
-                ),
-                "labels": [],
-                "notes": [],
-            }))?;
-        }
-    }
-    let has_error_diagnostic = workspace
-        .diagnostics()
-        .iter()
-        .any(|diagnostic| diagnostic.severity == telora_core::source::Severity::Error);
-    for diagnostic in workspace.diagnostics() {
-        let severity = match diagnostic.severity {
-            telora_core::source::Severity::Error => "error",
-            telora_core::source::Severity::Warning => "warning",
-            telora_core::source::Severity::Info => "info",
-        };
-        let labels = diagnostic
-            .labels
-            .iter()
-            .map(|label| {
-                let source = workspace.sources().get(label.location.source);
-                json!({
-                    "source": source.name.as_ref(),
-                    "location": location_json(&workspace, label.location),
-                    "message": label.message,
-                    "primary": label.primary,
-                })
-            })
-            .collect::<Vec<_>>();
-        emit(json!({
-            "schema": schema,
-            "module": module_name,
-            "record": "diagnostic",
-            "severity": severity,
-            "message": diagnostic.message,
-            "labels": labels,
-            "notes": diagnostic.notes,
-        }))?;
-    }
-    let failed = has_error_diagnostic;
-    emit(json!({
-        "schema": schema,
-        "module": module_name,
-        "record": "summary",
-        "status": if failed { "error" } else { "ok" },
-        "dependencies": workspace.modules().len().saturating_sub(1),
-        "types_only": arguments.types_only,
-        "check_seconds": check_seconds,
-        "catalog_seconds": catalog_seconds,
-    }))?;
-    Ok(i32::from(failed))
+    static_cli::check(context, &arguments.module_id, schema, arguments.types_only)
 }
 
 fn kind_name(kind: ShowKind) -> &'static str {

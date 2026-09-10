@@ -1,4 +1,64 @@
 #[test]
+fn static_mir_check_injects_data_and_blocks_execution_after_type_errors() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), r#"
+        import "./data.json" { data };
+        import "std/value" { Value };
+        @property(PropertyTarget.Type) type Mark = struct { value: Int };
+        def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) {
+            match data { Value.Int(n) => { value: n }, _ => fail!("data must precede property") }
+        };
+        @mark type Item = struct { value: Int };
+    "#).unwrap();
+    for (data, valid) in [("42", true), ("invalid-json", false)] {
+        fs::write(cwd.join("src/data.json"), data).unwrap();
+        for types_only in [true, false] {
+            let mut command = telora(&cwd);
+            command.args(["check", "@src/main"]);
+            if types_only { command.arg("--only-types"); }
+            let output = command.output().unwrap();
+            assert_eq!(output.status.success(), types_only || valid, "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        }
+    }
+    fs::write(cwd.join("src/main.telora"), "def bad: Int = \"wrong\"; def forbidden: Int = fail!(\"must not execute\");").unwrap();
+    let output = telora(&cwd).args(["check", "@src/main"]).output().unwrap();
+    let records = String::from_utf8(output.stdout).unwrap().lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+    assert!(!output.status.success());
+    assert!(!records.iter().any(|r| r["message"].as_str().is_some_and(|s| s.contains("must not execute"))));
+    assert_eq!(records.last().unwrap()["execution_seconds"], 0.0);
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
+fn static_mir_check_executes_session_roots_after_static_solving() {
+    let cwd = fixture();
+    for (source, expected) in [
+        ("def unused = 1 / 0; export def answer = 42;", Some("division")),
+        ("def unused: Fn() -> Int = fn() { fail!(\"not called\") }; export def answer = 42;", None),
+        ("@property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!(\"check property sentinel\") }; @mark type Item = struct { value: Int };", Some("check property sentinel")),
+    ] {
+        fs::write(cwd.join("src/main.telora"), source).unwrap();
+        for types_only in [true, false] {
+            let mut command = telora(&cwd);
+            command.args(["check", "@src/main"]);
+            if types_only { command.arg("--only-types"); }
+            let output = command.output().unwrap();
+            let text = String::from_utf8(output.stdout).unwrap();
+            let records = text.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+            let summary = records.iter().find(|r| r["record"] == "summary").unwrap();
+            assert_eq!(output.status.success(), types_only || expected.is_none(), "{source}\n{text}\n{}", String::from_utf8_lossy(&output.stderr));
+            assert_eq!(summary["types_only"], types_only);
+            assert!(summary["static_seconds"].is_number());
+            if types_only { assert_eq!(summary["execution_seconds"], 0.0); }
+            if !types_only && let Some(expected) = expected {
+                assert!(records.iter().any(|r| r["message"].as_str().is_some_and(|s| s.contains(expected))), "{text}");
+            }
+        }
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_eval_property_queries_execute_lazily_in_both_entry_modes() {
     let cwd = fixture();
     for (mode, fail, queried_type, succeeds) in [

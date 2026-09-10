@@ -35,6 +35,23 @@ fn private(name: &str) -> bool {
 }
 
 impl Inventory {
+    pub fn undeclared_warnings(&self) -> Result<Vec<String>, String> {
+        let mut warnings = vec![];
+        if let Some(workspace) = &self.workspace {
+            for (crate_name, _) in workspace.crates() {
+                for module in workspace
+                    .undeclared_modules(crate_name)
+                    .map_err(|e| e.to_string())?
+                {
+                    warnings.push(format!(
+                        "crate {:?} contains undeclared module file {}; add {:?} to telora-crate.json modules",
+                        module.crate_name, module.relative_path.display(), module.selector,
+                    ));
+                }
+            }
+        }
+        Ok(warnings)
+    }
     /// Called by the execution linker after static solving and code generation.
     pub fn read_data(
         &self,

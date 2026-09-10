@@ -5,6 +5,51 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Ordinary check uses a sealed session initialization root (2026-09-10)
+
+The CLI check command no longer calls Engine.recover_with_resolver. Both modes
+use the same inventory and three MIR passes. --only-types returns the static
+outcomes without constructing a VM or reading data contents. Ordinary check
+requires a successful seal, compiles a distinct Check root, links data and ABI
+references, then executes with one VM-owned session state and quota account.
+
+The Check root installs all discovered source-global and property thunks, then
+demands their slots. Function definitions create closures but do not call their
+bodies. Native/data bindings are available before any demand; dependency reads
+reuse the existing lazy table, so shared globals/properties are not copied or
+reinitialized at module boundaries. Uncaught VM errors currently stop execution
+at the first failing root. Static diagnostics still collect across the graph.
+
+VM.check_linked returns only diagnostics. No initialized property/global value
+is exported to a host object or moved to another world. The successful root is
+Unit; it does not pretend to be a user export. Check output retains the diagnostic
+and summary schema, adds static_seconds/execution_seconds, preserves undeclared
+module warnings and excludes builtin modules from the user dependency count.
+Execution time includes codegen/link/data preparation and VM initialization.
+
+Regression work also restores explicit-open-import precedence over implicit
+prelude defaults while explicit prelude imports participate in ambiguity. This
+choice is closed by symbol-resolve, not repeated by the type or execution stages.
+Query displays nominal type names instead of internal SymbolId formatting.
+
+New tests exercise unused failing globals, uncalled failing function bodies,
+forced property failures, demand cycles, data-before-property order, unread
+malformed data under --only-types and suppression of VM execution after type
+errors. The existing check regression selection currently has nine passes and
+three failures: newtype/trait execution, parser-recovery diagnostic fallout and
+an unmigrated run invocation. Those are remaining assembly gaps; connecting
+ordinary check is not a claim that all language cases or the full suite pass.
+
+Focused validation: 21 codegen tests, four symbol-pass tests and 13 static-MIR
+CLI tests pass (including eval/eval-with). Logs: `/tmp/mir-check-core-tests.log`,
+`/tmp/mir-check-symbol-tests.log`, `/tmp/mir-check-static-cli-tests.log`, and
+`/tmp/mir-check-regression-tests.log`. Diff and source-size checks pass with
+large-file review warnings.
+
+Construction checks, generic metadata/evidence, remaining codegen forms,
+run/serve/LSP and removal of the old implementation remain pending. No performance
+claim is made at this checkpoint.
+
 ### Solved pattern branches and native algebraic values (2026-09-10)
 
 The new emitter now lowers match, guards, if-let, let-else and boolean short

@@ -33,36 +33,83 @@ fn diagnostic(mir: &Mir, schema: &str, root: &str, d: &Diagnostic) -> Value {
             "location": location(mir, l.location), "message": l.message, "primary": l.primary})).collect::<Vec<_>>()})
 }
 
-pub fn check(context: PathBuf, selector: &str, schema: &str) -> Result<i32, String> {
+pub fn check(
+    context: PathBuf,
+    selector: &str,
+    schema: &str,
+    types_only: bool,
+) -> Result<i32, String> {
     let started = Instant::now();
     let mut inventory = Inventory::new(&context, selector.starts_with("std/"))?;
     let root = inventory.select(selector)?;
+    for message in inventory.undeclared_warnings()? {
+        emit(
+            json!({"schema": schema, "module": root, "record": "diagnostic",
+            "severity": "warning", "message": message, "labels": [], "notes": []}),
+        )?;
+    }
     let catalog_seconds = started.elapsed().as_secs_f64();
     let started = Instant::now();
-    let mir = inventory.solve(&root);
-    let check_seconds = started.elapsed().as_secs_f64();
+    let mut mir = inventory.solve(&root);
+    let static_seconds = started.elapsed().as_secs_f64();
     let unproven_bounds = mir
         .bound_requirements
         .iter()
         .filter(|r| !r.state.is_proven())
         .count();
-    for d in &mir.diagnostics {
-        emit(diagnostic(&mir, schema, &root, d))?;
-    }
-    let failed = mir
+    let static_failed = mir
         .diagnostics
         .iter()
         .any(|d| d.severity == Severity::Error)
         || !mir.type_unknowns.is_empty()
         || !mir.type_conflicts.is_empty()
         || unproven_bounds != 0;
+    let execution_started = Instant::now();
+    let mut execution_diagnostics = vec![];
+    if !types_only && !static_failed {
+        let artifact = mir.seal().and_then(telora_core::codegen::compile_check);
+        let linked = artifact.and_then(|artifact| {
+            telora_core::execution_link::link_entry_with_data(artifact, |link| {
+                inventory.read_data(link, crate::engine_config().data_limits.file_size)
+            })
+        });
+        match linked {
+            Ok(linked) => {
+                let config = crate::engine_config();
+                execution_diagnostics = telora_core::Vm::new()
+                    .with_debug_sink(std::sync::Arc::new(crate::StderrDebugSink))
+                    .check_linked(
+                        linked,
+                        config.session_quota,
+                        config.data_limits,
+                        &mut mir.sources,
+                    );
+            }
+            Err(diagnostics) => execution_diagnostics = diagnostics,
+        }
+    }
+    let execution_seconds = if types_only || static_failed {
+        0.0
+    } else {
+        execution_started.elapsed().as_secs_f64()
+    };
+    let failed = static_failed
+        || execution_diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error);
+    for d in mir.diagnostics.iter().chain(&execution_diagnostics) {
+        emit(diagnostic(&mir, schema, &root, d))?;
+    }
+    let check_seconds = static_seconds + execution_seconds;
     emit(
         json!({"schema": schema, "module": root, "record": "summary",
-        "status": if failed { "error" } else { "ok" }, "types_only": true,
-        "dependencies": mir.modules.iter().filter(|m| !matches!(m.state, ModuleState::Unloaded)).count().saturating_sub(1),
+        "status": if failed { "error" } else { "ok" }, "types_only": types_only,
+        "dependencies": mir.modules.iter().filter(|m| !matches!(m.state, ModuleState::Unloaded)
+            && inventory.entries.get(&m.name).is_some_and(|entry| entry.origin != "builtin")).count().saturating_sub(1),
         "unknown_types": mir.type_unknowns.len(), "type_conflicts": mir.type_conflicts.len(),
         "property_records": mir.properties.len(), "bound_requirements": mir.bound_requirements.len(), "unproven_bounds": unproven_bounds,
-        "check_seconds": check_seconds, "catalog_seconds": catalog_seconds}),
+        "check_seconds": check_seconds, "static_seconds": static_seconds, "execution_seconds": execution_seconds,
+        "catalog_seconds": catalog_seconds}),
     )?;
     Ok(i32::from(failed))
 }
@@ -97,6 +144,14 @@ fn type_name(mir: &Mir, id: TypeId) -> String {
             format!("module {}", mir.modules[module.index()].name)
         }
         TypeConstructor::Parameter(symbol) => mir.symbols[symbol.index()].name.clone(),
+        TypeConstructor::Nominal(symbol) => {
+            let name = &mir.symbols[symbol.index()].name;
+            if args.is_empty() {
+                name.clone()
+            } else {
+                format!("{name}({})", args.join(", "))
+            }
+        }
         TypeConstructor::Meta => format!("TypeOf({})", args.join(", ")),
         cons if args.is_empty() => format!("{cons:?}"),
         cons => format!("{cons:?}({})", args.join(", ")),
