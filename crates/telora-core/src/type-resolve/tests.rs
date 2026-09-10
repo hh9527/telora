@@ -385,3 +385,184 @@ fn configured_decorators_use_factory_and_provider_signatures() {
     assert!(mir.type_conflicts.is_empty(), "{:?}", mir.type_conflicts);
     assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());
 }
+
+#[test]
+fn property_presence_proves_signature_bounds_without_running_providers() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type)
+        type Label = struct { text: String };
+        def label: Fn(Type, Option(Label)) -> Label = fn(owner, previous) { fail!("must not run") };
+        @label @label
+        type Item = struct { value: Int };
+        native inspect: for(P, T: Property(P)) Fn(TypeOf(T), TypeOf(P)) -> P;
+        def read: for(T: Property(Label)) Fn(TypeOf(T)) -> Label = fn(target) { inspect(target, Label.type) };
+        export def answer = read(Item.type);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());
+    assert!(
+        mir.bound_requirements
+            .iter()
+            .any(|b| matches!(b.state, BoundState::Assumed(_)))
+    );
+    assert!(
+        mir.bound_requirements
+            .iter()
+            .any(|b| matches!(b.state, BoundState::Property(_)))
+    );
+    assert_eq!(
+        mir.properties
+            .iter()
+            .filter(|p| p.providers.len() == 2)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn missing_property_bound_is_rejected_with_all_type_slots_known() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type)
+        type Label = struct { text: String };
+        native requires: for(T: Property(Label)) Fn(TypeOf(T)) -> Bool;
+        export def answer = requires(Int.type);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());
+    assert!(
+        mir.bound_requirements
+            .iter()
+            .any(|b| b.state == BoundState::Rejected)
+    );
+    assert!(
+        mir.diagnostics
+            .iter()
+            .any(|d| d.message.contains("no static evidence") && !d.labels.is_empty())
+    );
+}
+
+#[test]
+fn trait_implementations_consume_property_evidence_and_lexical_bounds() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type)
+        type Label = struct { text: String };
+        def label: Fn(Type, Option(Label)) -> Label = fn(owner, previous) { fail!("not executed") };
+        @label type Item = struct { value: Int };
+        trait Named { name: Fn(Self) -> String };
+        impl(T: Property(Label)) Named for T { name: fn(value) { "named" } };
+        def name: for(T: Named) Fn(T) -> String = fn(value) { Named.name(value) };
+        def item: Item = { value: 1 };
+        export def answer = name(item);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(
+        mir.diagnostics.is_empty(),
+        "{:?}\n{}",
+        mir.diagnostics,
+        mir.dump()
+    );
+    assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());
+    assert!(
+        mir.bound_requirements
+            .iter()
+            .any(|b| matches!(b.state, BoundState::Implementation(_)))
+    );
+    assert!(
+        mir.bound_requirements
+            .iter()
+            .any(|b| matches!(b.state, BoundState::Assumed(_)))
+    );
+}
+
+#[test]
+fn trait_evidence_rejects_missing_cycles_overlap_and_wrong_member_signatures() {
+    for (source, message) in [
+        (
+            "trait Show { show: Fn(Self) -> String }; export def answer = Show.show(1);",
+            "no static evidence",
+        ),
+        (
+            "trait Show { show: Fn(Self) -> String }; impl(T: Show) Show for T { show: fn(x) { \"cycle\" } }; export def answer = Show.show(1);",
+            "no static evidence",
+        ),
+        (
+            "trait Show { show: Fn(Self) -> String }; impl(T) Show for T { show: fn(x) { \"all\" } }; impl Show for Int { show: fn(x) { \"int\" } }; export { Show };",
+            "overlapping trait implementations",
+        ),
+        (
+            "trait Show { show: Fn(Self) -> String }; impl Show for Int { show: fn(x) { 42 } }; export { Show };",
+            "incompatible types",
+        ),
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(
+            mir.diagnostics.iter().any(|d| d.message.contains(message)),
+            "{message}: {:?}",
+            mir.diagnostics
+        );
+    }
+}
+
+#[test]
+fn member_properties_keep_separate_presence_records_and_structural_contexts() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Field) type Mark = struct { value: Int };
+        type Ctx = struct { owner: Type, index: Int, name: String, ty: Type };
+        def mark: Fn(Ctx, Option(Mark)) -> Mark = fn(ctx, previous) { { value: ctx.index } };
+        type Item = struct { @mark first: Int, @mark second: String };
+        export def item: Item = { first: 1, second: "ok" };
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(
+        mir.properties
+            .iter()
+            .any(|p| p.site == PropertySite::Field(0))
+    );
+    assert!(
+        mir.properties
+            .iter()
+            .any(|p| p.site == PropertySite::Field(1))
+    );
+}
+
+#[test]
+fn exact_impl_wins_over_property_blanket_without_specializing_function_names() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type) type Tag = struct { value: Int };
+        def tag: Fn(Type, Option(Tag)) -> Tag = fn(owner, previous) { { value: 1 } };
+        @tag type Item = struct { value: Int };
+        trait Label { label: Fn(Self) -> String };
+        impl(T: Property(Tag)) Label for T { label: fn(value) { "generic" } };
+        impl Label for Item { label: fn(value) { "exact" } };
+        impl Label for Int { label: fn(value) { "primitive" } };
+        def item: Item = { value: 1 };
+        export def answer = Label.label(item);
+        export def number = Label.label(1);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    for requirement in &mir.bound_requirements {
+        let BoundState::Implementation(symbol) = requirement.state else {
+            continue;
+        };
+        assert!(mir.symbol_generics[symbol.index()].is_empty());
+    }
+}

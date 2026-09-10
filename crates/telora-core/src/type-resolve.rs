@@ -9,13 +9,22 @@ mod arena;
 mod constraints;
 #[path = "type-resolve/definitions.rs"]
 mod definitions;
+#[path = "type-resolve/evidence.rs"]
+mod evidence;
 #[path = "type-resolve/members.rs"]
 mod members;
+#[path = "type-resolve/properties.rs"]
+mod properties;
 #[cfg(test)]
 #[path = "type-resolve/tests.rs"]
 mod tests;
 
 enum Task {
+    BoundContext {
+        node: HirId,
+        subject: TypeSlotId,
+        bound: TypeSlotId,
+    },
     DiagnosticInput {
         node: HirId,
         input: TypeSlotId,
@@ -73,6 +82,8 @@ struct Solver<'a> {
     instances: Vec<Vec<(SymbolId, TypeSlotId)>>,
     return_slots: Vec<Option<TypeSlotId>>,
     administrative: Vec<bool>,
+    decorator_contexts: Vec<Option<TypeSlotId>>,
+    property_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
 }
 
 pub fn resolve(mir: &mut Mir) {
@@ -91,6 +102,7 @@ pub fn resolve(mir: &mut Mir) {
         solver.mir.symbol_types.push(slot);
     }
     solver.prepare_definitions();
+    solver.prepare_properties();
     for index in 0..solver.mir.symbols.len() {
         let slot = solver.mir.symbol_types[index];
         let symbol = &solver.mir.symbols[index];
@@ -146,6 +158,9 @@ pub fn resolve(mir: &mut Mir) {
         }
     }
     solver.finalize();
+    solver.finalize_properties();
+    solver.prove_bounds();
+    solver.mir.types_solved = true;
 }
 
 impl Solver<'_> {
@@ -156,6 +171,8 @@ impl Solver<'_> {
             instances: vec![vec![]; mir.hir.len()],
             return_slots: vec![None; mir.hir.len()],
             administrative: vec![false; mir.hir.len()],
+            decorator_contexts: vec![None; mir.hir.len()],
+            property_declarations: vec![],
             mir,
             revision: 0,
             tasks: vec![],
@@ -490,11 +507,12 @@ impl Solver<'_> {
             }
             HirKind::Parameter | HirKind::ReturnType => self.annotation(node),
             HirKind::TypeParameter => {
-                if !self.children(node, Role::Bound).is_empty() {
-                    self.mir.diagnostics.push(Diagnostic::error(
-                        "new type pass does not yet prove generic bounds",
-                        self.mir.hir[node.index()].location,
-                    ));
+                for bound in self.children(node, Role::Bound) {
+                    self.tasks.push(Task::BoundContext {
+                        node: bound,
+                        subject: node.ty(),
+                        bound: bound.ty(),
+                    });
                 }
             }
             HirKind::Decorator { configured } => {
@@ -514,7 +532,8 @@ impl Solver<'_> {
                 } else {
                     callee
                 };
-                let context = self.structure(TypeConstructor::Type, vec![]);
+                let context = self.decorator_contexts[node.index()]
+                    .unwrap_or_else(|| self.structure(TypeConstructor::Type, vec![]));
                 let previous = self.structure(TypeConstructor::Option, vec![node.ty()]);
                 self.tasks.push(Task::Call {
                     node,

@@ -41,6 +41,11 @@ pub fn check(context: PathBuf, selector: &str, schema: &str) -> Result<i32, Stri
     let started = Instant::now();
     let mir = inventory.solve(&root);
     let check_seconds = started.elapsed().as_secs_f64();
+    let unproven_bounds = mir
+        .bound_requirements
+        .iter()
+        .filter(|r| !r.state.is_proven())
+        .count();
     for d in &mir.diagnostics {
         emit(diagnostic(&mir, schema, &root, d))?;
     }
@@ -49,12 +54,14 @@ pub fn check(context: PathBuf, selector: &str, schema: &str) -> Result<i32, Stri
         .iter()
         .any(|d| d.severity == Severity::Error)
         || !mir.type_unknowns.is_empty()
-        || !mir.type_conflicts.is_empty();
+        || !mir.type_conflicts.is_empty()
+        || unproven_bounds != 0;
     emit(
         json!({"schema": schema, "module": root, "record": "summary",
         "status": if failed { "error" } else { "ok" }, "types_only": true,
         "dependencies": mir.modules.iter().filter(|m| !matches!(m.state, ModuleState::Unloaded)).count().saturating_sub(1),
         "unknown_types": mir.type_unknowns.len(), "type_conflicts": mir.type_conflicts.len(),
+        "property_records": mir.properties.len(), "bound_requirements": mir.bound_requirements.len(), "unproven_bounds": unproven_bounds,
         "check_seconds": check_seconds, "catalog_seconds": catalog_seconds}),
     )?;
     Ok(i32::from(failed))

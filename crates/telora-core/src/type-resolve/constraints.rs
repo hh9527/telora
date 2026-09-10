@@ -10,6 +10,58 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::BoundContext {
+                node,
+                subject,
+                bound,
+            } => match (self.term(subject).cloned(), self.term(bound).cloned()) {
+                (Some(subject_term), Some(bound_term))
+                    if subject_term.constructor == TypeConstructor::Meta
+                        && bound_term.constructor == TypeConstructor::Meta =>
+                {
+                    if let Some(raw) = self.term(bound_term.arguments[0]).cloned() {
+                        match raw.constructor {
+                            TypeConstructor::PropertyBound => {}
+                            TypeConstructor::Nominal(symbol)
+                                if self.is_trait(symbol) && raw.arguments.len() == 1 =>
+                            {
+                                self.equal(
+                                    subject_term.arguments[0],
+                                    raw.arguments[0],
+                                    Some(self.mir.hir[node.index()].location),
+                                );
+                            }
+                            _ => self.conflict(
+                                node.ty(),
+                                node.ty(),
+                                Some(self.mir.hir[node.index()].location),
+                                "generic bound must be a trait or Property(P)".into(),
+                            ),
+                        }
+                        None
+                    } else {
+                        Some(Task::BoundContext {
+                            node,
+                            subject,
+                            bound,
+                        })
+                    }
+                }
+                (Some(_), Some(_)) => {
+                    self.conflict(
+                        node.ty(),
+                        node.ty(),
+                        Some(self.mir.hir[node.index()].location),
+                        "generic bound must be a type expression".into(),
+                    );
+                    None
+                }
+                _ => Some(Task::BoundContext {
+                    node,
+                    subject,
+                    bound,
+                }),
+            },
             Task::DiagnosticInput { node, input } => {
                 if matches!(
                     self.mir.ty_slots[self.root(input).index()],

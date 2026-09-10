@@ -5,6 +5,50 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Static property and trait evidence graph (2026-09-10)
+
+Property providers and configured factories remain ordinary functions. The
+decorator syntax supplies the ordinary call arguments and records the resulting
+property type against the target; no provider/function name selects an inference
+rule. Field and variant sites supply their structural context types. Providers
+are never executed by this pass, including when their bodies unconditionally
+fail. Presence records group the same owner/site/property key and retain the
+provider sequence for the later metadata stage.
+
+Declaration bounds are lexical assumptions identified by their parameter
+SymbolIds. Every generic use instantiates its own bound obligations alongside
+its type slots. Trait member access generates an obligation for the receiver's
+resolved trait identity and target. Impl bodies are checked against the trait
+skeleton using the same record/function constraints as ordinary code.
+
+The pass builds one evidence graph, then propagates proofs to a least fixed
+point. Property presence and lexical assumptions supply roots; instantiated impl
+requirements supply graph edges. Unproven cycles cannot prove themselves. There
+is no speculative evaluation or failure/rollback path. The final MIR retains
+evidence nodes, selected impl SymbolIds, substitutions, dependencies, and the
+links from source references, so downstream code generation need not select or
+solve evidence again. Duplicate bounds, invalid impl targets, overlapping impls,
+missing evidence and wrong member signatures are diagnostics. RFC 0260's concrete
+impl precedence over property-constrained blankets is preserved by declaration
+identity and shape, without special cases for standard trait/function names.
+
+The types-only success gate now also checks every bound outcome and reports
+`property_records`, `bound_requirements` and `unproven_bounds` in its summary.
+The pass completion marker is set after evidence solving. This completes the
+previously explicit missing `Property(P)` proof path, not the whole architecture:
+static data contracts, remaining expression rules, metadata capability/value
+validation, execution assembly and removal of old execution consumers remain.
+
+Validation: 26 focused core pass tests pass. The added tests cover property
+presence with nonexecuting providers, lexical assumptions, missing evidence with
+fully known types, trait-to-property dependencies, self-proof cycles, impl
+overlap, concrete precedence, field contexts and nominal member signatures.
+Four static CLI tests pass, including these facts across module boundaries.
+The actual ontology `check --only-types @test/query` now exits 0 with 0 Unknown,
+0 Conflicted, 8 property presence records, 4 bound obligations and 0 unproven
+bounds. This verifies the exercised rules without evaluating Telora, not complete
+language coverage or a performance improvement claim.
+
 ### Declaration-driven inference expansion (2026-09-10)
 
 The static scope rule is solely `import "std/prelude" *;`. The symbol pass no

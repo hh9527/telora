@@ -241,6 +241,5 @@ impl Solver<'_> {
                 self.mir.type_unknowns.push(slot);
             }
         }
-        self.mir.types_solved = true;
     }
 }

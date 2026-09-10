@@ -38,6 +38,61 @@ fn static_mir_generic_native_signatures_determine_check_outcome() {
 }
 
 #[test]
+fn static_mir_proves_trait_property_dependencies_without_executing_functions() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/model.telora"),
+        r#"
+        @property(PropertyTarget.Type) type Tag = struct { value: Int };
+        def tag: Fn(Type, Option(Tag)) -> Tag = fn(owner, previous) { fail!("provider executed") };
+        @tag type Item = struct { value: Int };
+        trait Named { name: Fn(Self) -> String };
+        impl(T: Property(Tag)) Named for T { name: fn(value) { fail!("impl executed") } };
+        def name: for(T: Named) Fn(T) -> String = fn(value) { Named.name(value) };
+        export { Item, name };
+    "#,
+    )
+    .unwrap();
+    for (value, expected_code) in [("item", 0), ("1", 1)] {
+        fs::write(
+            cwd.join("src/main.telora"),
+            format!(
+                r#"
+            import "./model" as model;
+            def item: model.Item = {{ value: 1 }};
+            export def answer = model.name({value});
+        "#
+            ),
+        )
+        .unwrap();
+        let output = telora(&cwd)
+            .args(["check", "--only-types", "@src/main"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(expected_code),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let records = jsonl(&output.stdout);
+        let summary = records.iter().find(|r| r["record"] == "summary").unwrap();
+        assert_eq!(summary["unknown_types"], 0);
+        assert_eq!(summary["type_conflicts"], 0);
+        assert_eq!(
+            summary["unproven_bounds"].as_u64().unwrap() == 0,
+            expected_code == 0
+        );
+        assert!(
+            !records
+                .iter()
+                .any(|r| r["message"] == "provider executed" || r["message"] == "impl executed")
+        );
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_query_returns_known_unknown_and_conflicted_without_evaluation() {
     let cwd = fixture();
     fs::write(

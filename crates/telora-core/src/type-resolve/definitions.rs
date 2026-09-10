@@ -138,6 +138,25 @@ impl Solver<'_> {
             .map(|p| (p, self.fresh()))
             .collect::<Vec<_>>();
         self.instances[node.index()] = arguments.clone();
+        for &(parameter, subject) in &arguments {
+            let declarations = self.mir.symbols[parameter.index()].declarations.clone();
+            for declaration in declarations {
+                for bound in self.children(declaration, Role::Bound) {
+                    let bound = self.instantiate(
+                        bound.ty(),
+                        &arguments,
+                        Some(self.mir.hir[node.index()].location),
+                    );
+                    self.mir.bound_requirements.push(BoundRequirement {
+                        subject,
+                        bound,
+                        reference: node,
+                        state: BoundState::Pending,
+                        evidence: None,
+                    });
+                }
+            }
+        }
         self.tasks.push(Task::Instantiate {
             source: self.mir.symbol_types[symbol.index()],
             target: node.ty(),

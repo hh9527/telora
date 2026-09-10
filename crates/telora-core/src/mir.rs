@@ -224,6 +224,72 @@ pub struct TypeMember {
     pub syntax: HirId,
     pub payload: Option<TypeSlotId>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PropertySite {
+    Type,
+    Field(u32),
+    Variant(u32),
+}
+
+/// One static presence fact. Providers are retained in declaration/reduce order;
+/// their code is executed only by the subsequent metadata stage.
+#[derive(Debug)]
+pub struct PropertyRecord {
+    pub owner: TypeId,
+    pub site: PropertySite,
+    pub property: TypeId,
+    pub providers: Vec<HirId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoundState {
+    Pending,
+    Assumed(SymbolId),
+    Property(usize),
+    Implementation(SymbolId),
+    Ambiguous,
+    Unresolved,
+    Rejected,
+}
+
+impl BoundState {
+    pub fn is_proven(self) -> bool {
+        matches!(
+            self,
+            Self::Assumed(_) | Self::Property(_) | Self::Implementation(_)
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TraitImplementation {
+    pub symbol: SymbolId,
+    /// A trait skeleton applied to its target, possibly with rigid parameters.
+    pub trait_type: TypeId,
+    pub requirements: Vec<(SymbolId, TypeId)>,
+}
+
+#[derive(Debug)]
+pub struct BoundRequirement {
+    pub subject: TypeSlotId,
+    /// The instantiated type expression describing the bound.
+    pub bound: TypeSlotId,
+    pub reference: HirId,
+    pub state: BoundState,
+    pub evidence: Option<usize>,
+}
+
+/// A node in the session's static evidence graph, retained for code generation.
+#[derive(Debug)]
+pub struct EvidenceNode {
+    pub subject: TypeId,
+    pub bound: TypeId,
+    pub state: BoundState,
+    pub implementation: Option<SymbolId>,
+    pub arguments: Vec<(SymbolId, TypeId)>,
+    pub dependencies: Vec<usize>,
+}
 #[derive(Clone, Debug)]
 pub struct TypeTerm {
     pub constructor: TypeConstructor,
@@ -407,6 +473,10 @@ pub struct Mir {
     pub type_terms: Vec<TypeTerm>,
     pub types: Vec<ResolvedType>,
     pub type_definitions: Vec<TypeDefinition>,
+    pub properties: Vec<PropertyRecord>,
+    pub bound_requirements: Vec<BoundRequirement>,
+    pub trait_implementations: Vec<TraitImplementation>,
+    pub evidence: Vec<EvidenceNode>,
     pub type_conflicts: Vec<TypeConflict>,
     pub type_unknowns: Vec<TypeSlotId>,
     pub required_types: Vec<bool>,
@@ -501,6 +571,18 @@ impl Mir {
         }
         for definition in &self.type_definitions {
             writeln!(out, "type-definition {definition:?}").unwrap();
+        }
+        for (id, property) in self.properties.iter().enumerate() {
+            writeln!(out, "property {id} {property:?}").unwrap();
+        }
+        for (id, bound) in self.bound_requirements.iter().enumerate() {
+            writeln!(out, "bound {id} {bound:?}").unwrap();
+        }
+        for implementation in &self.trait_implementations {
+            writeln!(out, "trait-impl {implementation:?}").unwrap();
+        }
+        for (id, evidence) in self.evidence.iter().enumerate() {
+            writeln!(out, "evidence {id} {evidence:?}").unwrap();
         }
         for (id, parameters) in self.symbol_generics.iter().enumerate() {
             if !parameters.is_empty() {

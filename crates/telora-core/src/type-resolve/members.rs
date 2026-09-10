@@ -61,6 +61,18 @@ impl Solver<'_> {
                     self.bad_member(node, &name);
                     return None;
                 };
+                if metadata && self.is_trait(*symbol) {
+                    self.same(node, payload.unwrap());
+                    let bound = self.structure(TypeConstructor::Meta, vec![ty]);
+                    self.mir.bound_requirements.push(BoundRequirement {
+                        subject: term.arguments[0],
+                        bound,
+                        reference: node,
+                        state: BoundState::Pending,
+                        evidence: None,
+                    });
+                    return None;
+                }
                 if operation == TypeOperation::Struct && !metadata {
                     self.same(node, payload.unwrap());
                     return None;
