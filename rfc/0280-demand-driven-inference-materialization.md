@@ -58,7 +58,7 @@ their bodies; preserve sharing instead of rebuilding a tree for each consumer.
 This is representation conversion, not inference or Telora evaluation. Compute
 and associate property-generated values separately. Bound parameters describe
 generic templates; concrete runtime witnesses require solved instantiations.
-`--types-only` stops before this VM import entirely.
+`--only-types` stops before this VM import entirely.
 
 Finalized type skeletons and their TypeIds may enter the main world directly;
 there is no per-module type-publication transaction. Data modules contribute the
@@ -141,7 +141,7 @@ additional constraint. Do not add compatibility paths for that purpose.
 5. Dispatch execution through entry. Both execution phases consume finalized
    typing and cannot reopen inference.
 
-`check --types-only` stops after phase 2. Ordinary check shares that same static
+`check --only-types` stops after phase 2. Ordinary check shares that same static
 artifact before continuing with its existing tooling semantics. Stable source
 IDs are session identities; cross-compilation stability is not required.
 
@@ -195,7 +195,7 @@ later target a more efficient VM or native code without changing the static solv
 The immediate implementation priority is complete phase-1 type solving and removal
 of inference from phases 2 and 3, while preserving their existing execution behavior.
 Record-offset lowering and backend changes remain deferred. The first observable
-entry to this boundary is now `telora check --types-only MODULE_ID`: discover and
+entry to this boundary is now `telora check --only-types MODULE_ID`: discover and
 solve the graph, including tool and runtime function bodies, without constructing
 a VM or runtime heap. Ordinary `check` retains its execution behavior.
 Both modes report `catalog_seconds` (workspace/catalog preparation) and
@@ -858,7 +858,7 @@ is not an implementation of the handoff: it would repeat program solving.
 
 ## Type-only check and phase measurement
 
-`check --types-only MODULE_ID` is now available as an intermediate observation
+`check --only-types MODULE_ID` is now available as an intermediate observation
 point for the static phase. Its loader owns syntax and static interfaces without
 a VM or runtime heap. It checks function bodies and static tool contracts but
 does not execute properties, `@check`, or module values. Ordinary `check` retains

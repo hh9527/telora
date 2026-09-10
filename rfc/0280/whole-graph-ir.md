@@ -5,6 +5,42 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Early static CLI assembly (2026-09-10)
+
+The agreed next small integration step is now in place: `check --only-types`
+and `query` consume the new MIR. `--only-types` is the sole spelling; there is
+no `--types-only` alias. This does not declare the third pass complete or start
+assembly of execution consumers.
+
+`static_input.rs` builds the workspace/test/embedded-source inventory from
+package declarations and source text, then runs module, symbol and type passes
+on one MIR. It does not use the old ModuleResolver, Engine, WorkspaceSnapshot,
+type interfaces or VM. Embedded sources and intrinsic names are independent
+static inputs; no native callbacks or runtime types are constructed. The module
+pass accepts a logical-request policy for owner-relative selectors, dependencies
+and private/test visibility. Root/import/read failures are MIR diagnostics.
+
+`static_cli.rs` reads MIR diagnostics, source locations, symbol IDs and normalized
+type states directly. Query records include their session-local IDs and explicit
+Bound/Unresolved/Conflicted or Known/Unknown/Conflicted states. A query can return
+facts when the program has errors; an unresolved/unavailable root fails. Module
+listing only reads the inventory. Old CLI query snapshot consumers and the old
+types-only CLI call were removed, without a fallback. Ordinary check/evaluation
+and LSP remain on their existing path pending further assembly.
+
+The bridge is an observation surface for the unfinished type pass, not production
+language parity. In particular the prelude already exercises unsupported rules;
+valid source can still fail types-only checking. Static data modules export a
+`data` symbol but its canonical `Value` type is not yet solved. No timing comparison
+against ordinary check is meaningful at this point.
+
+Validation: core pass tests and focused CLI tests cover independent known,
+unknown and conflicted facts; cross-module and test-module queries; source-position
+references; invalid data remaining unparsed and division-by-zero remaining
+unevaluated. Complete acceptance and performance coverage remain for full assembly.
+
+### Original independent-pass construction sequence
+
 The agreed development sequence is now:
 
 1. Establish a compiling `telora-core` baseline. Do not require the `telora`
@@ -52,7 +88,7 @@ slots use the HIR node index. Unannotated parameters and closure results have
 slots too. No symbols or types are solved while lowering.
 
 The first pass uses an explicit canonical-name inventory and a text-only reader.
-Workspace configuration/catalog construction is not yet wired to it. Data
+Workspace configuration/catalog construction is now wired through the static CLI input. Data
 modules retain their static identity/contract without reading contents. Imports
 retain Bound/Unresolved/Conflicted targets; cycles retain graph edges. Each source
 is parsed once. Unknown inventory entries remain unloaded until reachable.

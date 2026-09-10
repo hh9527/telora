@@ -15,9 +15,19 @@ pub struct ModuleSpec {
 
 /// Inventory is independent of reachability. IDs are allocated before any read.
 pub fn resolve(
+    inventory: Vec<ModuleSpec>,
+    roots: &[String],
+    read: impl FnMut(ModuleId, &str) -> Result<String, String>,
+) -> Mir {
+    resolve_with_requests(inventory, roots, read, canonical_request)
+}
+
+/// The host supplies logical naming/access policy, never another module graph.
+pub fn resolve_with_requests(
     mut inventory: Vec<ModuleSpec>,
     roots: &[String],
     mut read: impl FnMut(ModuleId, &str) -> Result<String, String>,
+    mut request_name: impl FnMut(&str, &str) -> Option<String>,
 ) -> Mir {
     inventory.sort_by(|a, b| a.name.cmp(&b.name));
     let mut mir = Mir::default();
@@ -36,6 +46,16 @@ pub fn resolve(
         .iter()
         .map(|root| lookup(&names, root.clone()))
         .collect();
+    for root in &mir.roots {
+        if !matches!(root, ModuleTarget::Bound(_)) {
+            mir.diagnostics.push(crate::source::Diagnostic {
+                severity: crate::source::Severity::Error,
+                message: format!("module root is not resolved: {root:?}"),
+                labels: vec![],
+                notes: vec![],
+            });
+        }
+    }
     let mut pending = mir.roots.iter().filter_map(bound).collect::<BTreeSet<_>>();
     while let Some(id) = pending.pop_first() {
         if !matches!(mir.modules[id.index()].state, ModuleState::Unloaded) {
@@ -50,6 +70,12 @@ pub fn resolve(
         let text = match read(id, &spec.name) {
             Ok(text) => text,
             Err(message) => {
+                mir.diagnostics.push(crate::source::Diagnostic {
+                    severity: crate::source::Severity::Error,
+                    message: format!("cannot read module {}: {message}", spec.name),
+                    labels: vec![],
+                    notes: vec![],
+                });
                 mir.modules[id.index()].state = ModuleState::Unavailable(message);
                 continue;
             }
@@ -108,9 +134,16 @@ pub fn resolve(
             }
         }
         for (syntax, request) in requests {
-            let target = canonical_request(&spec.name, &request)
+            let target = request_name(&spec.name, &request)
                 .map(|name| lookup(&names, name))
                 .unwrap_or_else(|| ModuleTarget::Unresolved(request.clone()));
+            if !matches!(target, ModuleTarget::Bound(_)) {
+                let location = mir.hir[syntax.unwrap_or(body).index()].location;
+                mir.diagnostics.push(crate::source::Diagnostic::error(
+                    format!("module import {request:?} is not resolved: {target:?}"),
+                    location,
+                ));
+            }
             if let Some(target) = bound(&target) {
                 pending.insert(target);
             }
