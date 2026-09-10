@@ -30,7 +30,10 @@ impl Emitter<'_> {
             if symbols.contains(&self.mir.generic_instances[instance.index()].symbol)
                 && self.lookup_instance(instance).is_none() {
                 let dst = self.register();
-                self.emit(node, O::AllocFunc { dst, static_id: None });
+                let signature = self.mir.generic_instances[instance.index()].signature;
+                if self.mir.types[signature.index()].constructor == TypeConstructor::Function {
+                    self.emit(node, O::AllocFunc { dst, static_id: None });
+                }
                 self.local_instances.push((instance, dst));
             }
         }
@@ -41,18 +44,24 @@ impl Emitter<'_> {
             self.mir.generic_instances[instance.index()].symbol == symbol
         }).collect::<Vec<_>>();
         let value = self.child(node, Role::Value);
-        if !matches!(self.mir.hir[value.index()].kind, HirKind::Closure) {
-            return Err(self.error(node, "local generic initializer requires a closure"));
+        if !matches!(self.mir.hir[value.index()].kind,
+            HirKind::Closure | HirKind::Variable(_) | HirKind::Field | HirKind::TypeApply) {
+            return Err(self.error(node, "local generic initializer requires a non-expansive value"));
         }
         let previous = self.instance;
         for &(instance, target) in &instances {
             self.instance = Some(instance);
             let source = self.expression(value);
             self.instance = previous;
-            self.emit(node, O::SealFunc { target, source: source? });
+            let signature = self.mir.generic_instances[instance.index()].signature;
+            if self.mir.types[signature.index()].constructor == TypeConstructor::Function {
+                self.emit(node, O::SealFunc { target, source: source? });
+            } else {
+                self.emit(node, O::Move { dst: target, src: source? });
+            }
         }
         if let Some((_, value)) = instances.first() { return Ok(*value); }
-        // An unused closure literal has no execution effects.
+        // Unused non-expansive values have no execution effects.
         let dst = self.register();
         self.emit(node, O::MakeTuple { dst, items: vec![] });
         Ok(dst)

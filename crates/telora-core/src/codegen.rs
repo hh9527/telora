@@ -1423,6 +1423,72 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn nullary_constructor_aliases_have_independent_closed_owners() {
+        for source in [
+            "import \"./math\" { Empty }; export def answer = (Empty@[Int], Empty@[String]);",
+            "import \"./math\" { Message }; export def answer = { import Message.{Empty}; (Empty@[Int], Empty@[String]) };",
+            "export def answer = { import Option.{None as Empty}; (Empty@[Int], Empty@[String]) };",
+        ] {
+            let mir = graph(source, "export type Message(T) = enum { Data(T), Empty }; import Message.{Empty}; export { Empty };");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            let types = artifact.types.types[artifact.result_type.index()].arguments.clone();
+            assert_ne!(types[0], types[1]);
+            let nominal = matches!(artifact.types.types[types[0].index()].constructor, TypeConstructor::Nominal(_));
+            let result = execute(artifact).unwrap();
+            if nominal {
+                for (index, ty) in types.into_iter().enumerate() {
+                    assert_eq!(result.value().sequence_get(index).unwrap().solved_type_id(), Some(ty));
+                }
+            } else {
+                for index in 0..2 {
+                    assert_eq!(result.value().sequence_get(index).unwrap().as_atom().unwrap().as_str(), "None");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn generalized_function_aliases_preserve_local_captures() {
+        for source in [
+            "def identity = fn(value) { value }; def alias = identity; export def answer = (alias(21), alias(True));",
+            "export def answer = { let identity = fn(value) { value }; let alias = identity; (alias(21), alias(True)) };",
+            "export def answer = { let offset = 1; let identity = fn(value) { if offset == 1 { value } else { value } }; let alias = identity; (alias(21), alias(True)) };",
+        ] {
+            let mir = graph(source, "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            let result = execute(artifact).unwrap();
+            assert_eq!(result.value().sequence_get(0).unwrap().as_int(), Some(21));
+            assert_eq!(result.value().sequence_get(1).unwrap().runtime().value(), crate::heap::DecodedValue::BuiltinAtom(crate::BuiltinAtom::True));
+        }
+    }
+
+    #[test]
+    fn imported_generic_constructor_aliases_execute_closed_instances() {
+        for source in [
+            "import \"./math\" { Message }; import Message.{Data}; export def answer = (Data(1), Data@[String](\"text\"));",
+            "import \"./math\" { Make }; export def answer = (Make(1), Make@[String](\"text\"));",
+            "export def answer = { import Option.{Some as Make}; (Make(1), Make@[String](\"text\")) };",
+            "export def answer = (Option.Some@[Int](1), Option.Some@[String](\"text\"));",
+            "import \"./math\" { Message }; export def answer = (Message.Data@[Int](1), Message.Data@[String](\"text\"));",
+        ] {
+            let mir = graph(source, "export type Message(T) = enum { Data(T), Empty }; import Message.{Data as Make}; export { Make };");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            let items = artifact.types.types[artifact.result_type.index()].arguments.clone();
+            assert_ne!(items[0], items[1], "{source}");
+            let nominal = matches!(artifact.types.types[items[0].index()].constructor, TypeConstructor::Nominal(_));
+            let result = execute(artifact).unwrap();
+            let first = result.value().sequence_get(0).unwrap();
+            let second = result.value().sequence_get(1).unwrap();
+            assert_eq!(first.tagged_parts().unwrap().1.as_int(), Some(1), "{source}");
+            assert_eq!(second.tagged_parts().unwrap().1.as_str().unwrap().as_ref(), "text", "{source}");
+            if nominal {
+                assert_eq!(first.solved_type_id(), Some(items[0]), "{source}");
+                assert_eq!(second.solved_type_id(), Some(items[1]), "{source}");
+            }
+        }
+    }
+
+    #[test]
     fn first_and_cached_demands_preserve_initializer_origin_through_function_returns() {
         let mir = graph("import \"./math\" { original }; def echo: Fn(Int) -> Int = fn(value) { value }; export def answer = (echo(original), echo(original), original);", "export def original = -7;");
         let expected = mir.hir.iter().find(|node| matches!(node.kind, HirKind::Unary(crate::ast::UnaryOperator::Negate))).unwrap().location;

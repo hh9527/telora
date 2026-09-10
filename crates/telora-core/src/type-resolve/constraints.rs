@@ -39,13 +39,32 @@ impl Solver<'_> {
                 if self.mir.hir[callee.index()].resolution.is_some_and(|slot| matches!(self.mir.resolve_slots[slot.index()], ResolveState::Bound(symbol) if self.generalizations[symbol.index()].is_some())) {
                     return Ok(Some(Task::TypeApply { node }));
                 }
-                let parameters = self.mir.type_instances[callee.index()].clone();
+                let mut parameters = self.mir.type_instances[callee.index()].iter().map(|(_, slot)| *slot).collect::<Vec<_>>();
+                if parameters.is_empty()
+                    && let Some(slot) = self.mir.hir[callee.index()].resolution
+                    && let ResolveState::Member { receiver, .. } = self.mir.resolve_slots[slot.index()] {
+                    // A selected constructor retains its receiver's generic
+                    // holes. Native constructor families have positional holes
+                    // in the selected signature, identified by native rules.
+                    let Some(signature) = self.term(callee.ty()).cloned() else {
+                        return Ok(Some(Task::TypeApply { node }));
+                    };
+                    parameters = self.mir.type_instances[receiver.index()].iter().map(|(_, slot)| *slot).collect();
+                    if parameters.is_empty()
+                        && self.term(receiver.ty()).is_some_and(|term| matches!(term.constructor,
+                            TypeConstructor::TypeFunction(TypeFunction::Option | TypeFunction::Result | TypeFunction::FoldControl))) {
+                        let owner = if signature.constructor == TypeConstructor::Function {
+                            *signature.arguments.last().unwrap()
+                        } else { callee.ty() };
+                        if let Some(owner) = self.term(owner) { parameters = owner.arguments.clone(); }
+                    }
+                }
                 let arguments = self.children(node, Role::Argument);
                 if parameters.is_empty() || parameters.len() != arguments.len() {
                     self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
                         "explicit type application requires a generic binding with matching arity".into());
                 } else {
-                    for ((_, parameter), argument) in parameters.into_iter().zip(arguments) {
+                    for (parameter, argument) in parameters.into_iter().zip(arguments) {
                         self.assign(argument, TypeConstructor::Meta, vec![parameter]);
                     }
                     self.same(node, callee.ty());

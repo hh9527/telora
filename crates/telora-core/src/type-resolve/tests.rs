@@ -2,6 +2,51 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn imported_generic_constructor_uses_have_independent_type_arguments() {
+    for source in [
+        "type Message(T) = enum { Data(T), Empty }; import Message.{Data}; export def answer = (Data(1), Data@[String](\"text\"));",
+        "import Option.{Some as Make}; export def answer = (Make(1), Make@[String](\"text\"));",
+        "type Message(T) = enum { Data(T), Empty }; export def answer = (Message.Data(1), Message.Data@[String](\"text\"));",
+        "import \"std/prelude\" { Option as Family }; export def answer = (Family.Some@[Int](1), Family.Some@[String](\"text\"));",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+        let TypeState::Known(ty) = symbol_type(&mir, "answer") else { panic!("closed tuple") };
+        let items = &mir.types[ty.index()].arguments;
+        assert_eq!(items.len(), 2);
+        for (&item, expected) in items.iter().zip([TypeConstructor::Int, TypeConstructor::String]) {
+            let argument = mir.types[item.index()].arguments[0];
+            assert_eq!(mir.types[argument.index()].constructor, expected);
+        }
+    }
+}
+
+#[test]
+fn constructor_alias_arguments_follow_family_order_and_reject_wrong_arity() {
+    for source in [
+        "import Result.{Err as Reject, Ok as Accept}; export def answer: (Result(Int, String), Result(Int, String)) = (Reject@[Int, String](\"text\"), Accept@[Int, String](1));",
+        "type Outcome(T, E) = enum { Accept(T), Reject(E) }; import Outcome.{Reject}; export def answer: Outcome(Int, String) = Reject@[Int, String](\"text\");",
+        "def flip: for(T, E) Fn(E, T) -> (T, E) = fn(e, t) { (t, e) }; def alias = flip; export def answer = alias@[Int, String](\"text\", 1);",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+    }
+    for source in [
+        "export def answer = Option.Some@[Int, String](1);",
+        "type Message(T) = enum { Data(T) }; export def answer = Message.Data@[Int, String](1);",
+        "export def answer = Option.Some@[String](1);",
+        "type Message(T) = enum { Data(T) }; export def answer = Message(Int).Data@[String](\"text\");",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err(), "{source}");
+        assert!(!mir.type_conflicts.is_empty(), "{source}");
+    }
+}
+
+#[test]
 fn nonreturning_array_items_supply_bottom_only_after_live_element_evidence() {
     for (expression, expected) in [
         ("[stop(), 1]", TypeConstructor::Int),
@@ -71,6 +116,7 @@ fn callable_value_evidence_closes_nested_results_and_aliases_without_call_sites(
 #[test]
 fn implicit_schemes_fill_independent_reference_arguments_in_dependency_order() {
     for source in [
+        "def identity = fn(value) { value }; def alias = identity; export def answer = (alias(1), alias(\"text\"));",
         "def identity = fn(value) { value }; export def answer = (identity(1), identity(\"text\"), identity@[Int](3));",
         "export def answer = { let identity = fn(value) { value }; (identity(1), identity(\"text\"), identity@[Int](3)) };",
         "def first = fn(value) { second(value) }; def second = fn(value) { value }; export def answer = (first(1), first(\"text\"));",
@@ -114,11 +160,11 @@ fn implicit_schemes_do_not_generalize_recursive_captured_or_constrained_slots() 
     for source in [
         "def recur = fn(value) { if True { value } else { recur(value) } }; export def answer = (recur(1), recur(\"text\"));",
         "def left = fn(value) { right(value) }; def right = fn(value) { left(value) }; export def answer = (left(1), left(\"text\"));",
-        "def identity = fn(value) { value }; def alias = identity; export def answer = (alias(1), alias(\"text\"));",
         "def add = fn(left, right) { left + right }; export def answer = (add(1, 2), add(1.0, 2.0));",
         "def mixed = fn(value, unused) { value + value }; export def answer = (mixed(21, True), mixed(21, \"text\"));",
         "def before = fn(left, right) { left < right }; export def answer = (before(1, 2), before(\"a\", \"b\"));",
         "def before = fn(left, right) { left < right }; export def answer = before(True, False);",
+        "def factory = fn() { { make: fn(value) { value } } }; def alias = factory().make; export def answer = (alias(1), alias(\"text\"));",
         "export def answer = { let values = []; let keep = fn(value) { [...values, value] }; (keep(1), keep(\"text\")) };",
     ] {
         let mut mir = graph(&[("@src/main", source)]);

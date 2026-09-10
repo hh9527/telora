@@ -8,6 +8,17 @@ pub(super) struct Candidate {
 }
 
 impl Solver<'_> {
+    fn non_expansive(&self, mut node: HirId) -> bool {
+        loop {
+            node = match self.mir.hir[node.index()].kind {
+                HirKind::Closure | HirKind::Variable(_) => return true,
+                HirKind::Field => self.child(node, Role::Receiver).unwrap(),
+                HirKind::TypeApply => self.child(node, Role::Callee).unwrap(),
+                _ => return false,
+            };
+        }
+    }
+
     pub(super) fn prepare_generalization(&mut self) {
         let count = self.mir.symbols.len();
         self.generalizations = (0..count).map(|_| None).collect();
@@ -20,7 +31,11 @@ impl Solver<'_> {
             let declaration = symbol.declarations[0];
             if self.child(declaration, Role::Annotation).is_some() { continue; }
             let Some(value) = self.child(declaration, Role::Value) else { continue; };
-            if !matches!(self.mir.hir[value.index()].kind, HirKind::Closure) { continue; }
+            // Constructor imports lower to ordinary member-valued bindings.
+            // These non-expansive aliases need the same independent use-site
+            // instances as closure literals; sharing their holes makes the
+            // first call monomorphize every later use.
+            if !self.non_expansive(value) { continue; }
             let mut nodes = vec![];
             let mut pending = vec![value];
             while let Some(node) = pending.pop() {
@@ -118,6 +133,14 @@ impl Solver<'_> {
         if ready.is_empty() { return false; }
         for index in ready {
             let candidate = self.generalizations[index].take().unwrap();
+            if !self.term(self.mir.symbol_types[index]).is_some_and(|term| match term.constructor {
+                TypeConstructor::Function | TypeConstructor::Option | TypeConstructor::Result | TypeConstructor::FoldControl => true,
+                TypeConstructor::Nominal(symbol) => self.nominal_index[symbol.index()]
+                    .is_some_and(|definition| self.mir.type_definitions[definition].operation == TypeOperation::Enum),
+                _ => false,
+            }) {
+                continue;
+            }
             let mut excluded = blocked.clone();
             let mut captured = BTreeSet::new();
             for symbol in candidate.captures {
@@ -125,7 +148,26 @@ impl Solver<'_> {
                 // monomorphic unknowns remain owned by the surrounding scope.
                 captured.extend(self.unknown_leaves(self.mir.symbol_types[symbol.index()]));
             }
-            let leaves = self.unknown_leaves(self.mir.symbol_types[index]);
+            let mut leaves = self.unknown_leaves(self.mir.symbol_types[index]);
+            let value = candidate.nodes[0];
+            let mut ordered = self.mir.type_instances[value.index()].iter()
+                .flat_map(|(_, slot)| self.unknown_leaves(*slot)).collect::<Vec<_>>();
+            if ordered.is_empty()
+                && matches!(self.mir.member_selections[value.index()], Some(MemberSelection::EnumVariant { .. })) {
+                // A variant inherits its family's parameter order. In
+                // particular Err's payload mentions E before T, but explicit
+                // application still follows Result(T, E), not (E, T).
+                let signature = self.term(self.mir.symbol_types[index]).unwrap();
+                let owner = if signature.constructor == TypeConstructor::Function {
+                    *signature.arguments.last().unwrap()
+                } else { self.mir.symbol_types[index] };
+                ordered = self.unknown_leaves(owner);
+            }
+            ordered.retain(|slot| leaves.contains(slot));
+            for slot in leaves.drain(..) {
+                if !ordered.contains(&slot) { ordered.push(slot); }
+            }
+            let leaves = ordered;
             if leaves.iter().any(|slot| constrained.contains(slot) && !captured.contains(slot)) { continue; }
             excluded.extend(captured);
             for slot in leaves {

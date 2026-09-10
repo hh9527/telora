@@ -5,6 +5,42 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Constructor and function aliases retain generic instances (2026-09-11)
+
+Member imports lower to ordinary alias bindings. Previously only closure
+literals were eligible for implicit generalization, so imported constructors
+shared one set of argument holes: one use could constrain every other use, and
+explicit applications were rejected as non-generic. Non-expansive function and
+enum-value aliases now receive independent reference instances, including
+nullary variants. Alias eligibility checks the receiver/callee chain; a field
+selected from a call result is not silently re-executed as a generic initializer.
+Captured unknowns, recursive groups and outstanding operand constraints retain
+the existing monomorphic restrictions.
+
+Aliases preserve the source scheme's parameter order. Selected variants use
+their owner's order, including Err's Result(T, E) rather than payload-first
+(E, T). Direct member applications constrain the receiver's existing instance
+slots; native enum families use the positional slots established by native
+constructor rules, not source spelling. All decisions occur during static
+solving. Local codegen consumes finalized instance signatures and emits the
+existing function sealing or register move operation; no runtime type solving
+or container copying was added.
+
+Validation: 51 type-resolve tests and 69 codegen tests passed; the CLI build
+passed. Tests cover cross-module re-exports, local aliases/captures, native
+family renaming, nullary/payload variants, parameter order, incorrect arity and
+conflicting explicit arguments. The prior test asserting that a generic
+function alias must be monomorphic was moved to positive coverage. Actual
+language fixtures were unchanged. The full language suite still fails: the
+enum-constructors fixture's generic-application and Int/String cross-use
+diagnostics are gone, but its metadata comparison still incorrectly constrains
+a broad match result to TypeOf. That remains a separate static equality/join
+gap, alongside the other semantic gaps and old-path removal. Logs:
+/tmp/mir-member-instance-final-types.log,
+/tmp/mir-member-instance-final-codegen.log,
+/tmp/mir-member-instance-final-build.log and
+/tmp/mir-member-instance-final-language.log. No performance measurement was made.
+
 ### Demand publication preserves value origin (2026-09-11)
 
 The first lazy export/property read formerly rebased a generated initializer
