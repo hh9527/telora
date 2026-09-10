@@ -114,6 +114,28 @@ impl Emitter<'_> {
             }
         }
         thunk.function.capture_count = captures.len() as u32;
+        if let Some(PropertyAdmission::Require { capability, targets }) = record.admission {
+            let capability = &self.mir.properties[capability.index()];
+            let dependency = self.graph.property(crate::execution_graph::PropertyKey {
+                owner: capability.owner, site: capability.site, property: capability.property,
+            }).expect("sealed capability task");
+            let value = thunk.register();
+            thunk.emit(node, O::Demand { dst: value, node: dependency });
+            let bits = thunk.register();
+            thunk.emit(node, O::GetField { dst: bits, dict: value, field: "bits".into() });
+            let mask = thunk.constant(node, Constant::Int(targets));
+            let accepted = thunk.register();
+            thunk.emit(node, O::BitAnd { dst: accepted, left: bits, right: mask });
+            let zero = thunk.constant(node, Constant::Int(0));
+            let rejected = thunk.register();
+            thunk.emit(node, O::Equal { dst: rejected, left: accepted, right: zero });
+            let ready = thunk.label();
+            thunk.emit(node, O::JumpIfFalse { condition: rejected, target: ready });
+            let message = thunk.constant(node, Constant::String("property type does not support this decorator target".into()));
+            let failed = thunk.register();
+            thunk.emit(node, O::Raise { action: crate::ast::BlameAction::Fail, dst: failed, message, subjects: vec![] });
+            thunk.mark(ready);
+        }
         let owner = thunk.constant(node, Constant::SolvedType(record.owner));
         let context = match record.site {
             PropertySite::Type => owner,

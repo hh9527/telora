@@ -12,6 +12,8 @@ pub(crate) mod lower;
 mod seal;
 #[path = "mir/type-schemes.rs"]
 mod type_schemes;
+#[path = "mir/properties.rs"]
+mod properties;
 pub use seal::SealedMir;
 
 macro_rules! id {
@@ -50,6 +52,7 @@ pub enum SchemeNode {
 }
 id!(TypeTermId, TypeConflictId);
 id!(GenericInstanceId);
+id!(PropertyId);
 
 /// A statically instantiated declaration. The source HIR is shared; this
 /// instance supplies its normalized types and reference edges without cloning
@@ -333,6 +336,15 @@ pub struct PropertyRecord {
     pub concrete: bool,
     /// Solved provider node types and references for this applied owner.
     pub instance: Option<GenericInstanceId>,
+    /// Static applicability obligation; capability values remain VM work.
+    pub admission: Option<PropertyAdmission>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PropertyAdmission {
+    /// The admitted native marker bootstraps capability records themselves.
+    Capability,
+    Require { capability: PropertyId, targets: i64 },
 }
 
 #[derive(Clone, Debug)]

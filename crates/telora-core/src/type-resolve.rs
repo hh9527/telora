@@ -238,6 +238,7 @@ pub fn resolve(mir: &mut Mir) {
     solver.finalize_checks();
     solver.prove_bounds();
     solver.materialize_instances();
+    solver.mir.build_property_admissions();
     solver.mir.build_type_schemes();
     solver.mir.types_solved = true;
 }

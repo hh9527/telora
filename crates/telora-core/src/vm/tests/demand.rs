@@ -111,7 +111,7 @@ fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
     use crate::execution_graph::{EvaluationError, Request};
     use std::sync::atomic::{AtomicUsize, Ordering};
     static CALLS: AtomicUsize = AtomicUsize::new(0);
-    for (fails, generic) in [(false, false), (true, false), (false, true), (true, true)] {
+    for (fails, generic, admission) in [(false, false, 0), (true, false, 0), (false, true, 0), (true, true, 0), (true, true, 1), (true, true, 2)] {
         CALLS.store(0, Ordering::SeqCst);
         let body = if fails {
             "fail!(\"provider sentinel\")"
@@ -120,12 +120,22 @@ fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
         };
         let (item, payload, owner) = if generic { ("Item(T)", "T", "Item(Int)") }
             else { ("Item", "Int", "Item") };
+        let target = match admission {
+            1 => "do { let counted = tick(); PropertyTarget.Field }",
+            2 => "do { let counted = tick(); fail!(\"capability sentinel\") }",
+            _ => "PropertyTarget.Type",
+        };
+        let expected_error = match admission {
+            1 => "property type does not support this decorator target",
+            2 => "capability sentinel",
+            _ => "provider sentinel",
+        };
         let mir = crate::codegen::tests::graph(
             &format!(
                 r#"
             import "std/type-property" {{ get_type_prop as query }};
             native tick: Fn() -> Int;
-            @property(PropertyTarget.Type) type Mark = struct {{ value: Array(Int) }};
+            @property({target}) type Mark = struct {{ value: Array(Int) }};
             def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) {{ let counted = tick(); {body} }};
             @mark type {item} = struct {{ value: {payload} }};
             export def answer = query({owner}.type, Mark.type);
@@ -194,7 +204,7 @@ fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
             Err(mut failure) => {
                 assert!(fails);
                 assert!(failure.error.diagnostic().is_some());
-                assert!(failure.error.to_string().contains("provider sentinel"));
+                assert!(failure.error.to_string().contains(expected_error), "{}", failure.error);
                 let Err(EvaluationError::Failed(id)) = failure
                     .heap
                     .solved_evaluation

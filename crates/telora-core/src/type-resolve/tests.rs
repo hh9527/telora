@@ -2,6 +2,41 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn property_admission_links_capabilities_without_evaluating_targets() {
+    let mut mir = graph(&[("@src/main", r#"
+        import "std/prelude" {property as marker};
+        def attach = marker;
+        def choose: Fn() -> PropertyTarget = fn() { fail!("must not execute in type solving") };
+        @attach(choose()) type Mark = struct { value: Int };
+        def property: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: 42} };
+        @property type Item = struct { value: Int };
+        export def answer = Item.type;
+    "#)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let index = mir.properties.iter().position(|record| matches!(record.admission, Some(PropertyAdmission::Require { .. }))).unwrap();
+    let Some(PropertyAdmission::Require { capability, targets }) = mir.properties[index].admission else { unreachable!() };
+    assert_eq!(targets, 3);
+    assert_eq!(mir.properties[capability.index()].owner, mir.properties[index].property);
+    assert_eq!(mir.properties[capability.index()].admission, Some(PropertyAdmission::Capability));
+    mir.properties[index].admission = Some(PropertyAdmission::Capability);
+    assert!(mir.seal().is_err());
+}
+
+#[test]
+fn property_admission_rejects_missing_and_forged_capability_records() {
+    for (source, expected) in [
+        ("type Mark = struct {value: Int}; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: 42} }; @mark type Item = struct {value: Int}; export def answer = Item.type;", "no @property capability declaration"),
+        ("def forged: Fn(Type, Option(PropertyAttr)) -> PropertyAttr = fn(owner, previous) { {bits: 63} }; @forged type Mark = struct {value: Int}; export def answer = Mark.type;", "reserved for @property capability records"),
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|diagnostic| diagnostic.message.contains(expected)), "{}", mir.dump());
+        assert!(mir.seal().is_err());
+    }
+}
+
+#[test]
 fn generic_properties_close_provider_instances_before_sealing() {
     let mut mir = graph(&[("@src/main", r#"
         @property(PropertyTarget.Type) type Mark(T) = struct { witness: TypeOf(T) };

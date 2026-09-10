@@ -2425,6 +2425,60 @@ pub(crate) mod tests {
         );
     }
     #[test]
+    fn property_admission_stays_lazy_and_uses_existing_cycle_detection() {
+        for (target, query, cycle) in [
+            ("fail!(\"unused capability must stay lazy\")", "get_type_prop(Int.type, Mark.type)", false),
+            ("do { let value = get_type_prop(Item.type, Mark.type); PropertyTarget.Type }", "get_type_prop(Item.type, Mark.type)", true),
+        ] {
+            let source = format!(r#"
+                import "std/type-property" {{ get_type_prop }};
+                def choose: Fn() -> PropertyTarget = fn() {{ {target} }};
+                @property(choose()) type Mark = struct {{value: Int}};
+                def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) {{ {{value: 42}} }};
+                @mark type Item = struct {{value: Int}};
+                export def answer = match {query} {{ Some(p) => p.value, None => 42 }};
+            "#);
+            let mir = graph(&source, "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            match execute(artifact) {
+                Ok(result) => { assert!(!cycle); assert_eq!(result.value().as_int(), Some(42)); }
+                Err(error) => { assert!(cycle, "{error}"); assert!(error.to_string().contains("cyclic demand"), "{error}"); }
+            }
+        }
+    }
+
+    #[test]
+    fn property_admission_checks_dynamic_capabilities_for_every_owner_kind() {
+        for (context, declaration, query, allowed) in [
+            ("Type", "@mark type Owner = struct {value: Int};", "get_type_prop(Owner.type, Mark.type)", 3),
+            ("Type", "@mark type Owner = struct(Int);", "get_type_prop(Owner.type, Mark.type)", 3),
+            ("Type", "@mark type Owner = enum {Value(Int)};", "get_type_prop(Owner.type, Mark.type)", 5),
+            ("FieldPropertyCtx", "type Owner = struct {@mark value: Int};", "get_field_prop(Owner.type, 0, Mark.type)", 24),
+            ("VariantPropertyCtx", "type Owner = enum {@mark Value(Int)};", "get_variant_prop(Owner.type, 0, Mark.type)", 40),
+        ] {
+            for (target, bit) in [("Type", 1), ("StructType", 2), ("EnumType", 4), ("Member", 8), ("Field", 16), ("Variant", 32)] {
+                let source = format!(r#"
+                    import "std/type-property" {{ get_type_prop, get_field_prop, get_variant_prop, FieldPropertyCtx, VariantPropertyCtx }};
+                    import "std/_rt" as rt;
+                    def attach = property;
+                    def choose: Fn(Bool) -> PropertyTarget = fn(flag) {{ if flag {{ PropertyTarget.{target} }} else {{ PropertyTarget.Type }} }};
+                    @attach(choose(True)) type Mark = struct {{value: Int}};
+                    def mark: Fn({context}, Option(Mark)) -> Mark = fn(owner, previous) {{ {{value: 42}} }};
+                    {declaration}
+                    export def answer = match rt.with_diagnostics(fn(n: Int) {{ match {query} {{ Some(p) => p.value, None => 0 }} }})(0) {{
+                        Ok((value, _)) => value,
+                        Err(errors) => if errors[0].message == "property type does not support this decorator target" {{ -1 }} else {{ -2 }}
+                    }};
+                "#);
+                let mir = graph(&source, "");
+                let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+                let result = execute(artifact).unwrap();
+                assert_eq!(result.value().as_int(), Some(if allowed & bit != 0 { 42 } else { -1 }), "{source}");
+            }
+        }
+    }
+
+    #[test]
     fn generic_property_thunks_consume_closed_owner_and_provider_types() {
         let mir = graph(r#"
             import "std/type-property" { get_type_prop, get_field_prop, get_variant_prop, FieldPropertyCtx, VariantPropertyCtx };

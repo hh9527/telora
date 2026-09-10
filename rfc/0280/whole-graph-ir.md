@@ -5,6 +5,40 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Property applicability is a sealed obligation and a lazy VM check (2026-09-11)
+
+Each concrete ordinary property now carries a PropertyAdmission with the stable
+PropertyId of its capability record and its permitted owner-category mask.
+The carrier TypeId comes from the admitted native property ABI signature.
+Marker aliases retain the native binding identity; a user function named
+property is ordinary. Missing carrier declarations and non-marker attempts to
+publish the reserved PropertyAttr record produce static diagnostics. Seal
+validates the obligation, including rejection of a forged bootstrap exemption.
+
+Capability values remain tool-stage work: codegen emits an ordinary Demand,
+field read and mask test before the provider/factory is evaluated. Rejection
+uses the existing fail! instruction path at the decorator location. Native
+marker records bootstrap without demanding themselves. There is no target
+constant evaluation during solving, new VM operation, host value copy or
+runtime type inference.
+
+Validation: 63 type-resolve tests, the 87-test codegen suite and 48 VM tests
+pass. A subsequent focused run passes both applicability tests, including the
+new lazy/cyclic-dependency case (88 codegen tests now exist). The target matrix
+covers all six PropertyTarget values against struct, newtype, enum, field and
+variant owners, using a computed target and an aliased native marker. Static
+tests include a target that would fail if executed, a shadowing user property
+function, missing/forged markers and seal tampering. VM coverage confirms that
+target rejection and capability failure prevent provider execution and cache
+one failure/diagnostic across repeated reads.
+Logs: /tmp/mir-property-admission-{types,codegen,vm,final}.log.
+CLI build and actual properties (1/1), static-property-evidence (2/2), and
+property-target (2/2) language tests also pass; logs use the same prefix with
+build/language/evidence/target suffixes. No language fixtures were changed.
+
+Unspecialized generic function identity, diagnostic/query acceptance and old
+pipeline removal remain open. No performance assessment was made.
+
 ### Generic property applications close before codegen (2026-09-11)
 
 The static instance pass now specializes property templates for every concrete
