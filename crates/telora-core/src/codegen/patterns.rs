@@ -198,7 +198,7 @@ impl Emitter<'_> {
         Ok(())
     }
 
-    pub(super) fn pattern_branch(&mut self, node: HirId) -> Result<R, Diagnostic> {
+    pub(super) fn pattern_branch(&mut self, node: HirId, tail: bool) -> Result<R, Diagnostic> {
         let value = self.expression(self.child(node, Role::Value))?;
         let dst = self.register();
         let done = self.label();
@@ -217,7 +217,7 @@ impl Emitter<'_> {
                         },
                     );
                 }
-                let result = self.expression(self.child(arm, Role::Value))?;
+                let result = self.expression_mode(self.child(arm, Role::Value), tail)?;
                 self.emit(arm, O::Move { dst, src: result });
                 self.emit(arm, O::Jump { target: done });
                 self.locals.truncate(scope);
@@ -233,12 +233,12 @@ impl Emitter<'_> {
             } else {
                 Role::Body
             };
-            let result = self.expression(self.child(node, role))?;
+            let result = self.expression_mode(self.child(node, role), tail)?;
             self.emit(node, O::Move { dst, src: result });
             self.emit(node, O::Jump { target: done });
             self.locals.truncate(scope);
             self.mark(otherwise);
-            let result = self.expression(self.child(node, Role::Else))?;
+            let result = self.expression_mode(self.child(node, Role::Else), tail)?;
             self.emit(node, O::Move { dst, src: result });
         }
         self.mark(done);

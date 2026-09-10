@@ -5,6 +5,44 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Mechanical tail calls preserve native completion boundaries (2026-09-11)
+
+Codegen now propagates syntactic tail position through function/block results,
+if branches, match arms and explicit returns, emitting the existing TailCall
+operation. Callee evaluation, arguments, conditions and intermediate operands
+remain ordinary calls. MIR value adjustments and return-boundary construction
+checks disable tail transfer when work remains after the call. This is the
+existing language tail-call contract, not a new optimization pass.
+
+The VM retains a frame carrying a native continuation until a tail-transferred
+callee completes, then performs an internal return. Native continuations own
+diagnostic recovery and lazy-task success/failure publication; dropping their
+frame before synchronous native dispatch could lose those effects. Subsequent
+tail recursion has a Register return target and replaces frames normally, so
+retention is bounded by pending native work, not recursion count. These retained
+completion boundaries do not count as additional bytecode call depth; their
+native continuation depth still counts. No payload is copied across worlds.
+
+Solved checked casts now distinguish primitive representation errors from
+nominal identity errors and retain nested field paths. Their validation and
+construction behavior still consumes the sealed TypeId/layout image. The
+existing cast test's generic error expectation was updated to the restored
+specific diagnostic contract.
+
+Validation: 66 codegen tests passed, including codec construction-check
+failures caught by with_diagnostics. After the final logical-depth refinement
+and diagnostic-scope recursion assertions, all 48 VM tests and 6 tail-filtered
+tests pass. Tests cover 2000-step direct/mutual/generic recursion, match/return
+tails, retained non-tail arithmetic, return construction checks, and successful
+and failing long recursion inside a diagnostic scope. The actual
+test/compiler-semantics fixture now passes all 38 cases. Its last language
+aggregate preceded only the logical-depth accounting refinement; the complete
+language suite still fails other fixtures. Provenance/remaining semantic
+contracts and old-path removal remain unfinished. Logs:
+/tmp/mir-cast-tail-codegen.log, /tmp/mir-cast-tail-final-vm.log,
+/tmp/mir-tail-final-tests.log and /tmp/mir-cast-tail-final-language.log.
+No performance measurement was made.
+
 ### Callable value evidence, metadata joins and array bottom evidence (2026-09-11)
 
 Function parameter/result slots now carry provisional value-domain evidence in

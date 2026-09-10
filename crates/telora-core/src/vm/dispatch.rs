@@ -149,6 +149,7 @@ fn make_execution_frame(
         pc: 0,
         return_target,
         rule_boundary,
+        tail_return: None,
     })
 }
 
@@ -218,7 +219,7 @@ fn drive_vm_action(
                     return_target.append_native_trace(&mut runtime_error.trace);
                     runtime_error
                 })?;
-                let logical_depth = frames.len()
+                let logical_depth = frames.iter().filter(|frame| frame.tail_return.is_none()).count()
                     + frames
                         .iter()
                         .map(|frame| frame.return_target.native_depth())

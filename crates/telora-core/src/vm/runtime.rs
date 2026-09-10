@@ -17,6 +17,9 @@ struct ExecutionFrame {
     pc: usize,
     return_target: ReturnTarget,
     rule_boundary: Option<crate::Loc>,
+    /// A native continuation owns pending completion/failure work. A tail
+    /// transfer retains that boundary until its callee has produced a value.
+    tail_return: Option<Register>,
 }
 
 #[derive(Debug)]

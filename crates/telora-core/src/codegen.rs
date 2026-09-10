@@ -513,6 +513,7 @@ struct Emitter<'a> {
     function: Function,
     locals: Vec<(SymbolId, R)>,
     local_instances: Vec<(GenericInstanceId, R)>,
+    return_boundary: Option<HirId>,
     next_label: u32,
     native_links: Vec<NativeLink>,
     data_links: Vec<DataLink>,
@@ -535,6 +536,7 @@ impl<'a> Emitter<'a> {
             },
             locals: vec![],
             local_instances: vec![],
+            return_boundary: None,
             next_label: 0,
             native_links: vec![],
             data_links: vec![],
@@ -626,7 +628,11 @@ impl<'a> Emitter<'a> {
     }
 
     fn expression(&mut self, node: HirId) -> Result<R, Diagnostic> {
-        let value = self.expression_unadjusted(node)?;
+        self.expression_mode(node, false)
+    }
+    fn expression_mode(&mut self, node: HirId, tail: bool) -> Result<R, Diagnostic> {
+        let tail = tail && self.mir.value_adjustments[node.index()].is_none();
+        let value = self.expression_unadjusted(node, tail)?;
         self.adjust_value(node, value)
     }
     fn adjust_value(&mut self, node: HirId, value: R) -> Result<R, Diagnostic> {
@@ -647,7 +653,7 @@ impl<'a> Emitter<'a> {
         }
         Ok(value)
     }
-    fn expression_unadjusted(&mut self, node: HirId) -> Result<R, Diagnostic> {
+    fn expression_unadjusted(&mut self, node: HirId, tail: bool) -> Result<R, Diagnostic> {
         self.ty(node)?;
         if let Some(owner) = self.newtype_owner(node)? {
             return self.newtype_constructor(node, owner);
@@ -757,7 +763,7 @@ impl<'a> Emitter<'a> {
                 self.emit(node, O::GetField { dst, dict, field });
                 dst
             }
-            HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node)?,
+            HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node, tail)?,
             HirKind::Field
                 if matches!(
                     self.mir.member_selections[node.index()],
@@ -1108,7 +1114,7 @@ impl<'a> Emitter<'a> {
                 for binding in bindings {
                     self.expression(binding)?;
                 }
-                let value = self.expression(self.child(node, Role::Result))?;
+                let value = self.expression_mode(self.child(node, Role::Result), tail)?;
                 self.locals.truncate(scope);
                 self.local_instances.truncate(instance_scope);
                 value
@@ -1257,11 +1263,11 @@ impl<'a> Emitter<'a> {
                         target: otherwise,
                     },
                 );
-                let value = self.expression(self.child(node, Role::Then))?;
+                let value = self.expression_mode(self.child(node, Role::Then), tail)?;
                 self.emit(node, O::Move { dst, src: value });
                 self.emit(node, O::Jump { target: done });
                 self.mark(otherwise);
-                let value = self.expression(self.child(node, Role::Else))?;
+                let value = self.expression_mode(self.child(node, Role::Else), tail)?;
                 self.emit(node, O::Move { dst, src: value });
                 self.mark(done);
                 dst
@@ -1271,6 +1277,8 @@ impl<'a> Emitter<'a> {
                 let mut nested =
                     Self::new(self.mir, self.graph, format!("closure:{}", node.index()));
                 nested.instance = self.instance;
+                let boundary = self.child(node, Role::ReturnType);
+                nested.return_boundary = Some(boundary);
                 nested.function.parameter_count = parameters.len() as u32;
                 for parameter in parameters {
                     let register = nested.register();
@@ -1308,8 +1316,8 @@ impl<'a> Emitter<'a> {
                     }
                 }
                 nested.function.capture_count = captures.len() as u32;
-                let result = nested.expression(self.child(node, Role::Body))?;
-                let result = nested.adjust_value(self.child(node, Role::ReturnType), result)?;
+                let result = nested.expression_mode(self.child(node, Role::Body), self.mir.value_adjustments[boundary.index()].is_none())?;
+                let result = nested.adjust_value(boundary, result)?;
                 if !nested.native_links.is_empty() {
                     return Err(self.error(
                         node,
@@ -1352,10 +1360,8 @@ impl<'a> Emitter<'a> {
                 }
                 self.emit(
                     node,
-                    O::Call {
-                        base,
-                        argument_count: arguments.len() as u32,
-                    },
+                    if tail { O::TailCall { base, argument_count: arguments.len() as u32 } }
+                    else { O::Call { base, argument_count: arguments.len() as u32 } },
                 );
                 base
             }
@@ -1368,7 +1374,7 @@ impl<'a> Emitter<'a> {
                 self.emit(node, O::CheckedCast { dst, src, source, target });
                 dst
             }
-            HirKind::TypeAscription => self.expression(self.child(node, Role::Value))?,
+            HirKind::TypeAscription => self.expression_mode(self.child(node, Role::Value), tail)?,
             HirKind::TypeApply => self.expression(self.child(node, Role::Callee))?,
             HirKind::Propagate => {
                 let operand = self.child(node, Role::Operand);
@@ -1393,7 +1399,9 @@ impl<'a> Emitter<'a> {
                 dst
             }
             HirKind::Return => {
-                let value = self.expression(self.child(node, Role::Value))?;
+                let tail = self.return_boundary.is_some_and(|boundary| self.mir.value_adjustments[boundary.index()].is_none());
+                let mut value = self.expression_mode(self.child(node, Role::Value), tail)?;
+                if let Some(boundary) = self.return_boundary { value = self.adjust_value(boundary, value)?; }
                 self.emit(node, O::Return { src: value });
                 value
             }
@@ -1414,6 +1422,44 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn tail_positions_use_existing_frame_replacement_without_skipping_followup_work() {
+        for source in [
+            "def count: Fn(Int) -> Int = fn(n) { if n == 0 { 42 } else { count(n - 1) } }; export def answer = count(2000);",
+            "export def answer = { decl even: Fn(Int) -> Int; decl odd: Fn(Int) -> Int; def even = fn(n) { if n == 0 { 42 } else { odd(n - 1) } }; def odd = fn(n) { if n == 0 { 0 } else { even(n - 1) } }; even(2000) };",
+            "def count: Fn(Int) -> Int = fn(n) { match n { 0 => 42, value => count(value - 1) } }; export def answer = count(2000);",
+            "def count: Fn(Int) -> Int = fn(n) { if n == 0 { 42 } else { return count(n - 1); } }; export def answer = count(2000);",
+            "def count: for(T) Fn(T, Int) -> T = fn(value, n) { if n == 0 { value } else { count(value, n - 1) } }; export def answer = count(42, 2000);",
+            "def count: Fn(Int) -> Int = fn(n) { if n == 0 { 0 } else { count(n - 1) + 1 } }; export def answer = count(42);",
+            "import \"std/_rt\" as rt; def count: Fn(Int) -> Int = fn(n) { if n == 0 { 42 } else { count(n - 1) } }; export def answer = match rt.with_diagnostics(count)(2000) { Ok((value, _)) => value, Err(_) => 0 };",
+            "import \"std/_rt\" as rt; def count: Fn(Int) -> Int = fn(n) { if n == 0 { fail!(\"caught tail failure\") } else { count(n - 1) } }; export def answer = match rt.with_diagnostics(count)(2000) { Err(errors) => if errors[0].message == \"caught tail failure\" { 42 } else { 0 }, Ok(_) => 0 };",
+        ] {
+            let mir = graph(source, "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{source}");
+        }
+        for body in ["raw()", "return raw();"] {
+            let source = format!("@check(fn(value) {{ Err(blame!(\"must run return check\", value)) }}) type Item = struct {{x: Int}}; def raw: Fn() -> Unchecked(Item) = fn() {{ {{x: 0}} }}; def checked: Fn() -> Item = fn() {{ {body} }}; export def answer = checked();");
+            let mir = graph(&source, "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            assert!(execute(artifact).err().expect("return check rejects").to_string().contains("must run return check"));
+        }
+    }
+
+    #[test]
+    fn checked_cast_errors_distinguish_scalar_identity_and_nested_path() {
+        for source in [
+            "export def answer = if \"1\".cast!(Int) == Err(\"value must be Int, got String\") && 1.cast!(Float) == Err(\"value must be Float, got Int\") { 42 } else { 0 };",
+            "type A = struct {value: Int}; type B = struct {value: Int}; def a: A = {value: 1}; export def answer = if a.cast!(B) == Err(\"value has a different declared type identity\") { 42 } else { 0 };",
+            "type Address = struct {zip: Int}; type User = struct {address: Address}; export def answer = if {address: {zip: \"bad\"}}.cast!(User) == Err(\"value.address.zip must be Int, got String\") { 42 } else { 0 };",
+            "type User = struct {id: Int, name: String}; export def answer = match {id: 42, name: \"Ada\"}.cast!(User) { Ok(user) => user.id, Err(_) => 0 };",
+        ] {
+            let mir = graph(source, "");
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{source}");
+        }
+    }
+
     #[test]
     fn metadata_joins_execute_the_selected_original_witness() {
         let mir = graph("def choose = fn(flag: Bool) { if flag { Int.type } else { String.type } }; export def answer = (choose(True), choose(False));", "");
@@ -2699,7 +2745,7 @@ pub(crate) mod tests {
                 export def answer = match (42,).cast!(Count) { Ok(Count(value)) => value, _ => 0 };"#,
             r#"@check(fn(value) { fail!("checker execution failure") }) type Broken = struct {x: Int};
                 export def answer = match rt.with_diagnostics(fn(x: Int) { {x: x}.cast!(Broken) })(0) { Err(errors) => if errors[0].message == "checker execution failure" { 42 } else { 0 }, _ => 0 };"#,
-            r#"export def answer = match {x: "wrong"}.cast!(Point) { Err(message) => if message == "value.x: representation does not match cast target" { 42 } else { 0 }, _ => 0 };"#,
+            r#"export def answer = match {x: "wrong"}.cast!(Point) { Err(message) => if message == "value.x must be Int, got String" { 42 } else { 0 }, _ => 0 };"#,
             r#"export def answer = match "42".cast!(Int) { Err(_) => 42, _ => 0 };"#,
             r#"export def answer = match 42.cast!(Float) { Err(_) => 42, _ => 0 };"#,
             r#"export def answer = do { let value: Other = {x: 42}; match value.cast!(Point) { Err(_) => 42, _ => 0 } };"#,

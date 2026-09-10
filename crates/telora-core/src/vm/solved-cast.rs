@@ -420,12 +420,17 @@ fn continue_solved_cast(
             }
         };
         if mismatch {
+            let message = if matches!(target_shape.constructor, T::Nominal(_))
+                && matches!(source_shape.constructor, T::Nominal(_) | T::Unchecked) {
+                format!("{path} has a different declared type identity")
+            } else if matches!(target_body.constructor, T::Int | T::Float | T::String | T::Bytes | T::Dyn) {
+                format!("{path} must be {:?}, got {:?}", target_body.constructor, input.kind())
+            } else {
+                format!("{path}: representation does not match cast target")
+            };
             return finish_codec_payload(
                 BuiltinAtom::Err,
-                CodecNode::String(
-                    format!("{path}: representation does not match cast target"),
-                    value.loc(),
-                ),
+                CodecNode::String(message, value.loc()),
                 state.root.value,
                 state.return_target,
                 &function,

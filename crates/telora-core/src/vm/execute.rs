@@ -377,7 +377,9 @@ impl Vm {
                             .clone();
                         let function = function_arc.as_ref();
                         let pc = frames.last().expect("execution frame").pc;
-                        let instruction = function.instructions().get(pc).ok_or_else(|| {
+                        let tail_return = frames.last().expect("execution frame").tail_return
+                            .map(|src| Opcode::Return { src });
+                        let instruction = tail_return.as_ref().or_else(|| function.instructions().get(pc)).ok_or_else(|| {
                             error(
                                 RuntimeErrorKind::InvalidBytecode,
                                 "instruction pointer is out of bounds",
@@ -1861,17 +1863,27 @@ impl Vm {
                                     function,
                                     pc,
                                 )?;
-                                let completed = frames.pop().expect("tail caller frame");
-                                let rule_boundary = completed
-                                    .rule_boundary
-                                    .or_else(|| instruction_location(function, pc));
+                                let (return_target, rule_boundary, truncate) = if matches!(frames.last().expect("tail caller").return_target, ReturnTarget::Native(_)) {
+                                    // Native continuations include diagnostic scopes and
+                                    // lazy-task completion. Keep their failure boundary
+                                    // while native dispatch can still fail synchronously.
+                                    // The callee receives a Register target, so subsequent
+                                    // tail recursion replaces frames normally.
+                                    let frame = frames.last_mut().expect("native boundary");
+                                    frame.tail_return = Some(*call_base);
+                                    (ReturnTarget::Register { destination: *call_base, call_site: instruction_location(function, pc) }, frame.rule_boundary, None)
+                                } else {
+                                    let completed = frames.pop().expect("tail caller frame");
+                                    (completed.return_target, completed.rule_boundary, Some(completed.base))
+                                };
+                                let rule_boundary = rule_boundary.or_else(|| instruction_location(function, pc));
                                 let _ = registers;
-                                stack.truncate(completed.base);
+                                if let Some(base) = truncate { stack.truncate(base); }
                                 match drive_vm_action(
                                     VmAction::Call {
                                         callee,
                                         arguments,
-                                        return_target: completed.return_target,
+                                        return_target,
                                         call_function: function_arc,
                                         call_pc: pc,
                                         rule_boundary,
