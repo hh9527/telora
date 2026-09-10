@@ -5,6 +5,30 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Shared demand-evaluation state (2026-09-10)
+
+The agreed execution policy is lazy evaluation of top-level values and property
+records in one session. All declarations, code and slots must be ready before
+entry dispatch; property values need not all be computed first. Only actual
+reads create execution dependencies, including alternating property/global
+dependencies. Function construction must not force its body's global references.
+
+The independent execution_graph module builds stable global/property task IDs
+from SealedMir. Import/export aliases select the defining task. Each static
+property presence record retains one task and its provider reduce order. The
+session evaluator uses arrays for pending/running/ready/failed state, values and
+the active demand path. Completed values are reused; cycles report their closed
+path; failed dependencies can share one diagnostic identity without retry.
+Unfinished reduce results cannot be published out of stack order.
+
+Four focused tests pass, including actual sealed-MIR identity/order tests under
+reordered inventories. mir-dump --execution-graph exposes the planned task table
+without creating a VM. This is an independently tested execution foundation:
+the current VM global reads and get_type_prop do not yet use it. Remaining work
+is per-task codegen and VM suspension/resumption, solved metadata query linking,
+then replacing the eager global-order path. No lazy-property CLI completion or
+performance gain is claimed at this checkpoint.
+
 ### Module data injection before initialization (2026-09-10)
 
 Codegen emits data relocations using the resolved module identity and solved

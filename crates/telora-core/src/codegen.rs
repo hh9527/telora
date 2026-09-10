@@ -764,6 +764,78 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn execution_graph_uses_sealed_identities_and_one_slot_per_property_chain() {
+        use crate::execution_graph::{ExecutionGraph, PropertyKey, Request, Task};
+        let source = r#"
+            import "./math" { config as first };
+            import "./math" { config as second };
+            @property(PropertyTarget.Type)
+            type Label = struct { value: Int };
+            def label: Fn(Type, Option(Label)) -> Label = fn(owner, previous) { { value: first } };
+            @label
+            @label
+            type Item = struct { value: Int };
+            export def answer = second;
+        "#;
+        let mut baseline = None;
+        for order in [0, 1, 7] {
+            let mir = graph_order(source, "export def config = 42;", order);
+            let sealed = mir.seal().unwrap();
+            let graph = ExecutionGraph::from_mir(&sealed);
+            let symbol = |name: &str| {
+                SymbolId(mir.symbols.iter().position(|s| s.name == name).unwrap() as u32)
+            };
+            assert_eq!(
+                graph.global(symbol("first")),
+                graph.global(symbol("config"))
+            );
+            assert_eq!(
+                graph.global(symbol("second")),
+                graph.global(symbol("config"))
+            );
+            assert!(graph.global(symbol("Item")).is_none());
+            let chain = graph
+                .nodes()
+                .iter()
+                .find_map(|node| match &node.task {
+                    Task::Property { key, providers } if providers.len() == 2 => {
+                        Some((*key, providers))
+                    }
+                    _ => None,
+                })
+                .expect("two decorators reduce into one property node");
+            let record = mir
+                .properties
+                .iter()
+                .find(|p| p.providers.len() == 2)
+                .unwrap();
+            assert_eq!(chain.1.as_ref(), record.providers);
+            assert!(
+                graph
+                    .property(PropertyKey {
+                        owner: chain.0.property,
+                        ..chain.0
+                    })
+                    .is_none()
+            );
+            let property = graph.property(chain.0).unwrap();
+            let config = graph.global(symbol("config")).unwrap();
+            let mut execution = graph.evaluation();
+            assert_eq!(execution.request(property), Ok(Request::Start));
+            assert_eq!(execution.request(config), Ok(Request::Start));
+            execution.complete(config, 42).unwrap();
+            execution.complete(property, 42).unwrap();
+            assert_eq!(execution.request(property), Ok(Request::Ready(&42)));
+            let dump = format!("{graph:?}");
+            if let Some(baseline) = &baseline {
+                assert_eq!(&dump, baseline);
+            } else {
+                baseline = Some(dump);
+            }
+        }
+    }
+
     fn graph(main: &str, math: &str) -> Mir {
         graph_order(main, math, 0)
     }
@@ -1005,7 +1077,7 @@ mod tests {
                     linked,
                     crate::Quota::with_fuel(10000),
                     crate::DataLimits::default(),
-                &mut crate::SourceDatabase::default(),
+                    &mut crate::SourceDatabase::default(),
                 )
                 .unwrap();
             assert_eq!(result.value().as_int(), Some(42));

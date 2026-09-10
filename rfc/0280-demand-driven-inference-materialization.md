@@ -144,15 +144,47 @@ additional constraint. Do not add compatibility paths for that purpose.
    complete typed IR. No VM or Telora execution capability is available here.
 3. Create the VM, import finalized type skeletons, and parse/inject data modules.
    Data contents cannot feed back into type solving.
-4. Generate property values and compute top-level values, possibly on demand
-   according to their dependency graph. Module trait/property facts are static
-   inputs regardless of whether an exported value name was referenced.
+4. Prepare demand-evaluated property and top-level value tasks. Static facts,
+   compiled provider code and session slots exist before entry dispatch; a
+   property's concrete value is computed on its first actual consumption.
+   Module trait/property facts are static inputs regardless of whether an
+   exported value name was referenced.
 5. Dispatch execution through entry. Both execution phases consume finalized
    typing and cannot reopen inference.
 
 `check --only-types` stops after phase 2. Ordinary check shares that same static
 artifact before continuing with its existing tooling semantics. Stable source
 IDs are session identities; cross-compilation stability is not required.
+
+### Demand evaluation of properties and globals
+
+Top-level values and property records share one session evaluation table, keyed
+by stable IDs. A concrete property query selects `(TypeId, site, PropertyTypeId)`
+from the static presence index. An absent key returns None without executing
+providers. A pending task starts its compiled code; a completed task returns the
+saved value. All providers of one property key reduce in declaration order, with
+the intermediate result supplied explicitly as `previous`. Only the final result
+becomes available in the shared slot.
+
+Property code may request a top-level value, which may in turn request another
+property. Dependencies arise from executed reads, not all syntactic references.
+Creating a closure must not force the globals referenced by its body. Ordinary
+local expressions and call arguments retain their existing evaluation order.
+The type skeleton alone never demands every property attached to that type;
+queries, evidence consumers and construction checks request their specific record.
+
+Requesting a running node is an evaluation cycle, reported with the actual demand
+path. Arbitrary user-code cycles have no implicit fixed-point or partial-value
+semantics. Failed tasks retain the failure identity, so repeated requests do not
+retry user code or duplicate its diagnostic. Execution may continue for diagnostic
+collection, but a failed session cannot publish a final result. State and values
+belong to the session, not to a process-wide cache or a module transaction.
+
+The preparation/entry boundary does not imply eagerly computing every property.
+An entry may first consume a previously unrequested property. Lazy property code
+still has only its resolved lexical dependencies; it does not implicitly acquire
+entry arguments or request-local state. Static dependency scheduling can later
+optimize proven cases without changing this demand-driven behavior.
 
 ### Session ownership
 

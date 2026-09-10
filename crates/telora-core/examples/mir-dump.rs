@@ -1,4 +1,4 @@
-//! Inspect the new MIR without the old Engine; --run EXPORT exercises codegen.
+//! Inspect MIR; --execution-graph prints demand tasks, --run EXPORT runs codegen.
 //! cargo run -p telora-core --example mir-dump -- @src/main @src/main=main.telora
 use std::{collections::BTreeMap, error::Error, path::PathBuf};
 use telora_core::{
@@ -14,7 +14,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         None
     };
-    let types = run.is_some() || args.peek().is_some_and(|arg| arg == "--types");
+    let execution_graph = args.peek().is_some_and(|arg| arg == "--execution-graph");
+    let types = run.is_some() || execution_graph || args.peek().is_some_and(|arg| arg == "--types");
     let symbols = types || args.peek().is_some_and(|arg| arg == "--symbols");
     if symbols && run.is_none() {
         args.next();
@@ -98,6 +99,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             &mut mir.sources,
         )?;
         println!("{}", result.value());
+    } else if execution_graph {
+        let sealed = mir
+            .seal()
+            .map_err(|diagnostics| format!("seal: {diagnostics:?}"))?;
+        println!(
+            "{:#?}",
+            telora_core::execution_graph::ExecutionGraph::from_mir(&sealed)
+        );
     } else {
         print!("{}", mir.dump());
     }
