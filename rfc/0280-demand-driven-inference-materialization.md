@@ -13,11 +13,20 @@
 
 ### Controlling implementation target
 
-After resolving HIR for all reachable modules, construct one session-wide IR
-with stable type slots for definitions, parameters, signatures, patterns and
-expressions. This is the typed intermediate representation consumed by later
-stages, analogous in purpose to a fully typed MIR. The implementation need not
-introduce Rust MIR's control-flow or ownership machinery.
+Construct one session-wide MIR starting with module discovery. Attach each
+reachable non-data module's CST and lower syntax into HIR with stable reference
+and type slots. Three passes enrich this same structure: `module-resolve`,
+`symbol-resolve`, then `type-resolve`. They do not build independent graphs that
+must be translated into one another. The finalized MIR is consumed by later
+stages; Rust MIR's control-flow or ownership machinery is not required.
+
+Build these passes independently of the implementations they replace, in that
+order, with simple core unit tests after each pass. Keep `telora-core` compiling;
+the old code remains reference material during development, never a dependency
+or fallback for the new passes. Once all passes are ready, integrate them and
+remove the replaced implementations. Full performance and corner-case validation
+follow integration. See the [current route and pass audit](0280/whole-graph-ir.md).
+The MIR must be inspectable between passes without triggering any solving.
 
 Allocate syntax-owned slots before constraint solving. Generic instantiation and
 generated operations may allocate auxiliary slots during static solving; every

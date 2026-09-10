@@ -3,6 +3,81 @@
 Date: 2026-09-10. This is an implementation audit, not a performance result.
 The controlling target is RFC 0280's session-wide typed IR.
 
+## Implementation route (supersedes incremental consumer migration)
+
+The agreed development sequence is now:
+
+1. Establish a compiling `telora-core` baseline. Do not require the `telora`
+   application to build during the replacement work.
+2. Add `module-resolve`, then `symbol-resolve`, then `type-resolve` as independent
+   modules. Keep the current implementation available as reference during this
+   construction phase; do not continue migrating its individual call sites.
+3. New modules must not depend on the implementations they will replace. Reuse
+   retained lexical/syntax/source primitives, but do not call the old loader,
+   symbol resolver, module interfaces or inference machinery as an adapter,
+   bootstrap path or fallback. Required algorithms must live in the new modules
+   or in genuinely independent retained primitives.
+4. Complete each new module with small direct unit tests, then move to the next.
+   Do not require full CLI integration, performance testing or comprehensive
+   corner-case coverage at these construction boundaries.
+5. Once all three modules are ready, integrate them together and completely
+   remove the replaced implementations. All consumers use the new pipeline;
+   coexistence during development is not an execution compatibility mode.
+6. After integration, run performance evaluation and complete corner-case
+   coverage across the full flow.
+
+`module-resolve` owns module inventory IDs, source discovery/parsing and module
+edges, including static data-module identity without parsing its contents.
+`symbol-resolve` consumes that graph, allocates declaration/export/import and
+reference identities, and records Bound/Unresolved/Conflicted outcomes.
+`type-resolve` consumes those authoritative bindings, allocates session-wide
+type slots, solves evidence and retains normalized Known/Unknown/Conflicted
+results. None of these modules receives a VM or executes Telora. Later tools and
+runtime consume the finalized type graph and do not reopen resolution/inference.
+
+The existing implementation audit below records reference code and gaps, not
+the dependency graph or work breakdown for these new modules. The local
+`ProgramTypeOutcome` change belongs to the old implementation baseline: it
+collects independent binding conflicts, but its outer module consumer still
+exposes only one diagnostic. The new `type-resolve` must not depend on it.
+
+### New pipeline: three passes over one MIR
+
+`mir.rs` owns the evolving session graph. `module-resolve.rs` now allocates the
+inventory's dense ModuleIds before reading source, attaches each reachable CST,
+and lowers syntax into a separate flat HIR arena (`mir/lower.rs`). This lowering
+uses parser AST primitives, never the old HIR resolver. Nodes retain labelled
+child edges; reference nodes have explicit resolve slots, and syntax-owned type
+slots use the HIR node index. Unannotated parameters and closure results have
+slots too. No symbols or types are solved while lowering.
+
+The first pass uses an explicit canonical-name inventory and a text-only reader.
+Workspace configuration/catalog construction is not yet wired to it. Data
+modules retain their static identity/contract without reading contents. Imports
+retain Bound/Unresolved/Conflicted targets; cycles retain graph edges. Each source
+is parsed once. Unknown inventory entries remain unloaded until reachable.
+
+`Mir::dump()` reads these same arrays and attached-source identities without
+performing resolution, proxy compression or evaluation. The dump shows Pending
+references and Unknown type slots before subsequent passes fill them.
+
+Two direct unit tests cover shared dependency loading/data exclusion and
+cycles/missing/ambiguous module targets. Symbol and type passes are not yet
+implemented. Do not infer full language or workspace integration from these
+module-pass tests; final integration and exhaustive coverage remain later work.
+
+The `telora-core` example `mir-dump` accepts `ROOT NAME=PATH ...` and prints the
+first-pass MIR without constructing an Engine. Example:
+
+```sh
+cargo run -p telora-core --example mir-dump -- @src/main @src/main=main.telora @src/shared=shared.telora
+```
+
+The example was run with two Telora files and a deliberately absent JSON path:
+both CSTs and their HIR/type/reference slots appeared in the dump, and the data
+module appeared without any file read. This is an explicit-inventory debug
+driver, not the final workspace CLI or configuration integration.
+
 ## Current gaps
 
 | Boundary | Current evidence | Required replacement |
@@ -50,9 +125,10 @@ Two further dependencies are important for integration:
    contextual conversions retain independent slots. Property values remain later
    execution work; record-offset lowering is also later work.
 
-Intermediate branch states need not preserve complete functionality or compile.
-There are no additional acceptance milestones for small interface migrations,
-and no compatibility fallback should be added to keep such a migration green.
+During independent construction, preserve compilation and simple unit testing
+of `telora-core`. Full application behavior is not a construction gate. During
+final integration, temporary incomplete behavior is acceptable; do not add a
+compatibility fallback to keep the old flow alive.
 
 ## First integration dependency: resolve before solving
 

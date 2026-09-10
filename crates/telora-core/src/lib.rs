@@ -19,6 +19,9 @@ pub mod hir;
 pub mod json;
 pub mod lexer;
 pub mod lir;
+pub mod mir;
+#[path = "module-resolve.rs"]
+pub mod module_resolve;
 pub mod module;
 pub mod module_id;
 pub mod package;
