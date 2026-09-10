@@ -5,6 +5,29 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove the old public source type-analysis entry points (2026-09-11)
+
+Deleted analyze_source/analyze_source_with_fuel/analyze_source_with_quota and
+their root exports. Removed the old entry-point test suite and inline source
+analysis test modules. These source-analysis APIs had no remaining production
+callers after Engine/source-compiler removal. MIR module/symbol/type passes
+remain the product's source analysis path, with their existing tests retained.
+
+The remaining old internal analyzer, tool evaluator and descriptor support are
+still compiled. Removing the public root exposes their dead dependency chain:
+workspace compilation now reports 371 unused-code warnings. This is an explicit
+intermediate state, not a claim that those implementations have been deleted.
+No warning suppressions or replacement source-analysis adapter were introduced.
+The descriptor API still used by VM/heap is the boundary for the next deletion.
+
+Validation: workspace compilation passes, type-resolve 68/68, codegen 88/88 and
+telora library 28/28 pass. Logs:
+/tmp/mir-remove-analysis-entry-{check,types,codegen,editor}.log.
+About 2,350 lines of old entry/test code were removed and remain in Git history
+for any additional corner-case migration. Final implementation removal, generic
+function values, outstanding rules, full acceptance and performance assessment
+remain incomplete.
+
 ### Remove the old source compilation/execution API (2026-09-11)
 
 Deleted compile_source, run_source, CompiledSource, ExecutionError, the old

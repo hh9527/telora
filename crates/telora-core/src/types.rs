@@ -71,7 +71,3 @@ include!("types/inference-expression.rs");
 include!("types/inference-utils.rs");
 include!("types/expression.rs");
 include!("types/relations.rs");
-
-#[cfg(test)]
-#[path = "types/tests/mod.rs"]
-mod tests;

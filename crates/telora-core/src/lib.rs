@@ -95,8 +95,6 @@ pub use types::{
     Analysis, AnalysisTypeId, DeclaredTypeDescriptor, ModuleInterface,
     SemanticDependencyGraph, SemanticDependencyNode, TraitImplementation, TypeCapability,
     TypeConstraint, TypeGraph, TypeNode, TypeParameter, TypeParameterId, TypeScheme,
-    analyze_source,
-    analyze_source_with_fuel, analyze_source_with_quota,
 };
 pub use value::{Atom, BuiltinAtom, NativeError, NativeFunction, NativeType, OpaqueValue};
 pub use vm::{
