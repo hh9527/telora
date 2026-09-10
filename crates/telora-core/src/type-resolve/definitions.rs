@@ -107,7 +107,7 @@ impl Solver<'_> {
             .modules
             .iter()
             .filter_map(|m| match m.state {
-                ModuleState::Source { body, .. } => Some((body, None)),
+                ModuleState::Source { body, .. } | ModuleState::Data { body } => Some((body, None)),
                 _ => None,
             })
             .collect::<Vec<_>>();

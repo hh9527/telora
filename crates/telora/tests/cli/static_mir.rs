@@ -156,6 +156,47 @@ export def bad: Int = "wrong";
 }
 
 #[test]
+fn static_mir_data_exports_have_the_resolved_value_type_without_parsing_data() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/payload.json"), "THIS IS NOT JSON").unwrap();
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
+        import "./payload.json" { data };
+        import "std/value" { Value };
+        export def payload: Value = data;
+        export def unevaluated = 1 / 0;
+    "#,
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args(["check", "--only-types", "@src/main"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let summary = jsonl(&output.stdout)
+        .into_iter()
+        .find(|r| r["record"] == "summary")
+        .unwrap();
+    assert_eq!(summary["unknown_types"], 0);
+    assert_eq!(summary["unproven_bounds"], 0);
+    let output = telora(&cwd)
+        .args(["query", "exports", "@src/main"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(jsonl(&output.stdout).iter().any(|r| r["record"] == "export"
+        && r["name"] == "payload"
+        && r["state"] == "Known"
+        && r["type_id"].is_number()));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_query_links_imports_and_source_positions() {
     let cwd = fixture();
     fs::write(

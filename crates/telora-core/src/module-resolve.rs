@@ -64,12 +64,13 @@ pub fn resolve_with_requests(
             continue;
         }
         let spec = &inventory[id.index()];
-        if spec.kind == ModuleKind::Data {
-            // Neither the contents nor the syntax of a data file enter this pass.
-            mir.modules[id.index()].state = ModuleState::Data;
-            continue;
-        }
-        let text = match read(id, &spec.name) {
+        // Data bytes are not an input to the static phase. This source is a
+        // compiler-owned interface, whose Value reference resolves normally.
+        let text = match if spec.kind == ModuleKind::Data {
+            Ok("import \"std/value\" { Value }; decl data: Value; export { data };".into())
+        } else {
+            read(id, &spec.name)
+        } {
             Ok(text) => text,
             Err(message) => {
                 mir.diagnostics.push(crate::source::Diagnostic {
@@ -82,7 +83,12 @@ pub fn resolve_with_requests(
                 continue;
             }
         };
-        let source = mir.sources.add(spec.name.clone(), text);
+        let source_name = if spec.kind == ModuleKind::Data {
+            format!("{} (static contract)", spec.name)
+        } else {
+            spec.name.clone()
+        };
+        let source = mir.sources.add(source_name, text);
         let parsed = parse_registered(&mir.sources, source);
         mir.diagnostics.extend(parsed.diagnostics);
         let mut lower = mir::lower::Lower {
@@ -101,10 +107,14 @@ pub fn resolve_with_requests(
                 parsed.recovered.result,
             ),
         };
-        mir.modules[id.index()].state = ModuleState::Source {
-            source,
-            cst: parsed.cst,
-            body,
+        mir.modules[id.index()].state = if spec.kind == ModuleKind::Data {
+            ModuleState::Data { body }
+        } else {
+            ModuleState::Source {
+                source,
+                cst: parsed.cst,
+                body,
+            }
         };
         let mut requests = spec
             .implicit_imports
@@ -220,6 +230,7 @@ mod tests {
             ),
             ("@src/shared", "export def shared = 1;"),
             ("@src/unused", "invalid unused text"),
+            ("std/value", "export type Value = enum { Missing };"),
         ]);
         let mut inventory = sources
             .keys()
@@ -242,9 +253,10 @@ mod tests {
             Ok(sources[name].to_owned())
         });
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
-        assert_eq!(reads.len(), 4);
+        assert_eq!(reads.len(), 5);
+        assert!(!reads.contains_key("@src/data.json"));
         assert!(reads.values().all(|count| *count == 1));
-        assert_eq!(mir.imports.len(), 5);
+        assert_eq!(mir.imports.len(), 6);
         assert_eq!(mir.hir.len(), mir.ty_slots.len());
         assert!(mir.ty_slots.iter().all(|slot| *slot == TypeState::Unknown));
         assert!(!mir.resolve_slots.is_empty());

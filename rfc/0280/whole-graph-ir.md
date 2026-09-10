@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Static data module contract (2026-09-10)
+
+Data modules now attach a compiler-owned interface to the same MIR:
+`import "std/value" { Value }; decl data: Value; export { data };`.
+The module pass does not call the data reader or parse data bytes. Only this
+small interface is lowered; no data-file CST is attached. Its explicit import
+discovers the normal `std/value` module, and its annotation resolves through that
+module's exports. There is no Value-name recognition in type inference and no
+second implicit scope rule beyond the prelude import.
+
+The symbol pass treats these declarations/imports/exports as ordinary graph
+records. The previous untyped special Data symbol was removed. `check --only-types`
+and `query` therefore return a normalized type for the data export before any VM
+exists. Parsing and injecting actual data remains an execution-stage operation.
+
+Validation: 27 focused core pass tests and 5 static CLI tests pass. The module
+test verifies that the data reader is never called; the type test changes the
+inventory's Value export into an ordinary alias and verifies that inference
+follows it. A CLI fixture with invalid JSON and `1 / 0` passes types-only checking
+and exposes the data export's known type through query, without parsing or
+evaluation. Remaining expression rules and execution assembly are still pending.
+
 ### Static property and trait evidence graph (2026-09-10)
 
 Property providers and configured factories remain ordinary functions. The

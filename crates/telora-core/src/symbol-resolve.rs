@@ -33,7 +33,7 @@ pub fn resolve(mir: &mut Mir) {
     for index in 0..pass.mir.modules.len() {
         let module = ModuleId(index as u32);
         match pass.mir.modules[index].state {
-            ModuleState::Source { body, .. } => {
+            ModuleState::Source { body, .. } | ModuleState::Data { body } => {
                 let scope = pass.scope(module, None);
                 pass.mir.module_scopes[index] = Some(scope);
                 pass.index_block(body, scope);
@@ -45,10 +45,6 @@ pub fn resolve(mir: &mut Mir) {
                     .collect::<Vec<_>>();
                 pass.mir.scopes[scope.index()].open_imports.extend(implicit);
                 pass.index_exports(module, body);
-            }
-            ModuleState::Data => {
-                let data = pass.symbol(Some(module), "data".into(), SymbolKind::Data, None, None);
-                pass.mir.exports[index].push(data);
             }
             _ => {}
         }

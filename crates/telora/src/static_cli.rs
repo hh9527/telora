@@ -207,7 +207,7 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
     };
     if !matches!(
         mir.modules[module].state,
-        ModuleState::Source { .. } | ModuleState::Data
+        ModuleState::Source { .. } | ModuleState::Data { .. }
     ) {
         return Ok(1);
     }

@@ -14,7 +14,11 @@ fn graph(sources: &[(&str, &str)]) -> Mir {
         .map(|(name, _)| ModuleSpec {
             native: crate::static_sources::native_module(name),
             name: (*name).into(),
-            kind: ModuleKind::Source,
+            kind: if name.ends_with(".json") {
+                ModuleKind::Data
+            } else {
+                ModuleKind::Source
+            },
             implicit_imports: if *name == "std/prelude" {
                 vec![]
             } else {
@@ -565,4 +569,28 @@ fn exact_impl_wins_over_property_blanket_without_specializing_function_names() {
         };
         assert!(mir.symbol_generics[symbol.index()].is_empty());
     }
+}
+
+#[test]
+fn data_contract_resolves_the_exported_value_type_without_reading_data() {
+    let mut mir = graph(&[
+        (
+            "@src/main",
+            "import \"./payload.json\" { data }; export def answer = data;",
+        ),
+        ("@src/payload.json", "THIS IS NOT JSON OR TELORA"),
+        ("std/value", "export type Value = Int;"),
+    ]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());
+    let TypeState::Known(answer) = symbol_type(&mir, "answer") else {
+        panic!("{}", mir.dump());
+    };
+    assert_eq!(mir.types[answer.index()].constructor, TypeConstructor::Int);
+    assert!(
+        mir.modules
+            .iter()
+            .any(|m| matches!(m.state, ModuleState::Data { .. }))
+    );
 }

@@ -49,7 +49,9 @@ pub enum ModuleState {
         cst: CstData,
         body: HirId,
     },
-    Data,
+    Data {
+        body: HirId,
+    },
     Unavailable(String),
 }
 
@@ -117,7 +119,6 @@ pub enum SymbolKind {
     Import,
     Export,
     Namespace(ModuleId),
-    Data,
 }
 #[derive(Debug)]
 pub struct Symbol {
@@ -541,7 +542,9 @@ impl Mir {
         for (id, module) in self.modules.iter().enumerate() {
             let state = match &module.state {
                 ModuleState::Unloaded => "unloaded".into(),
-                ModuleState::Data => "data (static export: data: Value)".into(),
+                ModuleState::Data { body } => {
+                    format!("data (static export: data: Value) contract={body:?}")
+                }
                 ModuleState::Unavailable(message) => format!("unavailable {message:?}"),
                 ModuleState::Source { source, body, .. } => {
                     format!("source {source:?} CST attached body={body:?}")
