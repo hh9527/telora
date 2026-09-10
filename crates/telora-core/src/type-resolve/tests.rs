@@ -17,6 +17,9 @@ fn unchecked_identity_and_conversion_evidence_are_separate() {
     assert_eq!(mir.types[candidate.index()].constructor, TypeConstructor::Unchecked);
     assert_eq!(mir.types[candidate.index()].arguments, [checked]);
     assert_eq!(mir.value_adjustments.iter().flatten().count(), 1);
+    let (_, image) = mir.seal().unwrap().into_parts();
+    drop(mir);
+    assert!(std::ptr::eq(image.layout(candidate).unwrap(), image.layout(checked).unwrap()));
     for source in [
         "export type Bad = Unchecked(Int);",
         "type Item = struct(Int); export type Bad = Unchecked(Item);",

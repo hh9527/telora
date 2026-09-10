@@ -2139,6 +2139,29 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn unchecked_metadata_observes_shared_skeleton_without_checks() {
+        for body in [
+            r#"def body = match td.resolve(Unchecked(Box(Int)).type) { Ok(value) => value, _ => fail!("resolve") };
+                def checked_body = match td.resolve(Box(Int).type) { Ok(value) => value, _ => fail!("resolve") };
+                export def answer = if td.kind(Unchecked(Box(Int)).type) == td.TypeDescKind.Ref && body == checked_body && td.kind(body) == td.TypeDescKind.Struct && td.fields(body)[0].ty == Int.type { 42 } else { 0 };"#,
+            r#"export def answer = if td.fields(Unchecked(Box(String)).type)[0].ty == String.type && td.fields(Unchecked(Box(Int)).type)[1].ty == Array(Box(Int)).type { 42 } else { 0 };"#,
+            r#"export def answer = do { let candidate: Unchecked(Box(Int)) = {value: 42, children: []}; let packed = dyn.pack(Unchecked(Box(Int)).type, candidate); match dyn.project_with(Int.type, dyn.get_field_value(packed, 0)) { Some(value) => value, _ => 0 } };"#,
+        ] {
+            let mir = graph(&format!(r#"
+                import "std/type-desc" as td; import "std/dyn" as dyn;
+                @check(fn(value) {{ fail!("metadata must not complete a candidate") }})
+                type Box(T) = struct {{value: T, children: Array(Box(T))}};
+                {body}
+            "#), "");
+            assert!(mir.diagnostics.is_empty(), "{body}\n{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{body}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{body}");
+        }
+    }
+
+    #[test]
     fn unchecked_values_complete_at_explicit_mir_boundaries() {
         let definitions = r#"
             import "std/dyn" as dyn; import "std/_rt" as rt;

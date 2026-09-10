@@ -59,7 +59,7 @@ fn run_solved_type_desc(
                 T::Native(_) => "Opaque",
                 T::Parameter(_) | T::PropertyBound => "Bound",
                 T::Dyn => "Dyn",
-                T::Nominal(_) => "Ref",
+                T::Nominal(_) | T::Unchecked => "Ref",
                 _ => {
                     return Err(error(
                         RuntimeErrorKind::InvalidBytecode,

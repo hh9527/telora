@@ -359,8 +359,10 @@ fn solved_dyn_member_access_preserves_payload_handles() {
         def original = ["a string deliberately longer than inline storage capacity"];
         def boxed: Box(Array(String)) = {value: original};
         def field = dyn.get_field_value(dyn.pack(Box(Array(String)).type, boxed), 0);
+        def candidate: Unchecked(Box(Array(String))) = {value: original};
+        def candidate_field = dyn.get_field_value(dyn.pack(Unchecked(Box(Array(String))).type, candidate), 0);
         def variant = match dyn.get_variant_payload(dyn.pack(Item(Array(String)).type, Item.Full(original)), 1) { Some(value) => value, None => fail!("missing payload") };
-        export def answer = (original, field, variant);
+        export def answer = (original, field, variant, candidate_field);
     "#, "");
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
@@ -370,7 +372,7 @@ fn solved_dyn_member_access_preserves_payload_handles() {
     let view = HeapView { current: &result.world.work.heap, background: Some(&result.world.main) };
     let root = result.value();
     let original = root.sequence_get(0).unwrap().value;
-    for index in [1, 2] {
+    for index in [1, 2, 3] {
         let DecodedValue::Dyn(handle) = root.sequence_get(index).unwrap().value.value() else { panic!("Dyn child") };
         let (_, descriptor, payload) = view.dyn_parts(handle).unwrap();
         assert_eq!(payload.value(), original.value());

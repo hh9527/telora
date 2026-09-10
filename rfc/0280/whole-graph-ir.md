@@ -5,6 +5,25 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Unchecked metadata shares the solved owner layout (2026-09-10)
+
+TypeImage.layout follows Unchecked's canonical owner ID and returns the owner's
+existing layout by reference. It does not duplicate member arrays or manufacture
+new body IDs. TypeDesc.kind reports Ref; resolve and fields consume the shared
+body. Applied generic members and recursive checked field identities remain
+unchanged. Dyn field access follows the same owner relation while the package
+retains its original Unchecked descriptor and payload handles.
+
+Validation: 48 codegen and 14 solved VM tests pass. New cases use an always-failing
+checker to prove that metadata/field observation does not complete the candidate.
+A detached-image assertion verifies pointer equality between owner and Unchecked
+layouts. The Dyn regression verifies original array payload-handle reuse for
+unchecked field access. Logs: /tmp/mir-unchecked-metadata.log,
+/tmp/mir-metadata-codegen.log and /tmp/mir-metadata-vm.log.
+No performance/full-suite claim. Contextual tuple/branch completion, remaining
+generic evidence/property support, command/LSP migration and old-pipeline removal
+remain open.
+
 ### Unchecked construction and explicit MIR completion boundaries (2026-09-10)
 
 Unchecked(T) now admits named-field Struct candidates, exposes their fields and

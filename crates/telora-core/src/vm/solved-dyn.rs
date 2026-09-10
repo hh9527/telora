@@ -333,6 +333,9 @@ fn solved_dyn_fields(
     types: &crate::type_image::TypeImage,
 ) -> Result<Vec<(&str, crate::mir::TypeId)>, String> {
     use crate::mir::{TypeConstructor as T, TypeOperation};
+    let ty = if types.types[ty.index()].constructor == T::Unchecked {
+        types.types[ty.index()].arguments[0]
+    } else { ty };
     let shape = &types.types[ty.index()];
     match &shape.constructor {
         T::Record(names) => Ok(names

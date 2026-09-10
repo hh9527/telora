@@ -2,7 +2,7 @@
 //! or recursively owned descriptors. Generic bodies remain parameterized;
 //! nominal applications retain their arguments in the ordinary type table.
 use crate::{
-    mir::{Mir, ResolvedType, SymbolId, TypeId, TypeOperation, TypeState},
+    mir::{Mir, ResolvedType, SymbolId, TypeConstructor, TypeId, TypeOperation, TypeState},
     source::Diagnostic,
 };
 
@@ -57,6 +57,11 @@ impl TypeImage {
     /// Applied member types in declaration order. This is an array lookup,
     /// including for recursive and generic nominal applications.
     pub fn layout(&self, ty: TypeId) -> Option<&crate::mir::TypeLayout> {
+        // Unchecked changes the outer guarantee, not the representation. Its
+        // canonical argument is the already solved owner; share that layout.
+        let ty = if self.types.get(ty.index())?.constructor == TypeConstructor::Unchecked {
+            *self.types[ty.index()].arguments.first()?
+        } else { ty };
         self.layouts.get(ty.index())?.as_ref()
     }
 
