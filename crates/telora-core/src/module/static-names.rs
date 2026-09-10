@@ -297,6 +297,31 @@ impl<'a> StaticNames<'a> {
             hir[id.index()] = self.module_resolution(id);
         }
         self.resolve_export_aliases(&mut hir);
+        for index in 0..hir.len() {
+            let Some(module) = &hir[index] else { continue; };
+            let origins = module.imports.iter().map(|(name, target)| {
+                use crate::hir::{HirImportOrigin as Origin, HirResolution};
+                let origin = match *target {
+                    StaticImportTarget::Namespace(module) => Origin::Namespace(module),
+                    StaticImportTarget::Export { module, index } => {
+                        let definition = self.program(module).and_then(|program| {
+                            let ExprKind::Dict(fields) = &program.value.body.value.result.value else { return None; };
+                            let ExprKind::Variable(name) = &fields[index as usize].value.value.value else { return None; };
+                            let resolved = hir[module.index()].as_ref()?;
+                            let reference = resolved.hir.reference_at(name.location, &name.value)?;
+                            match reference.resolution {
+                                HirResolution::Definition(definition) => Some(definition),
+                                _ => None,
+                            }
+                        });
+                        definition.map_or(Origin::Export { module, index },
+                            |definition| Origin::Definition { module, definition })
+                    }
+                };
+                (name.clone(), origin)
+            }).collect();
+            hir[index].as_mut().unwrap().hir.set_import_origins(&origins);
+        }
         hir
     }
 

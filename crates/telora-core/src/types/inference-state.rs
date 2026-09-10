@@ -39,6 +39,7 @@ struct GenericInference<'a> {
     recursive_equations: HashMap<InferenceVariableId, TypeDescriptor>,
     variables: InferenceVariables,
     definition_bindings: Vec<Option<InferenceDefinition>>,
+    import_bindings: HashMap<crate::hir::HirImportOrigin, InferenceDefinition>,
     definition_schemes: Vec<TypeScheme>,
     records: HashMap<crate::Location, InferenceVariableId>,
     value_constructors: HashMap<crate::Location, ValueConstructor>,

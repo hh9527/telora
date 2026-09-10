@@ -110,6 +110,14 @@ fn solve_program_types<'a>(
         }
     }
     let type_metadata_expected = TypeDescriptor::Type;
+    for reference in hir.references() {
+        if reference.resolution != HirResolution::External { continue; }
+        if let Some(origin) = hir.reference_import_origin(reference.id)
+            && let Some(descriptor) = static_environment.get(&reference.name)
+        {
+            inference.bind_import_origin(origin, descriptor.clone(), binding_schemes.get(&reference.name).cloned());
+        }
+    }
     let mut delayed_bindings = Vec::new();
     let mut recursive_skeletons = HashMap::new();
     let component_plan = definition_component_plan(&program.value.body, hir);

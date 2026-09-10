@@ -1,4 +1,29 @@
     #[test]
+    fn resolved_import_aliases_read_one_source_slot_without_name_lookup() {
+        let program = crate::parser::parse("import-slots.telora", "(left, right)").unwrap();
+        let mut hir = HirProgram::resolve(&program, ["left".into(), "right".into()]);
+        let origin = crate::hir::HirImportOrigin::Export { module: crate::ModuleId::ANONYMOUS, index: 0 };
+        hir.set_import_origins(&BTreeMap::from([("left".into(), origin), ("right".into(), origin)]));
+        let schemes = HashMap::new();
+        let interfaces = BTreeMap::new();
+        let named_types = BTreeMap::new();
+        let trait_ids = BTreeMap::new();
+        let dyn_namespaces = HashSet::new();
+        let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &named_types,
+            InferenceAnnotationInputs::default(), &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None);
+        let slot = inference.variables.fresh();
+        inference.bind_import_origin(origin, TypeDescriptor::Inference(slot), None);
+        inference.variables.set(slot, TypeDescriptor::Int);
+        for reference in hir.references() {
+            let name = crate::ast::located(reference.name.clone(), reference.location);
+            assert_eq!(inference.resolved_binding(&name).unwrap().slot, slot);
+            let expression = crate::ast::located(ExprKind::Variable(name), reference.location);
+            let inferred = inference.infer(&expression, &HashMap::new(), None).unwrap();
+            assert_eq!(inference.normalize(&inferred), TypeDescriptor::Int);
+        }
+    }
+
+    #[test]
     fn resolved_local_bindings_use_slots_without_populating_name_scopes() {
         let program = crate::parser::parse("resolved-local.telora", "let value = 0; { let value = 1; value }").unwrap();
         let hir = HirProgram::resolve(&program, Vec::new());

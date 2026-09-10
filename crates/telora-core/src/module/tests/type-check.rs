@@ -224,6 +224,8 @@ fn session_export_aliases_share_source_identity_without_merging_new_definitions(
         export def original = 1;
         export { original as alias };
         export def separate = original;
+        export def identity = fn(value) { value };
+        export { identity as identity_alias };
     "#).unwrap();
     fs::write(directory.join("src/bridge.telora"), r#"
         import "./model" { alias as forwarded };
@@ -231,9 +233,10 @@ fn session_export_aliases_share_source_identity_without_merging_new_definitions(
         export { forwarded, model };
     "#).unwrap();
     fs::write(directory.join("src/main.telora"), r#"
-        import "./model" { original, alias, separate };
+        import "./model" { original, alias, separate, identity, identity_alias };
         import "./bridge" { forwarded, model };
         export def result = original + alias + forwarded + separate + model.original;
+        export def distinct_instantiations = (identity(1), identity_alias("text"));
     "#).unwrap();
     let resolver = session_workspace_resolver(&directory, &["@src/main", "@src/model", "@src/bridge"]);
     let root = resolver.selected_root().unwrap();
@@ -247,6 +250,14 @@ fn session_export_aliases_share_source_identity_without_merging_new_definitions(
     assert!(resolved.diagnostics.is_empty(), "{:?}", resolved.diagnostics);
     assert_eq!(resolved.imports["original"], resolved.imports["alias"]);
     assert_eq!(resolved.imports["original"], resolved.imports["forwarded"]);
+    let origin = |name: &str| {
+        let reference = resolved.hir.references().iter().find(|reference| reference.name == name).unwrap();
+        resolved.hir.reference_import_origin(reference.id).unwrap()
+    };
+    assert_eq!(origin("original"), origin("forwarded"));
+    assert!(matches!(origin("original"), crate::hir::HirImportOrigin::Definition { .. }));
+    assert_eq!(origin("identity"), origin("identity_alias"));
+    assert_ne!(origin("original"), origin("separate"));
     assert_eq!(resolved.imports["model"], StaticImportTarget::Namespace(resolved.imports["original"].module()));
     assert_ne!(resolved.imports["original"], resolved.imports["separate"],
         "equal values/types must not merge independently authored definitions");

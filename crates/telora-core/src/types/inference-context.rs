@@ -82,6 +82,7 @@ impl<'a> GenericInference<'a> {
             recursive_equations: HashMap::new(),
             variables: annotation_inputs.variables,
             definition_bindings: vec![None; hir.definitions().len()],
+            import_bindings: HashMap::new(),
             definition_schemes: Vec::new(),
             records: HashMap::new(),
             pattern_diagnostics: BTreeMap::new(),
@@ -533,6 +534,9 @@ impl<'a> GenericInference<'a> {
 
     fn resolved_binding(&self, name: &crate::ast::Identifier) -> Option<InferenceDefinition> {
         let reference = self.hir.reference_at(name.location, &name.value)?;
+        if let Some(origin) = self.hir.reference_import_origin(reference.id) {
+            return self.import_bindings.get(&origin).copied();
+        }
         let HirResolution::Definition(id) = reference.resolution else { return None; };
         self.definition_bindings[id.index()]
     }
@@ -551,6 +555,11 @@ impl<'a> GenericInference<'a> {
             return;
         };
         let index = definition.id.index();
+        if let Some(origin) = self.hir.definition_import_origin(definition.id) {
+            let binding = self.bind_import_origin(origin, descriptor, scheme);
+            self.definition_bindings[index] = Some(binding);
+            return;
+        }
         let slot = self.variables.structure_edge(descriptor);
         let scheme = scheme.map_or(u32::MAX, |scheme| {
             if let Some(previous) = self.definition_bindings[index]
@@ -566,6 +575,22 @@ impl<'a> GenericInference<'a> {
             }
         });
         self.definition_bindings[index] = Some(InferenceDefinition { slot, scheme });
+    }
+
+    fn bind_import_origin(&mut self, origin: crate::hir::HirImportOrigin,
+        descriptor: TypeDescriptor, scheme: Option<TypeScheme>) -> InferenceDefinition
+    {
+        if let Some(binding) = self.import_bindings.get(&origin) { return *binding; }
+        let slot = self.variables.structure_edge(descriptor);
+        let scheme = scheme.map_or(u32::MAX, |scheme| {
+            let id = u32::try_from(self.definition_schemes.len()).expect("inference scheme capacity exceeded");
+            assert_ne!(id, u32::MAX, "inference scheme capacity exceeded");
+            self.definition_schemes.push(scheme);
+            id
+        });
+        let binding = InferenceDefinition { slot, scheme };
+        self.import_bindings.insert(origin, binding);
+        binding
     }
 
     fn namespace_interface(&self, expression: &Expr) -> Option<&ModuleInterface> {

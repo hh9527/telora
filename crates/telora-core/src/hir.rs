@@ -42,6 +42,13 @@ pub enum HirResolution {
     Unresolved,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum HirImportOrigin {
+    Definition { module: crate::ModuleId, definition: HirDefinitionId },
+    Export { module: crate::ModuleId, index: u32 },
+    Namespace(crate::ModuleId),
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct HirExternalName {
     pub(crate) declared: bool,
@@ -102,9 +109,30 @@ pub struct HirProgram {
     member_patterns: HashSet<Location>,
     tool_roots: HashSet<Location>,
     property_roots: HashSet<Location>,
+    definition_import_origins: Vec<Option<HirImportOrigin>>,
+    reference_import_origins: Vec<Option<HirImportOrigin>>,
 }
 
 impl HirProgram {
+    pub(crate) fn set_import_origins(&mut self, origins: &std::collections::BTreeMap<String, HirImportOrigin>) {
+        self.definition_import_origins = self.definitions.iter().map(|definition|
+            (definition.kind == HirDefinitionKind::Import).then(|| origins.get(&definition.name).copied()).flatten())
+            .collect();
+        self.reference_import_origins = self.references.iter().map(|reference| match reference.resolution {
+            HirResolution::Definition(id) => self.definition_import_origins[id.index()],
+            HirResolution::External => origins.get(&reference.name).copied(),
+            HirResolution::Unresolved => None,
+        }).collect();
+    }
+
+    pub(crate) fn definition_import_origin(&self, id: HirDefinitionId) -> Option<HirImportOrigin> {
+        self.definition_import_origins.get(id.index()).copied().flatten()
+    }
+
+    pub(crate) fn reference_import_origin(&self, id: HirReferenceId) -> Option<HirImportOrigin> {
+        self.reference_import_origins.get(id.index()).copied().flatten()
+    }
+
     pub fn resolve(program: &Program, external_names: impl IntoIterator<Item = String>) -> Self {
         Self::resolve_with_member_constructors(program, external_names, HashSet::new())
     }

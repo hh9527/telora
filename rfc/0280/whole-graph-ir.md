@@ -154,11 +154,33 @@ distinct declaration. This is source binding identity, not equality of inferred
 types. Tests cover direct aliases, a re-export chain, a namespace re-export and
 that distinction, then run the actual checker against the resolved graph.
 
-The next identity step must retain module-qualified definition identities on
-imported HIR references, rather than merely retaining a spelling plus a
-module-local External marker. The canonical source export row is still an
-interface-selection bridge, not a session type slot. No shared arena or complete
-cross-module reference table is claimed by this change.
+The types-only preparation now attaches module-qualified source identities to
+HIR import definitions and their references, in arrays indexed by the final HIR
+IDs. Declared exports use `(ModuleId, HirDefinitionId)`; synthetic/expression
+exports retain a source-row identity and namespace imports identify the module.
+Lexical resolution remains explicit, so a shadowing local declaration does not
+inherit an import's origin.
+
+Program inference consumes these origins: aliases reuse one imported declaration
+slot and scheme within the inference arena; open-import references read that
+slot directly. Generic calls still instantiate the shared scheme separately.
+Regression tests read both aliases from one initially unknown source slot with
+an empty name environment, then verify that resolving the slot resolves both
+references. The module fixture calls two aliases of a generic function at Int
+and String independently.
+
+This is not yet the complete pre-type graph symbol table: namespace member
+references are not all connected to final source declarations, ordinary checking
+still prepares HIR per module, and imported slots are still materialized from
+descriptor interfaces in separate arenas. The shared session slot owner and
+final typed IR remain required; source identity alone does not complete them.
+
+Treat these as separate gates: complete name resolution means every statically
+resolvable reference has a source identity (or a resolve diagnostic), including
+namespace members, before either checking mode starts type solving. Allocating
+the shared type slots is a subsequent requirement, not a prerequisite for calling
+the symbol graph complete. Record/trait member choices that actually depend on
+types remain explicit constraints for the type phase.
 
 HIR currently normalizes local definition/reference/expression IDs after indexing
 each source. Attach cross-module declaration edges after that normalization,
