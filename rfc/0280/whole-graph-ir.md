@@ -5,6 +5,36 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remaining runtime split: deletion must include its legacy producers (2026-09-11)
+
+Read-only call-site inspection after the host-contract extraction confirms that
+descriptor-based VM code is not yet dead code. In particular:
+
+| Legacy producer/consumer | Remaining edge | MIR replacement |
+| --- | --- | --- |
+| types/tool.rs | Installs NativeFunction::checked_cast(native_checked_cast) | Codegen's solved cast instructions |
+| vm/dispatch.rs | NativeKind::CheckedCast calls start_checked_cast | Solved cast/check execution |
+| vm/codec-decode.rs | RefineTop decodes metadata; Refine calls expand_cast_refinement | solved-codec-decode using TypeImage |
+| compiler/control.rs | Marks old interpreter closures as memoized | codegen/interpreters.rs sealed plans |
+| vm/dispatch.rs | Interpreter keys fall back to canonical_type_value_id without a solved image | SolvedType IDs from the session image |
+
+The VM still selects old versus solved execution by background.solved_types in
+dyn.rs, codec-entry.rs, json.rs, string.rs and type-desc.rs. codec-schema.rs also
+contains a representation split. call-context.rs has a related admission guard.
+Thus the existence of a green solved-codegen suite does not prove removal of
+the old runtime, and deleting checked-cast.rs alone would leave codec refinement
+and old native dispatch broken. No runtime source was changed in this audit.
+
+The next removal boundary is the old source/metadata producers together with
+their descriptor dispatch paths, rather than more isolated wrapper removals.
+Shared value/diagnostic helpers must be retained where solved execution still
+uses them; they are not legacy merely because they live in an old codec file.
+VM demand tests already cover solved cast handle/nominal identity, unchecked
+completion, codec failure caching and blame identity. Codegen tests cover
+interpreter factory identity and checked casts. These are regression gates for
+the deletion, not evidence that the deletion has already happened. Full legacy
+API/test removal and final acceptance remain required.
+
 ### Detach active runtime host contracts from the old Engine module (2026-09-11)
 
 DataLimits, RunHost and its effect/input/result structures, EvalContext and
