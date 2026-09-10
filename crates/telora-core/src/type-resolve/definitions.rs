@@ -55,7 +55,9 @@ impl Solver<'_> {
                     .into_iter()
                     .filter_map(|node| self.mir.hir_symbols[node.index()])
                     .collect::<Vec<_>>();
-                self.mir.symbol_generics[index] = parameters.clone();
+                if !parameters.is_empty() {
+                    self.mir.symbol_generics[index] = parameters.clone();
+                }
                 if let Some(value) = self.child(declaration, Role::Value)
                     && let HirKind::TypeOperation(
                         operation @ (TypeOperation::Struct

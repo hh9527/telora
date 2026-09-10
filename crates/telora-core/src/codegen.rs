@@ -664,7 +664,7 @@ impl<'a> Emitter<'a> {
                 }
                 if !self.mir.symbol_generics[symbol.index()].is_empty()
                     && matches!(self.mir.symbols[symbol.index()].kind,
-                        SymbolKind::Declaration(BindingKind::Def | BindingKind::Let | BindingKind::Impl))
+                        SymbolKind::Declaration(BindingKind::Def | BindingKind::Decl | BindingKind::Let | BindingKind::Impl))
                 {
                     return Err(self.error(node, "generic reference has no executable MIR instance"));
                 }
@@ -1012,6 +1012,7 @@ impl<'a> Emitter<'a> {
                     return Err(self.error(node, "unsupported solved record construction type"));
                 }
                 let mut fields = vec![];
+                let mut dicts = vec![];
                 for field in self.children(node, Role::Field) {
                     let Some(name) = self.mir.hir[field.index()]
                         .children
@@ -1019,9 +1020,15 @@ impl<'a> Emitter<'a> {
                         .find(|e| e.role == Role::Name)
                         .map(|e| e.node)
                     else {
-                        return Err(
-                            self.error(field, "dictionary spread lowering is not implemented yet")
-                        );
+                        if !fields.is_empty() {
+                            let dst = self.register();
+                            self.emit(node, O::MakeDict { dst, fields: std::mem::take(&mut fields) });
+                            dicts.push(dst);
+                        }
+                        let spread = self.child(field, Role::Value);
+                        let value = self.expression(self.child(spread, Role::Operand))?;
+                        dicts.push(value);
+                        continue;
                     };
                     let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
                         unreachable!()
@@ -1031,7 +1038,16 @@ impl<'a> Emitter<'a> {
                     fields.push((name, value));
                 }
                 let dst = self.register();
-                self.emit(node, O::MakeDict { dst, fields });
+                if dicts.is_empty() {
+                    self.emit(node, O::MakeDict { dst, fields });
+                } else {
+                    if !fields.is_empty() {
+                        let part = self.register();
+                        self.emit(node, O::MakeDict { dst: part, fields });
+                        dicts.push(part);
+                    }
+                    self.emit(node, O::MergeDicts { dst, dicts });
+                }
                 self.construction_check(node, ty, PropertySite::Type, dst);
                 self.emit(node, O::StampType { dst, src: dst, ty });
                 dst
@@ -1176,6 +1192,9 @@ impl<'a> Emitter<'a> {
                     B::Multiply => O::Multiply { dst, left, right },
                     B::Divide => O::Divide { dst, left, right },
                     B::Remainder => O::Remainder { dst, left, right },
+                    B::BitAnd => O::BitAnd { dst, left, right },
+                    B::BitOr => O::BitOr { dst, left, right },
+                    B::BitXor => O::BitXor { dst, left, right },
                     B::Equal => O::Equal { dst, left, right },
                     B::NotEqual => O::NotEqual { dst, left, right },
                     B::LessThan => O::LessThan { dst, left, right },
@@ -1536,6 +1555,27 @@ pub(crate) mod tests {
         }
     }
     #[test]
+    fn record_spreads_keep_winning_types_and_evaluate_overwritten_expressions() {
+        for source in [
+            "type Full = struct {x: Int, label: String}; type Count = struct {x: Int}; type Wrong = struct {x: String}; def base: Full = {x: 1, label: \"base\"}; def count: Count = {x: 42}; def wrong: Wrong = {x: \"ignored\"}; export def answer = (base <~ {x: \"ignored\", ...count} <~ {...wrong, x: 42}).x;",
+            "type Full = struct {x: Int, label: String}; type Count = struct {x: Int}; def count: Count = {x: 42}; def value: Full = {...count, label: \"ok\"}; export def answer = value.x;",
+            "type Box(T) = struct {value: T}; def copy: for(T) Fn(Box(T)) -> Box(T) = fn(value) { {...value} }; def value: Box(Int) = {value: 42}; export def answer = copy(value).value;",
+            "type Box(T) = struct {value: T}; decl copy: for(T) Fn(Box(T)) -> Box(T); def copy = fn(value) { {...value} }; def number: Box(Int) = {value: 42}; def text: Box(String) = {value: \"ok\"}; export def answer = if copy(text).value == \"ok\" { copy(number).value } else { 0 };",
+            "def left: Dict(Int) = {x: 1}; def right: Dict(Int) = {x: 42}; def result = {...left, ...right}; export def answer = result.x;",
+            "def result: Dict(Int) = {...{x: 42}}; export def answer = result.x;",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            let artifact = compile(sealed, entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{source}");
+        }
+        let source = "type Item = struct {x: Int}; def base: Item = {x: 42}; export def answer = base <~ {x: fail!(\"overwritten failure\"), ...base};";
+        let mir = graph(source, "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        assert!(execute(artifact).err().expect("eager failure").to_string().contains("overwritten failure"));
+    }
+
+    #[test]
     fn struct_updates_preserve_identity_and_contextual_field_types() {
         for source in [
             "type Full = struct {x: Int, label: String}; type Patch = struct {x: Int}; def base: Full = {x: 1, label: \"base\"}; def patch: Patch = {x: 20}; def updated = base <~ patch <~ {x: 42}; export def answer = if base.x == 1 && updated.label == \"base\" { updated.x } else { 0 };",
@@ -1654,6 +1694,9 @@ pub(crate) mod tests {
     #[test]
     fn unary_operators_consume_the_solved_operand_family() {
         for source in [
+            "export def answer = 43 & 42;",
+            "export def answer = 40 | 2;",
+            "export def answer = 40 ^ 2;",
             "export def answer = if !False { 42 } else { 0 };",
             "export def answer = !(-43);",
             "export def answer = -(-42);",

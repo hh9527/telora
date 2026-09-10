@@ -2,6 +2,22 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn record_spreads_reject_incompatible_modes_and_duplicate_explicit_fields() {
+    for (source, message) in [
+        ("type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = base <~ {x: 2, ...base, x: 3};", "duplicate update field"),
+        ("type Item = struct {x: Int}; def base: Item = {x: 1}; def dict: Dict(Int) = {x: 2}; export def bad: Item = {...base, ...dict};", "cannot mix Dict and named struct spreads"),
+        ("type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = {...base};", "record spread requires a named struct target context"),
+        ("def base: Dict(Int) = {x: 1}; export def bad = {...base, y: \"wrong\"};", "incompatible types"),
+        ("type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = base <~ {extra: 1, ...base};", "unknown struct update field"),
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err(), "{source}");
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains(message)), "{source}\n{}", mir.dump());
+    }
+}
+
+#[test]
 fn record_operations_reject_invalid_shapes_without_runtime_inference() {
     for (source, message) in [
         ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source.{x};", "field projection requires a named struct target context"),

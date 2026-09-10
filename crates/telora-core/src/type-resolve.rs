@@ -19,8 +19,8 @@ mod instances;
 mod layouts;
 #[path = "type-resolve/members.rs"]
 mod members;
-#[path = "type-resolve/field-projection.rs"]
-mod field_projection;
+#[path = "type-resolve/record-operations.rs"]
+mod record_operations;
 #[path = "type-resolve/properties.rs"]
 mod properties;
 #[cfg(test)]
@@ -28,6 +28,7 @@ mod properties;
 mod tests;
 
 enum Task {
+    RecordSpread { node: HirId },
     StructUpdate { node: HirId, left: TypeSlotId, right: TypeSlotId },
     FieldProjection { node: HirId, receiver: TypeSlotId },
     ShapeEqual { left: TypeSlotId, right: TypeSlotId, location: Option<Location> },
@@ -109,6 +110,7 @@ struct Solver<'a> {
     nominal_owner: Vec<Option<SymbolId>>,
     return_slots: Vec<Option<TypeSlotId>>,
     pending_blocks: Vec<bool>,
+    record_spreads: Vec<bool>,
     administrative: Vec<bool>,
     decorator_contexts: Vec<Option<TypeSlotId>>,
     property_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
@@ -202,7 +204,18 @@ pub fn resolve(mir: &mut Mir) {
 impl Solver<'_> {
     fn new(mir: &mut Mir) -> Solver<'_> {
         mir.value_adjustments.resize(mir.hir.len(), None);
+        let mut record_spreads = vec![false; mir.hir.len()];
+        for field in &mir.hir {
+            if matches!(field.kind, HirKind::DictField) {
+                for edge in &field.children {
+                    if edge.role == Role::Value && matches!(mir.hir[edge.node.index()].kind, HirKind::Spread) {
+                        record_spreads[edge.node.index()] = true;
+                    }
+                }
+            }
+        }
         Solver {
+            record_spreads,
             nominal_index: vec![None; mir.symbols.len()],
             nominal_owner: vec![None; mir.hir.len()],
             return_slots: vec![None; mir.hir.len()],
@@ -521,7 +534,14 @@ impl Solver<'_> {
             HirKind::FieldProjection => {
                 self.tasks.push(Task::FieldProjection { node, receiver: self.child(node, Role::Receiver).unwrap().ty() });
             }
+            HirKind::Spread if self.record_spreads[node.index()] => {
+                self.same(node, self.child(node, Role::Operand).unwrap().ty());
+            }
             HirKind::Dict => {
+                if self.children(node, Role::Field).iter().any(|&field| self.child(field, Role::Name).is_none()) {
+                    self.tasks.push(Task::RecordSpread { node });
+                    return;
+                }
                 let mut fields = vec![];
                 for field in self.children(node, Role::Field) {
                     let (Some(name), Some(value)) = (

@@ -118,7 +118,7 @@ impl ExecutionGraph {
         for (index, instance) in mir.generic_instances.iter().enumerate() {
             let symbol = &mir.symbols[instance.symbol.index()];
             if !instance.concrete || graph.global(instance.symbol).is_none()
-                || !matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Let | BindingKind::Def | BindingKind::Impl | BindingKind::Native))
+                || !matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Let | BindingKind::Def | BindingKind::Decl | BindingKind::Impl | BindingKind::Native))
             {
                 continue;
             }

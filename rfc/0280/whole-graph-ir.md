@@ -5,6 +5,39 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Record spreads preserve winners and declared generic identities (2026-09-11)
+
+Record/StructUpdate spread constraints now collect field contributions in source
+order and apply contextual types only to final winners. Explicit duplicate names,
+unknown update fields and invalid spread modes remain static errors. Dict spreads
+use the common element constraint, including contextual dictionary literals;
+mixing dynamic Dict and nominal struct spreads is rejected. The record operation
+constraints are consolidated in type-resolve/record-operations.rs.
+
+Codegen evaluates every authored expression in order, including overwritten
+values, and merges existing VM values with MakeDict/MergeDicts. Generic copies
+and final target construction use already-solved IDs; no VM change is needed.
+The overwritten-value failure test confirms that static winner selection is not
+dead-code elimination.
+
+The actual StructUpdate fixture exposed two additional assembly omissions.
+An unannotated def following a generic decl erased symbol_generics, and the
+execution graph excluded Decl-origin symbols from instance tasks. Both now
+preserve and consume the original declared generic identity. Int/String uses of
+the same declared generic copy function execute as separate solved instances.
+Integer BitAnd/BitOr/BitXor also now map mechanically to their existing opcodes.
+This does not implement implicit generalization.
+
+Validation: 59 codegen and 40 type-resolve tests pass. The rebuilt CLI passes all
+7 StructUpdate language tests, covering spread override order, nested contexts,
+generic identity, precedence and overwritten failures. The full language suite
+still fails other cases; its last aggregate run preceded the bitwise mapping,
+and the final StructUpdate result was verified separately. Array/Tuple Spread,
+provenance, implicit schemes, remaining syntax/schema and legacy removal are
+still open. Logs: /tmp/mir-record-spread-codegen.log,
+/tmp/mir-record-spread-types.log, /tmp/mir-record-spread-update.jsonl and
+/tmp/mir-record-spread-language.log. No performance measurement was made.
+
 ### Named field projection and basic struct update use solved shapes (2026-09-11)
 
 FieldProjection constraints read the source nominal member skeleton, substitute
