@@ -18,6 +18,20 @@ pub struct TypeId(u32);
 
 impl TypeId {
     const UNCHECKED: u32 = 1 << 31;
+    const SOLVED: u32 = 1 << 30;
+
+    /// Disjoint encoding for IDs owned by the sealed Main-world type image.
+    /// This is an identity encoding, not interning or type reconstruction.
+    pub(crate) fn solved(id: crate::mir::TypeId) -> Self {
+        let raw = id.index() as u32 + 1;
+        assert!(raw < Self::SOLVED, "solved type image exceeds ID space");
+        Self(Self::SOLVED | raw)
+    }
+
+    pub(crate) fn solved_id(self) -> Option<crate::mir::TypeId> {
+        if self.0 & Self::SOLVED == 0 { return None; }
+        (self.0 & !(Self::SOLVED | Self::UNCHECKED)).checked_sub(1).map(crate::mir::TypeId)
+    }
 
     pub(crate) const fn unchecked(self) -> Self {
         Self(self.0 | Self::UNCHECKED)
@@ -48,12 +62,13 @@ impl TypeId {
     fn from_index(index: usize) -> Self {
         let index = u32::try_from(index).expect("type store exceeds u32 ID space");
         let raw = Self::FIRST_DYNAMIC.checked_add(index)
-            .filter(|raw| *raw < Self::UNCHECKED)
-            .expect("type store exceeds 31-bit ID space");
+            .filter(|raw| *raw < Self::SOLVED)
+            .expect("type store exceeds 30-bit ID space");
         Self(raw)
     }
 
     fn index(self) -> Option<usize> {
+        if self.0 & Self::SOLVED != 0 { return None; }
         self.checked().0
             .checked_sub(Self::FIRST_DYNAMIC)
             .map(|index| index as usize)

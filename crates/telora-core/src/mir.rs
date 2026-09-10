@@ -229,6 +229,11 @@ pub struct TypeMember {
     pub payload: Option<TypeSlotId>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum MemberSelection {
+    EnumVariant { index: u32 },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PropertySite {
     Type,
@@ -476,6 +481,7 @@ pub struct Mir {
     pub symbol_generics: Vec<Vec<SymbolId>>,
     pub type_terms: Vec<TypeTerm>,
     pub types: Vec<ResolvedType>,
+    pub member_selections: Vec<Option<MemberSelection>>,
     pub type_definitions: Vec<TypeDefinition>,
     pub properties: Vec<PropertyRecord>,
     pub bound_requirements: Vec<BoundRequirement>,
@@ -597,6 +603,11 @@ impl Mir {
         }
         for (id, ty) in self.types.iter().enumerate() {
             writeln!(out, "type {id} {ty:?}").unwrap();
+        }
+        for (id, selection) in self.member_selections.iter().enumerate() {
+            if let Some(selection) = selection {
+                writeln!(out, "member-selection {id} {selection:?}").unwrap();
+            }
         }
         for (id, conflict) in self.type_conflicts.iter().enumerate() {
             writeln!(out, "type-conflict {id} {conflict:?}").unwrap();

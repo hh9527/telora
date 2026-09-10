@@ -320,6 +320,13 @@ impl fmt::Display for ExecutionWorld {
 }
 
 impl<'a> ValueRef<'a> {
+    /// Identity stamped by bytecode from the sealed type image, not inferred
+    /// from the runtime representation.
+    pub fn solved_type_id(&self) -> Option<crate::mir::TypeId> {
+        let id = self.value.type_id()?.solved_id()?;
+        self.view.background?.solved_types.as_ref()?.types.get(id.index())?;
+        Some(id)
+    }
     pub(crate) fn test_description(self) -> Option<(&'a crate::module::TestDescription, Val)> {
         let DecodedValue::Opaque(handle) = self.value.value() else {
             return None;

@@ -415,6 +415,24 @@ impl Vm {
                                 let value = *read_register(&registers, *src, function, pc)?;
                                 write_register(&mut registers, *dst, value, function, pc)?;
                             }
+                            Opcode::MakeVariant { dst, ty, variant, payload } => {
+                                let member = background.solved_types.as_ref()
+                                    .and_then(|types| types.variant(*ty, *variant))
+                                    .filter(|member| member.payload.is_some() == payload.is_some())
+                                    .ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode,
+                                        "invalid solved enum constructor", function, pc))?;
+                                let bytes = logical_value_bytes(if payload.is_some() { 2 } else { 0 })
+                                    .map_err(|e| allocation_error(e.message, function, pc))?;
+                                charge_allocation(account, bytes + member.name.len() as u64, function, pc)?;
+                                let tag = Val::unknown(current.atom(Some(background), &member.name));
+                                let value = if let Some(src) = payload {
+                                    let payload = *read_register(&registers, *src, function, pc)?;
+                                    Val::unknown(DecodedValue::Tagged(current.allocate(Object::Tagged { tag, payload })))
+                                } else { tag };
+                                let value = value.with_type_id(crate::TypeId::solved(*ty))
+                                    .with_loc(instruction_location(function, pc));
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
                             Opcode::OwnDeclared { dst, owner, value } => {
                                 let owner = *read_register(&registers, *owner, function, pc)?;
                                 let value = *read_register(&registers, *value, function, pc)?;

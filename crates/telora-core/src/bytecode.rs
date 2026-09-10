@@ -26,6 +26,12 @@ pub enum Constant {
 
 #[derive(Clone, Debug)]
 pub enum Instruction {
+    MakeVariant {
+        dst: Register,
+        ty: crate::mir::TypeId,
+        variant: u32,
+        payload: Option<Register>,
+    },
     LoadConst {
         dst: Register,
         constant: usize,
@@ -259,6 +265,12 @@ pub enum Instruction {
 
 #[derive(Clone, Debug)]
 pub enum Opcode {
+    MakeVariant {
+        dst: Register,
+        ty: crate::mir::TypeId,
+        variant: u32,
+        payload: Option<Register>,
+    },
     LoadConst {
         dst: Register,
         value: ValueLinkId,
@@ -732,6 +744,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
             value: ValueLinkId(constant),
         },
         Instruction::Move { dst, src } => Opcode::Move { dst, src },
+        Instruction::MakeVariant { dst, ty, variant, payload } => Opcode::MakeVariant { dst, ty, variant, payload },
         Instruction::OwnDeclared { dst, owner, value } => Opcode::OwnDeclared { dst, owner, value },
         Instruction::AllocFunc { dst, static_id } => Opcode::AllocFunc { dst, static_id },
         Instruction::SealFunc { target, source } => Opcode::SealFunc { target, source },

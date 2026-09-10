@@ -31,6 +31,18 @@ pub struct TypeMember {
 }
 
 impl TypeImage {
+    pub fn variant(&self, ty: TypeId, index: u32) -> Option<&TypeMember> {
+        let crate::mir::TypeConstructor::Nominal(symbol) = self.types.get(ty.index())?.constructor
+        else {
+            return None;
+        };
+        let definition = self.definition(symbol)?;
+        if definition.operation != TypeOperation::Enum {
+            return None;
+        }
+        definition.members.get(index as usize)
+    }
+
     pub(crate) fn from_mir(mir: &Mir) -> Result<Self, Vec<Diagnostic>> {
         let mut diagnostics = vec![];
         let mut definitions = vec![];

@@ -5,6 +5,31 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Solved nominal enum construction (2026-09-10)
+
+The type pass now retains nominal enum member selections as variant indices in
+MIR. Codegen consumes those selections and the normalized constructor signature,
+without repeating member-name resolution. It emits a `MakeVariant` operation
+carrying the original TypeId, variant index and optional payload register.
+Payload constructors are ordinary first-class closures and nullary variants are
+direct values. Their type declaration syntax is not a runtime dependency.
+
+The VM reads the imported type image for the constructor, checks the bytecode
+indices/arity, accounts for allocation, constructs the value and stamps its
+solved identity. MIR IDs use a disjoint encoding in the existing value type word;
+they are never interned into the legacy runtime TypeStore. `ValueRef` can expose
+that original solved ID. Missing type images are invalid bytecode, with no
+descriptor reconstruction fallback. Generic constructors requiring dynamic type
+witnesses and constructors whose owners have property records are explicitly
+rejected by codegen until those execution semantics are connected.
+
+Validation: 9 focused codegen tests, 21 type-pass tests and 9 runtime type-store
+tests pass. Coverage includes imported enum aliases, nullary/payload variants,
+first-class constructor calls, runtime identity retention, missing-image
+rejection and disjoint ID encoding/Unchecked round trips. Runtime metadata,
+property execution, builtin enum lowering, matching and semantic JSON consumers
+are not yet migrated. No performance claim is made.
+
 ### Move the sealed type image into Main (2026-09-10)
 
 `link_entry` consumes the compiled artifact and preserves its sealed type image.

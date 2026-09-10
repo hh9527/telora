@@ -15,6 +15,12 @@ pub struct LabelId(pub u32);
 
 #[derive(Clone, Debug)]
 pub enum Operation {
+    MakeVariant {
+        dst: RegisterId,
+        ty: crate::mir::TypeId,
+        variant: u32,
+        payload: Option<RegisterId>,
+    },
     LoadConst {
         dst: RegisterId,
         constant: ConstantId,
@@ -381,6 +387,12 @@ fn lower_operation(
         Operation::Move { dst, src } => Instruction::Move {
             dst: register(dst)?,
             src: register(src)?,
+        },
+        Operation::MakeVariant { dst, ty, variant, payload } => Instruction::MakeVariant {
+            dst: register(dst)?,
+            ty,
+            variant,
+            payload: payload.map(register).transpose()?,
         },
         Operation::OwnDeclared { dst, owner, value } => Instruction::OwnDeclared {
             dst: register(dst)?,

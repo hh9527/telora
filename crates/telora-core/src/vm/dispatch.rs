@@ -1,6 +1,7 @@
 fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register> {
     match instruction {
         Opcode::LoadConst { dst, .. }
+        | Opcode::MakeVariant { dst, .. }
         | Opcode::Move { dst, .. }
         | Opcode::OwnDeclared { dst, .. }
         | Opcode::AllocFunc { dst, .. }

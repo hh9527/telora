@@ -96,6 +96,7 @@ pub fn resolve(mir: &mut Mir) {
         "type pass runs once"
     );
     mir.required_types.resize(mir.hir.len(), false);
+    mir.member_selections.resize(mir.hir.len(), None);
     let mut solver = Solver::new(mir);
     for _ in 0..solver.mir.symbols.len() {
         let slot = solver.fresh();

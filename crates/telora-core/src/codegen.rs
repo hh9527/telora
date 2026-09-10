@@ -87,23 +87,26 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
         .filter(move |edge| {
             // A native declaration's Value edge stores its signature, not an
             // initializer. Its executable value is supplied by ABI linking.
-            !matches!(
-                mir.hir[node.index()].kind,
-                HirKind::Binding {
-                    kind: BindingKind::Native,
-                    ..
-                }
-            ) && !matches!(
-                edge.role,
-                Role::Annotation
-                    | Role::TypeParameter
-                    | Role::Bound
-                    | Role::ReturnType
-                    | Role::Decorator
-                    | Role::Name
-                    | Role::Target
-            ) && (!matches!(mir.hir[node.index()].kind, HirKind::TypeApply)
-                || edge.role == Role::Callee)
+            mir.member_selections[node.index()].is_none()
+                && !matches!(
+                    mir.hir[node.index()].kind,
+                    HirKind::Binding {
+                        kind: BindingKind::Native,
+                        ..
+                    }
+                )
+                && !matches!(
+                    edge.role,
+                    Role::Annotation
+                        | Role::TypeParameter
+                        | Role::Bound
+                        | Role::ReturnType
+                        | Role::Decorator
+                        | Role::Name
+                        | Role::Target
+                )
+                && (!matches!(mir.hir[node.index()].kind, HirKind::TypeApply)
+                    || edge.role == Role::Callee)
         })
         .map(|edge| edge.node)
 }
@@ -256,6 +259,79 @@ impl<'a> Emitter<'a> {
             }
         }
         let result = match &self.mir.hir[node.index()].kind {
+            HirKind::Field if self.mir.member_selections[node.index()].is_some() => {
+                let Some(MemberSelection::EnumVariant { index }) =
+                    self.mir.member_selections[node.index()]
+                else {
+                    unreachable!()
+                };
+                let ty = self.ty(node)?;
+                let signature = &self.mir.types[ty.index()];
+                let owner = if signature.constructor == TypeConstructor::Function {
+                    *signature.arguments.last().expect("constructor result")
+                } else {
+                    ty
+                };
+                if self
+                    .mir
+                    .properties
+                    .iter()
+                    .any(|property| property.owner == owner)
+                {
+                    return Err(self.error(
+                        node,
+                        "enum property execution lowering is not implemented yet",
+                    ));
+                }
+                let mut pending = vec![owner];
+                while let Some(id) = pending.pop() {
+                    let ty = &self.mir.types[id.index()];
+                    if matches!(ty.constructor, TypeConstructor::Parameter(_)) {
+                        return Err(self.error(
+                            node,
+                            "generic constructor type witness lowering is not implemented yet",
+                        ));
+                    }
+                    pending.extend(ty.arguments.iter().copied());
+                }
+                let dst = self.register();
+                if signature.constructor == TypeConstructor::Function {
+                    let owner = *signature.arguments.last().expect("constructor result");
+                    let mut nested = Self::new(self.mir, format!("variant:{}", node.index()));
+                    nested.function.parameter_count = 1;
+                    let payload = nested.register();
+                    let result = nested.register();
+                    nested.emit(
+                        node,
+                        O::MakeVariant {
+                            dst: result,
+                            ty: owner,
+                            variant: index,
+                            payload: Some(payload),
+                        },
+                    );
+                    nested.emit(node, O::Return { src: result });
+                    self.emit(
+                        node,
+                        O::MakeClosure {
+                            dst,
+                            function: Box::new(nested.function),
+                            captures: vec![],
+                        },
+                    );
+                } else {
+                    self.emit(
+                        node,
+                        O::MakeVariant {
+                            dst,
+                            ty,
+                            variant: index,
+                            payload: None,
+                        },
+                    );
+                }
+                dst
+            }
             HirKind::Binding {
                 kind: BindingKind::Native,
                 ..
@@ -707,6 +783,32 @@ mod tests {
         })
         .unwrap_err();
         assert!(errors.iter().any(|d| d.message.contains("arity")));
+    }
+
+    #[test]
+    fn executes_nominal_variants_with_solved_identity_and_first_class_constructors() {
+        let mir = graph(
+            "import \"./math\" { Choice as C }; \
+             export def answer = (C.Missing, (fn(make) { make(42) })(C.Number));",
+            "export type Choice = enum { Missing, Number(Int) };",
+        );
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let expected = artifact.types.types[artifact.result_type.index()].arguments[0];
+        // Bytecode cannot reconstruct missing static type data in an empty VM.
+        assert!(crate::Vm::new().execute(&artifact.bytecode, 10000).is_err());
+        let linked = crate::execution_link::link_entry(artifact).unwrap();
+        drop(mir);
+        let result = crate::Vm::new()
+            .execute_linked(linked, crate::Quota::with_fuel(10000))
+            .unwrap();
+        let missing = result.value().sequence_get(0).unwrap();
+        let number = result.value().sequence_get(1).unwrap();
+        assert_eq!(missing.solved_type_id(), Some(expected));
+        assert_eq!(number.solved_type_id(), Some(expected));
+        assert_eq!(number.tagged_parts().unwrap().1.as_int(), Some(42));
+        assert_eq!(result.types().variant(expected, 0).unwrap().name, "Missing");
+        assert_eq!(result.types().variant(expected, 1).unwrap().name, "Number");
     }
 
     #[test]

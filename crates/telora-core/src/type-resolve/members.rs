@@ -57,7 +57,11 @@ impl Solver<'_> {
                     self.bad_member(node, &name);
                     return None;
                 };
-                let Some((_, payload)) = members.into_iter().find(|(n, _)| n == &name) else {
+                let Some((index, (_, payload))) = members
+                    .into_iter()
+                    .enumerate()
+                    .find(|(_, (n, _))| n == &name)
+                else {
                     self.bad_member(node, &name);
                     return None;
                 };
@@ -81,6 +85,9 @@ impl Solver<'_> {
                     self.bad_member(node, &name);
                     return None;
                 }
+                self.mir.member_selections[node.index()] = Some(MemberSelection::EnumVariant {
+                    index: index as u32,
+                });
                 payload
             }
             TypeConstructor::Bool if metadata && matches!(name.as_str(), "True" | "False") => None,
