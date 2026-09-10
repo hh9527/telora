@@ -23,7 +23,11 @@ pub enum Constant {
     Bytes(Arc<[u8]>),
     Atom(Atom),
     Native(NativeFunction),
-    NativeWithType(NativeFunction, crate::NativeType),
+    SolvedNative {
+        function: NativeFunction,
+        signature: crate::mir::TypeId,
+        native_type: Option<crate::NativeType>,
+    },
 }
 
 #[derive(Clone, Debug)]

@@ -181,6 +181,19 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         ))
     }
 
+    /// The full function type selected by the static call instance. Native
+    /// consumers must use this evidence rather than inspect payloads for types.
+    pub fn solved_signature(&self) -> Result<Option<crate::mir::TypeId>, NativeError> {
+        if self.background.is_none_or(|heap| heap.solved_types.is_none()) {
+            return Ok(None);
+        }
+        let index = self.upvalue_count.checked_sub(1)
+            .ok_or_else(|| NativeError::new("solved native closure has no signature"))?;
+        self.value(self.upvalue(index)?)?.represented_type_id()
+            .map(Some)
+            .ok_or_else(|| NativeError::new("solved native closure has invalid signature metadata"))
+    }
+
     pub fn value(&self, register: RegisterId) -> Result<ValueRef<'_>, NativeError> {
         let index = usize::try_from(register.0)
             .map_err(|_| NativeError::new("register does not fit this platform"))?;

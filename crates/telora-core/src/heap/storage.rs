@@ -532,9 +532,17 @@ impl Heap {
                     )),
                     Constant::Atom(value) => Val::unknown(self.atom(background, value.name())),
                     Constant::Native(function) => self.native_closure(*function, []),
-                    Constant::NativeWithType(function, ty) => {
-                        let identity = self.native_type_value(ty.clone());
-                        self.native_closure(*function, vec![identity])
+                    Constant::SolvedNative { function, signature, native_type } => {
+                        let types = self.solved_types.as_ref().or_else(|| background.and_then(|h| h.solved_types.as_ref()));
+                        if types.is_none_or(|types| signature.index() >= types.types.len()) {
+                            return Err(HeapError("native signature is not in the solved type image"));
+                        }
+                        let mut captures = vec![];
+                        if let Some(ty) = native_type {
+                            captures.push(self.native_type_value(ty.clone()));
+                        }
+                        captures.push(Val::unknown(DecodedValue::SolvedType(*signature)));
+                        self.native_closure(*function, captures)
                     }
                     Constant::SolvedType(id) => {
                         let types = self.solved_types.as_ref().or_else(|| background.and_then(|h| h.solved_types.as_ref()));

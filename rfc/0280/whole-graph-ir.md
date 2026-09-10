@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Native instances carry their statically selected signatures (2026-09-10)
+
+Concrete native instances now use execution tasks as ordinary generic functions
+do. Codegen emits a native relocation with the instance's full signature TypeId;
+the linker installs this inline metadata as the final native closure capture.
+Existing opaque native ABI captures remain at their original indices. Generic
+native templates are not separately linked as executable closures.
+
+CallContext::solved_signature exposes this compiler-provided identity to native
+consumers without inspecting argument values. A regression invokes a native
+through a generic forwarding function with Int and String and returns only its
+captured signature, without reading either payload. This establishes the native
+type-evidence ABI; solved codec encode/decode/schema are still pending.
+
+All 30 codegen tests and 17 static-MIR CLI tests pass, including real serve
+request diagnostics and opaque fmt captures. Logs:
+/tmp/mir-native-instance-signatures.log and /tmp/mir-native-instance-cli.log.
+No full-suite or performance result is claimed. Next static work must provide
+fully applied nominal member skeletons so codec never substitutes generic
+member types at runtime; property values remain VM-owned lazy queries.
+
 ### Codegen consumes static generic instance bodies (2026-09-10)
 
 Concrete generic declaration instances now have execution graph task IDs. Codegen

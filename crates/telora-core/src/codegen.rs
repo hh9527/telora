@@ -124,6 +124,7 @@ pub struct NativeLink {
     pub module: Option<u32>,
     pub name: String,
     pub arity: usize,
+    pub signature: TypeId,
     pub location: crate::source::Location,
 }
 
@@ -214,6 +215,9 @@ fn compile_root(
     }
     // Native ABI values and injected data already exist before initialization.
     for &global in &globals {
+        if !mir.symbol_generics[global.index()].is_empty() {
+            continue;
+        }
         if !matches!(
             mir.symbols[global.index()].kind,
             SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl)
@@ -271,6 +275,20 @@ fn compile_root(
         if !globals.contains(&symbol) { continue; }
         let mut thunk = Emitter::new(mir, &graph, task.label.clone());
         thunk.instance = Some(instance);
+        if mir.symbols[symbol.index()].kind == SymbolKind::Declaration(BindingKind::Native) {
+            let locals = emitter.locals.len();
+            emitter.instance = Some(instance);
+            let value = emitter.expression(declaration).map_err(|d| vec![d])?;
+            emitter.instance = None;
+            emitter.locals.truncate(locals);
+            let capture = thunk.register();
+            thunk.function.capture_count = 1;
+            thunk.emit(declaration, O::Return { src: capture });
+            let dst = emitter.register();
+            emitter.emit(declaration, O::MakeClosure { dst, function: Box::new(thunk.function), captures: vec![value] });
+            emitter.emit(declaration, O::InstallTask { node: graph.instance(instance).expect("native instance task"), src: dst });
+            continue;
+        }
         let mut captures = vec![];
         for reference in referenced_globals(mir, declaration) {
             if let Some(value) = emitter.lookup(reference) {
@@ -852,6 +870,7 @@ impl<'a> Emitter<'a> {
                         .and_then(|m| self.mir.modules[m.index()].native.as_ref().map(|n| n.id)),
                     name: declaration.name.clone(),
                     arity: ty.arguments.len() - 1,
+                    signature: self.ty(node)?,
                     location: self.mir.hir[node.index()].location,
                 };
                 self.native_links.push(link);
@@ -1922,6 +1941,33 @@ pub(crate) mod tests {
             result.types().types[result_type.index()].constructor,
             TypeConstructor::Int
         );
+    }
+
+    #[test]
+    fn native_instances_receive_their_solved_signature_without_inspecting_arguments() {
+        let mir = graph(r#"
+            native signature: for(T) Fn(T) -> Type;
+            def forward: for(U) Fn(U) -> Type = fn(value) { signature(value) };
+            export def answer = (forward(42), forward("ok"));
+        "#, "");
+        let mut artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        artifact.bytecode = crate::execution_link::link_with(&artifact, |_| {
+            Some(crate::NativeFunction::new("test.signature", 1, |ctx| {
+                // Read only compiler-provided metadata; deliberately never
+                // inspect the user argument to determine its type.
+                assert!(ctx.solved_signature()?.is_some());
+                ctx.copy(ctx.result(), ctx.upvalue(0)?)
+            }))
+        }).unwrap();
+        artifact.native_links.clear();
+        drop(mir);
+        let result = execute(artifact).unwrap();
+        for (index, expected) in [TypeConstructor::Int, TypeConstructor::String].into_iter().enumerate() {
+            let id = result.value().sequence_get(index).unwrap().represented_type_id().unwrap();
+            let signature = &result.types().types[id.index()];
+            assert_eq!(signature.constructor, TypeConstructor::Function);
+            assert_eq!(result.types().types[signature.arguments[0].index()].constructor, expected);
+        }
     }
 
     #[test]

@@ -92,7 +92,7 @@ pub fn link_with(
     for link in &artifact.native_links {
         match native(link) {
             Some(function) if function.arity() == link.arity => {
-                let constant = if let Some(local) = function.native_type_local() {
+                let native_type = if let Some(local) = function.native_type_local() {
                     let native = link.module.and_then(|module| {
                         artifact
                             .types
@@ -107,19 +107,17 @@ pub fn link_with(
                         ));
                         continue;
                     };
-                    Constant::NativeWithType(
-                        function,
-                        crate::NativeType::bind(
+                    Some(crate::NativeType::bind(
                             crate::value::NativeTypeId {
                                 module: crate::value::NativeModuleId(id.module),
                                 local: id.slot,
                             },
                             name.clone(),
-                        ),
-                    )
+                        ))
                 } else {
-                    Constant::Native(function)
+                    None
                 };
+                let constant = Constant::SolvedNative { function, signature: link.signature, native_type };
                 replacements.insert(link.constant, constant);
             }
             Some(_) => diagnostics.push(Diagnostic::error(
