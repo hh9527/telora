@@ -475,8 +475,8 @@ impl ModuleLoader {
             skeleton,
             ModuleAnalysisContext::Ordinary,
             &program,
-            self.main.resolved.modules[skeleton.index()].take()
-                .expect("source module has session-resolved HIR").hir,
+            &mut Some(self.main.resolved.modules[skeleton.index()].take()
+                .expect("source module has session-resolved HIR").hir),
             account,
             &external_roots
                 .iter()

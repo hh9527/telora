@@ -1,4 +1,5 @@
-// Owns the solved arena and compiler evidence. Plans borrow only source syntax;
+// Owns the solved arena and compiler evidence. The caller retains the resolved
+// HIR, including when solving or execution returns an error. Plans borrow source syntax;
 // no field contains a heap, VM, runtime root or live inference solver.
 struct SolvedModulePlan<'a> {
     types: TypeGraph,
@@ -8,7 +9,6 @@ struct SolvedModulePlan<'a> {
     trait_implementations: Vec<TraitImplementation>,
     result_type: AnalysisTypeId,
     result_scheme: Option<TypeScheme>,
-    hir: HirProgram,
     definition_types: BTreeMap<HirDefinitionId, AnalysisTypeId>,
     definition_schemes: BTreeMap<HirDefinitionId, TypeScheme>,
     expression_types: BTreeMap<HirExpressionId, AnalysisTypeId>,

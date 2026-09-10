@@ -28,8 +28,8 @@ use crate::source::{Diagnostic, SourceDatabase};
 use crate::toml::validate_toml_registered;
 use crate::type_store::TypeStore;
 use crate::types::{
-    Analysis, ModuleAnalysisContext, ModuleInterface, PartialAnalysisControl, TraitImplementation,
-    TypeDescriptor, TypeScheme, analyze_partial_types_recovered_with_query,
+    Analysis, ModuleAnalysisContext, ModuleInterface, TraitImplementation,
+    TypeDescriptor, TypeScheme,
     analyze_program_with_bindings_observed,
 };
 use crate::vm::WorkWorld;

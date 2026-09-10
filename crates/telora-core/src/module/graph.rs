@@ -813,8 +813,8 @@ fn install_native_modules_observed(
                 defines_display_trait: spec.name == FMT_MODULE,
             },
             &program,
-            main.resolved.modules[module_id.index()].take()
-                .expect("native module has session-resolved HIR").hir,
+            &mut Some(main.resolved.modules[module_id.index()].take()
+                .expect("native module has session-resolved HIR").hir),
             &mut account,
             &external_roots
                 .iter()

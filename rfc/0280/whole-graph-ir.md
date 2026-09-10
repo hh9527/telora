@@ -10,7 +10,7 @@ The controlling target is RFC 0280's session-wide typed IR.
 | Module scheduling | `module/type-check.rs::StaticWorkspace::solve` recursively solves dependencies and selects descriptor interfaces using pre-resolved module/export-row targets. | Connect those targets to session definition/type-slot IDs and schedule constraints over shared records. |
 | Slot ownership | `types/inference-context.rs::GenericInference::new` takes one HIR program and starts with an empty expression `records` map. `record_type` creates/replaces expression edges while inferring. | Preallocate syntax-owned slots in the session graph, with explicit evidence for contextual conversions. |
 | HIR identity | Both checking modes, module loading, generated entry loading and native installation consume HIR from `module/static-names.rs`. Local IDs are qualified by their session ModuleId; bootstrap and Host symbols also have explicit IDs. | Allocate type slots against these source identities without rebuilding HIR. |
-| Static handoff | `types/solved-module.rs::SolvedModulePlan` owns one module's arena/HIR/evidence. `types/type-check.rs::check_module_types` retains only interface and types. | One typed program retains every required syntax type and lowering fact; modules are ranges/namespaces within it. |
+| Static handoff | `types/solved-module.rs::SolvedModulePlan` owns one module's arena/evidence; the caller retains HIR until successful analysis publication. `types/type-check.rs::check_module_types` retains only interface and types. | One typed program retains every required syntax type and lowering fact; modules are ranges/namespaces within it. |
 | Completion | `types/inference-publication.rs::publish_program_expressions` visits recorded locations, rejects some failures, but omits other unsuccessful publications. | Full required-slot scan, conflict provenance and Unknown diagnostics; a success artifact cannot contain missing types. |
 | Consumer boundary | Ordinary analysis calls solve then execute per module. The types-only loader has a separate publication path. | Both entries obtain the same finalized session IR before any Telora execution; only their later consumers differ. |
 | Tool plans | `types/tool-plan.rs::PreparedToolExpression` defers bytecode in a `OnceLock`, but retains lowered syntax and module-local evidence. | Tool bytecode generation consumes the finalized session records and graph IDs. Deferred compilation alone is not the global handoff. |
@@ -110,6 +110,26 @@ constructor; the subsequent CLI build and both open-import tests passed. These
 cover unused ambiguity, used ambiguity, explicit/local bindings, repeated imports,
 constructor references, and private trait facts from an otherwise unused import
 in ordinary and types-only modes. No performance measurement was taken here.
+
+The ordinary workspace no longer invokes a partial solver after analysis failure.
+Module solving borrows the authoritative HIR; execution transfers it only when
+publishing a successful Analysis. On failure the workspace moves the original
+HIR into a diagnostic envelope, retaining source IDs without cloning or resolving
+against runtime-derived interfaces. Skipped modules use their unconsumed session
+HIR. The runtime-interface partial-analysis adapter and its unavailable-import
+bookkeeping have been removed. The direct public partial-analysis API still
+exists, but is no longer a module failure/recovery path.
+
+This does not yet retain all inferred facts on an unsuccessful solve: the strict
+solver still returns early and discards its scratch graph. The unified total
+solver must replace that behavior and publish Known/Unknown/Conflicted facts
+from the same solve, including independent facts after a conflict. An empty
+diagnostic envelope is explicitly not that completed handoff.
+The 426 core tests pass after deleting the recovery path. A targeted ownership
+regression also verifies that a static type error preserves the original HIR
+definition allocation and leaves the main heap unallocated.
+The subsequent three LSP completion tests pass with parse/resolve diagnostics
+carried directly into workspace inputs. No timing benchmark was run.
 
 Validation of the conflict/result handoff changes: 426 core tests pass.
 The export-completion regressions passed after the static-name handoff. A

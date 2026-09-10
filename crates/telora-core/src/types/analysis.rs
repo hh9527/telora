@@ -68,6 +68,15 @@ pub struct PartialAnalysis {
     pub types: TypeGraph,
 }
 
+impl PartialAnalysis {
+    // Preserve source identities when no typed artifact was produced. This is
+    // a diagnostic envelope, never a request to rerun resolution or inference.
+    pub(crate) fn from_resolved(hir: HirProgram) -> Self {
+        Self { hir, dependencies: Default::default(), definition_facts: BTreeMap::new(),
+            definition_schemes: BTreeMap::new(), diagnostics: Vec::new(), types: Default::default() }
+    }
+}
+
 impl Analysis {
     pub fn display(&self, id: AnalysisTypeId) -> String {
         self.types.display(id)
@@ -186,29 +195,4 @@ pub(crate) struct PartialAnalysisControl<'a> {
     pub external_schemes: &'a BTreeMap<String, TypeScheme>,
     pub external_interfaces: &'a BTreeMap<String, ModuleInterface>,
     pub query: Option<&'a crate::query::QueryContext>,
-}
-
-pub(crate) fn analyze_partial_types_recovered_with_query(
-    sources: &SourceDatabase,
-    source_id: crate::SourceId,
-    recovered: &crate::parser::RecoveredProgram,
-    initial_diagnostics: Vec<Diagnostic>,
-    external_names: &BTreeSet<String>,
-    control: PartialAnalysisControl<'_>,
-) -> PartialAnalysis {
-    let interfaces = control.external_interfaces.iter()
-        .map(|(name, interface)| (name.clone(), interface.qualified(name)))
-        .collect::<BTreeMap<_, _>>();
-    let mut imported_types = HashMap::new();
-    let mut imported_values = BTreeMap::new();
-    for name in external_names {
-        if let Some(descriptor) = imported_binding_contract(name, &interfaces).map(|scheme| scheme.body)
-            .or_else(|| interfaces.get(name).and_then(imported_interface_descriptor)) {
-            imported_values.insert(name.clone(), descriptor.clone());
-            imported_types.insert(name.clone(), descriptor);
-        }
-    }
-    solve_partial_types(sources, source_id, recovered, initial_diagnostics,
-        PartialTypeInputs { module_id: None, names: external_names.clone(),
-            imported_types, imported_values, interfaces }, control)
 }

@@ -31,7 +31,7 @@ pub(crate) fn check_module_types(
     let context = if source_name.starts_with("std/") {
         ModuleAnalysisContext::Builtin { defines_display_trait: source_name.as_ref() == "std/fmt" }
     } else { ModuleAnalysisContext::Ordinary };
-    let solved = solve_module_plan(source_name, module_id, context, program, hir, &names,
+    let solved = solve_module_plan(source_name, module_id, context, program, &hir, &names,
         sources, &BTreeMap::new(), &interfaces, dependency_facts, None, type_store)?;
     Ok(CheckedModuleTypes { interface: solved.module_interface, types: solved.types })
 }

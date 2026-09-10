@@ -7,7 +7,7 @@
         let solved = solve_module_plan(
             "static-plan.telora", crate::ModuleId::ANONYMOUS,
             ModuleAnalysisContext::Ordinary, &program,
-            resolve_module_hir(&program, &BTreeSet::new(), HashSet::new()),
+            &resolve_module_hir(&program, &BTreeSet::new(), HashSet::new()),
             &BTreeSet::new(), &sources,
             &BTreeMap::new(), &BTreeMap::new(), &[], None, &mut TypeStore::default(),
         ).unwrap();
@@ -26,10 +26,12 @@
         let mut heap = Heap::main();
         let allocations = heap.allocation_count();
         let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
+        let mut hir = Some(resolve_module_hir_with_interfaces(&program, std::iter::empty(), &BTreeMap::new()));
+        let definitions = hir.as_ref().unwrap().definitions().as_ptr();
         let error = analyze_program_with_bindings_observed(
             "static-error.telora", crate::ModuleId::ANONYMOUS,
             ModuleAnalysisContext::Ordinary, &program,
-            resolve_module_hir_with_interfaces(&program, std::iter::empty(), &BTreeMap::new()),
+            &mut hir,
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
             &BTreeMap::new(), &HashSet::new(), &sources,
             &BTreeMap::new(), &BTreeMap::new(), &debug_sink,
@@ -38,6 +40,8 @@
         assert!(error.to_string().contains("cannot unify String with Int"), "{error}");
         assert_eq!(heap.allocation_count(), allocations,
             "static rejection must leave the main heap unallocated");
+        assert_eq!(hir.as_ref().expect("static failure preserves resolved HIR").definitions().as_ptr(), definitions,
+            "failure must retain the original source graph, not clone or rebuild it");
     }
 
     #[test]
@@ -233,7 +237,7 @@
             crate::ModuleId::ANONYMOUS,
             ModuleAnalysisContext::Ordinary,
             &program,
-            resolve_module_hir_with_interfaces(&program, external_roots.keys().cloned(), &BTreeMap::new()),
+            &mut Some(resolve_module_hir_with_interfaces(&program, external_roots.keys().cloned(), &BTreeMap::new())),
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
             &external_roots,
             &HashSet::new(),
@@ -313,7 +317,7 @@
             crate::ModuleId::ANONYMOUS,
             ModuleAnalysisContext::Ordinary,
             &program,
-            hir,
+            &mut Some(hir),
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
             &external_roots,
             &dynamic_bindings,

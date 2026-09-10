@@ -127,7 +127,7 @@ pub(crate) fn analyze_program_with_bindings(
         crate::ModuleId::ANONYMOUS,
         ModuleAnalysisContext::Ordinary,
         program,
-        resolve_module_hir_with_interfaces(program, external_roots.keys().cloned(), &external_interfaces),
+        &mut Some(resolve_module_hir_with_interfaces(program, external_roots.keys().cloned(), &external_interfaces)),
         account,
         &external_roots,
         dynamic_bindings,
@@ -147,7 +147,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     module_id: crate::ModuleId,
     module_context: ModuleAnalysisContext,
     program: &Program,
-    hir: HirProgram,
+    hir: &mut Option<HirProgram>,
     account: &mut QuotaAccount,
     external_roots: &BTreeMap<String, PersistentValue>,
     dynamic_bindings: &HashSet<String>,
@@ -162,9 +162,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
     account.register_sources(sources);
     let external_names = external_roots.keys().cloned().collect();
     let solved = solve_module_plan(source_name, module_id, module_context, program,
-        hir, &external_names, sources, external_provenance, external_interfaces,
+        hir.as_ref().expect("resolved HIR remains owned until analysis publication"), &external_names, sources, external_provenance, external_interfaces,
         dependency_facts, account.query_context(), type_store)?;
-    execute_module_plan(source_name, module_id, program, solved, account,
+    execute_module_plan(source_name, module_id, program, hir, solved, account,
         external_roots, dynamic_bindings, sources, debug_sink, tool_heap)
 }
 
@@ -174,7 +174,7 @@ fn solve_module_plan<'a>(
     module_id: crate::ModuleId,
     module_context: ModuleAnalysisContext,
     program: &'a Program,
-    hir: HirProgram,
+    hir: &HirProgram,
     external_names: &BTreeSet<String>,
     sources: &SourceDatabase,
     external_provenance: &BTreeMap<String, Provenance>,
@@ -1423,7 +1423,7 @@ fn solve_module_plan<'a>(
     drop(inference);
     Ok(SolvedModulePlan {
         types, declared_types, binding_types, trait_ids, trait_implementations,
-        result_type, result_scheme, hir, definition_types, definition_schemes,
+        result_type, result_scheme, definition_types, definition_schemes,
         expression_types, module_interface, propagation_families, not_families,
         trait_member_evidence, generic_call_evidence, interpolation_evidence,
         generic_evidence_parameters, generic_dictionary_factories,
@@ -1439,6 +1439,7 @@ fn execute_module_plan(
     source_name: &str,
     module_id: crate::ModuleId,
     program: &Program,
+    hir: &mut Option<HirProgram>,
     solved: SolvedModulePlan<'_>,
     account: &mut QuotaAccount,
     external_roots: &BTreeMap<String, PersistentValue>,
@@ -1449,7 +1450,7 @@ fn execute_module_plan(
 ) -> Result<Analysis, FrontendError> {
     let SolvedModulePlan {
         types, declared_types, binding_types, trait_ids, trait_implementations,
-        result_type, result_scheme, hir, definition_types, definition_schemes,
+        result_type, result_scheme, definition_types, definition_schemes,
         expression_types, module_interface, propagation_families, not_families,
         trait_member_evidence, generic_call_evidence, interpolation_evidence,
         generic_evidence_parameters, generic_dictionary_factories,
@@ -1485,7 +1486,7 @@ fn execute_module_plan(
     materialize_declarations(declaration_plans, &types, module_id, &declared_initializer_slots,
         source_name, &mut tool_values, &mut type_family_values, &mut evaluator)?;
     evaluator.tool_types = types;
-    prepare_construction_dependencies(source_name, program, &hir, &mut tool_bindings_to_execute,
+    prepare_construction_dependencies(source_name, program, hir.as_ref().expect("resolved HIR"), &mut tool_bindings_to_execute,
         &construction_checks, &mut tool_values,
         account, sources, &mut evaluator)?;
     for task in &mut tool_bindings_to_execute {
@@ -1625,7 +1626,7 @@ fn execute_module_plan(
         trait_implementations,
         result_type,
         result_scheme,
-        hir,
+        hir: hir.take().expect("resolved HIR is transferred exactly once"),
         definition_types,
         definition_schemes,
         expression_types,

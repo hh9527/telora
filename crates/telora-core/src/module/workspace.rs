@@ -148,10 +148,9 @@ impl WorkspaceBuilder<'_> {
             let mut semantic_imports = Vec::new();
             let mut external_roots = HashMap::new();
             let mut external_interfaces = BTreeMap::new();
-            let mut unavailable_imports = HashSet::new();
             let mut open_candidates: BTreeMap<String, Vec<WorkspaceOpenImportCandidate>> =
                 BTreeMap::new();
-            let mut diagnostics = Vec::new();
+            let mut diagnostics = parsed.diagnostics.clone();
             if vendor == ModuleVendor::Configured
                 && let Some(binding) = program.as_ref().and_then(|program| {
                     program.value.body.value.bindings.iter().find(|binding| {
@@ -209,7 +208,6 @@ impl WorkspaceBuilder<'_> {
                 ) {
                     Ok(target) => target,
                     Err(error) => {
-                        unavailable_imports.insert(name.clone());
                         diagnostics.push(Diagnostic::error(error.to_string(), location));
                         continue;
                     }
@@ -259,12 +257,10 @@ impl WorkspaceBuilder<'_> {
                                 external_interfaces.insert(name, interface);
                             }
                             Err(error) => {
-                                unavailable_imports.insert(name);
                                 diagnostics.push(Diagnostic::error(error.to_string(), location));
                             }
                         }
                     } else {
-                        unavailable_imports.insert(name);
                         diagnostics.push(Diagnostic::error(
                             format!("unknown built-in module {target:?}"),
                             location,
@@ -337,12 +333,10 @@ impl WorkspaceBuilder<'_> {
                             external_interfaces.insert(name.clone(), interface);
                         }
                         Err(error) => {
-                            unavailable_imports.insert(name);
                             diagnostics.push(Diagnostic::error(error.to_string(), location));
                         }
                     }
                 } else {
-                    unavailable_imports.insert(name);
                     if self.cycle_members.contains(&target_module.id) {
                         if !self.cycle_reported {
                             diagnostics.push(Diagnostic::error(
@@ -455,7 +449,9 @@ impl WorkspaceBuilder<'_> {
                 .main
                 .modules
                 .id(&module_id)
-                .unwrap_or(ModuleId::ANONYMOUS);
+                .expect("prepared source has a session ModuleId");
+            diagnostics.append(&mut self.main.resolved.modules[runtime_module_id.index()].as_mut()
+                .expect("module retains its resolve result before analysis").diagnostics);
             let evaluated = if self.cycle_members.contains(&module_id) || missing_exports {
                 ModuleEvaluation::default()
             } else {
@@ -471,29 +467,13 @@ impl WorkspaceBuilder<'_> {
             let program = parsed.program.as_ref();
             diagnostics.extend(evaluated.diagnostics);
             let analysis = evaluated.analysis;
-            // A strict result already owns the facts consumed by the workspace,
-            // even if later compilation or execution failed. Recovery must not
-            // independently infer and evaluate those definitions on success.
+            // A failed analysis retains the exact session HIR. Do not run a
+            // second resolver/type solver against runtime-derived interfaces.
             let partial = analysis.is_none().then(|| {
-                let external_schemes = external_interfaces
-                    .iter()
-                    .filter_map(|(name, interface)| {
-                        interface.binding_scheme().map(|scheme| (name.clone(), scheme.clone()))
-                    })
-                    .collect::<BTreeMap<_, _>>();
-                analyze_partial_types_recovered_with_query(
-                    &self.sources,
-                    source_id,
-                    &parsed.recovered,
-                    parsed.diagnostics.clone(),
-                    &external_roots.keys().cloned().collect(),
-                    PartialAnalysisControl {
-                        unavailable_imports: &unavailable_imports,
-                        external_schemes: &external_schemes,
-                        external_interfaces: &external_interfaces,
-                        query: self.query,
-                    },
-                )
+                let hir = evaluated.untyped_hir.or_else(||
+                    self.main.resolved.modules[runtime_module_id.index()].take().map(|resolved| resolved.hir))
+                    .expect("unsolved module retains its session HIR");
+                crate::types::PartialAnalysis::from_resolved(hir)
             });
             // Availability describes whether the source Module exists. Failed,
             // unknown and incomputable facts remain properties of its graph.
@@ -635,6 +615,8 @@ impl WorkspaceBuilder<'_> {
             account = account.with_query(query.clone());
         }
         let source = self.sources.get(source_id);
+        let mut hir = Some(self.main.resolved.modules[module_id.index()].take()
+            .expect("source module has session-resolved HIR").hir);
         let dependency_facts = self.main.modules.module(module_id).imports.iter().filter_map(|edge| {
             let provider = &self.main.modules.module(edge.target).cname;
             self.builtin_modules.get(&provider.to_string()).map(|module| &module.interface)
@@ -645,8 +627,7 @@ impl WorkspaceBuilder<'_> {
             module_id,
             ModuleAnalysisContext::Ordinary,
             program,
-            self.main.resolved.modules[module_id.index()].take()
-                .expect("source module has session-resolved HIR").hir,
+            &mut hir,
             &mut account,
             &external_roots
                 .iter()
@@ -663,7 +644,11 @@ impl WorkspaceBuilder<'_> {
         ) {
             Ok(analysis) => analysis,
             Err(error) => {
-                return ModuleEvaluation::failed(frontend_diagnostic(error, source_id, program));
+                return ModuleEvaluation {
+                    untyped_hir: hir,
+                    diagnostics: vec![frontend_diagnostic(error, source_id, program)],
+                    ..Default::default()
+                };
             }
         };
         let mut execution_roots = external_roots.clone();
@@ -723,6 +708,7 @@ impl WorkspaceBuilder<'_> {
                     analysis: Some(analysis),
                     root: None,
                     diagnostics,
+                    untyped_hir: None,
                 };
             }
         };
@@ -742,6 +728,7 @@ impl WorkspaceBuilder<'_> {
                     analysis: Some(analysis),
                     root: Some(root),
                     diagnostics,
+                    untyped_hir: None,
                 }
             }
             Err(error) => {
@@ -753,6 +740,7 @@ impl WorkspaceBuilder<'_> {
                     analysis: Some(analysis),
                     root: None,
                     diagnostics,
+                    untyped_hir: None,
                 }
             }
         }
@@ -762,18 +750,12 @@ impl WorkspaceBuilder<'_> {
 #[derive(Default)]
 struct ModuleEvaluation {
     analysis: Option<crate::Analysis>,
+    untyped_hir: Option<crate::hir::HirProgram>,
     root: Option<PersistentValue>,
     diagnostics: Vec<Diagnostic>,
 }
 
 impl ModuleEvaluation {
-    fn failed(diagnostic: Diagnostic) -> Self {
-        Self {
-            diagnostics: vec![diagnostic],
-            ..Self::default()
-        }
-    }
-
     fn analyzed(analysis: crate::Analysis, diagnostic: Diagnostic) -> Self {
         Self {
             analysis: Some(analysis),

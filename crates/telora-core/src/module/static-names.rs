@@ -69,11 +69,7 @@ impl ResolvedStaticGraph {
             let mut diagnostics = prepared.iter().flat_map(|prepared| prepared.diagnostics.iter()).cloned().collect::<Vec<_>>();
             let partial = self.modules[id.index()].take().map(|resolved| {
                 diagnostics.extend(resolved.diagnostics);
-                crate::types::PartialAnalysis {
-                    hir: resolved.hir,
-                    dependencies: Default::default(), definition_facts: BTreeMap::new(),
-                    definition_schemes: BTreeMap::new(), diagnostics: Vec::new(), types: Default::default(),
-                }
+                crate::types::PartialAnalysis::from_resolved(resolved.hir)
             });
             let imports = prepared.iter().flat_map(|prepared| &prepared.recovered.bindings)
                 .filter(|binding| matches!(binding.value.kind, BindingKind::Import | BindingKind::OpenImport))
