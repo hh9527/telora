@@ -1,9 +1,41 @@
 # Whole-graph typed IR migration audit
 
-Date: 2026-09-10. This is an implementation audit, not a performance result.
+Date: 2026-09-11. This is an implementation audit, not a performance result.
 The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
+
+### Shared read-only MIR queries for CLI and LSP assembly (2026-09-11)
+
+LSP audit finds that Workspace rebuild still calls Engine recovery and produces
+a separate WorkspaceSnapshot with remapped Definition/Reference/Type IDs. That
+route cannot become the new frontend's authoritative information graph.
+
+Added mir_query::MirQuery, a borrowed facade over the actual Mir. Definition
+locations, references, targets, expression types, symbol types and member lists
+return original SymbolId/HirId/TypeId identities and existing resolve/type states.
+The facade owns no parallel semantic graph and has no inference, seal or VM
+dependency. Unresolved/Conflicted references yield no target; queries do not
+search names again to repair them. References emitted twice by module export
+lowering are deduplicated by their actual source location for reference lists.
+
+Member queries read namespace export IDs, structural record argument IDs and
+precomputed nominal layouts. Generic member types are not substituted during
+querying; if a concrete layout is absent, the query does not invent one. The CLI
+now shares type rendering, definition/export type reads and reference enumeration
+with this facade. Field reference ranges cover the member name, not its receiver.
+
+Validation: 4 new core query tests pass, covering cross-module rename/import
+identity, shadowing, unresolved/duplicate conflicts, namespace fields and concrete
+generic layouts; 2 static-MIR CLI query regressions pass. Logs:
+/tmp/mir-query-core.log and /tmp/mir-query-cli.log. This is a query foundation,
+not a completed LSP migration or a performance result.
+
+Next assembly: the LSP versioned workspace must own a Mir built from the source
+inventory and document overlays, retain cancellation/stale-publication checks,
+and serve hover/definition/references/completion from this facade. Existing
+Workspace/WorkspaceSnapshot/Engine LSP dependencies remain until that switch;
+the broader legacy compiler removal and full acceptance remain open.
 
 ### CLI test switches to sealed MIR; old test loader removed (2026-09-10)
 

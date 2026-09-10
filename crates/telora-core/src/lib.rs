@@ -27,6 +27,7 @@ pub mod json;
 pub mod lexer;
 pub mod lir;
 pub mod mir;
+pub mod mir_query;
 pub mod static_sources;
 #[path = "module-resolve.rs"]
 pub mod module_resolve;

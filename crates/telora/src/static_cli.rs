@@ -8,7 +8,8 @@ use std::{path::PathBuf, time::Instant};
 use telora_core::{
     Location, PositionEncoding, TextPosition,
     ast::BindingKind,
-    mir::{Mir, ModuleState, ResolveState, Symbol, SymbolKind, TypeConstructor, TypeId, TypeState},
+    mir::{Mir, ModuleState, ResolveState, Symbol, SymbolId, SymbolKind, TypeState},
+    mir_query::MirQuery,
     source::{Diagnostic, Severity},
 };
 
@@ -114,53 +115,9 @@ pub fn check(
     Ok(i32::from(failed))
 }
 
-fn type_name(mir: &Mir, id: TypeId) -> String {
-    let ty = &mir.types[id.index()];
-    let args = ty
-        .arguments
-        .iter()
-        .map(|&id| type_name(mir, id))
-        .collect::<Vec<_>>();
-    match &ty.constructor {
-        TypeConstructor::Tuple => format!(
-            "({}{})",
-            args.join(", "),
-            if args.len() == 1 { "," } else { "" }
-        ),
-        TypeConstructor::Function => {
-            let (result, params) = args.split_last().expect("function result");
-            format!("Fn({}) -> {result}", params.join(", "))
-        }
-        TypeConstructor::Record(names) => format!(
-            "{{ {} }}",
-            names
-                .iter()
-                .zip(&args)
-                .map(|(n, t)| format!("{n}: {t}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        TypeConstructor::Namespace(module) => {
-            format!("module {}", mir.modules[module.index()].name)
-        }
-        TypeConstructor::Parameter(symbol) => mir.symbols[symbol.index()].name.clone(),
-        TypeConstructor::Nominal(symbol) => {
-            let name = &mir.symbols[symbol.index()].name;
-            if args.is_empty() {
-                name.clone()
-            } else {
-                format!("{name}({})", args.join(", "))
-            }
-        }
-        TypeConstructor::Meta => format!("TypeOf({})", args.join(", ")),
-        cons if args.is_empty() => format!("{cons:?}"),
-        cons => format!("{cons:?}({})", args.join(", ")),
-    }
-}
-
 fn type_fields(mir: &Mir, state: TypeState) -> (Option<usize>, Option<String>, &'static str) {
     match state {
-        TypeState::Known(id) => (Some(id.index()), Some(type_name(mir, id)), "Known"),
+        TypeState::Known(id) => (Some(id.index()), Some(MirQuery::new(mir).type_name(id)), "Known"),
         TypeState::Unknown => (None, None, "Unknown"),
         TypeState::Conflicted(_) => (None, None, "Conflicted"),
         TypeState::ProxyTo(_) | TypeState::Structure(_) => {
@@ -193,9 +150,10 @@ fn resolve_fields(state: &ResolveState) -> (&'static str, Option<usize>) {
     }
 }
 
-fn definition(mir: &Mir, root: &str, index: usize, kind: ShowKind) -> Value {
+fn definition(mir: &Mir, root: &str, id: SymbolId, kind: ShowKind) -> Value {
+    let index = id.index();
     let symbol = &mir.symbols[index];
-    let (type_id, ty, state) = type_fields(mir, mir.ty_slots[mir.symbol_types[index].index()]);
+    let (type_id, ty, state) = type_fields(mir, MirQuery::new(mir).symbol_type(id));
     let (resolution, target_id) = resolve_fields(&symbol.resolution);
     let loc = symbol
         .declarations
@@ -280,7 +238,7 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
                     continue;
                 }
                 let (type_id, ty, state) =
-                    type_fields(&mir, mir.ty_slots[mir.symbol_types[id.index()].index()]);
+                    type_fields(&mir, MirQuery::new(&mir).symbol_type(id));
                 let (resolution, target_id) = resolve_fields(&symbol.resolution);
                 emit(
                     json!({"schema": QUERY_SCHEMA, "module": root, "record": "export", "authority": "authoritative",
@@ -308,10 +266,7 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
                         }
                 })
             };
-            let mut definitions = mir
-                .symbols
-                .iter()
-                .enumerate()
+            let mut definitions = MirQuery::new(&mir).symbols()
                 .filter(|(_, s)| s.module.is_some_and(|id| id.index() == module))
                 .filter_map(|(i, s)| kind(s).map(|k| (i, s, k)))
                 .filter(|(_, s, k)| {
@@ -331,26 +286,24 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
                 emit(definition(&mir, &root, i, k))?;
             }
             if range.is_some() {
+                for reference in MirQuery::new(&mir).references().filter(|reference| intersects(reference.location)) {
+                    let node = &mir.hir[reference.node.index()];
+                    let slot = node.resolution.expect("reference has a resolve slot");
+                    let (resolution, target_id) = resolve_fields(reference.resolution);
+                    let name = match &node.kind {
+                        telora_core::mir::HirKind::Variable(n) | telora_core::mir::HirKind::PatternName(n) => Some(n.as_str()),
+                        _ => None,
+                    };
+                    emit(json!({"schema": QUERY_SCHEMA, "module": root, "record": "reference", "authority": "authoritative",
+                        "hir_id": reference.node.index(), "resolve_slot": slot.index(), "name": name, "resolved": target_id.is_some(),
+                        "resolution": resolution, "target_id": target_id, "location": location(&mir, reference.location)}))?;
+                }
                 for (i, node) in mir
                     .hir
                     .iter()
                     .enumerate()
                     .filter(|(_, n)| n.module.index() == module && intersects(n.location))
                 {
-                    if let Some(slot) = node.resolution {
-                        let (resolution, target_id) =
-                            resolve_fields(&mir.resolve_slots[slot.index()]);
-                        let name = match &node.kind {
-                            telora_core::mir::HirKind::Variable(n)
-                            | telora_core::mir::HirKind::PatternName(n) => Some(n.as_str()),
-                            _ => None,
-                        };
-                        emit(
-                            json!({"schema": QUERY_SCHEMA, "module": root, "record": "reference", "authority": "authoritative",
-                            "hir_id": i, "resolve_slot": slot.index(), "name": name, "resolved": target_id.is_some(),
-                            "resolution": resolution, "target_id": target_id, "location": location(&mir,node.location)}),
-                        )?;
-                    }
                     if mir.required_types[i] {
                         let (type_id, ty, state) = type_fields(&mir, mir.ty_slots[i]);
                         emit(
