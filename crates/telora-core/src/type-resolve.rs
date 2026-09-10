@@ -455,7 +455,7 @@ impl Solver<'_> {
                 }
                 self.tasks.push(Task::Join {
                     node,
-                    values: arms.into_iter().map(HirId::ty).collect(),
+                    values: arms.into_iter().map(|arm| self.child(arm, Role::Value).unwrap().ty()).collect(),
                 });
             }
             HirKind::IfLet | HirKind::LetElse => {

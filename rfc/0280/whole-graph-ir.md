@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Branch joins retain directional construction evidence (2026-09-10)
+
+When a join includes Unchecked values, the static pass waits for branch evidence
+and uses a checked branch (or the known contextual target) as the result type.
+Each candidate branch gets a value adjustment instead of merging its source slot
+with T. Match joins now name their actual arm expressions, the same nodes emitted
+by codegen, so adjustments cannot be stranded on administrative MatchArm nodes.
+Codegen needs no new inference or branching rule for these conversions.
+
+Validation: 49 codegen regressions and the existing 33 type-pass tests pass; an
+additional static test passes with explicit assertions that the original candidate
+remains Unchecked(T), the join is T, and exactly one adjustment is recorded. Eight
+execution cases cover if/match, branch-order reversal, unselected invalid
+candidates, selected rejection, contextual targets and generic checker instances.
+Logs: /tmp/mir-branch-codegen.log, /tmp/mir-branch-static.log and
+/tmp/mir-branch-specific.log. No performance or full-suite acceptance claim.
+
+Tuple contextual completion and broader recursive join coverage remain open,
+alongside generic evidence/property work, command/LSP integration and removal of
+the old pipeline. The overall migration is not complete.
+
 ### Unchecked metadata shares the solved owner layout (2026-09-10)
 
 TypeImage.layout follows Unchecked's canonical owner ID and returns the owner's

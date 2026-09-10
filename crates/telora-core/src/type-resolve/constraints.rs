@@ -174,6 +174,21 @@ impl Solver<'_> {
                 }
             }
             Task::Join { node, values } => {
+                // Completion is directional, not equality between branch slots.
+                // Prefer a checked branch as the join target, and leave each
+                // unchecked source intact with an explicit value adjustment.
+                if values.iter().any(|&value| self.term(value).is_some_and(|t| t.constructor == TypeConstructor::Unchecked)) {
+                    if values.iter().any(|&value| self.term(value).is_none() && !matches!(self.mir.ty_slots[self.root(value).index()], TypeState::Conflicted(_))) {
+                        return Ok(Some(Task::Join { node, values }));
+                    }
+                    if self.term(node.ty()).is_none() {
+                        let target = values.iter().copied().find(|&value| self.term(value).is_some_and(|t| matches!(t.constructor, TypeConstructor::Nominal(_))))
+                            .or_else(|| values.iter().copied().find(|&value| self.term(value).is_some_and(|t| t.constructor != TypeConstructor::Never)));
+                        if let Some(target) = target { self.same(node, target); }
+                    }
+                    for value in values { self.fit(node, node.ty(), value); }
+                    return Ok(None);
+                }
                 let mut unknown = false;
                 let mut live = false;
                 for &value in &values {

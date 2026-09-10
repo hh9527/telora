@@ -2,6 +2,22 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn branch_completion_does_not_unify_candidate_and_checked_identity() {
+    for expression in ["if True { candidate } else { good }", "match True { True => good, False => candidate }"] {
+        let source = format!("type Point = struct {{x: Int}}; def candidate: Unchecked(Point) = {{x: 0}}; def good: Point = {{x: 42}}; export def answer = {expression};");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+        mir.seal().unwrap();
+        let TypeState::Known(candidate) = symbol_type(&mir, "candidate") else { panic!("candidate"); };
+        let TypeState::Known(answer) = symbol_type(&mir, "answer") else { panic!("answer"); };
+        assert_eq!(mir.types[candidate.index()].constructor, TypeConstructor::Unchecked);
+        assert_eq!(mir.types[candidate.index()].arguments, [answer]);
+        assert_eq!(mir.value_adjustments.iter().flatten().count(), 1, "{}", mir.dump());
+    }
+}
+
+#[test]
 fn unchecked_identity_and_conversion_evidence_are_separate() {
     let mut mir = graph(&[("@src/main", r#"
         type Point = struct {x: Int};

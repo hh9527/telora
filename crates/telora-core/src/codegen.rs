@@ -2139,6 +2139,35 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn branch_completion_keeps_unselected_candidates_unchecked() {
+        let definitions = r#"
+            import "std/_rt" as rt;
+            @check(fn(value) { if value.x > 0 { Ok(()) } else { Err(blame!("positive branch", value.x)) } }) type Point = struct {x: Int};
+            def good: Point = {x: 42};
+            def bad: Unchecked(Point) = {x: 0};
+        "#;
+        for body in [
+            "export def answer = (if True { good } else { bad }).x;",
+            "export def answer = (if False { bad } else { good }).x;",
+            "export def answer = (match True { True => good, False => bad }).x;",
+            "export def answer = (match False { True => bad, False => good }).x;",
+            r#"export def answer = match rt.with_diagnostics(fn(flag: Bool) { if flag { bad } else { good } })(True) { Err(errors) => if errors[0].message == "positive branch" { 42 } else { 0 }, _ => 0 };"#,
+            r#"export def answer = match rt.with_diagnostics(fn(flag: Bool) { match flag { True => bad, False => good } })(True) { Err(errors) => if errors[0].message == "positive branch" { 42 } else { 0 }, _ => 0 };"#,
+            "export def answer = do { let value: Point = if True { good } else { bad }; value.x + bad.x };",
+            r#"@check(fn(value) { if value.valid { Ok(()) } else { Err(blame!("invalid generic branch", value.item)) } }) type Box(T) = struct {item: T, valid: Bool};
+                def choose: for(T) Fn(Bool, Unchecked(Box(T)), Box(T)) -> Box(T) = fn(flag, candidate, good) { if flag { candidate } else { good } };
+                export def answer = match rt.with_diagnostics(fn(flag: Bool) { let candidate: Unchecked(Box(Int)) = {item: 0, valid: False}; let good: Box(Int) = {item: 42, valid: True}; choose(flag, candidate, good) })(True) { Err(errors) => if errors[0].message == "invalid generic branch" { 42 } else { 0 }, _ => 0 };"#,
+        ] {
+            let mir = graph(&format!("{definitions}{body}"), "");
+            assert!(mir.diagnostics.is_empty(), "{body}\n{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{body}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{body}");
+        }
+    }
+
+    #[test]
     fn unchecked_metadata_observes_shared_skeleton_without_checks() {
         for body in [
             r#"def body = match td.resolve(Unchecked(Box(Int)).type) { Ok(value) => value, _ => fail!("resolve") };
