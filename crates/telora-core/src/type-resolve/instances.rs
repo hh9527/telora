@@ -25,16 +25,30 @@ impl Solver<'_> {
             })
             .collect();
         let mut indices = BTreeMap::<Key, GenericInstanceId>::new();
-        self.mir.implementation_instances.resize(self.mir.hir.len(), None);
+        self.mir
+            .implementation_instances
+            .resize(self.mir.hir.len(), None);
         for index in 0..self.mir.bound_requirements.len() {
             let requirement = &self.mir.bound_requirements[index];
             let reference = requirement.reference;
-            if !matches!(self.mir.member_selections[reference.index()], Some(MemberSelection::TraitMember { .. })) { continue; }
-            let Some(evidence) = requirement.evidence.map(|id| &self.mir.evidence[id]) else { continue; };
-            let Some(symbol) = evidence.implementation else { continue; };
-            if self.mir.symbol_generics[symbol.index()].is_empty() { continue; }
+            if !matches!(
+                self.mir.member_selections[reference.index()],
+                Some(MemberSelection::TraitMember { .. })
+            ) {
+                continue;
+            }
+            let Some(evidence) = requirement.evidence.map(|id| &self.mir.evidence[id]) else {
+                continue;
+            };
+            let Some(symbol) = evidence.implementation else {
+                continue;
+            };
+            if self.mir.symbol_generics[symbol.index()].is_empty() {
+                continue;
+            }
             let key = (symbol, evidence.arguments.clone());
-            self.mir.implementation_instances[reference.index()] = self.admit_instance(key, &mut indices, &mut canonical);
+            self.mir.implementation_instances[reference.index()] =
+                self.admit_instance(key, &mut indices, &mut canonical);
         }
         for index in 0..self.mir.hir.len() {
             if let Some(key) =
@@ -45,40 +59,117 @@ impl Solver<'_> {
             }
         }
         let mut next = 0;
-        while next < self.mir.generic_instances.len() {
-            let symbol = self.mir.generic_instances[next].symbol;
-            let substitutions = self.mir.generic_instances[next]
-                .arguments
-                .iter()
-                .copied()
-                .collect();
-            let mut pending = self.mir.symbols[symbol.index()].declarations.clone();
-            let mut nodes = BTreeSet::new();
-            while let Some(node) = pending.pop() {
-                if !nodes.insert(node) {
+        let mut next_type = 0;
+        let mut check_templates = BTreeMap::<SymbolId, Vec<ConstructionCheck>>::new();
+        for check in &self.mir.construction_checks {
+            if !check.concrete {
+                if let TypeConstructor::Nominal(symbol) =
+                    self.mir.types[check.owner.index()].constructor
+                {
+                    check_templates
+                        .entry(symbol)
+                        .or_default()
+                        .push(check.clone());
+                }
+            }
+        }
+        loop {
+            // Applied member skeletons can discover checked types that do not
+            // occur directly in source references (e.g. Envelope(Int).item).
+            let previous_types = self.mir.types.len();
+            self.materialize_layouts();
+            if self.mir.type_layouts.len() != self.mir.types.len() {
+                return;
+            }
+            for index in previous_types..self.mir.types.len() {
+                let ty = &self.mir.types[index];
+                canonical.insert(
+                    (ty.constructor.clone(), ty.arguments.clone()),
+                    TypeId(index as u32),
+                );
+            }
+            while next_type < self.mir.types.len() {
+                let owner = TypeId(next_type as u32);
+                next_type += 1;
+                let TypeConstructor::Nominal(symbol) = self.mir.types[owner.index()].constructor
+                else {
+                    continue;
+                };
+                let Some(checks) = check_templates.get(&symbol) else {
+                    continue;
+                };
+                if self.contains_parameter(owner) {
                     continue;
                 }
-                pending.extend(self.mir.hir[node.index()].children.iter().map(|e| e.node));
-            }
-            let mut types = vec![];
-            let mut references = vec![];
-            let mut translated = BTreeMap::new();
-            for node in nodes {
-                if let TypeState::Known(ty) = self.mir.ty_slots[node.ty().index()] {
-                    let ty = *translated.entry(ty).or_insert_with(|| {
-                        self.substitute_resolved(ty, &substitutions, &mut canonical)
+                let definition = &self.mir.type_definitions
+                    [self.nominal_index[symbol.index()].expect("check owner definition")];
+                let arguments = definition
+                    .parameters
+                    .iter()
+                    .copied()
+                    .zip(self.mir.types[owner.index()].arguments.iter().copied())
+                    .collect::<Vec<_>>();
+                let Some(instance) =
+                    self.admit_instance((symbol, arguments.clone()), &mut indices, &mut canonical)
+                else {
+                    continue;
+                };
+                let substitutions = arguments.into_iter().collect();
+                for check in checks {
+                    let signature =
+                        self.substitute_resolved(check.signature, &substitutions, &mut canonical);
+                    self.mir.construction_checks.push(ConstructionCheck {
+                        owner,
+                        signature,
+                        concrete: true,
+                        instance: Some(instance),
+                        ..check.clone()
                     });
-                    types.push((node, ty));
-                }
-                if let Some(key) = self.instance_key(node, &substitutions, &mut canonical)
-                    && let Some(instance) = self.admit_instance(key, &mut indices, &mut canonical)
-                {
-                    references.push((node, instance));
                 }
             }
-            self.mir.generic_instances[next].types = types;
-            self.mir.generic_instances[next].references = references;
-            next += 1;
+            if next == self.mir.generic_instances.len() {
+                // Checker signatures may have appended types after the layout pass.
+                if self.mir.type_layouts.len() == self.mir.types.len() {
+                    break;
+                }
+                continue;
+            }
+            while next < self.mir.generic_instances.len() {
+                let symbol = self.mir.generic_instances[next].symbol;
+                let substitutions = self.mir.generic_instances[next]
+                    .arguments
+                    .iter()
+                    .copied()
+                    .collect();
+                let mut pending = self.mir.symbols[symbol.index()].declarations.clone();
+                let mut nodes = BTreeSet::new();
+                while let Some(node) = pending.pop() {
+                    if !nodes.insert(node) {
+                        continue;
+                    }
+                    pending.extend(self.mir.hir[node.index()].children.iter().map(|e| e.node));
+                }
+                let mut types = vec![];
+                let mut references = vec![];
+                let mut translated = BTreeMap::new();
+                for node in nodes {
+                    if let TypeState::Known(ty) = self.mir.ty_slots[node.ty().index()] {
+                        let ty = *translated.entry(ty).or_insert_with(|| {
+                            self.substitute_resolved(ty, &substitutions, &mut canonical)
+                        });
+                        types.push((node, ty));
+                    }
+                    if let Some(key) = self.instance_key(node, &substitutions, &mut canonical)
+                        && let Some(instance) =
+                            self.admit_instance(key, &mut indices, &mut canonical)
+                    {
+                        references.push((node, instance));
+                    }
+                }
+                self.mir.generic_instances[next].types = types;
+                self.mir.generic_instances[next].references = references;
+                next += 1;
+            }
         }
     }
 

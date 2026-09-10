@@ -5,6 +5,34 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Generic construction checker bodies close in the static graph (2026-09-10)
+
+ConstructionCheck now retains template/concrete status and, for applied owners,
+the GenericInstanceId containing the checker's normalized node types and reference
+edges. The template HIR remains shared. ExecutionGraph admits concrete checker
+contracts only; codegen selects their existing instance context and mechanically
+emits the checker thunk. The generic-checker codegen rejection gate is removed.
+
+Static instance materialization and nominal layout expansion now close together.
+New applied owners discovered through member layouts or instantiated function
+bodies receive checker contracts; generic calls inside those checkers extend the
+same instance worklist. Layout expansion resumes at its previous array cursor.
+Seal checks each applied checker signature against its instance node-type table.
+This performs no Telora execution and adds no downstream type substitution.
+
+Validation: 32 type-pass tests, 45 codegen tests and 12 solved VM tests pass.
+New cases cover Int/String applications sharing checker syntax, generic calls in
+checker bodies, owners discovered only through nested member layouts, owners
+produced by generic functions, normal rejection, and Struct/newtype/variant/codec
+execution. Logs: /tmp/mir-generic-check-static.log,
+/tmp/mir-generic-check-codegen.log and /tmp/mir-generic-check-vm.log.
+
+This closes generic owner-parameter specialization for construction checkers,
+not every generic feature: instance-specific assumed trait/property evidence,
+generic property providers and local declarations capturing outer type parameters
+remain open, as do CheckedCast/Unchecked paths and the remaining integration and
+legacy-removal gates. No performance/full-suite acceptance claim.
+
 ### Codec and text parsing invoke solved construction checks (2026-09-10)
 
 The solved codec and string parser now invoke the existing lazy checker tasks

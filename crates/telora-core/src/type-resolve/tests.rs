@@ -2,6 +2,36 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn generic_construction_checks_close_bodies_and_member_discovered_owners() {
+    let mut mir = graph(&[("@src/main", r#"
+        def identity: for(T) Fn(T) -> T = fn(value) { value };
+        @check(fn(value) { let copied = identity(value.item); Ok(()) })
+        type Item(T) = struct { item: T };
+        type Envelope(T) = struct { child: Item(T) };
+        export def first = Envelope(Int).type;
+        export def second = Envelope(String).type;
+    "#)]);
+    let hir = mir.hir.as_ptr();
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    mir.seal().unwrap();
+    assert_eq!(hir, mir.hir.as_ptr());
+    let checks = mir.construction_checks.iter().filter(|check| check.concrete).collect::<Vec<_>>();
+    assert_eq!(checks.len(), 2, "{}", mir.dump());
+    for check in checks {
+        let instance = &mir.generic_instances[check.instance.unwrap().index()];
+        assert!(instance.concrete);
+        assert_eq!(instance.ty(check.checker), Some(check.signature));
+        assert!(instance.references.iter().any(|(_, reference)| {
+            let target = &mir.generic_instances[reference.index()];
+            mir.symbols[target.symbol.index()].name == "identity" && target.concrete
+        }));
+        let input = mir.types[check.signature.index()].arguments[0];
+        assert_eq!(mir.types[input.index()].arguments, [check.owner]);
+    }
+}
+
+#[test]
 fn construction_checks_are_separate_closed_contracts_without_execution() {
     let mut mir = graph(&[("@src/main", r#"
         @check(fn(value) { if value.port > 0 { Ok(()) } else { Err(blame!("positive port", value.port)) } })

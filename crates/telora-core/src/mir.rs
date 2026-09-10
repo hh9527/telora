@@ -298,12 +298,16 @@ pub struct PropertyRecord {
     pub providers: Vec<HirId>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ConstructionCheck {
     pub owner: TypeId,
     pub site: PropertySite,
     pub checker: HirId,
     pub signature: TypeId,
+    /// Template contracts remain inspectable, but only concrete checks execute.
+    pub concrete: bool,
+    /// Closed node types and references for this applied owner's checker body.
+    pub instance: Option<GenericInstanceId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

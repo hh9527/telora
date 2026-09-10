@@ -101,7 +101,8 @@ impl Solver<'_> {
         for &(owner, site, decorator) in &self.check_declarations {
             let (Some(owner), Some(signature)) = (self.known(owner), self.known(decorator.ty())) else { continue };
             let checker = self.child(decorator, Role::Argument).expect("check argument");
-            self.mir.construction_checks.push(ConstructionCheck { owner, site, checker, signature });
+            let concrete = !self.contains_parameter(owner) && !self.contains_parameter(signature);
+            self.mir.construction_checks.push(ConstructionCheck { owner, site, checker, signature, concrete, instance: None });
         }
     }
 

@@ -176,7 +176,6 @@ pub fn resolve(mir: &mut Mir) {
     solver.finalize_checks();
     solver.prove_bounds();
     solver.materialize_instances();
-    solver.materialize_layouts();
     solver.mir.types_solved = true;
 }
 

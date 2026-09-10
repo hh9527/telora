@@ -154,7 +154,7 @@ impl ExecutionGraph {
                 "one reduced property per key"
             );
         }
-        for check in &mir.construction_checks {
+        for check in mir.construction_checks.iter().filter(|check| check.concrete) {
             let node = graph.push(Node { label: format!("check({:?}, {:?})", check.owner, check.site), task: Task::ConstructionCheck { owner: check.owner, site: check.site, checker: check.checker }, ty: check.signature, location: mir.hir[check.checker.index()].location });
             assert!(graph.checks.insert((check.owner, check.site), node).is_none());
         }

@@ -140,14 +140,6 @@ fn compile_root(
     sealed: SealedMir<'_>,
     root: CompilationRoot,
 ) -> Result<CompiledEntry, Vec<Diagnostic>> {
-    for check in &sealed.mir().construction_checks {
-        let mut pending = vec![check.signature];
-        while let Some(ty) = pending.pop() {
-            let shape = &sealed.mir().types[ty.index()];
-            if matches!(shape.constructor, TypeConstructor::Parameter(_)) { return Err(vec![Diagnostic::error("generic construction checks require static specialization", sealed.mir().hir[check.checker.index()].location)]); }
-            pending.extend(shape.arguments.iter().copied());
-        }
-    }
     let graph = ExecutionGraph::from_mir(&sealed);
     let (mir, types) = sealed.into_parts();
     let (target, declaration, name) = if let CompilationRoot::Export(entry) = root {
@@ -204,7 +196,7 @@ fn compile_root(
             .collect()
     };
     let mut all = globals.into_iter().collect::<std::collections::BTreeSet<_>>();
-    for check in &mir.construction_checks {
+    for check in mir.construction_checks.iter().filter(|check| check.concrete) {
         for symbol in referenced_globals(mir, check.checker) { all.extend(reachable_globals(mir, symbol)); }
     }
     globals = all.into_iter().collect();
@@ -322,8 +314,9 @@ fn compile_root(
             emitter.property_thunk(record).map_err(|d| vec![d])?;
         }
     }
-    for check in &mir.construction_checks {
+    for check in mir.construction_checks.iter().filter(|check| check.concrete) {
         let mut thunk = Emitter::new(mir, &graph, format!("check:{}", check.checker.index()));
+        thunk.instance = check.instance;
         let mut captures = vec![];
         for symbol in referenced_globals(mir, check.checker) {
             if let Some(value) = emitter.lookup(symbol) { let register = thunk.register(); thunk.locals.push((symbol, register)); captures.push(value); }
@@ -2109,6 +2102,36 @@ pub(crate) mod tests {
             let signature = &result.types().types[id.index()];
             assert_eq!(signature.constructor, TypeConstructor::Function);
             assert_eq!(result.types().types[signature.arguments[0].index()].constructor, expected);
+        }
+    }
+
+    #[test]
+    fn generic_construction_checks_consume_static_body_instances() {
+        let definitions = r#"
+            import "std/json" as json;
+            import "std/_rt" as rt;
+            def identity: for(T) Fn(T) -> T = fn(value) { value };
+            @check(fn(value) { let copied = identity(value.item); if value.valid { Ok(()) } else { Err(blame!("invalid item", copied)) } })
+            type Item(T) = struct { item: T, valid: Bool };
+            @check(fn(value) { let copied = identity(value); Ok(()) }) type Wrapped(T) = struct(T);
+            type Choice(T) = enum { @check(fn(value) { let copied = identity(value); Ok(()) }) Some(T), Empty };
+            type Envelope(T) = struct { child: Item(T) };
+        "#;
+        for body in [
+            r#"export def answer = do { let a: Item(Int) = { item: 40, valid: True }; let b: Item(String) = { item: "ok", valid: True }; a.item + 2 };"#,
+            r#"def make: for(T) Fn(T) -> Item(T) = fn(value) { { item: value, valid: True } }; export def answer = make(42).item;"#,
+            r#"export def answer = match rt.with_diagnostics(fn(value: Int) { let item: Item(Int) = { item: value, valid: False }; item })(0) { Err(errors) => if errors[0].message == "invalid item" { 42 } else { 0 }, _ => 0 };"#,
+            r#"type IntWrapped = Wrapped(Int); export def answer = match IntWrapped(42) { IntWrapped(value) => value };"#,
+            r#"type IntChoice = Choice(Int); export def answer = match IntChoice.Some(42) { IntChoice.Some(value) => value, _ => 0 };"#,
+            r#"export def answer = match json.decode(Envelope(Int).type, "{\"child\":{\"item\":42,\"valid\":true}}") { Ok(value) => value.child.item, _ => 0 };"#,
+            r#"export def answer = match json.decode(Envelope(String).type, "{\"child\":{\"item\":\"bad\",\"valid\":false}}") { Err(_) => 42, _ => 0 };"#,
+        ] {
+            let mir = graph(&format!("{definitions}{body}"), "");
+            assert!(mir.diagnostics.is_empty(), "{body}\n{}", mir.dump());
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{body}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{body}");
         }
     }
 

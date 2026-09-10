@@ -20,7 +20,14 @@ impl Mir {
             || self.reference_instances.len() != self.hir.len()
             || self.implementation_instances.len() != self.hir.len()
             || self.type_layouts.len() != self.types.len()
-            || self.construction_checks.iter().any(|check| check.owner.index() >= self.types.len() || check.signature.index() >= self.types.len() || self.ty_slots.get(check.checker.index()) != Some(&TypeState::Known(check.signature)))
+            || self.construction_checks.iter().any(|check| {
+                let signature = if let Some(instance) = check.instance {
+                    self.generic_instances.get(instance.index()).filter(|instance| instance.concrete).and_then(|instance| instance.ty(check.checker))
+                } else {
+                    match self.ty_slots.get(check.checker.index()) { Some(TypeState::Known(ty)) => Some(*ty), _ => None }
+                };
+                check.owner.index() >= self.types.len() || check.signature.index() >= self.types.len() || signature != Some(check.signature)
+            })
             || self.type_layouts.iter().flatten().any(|layout| layout.body.index() >= self.types.len() || layout.members.iter().flatten().any(|id| id.index() >= self.types.len()))
             || self.type_instances.iter().enumerate().any(|(node, arguments)| {
                 !arguments.is_empty()
