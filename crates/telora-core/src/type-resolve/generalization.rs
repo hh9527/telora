@@ -103,6 +103,7 @@ impl Solver<'_> {
                 _ => {}
             }
             let slots = match task {
+                Task::Interpreter { node, .. } => vec![node.ty()],
                 Task::Numeric { node, operand } | Task::Not { node, operand } | Task::Ordered { node, operand } => vec![node.ty(), *operand],
                 Task::Member { node, receiver, .. } | Task::Projection { node, receiver, .. }
                     | Task::FieldProjection { node, receiver } => vec![node.ty(), *receiver],

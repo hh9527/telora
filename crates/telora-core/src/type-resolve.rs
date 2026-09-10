@@ -34,6 +34,8 @@ mod metadata_joins;
 mod properties;
 #[path = "type-resolve/construction-origins.rs"]
 mod construction_origins;
+#[path = "type-resolve/interpreters.rs"]
+mod interpreters;
 #[path = "type-resolve/type-facets.rs"]
 mod type_facets;
 #[cfg(test)]
@@ -41,6 +43,7 @@ mod type_facets;
 mod tests;
 
 enum Task {
+    Interpreter { node: HirId, parameters: Vec<SymbolId> },
     TypeFacet { node: HirId, source: TypeSlotId },
     ValueEqual { node: HirId, left: TypeSlotId, right: TypeSlotId },
     Ordered { node: HirId, operand: TypeSlotId },
@@ -161,6 +164,7 @@ pub fn resolve(mir: &mut Mir) {
     );
     mir.required_types.resize(mir.hir.len(), false);
     mir.member_selections.resize(mir.hir.len(), None);
+    mir.interpreter_plans.resize(mir.hir.len(), None);
     mir.type_instances.resize_with(mir.hir.len(), Vec::new);
     let mut solver = Solver::new(mir);
     for _ in 0..solver.mir.symbols.len() {
@@ -796,6 +800,7 @@ impl Solver<'_> {
             HirKind::Name(_) | HirKind::NativeTypeSlot(_) => {
                 self.mir.required_types[node.index()] = false
             }
+            HirKind::Interpreter => self.prepare_interpreter(node),
             _ => self.unsupported(node),
         }
     }

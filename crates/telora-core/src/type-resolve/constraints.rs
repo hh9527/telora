@@ -93,6 +93,7 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::Interpreter { node, parameters } => self.interpreter(node, parameters),
             Task::TypeFacet { node, source } => self.type_facet(node, source, false),
             Task::ValueEqual { node, left, right } => Some(Task::ValueEqual { node, left, right }),
             Task::Reference { node, symbol } => {

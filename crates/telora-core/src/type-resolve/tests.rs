@@ -2,6 +2,50 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn interpreter_contracts_reject_invalid_witnesses_and_nested_parameters() {
+    for (source, message) in [
+        ("export def bad = interpreter!(fn(x) { True });", "directly annotated generic def"),
+        ("export def bad: for(T) Fn(TypeOf(T), TypeOf(T)) -> Fn(T) -> Bool = interpreter!(fn(x) { True });", "unique witness"),
+        ("export def bad: for(T, U) Fn(TypeOf(T)) -> Fn(T) -> Bool = interpreter!(fn(x) { True });", "missing a type parameter witness"),
+        ("export def bad: for(T) Fn(Int) -> Fn(T) -> Bool = interpreter!(fn(x) { True });", "TypeOf witnesses"),
+        ("export def bad: for(T) Fn(TypeOf(Int)) -> Fn(T) -> Bool = interpreter!(fn(x) { True });", "quantified type parameter"),
+        ("export def bad: for(T) Fn(TypeOf(T)) -> Fn(Array(T)) -> Bool = interpreter!(fn(x) { True });", "cannot nest"),
+        ("export def bad: for(T) Fn(TypeOf(T)) -> Fn(T) -> Array(T) = interpreter!(fn(x) { [] });", "result cannot contain"),
+        ("def erased: Fn(Int) -> Bool = fn(x) { True }; export def bad: for(T) Fn(TypeOf(T)) -> Fn(T) -> Bool = interpreter!(erased);", "incompatible types"),
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err(), "{source}");
+        assert!(mir.diagnostics.iter().any(|diagnostic| diagnostic.message.contains(message)), "{source}\n{}", mir.dump());
+    }
+    for source in [
+        "export def adapt: for(T) Fn(TypeOf(T)) -> Fn(Int) -> Bool = interpreter!(fn(x) { True });",
+        "def erased: Fn(Dyn) -> Never = fn(x) { fail!(\"stop\") }; export def adapt: for(T) Fn(TypeOf(T)) -> Fn(T) -> Bool = interpreter!(erased);",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+    }
+}
+
+#[test]
+fn interpreter_plans_derive_from_resolved_signatures_without_hidden_references() {
+    let mut mir = graph(&[("@src/main", r#"
+        type Witness(T) = TypeOf(T);
+        def erased: Fn(String, Dyn, Bool, Dyn, Dyn) -> Bool = fn(text, a, flag, b, again) { flag };
+        export def adapt: for(A, B) Fn(Witness(B), Witness(A)) -> Fn(String, A, Bool, B, A) -> Bool = interpreter!(erased);
+        export def answer = adapt(Int.type, String.type)("text", "a", True, 42, "b");
+    "#)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    assert!(!mir.hir.iter().any(|node| matches!(&node.kind, HirKind::Variable(name) if name.starts_with('\0'))));
+    let index = mir.interpreter_plans.iter().position(Option::is_some).unwrap();
+    assert_eq!(mir.interpreter_plans[index], Some(InterpreterPlan { witness_count: 2, parameters: vec![None, Some(1), None, Some(0), Some(1)] }));
+    mir.interpreter_plans[index].as_mut().unwrap().parameters[1] = Some(0);
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn empty_option_bottom_evidence_does_not_default_arbitrary_generic_results() {
     let mut mir = graph(&[("@src/main", "def inspect: for(T) Fn(Option(T)) -> Bool = fn(value) { match value { None => False, Some(_) => True } }; export def empty = Option.None; export def constrained: Option(Int) = None; export def observed = inspect(empty);")]);
     resolve(&mut mir);

@@ -482,10 +482,9 @@ impl Lower<'_> {
             }
             E::Interpreter {
                 operand,
-                elaboration,
+                elaboration: _,
             } => {
                 self.expression_edge(&mut edges, Role::Operand, *operand);
-                self.expression_edge(&mut edges, Role::Elaboration, *elaboration);
                 HirKind::Interpreter
             }
             E::Closure {

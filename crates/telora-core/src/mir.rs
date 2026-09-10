@@ -532,6 +532,14 @@ pub enum HirKind {
     PatternField,
 }
 
+/// Static parameter adapter for an interpreter factory. Each inner argument
+/// either passes through or packs with the indicated outer witness argument.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InterpreterPlan {
+    pub witness_count: u32,
+    pub parameters: Vec<Option<u32>>,
+}
+
 #[derive(Default)]
 pub struct Mir {
     pub sources: SourceDatabase,
@@ -563,6 +571,7 @@ pub struct Mir {
     pub types: Vec<ResolvedType>,
     pub type_layouts: Vec<Option<TypeLayout>>,
     pub member_selections: Vec<Option<MemberSelection>>,
+    pub interpreter_plans: Vec<Option<InterpreterPlan>>,
     pub type_definitions: Vec<TypeDefinition>,
     pub properties: Vec<PropertyRecord>,
     pub construction_checks: Vec<ConstructionCheck>,
@@ -725,6 +734,11 @@ impl Mir {
         for (id, selection) in self.member_selections.iter().enumerate() {
             if let Some(selection) = selection {
                 writeln!(out, "member-selection {id} {selection:?}").unwrap();
+            }
+        }
+        for (id, plan) in self.interpreter_plans.iter().enumerate() {
+            if let Some(plan) = plan {
+                writeln!(out, "interpreter-plan {id} {plan:?}").unwrap();
             }
         }
         for (id, conflict) in self.type_conflicts.iter().enumerate() {

@@ -5,6 +5,36 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Interpreter adapters are solved and sealed in MIR (2026-09-11)
+
+MIR lowering now retains only the authored interpreter operand, discarding the
+legacy parser-generated adapter. Hidden pack names and synthetic closures no
+longer enter the graph's symbol/type obligations. The new interpreter rule
+consumes the resolved explicit generic signature: it maps each quantified
+parameter to a unique TypeOf witness, classifies each inner parameter as a
+direct pack or independent pass-through, rejects nested interpreted parameters
+and dependent results, and constrains the operand to the derived erased ABI.
+Aliases such as Witness(T) = TypeOf(T) work without spelling-based checks.
+
+The session stores an InterpreterPlan beside HIR, and MIR dumps expose it.
+Seal validates the plan against the closed outer/inner/operand types, including
+witness indices and pack relationships. A tampered plan cannot seal. The rule
+waits for incomplete evidence without allocating new type terms on every retry.
+No VM access or dependency on the replaced type/compiler modules was added.
+
+Validation: 58 type-resolve tests, 84 existing codegen tests and CLI build pass.
+Tests cover reordered/aliased witnesses, mixed and repeated arguments,
+metadata-only factories, Never-returning operands, invalid contracts and seal
+rejection of a changed plan. Actual check --only-types @test/interpreter/testee
+now reports status ok, zero Unknown/Conflicted and zero execution seconds.
+
+This is the static adapter milestone, not interpreter execution completion:
+the actual test command now reaches the explicit missing Interpreter codegen
+diagnostic. Mechanical adapter generation and its runtime identity/cache
+behavior remain to be connected. Other migration gaps and legacy removal
+remain. Logs: /tmp/mir-interpreter-{types,codegen,build,check,runtime}.log.
+No performance assessment or fixture edits.
+
 ### Initialization acceptance follows lazy session semantics (2026-09-11)
 
 The old initialization fixture assumed that an unread top-level failure was

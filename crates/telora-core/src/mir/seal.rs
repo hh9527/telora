@@ -12,6 +12,31 @@ pub struct SealedMir<'a> {
 }
 
 impl Mir {
+    fn valid_interpreter_plan(&self, node: HirId) -> bool {
+        let Some(plan) = self.interpreter_plans.get(node.index()).and_then(Option::as_ref) else { return false; };
+        let Some(TypeState::Known(ty)) = self.ty_slots.get(node.index()) else { return false; };
+        let outer = &self.types[ty.index()];
+        if outer.constructor != TypeConstructor::Function || outer.arguments.len() != plan.witness_count as usize + 1 { return false; }
+        if outer.arguments[..plan.witness_count as usize].iter().any(|ty| self.types[ty.index()].constructor != TypeConstructor::TypeOf) { return false; }
+        let inner = &self.types[outer.arguments.last().unwrap().index()];
+        if inner.constructor != TypeConstructor::Function || inner.arguments.len() != plan.parameters.len() + 1 { return false; }
+        let Some(operand) = self.hir[node.index()].children.iter().find(|edge| edge.role == Role::Operand).map(|edge| edge.node) else { return false; };
+        let Some(TypeState::Known(ty)) = self.ty_slots.get(operand.index()) else { return false; };
+        let erased = &self.types[ty.index()];
+        if erased.constructor != TypeConstructor::Function || erased.arguments.len() != inner.arguments.len()
+            || (erased.arguments.last() != inner.arguments.last()
+                && self.types[erased.arguments.last().unwrap().index()].constructor != TypeConstructor::Never) { return false; }
+        plan.parameters.iter().enumerate().all(|(index, witness)| match witness {
+            Some(witness) if *witness < plan.witness_count => {
+                let witness = &self.types[outer.arguments[*witness as usize].index()];
+                witness.arguments.first() == Some(&inner.arguments[index])
+                    && self.types[erased.arguments[index].index()].constructor == TypeConstructor::Dyn
+            }
+            None => erased.arguments[index] == inner.arguments[index],
+            _ => false,
+        })
+    }
+
     fn valid_newtype_selection(&self, node: HirId, ty: TypeId) -> bool {
         let (owner, payload) = match self.member_selections.get(node.index()) {
             Some(Some(MemberSelection::NewtypeConstructor)) => {
@@ -39,6 +64,9 @@ impl Mir {
             || self.implementation_instances.len() != self.hir.len()
             || self.type_layouts.len() != self.types.len()
             || self.member_selections.len() != self.hir.len()
+            || self.interpreter_plans.len() != self.hir.len()
+            || self.hir.iter().enumerate().any(|(index, node)| matches!(node.kind, HirKind::Interpreter)
+                && !self.valid_interpreter_plan(HirId(index as u32)))
             || self.member_selections.iter().enumerate().any(|(node, selection)| {
                 if !matches!(selection, Some(MemberSelection::NewtypeConstructor | MemberSelection::NewtypePattern)) { return false; }
                 let Some(TypeState::Known(ty)) = self.ty_slots.get(node) else { return true; };
