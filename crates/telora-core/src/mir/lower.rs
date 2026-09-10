@@ -417,16 +417,6 @@ impl Lower<'_> {
                 self.expression_edge(&mut edges, Role::Target, *target);
                 HirKind::CheckedCast
             }
-            E::DynProject {
-                namespace,
-                target,
-                value,
-            } => {
-                self.expression_edge(&mut edges, Role::Namespace, *namespace);
-                self.expression_edge(&mut edges, Role::Target, *target);
-                self.expression_edge(&mut edges, Role::Value, *value);
-                HirKind::DynProject
-            }
             E::Binary {
                 operator,
                 left,

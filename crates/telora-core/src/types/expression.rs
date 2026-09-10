@@ -185,12 +185,6 @@ fn infer_expr_projection(
                 _ => None,
             }
         }
-        ExprKind::DynProject { target, .. } => {
-            match infer_expr_projection(target, environment) {
-                Some(TypeDescriptor::TypeOf(target)) => Some(option_descriptor(*target)),
-                _ => None,
-            }
-        }
         ExprKind::TypeApply { .. } => None,
         ExprKind::Call { callee, arguments } => {
             let callee = infer_expr_projection(callee, environment);

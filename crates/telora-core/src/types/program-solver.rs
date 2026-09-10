@@ -11,7 +11,6 @@ struct ProgramTypeInputs<'a> {
     type_properties: &'a [TypePropertyEvidence],
     trait_ids: &'a BTreeMap<String, crate::TraitId>,
     display_trait: Option<(crate::TraitId, String)>,
-    dyn_namespaces: &'a HashSet<String>,
     static_environment: &'a HashMap<String, TypeDescriptor>,
     definition_contracts: &'a HashMap<String, TypeDescriptor>,
     contract_external_names: &'a HashSet<&'a str>,
@@ -50,7 +49,6 @@ fn solve_program_types<'a>(
         type_properties,
         trait_ids,
         display_trait,
-        dyn_namespaces,
         static_environment,
         definition_contracts,
         contract_external_names,
@@ -70,7 +68,6 @@ fn solve_program_types<'a>(
         type_properties,
         trait_ids,
         display_trait,
-        dyn_namespaces,
         builtin_tuple_available,
         None,
         query,
@@ -782,7 +779,6 @@ mod program_outcome_tests {
         let named_types = BTreeMap::new();
         let annotations = HashMap::new();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let contracts = HashMap::new();
         let external_names = HashSet::new();
         let families = BTreeMap::new();
@@ -810,7 +806,6 @@ mod program_outcome_tests {
                 type_properties: &[],
                 trait_ids: &trait_ids,
                 display_trait: None,
-                dyn_namespaces: &dyn_namespaces,
                 static_environment: &prelude.types,
                 definition_contracts: &contracts,
                 contract_external_names: &external_names,

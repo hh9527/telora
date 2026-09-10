@@ -114,15 +114,6 @@ fn free_expr(expression: &Expr, bound: &HashSet<String>, free: &mut BTreeSet<Str
             free_expr(target, bound, free);
             free_expr(value, bound, free);
         }
-        ExprKind::DynProject {
-            namespace,
-            target,
-            value,
-        } => {
-            free_expr(namespace, bound, free);
-            free_expr(target, bound, free);
-            free_expr(value, bound, free);
-        }
         ExprKind::Call { callee, arguments } => {
             free_expr(callee, bound, free);
             for argument in arguments {
@@ -298,15 +289,6 @@ pub(crate) fn collect_runtime_names(expression: &Expr, names: &mut HashSet<Strin
         ExprKind::TypeAscription { value, .. } => collect_runtime_names(value, names),
         ExprKind::CheckedCast { value, target } => {
             names.insert("\0telora_cast".to_owned());
-            collect_runtime_names(target, names);
-            collect_runtime_names(value, names);
-        }
-        ExprKind::DynProject {
-            namespace,
-            target,
-            value,
-        } => {
-            collect_runtime_names(namespace, names);
             collect_runtime_names(target, names);
             collect_runtime_names(value, names);
         }

@@ -275,27 +275,6 @@ impl<'a> Compiler<'a> {
                 );
                 self.compile_expr_unowned(&call)
             }
-            ExprKind::DynProject {
-                namespace,
-                target,
-                value,
-            } => {
-                let callee = located(
-                    ExprKind::Field {
-                        receiver: namespace.clone(),
-                        field: located("project_with".to_owned(), expression.location),
-                    },
-                    expression.location,
-                );
-                let call = located(
-                    ExprKind::Call {
-                        callee: Box::new(callee),
-                        arguments: vec![(**target).clone(), (**value).clone()],
-                    },
-                    expression.location,
-                );
-                self.compile_expr_unowned(&call)
-            }
             ExprKind::FieldProjection { receiver, fields } => {
                 let dict = self.compile_expr(receiver)?;
                 let mut projected = Vec::with_capacity(fields.len());

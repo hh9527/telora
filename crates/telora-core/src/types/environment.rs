@@ -70,7 +70,7 @@ mod environment_tests {
         let hir = HirProgram::default();
         let mut context = ToolInferenceContext::new(
             TypeGraph::default(), &hir, BTreeMap::new(), HashMap::new(), HashMap::new(),
-            BTreeMap::new(), true, HashSet::new(),
+            BTreeMap::new(), true,
         );
         for index in 0..1024 {
             context.environment.insert(format!("unused{index}"), TypeDescriptor::Int);

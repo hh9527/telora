@@ -573,36 +573,6 @@ impl<'a> GenericInference<'a> {
                 self.infer(value, environment, None)?;
                 result_descriptor(target, TypeDescriptor::String)
             }
-            ExprKind::DynProject {
-                namespace,
-                target,
-                value,
-            } => {
-                let ExprKind::Variable(namespace_name) = &namespace.value else {
-                    return Err("Dyn project syntax requires a std/dyn namespace".into());
-                };
-                if !self.dyn_namespaces.contains(&namespace_name.value) {
-                    return Err(format!(
-                        "{}.project@[T] is available only on an imported std/dyn namespace",
-                        namespace_name.value
-                    ));
-                }
-                self.infer(namespace, environment, None)?;
-                let target_descriptor = self
-                    .local_annotations
-                    .get(&target.location)
-                    .cloned()
-                    .ok_or_else(|| "Dyn projection target metadata was not evaluated".to_owned())?;
-                if type_identity_is_symbolic(&self.normalize(&target_descriptor)) {
-                    return Err(
-                        "Dyn projection of a generic type requires an explicit runtime TypeOf witness"
-                            .into(),
-                    );
-                }
-                self.infer(target, environment, Some(&TypeDescriptor::Type))?;
-                self.infer(value, environment, Some(&TypeDescriptor::Dyn))?;
-                option_descriptor(target_descriptor)
-            }
             ExprKind::Binary {
                 operator,
                 left,

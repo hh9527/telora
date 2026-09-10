@@ -424,10 +424,9 @@ mod inference_publication_tests {
         let named_types = BTreeMap::new();
         let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
             &schemes, &hir, &interfaces, &named_types, annotations,
-            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+            &[], &[], &trait_ids, None, true, None, None,
         );
         let id = crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 97);
         let recursive = TypeDescriptor::Declared(DeclaredTypeDescriptor {

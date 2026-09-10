@@ -9,9 +9,8 @@
         let interfaces = BTreeMap::new();
         let named_types = BTreeMap::new();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &named_types,
-            InferenceAnnotationInputs::default(), &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None);
+            InferenceAnnotationInputs::default(), &[], &[], &trait_ids, None, true, None, None);
         let environment = HashMap::from([("absent".into(), TypeDescriptor::Int), ("ambiguous".into(), TypeDescriptor::Int)]);
         for reference in hir.references() {
             let expression = crate::ast::located(ExprKind::Variable(crate::ast::located(
@@ -40,9 +39,8 @@
         let interfaces = BTreeMap::new();
         let named_types = BTreeMap::new();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &named_types,
-            InferenceAnnotationInputs::default(), &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None);
+            InferenceAnnotationInputs::default(), &[], &[], &trait_ids, None, true, None, None);
         let slot = inference.variables.fresh();
         inference.bind_import_origin(origin, TypeDescriptor::Inference(slot), None);
         inference.variables.set(slot, TypeDescriptor::Int);
@@ -69,10 +67,9 @@
         let named_types = BTreeMap::new();
         let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
             &schemes, &hir, &interfaces, &named_types, annotations,
-            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+            &[], &[], &trait_ids, None, true, None, None,
         );
         let slot = inference.variables.fresh();
         let mut environment = HashMap::from([("value".into(), TypeDescriptor::String)]);
@@ -219,10 +216,9 @@
         let named_types = BTreeMap::new();
         let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
             &schemes, &hir, &interfaces, &named_types, annotations,
-            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+            &[], &[], &trait_ids, None, true, None, None,
         );
         let mut sources = SourceDatabase::default();
         let source = sources.add("pattern.telora", "payload");
@@ -246,10 +242,9 @@
         let named_types = BTreeMap::new();
         let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
             &schemes, &hir, &interfaces, &named_types, annotations,
-            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+            &[], &[], &trait_ids, None, true, None, None,
         );
         let mut sources = SourceDatabase::default();
         let source = sources.add("records.telora", "x");
@@ -274,10 +269,9 @@
         let named_types = BTreeMap::new();
         let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
             &schemes, &hir, &interfaces, &named_types, annotations,
-            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+            &[], &[], &trait_ids, None, true, None, None,
         );
         let never = inference.variables.structure_node(InferenceConstructor::Never, &[]);
         let array = inference.variables.structure_node(InferenceConstructor::Array, &[never]);
@@ -301,10 +295,9 @@
         let named_types = BTreeMap::new();
         let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
             &schemes, &hir, &interfaces, &named_types, annotations,
-            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+            &[], &[], &trait_ids, None, true, None, None,
         );
         // Recursive references may have an identity without a local body.
         let named = TypeDescriptor::Named("Tree".into());
@@ -323,10 +316,9 @@
         let named_types = BTreeMap::new();
         let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
             &schemes, &hir, &interfaces, &named_types, annotations,
-            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+            &[], &[], &trait_ids, None, true, None, None,
         );
         let mut sources = SourceDatabase::default();
         let source = sources.add("aggregate.telora", "([1, 2], [3])");
@@ -381,10 +373,9 @@
         let named_types = BTreeMap::new();
         let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
-        let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
             &schemes, &hir, &interfaces, &named_types, annotations,
-            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+            &[], &[], &trait_ids, None, true, None, None,
         );
         let item1 = inference.variables.fresh();
         let item2 = inference.variables.fresh();
@@ -423,7 +414,6 @@
         let schemes = HashMap::new();
         let interfaces = BTreeMap::new();
         let annotations = InferenceAnnotationInputs::default();
-        let dyn_namespaces = HashSet::new();
         let named_types = BTreeMap::new();
         let trait_ids = BTreeMap::new();
         let hir = HirProgram::default();
@@ -437,7 +427,6 @@
             &[],
             &trait_ids,
             None,
-            &dyn_namespaces,
             true,
             None,
             None,

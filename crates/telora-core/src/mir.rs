@@ -502,7 +502,6 @@ pub enum HirKind {
     },
     TypeAscription,
     CheckedCast,
-    DynProject,
     Binary(BinaryOperator),
     Field,
     FieldProjection,

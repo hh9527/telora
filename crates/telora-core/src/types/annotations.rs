@@ -33,7 +33,7 @@ mod static_annotation_tests {
             });
             let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
             let context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
-                prelude.schemes, BTreeMap::new(), true, HashSet::new());
+                prelude.schemes, BTreeMap::new(), true);
             let expression = &program.value.body.value.result;
             let mut graph = TypeGraph::default();
             let result = with_tool_annotation_context(expression, &context, &mut graph,
@@ -281,17 +281,6 @@ fn collect_nested_annotation_types(
         }
         ExprKind::TypeAscription { value, target } | ExprKind::CheckedCast { value, target } => {
             collect_nested_annotation_types(value, sources, annotations, static_types)?;
-            let descriptor = static_types.elaborate(target, sources)?;
-            annotations.insert(target.location, descriptor);
-        }
-        ExprKind::DynProject {
-            namespace,
-            target,
-            value,
-        } => {
-            for expression in [namespace.as_ref(), value.as_ref()] {
-                collect_nested_annotation_types(expression, sources, annotations, static_types)?;
-            }
             let descriptor = static_types.elaborate(target, sources)?;
             annotations.insert(target.location, descriptor);
         }

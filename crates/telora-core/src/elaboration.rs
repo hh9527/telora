@@ -270,15 +270,6 @@ impl Elaborator<'_> {
                 self.expression(value);
                 self.expression(target);
             }
-            ExprKind::DynProject {
-                namespace,
-                target,
-                value,
-            } => {
-                self.expression(namespace);
-                self.expression(target);
-                self.expression(value);
-            }
             ExprKind::Call { callee, arguments } => {
                 self.expression_mode(callee, true);
                 for argument in arguments.iter_mut() {

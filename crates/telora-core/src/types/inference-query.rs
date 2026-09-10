@@ -566,9 +566,8 @@ mod inference_query_tests {
         let interfaces = BTreeMap::new();
         let names = BTreeMap::new();
         let traits = BTreeMap::new();
-        let namespaces = HashSet::new();
         let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &names,
-            InferenceAnnotationInputs::default(), &[], &[], &traits, None, &namespaces, true, None, None);
+            InferenceAnnotationInputs::default(), &[], &[], &traits, None, true, None, None);
         let int = inference.variables.structure_edge(TypeDescriptor::Int);
         let record = inference.variables.structure_node(InferenceConstructor::Struct(Box::new(["value".into()])), &[int]);
         let other_record = inference.variables.structure_node(InferenceConstructor::Struct(Box::new(["value".into()])), &[int]);
@@ -602,9 +601,8 @@ mod inference_query_tests {
         let interfaces = BTreeMap::new();
         let names = BTreeMap::new();
         let traits = BTreeMap::new();
-        let namespaces = HashSet::new();
         let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &names,
-            InferenceAnnotationInputs::default(), &[], &[], &traits, None, &namespaces, true, None, None);
+            InferenceAnnotationInputs::default(), &[], &[], &traits, None, true, None, None);
         let payload = inference.variables.fresh();
         let mut deep = inference.variables.fresh();
         for _ in 0..16384 {
@@ -641,9 +639,8 @@ mod inference_query_tests {
         let interfaces = BTreeMap::new();
         let names = BTreeMap::new();
         let traits = BTreeMap::new();
-        let namespaces = HashSet::new();
         let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &names,
-            InferenceAnnotationInputs::default(), &[], &[], &traits, None, &namespaces, true, None, None);
+            InferenceAnnotationInputs::default(), &[], &[], &traits, None, true, None, None);
         let enumeration = TypeDescriptor::Enum(BTreeMap::from([
             ("Empty".into(), None), ("Value".into(), Some(Box::new(TypeDescriptor::Int))),
         ]));
@@ -678,9 +675,8 @@ mod inference_query_tests {
         let interfaces = BTreeMap::new();
         let names = BTreeMap::new();
         let traits = BTreeMap::new();
-        let namespaces = HashSet::new();
         let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &names,
-            InferenceAnnotationInputs::default(), &[], &[], &traits, None, &namespaces, true, None, None);
+            InferenceAnnotationInputs::default(), &[], &[], &traits, None, true, None, None);
         let parameter = inference.variables.fresh();
         let mut child = inference.variables.fresh();
         for _ in 0..16384 {
@@ -721,9 +717,8 @@ mod inference_query_tests {
         let interfaces = BTreeMap::new();
         let names = BTreeMap::new();
         let traits = BTreeMap::new();
-        let namespaces = HashSet::new();
         let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &names,
-            InferenceAnnotationInputs::default(), &[], &[], &traits, None, &namespaces, true, None, None);
+            InferenceAnnotationInputs::default(), &[], &[], &traits, None, true, None, None);
         let value = inference.variables.fresh();
         let nominal = inference.variables.fresh();
         let body = inference.variables.structure_node(InferenceConstructor::Struct(Box::new([
@@ -759,9 +754,8 @@ mod inference_query_tests {
         let interfaces = BTreeMap::new();
         let names = BTreeMap::new();
         let traits = BTreeMap::new();
-        let namespaces = HashSet::new();
         let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &names,
-            InferenceAnnotationInputs::default(), &[], &[], &traits, None, &namespaces, true, None, None);
+            InferenceAnnotationInputs::default(), &[], &[], &traits, None, true, None, None);
         let leaf = inference.variables.fresh();
         let mut child = leaf;
         for _ in 0..16384 {
@@ -800,7 +794,6 @@ mod inference_query_tests {
         ]);
         let annotations = InferenceAnnotationInputs::default();
         let traits = BTreeMap::new();
-        let namespaces = HashSet::new();
         let mut inference = GenericInference::new(
             &schemes,
             &hir,
@@ -811,7 +804,6 @@ mod inference_query_tests {
             &[],
             &traits,
             None,
-            &namespaces,
             true,
             None,
             None,

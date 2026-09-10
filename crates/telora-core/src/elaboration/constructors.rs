@@ -125,15 +125,6 @@ pub(crate) fn lower_constructor_patterns(
             lower_constructor_patterns(left, constructors);
             lower_constructor_patterns(right, constructors);
         }
-        ExprKind::DynProject {
-            namespace,
-            target,
-            value,
-        } => {
-            lower_constructor_patterns(namespace, constructors);
-            lower_constructor_patterns(target, constructors);
-            lower_constructor_patterns(value, constructors);
-        }
         ExprKind::Call { callee, arguments } => {
             lower_constructor_patterns(callee, constructors);
             for argument in arguments {

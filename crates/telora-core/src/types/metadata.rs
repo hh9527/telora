@@ -322,7 +322,7 @@ mod pure_tool_solver_tests {
             let prelude = BootstrapPrelude::new();
             let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
             let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
-                prelude.schemes, BTreeMap::new(), true, HashSet::new());
+                prelude.schemes, BTreeMap::new(), true);
             let expression = &program.value.body.value.result;
             for expected in [None, Some(&TypeDescriptor::Int)] {
                 let result = solve_tool_expression_types(expression, expected, None, &sources, &mut context);
@@ -358,7 +358,7 @@ mod pure_tool_solver_tests {
             });
             let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
             let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
-                prelude.schemes, BTreeMap::new(), true, HashSet::new());
+                prelude.schemes, BTreeMap::new(), true);
             let expression = &program.value.body.value.result;
             let result = solve_tool_expression_types(expression, Some(&expected), None, &sources, &mut context);
             assert_eq!(result.is_ok(), valid, "{text}: {:?}", result.as_ref().err());
@@ -455,7 +455,7 @@ fn solve_tool_expression_types(
         &context.schemes, &context.hir, &context.interfaces, &context.named_types,
         annotation_inputs, &context.trait_implementations, &context.type_properties,
         &context.trait_ids, context.display_trait.clone(),
-        &context.dyn_namespaces, context.builtin_tuple_available,
+        context.builtin_tuple_available,
         Some(&context.declared_bodies), query,
     );
     for (name, scheme) in lexical_schemes {

@@ -402,7 +402,7 @@
         let hir = HirProgram::resolve(&program, bootstrap.types.keys().cloned());
         let mut context = ToolInferenceContext::new(
             TypeGraph::default(), &hir, BTreeMap::new(), bootstrap.types, bootstrap.schemes,
-            BTreeMap::new(), true, HashSet::new(),
+            BTreeMap::new(), true,
         );
         let mut account = QuotaAccount::new(Quota::with_fuel(fuel));
         let evidence = solve_tool_expression_types(expression, Some(&TypeDescriptor::Int),

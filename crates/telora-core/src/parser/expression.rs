@@ -382,26 +382,9 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .find(|child| self.rule(**child) == Some(Rule::Arguments))
                     .map_or(Ok(Vec::new()), |args| self.expression_children(*args))?;
-                if let ExprKind::TypeApply {
-                    callee: applied,
-                    arguments: type_arguments,
-                } = &callee.value
-                    && let ExprKind::Field { receiver, field } = &applied.value
-                    && field.value == "project"
-                    && let [type_argument] = type_arguments.as_slice()
-                    && let TypeArgumentKind::Explicit(target) = &type_argument.value
-                    && let [value] = arguments.as_slice()
-                {
-                    ExprKind::DynProject {
-                        namespace: receiver.clone(),
-                        target: Box::new(target.clone()),
-                        value: Box::new(value.clone()),
-                    }
-                } else {
-                    ExprKind::Call {
-                        callee: Box::new(callee),
-                        arguments,
-                    }
+                ExprKind::Call {
+                    callee: Box::new(callee),
+                    arguments,
                 }
             }
             Rule::TypeApplyExpr => {

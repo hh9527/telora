@@ -323,15 +323,6 @@ impl<'a> TypeBoundary<'a> {
                 self.data_expression(value);
                 self.type_expression(target);
             }
-            ExprKind::DynProject {
-                namespace,
-                target,
-                value,
-            } => {
-                self.data_expression(namespace);
-                self.type_expression(target);
-                self.data_expression(value);
-            }
             ExprKind::Call { callee, arguments } => {
                 if matches!(self.role(callee), SurfaceRole::Type) {
                     self.diagnostics.push(Diagnostic::error(

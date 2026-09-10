@@ -121,7 +121,7 @@ mod tool_plan_tests {
             let hir = HirProgram::resolve(&program, prelude.types.keys().cloned()
                 .chain(["provider".into(), PROPERTY_PREVIOUS_BINDING.into()]));
             let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
-                prelude.schemes, BTreeMap::new(), true, HashSet::new());
+                prelude.schemes, BTreeMap::new(), true);
             let before = context.environment.clone();
             let environment = HashMap::from([("provider".into(), TypeDescriptor::Function {
                 parameters: vec![option_descriptor(TypeDescriptor::Int)],
@@ -146,7 +146,7 @@ mod tool_plan_tests {
         let prelude = BootstrapPrelude::new();
         let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
         let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
-            prelude.schemes, BTreeMap::new(), true, HashSet::new());
+            prelude.schemes, BTreeMap::new(), true);
         assert!(!context.environment.contains_key("OnType"));
         let expression = &program.value.body.value.result;
         let evidence = solve_tool_expression_types(expression, Some(&property_target_descriptor()), None,
@@ -169,7 +169,7 @@ mod tool_plan_tests {
         let existing_root = module_types.intern_descriptor(&descriptor);
         let storage = module_types.nodes.as_ptr();
         let mut context = ToolInferenceContext::new(module_types, &hir, BTreeMap::new(), prelude.types,
-            prelude.schemes, BTreeMap::new(), true, HashSet::new());
+            prelude.schemes, BTreeMap::new(), true);
         assert_eq!(context.types.nodes.as_ptr(), storage, "handoff must move the arena without copying it");
         let expression = &program.value.body.value.result;
         let mut plans = Vec::new();
@@ -213,7 +213,7 @@ mod tool_plan_tests {
         let prelude = BootstrapPrelude::new();
         let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
         let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
-            prelude.schemes, BTreeMap::new(), true, HashSet::new());
+            prelude.schemes, BTreeMap::new(), true);
         let expression = &program.value.body.value.result;
         let mut evidence = solve_tool_expression_types(expression, Some(&TypeDescriptor::Int), None,
             &sources, &mut context).unwrap();
@@ -260,7 +260,7 @@ mod tool_plan_tests {
         let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
         let environment = prelude.types.clone();
         let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
-            prelude.schemes, BTreeMap::new(), true, HashSet::new());
+            prelude.schemes, BTreeMap::new(), true);
         let missing = prepare_property_plans(&program, &HashMap::new(), &environment, None, &sources, &mut context);
         assert!(missing.err().unwrap().message.contains("no solved contract"));
         let contracts = program.value.body.value.bindings.iter()
@@ -292,7 +292,7 @@ mod tool_plan_tests {
             let prelude = BootstrapPrelude::new();
             let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
             let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
-                prelude.schemes, BTreeMap::new(), true, HashSet::new());
+                prelude.schemes, BTreeMap::new(), true);
             let plans = prepare_construction_checks(&program, &environment, None, &sources, &mut context);
             assert_eq!(plans.is_ok(), valid, "{:?}", plans.as_ref().err());
             if let Ok(plans) = plans {
@@ -319,7 +319,7 @@ mod tool_plan_tests {
         prelude.types.insert("input".into(), TypeDescriptor::Int);
         let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
         let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
-            prelude.schemes, BTreeMap::new(), true, HashSet::new());
+            prelude.schemes, BTreeMap::new(), true);
         let expression = &binding.value.value;
         let evidence = solve_tool_expression_types(expression, Some(&TypeDescriptor::Int), None,
             &sources, &mut context).unwrap();
@@ -362,7 +362,7 @@ mod tool_plan_tests {
                 prelude.types.insert("input".into(), TypeDescriptor::Int);
                 let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
                 let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
-                    prelude.schemes, BTreeMap::new(), true, HashSet::new());
+                    prelude.schemes, BTreeMap::new(), true);
                 let expression = &program.value.body.value.result;
                 let evidence = solve_tool_expression_types(expression, Some(&TypeDescriptor::Int), None,
                     &sources, &mut context).unwrap();

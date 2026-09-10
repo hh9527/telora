@@ -576,15 +576,6 @@ fn expression_references_names(
             expression_references_names(value, names, bound)
                 || expression_references_names(target, names, bound)
         }
-        ExprKind::DynProject {
-            namespace,
-            target,
-            value,
-        } => {
-            expression_references_names(namespace, names, bound)
-                || expression_references_names(target, names, bound)
-                || expression_references_names(value, names, bound)
-        }
         ExprKind::Binary { left, right, .. } => {
             expression_references_names(left, names, bound)
                 || expression_references_names(right, names, bound)

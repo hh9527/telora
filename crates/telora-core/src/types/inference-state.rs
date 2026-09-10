@@ -24,7 +24,6 @@ struct GenericInference<'a> {
     declared_bodies: std::borrow::Cow<'a, HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>>,
     local_annotations: HashMap<crate::Location, TypeDescriptor>,
     normalizing_nominals: std::cell::RefCell<Vec<crate::value::DeclaredTypeId>>,
-    dyn_namespaces: &'a HashSet<String>,
     builtin_tuple_available: bool,
     query: Option<crate::query::QueryContext>,
     closure_inference_depth: usize,

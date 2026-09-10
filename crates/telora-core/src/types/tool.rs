@@ -17,19 +17,11 @@ struct ToolInferenceContext<'a> {
     schemes: HashMap<String, TypeScheme>,
     named_types: BTreeMap<String, TypeDescriptor>,
     builtin_tuple_available: bool,
-    dyn_namespaces: HashSet<String>,
     declared_bodies: HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>,
     trait_implementations: Vec<TraitImplementation>,
     type_properties: Vec<TypePropertyEvidence>,
     trait_ids: BTreeMap<String, crate::TraitId>,
     display_trait: Option<(crate::TraitId, String)>,
-}
-
-fn imported_dyn_namespaces(bindings: &[Binding]) -> HashSet<String> {
-    bindings.iter().filter(|binding| {
-        binding.value.kind == BindingKind::Import && binding.value.imported_name.is_none()
-            && matches!(&binding.value.value.value, ExprKind::String(path) if path == "std/dyn")
-    }).map(|binding| binding.value.name.value.clone()).collect()
 }
 
 #[derive(Default)]
@@ -372,7 +364,6 @@ impl<'a> ToolInferenceContext<'a> {
         schemes: HashMap<String, TypeScheme>,
         named_types: BTreeMap<String, TypeDescriptor>,
         builtin_tuple_available: bool,
-        dyn_namespaces: HashSet<String>,
     ) -> Self {
         let trait_implementations = interfaces.values()
             .flat_map(|interface| interface.trait_implementations.iter().cloned()).collect();
@@ -385,7 +376,7 @@ impl<'a> ToolInferenceContext<'a> {
         let mut context = Self {
             types,
             hir, interfaces, environment, schemes, named_types, builtin_tuple_available,
-            dyn_namespaces, declared_bodies: HashMap::new(), trait_implementations,
+            declared_bodies: HashMap::new(), trait_implementations,
             type_properties, trait_ids, display_trait,
         };
         context.prepare_declarations();

@@ -1409,6 +1409,33 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn dyn_projection_uses_ordinary_generic_bindings_and_solved_witnesses() {
+        for source in [
+            r#"import "std/dyn" as dyn;
+                export def answer = match dyn.project@[Int](dyn.pack(Int.type, 42)) { Some(value) => value, None => 0 };"#,
+            r#"import "std/dyn" {project as unpack, pack};
+                export def answer = match unpack@[Int](pack(Int.type, 42)) { Some(value) => value, None => 0 };"#,
+            r#"import "std/dyn" as dyn;
+                def unpack: for(T) Fn(Dyn) -> Option(T) = fn(value) { dyn.project@[T](value) };
+                export def answer = match unpack@[Int](dyn.pack(Int.type, 42)) { Some(value) => value, None => 0 };"#,
+            r#"import "std/dyn" as dyn;
+                def unpack: Fn(Dyn) -> Option(Int) = dyn.project;
+                export def answer = match unpack(dyn.pack(Int.type, 42)) { Some(value) => value, None => 0 };"#,
+            r#"import "std/dyn" as dyn; type A = struct {value: Int}; type B = struct {value: Int};
+                def value: A = {value: 1};
+                export def answer = if dyn.project@[B](dyn.pack(A.type, value)) == None { 42 } else { 0 };"#,
+            r#"import "./math" as user;
+                export def answer = user.project@[Int](42);"#,
+        ] {
+            let mir = graph(source, "export def project: for(T) Fn(T) -> T = fn(value) { value };");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{source}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+
+    #[test]
     fn property_target_enum_computes_matches_reflects_and_reduces_all_categories() {
         let mir = graph(r#"
             import "std/type-property" as props;

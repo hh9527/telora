@@ -908,7 +908,6 @@ fn solve_module_plan<'a>(
     )?;
     let mut named_types = imported_named_types;
     named_types.extend(declared_types.clone());
-    let dyn_namespaces = imported_dyn_namespaces(&program.value.body.value.bindings);
     let display_trait = program
         .value
         .body
@@ -960,7 +959,6 @@ fn solve_module_plan<'a>(
             type_properties: &type_properties,
             trait_ids: &trait_ids,
             display_trait: display_trait,
-            dyn_namespaces: &dyn_namespaces,
             static_environment: &static_environment,
             definition_contracts: &definition_contracts,
             contract_external_names: &contract_external_names,
@@ -1182,7 +1180,7 @@ fn solve_module_plan<'a>(
     let mut tool_context = ToolInferenceContext::new(
         types, &hir, qualified_external_interfaces.clone(), static_environment.clone(),
         binding_schemes.clone(), named_types.clone(),
-        !external_names.contains("Tuple"), dyn_namespaces.clone(),
+        !external_names.contains("Tuple"),
     );
     tool_context.type_properties.extend(inference.local_type_properties.iter().cloned());
     // Main expressions and tool bindings share the frozen solver's publication

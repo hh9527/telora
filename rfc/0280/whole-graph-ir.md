@@ -5,6 +5,32 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Dyn projection is an ordinary generic function (2026-09-11)
+
+The parser previously rewrote any `namespace.project@[T](value)` by spelling
+into DynProject, even when the binding belonged to a user module. The new
+type pass correctly had no evidence rule for this obsolete special node.
+`std/dyn.project` is now an ordinary exported generic function implemented as
+`project_with(T.type, value)`. Generic instance solving already closes that
+metadata reference, so ordinary codegen emits the witness without a new
+inference rule, optimization pass, VM operation or runtime type reconstruction.
+
+Removed the DynProject AST/MIR variants, parser rewrite, old analysis and
+compiler branches, and the obsolete imported-Dyn-namespace name tables. The
+remaining legacy modules only received the matching variant/argument removal;
+they are not fallback consumers for this feature. RFC 0252 records that its
+old dedicated-sugar strategy is superseded by closed generic instances.
+
+Validation: 75 codegen, 54 type-resolve and 8 parser tests pass, and CLI build
+passes. Coverage includes explicit projection, renamed imports, transitive
+generic calls, contextual function values, unequal nominal identity, and a
+user module's unrelated generic function named project. The actual reflection
+fixture now passes (1/1), without fixture edits. The full language aggregate
+still fails remaining newtype, codec, diagnostic/query and other cases;
+old-path removal and full acceptance remain incomplete. Logs:
+/tmp/mir-dyn-project-{codegen,types,parser,build,language}.log.
+No performance measurement was made.
+
 ### Native property targets and canonical member indices (2026-09-11)
 
 PropertyTarget now uses its native enum identity and ordinary MIR enum member

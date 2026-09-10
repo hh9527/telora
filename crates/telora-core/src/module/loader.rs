@@ -676,15 +676,6 @@ fn expression_has_import(expression: &Expr) -> bool {
         ExprKind::TypeAscription { value, target } | ExprKind::CheckedCast { value, target } => {
             expression_has_import(value) || expression_has_import(target)
         }
-        ExprKind::DynProject {
-            namespace,
-            target,
-            value,
-        } => {
-            expression_has_import(namespace)
-                || expression_has_import(target)
-                || expression_has_import(value)
-        }
         ExprKind::Call { callee, arguments } => {
             expression_has_import(callee) || arguments.iter().any(expression_has_import)
         }
