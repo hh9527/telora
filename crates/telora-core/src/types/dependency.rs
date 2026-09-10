@@ -45,21 +45,6 @@ fn type_definition_bindings<'a>(
         .collect()
 }
 
-fn classify_partial_error(message: &str) -> FactState {
-    if message.contains("not assignable") || message.contains("incompatible") {
-        FactState::Conflicted(Conflict::IncompatibleContract)
-    } else if message.contains("fuel exhausted")
-        || message.contains("quota")
-        || message.contains("stack limit")
-    {
-        FactState::Incomputable(IncomputableReason::QuotaExceeded)
-    } else if message.contains("native symbol") || message.contains("has not been resolved") {
-        FactState::Incomputable(IncomputableReason::RuntimeOnly)
-    } else {
-        FactState::Incomputable(IncomputableReason::UnsupportedOperation)
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum ModuleAnalysisContext {
     #[default]

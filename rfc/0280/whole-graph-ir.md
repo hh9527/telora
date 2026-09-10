@@ -5,6 +5,25 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Delete the old partial type analyzer (2026-09-11)
+
+Removed PartialAnalysis and all analyze_partial_types entry points, the entire
+partial-solver implementation, its diagnostic fact types, and the helper that
+classified failure states by matching error-message strings. The diagnostic
+types temporarily isolated in types/facts.rs are now gone as well. Repository
+Rust code has no remaining PartialAnalysis/SemanticFact/FactState references.
+Tests specific to this removed analyzer were deleted; shared dependency graph
+and strict-analysis helpers remain where the old full analyzer still uses them.
+
+This removes about 1,060 source/test lines without adding a replacement recovery
+path. Editor diagnostics and queries continue to consume the same MIR graph,
+including unresolved/conflicted slots. Validation: workspace compilation,
+type-resolve 68/68, mir_query 5/5 and telora library 28/28 pass. Logs:
+/tmp/mir-remove-partial-{check,types,query,editor}.log.
+There are still 37 unused-code warnings from remaining old code. The full old
+analyzer/compiler and descriptor runtime branches still require removal;
+final acceptance and performance evaluation remain outstanding.
+
 ### Delete the legacy semantic snapshot and query projection (2026-09-11)
 
 Removed semantic.rs, its remaining old-interface test and its root-level API

@@ -76,26 +76,6 @@ fn elaborate_recursive_family(
 mod static_family_tests {
     use super::*;
 
-    #[test]
-    fn recursive_conflicts_keep_all_sibling_evidence_without_execution() {
-        let partial = analyze_partial_types("recursive-conflicts",
-            "type Tree(T) = struct {left: Tree(Array(T)), right: Tree(Dict(T))}; type Good = struct {value: Int}; 0",
-            Quota::with_fuel(0));
-        let tree = partial.hir.definitions().iter().find(|definition| definition.name == "Tree").unwrap();
-        let fact = &partial.definition_facts[&tree.id];
-        assert_eq!(fact.state, FactState::Conflicted(Conflict::IncompatibleContract));
-        assert_eq!(fact.diagnostics.len(), 2);
-        for id in &fact.diagnostics {
-            let diagnostic = &partial.diagnostics[id.index()];
-            assert!(diagnostic.message.contains("unchanged and in declaration order"));
-            assert_eq!(diagnostic.labels.len(), 2);
-            assert_eq!(diagnostic.labels[1].location, tree.location);
-        }
-        assert_ne!(partial.diagnostics[fact.diagnostics[0].index()].labels[0].location,
-            partial.diagnostics[fact.diagnostics[1].index()].labels[0].location);
-        let good = partial.hir.definitions().iter().find(|definition| definition.name == "Good").unwrap();
-        assert_eq!(partial.definition_facts[&good.id].state, FactState::Known);
-    }
 
     #[test]
     fn recursive_family_definition_requires_no_execution_fuel() {

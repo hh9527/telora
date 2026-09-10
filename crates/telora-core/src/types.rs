@@ -12,11 +12,6 @@ use crate::json::{Provenance, ValuePath, ValuePathSegment};
 use crate::lexer::{FrontendError, SourceLocation};
 use crate::lir::RegisterId;
 use crate::parser::parse_registered;
-mod facts;
-pub use facts::{
-    Conflict, DiagnosticId, FactIdentity, FactState, IncomputableReason, SemanticFact,
-    UnknownReason,
-};
 use crate::source::{Diagnostic, SourceDatabase};
 use crate::type_store::{InternType, TypeId, TypeShape, TypeStore};
 use crate::value::{
@@ -39,7 +34,6 @@ include!("types/descriptor.rs");
 include!("types/environment.rs");
 include!("types/traits.rs");
 include!("types/analysis.rs");
-include!("types/partial-solver.rs");
 include!("types/program-solver.rs");
 include!("types/type-check.rs");
 include!("types/dependency.rs");

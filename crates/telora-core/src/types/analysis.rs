@@ -58,24 +58,6 @@ pub struct SemanticDependencyGraph {
     pub nodes: Vec<SemanticDependencyNode>,
 }
 
-#[derive(Clone, Debug)]
-pub struct PartialAnalysis {
-    pub hir: HirProgram,
-    pub dependencies: SemanticDependencyGraph,
-    pub definition_facts: BTreeMap<HirDefinitionId, SemanticFact<AnalysisTypeId>>,
-    pub definition_schemes: BTreeMap<HirDefinitionId, TypeScheme>,
-    pub diagnostics: Vec<Diagnostic>,
-    pub types: TypeGraph,
-}
-
-impl PartialAnalysis {
-    // Preserve source identities when no typed artifact was produced. This is
-    // a diagnostic envelope, never a request to rerun resolution or inference.
-    pub(crate) fn from_resolved(hir: HirProgram) -> Self {
-        Self { hir, dependencies: Default::default(), definition_facts: BTreeMap::new(),
-            definition_schemes: BTreeMap::new(), diagnostics: Vec::new(), types: Default::default() }
-    }
-}
 
 impl Analysis {
     pub fn display(&self, id: AnalysisTypeId) -> String {
@@ -123,76 +105,4 @@ pub fn analyze_source_with_quota(
         &sources,
         &BTreeMap::new(),
     )
-}
-
-pub fn analyze_partial_types(source_name: &str, source: &str, quota: Quota) -> PartialAnalysis {
-    analyze_partial_types_with_bindings(source_name, source, quota, &BTreeMap::new())
-}
-
-pub fn analyze_partial_types_with_bindings(
-    source_name: &str,
-    source: &str,
-    quota: Quota,
-    external_values: &BTreeMap<String, crate::DataWorld>,
-) -> PartialAnalysis {
-    let mut sources = SourceDatabase::default();
-    let source_id = sources.add(source_name, source);
-    analyze_partial_types_registered(&sources, source_id, quota, external_values, &HashSet::new())
-}
-
-pub(crate) fn analyze_partial_types_registered(
-    sources: &SourceDatabase,
-    source_id: crate::SourceId,
-    quota: Quota,
-    external_values: &BTreeMap<String, crate::DataWorld>,
-    unavailable_imports: &HashSet<String>,
-) -> PartialAnalysis {
-    let parsed = parse_registered(sources, source_id);
-    analyze_partial_types_recovered(
-        sources,
-        source_id,
-        &parsed.recovered,
-        parsed.diagnostics,
-        quota,
-        external_values,
-        unavailable_imports,
-    )
-}
-
-pub(crate) fn analyze_partial_types_recovered(
-    sources: &SourceDatabase,
-    source_id: crate::SourceId,
-    recovered: &crate::parser::RecoveredProgram,
-    initial_diagnostics: Vec<Diagnostic>,
-    _quota: Quota,
-    external_values: &BTreeMap<String, crate::DataWorld>,
-    unavailable_imports: &HashSet<String>,
-) -> PartialAnalysis {
-    let interfaces = external_values.iter().filter_map(|(name, value)|
-        value.static_interface(name).map(|interface| (name.clone(), interface)))
-        .collect::<BTreeMap<_, _>>();
-    let imported_types = interfaces.iter().filter_map(|(name, interface)|
-        imported_interface_descriptor(interface).map(|ty| (name.clone(), ty)))
-        .collect::<HashMap<_, _>>();
-    solve_partial_types(
-        sources, source_id, recovered, initial_diagnostics,
-        PartialTypeInputs {
-            names: external_values.keys().cloned().collect(),
-            imported_values: imported_types.iter().map(|(name, ty)| (name.clone(), ty.clone())).collect(),
-            imported_types, interfaces: interfaces.clone(), ..Default::default()
-        },
-        PartialAnalysisControl {
-            unavailable_imports,
-            external_schemes: &BTreeMap::new(),
-            external_interfaces: &interfaces,
-            query: None,
-        },
-    )
-}
-
-pub(crate) struct PartialAnalysisControl<'a> {
-    pub unavailable_imports: &'a HashSet<String>,
-    pub external_schemes: &'a BTreeMap<String, TypeScheme>,
-    pub external_interfaces: &'a BTreeMap<String, ModuleInterface>,
-    pub query: Option<&'a crate::query::QueryContext>,
 }
