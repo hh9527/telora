@@ -5,6 +5,29 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Recovered containers do not invent result obligations (2026-09-11)
+
+Parser recovery may retain a module block without a result expression. Type
+generation no longer marks that missing result as required: the container slot
+remains unfilled, while original syntax diagnostics prevent sealing. This is
+not module-wide diagnostic suppression and does not manufacture a Unit type.
+Recovered healthy declarations and independent type conflicts still solve.
+
+Validation: the previously failing CLI parser-recovery case passes, as do all
+38 type-resolve tests. A new mixed-error test retains a missing-FatArrow
+diagnostic, a Known healthy export and a Conflicted bad expression without an
+extra unknown-result diagnostic, and verifies seal rejection. Logs:
+/tmp/mir-parser-fallout.log, /tmp/mir-parser-independent.log and
+/tmp/mir-parser-types.log. Full CLI acceptance has not been rerun after this fix.
+
+A read-only tally of the last language-suite output identifies common missing
+rules: Spread (51 diagnostics), StructUpdate (21), FieldProjection (16), and
+Propagate (13), alongside implicit generalization and other gaps. These are
+diagnostic counts, not independent defect or failed-test counts; numerous
+Unknown outcomes are downstream effects. Implement these shared MIR rules
+rather than special-casing the individual fixtures. Legacy removal and full
+semantic acceptance are still incomplete.
+
 ### Query preserves declaration binders and module outcomes (2026-09-11)
 
 CLI definition/export rendering now uses the shared symbol_signature query.

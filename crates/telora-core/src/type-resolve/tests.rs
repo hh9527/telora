@@ -2,6 +2,23 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn syntax_recovery_keeps_independent_type_conflicts_without_a_fake_result_obligation() {
+    let mut mir = module_resolve::resolve(vec![ModuleSpec {
+        native: None, name: "main".into(), kind: ModuleKind::Source, implicit_imports: vec![],
+    }], &["main".into()], |_, _| Ok(
+        "export def broken = match A { A 1, _ => 2 }; export def healthy = 42; export def bad = 1 + \"x\";".into()
+    ));
+    assert!(mir.diagnostics.iter().any(|d| d.message == "missing FatArrow"));
+    crate::symbol_resolve::resolve(&mut mir);
+    resolve(&mut mir);
+    assert!(matches!(symbol_type(&mir, "healthy"), TypeState::Known(_)));
+    assert!(matches!(symbol_type(&mir, "bad"), TypeState::Conflicted(_)));
+    assert!(mir.diagnostics.iter().any(|d| d.message.contains("incompatible types")));
+    assert!(!mir.diagnostics.iter().any(|d| d.message == "unknown type"), "{}", mir.dump());
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn positional_projection_requires_a_tuple_or_the_single_newtype_payload() {
     for source in [
         "type Count = struct(Int); export def invalid = Count(42).1;",

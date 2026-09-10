@@ -546,6 +546,11 @@ impl Solver<'_> {
                             .map(HirId::ty).collect(),
                         result: value.ty(),
                     });
+                } else {
+                    // Parser recovery can retain a module container without a
+                    // result expression. Its absent result supplies no type
+                    // obligation; the original syntax diagnostics remain.
+                    self.mir.required_types[node.index()] = false;
                 }
             }
             HirKind::DictField => {
