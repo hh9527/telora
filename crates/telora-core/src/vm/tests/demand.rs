@@ -582,6 +582,40 @@ fn solved_test_fixtures_prepare_all_inputs_before_factories_and_keep_group_notic
 }
 
 #[test]
+fn solved_test_session_reports_bootstrap_and_fixture_allocation_failure() {
+    struct LargeFixture;
+    impl crate::TestHost for LargeFixture {
+        fn resolve(&mut self, _: &str, _: Option<&std::path::Path>, _: &str) -> Result<crate::TestSource, String> {
+            Ok(crate::TestSource { key: "large".into(), format: crate::SystemDataFormat::Json })
+        }
+        fn read(&mut self, _: &crate::TestSource, _: usize) -> Result<String, String> {
+            Ok(format!("\"{}\"", "x".repeat(200_000)))
+        }
+    }
+    for allocation_bytes in [0, 100_000] {
+        let mut mir = crate::codegen::tests::graph(r#"
+            import "std/test" as test;
+            export def cases = test.with_fixtures(["large"], fn(value) { test.should_ok(fn() {value}) });
+        "#, "");
+        let crate::mir::ModuleTarget::Bound(module) = mir.roots[0] else { panic!("root"); };
+        let compiled = crate::codegen::compile_tests(mir.seal().unwrap(), module).unwrap();
+        let linked = crate::execution_link::link_entry(compiled.bootstrap).unwrap();
+        let report = Vm::new().test_linked(linked, compiled.plan,
+            Quota::new(100_000, 10_000, allocation_bytes), crate::DataLimits::default(), &mut mir.sources,
+            crate::TestContext { host: Some(&mut LargeFixture), ..Default::default() }).unwrap();
+        assert!(report.aborted && !report.passed(), "{report:?}");
+        if allocation_bytes == 0 {
+            assert!(report.cases.is_empty(), "bootstrap must fail before a case is demanded: {report:?}");
+            assert!(!report.diagnostics.is_empty());
+        } else {
+            assert_eq!(report.cases.len(), 1);
+            assert_eq!(report.cases[0].phase, "factory");
+            assert!(report.cases[0].diagnostics.iter().any(|d| d.message == "fixture materialization allocation quota exceeded"));
+        }
+    }
+}
+
+#[test]
 fn solved_cast_preserves_data_handles_and_nominal_identity() {
     let mir = crate::codegen::tests::graph(r#"
         type Item = struct {text: String};

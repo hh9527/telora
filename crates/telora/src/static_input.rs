@@ -79,6 +79,17 @@ fn private(name: &str) -> bool {
 }
 
 impl Inventory {
+    pub fn workspace(&self) -> Option<Arc<ResolvedWorkspace>> {
+        self.workspace.clone()
+    }
+
+    pub fn module_paths(&self) -> std::collections::HashMap<String, PathBuf> {
+        self.entries.iter().filter_map(|(name, entry)| match &entry.source {
+            Source::File(path) => Some((name.clone(), path.clone())),
+            _ => None,
+        }).collect()
+    }
+
     pub fn undeclared_warnings(&self) -> Result<Vec<String>, String> {
         let mut warnings = vec![];
         if let Some(workspace) = &self.workspace {
@@ -121,7 +132,7 @@ impl Inventory {
         let bytes = crate::source_arg::read_limited(file, max_bytes, &path.display().to_string())?;
         let text = String::from_utf8(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(telora_core::EvalSource {
-            source_name: path.display().to_string(),
+            source_name: link.name.clone(),
             format,
             text,
         })

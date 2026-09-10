@@ -185,10 +185,6 @@ impl<'a> WorkView<'a> {
 }
 
 impl WorkWorld {
-    pub(crate) fn new(heap: Heap, root: Val) -> Self {
-        Self { heap, root }
-    }
-
     pub(crate) fn root_ref<'a>(&'a self, world: &'a Heap) -> ValueRef<'a> {
         self.value_ref(world, self.root)
     }

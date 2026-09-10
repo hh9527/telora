@@ -53,7 +53,6 @@ include!("module/loaded.rs");
 include!("module/host.rs");
 include!("module/engine.rs");
 include!("module/eval.rs");
-include!("module/test.rs");
 include!("module/workspace.rs");
 include!("module/type-check.rs");
 include!("module/entry.rs");

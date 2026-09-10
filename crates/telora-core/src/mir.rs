@@ -282,6 +282,7 @@ pub enum MemberSelection {
     PropertyTarget(u8),
     Boolean(bool),
     RecordField,
+    DictField,
     EnumVariant {
         index: u32,
     },

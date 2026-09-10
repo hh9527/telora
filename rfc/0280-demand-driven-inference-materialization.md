@@ -189,6 +189,28 @@ still has only its resolved lexical dependencies; it does not implicitly acquire
 entry arguments or request-local state. Static dependency scheduling can later
 optimize proven cases without changing this demand-driven behavior.
 
+### Test command assembly
+
+`telora test` uses the same module/symbol/type passes and sealed MIR as the other
+commands. TestPlan selects direct root exports by the resolved native Test type
+identity, including reexports, before any initializer executes. After codegen
+and linking, data modules are validated and injected before the VM bootstrap.
+Invalid data produces structured diagnostics and prevents user-code execution.
+The bootstrap installs lazy tasks; each selected export is then demanded in name
+order and its deferred thunk or fixture factory runs in that same VM session.
+
+This applies the demand semantics above to tests, superseding RFC 0266/0267's
+eager whole-module initialization and rejection based solely on import cycles.
+Unused top-level values are not forced. Import cycles belong to the static graph;
+only an actual read of a Running evaluation task is an evaluation-cycle failure.
+Ordinary check retains its explicit session-root evaluation behavior.
+
+The test catalog, visibility rules, local fixture-source restrictions, expansion
+limits and `telora.test/v2` report schema remain. Expected recoverable failures
+are test results; terminal failures abort. Only reports and diagnostics leave
+the test session, never partially initialized user values. The old
+Engine::test_with_resolver/WorkspaceBuilder test route is removed, with no fallback.
+
 ### Session ownership
 
 Create module definitions, imports/exports, type terms and inference slots in one

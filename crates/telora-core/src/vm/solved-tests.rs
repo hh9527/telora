@@ -24,23 +24,62 @@ impl Vm {
         let mut account = QuotaAccount::new(quota)
             .with_data_limits(limits)
             .with_sources(sources);
-        let externals = solved_module_data(&mut main, entry.data, limits, sources, &mut account)?;
-        let bootstrap = self
-            .execute_frame_with_policy(
-                &main,
-                &externals,
-                &entry.bytecode,
-                None,
-                None,
-                &[],
-                &[],
-                &[],
-                &mut account,
-                false,
-                0,
-                false,
+        let mut report = TestReport::default();
+        let mut externals = HashMap::new();
+        for (link, source) in entry.data {
+            let (data, bytes) = match solved_data_plan(source, limits, sources) {
+                Ok(data) => data,
+                Err(diagnostics) => {
+                    report.diagnostics.extend(diagnostics);
+                    report.aborted = true;
+                    continue;
+                }
+            };
+            if account.charge_allocation(bytes).is_err() {
+                report.diagnostics.push(Diagnostic::error(
+                    "data source allocation quota exceeded",
+                    link.location,
+                ));
+                report.aborted = true;
+                break;
+            }
+            let value = crate::json::materialize_data_plan(
+                &data,
+                &mut main,
+                Some(crate::json::SemanticDataTarget {
+                    background: None,
+                    type_id: crate::TypeId::solved(link.ty),
+                }),
             )
-            .map_err(|failure| failure.error.to_string())?;
+            .value;
+            externals.insert(link.key(), value);
+        }
+        if report.aborted {
+            return Ok(report);
+        }
+        account.register_sources(sources);
+        let bootstrap = match self.execute_frame_with_policy(
+            &main,
+            &externals,
+            &entry.bytecode,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &mut account,
+            false,
+            0,
+            false,
+        ) {
+            Ok(bootstrap) => bootstrap,
+            Err(failure) => {
+                report.aborted = true;
+                report.diagnostics = account.take_diagnostics();
+                append_test_error(&mut report.diagnostics, &failure.error, None);
+                return Ok(report);
+            }
+        };
         let mut current = Some(bootstrap.world.heap);
         let mut report = TestReport {
             diagnostics: account.take_diagnostics(),

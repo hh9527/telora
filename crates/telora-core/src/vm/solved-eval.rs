@@ -138,41 +138,43 @@ fn solved_data_value(
     sources: &mut SourceDatabase,
     account: &mut QuotaAccount,
 ) -> Result<Val, String> {
+    let (plan, bytes) = solved_data_plan(source, limits, sources).map_err(|diagnostics| {
+        diagnostics.iter().map(|d| sources.render(d)).collect::<Vec<_>>().join("\n")
+    })?;
+    account.charge_allocation(bytes).map_err(|_| "data source allocation quota exceeded")?;
+    account.register_sources(sources);
+    Ok(crate::json::materialize_data_plan(
+        &plan, heap, Some(crate::json::SemanticDataTarget {
+            background, type_id: crate::TypeId::solved(ty),
+        }),
+    ).value)
+}
+
+fn solved_data_plan(
+    source: crate::EvalSource,
+    limits: crate::DataLimits,
+    sources: &mut SourceDatabase,
+) -> Result<(crate::json::ValidatedDataPlan, u64), Vec<Diagnostic>> {
     if source.text.len() > limits.file_size {
-        return Err("data source exceeds file_size limit".into());
+        return Err(vec![Diagnostic {
+            severity: crate::source::Severity::Error,
+            message: "data source exceeds file_size limit".into(), labels: vec![], notes: vec![],
+        }]);
     }
     let id = sources.add(source.source_name, &source.text);
+    let error = |message| vec![Diagnostic::error(message, crate::Loc { source: id, start: 0, end: 0 })];
     let plan = match source.format {
         crate::SystemDataFormat::Json => crate::json::validate_json_registered(sources, id),
         crate::SystemDataFormat::Yaml => crate::yaml::validate_yaml_registered(sources, id),
         crate::SystemDataFormat::Toml => crate::toml::validate_toml_registered(sources, id),
-    }
-    .map_err(|diagnostics| {
-        diagnostics
-            .iter()
-            .map(|d| sources.render(d))
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
+    }?;
     let stats = plan
         .enforce_limits(limits, source.text.len())
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| error(e.to_string()))?;
     let bytes = logical_value_bytes(stats.nodes.saturating_mul(4))
-        .map_err(|e| e.message)?
+        .map_err(|e| error(e.message))?
         .saturating_add(stats.payloads_bytes as u64);
-    account
-        .charge_allocation(bytes)
-        .map_err(|_| "data source allocation quota exceeded")?;
-    account.register_sources(sources);
-    Ok(crate::json::materialize_data_plan(
-        &plan,
-        heap,
-        Some(crate::json::SemanticDataTarget {
-            background,
-            type_id: crate::TypeId::solved(ty),
-        }),
-    )
-    .value)
+    Ok((plan, bytes))
 }
 
 fn solved_eval_names(config: ValueRef<'_>, field: &str) -> Result<Vec<String>, String> {

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use telora_core::lir::RegisterId;
 use telora_core::{
-    CallContext, DataLimits, DebugEvent, DebugSink, EesCall, EesReply, Engine, EngineConfig,
+    CallContext, DataLimits, DebugEvent, DebugSink, EesCall, EesReply, EngineConfig,
     NativeError, NativeFunction, Quota, RunHost,
     RunHostFuture, RunTermination, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
 };
@@ -40,10 +40,6 @@ fn engine_config() -> EngineConfig {
         session_quota: Quota::new(EVALUATION_FUEL, STACK_SLOTS, ALLOCATION_BYTES),
         data_limits: DataLimits::default(),
     }
-}
-
-fn engine() -> Engine {
-    Engine::new(engine_config()).with_debug_sink(Arc::new(StderrDebugSink))
 }
 
 struct StderrDebugSink;

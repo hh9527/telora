@@ -45,6 +45,18 @@ pub struct TestReport {
     pub aborted: bool,
 }
 
+impl TestReport {
+    pub fn passed(&self) -> bool {
+        !self.aborted
+            && !self.cases.is_empty()
+            && self.cases.iter().all(|case| case.passed)
+            && !self
+                .diagnostics
+                .iter()
+                .any(|d| d.severity == Severity::Error)
+    }
+}
+
 #[derive(Debug)]
 pub struct TestNotice {
     pub before_case: usize,

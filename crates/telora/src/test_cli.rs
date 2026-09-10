@@ -1,8 +1,8 @@
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use telora_core::module::{TestHost, TestLimits, TestSource};
-use telora_core::{ModuleResolver, ResolvedWorkspace};
+use telora_core::test_plan::{TestReport, TestResult};
+use telora_core::{ResolvedWorkspace, TestContext, TestHost, TestSource};
 
 struct FileTestHost {
     workspace: Arc<ResolvedWorkspace>,
@@ -73,29 +73,85 @@ impl TestHost for FileTestHost {
 }
 
 pub(crate) fn run(context: PathBuf, name: &str) -> Result<i32, String> {
-    let workspace = crate::package_host::prepare(&context)?;
-    let resolver =
-        ModuleResolver::from_workspace(Arc::clone(&workspace), &context, &format!("@test/{name}"))
-            .map_err(|e| e.to_string())?;
-    let mut warnings = Vec::new();
-    for (crate_name, _) in workspace.crates() {
-        for undeclared in workspace
-            .undeclared_modules(crate_name)
-            .map_err(|e| e.to_string())?
-        {
-            warnings.push(format!(
-                "crate {:?} contains undeclared module file {}; add {:?} to telora-crate.json modules",
-                undeclared.crate_name, undeclared.relative_path.display(), undeclared.selector,
-            ));
-        }
+    let mut inventory = crate::static_input::Inventory::new(&context, false)?;
+    let root = inventory.select(&format!("@test/{name}"))?;
+    if !inventory.entries.contains_key(&root) {
+        return Err(format!("unknown test module {root:?}"));
     }
-    let outcome = crate::engine()
-        .test_with_resolver(
-            resolver,
-            &mut FileTestHost { workspace },
-            TestLimits::default(),
-        )
-        .map_err(|e| e.to_string())?;
+    let warnings = inventory.undeclared_warnings()?;
+    let mut mir = inventory.solve(&root);
+    let compiled = mir.seal().and_then(|sealed| {
+        let telora_core::mir::ModuleTarget::Bound(module) = mir.roots[0] else {
+            unreachable!("sealed root must be resolved");
+        };
+        telora_core::codegen::compile_tests(sealed, module)
+    });
+    let compiled = match compiled {
+        Ok(compiled) => compiled,
+        Err(diagnostics) => {
+            for diagnostic in diagnostics {
+                if !mir.diagnostics.contains(&diagnostic) {
+                    mir.diagnostics.push(diagnostic);
+                }
+            }
+            return emit_report(
+                &root,
+                &mir.sources,
+                TestReport {
+                    diagnostics: mir.diagnostics,
+                    aborted: true,
+                    ..Default::default()
+                },
+                warnings,
+            );
+        }
+    };
+    let config = crate::engine_config();
+    let linked =
+        match telora_core::execution_link::link_entry_with_data(compiled.bootstrap, |link| {
+            inventory.read_data(link, config.data_limits.file_size)
+        }) {
+            Ok(linked) => linked,
+            Err(diagnostics) => {
+                return emit_report(
+                    &root,
+                    &mir.sources,
+                    TestReport {
+                        diagnostics,
+                        aborted: true,
+                        ..Default::default()
+                    },
+                    warnings,
+                );
+            }
+        };
+    let mut host = FileTestHost {
+        workspace: inventory.workspace().ok_or("test requires a workspace")?,
+    };
+    let mut report = telora_core::Vm::new()
+        .with_debug_sink(Arc::new(crate::StderrDebugSink))
+        .test_linked(
+            linked,
+            compiled.plan,
+            config.session_quota,
+            config.data_limits,
+            &mut mir.sources,
+            TestContext {
+                host: Some(&mut host),
+                module_paths: inventory.module_paths(),
+                ..Default::default()
+            },
+        )?;
+    report.diagnostics.splice(0..0, mir.diagnostics);
+    emit_report(&root, &mir.sources, report, warnings)
+}
+
+fn emit_report(
+    module: &str,
+    sources: &telora_core::SourceDatabase,
+    outcome: TestReport,
+    warnings: Vec<String>,
+) -> Result<i32, String> {
     let diagnostic_record = |diagnostic: &telora_core::source::Diagnostic| {
         let severity = match diagnostic.severity {
             telora_core::source::Severity::Error => "error",
@@ -106,7 +162,7 @@ pub(crate) fn run(context: PathBuf, name: &str) -> Result<i32, String> {
             .labels
             .iter()
             .map(|label| {
-                let source = outcome.sources.get(label.location.source);
+                let source = sources.get(label.location.source);
                 let start = source
                     .text()
                     .position(label.location.start, telora_core::PositionEncoding::Utf8)
@@ -121,21 +177,21 @@ pub(crate) fn run(context: PathBuf, name: &str) -> Result<i32, String> {
             }, "message": label.message, "primary": label.primary})
             })
             .collect::<Vec<_>>();
-        json!({"schema": "telora.test/v2", "record": "diagnostic", "module": outcome.module,
+        json!({"schema": "telora.test/v2", "record": "diagnostic", "module": module,
             "severity": severity, "message": diagnostic.message, "labels": labels, "notes": diagnostic.notes})
     };
     for message in warnings {
         crate::emit(json!({"schema": "telora.test/v2", "record": "diagnostic",
-            "module": outcome.module, "severity": "warning", "message": message,
+            "module": module, "severity": "warning", "message": message,
             "labels": [], "notes": []}))?;
     }
     for diagnostic in &outcome.diagnostics {
         crate::emit(diagnostic_record(diagnostic))?;
     }
-    let emit_case_diagnostics = |case: &telora_core::module::TestCase| -> Result<(), String> {
+    let emit_case_diagnostics = |case: &TestResult| -> Result<(), String> {
         for diagnostic in &case.diagnostics {
             let mut record = diagnostic_record(diagnostic);
-            record["test"] = json!(case.test);
+            record["test"] = json!(case.name);
             record["fixtures"] = json!(case.fixtures);
             record["sources"] = json!(case.sources);
             record["phase"] = json!(case.phase);
@@ -153,14 +209,17 @@ pub(crate) fn run(context: PathBuf, name: &str) -> Result<i32, String> {
         }
         emit_case_diagnostics(case)?;
         crate::emit(
-            json!({"schema": "telora.test/v2", "record": "case", "module": outcome.module,
-            "test": case.test, "fixtures": case.fixtures, "sources": case.sources,
+            json!({"schema": "telora.test/v2", "record": "case", "module": module,
+            "test": case.name, "fixtures": case.fixtures, "sources": case.sources,
             "status": if case.passed { "passed" } else { "failed" }}),
         )?;
     }
+    for notice in notices {
+        emit_case_diagnostics(&notice.context)?;
+    }
     let passed = outcome.cases.iter().filter(|case| case.passed).count();
     crate::emit(
-        json!({"schema": "telora.test/v2", "record": "summary", "module": outcome.module,
+        json!({"schema": "telora.test/v2", "record": "summary", "module": module,
         "status": if outcome.passed() { "ok" } else { "error" }, "total": outcome.cases.len(),
         "passed": passed, "failed": outcome.cases.len() - passed, "aborted": outcome.aborted }),
     )?;

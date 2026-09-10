@@ -846,7 +846,7 @@ impl<'a> Emitter<'a> {
             HirKind::Field
                 if matches!(
                     self.mir.member_selections[node.index()],
-                    Some(MemberSelection::RecordField)
+                    Some(MemberSelection::RecordField | MemberSelection::DictField)
                 ) =>
             {
                 let slot = self.mir.hir[node.index()]

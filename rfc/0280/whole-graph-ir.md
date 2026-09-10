@@ -5,6 +5,42 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### CLI test switches to sealed MIR; old test loader removed (2026-09-10)
+
+The test command now enters Inventory, module/symbol/type resolution, TestPlan,
+codegen, linking and Vm.test_linked. Inventory supplies physical module paths to
+the fixture host; runtime data diagnostics use canonical module identities.
+The existing telora.test/v2 formatter consumes the new report, preserving source
+labels, nested fixture trails, factory notices and terminal-abort status.
+
+Removed module/test.rs and Engine::test_with_resolver, the old deferred-test
+runner tests and its unused WorkWorld constructor. Their shared-quota, expansion,
+input-cache and prepare-before-factory coverage is now in the solved VM tests.
+The CLI's last non-LSP Engine factory is removed. No old-path fallback remains
+for test. LSP still uses Workspace/WorkspaceSnapshot/Engine and remains a gate.
+
+CLI coverage exposed Dict field access missing from the static member pass.
+The pass now records DictField and its element type; codegen mechanically emits
+the existing field-read instruction. Runtime representation is unchanged.
+Shared data validation now retains structured diagnostics so multiple malformed
+data modules are reported before bootstrap or user initializer execution.
+
+Tests were updated to exercise direct Test exports and demand semantics:
+syntactic import cycles alone are accepted, actual evaluation cycles fail,
+independent failed initializers are collected, and unread globals stay lazy.
+The controlling RFC now explicitly documents the superseded eager test lifecycle.
+New CLI fixtures cover helper-relative JSON/YAML/TOML, nested factories, warnings,
+bad-data siblings, real crate escape rejection and malformed module data.
+
+Validation: all 7 test-command CLI tests, 17 static-MIR CLI regressions (including
+check/eval/eval-with/run/serve), 48 VM tests and 51 codegen tests pass. VM coverage
+also verifies bootstrap allocation failure and fixture materialization allocation
+failure produce aborted reports at the correct boundary. Logs:
+/tmp/mir-test-cli-switch.log, /tmp/mir-test-switch-static-cli.log,
+/tmp/mir-test-switch-vm.log and /tmp/mir-test-switch-codegen.log.
+No full-suite or performance claim. Remaining assembly includes LSP, unresolved
+language/codegen coverage and removal of the broader legacy compiler modules.
+
 ### Fixture expansion uses the solved test session (2026-09-10)
 
 Vm.test_linked now expands with_fixtures through an explicit depth-first work

@@ -48,6 +48,11 @@ impl Solver<'_> {
             metadata = true;
         }
         let payload = match &term.constructor {
+            TypeConstructor::Dict if !metadata => {
+                self.same(node, term.arguments[0]);
+                self.mir.member_selections[node.index()] = Some(MemberSelection::DictField);
+                return None;
+            }
             TypeConstructor::Record(fields) if !metadata => {
                 if let Some(index) = fields.iter().position(|f| f == &name) {
                     self.same(node, term.arguments[index]);
