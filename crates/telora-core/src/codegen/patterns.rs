@@ -220,8 +220,7 @@ impl Emitter<'_> {
                 self.locals.truncate(scope);
                 self.mark(next);
             }
-            let message = self.constant(node, Constant::String("non-exhaustive match".into()));
-            self.emit(node, O::Panic { message });
+            self.emit(node, O::Fail { message: "no match arm accepted the value".into() });
         } else {
             let otherwise = self.label();
             self.pattern(self.child(node, Role::Pattern), value, otherwise)?;

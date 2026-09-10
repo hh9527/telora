@@ -75,7 +75,7 @@ fn run_solved_dyn(
         let (name, ty) = fields.get(index).ok_or_else(|| {
             error(
                 RuntimeErrorKind::TypeMismatch,
-                "Struct field index is out of range",
+                format!("field index {index} is out of range"),
                 function,
                 pc,
             )

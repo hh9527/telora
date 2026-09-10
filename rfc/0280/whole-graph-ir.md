@@ -5,6 +5,18 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Match failures keep the established runtime category (2026-09-11)
+
+Codegen now emits the existing Fail instruction when no match arm accepts a
+value, preserving NoPatternMatched instead of generating Panic. The message
+again identifies that no arm accepted the value. Solved Dyn field reflection
+also includes the requested index in its out-of-range diagnostic.
+
+Validation: 82 codegen tests, 48 VM tests, CLI build and the actual
+runtime-failures suite (11/11) pass. Logs: /tmp/mir-fail-{codegen,vm,build,language}.log.
+No fixture change or performance run. Remaining migration gaps in the previous
+audit still apply, except runtime-failures is now passing.
+
 ### Decode diagnostics retain alternative failures and subjects (2026-09-11)
 
 The solved untagged decoder discarded every rejected candidate's reason and
