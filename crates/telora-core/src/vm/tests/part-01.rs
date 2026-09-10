@@ -204,7 +204,7 @@
 
     #[test]
     fn runtime_error_recoverability_is_typed_and_exhaustive() {
-        use crate::evaluation::FailureClass;
+        use crate::vm::FailureClass;
 
         let function = BytecodeFunction::new("classification", 0, vec![], vec![]);
         for kind in [

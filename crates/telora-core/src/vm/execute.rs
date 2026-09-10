@@ -2070,7 +2070,7 @@ impl Vm {
                 match attempt {
                     Err(mut runtime_error)
                         if runtime_error.failure_class()
-                            == crate::evaluation::FailureClass::Recoverable
+                            == FailureClass::Recoverable
                             && frames.iter().any(|frame| {
                                 matches!(
                                     &frame.return_target,
@@ -2117,7 +2117,7 @@ impl Vm {
                     Err(mut runtime_error)
                         if best_effort
                             && runtime_error.failure_class()
-                                == crate::evaluation::FailureClass::Recoverable =>
+                                == FailureClass::Recoverable =>
                     {
                         let failure_location = runtime_error.data_location();
                         let failed_instruction = runtime_error.instruction;

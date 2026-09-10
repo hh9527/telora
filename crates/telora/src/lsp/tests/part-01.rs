@@ -479,10 +479,10 @@
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn hover_reports_the_solved_local_function_type() {
+    async fn hover_preserves_the_local_function_principal_signature() {
         let (_, state, uri) =
             semantic_fixture(
-                "let identity = fn(value) { value };\nlet result = identity(1); export { result as output };",
+                "export def output = do { let identity = fn(value) { value };\nidentity(1) };",
             )
             .await;
         let hover: Option<lsp::Hover> = serde_json::from_value(
@@ -493,7 +493,7 @@
                     lsp::request::HoverRequest::METHOD,
                     serde_json::json!({
                         "textDocument": { "uri": uri },
-                        "position": { "line": 1, "character": 15 }
+                        "position": { "line": 1, "character": 3 }
                     }),
                 ),
             )
@@ -502,10 +502,10 @@
         )
         .expect("hover result");
         assert!(matches!(
-            hover.expect("scheme hover").contents,
+            hover.as_ref().expect("scheme hover").contents,
             lsp::HoverContents::Scalar(lsp::MarkedString::String(ref text))
-                if text == "identity: Fn(Int) -> Int"
-        ));
+                if text == "identity: for(A) Fn(A) -> A"
+        ), "{hover:?}");
     }
 
     #[tokio::test(flavor = "current_thread")]

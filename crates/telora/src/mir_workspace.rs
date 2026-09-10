@@ -365,6 +365,7 @@ mod tests {
             workspace.document(&first).unwrap().text().to_string(),
             "export def first = 1;"
         );
+        let old_document = workspace.document(&first).unwrap();
         workspace
             .change(
                 &first,
@@ -374,6 +375,7 @@ mod tests {
             )
             .unwrap();
         let snapshot = workspace.rebuild(&workspace.context()).await.unwrap();
+        assert_eq!(old_document.text().to_string(), "export def first = 1;");
         assert!(
             snapshot.mir.diagnostics.is_empty(),
             "{:?}",

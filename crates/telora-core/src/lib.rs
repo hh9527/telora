@@ -19,7 +19,6 @@ pub mod compiler;
 mod core;
 pub mod document;
 mod elaboration;
-mod evaluation;
 mod fmt;
 mod heap;
 pub mod hir;
@@ -52,7 +51,6 @@ mod type_store;
 pub mod types;
 pub mod value;
 pub mod vm;
-pub mod workspace;
 pub mod yaml;
 
 pub use bytecode::{
@@ -117,5 +115,4 @@ pub use vm::{
     CallContext, DataWorld, DebugEvent, DebugSink, DiscardDebugSink, ExecutionWorld, Quota,
     QuotaAccount, RuntimeError, RuntimeErrorKind, RuntimeFrame, ValueKind, ValueRef, Vm,
 };
-pub use workspace::{Workspace, WorkspaceError};
 pub use yaml::{YamlParse, parse_yaml_registered};

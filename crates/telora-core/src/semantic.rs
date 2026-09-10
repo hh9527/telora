@@ -573,10 +573,6 @@ impl WorkspaceSnapshot {
         self.revision
     }
 
-    pub(crate) fn set_revision(&mut self, revision: crate::query::Revision) {
-        self.revision = revision;
-    }
-
     pub async fn query_definition_at(
         &self,
         context: &crate::query::QueryContext,

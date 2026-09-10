@@ -1,3 +1,10 @@
+/// Recovery is a VM execution concern; static solving records diagnostics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FailureClass {
+    Recoverable,
+    Terminal,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeErrorKind {
     Cancelled,
@@ -47,9 +54,7 @@ pub struct RuntimeFrame {
 }
 
 impl RuntimeError {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const fn failure_class(&self) -> crate::evaluation::FailureClass {
-        use crate::evaluation::FailureClass;
+    pub(crate) const fn failure_class(&self) -> FailureClass {
         match self.kind {
             RuntimeErrorKind::DivisionByZero
             | RuntimeErrorKind::IntegerOverflow
@@ -258,4 +263,3 @@ fn fail_on_reported_error(
     runtime.set_locations(primary, rule);
     Err(runtime)
 }
-

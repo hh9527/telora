@@ -5,6 +5,31 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove the obsolete workspace and evaluation-plan shells (2026-09-11)
+
+Deleted the old core Workspace/WorkspaceError API and its Engine-backed
+overlay/rebuild wrapper. Repository consumers already use the MIR workspace;
+the old implementation had only its own tests remaining. Overlay snapshots,
+revision rejection, cancellation and publication are covered by the MIR
+workspace tests; a retained-document assertion now explicitly checks that an
+edit does not mutate the previous document snapshot. The unused old semantic
+snapshot revision setter was removed as well.
+
+Deleted the unused EvaluationPlan/BestEffortSession/FailureArena implementation
+and its internal tests. Its only externally consumed type, FailureClass, now
+lives in VM error handling; runtime classification and recovery behavior are
+unchanged. No compatibility aliases or feature-gated old implementations remain
+for these removed APIs. About 1,150 net source/test lines were removed.
+
+Validation: VM tests 48/48, MIR workspace tests 3/3, final telora library tests
+28/28 (including all 23 LSP tests), cargo check --workspace clean. The LSP run
+exposed an obsolete monomorphic hover expectation: actual MIR query output is
+identity: for(A) Fn(A) -> A. The test now uses a valid block-local binding and
+asserts its principal signature, consistent with the earlier query migration.
+Logs: /tmp/mir-legacy-shells-{vm,workspace,editor-final,check}.log.
+The larger old Engine/compiler/type/semantic implementation still exists and
+must be removed; this deletion is not a claim that assembly is complete.
+
 ### Runtime value-shape requirements move out of codegen (2026-09-11)
 
 Native declarations with non-function signatures are now diagnosed by the

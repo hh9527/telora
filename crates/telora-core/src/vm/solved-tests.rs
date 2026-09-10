@@ -138,7 +138,7 @@ impl Vm {
                         Ok(value) => value,
                         Err(error) => {
                             report.aborted |=
-                                error.failure_class() == crate::evaluation::FailureClass::Terminal;
+                                error.failure_class() == FailureClass::Terminal;
                             result.diagnostics = account.take_diagnostics();
                             append_test_error(&mut result.diagnostics, &error, Some(case.location));
                             report.cases.push(result);
@@ -244,7 +244,7 @@ impl Vm {
                         Err(error) => {
                             expanded += 1;
                             report.aborted |=
-                                error.failure_class() == crate::evaluation::FailureClass::Terminal;
+                                error.failure_class() == FailureClass::Terminal;
                             append_test_error(&mut result.diagnostics, &error, location);
                             report.cases.push(result);
                         }
@@ -356,7 +356,7 @@ impl Vm {
                 &mut account,
             );
             let terminal = execution.as_ref().err().is_some_and(|error| {
-                error.failure_class() == crate::evaluation::FailureClass::Terminal
+                error.failure_class() == FailureClass::Terminal
             });
             result.passed = !terminal
                 && match description.kind {
