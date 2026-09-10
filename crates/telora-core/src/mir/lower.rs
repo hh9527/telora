@@ -9,6 +9,17 @@ pub(crate) struct Lower<'a> {
 }
 
 impl Lower<'_> {
+    fn type_operation(name: &str) -> Option<TypeOperation> {
+        match name {
+            "\0telora_function_type" => Some(TypeOperation::Function),
+            "\0telora_tuple_type" => Some(TypeOperation::Tuple),
+            "\0telora_unit_type" => Some(TypeOperation::Unit),
+            "\0telora_struct" => Some(TypeOperation::Struct),
+            "\0telora_newtype" => Some(TypeOperation::Newtype),
+            "\0telora_enum" => Some(TypeOperation::Enum),
+            _ => None,
+        }
+    }
     fn node(&mut self, location: Location, kind: HirKind, children: Vec<Edge>) -> HirId {
         self.mir.node(self.module, location, kind, children)
     }
@@ -166,6 +177,43 @@ impl Lower<'_> {
         self.node(pattern.location, kind, edges)
     }
     fn expr(&mut self, expression: ast::Expr) -> HirId {
+        // Parser-generated type syntax is an IR operation, not a source symbol
+        // or a call which could be dispatched to a VM.
+        if let E::Call { callee, .. } = &expression.value
+            && let E::Variable(name) = &callee.value
+            && let Some(operation) = Self::type_operation(&name.value)
+        {
+            let E::Call { arguments, .. } = expression.value else {
+                unreachable!()
+            };
+            let mut edges = vec![];
+            for (index, argument) in arguments.into_iter().enumerate() {
+                if index == 0
+                    && matches!(operation, TypeOperation::Function | TypeOperation::Tuple)
+                    && let E::Array(items) = argument.value
+                {
+                    for item in items {
+                        self.expression_edge(&mut edges, Role::Argument, item);
+                    }
+                } else {
+                    self.expression_edge(&mut edges, Role::Argument, argument);
+                }
+            }
+            return self.node(
+                expression.location,
+                HirKind::TypeOperation(operation),
+                edges,
+            );
+        }
+        if let E::Variable(name) = &expression.value
+            && let Some(operation) = Self::type_operation(&name.value)
+        {
+            return self.node(
+                expression.location,
+                HirKind::TypeOperation(operation),
+                vec![],
+            );
+        }
         let mut edges = vec![];
         let kind = match expression.value {
             E::Int(v) => HirKind::Int(v),

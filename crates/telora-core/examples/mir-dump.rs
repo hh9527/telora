@@ -8,7 +8,8 @@ use telora_core::{
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1).peekable();
-    let symbols = args.peek().is_some_and(|arg| arg == "--symbols");
+    let types = args.peek().is_some_and(|arg| arg == "--types");
+    let symbols = types || args.peek().is_some_and(|arg| arg == "--symbols");
     if symbols {
         args.next();
     }
@@ -50,6 +51,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
         );
+    }
+    if types {
+        telora_core::type_resolve::resolve(&mut mir);
     }
     print!("{}", mir.dump());
     Ok(())

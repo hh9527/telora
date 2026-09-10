@@ -87,6 +87,40 @@ links. The new pass imports only MIR, syntax enums and diagnostics, with no old
 resolver or type solver dependency. `type-resolve` is the next independent pass;
 full language corner cases are still scheduled after integration.
 
+### Third pass construction: independent type arena and evidence kernel
+
+`type-resolve.rs` and `type-resolve/arena.rs` now generate constraints against
+the same MIR syntax slots and resolved SymbolIds. Every symbol receives a slot
+before evidence is applied; module boundaries do not create separate solutions.
+The solver cannot access the old type engine, loader or VM. Resolve outcomes are
+read-only inputs, including Unresolved and categorized Conflicted results.
+
+The 8-byte POD slot state distinguishes Unknown, ProxyTo, provisional Structure,
+final Known(TypeId), and Conflicted. Provisional constructors reference argument
+slots; final constructors reference canonical TypeIds. Equality uses an iterative
+queue with proxy compression, structural occurs checks and conflict propagation.
+Finalization scans constructors, interns equal resolved structures, and writes
+direct terminal states back into the existing slot array. It also records
+required Unknown syntax/symbol slots. `types_solved` means the pass has produced
+an outcome, not that the program is valid or ready for code generation.
+
+The initial kernel covers primitive values, monomorphic closures/calls, cross-
+module binding edges, annotations, tuples, arrays, record fields and basic
+branch/numeric constraints. Parser-generated function/tuple/unit type helpers
+are lowered to explicit HIR type operations; they are neither user symbols nor
+VM calls. Type intrinsics supply occurrence-local rigid evidence so one invalid
+annotation cannot contaminate other uses of Int/String.
+
+Five simple type tests and all eleven new-pass tests pass. They check cross-module
+calls without changing HIR or symbol outcomes, independent conflicts, Unknown
+references alongside known bindings, function/tuple/unit annotations, POD layout
+and canonical structure IDs after child equality. This is not the completed
+type pass: polymorphic instantiation/generalization, general type constructors,
+nominal/recursive skeletons, trait/property facts, the data Value contract and
+remaining expression evidence rules still need implementation. Unsupported rules
+emit explicit diagnostics; no legacy solver is called. Do not start final
+integration or performance claims on the strength of these kernel tests.
+
 The `telora-core` example `mir-dump` accepts `ROOT NAME=PATH ...` and prints the
 first-pass MIR without constructing an Engine. Example:
 
@@ -102,6 +136,8 @@ driver, not the final workspace CLI or configuration integration.
 Use `mir-dump --symbols ROOT NAME=PATH ...` to run the symbol pass before dumping
 the same MIR. Intrinsic symbol names can be supplied with `--intrinsic=NAME`;
 ordinary/prelude exports come from the module inventory, not a VM environment.
+`mir-dump --types` runs all three new passes and additionally prints provisional
+terms, canonical types, symbol type slots, conflicts and remaining Unknown slots.
 
 ## Current gaps
 

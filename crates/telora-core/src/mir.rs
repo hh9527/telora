@@ -26,6 +26,7 @@ id!(
     ConflictId
 );
 id!(ScopeId);
+id!(TypeTermId, TypeConflictId);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModuleTarget {
@@ -134,8 +135,46 @@ pub enum ResolveConflict {
 pub enum TypeState {
     Unknown,
     ProxyTo(TypeSlotId),
+    /// A provisional constructor whose arguments may still be unsolved slots.
+    Structure(TypeTermId),
     Known(TypeId),
-    Conflicted(ConflictId),
+    Conflicted(TypeConflictId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TypeConstructor {
+    Int,
+    Float,
+    String,
+    Bytes,
+    Bool,
+    Never,
+    Tuple,
+    Array,
+    Dict,
+    Function,
+    Record(Vec<String>),
+    Meta,
+    Namespace(ModuleId),
+    Parameter(SymbolId),
+}
+#[derive(Clone, Debug)]
+pub struct TypeTerm {
+    pub constructor: TypeConstructor,
+    pub arguments: Vec<TypeSlotId>,
+}
+#[derive(Clone, Debug)]
+pub struct ResolvedType {
+    pub constructor: TypeConstructor,
+    pub arguments: Vec<TypeId>,
+}
+#[derive(Debug)]
+pub struct TypeConflict {
+    pub left: TypeSlotId,
+    pub right: TypeSlotId,
+    pub location: Option<Location>,
+    pub message: String,
+    pub resolve_origin: Option<ConflictId>,
 }
 
 /// Syntax-owned type slots use the HIR node's index; additional inference slots
@@ -194,10 +233,21 @@ pub struct Edge {
     pub node: HirId,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TypeOperation {
+    Function,
+    Tuple,
+    Unit,
+    Struct,
+    Newtype,
+    Enum,
+}
+
 /// Each operation retains its syntax payload and explicitly labelled child
 /// edges. No node owns another HIR node or contains a resolved type descriptor.
 #[derive(Debug)]
 pub enum HirKind {
+    TypeOperation(TypeOperation),
     Block,
     Binding {
         kind: BindingKind,
@@ -281,6 +331,13 @@ pub struct Mir {
     pub resolve_conflicts: Vec<ResolveConflict>,
     pub symbols_closed: bool,
     pub ty_slots: Vec<TypeState>,
+    pub symbol_types: Vec<TypeSlotId>,
+    pub type_terms: Vec<TypeTerm>,
+    pub types: Vec<ResolvedType>,
+    pub type_conflicts: Vec<TypeConflict>,
+    pub type_unknowns: Vec<TypeSlotId>,
+    pub required_types: Vec<bool>,
+    pub types_solved: bool,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -326,8 +383,17 @@ impl Mir {
     /// A read-only dump: never resolves a name, shortens a proxy or evaluates code.
     pub fn dump(&self) -> String {
         let mut out = String::new();
-        writeln!(out, "mir modules={} hir={} resolve_slots={} ty_slots={} symbols_closed={}",
-            self.modules.len(), self.hir.len(), self.resolve_slots.len(), self.ty_slots.len(), self.symbols_closed).unwrap();
+        writeln!(
+            out,
+            "mir modules={} hir={} resolve_slots={} ty_slots={} symbols_closed={} types_solved={}",
+            self.modules.len(),
+            self.hir.len(),
+            self.resolve_slots.len(),
+            self.ty_slots.len(),
+            self.symbols_closed,
+            self.types_solved
+        )
+        .unwrap();
         writeln!(out, "roots {:?}", self.roots).unwrap();
         for (id, module) in self.modules.iter().enumerate() {
             let state = match &module.state {
@@ -357,6 +423,24 @@ impl Mir {
         for (id, conflict) in self.resolve_conflicts.iter().enumerate() {
             writeln!(out, "resolve-conflict {id} {conflict:?}").unwrap();
         }
+        for (id, term) in self.type_terms.iter().enumerate() {
+            writeln!(out, "type-term {id} {term:?}").unwrap();
+        }
+        for (id, ty) in self.types.iter().enumerate() {
+            writeln!(out, "type {id} {ty:?}").unwrap();
+        }
+        for (id, conflict) in self.type_conflicts.iter().enumerate() {
+            writeln!(out, "type-conflict {id} {conflict:?}").unwrap();
+        }
+        for (id, slot) in self.symbol_types.iter().enumerate() {
+            writeln!(
+                out,
+                "symbol-type {id} {slot:?} => {:?}",
+                self.ty_slots[slot.index()]
+            )
+            .unwrap();
+        }
+        writeln!(out, "type-unknowns {:?}", self.type_unknowns).unwrap();
         for (id, node) in self.hir.iter().enumerate() {
             writeln!(
                 out,
