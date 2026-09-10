@@ -1,7 +1,7 @@
 pub(crate) type TypeMetadataOrigin = (Loc, Option<Val>);
 
 impl Heap {
-    fn record_value(
+    pub(crate) fn record_value(
         &mut self,
         entries: impl IntoIterator<Item = (String, Val)>,
     ) -> Result<Val, HeapError> {

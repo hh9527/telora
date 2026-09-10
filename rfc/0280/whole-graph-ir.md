@@ -5,6 +5,33 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### eval-with host input and callback assembly (2026-09-10)
+
+Both eval commands now share the new static preparation path. eval-with checks
+the exported entry.Eval identity and the Value result contract in MIR, then
+codegen emits its fixed evaluate-call adapter before VM creation. The CLI no
+longer prepares PendingModule or invokes Engine for either command.
+
+The new execution entry initializes the wrapper, validates its declared source,
+environment and argument config, parses JSON/YAML/TOML inputs with the existing
+data validators and limits, and materializes them using the solved Value TypeId.
+It calls the precompiled adapter in the same Main/Work world and with the same
+quota account as initialization. It neither infers types nor creates metadata
+witnesses. Runtime sources join the existing source database so input origins
+do not collide with code origins. JSON is published only after success.
+
+CLI coverage passes for all three input formats together, declared environment
+filtering, trailing arguments, and Value JSON output. Negative cases verify
+missing/mismatched sources, missing env, duplicate config names and rejected
+arguments fail before the callback and publish no partial JSON. Ordinary eval
+continues to pass its focused contract/output coverage.
+
+Remaining assembly includes ordinary check, module data imports, property
+execution and run/serve entry dispatch. Remaining expression lowering (including
+match and generic runtime witnesses) still limits which programs these migrated
+commands can execute. This milestone reuses the retained VM representation; it
+does not implement the deferred runtime-layout RFC or claim performance gains.
+
 ### Prioritize pipeline assembly; reuse record storage (2026-09-10)
 
 The agreed priority is replacing the complete compiler pipeline. A distinct

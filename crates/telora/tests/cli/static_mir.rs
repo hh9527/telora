@@ -1,4 +1,105 @@
 #[test]
+fn static_mir_eval_with_injects_declared_inputs_and_rejects_config_mismatches() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), r#"
+        import "std/entry" { main };
+        import "std/value" { Value };
+        import "std/array" { map };
+        import "std/dict" { values };
+        export def evaluate = main({ sources: ["j", "t", "y"], envs: ["TELORA_MIR_EVAL_TEST"], args: True }, fn(ctx) {
+            Value.Object({ "inputs": Value.Object(ctx.sources),
+                "env": Value.Array(map(values(ctx.env), Value.String)),
+                "args": Value.Array(map(ctx.args, Value.String)) })
+        });
+    "#).unwrap();
+    let json = cwd.join("input.json");
+    let yaml = cwd.join("input.yaml");
+    let toml = cwd.join("input.toml");
+    fs::write(&json, r#"{"x":[1,true,null]}"#).unwrap();
+    fs::write(&yaml, "x: 2\n").unwrap();
+    fs::write(&toml, "x = 3\n").unwrap();
+    let inputs = [
+        format!("j={}", json.display()),
+        format!("y={}", yaml.display()),
+        format!("t={}", toml.display()),
+    ];
+    let output = telora(&cwd)
+        .env("TELORA_MIR_EVAL_TEST", "visible")
+        .args([
+            "eval-with",
+            "@src/main:evaluate",
+            "--source",
+            &inputs[0],
+            "--source",
+            &inputs[1],
+            "--source",
+            &inputs[2],
+            "--",
+            "one",
+            "two",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        serde_json::json!({
+            "inputs": {"j":{"x":[1,true,null]}, "y":{"x":2}, "t":{"x":3}},
+            "env":["visible"], "args":["one","two"]
+        })
+    );
+    let output = telora(&cwd)
+        .args(["eval-with", "@src/main:evaluate"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("sources do not match"));
+    for (config, expected) in [
+        (
+            "{ sources: [], envs: [], args: False }",
+            "does not accept command-line",
+        ),
+        (
+            "{ sources: [], envs: [\"TELORA_MIR_MISSING\"], args: True }",
+            "cannot read declared environment",
+        ),
+        (
+            "{ sources: [], envs: [\"x\", \"x\"], args: True }",
+            "unique non-empty",
+        ),
+    ] {
+        fs::write(
+            cwd.join("src/main.telora"),
+            format!(
+                r#"
+            import "std/entry" {{ main }}; import "std/value" {{ Value }};
+            export def evaluate = main({config}, fn(ctx) {{ Value.Int(1 / 0) }});
+        "#
+            ),
+        )
+        .unwrap();
+        let output = telora(&cwd)
+            .env_remove("TELORA_MIR_MISSING")
+            .args(["eval-with", "@src/main:evaluate", "--", "arg"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_eval_serializes_value_and_rejects_other_contracts_before_execution() {
     let cwd = fixture();
     fs::write(

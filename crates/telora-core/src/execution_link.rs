@@ -13,6 +13,7 @@ pub struct LinkedEntry {
     pub(crate) bytecode: BytecodeFunction,
     pub(crate) types: crate::type_image::TypeImage,
     pub(crate) result_type: crate::mir::TypeId,
+    pub(crate) eval_call: Option<crate::codegen::EvalCall>,
 }
 
 pub fn link_entry(artifact: CompiledEntry) -> Result<LinkedEntry, Vec<Diagnostic>> {
@@ -21,6 +22,7 @@ pub fn link_entry(artifact: CompiledEntry) -> Result<LinkedEntry, Vec<Diagnostic
         bytecode,
         types: artifact.types,
         result_type: artifact.result_type,
+        eval_call: artifact.eval_call,
     })
 }
 

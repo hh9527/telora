@@ -14,6 +14,71 @@ pub struct CompiledEntry {
     pub bytecode: BytecodeFunction,
     pub native_links: Vec<NativeLink>,
     pub types: crate::type_image::TypeImage,
+    pub eval_call: Option<EvalCall>,
+}
+
+pub struct EvalCall {
+    pub bytecode: BytecodeFunction,
+    pub result_type: TypeId,
+}
+
+/// Compile the fixed entry.Eval ABI adapter before any VM exists.
+pub fn compile_eval(
+    sealed: SealedMir<'_>,
+    entry: SymbolId,
+    value_type: TypeId,
+) -> Result<CompiledEntry, Vec<Diagnostic>> {
+    let mut artifact = compile(sealed, entry)?;
+    let signature = match artifact.types.types[artifact.result_type.index()].constructor {
+        TypeConstructor::Nominal(symbol) => artifact
+            .types
+            .definition(symbol)
+            .filter(|d| d.parameters.is_empty())
+            .and_then(|d| d.members.iter().find(|m| m.name == "evaluate"))
+            .and_then(|m| m.payload)
+            .map(|ty| &artifact.types.types[ty.index()]),
+        _ => None,
+    };
+    if !signature.is_some_and(|ty| {
+        ty.constructor == TypeConstructor::Function
+            && ty.arguments.len() == 2
+            && ty.arguments[1] == value_type
+    }) {
+        return Err(vec![Diagnostic {
+            severity: Severity::Error,
+            message: "invalid static entry.Eval evaluate signature".into(),
+            labels: vec![],
+            notes: vec![],
+        }]);
+    }
+    use crate::bytecode::{Instruction as I, Register};
+    artifact.eval_call = Some(EvalCall {
+        result_type: value_type,
+        bytecode: BytecodeFunction::with_signature(
+            "<entry.Eval.evaluate>",
+            2,
+            0,
+            4,
+            vec![],
+            vec![
+                I::GetField {
+                    dst: Register(2),
+                    dict: Register(0),
+                    field: "evaluate".into(),
+                },
+                I::Move {
+                    dst: Register(3),
+                    src: Register(1),
+                },
+                I::Call {
+                    base: Register(2),
+                    argument_count: 1,
+                },
+                I::Return { src: Register(2) },
+            ],
+        ),
+    });
+    Ok(artifact)
 }
 
 #[derive(Debug)]
@@ -77,6 +142,7 @@ pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, 
         bytecode,
         native_links: emitter.native_links,
         types,
+        eval_call: None,
     })
 }
 
