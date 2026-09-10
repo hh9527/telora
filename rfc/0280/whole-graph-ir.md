@@ -5,6 +5,37 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### First vertical codegen path (2026-09-10)
+
+The new `codegen` module consumes `&Mir` plus an entry SymbolId and emits retained
+LIR operations, then uses the LIR assembler to produce bytecode. It does not
+import the old compiler/resolver/inference modules or receive a VM. The entry
+gate requires completed symbol/type passes, no Unknown/Conflicted slots or
+unproven bounds, and no error diagnostics. Each emitted expression must have a
+normalized TypeId. Unsupported lowering produces a source diagnostic.
+
+This first path covers primitive literals, tuples/arrays, ordinary acyclic
+global dependencies across modules, local bindings, arithmetic/comparisons,
+branches, closures/captures, calls, explicit generic application and returns.
+Globals are ordered using the already-bound SymbolIds. Captures use those same
+identities; no type environment or descriptor tree is rebuilt. The MIR remains
+unchanged by code generation. Recursive initialization, native/type linking,
+nominal constructors, trait dictionaries, property execution and the remaining
+operations are still integration work; ordinary CLI execution has not switched.
+
+`mir-dump --run EXPORT ROOT NAME=PATH ...` is the initial vertical debug driver.
+It runs the three static passes, compiles the selected export, then creates the
+VM and executes the bytecode. It does not call the old Engine or compiler.
+The source and types-only inspection modes continue to avoid creating a VM.
+
+Validation: three focused codegen tests pass, covering captured closures and
+branches, imported generic definitions/aliases, unchanged MIR, rejected invalid
+and unsupported input, and division by zero failing only in the VM. A real
+two-file invocation of `mir-dump --run answer` returned 42 through the new path.
+This is the first runnable vertical slice, not completed execution assembly or
+a performance result. Further work follows the agreed order: connect the
+execution pipeline, then fill rules and complete acceptance coverage.
+
 ### Static data module contract (2026-09-10)
 
 Data modules now attach a compiler-owned interface to the same MIR:

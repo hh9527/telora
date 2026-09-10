@@ -1,4 +1,4 @@
-//! Inspect the new MIR without linking the old Engine or any VM.
+//! Inspect the new MIR without the old Engine; --run EXPORT exercises codegen.
 //! cargo run -p telora-core --example mir-dump -- @src/main @src/main=main.telora
 use std::{collections::BTreeMap, error::Error, path::PathBuf};
 use telora_core::{
@@ -8,9 +8,15 @@ use telora_core::{
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1).peekable();
-    let types = args.peek().is_some_and(|arg| arg == "--types");
+    let run = if args.peek().is_some_and(|arg| arg == "--run") {
+        args.next();
+        Some(args.next().ok_or("--run requires an export name")?)
+    } else {
+        None
+    };
+    let types = run.is_some() || args.peek().is_some_and(|arg| arg == "--types");
     let symbols = types || args.peek().is_some_and(|arg| arg == "--symbols");
-    if symbols {
+    if symbols && run.is_none() {
         args.next();
     }
     let root = args
@@ -69,6 +75,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     if types {
         telora_core::type_resolve::resolve(&mut mir);
     }
-    print!("{}", mir.dump());
+    if let Some(export) = run {
+        let telora_core::mir::ModuleTarget::Bound(root) = mir.roots[0] else {
+            return Err("unresolved root".into());
+        };
+        let symbol = *mir.exports[root.index()]
+            .iter()
+            .find(|id| mir.symbols[id.index()].name == export)
+            .ok_or("entry export is missing")?;
+        let artifact = telora_core::codegen::compile(&mir, symbol)
+            .map_err(|diagnostics| format!("codegen: {diagnostics:?}"))?;
+        let mut vm = telora_core::Vm::new();
+        let result = vm.execute(&artifact.bytecode, 1_000_000)?;
+        println!("{}", result.value());
+    } else {
+        print!("{}", mir.dump());
+    }
     Ok(())
 }
