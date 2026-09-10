@@ -45,7 +45,7 @@ impl Emitter<'_> {
         }).collect::<Vec<_>>();
         let value = self.child(node, Role::Value);
         if !matches!(self.mir.hir[value.index()].kind,
-            HirKind::Closure | HirKind::Variable(_) | HirKind::Field | HirKind::TypeApply) {
+            HirKind::Closure | HirKind::Interpreter | HirKind::Variable(_) | HirKind::Field | HirKind::TypeApply) {
             return Err(self.error(node, "local generic initializer requires a non-expansive value"));
         }
         let previous = self.instance;

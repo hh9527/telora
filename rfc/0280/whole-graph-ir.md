@@ -5,6 +5,31 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Interpreter plans generate ordinary executable adapters (2026-09-11)
+
+Codegen now consumes InterpreterPlan to emit an outer witness factory and an
+inner adapter closure. The plan selects direct forwarding or the existing
+builtin Dyn pack operation at each parameter position. Packing retains the
+witness and original value handle. No opcode, hidden binding, type inference
+or runtime type reconstruction was added. Operand evaluation stays inside the
+invoked adapter, after factory creation, with ordinary lexical capture behavior.
+
+Factories use the VM's existing memoized-interpreter table. In solved sessions
+its keys now consume SolvedType IDs directly instead of parsing legacy Dict
+metadata. The legacy metadata branch remains for the not-yet-removed old
+pipeline; solved sessions cannot fall back to it. Local generic interpreter
+definitions use the existing non-expansive closure allocation/sealing path.
+
+Validation: 85 codegen tests, 48 VM tests and CLI build pass. New runtime cases
+cover reordered/aliased witnesses, mixed/repeated arguments, same/different
+factory identity, lazy failing operands, enclosing local captures and
+metadata-only factories. The actual interpreter verified_case and its language
+aggregate checker pass. Remaining test-mode aggregate failures are
+module-interfaces and stdlib-collections (unspecialized function identity);
+diagnostic/query gates and old-pipeline removal remain incomplete.
+Logs: /tmp/mir-interpreter-runtime-{codegen,vm,build,language}.log.
+No performance assessment or fixture changes.
+
 ### Interpreter adapters are solved and sealed in MIR (2026-09-11)
 
 MIR lowering now retains only the authored interpreter operand, discarding the

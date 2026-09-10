@@ -363,7 +363,16 @@ fn drive_vm_action(
                                 )?;
                                 let arguments = arguments
                                     .iter()
-                                    .map(|argument| view.canonical_type_value_id(*argument))
+                                    .map(|argument| {
+                                        if let Some(types) = background.solved_types.as_ref() {
+                                            match argument.value() {
+                                                DecodedValue::SolvedType(id) if id.index() < types.types.len() => Ok(crate::TypeId::solved(id)),
+                                                _ => Err(crate::heap::HeapError::owned("interpreter witness is outside the solved type image".into())),
+                                            }
+                                        } else {
+                                            view.canonical_type_value_id(*argument)
+                                        }
+                                    })
                                     .collect::<Result<Vec<_>, _>>()
                                     .map_err(|heap_error| {
                                         error(

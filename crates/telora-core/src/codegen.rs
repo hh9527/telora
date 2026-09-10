@@ -11,6 +11,8 @@ use crate::{
 
 #[path = "codegen/newtypes.rs"]
 mod newtypes;
+#[path = "codegen/interpreters.rs"]
+mod interpreters;
 #[path = "codegen/patterns.rs"]
 mod patterns;
 #[path = "codegen/local-instances.rs"]
@@ -1259,6 +1261,7 @@ impl<'a> Emitter<'a> {
                 self.mark(done);
                 dst
             }
+            HirKind::Interpreter => self.interpreter(node)?,
             HirKind::Closure => {
                 let parameters = self.children(node, Role::Parameter);
                 let mut nested =
@@ -1409,6 +1412,41 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn interpreter_adapters_use_solved_plans_and_preserve_factory_identity() {
+        for source in [
+            r#"import "std/dyn" as dyn;
+                type Witness(T) = TypeOf(T);
+                def erased: Fn(Int, Dyn, Bool, Dyn, Dyn) -> Int = fn(offset, text, enabled, number, again) {
+                    if enabled && dyn.check_string(text) == Some("a") && dyn.check_string(again) == Some("b") {
+                        match dyn.check_int(number) { Some(value) => offset + value, None => 0 }
+                    } else { 0 }
+                };
+                def factory: for(A, B) Fn(Witness(B), Witness(A)) -> Fn(Int, A, Bool, B, A) -> Int = interpreter!(erased);
+                export def answer = factory(Int.type, String.type)(2, "a", True, 40, "b");"#,
+            r#"def erased: Fn(Dyn) -> Int = fn(value) { 42 };
+                def first: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(erased);
+                def second: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(erased);
+                export def answer = do { let a = first(Int.type); let b = first(Int.type); let c = second(Int.type);
+                    if a == b && a != c { a(0) } else { 0 }
+                };"#,
+            r#"def operand: Fn(Dyn) -> Int = fail!("operand must remain lazy");
+                def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(operand);
+                export def answer = do { let adapter = factory(Int.type); 42 };"#,
+            r#"def run: Fn(Int) -> Int = fn(offset) {
+                    def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(fn(value) { offset });
+                    factory(String.type)("ignored")
+                }; export def answer = run(42);"#,
+            r#"def factory: for(T) Fn(TypeOf(T)) -> Fn(Int) -> Int = interpreter!(fn(value) { value });
+                export def answer = factory(String.type)(42);"#,
+        ] {
+            let mir = graph(source, "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            let result = execute(artifact).unwrap_or_else(|error| panic!("{source}\n{error}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+
     #[test]
     fn decoded_container_fields_preserve_their_solved_types() {
         let mir = graph(r#"import "std/codec" as codec;
