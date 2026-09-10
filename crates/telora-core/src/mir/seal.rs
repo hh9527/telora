@@ -17,6 +17,7 @@ impl Mir {
             || !self.types_solved
             || !self.type_unknowns.is_empty()
             || !self.type_conflicts.is_empty()
+            || self.types.iter().any(|ty| matches!(ty.constructor, TypeConstructor::ArrayLiteral | TypeConstructor::TupleLiteral))
             || self.reference_instances.len() != self.hir.len()
             || self.implementation_instances.len() != self.hir.len()
             || self.type_layouts.len() != self.types.len()

@@ -284,7 +284,7 @@ impl Solver<'_> {
             };
             result.push(next);
         }
-        let provisional = matches!(term.constructor, TypeConstructor::Record(_) | TypeConstructor::ArrayLiteral);
+        let provisional = matches!(term.constructor, TypeConstructor::Record(_) | TypeConstructor::ArrayLiteral | TypeConstructor::TupleLiteral);
         let constructor = term.constructor;
         let instance = self.structure(constructor.clone(), result);
         self.equal(target, instance, location);

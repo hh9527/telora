@@ -2139,6 +2139,29 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn tuple_literals_complete_candidates_with_static_element_targets() {
+        let definitions = r#"
+            import "std/_rt" as rt;
+            @check(fn(value) { if value.x > 0 { Ok(()) } else { Err(blame!("positive tuple item", value.x)) } }) type Point = struct {x: Int};
+            def candidate: Unchecked(Point) = {x: 42};
+        "#;
+        for body in [
+            "export def answer = do { let pair: (Point, Int) = (candidate, 0); pair.0.x + pair.1 };",
+            "def accept: Fn((Point, Int)) -> Int = fn(pair) { pair.0.x }; export def answer = accept((candidate, 0));",
+            "def pair: Fn(Unchecked(Point)) -> (Point, Int) = fn(value) { (value, 0) }; export def answer = pair(candidate).0.x;",
+            "export def answer = do { let nested: ((Point, Int), String) = ((candidate, 0), \"ok\"); nested.0.0.x };",
+            r#"export def answer = match rt.with_diagnostics(fn(x: Int) { let value: Unchecked(Point) = {x: x}; let pair: (Int, Point) = (0, value); pair })(0) { Err(errors) => if errors[0].message == "positive tuple item" { 42 } else { 0 }, _ => 0 };"#,
+        ] {
+            let mir = graph(&format!("{definitions}{body}"), "");
+            assert!(mir.diagnostics.is_empty(), "{body}\n{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{body}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{body}");
+        }
+    }
+
+    #[test]
     fn branch_completion_keeps_unselected_candidates_unchecked() {
         let definitions = r#"
             import "std/_rt" as rt;

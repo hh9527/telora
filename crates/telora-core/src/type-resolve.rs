@@ -168,7 +168,7 @@ pub fn resolve(mir: &mut Mir) {
             }
         }
         if solver.revision == revision {
-            if !solver.finish_arrays() && !solver.finish_bottoms() {
+            if !solver.finish_literals() && !solver.finish_bottoms() {
                 break;
             }
         }
@@ -755,7 +755,7 @@ impl Solver<'_> {
                     let tuple = self.structure(TypeConstructor::Tuple, raw);
                     self.assign(node, TypeConstructor::Meta, vec![tuple]);
                 } else if metadata == 0 {
-                    self.assign(node, TypeConstructor::Tuple, items);
+                    self.assign(node, TypeConstructor::TupleLiteral, items);
                 } else {
                     self.conflict(
                         node.ty(),

@@ -238,7 +238,7 @@ impl Solver<'_> {
                     }));
                 };
                 match (index, &term.constructor) {
-                    (Some(i), TypeConstructor::Tuple) if i < term.arguments.len() => {
+                    (Some(i), TypeConstructor::Tuple | TypeConstructor::TupleLiteral) if i < term.arguments.len() => {
                         self.same(node, term.arguments[i])
                     }
                     (None, TypeConstructor::Array | TypeConstructor::Dict) => {
@@ -521,6 +521,22 @@ impl Solver<'_> {
     ) -> bool {
         let a = self.term(left).unwrap().clone();
         let b = self.term(right).unwrap().clone();
+        if (a.constructor == TypeConstructor::Tuple && b.constructor == TypeConstructor::TupleLiteral)
+            || (b.constructor == TypeConstructor::Tuple && a.constructor == TypeConstructor::TupleLiteral)
+        {
+            let (expected, actual, target, items) = if a.constructor == TypeConstructor::Tuple {
+                (left, right, a.arguments, b.arguments)
+            } else { (right, left, b.arguments, a.arguments) };
+            if target.len() != items.len() { return false; }
+            for (expected, actual) in target.into_iter().zip(items) {
+                if actual.index() < self.mir.hir.len() {
+                    self.fit(HirId(actual.0), expected, actual);
+                } else { self.equal(expected, actual, location); }
+            }
+            self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
+            self.revision += 1;
+            return true;
+        }
         if a.constructor == TypeConstructor::ArrayLiteral
             && b.constructor == TypeConstructor::ArrayLiteral
         {
@@ -614,7 +630,7 @@ impl Solver<'_> {
         true
     }
 
-    pub(super) fn finish_arrays(&mut self) -> bool {
+    pub(super) fn finish_literals(&mut self) -> bool {
         let mut changed = false;
         let count = self.mir.ty_slots.len();
         for index in 0..count {
@@ -625,6 +641,13 @@ impl Solver<'_> {
             let Some(term) = self.term(slot).cloned() else {
                 continue;
             };
+            if term.constructor == TypeConstructor::TupleLiteral {
+                let tuple = self.structure(TypeConstructor::Tuple, term.arguments);
+                self.mir.ty_slots[index] = TypeState::ProxyTo(tuple);
+                self.revision += 1;
+                changed = true;
+                continue;
+            }
             if term.constructor != TypeConstructor::ArrayLiteral {
                 continue;
             }

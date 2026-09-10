@@ -5,6 +5,29 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Contextual tuple literals retain per-element completion evidence (2026-09-10)
+
+Value tuple syntax now starts as a provisional TupleLiteral, distinct from an
+already fixed Tuple type. Contextual tuple constraints fit each source element
+against the corresponding target, retaining Unchecked completion adjustments
+instead of unifying the candidate's identity with T. Generic instantiation keeps
+the existing refinement edge alive for provisional tuple syntax as well.
+
+The static literal-finalization scan normalizes remaining tuple literals to Tuple;
+seal rejects any provisional ArrayLiteral/TupleLiteral in the published type
+arena. Tuple projection can consume provisional child slots during solving.
+No codegen inference or new runtime operation is needed.
+
+Validation: 35 type-pass and 50 codegen tests pass; cargo check -p telora passes.
+Five new execution cases cover tuple assignment, function argument/return,
+nested tuple construction and checker rejection. Static assertions verify the
+candidate retains Unchecked identity, the element target is T, and no provisional
+literal constructor escapes normalization. Logs: /tmp/mir-tuple-static.log,
+/tmp/mir-tuple-codegen.log and /tmp/mir-tuple-cli.log.
+No performance/full-suite claim. Broader recursive/composed inference coverage,
+generic evidence/property support, command/LSP integration and old-pipeline
+removal remain required before the overall migration can be called complete.
+
 ### Branch joins retain directional construction evidence (2026-09-10)
 
 When a join includes Unchecked values, the static pass waits for branch evidence

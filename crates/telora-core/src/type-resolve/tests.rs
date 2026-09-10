@@ -2,6 +2,26 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn tuple_completion_normalizes_literal_slots_without_erasing_source_identity() {
+    let mut mir = graph(&[("@src/main", r#"
+        type Point = struct {x: Int};
+        def candidate: Unchecked(Point) = {x: 42};
+        export def pair: (Point, Int) = (candidate, 0);
+        export def inferred = (1, "ok");
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    mir.seal().unwrap();
+    let TypeState::Known(candidate) = symbol_type(&mir, "candidate") else { panic!("candidate"); };
+    let TypeState::Known(pair) = symbol_type(&mir, "pair") else { panic!("pair"); };
+    assert_eq!(mir.types[pair.index()].constructor, TypeConstructor::Tuple);
+    assert_eq!(mir.types[candidate.index()].constructor, TypeConstructor::Unchecked);
+    assert_eq!(mir.types[candidate.index()].arguments, [mir.types[pair.index()].arguments[0]]);
+    assert_eq!(mir.value_adjustments.iter().flatten().count(), 1);
+    assert!(mir.types.iter().all(|ty| !matches!(ty.constructor, TypeConstructor::TupleLiteral | TypeConstructor::ArrayLiteral)));
+}
+
+#[test]
 fn branch_completion_does_not_unify_candidate_and_checked_identity() {
     for expression in ["if True { candidate } else { good }", "match True { True => good, False => candidate }"] {
         let source = format!("type Point = struct {{x: Int}}; def candidate: Unchecked(Point) = {{x: 0}}; def good: Point = {{x: 42}}; export def answer = {expression};");

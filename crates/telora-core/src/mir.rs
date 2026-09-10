@@ -223,6 +223,7 @@ pub enum TypeConstructor {
     Tuple,
     Array,
     ArrayLiteral,
+    TupleLiteral,
     TypeList,
     Dict,
     Function,
