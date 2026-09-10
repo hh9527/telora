@@ -20,7 +20,7 @@ impl<'a> GenericInference<'a> {
                     nested_types
                 } else {
                     let ty = self.infer(operand, environment, None)?;
-                    let TypeDescriptor::Tuple(spread) = self.normalize(&ty) else {
+                    let Some(TypeDescriptor::Tuple(spread)) = self.collection_shape(&ty) else {
                         return Err("tuple spread requires a statically known Tuple".into());
                     };
                     spread
@@ -133,7 +133,7 @@ impl<'a> GenericInference<'a> {
         &self,
         ty: &TypeDescriptor,
     ) -> Result<BTreeMap<String, TypeDescriptor>, String> {
-        if let TypeDescriptor::Declared(declared) = self.expose_named(ty)
+        if let Some(declared) = self.declared_context(ty)
             && let TypeDescriptor::Struct(fields) = declared.body.as_ref()
         {
             return Ok(fields.clone());
@@ -148,12 +148,7 @@ impl<'a> GenericInference<'a> {
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
         let constructs_declared_value = expression_constructs_declared_value(expression);
-        let expected_declared = expected.and_then(|expected| {
-            let TypeDescriptor::Declared(declared) = self.expose_named(expected) else {
-                return None;
-            };
-            Some(declared)
-        });
+        let expected_declared = expected.and_then(|expected| self.declared_context(expected));
         let structural_expected = expected_declared
             .as_ref()
             .filter(|_| matches!(expression.value, ExprKind::Dict(_)))
@@ -181,7 +176,8 @@ impl<'a> GenericInference<'a> {
         }
         result.map(|inferred| {
             let Some(declared) = expected_declared else {
-                if let Some(expected) = expected.map(|ty| self.normalize(ty))
+                if (constructs_declared_value || matches!(expression.value, ExprKind::Atom(_)))
+                    && let Some(expected) = expected.map(|ty| self.normalize(ty))
                     && ((constructs_declared_value
                         && matches!(expected, TypeDescriptor::Enum(_)))
                         || (matches!(expression.value, ExprKind::Atom(_))
@@ -231,7 +227,7 @@ impl<'a> GenericInference<'a> {
                 for part in parts {
                     if let StringPartKind::Expression(expression) = &part.value {
                         let target = self.infer(expression, environment, None)?;
-                        self.require_interpolation_evidence(target, expression.location)?;
+                        self.record_interpolation_obligation(target, expression.location);
                     }
                 }
                 TypeDescriptor::String
@@ -239,10 +235,10 @@ impl<'a> GenericInference<'a> {
             ExprKind::Bytes(_) => TypeDescriptor::Bytes,
             ExprKind::Atom(name) => self.enum_constructor(expression.location, name, None),
             ExprKind::Array(items) => {
-                let item_expected = match expected.map(|ty| self.normalize(ty)) {
+                let item_expected = match expected.and_then(|ty| self.collection_shape(ty)) {
                     Some(TypeDescriptor::Array(item))
                         if items.is_empty()
-                            || !matches!(self.normalize(&item), TypeDescriptor::Inference(_)) =>
+                            || !matches!(self.variables.view(&item), InferenceView::Unknown(_) | InferenceView::Conflicted(_)) =>
                     {
                         Some(*item)
                     }
@@ -255,11 +251,10 @@ impl<'a> GenericInference<'a> {
                             .as_ref()
                             .map(|item| TypeDescriptor::Array(Box::new(item.clone())));
                         let spread = self.infer(operand, environment, spread_expected.as_ref())?;
-                        let resolved = self.normalize(&spread);
-                        let TypeDescriptor::Array(spread_item) = resolved else {
+                        let Some(TypeDescriptor::Array(spread_item)) = self.collection_shape(&spread) else {
                             return Err(format!(
                                 "array spread requires Array, found {}",
-                                resolved.display_name()
+                                self.normalize(&spread).display_name()
                             ));
                         };
                         item_types.push(*spread_item);
@@ -286,7 +281,10 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Inference(self.variables.structure_node(InferenceConstructor::Array, &[item]))
             }
             ExprKind::TypeMetadata(operand) => {
-                let inferred = self.infer(operand, environment, Some(&TypeDescriptor::Type))?;
+                self.type_syntax_depth += 1;
+                let inferred = self.infer(operand, environment, Some(&TypeDescriptor::Type));
+                self.type_syntax_depth -= 1;
+                let inferred = inferred?;
                 self.local_annotations.get(&expression.location)
                     .map(|target| TypeDescriptor::TypeOf(Box::new(target.clone())))
                     .unwrap_or(inferred)
@@ -299,7 +297,7 @@ impl<'a> GenericInference<'a> {
             }
             ExprKind::Spread(operand) => self.infer(operand, environment, expected)?,
             ExprKind::Tuple(items) => {
-                let item_expected = match expected.map(|ty| self.normalize(ty)) {
+                let item_expected = match expected.and_then(|ty| self.collection_shape(ty)) {
                     Some(TypeDescriptor::Tuple(expected_items)) => Some(expected_items),
                     _ => None,
                 };
@@ -312,7 +310,7 @@ impl<'a> GenericInference<'a> {
             ExprKind::Dict(fields) => {
                 let has_spread = fields.iter().any(|field| field.value.name.is_none());
                 let metadata_expected = expected
-                    .map(|ty| self.normalize(ty))
+                    .and_then(|ty| self.collection_shape(ty))
                     .filter(|ty| matches!(ty, TypeDescriptor::Type | TypeDescriptor::TypeOf(_)));
                 if let Some(metadata_expected) = metadata_expected {
                     if has_spread {
@@ -323,7 +321,7 @@ impl<'a> GenericInference<'a> {
                     }
                     metadata_expected
                 } else if has_spread {
-                    let item_expected = match expected.map(|ty| self.normalize(ty)) {
+                    let item_expected = match expected.and_then(|ty| self.collection_shape(ty)) {
                         Some(TypeDescriptor::Dict(item)) => Some(*item),
                         _ => None,
                     };
@@ -338,11 +336,10 @@ impl<'a> GenericInference<'a> {
                                 .map(|item| TypeDescriptor::Dict(Box::new(item.clone())));
                             let spread =
                                 self.infer(operand, environment, spread_expected.as_ref())?;
-                            let resolved = self.normalize(&spread);
-                            let TypeDescriptor::Dict(spread_item) = resolved else {
+                            let Some(TypeDescriptor::Dict(spread_item)) = self.collection_shape(&spread) else {
                                 return Err(format!(
                                     "Dict spread requires Dict, found {}",
-                                    resolved.display_name()
+                                    self.normalize(&spread).display_name()
                                 ));
                             };
                             item_types.push(*spread_item);
@@ -366,7 +363,7 @@ impl<'a> GenericInference<'a> {
                     let item = self.variables.structure_edge(item);
                     TypeDescriptor::Inference(self.variables.structure_node(InferenceConstructor::Dict, &[item]))
                 } else {
-                    if let Some(TypeDescriptor::Dict(item)) = expected.map(|ty| self.normalize(ty)) {
+                    if let Some(TypeDescriptor::Dict(item)) = expected.and_then(|ty| self.collection_shape(ty)) {
                         for field in fields {
                             self.infer(&field.value.value, environment, Some(&item))
                                 .map_err(|message| {
@@ -384,7 +381,7 @@ impl<'a> GenericInference<'a> {
                         let item = self.variables.structure_edge(*item);
                         TypeDescriptor::Inference(self.variables.structure_node(InferenceConstructor::Dict, &[item]))
                     } else {
-                        let expected_fields = match expected.map(|ty| self.normalize(ty)) {
+                        let expected_fields = match expected.and_then(|ty| self.collection_shape(ty)) {
                             Some(TypeDescriptor::Struct(fields)) => fields,
                             _ => BTreeMap::new(),
                         };
@@ -591,7 +588,7 @@ impl<'a> GenericInference<'a> {
                     .get(&target.location)
                     .cloned()
                     .ok_or_else(|| "Dyn projection target metadata was not evaluated".to_owned())?;
-                if type_identity_is_symbolic(&target_descriptor) {
+                if type_identity_is_symbolic(&self.normalize(&target_descriptor)) {
                     return Err(
                         "Dyn projection of a generic type requires an explicit runtime TypeOf witness"
                             .into(),
@@ -623,7 +620,7 @@ impl<'a> GenericInference<'a> {
                         };
                         let evidence = self.infer(evidence, environment, None)?;
                         let evidence = self.normalize(&evidence);
-                        if self.declared_identity(&evidence).is_some() {
+                        if self.declared_constructor(&evidence).is_some() {
                             self.infer(literal, environment, Some(&evidence))?;
                         } else {
                             self.infer(literal, environment, None)?;
@@ -700,7 +697,7 @@ impl<'a> GenericInference<'a> {
                 if self.declared_constructor_reference(receiver) {
                     self.type_facet_locations.insert(receiver.location);
                     let receiver_type = self.infer(receiver, environment, None)?;
-                    if let Some((ty, constructor)) = enum_member_type(&self.normalize(&receiver_type), &field.value)? {
+                    if let Some((ty, constructor)) = self.enum_member(&receiver_type, &field.value)? {
                         self.value_constructors.insert(expression.location, constructor);
                         ty
                     } else {
@@ -948,15 +945,14 @@ impl<'a> GenericInference<'a> {
                         self.materialize_field_requirements(&TypeDescriptor::Tuple(
                             parameters.clone(),
                         ))?;
-                        let result = self.normalize(&result);
-                        let result = if matches!(result, TypeDescriptor::TypeOf(_))
-                            && contains_type_variable(&result)
-                        {
+                        let unresolved = self.has_unresolved(&result);
+                        let erased_metadata = unresolved && self.is_type_of(&result);
+                        let result = if erased_metadata {
                             TypeDescriptor::Type
                         } else {
-                            result
+                            *result
                         };
-                        if contains_type_variable(&result)
+                        if unresolved && !erased_metadata
                             && self.delayed_initializer_depth == 0
                             && !has_placeholder
                             && expected.is_none()
@@ -964,7 +960,7 @@ impl<'a> GenericInference<'a> {
                         {
                             return Err(format!(
                                 "cannot infer generic result type {}",
-                                result.display_name()
+                                self.normalize(&result).display_name()
                             ));
                         }
                         result
@@ -1046,6 +1042,7 @@ impl<'a> GenericInference<'a> {
                             ),
                         };
                         self.pending_type_constraints.push(PendingTypeConstraint {
+                            destination: EvidenceDestination::CallArgument,
                             capability,
                             target: target.clone(),
                             location: expression.location,
@@ -1458,11 +1455,16 @@ impl<'a> GenericInference<'a> {
         {
             self.check(&inferred, expected)?;
         }
-        let inferred = match expected.map(|ty| self.normalize(ty)) {
-            Some(expected) if contains_pending_alternatives(&inferred)
-                && !contains_pending_alternatives(&expected)
-                && !contains_type_variable(&expected) => expected,
-            _ => inferred,
+        // Only a pending join needs a concrete contextual replacement. Ordinary
+        // expressions retain their slots without expanding the expected graph.
+        let inferred = if contains_pending_alternatives(&inferred)
+            && let Some(expected) = expected.map(|ty| self.normalize(ty))
+            && !contains_pending_alternatives(&expected)
+            && !contains_type_variable(&expected)
+        {
+            expected
+        } else {
+            inferred
         };
         Ok(self.record_type(expression.location, inferred))
     }
@@ -1511,8 +1513,8 @@ impl<'a> GenericInference<'a> {
                 self.value_constructors.get(&callee.location).cloned()
         {
             let expected = self.expose_named(expected);
-            let same_owner = match (self.declared_identity(&actual), self.declared_identity(&expected)) {
-                (Some(actual), Some(expected)) => actual.constructor() == expected.constructor(),
+            let same_owner = match (self.declared_constructor(&actual), self.declared_constructor(&expected)) {
+                (Some(actual), Some(expected)) => actual == expected,
                 (None, None) => true,
                 _ => false,
             };
@@ -1529,7 +1531,7 @@ impl<'a> GenericInference<'a> {
                 return Ok(result);
             }
         }
-        if self.declared_identity(&actual).is_some() {
+        if self.declared_constructor(&actual).is_some() {
             return Ok(actual);
         }
         let expected = self.expose_named(expected);

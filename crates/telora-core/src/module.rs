@@ -29,7 +29,7 @@ use crate::toml::validate_toml_registered;
 use crate::type_store::TypeStore;
 use crate::types::{
     Analysis, ModuleAnalysisContext, ModuleInterface, PartialAnalysisControl, TraitImplementation,
-    TypeDescriptor, TypeFamilyTemplate, TypeScheme, analyze_partial_types_recovered_with_query,
+    TypeDescriptor, TypeScheme, analyze_partial_types_recovered_with_query,
     analyze_program_with_bindings_observed, program_references_name, recovered_reference_locations,
 };
 use crate::vm::WorkWorld;
@@ -48,12 +48,14 @@ include!("module/data.rs");
 include!("module/artifact.rs");
 include!("module/imports.rs");
 include!("module/graph.rs");
+include!("module/static-names.rs");
 include!("module/loaded.rs");
 include!("module/host.rs");
 include!("module/engine.rs");
 include!("module/eval.rs");
 include!("module/test.rs");
 include!("module/workspace.rs");
+include!("module/type-check.rs");
 include!("module/entry.rs");
 include!("module/loader.rs");
 include!("module/prepare.rs");

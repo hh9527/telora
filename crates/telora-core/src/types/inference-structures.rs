@@ -93,7 +93,13 @@ impl InferenceVariables {
                     state[slot.0 as usize] = 1;
                     pending.push((slot, true));
                     if let Some(id) = self.known(slot) {
-                        pending.extend(self.arguments(id).iter().rev().map(|slot| (*slot, false)));
+                        // Nominal bodies are visited as separate roots. Their
+                        // recursive edges do not order structural coalescing.
+                        let arguments = self.arguments(id);
+                        let arguments = if matches!(self.constructor(id), InferenceConstructor::Declared { .. }) {
+                            &arguments[..arguments.len() - 1]
+                        } else { arguments };
+                        pending.extend(arguments.iter().rev().map(|slot| (*slot, false)));
                     }
                 }
             }

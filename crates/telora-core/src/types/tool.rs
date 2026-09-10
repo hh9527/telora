@@ -3,13 +3,14 @@ struct ToolEvaluator<'a> {
     silent_vm: Vm,
     main: &'a mut Heap,
     work: Heap,
-    inference_context: Option<ToolInferenceContext<'a>>,
-    inference_depth: usize,
+    tool_types: TypeGraph,
+    tool_type_values: crate::heap::TypeGraphMaterialization,
     registered_construction_checks: BTreeSet<PropertyKey>,
     construction_checks_complete: bool,
 }
 
 struct ToolInferenceContext<'a> {
+    types: TypeGraph,
     hir: &'a HirProgram,
     interfaces: BTreeMap<String, ModuleInterface>,
     environment: HashMap<String, TypeDescriptor>,
@@ -22,7 +23,6 @@ struct ToolInferenceContext<'a> {
     type_properties: Vec<TypePropertyEvidence>,
     trait_ids: BTreeMap<String, crate::TraitId>,
     display_trait: Option<(crate::TraitId, String)>,
-    supports_constructors: bool,
 }
 
 fn imported_dyn_namespaces(bindings: &[Binding]) -> HashSet<String> {
@@ -34,11 +34,11 @@ fn imported_dyn_namespaces(bindings: &[Binding]) -> HashSet<String> {
 
 #[derive(Default)]
 struct ToolExpressionEvidence {
-    types: TypeGraph,
+    external_names: HashSet<String>,
     expression_types: HashMap<crate::Location, ToolTypeRoot>,
     value_constructors: HashMap<crate::Location, ValueConstructor>,
     calls: HashMap<crate::Location, Vec<ResolvedEvidence>>,
-    runtime_types: BTreeMap<String, ToolTypeRoot>,
+    runtime_types: BTreeMap<String, AnalysisTypeId>,
     parameters: HashMap<crate::Location, Vec<String>>,
     lexical_types: HashMap<TypeParameterId, String>,
     inferred_scopes: HashMap<crate::Location, Vec<LexicalTypeEvidence>>,
@@ -48,35 +48,30 @@ struct ToolExpressionEvidence {
     interpolations: HashMap<crate::Location, ResolvedEvidence>,
 }
 
-// IDs always refer to the graph owned by the enclosing evidence. Intermediate
+// IDs always refer to the module's shared tool type graph. Intermediate
 // tool records can be open even after a successful inference pass; keep those
 // explicit until all consumers support an open graph snapshot.
+#[derive(Clone, Copy)]
 enum ToolTypeRoot {
     Graph(AnalysisTypeId),
-    Compatibility(TypeDescriptor),
+    OpenFunction { arity: usize, owner: Option<AnalysisTypeId> },
+    Unresolved,
 }
 
 impl ToolTypeRoot {
-    fn metadata_root(&self) -> crate::heap::TypeMetadataRoot<'_> {
-        match self {
-            Self::Graph(id) => crate::heap::TypeMetadataRoot::Graph(*id),
-            Self::Compatibility(descriptor) => crate::heap::TypeMetadataRoot::Descriptor(descriptor),
-        }
-    }
-
     #[cfg(test)]
     fn runtime_value(&self, graph: &TypeGraph, evaluator: &mut ToolEvaluator<'_>) -> Result<Val, FrontendError> {
         match self {
             Self::Graph(id) => evaluator.work.type_graph_value(Some(evaluator.main), graph, *id)
                 .map_err(|error| frontend_error("<tool-stage>", error.to_string())),
-            Self::Compatibility(descriptor) => evaluator.descriptor(descriptor),
+            _ => Err(frontend_error("<tool-stage>", "open expression shape is not a runtime type")),
         }
     }
 
     fn bound_arity(&self, graph: &TypeGraph) -> usize {
         let mut parameters = Vec::new();
         match self {
-            Self::Compatibility(descriptor) => collect_bound_parameters(descriptor, &mut parameters),
+            Self::OpenFunction { .. } | Self::Unresolved => {},
             Self::Graph(root) => {
                 let mut visited = vec![false; graph.nodes().len()];
                 let mut pending = vec![*root];
@@ -107,17 +102,29 @@ impl ToolTypeRoot {
         parameters.iter().map(|parameter| parameter.index() as usize + 1).max().unwrap_or(0)
     }
 
+    #[cfg(test)]
     fn import(graph: &mut TypeGraph, descriptor: &TypeDescriptor) -> Self {
         match graph.intern_resolved_descriptor(descriptor) {
             Some(id) => Self::Graph(id),
-            None => Self::Compatibility(descriptor.clone()),
+            None => Self::open_shape(graph, descriptor),
         }
     }
 
-    fn descriptor<'a>(&'a self, graph: &TypeGraph) -> Result<std::borrow::Cow<'a, TypeDescriptor>, String> {
+    fn open_shape(graph: &mut TypeGraph, descriptor: &TypeDescriptor) -> Self {
+        match descriptor {
+            TypeDescriptor::Function { parameters, result } => Self::OpenFunction {
+                arity: parameters.len(),
+                owner: matches!(result.as_ref(), TypeDescriptor::Declared(_))
+                    .then(|| graph.intern_resolved_descriptor(result)).flatten(),
+            },
+            _ => Self::Unresolved,
+        }
+    }
+
+    fn descriptor(&self, graph: &TypeGraph) -> Result<TypeDescriptor, String> {
         match self {
-            Self::Graph(id) => graph.descriptor(*id).map(std::borrow::Cow::Owned),
-            Self::Compatibility(descriptor) => Ok(std::borrow::Cow::Borrowed(descriptor)),
+            Self::Graph(id) => graph.descriptor(*id),
+            _ => Err("open expression shape has no solved type descriptor".into()),
         }
     }
 
@@ -127,7 +134,7 @@ impl ToolTypeRoot {
                 TypeNode::Function { parameters, .. } => Some(parameters.len()),
                 _ => None,
             },
-            Self::Compatibility(TypeDescriptor::Function { parameters, .. }) => Some(parameters.len()),
+            Self::OpenFunction { arity, .. } => Some(*arity),
             _ => None,
         }
     }
@@ -141,14 +148,8 @@ impl ToolTypeRoot {
                 };
                 matches!(graph.node(id), TypeNode::Declared { .. }).then_some(Self::Graph(id))
             }
-            Self::Compatibility(descriptor) => {
-                let descriptor = match descriptor {
-                    TypeDescriptor::Function { result, .. } if constructor => result.as_ref(),
-                    _ => descriptor,
-                };
-                matches!(descriptor, TypeDescriptor::Declared(_))
-                    .then(|| Self::Compatibility(descriptor.clone()))
-            }
+            Self::OpenFunction { owner, .. } if constructor => owner.map(Self::Graph),
+            _ => None,
         }
     }
 }
@@ -158,20 +159,46 @@ mod tool_type_root_tests {
     use super::*;
 
     #[test]
-    fn graph_metadata_batch_shares_roots_preserves_order_and_discards_failed_scratch() {
-        use crate::heap::TypeMetadataRoot as Root;
+    fn open_function_shape_reads_slots_without_rebuilding_descriptors() {
+        let mut variables = InferenceVariables::default();
+        let unknown = variables.fresh();
+        let int = variables.structure_edge(TypeDescriptor::Int);
+        let owner = variables.structure_node(InferenceConstructor::Declared {
+            head: crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 989),
+            name: "KnownOwner".into(),
+        }, &[int]);
+        let function = variables.structure_node(InferenceConstructor::Function, &[unknown, owner]);
+        let proxy = variables.fresh();
+        variables.set(proxy, TypeDescriptor::Inference(function));
+        let mut graph = TypeGraph::default();
+        let mut publication = InferencePublication::new(&variables);
+        let shape = publication.publish_tool_root(&mut graph, proxy,
+            |_| panic!("open function shape must not rebuild a descriptor"));
+        assert_eq!(shape.arity(&graph), Some(1));
+        assert!(shape.descriptor(&graph).is_err());
+        let resolved_owner = shape.owner(&graph, true).expect("independently solved owner");
+        assert!(matches!(resolved_owner, ToolTypeRoot::Graph(_)));
+        assert_eq!(graph.nodes().len(), 2);
+    }
+
+    #[test]
+    fn graph_metadata_batches_share_results_and_discard_failed_provisional_slots() {
         let mut graph = TypeGraph::default();
         let int = graph.intern_node(TypeNode::Int);
         let shared = graph.intern_node(TypeNode::Array(int));
         let pair = graph.intern_node(TypeNode::Tuple(vec![shared, shared]));
+        let string = graph.intern_node(TypeNode::String);
         let invalid = graph.push(TypeNode::Pending);
         graph.finish_reserved_node(invalid, TypeNode::Array(invalid));
+        let invalid_owner = graph.intern_declared_body(
+            crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 992),
+            "Invalid".into(), invalid);
         let mut main = Heap::main();
         let mut evaluator = ToolEvaluator::new(Arc::new(DiscardDebugSink), &mut main);
-        let values = evaluator.work.type_graph_values(Some(evaluator.main), &graph, [
-            Root::Graph(shared), Root::Descriptor(&TypeDescriptor::String),
-            Root::Graph(pair), Root::Graph(shared),
-        ]).unwrap();
+        let mut materialized = crate::heap::TypeGraphMaterialization::default();
+        let values = evaluator.work.type_graph_values_in(Some(evaluator.main), &graph, [
+            shared, string, pair, shared,
+        ], &mut materialized).unwrap();
         assert_eq!(values[0].value(), values[3].value());
         for (value, expected) in values.iter().zip([
             TypeDescriptor::Array(Box::new(TypeDescriptor::Int)), TypeDescriptor::String,
@@ -181,13 +208,20 @@ mod tool_type_root_tests {
             let (decoded, id) = evaluator.decode_type_graph(*value, "Type").unwrap();
             assert_eq!(decoded.descriptor(id).unwrap(), expected);
         }
-        assert!(evaluator.work.type_graph_values(Some(evaluator.main), &graph,
-            [Root::Graph(shared), Root::Graph(invalid)]).is_err());
-        let next = evaluator.work.type_graph_values(Some(evaluator.main), &graph,
-            [Root::Graph(pair)]).unwrap();
+        let reused = evaluator.work.type_graph_values_in(Some(evaluator.main), &graph,
+            [pair], &mut materialized).unwrap();
+        assert_eq!(reused[0].value(), values[2].value());
+        assert!(evaluator.work.type_graph_values_in(Some(evaluator.main), &graph,
+            [shared, invalid], &mut materialized).is_err());
+        for _ in 0..2 {
+            assert!(evaluator.work.type_graph_values_in(Some(evaluator.main), &graph,
+                [invalid_owner], &mut materialized).is_err());
+        }
+        let next = evaluator.work.type_graph_values_in(Some(evaluator.main), &graph,
+            [pair], &mut materialized).unwrap();
         let (decoded, id) = evaluator.decode_type_graph(next[0], "Type").unwrap();
         assert_eq!(decoded.descriptor(id).unwrap(), graph.descriptor(pair).unwrap());
-        assert!(evaluator.work.type_graph_values(Some(evaluator.main), &graph, []).unwrap().is_empty());
+        assert!(evaluator.work.type_graph_values_in(Some(evaluator.main), &graph, [], &mut materialized).unwrap().is_empty());
     }
 
     #[test]
@@ -271,6 +305,8 @@ mod tool_type_root_tests {
 
     #[test]
     fn open_function_evidence_keeps_arity_without_claiming_a_final_type() {
+        fn assert_copy<T: Copy>() {}
+        assert_copy::<ToolTypeRoot>();
         let mut variables = InferenceVariables::default();
         let slot = variables.fresh();
         let descriptor = TypeDescriptor::Function {
@@ -279,11 +315,24 @@ mod tool_type_root_tests {
         };
         let mut graph = TypeGraph::default();
         let root = ToolTypeRoot::import(&mut graph, &descriptor);
-        assert!(matches!(root, ToolTypeRoot::Compatibility(_)));
+        assert!(matches!(root, ToolTypeRoot::OpenFunction { arity: 1, owner: None }));
         assert_eq!(root.arity(&graph), Some(1));
         assert!(root.owner(&graph, true).is_none());
-        assert_eq!(root.descriptor(&graph).unwrap().as_ref(), &descriptor);
+        assert!(root.descriptor(&graph).is_err());
         assert_eq!(graph.nodes().len(), 0);
+
+        let owner = TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 988),
+            name: "KnownOwner".into(), body: Arc::new(TypeDescriptor::Newtype(Box::new(TypeDescriptor::Int))),
+        });
+        let constructor = ToolTypeRoot::import(&mut graph, &TypeDescriptor::Function {
+            parameters: vec![TypeDescriptor::Inference(slot)], result: Box::new(owner.clone()),
+        });
+        assert_eq!(constructor.arity(&graph), Some(1));
+        assert!(constructor.descriptor(&graph).is_err());
+        assert!(constructor.owner(&graph, false).is_none());
+        let resolved_owner = constructor.owner(&graph, true).expect("known owner retained independently");
+        assert_eq!(resolved_owner.descriptor(&graph).unwrap(), owner);
     }
 }
 
@@ -316,6 +365,7 @@ impl<'a> ToolInferenceContext<'a> {
     }
 
     fn new(
+        types: TypeGraph,
         hir: &'a HirProgram,
         interfaces: BTreeMap<String, ModuleInterface>,
         environment: HashMap<String, TypeDescriptor>,
@@ -333,9 +383,10 @@ impl<'a> ToolInferenceContext<'a> {
         let display_trait = interfaces.values().find_map(|interface| interface.display_trait)
             .map(|id| (id, "std/fmt.Display".to_owned()));
         let mut context = Self {
+            types,
             hir, interfaces, environment, schemes, named_types, builtin_tuple_available,
             dyn_namespaces, declared_bodies: HashMap::new(), trait_implementations,
-            type_properties, trait_ids, display_trait, supports_constructors: false,
+            type_properties, trait_ids, display_trait,
         };
         context.prepare_declarations();
         context
@@ -349,61 +400,9 @@ impl<'a> ToolInferenceContext<'a> {
             .chain(self.interfaces.values().flat_map(|interface| interface.exports.values().map(|scheme| &scheme.body)))
         {
             collect_declared_bodies(descriptor, &mut self.declared_bodies, &mut HashSet::new());
-            self.supports_constructors |= tool_constructor_type(descriptor);
         }
     }
 
-    fn publish_binding(
-        &mut self,
-        name: &str,
-        descriptor: Option<&TypeDescriptor>,
-        scheme: Option<&TypeScheme>,
-        named_type: Option<&TypeDescriptor>,
-    ) {
-        if let Some(descriptor) = descriptor {
-            self.environment.insert(name.into(), descriptor.clone());
-            collect_declared_bodies(descriptor, &mut self.declared_bodies, &mut HashSet::new());
-            self.supports_constructors |= tool_constructor_type(descriptor);
-        } else {
-            self.environment.remove(name);
-        }
-        if let Some(scheme) = scheme {
-            self.schemes.insert(name.into(), scheme.clone());
-            collect_declared_bodies(&scheme.body, &mut self.declared_bodies, &mut HashSet::new());
-            self.supports_constructors |= tool_constructor_type(&scheme.body);
-        } else {
-            self.schemes.remove(name);
-        }
-        if let Some(descriptor) = named_type {
-            self.named_types.insert(name.into(), descriptor.clone());
-        }
-    }
-
-    fn publish_type(&mut self, name: &str, descriptor: &TypeDescriptor, scheme: Option<&TypeScheme>) {
-        let (witness, body) = if let Some(scheme) = scheme {
-            self.schemes.insert(name.into(), scheme.clone());
-            let body = match &scheme.body {
-                TypeDescriptor::Function { result, .. } => match result.as_ref() {
-                    TypeDescriptor::TypeOf(body) => body.as_ref(),
-                    _ => descriptor,
-                },
-                _ => descriptor,
-            };
-            (scheme.body.clone(), body.clone())
-        } else {
-            (TypeDescriptor::TypeOf(Box::new(descriptor.clone())), descriptor.clone())
-        };
-        self.publish_binding(name, Some(&witness), scheme, Some(&body));
-    }
-}
-
-fn tool_constructor_type(descriptor: &TypeDescriptor) -> bool {
-    let owner = constructor_instance_type(descriptor).unwrap_or(descriptor);
-    let body = match owner {
-        TypeDescriptor::Declared(declared) => declared.body.as_ref(),
-        ty => ty,
-    };
-    matches!(body, TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_))
 }
 
 impl<'a> ToolEvaluator<'a> {
@@ -414,38 +413,10 @@ impl<'a> ToolEvaluator<'a> {
             silent_vm: Vm::new().with_debug_sink(Arc::new(DiscardDebugSink)),
             main,
             work,
-            inference_context: None,
-            inference_depth: 0,
+            tool_types: TypeGraph::default(),
+            tool_type_values: crate::heap::TypeGraphMaterialization::default(),
             registered_construction_checks: BTreeSet::new(),
             construction_checks_complete: false,
-        }
-    }
-
-    fn refresh_inference_context(
-        &mut self,
-        environment: &HashMap<String, TypeDescriptor>,
-        schemes: &HashMap<String, TypeScheme>,
-        declared_types: &BTreeMap<String, TypeDescriptor>,
-    ) {
-        if let Some(context) = &mut self.inference_context {
-            context.environment.clone_from(environment);
-            context.schemes.clone_from(schemes);
-            context.named_types = context.interfaces.values()
-                .flat_map(|interface| interface.concrete_types.clone())
-                .chain(declared_types.clone()).collect();
-            context.prepare_declarations();
-        }
-    }
-
-    fn publish_inference_binding(
-        &mut self,
-        name: &str,
-        environment: &HashMap<String, TypeDescriptor>,
-        schemes: &HashMap<String, TypeScheme>,
-        declared_types: &BTreeMap<String, TypeDescriptor>,
-    ) {
-        if let Some(context) = &mut self.inference_context {
-            context.publish_binding(name, environment.get(name), schemes.get(name), declared_types.get(name));
         }
     }
 
@@ -519,10 +490,6 @@ impl<'a> ToolEvaluator<'a> {
             .map_err(|error| frontend_error("<tool-stage>", error.to_string()))?;
         publish_root(self.main, &self.work, root)
             .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
-    }
-
-    fn decode_type(&self, value: Val, path: &str) -> Result<TypeDescriptor, String> {
-        decode_type_ref(ValueRef::work(value, &self.work, self.main), path)
     }
 
     fn declared_type_id(&self, value: Val) -> Result<TypeId, FrontendError> {
@@ -618,6 +585,7 @@ impl<'a> ToolEvaluator<'a> {
         self.main.persistent_type_property(target, property)
     }
 
+    #[cfg(test)]
     fn decode_type_graph(
         &self,
         value: Val,
@@ -708,7 +676,6 @@ impl<'a> ToolEvaluator<'a> {
 struct RecursiveTypeFamilyBuild {
     family_value: Val,
     family: TypeFamilyTemplate,
-    scheme: TypeScheme,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -718,36 +685,16 @@ fn build_recursive_type_family(
     declaration: u32,
     binding: &Binding,
     base_bindings: &dyn ToolBindings,
-    account: &mut QuotaAccount,
-    sources: &SourceDatabase,
+    parameters: &[TypeParameter],
+    rebuild_at_runtime: bool,
     evaluator: &mut ToolEvaluator<'_>,
-    solved: Option<(&TypeGraph, &SolvedRecursiveType)>,
+    solved: (&TypeGraph, &SolvedRecursiveType),
 ) -> Result<RecursiveTypeFamilyBuild, FrontendError> {
     let mut evaluation_bindings = ScopedToolBindings::new(base_bindings);
-    let mut parameters = Vec::new();
-    let mut parameter_names = HashSet::new();
-    for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
-        if !parameter_names.insert(parameter.value.as_str()) {
-            return Err(FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(
-                    format!("duplicate type parameter {:?}", parameter.value),
-                    parameter.location,
-                ),
-            ));
-        }
-        let id = TypeParameterId(
-            u32::try_from(index)
-                .map_err(|_| frontend_error(source_name, "type family has too many parameters"))?,
-        );
-        parameters.push(TypeParameter {
-            id,
-            name: parameter.value.clone(),
-            location: parameter.location,
-        });
+    for parameter in parameters {
         evaluation_bindings.insert(
-            parameter.value.clone(),
-            evaluator.descriptor(&TypeDescriptor::Bound(id))?,
+            parameter.name.clone(),
+            evaluator.descriptor(&TypeDescriptor::Bound(parameter.id))?,
         );
     }
     let constructor = NominalTypeConstructor {
@@ -758,92 +705,26 @@ fn build_recursive_type_family(
         name: binding.value.name.value.clone(),
     };
     let (symbolic_root, self_family) =
-        evaluator.reserve_recursive_type_family(&constructor, &parameters)?;
+        evaluator.reserve_recursive_type_family(&constructor, parameters)?;
     evaluation_bindings.insert(binding.value.name.value.clone(), self_family);
-    let body = if let Some((graph, solved)) = solved {
-        validate_declared_graph(source_name, binding, graph, solved.body)?;
-        materialize_type_body(Some(solved.body), graph, binding, source_name,
-            &evaluation_bindings, account, sources, evaluator)?.0
-    } else {
-        let body = evaluate_tool_expression(source_name, &binding.value.value,
-            &evaluation_bindings, account, sources, evaluator)?;
-        validate_declared_metadata(source_name, binding, body, evaluator)?;
-        body
-    };
+    let (graph, solved) = solved;
+    let body = materialize_type_body(solved.body, graph, binding, source_name,
+        &evaluation_bindings, evaluator)?.0;
     evaluator
         .work
         .seal_type_ref(symbolic_root, body)
         .map_err(|error| frontend_error(source_name, error.to_string()))?;
-    let decoded;
-    let (graph, root) = if let Some((graph, solved)) = solved {
-        (graph, solved.owner)
-    } else {
-        decoded = evaluator
-            .decode_type_graph(symbolic_root, "Type")
-            .map_err(|message| {
-                frontend_error(
-                    source_name,
-                    format!(
-                        "type family {} produced invalid metadata: {message}",
-                        binding.value.name.value
-                    ),
-                )
-            })?;
-        (&decoded.0, decoded.1)
-    };
-    let descriptor = graph.descriptor(root).map_err(|message| {
-        frontend_error(
-            source_name,
-            format!(
-                "type family {} produced invalid metadata: {message}",
-                binding.value.name.value
-            ),
-        )
-    })?;
-    let mut bounds = Vec::new();
-    collect_bound_parameters(&descriptor, &mut bounds);
-    if let Some(foreign) = bounds
-        .iter()
-        .find(|bound| !parameters.iter().any(|parameter| parameter.id == **bound))
-    {
-        return Err(FrontendError::from_diagnostic(
-            sources,
-            Diagnostic::error(
-                format!(
-                    "type family {} produced foreign bound parameter T{}",
-                    binding.value.name.value, foreign.0
-                ),
-                binding.value.value.location,
-            ),
-        ));
-    }
     let (family_value, template, root) =
         evaluator.create_type_family(symbolic_root, parameters.len(), None)?;
     let family = TypeFamilyTemplate {
-        parameters: parameters.clone(),
         template,
         root,
-        rebuild_at_runtime: contains_named_type(&descriptor),
+        rebuild_at_runtime,
         constructor: Some(constructor),
-    };
-    let scheme = TypeScheme {
-        parameters,
-        constraints: Vec::new(),
-        body: TypeDescriptor::Function {
-            parameters: family
-                .parameters
-                .iter()
-                .map(|parameter| {
-                    TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Bound(parameter.id)))
-                })
-                .collect(),
-            result: Box::new(TypeDescriptor::TypeOf(Box::new(descriptor.clone()))),
-        },
     };
     Ok(RecursiveTypeFamilyBuild {
         family_value,
         family,
-        scheme,
     })
 }
 
@@ -965,523 +846,4 @@ fn native_type_argument_descriptor(
             error.message
         ))
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_nested_annotation_types(
-    source_name: &str,
-    expression: &Expr,
-    bindings: &dyn ToolBindings,
-    account: &mut QuotaAccount,
-    sources: &SourceDatabase,
-    debug_sink: &mut ToolEvaluator,
-    annotations: &mut HashMap<crate::Location, TypeDescriptor>,
-) -> Result<(), FrontendError> {
-    match &expression.value {
-        ExprKind::InterpolatedString(parts) => {
-            for part in parts {
-                if let StringPartKind::Expression(expression) = &part.value {
-                    collect_nested_annotation_types(
-                        source_name,
-                        expression,
-                        bindings,
-                        account,
-                        sources,
-                        debug_sink,
-                        annotations,
-                    )?;
-                }
-            }
-        }
-        ExprKind::Array(items) | ExprKind::Tuple(items) => {
-            for item in items {
-                collect_nested_annotation_types(
-                    source_name,
-                    item,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                    annotations,
-                )?;
-            }
-        }
-        ExprKind::TypeMetadata(operand) => {
-            let mut target = operand.as_ref();
-            while let ExprKind::TypeSyntax(inner) = &target.value { target = inner; }
-            let metadata = if let ExprKind::Variable(name) = &target.value
-                && let Some(value) = bindings.get(&name.value)
-            { *value } else {
-                evaluate_tool_expression(source_name, operand, bindings, account, sources, debug_sink)?
-            };
-            let descriptor = debug_sink.decode_type(metadata, "Type").map_err(|message| {
-                FrontendError::from_diagnostic(sources, Diagnostic::error(message, expression.location))
-            })?;
-            annotations.insert(expression.location, descriptor);
-        }
-        ExprKind::TypeSyntax(operand) | ExprKind::Spread(operand) => collect_nested_annotation_types(
-            source_name,
-            operand,
-            bindings,
-            account,
-            sources,
-            debug_sink,
-            annotations,
-        )?,
-        ExprKind::Dict(fields) => {
-            for field in fields {
-                collect_nested_annotation_types(
-                    source_name,
-                    &field.value.value,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                    annotations,
-                )?;
-            }
-        }
-        ExprKind::Block(block) => {
-            collect_block_annotation_types(
-                source_name,
-                block,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-                annotations,
-            )?;
-        }
-        ExprKind::Closure {
-            parameters,
-            result_annotation,
-            body,
-        } => {
-            for annotation in parameters
-                .iter()
-                .filter_map(|parameter| parameter.annotation.as_ref())
-                .chain(result_annotation.as_deref())
-            {
-                let metadata = evaluate_tool_expression(
-                    source_name,
-                    annotation,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                )?;
-                let descriptor = debug_sink
-                    .decode_type(metadata, "Type")
-                    .map_err(|message| {
-                        FrontendError::from_diagnostic(
-                            sources,
-                            Diagnostic::error(
-                                format!("closure annotation is invalid: {message}"),
-                                annotation.location,
-                            ),
-                        )
-                    })?;
-                annotations.insert(annotation.location, descriptor);
-            }
-            collect_block_annotation_types(
-                source_name,
-                body,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-                annotations,
-            )?;
-        }
-        ExprKind::Unary { operand, .. }
-        | ExprKind::FieldProjection { receiver: operand, .. }
-        | ExprKind::Propagate { operand }
-        | ExprKind::Field {
-            receiver: operand, ..
-        }
-        | ExprKind::TupleProjection {
-            receiver: operand, ..
-        } => {
-            collect_nested_annotation_types(
-                source_name,
-                operand,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-                annotations,
-            )?;
-        }
-        ExprKind::Return { value } => collect_nested_annotation_types(
-            source_name,
-            value,
-            bindings,
-            account,
-            sources,
-            debug_sink,
-            annotations,
-        )?,
-        ExprKind::Panic { message } => collect_nested_annotation_types(
-            source_name,
-            message,
-            bindings,
-            account,
-            sources,
-            debug_sink,
-            annotations,
-        )?,
-        ExprKind::Raise { message, subjects, .. } => {
-            for value in std::iter::once(message.as_ref()).chain(subjects.iter()) {
-                collect_nested_annotation_types(source_name, value, bindings, account,
-                    sources, debug_sink, annotations)?;
-            }
-        },
-        ExprKind::Debug { value, .. } => collect_nested_annotation_types(
-            source_name,
-            value,
-            bindings,
-            account,
-            sources,
-            debug_sink,
-            annotations,
-        )?,
-        ExprKind::TypeAscription { value, target } | ExprKind::CheckedCast { value, target } => {
-            collect_nested_annotation_types(
-                source_name,
-                value,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-                annotations,
-            )?;
-            let metadata = evaluate_tool_expression(
-                source_name,
-                target,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-            )?;
-            let descriptor = debug_sink
-                .decode_type(metadata, "Type")
-                .map_err(|message| {
-                    FrontendError::from_diagnostic(
-                        sources,
-                        Diagnostic::error(
-                            format!("type target is invalid: {message}"),
-                            target.location,
-                        ),
-                    )
-                })?;
-            annotations.insert(target.location, descriptor);
-        }
-        ExprKind::DynProject {
-            namespace,
-            target,
-            value,
-        } => {
-            for expression in [namespace.as_ref(), value.as_ref()] {
-                collect_nested_annotation_types(
-                    source_name,
-                    expression,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                    annotations,
-                )?;
-            }
-            let metadata = evaluate_tool_expression(
-                source_name,
-                target,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-            )?;
-            let descriptor = debug_sink
-                .decode_type(metadata, "Type")
-                .map_err(|message| {
-                    FrontendError::from_diagnostic(
-                        sources,
-                        Diagnostic::error(
-                            format!("Dyn projection target is invalid: {message}"),
-                            target.location,
-                        ),
-                    )
-                })?;
-            annotations.insert(target.location, descriptor);
-        }
-        ExprKind::Binary { left, right, .. } => {
-            for expression in [left.as_ref(), right.as_ref()] {
-                collect_nested_annotation_types(
-                    source_name,
-                    expression,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                    annotations,
-                )?;
-            }
-        }
-        ExprKind::Index { receiver, index } => {
-            for expression in [receiver.as_ref(), index.as_ref()] {
-                collect_nested_annotation_types(
-                    source_name,
-                    expression,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                    annotations,
-                )?;
-            }
-        }
-        ExprKind::Call { callee, arguments } => {
-            collect_nested_annotation_types(
-                source_name,
-                callee,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-                annotations,
-            )?;
-            for argument in arguments {
-                collect_nested_annotation_types(
-                    source_name,
-                    argument,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                    annotations,
-                )?;
-            }
-        }
-        ExprKind::TypeApply { callee, arguments } => {
-            collect_nested_annotation_types(
-                source_name,
-                callee,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-                annotations,
-            )?;
-            for argument in arguments {
-                let TypeArgumentKind::Explicit(expression) = &argument.value else {
-                    continue;
-                };
-                let metadata = evaluate_tool_expression(
-                    source_name,
-                    expression,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                )?;
-                let descriptor = debug_sink
-                    .decode_type(metadata, "Type")
-                    .map_err(|message| {
-                        FrontendError::from_diagnostic(
-                            sources,
-                            Diagnostic::error(
-                                format!("type argument is invalid: {message}"),
-                                expression.location,
-                            ),
-                        )
-                    })?;
-                annotations.insert(expression.location, descriptor);
-            }
-        }
-        ExprKind::Interpreter { operand, .. } => collect_nested_annotation_types(
-            source_name,
-            operand,
-            bindings,
-            account,
-            sources,
-            debug_sink,
-            annotations,
-        )?,
-        ExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_nested_annotation_types(
-                source_name,
-                condition,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-                annotations,
-            )?;
-            for block in [then_branch, else_branch] {
-                collect_block_annotation_types(
-                    source_name,
-                    block,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                    annotations,
-                )?;
-            }
-        }
-        ExprKind::IfLet {
-            value,
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            collect_nested_annotation_types(
-                source_name,
-                value,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-                annotations,
-            )?;
-            for block in [then_branch, else_branch] {
-                collect_block_annotation_types(
-                    source_name,
-                    block,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                    annotations,
-                )?;
-            }
-        }
-        ExprKind::LetElse {
-            value,
-            else_branch,
-            body,
-            ..
-        } => {
-            collect_nested_annotation_types(
-                source_name,
-                value,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-                annotations,
-            )?;
-            for block in [else_branch, body] {
-                collect_block_annotation_types(
-                    source_name,
-                    block,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                    annotations,
-                )?;
-            }
-        }
-        ExprKind::Match { value, arms } => {
-            collect_nested_annotation_types(
-                source_name,
-                value,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-                annotations,
-            )?;
-            for arm in arms {
-                if let Some(guard) = &arm.value.guard {
-                    collect_nested_annotation_types(
-                        source_name,
-                        guard,
-                        bindings,
-                        account,
-                        sources,
-                        debug_sink,
-                        annotations,
-                    )?;
-                }
-                collect_nested_annotation_types(
-                    source_name,
-                    &arm.value.value,
-                    bindings,
-                    account,
-                    sources,
-                    debug_sink,
-                    annotations,
-                )?;
-            }
-        }
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::String(_)
-        | ExprKind::Bytes(_)
-        | ExprKind::Atom(_)
-        | ExprKind::Variable(_) => {}
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_block_annotation_types(
-    source_name: &str,
-    block: &Block,
-    bindings: &dyn ToolBindings,
-    account: &mut QuotaAccount,
-    sources: &SourceDatabase,
-    debug_sink: &mut ToolEvaluator,
-    annotations: &mut HashMap<crate::Location, TypeDescriptor>,
-) -> Result<(), FrontendError> {
-    for binding in &block.value.bindings {
-        if let Some(annotation) = &binding.value.annotation {
-            let metadata = evaluate_tool_expression(
-                source_name,
-                annotation,
-                bindings,
-                account,
-                sources,
-                debug_sink,
-            )?;
-            let descriptor = debug_sink
-                .decode_type(metadata, "Type")
-                .map_err(|message| {
-                    FrontendError::from_diagnostic(
-                        sources,
-                        Diagnostic::error(
-                            format!(
-                                "annotation on {} is invalid: {message}",
-                                binding.value.name.value
-                            ),
-                            annotation.location,
-                        ),
-                    )
-                })?;
-            annotations.insert(annotation.location, descriptor);
-        }
-        collect_nested_annotation_types(
-            source_name,
-            &binding.value.value,
-            bindings,
-            account,
-            sources,
-            debug_sink,
-            annotations,
-        )?;
-    }
-    collect_nested_annotation_types(
-        source_name,
-        &block.value.result,
-        bindings,
-        account,
-        sources,
-        debug_sink,
-        annotations,
-    )
 }

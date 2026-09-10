@@ -109,6 +109,10 @@ pub(crate) fn analyze_program_with_bindings(
     let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
     let mut tool_heap = Heap::main();
     let mut type_store = TypeStore::default();
+    let external_interfaces = external_values.iter().map(|(name, value)| {
+        value.static_interface(name).map(|interface| (name.clone(), interface))
+            .ok_or_else(|| frontend_error(source_name, format!("Host binding {name:?} requires an explicit type interface")))
+    }).collect::<Result<BTreeMap<_, _>, _>>()?;
     let external_roots = external_values
         .iter()
         .map(|(name, value)| {
@@ -128,7 +132,7 @@ pub(crate) fn analyze_program_with_bindings(
         dynamic_bindings,
         sources,
         external_provenance,
-        &BTreeMap::new(),
+        &external_interfaces,
         &debug_sink,
         &mut tool_heap,
         &mut type_store,
@@ -152,6 +156,33 @@ pub(crate) fn analyze_program_with_bindings_observed(
     type_store: &mut TypeStore,
 ) -> Result<Analysis, FrontendError> {
     account.register_sources(sources);
+    let external_names = external_roots.keys().cloned().collect();
+    let hir = resolve_module_hir(program, &external_names,
+        external_interfaces.iter().filter(|(name, interface)|
+            interface.value_binding.as_deref() == Some(name.as_str())
+                && interface.member_constructors.contains_key(*name))
+            .map(|(name, _)| name.clone()).collect());
+    let solved = solve_module_plan(source_name, module_id, module_context, program,
+        hir, &external_names, sources, external_provenance, external_interfaces,
+        account.query_context(), type_store)?;
+    execute_module_plan(source_name, module_id, program, solved, account,
+        external_roots, dynamic_bindings, sources, debug_sink, tool_heap)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn solve_module_plan<'a>(
+    source_name: &str,
+    module_id: crate::ModuleId,
+    module_context: ModuleAnalysisContext,
+    program: &'a Program,
+    hir: HirProgram,
+    external_names: &BTreeSet<String>,
+    sources: &SourceDatabase,
+    external_provenance: &BTreeMap<String, Provenance>,
+    external_interfaces: &BTreeMap<String, ModuleInterface>,
+    query: Option<crate::query::QueryContext>,
+    type_store: &mut TypeStore,
+) -> Result<SolvedModulePlan<'a>, FrontendError> {
     let prelude = BootstrapPrelude::new();
     let authored_names = program
         .value
@@ -167,29 +198,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
         })
         .map(|binding| binding.value.name.value.as_str())
         .collect::<HashSet<_>>();
-    let hir = HirProgram::resolve_with_member_constructors(
-        program,
-        prelude
-            .types
-            .keys()
-            .filter(|name| !external_roots.contains_key(*name))
-            .chain(external_roots.keys())
-            .cloned()
-            .collect::<Vec<_>>(),
-        external_interfaces.iter().filter(|(name, interface)|
-            interface.value_binding.as_deref() == Some(name.as_str())
-                && interface.member_constructors.contains_key(*name))
-            .map(|(name, _)| name.clone()).collect(),
-    );
     let prelude_value_names = prelude
         .types
         .keys()
-        .filter(|name| !external_roots.contains_key(*name))
+        .filter(|name| !external_names.contains(*name))
         .filter(|name| !authored_names.contains(name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
     let mut boundary = TypeBoundary::new(&hir, external_interfaces);
-    boundary.external_data.extend(external_roots.keys().cloned());
+    boundary.external_data.extend(external_names.iter().cloned());
     boundary.bindings(&program.value.body.value.bindings);
     if program.value.authored_result { boundary.data_expression(&program.value.body.value.result); }
     if let Some(diagnostic) = boundary.diagnostics.first().cloned() {
@@ -204,22 +221,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         types: mut static_environment,
         schemes: mut binding_schemes,
     } = prelude;
-    let cached_bootstrap_root = tool_heap.bootstrap_root();
-    let mut evaluator = ToolEvaluator::new(Arc::clone(debug_sink), tool_heap);
-    let mut tool_values = if let Some(root) = cached_bootstrap_root {
-        prelude_value_names
-            .iter()
-            .map(|name| {
-                let value = root
-                    .export_get(evaluator.main, name)
-                    .expect("bootstrap exports root is a Dict")
-                    .unwrap_or_else(|| panic!("bootstrap exports root is missing {name:?}"));
-                (name.clone(), value.runtime())
-            })
-            .collect()
-    } else {
-        evaluator.install_bootstrap()?
-    };
     let mut declared_types = BTreeMap::new();
     let mut binding_types = BTreeMap::new();
     let mut declared_type_spans = HashMap::new();
@@ -237,7 +238,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .checked_add(1)
             .expect("type constructor slot exceeds u32");
     }
-    stage_pending_construction_checks(module_id, program, &declared_initializer_slots, &mut evaluator)?;
     let trait_ids = program
         .value
         .body
@@ -293,23 +293,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
         })
         .map(|binding| binding.value.name.value.as_str())
         .collect::<HashSet<_>>();
-    for (name, root) in external_roots {
+    for name in external_names {
         if authored_names.contains(name.as_str()) {
             continue;
         }
         let interface = qualified_external_interfaces.get(name);
-        let scheme = interface
-            .and_then(ModuleInterface::binding_scheme)
-            .or_else(|| qualified_external_interfaces.values()
-                .flat_map(|interface| &interface.trait_implementations)
-                .find(|implementation| implementation.dictionary == *name)
-                .map(|implementation| &implementation.dictionary_scheme))
-            .cloned();
-        tool_values.insert(name.clone(), root.runtime());
-        let inferred = scheme.as_ref().map(|scheme| scheme.body.clone()).or_else(|| imported_static_descriptor(
-            ValueRef::persistent(*root, evaluator.main),
-            interface,
-        )).ok_or_else(|| frontend_error(source_name, format!("Host binding {name:?} requires an explicit type interface")))?;
+        let scheme = imported_binding_contract(name, &qualified_external_interfaces);
+        let inferred = scheme.as_ref().map(|scheme| scheme.body.clone())
+            .or_else(|| interface.and_then(imported_interface_descriptor))
+            .ok_or_else(|| frontend_error(source_name, format!("Host binding {name:?} requires an explicit type interface")))?;
         static_environment.insert(name.clone(), inferred.clone());
         binding_types.insert(name.clone(), inferred);
         if let Some(scheme) = scheme {
@@ -320,141 +312,42 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .values()
         .flat_map(|interface| interface.concrete_types.clone())
         .collect::<BTreeMap<_, _>>();
-    validate_export_references(program, prelude_names.iter(), external_roots, sources)?;
+    validate_export_references(program, prelude_names.iter(), external_names.iter(), sources)?;
 
     for binding in &program.value.body.value.bindings {
         if binding.value.kind == BindingKind::NativeType {
             let name = &binding.value.name.value;
-            let root = external_roots.get(name).ok_or_else(|| {
-                frontend_error(source_name, format!("native type {name} has not been linked"))
-            })?;
-            let descriptor = evaluator
-                .decode_type(root.runtime(), "Type")
+            let descriptor = native_type_contract(name, &qualified_external_interfaces)
                 .map_err(|message| frontend_error(source_name, message))?;
-            tool_values.insert(name.clone(), root.runtime());
             let witness = TypeDescriptor::TypeOf(Box::new(descriptor.clone()));
             declared_types.insert(name.clone(), descriptor);
             static_environment.insert(name.clone(), witness.clone());
-            binding_types.insert(name.clone(), witness);
+            binding_types.insert(name.clone(), witness.clone());
+            binding_schemes.insert(name.clone(), TypeScheme {
+                parameters: Vec::new(), constraints: Vec::new(), body: witness,
+            });
             continue;
         }
         if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
-            let name = binding.value.name.value.clone();
-            let pending = evaluator.descriptor(&TypeDescriptor::Named(name.clone()))?;
-            tool_values.insert(name, pending);
             static_environment.insert(binding.value.name.value.clone(), TypeDescriptor::Type);
             binding_types.insert(binding.value.name.value.clone(), TypeDescriptor::Type);
         }
     }
 
-    for name in dynamic_bindings {
-        if !external_roots.contains_key(name) {
-            return Err(frontend_error(
-                source_name,
-                format!("dynamic binding {name:?} has no value"),
-            ));
-        }
-    }
-
-    // Definition contracts are evaluated before the source-order binding pass.
-    // Make resolved imports available at that same tool stage so selectively
-    // imported TypeMetadata can be used directly as a contract.
-    for binding in &program.value.body.value.bindings {
-        if binding.value.kind != BindingKind::Import {
-            continue;
-        }
-        let name = &binding.value.name.value;
-        let value = external_roots.get(name).copied().ok_or_else(|| {
-            frontend_error(source_name, format!("import {name} has not been resolved"))
-        })?;
-        tool_values.insert(name.clone(), value.runtime());
-    }
-
     let type_bindings = type_definition_bindings(&hir, &program.value.body.value.bindings);
-    evaluator.inference_context = Some(ToolInferenceContext::new(
-        &hir, qualified_external_interfaces.clone(), static_environment.clone(),
-        binding_schemes.clone(), imported_named_types.clone().into_iter().chain(declared_types.clone()).collect(),
-        !external_roots.contains_key("Tuple"),
-        imported_dyn_namespaces(&program.value.body.value.bindings),
-    ));
     let type_definitions = type_bindings.keys().copied().collect::<HashSet<_>>();
     let type_dependencies = type_dependency_graph(&hir, &type_definitions);
     let dependency_plan = TypeDependencyPlan::new(&type_dependencies);
-    for node in &type_dependencies.nodes {
-        let binding = type_bindings[&node.definition];
-        if binding.value.type_parameters.is_empty()
-            && binding.value.declared_initializer.is_some()
-            && dependency_plan.is_cyclic(node.definition)
-        {
-            let name = binding.value.name.value.clone();
-            let value = evaluator.descriptor(&TypeDescriptor::Named(name.clone()))?;
-            tool_values.insert(name, value);
-        }
-    }
-    let contract_type_definitions = program
-        .value
-        .body
-        .value
-        .bindings
-        .iter()
-        .filter(|binding| {
-            matches!(
-                binding.value.kind,
-                BindingKind::Decl | BindingKind::Native | BindingKind::Impl
-            )
-                || binding.value.kind == BindingKind::Def && binding.value.annotation.is_some()
-        })
-        .filter_map(|binding| binding.value.annotation.as_ref())
-        .flat_map(|annotation| hir.expression_ids_at(annotation.location))
-        .flat_map(|root| expression_dependencies(&hir, root))
-        .filter(|definition| type_definitions.contains(definition))
-        .collect::<Vec<_>>();
-    let family_definitions = type_bindings
-        .iter()
-        .filter(|(_, binding)| !binding.value.type_parameters.is_empty())
-        .map(|(definition, _)| *definition)
-        .collect::<Vec<_>>();
-    let mut scheduled_types = BTreeSet::new();
-    let mut frontier = family_definitions;
-    let helper_dependent_types = type_definitions
-        .iter()
-        .copied()
-        .filter(|definition| {
-            type_definition_dependencies(&hir, *definition).iter().any(|dependency| {
-                hir.definition(*dependency).is_some_and(|dependency| {
-                    dependency.top_level
-                        && matches!(dependency.kind, HirDefinitionKind::Let | HirDefinitionKind::DefinitionSlot)
-                })
-            })
-        })
-        .collect::<Vec<_>>();
-    // Resolve forward type references before publishing metadata. Types that
-    // execute local value helpers remain in the source-order tool pass.
-    let helper_dependents = dependency_plan.dependents(&helper_dependent_types);
-    frontier.extend(type_definitions.iter().copied()
-        .filter(|definition| !helper_dependents.contains(definition)));
-    frontier.extend(contract_type_definitions);
-    frontier.extend(
-        type_definitions
-            .iter()
-            .copied()
-            .filter(|definition| dependency_plan.is_cyclic(*definition)),
-    );
-    while let Some(definition) = frontier.pop() {
-        if !scheduled_types.insert(definition) {
-            continue;
-        }
-        frontier.extend(dependency_plan.node(definition).dependencies.iter().copied());
-    }
+    // Every type declaration belongs to static solving, including declarations
+    // whose unresolved references previously deferred them to value execution.
+    let scheduled_types = type_definitions.iter().copied().collect::<BTreeSet<_>>();
 
     let mut pending_types = scheduled_types.clone();
     let mut evaluated_types = BTreeSet::new();
-    let mut evaluated_concrete_type_names = HashSet::new();
-    let mut type_family_values = BTreeMap::new();
-    let mut type_family_templates = BTreeMap::new();
     let mut types = TypeGraph::default();
-    let contract_external_names = external_roots.keys().map(String::as_str).collect();
-    let mut contract_families = static_type_families(&mut types, &type_family_values, &binding_schemes, &qualified_external_interfaces);
+    let mut declaration_plans = Vec::new();
+    let contract_external_names = external_names.iter().map(String::as_str).collect();
+    let mut contract_families = static_type_families(&mut types, &qualified_external_interfaces);
     let mut schedule = dependency_plan.order(&scheduled_types).into_iter();
     while !pending_types.is_empty() {
         let component = schedule.next().expect("pending type has a scheduled component");
@@ -468,61 +361,19 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     hir: &hir, environment: &static_environment, external_names: &contract_external_names,
                     interfaces: &qualified_external_interfaces, parameters: &[], families: &contract_families,
                 }.elaborate(&binding.value.value, &mut types);
-                let (value, descriptor) = if let Some(root) = static_body {
-                    materialize_static_declaration(root, &mut types, binding, module_id,
-                        &declared_initializer_slots, source_name, type_store, &mut evaluator, &tool_values)?
-                } else {
-                    prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
-                        &static_environment, account, sources, &mut evaluator)?;
-                    let value = evaluate_tool_expression(
-                        source_name,
-                        &binding.value.value,
-                        &tool_values,
-                        account,
-                        sources,
-                        &mut evaluator,
-                    )?;
-                    let value = declare_metadata_value(
-                        source_name,
-                        module_id,
-                        binding,
-                        &declared_initializer_slots,
-                        value,
-                        &mut evaluator,
-                    )?;
-                    let (graph, root) =
-                        evaluator
-                            .decode_type_graph(value, "Type")
-                            .map_err(|message| {
-                                FrontendError::from_diagnostic(
-                                    sources,
-                                    Diagnostic::error(
-                                        format!(
-                                            "type {} produced invalid metadata: {message}",
-                                            binding.value.name.value
-                                        ),
-                                        binding.value.value.location,
-                                    ),
-                                )
-                            })?;
-                    let descriptor = graph.descriptor(root).map_err(|message| {
-                        frontend_error(
-                            source_name,
-                            format!(
-                                "type {} produced invalid metadata: {message}",
-                                binding.value.name.value
-                            ),
-                        )
-                    })?;
-                    graph
-                        .canonicalize(root, type_store)
-                        .map_err(|message| frontend_error(source_name, message))?;
-                    (value, descriptor)
-                };
+                if let Some(diagnostic) = types.elaboration_conflicts.first() {
+                    return Err(FrontendError::from_diagnostic(sources, diagnostic.clone()));
+                }
+                let root = static_body.ok_or_else(|| FrontendError::from_diagnostic(sources,
+                    Diagnostic::error("type declaration remains unknown after static solving",
+                        binding.value.value.location)))?;
+                let root = prepare_static_declaration(root, &mut types, binding, module_id,
+                    &declared_initializer_slots, source_name, type_store)?;
+                let descriptor = types.descriptor(root).map_err(|message| frontend_error(source_name, message))?;
+                declaration_plans.push(DeclarationPlan::Concrete { binding, root });
                 let name = binding.value.name.value.clone();
                 declared_types.insert(name.clone(), descriptor.clone());
                 declared_type_spans.insert(name.clone(), binding.location);
-                tool_values.insert(name.clone(), value);
                 let witness = TypeDescriptor::TypeOf(Box::new(descriptor));
                 static_environment.insert(name.clone(), witness.clone());
                 binding_types.insert(name.clone(), witness.clone());
@@ -534,8 +385,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         body: witness,
                     },
                 );
-                evaluator.publish_inference_binding(&name, &static_environment, &binding_schemes, &declared_types);
-                evaluated_concrete_type_names.insert(name);
                 pending_types.remove(&definition);
                 evaluated_types.insert(definition);
                 progressed = true;
@@ -549,29 +398,14 @@ pub(crate) fn analyze_program_with_bindings_observed(
             };
             let static_body = static_scope.elaborate(&binding.value.value, &mut types);
             let static_constraints = static_scope.constraints(&binding.value.type_parameter_bounds, &trait_ids, &mut types);
-            if static_body.is_none() || static_constraints.is_none() {
-                prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
-                    &static_environment, account, sources, &mut evaluator)?;
+            if let Some(diagnostic) = types.elaboration_conflicts.first().or(static_constraints.unknown.first()) {
+                return Err(FrontendError::from_diagnostic(sources, diagnostic.clone()));
             }
-            let mut bindings = ScopedToolBindings::new(&tool_values);
-            if static_body.is_none() || static_constraints.is_none() {
-                bindings.insert_type_parameters(&parameters, &mut evaluator)?;
-            }
-            let constraints = if let Some(constraints) = static_constraints {
-                finish_type_constraints(constraints, sources)?
-            } else { evaluate_type_constraints(
-                source_name,
-                &parameters,
-                &binding.value.type_parameter_bounds,
-                &bindings,
-                &trait_ids,
-                &qualified_external_interfaces,
-                account,
-                sources,
-                &mut evaluator,
-            )? };
-            let (value, descriptor) = materialize_type_body(static_body, &types, binding,
-                source_name, &bindings, account, sources, &mut evaluator)?;
+            let static_body = static_body.ok_or_else(|| FrontendError::from_diagnostic(sources,
+                Diagnostic::error("type family remains unknown after static solving",
+                    binding.value.value.location)))?;
+            let constraints = finish_type_constraints(static_constraints.known, sources)?;
+            let descriptor = types.descriptor(static_body).map_err(|message| frontend_error(source_name, message))?;
             let constructor =
                 binding
                     .value
@@ -619,21 +453,18 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     ),
                 ));
             }
-            let (family_value, template_root, family_root) =
-                evaluator.create_type_family(value, parameters.len(), constructor.as_ref())?;
-            let family = TypeFamilyTemplate {
+            declaration_plans.push(DeclarationPlan::Family {
+                binding,
+                body: static_body,
                 parameters: parameters.clone(),
-                template: template_root,
-                root: family_root,
                 rebuild_at_runtime: contains_named_type(&descriptor),
                 constructor,
-            };
+            });
             let scheme = TypeScheme {
-                parameters,
+                parameters: parameters.clone(),
                 constraints,
                 body: TypeDescriptor::Function {
-                    parameters: family
-                        .parameters
+                    parameters: parameters
                         .iter()
                         .map(|parameter| {
                             TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Bound(parameter.id)))
@@ -643,16 +474,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 },
             };
             let projected = scheme.body.clone();
-            tool_values.insert(binding.value.name.value.clone(), family_value);
             static_environment.insert(binding.value.name.value.clone(), projected.clone());
             binding_types.insert(binding.value.name.value.clone(), projected);
             if let Some(family) = StaticTypeFamily::from_scheme(&scheme, &mut types) {
                 contract_families.insert(binding.value.name.value.clone(), family);
             }
             binding_schemes.insert(binding.value.name.value.clone(), scheme);
-            evaluator.publish_inference_binding(&binding.value.name.value, &static_environment, &binding_schemes, &declared_types);
-            type_family_templates.insert(binding.value.name.value.clone(), family.clone());
-            type_family_values.insert(binding.value.name.value.clone(), family.clone());
             pending_types.remove(&definition);
             evaluated_types.insert(definition);
             progressed = true;
@@ -684,33 +511,27 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     declared_initializer_slots[&binding.value.name.location], &parameters, &hir,
                     &static_environment, &contract_external_names, &qualified_external_interfaces,
                     &mut contract_families, &mut types);
-                if solved.is_none() {
-                    prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
-                        &static_environment, account, sources, &mut evaluator)?;
+                if let Some(diagnostic) = types.elaboration_conflicts.first() {
+                    return Err(FrontendError::from_diagnostic(sources, diagnostic.clone()));
                 }
-                let built = build_recursive_type_family(
-                    source_name,
-                    module_id,
-                    declared_initializer_slots[&binding.value.name.location],
+                let solved = solved.ok_or_else(|| FrontendError::from_diagnostic(sources,
+                    Diagnostic::error("recursive type family remains unknown after static solving",
+                        binding.value.value.location)))?;
+                let (scheme, rebuild_at_runtime) = prepare_recursive_family_scheme(
+                    binding, parameters, &types, &solved, sources)?;
+                declaration_plans.push(DeclarationPlan::RecursiveFamily {
                     binding,
-                    &tool_values,
-                    account,
-                    sources,
-                    &mut evaluator,
-                    solved.as_ref().map(|solved| (&types, solved)),
-                )?;
-                let projected = built.scheme.body.clone();
-                tool_values.insert(binding.value.name.value.clone(), built.family_value);
+                    solved,
+                    parameters: scheme.parameters.clone(),
+                    rebuild_at_runtime,
+                });
+                let projected = scheme.body.clone();
                 static_environment.insert(binding.value.name.value.clone(), projected.clone());
                 binding_types.insert(binding.value.name.value.clone(), projected);
-                if let Some(family) = StaticTypeFamily::from_scheme(&built.scheme, &mut types) {
+                if let Some(family) = StaticTypeFamily::from_scheme(&scheme, &mut types) {
                     contract_families.insert(binding.value.name.value.clone(), family);
                 }
-                binding_schemes.insert(binding.value.name.value.clone(), built.scheme);
-                evaluator.publish_inference_binding(&binding.value.name.value, &static_environment, &binding_schemes, &declared_types);
-                type_family_templates
-                    .insert(binding.value.name.value.clone(), built.family.clone());
-                type_family_values.insert(binding.value.name.value.clone(), built.family);
+                binding_schemes.insert(binding.value.name.value.clone(), scheme);
                 pending_types.remove(&definition);
                 evaluated_types.insert(definition);
                 continue;
@@ -729,63 +550,24 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 let static_bodies = elaborate_recursive_bodies(&recursive_bindings, module_id,
                     &declared_initializer_slots, &mut static_environment, &hir, &contract_external_names,
                     &qualified_external_interfaces, &contract_families, &mut types);
-                if static_bodies.is_none() {
-                    prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
-                        &static_environment, account, sources, &mut evaluator)?;
+                if let Some(diagnostic) = types.elaboration_conflicts.first() {
+                    return Err(FrontendError::from_diagnostic(sources, diagnostic.clone()));
                 }
-                let mut type_refs = BTreeMap::new();
-                for definition in &component {
-                    let binding = type_bindings[definition];
-                    let name = binding.value.name.value.clone();
-                    let placeholder = tool_values[&name];
-                    let type_ref = evaluator
-                        .work
-                        .reserve_type_ref(
-                            module_id,
-                            declared_initializer_slots[&binding.value.name.location],
-                            name.as_str(),
-                            placeholder,
-                        )
-                        .map_err(|error| {
-                            frontend_error(
-                                source_name,
-                                format!("declared type reservation failed: {error}"),
-                            )
-                        })?;
-                    tool_values.insert(name.clone(), type_ref);
-                    type_refs.insert(*definition, type_ref);
-                }
-                let mut bodies = BTreeMap::new();
+                let static_bodies = static_bodies.ok_or_else(|| FrontendError::from_diagnostic(sources,
+                    Diagnostic::error("recursive type declarations remain unknown after static solving",
+                        binding.value.value.location)))?;
                 for (index, definition) in component.iter().enumerate() {
                     let binding = type_bindings[definition];
-                    let value = if let Some(roots) = &static_bodies {
-                        validate_declared_graph(source_name, binding, &types, roots[index].body)?;
-                        materialize_type_body(Some(roots[index].body), &types, binding,
-                            source_name, &tool_values, account, sources, &mut evaluator)?.0
-                    } else {
-                        let value = evaluate_tool_expression(source_name, &binding.value.value, &tool_values,
-                            account, sources, &mut evaluator)?;
-                        validate_declared_metadata(source_name, binding, value, &evaluator)?;
-                        value
-                    };
-                    bodies.insert(*definition, value);
-                }
-                for definition in &component {
-                    evaluator
-                        .work
-                        .seal_type_ref(type_refs[definition], bodies[definition])
-                        .map_err(|error| frontend_error(source_name, error.to_string()))?;
+                    validate_declared_graph(source_name, binding, &types, static_bodies[index].body)?;
                 }
                 for (index, definition) in component.into_iter().enumerate() {
                     let binding = type_bindings[&definition];
-                    let value = type_refs[&definition];
                     let descriptor = recursive_declaration_descriptor(
-                        static_bodies.as_ref().map(|roots| &roots[index]), &types, value,
-                        binding, source_name, &evaluator, type_store)?;
+                        &static_bodies[index], &types,
+                        binding, source_name, type_store)?;
                     let name = binding.value.name.value.clone();
                     declared_types.insert(name.clone(), descriptor.clone());
                     declared_type_spans.insert(name.clone(), binding.location);
-                    tool_values.insert(name.clone(), value);
                     let witness = TypeDescriptor::TypeOf(Box::new(descriptor));
                     static_environment.insert(name.clone(), witness.clone());
                     binding_types.insert(name.clone(), witness.clone());
@@ -797,11 +579,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             body: witness,
                         },
                     );
-                    evaluator.publish_inference_binding(&name, &static_environment, &binding_schemes, &declared_types);
-                    evaluated_concrete_type_names.insert(name);
                     pending_types.remove(&definition);
                     evaluated_types.insert(definition);
                 }
+                declaration_plans.push(DeclarationPlan::RecursiveGroup {
+                    bindings: recursive_bindings, roots: static_bodies,
+                });
                 continue;
             }
             let message = if !contains_nominal {
@@ -828,7 +611,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
     }
 
-    evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
     let mut definition_contracts = HashMap::new();
     let mut declaration_locations = HashMap::new();
     let mut definition_counts = HashMap::<String, usize>::new();
@@ -867,28 +649,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
         };
         let static_contract = static_scope.elaborate(contract, &mut types);
         let static_constraints = static_scope.constraints(&binding.value.type_parameter_bounds, &trait_ids, &mut types);
-        if static_contract.is_none() || static_constraints.is_none() {
-            prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
-                &static_environment, account, sources, &mut evaluator)?;
+        if let Some(diagnostic) = types.elaboration_conflicts.first().or(static_constraints.unknown.first()) {
+            return Err(FrontendError::from_diagnostic(sources, diagnostic.clone()));
         }
-        let mut contract_values = ScopedToolBindings::new(&tool_values);
-        if static_contract.is_none() || static_constraints.is_none()
-        {
-            contract_values.insert_type_parameters(&scheme_parameters, &mut evaluator)?;
-        }
-        let mut scheme_constraints = if let Some(constraints) = static_constraints {
-            finish_type_constraints(constraints, sources)?
-        } else { evaluate_type_constraints(
-            source_name,
-            &scheme_parameters,
-            &binding.value.type_parameter_bounds,
-            &contract_values,
-            &trait_ids,
-            &qualified_external_interfaces,
-            account,
-            sources,
-            &mut evaluator,
-        )? };
+        let root = static_contract.ok_or_else(|| FrontendError::from_diagnostic(sources,
+            static_scope.unknown_diagnostic(contract)))?;
+        let mut scheme_constraints = finish_type_constraints(static_constraints.known, sources)?;
         if matches!(binding.value.kind, BindingKind::Def | BindingKind::Decl)
             && !program.value.body.value.bindings.iter().any(|candidate| {
                 candidate.value.name.value == *name && matches!(candidate.value.value.value, ExprKind::Interpreter { .. })
@@ -899,14 +665,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 location: parameter.location,
             }));
         }
-        let descriptor = if let Some(root) = static_contract {
-            // Compatibility egress into the existing TypeScheme. The static
-            // path constructs type edges directly, without creating metadata.
-            types.descriptor(root).map_err(|message| frontend_error(source_name, message))?
-        } else {
-            evaluate_legacy_contract(source_name, name, contract,
-                &contract_values, account, sources, &mut evaluator)?
-        };
+        let descriptor = types.descriptor(root)
+            .map_err(|message| frontend_error(source_name, message))?;
         if binding.value.kind != BindingKind::Native
             || !scheme_parameters.is_empty()
             || contains_metatype(&descriptor)
@@ -997,145 +757,31 @@ pub(crate) fn analyze_program_with_bindings_observed(
         ));
     }
 
-    evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
     let tool_dependencies = tool_value_dependencies(&hir);
-    prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
-        &static_environment, account, sources, &mut evaluator)?;
+    let mut tool_bindings_to_execute = Vec::new();
     for binding in &program.value.body.value.bindings {
-        evaluate_construction_checks(source_name, program, &tool_values, &static_environment,
-            account, sources, &mut evaluator, false)?;
-        let inferred_expression = infer_expr_recorded(
-            &binding.value.value,
-            &static_environment,
-            &mut expression_descriptors,
-        );
-        if let Some(annotation) = &binding.value.annotation {
-            infer_expr_recorded(annotation, &static_environment, &mut expression_descriptors);
-        }
         match binding.value.kind {
             BindingKind::OpenImport | BindingKind::Export => continue,
             BindingKind::Decl => continue,
-            BindingKind::Native | BindingKind::NativeType => {
-                let value = external_roots
-                    .get(&binding.value.name.value)
-                    .copied()
-                    .ok_or_else(|| {
-                        FrontendError::from_diagnostic(
-                            sources,
-                            Diagnostic::error(
-                                format!(
-                                    "native symbol {:?} has not been linked",
-                                    binding.value.name.value
-                                ),
-                                binding.location,
-                            ),
-                        )
-                    })?;
-                tool_values.insert(binding.value.name.value.clone(), value.runtime());
-                if binding.value.kind == BindingKind::NativeType {
-                    let value = tool_values[&binding.value.name.value];
-                    let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
-                        FrontendError::from_diagnostic(
-                            sources,
-                            Diagnostic::error(
-                                format!(
-                                    "native type {} is invalid: {message}",
-                                    binding.value.name.value
-                                ),
-                                binding.location,
-                            ),
-                        )
-                    })?;
-                    let witness = TypeDescriptor::TypeOf(Box::new(descriptor.clone()));
-                    declared_types.insert(binding.value.name.value.clone(), descriptor);
-                    static_environment.insert(binding.value.name.value.clone(), witness.clone());
-                    binding_types.insert(binding.value.name.value.clone(), witness.clone());
-                    binding_schemes.insert(
-                        binding.value.name.value.clone(),
-                        TypeScheme {
-                            parameters: Vec::new(),
-                            constraints: Vec::new(),
-                            body: witness,
-                        },
-                    );
-                }
-            }
-            BindingKind::Type | BindingKind::Trait => {
-                if !binding.value.type_parameters.is_empty()
-                    || evaluated_concrete_type_names.contains(&binding.value.name.value)
-                {
-                    continue;
-                }
-                let value = evaluate_tool_expression(
-                    source_name,
-                    &binding.value.value,
-                    &tool_values,
-                    account,
-                    sources,
-                    &mut evaluator,
-                )?;
-                let value = declare_metadata_value(
-                    source_name,
-                    module_id,
-                    binding,
-                    &declared_initializer_slots,
-                    value,
-                    &mut evaluator,
-                )?;
-                let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
-                    FrontendError::from_diagnostic(
-                        sources,
-                        Diagnostic::error(
-                            format!(
-                                "type {} produced invalid metadata: {message}",
-                                binding.value.name.value
-                            ),
-                            binding.value.value.location,
-                        ),
-                    )
-                })?;
-                declared_types.insert(binding.value.name.value.clone(), descriptor);
-                declared_type_spans.insert(binding.value.name.value.clone(), binding.location);
-                tool_values.insert(binding.value.name.value.clone(), value);
-                let witness = TypeDescriptor::TypeOf(Box::new(
-                    declared_types[&binding.value.name.value].clone(),
-                ));
-                static_environment.insert(binding.value.name.value.clone(), witness.clone());
-                binding_types.insert(binding.value.name.value.clone(), witness.clone());
-                binding_schemes.insert(
-                    binding.value.name.value.clone(),
-                    TypeScheme {
-                        parameters: Vec::new(),
-                        constraints: Vec::new(),
-                        body: witness,
-                    },
-                );
-            }
+            BindingKind::Native | BindingKind::NativeType => continue,
+            BindingKind::Type | BindingKind::Trait => continue,
             BindingKind::Let | BindingKind::Impl => {
-                let inferred = inferred_expression;
+                let inferred = (binding.value.kind == BindingKind::Let)
+                    .then(|| infer_expr_projection(&binding.value.value, &static_environment)).flatten();
                 let checked = if binding.value.kind == BindingKind::Impl {
                     Some(definition_contracts
                         .get(&binding.value.name.value)
                         .cloned()
                         .expect("impl contract was evaluated with its type parameter scope"))
                 } else if let Some(annotation) = &binding.value.annotation {
-                    let metadata = evaluate_tool_expression(
-                        source_name,
-                        annotation,
-                        &tool_values,
-                        account,
-                        sources,
-                        &mut evaluator,
-                    )?;
-                    let expected = evaluator.decode_type(metadata, "Type").map_err(|message| {
-                        frontend_error(
-                            source_name,
-                            format!(
-                                "annotation on {} is invalid: {message}",
-                                binding.value.name.value
-                            ),
-                        )
-                    })?;
+                    let expected = StaticAnnotationContext {
+                        scope: StaticContractScope { hir: &hir, environment: &static_environment,
+                            external_names: &contract_external_names, interfaces: &qualified_external_interfaces,
+                            parameters: &[], families: &contract_families }, graph: &mut types,
+                    }.elaborate(annotation, sources)?;
+                    // Preliminary let diagnostics still consume descriptor paths.
+                    let expected = types.descriptor(expected)
+                        .map_err(|message| frontend_error(source_name, message))?;
                     if let Some(inferred) = &inferred
                         && !contains_named_type(&expected)
                         && !same_nominal_head_with_erased_arguments(&inferred, &expected)
@@ -1188,91 +834,41 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 if let Some(checked) = checked { binding_types.insert(binding.value.name.value.clone(), checked); }
                 else { binding_types.remove(&binding.value.name.value); }
 
-                if tool_dependencies.contains(&binding.value.name.value)
-                    && let Ok(value) = evaluate_typed_tool_expression_silent(
-                    source_name,
-                    &binding.value.value,
-                    &tool_values,
-                    &expression_descriptors,
-                    binding.value.annotation.as_ref().and_then(|_| binding_types.get(&binding.value.name.value)),
-                    account,
-                    sources,
-                    &mut evaluator,
-                ) {
-                    tool_values.insert(binding.value.name.value.clone(), value);
+                if tool_dependencies.contains(&binding.value.name.value) {
+                    tool_bindings_to_execute.push(binding);
                 }
             }
             BindingKind::Def => {
                 let name = &binding.value.name.value;
-                let inferred = inferred_expression;
                 let checked = definition_contracts
                     .get(name)
-                    .cloned()
-                    .or(inferred);
+                    .cloned();
                 set_projected_type(&mut static_environment, name, checked.clone());
                 if let Some(checked) = checked { binding_types.insert(name.clone(), checked); }
                 else { binding_types.remove(name); }
-                if tool_dependencies.contains(name)
-                    && let Ok(value) = evaluate_typed_tool_expression_silent(
-                    source_name,
-                    &binding.value.value,
-                    &tool_values,
-                    &expression_descriptors,
-                    definition_contracts.get(name),
-                    account,
-                    sources,
-                    &mut evaluator,
-                ) {
-                    tool_values.insert(name.clone(), value);
+                if tool_dependencies.contains(name) {
+                    tool_bindings_to_execute.push(binding);
                 }
             }
             BindingKind::Import => {
-                let value = external_roots
-                    .get(&binding.value.name.value)
-                    .copied()
-                    .ok_or_else(|| {
-                        frontend_error(
-                            source_name,
-                            format!("import {} has not been resolved", binding.value.name.value),
-                        )
-                    })?;
                 let interface = qualified_external_interfaces.get(&binding.value.name.value);
                 let scheme = interface
                     .and_then(ModuleInterface::binding_scheme)
                     .cloned();
-                let inferred = imported_static_descriptor(
-                    ValueRef::persistent(value, evaluator.main),
-                    interface,
-                ).ok_or_else(|| frontend_error(source_name, format!("import {:?} requires an explicit type interface", binding.value.name.value)))?;
+                let inferred = interface.and_then(imported_interface_descriptor)
+                    .ok_or_else(|| frontend_error(source_name, format!("import {:?} requires an explicit type interface", binding.value.name.value)))?;
                 static_environment.insert(binding.value.name.value.clone(), inferred.clone());
                 binding_types.insert(binding.value.name.value.clone(), inferred);
                 if let Some(scheme) = scheme {
                     binding_schemes.insert(binding.value.name.value.clone(), scheme);
-                    tool_values.insert(binding.value.name.value.clone(), value.runtime());
-                } else {
-                    tool_values.insert(binding.value.name.value.clone(), value.runtime());
                 }
             }
         }
-        evaluator.publish_inference_binding(&binding.value.name.value, &static_environment, &binding_schemes, &declared_types);
     }
 
-    evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
-    evaluate_construction_checks(source_name, program, &tool_values, &static_environment,
-        account, sources, &mut evaluator, true)?;
-    let local_type_property_evidence = declared_property_evidence(
-        program,
-        &tool_values,
-        &static_environment,
-        sources,
-        &mut evaluator,
-    )?;
     let mut type_properties = qualified_external_interfaces
         .values()
         .flat_map(|interface| interface.type_properties.iter().cloned())
-        .chain(
-            local_type_property_evidence.iter().cloned(),
-        )
         .collect::<Vec<_>>();
     type_properties.sort_by(|left, right| {
         TypeExprId::from_descriptor(&left.target)
@@ -1300,37 +896,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
     }
 
-    infer_expr_recorded(
-        &program.value.body.value.result,
-        &static_environment,
-        &mut expression_descriptors,
-    );
-    let mut local_annotations = HashMap::new();
-    for binding in &program.value.body.value.bindings {
-        let mut annotation_values = ScopedToolBindings::new(&tool_values);
-        for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
-            let value =
-                evaluator.descriptor(&TypeDescriptor::Bound(TypeParameterId(index as u32)))?;
-            annotation_values.insert(parameter.value.clone(), value);
-        }
-        collect_nested_annotation_types(
-            source_name,
-            &binding.value.value,
-            &annotation_values,
-            account,
-            sources,
-            &mut evaluator,
-            &mut local_annotations,
-        )?;
-    }
-    collect_nested_annotation_types(
-        source_name,
-        &program.value.body.value.result,
-        &tool_values,
-        account,
-        sources,
-        &mut evaluator,
-        &mut local_annotations,
+    let local_annotations = collect_program_annotations(
+        program, sources,
+        StaticContractScope { hir: &hir, environment: &static_environment,
+            external_names: &contract_external_names, interfaces: &qualified_external_interfaces,
+            parameters: &[], families: &contract_families }, &mut types,
     )?;
     let mut named_types = imported_named_types;
     named_types.extend(declared_types.clone());
@@ -1371,523 +941,41 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 .find_map(|interface| interface.display_trait)
                 .map(|id| (id, "std/fmt.Display".to_owned()))
         });
-    let mut inference = GenericInference::new(
-        &binding_schemes,
-        &hir,
-        &qualified_external_interfaces,
-        &named_types,
-        &local_annotations,
-        &trait_implementations,
-        &type_properties,
-        &trait_ids,
-        display_trait,
-        &dyn_namespaces,
-        !external_roots.contains_key("Tuple"),
-        None,
-        account.query_context(),
-    );
-    let mut checked_environment = ScopedTypeEnvironment::new(&static_environment);
-    for definition in hir.definitions().iter().filter(|definition| definition.top_level) {
-        if let Some(descriptor) = static_environment.get(&definition.name) {
-            inference.bind_local(&mut checked_environment, definition.location, &definition.name,
-                descriptor.clone(), binding_schemes.get(&definition.name).cloned());
-        }
-    }
-    let type_metadata_expected = TypeDescriptor::Type;
-    let mut delayed_bindings = Vec::new();
-    let mut recursive_skeletons = HashMap::new();
-    let component_plan = definition_component_plan(&program.value.body, &hir);
-    if let Some(location) = component_plan.indirect_recursive.iter().next() {
-        return Err(FrontendError::from_diagnostic(
-            sources,
-            Diagnostic::error(
-                "indirect recursive definition requires an explicit contract",
-                *location,
-            ),
-        ));
-    }
-    for binding in &program.value.body.value.bindings {
-        if binding.value.kind != BindingKind::Def
-            || binding.value.annotation.is_some()
-            || definition_contracts.contains_key(&binding.value.name.value)
-            || !component_plan
-                .recursive
-                .contains(&binding.value.name.location)
-        {
-            continue;
-        }
-        let first_owned_variable = inference.variables.next_id();
-        if let Some(skeleton) = inference.recursive_closure_skeleton(&binding.value.value) {
-            checked_environment.insert(binding.value.name.value.clone(), skeleton.clone());
-            inference.bind_local(&mut checked_environment, binding.value.name.location,
-                &binding.value.name.value, skeleton.clone(), None);
-            recursive_skeletons.insert(
-                binding.value.name.value.clone(),
-                (skeleton.clone(), first_owned_variable),
-            );
-            delayed_bindings.push((
-                binding.value.name.value.clone(),
-                binding.value.value.location,
-                skeleton,
-                first_owned_variable,
-            ));
-        }
-    }
-    let recursive_variables = recursive_skeletons
-        .values()
-        .filter_map(|(skeleton, _)| GenericInference::recursive_result_variable(skeleton))
-        .collect::<HashSet<_>>();
-    for binding in &program.value.body.value.bindings {
-        let Some((skeleton, _)) = recursive_skeletons.get(&binding.value.name.value) else {
-            continue;
-        };
-        if binding.value.kind != BindingKind::Def {
-            continue;
-        }
-        inference.delayed_initializer_depth += 1;
-        inference.recursive_body_inference_depth += 1;
-        let inferred = inference.infer(
-            &binding.value.value,
-            &checked_environment,
-            Some(skeleton),
-        );
-        inference.recursive_body_inference_depth -= 1;
-        inference.delayed_initializer_depth -= 1;
-        let inferred = inferred.map_err(|message| {
-            let diagnostic = inference.take_failure_diagnostic(
-                binding.value.value.location,
-                message,
-                binding
-                    .value
-                    .annotation
-                    .as_ref()
-                    .map(|annotation| annotation.location),
-            );
-            FrontendError::from_diagnostic(sources, diagnostic)
-        })?;
-        if let (
-            Some(variable),
-            TypeDescriptor::Function {
-                result: inferred_result,
-                ..
-            },
-        ) = (
-            GenericInference::recursive_result_variable(skeleton),
-            (*inference.variables.head(&inferred)).clone(),
-        ) {
-            inference
-                .recursive_equations
-                .insert(variable, *inferred_result);
-        }
-        binding_types.insert(binding.value.name.value.clone(), skeleton.clone());
-    }
-    inference
-        .solve_recursive_equations(&recursive_variables)
-        .map_err(|message| frontend_error(source_name, message))?;
-    for location in &component_plan.acyclic {
-        let binding = program
-            .value
-            .body
-            .value
-            .bindings
-            .iter()
-            .find(|binding| binding.value.name.location == *location)
-            .expect("component binding exists");
-        let first_owned_variable = inference.variables.next_id();
-        inference.delayed_initializer_depth += 1;
-        let inferred = inference.infer(&binding.value.value, &checked_environment, None);
-        inference.delayed_initializer_depth -= 1;
-        let inferred = inferred.map_err(|message| {
-            let diagnostic = inference.take_failure_diagnostic(
-                binding.value.value.location,
-                message,
-                binding
-                    .value
-                    .annotation
-                    .as_ref()
-                    .map(|annotation| annotation.location),
-            );
-            FrontendError::from_diagnostic(sources, diagnostic)
-        })?;
-        let scheme = inference
-            .generalize_local_closure(&inferred, first_owned_variable, binding.value.name.location, binding.value.value.location)
-            .map_err(|message| {
-                FrontendError::from_diagnostic(
-                    sources,
-                    Diagnostic::error(message, binding.value.value.location),
-                )
-            })?;
-        let descriptor = scheme.as_ref().map_or_else(
-            || inference.normalize(&inferred),
-            |scheme| scheme.body.clone(),
-        );
-        checked_environment.insert(binding.value.name.value.clone(), descriptor.clone());
-        inference.bind_local(&mut checked_environment, binding.value.name.location,
-            &binding.value.name.value, descriptor.clone(), scheme.clone());
-        binding_types.insert(binding.value.name.value.clone(), descriptor);
-        if let Some(scheme) = scheme {
-            inference
-                .inferred_schemes
-                .insert(binding.value.name.location, scheme.clone());
-            inference
-                .top_level_inferred_schemes
-                .insert(binding.value.name.value.clone(), scheme);
-        } else {
-            delayed_bindings.push((
-                binding.value.name.value.clone(),
-                binding.value.value.location,
-                inferred,
-                first_owned_variable,
-            ));
-        }
-    }
-    for binding in &program.value.body.value.bindings {
-        if matches!(
-            binding.value.kind,
-            BindingKind::Decl
-                | BindingKind::Native
-                | BindingKind::Import
-                | BindingKind::OpenImport
-                | BindingKind::Export
-        ) {
-            if binding.value.kind == BindingKind::Import {
-                let scheme = external_interfaces
-                    .get(&binding.value.name.value)
-                    .and_then(ModuleInterface::binding_scheme)
-                    .cloned();
-                if let Some(descriptor) = checked_environment.get(&binding.value.name.value).cloned() {
-                    inference.bind_local(&mut checked_environment, binding.value.name.location,
-                        &binding.value.name.value, descriptor, scheme);
-                } else {
-                    inference.set_local_scheme(binding.value.name.value.clone(), scheme);
-                }
-            }
-            continue;
-        }
-        if recursive_skeletons.contains_key(&binding.value.name.value) {
-            continue;
-        }
-        if component_plan
-            .acyclic
-            .contains(&binding.value.name.location)
-        {
-            continue;
-        }
-        let expected = if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
-            Some(&type_metadata_expected)
-        } else {
-            definition_contracts
-                .get(&binding.value.name.value)
-                .or_else(|| {
-                    binding
-                        .value
-                        .annotation
-                        .as_ref()
-                        .and_then(|_| binding_types.get(&binding.value.name.value))
-                })
-                .or_else(|| {
-                    recursive_skeletons
-                        .get(&binding.value.name.value)
-                        .map(|(skeleton, _)| skeleton)
-                })
-        };
-        let is_recursive = recursive_skeletons.contains_key(&binding.value.name.value);
-        if binding.value.kind == BindingKind::Def
-            && binding.value.annotation.is_none()
-            && !is_recursive
-            && !definition_contracts.contains_key(&binding.value.name.value)
-            && expression_references_names(
-                &binding.value.value,
-                &HashSet::from([binding.value.name.value.clone()]),
-                &HashSet::new(),
-            )
-        {
-            return Err(FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(
-                    format!(
-                        "recursive definition {:?} requires a closure value or explicit contract",
-                        binding.value.name.value
-                    ),
-                    binding.value.value.location,
-                ),
-            ));
-        }
-        let is_delayed = (expected.is_none() || is_recursive)
-            && matches!(
-                binding.value.kind,
-                BindingKind::Let | BindingKind::Def | BindingKind::Impl
-            )
-            && !definition_contracts.contains_key(&binding.value.name.value);
-        let first_owned_variable = recursive_skeletons
-            .get(&binding.value.name.value)
-            .map_or(inference.variables.next_id(), |(_, first)| *first);
-        if is_delayed {
-            inference.delayed_initializer_depth += 1;
-        }
-        let mut initializer_environment = None;
-        if is_delayed && binding.value.kind == BindingKind::Def && !is_recursive {
-            let mut environment = ScopedTypeEnvironment::new(&checked_environment);
-            environment.remove(&binding.value.name.value);
-            if let Some(definition) = hir.definition_at(binding.value.name.location, &binding.value.name.value) {
-                inference.definition_bindings[definition.id.index()] = None;
-            }
-            initializer_environment = Some(environment);
-        } else if matches!(
-            binding.value.kind,
-            BindingKind::Type | BindingKind::Trait | BindingKind::Impl
-        )
-            && !binding.value.type_parameters.is_empty()
-        {
-            let mut environment = ScopedTypeEnvironment::new(&checked_environment);
-            for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
-                environment.insert(
-                    parameter.value.clone(),
-                    TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Bound(TypeParameterId(
-                        index as u32,
-                    )))),
-                );
-            }
-            initializer_environment = Some(environment);
-        }
-        let environment = initializer_environment
-            .as_ref()
-            .map_or(&checked_environment as &dyn TypeEnvironment, |environment| environment);
-        let lexical_evidence_start = binding_schemes
-            .get(&binding.value.name.value)
-            .cloned()
-            .map(|scheme| {
-                inference.push_lexical_evidence(&binding.value.name.value, &scheme)
-            });
-        if let Some(annotation) = &binding.value.annotation {
-            let mut contract_environment = ScopedTypeEnvironment::new(environment);
-            for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
-                contract_environment.insert(parameter.value.clone(), TypeDescriptor::TypeOf(
-                    Box::new(TypeDescriptor::Bound(TypeParameterId(index as u32)))));
-            }
-            StaticContractScope { hir: &hir, environment: &static_environment,
-                external_names: &contract_external_names, interfaces: &qualified_external_interfaces,
-                parameters: binding_schemes.get(&binding.value.name.value).map_or(&[], |scheme| &scheme.parameters),
-                families: &contract_families,
-            }.check_contract_obligations(annotation, &mut inference, &contract_environment)
-                .map_err(|(location, message)| FrontendError::from_diagnostic(sources,
-                    inference.take_failure_diagnostic(location, message, None)))?;
-        }
-        if binding.value.kind == BindingKind::Impl {
-            inference.lexical_type_evidence.extend(binding.value.type_parameters.iter().enumerate().map(|(index, parameter)| LexicalTypeEvidence {
-                capability: TypeCapability::RuntimeType,
-                target: TypeDescriptor::Bound(TypeParameterId(index as u32)),
-                name: parameter.value.clone(),
-            }));
-        }
-        let inferred = if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
-            inference.infer(&binding.value.value, environment, expected)
-        } else {
-            inference.infer(&binding.value.value, environment, expected)
-        };
-        if let Some(start) = lexical_evidence_start {
-            inference.pop_lexical_evidence(start);
-        }
-        if is_delayed {
-            inference.delayed_initializer_depth -= 1;
-        }
-        let inferred = inferred.map_err(|message| {
-            let expected_location = binding
-                .value
-                .annotation
-                .as_ref()
-                .map(|annotation| annotation.location)
-                .or_else(|| {
-                    declaration_locations
-                        .get(&binding.value.name.value)
-                        .copied()
-                });
-            let diagnostic = inference.take_failure_diagnostic(
-                binding.value.value.location,
-                message,
-                expected_location,
-            );
-            FrontendError::from_diagnostic(sources, diagnostic)
-        })?;
-        if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
-            continue;
-        }
-        if matches!(
-            binding.value.kind,
-            BindingKind::Let | BindingKind::Def | BindingKind::Impl
-        ) {
-            let inferred_scheme = if binding.value.is_member_import() {
-                Some(inference.member_import_scheme(&binding.value, &inferred)
-                    .map_err(|message| FrontendError::from_diagnostic(sources,
-                        Diagnostic::error(message, binding.value.value.location)))?)
-            } else if binding.value.kind == BindingKind::Let
-                && binding.value.annotation.is_none()
-                && binding.value.type_parameters.is_empty()
-                && matches!(binding.value.value.value, ExprKind::Closure { .. })
-            {
-                inference
-                    .generalize_local_closure(
-                        &inferred,
-                        first_owned_variable,
-                        binding.value.name.location,
-                        binding.value.value.location,
-                    )
-                    .map_err(|message| {
-                        FrontendError::from_diagnostic(
-                            sources,
-                            Diagnostic::error(message, binding.value.value.location),
-                        )
-                    })?
-            } else {
-                None
-            };
-            let checked = inferred_scheme.as_ref().map_or_else(
-                || expected.cloned().unwrap_or(inferred),
-                |scheme| scheme.body.clone(),
-            );
-            checked_environment.insert(binding.value.name.value.clone(), checked.clone());
-            binding_types.insert(binding.value.name.value.clone(), checked.clone());
-            let checked_scheme = if inferred_scheme.is_some()
-                || binding.value.kind == BindingKind::Let
-                || binding.value.annotation.is_none()
-                    && !definition_contracts.contains_key(&binding.value.name.value)
-            {
-                inferred_scheme.clone()
-            } else {
-                binding_schemes.get(&binding.value.name.value).cloned()
-            };
-            inference.bind_local(&mut checked_environment, binding.value.name.location,
-                &binding.value.name.value, checked.clone(), checked_scheme);
-            if let Some(scheme) = &inferred_scheme {
-                inference
-                    .inferred_schemes
-                    .insert(binding.value.name.location, scheme.clone());
-            }
-            if let Some(scheme) = inferred_scheme {
-                inference
-                    .top_level_inferred_schemes
-                    .insert(binding.value.name.value.clone(), scheme);
-            } else if is_delayed && !is_recursive {
-                delayed_bindings.push((
-                    binding.value.name.value.clone(),
-                    binding.value.value.location,
-                    checked,
-                    first_owned_variable,
-                ));
-            }
-        }
-    }
-    if !program.value.authored_result
-        && let ExprKind::Dict(fields) = &program.value.body.value.result.value
-    {
-        for field in fields {
-            inference.type_facet_locations.insert(field.value.value.location);
-        }
-    }
-    let result_type = inference
-        .infer(&program.value.body.value.result, &checked_environment, None)
-        .map_err(|message| {
-            let diagnostic = inference.take_failure_diagnostic(
-                program.value.body.value.result.location,
-                message,
-                None,
-            );
-            FrontendError::from_diagnostic(sources, diagnostic)
-        })?;
-    let module_requirement = inference
-        .propagation_boundaries
-        .pop()
-        .expect("module propagation boundary exists");
-    let result_type = inference
-        .finish_propagation_boundary(result_type, None, module_requirement)
-        .map_err(|message| {
-            FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(message, program.value.body.value.result.location),
-            )
-        })?;
-    if let Some((location, message)) = inference.pattern_diagnostics.first_key_value() {
-        return Err(FrontendError::from_diagnostic(
-            sources,
-            Diagnostic::error(message.clone(), *location),
-        ));
-    }
-    if let Some((location, message)) = inference.unresolved_placeholder_since(0) {
-        return Err(FrontendError::from_diagnostic(
-            sources,
-            Diagnostic::error(message, location),
-        ));
-    }
-    inference
-        .finish_type_constraints()
-        .map_err(|(location, message)| {
-            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
-        })?;
-    inference
-        .finish_interpolations()
-        .map_err(|(location, message)| {
-            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
-        })?;
-    inference.finish_enum_constructors().map_err(|(location, message)| {
-        FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
-    })?;
-    for (name, location, descriptor, first_owned_variable) in delayed_bindings {
-        if let Some(query) = &inference.query {
-            query.check().map_err(|error| {
-                FrontendError::from_diagnostic(
-                    sources,
-                    Diagnostic::error(error.to_string(), location),
-                )
-            })?;
-        }
-        let resolved = inference.normalize(&descriptor);
-        if contains_inference_variable_at_or_after(&resolved, first_owned_variable) {
-            return Err(FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(
-                    format!(
-                        "cannot infer monomorphic binding {name:?}: unresolved {}",
-                        resolved.display_name()
-                    ),
-                    location,
-                ),
-            ));
-        }
-    }
-    inference.variables.canonicalize_slots();
+    let (mut inference, checked_environment, result_type) = solve_program_types(
+        source_name, program, sources, &types, ProgramTypeInputs {
+            module_id,
+            declaration_locations: &declaration_locations,
+            binding_schemes: &binding_schemes,
+            hir: &hir,
+            qualified_external_interfaces: &qualified_external_interfaces,
+            external_interfaces: &external_interfaces,
+            named_types: &named_types,
+            local_annotations: &local_annotations,
+            trait_implementations: &trait_implementations,
+            type_properties: &type_properties,
+            trait_ids: &trait_ids,
+            display_trait: display_trait,
+            dyn_namespaces: &dyn_namespaces,
+            static_environment: &static_environment,
+            definition_contracts: &definition_contracts,
+            contract_external_names: &contract_external_names,
+            contract_families: &contract_families,
+            builtin_tuple_available: !external_names.contains("Tuple"),
+            query: query.clone(),
+        }, &mut binding_types,
+    )?;
     let installed_named_types = types.install_named_descriptors(&named_types);
     // Preserve binding-first nominal reservations before publishing expressions.
-    for descriptor in binding_types.values() {
-        let resolved = inference.normalize(descriptor);
+    // Solving is complete: keep this projection for validation and interface/ID
+    // publication instead of normalizing the same bindings for each consumer.
+    let binding_types = binding_types.into_iter().map(|(name, descriptor)| {
+        let resolved = inference.normalize(&descriptor);
         types.intern_resolved_descriptor(&resolved);
-    }
+        (name, resolved)
+    }).collect::<BTreeMap<_, _>>();
     let mut publication = InferencePublication::new(&inference.variables);
-    let mut published_expressions = HashMap::new();
-    let mut completed_expressions = inference.records.iter()
-        .map(|(location, slot)| (*location, *slot)).collect::<Vec<_>>();
-    completed_expressions.sort_by_key(|(location, _)| location.range().start);
-    for (location, slot) in completed_expressions {
-        expression_descriptors.remove(&location);
-        let published = publication.publish(&mut types, slot,
-            |slot| inference.normalize(&TypeDescriptor::Inference(slot)));
-        let failure = published.err().unwrap_or_default();
-        if failure.contains(PublicationFailure::STANDALONE) {
-            return Err(FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error("standalone Atom/Tagged is not a public expression type; use an enum", location),
-            ));
-        }
-        if failure.contains(PublicationFailure::ALTERNATIVES) {
-            let resolved = inference.normalize(&TypeDescriptor::Inference(slot));
-            return Err(FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(
-                    format!("no common type for {}; supply explicit context with .ty!(Ty) or @[Ty]", resolved.display_name()),
-                    location,
-                ),
-            ));
-        }
-        if let Ok(ty) = published { published_expressions.insert(location, ty); }
+    let published_expressions = publish_program_expressions(&inference, &mut publication, &mut types, sources)?;
+    for (&location, &slot) in &inference.records {
         // Runtime owner bridges still consume nominal descriptors. Structural
         // expression types live only in the final graph, not a second type tree.
         if let Some(ty) = inference.variables.known(slot)
@@ -1897,7 +985,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
             expression_descriptors.insert(location, inference.normalize(&TypeDescriptor::Inference(slot)));
         }
     }
-    drop(publication);
     inference.top_level_inferred_schemes = inference
         .top_level_inferred_schemes
         .iter()
@@ -1918,9 +1005,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .collect();
     let mut binding_schemes = binding_schemes.clone();
     binding_schemes.extend(inference.top_level_inferred_schemes.clone());
-    let namespace_bindings = qualified_external_interfaces.keys()
-        .filter(|name| external_roots.get(*name).is_some_and(|root| ValueRef::persistent(*root, evaluator.main).kind() == ValueKind::Module))
-        .cloned().collect::<HashSet<_>>();
+    let namespace_bindings = qualified_external_interfaces.iter()
+        .filter(|(_, interface)| interface.value_binding.is_none())
+        .map(|(name, _)| name.clone()).collect::<HashSet<_>>();
     let explicitly_exported_locals = program
         .value
         .body
@@ -1938,7 +1025,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 .or_insert_with(|| TypeScheme {
                     parameters: Vec::new(),
                     constraints: Vec::new(),
-                    body: inference.normalize(descriptor),
+                    body: descriptor.clone(),
                 });
         }
     }
@@ -1973,14 +1060,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
         constraints: Vec::new(),
         body: resolved_result.clone(),
     })).filter(|scheme| validate_publishable_scheme(scheme).is_ok());
-    for (name, descriptor) in &binding_types {
-        let resolved = inference.normalize(descriptor);
-        if contains_standalone_sum(&resolved) {
+    for (name, resolved) in &binding_types {
+        if contains_standalone_sum(resolved) {
             return Err(frontend_error(source_name, format!(
                 "binding {name:?} has no resolved enum owner",
             )));
         }
-        if contains_type_variable(&resolved) {
+        if contains_type_variable(resolved) {
             return Err(frontend_error(
                 source_name,
                 format!(
@@ -1998,20 +1084,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
             )
         })?;
     }
-    let interface_binding_types = binding_types
-        .iter()
-        .map(|(name, descriptor)| (name.clone(), inference.normalize(descriptor)))
-        .collect::<BTreeMap<_, _>>();
+    let interface_binding_types = binding_types;
     let declared_type_names = declared_types.keys().cloned().collect::<Vec<_>>();
     let declared_types = declared_type_names
         .into_iter()
         .map(|name| (name.clone(), installed_named_types[&name]))
         .collect::<BTreeMap<_, _>>();
-    let binding_types: BTreeMap<String, AnalysisTypeId> = binding_types
-        .into_iter()
+    let binding_types: BTreeMap<String, AnalysisTypeId> = interface_binding_types
+        .iter()
         .map(|(name, descriptor)| {
-            let descriptor = inference.normalize(&descriptor);
-            (name, types.intern_descriptor(&descriptor))
+            (name.clone(), types.intern_descriptor(descriptor))
         })
         .collect();
     let result_type = types.intern_resolved_descriptor(&resolved_result).ok_or_else(|| {
@@ -2083,18 +1165,51 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 .map_err(|message| frontend_error(source_name, message))?;
         }
     }
-    // Property presence follows the provider contract. Values are materialized
-    // only after the module's static obligations have succeeded.
-    let local_type_properties = evaluate_declared_properties(
-        source_name, program, &tool_values, &static_environment,
-        account, sources, &mut evaluator,
-    )?;
-    let local_type_property_roots = local_type_properties.iter()
-        .map(|(evidence, root)| (evidence.root.clone(), *root))
+    let static_environment = static_environment.iter()
+        .map(|(name, descriptor)| (name.clone(), inference.normalize(descriptor)))
+        .chain(interface_binding_types.iter().map(|(name, descriptor)| (name.clone(), descriptor.clone())))
+        .chain(binding_schemes.iter().filter(|(_, scheme)| !scheme.parameters.is_empty())
+            .map(|(name, scheme)| (name.clone(), scheme.body.clone())))
+        .collect::<HashMap<_, _>>();
+    let mut tool_context = ToolInferenceContext::new(
+        types, &hir, qualified_external_interfaces.clone(), static_environment.clone(),
+        binding_schemes.clone(), named_types.clone(),
+        !external_names.contains("Tuple"), dyn_namespaces.clone(),
+    );
+    tool_context.type_properties.extend(inference.local_type_properties.iter().cloned());
+    // Main expressions and tool bindings share the frozen solver's publication
+    // table and the same arena. Moving the graph preserves every published ID.
+    let tool_bindings_to_execute = tool_bindings_to_execute.into_iter().map(|binding| {
+        prepare_solved_tool_binding(binding, &inference, &mut publication, &mut tool_context, sources)
+            .map(|plan| SolvedToolBinding { binding, plan })
+            .map_err(|message| FrontendError::from_diagnostic(sources,
+                Diagnostic::error(message, binding.value.value.location)))
+    }).collect::<Result<Vec<_>, _>>()?;
+    drop(publication);
+    let construction_checks = prepare_construction_checks(program, &static_environment,
+        query.clone(), sources, &mut tool_context)?;
+    let property_plans = prepare_property_plans(program, &inference.property_contracts, &static_environment,
+        query, sources, &mut tool_context)?;
+    let ToolInferenceContext { mut types, .. } = tool_context;
+    let type_family_constructors = declaration_plans.iter().filter_map(|plan| {
+        match plan {
+            DeclarationPlan::Family { binding, constructor: Some(constructor), .. } =>
+                Some((binding.value.name.value.clone(), constructor.clone())),
+            DeclarationPlan::RecursiveFamily { binding, .. } => Some((binding.value.name.value.clone(),
+                NominalTypeConstructor {
+                    id: crate::TypeConstructorId { module: module_id, local: declared_initializer_slots[&binding.value.name.location] },
+                    name: binding.value.name.value.clone(),
+                })),
+            _ => None,
+        }
+    }).collect::<BTreeMap<_, _>>();
+    let (declared_value_owners, owner_plans) = prepare_declared_value_owners(
+        program, &expression_descriptors, &binding_schemes, &inference, &mut types,
+    );
+    let runtime_type_evidence = std::mem::take(&mut inference.runtime_type_evidence)
+        .into_iter().map(|(name, descriptor)| (name, inference.normalize(&descriptor)))
         .collect::<BTreeMap<_, _>>();
-    if local_type_property_evidence.iter().any(|evidence| !local_type_property_roots.contains_key(&evidence.root)) {
-        return Err(frontend_error(source_name, "declared property evidence was not materialized"));
-    }
+    let local_type_property_evidence = std::mem::take(&mut inference.local_type_properties);
     let module_display_trait = if module_context.defines_display_trait() {
         trait_ids.get("Display").copied()
     } else {
@@ -2124,8 +1239,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             ExprKind::Dict(fields) => fields.iter().filter_map(|field| {
                 let ExprKind::Variable(binding) = &field.value.value.value else { return None; };
                 let interface = qualified_external_interfaces.get(&binding.value)?;
-                let root = external_roots.get(&binding.value)?;
-                if ValueRef::persistent(*root, evaluator.main).kind() != ValueKind::Module { return None; }
+                if !namespace_bindings.contains(&binding.value) { return None; }
                 Some((field.value.name.as_ref()?.value.clone(), interface.clone()))
             }).collect(),
             _ => BTreeMap::new(),
@@ -2208,12 +1322,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
             })
             .map(published_trait_implementation)
             .collect(),
-        type_properties: local_type_properties
-            .iter()
-            .map(|(evidence, _)| evidence.clone())
-            .collect(),
+        type_properties: local_type_property_evidence.clone(),
         display_trait: module_display_trait,
-        type_family_templates: match &program.value.body.value.result.value {
+        type_family_constructors: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields
                 .iter()
                 .filter_map(|field| {
@@ -2221,14 +1332,14 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         return None;
                     };
                     field.value.name.as_ref().and_then(|name| {
-                        type_family_templates
+                        type_family_constructors
                             .get(&binding.value)
                             .cloned()
                             .or_else(|| {
                                 qualified_external_interfaces
                                     .get(&binding.value)
                                     .and_then(|interface| {
-                                        interface.type_family_templates.get(&binding.value)
+                                        interface.type_family_constructors.get(&binding.value)
                                     })
                                     .cloned()
                             })
@@ -2249,7 +1360,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let generic_call_evidence = std::mem::take(&mut inference.resolved_call_evidence);
     let interpolation_evidence =
         std::mem::take(&mut inference.resolved_interpolation_evidence);
-    let runtime_type_evidence = std::mem::take(&mut inference.runtime_type_evidence);
     let mut generic_evidence_parameters: HashMap<_, _> = program
         .value
         .body
@@ -2301,6 +1411,99 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 (binding.value.value.location, parameters)
             })
         .collect();
+    let value_constructors = std::mem::take(&mut inference.value_constructors);
+    // All inference-dependent interface and compiler evidence is now final.
+    // Execution below cannot query, normalize through, or revive this solver.
+    drop(inference);
+    Ok(SolvedModulePlan {
+        types, declared_types, binding_types, trait_ids, trait_implementations,
+        result_type, result_scheme, hir, definition_types, definition_schemes,
+        expression_types, module_interface, propagation_families, not_families,
+        trait_member_evidence, generic_call_evidence, interpolation_evidence,
+        generic_evidence_parameters, generic_dictionary_factories,
+        declared_value_owners, value_constructors, authored_names, prelude_value_names,
+        declared_initializer_slots, declaration_plans, tool_bindings_to_execute,
+        construction_checks, property_plans, local_type_property_evidence,
+        static_environment, runtime_type_evidence, owner_plans,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_module_plan(
+    source_name: &str,
+    module_id: crate::ModuleId,
+    program: &Program,
+    solved: SolvedModulePlan<'_>,
+    account: &mut QuotaAccount,
+    external_roots: &BTreeMap<String, PersistentValue>,
+    dynamic_bindings: &HashSet<String>,
+    sources: &SourceDatabase,
+    debug_sink: &Arc<dyn DebugSink>,
+    tool_heap: &mut Heap,
+) -> Result<Analysis, FrontendError> {
+    let SolvedModulePlan {
+        types, declared_types, binding_types, trait_ids, trait_implementations,
+        result_type, result_scheme, hir, definition_types, definition_schemes,
+        expression_types, module_interface, propagation_families, not_families,
+        trait_member_evidence, generic_call_evidence, interpolation_evidence,
+        generic_evidence_parameters, generic_dictionary_factories,
+        declared_value_owners, value_constructors, authored_names, prelude_value_names,
+        declared_initializer_slots, declaration_plans, tool_bindings_to_execute,
+        construction_checks, property_plans, local_type_property_evidence,
+        static_environment, runtime_type_evidence, owner_plans,
+    } = solved;
+    let mut tool_bindings_to_execute = tool_bindings_to_execute.into_iter()
+        .map(|SolvedToolBinding { binding, plan }| ToolBindingTask { binding, plan, value: None })
+        .collect::<Vec<_>>();
+    // Execution resources are acquired only after this module's static plans
+    // have been solved. Runtime linking is also deferred to this boundary.
+    let mut tool_values = link_external_tool_values(
+        source_name, sources, program, external_roots, dynamic_bindings, &authored_names,
+    )?;
+    let cached_bootstrap_root = tool_heap.bootstrap_root();
+    let mut evaluator = ToolEvaluator::new(Arc::clone(debug_sink), tool_heap);
+    let mut bootstrap_values = if let Some(root) = cached_bootstrap_root {
+        prelude_value_names.iter().map(|name| {
+            let value = root.export_get(evaluator.main, name)
+                .expect("bootstrap exports root is a Dict")
+                .unwrap_or_else(|| panic!("bootstrap exports root is missing {name:?}"));
+            (name.clone(), value.runtime())
+        }).collect()
+    } else {
+        evaluator.install_bootstrap()?
+    };
+    bootstrap_values.append(&mut tool_values);
+    let mut tool_values = bootstrap_values;
+    stage_pending_construction_checks(module_id, program, &declared_initializer_slots, &mut evaluator)?;
+    let mut type_family_values = BTreeMap::new();
+    materialize_declarations(declaration_plans, &types, module_id, &declared_initializer_slots,
+        source_name, &mut tool_values, &mut type_family_values, &mut evaluator)?;
+    evaluator.tool_types = types;
+    prepare_construction_dependencies(source_name, program, &hir, &mut tool_bindings_to_execute,
+        &construction_checks, &mut tool_values,
+        account, sources, &mut evaluator)?;
+    for task in &mut tool_bindings_to_execute {
+        evaluate_construction_checks(source_name, &construction_checks, &tool_values,
+            account, sources, &mut evaluator, false)?;
+        if let Ok(value) = task.execute(source_name,
+            &tool_values, account, sources, &mut evaluator) {
+            tool_values.insert(task.binding.value.name.value.clone(), value);
+        }
+    }
+    evaluate_construction_checks(source_name, &construction_checks, &tool_values,
+        account, sources, &mut evaluator, true)?;
+    // Property presence follows the provider contract. Values are materialized
+    // only after the module's static obligations have succeeded.
+    let local_type_properties = evaluate_declared_properties(
+        source_name, program, &property_plans, &local_type_property_evidence, &tool_values, &static_environment,
+        account, sources, &mut evaluator,
+    )?;
+    let local_type_property_roots = local_type_properties.iter()
+        .map(|(evidence, root)| (evidence.root.clone(), *root))
+        .collect::<BTreeMap<_, _>>();
+    if local_type_property_evidence.iter().any(|evidence| !local_type_property_roots.contains_key(&evidence.root)) {
+        return Err(frontend_error(source_name, "declared property evidence was not materialized"));
+    }
     let bootstrap_root = if let Some(root) = cached_bootstrap_root {
         root
     } else {
@@ -2330,7 +1533,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let names = runtime_type_evidence.keys().cloned().collect::<Vec<_>>();
         let mut values = Vec::new();
         for (name, descriptor) in runtime_type_evidence {
-            let descriptor = inference.normalize(&descriptor);
             let value = evaluator.descriptor(&descriptor)?;
             let mut parameters = Vec::new();
             collect_bound_parameters(&descriptor, &mut parameters);
@@ -2379,61 +1581,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
     }
     let mut pending_owner_roots = Vec::new();
-    let mut declared_value_owners = HashMap::new();
-    let value_constructors = inference.value_constructors.clone();
-    for (location, descriptor) in &expression_descriptors {
-        let descriptor = if value_constructors.contains_key(location)
-            && let TypeDescriptor::Function { result, .. } = descriptor
-        {
-            result.as_ref()
-        } else {
-            descriptor
+    let owner_values = evaluator.work.type_graph_values_in(
+        Some(evaluator.main), &evaluator.tool_types, owner_plans.iter().map(|plan| plan.root),
+        &mut evaluator.tool_type_values,
+    ).map_err(|error| frontend_error(source_name, error.to_string()))?;
+    for (plan, value) in owner_plans.into_iter().zip(owner_values) {
+        let value = if plan.arity == 0 { value } else {
+            evaluator.create_type_family(value, plan.arity, None)?.0
         };
-        if !matches!(descriptor, TypeDescriptor::Declared(_)) {
-            continue;
-        }
-        let key = if type_identity_is_symbolic(descriptor) {
-            format!("\0owner-family:{}:{}", location.start, location.end)
-        } else { crate::compiler::declared_owner_link_key(*location) };
-        let mut owner = ResolvedEvidence::root(key.clone());
-        let mut parameters = Vec::new();
-        collect_bound_parameters(descriptor, &mut parameters);
-        parameters.sort_by_key(|parameter| parameter.0);
-        parameters.dedup();
-        let descriptor = if parameters.is_empty() { descriptor.clone() } else {
-            let binding = program.value.body.value.bindings.iter().find(|binding| {
-                binding.value.value.location.source == location.source
-                    && binding.value.value.location.start <= location.start
-                    && location.end <= binding.value.value.location.end
-            });
-            let scheme = binding.and_then(|binding| binding_schemes.get(&binding.value.name.value));
-            let mut replacements = HashMap::new();
-            for (index, parameter) in parameters.iter().enumerate() {
-                let inferred = inference.inferred_runtime_scopes.iter().filter(|(scope, _)| {
-                    scope.source == location.source && scope.start <= location.start && location.end <= scope.end
-                }).filter_map(|(scope, evidence)| evidence.iter().find(|evidence| evidence.target == TypeDescriptor::Bound(*parameter))
-                    .map(|evidence| (scope.end - scope.start, evidence.name.clone())))
-                    .min_by_key(|(length, _)| *length).map(|(_, name)| name);
-                let explicit = scheme.and_then(|scheme| scheme.constraints.iter().position(|constraint| {
-                    constraint.parameter == *parameter && constraint.capability == TypeCapability::RuntimeType
-                })).map(|index| evidence_parameter_name(&binding.unwrap().value.name.value, index));
-                let implementation = binding.filter(|binding| binding.value.kind == BindingKind::Impl)
-                    .and_then(|binding| binding.value.type_parameters.get(parameter.0 as usize))
-                    .map(|parameter| parameter.value.clone());
-                let Some(name) = inferred.or(explicit).or(implementation) else { break; };
-                owner.arguments.push(ResolvedEvidence::root(name));
-                replacements.insert(*parameter, TypeDescriptor::Bound(TypeParameterId(index as u32)));
-            }
-            if owner.arguments.len() != parameters.len() { continue; }
-            substitute_bound_parameters(descriptor, &replacements)
-        };
-        if contains_type_variable(&descriptor) { continue; }
-        let value = evaluator.descriptor(&descriptor)?;
-        let value = if owner.arguments.is_empty() { value } else {
-            evaluator.create_type_family(value, owner.arguments.len(), None)?.0
-        };
-        pending_owner_roots.push((key.clone(), value));
-        declared_value_owners.insert(*location, owner);
+        pending_owner_roots.push((plan.key, value));
     }
     if !pending_owner_roots.is_empty() {
         let names = pending_owner_roots
@@ -2454,7 +1610,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .chain(runtime_roots.keys())
         .cloned()
         .collect();
-    evaluator.inference_context = None;
+    let types = std::mem::take(&mut evaluator.tool_types);
     Ok(Analysis {
         types,
         declared_types,

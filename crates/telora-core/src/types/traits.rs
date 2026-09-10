@@ -67,76 +67,6 @@ fn visible_trait(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn evaluate_type_constraints(
-    source_name: &str,
-    parameters: &[TypeParameter],
-    authored: &[Vec<Expr>],
-    values: &dyn ToolBindings,
-    local_traits: &BTreeMap<String, crate::TraitId>,
-    external_interfaces: &BTreeMap<String, ModuleInterface>,
-    account: &mut QuotaAccount,
-    sources: &SourceDatabase,
-    evaluator: &mut ToolEvaluator<'_>,
-) -> Result<Vec<TypeConstraint>, FrontendError> {
-    let mut constraints = Vec::new();
-    for (parameter, bounds) in parameters.iter().zip(authored) {
-        for bound in bounds {
-            let capability = if let Some((id, name)) =
-                visible_trait(bound, local_traits, external_interfaces)
-            {
-                TypeCapability::Trait { id, name }
-            } else if let ExprKind::Call { callee, arguments } = &bound.value
-                && matches!(&callee.value, ExprKind::Variable(name) if name.value == "Property")
-                && let [property] = arguments.as_slice()
-            {
-                let metadata = evaluate_tool_expression(
-                    source_name,
-                    property,
-                    values,
-                    account,
-                    sources,
-                    evaluator,
-                )?;
-                let descriptor = evaluator.decode_type(metadata, "Type").map_err(|message| {
-                    FrontendError::from_diagnostic(
-                        sources,
-                        Diagnostic::error(
-                            format!("invalid Property constraint: {message}"),
-                            bound.location,
-                        ),
-                    )
-                })?;
-                TypeCapability::Property(descriptor)
-            } else {
-                return Err(FrontendError::from_diagnostic(
-                    sources,
-                    Diagnostic::error("unknown trait or constraint", bound.location),
-                ));
-            };
-            if constraints.iter().any(|existing: &TypeConstraint| {
-                existing.parameter == parameter.id && existing.capability == capability
-            }) {
-                return Err(FrontendError::from_diagnostic(
-                    sources,
-                    Diagnostic::error("duplicate type parameter constraint", bound.location),
-                ));
-            }
-            constraints.push(TypeConstraint {
-                parameter: parameter.id,
-                capability,
-                location: bound.location,
-            });
-        }
-    }
-    constraints.sort_by(|left, right| {
-        left.parameter
-            .cmp(&right.parameter)
-            .then_with(|| left.capability.display_name().cmp(&right.capability.display_name()))
-    });
-    Ok(constraints)
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TraitImplementation {
     pub id: crate::TraitImplId,
@@ -152,6 +82,19 @@ pub struct TraitImplementation {
 #[derive(Clone, Debug)]
 struct PendingTypeConstraint {
     capability: TypeCapability,
+    target: TypeDescriptor,
+    location: crate::Location,
+    lexical_evidence: Vec<LexicalTypeEvidence>,
+    destination: EvidenceDestination,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum EvidenceDestination {
+    CallArgument,
+    TraitMember,
+}
+
+struct PendingInterpolation {
     target: TypeDescriptor,
     location: crate::Location,
     lexical_evidence: Vec<LexicalTypeEvidence>,
@@ -365,7 +308,17 @@ impl GenericInference<'_> {
         ) || matches!(target, TypeDescriptor::Enum(variants) if variants.values().all(Option::is_none))
     }
 
-    fn require_interpolation_evidence(
+    fn record_interpolation_obligation(
+        &mut self,
+        target: TypeDescriptor,
+        location: crate::Location,
+    ) {
+        self.pending_interpolations.push(PendingInterpolation {
+            target, location, lexical_evidence: self.lexical_type_evidence.clone(),
+        });
+    }
+
+    fn resolve_interpolation_evidence(
         &mut self,
         target: TypeDescriptor,
         location: crate::Location,
@@ -377,8 +330,7 @@ impl GenericInference<'_> {
             collect_bound_parameters(&target, &mut bound_parameters);
         }
         if contains_type_variable(&target) || !bound_parameters.is_empty() {
-            self.pending_interpolations.push((target, location));
-            return Ok(());
+            return Err("string interpolation type remains unresolved".to_owned());
         }
         if matches!(target, TypeDescriptor::Never) {
             return Ok(());
@@ -413,15 +365,11 @@ impl GenericInference<'_> {
 
     fn finish_interpolations(&mut self) -> Result<(), (crate::Location, String)> {
         let pending = std::mem::take(&mut self.pending_interpolations);
-        for (target, location) in pending {
-            self.require_interpolation_evidence(target, location)
-                .map_err(|message| (location, message))?;
-        }
-        if let Some((_, location)) = self.pending_interpolations.first() {
-            return Err((
-                *location,
-                "string interpolation type remains unresolved".to_owned(),
-            ));
+        for PendingInterpolation { target, location, lexical_evidence } in pending {
+            let previous = std::mem::replace(&mut self.lexical_type_evidence, lexical_evidence);
+            let result = self.resolve_interpolation_evidence(target, location);
+            self.lexical_type_evidence = previous;
+            result.map_err(|message| (location, message))?;
         }
         Ok(())
     }
@@ -508,7 +456,7 @@ impl GenericInference<'_> {
         target: &TypeDescriptor,
     ) -> Option<String> {
         let target = self.normalize(target);
-        self.type_properties.iter().find_map(|evidence| {
+        self.type_properties.iter().chain(&self.local_type_properties).find_map(|evidence| {
             (self.normalize(&evidence.target) == target && evidence.property == *property)
                 .then(|| evidence.root.clone())
         })
@@ -657,33 +605,11 @@ impl GenericInference<'_> {
                 return Err(format!("{trait_name}.{member} requires a Self argument"));
             };
             let target = self.infer(first, environment, None)?;
-            let (dictionary, dictionary_type) =
-                if let Some(dictionary) = self.lexical_trait_evidence(trait_id, &target) {
-                    let dictionary_type = self
-                        .trait_dictionary_type(trait_id, &target)
-                        .ok_or_else(|| "trait has no static dictionary type".to_owned())?;
-                    (ResolvedEvidence::root(dictionary), dictionary_type)
-                } else {
-                    let (implementation, replacements) = self
-                        .trait_candidate(trait_id, &target)?
-                        .ok_or_else(|| {
-                            format!(
-                                "type {} does not implement {trait_name}",
-                                self.normalize(&target).display_name()
-                            )
-                        })?;
-                    let implementation = implementation.clone();
-                    let dictionary_type = substitute_bound_parameters(
-                        &implementation.dictionary_scheme.body,
-                        &replacements,
-                    );
-                    let evidence = self.implementation_evidence(
-                        &implementation,
-                        &replacements,
-                        callee.location,
-                    )?;
-                    (evidence, dictionary_type)
-                };
+            // The trait declaration determines the member signature. Choosing an
+            // implementation is an evidence obligation, not an input to inference.
+            let dictionary_type = self
+                .trait_dictionary_type(trait_id, &target)
+                .ok_or_else(|| "trait has no static dictionary type".to_owned())?;
             let member_type = self.project_field(&dictionary_type, &member)?;
             let TypeDescriptor::Function { parameters, result } = member_type else {
                 return Err(format!("trait member {trait_name}.{member} is not callable"));
@@ -702,8 +628,13 @@ impl GenericInference<'_> {
             if let Some(expected) = expected {
                 self.check(&result, expected)?;
             }
-            self.resolved_trait_members
-                .insert(callee.location, dictionary);
+            self.pending_type_constraints.push(PendingTypeConstraint {
+                capability: TypeCapability::Trait { id: trait_id, name: trait_name },
+                target,
+                location: callee.location,
+                lexical_evidence: self.lexical_type_evidence.clone(),
+                destination: EvidenceDestination::TraitMember,
+            });
             Ok(self.normalize(&result))
         })())
     }
@@ -789,11 +720,30 @@ impl GenericInference<'_> {
         }
     }
 
+    fn record_constraint_evidence(
+        &mut self,
+        constraint: &PendingTypeConstraint,
+        evidence: ResolvedEvidence,
+    ) {
+        match constraint.destination {
+            EvidenceDestination::CallArgument => {
+                self.resolved_call_evidence.entry(constraint.location).or_default().push(evidence);
+            }
+            EvidenceDestination::TraitMember => {
+                self.resolved_trait_members.insert(constraint.location, evidence);
+            }
+        }
+    }
+
     fn finish_type_constraints(&mut self) -> Result<(), (crate::Location, String)> {
         let pending = std::mem::take(&mut self.pending_type_constraints);
         for constraint in pending {
             let mut target = self.normalize(&constraint.target);
             if contains_type_variable(&target) {
+                if matches!(constraint.destination, EvidenceDestination::TraitMember) {
+                    return Err((constraint.location,
+                        format!("cannot resolve trait constraint for {}", target.display_name())));
+                }
                 if constraint.capability != TypeCapability::RuntimeType
                     || self.type_facet_locations.contains(&constraint.location) {
                     continue;
@@ -821,10 +771,7 @@ impl GenericInference<'_> {
                 evidence.capability == capability
                     && self.normalize(&evidence.target) == target
             }) {
-                self.resolved_call_evidence
-                    .entry(constraint.location)
-                    .or_default()
-                    .push(ResolvedEvidence::root(evidence.name.clone()));
+                self.record_constraint_evidence(&constraint, ResolvedEvidence::root(evidence.name.clone()));
                 continue;
             }
             match &capability {
@@ -851,30 +798,31 @@ impl GenericInference<'_> {
                     self.resolved_call_evidence.entry(constraint.location).or_default().push(evidence);
                 }
                 TypeCapability::Trait { id, name } => {
-                    let (implementation, replacements) = self
-                        .trait_candidate(*id, &target)
-                        .map_err(|message| (constraint.location, message))?
-                        .ok_or_else(|| {
-                            (
+                    let lexical_start = self.lexical_type_evidence.len();
+                    self.lexical_type_evidence.extend(constraint.lexical_evidence.iter().cloned());
+                    let dictionary = (|| {
+                        let (implementation, replacements) = self
+                            .trait_candidate(*id, &target)
+                            .map_err(|message| (constraint.location, message))?
+                            .ok_or_else(|| {
+                                (
+                                    constraint.location,
+                                    format!(
+                                        "type {} does not implement {name}",
+                                        target.display_name()
+                                    ),
+                                )
+                            })?;
+                        let implementation = implementation.clone();
+                        self.implementation_evidence(
+                                &implementation,
+                                &replacements,
                                 constraint.location,
-                                format!(
-                                    "type {} does not implement {name}",
-                                    target.display_name()
-                                ),
                             )
-                        })?;
-                    let implementation = implementation.clone();
-                    let dictionary = self
-                        .implementation_evidence(
-                            &implementation,
-                            &replacements,
-                            constraint.location,
-                        )
-                        .map_err(|message| (constraint.location, message))?;
-                    self.resolved_call_evidence
-                        .entry(constraint.location)
-                        .or_default()
-                        .push(dictionary);
+                            .map_err(|message| (constraint.location, message))
+                    })();
+                    self.lexical_type_evidence.truncate(lexical_start);
+                    self.record_constraint_evidence(&constraint, dictionary?);
                 }
                 TypeCapability::Property(property) => {
                     let evidence = self

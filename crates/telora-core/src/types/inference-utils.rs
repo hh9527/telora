@@ -679,10 +679,10 @@ pub(crate) fn program_references_name(program: &Program, name: &str, member_cand
         })
 }
 
-fn validate_export_references<'a, T>(
+fn validate_export_references<'a>(
     program: &Program,
     prelude: impl Iterator<Item = &'a String>,
-    external_values: &BTreeMap<String, T>,
+    external_names: impl Iterator<Item = &'a String>,
     sources: &SourceDatabase,
 ) -> Result<(), FrontendError> {
     let authored = program
@@ -701,8 +701,7 @@ fn validate_export_references<'a, T>(
         .collect::<HashSet<_>>();
     let mut visible = prelude.cloned().collect::<HashSet<_>>();
     visible.extend(
-        external_values
-            .keys()
+        external_names
             .filter(|name| !authored.contains(name.as_str()))
             .cloned(),
     );

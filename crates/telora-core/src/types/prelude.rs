@@ -3,6 +3,31 @@ struct BootstrapPrelude {
     schemes: HashMap<String, TypeScheme>,
 }
 
+// Name resolution must not construct type descriptors just to discover names.
+const BOOTSTRAP_NAMES: &[&str] = &[
+    "Type", "Dyn", "Never", "Unit", "Int", "Float", "String", "Bytes", "Bool",
+    "PropertyTarget", "Array", "Dict", "TypeOf", "Unchecked", "Tuple", "Func",
+    "Option", "Result", "FoldControl", "\0telora_unit_type", "\0telora_tuple_type",
+    "\0telora_function_type", "\0telora_struct", "\0telora_newtype", "\0telora_enum",
+    "\0telora_pack_dyn", "\0telora_cast",
+];
+
+pub(crate) fn resolve_module_hir(
+    program: &Program,
+    external_names: &BTreeSet<String>,
+    external_member_names: HashSet<String>,
+) -> HirProgram {
+    HirProgram::resolve_with_member_constructors(program,
+        BOOTSTRAP_NAMES.iter().copied().chain(external_names.iter().map(String::as_str))
+            .map(str::to_owned), external_member_names)
+}
+
+#[test]
+fn bootstrap_resolution_names_match_static_contracts() {
+    assert_eq!(BOOTSTRAP_NAMES.iter().map(|name| name.to_string()).collect::<BTreeSet<_>>(),
+        core_prelude_types().into_keys().collect::<BTreeSet<_>>());
+}
+
 impl BootstrapPrelude {
     fn new() -> Self {
         let artifact = Self {

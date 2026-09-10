@@ -1,3 +1,8 @@
+struct StaticConstraintSolution {
+    known: Vec<TypeConstraint>,
+    unknown: Vec<Diagnostic>,
+}
+
 impl StaticContractScope<'_> {
     fn check_contract_obligations(
         &self, expression: &Expr, inference: &mut GenericInference<'_>, environment: &dyn TypeEnvironment,
@@ -36,8 +41,9 @@ impl StaticContractScope<'_> {
         authored: &[Vec<Expr>],
         traits: &BTreeMap<String, crate::TraitId>,
         graph: &mut TypeGraph,
-    ) -> Option<Vec<TypeConstraint>> {
+    ) -> StaticConstraintSolution {
         let mut constraints = Vec::new();
+        let mut unknown = Vec::new();
         for (parameter, bounds) in self.parameters.iter().zip(authored) {
             for bound in bounds {
                 let capability = if let Some((id, name)) =
@@ -48,10 +54,15 @@ impl StaticContractScope<'_> {
                     && matches!(&callee.value, ExprKind::Variable(name) if name.value == "Property")
                     && let [property] = arguments.as_slice()
                 {
-                    let root = self.elaborate(property, graph)?;
-                    TypeCapability::Property(graph.descriptor(root).ok()?)
+                    let Some(descriptor) = self.elaborate(property, graph)
+                        .and_then(|root| graph.descriptor(root).ok()) else {
+                        unknown.push(Diagnostic::error("property constraint type remains unknown", property.location));
+                        continue;
+                    };
+                    TypeCapability::Property(descriptor)
                 } else {
-                    return None;
+                    unknown.push(Diagnostic::error("unknown trait or constraint", bound.location));
+                    continue;
                 };
                 constraints.push(TypeConstraint {
                     parameter: parameter.id,
@@ -60,7 +71,7 @@ impl StaticContractScope<'_> {
                 });
             }
         }
-        Some(constraints)
+        StaticConstraintSolution { known: constraints, unknown }
     }
 }
 
@@ -92,6 +103,31 @@ fn finish_type_constraints(
 #[cfg(test)]
 mod static_constraint_tests {
     use super::*;
+
+    #[test]
+    fn unknown_constraints_do_not_discard_other_solved_constraints() {
+        let mut sources = SourceDatabase::default();
+        let source = sources.add("static-constraints",
+            "decl f: for(T: Missing + Property(Int) + AlsoMissing) Fn(T) -> T;");
+        let program = parse_registered(&sources, source).program.unwrap();
+        let binding = &program.value.body.value.bindings[0];
+        let environment = BootstrapPrelude::new().types;
+        let hir = HirProgram::resolve(&program, environment.keys().cloned());
+        let parameters = static_contract_parameters(binding, &sources).unwrap();
+        let scope = StaticContractScope {
+            hir: &hir, environment: &environment, external_names: &HashSet::new(),
+            interfaces: &BTreeMap::new(), parameters: &parameters, families: &BTreeMap::new(),
+        };
+        let solved = scope.constraints(&binding.value.type_parameter_bounds,
+            &BTreeMap::new(), &mut TypeGraph::default());
+        assert_eq!(solved.known.len(), 1);
+        assert_eq!(solved.known[0].capability, TypeCapability::Property(TypeDescriptor::Int));
+        assert_eq!(solved.unknown.len(), 2);
+        for (diagnostic, index) in solved.unknown.iter().zip([0, 2]) {
+            assert_eq!(diagnostic.message, "unknown trait or constraint");
+            assert_eq!(diagnostic.labels[0].location, binding.value.type_parameter_bounds[0][index].location);
+        }
+    }
 
     #[test]
     fn constrained_family_applications_require_property_evidence() {

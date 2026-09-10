@@ -1,8 +1,10 @@
 // Runtime metadata is a consumer of the solved graph. This builder intentionally
 // has no source-origin callback: origin-bearing projections use their own path.
-pub(crate) enum TypeMetadataRoot<'a> {
-    Graph(crate::types::AnalysisTypeId),
-    Descriptor(&'a crate::types::TypeDescriptor),
+// One table belongs to one immutable graph and one live work heap.
+#[derive(Default)]
+pub(crate) struct TypeGraphMaterialization {
+    values: Vec<Option<Val>>,
+    active: Vec<Option<usize>>,
 }
 
 impl Heap {
@@ -13,20 +15,31 @@ impl Heap {
         graph: &crate::types::TypeGraph,
         root: crate::types::AnalysisTypeId,
     ) -> Result<Val, HeapError> {
-        self.type_graph_values(background, graph, [TypeMetadataRoot::Graph(root)])
+        self.type_graph_values(background, graph, [root])
             .map(|mut values| values.pop().expect("one root"))
     }
 
-    pub(crate) fn type_graph_values<'a>(
+    #[cfg(test)]
+    pub(crate) fn type_graph_values(
         &mut self,
         background: Option<&Heap>,
         graph: &crate::types::TypeGraph,
-        roots: impl IntoIterator<Item = TypeMetadataRoot<'a>>,
+        roots: impl IntoIterator<Item = crate::types::AnalysisTypeId>,
+    ) -> Result<Vec<Val>, HeapError> {
+        self.type_graph_values_in(background, graph, roots, &mut TypeGraphMaterialization::default())
+    }
+
+    pub(crate) fn type_graph_values_in(
+        &mut self,
+        background: Option<&Heap>,
+        graph: &crate::types::TypeGraph,
+        roots: impl IntoIterator<Item = crate::types::AnalysisTypeId>,
+        materialized: &mut TypeGraphMaterialization,
     ) -> Result<Vec<Val>, HeapError> {
         struct Builder<'a> {
             graph: &'a crate::types::TypeGraph,
-            values: Vec<Option<Val>>,
-            active: Vec<Option<usize>>,
+            values: &'a mut Vec<Option<Val>>,
+            active: &'a mut Vec<Option<usize>>,
             depth: usize,
             nominal_boundary: usize,
             declared: HashMap<crate::value::DeclaredTypeId, Val>,
@@ -224,26 +237,25 @@ impl Heap {
                 Ok(value)
             }
         }
-        // The conversion table cannot escape this heap/graph operation. Reuse it
-        // across roots, but allocate nothing for an empty or descriptor-only batch.
-        let mut builder = None;
-        roots
-            .into_iter()
-            .map(|root| match root {
-                TypeMetadataRoot::Graph(root) => builder
-                    .get_or_insert_with(|| Builder {
-                        graph,
-                        values: vec![None; graph.nodes().len()],
-                        active: vec![None; graph.nodes().len()],
-                        depth: 0,
-                        nominal_boundary: 0,
-                        declared: HashMap::new(),
-                    })
-                    .build(self, background, root),
-                TypeMetadataRoot::Descriptor(descriptor) => {
-                    self.type_descriptor_value(background, descriptor)
-                }
-            })
-            .collect()
+        let mut roots = roots.into_iter().peekable();
+        if roots.peek().is_none() { return Ok(Vec::new()); }
+        materialized.values.resize(graph.nodes().len(), None);
+        materialized.active.resize(graph.nodes().len(), None);
+        let mut builder = Builder {
+            graph,
+            values: &mut materialized.values,
+            active: &mut materialized.active,
+            depth: 0,
+            nominal_boundary: 0,
+            declared: HashMap::new(),
+        };
+        let result: Result<Vec<_>, _> = roots.map(|root| builder.build(self, background, root)).collect();
+        if result.is_err() {
+            // A failed nominal body may have installed provisional owner slots.
+            // Do not let a later execution observe those as completed metadata.
+            builder.values.fill(None);
+            builder.active.fill(None);
+        }
+        result
     }
 }

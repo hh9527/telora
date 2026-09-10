@@ -1457,7 +1457,11 @@ pub(crate) struct SemanticModuleInterface {
 
 impl SemanticModuleInterface {
     pub(crate) fn new(interface: &ModuleInterface) -> Self {
-        let (types, result_type) = TypeGraph::from_module_interface(interface);
+        Self::with_types(interface, TypeGraph::default())
+    }
+
+    pub(crate) fn with_types(interface: &ModuleInterface, mut types: TypeGraph) -> Self {
+        let result_type = types.intern_module_interface(interface);
         let export_schemes = interface
             .exports
             .iter()

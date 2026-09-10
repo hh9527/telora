@@ -6,6 +6,28 @@ mod named_graph_tests {
     use super::*;
 
     #[test]
+    fn nominal_publication_reuses_solved_body_ids_and_refines_reserved_identity() {
+        let mut graph = TypeGraph::default();
+        let int = graph.intern_node(TypeNode::Int);
+        let body = graph.intern_node(TypeNode::Struct(BTreeMap::from([("value".into(), int)])));
+        let declaration = crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 71);
+        let before = graph.nodes.len();
+        let owner = graph.intern_declared_body(declaration.clone(), "Record".into(), body);
+        assert_eq!(graph.nodes.len(), before + 1);
+        assert!(matches!(graph.node(owner), TypeNode::Declared { body: actual, .. } if *actual == body));
+        let descriptor = graph.descriptor(owner).unwrap();
+        assert_eq!(graph.intern_descriptor(&descriptor), owner);
+        assert_eq!(graph.nodes.len(), before + 1);
+
+        let reserved_id = crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 72);
+        let never = graph.intern_node(TypeNode::Never);
+        let reserved = graph.intern_declared_body(reserved_id.clone(), "Reserved".into(), never);
+        assert_eq!(graph.intern_declared_body(reserved_id, "Reserved".into(), body), reserved);
+        assert!(matches!(graph.node(reserved), TypeNode::Declared { body: actual, .. } if *actual == body));
+        assert_eq!(graph.intern_descriptor(&graph.descriptor(reserved).unwrap()), reserved);
+    }
+
+    #[test]
     fn named_publication_keeps_forward_edges_and_shares_resolved_roots() {
         let mut graph = TypeGraph::default();
         let roots = graph.install_named_descriptors(&BTreeMap::from([
@@ -82,6 +104,9 @@ pub enum TypeNode {
 #[derive(Clone, Default)]
 pub struct TypeGraph {
     nodes: Vec<TypeNode>,
+    // Static contradictions remain analysis results even when their containing
+    // type has no root yet. They must never trigger runtime type discovery.
+    elaboration_conflicts: Vec<Diagnostic>,
     names: BTreeMap<String, AnalysisTypeId>,
     declared: HashMap<crate::value::DeclaredTypeId, AnalysisTypeId>,
     interned: RawTable<AnalysisTypeId>,
@@ -137,19 +162,17 @@ impl TypeGraph {
             .map(|(index, node)| (AnalysisTypeId(index as u32), node))
     }
 
-    pub(crate) fn from_module_interface(interface: &ModuleInterface) -> (Self, AnalysisTypeId) {
-        let mut graph = Self::default();
+    pub(crate) fn intern_module_interface(&mut self, interface: &ModuleInterface) -> AnalysisTypeId {
         for (name, descriptor) in &interface.concrete_types {
-            let ty = graph.intern_descriptor(descriptor);
-            graph.names.insert(name.clone(), ty);
+            let ty = self.intern_descriptor(descriptor);
+            self.names.insert(name.clone(), ty);
         }
         let fields = interface
             .exports
             .iter()
-            .map(|(name, scheme)| (name.clone(), graph.intern_descriptor(&scheme.body)))
+            .map(|(name, scheme)| (name.clone(), self.intern_descriptor(&scheme.body)))
             .collect();
-        let result = graph.intern_node(TypeNode::Struct(fields));
-        (graph, result)
+        self.intern_node(TypeNode::Struct(fields))
     }
 
     pub fn display(&self, id: AnalysisTypeId) -> String {
@@ -385,6 +408,26 @@ impl TypeGraph {
         };
         // Nominal hashing depends only on declaration identity, which is unchanged.
         *body = resolved_body;
+    }
+
+    fn intern_declared_body(
+        &mut self,
+        declaration: crate::value::DeclaredTypeId,
+        name: String,
+        body: AnalysisTypeId,
+    ) -> AnalysisTypeId {
+        if let Some(owner) = self.declared.get(&declaration).copied() {
+            if let TypeNode::Declared { body: previous, .. } = self.node(owner)
+                && matches!(self.node(*previous), TypeNode::Never)
+                && !matches!(self.node(body), TypeNode::Never)
+            {
+                self.fill_declared_body(owner, body);
+            }
+            return owner;
+        }
+        let owner = self.intern_node(TypeNode::Declared { id: declaration.clone(), name, body });
+        self.declared.insert(declaration, owner);
+        owner
     }
 
     fn intern_descriptor(&mut self, descriptor: &TypeDescriptor) -> AnalysisTypeId {

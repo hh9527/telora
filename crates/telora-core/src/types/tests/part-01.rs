@@ -1,4 +1,45 @@
     #[test]
+    fn solved_module_plan_publishes_family_and_value_contracts_without_heap() {
+        let mut sources = SourceDatabase::default();
+        let source_id = sources.add("static-plan.telora",
+            "type Box(T) = struct { value: T }; def answer = 1 / 0; export { Box, answer };");
+        let program = parse_registered(&sources, source_id).program.unwrap();
+        let solved = solve_module_plan(
+            "static-plan.telora", crate::ModuleId::ANONYMOUS,
+            ModuleAnalysisContext::Ordinary, &program,
+            resolve_module_hir(&program, &BTreeSet::new(), HashSet::new()),
+            &BTreeSet::new(), &sources,
+            &BTreeMap::new(), &BTreeMap::new(), None, &mut TypeStore::default(),
+        ).unwrap();
+        assert_eq!(solved.module_interface.exports["answer"].body, TypeDescriptor::Int);
+        assert_eq!(solved.module_interface.type_family_constructors["Box"].id.module,
+            crate::ModuleId::ANONYMOUS);
+        assert!(!solved.expression_types.is_empty());
+        assert!(!solved.declaration_plans.is_empty());
+    }
+
+    #[test]
+    fn static_type_error_leaves_main_heap_unallocated() {
+        let mut sources = SourceDatabase::default();
+        let source_id = sources.add("static-error.telora", "def answer: Int = \"wrong\";");
+        let program = parse_registered(&sources, source_id).program.unwrap();
+        let mut heap = Heap::main();
+        let allocations = heap.allocation_count();
+        let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
+        let error = analyze_program_with_bindings_observed(
+            "static-error.telora", crate::ModuleId::ANONYMOUS,
+            ModuleAnalysisContext::Ordinary, &program,
+            &mut QuotaAccount::new(Quota::with_fuel(100_000)),
+            &BTreeMap::new(), &HashSet::new(), &sources,
+            &BTreeMap::new(), &BTreeMap::new(), &debug_sink,
+            &mut heap, &mut TypeStore::default(),
+        ).err().expect("invalid annotation must fail statically");
+        assert!(error.to_string().contains("cannot unify String with Int"), "{error}");
+        assert_eq!(heap.allocation_count(), allocations,
+            "static rejection must leave the main heap unallocated");
+    }
+
+    #[test]
     fn bootstrap_prelude_keeps_public_projections_consistent() {
         let prelude = BootstrapPrelude::new();
         for name in prelude.schemes.keys() {
@@ -18,12 +59,31 @@
         assert_eq!(trait_id.local, crate::FIRST_DYNAMIC_MODULE_LOCAL);
         assert_eq!(analysis.module_interface.traits["Display"], trait_id);
         assert_eq!(
-            analysis.module_interface.type_family_templates["Display"]
-                .constructor()
-                .unwrap()
+            analysis.module_interface.type_family_constructors["Display"]
                 .id,
             crate::TypeConstructorId::from(trait_id)
         );
+    }
+
+    #[test]
+    fn trait_member_signature_solves_self_before_selecting_implementation() {
+        let analysis = analyze_source(
+            "deferred-trait.telora",
+            r#"trait Combine { combine: Fn(Self, Self) -> Self };
+               impl Combine for Int { combine: fn(a, b) { a + b } };
+               def add_one = fn(x) { Combine.combine(x, 1) };
+               def output = add_one(41);
+               export { add_one, output };"#,
+        ).unwrap();
+        assert_eq!(analysis.display(analysis.binding_types["output"]), "Int");
+        assert_eq!(analysis.display(analysis.binding_types["add_one"]), "Fn(Int) -> Int");
+
+        let missing = analyze_source(
+            "missing-deferred-trait.telora",
+            r#"trait Combine { combine: Fn(Self, Self) -> Self };
+               def add_one = fn(x) { Combine.combine(x, 1) };"#,
+        ).unwrap_err();
+        assert!(missing.message.contains("Int does not implement Combine"), "{missing}");
     }
 
     #[test]
@@ -234,7 +294,7 @@
                         trait_implementations: Vec::new(),
                         type_properties: Vec::new(),
                         display_trait: None,
-                        type_family_templates: BTreeMap::new(),
+                        type_family_constructors: BTreeMap::new(),
                     },
                 )])
             })
@@ -292,7 +352,11 @@
             "a consumed Host interface is not implicitly re-exported"
         );
 
-        let dynamic = analyze_with_host_binding("host", None, true, None).unwrap();
+        let missing_data = analyze_with_host_binding("host", None, true, None).unwrap_err();
+        assert!(missing_data.message.contains("requires an explicit type interface"));
+        let dynamic = analyze_with_host_binding("host", None, true, Some(TypeScheme {
+            parameters: Vec::new(), constraints: Vec::new(), body: TypeDescriptor::Int,
+        })).unwrap();
         assert_eq!(dynamic.display(dynamic.binding_types["host"]), "Int");
         assert_eq!(dynamic.display(dynamic.result_type), "Int");
 

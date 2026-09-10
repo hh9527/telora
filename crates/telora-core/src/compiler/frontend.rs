@@ -394,26 +394,39 @@ pub fn run_source(
         .map_err(|error| ExecutionError::Runtime(error.with_sources(&sources)))
 }
 
-pub(crate) fn compile_expression_with_external_bindings(
-    source_name: &str,
-    function_name: &str,
-    expression: &Expr,
+pub(crate) struct PreparedExternalExpression {
+    expression: Expr,
+    declared_value_owners: HashMap<Location, crate::types::ResolvedEvidence>,
+    value_constructors: HashMap<Location, crate::types::ValueConstructor>,
+}
+
+pub(crate) fn prepare_expression_with_external_bindings(
+    mut expression: Expr,
     binding_exists: impl Fn(&str) -> bool,
     declared_value_owners: HashMap<Location, crate::types::ResolvedEvidence>,
     value_constructors: HashMap<Location, crate::types::ValueConstructor>,
     source_file: &SourceFile,
-) -> Result<(BytecodeFunction, Vec<String>), FrontendError> {
-    let mut lowered = expression.clone();
-    crate::elaboration::lower_constructor_patterns(&mut lowered, &value_constructors);
-    let expression = &lowered;
+) -> Result<(PreparedExternalExpression, Vec<String>), FrontendError> {
+    crate::elaboration::lower_constructor_patterns(&mut expression, &value_constructors);
     let mut required = BTreeSet::new();
-    free_expr(expression, &HashSet::new(), &mut required);
+    free_expr(&expression, &HashSet::new(), &mut required);
     for evidence in declared_value_owners.values() { evidence.collect_bindings(&mut required); }
-    let hir = HirProgram::resolve_runtime_expression(expression, Vec::new());
+    let hir = HirProgram::resolve_runtime_expression(&expression, Vec::new());
     required.extend(hir.unresolved()
         .map(|reference| reference.name.clone()));
     let bindings = required.into_iter().filter(|name| binding_exists(name)).collect::<Vec<_>>();
     validate_hir(source_file, &hir, &bindings.iter().cloned().collect())?;
+    Ok((PreparedExternalExpression { expression, declared_value_owners, value_constructors }, bindings))
+}
+
+pub(crate) fn compile_prepared_external_expression(
+    source_name: &str,
+    function_name: &str,
+    prepared: &PreparedExternalExpression,
+    bindings: &[String],
+    source_file: &SourceFile,
+) -> Result<BytecodeFunction, FrontendError> {
+    let PreparedExternalExpression { expression, declared_value_owners, value_constructors } = prepared;
     let owner_index = OwnerEvidenceIndex::new(&declared_value_owners);
     let mut compiler = Compiler {
         source_name,
@@ -441,12 +454,12 @@ pub(crate) fn compile_expression_with_external_bindings(
         static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };
-    for name in &bindings {
+    for name in bindings {
         let register = compiler.load_external_constant(name.clone(), expression.location);
         compiler.environment.insert(name.clone(), register);
     }
     compiler.compile_tail_expr(expression)?;
-    Ok((compiler.finish()?, bindings))
+    compiler.finish()
 }
 
 fn validate_hir(

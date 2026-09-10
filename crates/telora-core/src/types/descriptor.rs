@@ -82,7 +82,7 @@ pub struct ModuleInterface {
     pub trait_implementations: Vec<TraitImplementation>,
     pub type_properties: Vec<TypePropertyEvidence>,
     pub(crate) display_trait: Option<crate::TraitId>,
-    pub(crate) type_family_templates: BTreeMap<String, TypeFamilyTemplate>,
+    pub(crate) type_family_constructors: BTreeMap<String, NominalTypeConstructor>,
 }
 
 impl ModuleInterface {
@@ -128,29 +128,13 @@ impl ModuleInterface {
             trait_implementations: self.trait_implementations.clone(),
             type_properties: self.type_properties.clone(),
             display_trait: self.display_trait,
-            type_family_templates: self
-                .type_family_templates
-                .iter()
-                .map(|(name, family)| {
-                    (
-                        name.clone(),
-                        TypeFamilyTemplate {
-                            parameters: family.parameters.clone(),
-                            template: family.template,
-                            root: family.root,
-                            rebuild_at_runtime: family.rebuild_at_runtime,
-                            constructor: family.constructor.clone(),
-                        },
-                    )
-                })
-                .collect(),
+            type_family_constructors: self.type_family_constructors.clone(),
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypeFamilyTemplate {
-    parameters: Vec<TypeParameter>,
     template: PersistentValue,
     root: PersistentValue,
     rebuild_at_runtime: bool,

@@ -149,13 +149,14 @@ struct InferenceVariables {
     nodes: Vec<std::cell::Cell<InferenceNode>>,
     types: Vec<InferenceType>,
     arguments: Vec<InferenceVariableId>,
+    instantiation_results: Vec<InferenceVariableId>,
     constructors: Vec<Arc<InferenceConstructor>>,
     constructor_ids: HashMap<Arc<InferenceConstructor>, InferenceConstructorId>,
     leaf_types: Vec<Option<InferenceTypeId>>,
     descriptor_views: Vec<std::cell::OnceCell<Arc<TypeDescriptor>>>,
     descriptor_view_ids: std::cell::RefCell<HashMap<*const TypeDescriptor, InferenceTypeId>>,
     normalized_body_indices: Vec<std::cell::Cell<u32>>,
-    normalized_bodies: std::cell::RefCell<Vec<(u64, Arc<TypeDescriptor>)>>,
+    normalized_bodies: std::cell::RefCell<Vec<(u64, Arc<TypeDescriptor>, Option<crate::value::DeclaredTypeId>)>>,
     revision: u64,
     imported_bodies: HashMap<*const TypeDescriptor, (Arc<TypeDescriptor>, InferenceVariableId)>,
     resolved_declared_bodies: HashMap<crate::value::DeclaredTypeId, Vec<(Arc<TypeDescriptor>, InferenceVariableId)>>,
@@ -280,15 +281,31 @@ impl InferenceVariables {
     }
 
     fn initialize_known(&mut self, root: InferenceVariableId, id: InferenceTypeId) {
-        let mut dependencies = self.arguments(id).to_vec();
-        dependencies.sort_unstable();
-        dependencies.dedup();
-        for dependency in dependencies {
-            let dependency = self.root(dependency);
-            self.add_dependent(dependency, root);
+        let arity = self.arguments(id).len();
+        if arity <= 8 {
+            // Most rows have zero, one or two arguments. Inspect that tiny
+            // slice directly instead of allocating a temporary dependency Vec.
+            for index in 0..arity {
+                let dependency = self.arguments(id)[index];
+                if self.arguments(id)[..index].contains(&dependency) { continue; }
+                self.add_dependent(self.root(dependency), root);
+            }
+        } else {
+            let mut dependencies = self.arguments(id).to_vec();
+            dependencies.sort_unstable();
+            dependencies.dedup();
+            for dependency in dependencies {
+                self.add_dependent(self.root(dependency), root);
+            }
         }
         self.nodes[root.0 as usize].set(InferenceNode::Known(id));
-        self.refresh(vec![root]);
+        // A new Known node only changes state during refresh if a child is
+        // already conflicted. Allocate the propagation queue only in that case.
+        if self.arguments(id).iter().any(|dependency|
+            matches!(self.nodes[self.root(*dependency).0 as usize].get(), InferenceNode::Conflicted(_)))
+        {
+            self.refresh(vec![root]);
+        }
     }
 
     fn advance_revision(&mut self) {

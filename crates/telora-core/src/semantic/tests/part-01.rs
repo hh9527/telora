@@ -221,7 +221,10 @@
                 .expressions()
                 .iter()
                 .filter(|expression| expression.module == main_module.id)
-                .all(|expression| expression.ty.value.is_some())
+                .all(|expression| expression.ty.value.is_some()),
+            "missing expression types: {:?}", snapshot.expressions().iter()
+                .filter(|expression| expression.module == main_module.id && expression.ty.value.is_none())
+                .collect::<Vec<_>>()
         );
         let main_source = snapshot.sources().get(main_module.source.unwrap());
         let literal = u32::try_from(main_source.text().to_string().find("1 + 2").unwrap()).unwrap();
@@ -360,7 +363,7 @@
         };
         assert!(matches!(
             fact("A").state,
-            FactState::Incomputable(IncomputableReason::UnsupportedOperation)
+            FactState::Unknown(UnknownReason::UnresolvedName)
         ));
         assert_eq!(fact("B").state, FactState::Known);
         assert_eq!(fact("C").state, FactState::Known);

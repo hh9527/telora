@@ -92,7 +92,9 @@
         .unwrap();
         load_module(directory.join("typed.telora"), BTreeMap::new(), 100_000).unwrap();
         let module_limited = Engine::new(EngineConfig {
-            module_quota: Quota::new(1, 1_000, u64::MAX),
+            // Static type applications no longer consume execution fuel; the
+            // property provider still requires a call in the value phase.
+            module_quota: Quota::new(0, 1_000, u64::MAX),
             session_quota: Quota::new(100, 1_000, u64::MAX),
             data_limits: DataLimits::default(),
         });

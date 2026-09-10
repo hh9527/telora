@@ -603,6 +603,9 @@ struct ApplicationSelector {
     after_help = "Examples:\n  telora check @src/lib\n  telora -C examples/app check @src/main\n  telora check @test/compiler"
 )]
 struct CheckArgs {
+    /// Solve types without executing tool, property, or runtime code.
+    #[arg(long)]
+    types_only: bool,
     /// Canonical module selector, such as @src/lib, @test/compiler, or std/string.
     #[arg(value_name = "MODULE_ID")]
     module_id: String,
@@ -893,6 +896,7 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
 }
 
 fn check_command(context: PathBuf, arguments: CheckArgs, schema: &str) -> Result<i32, String> {
+    let catalog_started = std::time::Instant::now();
     let prepared = package_host::prepare(&context)?;
     let resolver =
         ModuleResolver::from_workspace(Arc::clone(&prepared), &context, &arguments.module_id)
@@ -901,9 +905,15 @@ fn check_command(context: PathBuf, arguments: CheckArgs, schema: &str) -> Result
         .selected_root()
         .map(|module| module.id.to_string())
         .map_err(|error| error.to_string())?;
-    let workspace = engine()
-        .recover_with_resolver(resolver)
+    let check_started = std::time::Instant::now();
+    let catalog_seconds = catalog_started.elapsed().as_secs_f64();
+    let workspace = if arguments.types_only {
+        engine().check_types_with_resolver(resolver)
+    } else {
+        engine().recover_with_resolver(resolver)
+    }
         .map_err(|error| error.to_string())?;
+    let check_seconds = check_started.elapsed().as_secs_f64();
     for (crate_name, _) in prepared.crates() {
         for undeclared in prepared
             .undeclared_modules(crate_name)
@@ -965,6 +975,9 @@ fn check_command(context: PathBuf, arguments: CheckArgs, schema: &str) -> Result
         "record": "summary",
         "status": if failed { "error" } else { "ok" },
         "dependencies": workspace.modules().len().saturating_sub(1),
+        "types_only": arguments.types_only,
+        "check_seconds": check_seconds,
+        "catalog_seconds": catalog_seconds,
     }))?;
     Ok(i32::from(failed))
 }

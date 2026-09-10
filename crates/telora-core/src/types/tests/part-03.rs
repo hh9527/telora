@@ -157,7 +157,7 @@
         let d = definition("D");
         assert!(matches!(
             partial.definition_facts[&a].state,
-            FactState::Incomputable(IncomputableReason::UnsupportedOperation)
+            FactState::Unknown(UnknownReason::UnresolvedName)
         ));
         assert_eq!(partial.definition_facts[&b].state, FactState::Known);
         assert_eq!(partial.definition_facts[&c].state, FactState::Known);
@@ -221,11 +221,11 @@
     }
 
     #[test]
-    fn partial_type_evaluation_shares_one_fuel_account() {
+    fn partial_type_solving_does_not_consume_execution_fuel() {
         let partial = analyze_partial_types(
             "fuel.telora",
             "type A = Array(Int); type B = Array(Int); 0",
-            Quota::with_fuel(1),
+            Quota::with_fuel(0),
         );
         let facts = partial
             .hir
@@ -235,10 +235,8 @@
             .map(|definition| &partial.definition_facts[&definition.id])
             .collect::<Vec<_>>();
         assert_eq!(facts[0].state, FactState::Known);
-        assert_eq!(
-            facts[1].state,
-            FactState::Incomputable(IncomputableReason::QuotaExceeded)
-        );
+        assert_eq!(facts[1].state, FactState::Known);
+        assert!(partial.diagnostics.is_empty());
     }
 
     #[test]
@@ -246,7 +244,7 @@
         let partial = analyze_partial_types(
             "recursive.telora",
             "type Node = struct {children: Array(Node)}; 0",
-            Quota::with_fuel(100),
+            Quota::with_fuel(0),
         );
         let node = partial
             .hir
@@ -331,7 +329,7 @@
         let partial = analyze_partial_types(
             "recursive-family.telora",
             "type Expr(A) = enum {Leaf(A), Call(Array(Expr(A)))}; 0",
-            Quota::with_fuel(100),
+            Quota::with_fuel(0),
         );
         let expression_family = partial
             .hir
@@ -355,7 +353,7 @@
             .type_descriptor_value(None, &TypeDescriptor::Int)
             .unwrap();
         let bindings =
-            BTreeMap::from([("LinkedType".to_owned(), crate::DataWorld::new(heap, root))]);
+            BTreeMap::from([("LinkedType".to_owned(), crate::DataWorld::new(heap, root, Some(TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Int)))))]);
         let partial = analyze_partial_types_with_bindings(
             "linked.telora",
             "type Linked = LinkedType; 0",
@@ -400,9 +398,21 @@
         let expression = &program.value.body.value.bindings[0].value.value;
         let mut main = Heap::main();
         let mut evaluator = ToolEvaluator::new(Arc::new(DiscardDebugSink), &mut main);
+        let bootstrap = BootstrapPrelude::new();
+        let hir = HirProgram::resolve(&program, bootstrap.types.keys().cloned());
+        let mut context = ToolInferenceContext::new(
+            TypeGraph::default(), &hir, BTreeMap::new(), bootstrap.types, bootstrap.schemes,
+            BTreeMap::new(), true, HashSet::new(),
+        );
         let mut account = QuotaAccount::new(Quota::with_fuel(fuel));
+        let evidence = solve_tool_expression_types(expression, Some(&TypeDescriptor::Int),
+            account.query_context(), &sources, &mut context)
+            .and_then(|evidence| prepare_tool_execution(expression, evidence, &sources, &mut context.types))
+            .map_err(|message| frontend_error("tool-fuel", message))?;
+        evaluator.tool_types = context.types;
         for _ in 0..count {
-            evaluate_tool_expression("tool-fuel", expression, &BTreeMap::new(), &mut account, &sources, &mut evaluator)?;
+            evaluate_prepared_tool_expression("tool-fuel", &BTreeMap::new(), &evidence,
+                &mut account, &sources, &mut evaluator, true)?;
         }
         Ok(account.remaining_fuel())
     }
@@ -435,4 +445,19 @@
         let witness =
             crate::run_source("test", "type User = struct {name: String}; User.type", 100_000).unwrap();
         assert_eq!(witness.value().kind(), crate::ValueKind::Type);
+    }
+    #[test]
+    fn function_type_errors_precede_construction_check_factory_execution() {
+        let source = r#"
+            @check(do { fail!("tool-stage-sentinel"); fn(value) { fail!("unused callback") } })
+            type Item = struct(Int);
+            def later: Fn(Int) -> Int = fn(x) { "bad" };
+            0
+        "#;
+        let error = analyze_source("solve-before-tools", source).unwrap_err();
+        assert!(!error.message.contains("tool-stage-sentinel"), "{}", error.message);
+        assert!(error.message.contains("Int") && error.message.contains("String"), "{}", error.message);
+        let valid = source.replace("fn(x) { \"bad\" }", "fn(x) { 1 }");
+        let error = analyze_source("execute-after-solving", &valid).unwrap_err();
+        assert!(error.message.contains("tool-stage-sentinel"), "{}", error.message);
     }

@@ -13,6 +13,68 @@ mod inference_table_tests {
     use super::*;
 
     #[test]
+    fn deep_generic_instantiation_uses_an_explicit_stack() {
+        let mut arena = InferenceVariables::default();
+        let parameter = TypeParameterId(7);
+        let mut template = TypeDescriptor::Bound(parameter);
+        for _ in 0..16384 { template = TypeDescriptor::Array(Box::new(template)); }
+        let argument = arena.fresh();
+        let mut slot = arena.instantiate_descriptor(&template, &HashMap::from([(parameter, argument)]));
+        // The input descriptor's recursive Drop is independent of the solver.
+        while let TypeDescriptor::Array(inner) = template { template = *inner; }
+        for _ in 0..16384 {
+            let row = arena.known(slot).unwrap();
+            assert!(matches!(arena.constructor(row), InferenceConstructor::Array));
+            slot = arena.arguments(row)[0];
+        }
+        assert_eq!(slot, argument);
+        assert!(arena.descriptor_views.iter().all(|view| view.get().is_none()));
+    }
+
+    #[test]
+    fn nominal_instantiation_shares_bodies_only_within_the_same_call() {
+        let mut arena = InferenceVariables::default();
+        let parameter = TypeParameterId(7);
+        let nominal = TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: crate::value::DeclaredTypeId::applied(crate::ModuleId::ANONYMOUS, 94, &[TypeDescriptor::Bound(parameter)]),
+            name: "Container".into(),
+            body: Arc::new(TypeDescriptor::Array(Box::new(TypeDescriptor::Bound(parameter)))),
+        });
+        let template = TypeDescriptor::Function { parameters: vec![nominal.clone()], result: Box::new(nominal) };
+        let mut bodies = Vec::new();
+        for _ in 0..2 {
+            let argument = arena.fresh();
+            let root = arena.instantiate_descriptor(&template, &HashMap::from([(parameter, argument)]));
+            let slots = arena.arguments(arena.known(root).unwrap());
+            let first = arena.arguments(arena.known(slots[0]).unwrap());
+            let second = arena.arguments(arena.known(slots[1]).unwrap());
+            assert_eq!(first, second);
+            assert_eq!(first[0], argument);
+            assert_eq!(arena.arguments(arena.known(first[1]).unwrap()), &[argument]);
+            bodies.push(first[1]);
+        }
+        assert_ne!(bodies[0], bodies[1]);
+        assert!(arena.descriptor_views.iter().all(|view| view.get().is_none()));
+    }
+
+    #[test]
+    fn importing_an_arena_body_view_reuses_its_row_and_live_dependencies() {
+        let mut arena = InferenceVariables::default();
+        let item = arena.fresh();
+        let body = arena.structure_node(InferenceConstructor::Array, &[item]);
+        let row = arena.known(body).unwrap();
+        let view = arena.bound(body).unwrap();
+        let rows = arena.types.len();
+        let imported = arena.import_body(Arc::clone(&view));
+        assert_eq!(arena.known(imported).unwrap().0, row.0);
+        assert_eq!(arena.types.len(), rows);
+        assert_eq!(arena.import_body(view), imported);
+        arena.record_conflict(&TypeDescriptor::Inference(item), "element conflict");
+        assert!(arena.ensure_consistent(&TypeDescriptor::Inference(imported)).is_err());
+        assert!(arena.ensure_consistent(&TypeDescriptor::Inference(body)).is_err());
+    }
+
+    #[test]
     fn type_rows_and_argument_edges_are_pod() {
         assert_eq!(std::mem::size_of::<InferenceType>(), 12);
         assert!(!std::mem::needs_drop::<InferenceType>());
@@ -136,19 +198,19 @@ mod inference_table_tests {
         assert_eq!(arena.normalized_body_indices.len(), 1024);
         assert!(arena.normalized_bodies.borrow().is_empty());
         let id = InferenceTypeId(0);
-        arena.cache_normalized_body(id, Arc::new(TypeDescriptor::Int));
+        arena.cache_normalized_body(id, Arc::new(TypeDescriptor::Int), None);
         assert_eq!(arena.normalized_bodies.borrow().len(), 1);
-        assert_eq!(arena.normalized_body(id).as_deref(), Some(&TypeDescriptor::Int));
+        assert_eq!(arena.normalized_body(id, None).as_deref(), Some(&TypeDescriptor::Int));
         let revision = arena.revision;
         arena.structure_edge(TypeDescriptor::Tuple(vec![TypeDescriptor::Int]));
         arena.structure_node(InferenceConstructor::Array, &[item]);
         assert_eq!(arena.revision, revision);
-        assert!(arena.normalized_body(id).is_some());
+        assert!(arena.normalized_body(id, None).is_some());
         arena.set(item, TypeDescriptor::String);
-        assert!(arena.normalized_body(id).is_none());
-        arena.cache_normalized_body(id, Arc::new(TypeDescriptor::String));
+        assert!(arena.normalized_body(id, None).is_none());
+        arena.cache_normalized_body(id, Arc::new(TypeDescriptor::String), None);
         assert_eq!(arena.normalized_bodies.borrow().len(), 1);
-        assert_eq!(arena.normalized_body(id).as_deref(), Some(&TypeDescriptor::String));
+        assert_eq!(arena.normalized_body(id, None).as_deref(), Some(&TypeDescriptor::String));
     }
 
     #[test]
@@ -382,83 +444,101 @@ impl InferenceVariables {
         ty: &TypeDescriptor,
         parameters: &HashMap<TypeParameterId, InferenceVariableId>,
     ) -> InferenceVariableId {
-        self.instantiate_descriptor_with(ty, parameters, &mut HashMap::new())
-    }
-
-    fn instantiate_descriptor_with(
-        &mut self,
-        ty: &TypeDescriptor,
-        parameters: &HashMap<TypeParameterId, InferenceVariableId>,
-        bodies: &mut HashMap<*const TypeDescriptor, InferenceVariableId>,
-    ) -> InferenceVariableId {
+        if let TypeDescriptor::Inference(slot) = ty { return *slot; }
+        if let TypeDescriptor::Bound(parameter) = ty
+            && let Some(slot) = parameters.get(parameter) { return *slot; }
+        if !matches!(ty, TypeDescriptor::Declared(_) | TypeDescriptor::Array(_) | TypeDescriptor::Dict(_)
+            | TypeDescriptor::Newtype(_) | TypeDescriptor::TypeOf(_) | TypeDescriptor::Tagged { .. }
+            | TypeDescriptor::Tuple(_) | TypeDescriptor::PendingAlternatives(_) | TypeDescriptor::Struct(_)
+            | TypeDescriptor::Enum(_) | TypeDescriptor::Function { .. })
+        {
+            return self.structure_edge(ty.clone());
+        }
         use InferenceConstructor as C;
-        let mut arguments = Vec::new();
-        let constructor = match ty {
-            TypeDescriptor::Inference(slot) => return *slot,
-            TypeDescriptor::Bound(parameter) => {
-                if let Some(slot) = parameters.get(parameter) { return *slot; }
-                C::Bound(*parameter)
-            }
-            TypeDescriptor::Declared(declared) => {
-                for argument in declared.id.arguments() {
-                    arguments.push(self.instantiate_descriptor_with(argument, parameters, bodies));
+        enum Work<'a> {
+            Visit(&'a TypeDescriptor),
+            Finish(C, usize),
+            Body(&'a DeclaredTypeDescriptor),
+            SaveBody(*const TypeDescriptor),
+        }
+        let mut work = vec![Work::Visit(ty)];
+        let mut results = std::mem::take(&mut self.instantiation_results);
+        debug_assert!(results.is_empty());
+        let mut bodies = HashMap::new();
+        while let Some(task) = work.pop() {
+            let ty = match task {
+                Work::Visit(ty) => ty,
+                Work::Finish(constructor, start) => {
+                    let slot = self.structure_node(constructor, &results[start..]);
+                    results.truncate(start);
+                    results.push(slot);
+                    continue;
                 }
-                let body = if arguments.is_empty() {
-                    self.import_declared_body(declared)
-                } else if let Some(slot) = bodies.get(&Arc::as_ptr(&declared.body)) {
-                    *slot
-                } else {
-                    let slot = self.instantiate_descriptor_with(&declared.body, parameters, bodies);
-                    bodies.insert(Arc::as_ptr(&declared.body), slot);
-                    slot
-                };
-                arguments.push(body);
-                C::Declared { head: declared.id.reapply(&[]), name: declared.name.clone() }
-            }
-            TypeDescriptor::Array(item) | TypeDescriptor::Dict(item)
-            | TypeDescriptor::Newtype(item) | TypeDescriptor::TypeOf(item)
-            | TypeDescriptor::Tagged { payload: item, .. } => {
-                arguments.push(self.instantiate_descriptor_with(item, parameters, bodies));
-                match ty {
-                    TypeDescriptor::Array(_) => C::Array,
-                    TypeDescriptor::Dict(_) => C::Dict,
-                    TypeDescriptor::Newtype(_) => C::Newtype,
-                    TypeDescriptor::TypeOf(_) => C::TypeOf,
-                    TypeDescriptor::Tagged { tag, .. } => C::Tagged(tag.clone()),
-                    _ => unreachable!(),
+                Work::Body(declared) => {
+                    if declared.id.arguments().is_empty() {
+                        results.push(self.import_declared_body(declared));
+                    } else if let Some(slot) = bodies.get(&Arc::as_ptr(&declared.body)) {
+                        results.push(*slot);
+                    } else {
+                        work.push(Work::SaveBody(Arc::as_ptr(&declared.body)));
+                        work.push(Work::Visit(&declared.body));
+                    }
+                    continue;
                 }
-            }
-            TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
-                for item in items {
-                    arguments.push(self.instantiate_descriptor_with(item, parameters, bodies));
+                Work::SaveBody(address) => {
+                    bodies.insert(address, *results.last().expect("instantiated body"));
+                    continue;
                 }
-                if matches!(ty, TypeDescriptor::Tuple(_)) { C::Tuple } else { C::PendingAlternatives }
-            }
-            TypeDescriptor::Struct(fields) => {
-                for item in fields.values() {
-                    arguments.push(self.instantiate_descriptor_with(item, parameters, bodies));
+            };
+            let constructor = match ty {
+                TypeDescriptor::Inference(slot) => { results.push(*slot); continue; }
+                TypeDescriptor::Bound(parameter) if parameters.contains_key(parameter) => {
+                    results.push(parameters[parameter]);
+                    continue;
                 }
-                C::Struct(fields.keys().cloned().collect())
-            }
-            TypeDescriptor::Enum(variants) => {
-                for item in variants.values().flatten() {
-                    arguments.push(self.instantiate_descriptor_with(item, parameters, bodies));
+                TypeDescriptor::Declared(declared) => C::Declared { head: declared.id.reapply(&[]), name: declared.name.clone() },
+                TypeDescriptor::Array(_) => C::Array,
+                TypeDescriptor::Dict(_) => C::Dict,
+                TypeDescriptor::Newtype(_) => C::Newtype,
+                TypeDescriptor::TypeOf(_) => C::TypeOf,
+                TypeDescriptor::Tagged { tag, .. } => C::Tagged(tag.clone()),
+                TypeDescriptor::Tuple(_) => C::Tuple,
+                TypeDescriptor::PendingAlternatives(_) => C::PendingAlternatives,
+                TypeDescriptor::Struct(fields) => C::Struct(fields.keys().cloned().collect()),
+                TypeDescriptor::Enum(variants) => C::Enum(variants.iter().map(|(name, payload)| (name.clone(), payload.is_some())).collect()),
+                TypeDescriptor::Function { .. } => C::Function,
+                ty => { results.push(self.structure_edge(ty.clone())); continue; }
+            };
+            work.push(Work::Finish(constructor, results.len()));
+            match ty {
+                TypeDescriptor::Declared(declared) => {
+                    work.push(Work::Body(declared));
+                    work.extend(declared.id.arguments().iter().rev().map(Work::Visit));
                 }
-                C::Enum(variants.iter().map(|(name, payload)| (name.clone(), payload.is_some())).collect())
-            }
-            TypeDescriptor::Function { parameters: inputs, result } => {
-                for item in inputs {
-                    arguments.push(self.instantiate_descriptor_with(item, parameters, bodies));
+                TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::Newtype(item)
+                | TypeDescriptor::TypeOf(item) | TypeDescriptor::Tagged { payload: item, .. } => work.push(Work::Visit(item)),
+                TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => work.extend(items.iter().rev().map(Work::Visit)),
+                TypeDescriptor::Struct(fields) => work.extend(fields.values().rev().map(Work::Visit)),
+                TypeDescriptor::Enum(variants) => work.extend(variants.values().rev().flatten().map(|ty| Work::Visit(ty))),
+                TypeDescriptor::Function { parameters, result } => {
+                    work.push(Work::Visit(result));
+                    work.extend(parameters.iter().rev().map(Work::Visit));
                 }
-                arguments.push(self.instantiate_descriptor_with(result, parameters, bodies));
-                C::Function
+                _ => unreachable!("structural template node"),
             }
-            ty => return self.structure_edge(ty.clone()),
-        };
-        self.structure_node(constructor, &arguments)
+        }
+        debug_assert_eq!(results.len(), 1);
+        let root = results.pop().expect("instantiated root");
+        self.instantiation_results = results;
+        root
     }
 
     fn import_declared_body(&mut self, declared: &DeclaredTypeDescriptor) -> InferenceVariableId {
+        // An already imported immutable body has arena edges, including any
+        // unresolved slots. Reuse them before walking the descriptor skeleton.
+        if let Some((_, slot)) = self.imported_bodies.get(&Arc::as_ptr(&declared.body)) {
+            return *slot;
+        }
         // A complete nominal identity fixes its skeleton. Normalization may
         // produce new Arc addresses for that same immutable body.
         if !matches!(declared.body.as_ref(), TypeDescriptor::Never)
@@ -484,11 +564,18 @@ impl InferenceVariables {
         if let Some((_, slot)) = self.imported_bodies.get(&address) { return *slot; }
         let slot = self.fresh();
         self.imported_bodies.insert(address, (Arc::clone(&body), slot));
-        self.set(slot, body.as_ref().clone());
+        let existing_row = self.descriptor_view_ids.borrow().get(&address).copied();
+        if let Some(row) = existing_row {
+            // This is already a view of our own arena. Reuse its immutable
+            // constructor/argument row instead of lowering it a second time.
+            self.initialize_known(slot, row);
+        } else {
+            self.set(slot, body.as_ref().clone());
+        }
         slot
     }
 
-    fn normalized_body(&self, id: InferenceTypeId) -> Option<Arc<TypeDescriptor>> {
+    fn normalized_body(&self, id: InferenceTypeId, context: Option<&crate::value::DeclaredTypeId>) -> Option<Arc<TypeDescriptor>> {
         let index = self.normalized_body_indices[id.0 as usize].get();
         if index == u32::MAX {
             #[cfg(feature = "inference-profile")]
@@ -496,24 +583,24 @@ impl InferenceVariables {
             return None;
         }
         let bodies = self.normalized_bodies.borrow();
-        let (revision, body) = &bodies[index as usize];
+        let (revision, body, owner) = &bodies[index as usize];
         #[cfg(feature = "inference-profile")]
         profile_increment(if *revision == self.revision {
             &self.profile.body_hits
         } else { &self.profile.body_stale });
-        (*revision == self.revision).then(|| Arc::clone(body))
+        (*revision == self.revision && owner.as_ref() == context).then(|| Arc::clone(body))
     }
 
-    fn cache_normalized_body(&self, id: InferenceTypeId, body: Arc<TypeDescriptor>) {
+    fn cache_normalized_body(&self, id: InferenceTypeId, body: Arc<TypeDescriptor>, context: Option<crate::value::DeclaredTypeId>) {
         let index = &self.normalized_body_indices[id.0 as usize];
         let mut bodies = self.normalized_bodies.borrow_mut();
         if index.get() == u32::MAX {
             let next = u32::try_from(bodies.len()).expect("normalized body capacity exceeded");
             assert_ne!(next, u32::MAX, "normalized body capacity exceeded");
-            bodies.push((self.revision, body));
+            bodies.push((self.revision, body, context));
             index.set(next);
         } else {
-            bodies[index.get() as usize] = (self.revision, body);
+            bodies[index.get() as usize] = (self.revision, body, context);
         }
     }
 

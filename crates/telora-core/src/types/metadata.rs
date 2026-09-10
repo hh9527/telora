@@ -32,77 +32,121 @@ fn elaborate_recursive_bodies(
 
 #[allow(clippy::too_many_arguments)]
 fn recursive_declaration_descriptor(
-    solved: Option<&SolvedRecursiveType>, graph: &TypeGraph, value: Val,
-    binding: &Binding, source_name: &str, evaluator: &ToolEvaluator<'_>, store: &mut TypeStore,
+    solved: &SolvedRecursiveType, graph: &TypeGraph,
+    binding: &Binding, source_name: &str, store: &mut TypeStore,
 ) -> Result<TypeDescriptor, FrontendError> {
     let invalid = |message| frontend_error(source_name, format!(
         "type {} produced invalid metadata: {message}", binding.value.name.value));
-    let decoded;
-    let (graph, root) = if let Some(solved) = solved {
-        (graph, solved.owner)
-    } else {
-        decoded = evaluator.decode_type_graph(value, "Type").map_err(invalid)?;
-        (&decoded.0, decoded.1)
-    };
+    let root = solved.owner;
     let descriptor = graph.descriptor(root).map_err(invalid)?;
     graph.canonicalize(root, store).map_err(|message| frontend_error(source_name, message))?;
     Ok(descriptor)
 }
 
-// Metadata is currently still consumed by legacy family/value preparation.
+// Establish the nominal graph identity before runtime materialization.
 #[allow(clippy::too_many_arguments)]
-fn materialize_static_declaration(
+fn prepare_static_declaration(
     root: AnalysisTypeId, graph: &mut TypeGraph, binding: &Binding, module_id: crate::ModuleId,
     slots: &HashMap<crate::Location, u32>, source_name: &str, type_store: &mut TypeStore,
-    evaluator: &mut ToolEvaluator<'_>, values: &dyn ToolBindings,
-) -> Result<(Val, TypeDescriptor), FrontendError> {
+) -> Result<AnalysisTypeId, FrontendError> {
     let root = if binding.value.declared_initializer.is_some() {
-        let body = graph.descriptor(root).map_err(|message| frontend_error(source_name, message))?;
-        graph.intern_descriptor(&TypeDescriptor::Declared(DeclaredTypeDescriptor {
-            id: crate::value::DeclaredTypeId::concrete(module_id, slots[&binding.value.name.location]),
-            name: binding.value.name.value.clone(), body: Arc::new(body),
-        }))
+        graph.intern_declared_body(
+            crate::value::DeclaredTypeId::concrete(module_id, slots[&binding.value.name.location]),
+            binding.value.name.value.clone(), root)
     } else { root };
     graph.canonicalize(root, type_store).map_err(|message| frontend_error(source_name, message))?;
-    let descriptor = graph.descriptor(root).map_err(|message| frontend_error(source_name, message))?;
-    Ok((evaluator.descriptor_with_origins(&descriptor, &binding.value.value, values)?, descriptor))
+    Ok(root)
 }
 
 // Metadata is currently still consumed by legacy family/value preparation.
 // A solved body enters that boundary directly; it is never executed or decoded.
 #[allow(clippy::too_many_arguments)]
 fn materialize_type_body(
-    root: Option<AnalysisTypeId>, graph: &TypeGraph, binding: &Binding,
-    source_name: &str, values: &dyn ToolBindings, account: &mut QuotaAccount,
-    sources: &SourceDatabase, evaluator: &mut ToolEvaluator<'_>,
+    root: AnalysisTypeId, graph: &TypeGraph, binding: &Binding,
+    source_name: &str, values: &dyn ToolBindings, evaluator: &mut ToolEvaluator<'_>,
 ) -> Result<(Val, TypeDescriptor), FrontendError> {
-    if let Some(root) = root {
-        let descriptor = graph.descriptor(root).map_err(|message| frontend_error(source_name, message))?;
-        return Ok((evaluator.descriptor_with_origins(&descriptor, &binding.value.value, values)?, descriptor));
-    }
-    let value = evaluate_tool_expression(source_name, &binding.value.value, values, account, sources, evaluator)?;
-    let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
-        FrontendError::from_diagnostic(sources, Diagnostic::error(
-            format!("type family {} produced invalid metadata: {message}", binding.value.name.value),
-            binding.value.value.location))
-    })?;
-    Ok((value, descriptor))
+    let descriptor = graph.descriptor(root).map_err(|message| frontend_error(source_name, message))?;
+    Ok((evaluator.descriptor_with_origins(&descriptor, &binding.value.value, values)?, descriptor))
 }
 
-fn imported_static_descriptor(
-    value: ValueRef<'_>,
-    interface: Option<&ModuleInterface>,
-) -> Option<TypeDescriptor> {
-    let Some(interface) = interface else {
-        return infer_value_ref(value);
-    };
-    if interface.exports.is_empty() && interface.namespaces.is_empty() && value.kind() != ValueKind::Module {
-        return infer_value_ref(value);
+// Native identities originate in the builtin inventory, never in a heap value.
+fn native_type_contract(name: &str, interfaces: &BTreeMap<String, ModuleInterface>) -> Result<TypeDescriptor, String> {
+    let scheme = interfaces.get(name).and_then(ModuleInterface::binding_scheme)
+        .ok_or_else(|| format!("native type {name} requires an explicit static type interface"))?;
+    if scheme.parameters.is_empty() && scheme.constraints.is_empty()
+        && let TypeDescriptor::TypeOf(instance) = &scheme.body
+        && matches!(instance.as_ref(), TypeDescriptor::Opaque(_))
+    {
+        return Ok(instance.as_ref().clone());
     }
-    if let Some(scheme) = interface.binding_scheme() {
-        return Some(scheme.body.clone());
+    Err(format!("native type {name} requires a concrete opaque type interface"))
+}
+
+#[cfg(test)]
+mod native_contract_tests {
+    use super::*;
+
+    #[test]
+    fn native_contracts_require_static_opaque_identity_without_runtime_resources() {
+        let native = crate::NativeType::bind(crate::value::NativeTypeId {
+            module: crate::value::NativeModuleId(1024), local: 7,
+        }, "host:fixture#Item");
+        let expected = TypeDescriptor::Opaque(native);
+        let mut interfaces = BTreeMap::new();
+        assert!(native_type_contract("Item", &interfaces).unwrap_err().contains("explicit static type interface"));
+        interfaces.insert("Item".into(), ModuleInterface {
+            value_binding: Some("Item".into()),
+            exports: BTreeMap::from([("Item".into(), TypeScheme {
+                parameters: Vec::new(), constraints: Vec::new(),
+                body: TypeDescriptor::TypeOf(Box::new(expected.clone())),
+            })]),
+            ..Default::default()
+        });
+        assert_eq!(native_type_contract("Item", &interfaces).unwrap(), expected);
+        interfaces.get_mut("Item").unwrap().exports.get_mut("Item").unwrap().body =
+            TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Int));
+        assert!(native_type_contract("Item", &interfaces).unwrap_err().contains("concrete opaque type interface"));
+    }
+}
+
+// Namespace/value identity is an interface fact, including an empty namespace.
+fn imported_binding_contract(name: &str, interfaces: &BTreeMap<String, ModuleInterface>) -> Option<TypeScheme> {
+    interfaces.get(name).and_then(ModuleInterface::binding_scheme).cloned()
+        .or_else(|| interfaces.values().flat_map(|interface| &interface.trait_implementations)
+            .find(|implementation| implementation.dictionary == name)
+            .map(|implementation| implementation.dictionary_scheme.clone()))
+        .or_else(|| interfaces.values().flat_map(|interface| &interface.type_properties)
+            .find(|property| property.root == name).map(|property| TypeScheme {
+                parameters: Vec::new(), constraints: Vec::new(), body: property.property.clone(),
+            }))
+}
+
+// A malformed selected binding cannot be treated as a namespace or guessed from
+// its runtime value.
+fn imported_interface_descriptor(interface: &ModuleInterface) -> Option<TypeDescriptor> {
+    if interface.value_binding.is_some() {
+        return interface.binding_scheme().map(|scheme| scheme.body.clone());
     }
     Some(interface_descriptor(interface))
+}
+
+#[cfg(test)]
+mod import_contract_tests {
+    use super::*;
+
+    #[test]
+    fn import_shape_comes_from_namespace_or_selected_contract_without_values() {
+        let mut interface = ModuleInterface::default();
+        assert_eq!(imported_interface_descriptor(&interface), Some(TypeDescriptor::Struct(BTreeMap::new())));
+        interface.exports.insert("answer".into(), TypeScheme {
+            parameters: Vec::new(), constraints: Vec::new(), body: TypeDescriptor::Int,
+        });
+        assert_eq!(imported_interface_descriptor(&interface), Some(TypeDescriptor::Struct(BTreeMap::from([("answer".into(), TypeDescriptor::Int)]))));
+        interface.value_binding = Some("answer".into());
+        assert_eq!(imported_interface_descriptor(&interface), Some(TypeDescriptor::Int));
+        interface.value_binding = Some("missing".into());
+        assert_eq!(imported_interface_descriptor(&interface), None);
+    }
 }
 
 fn interface_descriptor(interface: &ModuleInterface) -> TypeDescriptor {
@@ -216,132 +260,6 @@ fn validate_interpreter_contract(
     Ok(())
 }
 
-pub(crate) fn infer_value_ref(value: ValueRef<'_>) -> Option<TypeDescriptor> {
-    infer_value_ref_with(value, &mut HashSet::new())
-}
-
-fn infer_value_ref_with(
-    value: ValueRef<'_>,
-    visiting_type_slots: &mut HashSet<Handle>,
-) -> Option<TypeDescriptor> {
-    if let Some(handle) = value.hidden_type_slot_handle() {
-        if !visiting_type_slots.insert(handle) {
-            return None;
-        }
-        let inferred = value
-            .resolve_hidden_type_slot()
-            .ok()
-            .and_then(|resolved| infer_value_ref_with(resolved, visiting_type_slots));
-        visiting_type_slots.remove(&handle);
-        return inferred;
-    }
-    if let Some((owner, _)) = value.declared_value_parts() {
-        return decode_type_ref(owner, "declared value owner").ok();
-    }
-    Some(match value.kind() {
-        ValueKind::Int => TypeDescriptor::Int,
-        ValueKind::Float => TypeDescriptor::Float,
-        ValueKind::String => TypeDescriptor::String,
-        ValueKind::Bytes => TypeDescriptor::Bytes,
-        ValueKind::Type => TypeDescriptor::TypeOf(Box::new(
-            decode_type_ref(value, "Type").ok()?,
-        )),
-        ValueKind::Opaque => value
-            .opaque_native_type()
-            .cloned()
-            .map(TypeDescriptor::Opaque)?,
-        ValueKind::Atom | ValueKind::Tagged => return None,
-        ValueKind::Array => {
-            let items = (0..value.sequence_len().unwrap_or_default())
-                .filter_map(|index| value.sequence_get(index))
-                .map(|item| infer_value_ref_with(item, visiting_type_slots))
-                .collect::<Option<Vec<_>>>()?;
-            let item = if items.is_empty() { TypeDescriptor::Never } else { common_type(items)? };
-            TypeDescriptor::Array(Box::new(item))
-        }
-        ValueKind::Tuple => TypeDescriptor::Tuple(
-            (0..value.sequence_len().unwrap_or_default())
-                .filter_map(|index| value.sequence_get(index))
-                .map(|item| infer_value_ref_with(item, visiting_type_slots))
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        ValueKind::Dict => TypeDescriptor::Struct(
-            value
-                .dict_fields()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|name| {
-                    Some((name.to_owned(), infer_value_ref_with(value.dict_get(name)?, visiting_type_slots)?))
-                })
-                .collect::<Option<BTreeMap<_, _>>>()?,
-        ),
-        ValueKind::Func => return None,
-        ValueKind::Dyn => TypeDescriptor::Dyn,
-        ValueKind::Module => TypeDescriptor::Struct(
-            value
-                .module_fields()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|name| {
-                    Some((name.to_owned(), infer_value_ref_with(value.module_get(name)?, visiting_type_slots)?))
-                })
-                .collect::<Option<BTreeMap<_, _>>>()?,
-        ),
-    })
-}
-
-fn declare_metadata_value(
-    source_name: &str,
-    module_id: crate::ModuleId,
-    binding: &Binding,
-    slots: &HashMap<crate::Location, u32>,
-    value: Val,
-    evaluator: &mut ToolEvaluator,
-) -> Result<Val, FrontendError> {
-    if binding.value.declared_initializer.is_none() {
-        return Ok(value);
-    }
-    validate_declared_metadata(source_name, binding, value, evaluator)?;
-    let slot = slots
-        .get(&binding.value.name.location)
-        .copied()
-        .expect("direct declared initializer has a declaration slot");
-    evaluator
-        .work
-        .declare_type(value, module_id, slot, binding.value.name.value.as_str())
-        .map_err(|error| {
-            frontend_error(
-                source_name,
-                format!("declared type construction failed: {error}"),
-            )
-        })
-}
-
-fn validate_declared_metadata(
-    source_name: &str,
-    binding: &Binding,
-    value: Val,
-    evaluator: &ToolEvaluator,
-) -> Result<(), FrontendError> {
-    let mut graph = TypeGraph::default();
-    let root = graph
-        .decode_persistent(
-            ValueRef::work(value, &evaluator.work, evaluator.main),
-            "Type",
-            &mut HashMap::new(),
-        )
-        .map_err(|message| {
-            frontend_error(
-                source_name,
-                format!(
-                    "declared type {} produced invalid metadata: {message}",
-                    binding.value.name.value
-                ),
-            )
-        })?;
-    validate_declared_graph(source_name, binding, &graph, root)
-}
-
 fn validate_declared_graph(
     source_name: &str, binding: &Binding, graph: &TypeGraph, root: AnalysisTypeId,
 ) -> Result<(), FrontendError> {
@@ -391,36 +309,129 @@ fn declared_body_accepts_expression(body: &TypeDescriptor, expression: &Expr) ->
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn infer_tool_expression_evidence(
-    source_name: &str,
-    expression: &Expr,
-    bindings: &dyn ToolBindings,
-    expected: Option<&TypeDescriptor>,
-    account: &mut QuotaAccount,
-    sources: &SourceDatabase,
-    evaluator: &mut ToolEvaluator,
-) -> Result<ToolExpressionEvidence, String> {
-    let context = evaluator.inference_context.as_ref().ok_or("tool inference context is unavailable")?;
-    if !matches!(expected, Some(TypeDescriptor::Function { .. })) && !context.supports_constructors {
-        return Ok(ToolExpressionEvidence::default());
+#[cfg(test)]
+mod pure_tool_solver_tests {
+    use super::*;
+
+    #[test]
+    fn scalar_tool_expressions_require_solved_evidence_without_constructors() {
+        for (text, valid) in [("1 + 2", true), ("1 / 0", true), ("1 + \"wrong\"", false)] {
+            let mut sources = SourceDatabase::default();
+            let source = sources.add("scalar-tool-types", text);
+            let program = parse_registered(&sources, source).program.unwrap();
+            let prelude = BootstrapPrelude::new();
+            let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
+            let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
+                prelude.schemes, BTreeMap::new(), true, HashSet::new());
+            let expression = &program.value.body.value.result;
+            for expected in [None, Some(&TypeDescriptor::Int)] {
+                let result = solve_tool_expression_types(expression, expected, None, &sources, &mut context);
+                assert_eq!(result.is_ok(), valid, "{text}: {:?}", result.as_ref().err());
+                if let Ok(evidence) = result {
+                    assert_eq!(evidence.expression_types[&expression.location]
+                        .descriptor(&context.types).unwrap(), TypeDescriptor::Int);
+                }
+            }
+        }
     }
-    let mut annotations = HashMap::new();
-    evaluator.inference_depth += 1;
-    let annotation_result = collect_nested_annotation_types(
-        source_name, expression, bindings, account, sources, evaluator, &mut annotations,
-    );
-    evaluator.inference_depth -= 1;
-    annotation_result.map_err(|error| error.to_string())?;
-    let context = evaluator.inference_context.as_ref().ok_or("tool inference context is unavailable")?;
-    let inputs = HirProgram::resolve_expression(expression, Vec::new());
+
+    #[test]
+    fn tool_function_types_are_solved_without_runtime_resources() {
+        let expected = TypeDescriptor::Function {
+            parameters: vec![TypeDescriptor::Int], result: Box::new(TypeDescriptor::Int),
+        };
+        for (text, valid) in [("fn(x) { x + 1 }", true), ("fn(x) { identity@[Int](x) }", true),
+            ("fn(x) { 1 / 0 }", true), ("fn(x) { x + \"wrong\" }", false)] {
+            let mut sources = SourceDatabase::default();
+            let source = sources.add("pure-tool-types", text);
+            let parsed = parse_registered(&sources, source);
+            let program = parsed.program.unwrap();
+            let mut prelude = BootstrapPrelude::new();
+            let parameter = TypeParameterId(0);
+            let body = TypeDescriptor::Function { parameters: vec![TypeDescriptor::Bound(parameter)],
+                result: Box::new(TypeDescriptor::Bound(parameter)) };
+            prelude.types.insert("identity".into(), body.clone());
+            prelude.schemes.insert("identity".into(), TypeScheme {
+                parameters: vec![TypeParameter { id: parameter, name: "T".into(), location: program.location }],
+                constraints: vec![TypeConstraint { parameter, capability: TypeCapability::RuntimeType,
+                    location: program.location }], body,
+            });
+            let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
+            let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
+                prelude.schemes, BTreeMap::new(), true, HashSet::new());
+            let expression = &program.value.body.value.result;
+            let result = solve_tool_expression_types(expression, Some(&expected), None, &sources, &mut context);
+            assert_eq!(result.is_ok(), valid, "{text}: {:?}", result.as_ref().err());
+            if let Ok(evidence) = result {
+                let root = &evidence.expression_types[&expression.location];
+                assert_eq!(root.arity(&context.types), Some(1));
+                assert_eq!(root.descriptor(&context.types).unwrap(), expected);
+                if text.contains("identity") {
+                    assert!(!evidence.runtime_types.is_empty());
+                    for id in evidence.runtime_types.values() {
+                        assert_eq!(context.types.node(*id), &TypeNode::Int);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn tool_external_names(
+    expression: &Expr,
+    inputs: &HirProgram,
+    context: &ToolInferenceContext<'_>,
+) -> HashSet<String> {
     let names = inputs.references().iter()
         .filter(|reference| !matches!(reference.resolution, HirResolution::Definition(_)))
         .map(|reference| reference.name.as_str()).collect::<HashSet<_>>();
+    let mut external_names = names.iter().filter(|name| context.environment.contains_key(**name)
+        || context.schemes.contains_key(**name) || context.interfaces.contains_key(**name))
+        .map(|name| (*name).to_owned()).collect::<HashSet<_>>();
+    for reference in inputs.references() {
+        if let Some(HirResolution::Definition(id)) = context.hir.reference_at(reference.location, &reference.name)
+            .map(|reference| reference.resolution)
+            && context.hir.definition(id).is_some_and(|definition| definition.top_level) {
+            external_names.insert(reference.name.clone());
+        }
+    }
+    // Unit constructors in patterns are not ordinary expression references.
+    external_names.extend(context.interfaces.iter().filter(|(name, interface)|
+        interface.value_binding.as_deref() == Some(name.as_str())
+            && interface.member_constructors.contains_key(*name)).map(|(name, _)| name.clone()));
+    for definition in context.hir.definitions() {
+        if let Some(value) = definition.value.and_then(|id| context.hir.expression(id))
+            && value.location.source == expression.location.source
+            && value.location.start <= expression.location.start && expression.location.end <= value.location.end {
+            external_names.extend(definition.type_parameters.iter().filter(|parameter| names.contains(parameter.name.as_str()))
+                .map(|parameter| parameter.name.clone()));
+        }
+    }
+    external_names
+}
+
+// Static preparation has no access to runtime values, heaps or an evaluator.
+fn solve_tool_expression_types(
+    expression: &Expr,
+    expected: Option<&TypeDescriptor>,
+    query: Option<crate::query::QueryContext>,
+    sources: &SourceDatabase,
+    context: &mut ToolInferenceContext<'_>,
+) -> Result<ToolExpressionEvidence, String> {
+    let inputs = HirProgram::resolve_expression(expression, Vec::new());
+    let external_names = tool_external_names(expression, &inputs, context);
+    let names = inputs.references().iter()
+        .filter(|reference| !matches!(reference.resolution, HirResolution::Definition(_)))
+        .map(|reference| reference.name.as_str()).collect::<HashSet<_>>();
+    let mut annotations = HashMap::new();
+    let mut types = std::mem::take(&mut context.types);
+    let annotations_result = collect_tool_annotations(expression, context, sources, &mut annotations, &mut types);
+    context.types = types;
+    annotations_result.map_err(|error| error.to_string())?;
     let mut environment = HashMap::new();
     let mut lexical_schemes = Vec::new();
-    // Bound type parameters supplied by the metadata scheduler are lexical
-    // evidence, just like the parameters supplied to the final inference pass.
+    // Reference types and imported schemes come from the static context. Runtime
+    // metadata values cannot refine or override the solver's input environment.
     for name in names {
         if let Some(descriptor) = context.environment.get(name) {
             environment.insert(name.to_owned(), descriptor.clone());
@@ -430,27 +441,22 @@ fn infer_tool_expression_evidence(
         {
             lexical_schemes.push((name.to_owned(), scheme.clone()));
         }
-        let Some(value) = bindings.get(name) else { continue; };
-        if let Ok(descriptor) = evaluator.decode_type(*value, "Type") {
-            environment.insert(name.to_owned(), TypeDescriptor::TypeOf(Box::new(descriptor)));
-        } else if let Some(interface) = context.interfaces.get(name)
-            && let Some(descriptor) = imported_static_descriptor(
-                ValueRef::work(*value, &evaluator.work, evaluator.main), Some(interface),
-            )
-        {
-            environment.insert(name.to_owned(), descriptor);
+        if let Some(interface) = context.interfaces.get(name) {
+            environment.insert(name.to_owned(), interface.binding_scheme()
+                .map_or_else(|| interface_descriptor(interface), |scheme| scheme.body.clone()));
         }
     }
-    let context = evaluator.inference_context.as_mut().expect("tool inference context exists");
-    for descriptor in annotations.values().chain(environment.values()) {
+    for descriptor in environment.values() {
         collect_declared_bodies(descriptor, &mut context.declared_bodies, &mut HashSet::new());
     }
+    let annotation_inputs = InferenceAnnotationInputs::from_graph(&context.types, &annotations, sources)
+        .map_err(|error| error.to_string())?;
     let mut inference = GenericInference::new(
         &context.schemes, &context.hir, &context.interfaces, &context.named_types,
-        &annotations, &context.trait_implementations, &context.type_properties,
+        annotation_inputs, &context.trait_implementations, &context.type_properties,
         &context.trait_ids, context.display_trait.clone(),
         &context.dyn_namespaces, context.builtin_tuple_available,
-        Some(&context.declared_bodies), account.query_context(),
+        Some(&context.declared_bodies), query,
     );
     for (name, scheme) in lexical_schemes {
         inference.set_local_scheme(name, Some(scheme));
@@ -483,210 +489,71 @@ fn infer_tool_expression_evidence(
     let runtime_slots = inference.runtime_type_evidence.iter().map(|(name, descriptor)| {
         (name.clone(), inference.variables.structure_edge(descriptor.clone()))
     }).collect::<Vec<_>>();
-    let mut types = TypeGraph::default();
     let mut publication = InferencePublication::new(&inference.variables);
-    let mut publish = |slot| match publication.publish(&mut types, slot,
-        |slot| inference.normalize(&TypeDescriptor::Inference(slot))) {
-        Ok(id) => ToolTypeRoot::Graph(id),
-        Err(_) => ToolTypeRoot::Compatibility(inference.normalize(&TypeDescriptor::Inference(slot))),
-    };
     let expression_types = inference.records.iter()
-        .map(|(location, slot)| (*location, publish(*slot))).collect();
+        .map(|(location, slot)| (*location, publication.publish_tool_root(&mut context.types, *slot,
+            |slot| inference.normalize(&TypeDescriptor::Inference(slot))))).collect();
     let runtime_types = runtime_slots.into_iter()
-        .map(|(name, slot)| (name, publish(slot))).collect();
-    Ok(ToolExpressionEvidence { types, expression_types, value_constructors: inference.value_constructors,
+        .map(|(name, slot)| publication.publish(&mut context.types, slot,
+            |slot| inference.normalize(&TypeDescriptor::Inference(slot)))
+            .map(|id| (name.clone(), id))
+            .map_err(|_| format!("runtime type evidence {name:?} has no solved static type")))
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    Ok(ToolExpressionEvidence { external_names, expression_types, value_constructors: inference.value_constructors,
         calls: inference.resolved_call_evidence, runtime_types,
         parameters, lexical_types, inferred_scopes: inference.inferred_runtime_scopes, families: inference.propagation_families,
         not_families: inference.not_families, members: inference.resolved_trait_members,
         interpolations: inference.resolved_interpolation_evidence })
 }
 
-fn evaluate_legacy_contract(
-    source_name: &str,
-    name: &str,
-    contract: &Expr,
-    values: &dyn ToolBindings,
-    account: &mut QuotaAccount,
-    sources: &SourceDatabase,
-    evaluator: &mut ToolEvaluator<'_>,
-) -> Result<TypeDescriptor, FrontendError> {
-    let metadata = evaluate_tool_expression(source_name, contract, values, account, sources, evaluator)?;
-    evaluator.decode_type(metadata, "Type").map_err(|message| frontend_error(source_name,
-        format!("declaration {name} has invalid contract metadata: {message}")))
-}
-
-fn evaluate_tool_expression(
-    source_name: &str,
-    expression: &Expr,
-    bindings: &dyn ToolBindings,
-    account: &mut QuotaAccount,
-    sources: &SourceDatabase,
-    evaluator: &mut ToolEvaluator,
-) -> Result<Val, FrontendError> {
-    evaluate_tool_expression_with_debug(
-        source_name,
-        expression,
-        bindings,
-        None,
-        Some(&TypeDescriptor::Type),
-        account,
-        sources,
-        evaluator,
-        true,
-    )
-}
-
-fn evaluate_typed_tool_expression_silent(
-    source_name: &str,
-    expression: &Expr,
-    bindings: &dyn ToolBindings,
-    expression_descriptors: &HashMap<crate::Location, TypeDescriptor>,
-    expected: Option<&TypeDescriptor>,
-    account: &mut QuotaAccount,
-    sources: &SourceDatabase,
-    evaluator: &mut ToolEvaluator,
-) -> Result<Val, FrontendError> {
-    evaluate_tool_expression_with_debug(
-        source_name,
-        expression,
-        bindings,
-        Some(expression_descriptors),
-        expected,
-        account,
-        sources,
-        evaluator,
-        false,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn evaluate_tool_expression_with_debug(
-    source_name: &str,
-    expression: &Expr,
-    bindings: &dyn ToolBindings,
-    expression_descriptors: Option<&HashMap<crate::Location, TypeDescriptor>>,
-    expected: Option<&TypeDescriptor>,
-    account: &mut QuotaAccount,
-    sources: &SourceDatabase,
-    evaluator: &mut ToolEvaluator,
-    observed: bool,
-) -> Result<Val, FrontendError> {
-    let evidence = match infer_tool_expression_evidence(
-        source_name, expression, bindings, expected, account, sources, evaluator,
-    ) {
-        Ok(evidence) => Some(evidence),
-        Err(message) if expression_descriptors.is_some() => {
-            return Err(FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(message, expression.location),
-            ));
-        }
-        Err(_) => None,
-    };
-    let mut prepared = evidence.unwrap_or_default();
-    for (location, descriptor) in expression_descriptors.into_iter().flat_map(|descriptors| descriptors.iter())
-            .filter(|(location, _)| location.source == expression.location.source
-                && expression.location.start <= location.start
-                && location.end <= expression.location.end)
-    {
-        prepared.expression_types.entry(*location)
-            .or_insert_with(|| ToolTypeRoot::import(&mut prepared.types, descriptor));
-    }
-    evaluate_prepared_tool_expression(
-        source_name, expression, bindings, prepared, account, sources, evaluator, observed,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 fn evaluate_prepared_tool_expression(
     source_name: &str,
-    expression: &Expr,
     bindings: &dyn ToolBindings,
-    evidence: ToolExpressionEvidence,
+    evidence: &PreparedToolExpression,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator,
     observed: bool,
 ) -> Result<Val, FrontendError> {
-    let ToolExpressionEvidence { types, expression_types, value_constructors, calls, runtime_types,
-        parameters, lexical_types, inferred_scopes, families, not_families, members, interpolations } = evidence;
-    let arities = expression_types.iter().filter_map(|(location, root)|
-        root.arity(&types).map(|arity| (*location, arity))).collect();
-    let mut lowered = expression.clone();
-    crate::elaboration::elaborate_tool_expression(&mut lowered, &calls, &arities, &parameters,
-        &families, &not_families, &members, &interpolations);
+    let PreparedToolExpression { expression, source, function, required, runtime_types } = evidence;
+    let function = function.get_or_init(|| {
+        let source = sources.get(*source);
+        crate::compiler::compile_prepared_external_expression(
+            &source.name, "<tool-stage>", expression, required, source,
+        )
+    }).as_ref().map_err(Clone::clone)?;
+    if let Some(name) = required.iter().find(|name| bindings.get(name).is_none()
+        && !runtime_types.iter().any(|(generated, _, _)| generated == *name)) {
+        return Err(frontend_error(source_name,
+            format!("prepared tool expression requires unavailable binding {name:?}")));
+    }
     let mut bindings = ScopedToolBindings::new(bindings);
-    let values = evaluator.work.type_graph_values(
-        Some(evaluator.main), &types, runtime_types.values().map(ToolTypeRoot::metadata_root),
+    let values = evaluator.work.type_graph_values_in(
+        Some(evaluator.main), &evaluator.tool_types, runtime_types.iter().map(|(_, root, _)| *root),
+        &mut evaluator.tool_type_values,
     ).map_err(|error| frontend_error("<tool-stage>", error.to_string()))?;
-    for ((name, root), value) in runtime_types.into_iter().zip(values) {
-        let arity = if name.starts_with("\0type_argument:") { root.bound_arity(&types) } else { 0 };
-        let value = if arity != 0 {
-            evaluator.create_type_family(value, arity, None)?.0
+    for ((name, _, arity), value) in runtime_types.iter().zip(values) {
+        let value = if *arity != 0 {
+            evaluator.create_type_family(value, *arity, None)?.0
         } else { value };
-        bindings.insert(name, value);
+        bindings.insert(name.clone(), value);
     }
-    let mut declared_value_owners = HashMap::new();
-    for (location, root) in &expression_types {
-        let Some(owner_root) = root.owner(&types, value_constructors.contains_key(location)) else { continue; };
-        if location.source == expression.location.source
-            && expression.location.start <= location.start
-            && location.end <= expression.location.end
-        {
-            let descriptor = owner_root.descriptor(&types).map_err(|message| frontend_error(source_name, message))?;
-            let descriptor = descriptor.as_ref();
-            let key = if type_identity_is_symbolic(descriptor) {
-                format!("\0owner-family:{}:{}", location.start, location.end)
-            } else { crate::compiler::declared_owner_link_key(*location) };
-            let mut owner = ResolvedEvidence::root(key.clone());
-            let mut parameters = Vec::new();
-            collect_bound_parameters(descriptor, &mut parameters);
-            parameters.sort_by_key(|parameter| parameter.0);
-            parameters.dedup();
-            let mut replacements = HashMap::new();
-            for (index, parameter) in parameters.iter().enumerate() {
-                let inferred = inferred_scopes.iter().filter(|(scope, _)| {
-                    scope.source == location.source && scope.start <= location.start && location.end <= scope.end
-                }).filter_map(|(scope, evidence)| evidence.iter().find(|evidence| evidence.target == TypeDescriptor::Bound(*parameter))
-                    .map(|evidence| (scope.end - scope.start, &evidence.name)))
-                    .min_by_key(|(length, _)| *length).map(|(_, name)| name);
-                let Some(name) = inferred.or_else(|| lexical_types.get(parameter)) else { break; };
-                owner.arguments.push(ResolvedEvidence::root(name.clone()));
-                replacements.insert(*parameter, TypeDescriptor::Bound(TypeParameterId(index as u32)));
-            }
-            if owner.arguments.len() != parameters.len() || contains_type_variable(descriptor) { continue; }
-            let descriptor = substitute_bound_parameters(descriptor, &replacements);
-            let value = evaluator.descriptor(&descriptor)?;
-            let value = if owner.arguments.is_empty() { value } else {
-                evaluator.create_type_family(value, owner.arguments.len(), None)?.0
-            };
-            bindings.insert(key, value);
-            declared_value_owners.insert(*location, owner);
-        }
-    }
-    let (function, required) = compile_expression_with_external_bindings(
-        source_name,
-        "<tool-stage>",
-        &lowered,
-        |name| bindings.get(name).is_some(),
-        declared_value_owners,
-        value_constructors,
-        sources.get(expression.location.source),
-    )?;
-    let externals = required.into_iter()
+    let externals = required.iter()
         .map(|name| {
-            let value = *bindings.get(&name).expect("compiled external binding exists");
-            (name, value)
+            let value = *bindings.get(name).ok_or_else(|| frontend_error(source_name,
+                format!("prepared tool expression requires unavailable binding {name:?}")))?;
+            Ok((name.clone(), value))
         })
-        .collect::<HashMap<_, _>>();
+        .collect::<Result<HashMap<_, _>, FrontendError>>()?;
     let work = std::mem::replace(&mut evaluator.work, Heap::work_for(evaluator.main));
-    let vm = if observed && evaluator.inference_depth == 0 {
+    let vm = if observed {
         &mut evaluator.observed_vm
     } else {
         &mut evaluator.silent_vm
     };
     let root =
-        match vm.execute_in_existing_work(evaluator.main, &externals, &function, work, account) {
+        match vm.execute_in_existing_work(evaluator.main, &externals, function, work, account) {
             Ok((work, root)) => {
                 evaluator.work = work;
                 root

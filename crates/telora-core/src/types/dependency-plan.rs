@@ -60,7 +60,6 @@ fn type_dependency_graph(
 struct TypeDependencyPlan<'a> {
     graph: &'a SemanticDependencyGraph,
     positions: HashMap<HirDefinitionId, usize>,
-    reverse: Vec<Vec<usize>>,
     components: Vec<Vec<HirDefinitionId>>,
     component_ids: Vec<usize>,
     cyclic: Vec<bool>,
@@ -107,11 +106,9 @@ mod dependency_plan_tests {
             assert_eq!(ranks.len(), 3);
             for source in 0..3 {
                 assert_eq!(plan.is_cyclic(ids[source]), reaches[source][source]);
-                let dependents = plan.dependents(&[ids[source]]);
                 for target in 0..3 {
                     assert_eq!(plan.component(ids[source]).contains(&ids[target]),
                         source == target || reaches[source][target] && reaches[target][source]);
-                    assert_eq!(dependents.contains(&ids[target]), source == target || reaches[target][source]);
                     if reaches[source][target] { assert!(ranks[&ids[target]] <= ranks[&ids[source]]); }
                 }
             }
@@ -214,7 +211,7 @@ impl<'a> TypeDependencyPlan<'a> {
             component.len() > 1 || graph.nodes[positions[&component[0]]]
                 .dependencies.contains(&component[0])
         }).collect();
-        Self { graph, positions, reverse, components, component_ids, cyclic }
+        Self { graph, positions, components, component_ids, cyclic }
     }
 
     fn node(&self, definition: HirDefinitionId) -> &SemanticDependencyNode {
@@ -229,16 +226,6 @@ impl<'a> TypeDependencyPlan<'a> {
         &self.components[self.component_ids[self.positions[&definition]]]
     }
 
-    fn dependents(&self, roots: &[HirDefinitionId]) -> HashSet<HirDefinitionId> {
-        let mut visited = HashSet::new();
-        let mut pending = roots.iter().map(|root| self.positions[root]).collect::<Vec<_>>();
-        while let Some(node) = pending.pop() {
-            if visited.insert(self.graph.nodes[node].definition) {
-                pending.extend(&self.reverse[node]);
-            }
-        }
-        visited
-    }
 
     fn order(&self, selected: &BTreeSet<HirDefinitionId>) -> Vec<Vec<HirDefinitionId>> {
         let mut active = vec![false; self.components.len()];

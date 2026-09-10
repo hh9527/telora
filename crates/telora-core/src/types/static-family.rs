@@ -9,6 +9,40 @@ struct StaticTypeFamily {
     has_constraints: bool,
 }
 
+fn static_type_family_scheme(parameters: Vec<TypeParameter>, body: TypeDescriptor) -> TypeScheme {
+    TypeScheme {
+        body: TypeDescriptor::Function {
+            parameters: parameters.iter().map(|parameter|
+                TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Bound(parameter.id)))).collect(),
+            result: Box::new(TypeDescriptor::TypeOf(Box::new(body))),
+        },
+        parameters,
+        constraints: Vec::new(),
+    }
+}
+
+fn prepare_recursive_family_scheme(
+    binding: &Binding,
+    parameters: Vec<TypeParameter>,
+    graph: &TypeGraph,
+    solved: &SolvedRecursiveType,
+    sources: &SourceDatabase,
+) -> Result<(TypeScheme, bool), FrontendError> {
+    let source_name = &sources.get(binding.location.source).name;
+    validate_declared_graph(source_name, binding, graph, solved.body)?;
+    let descriptor = graph.descriptor(solved.owner)
+        .map_err(|message| frontend_error(source_name, message))?;
+    let mut bounds = Vec::new();
+    collect_bound_parameters(&descriptor, &mut bounds);
+    if let Some(foreign) = bounds.iter().find(|bound| !parameters.iter().any(|parameter| parameter.id == **bound)) {
+        return Err(FrontendError::from_diagnostic(sources, Diagnostic::error(
+            format!("type family {} produced foreign bound parameter T{}", binding.value.name.value, foreign.0),
+            binding.value.value.location)));
+    }
+    let rebuild_at_runtime = contains_named_type(&descriptor);
+    Ok((static_type_family_scheme(parameters, descriptor), rebuild_at_runtime))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn elaborate_recursive_family(
     binding: &Binding, module_id: crate::ModuleId, declaration: u32,
@@ -41,6 +75,27 @@ fn elaborate_recursive_family(
 #[cfg(test)]
 mod static_family_tests {
     use super::*;
+
+    #[test]
+    fn recursive_conflicts_keep_all_sibling_evidence_without_execution() {
+        let partial = analyze_partial_types("recursive-conflicts",
+            "type Tree(T) = struct {left: Tree(Array(T)), right: Tree(Dict(T))}; type Good = struct {value: Int}; 0",
+            Quota::with_fuel(0));
+        let tree = partial.hir.definitions().iter().find(|definition| definition.name == "Tree").unwrap();
+        let fact = &partial.definition_facts[&tree.id];
+        assert_eq!(fact.state, FactState::Conflicted(Conflict::IncompatibleContract));
+        assert_eq!(fact.diagnostics.len(), 2);
+        for id in &fact.diagnostics {
+            let diagnostic = &partial.diagnostics[id.index()];
+            assert!(diagnostic.message.contains("unchanged and in declaration order"));
+            assert_eq!(diagnostic.labels.len(), 2);
+            assert_eq!(diagnostic.labels[1].location, tree.location);
+        }
+        assert_ne!(partial.diagnostics[fact.diagnostics[0].index()].labels[0].location,
+            partial.diagnostics[fact.diagnostics[1].index()].labels[0].location);
+        let good = partial.hir.definitions().iter().find(|definition| definition.name == "Good").unwrap();
+        assert_eq!(partial.definition_facts[&good.id].state, FactState::Known);
+    }
 
     #[test]
     fn recursive_family_definition_requires_no_execution_fuel() {
@@ -243,8 +298,6 @@ impl StaticTypeFamily {
 
 fn static_type_families(
     graph: &mut TypeGraph,
-    local: &BTreeMap<String, TypeFamilyTemplate>,
-    schemes: &HashMap<String, TypeScheme>,
     interfaces: &BTreeMap<String, ModuleInterface>,
 ) -> BTreeMap<String, StaticTypeFamily> {
     fn namespace(
@@ -253,7 +306,7 @@ fn static_type_families(
         graph: &mut TypeGraph,
         families: &mut BTreeMap<String, StaticTypeFamily>,
     ) {
-        for name in interface.type_family_templates.keys() {
+        for name in &interface.type_declarations {
             if let Some(family) = interface
                 .exports
                 .get(name)
@@ -276,14 +329,6 @@ fn static_type_families(
     let mut families = BTreeMap::new();
     for (name, interface) in interfaces {
         namespace(name, interface, graph, &mut families);
-    }
-    for name in local.keys() {
-        if let Some(family) = schemes
-            .get(name)
-            .and_then(|scheme| StaticTypeFamily::from_scheme(scheme, graph))
-        {
-            families.insert(name.clone(), family);
-        }
     }
     families
 }

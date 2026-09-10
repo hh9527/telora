@@ -1,1 +1,1 @@
-decorator argument has type String, which is not assignable to RenameCase
+cannot unify String with RenameCase

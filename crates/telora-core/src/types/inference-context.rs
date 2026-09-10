@@ -4,7 +4,7 @@ impl<'a> GenericInference<'a> {
         hir: &'a HirProgram,
         external_interfaces: &'a BTreeMap<String, ModuleInterface>,
         named_types: &'a BTreeMap<String, TypeDescriptor>,
-        local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
+        annotation_inputs: InferenceAnnotationInputs,
         trait_implementations: &'a [TraitImplementation],
         type_properties: &'a [TypePropertyEvidence],
         trait_ids: &'a BTreeMap<String, crate::TraitId>,
@@ -14,15 +14,12 @@ impl<'a> GenericInference<'a> {
         prepared_bodies: Option<&'a HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>>,
         query: Option<crate::query::QueryContext>,
     ) -> Self {
-        let declared_bodies = if let Some(bodies) = prepared_bodies {
+        let mut declared_bodies = if let Some(bodies) = prepared_bodies {
             std::borrow::Cow::Borrowed(bodies)
         } else {
             let mut declared_bodies = HashMap::new();
             for scheme in schemes.values() {
                 collect_declared_bodies(&scheme.body, &mut declared_bodies, &mut HashSet::new());
-            }
-            for descriptor in local_annotations.values() {
-                collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
             }
             for descriptor in named_types.values() {
                 collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
@@ -37,6 +34,11 @@ impl<'a> GenericInference<'a> {
             }
             std::borrow::Cow::Owned(declared_bodies)
         };
+        for (identity, slot) in &annotation_inputs.declared_bodies {
+            if let Some(body) = annotation_inputs.variables.bound(*slot) {
+                declared_bodies.to_mut().insert(identity.clone(), body);
+            }
+        }
         Self {
             schemes,
             scheme_scopes: vec![HashMap::new()],
@@ -47,6 +49,8 @@ impl<'a> GenericInference<'a> {
             pending_type_constraints: Vec::new(),
             trait_implementations,
             type_properties,
+            local_type_properties: Vec::new(),
+            property_contracts: HashMap::new(),
             trait_ids,
             display_trait,
             resolved_trait_members: HashMap::new(),
@@ -59,7 +63,8 @@ impl<'a> GenericInference<'a> {
             external_interfaces,
             named_types,
             declared_bodies,
-            local_annotations,
+            local_annotations: annotation_inputs.types,
+            normalizing_nominals: std::cell::RefCell::new(Vec::new()),
             dyn_namespaces,
             builtin_tuple_available,
             query,
@@ -75,7 +80,7 @@ impl<'a> GenericInference<'a> {
             value_constructors: HashMap::new(),
             type_facet_locations: HashSet::new(),
             recursive_equations: HashMap::new(),
-            variables: InferenceVariables::default(),
+            variables: annotation_inputs.variables,
             definition_bindings: vec![None; hir.definitions().len()],
             definition_schemes: Vec::new(),
             records: HashMap::new(),
@@ -322,30 +327,25 @@ impl<'a> GenericInference<'a> {
     }
 
     fn declared_identity(&self, ty: &TypeDescriptor) -> Option<crate::value::DeclaredTypeId> {
-        fn find(
-            inference: &GenericInference<'_>,
-            ty: &TypeDescriptor,
-            named: &mut HashSet<String>,
-            variables: &mut HashSet<InferenceVariableId>,
-        ) -> Option<crate::value::DeclaredTypeId> {
-            match ty {
-                TypeDescriptor::Declared(declared) if declared.id.constructor() == unchecked_type_constructor() => {
-                    let TypeDescriptor::Declared(declared) = inference.normalize(ty) else { unreachable!() };
-                    Some(declared.id)
+        match self.nominal_view(ty)? {
+            InferenceView::Row(row) => {
+                let InferenceConstructor::Declared { head, .. } = self.variables.constructor(row) else { unreachable!() };
+                if head.constructor() == unchecked_type_constructor() {
+                    let TypeDescriptor::Declared(declared) = self.normalize(self.variables.descriptor_view(row)) else { unreachable!() };
+                    return Some(declared.id);
                 }
-                TypeDescriptor::Declared(declared) => Some(declared.id.clone()),
-                TypeDescriptor::Named(name) if named.insert(name.clone()) => inference
-                    .named_type(name)
-                    .and_then(|ty| find(inference, ty, named, variables)),
-                TypeDescriptor::Inference(variable) if variables.insert(*variable) => inference
-                    .variables
-                    .binding(*variable)
-                    .and_then(|ty| find(inference, ty, named, variables)),
-                _ => None,
+                let arguments = self.variables.arguments(row);
+                let arguments = arguments[..arguments.len() - 1].iter().copied().map(TypeDescriptor::Inference).collect::<Vec<_>>();
+                Some(head.reapply(&arguments))
             }
+            InferenceView::Descriptor(descriptor @ TypeDescriptor::Declared(declared)) => {
+                if declared.id.constructor() == unchecked_type_constructor() {
+                    let TypeDescriptor::Declared(declared) = self.normalize(descriptor) else { unreachable!() };
+                    Some(declared.id)
+                } else { Some(declared.id.clone()) }
+            }
+            _ => unreachable!("nominal view"),
         }
-
-        find(self, ty, &mut HashSet::new(), &mut HashSet::new())
     }
 
     fn finish_return_boundary(
@@ -499,6 +499,7 @@ impl<'a> GenericInference<'a> {
                     ),
                 };
                 self.pending_type_constraints.push(PendingTypeConstraint {
+                    destination: EvidenceDestination::CallArgument,
                     capability,
                     target: TypeDescriptor::Inference(variable),
                     location,
@@ -1030,10 +1031,19 @@ impl<'a> GenericInference<'a> {
                 if declared.id.constructor() == unchecked_type_constructor() {
                     return unchecked_descriptor(arguments[0].clone());
                 }
+                let identity = declared.id.reapply(&arguments);
+                if self.normalizing_nominals.borrow().contains(&identity) {
+                    return TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                        id: identity, name: declared.name.clone(), body: Arc::new(TypeDescriptor::Never),
+                    });
+                }
+                self.normalizing_nominals.borrow_mut().push(identity.clone());
+                let body = self.normalize_body(&declared.body);
+                self.normalizing_nominals.borrow_mut().pop();
                 TypeDescriptor::Declared(DeclaredTypeDescriptor {
-                    id: declared.id.reapply(&arguments),
+                    id: identity,
                     name: declared.name.clone(),
-                    body: self.normalize_body(&declared.body),
+                    body,
                 })
             }
             TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(self.normalize(item))),
@@ -1078,10 +1088,14 @@ impl<'a> GenericInference<'a> {
 
     fn normalize_body(&self, body: &Arc<TypeDescriptor>) -> Arc<TypeDescriptor> {
         let id = self.variables.descriptor_view_ids.borrow().get(&Arc::as_ptr(body)).copied();
+        let path = self.normalizing_nominals.borrow();
+        let cacheable = path.len() <= 1;
+        let context = path.first().cloned();
+        drop(path);
         #[cfg(feature = "inference-profile")]
         if id.is_none() { profile_increment(&self.variables.profile.body_unindexed); }
-        if let Some(id) = id
-            && let Some(normalized) = self.variables.normalized_body(id)
+        if cacheable && let Some(id) = id
+            && let Some(normalized) = self.variables.normalized_body(id, context.as_ref())
         {
             return normalized;
         }
@@ -1090,8 +1104,8 @@ impl<'a> GenericInference<'a> {
         } else {
             Arc::clone(body)
         };
-        if let Some(id) = id {
-            self.variables.cache_normalized_body(id, Arc::clone(&normalized));
+        if cacheable && let Some(id) = id {
+            self.variables.cache_normalized_body(id, Arc::clone(&normalized), context);
         }
         normalized
     }

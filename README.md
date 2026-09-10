@@ -76,12 +76,21 @@ export def run = entry.run(State.type, config, ees.none, fn(ctx) {
 ```bash
 target/release/telora -C hello lock
 target/release/telora -C hello check @src/app
+target/release/telora -C hello check --types-only @src/app
 target/release/telora -C hello run @src/app:run
 target/release/telora -C hello query exports @src/app
 ```
 
 `entry.run` 保留具体 State 类型；工具阶段验证这个名义 wrapper，向 reducer 投递一个
 请求，并把 `Reply` 中的 `Value` 编码为 JSON。
+
+`check --types-only` 只解析模块图并检查类型（包含工具函数和运行时函数体），不执行
+property、`@check` 或模块值。JSON/TOML/YAML 模块只提供 `{ data: Value }` 类型契约，
+不读取或解析内容；内容语法及数据限制由后续加载阶段检查。
+普通 `check` 保持完整检查行为。两种模式的 JSON summary
+均包含 `catalog_seconds` 和 `check_seconds`，分别记录清单准备及所选检查路径耗时。
+两种模式已共用静态求解器，但模块加载与产物发布路径尚未统一，耗时之差不能直接
+当作工具及运行时阶段的精确耗时。
 
 ## 语言模型
 

@@ -12,10 +12,6 @@ pub struct TypePropertyEvidence {
     pub root: String,
 }
 
-fn type_property_runtime_name(target: TypeId, property: TypeId) -> String {
-    format!("\0type_property:{}:{}", target.raw(), property.raw())
-}
-
 fn type_value_descriptor(descriptor: &TypeDescriptor) -> Option<TypeDescriptor> {
     let TypeDescriptor::TypeOf(target) = descriptor else {
         return None;
@@ -32,6 +28,83 @@ const PROPERTY_CAP_VARIANT: u32 = 1 << 5;
 
 const PROPERTY_PREVIOUS_BINDING: &str = "\0telora_property_previous";
 
+struct PreparedPropertyDecorator {
+    descriptor: TypeDescriptor,
+    plan: PreparedToolExpression,
+}
+
+#[derive(Default)]
+struct PreparedPropertyPlans {
+    capabilities: HashMap<crate::Location, PreparedToolExpression>,
+    decorators: HashMap<crate::Location, PreparedPropertyDecorator>,
+}
+
+// These plans depend only on solved contracts and syntax, including the type of
+// `previous`. Capability values and chained property values are execution inputs.
+fn prepare_property_plans(
+    program: &Program,
+    contracts: &HashMap<crate::Location, TypeDescriptor>,
+    environment: &HashMap<String, TypeDescriptor>,
+    query: Option<crate::query::QueryContext>,
+    sources: &SourceDatabase,
+    context: &mut ToolInferenceContext<'_>,
+) -> Result<PreparedPropertyPlans, FrontendError> {
+    let mut plans = PreparedPropertyPlans::default();
+    for binding in &program.value.body.value.bindings {
+        for decorator in binding.value.decorators.iter().filter(|d| intrinsic_property_marker(d)) {
+            validate_decorated_binding(binding, sources)?;
+            if !decorator.value.configured || decorator.value.arguments.len() != 1 {
+                return Err(FrontendError::from_diagnostic(sources, Diagnostic::error(
+                    "@property requires exactly one PropertyTarget value", decorator.location)));
+            }
+            let argument = &decorator.value.arguments[0];
+            let evidence = solve_tool_expression_types(argument, Some(&property_target_descriptor()),
+                query.clone(), sources, context).map_err(|message|
+                    FrontendError::from_diagnostic(sources, Diagnostic::error(
+                        format!("@property requires PropertyTarget: {message}"), argument.location)))?;
+            let plan = prepare_tool_execution(argument, evidence, sources, &mut context.types).map_err(|message|
+                FrontendError::from_diagnostic(sources, Diagnostic::error(message, argument.location)))?;
+            plans.capabilities.insert(decorator.location, plan);
+        }
+        let decorators = binding.value.decorators.iter()
+            .filter(|d| !intrinsic_property_marker(d) && !intrinsic_check_marker(d)).collect::<Vec<_>>();
+        if decorators.is_empty() && !binding_has_member_decorators(binding) { continue; }
+        validate_decorated_binding(binding, sources)?;
+        let kind = binding.value.declared_initializer.expect("validated nominal binding");
+        let owner = match kind {
+            crate::ast::DeclaredInitializerKind::Struct | crate::ast::DeclaredInitializerKind::Newtype => PropertyOwnerKind::Field,
+            crate::ast::DeclaredInitializerKind::Enum => PropertyOwnerKind::Variant,
+        };
+        let mut members = declared_member_fields(binding).expect("validated nominal members").iter().collect::<Vec<_>>();
+        members.sort_by_key(|member| member.value.name.as_ref().map(|name| &name.value));
+        let mut prepare = |decorator: &crate::ast::Decorator, input| -> Result<(), FrontendError> {
+            if intrinsic_property_marker(decorator) {
+                return Err(FrontendError::from_diagnostic(sources, Diagnostic::error(
+                    "@property only declares capabilities on property carrier types", decorator.location)));
+            }
+            let descriptor = contracts.get(&decorator.location).cloned().ok_or_else(||
+                FrontendError::from_diagnostic(sources, Diagnostic::error(
+                    "property decorator has no solved contract", decorator.location)))?;
+            let call = property_call(decorator, input, decorator.location);
+            let plan = prepare_property_call(&call, &descriptor, environment, query.clone(), sources, context)
+                .map_err(|message| FrontendError::from_diagnostic(sources, Diagnostic::error(message, decorator.location)))?;
+            plans.decorators.insert(decorator.location, PreparedPropertyDecorator { descriptor, plan });
+            Ok(())
+        };
+        for (index, member) in members.into_iter().enumerate() {
+            let index = u32::try_from(index).map_err(|_| FrontendError::from_diagnostic(sources,
+                Diagnostic::error("declared type has too many members", binding.location)))?;
+            for decorator in member.value.decorators.iter().filter(|d| !intrinsic_check_marker(d)) {
+                prepare(decorator, member_context(binding, member, index, owner))?;
+            }
+        }
+        for decorator in decorators {
+            prepare(decorator, owner_expression(binding))?;
+        }
+    }
+    Ok(plans)
+}
+
 fn intrinsic_property_marker(decorator: &crate::ast::Decorator) -> bool {
     matches!(
         &decorator.value.callee.value,
@@ -39,34 +112,19 @@ fn intrinsic_property_marker(decorator: &crate::ast::Decorator) -> bool {
     )
 }
 
-fn reserved_property_marker(decorator: &crate::ast::Decorator) -> bool {
-    intrinsic_property_marker(decorator)
-}
-
 fn property_capability(
     decorator: &crate::ast::Decorator,
+    plan: &PreparedToolExpression,
     tool_values: &BTreeMap<String, Val>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator<'_>,
 ) -> Result<u32, FrontendError> {
-    if !decorator.value.configured || decorator.value.arguments.len() != 1 {
-        return Err(FrontendError::from_diagnostic(
-            sources,
-            Diagnostic::error(
-                "@property requires exactly one PropertyTarget value",
-                decorator.location,
-            ),
-        ));
-    }
     let argument = &decorator.value.arguments[0];
-    let expected = property_target_descriptor();
     let source_name = sources.get(argument.location.source).name.to_string();
-    let evidence = infer_tool_expression_evidence(&source_name, argument, tool_values, Some(&expected), account, sources, evaluator)
-        .map_err(|message| FrontendError::from_diagnostic(sources,
-            Diagnostic::error(format!("@property requires PropertyTarget: {message}"), argument.location)))?;
-    let value = evaluate_prepared_tool_expression(&source_name, argument, tool_values,
-        evidence, account, sources, evaluator, false)?;
+    let value = evaluate_prepared_tool_expression(&source_name, tool_values,
+        plan,
+        account, sources, evaluator, false)?;
     let value = ValueRef::work(value, &evaluator.work, evaluator.main);
     let capability = value.as_atom().ok_or_else(|| FrontendError::from_diagnostic(sources,
         Diagnostic::error("@property must evaluate to a PropertyTarget value", argument.location)))?;
@@ -132,65 +190,12 @@ fn property_context_descriptor(kind: PropertyOwnerKind) -> TypeDescriptor {
     }
 }
 
-fn decorator_property_descriptor(
+fn property_provider_result(
     decorator: &crate::ast::Decorator,
     owner: PropertyOwnerKind,
-    environment: &HashMap<String, TypeDescriptor>,
+    provider: TypeDescriptor,
     sources: &SourceDatabase,
 ) -> Result<TypeDescriptor, FrontendError> {
-    let mut provider =
-        infer_expr_recorded(&decorator.value.callee, environment, &mut HashMap::new())
-            .ok_or_else(|| FrontendError::from_diagnostic(sources, Diagnostic::error(
-                "decorator requires an explicit provider contract", decorator.location)))?;
-    if decorator.value.configured {
-        let TypeDescriptor::Function { parameters, result } = provider else {
-            return Err(FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(
-                    "configured decorator target is not callable",
-                    decorator.location,
-                ),
-            ));
-        };
-        if parameters.len() != decorator.value.arguments.len() {
-            return Err(FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(
-                    format!(
-                        "configured decorator expects {} argument(s), got {}",
-                        parameters.len(),
-                        decorator.value.arguments.len()
-                    ),
-                    decorator.location,
-                ),
-            ));
-        }
-        for (argument, expected) in decorator.value.arguments.iter().zip(&parameters) {
-            let Some(actual) = infer_expr_recorded(argument, environment, &mut HashMap::new()) else { continue; };
-            let contextual = match expected {
-                TypeDescriptor::Declared(declared)
-                    if is_declared_literal_construction(argument, expected) =>
-                {
-                    assignable(&actual, &declared.body)
-                }
-                _ => false,
-            };
-            if !assignable(&actual, expected) && !contextual {
-                return Err(FrontendError::from_diagnostic(
-                    sources,
-                    Diagnostic::error(
-                        format!(
-                            "decorator argument has type {}, which is not assignable to {}",
-                            actual.display_name(),
-                            expected.display_name()
-                        ),
-                        argument.location,
-                    ),
-                ));
-            }
-        }
-        provider = *result;
-    }
     let TypeDescriptor::Function { parameters, result } = provider else {
         return Err(FrontendError::from_diagnostic(
             sources,
@@ -270,40 +275,15 @@ fn evaluate_property_decorator(
     source_name: &str,
     decorator: &crate::ast::Decorator,
     owner: PropertyOwnerKind,
-    context: Expr,
+    prepared: &PreparedPropertyDecorator,
     previous: Option<Val>,
     tool_values: &BTreeMap<String, Val>,
-    static_environment: &HashMap<String, TypeDescriptor>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator<'_>,
 ) -> Result<(TypeId, Val), FrontendError> {
-    if reserved_property_marker(decorator) {
-        return Err(FrontendError::from_diagnostic(
-            sources,
-            Diagnostic::error(
-                "@property only declares capabilities on property carrier types",
-                decorator.location,
-            ),
-        ));
-    }
-    let property_descriptor =
-        decorator_property_descriptor(decorator, owner, static_environment, sources)?;
-    if !matches!(property_descriptor, TypeDescriptor::Declared(_))
-        || type_identity_is_symbolic(&property_descriptor)
-    {
-        return Err(FrontendError::from_diagnostic(
-            sources,
-            Diagnostic::error(
-                format!(
-                    "decorator result must be a concrete nominal property type, got {}",
-                    property_descriptor.display_name()
-                ),
-                decorator.location,
-            ),
-        ));
-    }
-    let property_type = evaluator.canonical_type_id(&property_descriptor)?;
+    let property_descriptor = &prepared.descriptor;
+    let property_type = evaluator.canonical_type_id(property_descriptor)?;
     if evaluator.property_attr_type() == Some(property_type) {
         return Err(FrontendError::from_diagnostic(
             sources,
@@ -334,48 +314,11 @@ fn evaluate_property_decorator(
         ));
     }
 
-    let mut environment = ScopedTypeEnvironment::new(static_environment);
-    environment.insert(
-        PROPERTY_PREVIOUS_BINDING.into(),
-        option_descriptor(property_descriptor.clone()),
-    );
-    let call = property_call(decorator, context, decorator.location);
-    let mut descriptors = HashMap::new();
-    let inferred = infer_expr_recorded(&call, &environment, &mut descriptors);
-    if inferred.as_ref() != Some(&property_descriptor) {
-        return Err(FrontendError::from_diagnostic(
-            sources,
-            Diagnostic::error(
-                format!(
-                    "decorator call inferred {}, expected {}",
-                    inferred.as_ref().map_or_else(|| "unavailable".to_owned(), TypeDescriptor::display_name),
-                    property_descriptor.display_name()
-                ),
-                decorator.location,
-            ),
-        ));
-    }
     let mut values = ScopedToolBindings::new(tool_values);
     let previous = evaluator.previous_property_value(previous);
     values.insert(PROPERTY_PREVIOUS_BINDING.into(), previous);
-    let previous_environment = evaluator.inference_context.as_mut()
-        .map(|context| context.scope_environment_inputs(&call, &environment));
-    let property = evaluate_typed_tool_expression_silent(
-        source_name,
-        &call,
-        &values,
-        &descriptors,
-        Some(&property_descriptor),
-        account,
-        sources,
-        evaluator,
-    );
-    if let Some(environment) = previous_environment
-        && let Some(context) = &mut evaluator.inference_context
-    {
-        context.restore_environment_inputs(environment);
-    }
-    let property = property?;
+    let property = evaluate_prepared_tool_expression(
+        source_name, &values, &prepared.plan, account, sources, evaluator, false)?;
     if property.type_id() != Some(property_type) {
         return Err(FrontendError::from_diagnostic(
             sources,
@@ -386,6 +329,24 @@ fn evaluate_property_decorator(
         ));
     }
     Ok((property_type, property))
+}
+
+// Prepare the chained call without allocating its previous runtime value or
+// accessing the VM. Restore lexical inputs on both successful and failed solves.
+fn prepare_property_call(
+    call: &Expr,
+    property: &TypeDescriptor,
+    environment: &dyn TypeEnvironment,
+    query: Option<crate::query::QueryContext>,
+    sources: &SourceDatabase,
+    context: &mut ToolInferenceContext<'_>,
+) -> Result<PreparedToolExpression, String> {
+    let mut environment = ScopedTypeEnvironment::new(environment);
+    environment.insert(PROPERTY_PREVIOUS_BINDING.into(), option_descriptor(property.clone()));
+    let previous = context.scope_environment_inputs(call, &environment);
+    let evidence = solve_tool_expression_types(call, Some(property), query, sources, context);
+    context.restore_environment_inputs(previous);
+    prepare_tool_execution(call, evidence?, sources, &mut context.types)
 }
 
 fn declared_member_fields(binding: &Binding) -> Option<&[crate::ast::DictField]> {
@@ -496,13 +457,12 @@ fn validate_decorated_binding(
     ))
 }
 
-fn declared_property_evidence(
+fn declared_property_contracts(
     program: &Program,
-    tool_values: &BTreeMap<String, Val>,
-    environment: &HashMap<String, TypeDescriptor>,
+    environment: &dyn TypeEnvironment,
     sources: &SourceDatabase,
-    evaluator: &mut ToolEvaluator<'_>,
-) -> Result<Vec<TypePropertyEvidence>, FrontendError> {
+    mut provider: impl FnMut(&crate::ast::Decorator, PropertyOwnerKind) -> Result<TypeDescriptor, FrontendError>,
+) -> Result<Vec<(TypeDescriptor, TypeDescriptor)>, FrontendError> {
     let mut evidence = BTreeMap::new();
     for binding in &program.value.body.value.bindings {
         if !binding.value.decorators.iter().any(|decorator| !intrinsic_check_marker(decorator))
@@ -512,8 +472,8 @@ fn declared_property_evidence(
         validate_decorated_binding(binding, sources)?;
         let target = environment.get(&binding.value.name.value)
             .and_then(type_value_descriptor)
-            .expect("decorated type has a concrete Type descriptor");
-        let target_type = evaluator.declared_type_id(tool_values[&binding.value.name.value])?;
+            .ok_or_else(|| FrontendError::from_diagnostic(sources,
+                Diagnostic::error("decorated type remains unknown", binding.location)))?;
         for decorator in binding.value.decorators.iter().filter(|decorator| !intrinsic_check_marker(decorator)) {
             let property = if intrinsic_property_marker(decorator) {
                 environment.get("PropertyAttr").and_then(type_value_descriptor)
@@ -521,11 +481,9 @@ fn declared_property_evidence(
                         "@property requires the PropertyAttr bootstrap", decorator.location,
                     )))?
             } else {
-                decorator_property_descriptor(
+                provider(
                     decorator,
                     PropertyOwnerKind::Ty(binding.value.declared_initializer.expect("nominal declaration")),
-                    environment,
-                    sources,
                 )?
             };
             if !matches!(property, TypeDescriptor::Declared(_)) || type_identity_is_symbolic(&property) {
@@ -534,19 +492,93 @@ fn declared_property_evidence(
                     decorator.location,
                 )));
             }
-            let property_type = evaluator.canonical_type_id(&property)?;
-            let key = PropertyKey::Ty { ty: target_type, property_ty: property_type };
-            evidence.insert(key, TypePropertyEvidence {
-                target: target.clone(), property,
-                root: type_property_runtime_name(target_type, property_type),
-            });
+            let key = (TypeExprId::from_descriptor(&target), TypeExprId::from_descriptor(&property));
+            evidence.insert(key, (target.clone(), property));
+        }
+        if let Some(members) = declared_member_fields(binding) {
+            let owner = match binding.value.declared_initializer {
+                Some(crate::ast::DeclaredInitializerKind::Enum) => PropertyOwnerKind::Variant,
+                _ => PropertyOwnerKind::Field,
+            };
+            for member in members {
+                for decorator in member.value.decorators.iter().filter(|d| !intrinsic_check_marker(d)) {
+                    if intrinsic_property_marker(decorator) {
+                        return Err(FrontendError::from_diagnostic(sources, Diagnostic::error(
+                            "@property only declares capabilities on property carrier types", decorator.location)));
+                    }
+                    provider(decorator, owner)?;
+                }
+            }
         }
     }
     Ok(evidence.into_values().collect())
 }
 
+#[cfg(test)]
+mod property_contract_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_property_declarations_produce_one_static_presence_record() {
+        let mut sources = SourceDatabase::default();
+        let source = sources.add("static-property-presence", "@tag @tag type Record = struct {value: Int};");
+        let program = parse_registered(&sources, source).program.unwrap();
+        let nominal = |local, name: &str| TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, local),
+            name: name.into(), body: Arc::new(TypeDescriptor::Struct(BTreeMap::new())),
+        });
+        let target = nominal(80, "Record");
+        let property = nominal(81, "Label");
+        let environment = HashMap::from([
+            ("Record".into(), TypeDescriptor::TypeOf(Box::new(target.clone()))),
+            ("tag".into(), TypeDescriptor::Function {
+                parameters: vec![TypeDescriptor::Type, option_descriptor(property.clone())],
+                result: Box::new(property.clone()),
+            }),
+        ]);
+        let contracts = declared_property_contracts(&program, &environment, &sources,
+            |decorator, owner| property_provider_result(decorator, owner, environment["tag"].clone(), &sources)).unwrap();
+        assert_eq!(contracts, vec![(target, property)]);
+    }
+}
+
+fn declared_property_evidence(
+    module_id: crate::ModuleId,
+    contracts: Vec<(TypeDescriptor, TypeDescriptor)>,
+) -> Vec<TypePropertyEvidence> {
+    contracts.into_iter().enumerate().map(|(index, (target, property))| {
+        TypePropertyEvidence { target, property,
+            root: format!("\0type_property:{}:{index}", module_id.raw()) }
+    }).collect()
+}
+
+fn solve_declared_property_contracts(
+    program: &Program,
+    environment: &dyn TypeEnvironment,
+    inference: &mut GenericInference<'_>,
+    sources: &SourceDatabase,
+) -> Result<Vec<(TypeDescriptor, TypeDescriptor)>, FrontendError> {
+    declared_property_contracts(program, environment, sources, |decorator, owner| {
+        let expression = configured_decorator_provider(decorator);
+        let provider = inference.infer(&expression, environment, None).map_err(|message| {
+            FrontendError::from_diagnostic(sources,
+                inference.take_failure_diagnostic(decorator.location, message, None))
+        })?;
+        let property = property_provider_result(decorator, owner, inference.normalize(&provider), sources)?;
+        if !matches!(property, TypeDescriptor::Declared(_)) || type_identity_is_symbolic(&property) {
+            return Err(FrontendError::from_diagnostic(sources, Diagnostic::error(
+                format!("decorator result must be a concrete nominal property type, got {}", property.display_name()),
+                decorator.location,
+            )));
+        }
+        inference.property_contracts.insert(decorator.location, property.clone());
+        Ok(property)
+    })
+}
+
 fn establish_property_markers(
     program: &Program,
+    plans: &PreparedPropertyPlans,
     tool_values: &BTreeMap<String, Val>,
     static_environment: &HashMap<String, TypeDescriptor>,
     account: &mut QuotaAccount,
@@ -582,7 +614,8 @@ fn establish_property_markers(
             .expect("property carrier has a concrete Type descriptor");
         let mut capabilities = 0;
         for decorator in &markers {
-            capabilities |= property_capability(decorator, tool_values, account, sources, evaluator)?;
+            capabilities |= property_capability(decorator, &plans.capabilities[&decorator.location],
+                tool_values, account, sources, evaluator)?;
         }
         let bootstrap =
             binding.value.name.value == "PropertyAttr" && evaluator.property_attr_type().is_none();
@@ -627,6 +660,8 @@ fn establish_property_markers(
 fn evaluate_declared_properties(
     source_name: &str,
     program: &Program,
+    plans: &PreparedPropertyPlans,
+    expected: &[TypePropertyEvidence],
     tool_values: &BTreeMap<String, Val>,
     static_environment: &HashMap<String, TypeDescriptor>,
     account: &mut QuotaAccount,
@@ -635,6 +670,7 @@ fn evaluate_declared_properties(
 ) -> Result<Vec<(TypePropertyEvidence, PersistentValue)>, FrontendError> {
     let (bootstrap_type, mut publication, mut evidence_descriptors) = establish_property_markers(
         program,
+        plans,
         tool_values,
         static_environment,
         account,
@@ -711,14 +747,8 @@ fn evaluate_declared_properties(
                         ),
                     ));
                 }
-                let context = member_context(binding, member, index, owner_kind);
-                let property_descriptor = decorator_property_descriptor(
-                    decorator,
-                    owner_kind,
-                    static_environment,
-                    sources,
-                )?;
-                let property_type = evaluator.canonical_type_id(&property_descriptor)?;
+                let prepared = &plans.decorators[&decorator.location];
+                let property_type = evaluator.canonical_type_id(&prepared.descriptor)?;
                 let key = match owner_kind {
                     PropertyOwnerKind::Field => PropertyKey::Field {
                         ty: target_type,
@@ -737,10 +767,9 @@ fn evaluate_declared_properties(
                     source_name,
                     decorator,
                     owner_kind,
-                    context,
+                    prepared,
                     previous,
                     tool_values,
-                    static_environment,
                     account,
                     sources,
                     evaluator,
@@ -754,25 +783,15 @@ fn evaluate_declared_properties(
         }
 
         for decorator in type_decorators {
-            let property_descriptor = decorator_property_descriptor(
-                decorator,
-                PropertyOwnerKind::Ty(
-                    binding
-                        .value
-                        .declared_initializer
-                        .expect("decorated binding is nominal"),
-                ),
-                static_environment,
-                sources,
-            )?;
-            let property_type = evaluator.canonical_type_id(&property_descriptor)?;
+            let prepared = &plans.decorators[&decorator.location];
+            let property_type = evaluator.canonical_type_id(&prepared.descriptor)?;
             let key = PropertyKey::Ty {
                 ty: target_type,
                 property_ty: property_type,
             };
             evidence_descriptors.insert(
                 key,
-                (target_descriptor.clone(), property_descriptor.clone()),
+                (target_descriptor.clone(), prepared.descriptor.clone()),
             );
             let previous = effective.get(&key).copied();
             let (actual_type, value) = evaluate_property_decorator(
@@ -784,10 +803,9 @@ fn evaluate_declared_properties(
                         .declared_initializer
                         .expect("decorated binding is nominal"),
                 ),
-                owner_expression(binding),
+                prepared,
                 previous,
                 tool_values,
-                static_environment,
                 account,
                 sources,
                 evaluator,
@@ -808,24 +826,21 @@ fn evaluate_declared_properties(
                 Diagnostic::error(error.to_string(), program.location),
             )
         })?;
-    evidence_descriptors
-        .into_iter()
-        .map(|(key, (target, property))| {
-            let PropertyKey::Ty { ty, property_ty } = key else {
-                unreachable!("only type properties publish trait evidence");
-            };
-            let root = type_property_runtime_name(ty, property_ty);
+    if evidence_descriptors.len() != expected.len() {
+        return Err(frontend_error(source_name, "materialized property set differs from solved contracts"));
+    }
+    expected
+        .iter()
+        .map(|evidence| {
+            let ty = evaluator.canonical_type_id(&evidence.target)?;
+            let property_ty = evaluator.canonical_type_id(&evidence.property)?;
+            if !evidence_descriptors.contains_key(&PropertyKey::Ty { ty, property_ty }) {
+                return Err(frontend_error(source_name, "solved property contract was not materialized"));
+            }
             let value = evaluator
                 .persistent_type_property(ty, property_ty)
                 .expect("published type property is present in Main world");
-            Ok((
-                TypePropertyEvidence {
-                    target,
-                    property,
-                    root,
-                },
-                value,
-            ))
+            Ok((evidence.clone(), value))
         })
         .collect()
 }

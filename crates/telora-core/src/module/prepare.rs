@@ -19,7 +19,12 @@ impl ModuleLoader {
         let source_name = module_id.to_string();
         let mut external_provenance = BTreeMap::new();
         let mut external_roots = HashMap::new();
+        let mut external_interfaces = BTreeMap::new();
         for (name, value) in external_bindings {
+            let interface = value.static_interface(name).ok_or_else(|| ModuleError::new(
+                format!("Host binding {name:?} requires an explicit type interface"),
+            ))?;
+            external_interfaces.insert(name.clone(), interface);
             let root = value
                 .publish(&mut self.main.heap)
                 .map_err(|error| ModuleError::new(error.to_string()))?;
@@ -27,7 +32,6 @@ impl ModuleLoader {
         }
         let mut semantic_imports = Vec::new();
         let mut graph_imports = Vec::new();
-        let mut external_interfaces = BTreeMap::new();
         let mut open_candidates: BTreeMap<String, Vec<OpenImportCandidate>> = BTreeMap::new();
         let mut direct_import_names = external_bindings.keys().cloned().collect::<HashSet<_>>();
 

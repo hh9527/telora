@@ -18,6 +18,25 @@ fn help_lists_the_public_command_surface() {
 }
 
 #[test]
+fn check_preserves_property_provider_alias_and_factory_contracts() {
+    let cwd = fixture();
+    for definitions in [
+        "def provider: Fn(Type, Option(Tag)) -> Tag = fn(target, previous) { Tag(1) }; def alias = provider;",
+        "def configure: Fn(Int) -> Fn(Type, Option(Tag)) -> Tag = fn(n) { fn(target, previous) { Tag(n) } }; def alias = configure(1);",
+        "def configure = fn(n: Int) { fn(target: Type, previous: Option(Tag)) { Tag(n) } }; def alias = configure(1);",
+    ] {
+        fs::write(cwd.join("src/provider.telora"), format!(
+            "@property(PropertyTarget.Type) type Tag = struct(Int); {definitions} @alias type Item = struct(Int); def requires: for(T: Property(Tag)) Fn(TypeOf(T)) -> Int = fn(target) {{ 1 }}; trait Named {{ name: Fn(Self) -> Int }}; impl(T: Property(Tag)) Named for T {{ name: fn(value) {{ 42 }} }}; export def output = requires((Item).type); export def named = Named.name(Item(1)); export {{ Item }};"
+        )).unwrap();
+        for arguments in [vec!["check", "@src/provider"], vec!["check", "--types-only", "@src/provider"]] {
+            let output = telora(&cwd).args(&arguments).output().unwrap();
+            assert!(output.status.success(), "{arguments:?}: {definitions}\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        }
+    }
+}
+
+#[test]
 fn run_and_check_select_logical_roots_from_cwd() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "export def output = \"42\";").unwrap();
@@ -64,6 +83,31 @@ export def run = entry.run((State).type, config, ees.none, fn(ctx) {
         "{}",
         String::from_utf8_lossy(&check.stderr)
     );
+}
+
+#[test]
+fn types_only_solves_member_provider_contracts_without_execution() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/member-provider.telora"), r#"
+        @property(PropertyTarget.Field) type Tag = struct(Int);
+        type Context = struct { owner: Type, index: Int, name: String, ty: Type };
+        def factory = fn(n: Int) {
+            fn(context: Context, previous: Option(Tag)) -> Tag {
+                fail!("member provider executed")
+            }
+        };
+        def provider = factory(1);
+        type Item = struct { @provider value: Int };
+        export { Item };
+    "#).unwrap();
+    let output = telora(&cwd).args(["check", "--types-only", "@src/member-provider"]).output().unwrap();
+    assert!(output.status.success(), "{}\n{}",
+        String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let output = telora(&cwd).args(["check", "@src/member-provider"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("member provider executed"), "{}\n{}",
+        String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    fs::remove_dir_all(cwd).unwrap();
 }
 
 #[test]
@@ -764,4 +808,95 @@ fn test_roots_are_selectable_but_not_importable() {
         .output()
         .unwrap();
     assert!(!check.status.success());
+}
+#[test]
+fn types_only_check_skips_execution_but_rejects_type_errors() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/types-only.telora"), "export def answer = 1 / 0;").unwrap();
+    let output = telora(&cwd).args(["check", "--types-only", "@src/types-only"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let records = String::from_utf8(output.stdout).unwrap();
+    let summary: Value = serde_json::from_str(records.lines().last().unwrap()).unwrap();
+    assert_eq!(summary["types_only"], true);
+    assert!(summary["check_seconds"].as_f64().unwrap() >= 0.0);
+    assert!(summary["catalog_seconds"].as_f64().unwrap() >= 0.0);
+    let output = telora(&cwd).args(["check", "@src/types-only"]).output().unwrap();
+    assert!(!output.status.success());
+    fs::write(cwd.join("src/types-only.telora"), "export def answer: Int = \"wrong\";").unwrap();
+    let output = telora(&cwd).args(["check", "@src/types-only", "--types-only"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Int"));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
+fn data_contents_are_checked_after_types_only() {
+    let cwd = fixture();
+    for (extension, valid, invalid) in [
+        ("json", "{\"value\":1}", "{"),
+        ("toml", "value = 1", "value = ["),
+        ("yaml", "value: 1", "value: ["),
+    ] {
+        let module = format!("@src/data.{extension}");
+        fs::write(cwd.join("src/data-user.telora"), format!(
+            "import \"std/value\" {{ Value }}; import \"{module}\" {{ data }}; export def result: Value = data;"
+        )).unwrap();
+        let path = cwd.join(format!("src/data.{extension}"));
+        fs::write(&path, invalid).unwrap();
+        refresh_fixture_workspace(&cwd);
+        for root in ["@src/data-user", module.as_str()] {
+            let output = telora(&cwd).args(["check", "--types-only", root]).output().unwrap();
+            assert!(output.status.success(), "{root}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            let output = telora(&cwd).args(["check", root]).output().unwrap();
+            assert!(!output.status.success(), "invalid {extension} must fail ordinary check");
+        }
+        fs::write(&path, valid).unwrap();
+        let output = telora(&cwd).args(["check", "@src/data-user"]).output().unwrap();
+        assert!(output.status.success(), "{extension}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        fs::write(cwd.join("src/data-user.telora"), format!(
+            "import \"{module}\" {{ data }}; export def result: Int = data;"
+        )).unwrap();
+        let output = telora(&cwd).args(["check", "--types-only", "@src/data-user"]).output().unwrap();
+        assert!(!output.status.success(), "data must retain Value's nominal type");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Int"));
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
+fn types_only_and_ordinary_check_agree_on_open_import_resolution() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/a.telora"), r#"
+        export def shared = 1; export def True = 1;
+        export type Choice = enum { done, pending }; export Choice.{done};
+    "#).unwrap();
+    fs::write(cwd.join("src/b.telora"), "export def shared = 2; export def done = 0;").unwrap();
+    fs::write(cwd.join("src/bridge.telora"),
+        "import \"./a\" *; export { shared, Choice, done };").unwrap();
+    for (source, ambiguous) in [
+        ("import \"./a\" *; import \"./b\" *; export def result = 0;", false),
+        ("import \"./a\" *; import \"./b\" *; export def result = shared;", true),
+        ("import \"./a\" *; import \"./b\" *; def shared = 3; export def result = shared;", false),
+        ("import \"./a\" *; import \"./b\" *; export def result = do { let shared = 3; shared };", false),
+        ("import \"./a\" { shared }; import \"./b\" *; export def result = shared;", false),
+        ("import \"./a\" *; import \"./a\" *; export def result = shared;", false),
+        ("import \"./a\" *; export def result: Int = True;", false),
+        ("import \"./a\" *; import \"./b\" *; export def result = match Choice.done { done => 1, _ => 0 };", true),
+        ("import \"./bridge\" *; export def result = match Choice.done { done => shared, Choice.pending => 0 };", false),
+    ] {
+        fs::write(cwd.join("src/open.telora"), source).unwrap();
+        for types_only in [false, true] {
+            let mut command = telora(&cwd);
+            command.args(["check", "@src/open"]);
+            if types_only { command.arg("--types-only"); }
+            let output = command.output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert_eq!(output.status.success(), !ambiguous,
+                "types_only={types_only}: {source}\n{stdout}\n{}", String::from_utf8_lossy(&output.stderr));
+            if ambiguous { assert!(stdout.contains("ambiguous"), "{stdout}"); }
+        }
+    }
+    fs::remove_dir_all(cwd).unwrap();
 }

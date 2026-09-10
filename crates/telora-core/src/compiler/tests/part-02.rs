@@ -83,6 +83,14 @@
         )
         .unwrap();
         assert_eq!(explicit.to_string(), "\"int=7\"");
+
+        let inferred_self = run(
+            r#"trait Combine { combine: Fn(Self, Self) -> Self };
+               impl Combine for Int { combine: fn(a, b) { a + b } };
+               def add_one = fn(x) { Combine.combine(x, 1) };
+               add_one(41)"#,
+        ).unwrap();
+        assert_eq!(inferred_self.to_string(), "42");
     }
 
     #[test]

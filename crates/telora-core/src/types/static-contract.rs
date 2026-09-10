@@ -10,8 +10,54 @@ struct StaticContractScope<'a> {
     families: &'a BTreeMap<String, StaticTypeFamily>,
 }
 
+// Visit every sibling even when an earlier edge is unknown or conflicted.
+// Option's FromIterator would stop before discovering the remaining evidence.
+fn collect_static_results<T, C: FromIterator<T>>(
+    items: impl Iterator<Item = Option<T>>,
+) -> Option<C> {
+    let mut complete = true;
+    let result = items.filter_map(|item| {
+        complete &= item.is_some();
+        item
+    }).collect();
+    complete.then_some(result)
+}
+
 impl StaticContractScope<'_> {
+    fn unknown_diagnostic(&self, expression: &Expr) -> Diagnostic {
+        if let Some(reference) = self.hir.references().iter().find(|reference| {
+            reference.resolution == HirResolution::Unresolved
+                && reference.location.source == expression.location.source
+                && expression.location.start <= reference.location.start
+                && reference.location.end <= expression.location.end
+        }) {
+            Diagnostic::error(format!("unknown binding {:?}", reference.name), reference.location)
+        } else {
+            Diagnostic::error("type remains unknown after static solving", expression.location)
+        }
+    }
+
+    fn family_conflict(&self, expression: &Expr, callee: &Expr, message: impl Into<String>) -> Diagnostic {
+        let diagnostic = Diagnostic::error(message, expression.location);
+        let ExprKind::Variable(name) = &callee.value else { return diagnostic; };
+        let Some(HirResolution::Definition(id)) = self.hir
+            .reference_at(name.location, &name.value).map(|reference| reference.resolution)
+            else { return diagnostic; };
+        let Some(definition) = self.hir.definition(id) else { return diagnostic; };
+        diagnostic.with_secondary("type family declared here", definition.location)
+    }
+
+    fn member_import(&self, expression: &Expr) -> Option<&Expr> {
+        let ExprKind::Variable(name) = &expression.value else { return None; };
+        let HirResolution::Definition(id) = self.hir
+            .reference_at(name.location, &name.value)?.resolution else { return None; };
+        self.hir.definition(id)?.member_import.as_ref()
+    }
+
     fn family_name(&self, expression: &Expr) -> Option<String> {
+        if let Some(import) = self.member_import(expression) {
+            return self.family_name(import);
+        }
         match &expression.value {
             ExprKind::Variable(name) => {
                 if self
@@ -36,6 +82,9 @@ impl StaticContractScope<'_> {
     }
 
     fn namespace(&self, expression: &Expr) -> Option<&ModuleInterface> {
+        if let Some(import) = self.member_import(expression) {
+            return self.namespace(import);
+        }
         match &expression.value {
             ExprKind::Variable(name) => {
                 if self
@@ -89,6 +138,9 @@ impl StaticContractScope<'_> {
     }
 
     fn elaborate(&self, expression: &Expr, graph: &mut TypeGraph) -> Option<AnalysisTypeId> {
+        if let Some(import) = self.member_import(expression) {
+            return self.elaborate(import, graph);
+        }
         let node = match &expression.value {
             ExprKind::TypeSyntax(inner) => return self.elaborate(inner, graph),
             ExprKind::Field { receiver, field } => {
@@ -116,7 +168,24 @@ impl StaticContractScope<'_> {
                 {
                     TypeNode::Bound(parameter.id)
                 } else {
-                    let TypeDescriptor::TypeOf(instance) = self.environment.get(&name.value)?
+                    let imported = self.hir.reference_at(name.location, &name.value)
+                        .is_some_and(|reference| matches!(reference.resolution,
+                            HirResolution::Definition(id) if self.hir.definition(id)
+                                .is_some_and(|definition| definition.kind == HirDefinitionKind::Import)));
+                    let descriptor = if imported {
+                        let interface = self.interfaces.get(&name.value)?;
+                        if !interface.type_declarations.contains(interface.value_binding.as_ref()?) {
+                            return None;
+                        }
+                        let scheme = interface.binding_scheme()?;
+                        if !scheme.parameters.is_empty() || !scheme.constraints.is_empty() {
+                            return None;
+                        }
+                        &scheme.body
+                    } else {
+                        self.environment.get(&name.value)?
+                    };
+                    let TypeDescriptor::TypeOf(instance) = descriptor
                     else {
                         return None;
                     };
@@ -131,47 +200,66 @@ impl StaticContractScope<'_> {
                     .family_name(callee)
                     .and_then(|name| self.families.get(&name))
                 {
+                    let solved_arguments: Option<Vec<_>> = collect_static_results(arguments
+                        .iter().map(|argument| self.elaborate(argument, graph)));
                     if arguments.len() != family.arity {
+                        graph.elaboration_conflicts.push(self.family_conflict(expression, callee,
+                            format!("expected {} arguments, got {}", family.arity, arguments.len()),
+                        ));
                         return None;
                     }
-                    let arguments = arguments
-                        .iter()
-                        .map(|argument| self.elaborate(argument, graph))
-                        .collect::<Option<Vec<_>>>()?;
+                    let arguments = solved_arguments?;
                     if family.recursive_pending {
-                        return arguments.iter().enumerate().all(|(index, argument)|
-                            matches!(graph.node(*argument), TypeNode::Bound(parameter) if parameter.0 as usize == index))
-                            .then_some(family.root);
+                        let unchanged = arguments.iter().enumerate().all(|(index, argument)|
+                            matches!(graph.node(*argument), TypeNode::Bound(parameter) if parameter.0 as usize == index));
+                        if !unchanged {
+                            graph.elaboration_conflicts.push(self.family_conflict(expression, callee,
+                                "recursive type-family application must use its bound parameters unchanged and in declaration order",
+                            ));
+                        }
+                        return unchanged.then_some(family.root);
                     }
                     return Some(graph.apply_static_family(family.root, &arguments));
                 }
-                match (self.builtin(callee)?, arguments.as_slice()) {
+                let builtin = self.builtin(callee)?;
+                let arity = match builtin {
+                    "Array" | "Dict" | "TypeOf" | "Unchecked" | "Option" | "Tuple"
+                        | "\0telora_tuple_type" => Some(1),
+                    "Result" | "FoldControl" | "Func" | "\0telora_function_type"
+                        | "\0telora_struct" | "\0telora_enum" | "\0telora_newtype" => Some(2),
+                    _ => None,
+                };
+                if let Some(arity) = arity.filter(|arity| *arity != arguments.len()) {
+                    graph.elaboration_conflicts.push(self.family_conflict(expression, callee,
+                        format!("expected {arity} arguments, got {}", arguments.len())));
+                    return None;
+                }
+                match (builtin, arguments.as_slice()) {
                     ("\0telora_struct", [_, members]) => {
                         let ExprKind::Dict(members) = &members.value else {
                             return None;
                         };
                         TypeNode::Struct(
-                            members
+                            collect_static_results(members
                                 .iter()
                                 .map(|member| {
                                     Some((
                                         member.value.name.as_ref()?.value.clone(),
                                         self.elaborate(&member.value.value, graph)?,
                                     ))
-                                })
-                                .collect::<Option<_>>()?,
+                                }))?,
                         )
                     }
                     ("\0telora_enum", [_, members]) => {
                         let ExprKind::Dict(members) = &members.value else {
                             return None;
                         };
-                        TypeNode::Enum(members.iter().map(|member| {
+                        TypeNode::Enum(collect_static_results(members.iter().map(|member| {
                             let payload = if matches!(&member.value.value.value, ExprKind::Atom(name) if name == "None") {
                                 None
                             } else { Some(self.elaborate(&member.value.value, graph)?) };
                             Some((member.value.name.as_ref()?.value.clone(), payload))
-                        }).collect::<Option<_>>()?)
+                        }))?)
                     }
                     ("\0telora_newtype", [_, members]) => {
                         let ExprKind::Dict(members) = &members.value else {
@@ -185,28 +273,54 @@ impl StaticContractScope<'_> {
                     ("Array", [item]) => TypeNode::Array(self.elaborate(item, graph)?),
                     ("Dict", [item]) => TypeNode::Dict(self.elaborate(item, graph)?),
                     ("TypeOf", [item]) => TypeNode::TypeOf(self.elaborate(item, graph)?),
+                    ("Unchecked", [item]) => {
+                        let root = self.elaborate(item, graph)?;
+                        let target = graph.descriptor(root).ok()?;
+                        if !matches!(&target, TypeDescriptor::Declared(declared)
+                            if matches!(declared.body.as_ref(), TypeDescriptor::Struct(_))) {
+                            graph.elaboration_conflicts.push(Diagnostic::error(
+                                "Unchecked expects a named-field struct type", expression.location));
+                            return None;
+                        }
+                        return Some(graph.intern_descriptor(&unchecked_descriptor(target)));
+                    }
+                    ("Option", [item]) => TypeNode::Enum(BTreeMap::from([
+                        ("None".into(), None),
+                        ("Some".into(), Some(self.elaborate(item, graph)?)),
+                    ])),
+                    ("Result", [ok, error]) => {
+                        let ok = self.elaborate(ok, graph);
+                        let error = self.elaborate(error, graph);
+                        TypeNode::Enum(BTreeMap::from([
+                            ("Err".into(), Some(error?)), ("Ok".into(), Some(ok?)),
+                        ]))
+                    }
+                    ("FoldControl", [state, result]) => {
+                        let state = self.elaborate(state, graph);
+                        let result = self.elaborate(result, graph);
+                        TypeNode::Enum(BTreeMap::from([
+                            ("Break".into(), Some(result?)), ("Continue".into(), Some(state?)),
+                        ]))
+                    }
                     ("Tuple" | "\0telora_tuple_type", [items]) => {
                         let ExprKind::Array(items) = &items.value else {
                             return None;
                         };
                         TypeNode::Tuple(
-                            items
+                            collect_static_results(items
                                 .iter()
-                                .map(|item| self.elaborate(item, graph))
-                                .collect::<Option<_>>()?,
+                                .map(|item| self.elaborate(item, graph)))?,
                         )
                     }
                     ("Func" | "\0telora_function_type", [parameters, result]) => {
                         let ExprKind::Array(parameters) = &parameters.value else {
                             return None;
                         };
-                        TypeNode::Function {
-                            parameters: parameters
+                        let parameters = collect_static_results(parameters
                                 .iter()
-                                .map(|item| self.elaborate(item, graph))
-                                .collect::<Option<_>>()?,
-                            result: self.elaborate(result, graph)?,
-                        }
+                                .map(|item| self.elaborate(item, graph)));
+                        let result = self.elaborate(result, graph);
+                        TypeNode::Function { parameters: parameters?, result: result? }
                     }
                     _ => return None,
                 }
@@ -220,6 +334,45 @@ impl StaticContractScope<'_> {
 #[cfg(test)]
 mod static_contract_tests {
     use super::*;
+
+    #[test]
+    fn selected_import_contract_uses_only_the_static_interface() {
+        let mut sources = SourceDatabase::default();
+        let source = sources.add("contract", "import \"pkg\" { Item as Renamed }; decl f: Fn(Dict(Renamed)) -> (); ");
+        let program = parse_registered(&sources, source).program.unwrap();
+        let environment = BootstrapPrelude::new().types;
+        let hir = HirProgram::resolve(&program, environment.keys().cloned());
+        let annotation = program.value.body.value.bindings.last().unwrap()
+            .value.annotation.as_ref().unwrap();
+        let mut interfaces = BTreeMap::from([("Renamed".into(), ModuleInterface {
+            value_binding: Some("Item".into()),
+            type_declarations: BTreeSet::from(["Item".into()]),
+            exports: BTreeMap::from([("Item".into(), TypeScheme {
+                parameters: Vec::new(), constraints: Vec::new(),
+                body: TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Int)),
+            })]),
+            ..Default::default()
+        })]);
+        let external_names = HashSet::from(["Renamed"]);
+        let families = BTreeMap::new();
+        let mut graph = TypeGraph::default();
+        let scope = StaticContractScope {
+            hir: &hir, environment: &environment, external_names: &external_names,
+            interfaces: &interfaces, parameters: &[], families: &families,
+        };
+        let root = scope.elaborate(annotation, &mut graph).unwrap();
+        assert_eq!(graph.descriptor(root).unwrap(), TypeDescriptor::Function {
+            parameters: vec![TypeDescriptor::Dict(Box::new(TypeDescriptor::Int))],
+            result: Box::new(TypeDescriptor::Tuple(Vec::new())),
+        });
+        interfaces.get_mut("Renamed").unwrap().type_declarations.clear();
+        let scope = StaticContractScope {
+            hir: &hir, environment: &environment, external_names: &external_names,
+            interfaces: &interfaces, parameters: &[], families: &families,
+        };
+        assert!(scope.elaborate(annotation, &mut graph).is_none(),
+            "imported metadata data does not establish a type declaration");
+    }
 
     #[test]
     fn recursive_nominal_bodies_require_no_execution_fuel() {

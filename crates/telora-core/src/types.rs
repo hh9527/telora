@@ -2,7 +2,7 @@ use crate::ast::{
     BinaryOperator, Binding, BindingKind, Block, Expr, ExprKind, Pattern, Program, StringPartKind,
     TypeArgumentKind, UnaryOperator, located,
 };
-use crate::compiler::compile_expression_with_external_bindings;
+use crate::compiler::prepare_expression_with_external_bindings;
 use crate::heap::{
     Handle, Heap, HeapView, PersistentValue, PropertyKey, Val, publish_root,
     publish_type_properties,
@@ -38,6 +38,9 @@ include!("types/descriptor.rs");
 include!("types/environment.rs");
 include!("types/traits.rs");
 include!("types/analysis.rs");
+include!("types/partial-solver.rs");
+include!("types/program-solver.rs");
+include!("types/type-check.rs");
 include!("types/dependency.rs");
 include!("types/type-boundary.rs");
 include!("types/static-contract.rs");
@@ -45,8 +48,14 @@ include!("types/static-family.rs");
 include!("types/static-origin.rs");
 include!("types/static-constraints.rs");
 include!("types/dependency-plan.rs");
+include!("types/solved-module.rs");
 include!("types/metadata.rs");
+include!("types/host-contract.rs");
 include!("types/tool.rs");
+include!("types/tool-plan.rs");
+include!("types/declaration-plan.rs");
+include!("types/owner-plan.rs");
+include!("types/annotations.rs");
 include!("types/tool-bindings.rs");
 include!("types/properties.rs");
 include!("types/construction.rs");
@@ -56,6 +65,7 @@ include!("types/inference-state.rs");
 include!("types/inference-profile.rs");
 include!("types/inference-variables.rs");
 include!("types/inference-table.rs");
+include!("types/inference-inputs.rs");
 include!("types/inference-query.rs");
 include!("types/inference-structures.rs");
 include!("types/inference-publication.rs");

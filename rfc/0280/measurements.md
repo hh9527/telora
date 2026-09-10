@@ -1188,3 +1188,1482 @@ remaining annotation consumers to static graph elaboration is the next execution
 boundary investigation; stack presence alone does not quantify its full timing cost.
 Evidence: `/tmp/rfc0280-owner-index-ontology-heap.{log,txt}` and
 `/tmp/telora-perf-173/owner-index-ontology.heap.zst`.
+
+### Static annotations and partial type solving
+
+Compared the local implementation after `b3ce28b` against its saved release
+binary `telora-owner-index`. The candidate is preserved as
+`/tmp/telora-perf-173/telora-static-annotations`. Full workspace tests passed
+(367 core, 41 CLI including language acceptance, and remaining groups); release,
+source-size and diff checks passed. Ontology assets remained clean at `1a871a0`.
+
+Command: `BIN -C /home/h00629578/ws/lab-ws/lab-ontology/ontology check @test/query`.
+Both versions succeeded with nine dependencies. Hyperfine used one warmup and
+five samples per version, then repeated in reverse binary order. The following
+medians pool ten samples per version. No build, tests or profiler ran concurrently
+with timing. This is an incremental comparison with `b3ce28b`, not the original
+baseline, and check retains its existing value-evaluation behavior.
+
+| Metric | `b3ce28b` | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| Wall time, median | 2.996063 s | 2.053956 s | -31.44% |
+| Wall time, observed range | 2.910164–3.040609 s | 1.981807–2.166379 s | |
+| Allocation calls | 9,476,115 | 7,371,280 | -22.21% |
+| Peak heap | 232.88 MB | 232.63 MB | essentially unchanged |
+
+Allocation and peak-heap measurements are separate sequential heaptrack runs,
+one per version. The lower allocation count does not imply a comparable reduction
+in peak live memory. Profiler-inflated runtime and RSS are not timing/memory claims.
+No attribution to a single subchange is inferred from the combined candidate.
+
+Raw timing: `/tmp/rfc0280-static-solver-ontology-{forward,reverse}.{json,log}`.
+Raw profiles: `/tmp/rfc0280-static-solver-ontology-{baseline,candidate}.heap.zst`;
+printed summaries: `/tmp/rfc0280-static-solver-ontology-{baseline,candidate}-heap.txt`.
+# Types-only check checkpoint (2026-09-10)
+
+Static tool execution-plan follow-up: owner parameter matching, substitution,
+family arities and lowering now produce a VM-free `PreparedToolExpression` before
+evaluation. Owner metadata shares the runtime witness graph batch. Open function
+shapes read solver slots directly, including proxies; a regression test forbids
+descriptor reconstruction for that case. Validation: 377 core regressions, the
+new static owner-plan test, and all 42 CLI tests pass. Equivalent ordinary
+ontology check, two warmups/five samples per binary: before 2.024 ± 0.011 s,
+after 2.025 ± 0.019 s, all exit codes zero. No measurable end-to-end speed change
+is established. Baseline `/tmp/telora-tool-plan.xTLPqq/before`; raw data
+`/tmp/tool-plan-perf.json` and `/tmp/tool-plan-perf.log`.
+
+Tool evidence graph-only follow-up: runtime type witnesses now contain graph IDs
+only; expression records no longer retain compatibility descriptor trees. The
+heap batch metadata API consumes `AnalysisTypeId` directly. Core regression (376
+tests), the extended generic witness/open-function owner tests, and all 42 CLI
+tests pass. Release ontology smoke checks succeeded in both modes: ordinary
+internal `check_seconds` 2.033563, pure 0.766981. These are single smoke samples,
+not a performance comparison or evidence of additional speedup. Logs:
+`/tmp/graph-only-tool-core.log`, `/tmp/graph-only-tool-cli.log`, and
+`/tmp/graph-only-tool-release.log`.
+
+Tool inference input separation follow-up: removed runtime-value decoding from
+tool-expression inference and extracted a solver without VM/heap/value-binding
+parameters. Equivalent-workload release comparison of ordinary ontology
+`check @test/query`, two warmups and five measured runs each: before
+2.036 ± 0.012 s, after 2.026 ± 0.014 s, all exit codes zero. This does not establish
+a clear speed improvement; it removes a runtime dependency needed for moving
+tool inference into phase 1. Baseline binary:
+`/tmp/telora-pure-tool.Ebzcst/before`; artifacts `/tmp/pure-tool-perf.json` and
+`/tmp/pure-tool-perf.log`. Validation: 375 core regression tests, the additional
+pure-tool solver test, and all 42 CLI tests (including language acceptance) pass.
+
+Follow-up: shared expression publication now rejects heterogeneous branch results
+even when discarded, and semantic interfaces consume the solved TypeGraph without
+renumbering. The ordinary path no longer sorts expression records a second time
+for its nominal-owner bridge. Core regression: 374 tests passed; the additional
+graph-identity preservation test passed separately. Release ontology recheck:
+five runs after two warmups per mode, all successful, pure mean 0.7807 ± 0.0112 s,
+ordinary mean 2.029 ± 0.023 s. These follow-up measurements show no clear additional
+speedup relative to the checkpoint below; this change primarily closes a static
+validation gap and establishes graph ownership for downstream consumption.
+Artifacts: `/tmp/static-publication-perf.json`, `/tmp/static-publication-perf.log`.
+
+Local `feat/0280-arena-type-consumers` working tree based on `b3ce28b`.
+Release build; ontology assets unchanged at `1a871a0`.
+
+Command: `target/release/telora -C /home/h00629578/ws/lab-ws/lab-ontology/ontology check [--types-only] @test/query`.
+Hyperfine, two warmups and five measured runs per mode, serial execution with no
+concurrent builds/tests. All ten measured commands exited successfully.
+
+| Mode | Mean ± standard deviation | Median | Range |
+| --- | --- | --- | --- |
+| `check --types-only` | 0.760887 ± 0.014438 s | 0.754703 s | 0.750976–0.786266 s |
+| Ordinary `check` | 1.987477 ± 0.004352 s | 1.988734 s | 1.982447–1.993373 s |
+
+These compare different modes of the **same binary**, not a before/after speedup
+of equivalent work. Pure checking takes about 38% of ordinary check wall time.
+The roughly 1.23 s difference is not an exact phase-2/3 duration: the ordinary
+loader still performs its own static preparation and execution, while the pure
+loader builds static interfaces and checks reachable builtin source directly.
+Their reported dependency counts also differ (16 versus 9) because the static
+snapshot includes reachable builtin dependencies.
+
+The pure entry creates no VM/runtime heap and checks value/function bodies,
+provider contracts and `@check` callbacks. Regression cases cover non-execution
+of division-by-zero module values and failing providers/check callbacks, rejected
+type errors, selected imports, newtype constructors and malformed static data.
+The ordinary path remains unchanged in execution semantics. Follow-up work must
+make it consume the static solution rather than infer again.
+
+Raw artifacts: `/tmp/types-only-ontology-perf.json` and
+`/tmp/types-only-ontology-perf.log`. CLI summaries report `catalog_seconds` and
+`check_seconds`; these are internal timers, whereas the table reports complete
+process wall time.
+
+Compiled tool-plan follow-up: bytecode compilation and external-name resolution
+now happen in VM-free preparation; execution consumes the compiled plan and
+graph roots. The ordinary metadata scheduler still invokes preparation, so this
+does not yet complete the session-wide static/execution boundary. Validation:
+380 core tests and all 42 CLI tests (including language acceptance) pass;
+release build, source-size check and `git diff --check` pass.
+
+Release ontology comparison, two warmups and five measured runs per command,
+without concurrent builds/tests; all commands succeeded and assets remain clean:
+ordinary check before 2.024 ± 0.017 s, after 2.022 ± 0.031 s. There is no clear
+additional speedup. The same new binary's `check --types-only` takes
+0.7654 ± 0.0033 s, about 38% of ordinary check wall time. The 1.26 s difference
+is still not an exact measurement of phases 2/3, for the pipeline differences
+described above. Baseline: `/tmp/telora-compiled-plan.FcY6FX/before`;
+artifacts: `/tmp/compiled-tool-plan-perf.json` and
+`/tmp/compiled-tool-plan-perf.log`.
+
+Required tool-evidence follow-up: removed the constructor-presence shortcut
+which returned empty evidence for non-function tool expressions. Scalar tool
+expressions now always run static inference and publication. Removed the flag
+and its descriptor scans; the compiler also consumes the lowered expression
+without cloning it again. Validation: 381 core tests, all 42 CLI tests, release
+build, source-size check and diff whitespace check pass. A regression checks
+scalar success and type errors with and without an expected type, including
+`1 / 0` being accepted without evaluation.
+
+Equivalent ordinary ontology checks (two warmups, five runs, no concurrent
+builds/tests): before 2.031 ± 0.025 s, after 2.033 ± 0.028 s; all successful.
+No measurable speed change. Baseline `/tmp/telora-before-required-tool-evidence`;
+artifacts `/tmp/required-tool-evidence-perf.{json,log}`. The ordinary scheduler
+still owns inference; removing this shortcut does not complete phase separation.
+
+Property generated-call follow-up: removed the lightweight recorded inference
+before generic tool inference, and its supplemental descriptor table. A VM-free
+`prepare_property_call` solves against the property result once, restores scoped
+static inputs and compiles the plan before the previous runtime value is built.
+Provider signature discovery and capability validation remain in the ordinary
+scheduler; this does not yet complete session-wide static property planning.
+Validation: 382 core tests, all 42 CLI tests (including language acceptance),
+release build, source-size and diff checks pass. A new regression verifies
+previous-value type injection without runtime resources and scope restoration
+after both success and type error.
+
+Equivalent ordinary ontology checks (two warmups and five measured runs each,
+no concurrent builds/tests): before 2.035 ± 0.030 s, after 2.004 ± 0.020 s, all
+successful. The sample mean is about 1.5% lower, but the difference is small
+relative to observed variation; do not treat it as an established speedup.
+Baseline `/tmp/telora-before-property-single-solve`; artifacts
+`/tmp/property-single-solve-perf.{json,log}`.
+
+Single evidence-source / static check-contract follow-up: removed the remaining
+tool-plan descriptor supplementation from lightweight inference. Check dependency
+annotations now use static elaboration instead of executing a type expression
+and decoding runtime metadata; errors are reported rather than ignored.
+Validation: 383 core tests, all 42 CLI tests including language acceptance,
+release build, source-size and diff checks pass. New regression covers primitive
+and array contracts and rejects a value-level type factory without invoking it.
+
+Equivalent ordinary ontology checks, two warmups and five runs each without
+concurrent builds/tests: before 2.036 ± 0.036 s, after 2.035 ± 0.025 s, all
+successful. No measurable speedup. Baseline `/tmp/telora-before-static-check-contract`;
+artifacts `/tmp/static-check-contract-perf.{json,log}`. Ordinary type declaration
+branches still contain execution fallbacks; full static/execution separation
+is not established by this follow-up.
+
+Static declaration scheduling follow-up: every type declaration now enters
+static scheduling. Removed source-order execution of helper-dependent type
+declarations and VM fallbacks for concrete, family and recursive bodies.
+Materialization requires a solved graph ID, and recursive descriptor publication
+has no evaluator/value input. Removed dead runtime declaration helpers and the
+retained reverse dependency table. Invalid Unchecked targets now produce their
+precise error during static elaboration; three acceptance fixtures initially
+exposed this missing diagnostic after fallback removal and now pass unchanged.
+
+Validation: all 384 core tests and 42 CLI tests (including language acceptance),
+release build, source-size and diff checks pass. Zero-fuel cases cover ordinary,
+generic and recursive declarations attempting to call a value-level type factory;
+these are rejected by the existing static type/value boundary, before body
+elaboration. A direct types-only invalid-Unchecked check also reports the precise
+static error. Ordinary metadata materialization and tool inference scheduling
+remain interleaved; full phase separation is still incomplete.
+
+Equivalent ordinary ontology check comparison, two warmups and five measured
+runs each with no concurrent builds/tests: before 1.996 ± 0.019 s, after
+2.016 ± 0.023 s, all successful. The roughly 1% higher mean is within the observed
+variation; no performance benefit established. Baseline
+`/tmp/telora-before-all-static-declarations`; raw data
+`/tmp/all-static-declarations-perf.{json,log}`.
+
+Static recursive-family handoff: signature construction, bound validation and
+runtime-rebuild classification now precede runtime materialization in a VM-free
+helper. The materializer consumes prepared parameters and graph roots, no longer
+parses binders twice or returns a TypeScheme. Removed the unused runtime-template
+input to static family inventory (empty at every call site). Validation: all
+384 core tests and 42 CLI tests including language acceptance, release build,
+source-size and diff checks pass.
+
+Equivalent ordinary ontology check, two warmups and five measured runs each,
+without concurrent builds/tests: before 2.005 ± 0.012 s, after 1.999 ± 0.018 s,
+all successful. No measurable speedup. Baseline
+`/tmp/telora-before-static-family-handoff`; raw data
+`/tmp/static-family-handoff-perf.{json,log}`. The declaration loop still interleaves
+static solving and materialization; full session phase separation remains open.
+
+Nominal graph handoff: concrete declaration identities are now prepared without
+a VM, and runtime materialization consumes an immutable graph/root. Nominal
+wrapping directly reuses the body ID instead of expanding the body to a descriptor
+tree and reimporting it. Regression verifies one added node, unchanged body IDs,
+descriptor reimport identity and refinement of a reserved Never-body row.
+Validation: all 385 core tests, 42 CLI tests (including language acceptance),
+release build, source-size and diff checks pass.
+
+Equivalent ordinary ontology check, two warmups and five runs per command,
+without concurrent builds/tests: before 2.021 ± 0.038 s, after 2.025 ± 0.012 s,
+all successful. No measurable speedup. Baseline
+`/tmp/telora-before-nominal-graph-handoff`; artifacts
+`/tmp/nominal-graph-handoff-perf.{json,log}`. This removes one descriptor round trip;
+it does not yet defer all materialization until session static solving completes.
+
+Deferred declaration materialization: the declaration loop now emits ordered
+graph-root plans for concrete types, families and recursive components. Runtime
+placeholders and metadata are created only after declaration solving, definition
+contracts, trait-overlap/interpreter checks and unresolved-name validation succeed.
+Recursive runtime references/bodies use vectors. The tool inference context is
+created once afterward, removing initial environment cloning plus two refreshes
+and per-declaration publication. Full function-body inference and tool scheduling
+still follow materialization; this is not the final session static boundary.
+
+Validation: all 385 core tests, all 42 CLI tests including language acceptance,
+release build, source-size and diff checks pass. Equivalent ordinary ontology
+check, two warmups and five measured runs each, without concurrent builds/tests:
+before 2.034 ± 0.044 s, after 2.005 ± 0.023 s, all successful. The approximately
+1.4% lower sample mean is close to observed variation; no stable speedup established.
+Baseline `/tmp/telora-before-deferred-declarations`; artifacts
+`/tmp/deferred-declarations-perf.{json,log}`.
+
+Static property-contract collection: ordinary and types-only checking now share
+VM-free presence collection from provider signatures and target static types.
+Repeated declarations deduplicate by static type identity. Ordinary evidence
+linking separately assigns runtime binding names and no longer reads a target
+runtime value. Type-ID linking still uses the current evaluator's type store;
+full phase separation remains incomplete. Regression covers repeated declarations
+without runtime resources. All 386 core tests and 42 CLI tests, release build,
+source-size and diff checks pass.
+
+Equivalent ordinary ontology check, two warmups and five runs each with no
+concurrent builds/tests: before 1.999 ± 0.020 s, after 2.009 ± 0.013 s, all
+successful. No measurable benefit; the difference is close to sample variation.
+Baseline `/tmp/telora-before-static-property-contracts`; artifacts
+`/tmp/static-property-contracts-perf.{json,log}`.
+
+Native import cleanup: native TypeSchemes are installed with initial descriptor
+import; the later binding pass no longer decodes metadata or reconstructs these
+schemes. All 386 core tests, 42 CLI tests including language acceptance, release
+build, source-size and diff checks pass. No new performance measurement was run
+for this cleanup; no speedup is claimed. Logs:
+`/tmp/native-type-single-import-{core,cli,release}.log`.
+
+Program solve before tools: split the preliminary binding/environment pass from
+tool execution. Ordered tool tasks execute after complete program inference and
+expression publication, as do declaration materialization and construction-check
+factories. Removed obsolete context synchronization APIs and construction-check
+attempts at bindings with no tool work. Validation: 386 existing core tests pass,
+plus the new execution-order regression passes separately; all 42 CLI tests,
+release build, source-size and diff checks pass. The regression confirms that a
+later function type error prevents an earlier failing check factory from running,
+and that fixing the type error permits the factory to execute.
+
+Equivalent ordinary ontology check, two warmups and five measured runs each,
+without concurrent builds/tests: before 1.994 ± 0.020 s (1.970–2.018), after
+1.926 ± 0.010 s (1.916–1.941), all successful. Mean wall time decreases about
+3.4%, with non-overlapping sample ranges. Baseline
+`/tmp/telora-before-solve-before-tools`; artifacts `/tmp/solve-before-tools-perf.{json,log}`.
+This is a per-module improvement: ordinary imported-module execution, independent
+tool-expression inference, and final generic normalization still prevent claiming
+the session-wide three-phase architecture complete.
+
+Solved tool-input handoff: execution now follows inferred-scheme normalization,
+interface publication and publishable-scheme validation. Tool setup consumes
+complete normalized binding types and quantified schemes; queued expected types
+normalize before materialization. 387 core tests and all 42 CLI tests pass,
+along with release build, source-size and diff checks. Independent tool inference
+is still present, so this does not finish the phase boundary.
+
+Equivalent ordinary ontology check, two warmups and five measured runs each
+without concurrent builds/tests: before 1.928 ± 0.015 s (1.916–1.948), after
+1.962 ± 0.018 s (1.943–1.988), all successful. The sample mean is about 1.8%
+higher; no performance gain is claimed. This transitional change builds complete
+execution inputs while the independent tool inference path still exists; removal
+of that repeated solve remains necessary. Baseline
+`/tmp/telora-before-solved-tool-inputs`; artifacts `/tmp/solved-tool-inputs-perf.{json,log}`.
+
+Main-solver evidence reuse: normal top-level tool tasks now select expression,
+constructor, call, trait/interpolation and lexical evidence from the completed
+program solver and compile plans before materialization. Their execution no
+longer reinfers the expression; missing evidence fails without a reinference
+fallback. The old typed-tool evaluation wrapper is removed. All 387 core tests
+and 42 CLI tests including language acceptance, release build, source-size and
+diff checks pass.
+
+Equivalent ordinary ontology check, two warmups and five measured runs each,
+without concurrent builds/tests: before 1.965 ± 0.020 s, after 1.967 ± 0.037 s,
+all successful. No measurable improvement. Baseline
+`/tmp/telora-before-reuse-program-evidence`; artifacts
+`/tmp/reuse-program-evidence-perf.{json,log}`. Construction-check dependency
+retries and generated property/check expressions still have independent inference;
+plans also still publish their own type graphs. These remain required follow-ups.
+
+Reusable construction dependency plans: retries now borrow the same precompiled
+top-level plans as ordinary tool tasks, without annotation elaboration, independent
+inference or recompilation. Missing external bindings are checked before runtime
+type materialization. A regression executes the same plan with different bindings
+and no inference context. All 387 core tests, 42 CLI tests, release build,
+source-size and diff checks pass.
+
+Two warmups and five measured runs per command, with no concurrent builds/tests:
+ordinary ontology check before 1.986 ± 0.008 s, after 1.974 ± 0.025 s. The small
+difference does not demonstrate a performance gain. The same release binary's
+`check --types-only @test/query` takes 0.767 ± 0.009 s, about 39% of ordinary
+check wall time. These are separate end-to-end paths, not an exact decomposition
+of ordinary check into static/tool/runtime phases; ordinary check does not yet
+consume the pure static entry's complete artifact. Generated check/property
+expressions and per-plan type graphs remain follow-ups. Baseline
+`/tmp/telora-before-reusable-tool-plans`; artifacts
+`/tmp/reusable-tool-plans-perf.{json,log}`.
+
+Definition-local tool results: each top-level tool task now retains its successful
+value. Construction dependency scheduling and the normal task loop consume the
+same completed slot instead of executing the definition twice. Failed attempts
+leave the slot empty; the runtime name map is not used as completion identity.
+The new regression verifies missing-input retry followed by successful result
+reuse with no inputs and zero fuel. All 388 core tests, 42 CLI tests including
+language acceptance, release build, source-size and diff checks pass.
+
+Equivalent ordinary ontology check, two warmups and five measured runs each,
+without concurrent builds/tests: before 1.960 ± 0.031 s (1.929–2.000), after
+1.973 ± 0.013 s (1.958–1.992), all successful. No measurable speedup; mean wall
+time is about 0.7% higher and sample ranges overlap. Baseline
+`/tmp/telora-before-tool-definition-once`; artifacts
+`/tmp/tool-definition-once-perf.{json,log}`. Generated construction-check and
+property plans still require migration out of execution-time inference.
+
+Static construction-check plans: `prepare_construction_checks` validates nominal
+targets and check contracts and compiles every check expression once, before
+declaration materialization/tool execution. This function accepts no evaluator,
+VM or heap. The execution/retry path consumes prepared plans and parameter IDs;
+it no longer solves expressions or defers type errors to an execution retry.
+The regression validates both valid/invalid contracts before creating a VM and
+then registers a valid plan with no evaluator inference context. All 389 core
+tests, 42 CLI tests including language acceptance, release build, source-size
+and diff checks pass.
+
+Equivalent ordinary ontology check, two warmups and five measured runs each,
+without concurrent builds/tests: before 1.985 ± 0.037 s (1.964–2.052), after
+1.976 ± 0.030 s (1.947–2.023), all successful. No measurable speedup. Baseline
+`/tmp/telora-before-static-check-plans`; artifacts
+`/tmp/static-check-plans-perf.{json,log}`. Check preparation still performs one
+independent static expression solve rather than consuming main-solver evidence;
+property preparation still runs at execution time. The complete session-wide
+static artifact and removal of evaluator inference context remain outstanding.
+
+Static property plans and evaluator separation: capability expressions and
+generated provider calls now prepare before declaration materialization and tool
+execution. Provider plans retain their nominal result descriptor, avoiding
+repeated contract elaboration in reduce. Runtime capability evaluation/validation
+and chained property values retain their existing behavior. Deleted
+`ToolEvaluator.inference_context` and the evaluator-based inference wrapper; the
+temporary static tool context is dropped before execution. A new test prepares
+a complete property module with no capability/provider values or VM. All 390
+core tests, 42 CLI tests including language acceptance, release build, source-size
+and diff checks pass.
+
+Equivalent ordinary ontology check, two warmups and five measured runs each,
+without concurrent builds/tests: before 1.967 ± 0.013 s (1.947–1.983), after
+1.948 ± 0.025 s (1.917–1.982), all successful. Mean wall time is about 1% lower,
+but overlapping ranges do not establish a clear speedup. Baseline
+`/tmp/telora-before-static-property-plans`; artifacts
+`/tmp/static-property-plans-perf.{json,log}`. Generated expressions still have
+independent static solves, plans retain separate type graphs, property execution
+sites link plans by source location, and ordinary module loading still needs the
+complete session-wide static artifact. This is a per-module execution boundary,
+not completion of session-wide three-phase separation.
+
+Tool graph retention: after compilation, runtime witness roots are filtered by
+the compiler's actual external links. Plans with no remaining runtime type roots
+release their static expression graph; plans with runtime roots preserve existing
+IDs without descriptor rebuilding. A regression injects unused named-type
+evidence and verifies it is discarded, the graph is empty and execution still
+returns 42. All 391 core tests, 42 CLI tests, release build, source-size and diff
+checks pass.
+
+Equivalent ordinary ontology check, two warmups and five measured runs each,
+without concurrent builds/tests/profilers: before 1.973 ± 0.008 s, after
+1.962 ± 0.015 s, overlapping ranges and no demonstrated speedup. Separate
+heaptrack runs report 7,339,445 → 7,339,519 allocation calls and 232.62 →
+232.63 MB peak heap consumption: no observable allocation or peak-memory benefit
+on this workload. Profiler runtime and RSS are not performance claims. Baseline
+`/tmp/telora-before-tool-graph-retention`; timing artifacts
+`/tmp/tool-graph-retention-perf.{json,log}`; heap artifacts
+`/tmp/tool-graph-retention-{before,after}.zst` and corresponding `-summary.log`.
+This reduces unnecessary graph lifetime but does not eliminate the earlier graph
+construction. Shared graph publication and session-wide consumption remain the
+larger unresolved work.
+
+Shared module tool arena and materialized slots: top-level plans, generated
+construction-check plans and property plans publish directly into one TypeGraph.
+Evidence and compiled plans no longer own separate graphs. The completed arena
+moves into the evaluator once, without graph merging or ID remapping. Metadata
+materialization uses a persistent graph-ID-indexed table within the same immutable
+graph/work-heap lifetime; repeated roots return the same values. Failure clears
+the table to prevent provisional recursive owners escaping as completed results.
+Tests cover node/ID reuse across plans, materialized value identity, and repeated
+failure followed by valid materialization. All 392 core tests, 42 CLI tests,
+release build, source-size and diff checks pass; the strengthened identity test
+also passes separately.
+
+The initial graph-only checkpoint measured 1.966 ± 0.017 → 2.021 ± 0.061 s;
+inspection identified per-call graph-sized conversion tables and motivated the
+persistent materialization slots. Final equivalent ordinary ontology check,
+two warmups and five measured runs each, without concurrent builds/tests/profilers:
+before the combined change 1.960 ± 0.019 s (1.934–1.985), after 1.967 ± 0.041 s
+(1.931–2.018). No demonstrated speedup. Separate heaptrack runs report
+7,339,494 → 7,339,549 allocation calls and 232.62 → 232.62 MB peak heap:
+no observable allocation or peak-memory benefit on ontology. Profiler runtime/RSS
+are not performance claims.
+
+Baseline `/tmp/telora-before-shared-tool-arena`; final timing artifacts
+`/tmp/shared-tool-materialization-perf.{json,log}`; heap baseline
+`/tmp/shared-tool-arena-before.zst`, final heap
+`/tmp/shared-tool-materialization-after.zst`, corresponding `-summary.log` files.
+Intermediate graph-only binary `/tmp/telora-shared-tool-arena-only` and
+`/tmp/shared-tool-arena-*` artifacts retain that checkpoint. The main module
+analysis graph and session-wide artifact are still separate from this tool arena;
+independent generated-expression solving and main-evidence publication remain.
+The final allocation report (`/tmp/shared-tool-materialization-allocators.log`)
+still shows `TypeDescriptor::clone`/BTreeMap cloning beneath
+`infer_expr_recorded`/`infer_expr_with` in the ordinary analyzer. String cloning
+accounts for 3,621,187 allocation calls across all its callers; this is not a
+claim that the entire count belongs to that one inference path. The remaining
+lightweight expression-descriptor pass is a concrete next investigation target.
+
+Remove provisional expression recording: the preliminary binding pass now asks
+only for root types and does not clone every subexpression descriptor into a
+parallel map. Provisional annotation/result traversals and property-contract
+throwaway recording maps are removed. Downstream expression types come from
+main-solver graph publication, with nominal bridges built from solved records.
+The initial validation exposed import path literals missing from that publication;
+the main solver now explicitly records their String type. The semantic coverage
+test remains strict and no provisional-record fallback is retained.
+
+All 392 core tests, 42 CLI tests including language acceptance, release build,
+source-size and diff checks pass. Equivalent ordinary ontology check, two warmups
+and five measured runs each, without concurrent builds/tests/profilers:
+
+| Metric | Before this step | After | Change |
+| --- | ---: | ---: | ---: |
+| Mean wall time | 1.985 ± 0.033 s | 1.258 ± 0.016 s | -36.6% |
+| Sample range | 1.953–2.035 s | 1.236–1.278 s | non-overlapping |
+| Allocation calls | 7,339,458 | 5,374,078 | -26.8% |
+| Peak heap | 232.62 MB | 118.09 MB | -49.2% |
+
+Heaptrack ran separately from timing. Profiler runtime and RSS are not used for
+these claims. This is an incremental comparison with the immediately preceding
+shared-tool-arena/materialization version, not the original RFC baseline.
+Baseline `/tmp/telora-before-projection-record-removal`; timing artifacts
+`/tmp/projection-record-removal-perf.{json,log}`; heap artifacts
+`/tmp/projection-record-removal-{before,after}.zst` and corresponding
+`-summary.log` files. Preliminary root-type projection and descriptor-based
+contract/environment consumers still remain; complete session graph unification
+is not finished by this change.
+
+Skip discarded contracted-body projections: the preliminary pass no longer
+projects `impl` bodies or `def` bodies whose type is already supplied by an
+established contract. Those branches previously computed a projection eagerly
+and discarded it. The complete program solver still checks the bodies; only
+definitions without contracts retain provisional root projection.
+
+All 392 core tests (including type-error-before-tool-execution coverage), 42 CLI
+tests including language acceptance, release build, source-size and diff checks
+pass. Equivalent ordinary ontology check, two warmups and five measured runs per
+version without concurrent builds/tests/profilers:
+
+| Metric | Before this step | After | Change |
+| --- | ---: | ---: | ---: |
+| Mean wall time | 1.278 ± 0.011 s | 1.184 ± 0.026 s | -7.4% |
+| Sample range | 1.263–1.292 s | 1.160–1.228 s | non-overlapping |
+| Allocation calls | 5,374,119 | 4,347,785 | -19.1% |
+| Peak heap | 118.09 MB | 118.09 MB | unchanged |
+
+Heaptrack ran separately; profiler runtime/RSS are not performance claims. This
+comparison is with the immediately preceding provisional-record-removal version,
+not the original RFC baseline. Baseline `/tmp/telora-before-contract-projection`;
+artifacts `/tmp/contract-projection-perf.{json,log}` and
+`/tmp/contract-projection-{before,after}.zst` with corresponding `-summary.log`
+files. Uncontracted projection, descriptor-based environments and session graph
+unification remain outstanding.
+
+Root-only projection: removed the obsolete expression-recording callback and
+discarded traversal of operands that cannot influence the provisional root type.
+Known function results no longer project arguments; comparison/string results,
+return/fail, index results and other forms avoid discarded work. Full checking
+remains in the program solver. New regressions ensure projection does not read
+irrelevant operand types and that complete solving still rejects invalid call
+arguments. All 394 core tests and 42 CLI tests pass, along with release build,
+source-size and diff checks. An overlapping acceptance run collided in the shared
+generated-output directory; the final CLI suite was rerun serially in isolation
+and passed.
+
+Equivalent ordinary ontology check, two warmups and five measured runs per
+version, with no concurrent builds/tests/profilers: before 1.166 ± 0.003 s
+(1.161–1.170), after 1.154 ± 0.018 s (1.136–1.182). No clear timing gain because
+sample ranges overlap. Separate heaptrack runs show 4,347,819 → 4,117,896
+allocation calls (-5.3%) and 118.09 → 118.08 MB peak heap (essentially unchanged).
+Profiler runtime/RSS are not performance claims. Baseline
+`/tmp/telora-before-root-only-projection`; artifacts
+`/tmp/root-only-projection-perf.{json,log}` and
+`/tmp/root-only-projection-{before,after}.zst` with corresponding `-summary.log`
+files. This is incremental to contracted-body projection removal. The remaining
+root projection is still transitional and must eventually be replaced by main
+solver evidence.
+
+Open closure projection: once any parameter lacks a provisional type, closure
+projection now returns unknown immediately instead of traversing the entire body
+before inevitably discarding its result. The main solver still infers the full
+closure. The projection regression verifies that this path never reads an
+irrelevant body type. All 394 core tests, 42 serial CLI tests including language
+acceptance, release build, source-size and diff checks pass.
+
+Equivalent ordinary ontology check, two warmups and five measured runs per
+version, without concurrent builds/tests/profilers: before 1.125 ± 0.009 s,
+after 1.128 ± 0.004 s; no observable timing gain. Separate heaptrack runs show
+4,117,920 → 4,115,345 allocation calls (2,575 fewer, about 0.06%) and
+118.09 → 118.09 MB peak heap. This is not a material memory improvement on
+ontology. Profiler runtime/RSS are not performance claims. Baseline
+`/tmp/telora-before-open-closure-projection`; artifacts
+`/tmp/open-closure-projection-perf.{json,log}` and
+`/tmp/open-closure-projection-{before,after}.zst` with corresponding `-summary.log`
+files. This result reinforces the need to focus next on larger solver/environment
+construction paths rather than expecting further large gains from local
+projection traversal cleanup.
+
+Main-solver-only definitions (withdrawn after the provider-contract regression
+described below): removed root projection for every `def`, including
+definitions without annotations. Established contracts remain static inputs;
+uncontracted definitions now rely directly on the main solver's dependency-ordered
+slots. Preliminary `let` diagnostics and property-contract projection remain.
+All 394 core tests, 42 CLI tests including language acceptance, release build,
+source-size and diff checks pass; ontology check succeeds.
+
+Timing used two warmups and five runs per binary in each of forward/reverse
+order, ten samples per binary in total. The reverse run followed an outlier
+warning on the first baseline sample set. No builds/tests/profilers overlapped
+timing. Equivalent ordinary ontology check, pooled samples:
+
+| Metric | Before this step | After | Change |
+| --- | ---: | ---: | ---: |
+| Median wall time | 1.14136 s | 1.10022 s | -3.6% |
+| Sample range | 1.12139–1.20624 s | 1.08569–1.11816 s | non-overlapping |
+| Allocation calls | 4,115,267 | 3,701,935 | -10.0% |
+| Peak heap | 118.09 MB | 117.70 MB | -0.3% |
+
+Heaptrack ran separately; profiler runtime/RSS are not performance claims.
+Baseline `/tmp/telora-before-main-definition-solve`; timing artifacts
+`/tmp/main-definition-solve-perf{,-reverse}.{json,log}`; heap artifacts
+`/tmp/main-definition-solve-{before,after}.zst` and corresponding `-summary.log`
+files. This is incremental to open-closure projection short-circuiting, not the
+original RFC baseline. Session graph unification and the remaining descriptor
+environment/contract consumers are still outstanding.
+
+Correction: the main-solver-only definitions experiment above broke valid
+property provider aliases and typed factories returning providers. Property
+contract discovery still precedes the main solver, so unannotated definitions
+must retain root projection until discovery consumes solved graph evidence.
+The removal was reverted; the claimed 3.6% timing and 10.0% allocation gains
+are withdrawn. Earlier safe projection optimizations remain in place.
+A new CLI regression covers both direct provider aliases and factory results.
+All 394 core tests and 43 serial CLI tests, including language acceptance, pass;
+release build, source-size and diff checks pass.
+
+Repaired release versus the last valid pre-experiment binary, with two warmups
+and five runs and no concurrent builds/tests/profilers: 1.132 ± 0.007 s before,
+1.127 ± 0.015 s repaired. This is no measurable timing improvement. No fresh
+memory claim is made. Artifacts: `/tmp/provider-contract-regression-perf.json`
+and `/tmp/provider-contract-regression-perf.log`; baseline binary
+`/tmp/telora-before-main-definition-solve`.
+
+Current `check --types-only` comparison after the correction: two warmups and
+five measured runs per mode, no overlapping builds/tests/profilers. Pure static
+check takes 0.7729 ± 0.0094 s; ordinary check takes 1.126 ± 0.016 s on the
+ontology `@test/query` workload. Artifact: `/tmp/types-only-current-perf.json`.
+These are separate command paths, not exact phase accounting: the difference
+must not be presented as isolated metadata/runtime execution time. Both JSON
+summaries expose `catalog_seconds`, `check_seconds`, and `types_only`.
+
+Shared tool-binding publication: all main-solver tool bindings now reuse one
+slot-to-graph publication table against their shared module tool arena. No table
+is allocated when there are no tool bindings. The table is dropped before the
+independent generated-expression solvers run. This removes a per-binding
+full-solver table allocation and repeated publication of shared slots; it does
+not unify the main and tool graphs or remove per-binding evidence-map scans.
+
+Validation: 394 core tests and 43 serial CLI tests including language acceptance
+passed. After the lazy-allocation refinement, all five publication-specific tests
+passed; release build, source-size and diff checks passed. Equivalent ordinary
+ontology check, two warmups and five runs per binary with no overlapping builds,
+tests or profilers: before 1.141 ± 0.023 s, after 1.159 ± 0.036 s. The overlapping
+samples do not establish a timing improvement. Separate heaptrack runs measured
+4,115,381 → 4,115,289 allocation calls (92 fewer) and 118.09 → 118.08 MB peak
+heap: no material memory improvement on this workload. Profiler runtime/RSS are
+not performance claims. Baseline `/tmp/telora-before-shared-tool-publication`;
+artifacts `/tmp/shared-tool-publication-perf.{json,log}` and
+`/tmp/shared-tool-publication-{before,after}.zst` with corresponding summary logs.
+
+Deferred trait evidence: explicit member calls now infer from the trait's
+declared signature and select implementations at the final constraint gate.
+Interpolation likewise records a lexical obligation and resolves Display evidence
+at finalization. This removes eager property-dependent candidate selection from
+expression inference; local provider contracts still need to migrate before the
+gate. There is no second expression inference pass or execution fallback.
+A regression infers `fn(x) { Combine.combine(x, 1) }` as `Fn(Int) -> Int` from
+the second argument, verifies execution returns 42, and rejects a missing impl.
+All 395 core tests and 43 serial CLI tests, including language acceptance, pass.
+Release build, source-size and diff checks pass; ontology types-only check succeeds.
+
+Equivalent ordinary ontology check, two warmups and five runs per binary after
+all tests/builds completed: before 1.138 ± 0.010 s, after 1.134 ± 0.012 s; no
+observable speedup. Separate heaptrack runs measured 4,115,318 → 4,115,306
+allocations and 118.09 → 118.08 MB peak heap, also no material improvement.
+Profiler runtime/RSS are not performance claims. Baseline binary:
+`/tmp/telora-before-deferred-trait-evidence`; artifacts:
+`/tmp/deferred-trait-perf.{json,log}`, `/tmp/deferred-trait-{before,after}.zst`
+and corresponding summary logs. This is a prerequisite for moving provider
+contract discovery onto solved evidence, not a claimed performance milestone.
+
+Main-solver property contracts: ordinary and types-only checking now infer provider
+expressions against the completed program binding slots, validate their nominal
+return contracts, and install local property-presence evidence before finalizing
+trait/property obligations. Evidence roots use module ID plus contract ordinal,
+without VM/heap access. Execution fills those exact roots and validates the
+materialized property set against the static contracts. Unannotated `def` root
+projection is removed; `let` projection remains. This supersedes the previously
+withdrawn removal by migrating its property-contract dependency first.
+
+The CLI regression now covers direct aliases, typed factories, inferred factory
+return types, direct property constraints and property-dependent trait calls in
+both check modes. All 395 core tests and the other 42 CLI tests passed. Language
+acceptance initially found one changed diagnostic: invalid rename_all configuration
+now reports `cannot unify String with RenameCase` at the argument from the main
+solver. Its expected text was updated, and the complete language acceptance test
+then passed. Release build, source-size and diff checks passed; ordinary and
+types-only ontology checks succeeded.
+
+Equivalent ordinary ontology check, two warmups and five runs per version in
+each of forward/reverse order (ten samples per binary), without concurrent
+builds/tests/profilers. Forward means: 1.149 ± 0.008 → 1.153 ± 0.057 s; reversed:
+1.139 ± 0.020 → 1.114 ± 0.037 s. Pooled mean 1.14379 → 1.13331 s, median
+1.14141 → 1.10732 s. The changed binary has a wide 1.08483–1.21234 s range, so
+these samples do not establish a stable timing improvement.
+
+Separate heaptrack runs: 4,115,324 → 3,701,963 allocation calls (413,361 fewer,
+10.04% reduction); peak heap 118.09 → 117.69 MB (about 0.34% lower). Allocation
+traffic falls materially; peak memory does not. Profiler runtime/RSS are not
+performance claims. Baseline `/tmp/telora-before-solved-property-contracts`;
+artifacts `/tmp/solved-property-perf{,-reverse}.{json,log}` and
+`/tmp/solved-property-{before,after}.zst` with corresponding summary logs.
+
+Property contract consumers: main inference now records contracts for type, field
+and variant decorators. Tool-plan preparation and the remaining types-only
+decorator validation require these records, with no reprojection or fallback.
+The old decorator projection helper is deleted. Member provider expressions are
+checked in main inference before evidence finalization; they do not establish
+type-level property-presence facts. Synthetic chained calls still have their own
+static inference and remain a migration target.
+
+All 395 core tests and 44 serial CLI tests, including language acceptance, pass.
+A new field-provider regression succeeds in types-only mode and deliberately
+fails inside the provider during ordinary check, proving that static contract
+checking does not execute it. The plan test rejects a missing contract even when
+its environment could supply the provider type. Release build, source-size and
+diff checks pass; both ontology check modes succeed.
+
+Equivalent ordinary ontology check, two warmups and five runs per binary without
+overlapping builds/tests/profilers: 1.090 ± 0.009 → 1.097 ± 0.018 s. No observable
+speedup. Separate heaptrack: 3,701,921 → 3,701,902 allocation calls (19 fewer),
+117.70 → 117.69 MB peak heap; no material memory improvement. Profiler runtime
+and RSS are not performance claims. Baseline:
+`/tmp/telora-before-property-contract-consumers`; artifacts:
+`/tmp/property-contract-consumers-perf.{json,log}` and
+`/tmp/property-contract-consumers-{before,after}.zst` with corresponding summaries.
+
+Unified module type arena: the main module graph now moves into tool preparation,
+then the evaluator, then back into Analysis. Tool plans and main expressions use
+the same graph IDs without graph copying, merging, remapping or Arc. Their
+publication table is also shared across the handoff instead of rebuilding a
+second table and revisiting the main solver's slots. The graph is frozen during
+execution. This unifies one module's arenas, not the session's module graphs;
+generated expressions still have independent static solvers.
+
+All 395 core and 44 serial CLI tests including language acceptance pass, along
+with release build, source-size and diff checks. The expanded graph handoff test
+checks that preparation moves the original node storage, uses a preexisting
+module root ID in multiple plans, reuses its materialized value, and returns the
+graph with both that root and an unrelated original root intact. Both ontology
+check modes succeed.
+
+Equivalent ordinary ontology check, two warmups and five measured runs per
+binary without concurrent builds/tests/profilers: 1.080 ± 0.008 → 1.088 ± 0.009 s,
+no observable speedup. Separate heaptrack runs measured 3,701,912 → 3,701,547
+allocation calls (365 fewer, about 0.01%) and unchanged 117.69 MB peak heap.
+No material memory improvement. Profiler runtime/RSS are not performance claims.
+Baseline `/tmp/telora-before-unified-module-type-graph`; artifacts
+`/tmp/unified-module-type-graph-perf.{json,log}` and
+`/tmp/unified-module-type-graph-{before,after}.zst` with corresponding summaries.
+
+### Types-only CLI verification (2026-09-10)
+
+Current working-tree release, ontology `@test/query`, two warmups and five
+measured runs per mode, with all builds and tests finished before measurement:
+
+| Mode | Wall time (mean ± standard deviation) |
+| --- | --- |
+| `check --types-only` | 848.4 ± 20.4 ms |
+| `check` | 1165 ± 15 ms |
+
+These compare two modes of the same binary, not optimization checkpoints.
+Their difference is not precise tool/runtime phase time: the static and full
+workspace paths have not yet been unified. JSON summaries report
+`catalog_seconds` separately from `check_seconds`; the latter measures the
+selected check path. Both modes succeed. Artifacts:
+`/tmp/types-only-comparison.{json,log}`, `/tmp/types-only-query.jsonl`, and
+`/tmp/full-check-query.jsonl`.
+
+Validation: 397 core tests and 44 CLI tests (including language acceptance),
+release build, source-size and diff checks pass. Annotation ingress fixes retain
+nominal body lookup through imported slots, avoid treating concrete Dyn targets
+as symbolic slot handles, and allow structural coalescing across nominal
+recursion boundaries. The recursive checked-tree acceptance case passes all
+five checks. This verification does not establish completion of the broader
+session-wide solver migration.
+
+### Recursive inference slot publication (2026-09-10)
+
+Publication validation now traverses slot edges once and propagates actual
+failure bits through a flat reverse-edge table to a fixed point. Revisiting a
+recursive edge no longer invents an unresolved type. Publication reserves graph
+IDs for recursive references, including structural ancestors of nominal nodes,
+then fills them without descriptor expansion. Regression coverage checks both
+root orders, complete recursive edges, absence of pending published nodes and
+descriptor views, and propagation of an unknown through a cycle into cached
+validation results.
+
+398 core tests and 44 CLI tests including language acceptance pass; release,
+source-size and diff checks pass. Ordinary ontology check, two warmups and five
+measured runs with no concurrent builds/tests: 1.181 ± 0.007 s before and
+1.183 ± 0.034 s after. No observable speedup or slowdown. This is a correctness
+prerequisite for consuming cyclic arena IDs, not a measured performance gain.
+Baseline `/tmp/telora-before-cyclic-publication`; measurements
+`/tmp/cyclic-publication-perf.{json,log}`. Remaining descriptor bridges and the
+session-wide phase boundary remain open.
+
+### Annotation ingress cost audit and traversal cleanup (2026-09-10)
+
+Re-measured the last pre-annotation-ingress release against the cyclic-publication
+checkpoint, using ordinary ontology `@test/query`, two warmups and five measured
+runs per binary with no concurrent builds/tests/profilers:
+1.134 ± 0.041 → 1.181 ± 0.007 s. This is not a speedup; the direction suggests
+regression, although the baseline is noisy. Separate heaptrack recordings show
+3,701,571 → 4,755,362 allocation calls (+28.5%), while peak heap drops from
+117.69 to 89.96 MB (-23.6%). Do not describe this migration as an unconditional
+performance improvement.
+
+Filtering allocation backtraces containing `normalize` and summing all reported
+allocator groups gives 1,054,233 → 2,454,141 inclusive allocation calls. These are
+allocation counts, not CPU percentages, and overlap other inclusive scopes.
+The increase of about 1.4 million explains why removing graph-to-descriptor
+annotation ingress did not improve total allocation counts. The remaining
+descriptor consumers repeatedly normalize the newly shared recursive slots.
+The next priority is moving those consumers to slot/graph queries, not merely
+optimizing import traversal or reinstating eager descriptor trees.
+
+The importer now visits children without allocating a Vec per node, reuses its
+validation stack and argument buffer, returns immediately for already imported
+roots, and compresses alias edges after connecting the complete chain. A
+16,384-alias regression verifies direct proxies to the final root without
+descriptor views. 399 core and 44 CLI tests, including language acceptance,
+release build, source-size and diff checks pass; both ontology check modes pass.
+
+This cleanup alone changes ordinary check from 1.185 ± 0.010 to
+1.177 ± 0.014 s: no observable speedup. Allocation calls fall only from
+4,755,362 to 4,754,179 (1,183 fewer), with unchanged 89.96 MB peak heap.
+Artifacts: `/tmp/annotation-ingress-perf.{json,log}`,
+`/tmp/annotation-ingress-{baseline,current}.zst`,
+`/tmp/annotation-ingress-allocations.log`, `/tmp/import-traversal-perf.{json,log}`,
+and `/tmp/import-traversal-after.zst`. Binaries:
+`/tmp/telora-before-graph-annotation-inputs`, `/tmp/telora-before-import-traversal`.
+
+### Collection consumers read slot shapes (2026-09-10)
+
+Array, tuple, Dict and record literal expectations and spread consumers now read
+outer constructors and retain child inference slots instead of normalizing
+complete nested descriptor trees. Pending alternatives still perform their
+semantic join; retaining this distinction preserves the generic heterogeneous
+array diagnostic (`diag-generic-union-context`). A 16,384-layer regression checks
+that an outer record query retains the same child slot across solving and
+creates no descriptor views. 400 core tests, 44 CLI tests including language
+acceptance, release, source-size and diff checks pass. Both ontology modes pass.
+
+Ordinary ontology check, two warmups and five measured runs per binary:
+before 1.165 ± 0.009 s, after 1.189 ± 0.020 s. Reversing order gives after
+1.183 ± 0.015 s, before 1.204 ± 0.019 s. The direction reverses with order;
+there is no stable speedup. Allocations decrease from 4,754,179 to 4,732,679
+(21,500 fewer, 0.45%); peak heap changes from 89.96 to 89.92 MB.
+
+A streaming aggregation of complete allocation stacks (no large intermediate
+stack file) attributes each allocation containing `normalize` to the caller of
+its outermost matching frame. Total 2,409,406 calls, with top callers:
+
+| Caller | Allocation calls |
+| --- | ---: |
+| `GenericInference::expose_named` | 1,292,803 |
+| `GenericInference::infer_inner` | 363,337 |
+| `GenericInference::infer_block` | 284,572 |
+| `GenericInference::contextualize_authored_literal` | 212,264 |
+
+These are allocation counts, not CPU percentages; inlining limits source-line
+attribution. The next larger target is `expose_named`, which currently fully
+normalizes before following names and completing nominal bodies. Its consumers
+must distinguish shape/identity queries from requests for final descriptors.
+
+Baseline `/tmp/telora-before-collection-shape`; artifacts
+`/tmp/collection-shape-perf{,-reverse}.{json,log}`,
+`/tmp/collection-shape-after.zst`, `/tmp/collection-shape-after-summary.log`,
+`/tmp/collection-shape-normalize-callers.log` and the aggregation script
+`/tmp/telora-normalize-callers.awk`.
+
+### Field projection consumes inference slots (2026-09-10)
+
+`project_field` no longer calls `expose_named` and normalizes the complete
+receiver. It follows names and nominal body edges, selects record fields by
+their sorted row names, and returns the original field slot (or Dict element
+slot). Unknown receivers retain one shared field obligation. Recursive stubs
+complete their identity through the existing body table without expanding the
+body. Pending alternatives still perform their semantic join, and Unchecked
+still derives its body from its solved argument. These exceptional semantics
+are not treated as ordinary structural edges.
+
+The regression verifies that projected fields retain their slot after solving,
+recursive siblings return the original nominal slot, missing fields diagnose,
+stubs resolve through the body table, and these ordinary graph queries create
+no descriptor views. 401 core and 44 CLI tests including language acceptance
+pass; release, source-size and diff checks pass. Both ontology modes pass.
+
+Ordinary ontology `@test/query`, two warmups and five measured runs, without
+concurrent builds/tests/profilers: 1.169 ± 0.007 → 1.098 ± 0.009 s (6.1% less
+time). Reversed order: after 1.096 ± 0.009, before 1.162 ± 0.014 s (5.7% less).
+The improvement persists in both orders. Separate heaptrack recordings show
+4,732,679 → 4,190,435 allocations (542,244 fewer, 11.5%). Peak heap is
+89.92 → 90.03 MB, no meaningful peak-memory improvement. Comparisons are with
+the immediately preceding collection-shape checkpoint, not the original RFC
+baseline; allocation count remains above the pre-annotation-ingress checkpoint.
+
+Baseline `/tmp/telora-before-field-slot`; artifacts
+`/tmp/field-slot-perf{,-reverse}.{json,log}`, `/tmp/field-slot-after.zst`,
+`/tmp/field-slot-after-summary.log`, `/tmp/field-slot-types-only.jsonl`.
+Other `expose_named` consumers and the session-wide phase boundary remain open.
+
+### Shallow nominal context and arena row reuse (2026-09-10)
+
+Expression expectation classification and struct-update field discovery now
+use `declared_context`. Non-nominal rows are rejected by constructor without
+expanding children; nominal contexts normalize identity arguments while retaining
+the shared shallow body. Ordinary expression returns skip the normalization
+that only literal/atom construction needs. Unchecked and pending-alternative
+semantics remain explicit. The deep regression checks that solving an identity
+argument changes the returned identity without replacing the shared body or
+materializing its 16,384-layer child.
+
+The initial shallow-context change increased allocation calls from 4,190,435 to
+4,419,791; its first timing comparison was 1.097 ± 0.014 → 1.114 ± 0.007 s,
+and reversed order was after 1.115 ± 0.022, before 1.105 ± 0.020 s. This
+intermediate version is not a performance improvement. The allocation diff
+included 107,354 additional allocations in `initialize_known`.
+
+Two related reconstruction/initialization costs were then removed. Re-importing
+a body view already owned by the solver reuses its immutable type row rather
+than lowering that row again. Small argument lists register dependencies by
+direct slice inspection; large lists retain sorted deduplication. A conflict
+propagation queue is allocated at initialization only when a child is already
+conflicted. The row-reuse regression verifies both unchanged row count and live
+conflict propagation through the shared children.
+
+Final ordinary ontology comparison against the preceding field-slot checkpoint:
+1.119 ± 0.020 → 1.110 ± 0.012 s (two warmups, five measured runs, no concurrent
+builds/tests/profilers): no observable speedup. Allocation calls are
+4,190,435 → 4,189,613 (822 fewer, effectively unchanged); peak heap is
+90.03 → 88.88 MB (1.15 MB lower). These final figures supersede the intermediate
+shallow-context result for the delivered working tree. No claim that all
+descriptor-consumer costs or the session-wide migration have been eliminated.
+
+403 core tests, 44 CLI tests including language acceptance, release build,
+source-size and diff checks pass. Both ontology check modes pass. Baseline:
+`/tmp/telora-before-declared-context`. Final artifacts:
+`/tmp/declared-context-complete-perf.{json,log}`,
+`/tmp/declared-context-complete.zst`, `/tmp/declared-context-complete-summary.log`,
+and `/tmp/declared-context-complete-types-only.jsonl`. Intermediate investigation:
+`/tmp/declared-context-after.zst`, `/tmp/declared-context-allocation-diff.log`,
+`/tmp/declared-context-perf{,-reverse}.{json,log}`.
+
+### Nominal constructor and argument queries use slots (2026-09-10)
+
+Nominal presence/constructor comparisons now follow slot and name edges without
+creating descriptor views or complete identity objects. Same-constructor
+unification and assignment obtain the argument slots directly instead of
+assembling two `DeclaredTypeId` values. The full identity adapter also reads
+ordinary nominal rows without materializing their bodies. Arguments remain
+inference references, not prematurely claimed final type IDs; Unchecked retains
+its explicit argument-derived identity semantics.
+
+The regression verifies constructor lookup, identity argument slots, and mixed
+slot/descriptor argument matching without any body views. 403 core tests pass,
+along with the updated targeted regression, 44 CLI tests including language
+acceptance, release build, source-size and diff checks. Both ontology modes pass.
+
+Ordinary ontology `@test/query`, two warmups and five measured runs per binary,
+without concurrent builds/tests/profilers: 1.090 ± 0.009 → 1.091 ± 0.008 s,
+no observable timing change. Allocation calls change from 4,189,613 to 4,189,078
+(535 fewer); peak heap remains 88.88 MB. This removes more descriptor-facing
+queries but does not provide a meaningful measured performance improvement.
+Baseline `/tmp/telora-before-nominal-head`; artifacts
+`/tmp/nominal-head-perf.{json,log}`, `/tmp/nominal-head-after.zst`,
+`/tmp/nominal-head-after-summary.log`, `/tmp/nominal-head-types-only.jsonl`.
+Full identity publication and remaining expression/pattern descriptor consumers
+are still separate work, as is the session-wide phase boundary.
+
+### Block boundaries retain inference slots (2026-09-10)
+
+The updated streaming stack audit of the nominal-query checkpoint attributes
+1,999,207 allocations to stacks containing `normalize`. Largest outer callers
+are `infer_inner` (1,080,992), `infer_block` (286,290),
+`contextualize_authored_literal` (207,819), and `expose_named` (203,345).
+These are allocation counts, not CPU percentages. The hotspot has shifted away
+from name exposure toward expression consumers.
+
+Non-generalized local definitions and block results now retain their original
+inference slots instead of normalizing a descriptor tree and importing it again
+at the enclosing expression. Both local and program-level monomorphic-binding
+checks traverse slots to locate remaining unknowns owned by that scope.
+Diagnostics still format normalized types, and pending alternatives retain
+their semantic join. Nominal definitions keep their separate declaration check
+boundary, matching the previous predicate semantics.
+
+403 core tests and 44 CLI tests including language acceptance pass. Expanded
+query tests compare the scope predicate against normalization before and after
+solving and at different slot thresholds; deep shared graph checks create no
+descriptor views. Release, source-size and diff checks pass; both ontology check
+modes pass.
+
+Ordinary ontology `@test/query`, two warmups and five measured runs per binary
+without concurrent builds/tests/profilers: 1.095 ± 0.021 → 1.098 ± 0.012 s,
+no observable speedup. Allocations decrease from 4,189,078 to 4,168,655
+(20,423 fewer, 0.49%); peak heap remains 88.88 MB. Scope boundaries now preserve
+the graph, but this does not eliminate remaining expression-level normalization
+or complete session-wide static solving.
+
+Baseline `/tmp/telora-before-block-slots`; artifacts
+`/tmp/block-slots-perf.{json,log}`, `/tmp/block-slots-after.zst`,
+`/tmp/block-slots-after-summary.log`, `/tmp/block-slots-types-only.jsonl`.
+Updated hotspot audit: `/tmp/nominal-head-normalize-callers.log`, produced from
+`/tmp/nominal-head-after.zst` with `/tmp/telora-normalize-callers.awk`.
+
+### Call results retain inference slots (2026-09-10)
+
+Ordinary function calls no longer normalize their complete result descriptor
+before returning it to the enclosing expression. They query unresolved state
+and the TypeOf constructor directly, preserving the existing erasure of
+incomplete TypeOf witnesses and generic-result diagnostics. Normal results
+retain the callee's result slot. When no field obligations exist, call processing
+also skips parameter normalization/scanning for field completion.
+
+403 core tests and 44 CLI tests including language acceptance pass. The TypeOf
+query is differentially checked against normalization before and after solving.
+Release, source-size and diff checks pass; both ontology check modes pass.
+
+Ordinary ontology `@test/query`, two warmups and five measured runs per binary,
+without concurrent builds/tests/profilers: 1.101 ± 0.020 → 1.072 ± 0.016 s.
+Reversed order: after 1.072 ± 0.026, before 1.094 ± 0.006 s. Both orders show
+a 2–3% lower mean, but the improvement is small relative to run variability.
+Allocation calls decrease from 4,168,655 to 4,053,526 (115,129 fewer, 2.76%);
+peak heap decreases from 88.88 to 88.57 MB. Comparison is against the preceding
+block-slot checkpoint, not the original RFC baseline.
+
+Baseline `/tmp/telora-before-call-result`; artifacts
+`/tmp/call-result-perf{,-reverse}.{json,log}`, `/tmp/call-result-after.zst`,
+`/tmp/call-result-after-summary.log`, `/tmp/call-result-types-only.jsonl`.
+Remaining expression/template descriptor consumers and session-wide static
+phase unification remain unfinished.
+
+### Iterative generic instantiation (2026-09-10)
+
+Generic descriptor instantiation now uses an explicit work stack and integer
+result slots, replacing recursive instantiation. The solver reuses result-buffer
+capacity between calls; parameter slots and parameterized nominal-body sharing
+remain independent between calls. Input templates are still descriptors, so
+this does not complete arena template storage or remove all recursive adapters.
+
+405 core tests and 44 CLI tests including language acceptance pass, as do the
+release build, source-size and diff checks. New tests cover 16,384 nested array
+constructors without descriptor views and nominal-body sharing within a call
+while isolating separate calls.
+
+Against the preceding call-result checkpoint, ordinary ontology `@test/query`
+with two warmups and five runs per binary takes 1.045 ± 0.012 → 1.044 ± 0.013 s:
+no observable speedup. Allocations decrease from 4,053,526 to 4,052,583 (943
+fewer); peak heap is essentially unchanged, 88.57 → 88.58 MB. The intermediate
+version allocated 5,880 more times; result-buffer reuse removes that regression.
+
+Baseline `/tmp/telora-before-iterative-instantiation`; final artifacts
+`/tmp/iterative-instantiation-buffer-perf.{json,log}`,
+`/tmp/iterative-instantiation-buffer.zst`,
+`/tmp/iterative-instantiation-buffer-summary.log`. Both ontology check modes
+also pass. This is a stack-depth improvement, not a measured throughput gain.
+
+### Expand contextual types only for pending joins (2026-09-10)
+
+The final expression-inference step normalized every supplied expected type,
+although that descriptor was consumed only when replacing pending alternatives
+with a fully resolved contextual type. It now tests for pending alternatives
+before expanding the expected graph. The existing replacement predicate and
+constraint checking are unchanged; ordinary expressions retain inference slots.
+
+405 core tests and 44 CLI tests including language acceptance pass. These include
+generic common-type diagnostics and contextual construction behavior. Release,
+source-size and diff checks pass, as do both ontology check modes.
+
+Against the immediately preceding iterative-instantiation checkpoint, ordinary
+ontology `@test/query`, two warmups and five measured runs per binary:
+1.070 ± 0.041 → 0.975 ± 0.011 s. Reversed order: after 0.983 ± 0.003,
+before 1.053 ± 0.013 s. Both orders show lower time, approximately 7–9%; the
+first baseline group is noisier. Allocation calls decrease from 4,052,583 to
+3,524,793 (527,790 fewer, 13.0%); peak heap changes only slightly,
+88.58 → 88.38 MB. This comparison is not against the original RFC baseline.
+
+Baseline `/tmp/telora-before-conditional-expected`; artifacts
+`/tmp/conditional-expected-perf{,-reverse}.{json,log}`,
+`/tmp/conditional-expected-after.zst`,
+`/tmp/conditional-expected-after-summary.log`,
+`/tmp/conditional-expected-types-only.jsonl`. Descriptor template ingress,
+other expression consumers, and the session-wide static-first ordinary loader
+remain unfinished.
+
+### Enum members consume owner and payload slots (2026-09-10)
+
+Expression-level enum member access now reads the constructor result, TypeOf
+edge and enum body directly from inference rows. The returned member retains
+the original owner and payload slots. It no longer expands unrelated variants
+or function parameters. Pending alternatives still require their semantic join;
+Unchecked still derives its body from its solved argument. Other descriptor
+consumers, including contextual enum payload refinement, remain separate work.
+
+407 core tests and 44 CLI tests including language acceptance pass, as do release,
+source-size and diff checks and both ontology check modes. New tests verify live
+payload refinement, exact owner slots and no descriptor views despite a sibling
+with 16,384 nested arrays. Differential tests cover anonymous/nominal enums,
+family constructors, pending alternatives, Unchecked and missing-member errors.
+
+Against the preceding conditional-expected checkpoint, ordinary ontology
+`@test/query`, two warmups and five measured runs per binary:
+0.983 ± 0.016 → 0.979 ± 0.010 s. There is no observable speedup.
+Allocations decrease from 3,524,793 to 3,500,193 (24,600 fewer, 0.70%);
+peak heap decreases from 88.38 to 87.74 MB (0.64 MB). This is an incremental
+graph-consumer migration, not completion of the session-wide phase boundary.
+
+Baseline `/tmp/telora-before-enum-member-slots`; artifacts
+`/tmp/enum-member-slots-perf.{json,log}`, `/tmp/enum-member-slots-after.zst`,
+`/tmp/enum-member-slots-after-summary.log`,
+`/tmp/enum-member-slots-types-only.jsonl`.
+
+Updated streaming stack attribution records 1,327,225 allocations on stacks
+containing normalization. The largest outer callers are `expose_named`
+(880,547), `contextualize_authored_literal` (214,409), module analysis (84,397),
+and `infer_pattern_constructors` (55,366). These are allocation counts, not CPU
+shares; compiler inlining affects attribution. Remaining name exposure and
+contextual literal consumers warrant the next investigation. Artifact:
+`/tmp/enum-member-slots-normalize-callers.log`.
+
+### Nominal argument refinement reads shallow shapes (2026-09-10)
+
+Further stack attribution of the preceding profile assigns 818,237 allocations
+under `expose_named` to `refine_argument_nominal_context`, out of 884,529 total
+exposure allocations. Artifact: `/tmp/enum-member-slots-expose-callers.log`.
+These counts measure allocations, not CPU time.
+
+The refiner now reads each actual argument's outer constructor and original child
+slots instead of normalizing the entire remaining subtree at every recursion
+level. Nominal identity arguments and required alternative joins still resolve;
+nominal bodies retain their shared shallow representation. Alias following and
+alternative resolution use one loop so cycles crossing both steps terminate.
+Parameter-side recursive reconstruction remains, as do descriptor ingress and
+the unfinished session-wide static-first ordinary loader.
+
+407 core tests and 44 CLI tests including language acceptance pass, along with
+release, source-size and diff checks and both ontology check modes. Expanded
+differential tests cover normalization before/after solving, nominal and
+Unchecked types, aliases, alternatives, direct alias cycles and cycles through
+alternatives. A 16,384-level structural input preserves exact child slots without
+constructing descriptor views.
+
+Against the preceding enum-member checkpoint, ordinary ontology `@test/query`,
+two warmups and five measured runs per binary: 0.974 ± 0.009 → 0.934 ± 0.008 s.
+Reversed order: after 0.929 ± 0.012, before 0.979 ± 0.012 s. Both orders show
+approximately 4–5% lower time. Allocation calls decrease from 3,500,193 to
+3,094,770 (405,423 fewer, 11.6%). Peak heap is essentially unchanged,
+87.74 → 87.75 MB. These are incremental results, not comparisons to the original
+RFC baseline or evidence that the full architecture migration is complete.
+
+Baseline `/tmp/telora-before-refinement-shapes`; artifacts
+`/tmp/refinement-shapes-perf{,-reverse}.{json,log}`,
+`/tmp/refinement-shapes-after.zst`, `/tmp/refinement-shapes-after-summary.log`,
+`/tmp/refinement-shapes-types-only.jsonl`.
+
+### Nominal refinement retains parent edges (2026-09-10)
+
+After refining a known parameter slot, the refiner now returns that original
+slot instead of its reconstructed descriptor. Parents already reference this
+slot and observe its refinement directly, so a child change no longer creates
+new type rows at every ancestor. The updated descriptor is moved into the slot
+without an extra clone. Local shallow descriptor construction and recursive
+traversal remain; this is not yet a wholly slot-based iterative refiner.
+
+408 core tests and 44 CLI tests including language acceptance pass, along with
+release, source-size and diff checks and both ontology check modes. A regression
+test verifies that nominal refinement updates a child while preserving its parent
+row and edge, leaves an independent parameter graph unchanged, and adds no rows
+when the same refinement is repeated.
+
+Against the preceding shallow-refinement checkpoint, ordinary ontology
+`@test/query`, two warmups and five measured runs per binary:
+0.940 ± 0.011 → 0.924 ± 0.024 s. Reversed order: after 0.902 ± 0.012,
+before 0.937 ± 0.017 s. Both orders have lower means, but the first comparison
+is small relative to variability; treat timing as an improvement trend rather
+than a stable percentage. Allocation calls decrease from 3,094,770 to 2,926,097
+(168,673 fewer, 5.45%). Peak heap is essentially unchanged, 87.75 → 87.59 MB.
+These results are relative to the preceding checkpoint, not the original RFC
+baseline. The ordinary loader's session-wide static-first boundary remains open.
+
+Baseline `/tmp/telora-before-refinement-slots`; artifacts
+`/tmp/refinement-slots-perf{,-reverse}.{json,log}`,
+`/tmp/refinement-slots-after.zst`, `/tmp/refinement-slots-after-summary.log`,
+`/tmp/refinement-slots-types-only.jsonl`.
+
+### Native types enter through static contracts (2026-09-10)
+
+The builtin inventory now supplies native types through explicit interfaces.
+Ordinary analysis reads the concrete opaque contract instead of decoding the
+linked native heap value. Missing/invalid contracts fail explicitly, and the
+unused evaluator descriptor-decoding method has been removed. See the
+[handoff audit](static-phase-handoff.md) for the remaining phase dependencies.
+
+409 core tests and 44 CLI tests including language acceptance pass. After removal
+of the unused decoder, the contract test and final release build pass without
+the new dead-code warning. Source-size/diff checks and both ontology check modes
+also pass. This checkpoint changes the native descriptor source, not the
+ordinary loader's execution ordering. No new throughput or allocation claim is
+made; the previous measured performance checkpoint remains the reference.
+
+Preserved binary `/tmp/telora-before-native-contracts`; verification artifacts
+`/tmp/native-contract-core.log`, `/tmp/native-contract-cli.log`,
+`/tmp/native-contract-focused-final.log`, `/tmp/native-contract-release-final.log`,
+`/tmp/native-contract-check.jsonl`, `/tmp/native-contract-types-only.jsonl`.
+
+### Ordinary imports use interface facts (2026-09-10)
+
+Ordinary import type selection and the pure checker now use one static interface
+reader. It distinguishes namespace and selected value through `value_binding`,
+including empty namespaces, and rejects selected bindings without a contract.
+It does not accept a runtime value. The old empty-interface runtime-kind test is
+removed; no-interface Host inputs and recovery value-fact projection remain
+separate, unfinished migration work.
+
+410 core tests, 44 CLI tests including language acceptance, release and
+source-size/diff checks pass; both ontology check modes pass. A new test checks
+empty/populated namespaces, selected values and malformed selected contracts
+without runtime resources. No new timing/allocation claim is made for this
+architecture checkpoint.
+
+Preserved binary `/tmp/telora-before-import-contracts`; artifacts
+`/tmp/import-contract-core.log`, `/tmp/import-contract-cli.log`,
+`/tmp/import-contract-release.log`, `/tmp/import-contract-check.jsonl`,
+`/tmp/import-contract-types-only.jsonl`.
+
+### DataWorld carries source-derived contracts (2026-09-10)
+
+Primitive Host factories now supply an explicit contract. JSON/TOML/YAML derive
+their contracts from the validated source plan before runtime materialization,
+using a postorder worklist and canonical type graph IDs for structural equality.
+The external interface still consumes a final descriptor. Heap and contract share
+one HostData owner, so cloning DataWorld does not clone the contract tree.
+
+Strict DataWorld analysis and module loading pass the contract as an interface.
+The DataWorld partial-analysis wrapper no longer creates a heap, publishes values,
+or derives types from values. Direct PersistentValue-based observed/recovery
+adapters remain unfinished; this is not yet complete Host boundary migration.
+
+Final verification: 412 core tests, 44 CLI tests including language acceptance,
+release, source-size/diff checks and both ontology check modes pass. New tests
+cover shared/forward plan edges, homogeneous/mixed/empty arrays, untyped tags,
+and differential agreement with existing data-value shapes. Existing metadata
+boundary tests still prevent Host metadata from impersonating type declarations.
+No timing or allocation improvement is claimed for this architecture change.
+
+Preserved binary `/tmp/telora-before-host-contracts`; final artifacts
+`/tmp/host-contract-core-final.log`, `/tmp/host-contract-cli-final.log`,
+`/tmp/host-contract-focused-final.log`, `/tmp/host-contract-release-final.log`,
+`/tmp/host-contract-check-final.jsonl`, `/tmp/host-contract-types-only-final.jsonl`.
+
+### Remove remaining runtime-value type inference (2026-09-10)
+
+External and recovery type inputs now use explicit interface contracts, including
+hidden property roots. Deleted the generic recursive value-inference fallback.
+Final validation: 412 core tests, 44 CLI tests including language acceptance,
+release build and ontology types-only check pass.
+
+Immediate baseline `/tmp/telora-before-no-value-fallback` versus current release,
+ontology `check @test/query`, hyperfine 2 warmups and 5 measured runs:
+897.9 ± 8.7 ms versus 906.4 ± 9.6 ms. No speedup is established. Heaptrack records
+2,926,205 versus 2,925,925 allocations and 87.58 versus 87.59 MB peak heap;
+these are effectively unchanged. This comparison is against the immediately
+preceding contract checkpoint, not the original performance baseline.
+
+A separate current-release comparison (2 warmups, 5 runs) gives:
+
+| Mode | Mean ± standard deviation |
+| --- | --- |
+| `check --types-only @test/query` | 600.6 ± 2.8 ms |
+| `check @test/query` | 919.9 ± 19.0 ms |
+
+The approximately 319 ms difference is between separate checking paths, not
+an exact measurement of metadata/runtime phases. JSON summaries expose
+`catalog_seconds` and `check_seconds`; precise stage accounting remains gated
+on a shared static artifact and driver.
+
+Artifacts: `/tmp/no-value-fallback-perf.{log,json}`,
+`/tmp/no-value-fallback-{before,after}-summary.log`,
+`/tmp/types-only-current-perf.{log,json}`,
+`/tmp/no-value-fallback-types-only.jsonl`.
+
+### Defer evaluator acquisition until module static plans are solved (2026-09-10)
+
+Removed the two remaining runtime Module-kind probes from ordinary interface
+publication. Evaluator/bootstrap/pending construction-check setup now follows
+static plan preparation. This is not yet session-wide static-first execution.
+
+Immediate baseline `/tmp/telora-before-evaluator-deferral`, same ontology workload,
+hyperfine 2 warmups/5 runs: baseline 953.3 ± 19.4 ms, current 912.7 ± 11.2 ms.
+Reversed order: current 929.6 ± 14.2 ms, baseline 936.4 ± 20.9 ms. The reverse
+comparison does not confirm the initial 4% difference; no stable speedup is
+claimed. Allocation impact was not measured for this checkpoint.
+
+Validation: existing 412 core tests passed; the new static-rejection main-heap
+test passed after correcting its expected diagnostic text. All 44 CLI integration
+tests (including language acceptance), release build, ontology types-only check,
+source-size and diff checks passed. The main-heap test does not prove absence of
+temporary work-heap allocation; evaluator placement is the source-level evidence
+for the new boundary, which still requires extraction into a VM-free API.
+
+Artifacts: `/tmp/evaluator-deferral-{core-final,focused,cli,release}.log`,
+`/tmp/evaluator-deferral-perf{,-reverse}.{log,json}`,
+`/tmp/evaluator-deferral-types-only.jsonl`.
+
+### Defer external runtime linking (2026-09-10)
+
+Removed runtime-value registration from the static binding traversals. One
+post-solving link step handles external/import/native values and missing dynamic
+inputs; import/native type selection remains based on mandatory static contracts.
+This removes repeated import/native registrations and the obsolete early import
+pass. It is an architectural checkpoint, with no new timing/allocation claim.
+
+413 core tests pass. Final CLI validation passes 22 library, 2 binary and 44
+integration tests including language acceptance; release build and both ontology
+check modes pass. Source-size and diff checks pass with existing review warnings.
+Artifacts: `/tmp/deferred-links-{core,cli,release}.log`,
+`/tmp/deferred-links-{check,types-only}.jsonl`.
+
+### Static owner evidence and graph-root materialization (2026-09-10)
+
+Owner capture evidence and parameter substitution now run before execution;
+runtime consumes plans containing graph IDs, link names and arities. Owner
+metadata uses one batch through the shared graph materialization table instead
+of per-owner descriptor materialization. Runtime type evidence normalization
+also moves before evaluator acquisition. Interface finalization and runtime
+family handles remain unfinished handoff work.
+
+Immediate baseline `/tmp/telora-before-owner-plans`, ontology ordinary check,
+hyperfine 2 warmups/5 runs: 946.7 ± 47.6 ms versus 910.8 ± 13.6 ms. Baseline
+variance is large; no stable throughput improvement is claimed. Heaptrack:
+2,925,979 → 2,920,574 allocations (-5,405, about 0.18%); temporary allocations
+170,548 → 176,131; peak heap 87.57 → 87.60 MB. No peak-memory reduction.
+
+413 core tests, 44 CLI integration tests including language acceptance, release,
+ontology types-only and source-size/diff checks pass. Ordinary ontology check
+also passes in all benchmark/profile runs. No inference fallback was added.
+
+Artifacts: `/tmp/owner-plan-core-final.log`, `/tmp/owner-plan-{cli,release}.log`,
+`/tmp/owner-plan-perf.{log,json}`, `/tmp/owner-plan-{before,after}-summary.log`,
+`/tmp/owner-plan-types-only.jsonl`.
+
+### Static family interfaces and inference release before execution (2026-09-10)
+
+ModuleInterface now carries static nominal family constructor identities instead
+of runtime templates. Import/re-export paths consume these identities; runtime
+families remain execution/compiler links. The duplicated template table and
+unused parameter copies are removed. Interface and compiler evidence now finish
+before execution, followed by an explicit `drop(inference)`.
+
+Immediate baseline `/tmp/telora-before-static-family-interface`, ontology ordinary
+check, 2 warmups/5 runs: baseline 912.8 ± 15.7 ms, current 942.1 ± 38.6 ms
+(outlier warning). Reverse order: current 929.4 ± 10.4 ms, baseline 920.0 ± 14.4 ms.
+No throughput improvement; the small slower tendency remains within the observed
+variation and should not be represented as a speedup.
+
+Heaptrack: 2,920,623 → 2,917,965 allocations (-2,658, about 0.09%); peak heap
+87.60 → 86.20 MB (-1.40 MB, about 1.6%). Temporary allocations 176,170 → 176,171.
+This compares only the immediate preceding owner-plan checkpoint.
+
+413 core tests, 44 CLI integration tests including language acceptance, release,
+ontology types-only and source-size/diff checks pass. Ordinary ontology checks
+pass in all benchmark/profile runs. Runtime template field search confirms no
+remaining `type_family_templates` interface path. The encompassing analysis API
+and module driver still require session-level separation; this is not completion
+of the overall static-first architecture.
+
+Artifacts: `/tmp/static-family-interface-{core,cli,release}.log`,
+`/tmp/static-family-interface-perf{,-reverse}.{log,json}`,
+`/tmp/static-family-interface-{before,after}-summary.log`,
+`/tmp/static-family-interface-types-only.jsonl`.
+
+### Extract VM-free module solver and solved artifact (2026-09-10)
+
+Ordinary analysis now hands a SolvedModulePlan from `solve_module_plan` to
+`execute_module_plan`. The solver accepts no VM/heap/runtime roots; the artifact
+owns the graph and evidence, borrowing only source syntax for prepared plans.
+Solved tool bindings are distinct from execution tasks containing value slots.
+No graph clone or second inference pass is introduced by the handoff.
+
+414 core tests pass, including a direct no-heap solver test with an exported
+generic nominal family and `1 / 0`. 44 CLI integration tests including language
+acceptance, release, ontology types-only and source-size/diff checks pass.
+Ordinary ontology checking passes throughout benchmarking.
+
+Immediate baseline `/tmp/telora-before-solved-module`, 2 warmups/5 runs:
+937.2 ± 11.9 → 921.6 ± 8.9 ms. This small single-order difference is not a claim
+of stable throughput gain. Allocation/peak-memory impact was not remeasured.
+The driver remains module-at-a-time, and the separate pure loader has not yet
+been migrated to consume this same artifact.
+
+Artifacts: `/tmp/solved-module-core-final.log`, `/tmp/solved-module-{cli,release}.log`,
+`/tmp/solved-module-perf.{log,json}`, `/tmp/solved-module-types-only.jsonl`.
+
+### Types-only and ordinary checking share the static solver (2026-09-10)
+
+Removed the standalone full types-only checking implementation and its separate
+decorator checker. The adapter now invokes solve_module_plan, moves its import
+interface map, and shares a TypeStore across the static module workspace.
+The modes still have different loaders/publication paths.
+
+Immediate baseline `/tmp/telora-before-shared-static`, ontology query, hyperfine
+2 warmups/5 runs:
+
+| Path | Mean ± standard deviation |
+| --- | --- |
+| Previous types-only | 596.9 ± 6.6 ms |
+| Shared-solver types-only | 737.6 ± 9.7 ms |
+| Current ordinary check | 920.1 ± 19.3 ms |
+
+Types-only regresses by about 23.6%. The shared path now prepares ordinary
+execution plans and compiler evidence too; the measurement does not isolate
+which substage accounts for the additional time. Keep one solver and separate
+typed evidence from code-generation preparation next, rather than restoring the
+old checker. The approximately 183 ms current mode difference is still not exact
+metadata/runtime phase accounting.
+
+Types-only heaptrack: allocations 2,347,937 → 2,288,341 (-59,596, about 2.54%);
+peak heap 88.04 → 83.28 MB (-4.76 MB, about 5.41%); temporary allocations
+131,674 → 123,691. These compare types-only to types-only, not ordinary check.
+
+414 core tests and 44 CLI integration tests including language acceptance pass.
+After the final interface-ownership change, core static-check and CLI types-only
+focused tests, cargo check and a fresh release build pass. Both ontology modes
+pass in benchmark/profile runs; source-size/diff checks pass with existing
+review warnings.
+
+Artifacts: `/tmp/shared-static-{core,cli}.log`,
+`/tmp/shared-static-focused-{core,cli}.log`, `/tmp/shared-static-release-final.log`,
+`/tmp/shared-static-perf.{log,json}`, `/tmp/shared-static-{before,after}-summary.log`.
+
+### Defer tool bytecode generation to execution (2026-09-10)
+
+Static preparation retains lowered expressions, solved owner/constructor evidence
+and validated external links. Compiler/LIR/bytecode generation now occurs on the
+execution consumer's first use and its result is reused. The code-generation
+API receives no inference context. Type checking, name validation, elaboration
+and witness preparation remain static.
+
+Immediate baseline `/tmp/telora-before-deferred-tool-codegen`, ontology query,
+2 warmups/5 runs: types-only 718.9 ± 6.6 → 739.6 ± 28.0 ms (outlier warning).
+Reverse order: current 731.4 ± 16.2 ms, baseline 728.7 ± 6.0 ms. No measurable
+speedup. Ordinary check in the first batch: 917.6 ± 29.3 → 905.0 ± 14.4 ms;
+no stable ordinary-check improvement is established either.
+
+Types-only heaptrack: 2,288,277 → 2,287,947 allocations (-330); temporary
+allocations 123,649 → 123,643; peak heap unchanged at 83.28 MB. Tool bytecode
+generation therefore does not explain the previous shared-solver cost increase.
+Next investigate static publication/canonicalization costs rather than attributing
+that regression to code generation without evidence.
+
+414 core tests, the extended lazy-codegen/repeated-execution regression test,
+44 CLI integration tests including language acceptance, release and source-size/
+diff checks pass. Both ontology modes pass in benchmark/profile runs. Prepared
+syntax is still retained with generated code; no memory saving is claimed.
+
+Artifacts: `/tmp/deferred-tool-codegen-{core,focused,cli,release}.log`,
+`/tmp/deferred-tool-codegen-perf{,-reverse}.{log,json}`,
+`/tmp/deferred-tool-codegen-{before,after}-summary.log`.
+
+### CPU profile and early imported-body lookup (2026-09-10)
+
+Software perf works: cpu-clock:u at 499 Hz with DWARF call graphs. Initial
+types-only recording has 326 samples, with contains_type_variable at 18.7%
+self time. Moved the existing imported-body lookup before recursive eligibility
+scans in import_declared_body; unresolved arena edges remain shared.
+
+Immediate baseline `/tmp/telora-before-body-ingress-fastpath`, 2 warmups/5 runs:
+types-only 734.1 ± 20.7 → 722.9 ± 9.0 ms; ordinary check 907.6 ± 11.8 →
+915.1 ± 7.0 ms. No stable improvement is established. A subsequent short profile
+has 347 samples and still attributes 17.0% self time to contains_type_variable.
+These short samples identify a continuing hotspot, not a precise reduction.
+
+414 core tests, 44 CLI integration tests including language acceptance, release,
+both ontology modes and source-size/diff checks pass. Existing tests cover
+shared unresolved body edges and distinct recursive view completeness.
+Artifacts: `/tmp/static-solver-current.perf`, `/tmp/static-solver-perf-report.log`,
+`/tmp/body-ingress-{core,cli,release}.log`, `/tmp/body-ingress-perf.{log,json}`,
+`/tmp/body-ingress-current.perf`, `/tmp/body-ingress-report.log`.
+
+### Reuse finalized binding descriptors across publication (2026-09-10)
+
+After solving, binding-first ID reservation now retains its normalized descriptor
+map. Owner/unresolved validation, exported monomorphic schemes, interface output
+and final graph-ID output reuse that map instead of independently normalizing
+each binding. The map moves into interface_binding_types; no extra full map copy
+or skipped validation is introduced.
+
+Immediate baseline `/tmp/telora-before-binding-publication` includes the prior
+imported-body lookup change. Ontology query, hyperfine 2 warmups/5 runs:
+
+| Mode | First comparison, baseline → current | Reverse comparison, baseline → current |
+| --- | --- | --- |
+| types-only | 742.9 ± 8.1 → 710.7 ± 12.1 ms | 732.8 ± 8.7 → 705.4 ± 10.4 ms |
+| ordinary check | 942.8 ± 35.1 → 910.5 ± 35.9 ms | 905.4 ± 8.5 → 883.5 ± 6.7 ms |
+
+Both orders support roughly 4% less types-only time; ordinary checking also
+improves, with the less noisy reverse comparison showing about 2.4%.
+Types-only heaptrack: 2,287,947 → 2,262,641 allocations (-25,306, about 1.1%);
+temporary allocations 123,648 → 123,647; peak heap 83.28 → 83.27 MB (effectively
+unchanged). These are incremental results, not original-baseline comparisons.
+
+414 core tests, 44 CLI integration tests including language acceptance, release,
+both ontology modes and source-size/diff checks pass. Artifacts:
+`/tmp/binding-publication-{core,cli,release}.log`,
+`/tmp/binding-publication-perf{,-reverse}.{log,json}`,
+`/tmp/binding-publication-{before,after}-summary.log`.

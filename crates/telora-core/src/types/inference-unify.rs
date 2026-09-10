@@ -279,13 +279,13 @@ impl<'a> GenericInference<'a> {
         }
         if let TypeDescriptor::Inference(variable) = left
             && let Some(existing) = self.variables.binding(*variable).cloned()
-            && self.declared_identity(right).is_some()
+            && self.declared_constructor(right).is_some()
         {
             if matches!(existing, TypeDescriptor::Inference(_) | TypeDescriptor::Bound(_)) {
                 return self.unify(&existing, right);
             }
-            if let Some(existing_id) = self.declared_identity(&existing)
-                && self.declared_identity(right).is_some_and(|id| !existing_id.has_same_head(&id))
+            if let Some(existing_id) = self.declared_constructor(&existing)
+                && self.declared_constructor(right).is_some_and(|id| existing_id != id)
             {
                 return self.unify(&existing, right);
             }
@@ -299,13 +299,13 @@ impl<'a> GenericInference<'a> {
         }
         if let TypeDescriptor::Inference(variable) = right
             && let Some(existing) = self.variables.binding(*variable).cloned()
-            && self.declared_identity(left).is_some()
+            && self.declared_constructor(left).is_some()
         {
             if matches!(existing, TypeDescriptor::Inference(_) | TypeDescriptor::Bound(_)) {
                 return self.unify(left, &existing);
             }
-            if let Some(existing_id) = self.declared_identity(&existing)
-                && self.declared_identity(left).is_some_and(|id| !existing_id.has_same_head(&id))
+            if let Some(existing_id) = self.declared_constructor(&existing)
+                && self.declared_constructor(left).is_some_and(|id| existing_id != id)
             {
                 return self.unify(left, &existing);
             }
@@ -317,12 +317,8 @@ impl<'a> GenericInference<'a> {
             self.variables.set(*variable, left.clone());
             return Ok(());
         }
-        if let (Some(left), Some(right)) =
-            (self.declared_identity(left), self.declared_identity(right))
-            && left.has_same_head(&right)
-            && left.arguments().len() == right.arguments().len()
-        {
-            for (left, right) in left.arguments().iter().zip(right.arguments()) {
+        if let Some((left, right)) = self.matching_nominal_arguments(left, right) {
+            for (left, right) in left.iter().zip(&right) {
                 self.unify(left, right)?;
             }
             return Ok(());
@@ -524,16 +520,18 @@ impl<'a> GenericInference<'a> {
             };
             let refined = self.refine_argument_nominal_context(&bound, actual)?;
             if refined != bound {
-                self.variables.set(*variable, refined.clone());
+                self.variables.set(*variable, refined);
             }
-            return Ok(refined);
+            // The parent already points at this slot. Return that edge so a
+            // child refinement does not reconstruct every enclosing type row.
+            return Ok(parameter.clone());
         }
-        let actual = self.expose_named(actual);
+        let actual = self.nominal_refinement_shape(actual);
         match (parameter, &actual) {
             (TypeDescriptor::PendingAlternatives(_), _) => Ok(parameter.clone()),
             (_, TypeDescriptor::Declared(declared)) => {
                 self.check(parameter, &actual)?;
-                if self.declared_identity(parameter).is_some() {
+                if self.declared_constructor(parameter).is_some() {
                     Ok(parameter.clone())
                 } else {
                     self.check(parameter, &declared.body)?;
@@ -783,13 +781,8 @@ impl<'a> GenericInference<'a> {
         let completed_expected = self.complete_declared(expected);
         let actual = completed_actual.as_ref().unwrap_or(actual);
         let expected = completed_expected.as_ref().unwrap_or(expected);
-        if let (Some(actual), Some(expected)) = (
-            self.declared_identity(actual),
-            self.declared_identity(expected),
-        ) && actual.has_same_head(&expected)
-            && actual.arguments().len() == expected.arguments().len()
-        {
-            for (actual, expected) in actual.arguments().iter().zip(expected.arguments()) {
+        if let Some((actual, expected)) = self.matching_nominal_arguments(actual, expected) {
+            for (actual, expected) in actual.iter().zip(&expected) {
                 self.check(actual, expected)?;
             }
             return Ok(());
@@ -1058,39 +1051,109 @@ impl<'a> GenericInference<'a> {
         receiver: &TypeDescriptor,
         field: &str,
     ) -> Result<TypeDescriptor, String> {
-        match self.expose_named(receiver) {
-            TypeDescriptor::Declared(declared) => self.project_field(&declared.body, field),
-            TypeDescriptor::Struct(fields) => fields
-                .get(field)
-                .cloned()
-                .ok_or_else(|| format!("Struct has no field {field:?}")),
-            TypeDescriptor::Dict(item) => Ok(*item),
-            TypeDescriptor::PendingAlternatives(variants) => variants
-                .iter()
-                .map(|variant| self.project_field(variant, field))
-                .collect::<Result<Vec<_>, _>>()
-                .map(join_all_types),
-            TypeDescriptor::Never => Ok(TypeDescriptor::Never),
-            TypeDescriptor::Inference(variable) => {
-                if let Some(result) = self
-                    .field_requirements
-                    .get(&variable)
-                    .and_then(|fields| fields.get(field))
-                {
-                    return Ok(result.clone());
+        let mut current = self.variables.view(receiver);
+        let mut rows = Vec::new();
+        let mut names = HashSet::new();
+        let variable = loop {
+            match current {
+                InferenceView::Row(row) => {
+                    let arguments = self.variables.arguments(row);
+                    match self.variables.constructor(row) {
+                        InferenceConstructor::Struct(names) => return names.binary_search_by(|name| name.as_str().cmp(field))
+                            .map(|index| TypeDescriptor::Inference(arguments[index]))
+                            .map_err(|_| format!("Struct has no field {field:?}")),
+                        InferenceConstructor::Dict => return Ok(TypeDescriptor::Inference(arguments[0])),
+                        InferenceConstructor::Never => return Ok(TypeDescriptor::Never),
+                        InferenceConstructor::Declared { head, .. }
+                            if head.constructor() == unchecked_type_constructor() =>
+                        {
+                            // Unchecked's body is derived from its solved
+                            // argument, so it is not an ordinary nominal edge.
+                            let normalized = self.normalize(self.variables.descriptor_view(row));
+                            let TypeDescriptor::Declared(declared) = normalized else { unreachable!() };
+                            return self.project_field(&declared.body, field);
+                        }
+                        InferenceConstructor::Declared { head, .. } => {
+                            if rows.contains(&row.0) { break None; }
+                            rows.push(row.0);
+                            let (&body, parameters) = arguments.split_last().expect("nominal body");
+                            // A recursive descriptor stub carries identity but
+                            // no body. Complete that identity without expanding
+                            // the body or any unrelated fields.
+                            if self.variables.known(body).is_some_and(|body|
+                                matches!(self.variables.constructor(body), InferenceConstructor::Never))
+                            {
+                                let parameters = parameters.iter().map(|slot|
+                                    self.normalize(&TypeDescriptor::Inference(*slot))).collect::<Vec<_>>();
+                                if let Some(body) = self.declared_bodies.get(&head.reapply(&parameters)) {
+                                    current = self.variables.view(body);
+                                    continue;
+                                }
+                            }
+                            current = self.variables.slot_view(body);
+                        }
+                        InferenceConstructor::Named(name) => {
+                            if !names.insert(name.clone()) { break None; }
+                            let Some(ty) = self.named_type(name) else { break None; };
+                            current = self.variables.view(ty);
+                        }
+                        InferenceConstructor::PendingAlternatives => {
+                            let normalized = self.normalize(self.variables.descriptor_view(row));
+                            return self.project_alternative_field(&normalized, field);
+                        }
+                        _ => break None,
+                    }
                 }
-                let result = self.fresh_variable();
-                self.field_requirements
-                    .entry(variable)
-                    .or_default()
-                    .insert(field.to_owned(), result.clone());
-                Ok(result)
+                InferenceView::Descriptor(ty) => match ty {
+                    TypeDescriptor::Declared(declared) if declared.id.constructor() == unchecked_type_constructor() => {
+                        let normalized = self.normalize(ty);
+                        let TypeDescriptor::Declared(declared) = normalized else { unreachable!() };
+                        return self.project_field(&declared.body, field);
+                    }
+                    TypeDescriptor::Declared(declared) => current = self.variables.view(self.declared_body(declared)),
+                    TypeDescriptor::Named(name) => {
+                        if !names.insert(name.clone()) { break None; }
+                        let Some(ty) = self.named_type(name) else { break None; };
+                        current = self.variables.view(ty);
+                    }
+                    TypeDescriptor::Struct(fields) => return fields.get(field).cloned()
+                        .ok_or_else(|| format!("Struct has no field {field:?}")),
+                    TypeDescriptor::Dict(item) => return Ok(item.as_ref().clone()),
+                    TypeDescriptor::Never => return Ok(TypeDescriptor::Never),
+                    TypeDescriptor::PendingAlternatives(_) => {
+                        let normalized = self.normalize(ty);
+                        return self.project_alternative_field(&normalized, field);
+                    }
+                    _ => break None,
+                },
+                InferenceView::Unknown(variable) => break Some(variable),
+                InferenceView::Conflicted(_) => break None,
             }
-            descriptor => Err(format!(
-                "cannot access field {field:?} on {}",
-                descriptor.display_name()
-            )),
+        };
+        if let Some(variable) = variable {
+            if let Some(result) = self.field_requirements.get(&variable).and_then(|fields| fields.get(field)) {
+                return Ok(result.clone());
+            }
+            let result = self.fresh_variable();
+            self.field_requirements.entry(variable).or_default().insert(field.to_owned(), result.clone());
+            return Ok(result);
         }
+        Err(format!(
+            "cannot access field {field:?} on {}",
+            self.normalize(receiver).display_name()
+        ))
+    }
+
+    fn project_alternative_field(&mut self, ty: &TypeDescriptor, field: &str) -> Result<TypeDescriptor, String> {
+        let TypeDescriptor::PendingAlternatives(variants) = ty else {
+            return self.project_field(ty, field);
+        };
+        let mut projected = Vec::with_capacity(variants.len());
+        for variant in variants {
+            let field = self.project_field(variant, field)?;
+            projected.push(self.normalize(&field));
+        }
+        Ok(join_all_types(projected))
     }
 
     fn expose_pattern_type(&self, descriptor: &TypeDescriptor) -> TypeDescriptor {
@@ -1144,6 +1207,7 @@ impl<'a> GenericInference<'a> {
         &mut self,
         descriptor: &TypeDescriptor,
     ) -> Result<(), String> {
+        if self.field_requirements.is_empty() { return Ok(()); }
         let mut variables = Vec::new();
         collect_inference_variables(&self.normalize(descriptor), &mut variables);
         variables.sort_unstable();

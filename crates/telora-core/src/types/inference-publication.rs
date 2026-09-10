@@ -10,6 +10,34 @@ enum PublishedInferenceSlot {
 #[derive(Clone, Copy, Default)]
 struct PublicationFailure(u8);
 
+fn publish_program_expressions(
+    inference: &GenericInference<'_>,
+    publication: &mut InferencePublication<'_>,
+    types: &mut TypeGraph,
+    sources: &SourceDatabase,
+) -> Result<HashMap<crate::Location, AnalysisTypeId>, FrontendError> {
+    let mut published = HashMap::with_capacity(inference.records.len());
+    let mut expressions = inference.records.iter().collect::<Vec<_>>();
+    expressions.sort_by_key(|(location, _)| location.range().start);
+    for (&location, &slot) in expressions {
+        let result = publication.publish(types, slot,
+            |slot| inference.normalize(&TypeDescriptor::Inference(slot)));
+        let failure = result.err().unwrap_or_default();
+        if failure.contains(PublicationFailure::STANDALONE) {
+            return Err(FrontendError::from_diagnostic(sources, Diagnostic::error(
+                "standalone Atom/Tagged is not a public expression type; use an enum", location)));
+        }
+        if failure.contains(PublicationFailure::ALTERNATIVES) {
+            let resolved = inference.normalize(&TypeDescriptor::Inference(slot));
+            return Err(FrontendError::from_diagnostic(sources, Diagnostic::error(
+                format!("no common type for {}; supply explicit context with .ty!(Ty) or @[Ty]", resolved.display_name()),
+                location)));
+        }
+        if let Ok(id) = result { published.insert(location, id); }
+    }
+    Ok(published)
+}
+
 impl PublicationFailure {
     const UNRESOLVED: u8 = 1;
     const STANDALONE: u8 = 2;
@@ -30,14 +58,42 @@ struct InferencePublication<'a> {
     variables: &'a InferenceVariables,
     slots: Vec<PublishedInferenceSlot>,
     validation: Vec<u8>,
+    validation_parents: Vec<u32>,
+    validation_edges: Vec<(usize, u32)>,
 }
 
 impl<'a> InferencePublication<'a> {
+    fn publish_tool_root(
+        &mut self,
+        graph: &mut TypeGraph,
+        slot: InferenceVariableId,
+        normalize: impl Fn(InferenceVariableId) -> TypeDescriptor,
+    ) -> ToolTypeRoot {
+        if let Ok(id) = self.publish(graph, slot, &normalize) {
+            return ToolTypeRoot::Graph(id);
+        }
+        let Some(ty) = self.variables.known(slot) else { return ToolTypeRoot::Unresolved; };
+        match self.variables.constructor(ty) {
+            InferenceConstructor::Function => {
+                let arguments = self.variables.arguments(ty);
+                let (&result, parameters) = arguments.split_last().expect("function result edge");
+                let arity = parameters.len();
+                let owner = self.publish(graph, result, &normalize).ok()
+                    .filter(|id| matches!(graph.node(*id), TypeNode::Declared { .. }));
+                ToolTypeRoot::OpenFunction { arity, owner }
+            }
+            InferenceConstructor::PendingAlternatives => ToolTypeRoot::open_shape(graph, &normalize(slot)),
+            _ => ToolTypeRoot::Unresolved,
+        }
+    }
+
     fn new(variables: &'a InferenceVariables) -> Self {
         Self {
             variables,
             slots: vec![PublishedInferenceSlot::Unvisited; variables.nodes.len()],
             validation: vec![u8::MAX; variables.nodes.len()],
+            validation_parents: vec![u32::MAX; variables.nodes.len()],
+            validation_edges: Vec::new(),
         }
     }
 
@@ -53,41 +109,53 @@ impl<'a> InferencePublication<'a> {
         normalize: &impl Fn(InferenceVariableId) -> TypeDescriptor,
     ) -> PublicationFailure {
         let root = self.variables.root(root);
-        if self.validation[root.0 as usize] < u8::MAX - 1 {
+        if self.validation[root.0 as usize] != u8::MAX {
             return PublicationFailure(self.validation[root.0 as usize]);
         }
-        let mut work = vec![(root, false)];
-        while let Some((slot, finish)) = work.pop() {
+        let mut work = vec![root];
+        let mut failures = Vec::new();
+        while let Some(slot) = work.pop() {
             let slot = self.variables.root(slot);
             let index = slot.0 as usize;
-            if self.validation[index] < u8::MAX - 1 { continue; }
+            if self.validation[index] != u8::MAX { continue; }
+            self.validation[index] = 0;
             let Some(ty) = self.variables.known(slot) else {
                 self.validation[index] = PublicationFailure::UNRESOLVED;
+                failures.push(index);
                 continue;
             };
             let constructor = self.variables.constructor(ty);
             if Self::needs_normalization(constructor) {
                 self.validation[index] = PublicationFailure::descriptor(&normalize(slot)).0;
+                if self.validation[index] != 0 { failures.push(index); }
                 continue;
             }
             let arguments = self.variables.arguments(ty);
-            if !finish {
-                if self.validation[index] == u8::MAX - 1 {
-                    self.validation[index] = PublicationFailure::UNRESOLVED;
-                    continue;
-                }
-                self.validation[index] = u8::MAX - 1;
-                work.push((slot, true));
-                work.extend(arguments.iter().rev().map(|slot| (*slot, false)));
-                continue;
-            }
             let mut failure = if matches!(constructor,
                 InferenceConstructor::AtomValue | InferenceConstructor::Atom(_) | InferenceConstructor::Tagged(_))
             { PublicationFailure::STANDALONE } else { 0 };
             for argument in arguments {
-                failure |= self.validation[self.variables.root(*argument).0 as usize];
+                let child = self.variables.root(*argument).0 as usize;
+                let edge = self.validation_edges.len() as u32;
+                self.validation_edges.push((index, self.validation_parents[child]));
+                self.validation_parents[child] = edge;
+                if self.validation[child] == u8::MAX { work.push(*argument); }
+                else { failure |= self.validation[child]; }
             }
             self.validation[index] = failure;
+            if failure != 0 { failures.push(index); }
+        }
+        // A recursive edge is evidence sharing, not an unknown. Propagate
+        // actual failures to a fixed point through the flat reverse edges.
+        while let Some(child) = failures.pop() {
+            let mut edge = self.validation_parents[child];
+            while edge != u32::MAX {
+                let (parent, next) = self.validation_edges[edge as usize];
+                let previous = self.validation[parent];
+                self.validation[parent] |= self.validation[child];
+                if self.validation[parent] != previous { failures.push(parent); }
+                edge = next;
+            }
         }
         PublicationFailure(self.validation[root.0 as usize])
     }
@@ -108,6 +176,7 @@ impl<'a> InferencePublication<'a> {
             let slot = self.variables.root(slot);
             let index = slot.0 as usize;
             if matches!(self.slots[index], PublishedInferenceSlot::Complete(_)) { continue; }
+            if !finish && matches!(self.slots[index], PublishedInferenceSlot::Reserved(_)) { continue; }
             let Some(ty) = self.variables.known(slot) else {
                 self.slots[index] = PublishedInferenceSlot::Complete(Err(PublicationFailure(PublicationFailure::UNRESOLVED)));
                 continue;
@@ -126,8 +195,9 @@ impl<'a> InferencePublication<'a> {
                 if finish {
                     let PublishedInferenceSlot::Reserved(id) = self.slots[index] else { unreachable!() };
                     let body = self.variables.root(*arguments.last().expect("nominal body edge"));
-                    let PublishedInferenceSlot::Complete(Ok(body)) = self.slots[body.0 as usize] else {
-                        unreachable!("validated nominal body must publish");
+                    let body = match self.slots[body.0 as usize] {
+                        PublishedInferenceSlot::Complete(Ok(body)) | PublishedInferenceSlot::Reserved(body) => body,
+                        _ => unreachable!("validated nominal body must publish"),
                     };
                     let TypeNode::Declared { body: target, .. } = &mut graph.nodes[id.index()] else { unreachable!() };
                     *target = body;
@@ -159,7 +229,7 @@ impl<'a> InferencePublication<'a> {
             }
             if !finish {
                 if matches!(self.slots[index], PublishedInferenceSlot::Visiting) {
-                    self.slots[index] = PublishedInferenceSlot::Complete(Err(PublicationFailure(PublicationFailure::UNRESOLVED)));
+                    self.slots[index] = PublishedInferenceSlot::Reserved(graph.push(TypeNode::Pending));
                     continue;
                 }
                 self.slots[index] = PublishedInferenceSlot::Visiting;
@@ -171,7 +241,7 @@ impl<'a> InferencePublication<'a> {
             let mut children = Vec::with_capacity(arguments.len());
             for argument in arguments {
                 match self.slots[self.variables.root(*argument).0 as usize] {
-                    PublishedInferenceSlot::Complete(Ok(id)) => children.push(id),
+                    PublishedInferenceSlot::Complete(Ok(id)) | PublishedInferenceSlot::Reserved(id) => children.push(id),
                     PublishedInferenceSlot::Complete(Err(error)) => failure.0 |= error.0,
                     _ => failure.0 |= PublicationFailure::UNRESOLVED,
                 }
@@ -212,7 +282,12 @@ impl<'a> InferencePublication<'a> {
                 }
                 C::Declared { .. } | C::PendingAlternatives | C::AtomValue | C::Atom(_) | C::Tagged(_) => unreachable!(),
             };
-            self.slots[index] = PublishedInferenceSlot::Complete(Ok(graph.intern_node(node)));
+            let id = if let PublishedInferenceSlot::Reserved(id) = self.slots[index] {
+                graph.nodes[id.index()] = node;
+                graph.record_interned_node(id);
+                id
+            } else { graph.intern_node(node) };
+            self.slots[index] = PublishedInferenceSlot::Complete(Ok(id));
         }
         match self.slots[root.0 as usize] {
             PublishedInferenceSlot::Complete(result) => result,
@@ -224,6 +299,43 @@ impl<'a> InferencePublication<'a> {
 #[cfg(test)]
 mod inference_publication_tests {
     use super::*;
+
+    #[test]
+    fn cyclic_slots_publish_from_structural_or_nominal_roots_and_propagate_errors() {
+        for nominal_first in [false, true] {
+            let mut variables = InferenceVariables::default();
+            let nominal = variables.fresh();
+            let body = variables.structure_node(InferenceConstructor::Array, &[nominal]);
+            let constructor = InferenceConstructor::Declared {
+                head: crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 99),
+                name: "Recursive".into(),
+            };
+            let ty = variables.push_type(constructor, &[body]);
+            variables.initialize_known(nominal, ty);
+            let mut graph = TypeGraph::default();
+            let mut publication = InferencePublication::new(&variables);
+            let root = if nominal_first { nominal } else { body };
+            publication.publish(&mut graph, root, |_| panic!("must consume slots")).ok().unwrap();
+            let nominal = publication.publish(&mut graph, nominal, |_| unreachable!()).ok().unwrap();
+            let body = publication.publish(&mut graph, body, |_| unreachable!()).ok().unwrap();
+            assert!(matches!(graph.node(nominal), TypeNode::Declared { body: id, .. } if *id == body));
+            assert!(matches!(graph.node(body), TypeNode::Array(id) if *id == nominal));
+            assert!(graph.nodes.iter().all(|node| !matches!(node, TypeNode::Pending)));
+            assert!(variables.descriptor_views.iter().all(|view| view.get().is_none()));
+        }
+
+        let mut variables = InferenceVariables::default();
+        let cycle = variables.fresh();
+        let unknown = variables.fresh();
+        let child = variables.structure_node(InferenceConstructor::Array, &[cycle]);
+        let ty = variables.push_type(InferenceConstructor::Tuple, &[child, unknown]);
+        variables.initialize_known(cycle, ty);
+        let mut publication = InferencePublication::new(&variables);
+        assert!(publication.validate(cycle, &|_| unreachable!()).contains(PublicationFailure::UNRESOLVED));
+        // The failure must also reach the node visited before the unknown,
+        // even when a subsequent query reads its cached result.
+        assert!(publication.validate(child, &|_| unreachable!()).contains(PublicationFailure::UNRESOLVED));
+    }
 
     #[test]
     fn deep_nominal_bodies_publish_without_normalization_or_descriptor_views() {
@@ -310,11 +422,11 @@ mod inference_publication_tests {
         let hir = HirProgram::default();
         let interfaces = BTreeMap::new();
         let named_types = BTreeMap::new();
-        let annotations = HashMap::new();
+        let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
         let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
-            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &schemes, &hir, &interfaces, &named_types, annotations,
             &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
         );
         let id = crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 97);

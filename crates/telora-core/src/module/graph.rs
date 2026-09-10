@@ -733,6 +733,15 @@ fn install_native_modules_observed(
         let native_module = crate::value::NativeModuleId(spec.id);
         let native_types = declared_native_types(&program, native_module, &spec.name, sources)?;
         for (name, native_type) in native_types.values() {
+            external_interfaces.insert(name.clone(), ModuleInterface {
+                value_binding: Some(name.clone()),
+                type_declarations: BTreeSet::from([name.clone()]),
+                exports: BTreeMap::from([(name.clone(), TypeScheme {
+                    parameters: Vec::new(), constraints: Vec::new(),
+                    body: TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Opaque(native_type.clone()))),
+                })]),
+                ..Default::default()
+            });
             let value = main.heap.native_type_value(native_type.clone());
             let root = main
                 .heap
@@ -1059,8 +1068,8 @@ fn select_import_interface(
             trait_implementations: interface.trait_implementations,
             type_properties: interface.type_properties,
             display_trait: interface.display_trait,
-            type_family_templates: interface
-                .type_family_templates
+            type_family_constructors: interface
+                .type_family_constructors
                 .get(exported)
                 .cloned()
                 .map(|family| BTreeMap::from([(local.to_owned(), family)]))

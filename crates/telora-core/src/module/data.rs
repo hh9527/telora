@@ -26,7 +26,7 @@ struct OpenImportCandidate {
     trait_implementations: Vec<TraitImplementation>,
     type_properties: Vec<crate::types::TypePropertyEvidence>,
     display_trait: Option<crate::TraitId>,
-    type_family_template: Option<TypeFamilyTemplate>,
+    type_family_constructor: Option<crate::types::NominalTypeConstructor>,
 }
 
 #[derive(Clone)]
@@ -42,7 +42,7 @@ struct WorkspaceOpenImportCandidate {
     trait_implementations: Vec<TraitImplementation>,
     type_properties: Vec<crate::types::TypePropertyEvidence>,
     display_trait: Option<crate::TraitId>,
-    type_family_template: Option<TypeFamilyTemplate>,
+    type_family_constructor: Option<crate::types::NominalTypeConstructor>,
 }
 
 fn workspace_open_import_exports(
@@ -77,7 +77,7 @@ fn workspace_open_import_exports(
                     trait_implementations: interface.trait_implementations.clone(),
                     type_properties: interface.type_properties.clone(),
                     display_trait: interface.display_trait,
-                    type_family_template: interface.type_family_templates.get(name).cloned(),
+                    type_family_constructor: interface.type_family_constructors.get(name).cloned(),
                 },
             ))
         })
@@ -118,7 +118,7 @@ fn open_import_exports(
                     trait_implementations: interface.trait_implementations.clone(),
                     type_properties: interface.type_properties.clone(),
                     display_trait: interface.display_trait,
-                    type_family_template: interface.type_family_templates.get(name).cloned(),
+                    type_family_constructor: interface.type_family_constructors.get(name).cloned(),
                 },
             ))
         })
@@ -209,9 +209,8 @@ fn entry_wrapper_body(
         .ok_or_else(|| ModuleError::new("std/entry is not installed"))?;
     let constructor = module
         .interface
-        .type_family_templates
+        .type_family_constructors
         .get(name)
-        .and_then(TypeFamilyTemplate::constructor)
         .map(|constructor| constructor.id)
         .ok_or_else(|| ModuleError::new(format!("std/entry has no {name} type family")))?;
     let TypeDescriptor::Declared(declared) = descriptor else {
@@ -248,7 +247,7 @@ fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
         trait_implementations: Vec::new(),
         type_properties: Vec::new(),
         display_trait: None,
-        type_family_templates: BTreeMap::new(),
+        type_family_constructors: BTreeMap::new(),
     }
 }
 

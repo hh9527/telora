@@ -10,11 +10,11 @@
         let schemes = HashMap::new();
         let interfaces = BTreeMap::new();
         let named_types = BTreeMap::new();
-        let annotations = HashMap::new();
+        let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
         let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
-            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &schemes, &hir, &interfaces, &named_types, annotations,
             &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
         );
         let slot = inference.variables.fresh();
@@ -160,11 +160,11 @@
         let hir = HirProgram::default();
         let interfaces = BTreeMap::new();
         let named_types = BTreeMap::new();
-        let annotations = HashMap::new();
+        let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
         let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
-            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &schemes, &hir, &interfaces, &named_types, annotations,
             &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
         );
         let mut sources = SourceDatabase::default();
@@ -187,11 +187,11 @@
         let hir = HirProgram::default();
         let interfaces = BTreeMap::new();
         let named_types = BTreeMap::new();
-        let annotations = HashMap::new();
+        let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
         let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
-            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &schemes, &hir, &interfaces, &named_types, annotations,
             &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
         );
         let mut sources = SourceDatabase::default();
@@ -215,11 +215,11 @@
         let hir = HirProgram::default();
         let interfaces = BTreeMap::new();
         let named_types = BTreeMap::new();
-        let annotations = HashMap::new();
+        let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
         let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
-            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &schemes, &hir, &interfaces, &named_types, annotations,
             &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
         );
         let never = inference.variables.structure_node(InferenceConstructor::Never, &[]);
@@ -242,11 +242,11 @@
         let hir = HirProgram::default();
         let interfaces = BTreeMap::new();
         let named_types = BTreeMap::new();
-        let annotations = HashMap::new();
+        let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
         let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
-            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &schemes, &hir, &interfaces, &named_types, annotations,
             &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
         );
         // Recursive references may have an identity without a local body.
@@ -264,11 +264,11 @@
         let hir = HirProgram::default();
         let interfaces = BTreeMap::new();
         let named_types = BTreeMap::new();
-        let annotations = HashMap::new();
+        let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
         let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
-            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &schemes, &hir, &interfaces, &named_types, annotations,
             &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
         );
         let mut sources = SourceDatabase::default();
@@ -322,11 +322,11 @@
         let hir = HirProgram::default();
         let interfaces = BTreeMap::new();
         let named_types = BTreeMap::new();
-        let annotations = HashMap::new();
+        let annotations = InferenceAnnotationInputs::default();
         let trait_ids = BTreeMap::new();
         let dyn_namespaces = HashSet::new();
         let mut inference = GenericInference::new(
-            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &schemes, &hir, &interfaces, &named_types, annotations,
             &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
         );
         let item1 = inference.variables.fresh();
@@ -365,7 +365,7 @@
 
         let schemes = HashMap::new();
         let interfaces = BTreeMap::new();
-        let annotations = HashMap::new();
+        let annotations = InferenceAnnotationInputs::default();
         let dyn_namespaces = HashSet::new();
         let named_types = BTreeMap::new();
         let trait_ids = BTreeMap::new();
@@ -375,7 +375,7 @@
             &hir,
             &interfaces,
             &named_types,
-            &annotations,
+            annotations,
             &[],
             &[],
             &trait_ids,
@@ -529,7 +529,7 @@
         fn round_trip(descriptor: &TypeDescriptor) {
             let mut heap = Heap::work();
             let value = heap.type_descriptor_value(None, descriptor).unwrap();
-            let world = crate::DataWorld::new(heap, value);
+            let world = crate::DataWorld::new(heap, value, Some(TypeDescriptor::TypeOf(Box::new(descriptor.clone()))));
             assert_eq!(decode_type_ref(world.value(), "Type").unwrap(), *descriptor);
         }
 

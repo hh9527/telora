@@ -95,7 +95,7 @@ fn host_metadata_cannot_impersonate_a_builtin_type_declaration() {
     let root = heap
         .type_descriptor_value(None, &TypeDescriptor::Int)
         .unwrap();
-    let values = BTreeMap::from([("Int".to_owned(), crate::DataWorld::new(heap, root))]);
+    let values = BTreeMap::from([("Int".to_owned(), crate::DataWorld::new(heap, root, Some(TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Int)))))]);
     let partial = analyze_partial_types_with_bindings(
         "host-metadata.telora",
         "type Invalid = Int; 0",

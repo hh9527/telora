@@ -152,40 +152,56 @@ pub struct ExecutionWorld {
 
 #[derive(Clone)]
 pub struct DataWorld {
-    heap: Arc<Heap>,
+    data: Arc<HostData>,
     root: Val,
 }
 
+struct HostData {
+    heap: Heap,
+    contract: Option<crate::types::TypeDescriptor>,
+}
+
 impl DataWorld {
-    pub(crate) fn new(heap: Heap, root: Val) -> Self {
+    pub(crate) fn new(heap: Heap, root: Val, contract: Option<crate::types::TypeDescriptor>) -> Self {
         Self {
-            heap: Arc::new(heap),
+            data: Arc::new(HostData { heap, contract }),
             root,
         }
     }
 
     pub fn int(value: i64) -> Self {
-        Self::new(Heap::work(), Val::unknown(DecodedValue::Int(value)))
+        Self::new(Heap::work(), Val::unknown(DecodedValue::Int(value)), Some(crate::types::TypeDescriptor::Int))
     }
 
     pub fn float(value: f64) -> Result<Self, &'static str> {
         value
             .is_finite()
-            .then(|| Self::new(Heap::work(), Val::unknown(DecodedValue::Float(value))))
+            .then(|| Self::new(Heap::work(), Val::unknown(DecodedValue::Float(value)), Some(crate::types::TypeDescriptor::Float)))
             .ok_or("Telora Float must be finite")
     }
 
     pub fn string(value: &str) -> Self {
         let mut heap = Heap::work();
         let root = Val::unknown(heap.string(None, value));
-        Self::new(heap, root)
+        Self::new(heap, root, Some(crate::types::TypeDescriptor::String))
+    }
+
+    pub(crate) fn static_interface(&self, name: &str) -> Option<crate::types::ModuleInterface> {
+        let body = self.data.contract.as_ref()?.clone();
+        Some(crate::types::ModuleInterface {
+            value_binding: Some(name.to_owned()),
+            exports: std::collections::BTreeMap::from([(name.to_owned(), crate::types::TypeScheme {
+                parameters: Vec::new(), constraints: Vec::new(), body,
+            })]),
+            ..Default::default()
+        })
     }
 
     pub fn value(&self) -> ValueRef<'_> {
         ValueRef {
             value: self.root,
             view: HeapView {
-                current: &self.heap,
+                current: &self.data.heap,
                 background: None,
             },
         }
@@ -195,7 +211,7 @@ impl DataWorld {
         &self,
         main: &mut Heap,
     ) -> Result<PersistentValue, crate::heap::HeapError> {
-        publish_root(main, &self.heap, self.root)
+        publish_root(main, &self.data.heap, self.root)
     }
 
     pub(crate) fn relocate_into(
@@ -203,7 +219,7 @@ impl DataWorld {
         target: &mut Heap,
         main: &Heap,
     ) -> Result<Val, crate::heap::HeapError> {
-        relocate_work_roots(target, main, &self.heap, &[self.root]).map(|roots| roots[0])
+        relocate_work_roots(target, main, &self.data.heap, &[self.root]).map(|roots| roots[0])
     }
 }
 
@@ -317,16 +333,6 @@ impl<'a> ValueRef<'a> {
 
     pub(crate) fn runtime(self) -> Val {
         self.value
-    }
-
-    pub(crate) fn persistent(value: PersistentValue, heap: &'a Heap) -> Self {
-        Self {
-            value: value.runtime(),
-            view: HeapView {
-                current: heap,
-                background: None,
-            },
-        }
     }
 
     pub(crate) fn work(value: Val, work: &'a Heap, main: &'a Heap) -> Self {
@@ -631,6 +637,7 @@ impl<'a> ValueRef<'a> {
         self.declared_type_body()
     }
 
+    #[cfg(test)]
     pub(crate) fn module_fields(self) -> Option<Vec<&'a str>> {
         let DecodedValue::Module(handle) = self.value.value() else {
             return None;

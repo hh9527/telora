@@ -1,19 +1,51 @@
-fn infer_expr_recorded(
-    expression: &Expr,
-    environment: &dyn TypeEnvironment,
-    facts: &mut HashMap<crate::Location, TypeDescriptor>,
-) -> Option<TypeDescriptor> {
-    infer_expr_with(expression, environment, &mut |location, descriptor| {
-        facts.insert(location, descriptor.clone());
-    })
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+
+    #[test]
+    fn root_projection_does_not_read_irrelevant_operand_types() {
+        struct Inputs { function: TypeDescriptor, array: TypeDescriptor }
+        impl TypeEnvironment for Inputs {
+            fn get(&self, name: &str) -> Option<&TypeDescriptor> {
+                match name {
+                    "f" => Some(&self.function),
+                    "items" => Some(&self.array),
+                    _ => panic!("root projection unnecessarily read {name}"),
+                }
+            }
+        }
+        let environment = Inputs {
+            function: TypeDescriptor::Function { parameters: vec![TypeDescriptor::Int], result: Box::new(TypeDescriptor::Int) },
+            array: TypeDescriptor::Array(Box::new(TypeDescriptor::Int)),
+        };
+        for text in ["f(unneeded)", "items[unneeded]", "if unneeded { 1 } else { 2 }"] {
+            let mut sources = SourceDatabase::default();
+            let source = sources.add("root-projection", text);
+            let program = parse_registered(&sources, source).program.unwrap();
+            assert_eq!(infer_expr_projection(&program.value.body.value.result, &environment), Some(TypeDescriptor::Int));
+        }
+        let mut sources = SourceDatabase::default();
+        let source = sources.add("untyped-closure-projection", "fn(x) { unneeded }");
+        let program = parse_registered(&sources, source).program.unwrap();
+        assert_eq!(infer_expr_projection(&program.value.body.value.result, &environment), None);
+    }
+
+    #[test]
+    fn complete_solver_still_rejects_arguments_with_projectable_call_results() {
+        let error = analyze_source("argument-check", r#"
+            def f: Fn(Int) -> Int = fn(x) { x };
+            def result = f("wrong");
+            result
+        "#).unwrap_err();
+        assert!(error.message.contains("Int") && error.message.contains("String"), "{}", error.message);
+    }
 }
 
-// This projection records only evidence available before strict inference.
+// This projection computes only the requested root type before strict inference.
 // Missing evidence is not a type and cannot justify a compatibility decision.
-fn infer_expr_with(
+fn infer_expr_projection(
     expression: &Expr,
     environment: &dyn TypeEnvironment,
-    record: &mut impl FnMut(crate::Location, &TypeDescriptor),
 ) -> Option<TypeDescriptor> {
     let inferred = match &expression.value {
         ExprKind::Int(_) => Some(TypeDescriptor::Int),
@@ -24,23 +56,16 @@ fn infer_expr_with(
         // variants before evaluation. Strict inference supplies the enum owner.
         ExprKind::Atom(name) => Some(TypeDescriptor::Atom(atom_from_name(name))),
         ExprKind::Variable(name) => environment.get(&name.value).cloned(),
-        ExprKind::InterpolatedString(parts) => {
-            for part in parts {
-                if let StringPartKind::Expression(expression) = &part.value {
-                    infer_expr_with(expression, environment, record);
-                }
-            }
-            Some(TypeDescriptor::String)
-        }
+        ExprKind::InterpolatedString(_) => Some(TypeDescriptor::String),
         ExprKind::Array(items) => {
             let items = items.iter().map(|item| {
                 if let ExprKind::Spread(operand) = &item.value {
-                    match infer_expr_with(operand, environment, record) {
+                    match infer_expr_projection(operand, environment) {
                         Some(TypeDescriptor::Array(item)) => Some(*item),
                         _ => None,
                     }
                 } else {
-                    infer_expr_with(item, environment, record)
+                    infer_expr_projection(item, environment)
                 }
             }).collect::<Vec<_>>();
             items.into_iter().collect::<Option<Vec<_>>>()
@@ -52,12 +77,12 @@ fn infer_expr_with(
             let mut complete = true;
             for item in items {
                 if let ExprKind::Spread(operand) = &item.value {
-                    if let Some(TypeDescriptor::Tuple(items)) = infer_expr_with(operand, environment, record) {
+                    if let Some(TypeDescriptor::Tuple(items)) = infer_expr_projection(operand, environment) {
                         types.extend(items);
                     } else {
                         complete = false;
                     }
-                } else if let Some(ty) = infer_expr_with(item, environment, record) {
+                } else if let Some(ty) = infer_expr_projection(item, environment) {
                     types.push(ty);
                 } else {
                     complete = false;
@@ -69,12 +94,12 @@ fn infer_expr_with(
             let items = fields.iter().map(|field| {
                 if field.value.name.is_none() {
                     let ExprKind::Spread(operand) = &field.value.value.value else { return None; };
-                    match infer_expr_with(operand, environment, record) {
+                    match infer_expr_projection(operand, environment) {
                         Some(TypeDescriptor::Dict(item)) => Some(*item),
                         _ => None,
                     }
                 } else {
-                    infer_expr_with(&field.value.value, environment, record)
+                    infer_expr_projection(&field.value.value, environment)
                 }
             }).collect::<Vec<_>>();
             items.into_iter().collect::<Option<Vec<_>>>()
@@ -82,45 +107,40 @@ fn infer_expr_with(
         }
         ExprKind::Dict(fields) => {
             let fields = fields.iter().map(|field| {
-                let ty = infer_expr_with(&field.value.value, environment, record);
+                let ty = infer_expr_projection(&field.value.value, environment);
                 ty.map(|ty| (field.value.name.as_ref().expect("ordinary field has a name").value.clone(), ty))
             }).collect::<Vec<_>>();
             fields.into_iter().collect::<Option<BTreeMap<_, _>>>().map(TypeDescriptor::Struct)
         }
-        ExprKind::Block(block) => infer_block_with(block, environment, record),
+        ExprKind::Block(block) => infer_block_projection(block, environment),
         ExprKind::TypeSyntax(operand) | ExprKind::TypeMetadata(operand) => {
-            match infer_expr_with(operand, environment, record) {
+            match infer_expr_projection(operand, environment) {
                 Some(TypeDescriptor::Type) => None,
                 inferred => inferred,
             }
         }
         ExprKind::Spread(operand) | ExprKind::Unary { operand, .. } | ExprKind::Propagate { operand } =>
-            infer_expr_with(operand, environment, record),
-        ExprKind::Return { value } => {
-            infer_expr_with(value, environment, record);
-            Some(TypeDescriptor::Never)
-        }
-        ExprKind::Panic { message } => {
-            infer_expr_with(message, environment, record);
-            Some(TypeDescriptor::Never)
-        }
-        ExprKind::Raise { action, message, subjects } => {
-            infer_expr_with(message, environment, record);
-            for subject in subjects { infer_expr_with(subject, environment, record); }
+            infer_expr_projection(operand, environment),
+        ExprKind::Return { .. } | ExprKind::Panic { .. } => Some(TypeDescriptor::Never),
+        ExprKind::Raise { action, .. } => {
             match action {
                 crate::ast::BlameAction::Build => Some(TypeDescriptor::Opaque(crate::core::blame_native_type())),
                 crate::ast::BlameAction::Warn => None,
                 _ => Some(TypeDescriptor::Never),
             }
         }
-        ExprKind::Debug { value, .. } => infer_expr_with(value, environment, record),
+        ExprKind::Debug { value, .. } => infer_expr_projection(value, environment),
         ExprKind::Binary { operator, left, right } => {
-            let left = infer_expr_with(left, environment, record);
-            let right = infer_expr_with(right, environment, record);
-            match operator.value {
+            if matches!(operator.value,
                 BinaryOperator::LessThan | BinaryOperator::LessThanOrEqual
                 | BinaryOperator::GreaterThan | BinaryOperator::GreaterThanOrEqual
-                | BinaryOperator::Equal | BinaryOperator::NotEqual => Some(normalized_bool_descriptor()),
+                | BinaryOperator::Equal | BinaryOperator::NotEqual)
+            {
+                return Some(normalized_bool_descriptor());
+            }
+            let left = infer_expr_projection(left, environment);
+            let right = infer_expr_projection(right, environment);
+            match operator.value {
                 BinaryOperator::StructUpdate if matches!(&left,
                     Some(TypeDescriptor::Declared(declared))
                         if matches!(declared.body.as_ref(), TypeDescriptor::Struct(_))) => left,
@@ -128,27 +148,23 @@ fn infer_expr_with(
                 _ => None,
             }
         }
-        ExprKind::FieldProjection { receiver, .. } => {
-            infer_expr_with(receiver, environment, record);
-            None
-        }
+        ExprKind::FieldProjection { .. } => None,
         ExprKind::Field { receiver, field } => {
-            match infer_expr_with(receiver, environment, record) {
+            match infer_expr_projection(receiver, environment) {
                 Some(TypeDescriptor::Struct(fields)) => fields.get(&field.value).cloned(),
                 Some(TypeDescriptor::Dict(item)) => Some(*item),
                 _ => None,
             }
         }
-        ExprKind::Index { receiver, index } => {
-            let receiver = infer_expr_with(receiver, environment, record);
-            infer_expr_with(index, environment, record);
+        ExprKind::Index { receiver, .. } => {
+            let receiver = infer_expr_projection(receiver, environment);
             match receiver {
                 Some(TypeDescriptor::Array(item)) => Some(*item),
                 _ => None,
             }
         }
         ExprKind::TupleProjection { receiver, index } => {
-            match infer_expr_with(receiver, environment, record) {
+            match infer_expr_projection(receiver, environment) {
                 Some(TypeDescriptor::Declared(declared)) if index.value == 0 => match declared.body.as_ref() {
                     TypeDescriptor::Newtype(payload) => Some(payload.as_ref().clone()),
                     _ => None,
@@ -158,39 +174,26 @@ fn infer_expr_with(
             }
         }
         ExprKind::TypeAscription { value, target } => {
-            let actual = infer_expr_with(value, environment, record);
-            match infer_expr_with(target, environment, record) {
+            match infer_expr_projection(target, environment) {
                 Some(TypeDescriptor::TypeOf(target)) => Some(*target),
-                _ => actual,
+                _ => infer_expr_projection(value, environment),
             }
         }
-        ExprKind::CheckedCast { value, target } => {
-            infer_expr_with(value, environment, record);
-            match infer_expr_with(target, environment, record) {
+        ExprKind::CheckedCast { target, .. } => {
+            match infer_expr_projection(target, environment) {
                 Some(TypeDescriptor::TypeOf(target)) => Some(result_descriptor(*target, TypeDescriptor::String)),
                 _ => None,
             }
         }
-        ExprKind::DynProject { namespace, target, value } => {
-            infer_expr_with(namespace, environment, record);
-            infer_expr_with(value, environment, record);
-            match infer_expr_with(target, environment, record) {
+        ExprKind::DynProject { target, .. } => {
+            match infer_expr_projection(target, environment) {
                 Some(TypeDescriptor::TypeOf(target)) => Some(option_descriptor(*target)),
                 _ => None,
             }
         }
-        ExprKind::TypeApply { callee, arguments } => {
-            infer_expr_with(callee, environment, record);
-            for argument in arguments {
-                if let TypeArgumentKind::Explicit(argument) = &argument.value {
-                    infer_expr_with(argument, environment, record);
-                }
-            }
-            None
-        }
+        ExprKind::TypeApply { .. } => None,
         ExprKind::Call { callee, arguments } => {
-            let callee = infer_expr_with(callee, environment, record);
-            let arguments = arguments.iter().map(|argument| infer_expr_with(argument, environment, record)).collect::<Vec<_>>();
+            let callee = infer_expr_projection(callee, environment);
             match callee {
                 Some(TypeDescriptor::Function { result, .. }) => {
                     let mut parameters = Vec::new();
@@ -198,61 +201,52 @@ fn infer_expr_with(
                     parameters.is_empty().then_some(*result)
                 }
                 Some(TypeDescriptor::Atom(tag)) if arguments.len() == 1 =>
-                    arguments.into_iter().next().flatten().map(|payload| TypeDescriptor::Tagged { tag, payload: Box::new(payload) }),
+                    infer_expr_projection(&arguments[0], environment).map(|payload| TypeDescriptor::Tagged { tag, payload: Box::new(payload) }),
                 _ => None,
             }
         }
-        ExprKind::Interpreter { elaboration, .. } => infer_expr_with(elaboration, environment, record),
-        ExprKind::Closure { parameters, result_annotation, body } => {
+        ExprKind::Interpreter { elaboration, .. } => infer_expr_projection(elaboration, environment),
+        ExprKind::Closure { parameters, body, .. } => {
             let mut closure_environment = ScopedTypeEnvironment::new(environment);
             let parameters = parameters.iter().map(|parameter| {
                 let ty = parameter.annotation.as_ref().and_then(|annotation| {
-                    match infer_expr_with(annotation, environment, record) {
+                    match infer_expr_projection(annotation, environment) {
                         Some(TypeDescriptor::TypeOf(ty)) => Some(*ty),
                         _ => None,
                     }
                 });
                 set_projected_type(&mut closure_environment, &parameter.name.value, ty.clone());
                 ty
-            }).collect::<Vec<_>>();
-            if let Some(annotation) = result_annotation { infer_expr_with(annotation, environment, record); }
-            let result = infer_block_with(body, &closure_environment, record);
-            parameters.into_iter().collect::<Option<Vec<_>>>().zip(result)
-                .map(|(parameters, result)| TypeDescriptor::Function { parameters, result: Box::new(result) })
+            }).collect::<Option<Vec<_>>>()?;
+            let result = infer_block_projection(body, &closure_environment)?;
+            Some(TypeDescriptor::Function { parameters, result: Box::new(result) })
         }
-        ExprKind::If { condition, then_branch, else_branch } => {
-            infer_expr_with(condition, environment, record);
-            let left = infer_block_with(then_branch, environment, record);
-            let right = infer_block_with(else_branch, environment, record);
+        ExprKind::If { then_branch, else_branch, .. } => {
+            let left = infer_block_projection(then_branch, environment);
+            let right = infer_block_projection(else_branch, environment);
             left.zip(right).map(|(left, right)| join_types(left, right))
         }
-        ExprKind::IfLet { pattern, value, then_branch, else_branch } => {
-            infer_expr_with(value, environment, record);
+        ExprKind::IfLet { pattern, then_branch, else_branch, .. } => {
             let mut then_environment = ScopedTypeEnvironment::new(environment);
             clear_pattern_types(pattern, &mut then_environment);
-            let left = infer_block_with(then_branch, &then_environment, record);
-            let right = infer_block_with(else_branch, environment, record);
+            let left = infer_block_projection(then_branch, &then_environment);
+            let right = infer_block_projection(else_branch, environment);
             left.zip(right).map(|(left, right)| join_types(left, right))
         }
-        ExprKind::LetElse { pattern, value, else_branch, body } => {
-            infer_expr_with(value, environment, record);
-            infer_block_with(else_branch, environment, record);
+        ExprKind::LetElse { pattern, body, .. } => {
             let mut body_environment = ScopedTypeEnvironment::new(environment);
             clear_pattern_types(pattern, &mut body_environment);
-            infer_block_with(body, &body_environment, record)
+            infer_block_projection(body, &body_environment)
         }
-        ExprKind::Match { value, arms } => {
-            infer_expr_with(value, environment, record);
+        ExprKind::Match { arms, .. } => {
             let arms = arms.iter().map(|arm| {
                 let mut arm_environment = ScopedTypeEnvironment::new(environment);
                 clear_pattern_types(&arm.value.pattern, &mut arm_environment);
-                if let Some(guard) = &arm.value.guard { infer_expr_with(guard, &arm_environment, record); }
-                infer_expr_with(&arm.value.value, &arm_environment, record)
+                infer_expr_projection(&arm.value.value, &arm_environment)
             }).collect::<Vec<_>>();
             arms.into_iter().collect::<Option<Vec<_>>>().map(pending_alternatives)
         }
     };
-    if let Some(inferred) = &inferred { record(expression.location, inferred); }
     inferred
 }
 
@@ -261,10 +255,9 @@ fn set_projected_type(environment: &mut dyn MutableTypeEnvironment, name: &str, 
     else { environment.remove(name); }
 }
 
-fn infer_block_with(
+fn infer_block_projection(
     block: &Block,
     environment: &dyn TypeEnvironment,
-    record: &mut impl FnMut(crate::Location, &TypeDescriptor),
 ) -> Option<TypeDescriptor> {
     let mut environment = ScopedTypeEnvironment::new(environment);
     let mut diverges = false;
@@ -272,14 +265,13 @@ fn infer_block_with(
         environment.remove(&binding.value.name.value);
     }
     for binding in &block.value.bindings {
-        if let Some(annotation) = &binding.value.annotation { infer_expr_with(annotation, &environment, record); }
-        let inferred = infer_expr_with(&binding.value.value, &environment, record);
+        let inferred = infer_expr_projection(&binding.value.value, &environment);
         diverges |= matches!(inferred, Some(TypeDescriptor::Never));
         if matches!(binding.value.kind, BindingKind::Let | BindingKind::Def | BindingKind::Import) {
             set_projected_type(&mut environment, &binding.value.name.value, inferred);
         }
     }
-    let result = infer_expr_with(&block.value.result, &environment, record);
+    let result = infer_expr_projection(&block.value.result, &environment);
     if diverges { Some(TypeDescriptor::Never) } else { result }
 }
 

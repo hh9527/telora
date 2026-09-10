@@ -312,26 +312,6 @@ impl Heap {
         Ok(PersistentValue(value))
     }
 
-    pub(crate) fn declare_type(
-        &mut self,
-        body: Val,
-        module: crate::ModuleId,
-        declaration: u32,
-        name: impl Into<Arc<str>>,
-    ) -> Result<Val, HeapError> {
-        let id = crate::value::DeclaredTypeId::concrete(module, declaration);
-        let type_id = self.canonical_declared_type_id(&id)?;
-        let handle = self.allocate_declared_type(Object::DeclaredType {
-            type_id,
-            id,
-            name: name.into(),
-            body,
-            sealed: true,
-            application_arguments: None,
-        });
-        Ok(Val::unknown(DecodedValue::DeclaredType(handle)))
-    }
-
     pub(crate) fn reserve_type_ref(
         &mut self,
         module: crate::ModuleId,

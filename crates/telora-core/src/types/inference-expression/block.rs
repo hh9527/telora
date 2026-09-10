@@ -135,7 +135,7 @@ impl<'a> GenericInference<'a> {
             )?;
             let descriptor = scheme
                 .as_ref()
-                .map_or_else(|| self.normalize(&inferred), |scheme| scheme.body.clone());
+                .map_or_else(|| inferred.clone(), |scheme| scheme.body.clone());
             self.bind_local(&mut environment, binding.value.name.location, &binding.value.name.value, descriptor, scheme.clone());
             if let Some(scheme) = scheme {
                 self.inferred_schemes
@@ -165,8 +165,8 @@ impl<'a> GenericInference<'a> {
                 .value
                 .annotation
                 .as_ref()
-                .and_then(|annotation| self.local_annotations.get(&annotation.location));
-            let binding_expected = annotated_expected.or_else(|| {
+                .and_then(|annotation| self.local_annotations.get(&annotation.location)).cloned();
+            let binding_expected = annotated_expected.as_ref().or_else(|| {
                 declared_contracts
                     .get(&binding.value.name.value)
                     .map(|(_, contract)| contract)
@@ -279,18 +279,17 @@ impl<'a> GenericInference<'a> {
             if let Some(query) = &self.query {
                 query.check().map_err(|error| error.to_string())?;
             }
-            let resolved = self.normalize(&descriptor);
-            if contains_inference_variable_at_or_after(&resolved, first_owned_variable) {
+            if self.contains_owned_unknown(&descriptor, first_owned_variable) {
                 return Err(format!(
                     "cannot infer monomorphic binding {name:?}: unresolved {}",
-                    resolved.display_name()
+                    self.normalize(&descriptor).display_name()
                 ));
             }
         }
         Ok(if diverges {
             TypeDescriptor::Never
         } else {
-            self.normalize(&result)
+            result
         })
     }
 }

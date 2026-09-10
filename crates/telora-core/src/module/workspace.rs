@@ -480,8 +480,8 @@ impl WorkspaceBuilder<'_> {
                         trait_implementations: candidate.trait_implementations,
                         type_properties: candidate.type_properties,
                         display_trait: candidate.display_trait,
-                        type_family_templates: candidate
-                            .type_family_template
+                        type_family_constructors: candidate
+                            .type_family_constructor
                             .map(|family| BTreeMap::from([(name.clone(), family)]))
                             .unwrap_or_default(),
                     }),
@@ -530,9 +530,7 @@ impl WorkspaceBuilder<'_> {
                     source_id,
                     &parsed.recovered,
                     parsed.diagnostics.clone(),
-                    self.engine.config.module_quota,
-                    &external_roots.iter().map(|(name, root)| (name.clone(), *root)).collect(),
-                    &mut self.main.heap,
+                    &external_roots.keys().cloned().collect(),
                     PartialAnalysisControl {
                         unavailable_imports: &unavailable_imports,
                         external_schemes: &external_schemes,
