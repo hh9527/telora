@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Delete the legacy semantic snapshot and query projection (2026-09-11)
+
+Removed semantic.rs, its remaining old-interface test and its root-level API
+exports. WorkspaceSnapshot, WorkspaceTypeGraph, projected workspace IDs,
+old completion/definition/reference APIs and snapshot builders are gone.
+Repository Rust callers now have no references to those snapshot/graph types.
+Editor and query consumers already use MIR IDs and mir_query directly.
+
+The old partial type analyzer still consumes diagnostic fact structures. These
+now live under types/facts.rs, re-exported by the old types module rather than
+by a separate semantic subsystem. Removed FactIdentity variants referring to
+deleted projected definition/expression IDs; the analyzer retains its existing
+HirDefinition identity. This does not replace the new solver's own slot states
+or add an adapter between the two representations.
+
+Validation: workspace compilation passes, type-resolve 68/68, mir_query 5/5 and
+telora library 28/28 pass. Logs:
+/tmp/mir-remove-semantic-{check,types,query,editor}.log.
+Unused-code warnings fall from 43 to 37; no suppressions were added. Roughly
+1,400 net source/test lines were removed. Remaining old compiler/types and VM
+descriptor branches still require removal; full migration remains incomplete.
+
 ### Delete the legacy Engine/module implementation (2026-09-11)
 
 Removed module.rs and all 27 files under module/, including the old graph and

@@ -42,7 +42,6 @@ mod property;
 pub mod query;
 mod regex;
 pub mod runtime_host;
-pub mod semantic;
 mod sha256;
 pub mod source;
 pub mod syntax;
@@ -86,14 +85,6 @@ pub use runtime_host::{
     DataLimits, EesCall, EesReply, EntryDataSources, EvalContext, EvalSource, RunHost,
     RunHostFuture, RunOutcome, RunTermination, SystemCaps, SystemDataFormat, SystemDataSource,
     SystemEesModel, SystemEvent, SystemStdin, SystemTextSource,
-};
-pub use semantic::{
-    CompletionCandidate, CompletionKind, CompletionResult, Conflict, Definition, DefinitionId,
-    DefinitionKind, DiagnosticId, FactIdentity, FactState, IncomputableReason, Reference,
-    ReferenceId, SemanticFact, UnknownReason, WorkspaceExport, WorkspaceExpression,
-    WorkspaceExpressionId, WorkspaceModule, WorkspaceModuleId, WorkspaceModuleKind,
-    WorkspaceModuleState, WorkspaceSnapshot, WorkspaceTypeGraph, WorkspaceTypeId,
-    WorkspaceTypeNode,
 };
 pub use source::{
     Diagnostic, Label, Loc, Located, Location, Origin, SourceDatabase, SourceId, TextRange,

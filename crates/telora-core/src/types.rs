@@ -12,7 +12,8 @@ use crate::json::{Provenance, ValuePath, ValuePathSegment};
 use crate::lexer::{FrontendError, SourceLocation};
 use crate::lir::RegisterId;
 use crate::parser::parse_registered;
-use crate::semantic::{
+mod facts;
+pub use facts::{
     Conflict, DiagnosticId, FactIdentity, FactState, IncomputableReason, SemanticFact,
     UnknownReason,
 };
