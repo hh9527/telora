@@ -13,7 +13,7 @@ fn run_core_codec(
 ) -> Result<VmAction, RuntimeError> {
     if background.solved_types.is_some() {
         if matches!(operation, CoreCodecFunction::Encode) {
-            return run_solved_codec_encode(arguments, signature, return_target, function, pc, current, background, account);
+            return run_solved_codec_encode(arguments, signature, return_target, rule_boundary, function, pc, current, background, account);
         }
         return run_solved_codec_decode(arguments, signature, return_target, function, pc, current, background, account);
     }

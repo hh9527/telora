@@ -5,6 +5,30 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Codec text encoding resumes through prepared DisplayBy (2026-09-10)
+
+The solved encoder now honors paired DecodeByParse/EncodeByDisplay markers,
+demands the VM-cached DisplayBy property, and calls its prepared display function
+with a Dyn wrapper around the original value and solved owner ID. A native
+continuation renders the returned Fmt into a new Value.String and resumes the
+same encoder stack. Nested structs and repeated array elements use this path.
+Text encoding takes precedence over structural rename/untagged options, matching
+the existing bridge contract. Missing marker partners or DisplayBy are errors.
+
+Rendering measures and charges the output size before allocating text, preserves
+native allocation/stack failure categories, and forwards the codec rule boundary
+through property and display calls. Property providers are cached; display(value)
+is an ordinary call per input. Tests distinguish a failed provider (one FailureId,
+one initial diagnostic, no repeated diagnostic) from two failed display calls
+(two FailureIds and one diagnostic per call, without poisoning the provider).
+
+Ten codec regressions pass, including nested Service/Endpoint text encoding,
+incomplete contracts, array continuation, existing handle-sharing checks, and
+the two failure lifecycles. Log: /tmp/mir-text-encode.log. No full-suite or
+performance claim. DecodeByParse execution still awaits solved regex preparation
+and parsing; construction checks, schema, generic evidence and legacy removal
+remain part of the overall migration.
+
 ### Static body IDs and prepared DisplayBy execution (2026-09-10)
 
 Nominal applied layouts now include a structural body TypeId allocated by the

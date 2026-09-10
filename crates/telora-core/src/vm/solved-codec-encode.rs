@@ -29,6 +29,7 @@ struct SolvedEncode {
     trace_frame: RuntimeFrame,
     function: Arc<BytecodeFunction>,
     pc: usize,
+    rule_boundary: Option<crate::Loc>,
 }
 
 impl NativeContinuation for SolvedEncode {
@@ -61,10 +62,85 @@ impl NativeContinuation for SolvedEncode {
     }
 }
 
+#[derive(Debug)]
+struct SolvedDisplay {
+    encoder: SolvedEncode,
+    loc: Option<crate::Loc>,
+}
+
+impl NativeContinuation for SolvedDisplay {
+    fn return_target(&self) -> &ReturnTarget {
+        &self.encoder.return_target
+    }
+    fn trace_frame(&self) -> &RuntimeFrame {
+        &self.encoder.trace_frame
+    }
+    fn resume(
+        self: Box<Self>,
+        value: Val,
+        current: &mut Heap,
+        background: &Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        let Self { mut encoder, loc } = *self;
+        let function = &encoder.function;
+        let pc = encoder.pc;
+        propagate_direct_failure(&value, function, pc)?;
+        let reference = ValueRef {
+            value,
+            view: HeapView {
+                current,
+                background: Some(background),
+            },
+        };
+        let render_error = |e: NativeError| {
+            error(
+                match e.limit() {
+                    Some(NativeLimit::Stack) => RuntimeErrorKind::StackLimitExceeded,
+                    Some(NativeLimit::Allocation) => RuntimeErrorKind::AllocationQuotaExceeded,
+                    None => RuntimeErrorKind::TypeMismatch,
+                },
+                e.message,
+                function,
+                pc,
+            )
+        };
+        let length = crate::fmt::rendered_value_len(reference).map_err(render_error)?;
+        charge_allocation(account, length as u64, function, pc)?;
+        let text = crate::fmt::render_value(reference).map_err(render_error)?;
+        let text = Val::new(current.string(Some(background), &text), loc);
+        encoder.output.push(solved_codec_tag(
+            "String",
+            text,
+            encoder.target,
+            loc,
+            current,
+            background,
+            account,
+            function,
+            pc,
+        )?);
+        continue_solved_encode(encoder, current, background, account)
+    }
+    fn resume_failed(
+        self: Box<Self>,
+        failure: Val,
+        _: &mut Heap,
+        _: &Heap,
+        _: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        Ok(VmAction::Return {
+            value: failure,
+            return_target: self.encoder.return_target,
+        })
+    }
+}
+
 fn run_solved_codec_encode(
     arguments: &[Val],
     signature: Option<Val>,
     return_target: ReturnTarget,
+    rule_boundary: Option<crate::Loc>,
     function: &BytecodeFunction,
     pc: usize,
     current: &mut Heap,
@@ -107,6 +183,7 @@ fn run_solved_codec_encode(
         "encode_by_display",
         "json_rename_all",
         "json_untagged",
+        "display_by",
     ]
     .into_iter()
     .map(|name| {
@@ -129,6 +206,7 @@ fn run_solved_codec_encode(
             }],
             output: vec![],
             target,
+            rule_boundary,
             properties,
             return_target,
             trace_frame: RuntimeFrame {
@@ -285,7 +363,36 @@ fn continue_solved_encode(
         let mut untagged = false;
         let shape = &types.types[ty.index()];
         if matches!(shape.constructor, T::Nominal(_)) && ty != state.target {
+            let has_property = |name| {
+                state
+                    .properties
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .and_then(|(_, property)| {
+                        graph.property(crate::execution_graph::PropertyKey {
+                            owner: ty,
+                            site: crate::mir::PropertySite::Type,
+                            property: *property,
+                        })
+                    })
+                    .is_some()
+            };
+            let bridged = has_property("encode_by_display");
+            if bridged != has_property("decode_by_parse") {
+                return Err(error(
+                    RuntimeErrorKind::TypeMismatch,
+                    "std/string.decode_by_parse and std/string.encode_by_display must be used together",
+                    &function,
+                    pc,
+                ));
+            }
+            let mut display = None;
             for &(name, property) in &state.properties {
+                if bridged && matches!(name, "json_untagged" | "json_rename_all")
+                    || !bridged && name == "display_by"
+                {
+                    continue;
+                }
                 let Some(node) = graph.property(crate::execution_graph::PropertyKey {
                     owner: ty,
                     site: crate::mir::PropertySite::Type,
@@ -315,6 +422,7 @@ fn continue_solved_encode(
                                 )
                             })?;
                         state.pending.push(SolvedEncodeTask::Visit { value, ty });
+                        let rule_boundary = state.rule_boundary;
                         let continuation = DemandContinuation {
                             node,
                             trace_frame: state.trace_frame.clone(),
@@ -328,7 +436,7 @@ fn continue_solved_encode(
                             return_target: ReturnTarget::Native(Box::new(continuation)),
                             call_function: function,
                             call_pc: pc,
-                            rule_boundary: None,
+                            rule_boundary,
                         });
                     }
                     Err(EvaluationError::Failed(failure)) => {
@@ -357,6 +465,29 @@ fn continue_solved_encode(
                     }
                 };
                 match name {
+                    "decode_by_parse" | "encode_by_display" => {}
+                    "display_by" => {
+                        let view = HeapView {
+                            current,
+                            background: Some(background),
+                        };
+                        display = Some(
+                            (ValueRef {
+                                value: property,
+                                view,
+                            })
+                            .dict_get("display")
+                            .ok_or_else(|| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "DisplayBy has no display function",
+                                    &function,
+                                    pc,
+                                )
+                            })?
+                            .value,
+                        );
+                    }
                     "json_untagged" => untagged = true,
                     "json_rename_all" => {
                         let view = HeapView {
@@ -382,15 +513,31 @@ fn continue_solved_encode(
                         }
                         rename = true;
                     }
-                    _ => {
-                        return Err(error(
-                            RuntimeErrorKind::InvalidBytecode,
-                            "solved codec display/parse bridge is not implemented yet",
-                            &function,
-                            pc,
-                        ));
-                    }
+                    _ => unreachable!("codec property contract"),
                 }
+            }
+            if bridged {
+                let callee = display.ok_or_else(|| {
+                    error(
+                        RuntimeErrorKind::TypeMismatch,
+                        "text codec requires a DisplayBy property",
+                        &function,
+                        pc,
+                    )
+                })?;
+                let argument = pack_solved_dyn(ty, value, current, account, &function, pc)?;
+                let rule_boundary = state.rule_boundary;
+                return Ok(VmAction::Call {
+                    callee,
+                    arguments: vec![argument],
+                    return_target: ReturnTarget::Native(Box::new(SolvedDisplay {
+                        encoder: state,
+                        loc: value.loc(),
+                    })),
+                    call_function: function,
+                    call_pc: pc,
+                    rule_boundary,
+                });
             }
         }
         if ty == state.target {

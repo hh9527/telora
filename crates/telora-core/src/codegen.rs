@@ -2062,6 +2062,44 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn solved_codec_text_encode_calls_prepared_display_for_nested_values() {
+        let mir = graph(r#"
+            import "std/codec" as codec; import "std/json" as json;
+            import "std/string" as string; import "std/fmt" as fmt;
+            @string.decode_by_parse @string.encode_by_display
+            @fmt.display_by("{host}:{port}")
+            type Endpoint = struct { host: String, port: Int };
+            @string.decode_by_parse @string.encode_by_display
+            @fmt.display_by("{name}@{endpoint}")
+            type Service = struct { name: String, endpoint: Endpoint };
+            def endpoint: Endpoint = {host: "localhost", port: 8080};
+            def service: Service = {name: "api", endpoint};
+            export def answer = json.stringify(codec.encode(codec.Value.type, { endpoints: [endpoint, endpoint], service }));
+        "#, "");
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        drop(mir);
+        let result = execute(artifact).unwrap();
+        assert_eq!(result.value().as_str().unwrap().as_str(), r#"{"endpoints":["localhost:8080","localhost:8080"],"service":"api@localhost:8080"}"#);
+    }
+
+    #[test]
+    fn solved_codec_text_encode_rejects_incomplete_bridge_contracts() {
+        for (decorators, expected) in [
+            ("@string.encode_by_display", "must be used together"),
+            ("@string.decode_by_parse", "must be used together"),
+            ("@string.decode_by_parse @string.encode_by_display", "requires a DisplayBy"),
+        ] {
+            let mir = graph(&format!(r#"import "std/codec" as codec; import "std/string" as string;
+                {decorators} type Item = struct {{ value: Int }};
+                def item: Item = {{value: 42}}; export def answer = codec.encode(codec.Value.type, item);"#), "");
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            let error = execute(artifact).err().expect("invalid text bridge");
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[test]
     fn solved_codec_encode_consumes_layouts_and_lazy_untagged_properties() {
         let mir = graph(r#"
             import "std/codec" as codec;

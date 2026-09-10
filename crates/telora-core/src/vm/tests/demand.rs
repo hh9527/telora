@@ -380,6 +380,30 @@ fn solved_dyn_member_access_preserves_payload_handles() {
 }
 
 #[test]
+fn solved_codec_display_calls_fail_per_value_without_poisoning_provider() {
+    let mir = crate::codegen::tests::graph(r#"
+        import "std/codec" as codec; import "std/_rt" as rt;
+        import "std/string" as string; import "std/fmt" as fmt;
+        def broken: Fn(Type, Option(fmt.DisplayBy)) -> fmt.DisplayBy = fn(owner, previous) {
+            {template: {strings: [], fields: []}, display: fn(value) { fail!("display value failed") }}
+        };
+        @string.decode_by_parse @string.encode_by_display @broken type Item = struct { value: Int };
+        def attempt = rt.with_diagnostics(fn(n: Int) { let item: Item = {value: n}; codec.encode(codec.Value.type, item) });
+        export def answer = (attempt(1), attempt(2));
+    "#, "");
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    let linked = crate::execution_link::link_entry(artifact).unwrap();
+    let result = Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
+    assert_eq!(result.world.work.heap.solved_failures.len(), 2);
+    for index in [0, 1] {
+        let (tag, reports) = result.value().sequence_get(index).unwrap().tagged_parts().unwrap();
+        assert_eq!(tag.as_atom().unwrap().as_str(), "Err");
+        assert_eq!(reports.sequence_len(), Some(1));
+    }
+}
+
+#[test]
 fn solved_codec_failed_property_is_not_retried_or_reported_twice() {
     for source in [r#"
         import "std/codec" as codec;
@@ -403,6 +427,13 @@ fn solved_codec_failed_property_is_not_retried_or_reported_twice() {
         import "std/json" as json;
         @json.untagged type Choice = enum { Plain(Dict(Int)), Broken(Item) };
         def attempt = rt.with_diagnostics(fn(n: Int) { codec.decode(Choice.type, codec.Value.Object({someValue: codec.Value.Int(n)})) });
+        export def answer = (attempt(1), attempt(2));
+    "#, r#"
+        import "std/codec" as codec; import "std/_rt" as rt;
+        import "std/string" as string; import "std/fmt" as fmt;
+        def broken: Fn(Type, Option(fmt.DisplayBy)) -> fmt.DisplayBy = fn(owner, previous) { fail!("display provider failed") };
+        @string.decode_by_parse @string.encode_by_display @broken type Item = struct { value: Int };
+        def attempt = rt.with_diagnostics(fn(n: Int) { let item: Item = {value: n}; codec.encode(codec.Value.type, item) });
         export def answer = (attempt(1), attempt(2));
     "#] {
     let mir = crate::codegen::tests::graph(source, "");
