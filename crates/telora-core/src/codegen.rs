@@ -673,13 +673,21 @@ mod tests {
         assert!(artifact.native_links.iter().all(|l| l.module == Some(5)));
         let bytecode = crate::execution_link::link_builtins(&artifact).unwrap();
         assert!(bytecode.shares_code_with(&artifact.bytecode));
+        let types_storage = artifact.types.types.as_ptr();
+        let definitions_storage = artifact.types.definitions.as_ptr();
+        let result_type = artifact.result_type;
+        let linked = crate::execution_link::link_entry(artifact).unwrap();
+        drop(mir);
+        let result = crate::Vm::new()
+            .execute_linked(linked, crate::Quota::with_fuel(10000))
+            .unwrap();
+        assert_eq!(result.value().as_int(), Some(42));
+        assert_eq!(result.result_type(), result_type);
+        assert_eq!(result.types().types.as_ptr(), types_storage);
+        assert_eq!(result.types().definitions.as_ptr(), definitions_storage);
         assert_eq!(
-            crate::Vm::new()
-                .execute(&bytecode, 10000)
-                .unwrap()
-                .value()
-                .as_int(),
-            Some(42)
+            result.types().types[result_type.index()].constructor,
+            TypeConstructor::Int
         );
     }
 

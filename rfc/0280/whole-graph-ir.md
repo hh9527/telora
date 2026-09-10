@@ -5,6 +5,26 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Move the sealed type image into Main (2026-09-10)
+
+`link_entry` consumes the compiled artifact and preserves its sealed type image.
+`Vm::execute_linked` moves that image into Main before executing bytecode, using
+the retained VM execution loop and quota accounting. Work accesses the same
+Main-owned arena. `SolvedExecution` exposes the resulting value, its statically
+solved result TypeId and the original image through read-only accessors. The
+debug driver's `--run` mode now uses this execution entry.
+
+Eight focused tests pass. The native `array.map`/`fold` test drops the source MIR
+before VM creation and checks that execution returns 42, preserves the result
+TypeId and retains the exact type/member-definition vector storage addresses.
+This verifies ownership transfer without a second copy or descriptor rebuild.
+
+This is the type-image ownership bridge, not completion of runtime type identity
+integration. Existing value tags and the retained legacy runtime TypeStore are
+not yet unified with MIR TypeIds. Nominal/enum emission, metadata/property
+consumers and semantic JSON output still need to consume the imported arena;
+ordinary CLI execution has not switched. No performance claim is made.
+
 ### Explicit seal and deterministic type image (2026-09-10)
 
 `Mir::seal` is now the publication boundary for codegen. It requires completed

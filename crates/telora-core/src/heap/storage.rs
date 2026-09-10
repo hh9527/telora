@@ -2,6 +2,7 @@ impl Heap {
     fn new(storage: Storage, types: crate::type_store::SharedTypeStore) -> Self {
         Self {
             storage,
+            solved_types: None,
             types,
             objects: Vec::new(),
             text: TextTable::default(),

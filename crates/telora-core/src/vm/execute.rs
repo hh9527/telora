@@ -1,4 +1,22 @@
 impl Vm {
+    /// Import the immutable type arena into Main before executing any bytecode.
+    /// This entry does not parse, resolve, infer, or materialize descriptors.
+    pub fn execute_linked(
+        &mut self,
+        entry: crate::execution_link::LinkedEntry,
+        quota: Quota,
+    ) -> Result<crate::execution_link::SolvedExecution, RuntimeError> {
+        let mut main = Heap::main();
+        main.solved_types = Some(entry.types);
+        let main = Arc::new(main);
+        let mut account = QuotaAccount::new(quota);
+        let work = self.execute_in_work(&main, &HashMap::new(), &entry.bytecode, &[], &mut account)?;
+        Ok(crate::execution_link::SolvedExecution {
+            world: ExecutionWorld::new(main, work),
+            result_type: entry.result_type,
+        })
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

@@ -125,6 +125,9 @@ impl TextTable {
 }
 
 pub(crate) struct Heap {
+    // Installed once in the main world by the solved execution path. Work heaps
+    // borrow it through their background; no descriptor reconstruction occurs.
+    pub(crate) solved_types: Option<crate::type_image::TypeImage>,
     storage: Storage,
     types: crate::type_store::SharedTypeStore,
     objects: Vec<Object>,

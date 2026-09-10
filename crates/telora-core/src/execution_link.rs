@@ -8,6 +8,42 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
+/// Executable and its sealed static type data, ready to move into a VM session.
+pub struct LinkedEntry {
+    pub(crate) bytecode: BytecodeFunction,
+    pub(crate) types: crate::type_image::TypeImage,
+    pub(crate) result_type: crate::mir::TypeId,
+}
+
+pub fn link_entry(artifact: CompiledEntry) -> Result<LinkedEntry, Vec<Diagnostic>> {
+    let bytecode = link_builtins(&artifact)?;
+    Ok(LinkedEntry {
+        bytecode,
+        types: artifact.types,
+        result_type: artifact.result_type,
+    })
+}
+
+/// The result type comes from static solving, never from inspecting the value.
+pub struct SolvedExecution {
+    pub(crate) world: crate::ExecutionWorld,
+    pub(crate) result_type: crate::mir::TypeId,
+}
+
+impl SolvedExecution {
+    pub fn value(&self) -> crate::ValueRef<'_> {
+        self.world.value()
+    }
+    pub fn result_type(&self) -> crate::mir::TypeId {
+        self.result_type
+    }
+    pub fn types(&self) -> &crate::type_image::TypeImage {
+        self.world
+            .solved_types()
+            .expect("solved execution owns its type image")
+    }
+}
+
 pub fn link_with(
     artifact: &CompiledEntry,
     mut native: impl FnMut(&NativeLink) -> Option<NativeFunction>,

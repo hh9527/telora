@@ -88,10 +88,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             .map_err(|diagnostics| format!("seal: {diagnostics:?}"))?;
         let artifact = telora_core::codegen::compile(sealed, symbol)
             .map_err(|diagnostics| format!("codegen: {diagnostics:?}"))?;
-        let mut vm = telora_core::Vm::new();
-        let bytecode = telora_core::execution_link::link_builtins(&artifact)
+        let linked = telora_core::execution_link::link_entry(artifact)
             .map_err(|diagnostics| format!("link: {diagnostics:?}"))?;
-        let result = vm.execute(&bytecode, 1_000_000)?;
+        let mut vm = telora_core::Vm::new();
+        let result = vm.execute_linked(linked, telora_core::Quota::with_fuel(1_000_000))?;
         println!("{}", result.value());
     } else {
         print!("{}", mir.dump());

@@ -239,6 +239,11 @@ impl fmt::Display for DataWorld {
 }
 
 impl ExecutionWorld {
+    /// Static type data imported by the solved execution path, with its original
+    /// TypeIds. Metadata generation must read this arena, not infer from values.
+    pub fn solved_types(&self) -> Option<&crate::type_image::TypeImage> {
+        self.main.solved_types.as_ref()
+    }
     pub(crate) fn new(main: Arc<Heap>, work: WorkWorld) -> Self {
         Self { main, work }
     }
