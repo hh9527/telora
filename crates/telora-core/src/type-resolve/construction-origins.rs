@@ -33,7 +33,10 @@ impl Solver<'_> {
             if let Some(value) = self.child(node, Role::Value) {
                 let mut pending = vec![value];
                 while let Some(node) = pending.pop() {
-                    if matches!(self.mir.hir[node.index()].kind, HirKind::Dict | HirKind::FieldProjection | HirKind::Binary(BinaryOperator::StructUpdate)) {
+                    // An update inherits its source's nominal owner. It does
+                    // not publish a fresh anonymous record; marking it here
+                    // would freeze the source through their shared type slot.
+                    if matches!(self.mir.hir[node.index()].kind, HirKind::Dict | HirKind::FieldProjection) {
                         self.materialized_records[node.index()] = true;
                     }
                     pending.extend(self.construction_children(node));

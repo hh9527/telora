@@ -5,6 +5,22 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Local struct updates inherit their solved source owner (2026-09-11)
+
+An unannotated local binding of a struct update incorrectly marked the update
+as a materialized anonymous record. Because updates share the source type,
+that marker propagated into the source and prevented its explicit nominal
+annotation from completing record construction. Construction-origin analysis
+now reserves this marker for record construction and projection: updates
+inherit their source owner. No codegen inference or VM fallback was added.
+
+Validation: 79 codegen tests, 55 type-resolve tests and CLI build pass. The
+local imported checked-struct regression executes to the expected value.
+Actual construction-check-once passes 2/2: copies emits one check warning,
+and merge_chain emits three (initial construction plus two updates).
+Logs: /tmp/mir-update-{codegen,types,build,language}.log. No performance
+measurement was made; remaining migration gaps from the prior audit remain.
+
 ### JSON Schema consumes solved IDs and VM property results (2026-09-11)
 
 The solved VM now implements json.schema_with instead of reporting an

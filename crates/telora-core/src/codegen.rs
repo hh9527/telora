@@ -1410,6 +1410,16 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn local_struct_update_chains_keep_their_nominal_type() {
+        let mir = graph(r#"import "./math" {Point};
+            export def answer = do { let point: Point = {x: 1}; let updated = point <~ {x: 2} <~ {x: 42}; updated.x };"#,
+            r#"@check(fn(value) { let warning: Option(()) = warn!(blame!("checked", value.x)); Ok(()) }) type Point = struct {x: Int}; export {Point};"#);
+        let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+        let result = execute(artifact).unwrap();
+        assert_eq!(result.value().as_int(), Some(42));
+    }
+
+    #[test]
     fn json_schema_reports_recoverable_mapping_and_property_errors() {
         for (declaration, target, expected) in [
             ("", "Type", "JSON Schema cannot describe Type metadata"),
