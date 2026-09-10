@@ -1243,6 +1243,45 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn solved_dyn_members_consume_applied_layouts() {
+        for source in [
+            r#"import "std/dyn" as dyn; type Box(T) = struct { z: String, a: T };
+                def value: Box(Int) = {a: 42, z: "other"};
+                export def answer = take(dyn.project_with(Int.type, dyn.get_field_value(dyn.pack(Box(Int).type, value), 1)));"#,
+            r#"import "std/dyn" as dyn; type Box(T) = struct(T);
+                def items = get(dyn.tuple_items(dyn.pack(Box(Int).type, Box(42))));
+                export def answer = take(dyn.project_with(Int.type, items[0]));"#,
+            r#"import "std/dyn" as dyn; type Tree(T) = enum { Empty, Leaf(T), Branch(Array(Tree(T))) };
+                def value = dyn.pack(Tree(Int).type, Tree.Leaf(42));
+                def child = take(dyn.get_variant_payload(value, 1));
+                export def answer = if dyn.get_variant_index(value) == 1 { take(dyn.project_with(Int.type, child)) } else { 0 };"#,
+            r#"import "std/dyn" as dyn; type Item = enum { Empty, Full(Int) };
+                def value = dyn.pack(Item.type, Item.Empty);
+                export def answer = if dyn.get_variant_payload(value, 0) == None && dyn.kind(value) == dyn.ValueKind.Atom { 42 } else { 0 };"#,
+            r#"import "std/dyn" as dyn; def value = dyn.pack(Dict(Int).type, {a: 42});
+                export def answer = take(dyn.project_with(Int.type, get(dyn.field(value, "a"))));"#,
+            r#"import "std/dyn" as dyn; def value = dyn.pack((Int, String).type, (42, "other"));
+                export def answer = take(dyn.project_with(Int.type, get(dyn.tuple_items(value))[0]));"#,
+            r#"import "std/dyn" as dyn; def value = dyn.pack(Array(Int).type, [42]);
+                export def answer = take(dyn.project_with(Int.type, get(dyn.array_items(value))[0]));"#,
+            r#"import "std/dyn" as dyn; def value = dyn.pack(Option(Int).type, Some(42));
+                export def answer = if get(dyn.tag(value)) == "Some" { take(dyn.project_with(Int.type, take(get(dyn.payload(value))))) } else { 0 };"#,
+            r#"import "std/dyn" as dyn; type Box(T) = struct { value: T };
+                def value: Box(Int) = {value: 42}; def fields = get(dyn.fields(dyn.pack(Box(Int).type, value)));
+                export def answer = if fields[0].0 == "value" { take(dyn.project_with(Int.type, fields[0].1)) } else { 0 };"#,
+            r#"import "std/dyn" as dyn; export def answer = match dyn.field(dyn.pack(Int.type, 1), "missing") { Err(_) => 42, _ => 0 };"#,
+        ] {
+            let source = &format!("def take: for(T) Fn(Option(T)) -> T = fn(value) {{ match value {{ Some(value) => value, None => fail!(\"missing value\") }} }}; def get: for(T, E) Fn(Result(T, E)) -> T = fn(value) {{ match value {{ Ok(value) => value, Err(_) => fail!(\"access failed\") }} }}; {source}");
+            let mir = graph(source, "");
+            assert!(mir.diagnostics.is_empty(), "{source}\n{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{source}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+
+    #[test]
     fn solved_dyn_and_actor_service_keep_type_witnesses_in_the_vm() {
         for source in [
             "import \"std/dyn\" as dyn; export def answer = match dyn.project_with(Int.type, dyn.pack(Int.type, 42)) { Some(value) => value, None => 0 };",

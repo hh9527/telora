@@ -2,6 +2,7 @@
 fn run_core_dyn(
     operation: CoreDynFunction,
     arguments: &[Val],
+    signature: Option<Val>,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -10,7 +11,7 @@ fn run_core_dyn(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     if background.solved_types.is_some() {
-        return run_solved_dyn(operation, arguments, return_target, function, pc, current, background, account);
+        return run_solved_dyn(operation, arguments, signature, return_target, function, pc, current, background, account);
     }
     if operation == CoreDynFunction::Pack {
         decode_runtime_type(arguments[0], current, background).map_err(|message| {

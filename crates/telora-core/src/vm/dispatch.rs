@@ -609,6 +609,7 @@ fn drive_vm_action(
                             NativeKind::CoreDyn(operation) => run_core_dyn(
                                 operation,
                                 &arguments,
+                                upvalues.last().copied(),
                                 return_target,
                                 &call_function,
                                 call_pc,

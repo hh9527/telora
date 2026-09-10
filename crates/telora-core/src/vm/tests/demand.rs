@@ -351,6 +351,35 @@ fn solved_codec_encode_preserves_string_and_existing_value_handles() {
 }
 
 #[test]
+fn solved_dyn_member_access_preserves_payload_handles() {
+    let mir = crate::codegen::tests::graph(r#"
+        import "std/dyn" as dyn;
+        type Box(T) = struct { value: T };
+        type Item(T) = enum { Empty, Full(T) };
+        def original = ["a string deliberately longer than inline storage capacity"];
+        def boxed: Box(Array(String)) = {value: original};
+        def field = dyn.get_field_value(dyn.pack(Box(Array(String)).type, boxed), 0);
+        def variant = match dyn.get_variant_payload(dyn.pack(Item(Array(String)).type, Item.Full(original)), 1) { Some(value) => value, None => fail!("missing payload") };
+        export def answer = (original, field, variant);
+    "#, "");
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    drop(mir);
+    let linked = crate::execution_link::link_entry(artifact).unwrap();
+    let result = Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
+    let view = HeapView { current: &result.world.work.heap, background: Some(&result.world.main) };
+    let root = result.value();
+    let original = root.sequence_get(0).unwrap().value;
+    for index in [1, 2] {
+        let DecodedValue::Dyn(handle) = root.sequence_get(index).unwrap().value.value() else { panic!("Dyn child") };
+        let (_, descriptor, payload) = view.dyn_parts(handle).unwrap();
+        assert_eq!(payload.value(), original.value());
+        let DecodedValue::SolvedType(ty) = descriptor.value() else { panic!("solved witness") };
+        assert_eq!(result.world.main.solved_types.as_ref().unwrap().types[ty.index()].constructor, crate::mir::TypeConstructor::Array);
+    }
+}
+
+#[test]
 fn solved_codec_failed_property_is_not_retried_or_reported_twice() {
     for source in [r#"
         import "std/codec" as codec;

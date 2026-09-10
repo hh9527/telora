@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Dyn member observations consume applied IDs (2026-09-10)
+
+Text codec integration exposed a prerequisite: std/fmt's prepared display uses
+indexed Dyn member access. The solved Dyn path now supports indexed fields and
+variants, named fields/field lists, Array/Tuple/newtype items, variant tag/payload
+and kind. Child witnesses come from the existing TypeImage layout or container
+arguments. Nominal member indices follow declaration order; value access selects
+the declared field name, independent of record construction order.
+
+Dyn wrappers keep original payload handles. An explicit VM test checks that both
+generic struct-field and generic enum-payload access retain the original Array
+handle after MIR is dropped. Native dyn.kind receives its compiled function
+signature and stamps the returned ValueKind with the signature's result TypeId;
+otherwise equality with the statically typed enum constant loses nominal identity.
+No name-based type discovery or runtime type substitution is involved.
+
+Validation: three solved-Dyn tests pass (including ten structural observation
+fixtures), and all 35 codegen tests pass. Logs: /tmp/mir-dyn-members.log and
+/tmp/mir-dyn-codegen.log. This is a dependency completed for text codec, not a
+claim that parse/display bridges are complete: solved TypeDesc observations and
+regex preparation still need migration, alongside the remaining overall gates.
+
 ### Untagged decode uses VM-local alternative frames (2026-09-10)
 
 The solved decoder now evaluates untagged enum alternatives from the already
