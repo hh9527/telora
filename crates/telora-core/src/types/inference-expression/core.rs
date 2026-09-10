@@ -703,13 +703,21 @@ impl<'a> GenericInference<'a> {
                     } else {
                         self.project_field(&receiver_type, &field.value)?
                     }
+                } else if let Some(binding) = self.imported_expression_binding(expression.location) {
+                    self.infer(receiver, environment, None)?;
+                    self.instantiate_binding(binding, expression.location)
                 } else if let Some(scheme) = self
                         .namespace_interface(receiver)
                         .and_then(|interface| interface.exports.get(&field.value))
                         .cloned()
                 {
                     self.infer(receiver, environment, None)?;
-                    self.instantiate(&scheme, expression.location)
+                    if let Some(origin) = self.hir.expression_import_origin_at(expression.location) {
+                        let binding = self.bind_import_origin(origin, scheme.body.clone(), Some(scheme));
+                        self.instantiate_binding(binding, expression.location)
+                    } else {
+                        self.instantiate(&scheme, expression.location)
+                    }
                 } else {
                     let receiver = self.infer(receiver, environment, None)?;
                     self.project_field(&receiver, &field.value)?

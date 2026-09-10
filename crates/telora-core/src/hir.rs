@@ -98,6 +98,14 @@ pub struct HirExpression {
     pub reference: Option<HirReferenceId>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct HirMemberAccess {
+    pub(crate) expression: HirExpressionId,
+    pub(crate) receiver: HirExpressionId,
+    pub(crate) field: String,
+    pub(crate) location: Location,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct HirProgram {
     definitions: Vec<HirDefinition>,
@@ -111,9 +119,23 @@ pub struct HirProgram {
     property_roots: HashSet<Location>,
     definition_import_origins: Vec<Option<HirImportOrigin>>,
     reference_import_origins: Vec<Option<HirImportOrigin>>,
+    member_accesses: Vec<HirMemberAccess>,
+    expression_import_origins: Vec<Option<HirImportOrigin>>,
 }
 
 impl HirProgram {
+    pub(crate) fn member_accesses(&self) -> &[HirMemberAccess] { &self.member_accesses }
+
+    pub(crate) fn set_expression_import_origins(&mut self, origins: Vec<Option<HirImportOrigin>>) {
+        assert_eq!(origins.len(), self.expressions.len());
+        self.expression_import_origins = origins;
+    }
+
+    pub(crate) fn expression_import_origin_at(&self, location: Location) -> Option<HirImportOrigin> {
+        self.expression_ids_at(location).find_map(|id|
+            self.expression_import_origins.get(id.index()).copied().flatten())
+    }
+
     pub(crate) fn set_import_origins(&mut self, origins: &std::collections::BTreeMap<String, HirImportOrigin>) {
         self.definition_import_origins = self.definitions.iter().map(|definition|
             (definition.kind == HirDefinitionKind::Import).then(|| origins.get(&definition.name).copied()).flatten())
@@ -347,6 +369,10 @@ impl HirProgram {
         }
         for expression in &mut self.expressions {
             expression.parent = expression.parent.map(|id| expressions[id.index()]);
+        }
+        for member in &mut self.member_accesses {
+            member.expression = expressions[member.expression.index()];
+            member.receiver = expressions[member.receiver.index()];
         }
         self.expression_children = vec![Vec::new(); self.expressions.len()];
         for expression in &self.expressions {
@@ -748,7 +774,13 @@ impl<'a> Resolver<'a> {
                 self.index_expr(right, scopes);
                 None
             }
-            ExprKind::Field { receiver, .. } | ExprKind::FieldProjection { receiver, .. } => {
+            ExprKind::Field { receiver, field } => {
+                let receiver = self.index_expr(receiver, scopes);
+                self.hir.member_accesses.push(HirMemberAccess { expression: expression_id,
+                    receiver, field: field.value.clone(), location: field.location });
+                None
+            }
+            ExprKind::FieldProjection { receiver, .. } => {
                 self.index_expr(receiver, scopes);
                 None
             }

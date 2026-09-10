@@ -296,36 +296,75 @@ impl<'a> StaticNames<'a> {
             }
             hir[id.index()] = self.module_resolution(id);
         }
-        self.resolve_export_aliases(&mut hir);
+        let aliases = self.resolve_export_aliases(&mut hir);
         for index in 0..hir.len() {
             let Some(module) = &hir[index] else { continue; };
-            let origins = module.imports.iter().map(|(name, target)| {
-                use crate::hir::{HirImportOrigin as Origin, HirResolution};
-                let origin = match *target {
-                    StaticImportTarget::Namespace(module) => Origin::Namespace(module),
-                    StaticImportTarget::Export { module, index } => {
-                        let definition = self.program(module).and_then(|program| {
-                            let ExprKind::Dict(fields) = &program.value.body.value.result.value else { return None; };
-                            let ExprKind::Variable(name) = &fields[index as usize].value.value.value else { return None; };
-                            let resolved = hir[module.index()].as_ref()?;
-                            let reference = resolved.hir.reference_at(name.location, &name.value)?;
-                            match reference.resolution {
-                                HirResolution::Definition(definition) => Some(definition),
-                                _ => None,
-                            }
-                        });
-                        definition.map_or(Origin::Export { module, index },
-                            |definition| Origin::Definition { module, definition })
-                    }
-                };
-                (name.clone(), origin)
-            }).collect();
+            let origins = module.imports.iter().map(|(name, target)|
+                (name.clone(), self.import_origin(*target, &hir))).collect();
             hir[index].as_mut().unwrap().hir.set_import_origins(&origins);
+        }
+        for index in 0..hir.len() {
+            let Some(module) = &hir[index] else { continue; };
+            let mut origins = vec![None; module.hir.expressions().len()];
+            let mut diagnostics = Vec::new();
+            // HIR indexes receivers before their member accesses, including
+            // nested namespaces. Local shadowing has already been resolved.
+            for member in module.hir.member_accesses() {
+                let receiver = module.hir.expression(member.receiver).expect("member receiver");
+                let origin = origins[member.receiver.index()].or_else(|| receiver.reference
+                    .and_then(|id| module.hir.reference_import_origin(id)));
+                let Some(crate::hir::HirImportOrigin::Namespace(provider)) = origin else { continue; };
+                match self.export_target(provider, &member.field) {
+                    Some(target) => origins[member.expression.index()] =
+                        Some(self.import_origin(Self::canonical_target(&aliases, target), &hir)),
+                    None => diagnostics.push(Diagnostic::error(
+                        format!("module {} has no export {:?}", self.graph.module(provider).cname, member.field),
+                        member.location)),
+                }
+            }
+            let module = hir[index].as_mut().unwrap();
+            module.hir.set_expression_import_origins(origins);
+            module.diagnostics.extend(diagnostics);
         }
         hir
     }
 
-    fn resolve_export_aliases(&mut self, modules: &mut [Option<ResolvedStaticModule>]) {
+    fn import_origin(&self, target: StaticImportTarget, modules: &[Option<ResolvedStaticModule>]) -> crate::hir::HirImportOrigin {
+        use crate::hir::{HirImportOrigin as Origin, HirResolution};
+        match target {
+            StaticImportTarget::Namespace(module) => Origin::Namespace(module),
+            StaticImportTarget::Export { module, index } => {
+                let definition = self.program(module).and_then(|program| {
+                    let ExprKind::Dict(fields) = &program.value.body.value.result.value else { return None; };
+                    let ExprKind::Variable(name) = &fields[index as usize].value.value.value else { return None; };
+                    let resolved = modules[module.index()].as_ref()?;
+                    let reference = resolved.hir.reference_at(name.location, &name.value)?;
+                    match reference.resolution {
+                        HirResolution::Definition(definition) => Some(definition),
+                        _ => None,
+                    }
+                });
+                definition.map_or(Origin::Export { module, index },
+                    |definition| Origin::Definition { module, definition })
+            }
+        }
+    }
+
+    fn canonical_target(aliases: &[Vec<StaticImportTarget>], target: StaticImportTarget) -> StaticImportTarget {
+        let mut current = target;
+        let mut path = Vec::new();
+        while let StaticImportTarget::Export { module, index } = current {
+            let next = aliases[module.index()][index as usize];
+            if next == current { break; }
+            // Keep a cycle available to the module-cycle diagnostic.
+            if path.contains(&current) { return target; }
+            path.push(current);
+            current = next;
+        }
+        current
+    }
+
+    fn resolve_export_aliases(&mut self, modules: &mut [Option<ResolvedStaticModule>]) -> Vec<Vec<StaticImportTarget>> {
         // These edges describe source identity, not type equality. In particular,
         // a new def whose initializer refers to another def remains distinct.
         let mut aliases = self.exports.iter().enumerate().map(|(module, rows)|
@@ -365,19 +404,9 @@ impl<'a> StaticNames<'a> {
         }
         for resolved in modules.iter_mut().flatten() {
             for target in resolved.imports.values_mut() {
-                let mut current = *target;
-                let mut path = Vec::new();
-                while let StaticImportTarget::Export { module, index } = current {
-                    let next = aliases[module.index()][index as usize];
-                    if next == current { break; }
-                    // A source cycle is not a successful identity solution.
-                    // Preserve its target for the module-cycle diagnostic.
-                    if path.contains(&current) { current = *target; break; }
-                    path.push(current);
-                    current = next;
-                }
-                *target = current;
+                *target = Self::canonical_target(&aliases, *target);
             }
         }
+        aliases
     }
 }

@@ -235,8 +235,10 @@ fn session_export_aliases_share_source_identity_without_merging_new_definitions(
     fs::write(directory.join("src/main.telora"), r#"
         import "./model" { original, alias, separate, identity, identity_alias };
         import "./bridge" { forwarded, model };
+        import "./bridge" as bridge;
         export def result = original + alias + forwarded + separate + model.original;
         export def distinct_instantiations = (identity(1), identity_alias("text"));
+        export def namespace_instantiations = (model.identity("text"), bridge.model.identity(1));
     "#).unwrap();
     let resolver = session_workspace_resolver(&directory, &["@src/main", "@src/model", "@src/bridge"]);
     let root = resolver.selected_root().unwrap();
@@ -257,11 +259,42 @@ fn session_export_aliases_share_source_identity_without_merging_new_definitions(
     assert_eq!(origin("original"), origin("forwarded"));
     assert!(matches!(origin("original"), crate::hir::HirImportOrigin::Definition { .. }));
     assert_eq!(origin("identity"), origin("identity_alias"));
+    let members = resolved.hir.member_accesses().iter().filter(|member| member.field == "identity")
+        .collect::<Vec<_>>();
+    assert_eq!(members.len(), 2);
+    for member in members {
+        let expression = resolved.hir.expression(member.expression).unwrap();
+        assert_eq!(resolved.hir.expression_import_origin_at(expression.location), Some(origin("identity")),
+            "direct and nested namespace access must bind the same source declaration");
+    }
     assert_ne!(origin("original"), origin("separate"));
     assert_eq!(resolved.imports["model"], StaticImportTarget::Namespace(resolved.imports["original"].module()));
     assert_ne!(resolved.imports["original"], resolved.imports["separate"],
         "equal values/types must not merge independently authored definitions");
     let snapshot = recovery_engine().check_types_with_resolver(resolver).unwrap();
     assert!(snapshot.diagnostics().is_empty(), "{:?}", snapshot.diagnostics());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn namespace_missing_member_is_resolved_before_types_and_respects_shadowing() {
+    let directory = fixture_dir();
+    fs::create_dir_all(directory.join("src")).unwrap();
+    fs::write(directory.join("src/provider.telora"), "export def known: Int = \"bad\";").unwrap();
+    fs::write(directory.join("src/main.telora"), r#"
+        import "./provider" as provider;
+        export def missing = provider.absent;
+        export def local = fn() { let provider = { absent: 1 }; provider.absent };
+    "#).unwrap();
+    let resolver = session_workspace_resolver(&directory, &["@src/main", "@src/provider"]);
+    let root = resolver.selected_root().unwrap();
+    let mut sources = SourceDatabase::default();
+    let graph = ModuleGraph::discover(&resolver, vec![root.clone()], &BTreeMap::new(),
+        builtin_list().into_iter().map(|(name, _)| ModuleCName::builtin(name)),
+        None, false, &mut sources).unwrap();
+    let modules = StaticNames::new(&graph).resolve(graph.id(&root.id).unwrap());
+    let resolved = modules[graph.id(&root.id).unwrap().index()].as_ref().unwrap();
+    assert_eq!(resolved.diagnostics.len(), 1, "{:?}", resolved.diagnostics);
+    assert!(resolved.diagnostics[0].message.contains("has no export \"absent\""));
     fs::remove_dir_all(directory).unwrap();
 }

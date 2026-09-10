@@ -169,9 +169,22 @@ an empty name environment, then verify that resolving the slot resolves both
 references. The module fixture calls two aliases of a generic function at Int
 and String independently.
 
-This is not yet the complete pre-type graph symbol table: namespace member
-references are not all connected to final source declarations, ordinary checking
-still prepares HIR per module, and imported slots are still materialized from
+HIR now also retains member-access receiver edges. In the types-only resolve
+pass, direct and chained namespace accesses follow the provider export index
+and canonical export aliases before typing. Their source origins are stored by
+expression ID. Missing namespace exports produce resolve diagnostics even when
+the provider has an unrelated type error; local shadowing does not inherit the
+namespace identity. A nested namespace regression binds both forms to the same
+generic source declaration and checks independent instantiations.
+
+Field inference consumes an already registered source binding directly. When a
+namespace member's slot has not yet been materialized, the existing descriptor
+interface supplies its scheme once to the source binding table. This transitional
+ingress still has to disappear with the shared type arena.
+
+This is not yet the complete shared pre-type graph symbol table: ordinary
+checking still prepares HIR per module, and unresolved-name validation is not a
+single session-wide completion gate. Imported slots are still materialized from
 descriptor interfaces in separate arenas. The shared session slot owner and
 final typed IR remain required; source identity alone does not complete them.
 

@@ -602,7 +602,22 @@ impl<'a> GenericInference<'a> {
         }
     }
 
+    fn imported_expression_binding(&self, location: crate::Location) -> Option<InferenceDefinition> {
+        self.hir.expression_import_origin_at(location)
+            .and_then(|origin| self.import_bindings.get(&origin).copied())
+    }
+
+    fn instantiate_binding(&mut self, binding: InferenceDefinition, location: crate::Location) -> TypeDescriptor {
+        if binding.scheme == u32::MAX { TypeDescriptor::Inference(binding.slot) }
+        else { self.instantiate(&self.definition_schemes[binding.scheme as usize].clone(), location) }
+    }
+
     fn explicit_scheme(&self, callee: &Expr) -> Option<TypeScheme> {
+        if matches!(callee.value, ExprKind::Field { .. })
+            && let Some(binding) = self.imported_expression_binding(callee.location)
+        {
+            return (binding.scheme != u32::MAX).then(|| self.definition_schemes[binding.scheme as usize].clone());
+        }
         match &callee.value {
             ExprKind::Variable(name) => {
                 if let Some(binding) = self.resolved_binding(name) {
