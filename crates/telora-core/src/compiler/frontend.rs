@@ -209,21 +209,6 @@ pub fn compile_source(source_name: &str, source: &str) -> Result<CompiledSource,
     })
 }
 
-pub(crate) fn compile_program_analyzed_in_module(
-    source_file: &SourceFile,
-    program: &Program,
-    analysis: &Analysis,
-    static_funcs: &HashMap<String, crate::FuncId>,
-) -> Result<BytecodeFunction, FrontendError> {
-    compile_program_with_promoted_types_and_static_funcs(
-        source_file,
-        program,
-        analysis,
-        &HashSet::new(),
-        &HashSet::new(),
-        static_funcs,
-    )
-}
 
 pub(crate) fn compile_program_with_promoted_types(
     source_file: &SourceFile,
@@ -231,24 +216,6 @@ pub(crate) fn compile_program_with_promoted_types(
     analysis: &Analysis,
     promoted_types: &HashSet<String>,
     erased_bindings: &HashSet<String>,
-) -> Result<BytecodeFunction, FrontendError> {
-    compile_program_with_promoted_types_and_static_funcs(
-        source_file,
-        program,
-        analysis,
-        promoted_types,
-        erased_bindings,
-        &HashMap::new(),
-    )
-}
-
-pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
-    source_file: &SourceFile,
-    program: &Program,
-    analysis: &Analysis,
-    promoted_types: &HashSet<String>,
-    erased_bindings: &HashSet<String>,
-    static_funcs: &HashMap<String, crate::FuncId>,
 ) -> Result<BytecodeFunction, FrontendError> {
     validate_hir(source_file, &analysis.hir)?;
     let mut program = program.clone();
@@ -283,7 +250,6 @@ pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
         &program,
         analysis,
         promoted_types.clone(),
-        static_funcs.clone(),
     )
 }
 
@@ -458,7 +424,6 @@ pub(crate) fn compile_prepared_external_expression(
         declared_value_owners: &declared_value_owners,
         owner_index: &owner_index,
         value_constructors: &value_constructors,
-        static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };
     for name in bindings {

@@ -60,7 +60,6 @@ impl<'a> JsonWriter<'a> {
                 return Err("JSON cannot encode Tagged; use a codec first".into());
             }
             DecodedValue::Func(_) => return Err("JSON cannot encode Func".into()),
-            DecodedValue::FuncRef(_) => return Err("JSON cannot encode Func".into()),
             DecodedValue::Dyn(_) => return Err("JSON cannot encode Dyn".into()),
             DecodedValue::Module(_) => return Err("JSON cannot encode Module".into()),
             DecodedValue::TypeSlot(_) => {

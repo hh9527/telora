@@ -426,7 +426,6 @@ impl<'a> ValueRef<'a> {
             DecodedValue::Tagged(_) => ValueKind::Tagged,
             DecodedValue::Tuple(_) => ValueKind::Tuple,
             DecodedValue::Func(_) => ValueKind::Func,
-            DecodedValue::FuncRef(_) => ValueKind::Func,
             DecodedValue::Dyn(_) => ValueKind::Dyn,
             DecodedValue::Module(_) => ValueKind::Module,
             DecodedValue::TypeSlot(_) => {

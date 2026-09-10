@@ -71,7 +71,7 @@ pub use json::{
 };
 pub use lexer::{FrontendError, SourceLocation};
 pub use module_id::{
-    FIRST_DYNAMIC_MODULE_LOCAL, FuncId, ModuleCName, ModuleCatalogEntry, ModuleCatalogOrigin,
+    FIRST_DYNAMIC_MODULE_LOCAL, ModuleCName, ModuleCatalogEntry, ModuleCatalogOrigin,
     ModuleFormat, ModuleId, ModuleResolver, ModuleVendor, ModuleVisibility, ResolveModuleError,
     ResolvedModule, TraitId, TraitImplId, TypeConstructorId, resolve_root_module,
 };

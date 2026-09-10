@@ -42,8 +42,7 @@ enum FlatKind {
     NativeType,
     Heap,
     TypeSlot,
-    FuncRef,
-    SolvedType,
+    SolvedType = 11,
     Invalid = 63,
 }
 
@@ -60,7 +59,6 @@ impl FlatKind {
             7 => Self::NativeType,
             8 => Self::Heap,
             9 => Self::TypeSlot,
-            10 => Self::FuncRef,
             11 => Self::SolvedType,
             _ => Self::Invalid,
         }
@@ -68,7 +66,7 @@ impl FlatKind {
 
     const fn traits(self) -> u16 {
         match self {
-            Self::Never | Self::Int | Self::Float | Self::NativeType | Self::FuncRef | Self::SolvedType => {
+            Self::Never | Self::Int | Self::Float | Self::NativeType | Self::SolvedType => {
                 TRAIT_INLINE
             }
             Self::InlineString | Self::InlineAtom => TRAIT_INLINE | TRAIT_TEXT,
@@ -399,7 +397,6 @@ pub(crate) enum DecodedValue {
     Dyn(Handle),
     Module(Handle),
     TypeSlot(Handle),
-    FuncRef(crate::FuncId),
 }
 
 impl DecodedValue {
@@ -448,11 +445,6 @@ impl DecodedValue {
                 FlatKind::TypeSlot,
                 HeapKind::None,
                 ScopedId::new(handle.storage, handle.slot).raw(),
-            ),
-            Self::FuncRef(id) => (
-                FlatKind::FuncRef,
-                HeapKind::None,
-                u64::from(id.module.raw()) | (u64::from(id.local) << 32),
             ),
         };
         (Meta::new(kind, sub_kind, Provenance::Unknown), raw)
@@ -614,10 +606,6 @@ impl Val {
             (FlatKind::Heap, HeapKind::Dyn) => DecodedValue::Dyn(handle()),
             (FlatKind::Heap, HeapKind::Module) => DecodedValue::Module(handle()),
             (FlatKind::TypeSlot, _) => DecodedValue::TypeSlot(handle()),
-            (FlatKind::FuncRef, _) => DecodedValue::FuncRef(crate::FuncId {
-                module: crate::ModuleId::from_raw(self.raw as u32),
-                local: (self.raw >> 32) as u32,
-            }),
             _ => unreachable!("invalid runtime Meta combination"),
         }
     }

@@ -136,12 +136,6 @@ impl ModuleId {
 pub const FIRST_DYNAMIC_MODULE_LOCAL: u32 = 1024;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct FuncId {
-    pub module: ModuleId,
-    pub local: u32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TypeConstructorId {
     pub module: ModuleId,
     pub local: u32,

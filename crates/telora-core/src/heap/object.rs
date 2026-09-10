@@ -140,7 +140,6 @@ pub(crate) struct Heap {
     shapes: Vec<Box<[InternId]>>,
     shape_slots: HashMap<Vec<InternId>, u32>,
     bootstrap_root: Option<PersistentValue>,
-    functions: HashMap<crate::FuncId, Option<Val>>,
     declared_types: HashMap<crate::TypeId, Val>,
     properties: BTreeMap<PropertyKey, Val>,
     property_attr_type: Option<crate::TypeId>,

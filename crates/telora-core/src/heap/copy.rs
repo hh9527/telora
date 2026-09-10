@@ -82,8 +82,7 @@ impl PendingCopy {
             DecodedValue::Int(_)
             | DecodedValue::BuiltinAtom(_)
             | DecodedValue::InlineAtom(_)
-            | DecodedValue::InlineString(_)
-            | DecodedValue::FuncRef(_) => value.value(),
+            | DecodedValue::InlineString(_) => value.value(),
             DecodedValue::Float(float) if float.is_finite() => value.value(),
             DecodedValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
             DecodedValue::Atom(id) => DecodedValue::Atom(self.copy_text(target, source, id)?),
@@ -571,8 +570,7 @@ fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
         | DecodedValue::Float(_)
         | DecodedValue::BuiltinAtom(_)
         | DecodedValue::InlineAtom(_)
-        | DecodedValue::InlineString(_)
-        | DecodedValue::FuncRef(_) => false,
+        | DecodedValue::InlineString(_) => false,
     }
 }
 
@@ -609,8 +607,7 @@ fn object_contains_disallowed(
             | DecodedValue::Float(_)
             | DecodedValue::BuiltinAtom(_)
             | DecodedValue::InlineAtom(_)
-            | DecodedValue::InlineString(_)
-            | DecodedValue::FuncRef(_) => false,
+            | DecodedValue::InlineString(_) => false,
         }
     };
     match object {

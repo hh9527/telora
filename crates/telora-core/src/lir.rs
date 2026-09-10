@@ -46,7 +46,6 @@ pub enum Operation {
     },
     AllocFunc {
         dst: RegisterId,
-        static_id: Option<crate::FuncId>,
     },
     SealFunc {
         target: RegisterId,
@@ -419,9 +418,8 @@ fn lower_operation(
             owner: register(owner)?,
             value: register(value)?,
         },
-        Operation::AllocFunc { dst, static_id } => Instruction::AllocFunc {
+        Operation::AllocFunc { dst } => Instruction::AllocFunc {
             dst: register(dst)?,
-            static_id,
         },
         Operation::SealFunc { target, source } => Instruction::SealFunc {
             target: register(target)?,

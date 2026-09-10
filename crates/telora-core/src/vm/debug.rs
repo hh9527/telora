@@ -116,11 +116,6 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push(name);
                 self.push(">");
             }
-            DecodedValue::FuncRef(id) => {
-                self.push("<fn-ref ");
-                self.push(&format!("{}:{}", id.module.raw(), id.local));
-                self.push(">");
-            }
             DecodedValue::Dyn(_) => self.push("<dyn>"),
             DecodedValue::Module(_) => self.push("<module>"),
             DecodedValue::TypeSlot(handle) => {

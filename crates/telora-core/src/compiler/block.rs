@@ -21,7 +21,6 @@ struct Compiler<'a> {
     declared_value_owners: &'a HashMap<Location, crate::types::ResolvedEvidence>,
     owner_index: &'a OwnerEvidenceIndex<'a>,
     value_constructors: &'a HashMap<Location, crate::types::ValueConstructor>,
-    static_funcs: HashMap<String, crate::FuncId>,
     source_file: Option<&'a SourceFile>,
 }
 
@@ -52,7 +51,6 @@ impl<'a> Compiler<'a> {
         program: &Program,
         analysis: &'a Analysis,
         promoted_types: HashSet<String>,
-        static_funcs: HashMap<String, crate::FuncId>,
     ) -> Result<BytecodeFunction, FrontendError> {
         let mut retained_names = HashSet::new();
         collect_runtime_names_block(&program.value.body, &mut retained_names);
@@ -93,7 +91,6 @@ impl<'a> Compiler<'a> {
             declared_value_owners: &analysis.declared_value_owners,
             owner_index: &owner_index,
             value_constructors: &analysis.value_constructors,
-            static_funcs,
             source_file,
         };
         let authored_names = program
@@ -210,7 +207,6 @@ impl<'a> Compiler<'a> {
             declared_value_owners,
             owner_index,
             value_constructors,
-            static_funcs: HashMap::new(),
             source_file,
         })
     }
@@ -395,7 +391,6 @@ impl<'a> Compiler<'a> {
                 self.emit(
                     Operation::AllocFunc {
                         dst: link,
-                        static_id: self.static_funcs.get(name).copied(),
                     },
                     binding.location,
                 );

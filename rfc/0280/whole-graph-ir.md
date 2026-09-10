@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove the legacy static-function reference representation (2026-09-11)
+
+Deleted the compiler's static function map/module compilation wrapper and
+AllocFunc.static_id throughout LIR, bytecode and VM. Function allocation now
+always creates an ordinary OpenFunc closure slot, which recursive definitions
+seal as before. Removed FuncId, DecodedValue::FuncRef and its packed-value tag,
+the heap's static function map, lookup/sealing routines, alias traversal,
+equality/debug branches and function-table relocation. The existing solved type
+tag retains its numeric value; the removed tag is no longer recognized.
+
+No producer or consumer of the old static function representation remains in
+repository Rust code. General function identity still uses closure identities,
+and this removal does not solve the outstanding unspecialized generic-function
+value inference issue. Work relocation now copies only its explicit roots,
+without collecting and republishing an implicit static function table.
+
+Validation: workspace compilation passes, codegen 88/88, VM 48/48, heap 17/17
+and LIR 2/2 pass. Logs: /tmp/mir-remove-static-func-{check,codegen,vm,heap,lir}.log.
+Remaining old compiler/types/descriptor execution code still produces 33 unused
+warnings and requires further removal. Full migration and final acceptance are
+not yet complete; no performance benchmark was performed.
+
 ### Delete obsolete per-module world publication (2026-09-11)
 
 Removed WorkWorld module sealing/field enumeration/publication methods,

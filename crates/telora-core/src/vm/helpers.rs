@@ -356,7 +356,6 @@ fn runtime_value_kind(actual: Val) -> &'static str {
         DecodedValue::Tagged(_) => "Tagged",
         DecodedValue::Dict(_) => "Dict",
         DecodedValue::Func(_) => "Func",
-        DecodedValue::FuncRef(_) => "Func",
         DecodedValue::Dyn(_) => "Dyn",
         DecodedValue::Module(_) => "Module",
         DecodedValue::TypeSlot(_) => "internal up-link",

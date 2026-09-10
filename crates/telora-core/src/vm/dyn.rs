@@ -220,7 +220,6 @@ fn run_core_dyn(
                 DecodedValue::Tagged(_) => "Tagged",
                 DecodedValue::Tuple(_) => "Tuple",
                 DecodedValue::Func(_) => "Func",
-                DecodedValue::FuncRef(_) => "Func",
                 DecodedValue::Dyn(_) => "Dyn",
                 DecodedValue::Module(_) => {
                     return Err(error(

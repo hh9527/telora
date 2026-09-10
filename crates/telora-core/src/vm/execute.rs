@@ -620,28 +620,21 @@ impl Vm {
                                     pc,
                                 )?;
                             }
-                            Opcode::AllocFunc { dst, static_id } => {
-                                let value = if let Some(id) = static_id {
-                                    Val::new(
-                                        DecodedValue::FuncRef(*id),
-                                        instruction_location(function, pc),
-                                    )
-                                } else {
-                                    charge_allocation(
-                                        account,
-                                        logical_value_bytes(1).map_err(|native_error| {
-                                            allocation_error(native_error.message, function, pc)
-                                        })?,
-                                        function,
-                                        pc,
-                                    )?;
-                                    Val::new(
-                                        DecodedValue::Func(
-                                            current.allocate(crate::heap::Object::OpenFunc),
-                                        ),
-                                        instruction_location(function, pc),
-                                    )
-                                };
+                            Opcode::AllocFunc { dst } => {
+                                charge_allocation(
+                                    account,
+                                    logical_value_bytes(1).map_err(|native_error| {
+                                        allocation_error(native_error.message, function, pc)
+                                    })?,
+                                    function,
+                                    pc,
+                                )?;
+                                let value = Val::new(
+                                    DecodedValue::Func(
+                                        current.allocate(crate::heap::Object::OpenFunc),
+                                    ),
+                                    instruction_location(function, pc),
+                                );
                                 write_register(&mut registers, *dst, value, function, pc)?;
                             }
                             Opcode::SealFunc { target, source } => {
@@ -661,7 +654,7 @@ impl Vm {
                                 {
                                     return Err(error(
                                         RuntimeErrorKind::TypeMismatch,
-                                        "function definition did not produce a FuncRef",
+                                        "function definition did not produce a function",
                                         function,
                                         pc,
                                     ));
@@ -687,20 +680,10 @@ impl Vm {
                                             },
                                         )?;
                                     }
-                                    DecodedValue::FuncRef(id) => current
-                                        .seal_static_func(id, source)
-                                        .map_err(|heap_error| {
-                                            error(
-                                                RuntimeErrorKind::DuplicateDefinition,
-                                                heap_error.to_string(),
-                                                function,
-                                                pc,
-                                            )
-                                        })?,
                                     _ => {
                                         return Err(error(
                                             RuntimeErrorKind::InvalidBytecode,
-                                            "function ref target is not a FuncRef",
+                                            "function target is not an open closure",
                                             function,
                                             pc,
                                         ));

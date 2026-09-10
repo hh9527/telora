@@ -1078,7 +1078,7 @@ impl<'a> Emitter<'a> {
                         if !self.mir.symbol_generics[symbol.index()].is_empty() { continue; }
                         if self.lookup(symbol).is_none() {
                             let dst = self.register();
-                            self.emit(binding, O::AllocFunc { dst, static_id: None });
+                            self.emit(binding, O::AllocFunc { dst });
                             self.locals.push((symbol, dst));
                         }
                     }

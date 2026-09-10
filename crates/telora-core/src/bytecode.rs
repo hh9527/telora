@@ -63,7 +63,6 @@ pub enum Instruction {
     },
     AllocFunc {
         dst: Register,
-        static_id: Option<crate::FuncId>,
     },
     SealFunc {
         target: Register,
@@ -312,7 +311,6 @@ pub enum Opcode {
     },
     AllocFunc {
         dst: Register,
-        static_id: Option<crate::FuncId>,
     },
     SealFunc {
         target: Register,
@@ -782,7 +780,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::InstallTask { node, src } => Opcode::InstallTask { node, src },
         Instruction::MakeVariant { dst, ty, variant, payload } => Opcode::MakeVariant { dst, ty, variant, payload },
         Instruction::OwnDeclared { dst, owner, value } => Opcode::OwnDeclared { dst, owner, value },
-        Instruction::AllocFunc { dst, static_id } => Opcode::AllocFunc { dst, static_id },
+        Instruction::AllocFunc { dst } => Opcode::AllocFunc { dst },
         Instruction::SealFunc { target, source } => Opcode::SealFunc { target, source },
         Instruction::AllocTypeSlot { dst } => Opcode::AllocTypeSlot { dst },
         Instruction::ReadTypeSlot { dst, link } => Opcode::ReadTypeSlot { dst, link },

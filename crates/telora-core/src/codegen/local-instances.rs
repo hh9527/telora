@@ -32,7 +32,7 @@ impl Emitter<'_> {
                 let dst = self.register();
                 let signature = self.mir.generic_instances[instance.index()].signature;
                 if self.mir.types[signature.index()].constructor == TypeConstructor::Function {
-                    self.emit(node, O::AllocFunc { dst, static_id: None });
+                    self.emit(node, O::AllocFunc { dst });
                 }
                 self.local_instances.push((instance, dst));
             }

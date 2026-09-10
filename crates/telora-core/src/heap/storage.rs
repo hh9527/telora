@@ -14,7 +14,6 @@ impl Heap {
             shapes: Vec::new(),
             shape_slots: HashMap::new(),
             bootstrap_root: None,
-            functions: HashMap::new(),
             declared_types: HashMap::new(),
             properties: BTreeMap::new(),
             property_attr_type: None,
@@ -55,41 +54,6 @@ impl Heap {
         self.objects.len()
     }
 
-
-    pub(crate) fn seal_static_func(
-        &mut self,
-        id: crate::FuncId,
-        value: Val,
-    ) -> Result<(), HeapError> {
-        if !matches!(
-            value.value(),
-            DecodedValue::Func(_) | DecodedValue::FuncRef(_)
-        ) {
-            return Err(HeapError(
-                "static function definition did not produce a closure",
-            ));
-        }
-        match self.functions.entry(id) {
-            std::collections::hash_map::Entry::Vacant(entry) if self.storage == Storage::Work => {
-                entry.insert(Some(value));
-                Ok(())
-            }
-            std::collections::hash_map::Entry::Occupied(mut entry) if entry.get().is_none() => {
-                entry.insert(Some(value));
-                Ok(())
-            }
-            std::collections::hash_map::Entry::Vacant(_) => {
-                Err(HeapError("unknown static function slot"))
-            }
-            std::collections::hash_map::Entry::Occupied(_) => {
-                Err(HeapError("static function slot is already sealed"))
-            }
-        }
-    }
-
-    pub(crate) fn static_func(&self, id: crate::FuncId) -> Option<Val> {
-        self.functions.get(&id).copied().flatten()
-    }
 
     pub(crate) fn bootstrap_root(&self) -> Option<PersistentValue> {
         self.bootstrap_root

@@ -12,33 +12,14 @@ pub(crate) fn relocate_work_roots(
             "work relocation requires two Work worlds and one Main world",
         ));
     }
-    // FuncRef is an immediate up-link, so move the source's sealed targets
-    // beside the copied graph when the Main world does not already own them.
-    let mut functions = source
-        .functions
-        .iter()
-        .filter_map(|(id, value)| value.map(|value| (*id, value)))
-        .filter(|(id, _)| target.static_func(*id).is_none() && main.static_func(*id).is_none())
-        .collect::<Vec<_>>();
-    functions.sort_by_key(|(id, _)| *id);
-    let mut copy = Vec::with_capacity(roots.len() + functions.len());
-    copy.extend_from_slice(roots);
-    copy.extend(functions.iter().map(|(_, value)| *value));
-    let copied = copy_roots(
+    copy_roots(
         target,
         HeapView {
             current: source,
             background: Some(main),
         },
-        &copy,
-    )?;
-    for ((id, _), value) in functions
-        .into_iter()
-        .zip(copied.iter().skip(roots.len()).copied())
-    {
-        target.seal_static_func(id, value)?;
-    }
-    Ok(copied[..roots.len()].to_vec())
+        roots,
+    )
 }
 
 pub(crate) fn publish_root(

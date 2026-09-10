@@ -35,28 +35,11 @@ impl<'a> HeapView<'a> {
         })
     }
 
-    pub(crate) fn static_func(&self, id: crate::FuncId) -> Option<Val> {
-        self.current
-            .static_func(id)
-            .or_else(|| self.background.and_then(|heap| heap.static_func(id)))
-    }
-
-    pub(crate) fn resolve_func(&self, mut value: Val) -> Result<Option<Handle>, HeapError> {
-        let mut visited = HashSet::new();
-        loop {
-            match value.value() {
-                DecodedValue::Func(handle) => return Ok(Some(handle)),
-                DecodedValue::FuncRef(id) => {
-                    if !visited.insert(id) {
-                        return Err(HeapError("cyclic static function alias"));
-                    }
-                    value = self
-                        .static_func(id)
-                        .ok_or(HeapError("static function slot is not sealed"))?;
-                }
-                _ => return Ok(None),
-            }
-        }
+    pub(crate) fn resolve_func(&self, value: Val) -> Result<Option<Handle>, HeapError> {
+        Ok(match value.value() {
+            DecodedValue::Func(handle) => Some(handle),
+            _ => None,
+        })
     }
 
     pub(crate) fn resolved_function_arity(&self, value: Val) -> Result<Option<usize>, HeapError> {
@@ -405,8 +388,7 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::DeclaredType(_)
                 | DecodedValue::SymbolicType(_)
                 | DecodedValue::Func(_)
-                | DecodedValue::TypeSlot(_)
-                | DecodedValue::FuncRef(_) => continue,
+                | DecodedValue::TypeSlot(_) => continue,
             };
             if !visited.insert(handle) {
                 continue;
@@ -464,26 +446,6 @@ impl<'a> HeapView<'a> {
         }
         let left = left.without_type_id();
         let right = right.without_type_id();
-        if matches!(left.value(), DecodedValue::FuncRef(_))
-            || matches!(right.value(), DecodedValue::FuncRef(_))
-        {
-            let Some(left) = self.resolve_func(left)? else {
-                return Ok(false);
-            };
-            let Some(right) = self.resolve_func(right)? else {
-                return Ok(false);
-            };
-            let Object::Closure { identity: left, .. } = self.object(left)? else {
-                return Err(HeapError("Func handle refers to another object kind"));
-            };
-            let Object::Closure {
-                identity: right, ..
-            } = self.object(right)?
-            else {
-                return Err(HeapError("Func handle refers to another object kind"));
-            };
-            return Ok(Arc::ptr_eq(left, right));
-        }
         match (left.value(), right.value()) {
             (DecodedValue::Func(left), DecodedValue::Func(right)) => {
                 let Object::Closure { identity: left, .. } = self.object(left)? else {

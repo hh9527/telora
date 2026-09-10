@@ -164,7 +164,6 @@ fn runtime_object_handle(value: DecodedValue) -> Option<Handle> {
         | DecodedValue::InlineAtom(_)
         | DecodedValue::Atom(_)
         | DecodedValue::InlineString(_)
-        | DecodedValue::ShortString(_)
-        | DecodedValue::FuncRef(_) => None,
+        | DecodedValue::ShortString(_) => None,
     }
 }
