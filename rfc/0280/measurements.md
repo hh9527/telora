@@ -2667,3 +2667,33 @@ both ontology modes and source-size/diff checks pass. Artifacts:
 `/tmp/binding-publication-{core,cli,release}.log`,
 `/tmp/binding-publication-perf{,-reverse}.{log,json}`,
 `/tmp/binding-publication-{before,after}-summary.log`.
+
+### Early MIR static CLI bridge: rough timing only (2026-09-10)
+
+Commit `89659b6` connects `check --only-types` and query directly to the three
+new MIR passes. Release built successfully. The sole flag spelling is now
+`--only-types`; earlier measurements above retain the historical spelling.
+
+Command (run the binary directly, excluding build time):
+
+```sh
+target/release/telora -C /home/h00629578/ws/lab-ws/lab-ontology/ontology check --only-types @test/query
+```
+
+One preliminary run, then three hyperfine runs with diagnostic stdout redirected
+to a file: **174.3 ± 3.7 ms**, range **170.1–177.3 ms**. A separate GNU time run
+reports maximum RSS **34,092 KiB** (about 33.3 MiB). RSS is not peak live heap and
+is not comparable to previous heaptrack figures.
+
+All measured runs exit 1: 16 dependencies, 6,817 Unknown type slots, 512 type
+conflicts, and 9,204 diagnostic records. The unfinished solver reaches its final
+summary, but does not establish successful type closure. These are observation
+costs for the current partial solver, **not an equivalent-workload speedup** over
+the earlier roughly 705 ms successful types-only checker. No further profiling
+was performed for this small bridge.
+
+The absolute context above avoids an existing package-discovery problem with
+an unnormalized `-C ../...` path; that attempt exited before loading modules and
+was excluded from timing. Artifacts: `/tmp/mir-cli-release.log`,
+`/tmp/mir-only-types-perf.json`, `/tmp/mir-only-types-time.txt`,
+`/tmp/mir-only-types-ontology.{jsonl,stderr}`.
