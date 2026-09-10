@@ -217,7 +217,7 @@ fn compile_root(
         || globals.iter().any(|s| {
             matches!(
                 native_abi(mir, *s),
-                Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop")) | Some((13, _)) | Some((7, "parse_with"))
+                Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop" | "evidence")) | Some((13, _)) | Some((7, "parse_with"))
             )
         });
     if queries_properties {
@@ -1501,6 +1501,29 @@ pub(crate) mod tests {
             assert_eq!(result.value().as_int(), Some(42), "{source}");
         }
     }
+    #[test]
+    fn property_evidence_demands_the_statically_proven_value() {
+        let source = r#"
+            import "std/type-property" as prop;
+            @property(PropertyTarget.Type) type Mark = struct {value: Int};
+            def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: 42} };
+            @mark type Item = struct {x: Int};
+            def read: for(T: Property(Mark)) Fn(TypeOf(T)) -> Int = fn(owner) {
+                let get = prop.evidence;
+                get(owner, Mark.type).value
+            };
+            export def answer = read(Item.type);
+        "#;
+        let mir = graph(source, "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+        let missing = graph(&source.replace("@mark type Item", "type Item"), "");
+        assert!(missing.seal().is_err());
+        let failed = graph(&source.replace("{value: 42}", "fail!(\"provider failed\")"), "");
+        let artifact = compile(failed.seal().unwrap(), entry(&failed)).unwrap();
+        assert!(execute(artifact).err().expect("provider failure").to_string().contains("provider failed"));
+    }
+
     #[test]
     fn block_bottoms_preserve_unit_tails_and_contextual_types() {
         for source in [

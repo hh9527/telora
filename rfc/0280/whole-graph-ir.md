@@ -5,6 +5,25 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Proven property evidence lowers to a VM demand (2026-09-11)
+
+The std/type-property evidence native now lowers to GetTypeProp with its two
+metadata arguments. Its Property(P) bound is proved before sealing; unlike the
+optional lookup adapter, it neither checks presence again nor wraps the value
+in Some. The returned value remains in the VM heap, and a failed provider uses
+the existing cached failure path. Codegen property dependency discovery now
+includes this native entry, so its demanded provider tasks are installed.
+
+Validation: 55 codegen tests pass. New coverage exercises a first-class evidence
+function inside a bounded generic function, absent-property seal rejection and
+provider failure propagation. The display language fixture now gets past the
+previous unsupported property ABI and fails later at string interpolation:
+MIR currently supplies the raw value instead of a statically selected Display
+conversion to Fmt. That static elaboration gap remains open; the fixture is not
+passing yet. Logs: /tmp/mir-property-evidence.log,
+/tmp/mir-evidence-codegen.log and /tmp/mir-evidence-display.jsonl. No VM changes
+or performance claims are included.
+
 ### Block bottom propagation is solved before tail fitting (2026-09-11)
 
 Blocks now have an explicit static constraint over evaluated binding initializers

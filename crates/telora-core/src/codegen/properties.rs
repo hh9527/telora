@@ -247,7 +247,7 @@ impl Emitter<'_> {
             return Ok(None);
         };
         let expected = match abi {
-            (25, "get_type_prop") => Some(2),
+            (25, "get_type_prop" | "evidence") => Some(2),
             (25, "get_field_prop" | "get_variant_prop") => Some(3),
             (18, "property") => Some(1),
             _ => None,
@@ -355,7 +355,14 @@ impl Emitter<'_> {
                 dst
             }
             (25, "evidence") => {
-                return Err(self.error(node, "this property ABI adapter is not implemented yet"));
+                // Property(P) was proved before sealing. Demand the VM-owned
+                // value directly; a failed provider propagates its cached failure.
+                adapter.function.parameter_count = 2;
+                let owner = adapter.register();
+                let property = adapter.register();
+                let dst = adapter.register();
+                adapter.emit(node, O::GetTypeProp { dst, owner, property });
+                dst
             }
             (18, "property") => {
                 adapter.function.parameter_count = 1;
