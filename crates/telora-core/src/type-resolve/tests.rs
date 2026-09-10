@@ -2,6 +2,56 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn principal_schemes_preserve_quantified_bounds() {
+    let mut mir = graph(&[("@src/main", r#"
+        trait Named { name: Fn(Self) -> String };
+        export def plain: for(T) Fn(T) -> T = fn(value) { value };
+        export def first: for(T: Named) Fn(T) -> T = fn(value) { value };
+        export def second: for(U: Named) Fn(U) -> U = fn(value) { value };
+    "#)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let scheme = |name| {
+        let index = mir.symbols.iter().position(|symbol| symbol.name == name && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap();
+        mir.symbol_schemes[index].unwrap()
+    };
+    let first = scheme("first");
+    assert_eq!(first, scheme("second"));
+    assert_ne!(first, scheme("plain"));
+    assert_eq!(mir.type_schemes[first.index()].bounds.len(), 1);
+    mir.type_schemes[first.index()].bounds.clear();
+    assert!(mir.seal().is_err());
+}
+
+#[test]
+fn principal_schemes_share_alpha_equivalent_contracts_but_not_function_symbols() {
+    let mut mir = graph(&[("@src/main", r#"
+        export def first: for(T) Fn(T) -> T = fn(value) { value };
+        export def second: for(U) Fn(U) -> U = fn(value) { value };
+        export def closed: for(T) Fn(T) -> Int = fn(value) { 42 };
+        export def unused: for(T, U) Fn(T) -> T = fn(value) { value };
+    "#)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let symbol = |name| mir.symbols.iter().position(|symbol| symbol.name == name && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap();
+    assert_ne!(symbol("first"), symbol("second"));
+    assert_eq!(mir.symbol_schemes[symbol("first")], mir.symbol_schemes[symbol("second")]);
+    assert_ne!(mir.symbol_schemes[symbol("first")], mir.symbol_schemes[symbol("closed")]);
+    assert_ne!(mir.symbol_schemes[symbol("first")], mir.symbol_schemes[symbol("unused")]);
+    let scheme = &mir.type_schemes[mir.symbol_schemes[symbol("closed")].unwrap().index()];
+    let SchemeNode::Apply { constructor: TypeConstructor::Function, arguments } = &mir.scheme_nodes[scheme.body.index()] else { panic!("function scheme") };
+    assert_eq!(mir.scheme_nodes[arguments[0].index()], SchemeNode::Bound(0));
+    let SchemeNode::Known(result) = mir.scheme_nodes[arguments[1].index()] else { panic!("closed result reuses TypeId") };
+    assert_eq!(mir.types[result.index()].constructor, TypeConstructor::Int);
+    let original = (mir.type_schemes.clone(), mir.scheme_nodes.clone(), mir.symbol_schemes.clone());
+    mir.build_type_schemes();
+    assert_eq!(original, (mir.type_schemes.clone(), mir.scheme_nodes.clone(), mir.symbol_schemes.clone()));
+    let bound = mir.scheme_nodes.iter().position(|node| matches!(node, SchemeNode::Bound(0))).unwrap();
+    mir.scheme_nodes[bound] = SchemeNode::Bound(999);
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn interpreter_contracts_reject_invalid_witnesses_and_nested_parameters() {
     for (source, message) in [
         ("export def bad = interpreter!(fn(x) { True });", "directly annotated generic def"),

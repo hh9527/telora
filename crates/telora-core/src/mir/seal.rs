@@ -64,6 +64,7 @@ impl Mir {
             || self.implementation_instances.len() != self.hir.len()
             || self.type_layouts.len() != self.types.len()
             || self.member_selections.len() != self.hir.len()
+            || !self.valid_type_schemes()
             || self.interpreter_plans.len() != self.hir.len()
             || self.hir.iter().enumerate().any(|(index, node)| matches!(node.kind, HirKind::Interpreter)
                 && !self.valid_interpreter_plan(HirId(index as u32)))

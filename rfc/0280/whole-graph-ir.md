@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Principal generic contracts retained in MIR (2026-09-11)
+
+MIR now retains a session arena of alpha-normalized quantified type schemes.
+Binder-dependent skeletons use scheme node IDs; closed subtrees reuse existing
+TypeIds. Contracts include declared generic bounds and their parameter indices,
+so constrained and unconstrained functions cannot acquire the same scheme.
+Alpha-equivalent contracts share an ID while their function symbols remain
+distinct. Construction uses stable symbol order and iterative graph traversal.
+MIR dumps expose the arena, and seal checks signatures, binders, bounds and edges
+against the solved source information.
+
+This is representation groundwork only: first-class unspecialized references
+do not yet consume these schemes. The module-interfaces and stdlib-collections
+function identity failures remain open. No new codegen or VM behavior, runtime
+inference, arbitrary default types or performance claim is included.
+
+Validation: 60 type-resolve tests pass, including alpha-equivalence, independent
+TypeId reuse, deterministic reconstruction, distinct bounds and seal rejection
+of damaged binders or missing bounds. All 85 codegen tests also pass.
+Logs: /tmp/mir-schemes-bounds.log and /tmp/mir-schemes-bounds-codegen.log.
+
 ### Interpreter plans generate ordinary executable adapters (2026-09-11)
 
 Codegen now consumes InterpreterPlan to emit an outer witness factory and an

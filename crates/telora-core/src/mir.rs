@@ -10,6 +10,8 @@ use std::fmt::Write;
 pub(crate) mod lower;
 #[path = "mir/seal.rs"]
 mod seal;
+#[path = "mir/type-schemes.rs"]
+mod type_schemes;
 pub use seal::SealedMir;
 
 macro_rules! id {
@@ -29,6 +31,23 @@ id!(
     ConflictId
 );
 id!(ScopeId);
+id!(TypeSchemeId, SchemeNodeId);
+
+/// A normalized quantified type. Scheme identity describes a type contract,
+/// not the runtime identity of a function implementing that contract.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TypeScheme {
+    pub parameter_count: u32,
+    pub body: SchemeNodeId,
+    pub bounds: Vec<(u32, SchemeNodeId)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum SchemeNode {
+    Known(TypeId),
+    Bound(u32),
+    Apply { constructor: TypeConstructor, arguments: Vec<SchemeNodeId> },
+}
 id!(TypeTermId, TypeConflictId);
 id!(GenericInstanceId);
 
@@ -559,6 +578,9 @@ pub struct Mir {
     pub ty_slots: Vec<TypeState>,
     pub symbol_types: Vec<TypeSlotId>,
     pub symbol_generics: Vec<Vec<SymbolId>>,
+    pub symbol_schemes: Vec<Option<TypeSchemeId>>,
+    pub type_schemes: Vec<TypeScheme>,
+    pub scheme_nodes: Vec<SchemeNode>,
     /// Per-reference generic substitutions produced by the type pass. Argument
     /// slots are normalized with the rest of the graph; consumers must use
     /// their solved outcome rather than matching signatures again. A generic
@@ -740,6 +762,12 @@ impl Mir {
             if let Some(plan) = plan {
                 writeln!(out, "interpreter-plan {id} {plan:?}").unwrap();
             }
+        }
+        for (id, scheme) in self.type_schemes.iter().enumerate() {
+            writeln!(out, "type-scheme {id} {scheme:?}").unwrap();
+        }
+        for (id, node) in self.scheme_nodes.iter().enumerate() {
+            writeln!(out, "scheme-node {id} {node:?}").unwrap();
         }
         for (id, conflict) in self.type_conflicts.iter().enumerate() {
             writeln!(out, "type-conflict {id} {conflict:?}").unwrap();
