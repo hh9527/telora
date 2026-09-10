@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove the old module type solver and execution plan (2026-09-11)
+
+Deleted the old dependency/program-solver/type-check/solved-module files and
+their includes: module analysis entry points, solve_module_plan,
+execute_module_plan, ProgramTypeInputs/Outcome and SolvedModulePlan. Reference
+inspection confirmed this was a closed legacy group after removal of the old
+public source analysis API. About 2,600 lines were removed; no compatibility
+adapter replaces them. Deleted tests belonged to the removed implementation;
+the new MIR type/codegen/editor suites remain intact.
+
+Codegen's target remains mechanical lowering of sealed MIR: symbol resolution,
+type arguments and operation selection belong to the static passes. Runtime
+optimization is not required for this migration, and missing static facts must
+not be reconstructed by codegen or VM.
+
+Validation: workspace compilation, type-resolve 68/68, codegen 88/88 and telora
+library 28/28 pass. Logs: /tmp/mir-remove-module-solver-{check,types,codegen,editor}.log.
+Remaining old tool compiler, inference helpers and descriptor runtime are still
+compiled and need removal. Generic function values, outstanding diagnostic
+rules, full acceptance and final performance evaluation remain incomplete.
+This deletion is not a measured performance improvement.
+
 ### Remove the old public source type-analysis entry points (2026-09-11)
 
 Deleted analyze_source/analyze_source_with_fuel/analyze_source_with_quota and

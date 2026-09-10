@@ -8,10 +8,13 @@ use crate::heap::{
     publish_type_properties,
 };
 use crate::hir::{HirDefinitionId, HirDefinitionKind, HirExpressionId, HirProgram, HirResolution};
-use crate::json::{Provenance, ValuePath, ValuePathSegment};
+use crate::json::{ValuePath, ValuePathSegment};
 use crate::lexer::{FrontendError, SourceLocation};
 use crate::lir::RegisterId;
+#[cfg(test)]
 use crate::parser::parse_registered;
+#[cfg(test)]
+use crate::Quota;
 use crate::source::{Diagnostic, SourceDatabase};
 use crate::type_store::{InternType, TypeId, TypeShape, TypeStore};
 use crate::value::{
@@ -19,7 +22,7 @@ use crate::value::{
     NativeError, NativeFunction,
 };
 use crate::{
-    BuiltinAtom, CallContext, DebugSink, DiscardDebugSink, Quota, QuotaAccount, ValueKind,
+    BuiltinAtom, CallContext, DebugSink, DiscardDebugSink, QuotaAccount, ValueKind,
     ValueRef, Vm,
 };
 use hashbrown::raw::RawTable;
@@ -34,16 +37,12 @@ include!("types/descriptor.rs");
 include!("types/environment.rs");
 include!("types/traits.rs");
 include!("types/analysis.rs");
-include!("types/program-solver.rs");
-include!("types/type-check.rs");
-include!("types/dependency.rs");
 include!("types/type-boundary.rs");
 include!("types/static-contract.rs");
 include!("types/static-family.rs");
 include!("types/static-origin.rs");
 include!("types/static-constraints.rs");
 include!("types/dependency-plan.rs");
-include!("types/solved-module.rs");
 include!("types/metadata.rs");
 include!("types/host-contract.rs");
 include!("types/tool.rs");
