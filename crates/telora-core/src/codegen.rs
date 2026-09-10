@@ -1068,6 +1068,25 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn solved_dyn_and_actor_service_keep_type_witnesses_in_the_vm() {
+        for source in [
+            "import \"std/dyn\" as dyn; export def answer = match dyn.project_with(Int.type, dyn.pack(Int.type, 42)) { Some(value) => value, None => 0 };",
+            "import \"std/dyn\" as dyn; export def answer = match dyn.project_with(String.type, dyn.pack(Int.type, 1)) { Some(_) => 0, None => 42 };",
+            "import \"std/dyn\" as dyn; type Alias = Int; export def answer = if dyn.desc(dyn.pack(Alias.type, 1)) == Int.type { 42 } else { 0 };",
+            "import \"std/dyn\" as dyn; type Count = struct(Int); export def answer = match dyn.check_int(dyn.pack(Count.type, Count(1))) { Some(_) => 0, None => 42 };",
+            "import \"std/dyn\" as dyn; type A = struct(Int); type B = struct(Int); export def answer = match dyn.project_with(B.type, dyn.pack(A.type, A(1))) { Some(_) => 0, None => 42 };",
+            "import \"std/dyn\" as dyn; export def answer = match dyn.check_int(dyn.pack(Int.type, 42)) { Some(value) => value, None => 0 };",
+            "import \"std/actor\" as actor; import \"std/value\" {Value}; import \"std/dyn\" as dyn; def service = actor.service(Array(Int).type, [42], fn(state, event) { (state, []) }); def transition = service.reduce((service.state, actor.Event.Request({id: \"request\", input: Value.Int(1)}))); export def answer = match dyn.project_with(Array(Int).type, transition.0) { Some(values) => values[0], None => 0 };",
+            "import \"std/entry\" as entry; import \"std/ees\" as ees; import \"std/dyn\" as dyn; def app = entry.run(Int.type, { sources: [], envs: [], args: False }, ees.none, fn(ctx) { (42, fn(state, event) { (state, []) }) }); def service = app.start({ sources: {}, env: {}, args: [] }); export def answer = match dyn.project_with(Int.type, service.state) { Some(value) => value, None => 0 };",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{:?}", mir.diagnostics));
+            let artifact = compile(sealed, entry(&mir)).unwrap_or_else(|d| panic!("{source}\n{d:?}"));
+            let result = execute(artifact).unwrap_or_else(|d| panic!("{source}\n{d}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+    #[test]
     fn newtypes_and_selected_trait_implementations_execute_from_solved_ids() {
         for source in [
             "type Inner = struct(Array(Int)); type Outer = struct(Inner); def input = [20, 22]; export def answer = match Outer(Inner(input)) { Outer(Inner(items)) => items[0] + items[1] };",

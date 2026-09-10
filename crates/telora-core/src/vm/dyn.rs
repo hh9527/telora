@@ -9,6 +9,9 @@ fn run_core_dyn(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
+    if background.solved_types.is_some() {
+        return run_solved_dyn(operation, arguments, return_target, function, pc, current, background, account);
+    }
     if operation == CoreDynFunction::Pack {
         decode_runtime_type(arguments[0], current, background).map_err(|message| {
             error(

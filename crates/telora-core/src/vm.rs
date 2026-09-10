@@ -33,6 +33,7 @@ include!("vm/dict.rs");
 include!("vm/model.rs");
 include!("vm/type-desc.rs");
 include!("vm/dyn.rs");
+include!("vm/solved-dyn.rs");
 include!("vm/model-type.rs");
 include!("vm/codec-entry.rs");
 include!("vm/codec-decode.rs");

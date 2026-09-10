@@ -5,6 +5,29 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Solved Dyn witnesses and actor state stay inside the VM (2026-09-10)
+
+Solved sessions now implement Dyn pack, project_with, desc and primitive checks
+using their closed TypeImage IDs. Pack retains the original metadata Val and
+payload Val; projection compares exact TypeIds and returns the original payload.
+Nominal wrappers do not pass primitive checks, and distinct nominal types cannot
+project to one another. The outer Dyn wrapper does not inherit the payload's
+nominal stamp. No descriptor decoding, runtime type interning or host/world
+payload copy participates in this path. Other Dyn observations remain explicit
+unsupported operations in solved sessions, without a legacy fallback.
+
+The actual std/actor.service and std/entry.run constructors now execute through
+this path. A VM test checks exact heap-handle and nominal-TypeId identity before
+packing, through an actor reducer, and after projection. The CLI eval-with test
+also executes actor.service and returns its updated state. This prepares actor
+execution; the run/serve CLI itself still needs assembly onto the new pipeline.
+
+Validation: 23 codegen tests, the dedicated actor handle-identity test and all
+14 static-MIR CLI tests pass. Logs: /tmp/mir-solved-dyn-core.log and
+/tmp/mir-solved-dyn-cli.log. This checkpoint makes no performance claim and does
+not close generic witnesses, remaining metadata/Dyn observations, construction
+checks, run/serve/LSP or final legacy-pipeline removal.
+
 ### Newtype values and statically selected trait implementations (2026-09-10)
 
 Newtype constructor occurrences now consume their solved nominal TypeId.

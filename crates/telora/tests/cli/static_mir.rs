@@ -1,4 +1,27 @@
 #[test]
+fn static_mir_eval_with_executes_actor_service_with_solved_dyn_state() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), r#"
+        import "std/entry" {main};
+        import "std/actor" as actor;
+        import "std/dyn" as dyn;
+        import "std/value" {Value};
+        def service = actor.service(Int.type, 41, fn(state, event) { (state + 1, []) });
+        export def answer = main({sources: [], envs: [], args: False}, fn(ctx) {
+            let transition = service.reduce((service.state, actor.Event.Request({id: "request", input: Value.None})));
+            match dyn.project_with(Int.type, transition.0) {
+                Some(value) => Value.Int(value),
+                None => fail!("state witness mismatch"),
+            }
+        });
+    "#).unwrap();
+    let output = telora(&cwd).args(["eval-with", "@src/main:answer"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), serde_json::json!(42));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_check_injects_data_and_blocks_execution_after_type_errors() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), r#"

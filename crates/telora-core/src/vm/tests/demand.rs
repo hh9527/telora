@@ -1,4 +1,61 @@
 #[test]
+fn solved_actor_state_keeps_the_original_payload_through_dyn_projection() {
+    let mir = crate::codegen::tests::graph(
+        r#"
+        import "std/actor" as actor;
+        import "std/value" {Value};
+        import "std/dyn" as dyn;
+        type State = struct(Array(Int));
+        def input = State([42]);
+        def service = actor.service(State.type, input, fn(state, event) { (state, []) });
+        def transition = service.reduce((service.state, actor.Event.Request({id: "request", input: Value.None})));
+        export def answer = (input, service.state, transition.0, dyn.project_with(State.type, transition.0), State.type);
+    "#,
+        "",
+    );
+    let artifact =
+        crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    let linked = crate::execution_link::link_entry(artifact).unwrap();
+    let result = Vm::new()
+        .execute_linked(
+            linked,
+            Quota::with_fuel(10000),
+            crate::DataLimits::default(),
+            &mut SourceDatabase::default(),
+        )
+        .unwrap();
+    let view = HeapView {
+        current: &result.world.work.heap,
+        background: Some(&result.world.main),
+    };
+    let DecodedValue::Tuple(handle) = result.world.work.root.value() else {
+        panic!("tuple root");
+    };
+    let Object::Tuple(values) = view.object(handle).unwrap() else {
+        panic!("tuple object");
+    };
+    for index in [1, 2] {
+        let DecodedValue::Dyn(handle) = values[index].value() else {
+            panic!("Dyn state");
+        };
+        assert!(
+            values[index].type_id().is_none(),
+            "Dyn must not inherit its payload's nominal stamp"
+        );
+        let (_, descriptor, payload) = view.dyn_parts(handle).unwrap();
+        assert_eq!(descriptor.value(), values[4].value());
+        assert_eq!(payload.value(), values[0].value());
+        assert_eq!(payload.type_id(), values[0].type_id());
+    }
+    let DecodedValue::Tagged(handle) = values[3].value() else {
+        panic!("Some projection");
+    };
+    let (_, payload) = view.tagged(handle).unwrap();
+    assert_eq!(payload.value(), values[0].value());
+    assert_eq!(payload.type_id(), values[0].type_id());
+}
+
+#[test]
 fn solved_newtypes_preserve_nested_payload_handles_and_type_ids() {
     let mir = crate::codegen::tests::graph(
         "type Inner = struct(Array(Int)); type Outer = struct(Inner); def input = [20, 22]; def inner = Inner(input); export def answer = (input, inner, Outer(inner));",
