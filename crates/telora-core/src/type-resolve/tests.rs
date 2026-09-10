@@ -2,6 +2,45 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn metadata_equality_does_not_unify_represented_types_or_narrow_a_join() {
+    for source in [
+        "export def answer = Int.type != String.type;",
+        "def chosen = if True { Int.type } else { String.type }; export def answer = chosen == Int.type;",
+        "type Choice = enum { Selected(Type), Empty }; def chosen = match Choice.Selected(Int.type) { Choice.Selected(value) => value, Choice.Empty => String.type }; export def answer = chosen == Int.type;",
+        "def matches = fn(value) { value == Int.type }; export def answer = matches(String.type);",
+        "def chosen = if True { Int.type } else { Int.type }; export def answer = chosen == String.type;",
+        "def same = fn(left, right) { left == right }; export def answer = same(1, 1);",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+        let TypeState::Known(ty) = symbol_type(&mir, "answer") else { panic!("closed comparison") };
+        assert_eq!(mir.types[ty.index()].constructor, TypeConstructor::Bool);
+        if source.contains("def chosen") {
+            let TypeState::Known(ty) = symbol_type(&mir, "chosen") else { panic!("closed join") };
+            let expected = if source.contains("else { Int.type }") { TypeConstructor::TypeOf } else { TypeConstructor::Type };
+            assert_eq!(mir.types[ty.index()].constructor, expected, "{source}");
+        }
+        if source.contains("def matches") {
+            let TypeState::Known(ty) = symbol_type(&mir, "matches") else { panic!("closed predicate") };
+            let parameter = mir.types[ty.index()].arguments[0];
+            assert_eq!(mir.types[parameter.index()].constructor, TypeConstructor::Type);
+        }
+    }
+    for source in [
+        "export def answer = Int.type == 1;",
+        "export def answer = 1 == \"1\";",
+        "type A = struct { x: Int }; type B = struct { x: Int }; def a: A = { x: 1 }; def b: B = { x: 1 }; export def answer = a == b;",
+        "export def answer: TypeOf(Int) = if True { Int.type } else { String.type };",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err(), "{source}");
+        assert!(!mir.type_conflicts.is_empty(), "{source}");
+    }
+}
+
+#[test]
 fn imported_generic_constructor_uses_have_independent_type_arguments() {
     for source in [
         "type Message(T) = enum { Data(T), Empty }; import Message.{Data}; export def answer = (Data(1), Data@[String](\"text\"));",

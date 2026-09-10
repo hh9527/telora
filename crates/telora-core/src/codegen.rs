@@ -1423,6 +1423,20 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn metadata_comparisons_execute_without_equating_type_witnesses() {
+        for source in [
+            "export def answer = if Int.type != String.type && Int.type == Int.type { 42 } else { 0 };",
+            "type Choice = enum { Selected(Type), Empty }; def chosen = match Choice.Selected(Int.type) { Choice.Selected(value) => value, Choice.Empty => String.type }; export def answer = if chosen == Int.type { 42 } else { 0 };",
+            "def matches = fn(value) { value == Int.type }; export def answer = if matches(Int.type) && !matches(String.type) { 42 } else { 0 };",
+        ] {
+            let mir = graph(source, "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            let result = execute(artifact).unwrap();
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+
+    #[test]
     fn nullary_constructor_aliases_have_independent_closed_owners() {
         for source in [
             "import \"./math\" { Empty }; export def answer = (Empty@[Int], Empty@[String]);",

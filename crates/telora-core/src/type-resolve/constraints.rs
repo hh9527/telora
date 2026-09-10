@@ -1,6 +1,52 @@
 use super::*;
 
 impl Solver<'_> {
+    pub(super) fn finish_value_equalities(&mut self) -> bool {
+        let pending = std::mem::take(&mut self.tasks);
+        let mut changed = false;
+        for task in pending {
+            if let Task::ValueEqual { node, left, right } = task {
+                // Let derived expression types settle before comparison
+                // supplies evidence to genuinely unconstrained operands.
+                let metadata = [left, right].into_iter().any(|slot| self.term(slot)
+                    .is_some_and(|term| matches!(term.constructor, TypeConstructor::Type | TypeConstructor::TypeOf)));
+                if metadata {
+                    for slot in [left, right] {
+                        if self.mir.ty_slots[self.root(slot).index()] == TypeState::Unknown {
+                            let ty = self.structure(TypeConstructor::Type, vec![]);
+                            self.equal(slot, ty, Some(self.mir.hir[node.index()].location));
+                        }
+                    }
+                    if let Some(task) = self.value_equal(node, left, right) { self.tasks.push(task); }
+                } else {
+                    self.equal(left, right, Some(self.mir.hir[node.index()].location));
+                }
+                changed = true;
+            } else { self.tasks.push(task); }
+        }
+        changed
+    }
+
+    fn value_equal(&mut self, node: HirId, left: TypeSlotId, right: TypeSlotId) -> Option<Task> {
+        for slot in [left, right] {
+            if matches!(self.mir.ty_slots[self.root(slot).index()], TypeState::Conflicted(_)) {
+                self.same(node, slot);
+                return None;
+            }
+        }
+        let (Some(a), Some(b)) = (self.term(left), self.term(right)) else {
+            return Some(Task::ValueEqual { node, left, right });
+        };
+        if matches!(a.constructor, TypeConstructor::Type | TypeConstructor::TypeOf)
+            && matches!(b.constructor, TypeConstructor::Type | TypeConstructor::TypeOf) {
+            // Metadata values compare represented TypeIds at runtime. Their
+            // comparison is not evidence that those TypeIds are identical.
+            return None;
+        }
+        self.equal(left, right, Some(self.mir.hir[node.index()].location));
+        None
+    }
+
     pub(super) fn finish_bottoms(&mut self) -> bool {
         let mut changed = false;
         for slot in std::mem::take(&mut self.bottom_candidates) {
@@ -23,6 +69,7 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::ValueEqual { node, left, right } => self.value_equal(node, left, right),
             Task::Reference { node, symbol } => {
                 if self.generalizations[symbol.index()].is_some() {
                     return Ok(Some(Task::Reference { node, symbol }));

@@ -106,7 +106,8 @@ impl Solver<'_> {
                 Task::Numeric { node, operand } | Task::Not { node, operand } | Task::Ordered { node, operand } => vec![node.ty(), *operand],
                 Task::Member { node, receiver, .. } | Task::Projection { node, receiver, .. }
                     | Task::FieldProjection { node, receiver } => vec![node.ty(), *receiver],
-                Task::Fit { expected, actual, .. } | Task::ShapeEqual { left: expected, right: actual, .. } => vec![*expected, *actual],
+                Task::Fit { expected, actual, .. } | Task::ShapeEqual { left: expected, right: actual, .. }
+                    | Task::ValueEqual { left: expected, right: actual, .. } => vec![*expected, *actual],
                 Task::Instantiate { target, .. } | Task::RefineInstance { target, .. } => vec![*target],
                 Task::Call { node, callee, .. } => vec![node.ty(), *callee],
                 Task::BoundContext { node, subject, bound } => vec![node.ty(), *subject, *bound],

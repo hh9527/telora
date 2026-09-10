@@ -5,6 +5,36 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Metadata value equality is distinct from type equality (2026-09-11)
+
+Binary equality formerly unified its operand slots immediately. As a result,
+Int.type != String.type demanded Int == String, and comparing an unresolved
+metadata match result to Int.type could force the match to TypeOf(Int) before
+its broad Type branch was solved. Equality now has a separate static worklist
+constraint. Known Type/TypeOf values are comparable without equating their
+represented types. Other values retain ordinary type compatibility checks.
+At a fixed point, unresolved comparison operands receive evidence: metadata
+comparison supplies broad Type, while ordinary comparison shares operand type
+evidence. This is constraint solving before generalization, not execution or
+failure recovery. Codegen and VM comparison instructions are unchanged.
+
+Validation: 52 type-resolve tests and 70 codegen tests passed; CLI build passed.
+Tests retain exact TypeOf for identical metadata branches, broad Type for mixed
+metadata branches, infer a Type-taking metadata predicate, and reject ordinary
+type mismatches and invalid TypeOf annotations. Runtime tests compare actual
+distinct/equal TypeIds and exercise the enum payload/match path. Actual
+test/prelude-constructors now passes. test/enum-constructors now executes and
+passes 9/11 cases; ownership/imported still fail comparisons of encoded values.
+The complete language aggregate remains failing. A wider metadata-name test
+filter also exercised old module tests: four fail, three explicitly at the
+known legacy native property registration boundary. Old-path removal and full
+acceptance are still outstanding. Logs:
+/tmp/mir-metadata-equality-all-types.log,
+/tmp/mir-metadata-equality-all-codegen.log,
+/tmp/mir-metadata-equality-build.log,
+/tmp/mir-metadata-equality-language.log and
+/tmp/mir-metadata-equality-tests.log. No performance measurement was made.
+
 ### Constructor and function aliases retain generic instances (2026-09-11)
 
 Member imports lower to ordinary alias bindings. Previously only closure

@@ -36,6 +36,7 @@ mod properties;
 mod tests;
 
 enum Task {
+    ValueEqual { node: HirId, left: TypeSlotId, right: TypeSlotId },
     Ordered { node: HirId, operand: TypeSlotId },
     Reference { node: HirId, symbol: SymbolId },
     TypeApply { node: HirId },
@@ -208,7 +209,7 @@ pub fn resolve(mir: &mut Mir) {
             }
         }
         if solver.revision == revision {
-            if !solver.finish_literals() && !solver.finish_bottoms() && !solver.generalize_ready() {
+            if !solver.finish_literals() && !solver.finish_bottoms() && !solver.finish_value_equalities() && !solver.generalize_ready() {
                 break;
             }
         }
@@ -717,11 +718,11 @@ impl Solver<'_> {
                 let operator = *operator;
                 let left = self.child(node, Role::Left).unwrap();
                 let right = self.child(node, Role::Right).unwrap();
-                self.equal(
-                    left.ty(),
-                    right.ty(),
-                    Some(self.mir.hir[node.index()].location),
-                );
+                if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
+                    self.tasks.push(Task::ValueEqual { node, left: left.ty(), right: right.ty() });
+                } else {
+                    self.equal(left.ty(), right.ty(), Some(self.mir.hir[node.index()].location));
+                }
                 match operator {
                     BinaryOperator::Add
                     | BinaryOperator::Subtract
