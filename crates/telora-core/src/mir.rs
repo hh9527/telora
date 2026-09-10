@@ -103,6 +103,7 @@ pub struct NativeTypeId {
     pub slot: u32,
 }
 impl NativeTypeId {
+    pub const TEST: Self = Self { module: 33, slot: 0 };
     /// Native ABI identity used by diagnostic syntax and the source inventory.
     pub const BLAME_ERROR: Self = Self {
         module: 34,

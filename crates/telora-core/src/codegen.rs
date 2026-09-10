@@ -37,6 +37,18 @@ pub struct CompiledEntry {
 pub enum CompilationRoot {
     Export(SymbolId),
     Check,
+    Tests(ModuleId),
+}
+
+pub struct CompiledTests {
+    pub bootstrap: CompiledEntry,
+    pub plan: crate::test_plan::TestPlan,
+}
+
+pub fn compile_tests(sealed: SealedMir<'_>, module: ModuleId) -> Result<CompiledTests, Vec<Diagnostic>> {
+    let plan = crate::test_plan::TestPlan::from_mir(&sealed, module)?;
+    let bootstrap = compile_root(sealed, CompilationRoot::Tests(module))?;
+    Ok(CompiledTests { bootstrap, plan })
 }
 
 #[derive(Debug)]
@@ -169,15 +181,16 @@ fn compile_root(
         };
         (Some(target), declaration, symbol.name.clone())
     } else {
-        let ModuleTarget::Bound(module) = mir.roots[0] else {
-            unreachable!("sealed root")
+        let module = if let CompilationRoot::Tests(module) = root { module } else {
+            let ModuleTarget::Bound(module) = mir.roots[0] else { unreachable!("sealed root") };
+            module
         };
         let (ModuleState::Source { body, .. } | ModuleState::Data { body }) =
             mir.modules[module.index()].state
         else {
             unreachable!("sealed module")
         };
-        (None, body, "<session check>".into())
+        (None, body, if matches!(root, CompilationRoot::Tests(_)) { "<test bootstrap>" } else { "<session check>" }.into())
     };
     let mut emitter = Emitter::new(mir, &graph, name);
     if target.is_some_and(|symbol| !mir.symbol_generics[symbol.index()].is_empty()) {
@@ -200,7 +213,7 @@ fn compile_root(
         for symbol in referenced_globals(mir, check.checker) { all.extend(reachable_globals(mir, symbol)); }
     }
     globals = all.into_iter().collect();
-    let queries_properties = root == CompilationRoot::Check
+    let queries_properties = matches!(root, CompilationRoot::Check | CompilationRoot::Tests(_))
         || globals.iter().any(|s| {
             matches!(
                 native_abi(mir, *s),
@@ -341,7 +354,7 @@ fn compile_root(
         };
         (result, emitter.ty(declaration).map_err(|d| vec![d])?)
     } else {
-        for node in graph.nodes() {
+        for node in graph.nodes().iter().filter(|_| root == CompilationRoot::Check) {
             let demand = match node.task {
                 crate::execution_graph::Task::Global { symbol, .. } => {
                     if emitter.lookup(symbol).is_some() || !mir.symbol_generics[symbol.index()].is_empty() {
@@ -363,7 +376,7 @@ fn compile_root(
             .types
             .iter()
             .position(|ty| ty.constructor == TypeConstructor::Tuple && ty.arguments.is_empty())
-            .ok_or_else(|| vec![emitter.error(declaration, "check root requires solved Unit")])?;
+            .ok_or_else(|| vec![emitter.error(declaration, "session root requires solved Unit")])?;
         let dst = emitter.register();
         emitter.emit(declaration, O::MakeTuple { dst, items: vec![] });
         (dst, TypeId(unit as u32))

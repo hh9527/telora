@@ -10,6 +10,7 @@ pub mod ast;
 pub mod bytecode;
 pub mod codegen;
 pub mod type_image;
+pub mod test_plan;
 pub mod execution_link;
 pub mod execution_graph;
 pub mod compiler;

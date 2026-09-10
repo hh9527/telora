@@ -5,6 +5,33 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Static test discovery and a deferred test-session bootstrap (2026-09-10)
+
+Command audit confirms check/query/eval/run/serve enter the new pipeline, while
+test still discovers exports after old ModuleGraph/WorkspaceBuilder execution;
+the LSP WorkspaceSnapshot path also remains a migration gate.
+
+The new independent test_plan module discovers direct monomorphic Test exports
+from SealedMir using native identity (module 33, slot 0). It retains export names,
+resolved SymbolIds, target SymbolIds, TypeIds and locations in deterministic name
+order. Same-named user types and functions returning Test are not test values.
+Reexports preserve their resolver-established target without another name lookup.
+
+compile_tests returns that plan and a Tests(module) bootstrap. The bootstrap
+installs the existing lazy global/property/checker tasks and returns Unit without
+demanding test exports or invoking thunks. Both the static planner and codegen
+remain independent of the old module loader/test runner implementation.
+
+Validation: four discovery/bootstrap tests and 50 codegen regressions pass;
+cargo check -p telora passes. A Test-typed failing initializer and a failing test
+thunk prove neither runs during discovery/bootstrap. Logs: /tmp/mir-test-plan.log,
+/tmp/mir-test-root-codegen.log and /tmp/mir-test-plan-cli.log.
+
+This does NOT switch telora test yet. Per-case execution, fixture expansion,
+session quotas and diagnostic collection must consume the new session before the
+CLI can replace test_with_resolver and its old loading path. No performance or
+full-suite acceptance claim; all broader migration/removal gates remain open.
+
 ### Contextual tuple literals retain per-element completion evidence (2026-09-10)
 
 Value tuple syntax now starts as a provisional TupleLiteral, distinct from an
