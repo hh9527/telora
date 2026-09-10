@@ -714,6 +714,13 @@ fn solved_codec_display_calls_fail_per_value_without_poisoning_provider() {
 #[test]
 fn solved_codec_failed_property_is_not_retried_or_reported_twice() {
     for source in [r#"
+        import "std/codec" as codec; import "std/json" as json; import "std/_rt" as rt;
+        def broken: Fn(Type, Option(codec.JsonRenameAll)) -> codec.JsonRenameAll = fn(owner, previous) { fail!("schema property failed") };
+        @broken type Item = struct {some_value: Int};
+        type Container = struct {item: Item};
+        def attempt = rt.with_diagnostics(fn(n: Int) { json.schema(Container.type) });
+        export def answer = (attempt(1), attempt(2));
+    "#, r#"
         import "std/codec" as codec;
         import "std/_rt" as rt;
         def broken: Fn(Type, Option(codec.JsonUntagged)) -> codec.JsonUntagged = fn(owner, previous) { fail!("codec property failed") };

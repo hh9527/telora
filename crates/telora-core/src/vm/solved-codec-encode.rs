@@ -239,13 +239,7 @@ fn solved_codec_tag(
         // same closed Dict(Value) witness as a source-level Value.Object call.
         // Read the target's applied layout; never synthesize a runtime type.
         let types = background.solved_types.as_ref().expect("solved codec image");
-        let payload_type = (|| {
-            let crate::mir::TypeConstructor::Nominal(symbol) = types.types[target.index()].constructor else { return None; };
-            let index = types.definition(symbol)?.members.iter().position(|member| member.name == tag)?;
-            let payload_type = types.layout(target)?.members[index]?;
-            let shape = &types.types[payload_type.index()];
-            (shape.constructor == crate::mir::TypeConstructor::Dict && shape.arguments == [target]).then_some(payload_type)
-        })().ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode,
+        let payload_type = types.semantic_object_payload(target).ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode,
             "codec target has no closed Dict(Value) object payload", function, pc))?;
         payload = payload.with_type_id(crate::TypeId::solved(payload_type));
     }

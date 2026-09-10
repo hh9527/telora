@@ -220,7 +220,7 @@ fn compile_root(
         || globals.iter().any(|s| {
             matches!(
                 native_abi(mir, *s),
-                Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop" | "evidence")) | Some((13, _)) | Some((7, "parse_with"))
+                Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop" | "evidence")) | Some((13, _)) | Some((7, "parse_with")) | Some((17, "schema_with"))
             )
         });
     if queries_properties {
@@ -1409,6 +1409,47 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn json_schema_reports_recoverable_mapping_and_property_errors() {
+        for (declaration, target, expected) in [
+            ("", "Type", "JSON Schema cannot describe Type metadata"),
+            ("", "Bytes", "Type Bytes has no JSON Schema mapping"),
+            ("", "Fn(Int) -> Int", "Type Func has no JSON Schema mapping"),
+            ("@json.rename_all(json.RenameCase.CamelCase) type Bad = struct {foo_bar: Int, fooBar: Int};", "Bad", "$.fooBar: duplicate external field name"),
+            ("@json.untagged type Bad = enum {One, Two};", "Bad", "$: untagged Enum may contain at most one unit variant"),
+            ("import \"std/string\" as string; @string.encode_by_display type Bad = struct(Int);", "Bad", "std/string.decode_by_parse and std/string.encode_by_display must be used together"),
+        ] {
+            let source = format!("import \"std/json\" as json; import \"std/_rt\" as rt; {declaration} export def answer = match rt.with_diagnostics(fn(n: Int) {{ json.schema(({target}).type) }})(0) {{ Err(errors) => errors[0].message, _ => \"unexpected success\" }};");
+            let mir = graph(&source, "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{source}\n{e}"));
+            assert_eq!(result.value().as_str().unwrap().as_str(), expected, "{source}");
+        }
+    }
+
+    #[test]
+    fn json_schema_consumes_solved_layouts_and_lazy_properties() {
+        for (declarations, target, expected) in [
+            ("", "Int", r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"integer"}"#),
+            ("type Id = struct(Int);", "Id", r##"{"$defs":{"Type0":{"type":"integer"}},"$ref":"#/$defs/Type0","$schema":"https://json-schema.org/draft/2020-12/schema"}"##),
+            ("@check(fn(value) { fail!(\"schema must not run construction checks\") }) type Id = struct(Int);", "Id", r##"{"$defs":{"Type0":{"type":"integer"}},"$ref":"#/$defs/Type0","$schema":"https://json-schema.org/draft/2020-12/schema"}"##),
+            ("type Node = struct {value: Int, next: Option(Node)};", "Node", r##"{"$defs":{"Type0":{"additionalProperties":false,"properties":{"next":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/Type0"}]},"value":{"type":"integer"}},"required":["value"],"type":"object"}},"$ref":"#/$defs/Type0","$schema":"https://json-schema.org/draft/2020-12/schema"}"##),
+            ("", "(Int, String)", r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","maxItems":2,"minItems":2,"prefixItems":[{"type":"integer"},{"type":"string"}],"type":"array"}"#),
+            ("@json.rename_all(json.RenameCase.CamelCase) type User = struct {user_name: String};", "User", r##"{"$defs":{"Type0":{"additionalProperties":false,"properties":{"userName":{"type":"string"}},"required":["userName"],"type":"object"}},"$ref":"#/$defs/Type0","$schema":"https://json-schema.org/draft/2020-12/schema"}"##),
+            ("@json.untagged type Scalar = enum {Text(String), Empty};", "Scalar", r##"{"$defs":{"Type0":{"oneOf":[{"type":"null"},{"type":"string"}]}},"$ref":"#/$defs/Type0","$schema":"https://json-schema.org/draft/2020-12/schema"}"##),
+            ("", "Result(Int, String)", r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","oneOf":[{"additionalProperties":false,"properties":{"Err":{"type":"string"}},"required":["Err"],"type":"object"},{"additionalProperties":false,"properties":{"Ok":{"type":"integer"}},"required":["Ok"],"type":"object"}]}"#),
+            ("import \"std/string\" as string; @string.decode_by_parse @string.encode_by_display type Text = struct(Int);", "Text", r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"string"}"#),
+        ] {
+            let source = format!("import \"std/json\" as json; {declarations} def schema = json.schema(({target}).type); def text = json.stringify(schema); def parsed = match json.parse(text) {{ Ok(value) => value, Err(error) => raise!(error) }}; export def answer = (text, schema == parsed);");
+            let mir = graph(&source, "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{source}\n{e}"));
+            assert_eq!(result.value().sequence_get(0).unwrap().as_str().unwrap().as_str(), expected, "{source}");
+            assert_eq!(result.value().sequence_get(1).unwrap().as_atom().unwrap().as_str(), "True", "{source}");
+        }
+    }
+
     #[test]
     fn newtype_facets_and_patterns_consume_static_constructor_selections() {
         for body in [

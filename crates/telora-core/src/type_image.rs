@@ -72,6 +72,16 @@ pub struct TypeMember {
 }
 
 impl TypeImage {
+    /// Native Value producers use the same dictionary witness as a source
+    /// Object constructor. This is a lookup in the closed applied layout.
+    pub(crate) fn semantic_object_payload(&self, owner: TypeId) -> Option<TypeId> {
+        let TypeConstructor::Nominal(symbol) = self.types.get(owner.index())?.constructor else { return None; };
+        let index = self.definition(symbol)?.members.iter().position(|member| member.name == "Object")?;
+        let payload = self.layout(owner)?.members[index]?;
+        let shape = &self.types[payload.index()];
+        (shape.constructor == TypeConstructor::Dict && shape.arguments == [owner]).then_some(payload)
+    }
+
     /// Applied member types in canonical member-name order. This is an array lookup,
     /// including for recursive and generic nominal applications.
     pub fn layout(&self, ty: TypeId) -> Option<&crate::mir::TypeLayout> {

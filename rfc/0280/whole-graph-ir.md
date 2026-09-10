@@ -5,6 +5,46 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### JSON Schema consumes solved IDs and VM property results (2026-09-11)
+
+The solved VM now implements json.schema_with instead of reporting an
+unimplemented InvalidBytecode operation. An explicit work stack traverses the
+closed TypeImage. Nominal TypeIds key recursive $defs/$ref links; applied
+layouts supply fields, enum payloads and newtype bodies. Output is constructed
+directly as typed Value handles in the VM. The solved path does not decode
+runtime metadata into CodecType, build a CodecNode schema tree, reconstruct
+types, or transfer property values through a host world.
+
+Schema generation demands codec marker/rename properties through the VM's
+existing evaluation table, suspending and resuming with a native continuation.
+It uses the same failure cache and does not retry or duplicate diagnostics.
+Codegen admits schema_with as a property consumer so the compiled artifact
+installs provider thunks. Generating a schema does not run construction checks.
+Unsupported mappings and invalid rename/untagged rules report recoverable
+TypeMismatch errors. Native enum payloads use their solved argument mapping.
+
+Real schema equality tests also exposed missing Dict(Value) payload witnesses
+in parsed Value.Object values. Parsing and codec/schema construction now share
+a TypeImage lookup for that existing applied payload TypeId. The parser stamps
+the original dictionary handle and preserves its provenance; it neither copies
+the parsed dictionary nor weakens equality. This applies to solved data-plan
+materialization as well as JSON/YAML/TOML parsing.
+
+Validation: final 78 codegen and 48 VM tests pass; CLI build passes. Exact schema
+output and equality with parsed output cover primitives, tuples, recursive
+structs, optional fields, newtypes, Result payload order, renamed fields,
+untagged enums and text codec markers. Additional coverage checks recoverable
+mapping errors, no construction-check execution, and one cached failure for
+repeated nested schema property demands.
+
+The actual language aggregate now passes enum-codec, newtype-metadata (7/7)
+and result-nominal. No fixture was changed. The aggregate still fails other
+codec/inference/runtime and diagnostic/query cases: codec-schema now reaches
+its assertions but still fails one; this milestone does not claim complete
+codec acceptance. Legacy module removal remains incomplete. Logs:
+/tmp/mir-schema-{codegen,vm,build}.log and
+/tmp/mir-schema-final-language.log. No performance measurement was made.
+
 ### Newtype facets and constructor patterns close in MIR (2026-09-11)
 
 Newtype references previously shared the declaration's Meta slot even in value

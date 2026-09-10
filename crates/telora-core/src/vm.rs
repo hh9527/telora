@@ -50,6 +50,7 @@ include!("vm/codec-transform.rs");
 include!("vm/codec-plan.rs");
 include!("vm/codec-enum.rs");
 include!("vm/codec-schema.rs");
+include!("vm/solved-schema.rs");
 include!("vm/json.rs");
 include!("vm/json-writer.rs");
 include!("vm/solved-json.rs");

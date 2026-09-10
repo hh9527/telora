@@ -16,9 +16,19 @@ pub(crate) fn semantic_tag(
     heap: &mut Heap,
     target: SemanticDataTarget<'_>,
     tag: &str,
-    payload: Val,
+    mut payload: Val,
     location: Location,
 ) -> Val {
+    if tag == "Object" && let Some(owner) = target.type_id.solved_id() {
+        let types = heap.solved_types.as_ref()
+            .or_else(|| target.background.and_then(|heap| heap.solved_types.as_ref()))
+            .expect("solved data requires its session type image");
+        let payload_type = types.semantic_object_payload(owner)
+            .expect("solved data Object requires its closed Dict(Value) payload");
+        // Keep the parsed dictionary handle and its provenance; attach only
+        // the type ID already provided by the native Value contract.
+        payload = payload.with_type_id(crate::TypeId::solved(payload_type));
+    }
     let tag = Val::original(heap.atom(target.background, tag), Some(location));
     Val::original(
         DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload })),

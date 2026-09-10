@@ -153,8 +153,7 @@ fn run_core_json(
     }
     if operation == CoreJsonFunction::Schema {
         if background.solved_types.is_some() {
-            return Err(error(RuntimeErrorKind::InvalidBytecode,
-                "schema generation with solved type/property witnesses is not implemented yet", function, pc));
+            return run_solved_json_schema(arguments, return_target, function, pc, current, background, account);
         }
         let properties = decode_codec_properties(arguments[0], current, background)
             .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
