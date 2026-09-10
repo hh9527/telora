@@ -206,7 +206,7 @@ fn run_core_dyn(
                 DecodedValue::InlineString(_) | DecodedValue::ShortString(_) => "String",
                 DecodedValue::Bytes(_) => "Bytes",
                 DecodedValue::Opaque(_) => "Opaque",
-                DecodedValue::NativeType(_) => "Type",
+                DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => "Type",
                 DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) => "Type",
                 DecodedValue::Dict(_) => "Dict",
                 DecodedValue::Array(_) => "Array",

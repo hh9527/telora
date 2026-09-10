@@ -233,7 +233,7 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
                 HirKind::Binding {
                     kind: BindingKind::Native | BindingKind::Decl,
                     ..
-                }
+                } | HirKind::TypeMetadata
             ) && !matches!(
                 edge.role,
                 Role::Annotation
@@ -397,6 +397,24 @@ impl<'a> Emitter<'a> {
             }
         }
         let result = match &self.mir.hir[node.index()].kind {
+            HirKind::TypeMetadata => {
+                let ty = &self.mir.types[self.ty(node)?.index()];
+                if ty.constructor != TypeConstructor::TypeOf || ty.arguments.len() != 1 {
+                    return Err(self.error(node, "type metadata has no solved represented type"));
+                }
+                let represented = ty.arguments[0];
+                let mut pending = vec![represented];
+                while let Some(id) = pending.pop() {
+                    let ty = &self.mir.types[id.index()];
+                    if matches!(ty.constructor, TypeConstructor::Parameter(_)) {
+                        return Err(
+                            self.error(node, "generic metadata requires a compiled type witness")
+                        );
+                    }
+                    pending.extend(ty.arguments.iter().copied());
+                }
+                self.constant(node, Constant::SolvedType(represented))
+            }
             HirKind::Binding {
                 kind: BindingKind::Decl,
                 ..
@@ -820,6 +838,47 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn type_metadata_retains_solved_ids_without_executing_property_providers() {
+        let mir = graph(
+            r#"
+            @property(PropertyTarget.Type)
+            type Mark = struct { value: Int };
+            def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!("must remain lazy") };
+            @mark
+            type Item = struct { next: Array(Item) };
+            type Alias = Item;
+            export def answer = (Int.type, Array(Int).type, Item.type, Alias.type);
+        "#,
+            "",
+        );
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let types = &artifact.types;
+        let expected = types.types[artifact.result_type.index()]
+            .arguments
+            .iter()
+            .map(|id| types.types[id.index()].arguments[0])
+            .collect::<Vec<_>>();
+        let result = execute(artifact).unwrap();
+        for (index, id) in expected.iter().enumerate() {
+            let metadata = result.value().sequence_get(index).unwrap();
+            assert_eq!(metadata.kind(), crate::ValueKind::Type);
+            assert_eq!(metadata.represented_type_id(), Some(*id));
+            assert!(metadata.as_int().is_none());
+        }
+        assert_eq!(expected[2], expected[3]);
+        let mir = graph(
+            "type Alias = Int; export def answer = if Int.type == Alias.type { 42 } else { 0 };",
+            "",
+        );
+        assert_eq!(
+            execute(compile(mir.seal().unwrap(), entry(&mir)).unwrap())
+                .unwrap()
+                .value()
+                .as_int(),
+            Some(42)
+        );
+    }
     fn execute(artifact: CompiledEntry) -> Result<crate::execution_link::SolvedExecution, String> {
         let linked = crate::execution_link::link_entry(artifact).map_err(|d| format!("{d:?}"))?;
         crate::Vm::new().execute_linked(

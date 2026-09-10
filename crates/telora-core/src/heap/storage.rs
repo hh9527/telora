@@ -531,6 +531,13 @@ impl Heap {
                     )),
                     Constant::Atom(value) => Val::unknown(self.atom(background, value.name())),
                     Constant::Native(function) => self.native_closure(*function, []),
+                    Constant::SolvedType(id) => {
+                        let types = self.solved_types.as_ref().or_else(|| background.and_then(|h| h.solved_types.as_ref()));
+                        if types.is_none_or(|types| id.index() >= types.types.len()) {
+                            return Err(HeapError("type metadata ID is not in the solved type image"));
+                        }
+                        Val::unknown(DecodedValue::SolvedType(*id))
+                    }
                 })
             })
             .collect::<Result<Box<[_]>, _>>()?;

@@ -349,7 +349,7 @@ fn runtime_value_kind(actual: Val) -> &'static str {
         DecodedValue::InlineString(_) | DecodedValue::ShortString(_) => "String",
         DecodedValue::Bytes(_) => "Bytes",
         DecodedValue::Opaque(_) => "Opaque",
-        DecodedValue::NativeType(_) => "Type",
+        DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => "Type",
         DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) => "Type",
         DecodedValue::Array(_) => "Array",
         DecodedValue::Tuple(_) => "Tuple",

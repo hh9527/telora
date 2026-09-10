@@ -402,6 +402,7 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::Bytes(_)
                 | DecodedValue::Opaque(_)
                 | DecodedValue::NativeType(_)
+                | DecodedValue::SolvedType(_)
                 | DecodedValue::DeclaredType(_)
                 | DecodedValue::SymbolicType(_)
                 | DecodedValue::Func(_)
@@ -544,6 +545,7 @@ impl<'a> HeapView<'a> {
                 Ok(left.logical_eq(right))
             }
             (DecodedValue::NativeType(left), DecodedValue::NativeType(right)) => Ok(left == right),
+            (DecodedValue::SolvedType(left), DecodedValue::SolvedType(right)) => Ok(left == right),
             (DecodedValue::DeclaredType(left), DecodedValue::DeclaredType(right)) => {
                 let left_handle = left;
                 let right_handle = right;

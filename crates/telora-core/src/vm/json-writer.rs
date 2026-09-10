@@ -17,6 +17,7 @@ impl<'a> JsonWriter<'a> {
 
     fn value(&mut self, value: Val, depth: usize) -> Result<(), String> {
         match value.value() {
+            DecodedValue::SolvedType(_) => return Err("JSON cannot encode Type metadata".into()),
             DecodedValue::Failed(_) => {
                 return Err("JSON cannot encode a failed evaluation node".into());
             }

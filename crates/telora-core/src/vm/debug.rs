@@ -28,6 +28,7 @@ impl<'a> DebugValueFormatter<'a> {
             return Ok(());
         }
         match value.value() {
+            DecodedValue::SolvedType(id) => self.push(&format!("<TypeId:{}>", id.index())),
             DecodedValue::Failed(_) => self.push("<failed>"),
             DecodedValue::Int(value) => self.push(&value.to_string()),
             DecodedValue::Float(value) => self.push(&format!("{value:?}")),

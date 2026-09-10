@@ -1,4 +1,33 @@
 #[test]
+fn static_mir_eval_reads_type_metadata_without_forcing_properties() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), r#"
+        import "std/value" { Value };
+        @property(PropertyTarget.Type)
+        type Mark = struct { value: Int };
+        def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!("must remain lazy") };
+        @mark
+        type Item = struct { value: Int };
+        type Alias = Item;
+        export def answer = Value.Int(if Item.type == Alias.type { 42 } else { 0 });
+    "#).unwrap();
+    let output = telora(&cwd)
+        .args(["eval", "@src/main:answer"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        serde_json::json!(42)
+    );
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_eval_demands_globals_in_the_vm() {
     let cwd = fixture();
     fs::write(

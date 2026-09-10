@@ -144,7 +144,7 @@ fn bound_type_replacements(
 
 fn runtime_object_handle(value: DecodedValue) -> Option<Handle> {
     match value {
-        DecodedValue::NativeType(_) => None,
+        DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => None,
         DecodedValue::Bytes(handle)
         | DecodedValue::DeclaredType(handle)
         | DecodedValue::SymbolicType(handle)

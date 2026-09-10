@@ -43,6 +43,7 @@ enum FlatKind {
     Heap,
     TypeSlot,
     FuncRef,
+    SolvedType,
     Invalid = 63,
 }
 
@@ -60,13 +61,14 @@ impl FlatKind {
             8 => Self::Heap,
             9 => Self::TypeSlot,
             10 => Self::FuncRef,
+            11 => Self::SolvedType,
             _ => Self::Invalid,
         }
     }
 
     const fn traits(self) -> u16 {
         match self {
-            Self::Never | Self::Int | Self::Float | Self::NativeType | Self::FuncRef => {
+            Self::Never | Self::Int | Self::Float | Self::NativeType | Self::FuncRef | Self::SolvedType => {
                 TRAIT_INLINE
             }
             Self::InlineString | Self::InlineAtom => TRAIT_INLINE | TRAIT_TEXT,
@@ -375,6 +377,7 @@ pub(crate) struct ShapeId {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum DecodedValue {
+    SolvedType(crate::mir::TypeId),
     Failed(u32),
     Int(i64),
     Float(f64),
@@ -402,6 +405,7 @@ pub(crate) enum DecodedValue {
 impl DecodedValue {
     fn encode(self) -> (Meta, u64) {
         let (kind, sub_kind, raw) = match self {
+            Self::SolvedType(id) => (FlatKind::SolvedType, HeapKind::None, id.index() as u64),
             Self::Failed(id) => (FlatKind::Never, HeapKind::None, ((id as u64) << 1) | 1),
             Self::Int(value) => (FlatKind::Int, HeapKind::None, value as u64),
             Self::Float(value) => (FlatKind::Float, HeapKind::None, value.to_bits()),
@@ -567,6 +571,7 @@ impl Val {
             slot: scoped_id().slot(),
         };
         match (self.meta.kind(), self.meta.sub_kind()) {
+            (FlatKind::SolvedType, _) => DecodedValue::SolvedType(crate::mir::TypeId(self.raw as u32)),
             (FlatKind::Never, _) => DecodedValue::Failed((self.raw >> 1) as u32),
             (FlatKind::Int, _) => DecodedValue::Int(self.raw as i64),
             (FlatKind::Float, _) => DecodedValue::Float(f64::from_bits(self.raw)),

@@ -408,7 +408,7 @@ impl<'a> ValueRef<'a> {
             DecodedValue::Float(_) => ValueKind::Float,
             DecodedValue::InlineString(_) | DecodedValue::ShortString(_) => ValueKind::String,
             DecodedValue::Bytes(_) => ValueKind::Bytes,
-            DecodedValue::NativeType(_) => ValueKind::Type,
+            DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => ValueKind::Type,
             DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) => ValueKind::Type,
             DecodedValue::Opaque(_) => ValueKind::Opaque,
             DecodedValue::Dict(_) => ValueKind::Dict,
@@ -440,6 +440,14 @@ impl<'a> ValueRef<'a> {
     pub fn as_int(self) -> Option<i64> {
         match self.value.value() {
             DecodedValue::Int(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Type represented by a metadata value, distinct from the value's own type.
+    pub fn represented_type_id(self) -> Option<crate::mir::TypeId> {
+        match self.value.value() {
+            DecodedValue::SolvedType(id) => Some(id),
             _ => None,
         }
     }

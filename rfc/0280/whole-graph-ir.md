@@ -5,6 +5,30 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Concrete TypeId metadata values (2026-09-10)
+
+Concrete T.type now lowers to a solved TypeId constant. The runtime value has a
+distinct inline Type classification; it is not an Int or a reconstructed tree of
+TypeDescriptor objects. Bytecode linking validates the ID against the installed
+session TypeImage. Type aliases preserve identity, and metadata equality compares
+the solved IDs. ValueRef.represented_type_id exposes the represented type, separate
+from the type of the metadata value itself.
+
+Codegen does not treat a TypeMetadata operand as an executable global dependency.
+Reading the skeleton of a decorated or recursive type therefore does not demand
+its property providers. Uninstantiated generic metadata still requires explicit
+witness lowering and is rejected; no runtime inference substitutes for it. The
+legacy world publisher rejects copying the new session-local metadata rather
+than remapping it through the old type store. JSON does not serialize metadata.
+
+Fifteen codegen tests and five focused CLI eval tests pass. New coverage checks
+primitive/array/recursive nominal metadata, alias identity and a decorated type
+whose provider would fail if executed: reading .type still succeeds.
+
+This supplies the runtime identity operand for property queries. GetTypeProp,
+provider reduce execution and the remaining metadata consumers are not yet
+connected. Full pipeline assembly and performance evaluation remain pending.
+
 ### Global demand instructions connected to the VM (2026-09-10)
 
 The new codegen no longer uses global_order or rejects syntactic global cycles.

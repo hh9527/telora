@@ -74,6 +74,7 @@ impl PendingCopy {
             });
         }
         let copied = match value.value() {
+            DecodedValue::SolvedType(_) => return Err(HeapError("solved type metadata cannot be copied through the legacy world publisher")),
             // Failure ids belong to the Main world's stable failure arena.
             // Work executions inherit that arena as a prefix and append new
             // roots, so the identity does not need relocation during copy.
@@ -552,7 +553,7 @@ impl PendingCopy {
 fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
     match value {
         DecodedValue::Atom(id) | DecodedValue::ShortString(id) => id.storage != target,
-        DecodedValue::NativeType(_) => false,
+        DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => false,
         DecodedValue::Bytes(handle)
         | DecodedValue::Opaque(handle)
         | DecodedValue::DeclaredType(handle)
@@ -590,7 +591,7 @@ fn object_contains_disallowed(
 
         match value.value() {
             DecodedValue::Atom(id) | DecodedValue::ShortString(id) => foreign(id.storage),
-            DecodedValue::NativeType(_) => false,
+            DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => false,
             DecodedValue::Bytes(handle)
             | DecodedValue::Opaque(handle)
             | DecodedValue::DeclaredType(handle)

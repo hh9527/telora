@@ -15,6 +15,7 @@ pub struct ProtoLinkId(pub usize);
 
 #[derive(Clone, Debug)]
 pub enum Constant {
+    SolvedType(crate::mir::TypeId),
     Placeholder,
     Int(i64),
     Float(f64),
