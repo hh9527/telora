@@ -21,7 +21,7 @@ mod ees_cli;
 mod eval_cli;
 mod source_arg;
 mod static_cli;
-mod static_input;
+use telora::static_input;
 mod test_cli;
 use ees_arg::{NamedEesVar, collect_ees_models, parse_named_ees_var};
 use ees_cli::EesArgs;

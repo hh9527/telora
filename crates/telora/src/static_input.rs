@@ -2,6 +2,7 @@
 use std::{
     collections::BTreeMap,
     fs,
+    io::Read,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -16,6 +17,16 @@ enum Source {
     File(PathBuf),
     Embedded(&'static str),
     Generated(String),
+}
+
+pub fn read_limited(reader: impl std::io::Read, max_bytes: usize, description: &str) -> Result<Vec<u8>, String> {
+    let max_read = u64::try_from(max_bytes).unwrap_or(u64::MAX).saturating_add(1);
+    let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+    reader.take(max_read).read_to_end(&mut bytes).map_err(|error| format!("cannot read {description}: {error}"))?;
+    if bytes.len() > max_bytes {
+        return Err(format!("{description} exceeds file_size limit ({} > {max_bytes})", bytes.len()));
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -79,6 +90,26 @@ fn private(name: &str) -> bool {
 }
 
 impl Inventory {
+    /// Editor roots may be private modules. Identity still comes exclusively
+    /// from the workspace catalog (or its normal test-module inventory).
+    pub fn document_name(&mut self, path: &Path) -> Result<String, String> {
+        let matches_path = |entry: &Entry| matches!(&entry.source,
+            Source::File(file) if file == path || file.canonicalize().ok().as_deref() == Some(path));
+        if let Some((name, _)) = self.entries.iter().find(|(_, entry)| matches_path(entry)) { return Ok(name.clone()); }
+        let workspace = self.workspace.as_ref().ok_or("editor documents require a workspace")?;
+        let owner = workspace.crate_for_path(path).map_err(|e| e.to_string())?.to_owned();
+        let test_root = workspace.crate_root(&owner).ok_or("missing declaring crate")?.join("tests");
+        if path.starts_with(&test_root) {
+            self.scan_tests_for(&owner, &test_root, &test_root)?;
+        }
+        self.entries.iter().find(|(_, entry)| matches_path(entry)).map(|(name, _)| name.clone())
+            .ok_or_else(|| format!("document {} is not in the module catalog", path.display()))
+    }
+
+    pub fn solve_documents(&self, roots: &[String], overlays: &BTreeMap<String, telora_core::DocumentText>) -> Mir {
+        self.solve_inputs(roots, None, overlays)
+    }
+
     pub fn workspace(&self) -> Option<Arc<ResolvedWorkspace>> {
         self.workspace.clone()
     }
@@ -129,7 +160,7 @@ impl Inventory {
             }
         };
         let file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let bytes = crate::source_arg::read_limited(file, max_bytes, &path.display().to_string())?;
+        let bytes = read_limited(file, max_bytes, &path.display().to_string())?;
         let text = String::from_utf8(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(telora_core::EvalSource {
             source_name: link.name.clone(),
@@ -241,6 +272,10 @@ impl Inventory {
     }
 
     fn scan_tests(&mut self, root: &Path, path: &Path) -> Result<(), String> {
+        self.scan_tests_for(&self.owner.clone(), root, path)
+    }
+
+    fn scan_tests_for(&mut self, owner: &str, root: &Path, path: &Path) -> Result<(), String> {
         let meta = fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
         if meta.file_type().is_symlink() {
             return Err(format!(
@@ -256,7 +291,7 @@ impl Inventory {
                 .map_err(|e| e.to_string())?;
             children.sort();
             for child in children {
-                self.scan_tests(root, &child)?;
+                self.scan_tests_for(owner, root, &child)?;
             }
         } else if meta.is_file()
             && let Ok(format) = ModuleFormat::from_path(path)
@@ -267,7 +302,7 @@ impl Inventory {
             }
             let name = format!(
                 "{}/tests/{}",
-                self.owner,
+                owner,
                 relative.to_string_lossy().replace('\\', "/")
             );
             if self.entries.contains_key(&name) {
@@ -278,7 +313,7 @@ impl Inventory {
                 Entry {
                     visibility: if private(&name) { "private" } else { "public" },
                     name,
-                    origin: "crate",
+                    origin: if owner == self.owner { "crate" } else { "dependency" },
                     format,
                     source: Source::File(path.to_owned()),
                     test: true,
@@ -360,6 +395,10 @@ impl Inventory {
     }
 
     fn solve_with_entry(&self, root: &str, application: Option<&str>) -> Mir {
+        self.solve_inputs(&[root.to_owned()], application, &BTreeMap::new())
+    }
+
+    fn solve_inputs(&self, roots: &[String], application: Option<&str>, overlays: &BTreeMap<String, telora_core::DocumentText>) -> Mir {
         let specs = self
             .entries
             .values()
@@ -384,14 +423,14 @@ impl Inventory {
             .collect();
         let mut mir = module_resolve::resolve_with_requests(
             specs,
-            &[root.to_owned()],
-            |_, name| match &self.entries[name].source {
+            roots,
+            |_, name| if let Some(text) = overlays.get(name) { Ok(text.to_string()) } else { match &self.entries[name].source {
                 Source::Embedded(text) => Ok((*text).into()),
                 Source::Generated(text) => Ok(text.clone()),
                 Source::File(path) => {
                     fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
                 }
-            },
+            } },
             |owner, request| {
                 // The user selected this application before the compiler-owned
                 // adapter was inserted. Only its exact import gets this edge;

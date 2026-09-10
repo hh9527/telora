@@ -5,6 +5,42 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Versioned editor workspace owns one MIR snapshot (2026-09-11)
+
+Added telora::mir_workspace, independent of Engine, WorkspaceSnapshot and the
+VM. A rebuild captures document versions, obtains canonical names from the
+shared inventory, and solves the selected module plus all open documents as
+roots in one graph. Overlays replace source text by module identity; imported
+and explicitly opened copies of the same module remain one module. Invalid
+programs retain the completed static passes and their diagnostic graph without
+requiring seal or any user-code execution.
+
+Snapshots own Mir and a physical-path-to-original-ModuleId lookup, and expose
+the shared MirQuery facade. The version clock and cancellation checkpoints guard
+publication: a stale/cancelled rebuild cannot replace the last snapshot; older
+snapshots remain immutable and reject queries against newer contexts. Rebuilds
+are currently synchronous within each static pass, with cooperative checkpoints
+around input capture and the solve; this is not intra-pass preemption.
+
+Moved Inventory from binary-only code into the telora library so CLI and LSP
+assembly use the same host input implementation. Existing command consumers now
+import that shared module. The bounded read helper also has one implementation.
+Editor document selection allows private catalog modules; test discovery retains
+its symlink rules and uses the declaring crate's identity, including when multiple
+open roots reuse the same catalog entries.
+
+Validation: 3 new workspace tests pass (overlays/multiple roots/close-to-disk,
+cancellation during a yielded build and stale publication, transactional document
+versions/private test roots); 2 inventory tests, 17 static-MIR CLI tests and 7 test
+CLI regressions pass. Logs: /tmp/mir-workspace.log,
+/tmp/mir-workspace-inventory.log, /tmp/mir-workspace-cli.log and
+/tmp/mir-workspace-test-cli.log. No full-LSP or performance claim.
+
+The LSP protocol handler still imports the old Workspace/WorkspaceSnapshot. The
+next step is to replace those imports and wire request/diagnostic handling to this
+workspace and MirQuery, then remove its old dependencies. Remaining language
+coverage, broader old-compiler removal and final acceptance are still open.
+
 ### Shared read-only MIR queries for CLI and LSP assembly (2026-09-11)
 
 LSP audit finds that Workspace rebuild still calls Engine recovery and produces
