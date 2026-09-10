@@ -1,6 +1,18 @@
 use super::*;
 
 impl Solver<'_> {
+    pub(super) fn validate_diverging_branches(&mut self) {
+        for index in 0..self.mir.hir.len() {
+            if !matches!(self.mir.hir[index].kind, HirKind::LetElse) { continue; }
+            let otherwise = self.child(HirId(index as u32), Role::Else).expect("let else branch");
+            if let Some(ty) = self.known(otherwise.ty())
+                && self.mir.types[ty.index()].constructor != TypeConstructor::Never {
+                self.mir.diagnostics.push(Diagnostic::error("let else branch must have type Never",
+                    self.mir.hir[otherwise.index()].location));
+            }
+        }
+    }
+
     pub(super) fn finish_unchecked_fits(&mut self) -> bool {
         let pending = std::mem::take(&mut self.tasks);
         let mut changed = false;

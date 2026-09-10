@@ -234,6 +234,7 @@ pub fn resolve(mir: &mut Mir) {
     solver.validate_field_projections();
     solver.resolve_constructor_patterns();
     solver.finalize();
+    solver.validate_diverging_branches();
     solver.finalize_properties();
     solver.finalize_checks();
     solver.prove_bounds();
@@ -558,8 +559,6 @@ impl Solver<'_> {
                         .collect();
                     self.tasks.push(Task::Join { node, values });
                 } else {
-                    let otherwise = self.child(node, Role::Else).unwrap();
-                    self.assign(otherwise, TypeConstructor::Never, vec![]);
                     let body = self.child(node, Role::Body).unwrap();
                     self.same(node, body.ty());
                 }

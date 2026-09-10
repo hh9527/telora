@@ -113,6 +113,10 @@ impl Mir {
             || !self.valid_type_schemes()
             || !self.valid_properties()
             || !self.valid_property_admissions()
+            || self.hir.iter().any(|node| matches!(node.kind, HirKind::LetElse)
+                && node.children.iter().find(|edge| edge.role == Role::Else).is_none_or(|edge|
+                    !matches!(self.ty_slots.get(edge.node.index()), Some(TypeState::Known(ty))
+                        if self.types[ty.index()].constructor == TypeConstructor::Never)))
             || self.interpreter_plans.len() != self.hir.len()
             || self.hir.iter().enumerate().any(|(index, node)| matches!(node.kind, HirKind::Interpreter)
                 && !self.valid_interpreter_plan(HirId(index as u32)))

@@ -5,6 +5,29 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Let-else divergence is validated without replacing type evidence (2026-09-11)
+
+The old MIR constraint assigned Never directly to a let-else failure branch.
+Bottom compatibility then swallowed a real Int/Unit branch, allowing invalid
+control flow through seal. The type pass now solves that branch normally and
+checks its resulting type for divergence. It reports the violation at the
+branch location, retains its actual Known type for queries, and continues
+solving independent definitions. Seal independently rejects a non-Never
+let-else branch even if diagnostics are removed. Codegen is unchanged.
+
+Validation: 64 type-resolve tests, 88 codegen tests and CLI build pass. Cases
+cover Int/Unit/mixed branches, preserved independent evidence, seal rejection,
+and valid return/fail!/all-diverging branches. The actual
+diag-let-else-never --only-types command now exits 1 with the expected diagnostic
+and zero execution time; compiler-semantics passes all 38 language cases,
+including return and panic! let-else branches.
+Logs: /tmp/mir-let-else-{types,codegen,build,fixed,compiler}.log.
+
+Match coverage/unreachable-arm validation, other diagnostic acceptance gaps,
+generic function identity and old-pipeline removal still require work. The
+full aggregate was not rerun after this targeted fix; the query audit below
+records the preceding aggregate result.
+
 ### MIR query acceptance preserves complete type facts (2026-09-11)
 
 Native opaque type display now uses the resolved native declaration and module

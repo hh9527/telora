@@ -2,6 +2,30 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn let_else_checks_divergence_without_overwriting_the_inferred_branch_type() {
+    for branch in ["0", "()", "if flag { 0 } else { fail!(\"stop\") }"] {
+        let source = format!("export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }}; export def independent = 42;");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|diagnostic| diagnostic.message == "let else branch must have type Never"), "{}", mir.dump());
+        let node = mir.hir.iter().find(|node| matches!(node.kind, HirKind::LetElse)).unwrap();
+        let branch = node.children.iter().find(|edge| edge.role == Role::Else).unwrap().node;
+        let TypeState::Known(ty) = mir.ty_slots[branch.index()] else { panic!("branch retains solved evidence") };
+        assert_ne!(mir.types[ty.index()].constructor, TypeConstructor::Never);
+        let TypeState::Known(ty) = symbol_type(&mir, "independent") else { panic!("independent type") };
+        assert_eq!(mir.types[ty.index()].constructor, TypeConstructor::Int);
+        mir.diagnostics.clear();
+        assert!(mir.seal().is_err(), "seal must enforce divergence itself");
+    }
+    for branch in ["return 42;", "fail!(\"stop\")", "if flag { return 1; } else { return 2; }"] {
+        let source = format!("export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }};");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    }
+}
+
+#[test]
 fn property_admission_links_capabilities_without_evaluating_targets() {
     let mut mir = graph(&[("@src/main", r#"
         import "std/prelude" {property as marker};
