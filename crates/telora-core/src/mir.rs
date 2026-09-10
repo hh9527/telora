@@ -323,12 +323,16 @@ pub enum PropertySite {
 
 /// One static presence fact. Providers are retained in declaration/reduce order;
 /// their code is executed only by the subsequent metadata stage.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PropertyRecord {
     pub owner: TypeId,
     pub site: PropertySite,
     pub property: TypeId,
     pub providers: Vec<HirId>,
+    /// Templates prove presence; only closed applications become VM tasks.
+    pub concrete: bool,
+    /// Solved provider node types and references for this applied owner.
+    pub instance: Option<GenericInstanceId>,
 }
 
 #[derive(Clone, Debug)]

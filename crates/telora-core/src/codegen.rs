@@ -229,7 +229,7 @@ fn compile_root(
         let mut all = globals
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>();
-        for provider in mir.properties.iter().flat_map(|p| &p.providers) {
+        for provider in mir.properties.iter().filter(|p| p.concrete).flat_map(|p| &p.providers) {
             for symbol in referenced_globals(mir, *provider) {
                 all.extend(reachable_globals(mir, symbol));
             }
@@ -329,7 +329,7 @@ fn compile_root(
         emitter.emit(declaration, O::InstallTask { node: graph.instance(instance).expect("instance task"), src: dst });
     }
     if queries_properties {
-        for record in &mir.properties {
+        for record in mir.properties.iter().filter(|record| record.concrete) {
             emitter.property_thunk(record).map_err(|d| vec![d])?;
         }
     }
@@ -2424,6 +2424,36 @@ pub(crate) mod tests {
             mir.diagnostics
         );
     }
+    #[test]
+    fn generic_property_thunks_consume_closed_owner_and_provider_types() {
+        let mir = graph(r#"
+            import "std/type-property" { get_type_prop, get_field_prop, get_variant_prop, FieldPropertyCtx, VariantPropertyCtx };
+            @property(PropertyTarget.Type) type Mark(T) = struct { witness: TypeOf(T), count: Int };
+            def mark: for(T) Fn(TypeOf(T)) -> Fn(Type, Option(Mark(T))) -> Mark(T) = fn(witness) {
+                fn(owner, previous) { {witness: witness, count: 1 + match previous { Some(p) => p.count, None => 0 }} }
+            };
+            @property(PropertyTarget.Field) type FieldMark = struct { context: FieldPropertyCtx };
+            @property(PropertyTarget.Variant) type VariantMark = struct { context: VariantPropertyCtx };
+            def field: Fn(FieldPropertyCtx, Option(FieldMark)) -> FieldMark = fn(ctx, previous) { {context: ctx} };
+            def variant: Fn(VariantPropertyCtx, Option(VariantMark)) -> VariantMark = fn(ctx, previous) { {context: ctx} };
+            @mark(T.type) @mark(T.type) type Box(T) = struct { @field value: T };
+            type Choice(T) = enum { @variant Empty, @variant Value(T) };
+            export def answer = do {
+                let a = match get_type_prop(Box(Int).type, Mark(Int).type) { Some(p) => p, None => fail!("missing Int mark") };
+                let b = match get_type_prop(Box(String).type, Mark(String).type) { Some(p) => p, None => fail!("missing String mark") };
+                let f = match get_field_prop(Box(String).type, 0, FieldMark.type) { Some(p) => p.context, None => fail!("missing field mark") };
+                let v = match get_variant_prop(Choice(Int).type, 1, VariantMark.type) { Some(p) => p.context, None => fail!("missing variant mark") };
+                let e = match get_variant_prop(Choice(Int).type, 0, VariantMark.type) { Some(p) => p.context, None => fail!("missing empty mark") };
+                if a.witness == Int.type && b.witness == String.type && a.count == 2 && b.count == 2
+                    && f.owner == Box(String).type && f.ty == String.type
+                    && v.owner == Choice(Int).type && v.payload == Some(Int.type) && e.payload == None { 42 } else { 0 }
+            };
+        "#, "");
+        let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+        let result = execute(artifact).unwrap();
+        assert_eq!(result.value().as_int(), Some(42));
+    }
+
     #[test]
     fn member_properties_receive_solved_skeleton_contexts() {
         let mir = graph(

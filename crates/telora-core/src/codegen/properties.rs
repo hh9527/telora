@@ -90,17 +90,6 @@ impl Emitter<'_> {
 
     pub(super) fn property_thunk(&mut self, record: &PropertyRecord) -> Result<(), Diagnostic> {
         let node = record.providers[0];
-        let mut pending = vec![record.owner, record.property];
-        while let Some(id) = pending.pop() {
-            let ty = &self.mir.types[id.index()];
-            if matches!(ty.constructor, TypeConstructor::Parameter(_)) {
-                return Err(self.error(
-                    node,
-                    "generic property task specialization is not implemented yet",
-                ));
-            }
-            pending.extend(ty.arguments.iter().copied());
-        }
         let mut thunk = Self::new(
             self.mir,
             self.graph,
@@ -110,6 +99,7 @@ impl Emitter<'_> {
                 record.property.index()
             ),
         );
+        thunk.instance = record.instance;
         let references = record
             .providers
             .iter()
@@ -149,13 +139,8 @@ impl Emitter<'_> {
                     ("index".into(), position),
                     ("name".into(), name),
                 ];
-                let payload = member
-                    .payload
-                    .map(|slot| match self.mir.ty_slots[slot.index()] {
-                        TypeState::Known(id) => Ok(id),
-                        _ => Err(self.error(node, "member payload is not solved")),
-                    })
-                    .transpose()?;
+                let payload = self.mir.type_layouts[record.owner.index()]
+                    .as_ref().expect("sealed property owner layout").members[index as usize];
                 if matches!(record.site, PropertySite::Field(_)) {
                     let ty = payload.ok_or_else(|| self.error(node, "field has no solved type"))?;
                     fields.push(("ty".into(), thunk.constant(node, Constant::SolvedType(ty))));

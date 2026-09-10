@@ -148,6 +148,8 @@ impl Solver<'_> {
                 site,
                 property,
                 providers,
+                concrete: !self.contains_parameter(owner) && !self.contains_parameter(property),
+                instance: None,
             })
             .collect();
     }

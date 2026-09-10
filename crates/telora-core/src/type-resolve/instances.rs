@@ -61,6 +61,13 @@ impl Solver<'_> {
         let mut next = 0;
         let mut next_type = 0;
         let mut check_templates = BTreeMap::<SymbolId, Vec<ConstructionCheck>>::new();
+        let mut property_templates = BTreeMap::<SymbolId, Vec<PropertyRecord>>::new();
+        for record in &self.mir.properties {
+            if !record.concrete
+                && let TypeConstructor::Nominal(symbol) = self.mir.types[record.owner.index()].constructor {
+                property_templates.entry(symbol).or_default().push(record.clone());
+            }
+        }
         for check in &self.mir.construction_checks {
             if !check.concrete {
                 if let TypeConstructor::Nominal(symbol) =
@@ -74,7 +81,7 @@ impl Solver<'_> {
             }
         }
         loop {
-            // Applied member skeletons can discover checked types that do not
+            // Applied member skeletons can discover decorated types that do not
             // occur directly in source references (e.g. Envelope(Int).item).
             let previous_types = self.mir.types.len();
             self.materialize_layouts();
@@ -95,14 +102,14 @@ impl Solver<'_> {
                 else {
                     continue;
                 };
-                let Some(checks) = check_templates.get(&symbol) else {
+                if !check_templates.contains_key(&symbol) && !property_templates.contains_key(&symbol) {
                     continue;
-                };
+                }
                 if self.contains_parameter(owner) {
                     continue;
                 }
                 let definition = &self.mir.type_definitions
-                    [self.nominal_index[symbol.index()].expect("check owner definition")];
+                    [self.nominal_index[symbol.index()].expect("decorated owner definition")];
                 let arguments = definition
                     .parameters
                     .iter()
@@ -115,7 +122,17 @@ impl Solver<'_> {
                     continue;
                 };
                 let substitutions = arguments.into_iter().collect();
-                for check in checks {
+                for record in property_templates.get(&symbol).into_iter().flatten() {
+                    let property = self.substitute_resolved(record.property, &substitutions, &mut canonical);
+                    self.mir.properties.push(PropertyRecord {
+                        owner,
+                        property,
+                        concrete: !self.contains_parameter(property),
+                        instance: Some(instance),
+                        ..record.clone()
+                    });
+                }
+                for check in check_templates.get(&symbol).into_iter().flatten() {
                     let signature =
                         self.substitute_resolved(check.signature, &substitutions, &mut canonical);
                     self.mir.construction_checks.push(ConstructionCheck {
@@ -128,7 +145,7 @@ impl Solver<'_> {
                 }
             }
             if next == self.mir.generic_instances.len() {
-                // Checker signatures may have appended types after the layout pass.
+                // Property/check signatures may have appended types after the layout pass.
                 if self.mir.type_layouts.len() == self.mir.types.len() {
                     break;
                 }

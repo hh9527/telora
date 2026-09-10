@@ -131,7 +131,7 @@ impl ExecutionGraph {
             });
             graph.instances[index] = Some(node);
         }
-        for record in &mir.properties {
+        for record in mir.properties.iter().filter(|record| record.concrete) {
             let key = PropertyKey {
                 owner: record.owner,
                 site: record.site,

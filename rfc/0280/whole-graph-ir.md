@@ -5,6 +5,35 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Generic property applications close before codegen (2026-09-11)
+
+The static instance pass now specializes property templates for every concrete
+nominal owner it discovers, including owners introduced by applied member
+layouts. PropertyRecord retains a template/concrete distinction and the owner's
+GenericInstanceId. Provider expression types, generic references and property
+result TypeIds are substituted in MIR using the same instance graph as checks.
+Templates remain available as static presence evidence and are excluded from
+VM evaluation tasks.
+
+Codegen consumes the closed provider instance and applied member layout. Its
+generic-property rejection/type-parameter scan is removed; field/variant context
+payloads no longer read the unspecialized source member's type slot. The VM's
+existing demand table still owns reduction, values and cached failure state.
+Seal checks property/provider types, concrete flags, owner instances, member
+indices, duplicate keys and missing applications for materialized owner instances.
+
+Validation: 61 type-resolve tests, 86 codegen tests, 48 VM tests and CLI build
+pass. New cases cover Int/String applications, generic property carrier types,
+chain reduction, field/variant payload metadata, owners discovered through nested
+layouts, and seal rejection of removed instance/record data. The existing VM
+object-reuse/failure-cache test now also covers generic owners. Actual language
+tests properties (1/1), static-property-evidence (2/2) and property-target (2/2)
+pass. Logs: /tmp/mir-generic-properties-{types,codegen,vm,build,language,evidence,target}.log.
+
+Unspecialized function identity, property capability admission, diagnostic/query
+acceptance and legacy pipeline removal remain open. No performance assessment
+or language fixture changes were made.
+
 ### Principal generic contracts retained in MIR (2026-09-11)
 
 MIR now retains a session arena of alpha-normalized quantified type schemes.

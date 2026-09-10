@@ -12,6 +12,52 @@ pub struct SealedMir<'a> {
 }
 
 impl Mir {
+    fn valid_properties(&self) -> bool {
+        let mut keys = std::collections::BTreeSet::new();
+        for record in &self.properties {
+            if record.owner.index() >= self.types.len() || record.property.index() >= self.types.len()
+                || record.providers.is_empty() || !keys.insert((record.owner, record.site, record.property)) {
+                return false;
+            }
+            let mut pending = vec![record.owner, record.property];
+            let mut seen = std::collections::BTreeSet::new();
+            let mut concrete = true;
+            while let Some(ty) = pending.pop() {
+                if !seen.insert(ty) { continue; }
+                let Some(ty) = self.types.get(ty.index()) else { return false; };
+                concrete &= !matches!(ty.constructor, TypeConstructor::Parameter(_));
+                pending.extend(ty.arguments.iter().copied());
+            }
+            if concrete != record.concrete { return false; }
+            let instance = if let Some(id) = record.instance {
+                let Some(instance) = self.generic_instances.get(id.index()) else { return false; };
+                let Some(signature) = self.types.get(instance.signature.index()) else { return false; };
+                if !instance.concrete || signature.constructor != TypeConstructor::Meta || signature.arguments != [record.owner] { return false; }
+                Some(instance)
+            } else { None };
+            if record.providers.iter().any(|provider| {
+                let ty = if let Some(instance) = instance { instance.ty(*provider) }
+                    else { match self.ty_slots.get(provider.index()) { Some(TypeState::Known(ty)) => Some(*ty), _ => None } };
+                ty != Some(record.property)
+            }) { return false; }
+            if let PropertySite::Field(index) | PropertySite::Variant(index) = record.site {
+                let Some(layout) = self.type_layouts.get(record.owner.index()).and_then(Option::as_ref) else { return false; };
+                if index as usize >= layout.members.len() || matches!(record.site, PropertySite::Field(_)) && layout.members[index as usize].is_none() { return false; }
+            }
+        }
+        for template in self.properties.iter().filter(|record| !record.concrete && record.instance.is_none()) {
+            let TypeConstructor::Nominal(symbol) = self.types[template.owner.index()].constructor else { return false; };
+            for instance in self.generic_instances.iter().filter(|instance| instance.concrete && instance.symbol == symbol) {
+                let signature = &self.types[instance.signature.index()];
+                if signature.constructor != TypeConstructor::Meta || signature.arguments.len() != 1 { return false; }
+                if !self.properties.iter().any(|record| record.concrete && record.owner == signature.arguments[0]
+                    && record.site == template.site && record.providers == template.providers
+                    && instance.ty(template.providers[0]) == Some(record.property)) { return false; }
+            }
+        }
+        true
+    }
+
     fn valid_interpreter_plan(&self, node: HirId) -> bool {
         let Some(plan) = self.interpreter_plans.get(node.index()).and_then(Option::as_ref) else { return false; };
         let Some(TypeState::Known(ty)) = self.ty_slots.get(node.index()) else { return false; };
@@ -65,6 +111,7 @@ impl Mir {
             || self.type_layouts.len() != self.types.len()
             || self.member_selections.len() != self.hir.len()
             || !self.valid_type_schemes()
+            || !self.valid_properties()
             || self.interpreter_plans.len() != self.hir.len()
             || self.hir.iter().enumerate().any(|(index, node)| matches!(node.kind, HirKind::Interpreter)
                 && !self.valid_interpreter_plan(HirId(index as u32)))

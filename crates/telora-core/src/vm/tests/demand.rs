@@ -111,13 +111,15 @@ fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
     use crate::execution_graph::{EvaluationError, Request};
     use std::sync::atomic::{AtomicUsize, Ordering};
     static CALLS: AtomicUsize = AtomicUsize::new(0);
-    for fails in [false, true] {
+    for (fails, generic) in [(false, false), (true, false), (false, true), (true, true)] {
         CALLS.store(0, Ordering::SeqCst);
         let body = if fails {
             "fail!(\"provider sentinel\")"
         } else {
             "{ value: [counted] }"
         };
+        let (item, payload, owner) = if generic { ("Item(T)", "T", "Item(Int)") }
+            else { ("Item", "Int", "Item") };
         let mir = crate::codegen::tests::graph(
             &format!(
                 r#"
@@ -125,8 +127,8 @@ fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
             native tick: Fn() -> Int;
             @property(PropertyTarget.Type) type Mark = struct {{ value: Array(Int) }};
             def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) {{ let counted = tick(); {body} }};
-            @mark type Item = struct {{ value: Int }};
-            export def answer = query(Item.type, Mark.type);
+            @mark type {item} = struct {{ value: {payload} }};
+            export def answer = query({owner}.type, Mark.type);
         "#
             ),
             "",
@@ -135,7 +137,7 @@ fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
             crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir))
                 .unwrap();
         let record = mir.properties.iter().find(|record| {
-            matches!(mir.types[record.owner.index()].constructor,
+            record.concrete && matches!(mir.types[record.owner.index()].constructor,
                 crate::mir::TypeConstructor::Nominal(symbol) if mir.symbols[symbol.index()].name == "Item")
         }).unwrap();
         let key = crate::execution_graph::PropertyKey {

@@ -2,6 +2,36 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn generic_properties_close_provider_instances_before_sealing() {
+    let mut mir = graph(&[("@src/main", r#"
+        @property(PropertyTarget.Type) type Mark(T) = struct { witness: TypeOf(T) };
+        def mark: for(T) Fn(TypeOf(T)) -> Fn(Type, Option(Mark(T))) -> Mark(T) = fn(witness) {
+            fn(owner, previous) { {witness: witness} }
+        };
+        @mark(T.type) type Box(T) = struct { value: T };
+        type Outer(T) = struct { value: Box(Array(T)) };
+        export def answer = (Box(Int).type, Box(String).type, Outer(Int).type);
+    "#)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let box_symbol = mir.symbols.iter().position(|symbol| symbol.name == "Box" && symbol.kind == SymbolKind::Declaration(BindingKind::Type)).unwrap();
+    let records = mir.properties.iter().enumerate().filter(|(_, record)| record.concrete && mir.types[record.owner.index()].constructor == TypeConstructor::Nominal(SymbolId(box_symbol as u32))).map(|(index, _)| index).collect::<Vec<_>>();
+    assert_eq!(records.len(), 3);
+    for &index in &records {
+        let record = &mir.properties[index];
+        let instance = &mir.generic_instances[record.instance.unwrap().index()];
+        assert!(instance.concrete);
+        assert_eq!(instance.ty(record.providers[0]), Some(record.property));
+        assert_eq!(mir.types[record.owner.index()].arguments, mir.types[record.property.index()].arguments);
+    }
+    let instance = mir.properties[records[0]].instance.take();
+    assert!(mir.seal().is_err());
+    mir.properties[records[0]].instance = instance;
+    mir.properties.remove(records[0]);
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn principal_schemes_preserve_quantified_bounds() {
     let mut mir = graph(&[("@src/main", r#"
         trait Named { name: Fn(Self) -> String };
