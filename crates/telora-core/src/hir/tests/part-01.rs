@@ -1,4 +1,40 @@
     #[test]
+    fn generic_parameter_references_close_over_their_own_nested_binders() {
+        let program = parse("generic-scopes.telora", r#"
+            def outer: for(T) Fn(T) -> T = fn(value: T) {
+                def inner: for(T) Fn(T) -> T = fn(item: T) { item };
+                let copy: T = value;
+                copy
+            };
+            outer
+        "#).unwrap();
+        let mut parameter_lookups = 0;
+        let hir = HirProgram::resolve_with_lookup(&program, &mut |name| {
+            if name == "T" { parameter_lookups += 1; }
+            HirExternalName { declared: true, member: name == "T" }
+        });
+        assert_eq!(parameter_lookups, 0, "bound parameters must not query import scopes");
+        let outer = hir.definitions().iter().find(|definition| definition.name == "outer").unwrap();
+        let inner = hir.definitions().iter().find(|definition| definition.name == "inner").unwrap();
+        assert_eq!(outer.type_parameters.len(), 1);
+        assert_eq!(inner.type_parameters.len(), 1);
+        let outer_id = outer.type_parameters[0].id;
+        let inner_id = inner.type_parameters[0].id;
+        assert_ne!(outer_id, inner_id);
+        let inner_body = hir.expression(inner.value.unwrap()).unwrap().location;
+        let mut referenced = HashSet::new();
+        for reference in hir.references().iter().filter(|reference| reference.name == "T") {
+            let HirResolution::Definition(id) = reference.resolution else { panic!("{reference:?}"); };
+            assert_eq!(hir.definition(id).unwrap().kind, HirDefinitionKind::TypeParameter);
+            assert_eq!(id, if inner.type_parameters[0].location.start <= reference.location.start && reference.location.end <= inner_body.end {
+                inner_id
+            } else { outer_id });
+            referenced.insert(id);
+        }
+        assert_eq!(referenced, HashSet::from([outer_id, inner_id]));
+    }
+
+    #[test]
     fn construction_checks_are_not_deferred_property_roots() {
         let program = parse(
             "hir.telora",

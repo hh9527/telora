@@ -125,7 +125,7 @@ impl<'a> TypeBoundary<'a> {
                             return role;
                         }
                         match definition.kind {
-                            HirDefinitionKind::Type | HirDefinitionKind::NativeType => {
+                            HirDefinitionKind::Type | HirDefinitionKind::NativeType | HirDefinitionKind::TypeParameter => {
                                 if self.constructors.contains(&definition.location) {
                                     SurfaceRole::Constructor
                                 } else {

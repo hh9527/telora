@@ -32,6 +32,7 @@ pub enum HirDefinitionKind {
     Native,
     NativeType,
     Parameter,
+    TypeParameter,
     Pattern,
 }
 
@@ -65,6 +66,7 @@ fn named_external_lookup(
 
 #[derive(Clone, Debug)]
 pub struct HirTypeParameter {
+    pub id: HirDefinitionId,
     pub name: String,
     pub location: Location,
 }
@@ -327,6 +329,11 @@ impl HirProgram {
                 *definition = definitions[definition.index()];
             }
         }
+        for definition in &mut self.definitions {
+            for parameter in &mut definition.type_parameters {
+                parameter.id = definitions[parameter.id.index()];
+            }
+        }
         self.definition_locations = self.definitions.iter().flat_map(|definition|
             std::iter::once(definition.location).chain(definition.additional_locations.iter().copied())
                 .map(|location| (location, definition.id))).collect();
@@ -409,7 +416,7 @@ type Scope = HashMap<String, HirDefinitionId>;
 
 struct Resolver<'a> {
     hir: HirProgram,
-    parameter_names: HashSet<String>,
+    parameter_definitions: HashMap<Location, HirDefinitionId>,
     external_lookup: &'a mut dyn FnMut(&str) -> HirExternalName,
     expression_stack: Vec<HirExpressionId>,
     static_expressions: bool,
@@ -417,12 +424,12 @@ struct Resolver<'a> {
 
 impl<'a> Resolver<'a> {
     fn new(external_lookup: &'a mut dyn FnMut(&str) -> HirExternalName, static_expressions: bool) -> Self {
-        Self { hir: HirProgram::default(), parameter_names: HashSet::new(), external_lookup,
+        Self { hir: HirProgram::default(), parameter_definitions: HashMap::new(), external_lookup,
             expression_stack: Vec::new(), static_expressions }
     }
 
     fn external_member(&mut self, name: &str) -> bool {
-        !self.parameter_names.contains(name) && (self.external_lookup)(name).member
+        (self.external_lookup)(name).member
     }
 
     fn define(&mut self, binding: &Binding, scope: &mut Scope, top_level: bool) -> HirDefinitionId {
@@ -442,15 +449,6 @@ impl<'a> Resolver<'a> {
         let id = self.define_name(name, kind, binding.value.name.location, scope, top_level);
         self.hir.definitions[id.index()].member_import = binding.value.is_member_import()
             .then(|| binding.value.value.clone());
-        self.hir.definitions[id.index()].type_parameters = binding
-            .value
-            .type_parameters
-            .iter()
-            .map(|parameter| HirTypeParameter {
-                name: parameter.value.clone(),
-                location: parameter.location,
-            })
-            .collect();
         id
     }
 
@@ -600,12 +598,33 @@ impl<'a> Resolver<'a> {
         {
             self.hir.tool_roots.insert(expression.location);
         }
-        let inserted = binding
-            .value
-            .type_parameters
-            .iter()
-            .map(|parameter| self.parameter_names.insert(parameter.value.clone()))
-            .collect::<Vec<_>>();
+        let mut parameter_scope = Scope::new();
+        let parameters = binding.value.type_parameters.iter().map(|parameter| {
+            // Annotation and body indexing can visit the same authored binder.
+            // Its source identity is allocated once, independent of either visit.
+            let id = if let Some(id) = self.parameter_definitions.get(&parameter.location).copied() {
+                parameter_scope.insert(parameter.value.clone(), id);
+                id
+            } else {
+                let id = self.define_name(&parameter.value, HirDefinitionKind::TypeParameter,
+                    parameter.location, &mut parameter_scope, false);
+                self.parameter_definitions.insert(parameter.location, id);
+                id
+            };
+            HirTypeParameter { id, name: parameter.value.clone(), location: parameter.location }
+        }).collect::<Vec<_>>();
+        if !parameters.is_empty() {
+            let owner = self.hir.definitions.iter_mut().find(|definition|
+                definition.location == binding.value.name.location
+                    || definition.additional_locations.contains(&binding.value.name.location))
+                .expect("type parameters belong to a declared binding");
+            for parameter in parameters {
+                if !owner.type_parameters.iter().any(|existing| existing.id == parameter.id) {
+                    owner.type_parameters.push(parameter);
+                }
+            }
+        }
+        scopes.push(parameter_scope);
         let expression = self.index_expr(expression, scopes);
         if self.static_expressions {
             self.expression_stack.push(expression);
@@ -651,11 +670,7 @@ impl<'a> Resolver<'a> {
             }
             self.expression_stack.pop();
         }
-        for (parameter, inserted) in binding.value.type_parameters.iter().zip(inserted) {
-            if inserted {
-                self.parameter_names.remove(&parameter.value);
-            }
-        }
+        scopes.pop();
         expression
     }
 
@@ -679,7 +694,7 @@ impl<'a> Resolver<'a> {
             ExprKind::Variable(name) => {
                 let resolution = resolve_name(scopes, &name.value).map_or_else(
                     || {
-                        if self.parameter_names.contains(&name.value) || (self.external_lookup)(&name.value).declared {
+                        if (self.external_lookup)(&name.value).declared {
                             HirResolution::External
                         } else {
                             HirResolution::Unresolved

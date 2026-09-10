@@ -193,10 +193,16 @@ no module exports a type solution across this gate.
 
 This is not yet the complete shared pre-type graph symbol table: ordinary
 checking still prepares HIR per module and uses its existing name validation.
-Also, HIR type-parameter metadata retains names/locations while parameter
-references still pass through Resolver.parameter_names and External resolution.
-They must link to stable parameter-symbol identities to satisfy the all-symbols
-closure criterion. Audit imports (including wildcard scope records), exports,
+HIR type parameters now have their own TypeParameter declaration records and
+HirDefinitionIds. Ordinary lexical scopes resolve their references; the temporary
+parameter_names set and its External treatment are removed. Signature and body
+visits share the identity allocated for the same authored binder location, and
+normalization remaps owner parameter IDs together with references. Type-position
+classification recognizes parameter definitions as types. A nested same-name
+parameter fixture checks distinct binder identities, signature/body reference
+closure, scope restoration and zero import lookups for bound parameters.
+
+Audit imports (including wildcard scope records), exports,
 local declarations and generated binders against that same criterion; successful
 import-origin linkage alone does not prove every symbol class is closed.
 Imported slots are still materialized from
