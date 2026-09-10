@@ -270,7 +270,7 @@ pub struct TypeMember {
 }
 
 /// Fully applied nominal member types, indexed by the owner's TypeId. Member
-/// order is the declaration order; None denotes a nullary enum variant only.
+/// order is canonical member-name order; None denotes a nullary enum variant only.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeLayout {
     pub members: Vec<Option<TypeId>>,
@@ -283,7 +283,6 @@ pub enum MemberSelection {
         index: u32,
         implementation: Option<SymbolId>,
     },
-    PropertyTarget(u8),
     Boolean(bool),
     RecordField,
     DictField,

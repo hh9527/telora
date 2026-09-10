@@ -418,7 +418,6 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
                     MemberSelection::EnumVariant { .. }
                         | MemberSelection::TraitMember { .. }
                         | MemberSelection::Boolean(_)
-                        | MemberSelection::PropertyTarget(_)
                 )
             ) && !matches!(
                 mir.hir[node.index()].kind,
@@ -764,19 +763,6 @@ impl<'a> Emitter<'a> {
                 dst
             }
             HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node, tail)?,
-            HirKind::Field
-                if matches!(
-                    self.mir.member_selections[node.index()],
-                    Some(MemberSelection::PropertyTarget(_))
-                ) =>
-            {
-                let Some(MemberSelection::PropertyTarget(bits)) =
-                    self.mir.member_selections[node.index()]
-                else {
-                    unreachable!()
-                };
-                self.constant(node, Constant::Int(bits as i64))
-            }
             HirKind::Panic => {
                 let message = self.expression(self.child(node, Role::Value))?;
                 self.emit(node, O::Panic { message });
@@ -1423,6 +1409,35 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn property_target_enum_computes_matches_reflects_and_reduces_all_categories() {
+        let mir = graph(r#"
+            import "std/type-property" as props;
+            import "std/type-desc" as td;
+            import "std/dyn" as dyn;
+            import PropertyTarget.{Member as Both};
+            def choose: Fn(Bool) -> PropertyTarget = fn(flag) { if flag { PropertyTarget.StructType } else { PropertyTarget.EnumType } };
+            @property(PropertyTarget.Type) @property(choose(True)) @property(choose(False))
+            @property(Both) @property(PropertyTarget.Field) @property(PropertyTarget.Variant)
+            type Mark = struct {value: Int};
+            def name: Fn(PropertyTarget) -> String = fn(value) { match value {
+                PropertyTarget.Type => "type", PropertyTarget.StructType => "struct",
+                PropertyTarget.EnumType => "enum", Both => "member",
+                PropertyTarget.Field => "field", PropertyTarget.Variant => "variant",
+            } };
+            export def answer = match props.get_type_prop(Mark.type, PropertyAttr.type) {
+                Some(attr) => if attr.bits == 63 && name(choose(False)) == "enum" && name(Both) == "member"
+                    && td.kind(PropertyTarget.type) == td.TypeDescKind.Enum
+                    && td.variants(PropertyTarget.type)[2].name == "Member"
+                    && dyn.get_variant_index(dyn.pack(PropertyTarget.type, PropertyTarget.Variant)) == 5 { 42 } else { 0 },
+                None => 0,
+            };
+        "#, "");
+        let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+        let result = execute(artifact).unwrap();
+        assert_eq!(result.value().as_int(), Some(42));
+    }
+
+    #[test]
     fn existing_record_values_keep_identity_while_fresh_literals_take_context() {
         for body in [
             "let raw = {value: 42}; [raw] != [item] && [item] != [raw] && (raw, 1) != (item, 1)",
@@ -1785,7 +1800,10 @@ pub(crate) mod tests {
                 type Tree(T) = enum { Empty, Branch(Array(Tree(T))), Leaf(T) };
                 def body = match td.resolve(Tree(Int).type) { Ok(value) => value, Err(_) => fail!("resolve") };
                 def variants = td.variants(body);
-                export def answer = if variants[0].payload == None && variants[1].payload == Some(Array(Tree(Int)).type) && variants[2].payload == Some(Int.type) && td.kind(body) == td.TypeDescKind.Enum { 42 } else { 0 };"#,
+                export def answer = if variants[0].name == "Branch" && variants[0].payload == Some(Array(Tree(Int)).type) && variants[1].name == "Empty" && variants[1].payload == None && variants[2].payload == Some(Int.type) && td.kind(body) == td.TypeDescKind.Enum { 42 } else { 0 };"#,
+            r#"import "std/type-desc" as td;
+                def variants = td.variants(Result(Int, String).type);
+                export def answer = if variants[0].name == "Err" && variants[0].payload == Some(String.type) && variants[1].name == "Ok" && variants[1].payload == Some(Int.type) { 42 } else { 0 };"#,
             r#"import "std/type-desc" as td; import "std/array" as array;
                 export def answer = if td.kind(Int.type) == td.TypeDescKind.Int && td.variants(Option(Int).type)[1].payload == Some(Int.type) && array.length(td.children((Fn(Int) -> String).type)) == 0 { 42 } else { 0 };"#,
             r#"import "std/type-desc" as td; export def answer = match td.resolve(Int.type) { Err(_) => 42, _ => 0 };"#,
@@ -1820,14 +1838,14 @@ pub(crate) mod tests {
         for source in [
             r#"import "std/dyn" as dyn; type Box(T) = struct { z: String, a: T };
                 def value: Box(Int) = {a: 42, z: "other"};
-                export def answer = take(dyn.project_with(Int.type, dyn.get_field_value(dyn.pack(Box(Int).type, value), 1)));"#,
+                export def answer = take(dyn.project_with(Int.type, dyn.get_field_value(dyn.pack(Box(Int).type, value), 0)));"#,
             r#"import "std/dyn" as dyn; type Box(T) = struct(T);
                 def items = get(dyn.tuple_items(dyn.pack(Box(Int).type, Box(42))));
                 export def answer = take(dyn.project_with(Int.type, items[0]));"#,
             r#"import "std/dyn" as dyn; type Tree(T) = enum { Empty, Leaf(T), Branch(Array(Tree(T))) };
                 def value = dyn.pack(Tree(Int).type, Tree.Leaf(42));
-                def child = take(dyn.get_variant_payload(value, 1));
-                export def answer = if dyn.get_variant_index(value) == 1 { take(dyn.project_with(Int.type, child)) } else { 0 };"#,
+                def child = take(dyn.get_variant_payload(value, 2));
+                export def answer = if dyn.get_variant_index(value) == 2 { take(dyn.project_with(Int.type, child)) } else { 0 };"#,
             r#"import "std/dyn" as dyn; type Item = enum { Empty, Full(Int) };
                 def value = dyn.pack(Item.type, Item.Empty);
                 export def answer = if dyn.get_variant_payload(value, 0) == None && dyn.kind(value) == dyn.ValueKind.Atom { 42 } else { 0 };"#,
@@ -2301,7 +2319,8 @@ pub(crate) mod tests {
             .unwrap()
             .tagged_parts()
             .unwrap();
-        assert_eq!(attr.dict_get("bits").unwrap().as_int(), Some(3));
+        assert_eq!(attr.dict_get("bits").unwrap().as_int(), Some(17));
+        assert!(attr.solved_type_id().is_some());
         assert_eq!(CALLS.load(Ordering::SeqCst), 3);
     }
 
@@ -2829,9 +2848,9 @@ pub(crate) mod tests {
         for body in [
             r#"def body = match td.resolve(Unchecked(Box(Int)).type) { Ok(value) => value, _ => fail!("resolve") };
                 def checked_body = match td.resolve(Box(Int).type) { Ok(value) => value, _ => fail!("resolve") };
-                export def answer = if td.kind(Unchecked(Box(Int)).type) == td.TypeDescKind.Ref && body == checked_body && td.kind(body) == td.TypeDescKind.Struct && td.fields(body)[0].ty == Int.type { 42 } else { 0 };"#,
-            r#"export def answer = if td.fields(Unchecked(Box(String)).type)[0].ty == String.type && td.fields(Unchecked(Box(Int)).type)[1].ty == Array(Box(Int)).type { 42 } else { 0 };"#,
-            r#"export def answer = do { let candidate: Unchecked(Box(Int)) = {value: 42, children: []}; let packed = dyn.pack(Unchecked(Box(Int)).type, candidate); match dyn.project_with(Int.type, dyn.get_field_value(packed, 0)) { Some(value) => value, _ => 0 } };"#,
+                export def answer = if td.kind(Unchecked(Box(Int)).type) == td.TypeDescKind.Ref && body == checked_body && td.kind(body) == td.TypeDescKind.Struct && td.fields(body)[1].ty == Int.type { 42 } else { 0 };"#,
+            r#"export def answer = if td.fields(Unchecked(Box(String)).type)[1].ty == String.type && td.fields(Unchecked(Box(Int)).type)[0].ty == Array(Box(Int)).type { 42 } else { 0 };"#,
+            r#"export def answer = do { let candidate: Unchecked(Box(Int)) = {value: 42, children: []}; let packed = dyn.pack(Unchecked(Box(Int)).type, candidate); match dyn.project_with(Int.type, dyn.get_field_value(packed, 1)) { Some(value) => value, _ => 0 } };"#,
         ] {
             let mir = graph(&format!(r#"
                 import "std/type-desc" as td; import "std/dyn" as dyn;

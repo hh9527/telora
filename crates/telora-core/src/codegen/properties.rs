@@ -365,8 +365,30 @@ impl Emitter<'_> {
                 dst
             }
             (18, "property") => {
+                let factory = &self.mir.types[self.ty(node)?.index()];
+                let provider_signature = &self.mir.types[factory.arguments[1].index()];
+                if provider_signature.constructor != TypeConstructor::Function || provider_signature.arguments.len() != 3 {
+                    return Err(self.error(node, "property native ABI requires a two-argument provider"));
+                }
+                let attribute_type = provider_signature.arguments[2];
                 adapter.function.parameter_count = 1;
+                let target = adapter.register();
                 let bits = adapter.register();
+                let ready = adapter.label();
+                for (index, name) in crate::type_image::PROPERTY_TARGET_VARIANTS.iter().enumerate() {
+                    let tag = adapter.constant(node, Constant::Atom(crate::Atom::named(*name)));
+                    let condition = adapter.register();
+                    let next = adapter.label();
+                    adapter.emit(node, O::TaggedTagEquals { dst: condition, value: target, tag });
+                    adapter.emit(node, O::JumpIfFalse { condition, target: next });
+                    let mask = adapter.constant(node, Constant::Int(crate::type_image::PROPERTY_TARGET_MASKS[index]));
+                    adapter.emit(node, O::Move { dst: bits, src: mask });
+                    adapter.emit(node, O::Jump { target: ready });
+                    adapter.mark(next);
+                }
+                let message = adapter.constant(node, Constant::String("invalid PropertyTarget variant".into()));
+                adapter.emit(node, O::Panic { message });
+                adapter.mark(ready);
                 let mut provider = Self::new(self.mir, self.graph, "<property marker>".into());
                 provider.function.parameter_count = 2;
                 provider.function.capture_count = 1;
@@ -439,6 +461,7 @@ impl Emitter<'_> {
                         fields: vec![("bits".into(), merged)],
                     },
                 );
+                provider.emit(node, O::StampType { dst: result, src: result, ty: attribute_type });
                 provider.emit(node, O::Return { src: result });
                 let dst = adapter.register();
                 adapter.emit(

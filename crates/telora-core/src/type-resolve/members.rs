@@ -111,16 +111,12 @@ impl Solver<'_> {
                     Some(MemberSelection::Boolean(name == "True"));
                 None
             }
-            TypeConstructor::PropertyTarget
-                if metadata && matches!(name.as_str(), "Type" | "Field" | "Variant") =>
-            {
-                self.mir.member_selections[node.index()] =
-                    Some(MemberSelection::PropertyTarget(match name.as_str() {
-                        "Type" => 1,
-                        "Field" => 2,
-                        "Variant" => 4,
-                        _ => unreachable!(),
-                    }));
+            TypeConstructor::PropertyTarget if metadata => {
+                let Some(index) = crate::type_image::PROPERTY_TARGET_VARIANTS.iter().position(|member| *member == name) else {
+                    self.bad_member(node, &name);
+                    return None;
+                };
+                self.mir.member_selections[node.index()] = Some(MemberSelection::EnumVariant { index: index as u32 });
                 None
             }
             TypeConstructor::Option if metadata => match name.as_str() {
@@ -142,12 +138,12 @@ impl Solver<'_> {
             TypeConstructor::Result if metadata => match name.as_str() {
                 "Ok" => {
                     self.mir.member_selections[node.index()] =
-                        Some(MemberSelection::EnumVariant { index: 0 });
+                        Some(MemberSelection::EnumVariant { index: 1 });
                     Some(term.arguments[0])
                 }
                 "Err" => {
                     self.mir.member_selections[node.index()] =
-                        Some(MemberSelection::EnumVariant { index: 1 });
+                        Some(MemberSelection::EnumVariant { index: 0 });
                     Some(term.arguments[1])
                 }
                 _ => {
@@ -158,12 +154,12 @@ impl Solver<'_> {
             TypeConstructor::FoldControl if metadata => match name.as_str() {
                 "Continue" => {
                     self.mir.member_selections[node.index()] =
-                        Some(MemberSelection::EnumVariant { index: 0 });
+                        Some(MemberSelection::EnumVariant { index: 1 });
                     Some(term.arguments[0])
                 }
                 "Break" => {
                     self.mir.member_selections[node.index()] =
-                        Some(MemberSelection::EnumVariant { index: 1 });
+                        Some(MemberSelection::EnumVariant { index: 0 });
                     Some(term.arguments[1])
                 }
                 _ => {

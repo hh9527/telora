@@ -189,7 +189,7 @@ fn run_solved_dyn(
             }
             let result_type = signature.arguments[1];
             let kind = match &types.types[packaged.index()].constructor {
-                T::Int | T::PropertyTarget => "Int",
+                T::Int => "Int",
                 T::Float => "Float",
                 T::String => "String",
                 T::Bytes => "Bytes",
@@ -200,7 +200,7 @@ fn run_solved_dyn(
                 T::Tuple => "Tuple",
                 T::Function => "Func",
                 T::Dyn => "Dyn",
-                T::Bool => "Atom",
+                T::Bool | T::PropertyTarget => "Atom",
                 T::Nominal(symbol) => match types
                     .definition(*symbol)
                     .expect("nominal Dyn definition")
@@ -401,6 +401,11 @@ fn solved_dyn_variant(
             "True" => (1, None),
             _ => return Err("invalid Bool variant".into()),
         },
+        T::PropertyTarget => {
+            let index = crate::type_image::PROPERTY_TARGET_VARIANTS.iter().position(|name| *name == tag)
+                .ok_or("invalid PropertyTarget variant")?;
+            (index, None)
+        }
         T::Option | T::Result | T::FoldControl => {
             let index = (0..2)
                 .find(|&index| {
@@ -408,15 +413,8 @@ fn solved_dyn_variant(
                         .is_some_and(|(name, _)| name == tag)
                 })
                 .ok_or("unknown builtin variant")?;
-            let (_, has_payload) =
-                crate::type_image::builtin_variant(&shape.constructor, index).unwrap();
-            let member = has_payload.then(|| {
-                shape.arguments[if shape.constructor == T::Option {
-                    0
-                } else {
-                    index as usize
-                }]
-            });
+            let member = crate::type_image::builtin_variant_argument(&shape.constructor, index)
+                .map(|argument| shape.arguments[argument]);
             (index as usize, member)
         }
         _ => return Err("Dyn variant access expects Enum".into()),

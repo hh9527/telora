@@ -562,6 +562,9 @@ impl Vm {
                                         charge_allocation(account, logical_value_bytes(2).map_err(|e| allocation_error(e.message, function, pc))?, function, pc)?;
                                         Val::unknown(DecodedValue::Tagged(current.allocate(Object::Tagged { tag, payload })))
                                     } else { tag };
+                                    let value = if background.solved_types.as_ref().unwrap().types[ty.index()].constructor == crate::mir::TypeConstructor::PropertyTarget {
+                                        value.with_type_id(crate::TypeId::solved(*ty))
+                                    } else { value };
                                     write_register(&mut registers, *dst, value.with_loc(instruction_location(function, pc)), function, pc)?;
                                     frames.last_mut().expect("variant frame").pc += 1;
                                     continue;

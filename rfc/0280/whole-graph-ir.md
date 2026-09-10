@@ -5,6 +5,36 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Native property targets and canonical member indices (2026-09-11)
+
+PropertyTarget now uses its native enum identity and ordinary MIR enum member
+selections for all six categories. Aliases, computed targets and constructor
+patterns use the normal pipeline; the special integer-valued member selection
+has been removed. The native property adapter maps enum values to capability
+bits, reduces prior bits and stamps its result with the already solved
+PropertyAttr return TypeId. It does not reconstruct a type at runtime.
+
+Nominal skeleton members are sorted by name during static definition setup,
+as required by RFC 0259. Member syntax and payload slots stay attached to their
+members, so property providers, reflection, Dyn access and constructor selection
+consume the same indices. Native enum indices follow the same ordering;
+Result/FoldControl payload argument positions and PropertyTarget capability
+bits are explicitly independent of those indices. Codegen remains mechanical.
+
+Three language fixtures renamed their explicit `property` namespace import to
+`props`: the original alias shadowed the implicit prelude function used by
+`@property`. Their assertions were not relaxed. Focused compiler tests were
+corrected where they incorrectly expected source-order member indices.
+
+Validation: 54 type-resolve, 74 codegen and 48 VM tests pass; CLI build passes.
+The actual language aggregate now passes properties (1/1) and property-target
+(2/2). The full aggregate still fails other newtype, codec, reflection and
+diagnostic/query cases. Applying a property carrier still needs tool-stage
+capability validation; this milestone does not claim that enforcement or
+complete enum codec coverage. Old-path removal and complete acceptance remain
+unfinished. Logs: /tmp/mir-canonical-{types,codegen,vm,build,language}.log.
+No performance measurement was made.
+
 ### Construction origins prevent retroactive nominal branding (2026-09-11)
 
 Record shape compatibility previously proxied the actual record slot to the

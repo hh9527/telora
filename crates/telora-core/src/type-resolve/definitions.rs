@@ -92,6 +92,7 @@ impl Solver<'_> {
                             payload,
                         });
                     }
+                    members.sort_by(|a, b| a.name.cmp(&b.name));
                     self.nominal_index[index] = Some(self.mir.type_definitions.len());
                     self.nominal_owner[value.index()] = Some(symbol);
                     self.mir.type_definitions.push(TypeDefinition {

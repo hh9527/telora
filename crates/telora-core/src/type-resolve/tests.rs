@@ -2,6 +2,27 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn property_target_members_use_native_identity_and_ordinary_resolution() {
+    let mut mir = graph(&[("@src/main", "import \"std/prelude\" {PropertyTarget as Target}; import Target.{Member as Both}; def target: Fn(Bool) -> Target = fn(enabled) { if enabled { Target.StructType } else { Target.EnumType } }; @property(target(True)) type Mark = struct {value: Int}; export def answer = (Target.Type, Target.StructType, Target.EnumType, Both, Target.Field, Target.Variant);")]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let TypeState::Known(tuple) = symbol_type(&mir, "answer") else { panic!("closed targets") };
+    assert_eq!(mir.types[tuple.index()].arguments.len(), 6);
+    for &target in &mir.types[tuple.index()].arguments {
+        assert_eq!(mir.types[target.index()].constructor, TypeConstructor::PropertyTarget);
+    }
+    for source in [
+        "type PropertyTarget = enum {Type}; @property(PropertyTarget.Type) type Mark = struct {value: Int}; export def answer = 42;",
+        "import \"./other\" as property; @property(PropertyTarget.Type) type Mark = struct {value: Int}; export def answer = 42;",
+    ] {
+        let mut mir = graph(&[("@src/main", source), ("@src/other", "export def value = 42;")]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err(), "{source}");
+        assert!(!mir.type_conflicts.is_empty(), "{source}");
+    }
+}
+
+#[test]
 fn completed_record_construction_keeps_its_static_identity_deterministically() {
     let sources = [("@src/main", "type Item = struct {value: Int}; def item: Item = {value: 42}; def raw = {value: 42}; export def answer = [item] == [{value: 42}] && [raw] != [item];")];
     let mut first = graph(&sources);
@@ -549,19 +570,19 @@ fn nominal_member_layouts_close_generic_and_recursive_type_references() {
     drop(mir);
     let layout = image.layout(tree).unwrap();
     assert_eq!(layout.members.len(), 3);
-    assert_eq!(image.types[layout.members[0].unwrap().index()].constructor, TypeConstructor::Int);
-    let branch = &image.types[layout.members[1].unwrap().index()];
+    assert_eq!(image.types[layout.members[2].unwrap().index()].constructor, TypeConstructor::Int);
+    let branch = &image.types[layout.members[0].unwrap().index()];
     assert_eq!(branch.constructor, TypeConstructor::Array);
     assert_eq!(branch.arguments, [tree]);
-    assert_eq!(layout.members[2], None);
+    assert_eq!(layout.members[1], None);
     let body = &image.types[layout.body.index()];
-    assert_eq!(body.constructor, TypeConstructor::Enum(vec![("Leaf".into(), true), ("Branch".into(), true), ("Empty".into(), false)]));
+    assert_eq!(body.constructor, TypeConstructor::Enum(vec![("Branch".into(), true), ("Empty".into(), false), ("Leaf".into(), true)]));
     assert_eq!(body.arguments, layout.members.iter().flatten().copied().collect::<Vec<_>>());
     let layout = image.layout(boxed).unwrap();
-    assert_eq!(image.types[layout.body.index()].constructor, TypeConstructor::Record(vec!["value".into(), "children".into()]));
+    assert_eq!(image.types[layout.body.index()].constructor, TypeConstructor::Record(vec!["children".into(), "value".into()]));
     assert_eq!(image.types[layout.body.index()].arguments, layout.members.iter().flatten().copied().collect::<Vec<_>>());
-    assert_eq!(image.types[layout.members[0].unwrap().index()].constructor, TypeConstructor::String);
-    let children = &image.types[layout.members[1].unwrap().index()];
+    assert_eq!(image.types[layout.members[1].unwrap().index()].constructor, TypeConstructor::String);
+    let children = &image.types[layout.members[0].unwrap().index()];
     assert_eq!(children.constructor, TypeConstructor::Array);
     assert_eq!(children.arguments, [boxed]);
 }

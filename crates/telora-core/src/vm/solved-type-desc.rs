@@ -54,7 +54,7 @@ fn run_solved_type_desc(
                 T::Tuple => "Tuple",
                 T::Record(_) => "Struct",
                 T::Newtype => "Newtype",
-                T::Enum(_) | T::Bool | T::Option | T::Result | T::FoldControl => "Enum",
+                T::Enum(_) | T::Bool | T::Option | T::Result | T::FoldControl | T::PropertyTarget => "Enum",
                 T::Function => "Func",
                 T::Native(_) => "Opaque",
                 T::Parameter(_) | T::PropertyBound => "Bound",
@@ -254,19 +254,15 @@ fn solved_type_desc_members(
                 .collect())
         }
         (T::Bool, true) => Ok(vec![("False".into(), None), ("True".into(), None)]),
+        (T::PropertyTarget, true) => Ok(crate::type_image::PROPERTY_TARGET_VARIANTS.iter().map(|name| ((*name).into(), None)).collect()),
         (T::Option | T::Result | T::FoldControl, true) => Ok((0..2)
             .map(|index| {
-                let (name, payload) = crate::type_image::builtin_variant(&shape.constructor, index)
+                let (name, _) = crate::type_image::builtin_variant(&shape.constructor, index)
                     .expect("builtin variant");
                 (
                     name.into(),
-                    payload.then(|| {
-                        shape.arguments[if shape.constructor == T::Option {
-                            0
-                        } else {
-                            index as usize
-                        }]
-                    }),
+                    crate::type_image::builtin_variant_argument(&shape.constructor, index)
+                        .map(|argument| shape.arguments[argument]),
                 )
             })
             .collect()),

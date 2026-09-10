@@ -8,6 +8,13 @@ use crate::{
 
 /// Native algebraic families have a fixed representation, independent of their
 /// type parameters. The type pass has already selected the variant index.
+pub(crate) const PROPERTY_TARGET_VARIANTS: [&str; 6] = [
+    "EnumType", "Field", "Member", "StructType", "Type", "Variant",
+];
+
+/// Capability bits are independent of canonical enum member indices.
+pub(crate) const PROPERTY_TARGET_MASKS: [i64; 6] = [4, 16, 8, 2, 1, 32];
+
 pub(crate) fn builtin_variant(
     constructor: &crate::mir::TypeConstructor,
     index: u32,
@@ -16,12 +23,23 @@ pub(crate) fn builtin_variant(
     Some(match (constructor, index) {
         (T::Option, 0) => ("None", false),
         (T::Option, 1) => ("Some", true),
-        (T::Result, 0) => ("Ok", true),
-        (T::Result, 1) => ("Err", true),
-        (T::FoldControl, 0) => ("Continue", true),
-        (T::FoldControl, 1) => ("Break", true),
+        (T::Result, 0) => ("Err", true),
+        (T::Result, 1) => ("Ok", true),
+        (T::FoldControl, 0) => ("Break", true),
+        (T::FoldControl, 1) => ("Continue", true),
+        (T::PropertyTarget, index) => (*PROPERTY_TARGET_VARIANTS.get(index as usize)?, false),
         _ => return None,
     })
+}
+
+pub(crate) fn builtin_variant_argument(constructor: &TypeConstructor, index: u32) -> Option<usize> {
+    use TypeConstructor as T;
+    match (constructor, index) {
+        (T::Option, 1) => Some(0),
+        (T::Result | T::FoldControl, 0) => Some(1),
+        (T::Result | T::FoldControl, 1) => Some(0),
+        _ => None,
+    }
 }
 
 #[derive(Debug)]
@@ -54,7 +72,7 @@ pub struct TypeMember {
 }
 
 impl TypeImage {
-    /// Applied member types in declaration order. This is an array lookup,
+    /// Applied member types in canonical member-name order. This is an array lookup,
     /// including for recursive and generic nominal applications.
     pub fn layout(&self, ty: TypeId) -> Option<&crate::mir::TypeLayout> {
         // Unchecked changes the outer guarantee, not the representation. Its
