@@ -1,0 +1,687 @@
+#[derive(Debug)]
+enum SolvedEncodeTask {
+    Visit {
+        value: Val,
+        ty: crate::mir::TypeId,
+    },
+    Array {
+        count: usize,
+        loc: Option<crate::Loc>,
+    },
+    Object {
+        names: Vec<String>,
+        loc: Option<crate::Loc>,
+    },
+}
+
+#[derive(Debug)]
+struct SolvedEncode {
+    pending: Vec<SolvedEncodeTask>,
+    output: Vec<Val>,
+    target: crate::mir::TypeId,
+    properties: Vec<(&'static str, crate::mir::TypeId)>,
+    return_target: ReturnTarget,
+    trace_frame: RuntimeFrame,
+    function: Arc<BytecodeFunction>,
+    pc: usize,
+}
+
+impl NativeContinuation for SolvedEncode {
+    fn return_target(&self) -> &ReturnTarget {
+        &self.return_target
+    }
+    fn trace_frame(&self) -> &RuntimeFrame {
+        &self.trace_frame
+    }
+    fn resume(
+        self: Box<Self>,
+        _: Val,
+        current: &mut Heap,
+        background: &Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        continue_solved_encode(*self, current, background, account)
+    }
+    fn resume_failed(
+        self: Box<Self>,
+        failure: Val,
+        _: &mut Heap,
+        _: &Heap,
+        _: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        Ok(VmAction::Return {
+            value: failure,
+            return_target: self.return_target,
+        })
+    }
+}
+
+fn run_solved_codec_encode(
+    arguments: &[Val],
+    signature: Option<Val>,
+    return_target: ReturnTarget,
+    function: &BytecodeFunction,
+    pc: usize,
+    current: &mut Heap,
+    background: &Heap,
+    account: &mut QuotaAccount,
+) -> Result<VmAction, RuntimeError> {
+    let types = background.solved_types.as_ref().expect("solved codec");
+    let signature = signature.ok_or_else(|| {
+        error(
+            RuntimeErrorKind::InvalidBytecode,
+            "codec requires a compiled native signature",
+            function,
+            pc,
+        )
+    })?;
+    let signature = solved_metadata_id(signature, types, function, pc)?;
+    let signature = &types.types[signature.index()];
+    let target = solved_metadata_id(arguments[1], types, function, pc)?;
+    if signature.constructor != crate::mir::TypeConstructor::Function
+        || signature.arguments.len() != 4
+        || signature.arguments[3] != target
+    {
+        return Err(error(
+            RuntimeErrorKind::InvalidBytecode,
+            "codec encode signature does not match its target",
+            function,
+            pc,
+        ));
+    }
+    let view = HeapView {
+        current,
+        background: Some(background),
+    };
+    let properties = ValueRef {
+        value: arguments[0],
+        view,
+    };
+    let properties = [
+        "decode_by_parse",
+        "encode_by_display",
+        "json_rename_all",
+        "json_untagged",
+    ]
+    .into_iter()
+    .map(|name| {
+        let value = properties.dict_get(name).ok_or_else(|| {
+            error(
+                RuntimeErrorKind::InvalidBytecode,
+                "codec property contract is missing a field",
+                function,
+                pc,
+            )
+        })?;
+        Ok((name, solved_metadata_id(value.value, types, function, pc)?))
+    })
+    .collect::<Result<Vec<_>, RuntimeError>>()?;
+    continue_solved_encode(
+        SolvedEncode {
+            pending: vec![SolvedEncodeTask::Visit {
+                value: arguments[2],
+                ty: signature.arguments[2],
+            }],
+            output: vec![],
+            target,
+            properties,
+            return_target,
+            trace_frame: RuntimeFrame {
+                function: function.name().to_owned(),
+                instruction: pc,
+                origin: function.origin_at(pc),
+            },
+            function: Arc::new(function.clone()),
+            pc,
+        },
+        current,
+        background,
+        account,
+    )
+}
+
+fn solved_codec_tag(
+    tag: &str,
+    payload: Val,
+    target: crate::mir::TypeId,
+    loc: Option<crate::Loc>,
+    current: &mut Heap,
+    background: &Heap,
+    account: &mut QuotaAccount,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> Result<Val, RuntimeError> {
+    charge_allocation(
+        account,
+        logical_value_bytes(2).map_err(|e| allocation_error(e.message, function, pc))?,
+        function,
+        pc,
+    )?;
+    let tag = Val::new(current.atom(Some(background), tag), loc);
+    Ok(Val::new(
+        DecodedValue::Tagged(current.allocate(Object::Tagged { tag, payload })),
+        loc,
+    )
+    .with_type_id(crate::TypeId::solved(target)))
+}
+
+fn continue_solved_encode(
+    mut state: SolvedEncode,
+    current: &mut Heap,
+    background: &Heap,
+    account: &mut QuotaAccount,
+) -> Result<VmAction, RuntimeError> {
+    use crate::execution_graph::{EvaluationError, Request};
+    use crate::mir::{TypeConstructor as T, TypeOperation};
+    let types = background
+        .solved_types
+        .as_ref()
+        .expect("solved codec image");
+    let graph = background
+        .solved_graph
+        .as_ref()
+        .expect("solved codec graph");
+    while let Some(task) = state.pending.pop() {
+        let function = Arc::clone(&state.function);
+        let pc = state.pc;
+        consume_fuel(account, &function, pc)?;
+        let (value, ty) = match task {
+            SolvedEncodeTask::Array { count, loc } => {
+                let values = state.output.split_off(state.output.len() - count);
+                charge_allocation(
+                    account,
+                    logical_value_bytes(count)
+                        .map_err(|e| allocation_error(e.message, &function, pc))?,
+                    &function,
+                    pc,
+                )?;
+                let payload = Val::new(
+                    DecodedValue::Array(current.allocate(Object::Array(values.into_boxed_slice()))),
+                    loc,
+                );
+                state.output.push(solved_codec_tag(
+                    "Array",
+                    payload,
+                    state.target,
+                    loc,
+                    current,
+                    background,
+                    account,
+                    &function,
+                    pc,
+                )?);
+                continue;
+            }
+            SolvedEncodeTask::Object { names, loc } => {
+                let values = state.output.split_off(state.output.len() - names.len());
+                charge_allocation(
+                    account,
+                    logical_value_bytes(names.len())
+                        .map_err(|e| allocation_error(e.message, &function, pc))?,
+                    &function,
+                    pc,
+                )?;
+                let payload = current
+                    .record_value(names.into_iter().zip(values))
+                    .map_err(|e| {
+                        error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            e.to_string(),
+                            &function,
+                            pc,
+                        )
+                    })?;
+                state.output.push(solved_codec_tag(
+                    "Object",
+                    payload,
+                    state.target,
+                    loc,
+                    current,
+                    background,
+                    account,
+                    &function,
+                    pc,
+                )?);
+                continue;
+            }
+            SolvedEncodeTask::Visit { value, ty } => (value, ty),
+        };
+        propagate_direct_failure(&value, &function, pc)?;
+        let mut rename = false;
+        let mut untagged = false;
+        let shape = &types.types[ty.index()];
+        if matches!(shape.constructor, T::Nominal(_)) && ty != state.target {
+            for &(name, property) in &state.properties {
+                let Some(node) = graph.property(crate::execution_graph::PropertyKey {
+                    owner: ty,
+                    site: crate::mir::PropertySite::Type,
+                    property,
+                }) else {
+                    continue;
+                };
+                let result = current
+                    .solved_evaluation
+                    .as_mut()
+                    .expect("solved codec state")
+                    .request(node);
+                let property = match result {
+                    Ok(Request::Ready(value)) => *value,
+                    Ok(Request::Start) => {
+                        let callee = current
+                            .solved_tasks
+                            .get(node.index())
+                            .copied()
+                            .flatten()
+                            .ok_or_else(|| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "codec property has no compiled initializer",
+                                    &function,
+                                    pc,
+                                )
+                            })?;
+                        state.pending.push(SolvedEncodeTask::Visit { value, ty });
+                        let continuation = DemandContinuation {
+                            node,
+                            trace_frame: state.trace_frame.clone(),
+                            call_function: Arc::clone(&function),
+                            call_pc: pc,
+                            return_target: ReturnTarget::Native(Box::new(state)),
+                        };
+                        return Ok(VmAction::Call {
+                            callee,
+                            arguments: vec![],
+                            return_target: ReturnTarget::Native(Box::new(continuation)),
+                            call_function: function,
+                            call_pc: pc,
+                            rule_boundary: None,
+                        });
+                    }
+                    Err(EvaluationError::Failed(failure)) => {
+                        return Err(propagated_failure_error(
+                            failure.0,
+                            value.loc(),
+                            &function,
+                            pc,
+                        ));
+                    }
+                    Err(EvaluationError::Cycle(path)) => {
+                        return Err(error(
+                            RuntimeErrorKind::UninitializedDefinition,
+                            format!("cyclic codec property demand: {path:?}"),
+                            &function,
+                            pc,
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("invalid codec property demand: {e:?}"),
+                            &function,
+                            pc,
+                        ));
+                    }
+                };
+                match name {
+                    "json_untagged" => untagged = true,
+                    "json_rename_all" => {
+                        let view = HeapView {
+                            current,
+                            background: Some(background),
+                        };
+                        let case = (ValueRef {
+                            value: property,
+                            view,
+                        })
+                        .dict_get("case")
+                        .and_then(|v| v.as_atom());
+                        if case
+                            .as_ref()
+                            .is_none_or(|case| case.as_str() != "CamelCase")
+                        {
+                            return Err(error(
+                                RuntimeErrorKind::TypeMismatch,
+                                "rename_all requires CamelCase",
+                                &function,
+                                pc,
+                            ));
+                        }
+                        rename = true;
+                    }
+                    _ => {
+                        return Err(error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "solved codec display/parse bridge is not implemented yet",
+                            &function,
+                            pc,
+                        ));
+                    }
+                }
+            }
+        }
+        if ty == state.target {
+            state.output.push(value);
+            continue;
+        }
+        let loc = value.loc().or_else(|| instruction_location(&function, pc));
+        let view = HeapView {
+            current,
+            background: Some(background),
+        };
+        let reference = ValueRef { value, view };
+        match &shape.constructor {
+            T::Int | T::Float | T::String | T::Bytes => {
+                let tag = match shape.constructor {
+                    T::Int => "Int",
+                    T::Float => "Float",
+                    T::String => "String",
+                    _ => "Bytes",
+                };
+                state.output.push(solved_codec_tag(
+                    tag,
+                    value,
+                    state.target,
+                    loc,
+                    current,
+                    background,
+                    account,
+                    &function,
+                    pc,
+                )?);
+            }
+            T::Bool => state
+                .output
+                .push(value.with_type_id(crate::TypeId::solved(state.target))),
+            T::Array | T::Tuple => {
+                let count = reference.sequence_len().ok_or_else(|| {
+                    error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "codec sequence does not match its solved type",
+                        &function,
+                        pc,
+                    )
+                })?;
+                if shape.constructor == T::Tuple && count != shape.arguments.len() {
+                    return Err(error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "codec tuple arity does not match its solved type",
+                        &function,
+                        pc,
+                    ));
+                }
+                state.pending.push(SolvedEncodeTask::Array { count, loc });
+                for index in (0..count).rev() {
+                    let value = reference.sequence_get(index).unwrap().value;
+                    let ty = if shape.constructor == T::Array {
+                        shape.arguments[0]
+                    } else {
+                        shape.arguments[index]
+                    };
+                    state.pending.push(SolvedEncodeTask::Visit { value, ty });
+                }
+            }
+            T::Record(names) => {
+                state.pending.push(SolvedEncodeTask::Object {
+                    names: names.clone(),
+                    loc,
+                });
+                for (name, &ty) in names.iter().zip(&shape.arguments).rev() {
+                    let value = reference
+                        .dict_get(name)
+                        .ok_or_else(|| {
+                            error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                "codec field is absent from the solved record",
+                                &function,
+                                pc,
+                            )
+                        })?
+                        .value;
+                    state.pending.push(SolvedEncodeTask::Visit { value, ty });
+                }
+            }
+            T::Option => {
+                if reference.as_atom().is_some_and(|a| a.as_str() == "None") {
+                    state.output.push(
+                        Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), loc)
+                            .with_type_id(crate::TypeId::solved(state.target)),
+                    );
+                } else {
+                    let (tag, payload) = reference.tagged_parts().ok_or_else(|| {
+                        error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "invalid solved Option payload",
+                            &function,
+                            pc,
+                        )
+                    })?;
+                    if tag.as_atom().is_none_or(|a| a.as_str() != "Some") {
+                        return Err(error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "invalid solved Option tag",
+                            &function,
+                            pc,
+                        ));
+                    }
+                    state.pending.push(SolvedEncodeTask::Visit {
+                        value: payload.value,
+                        ty: shape.arguments[0],
+                    });
+                }
+            }
+            T::Nominal(symbol) => {
+                let definition = types.definition(*symbol).ok_or_else(|| {
+                    error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "codec nominal definition is missing",
+                        &function,
+                        pc,
+                    )
+                })?;
+                let layout = types.layout(ty).ok_or_else(|| {
+                    error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "codec nominal layout is missing",
+                        &function,
+                        pc,
+                    )
+                })?;
+                match definition.operation {
+                    TypeOperation::Struct => {
+                        let names = definition
+                            .members
+                            .iter()
+                            .map(|m| {
+                                if rename {
+                                    lower_camel_case(&m.name)
+                                } else {
+                                    m.name.clone()
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        if names
+                            .iter()
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len()
+                            != names.len()
+                        {
+                            return Err(error(
+                                RuntimeErrorKind::TypeMismatch,
+                                "duplicate external field name",
+                                &function,
+                                pc,
+                            ));
+                        }
+                        state.pending.push(SolvedEncodeTask::Object { names, loc });
+                        for (member, &ty) in definition.members.iter().zip(&layout.members).rev() {
+                            let value = reference
+                                .dict_get(&member.name)
+                                .ok_or_else(|| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        "codec struct field is missing",
+                                        &function,
+                                        pc,
+                                    )
+                                })?
+                                .value;
+                            state.pending.push(SolvedEncodeTask::Visit {
+                                value,
+                                ty: ty.expect("struct member"),
+                            });
+                        }
+                    }
+                    TypeOperation::Newtype => {
+                        let value = reference
+                            .sequence_get(0)
+                            .ok_or_else(|| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "codec newtype payload is missing",
+                                    &function,
+                                    pc,
+                                )
+                            })?
+                            .value;
+                        state.pending.push(SolvedEncodeTask::Visit {
+                            value,
+                            ty: layout.members[0].expect("newtype payload"),
+                        });
+                    }
+                    TypeOperation::Enum => {
+                        if rename
+                            && definition
+                                .members
+                                .iter()
+                                .map(|m| lower_camel_case(&m.name))
+                                .collect::<std::collections::BTreeSet<_>>()
+                                .len()
+                                != definition.members.len()
+                        {
+                            return Err(error(
+                                RuntimeErrorKind::TypeMismatch,
+                                "duplicate external variant name",
+                                &function,
+                                pc,
+                            ));
+                        }
+                        if untagged && rename {
+                            return Err(error(
+                                RuntimeErrorKind::TypeMismatch,
+                                "rename_all is not meaningful on an untagged Enum",
+                                &function,
+                                pc,
+                            ));
+                        }
+                        if untagged && layout.members.iter().filter(|ty| ty.is_none()).count() > 1 {
+                            return Err(error(
+                                RuntimeErrorKind::TypeMismatch,
+                                "untagged Enum may contain at most one unit variant",
+                                &function,
+                                pc,
+                            ));
+                        }
+                        let (tag, payload) = if let Some((tag, payload)) = reference.tagged_parts()
+                        {
+                            (tag.as_atom(), Some(payload.value))
+                        } else {
+                            (reference.as_atom(), None)
+                        };
+                        let index = tag
+                            .as_ref()
+                            .and_then(|tag| {
+                                definition
+                                    .members
+                                    .iter()
+                                    .position(|m| m.name == tag.as_str())
+                            })
+                            .ok_or_else(|| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "codec enum tag does not match its solved type",
+                                    &function,
+                                    pc,
+                                )
+                            })?;
+                        let name = &definition.members[index].name;
+                        let name = if rename {
+                            lower_camel_case(name)
+                        } else {
+                            name.clone()
+                        };
+                        match (payload, layout.members[index]) {
+                            (Some(value), Some(ty)) => {
+                                if !untagged {
+                                    state.pending.push(SolvedEncodeTask::Object {
+                                        names: vec![name],
+                                        loc,
+                                    });
+                                }
+                                state.pending.push(SolvedEncodeTask::Visit { value, ty });
+                            }
+                            (None, None) if untagged => state.output.push(
+                                Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), loc)
+                                    .with_type_id(crate::TypeId::solved(state.target)),
+                            ),
+                            (None, None) => {
+                                charge_allocation(account, name.len() as u64, &function, pc)?;
+                                let payload =
+                                    Val::new(current.string(Some(background), &name), loc);
+                                state.output.push(solved_codec_tag(
+                                    "String",
+                                    payload,
+                                    state.target,
+                                    loc,
+                                    current,
+                                    background,
+                                    account,
+                                    &function,
+                                    pc,
+                                )?);
+                            }
+                            _ => {
+                                return Err(error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "codec enum payload does not match its solved type",
+                                    &function,
+                                    pc,
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "invalid nominal codec skeleton",
+                            &function,
+                            pc,
+                        ));
+                    }
+                }
+            }
+            _ => {
+                return Err(error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    format!(
+                        "solved codec encode does not support {:?} yet",
+                        shape.constructor
+                    ),
+                    &function,
+                    pc,
+                ));
+            }
+        }
+    }
+    if state.output.len() != 1 {
+        return Err(error(
+            RuntimeErrorKind::InvalidBytecode,
+            "codec output stack is not closed",
+            &state.function,
+            state.pc,
+        ));
+    }
+    Ok(VmAction::Return {
+        value: state.output.pop().unwrap(),
+        return_target: state.return_target,
+    })
+}

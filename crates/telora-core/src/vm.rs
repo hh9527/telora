@@ -25,6 +25,7 @@ include!("vm/construction.rs");
 include!("vm/diagnostic-scope.rs");
 include!("vm/execute.rs");
 include!("vm/dispatch.rs");
+include!("vm/solved-codec-encode.rs");
 include!("vm/array.rs");
 include!("vm/string.rs");
 include!("vm/path.rs");

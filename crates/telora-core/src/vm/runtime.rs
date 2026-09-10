@@ -68,6 +68,7 @@ trait NativeContinuation: fmt::Debug {
 #[derive(Debug)]
 struct DiagnosticContinuation {
     diagnostic_start: usize,
+    demand_start: usize,
     types: DiagnosticTypes,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,

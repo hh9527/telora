@@ -1,6 +1,19 @@
 use super::*;
 
 impl Solver<'_> {
+    pub(super) fn finish_bottoms(&mut self) -> bool {
+        let mut changed = false;
+        for slot in std::mem::take(&mut self.bottom_candidates) {
+            let root = self.root(slot);
+            if self.mir.ty_slots[root.index()] == TypeState::Unknown {
+                let never = self.structure(TypeConstructor::Never, vec![]);
+                self.equal(root, never, None);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub(super) fn fit(&mut self, node: HirId, expected: TypeSlotId, actual: TypeSlotId) {
         self.tasks.push(Task::Fit {
             node,
@@ -108,6 +121,31 @@ impl Solver<'_> {
                     .term(actual)
                     .is_some_and(|t| t.constructor == TypeConstructor::Never)
                 {
+                    // Bottom supplies a fallback only after other evidence has
+                    // reached a fixed point; it must not overwrite an annotation.
+                    self.bottom_candidates.push(expected);
+                    None
+                } else if let (Some(expected_type), Some(actual_type)) =
+                    (self.term(expected).cloned(), self.term(actual).cloned())
+                    && expected_type.constructor == TypeConstructor::Function
+                    && actual_type.constructor == TypeConstructor::Function
+                    && expected_type.arguments.len() == actual_type.arguments.len()
+                {
+                    // A function returning Never fits a declared return type;
+                    // that is not equality between the two signatures. Keep
+                    // the declared skeleton, and check the return separately
+                    // after the body's own constraints have contributed evidence.
+                    let last = expected_type.arguments.len() - 1;
+                    self.revision += 1;
+                    for (index, (expected, actual)) in expected_type.arguments.into_iter()
+                        .zip(actual_type.arguments).enumerate()
+                    {
+                        if index == last {
+                            self.fit(node, expected, actual);
+                        } else {
+                            self.equal(expected, actual, Some(self.mir.hir[node.index()].location));
+                        }
+                    }
                     None
                 } else {
                     self.equal(expected, actual, Some(self.mir.hir[node.index()].location));

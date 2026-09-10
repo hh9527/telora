@@ -94,6 +94,7 @@ struct Solver<'a> {
     administrative: Vec<bool>,
     decorator_contexts: Vec<Option<TypeSlotId>>,
     property_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
+    bottom_candidates: Vec<TypeSlotId>,
 }
 
 pub fn resolve(mir: &mut Mir) {
@@ -164,7 +165,7 @@ pub fn resolve(mir: &mut Mir) {
             }
         }
         if solver.revision == revision {
-            if !solver.finish_arrays() {
+            if !solver.finish_arrays() && !solver.finish_bottoms() {
                 break;
             }
         }
@@ -186,6 +187,7 @@ impl Solver<'_> {
             administrative: vec![false; mir.hir.len()],
             decorator_contexts: vec![None; mir.hir.len()],
             property_declarations: vec![],
+            bottom_candidates: vec![],
             mir,
             revision: 0,
             tasks: vec![],

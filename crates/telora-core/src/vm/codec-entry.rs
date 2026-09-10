@@ -2,6 +2,7 @@
 fn run_core_codec(
     operation: CoreCodecFunction,
     arguments: &[Val],
+    signature: Option<Val>,
     return_target: ReturnTarget,
     rule_boundary: Option<crate::Loc>,
     function: &BytecodeFunction,
@@ -11,8 +12,11 @@ fn run_core_codec(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     if background.solved_types.is_some() {
+        if matches!(operation, CoreCodecFunction::Encode) {
+            return run_solved_codec_encode(arguments, signature, return_target, function, pc, current, background, account);
+        }
         return Err(error(RuntimeErrorKind::InvalidBytecode,
-            "codec execution with solved type/property witnesses is not implemented yet", function, pc));
+            "solved codec decode is not implemented yet", function, pc));
     }
     let properties = decode_codec_properties(arguments[0], current, background)
         .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;

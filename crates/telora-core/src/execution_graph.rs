@@ -291,6 +291,17 @@ impl<V> Evaluation<V> {
         }
         self.failed = true;
     }
+
+    pub fn active_depth(&self) -> usize { self.active.len() }
+
+    /// A diagnostic scope converts this failure into user-visible data. Cache
+    /// failed inner tasks while preserving the enclosing computation/session.
+    pub fn fail_caught_since(&mut self, depth: usize, failure: FailureId) {
+        while self.active.len() > depth {
+            let node = self.active.pop().expect("inner demand");
+            self.states[node.index()] = State::Failed(failure);
+        }
+    }
 }
 
 #[cfg(test)]

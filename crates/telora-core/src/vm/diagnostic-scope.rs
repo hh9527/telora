@@ -43,6 +43,7 @@ fn run_core_runtime(
                     range: arguments[5],
                 },
                 diagnostic_start: account.diagnostics.len(),
+                demand_start: current.solved_evaluation.as_ref().map_or(0, |e| e.active_depth()),
                 return_target,
                 call_function: Arc::clone(call_function),
                 call_pc,
@@ -124,6 +125,15 @@ impl NativeContinuation for DiagnosticContinuation {
         background: &Heap,
         account: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError> {
+        let already_reported = error.propagated_failure.is_some();
+        if let Some(evaluation) = &mut current.solved_evaluation {
+            let id = error.propagated_failure.unwrap_or_else(|| {
+                let id = current.solved_failures.len() as u32;
+                current.solved_failures.push(error.clone());
+                id
+            });
+            evaluation.fail_caught_since(self.demand_start, crate::execution_graph::FailureId(id));
+        }
         let mut reports = take_scoped_diagnostics(
             self.diagnostic_start,
             self.types,
@@ -139,7 +149,7 @@ impl NativeContinuation for DiagnosticContinuation {
             labels: Vec::new(),
             notes: Vec::new(),
         });
-        reports.push(diagnostic_snapshot(
+        if !already_reported { reports.push(diagnostic_snapshot(
             &diagnostic,
             self.types,
             current,
@@ -147,7 +157,7 @@ impl NativeContinuation for DiagnosticContinuation {
             account,
             &self.call_function,
             self.call_pc,
-        )?);
+        )?); }
         diagnosed_result(
             None,
             reports,

@@ -5,6 +5,41 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Solved encode unblocks real SQLite run/serve flows (2026-09-10)
+
+codec.encode now reads its source TypeId from the compiled native signature and
+walks TypeImage's applied member layouts. Scalars, arrays, tuples, records,
+Option, nominal structs/newtypes/enums, rename_all and untagged encoding use this
+path. A flat work stack retains VM Val handles; existing String payloads and
+already-Value inputs are shared, not copied through host/world conversion.
+Fuel and heap allocation use the session quota.
+
+Nominal codec properties are requested through the VM's existing demand table.
+The encoder suspends for an uncomputed provider and resumes after the same task
+is cached. Property failures reuse FailureId. Diagnostic scopes now remember
+their incoming demand depth and fail/cache only inner tasks when catching an
+error, preserving outer computation. Repeating a failed property query returns
+Err without another diagnostic or provider execution.
+
+This exposed a static Never bug: function compatibility had unified an annotated
+return skeleton with a Never-returning body. Function return fitting is now
+directional; bottom is used for still-unknown result slots only after other
+evidence reaches a fixed point. A provider whose body only fail!s retains its
+declared property result and seals without executing it.
+
+Validation: all nine run_ CLI regressions now pass, including the three SQLite
+helpers previously blocked by codec. The concurrent SQLite serve regression
+passes. Also passed: 32 codegen tests, 29 type-pass tests, 17 static-MIR CLI tests,
+and four codec regressions covering recursive/renamed layouts, preserved input
+handles, and one cached failure with one initial/zero repeated diagnostics.
+Logs: /tmp/mir-codec-{run,serve}-cli.log, /tmp/mir-encode-{codegen-all,type-all,static-cli}.log,
+and /tmp/mir-solved-encode-regressions.log. No full-suite or performance claim.
+
+Remaining codec gaps include decode/schema, text display/parse bridges, Dict and
+other unsupported constructors, plus generic property/evidence specialization.
+Unsupported paths remain explicit errors; there is no old descriptor fallback.
+Remaining consumer migration and complete legacy removal are still required.
+
 ### Applied nominal member skeletons belong to MIR (2026-09-10)
 
 The static type pass now builds a TypeId-indexed member-layout table after

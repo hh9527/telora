@@ -587,6 +587,7 @@ fn drive_vm_action(
                             NativeKind::CoreCodec(operation) => run_core_codec(
                                 operation,
                                 &arguments,
+                                upvalues.last().copied(),
                                 return_target,
                                     inherited_rule_boundary,
                                 &call_function,

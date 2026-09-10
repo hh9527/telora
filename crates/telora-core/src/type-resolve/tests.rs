@@ -2,6 +2,24 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn never_returning_provider_preserves_its_declared_nominal_result() {
+    let mut mir = graph(&[("@src/main", r#"
+        @property(PropertyTarget.Type) type Tag = struct { value: Int };
+        def provider: Fn(Type, Option(Tag)) -> Tag = fn(owner, previous) { fail!("deferred") };
+        @provider type Item = struct { value: Int };
+        export def answer = Item.type;
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    mir.seal().unwrap();
+    let TypeState::Known(signature) = symbol_type(&mir, "provider") else { panic!("provider signature"); };
+    let result = *mir.types[signature.index()].arguments.last().unwrap();
+    let TypeConstructor::Nominal(symbol) = mir.types[result.index()].constructor else { panic!("declared result lost"); };
+    assert_eq!(mir.symbols[symbol.index()].name, "Tag");
+    assert!(mir.properties.iter().any(|property| property.property == result));
+}
+
+#[test]
 fn nominal_member_layouts_close_generic_and_recursive_type_references() {
     let mut mir = graph(&[("@src/main", r#"
         type Tree(T) = enum { Leaf(T), Branch(Array(Tree(T))), Empty };

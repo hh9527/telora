@@ -199,7 +199,7 @@ fn compile_root(
         || globals.iter().any(|s| {
             matches!(
                 native_abi(mir, *s),
-                Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop"))
+                Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop")) | Some((13, _))
             )
         });
     if queries_properties {
@@ -1968,6 +1968,42 @@ pub(crate) mod tests {
             assert_eq!(signature.constructor, TypeConstructor::Function);
             assert_eq!(result.types().types[signature.arguments[0].index()].constructor, expected);
         }
+    }
+
+    #[test]
+    fn solved_codec_encode_consumes_layouts_and_lazy_untagged_properties() {
+        let mir = graph(r#"
+            import "std/codec" as codec;
+            import "std/json" as json;
+            import "std/value" {ScalarValue};
+            type Box(T) = struct { value: T };
+            def boxed: Box(Int) = { value: 42 };
+            export def answer = json.stringify(codec.encode(codec.Value.type, {
+                boxed, bindings: [ScalarValue.Int(42), ScalarValue.String("ok"), ScalarValue.None],
+                sql: "SELECT 1", flags: [True, False],
+            }));
+        "#, "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        drop(mir);
+        let result = execute(artifact).unwrap();
+        assert_eq!(result.value().as_str().unwrap().as_str(),
+            r#"{"bindings":[42,"ok",null],"boxed":{"value":42},"flags":[true,false],"sql":"SELECT 1"}"#);
+    }
+
+    #[test]
+    fn solved_codec_encode_uses_rename_options_and_recursive_layouts() {
+        let mir = graph(r#"
+            import "std/codec" as codec;
+            import "std/json" as json;
+            type Tree = enum { Leaf(Int), Branch(Array(Tree)), Empty };
+            @json.rename_all(json.RenameCase.CamelCase)
+            type Model = struct { some_value: Option(Int), tree: Tree };
+            def model: Model = { some_value: Some(42), tree: Tree.Branch([Tree.Leaf(1), Tree.Empty]) };
+            export def answer = json.stringify(codec.encode(codec.Value.type, model));
+        "#, "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let result = execute(artifact).unwrap();
+        assert_eq!(result.value().as_str().unwrap().as_str(), r#"{"someValue":42,"tree":{"Branch":[{"Leaf":1},"Empty"]}}"#);
     }
 
     #[test]

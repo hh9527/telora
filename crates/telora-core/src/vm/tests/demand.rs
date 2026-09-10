@@ -331,3 +331,43 @@ fn solved_parse_obeys_the_session_data_limits() {
     let result = Vm::new().execute_linked(crate::execution_link::link_entry(artifact).unwrap(), Quota::with_fuel(10000), limits, &mut SourceDatabase::default());
     assert!(result.err().unwrap().contains("file_size limit"));
 }
+#[test]
+fn solved_codec_encode_preserves_string_and_existing_value_handles() {
+    let mir = crate::codegen::tests::graph(r#"
+        import "std/codec" as codec;
+        def input = "a string deliberately longer than the inline representation capacity";
+        def encoded = codec.encode(codec.Value.type, input);
+        export def answer = (input, encoded, codec.encode(codec.Value.type, encoded));
+    "#, "");
+    let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    let linked = crate::execution_link::link_entry(artifact).unwrap();
+    let result = Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
+    let view = HeapView { current: &result.world.work.heap, background: Some(&result.world.main) };
+    let root = ValueRef { value: result.world.work.root, view };
+    let input = root.sequence_get(0).unwrap();
+    let encoded = root.sequence_get(1).unwrap();
+    assert_eq!(encoded.tagged_parts().unwrap().1.value.value(), input.value.value());
+    assert_eq!(root.sequence_get(2).unwrap().value.value(), encoded.value.value());
+}
+
+#[test]
+fn solved_codec_failed_property_is_not_retried_or_reported_twice() {
+    let mir = crate::codegen::tests::graph(r#"
+        import "std/codec" as codec;
+        import "std/_rt" as rt;
+        def broken: Fn(Type, Option(codec.JsonUntagged)) -> codec.JsonUntagged = fn(owner, previous) { fail!("codec property failed") };
+        @broken type Item = enum { One(Int) };
+        def attempt = rt.with_diagnostics(fn(n: Int) { codec.encode(codec.Value.type, Item.One(n)) });
+        export def answer = (attempt(1), attempt(2));
+    "#, "");
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    let linked = crate::execution_link::link_entry(artifact).unwrap();
+    let result = Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
+    assert_eq!(result.world.work.heap.solved_failures.len(), 1);
+    for index in [0, 1] {
+        let (tag, reports) = result.value().sequence_get(index).unwrap().tagged_parts().unwrap();
+        assert_eq!(tag.as_atom().unwrap().as_str(), "Err");
+        assert_eq!(reports.sequence_len(), Some(if index == 0 { 1 } else { 0 }));
+    }
+}
