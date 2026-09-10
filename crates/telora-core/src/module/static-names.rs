@@ -45,23 +45,29 @@ struct ResolvedStaticModule {
     diagnostics: Vec<Diagnostic>,
 }
 
-type StaticImportCandidates = BTreeMap<String, Vec<StaticImportTarget>>;
+#[derive(Default)]
+struct StaticImportScope {
+    direct: BTreeMap<String, StaticImportTarget>,
+    authored: HashSet<String>,
+    open: Vec<ModuleId>,
+    prelude: Option<ModuleId>,
+}
 
 struct StaticNames<'a> {
     graph: &'a ModuleGraph,
     exports: HashMap<(ModuleId, String), StaticNameKind>,
     visiting: HashSet<(ModuleId, String)>,
-    imports: Vec<StaticImportCandidates>,
+    scopes: Vec<StaticImportScope>,
     diagnostics: Vec<Vec<Diagnostic>>,
 }
 
 impl<'a> StaticNames<'a> {
     fn new(graph: &'a ModuleGraph) -> Self {
         let mut names = Self { graph, exports: HashMap::new(), visiting: HashSet::new(),
-            imports: Vec::new(), diagnostics: Vec::new() };
+            scopes: Vec::new(), diagnostics: Vec::new() };
         for module in &graph.modules {
-            let (imports, diagnostics) = names.import_candidates(module.id);
-            names.imports.push(imports);
+            let (scope, diagnostics) = names.import_scope(module.id);
+            names.scopes.push(scope);
             names.diagnostics.push(diagnostics);
         }
         names
@@ -71,30 +77,29 @@ impl<'a> StaticNames<'a> {
         self.graph.module(module).prepared.as_ref()?.program.as_ref()
     }
 
-    fn export_targets(&self, module: ModuleId) -> Vec<(String, StaticImportTarget)> {
+    fn export_target(&self, module: ModuleId, name: &str) -> Option<StaticImportTarget> {
         let Some(program) = self.program(module) else {
-            return if self.graph.resolved[module.index()].as_ref().is_some_and(|resolved|
+            return if name == "data" && self.graph.resolved[module.index()].as_ref().is_some_and(|resolved|
                 static_data_kind(resolved.format).is_some())
-            { vec![("data".into(), StaticImportTarget::Export { module, index: 0 })] }
-            else { Vec::new() };
+            { Some(StaticImportTarget::Export { module, index: 0 }) }
+            else { None };
         };
         match &program.value.body.value.result.value {
-            ExprKind::Dict(fields) => fields.iter().enumerate()
-                .filter_map(|(index, field)| field.value.name.as_ref().map(|name|
-                    (name.value.clone(), StaticImportTarget::Export { module,
-                        index: u32::try_from(index).expect("export count exceeds u32") })))
-                .collect(),
-            _ => Vec::new(),
+            ExprKind::Dict(fields) => fields.iter().position(|field|
+                field.value.name.as_ref().is_some_and(|field| field.value == name))
+                .map(|index| StaticImportTarget::Export { module,
+                    index: u32::try_from(index).expect("export count exceeds u32") }),
+            _ => None,
         }
     }
 
-    fn import_candidates(&self, module: ModuleId) -> (StaticImportCandidates, Vec<Diagnostic>) {
+    fn import_scope(&self, module: ModuleId) -> (StaticImportScope, Vec<Diagnostic>) {
         let Some(program) = self.program(module) else { return Default::default(); };
         let bindings = &program.value.body.value.bindings;
-        let explicit = bindings.iter().filter(|binding|
+        let authored = bindings.iter().filter(|binding|
             !matches!(binding.value.kind, BindingKind::OpenImport | BindingKind::Export))
-            .map(|binding| binding.value.name.value.as_str()).collect::<HashSet<_>>();
-        let mut imports = StaticImportCandidates::new();
+            .map(|binding| binding.value.name.value.clone()).collect();
+        let mut scope = StaticImportScope { authored, ..Default::default() };
         let mut diagnostics = Vec::new();
         let edges = &self.graph.module(module).imports;
         for edge in edges.iter().filter(|edge| edge.local.is_some()) {
@@ -103,8 +108,7 @@ impl<'a> StaticNames<'a> {
                 binding.value.kind == BindingKind::Import && binding.value.name.value == *local);
             let target = match binding.and_then(|binding| binding.value.imported_name.as_deref()) {
                 Some(selected) => {
-                    let target = self.export_targets(edge.target).into_iter()
-                        .find(|(name, _)| *name == selected.value).map(|(_, target)| target);
+                    let target = self.export_target(edge.target, &selected.value);
                     let Some(target) = target else {
                         diagnostics.push(Diagnostic::error(format!("module interface has no export {:?}", selected.value),
                             selected.location));
@@ -114,26 +118,32 @@ impl<'a> StaticNames<'a> {
                 }
                 None => StaticImportTarget::Namespace(edge.target),
             };
-            imports.insert(local.clone(), vec![target]);
+            scope.direct.insert(local.clone(), target);
         }
-        for edge in edges.iter().filter(|edge| edge.local.is_none()
-            && self.graph.module(edge.target).cname != ModuleCName::builtin(PRELUDE_MODULE))
-        {
-            for (name, target) in self.export_targets(edge.target) {
-                if !explicit.contains(name.as_str()) {
-                    imports.entry(name).or_default().push(target);
-                }
+        for edge in edges.iter().filter(|edge| edge.local.is_none()) {
+            let prelude = self.graph.module(edge.target).cname == ModuleCName::builtin(PRELUDE_MODULE);
+            let explicit = bindings.iter().any(|binding| binding.value.kind == BindingKind::OpenImport
+                && self.graph.import_targets.target(binding.value.value.location) == Some(Ok(edge.target)));
+            if prelude { scope.prelude = Some(edge.target); }
+            if !prelude || explicit {
+                scope.open.push(edge.target);
             }
         }
-        for edge in edges.iter().filter(|edge| edge.local.is_none()
-            && self.graph.module(edge.target).cname == ModuleCName::builtin(PRELUDE_MODULE))
-        {
-            for (name, target) in self.export_targets(edge.target) {
-                if !explicit.contains(name.as_str()) { imports.entry(name).or_insert_with(|| vec![target]); }
-            }
+        scope.open.sort_unstable();
+        scope.open.dedup();
+        (scope, diagnostics)
+    }
+
+    fn candidates(&self, module: ModuleId, name: &str) -> Vec<StaticImportTarget> {
+        let scope = &self.scopes[module.index()];
+        if let Some(target) = scope.direct.get(name) { return vec![*target]; }
+        if scope.authored.contains(name) { return Vec::new(); }
+        let mut targets = scope.open.iter().filter_map(|module| self.export_target(*module, name))
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            targets.extend(scope.prelude.and_then(|module| self.export_target(module, name)));
         }
-        for candidates in imports.values_mut() { candidates.sort_unstable(); candidates.dedup(); }
-        (imports, diagnostics)
+        targets
     }
 
     fn target_kind(&mut self, target: StaticImportTarget) -> StaticNameKind {
@@ -161,7 +171,8 @@ impl<'a> StaticNames<'a> {
     }
 
     fn external(&mut self, module: ModuleId, name: &str) -> StaticNameKind {
-        if let Some(candidates) = self.imports[module.index()].get(name) {
+        let candidates = self.candidates(module, name);
+        if !candidates.is_empty() {
             return if candidates.len() == 1 { self.target_kind(candidates[0]) }
                 else { StaticNameKind::Unresolved };
         }
@@ -219,20 +230,22 @@ impl<'a> StaticNames<'a> {
 
     fn module_resolution(&mut self, module: ModuleId) -> Option<ResolvedStaticModule> {
         let program = self.program(module)?;
-        let candidates = self.imports[module.index()].clone();
-        let names = candidates.keys().cloned().collect();
-        let members = candidates.iter().filter(|(_, targets)| targets.iter().any(|target|
-            matches!(self.target_kind(*target), StaticNameKind::Newtype | StaticNameKind::Member)))
-            .map(|(name, _)| name.clone()).collect();
-        let hir = crate::types::resolve_module_hir(program, &names, members);
+        let mut queried = BTreeMap::<String, Vec<StaticImportTarget>>::new();
+        let hir = crate::types::resolve_module_hir_with_lookup(program, |name| {
+            let targets = queried.entry(name.to_owned()).or_insert_with(|| self.candidates(module, name));
+            crate::hir::HirExternalName { declared: !targets.is_empty(),
+                member: targets.iter().any(|target| matches!(self.target_kind(*target),
+                    StaticNameKind::Newtype | StaticNameKind::Member)) }
+        });
         let mut diagnostics = std::mem::take(&mut self.diagnostics[module.index()]);
-        let mut imports = BTreeMap::new();
-        for (name, targets) in candidates {
+        let mut imports = self.scopes[module.index()].direct.clone();
+        for (name, targets) in queried {
+            let Some(reference) = hir.references().iter().find(|reference|
+                reference.name == name && reference.resolution == crate::hir::HirResolution::External)
+                else { continue; };
             if targets.len() == 1 {
                 imports.insert(name, targets[0]);
-            } else if let Some(reference) = hir.references().iter().find(|reference|
-                reference.name == name && reference.resolution == crate::hir::HirResolution::External)
-            {
+            } else if targets.len() > 1 {
                 let providers = targets.iter().map(|target| self.graph.module(target.module()).cname.to_string())
                     .collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>().join(", ");
                 diagnostics.push(Diagnostic::error(

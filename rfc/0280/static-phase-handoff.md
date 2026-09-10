@@ -468,3 +468,32 @@ calls versus the preceding checkpoint's 2,263,129 (-377); peak heap remains
 Artifacts: `/tmp/resolved-imports-perf{,-reverse}.json`,
 `/tmp/resolved-imports-after-summary.log`, `/tmp/session-hir-after-summary.log`,
 `/tmp/resolved-imports-{workspace,release}.log`.
+
+## Wildcard imports establish search scopes (2026-09-10)
+
+StaticNames now stores open provider ModuleIds and resolves names when HIR
+requests them. Only actual external references create wildcard type inputs;
+pattern probes that become local bindings do not. Explicit prelude imports
+participate in ambiguity checking. The intrinsic PropertyAttr dependency is an
+explicit HIR reference, and module trait/property facts travel independently of
+selected exported values. The ordinary loader still uses its existing import
+preparation; global definition/type-slot ownership remains outstanding.
+
+Immediate baseline is commit `6b020f1`, preserved at
+`/tmp/telora-open-scopes.2aimiu/before`. Ontology query, 2 warmups/5 runs:
+
+| Mode | Baseline → current | Reverse order, baseline → current |
+| --- | --- | --- |
+| types-only | 737.8 ± 15.6 → 747.0 ± 7.7 ms | 736.1 ± 13.5 → 740.6 ± 17.4 ms |
+| ordinary check | 933.2 ± 25.9 → 915.3 ± 6.8 ms | 911.0 ± 14.5 → 922.0 ± 23.0 ms |
+
+No stable time improvement. Types-only allocation calls decrease from 2,262,796
+to 2,250,067 (-12,729, about 0.56%); temporary allocations increase from 123,784
+to 128,365. Peak heap is effectively unchanged: 83.28 → 83.25 MB.
+
+Full workspace tests pass (417 core, 47 CLI including language acceptance),
+release builds, both ontology modes and the types-only enum-constructor fixture
+pass. Source-size and diff checks pass with existing size review warnings.
+Artifacts: `/tmp/open-scopes-perf{,-reverse}.json`,
+`/tmp/open-scopes-{before,after}-summary.log`,
+`/tmp/open-scopes-{workspace,release}.log`.

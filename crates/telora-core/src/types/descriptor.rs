@@ -86,6 +86,10 @@ pub struct ModuleInterface {
 }
 
 impl ModuleInterface {
+    pub(crate) fn type_facts(&self) -> ModuleTypeFacts<'_> {
+        ModuleTypeFacts { trait_implementations: &self.trait_implementations,
+            type_properties: &self.type_properties, display_trait: self.display_trait }
+    }
     pub(crate) fn binding_scheme(&self) -> Option<&TypeScheme> {
         self.value_binding.as_ref().and_then(|name| self.exports.get(name))
     }
@@ -131,6 +135,15 @@ impl ModuleInterface {
             type_family_constructors: self.type_family_constructors.clone(),
         }
     }
+}
+
+// Module facts are independent of which exported names a source references.
+// Borrow them from the session owner; do not invent a value binding to carry them.
+#[derive(Clone, Copy)]
+pub(crate) struct ModuleTypeFacts<'a> {
+    trait_implementations: &'a [TraitImplementation],
+    type_properties: &'a [TypePropertyEvidence],
+    display_trait: Option<crate::TraitId>,
 }
 
 #[derive(Clone, Debug)]

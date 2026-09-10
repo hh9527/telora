@@ -883,6 +883,7 @@ fn types_only_and_ordinary_check_agree_on_open_import_resolution() {
         ("import \"./a\" { shared }; import \"./b\" *; export def result = shared;", false),
         ("import \"./a\" *; import \"./a\" *; export def result = shared;", false),
         ("import \"./a\" *; export def result: Int = True;", false),
+        ("import \"./a\" *; import \"std/prelude\" *; export def result = True;", true),
         ("import \"./a\" *; import \"./b\" *; export def result = match Choice.done { done => 1, _ => 0 };", true),
         ("import \"./bridge\" *; export def result = match Choice.done { done => shared, Choice.pending => 0 };", false),
     ] {
@@ -897,6 +898,29 @@ fn types_only_and_ordinary_check_agree_on_open_import_resolution() {
                 "types_only={types_only}: {source}\n{stdout}\n{}", String::from_utf8_lossy(&output.stderr));
             if ambiguous { assert!(stdout.contains("ambiguous"), "{stdout}"); }
         }
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
+fn unused_open_import_with_private_trait_implementation_checks_in_both_modes() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/implementation.telora"), r#"
+        trait Score { score: Fn(Self) -> Int };
+        impl Score for Int { score: fn(value) { 42 } };
+        export def unused = ();
+    "#).unwrap();
+    fs::write(cwd.join("src/consumer.telora"), r#"
+        import "./implementation" *;
+        export def result = 1;
+    "#).unwrap();
+    for types_only in [false, true] {
+        let mut command = telora(&cwd);
+        command.args(["check", "@src/consumer"]);
+        if types_only { command.arg("--types-only"); }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "types_only={types_only}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     }
     fs::remove_dir_all(cwd).unwrap();
 }

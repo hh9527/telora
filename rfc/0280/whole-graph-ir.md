@@ -121,6 +121,27 @@ Selected type inputs still clone descriptor-based interface fragments. Ordinary
 loading still has its separate import preparation; moving it to the shared graph
 and replacing selected interface fragments with type-slot edges remain required.
 
+Wildcard imports now retain provider module IDs as search scopes. HIR requests
+individual external names through a lookup callback; only actual external
+references become wildcard type inputs. Pattern classification probes that turn
+out to be local bindings do not create imports. Explicit imports still establish
+their declared bindings, and an explicit prelude wildcard participates in normal
+ambiguity checking rather than acting only as implicit fallback.
+
+Removing unused inputs exposed two previously implicit dependencies. The HIR for
+`@property` now records its required `PropertyAttr` reference. Dependency trait
+implementations and property evidence are borrowed separately from selected
+export values; their availability does not depend on referencing an arbitrary
+export. This remains a descriptor-based bridge until facts and declarations
+reside in the same session arena.
+
+The current single-name export lookup still scans source result rows. The next
+resolve step must index each module's export names once and connect the indexed
+rows to canonical source declarations (following aliases/re-exports). Building
+that provider-side index is distinct from eagerly populating every consumer's
+wildcard bindings. Imported HIR references must retain those identities, rather
+than merely retaining a spelling plus a module-local External marker.
+
 HIR currently marks imported references as `External` plus a name. The session
 IR must attach the resolved definition identity at that boundary, not defer the
 lookup to runtime binding maps. Module-qualified local HIR IDs can identify

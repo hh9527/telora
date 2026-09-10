@@ -22,6 +22,17 @@ pub(crate) fn resolve_module_hir(
             .map(str::to_owned), external_member_names)
 }
 
+pub(crate) fn resolve_module_hir_with_lookup(
+    program: &Program,
+    mut lookup: impl FnMut(&str) -> crate::hir::HirExternalName,
+) -> HirProgram {
+    HirProgram::resolve_with_lookup(program, &mut |name| {
+        let mut resolved = lookup(name);
+        resolved.declared |= BOOTSTRAP_NAMES.contains(&name);
+        resolved
+    })
+}
+
 #[test]
 fn bootstrap_resolution_names_match_static_contracts() {
     assert_eq!(BOOTSTRAP_NAMES.iter().map(|name| name.to_string()).collect::<BTreeSet<_>>(),

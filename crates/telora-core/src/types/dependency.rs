@@ -164,7 +164,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .map(|(name, _)| name.clone()).collect());
     let solved = solve_module_plan(source_name, module_id, module_context, program,
         hir, &external_names, sources, external_provenance, external_interfaces,
-        account.query_context(), type_store)?;
+        &[], account.query_context(), type_store)?;
     execute_module_plan(source_name, module_id, program, solved, account,
         external_roots, dynamic_bindings, sources, debug_sink, tool_heap)
 }
@@ -180,6 +180,7 @@ fn solve_module_plan<'a>(
     sources: &SourceDatabase,
     external_provenance: &BTreeMap<String, Provenance>,
     external_interfaces: &BTreeMap<String, ModuleInterface>,
+    dependency_facts: &[ModuleTypeFacts<'_>],
     query: Option<crate::query::QueryContext>,
     type_store: &mut TypeStore,
 ) -> Result<SolvedModulePlan<'a>, FrontendError> {
@@ -713,6 +714,7 @@ fn solve_module_plan<'a>(
     let mut trait_implementations = qualified_external_interfaces
         .values()
         .flat_map(|interface| interface.trait_implementations.iter().cloned())
+        .chain(dependency_facts.iter().flat_map(|facts| facts.trait_implementations.iter().cloned()))
         .chain(local_trait_implementations)
         .collect::<Vec<_>>();
     trait_implementations.sort_by_key(|implementation| implementation.id);
@@ -869,6 +871,7 @@ fn solve_module_plan<'a>(
     let mut type_properties = qualified_external_interfaces
         .values()
         .flat_map(|interface| interface.type_properties.iter().cloned())
+        .chain(dependency_facts.iter().flat_map(|facts| facts.type_properties.iter().cloned()))
         .collect::<Vec<_>>();
     type_properties.sort_by(|left, right| {
         TypeExprId::from_descriptor(&left.target)
@@ -939,6 +942,7 @@ fn solve_module_plan<'a>(
             qualified_external_interfaces
                 .values()
                 .find_map(|interface| interface.display_trait)
+                .or_else(|| dependency_facts.iter().find_map(|facts| facts.display_trait))
                 .map(|id| (id, "std/fmt.Display".to_owned()))
         });
     let (mut inference, checked_environment, result_type) = solve_program_types(
@@ -1216,6 +1220,7 @@ fn solve_module_plan<'a>(
         qualified_external_interfaces
             .values()
             .find_map(|interface| interface.display_trait)
+            .or_else(|| dependency_facts.iter().find_map(|facts| facts.display_trait))
     };
     let module_interface = ModuleInterface {
         value_binding: None,

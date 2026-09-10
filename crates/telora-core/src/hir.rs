@@ -42,6 +42,20 @@ pub enum HirResolution {
     Unresolved,
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct HirExternalName {
+    pub(crate) declared: bool,
+    pub(crate) member: bool,
+}
+
+fn named_external_lookup(
+    names: impl IntoIterator<Item = String>,
+    members: HashSet<String>,
+) -> impl FnMut(&str) -> HirExternalName {
+    let names = names.into_iter().collect::<HashSet<_>>();
+    move |name| HirExternalName { declared: names.contains(name), member: members.contains(name) }
+}
+
 #[derive(Clone, Debug)]
 pub struct HirTypeParameter {
     pub name: String,
@@ -100,13 +114,15 @@ impl HirProgram {
         external_names: impl IntoIterator<Item = String>,
         external_member_names: HashSet<String>,
     ) -> Self {
-        let mut resolver = Resolver {
-            hir: Self::default(),
-            external_names: external_names.into_iter().collect(),
-            external_member_names,
-            expression_stack: Vec::new(),
-            static_expressions: true,
-        };
+        let mut lookup = named_external_lookup(external_names, external_member_names);
+        Self::resolve_with_lookup(program, &mut lookup)
+    }
+
+    pub(crate) fn resolve_with_lookup(
+        program: &Program,
+        lookup: &mut dyn FnMut(&str) -> HirExternalName,
+    ) -> Self {
+        let mut resolver = Resolver::new(lookup, true);
         let mut scopes = Vec::new();
         resolver.index_block(&program.value.body, &mut scopes, true);
         resolver.hir.normalize_order();
@@ -121,13 +137,8 @@ impl HirProgram {
         expression: &Expr,
         external_names: impl IntoIterator<Item = String>,
     ) -> Self {
-        let mut resolver = Resolver {
-            hir: Self::default(),
-            external_names: external_names.into_iter().collect(),
-            external_member_names: HashSet::new(),
-            expression_stack: Vec::new(),
-            static_expressions: true,
-        };
+        let mut lookup = named_external_lookup(external_names, HashSet::new());
+        let mut resolver = Resolver::new(&mut lookup, true);
         resolver.index_expr(expression, &mut Vec::new());
         resolver.hir.normalize_order();
         resolver.hir
@@ -137,13 +148,8 @@ impl HirProgram {
         expression: &Expr,
         external_names: impl IntoIterator<Item = String>,
     ) -> Self {
-        let mut resolver = Resolver {
-            hir: Self::default(),
-            external_names: external_names.into_iter().collect(),
-            external_member_names: HashSet::new(),
-            expression_stack: Vec::new(),
-            static_expressions: false,
-        };
+        let mut lookup = named_external_lookup(external_names, HashSet::new());
+        let mut resolver = Resolver::new(&mut lookup, false);
         resolver.index_expr(expression, &mut Vec::new());
         resolver.hir.normalize_order();
         resolver.hir
@@ -161,13 +167,8 @@ impl HirProgram {
         external_names: impl IntoIterator<Item = String>,
         external_member_names: HashSet<String>,
     ) -> Self {
-        let mut resolver = Resolver {
-            hir: Self::default(),
-            external_names: external_names.into_iter().collect(),
-            external_member_names,
-            expression_stack: Vec::new(),
-            static_expressions: true,
-        };
+        let mut lookup = named_external_lookup(external_names, external_member_names);
+        let mut resolver = Resolver::new(&mut lookup, true);
         resolver.index_block_parts(
             &program.bindings,
             program.result.as_ref(),
@@ -352,15 +353,24 @@ impl HirProgram {
 
 type Scope = HashMap<String, HirDefinitionId>;
 
-struct Resolver {
+struct Resolver<'a> {
     hir: HirProgram,
-    external_names: HashSet<String>,
-    external_member_names: HashSet<String>,
+    parameter_names: HashSet<String>,
+    external_lookup: &'a mut dyn FnMut(&str) -> HirExternalName,
     expression_stack: Vec<HirExpressionId>,
     static_expressions: bool,
 }
 
-impl Resolver {
+impl<'a> Resolver<'a> {
+    fn new(external_lookup: &'a mut dyn FnMut(&str) -> HirExternalName, static_expressions: bool) -> Self {
+        Self { hir: HirProgram::default(), parameter_names: HashSet::new(), external_lookup,
+            expression_stack: Vec::new(), static_expressions }
+    }
+
+    fn external_member(&mut self, name: &str) -> bool {
+        !self.parameter_names.contains(name) && (self.external_lookup)(name).member
+    }
+
     fn define(&mut self, binding: &Binding, scope: &mut Scope, top_level: bool) -> HirDefinitionId {
         let name = binding.value.name.value.as_str();
         let kind = match binding.value.kind {
@@ -540,7 +550,7 @@ impl Resolver {
             .value
             .type_parameters
             .iter()
-            .map(|parameter| self.external_names.insert(parameter.value.clone()))
+            .map(|parameter| self.parameter_names.insert(parameter.value.clone()))
             .collect::<Vec<_>>();
         let expression = self.index_expr(expression, scopes);
         if self.static_expressions {
@@ -559,6 +569,15 @@ impl Resolver {
         if self.static_expressions && binding.value.kind == BindingKind::Type {
             self.expression_stack.push(expression);
             for decorator in &binding.value.decorators {
+                if matches!(&decorator.value.callee.value,
+                    ExprKind::Variable(name) if name.value == "property")
+                {
+                    // The intrinsic creates a static capability record. Make
+                    // its type dependency explicit at the keyword's location.
+                    let location = decorator.value.callee.location;
+                    let name = crate::ast::located("PropertyAttr".to_owned(), location);
+                    self.index_tool_expr(&crate::ast::located(ExprKind::Variable(name), location), scopes);
+                }
                 let intrinsic_property = matches!(
                     &decorator.value.callee.value,
                     ExprKind::Variable(name) if matches!(name.value.as_str(), "property" | "check")
@@ -580,7 +599,7 @@ impl Resolver {
         }
         for (parameter, inserted) in binding.value.type_parameters.iter().zip(inserted) {
             if inserted {
-                self.external_names.remove(&parameter.value);
+                self.parameter_names.remove(&parameter.value);
             }
         }
         expression
@@ -606,7 +625,7 @@ impl Resolver {
             ExprKind::Variable(name) => {
                 let resolution = resolve_name(scopes, &name.value).map_or_else(
                     || {
-                        if self.external_names.contains(&name.value) {
+                        if self.parameter_names.contains(&name.value) || (self.external_lookup)(&name.value).declared {
                             HirResolution::External
                         } else {
                             HirResolution::Unresolved
@@ -900,15 +919,15 @@ impl Resolver {
     fn index_pattern_constructors(&mut self, pattern: &Pattern, scopes: &mut Vec<Scope>) {
         match &pattern.value {
             PatternKind::Binding(name) => {
-                let member = resolve_name(scopes, &name.value).map_or_else(
-                    || self.external_member_names.contains(&name.value),
-                    |id| {
+                let member = match resolve_name(scopes, &name.value) {
+                    None => self.external_member(&name.value),
+                    Some(id) => {
                         let definition = &self.hir.definitions[id.index()];
                         definition.member_import.is_some()
                             || definition.kind == HirDefinitionKind::Import
-                                && self.external_member_names.contains(&name.value)
+                                && self.external_member(&name.value)
                     },
-                );
+                };
                 if member {
                     self.hir.member_patterns.insert(name.location);
                     self.index_expr(&crate::ast::located(ExprKind::Variable(name.clone()), name.location), scopes);

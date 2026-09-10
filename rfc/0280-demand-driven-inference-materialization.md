@@ -64,7 +64,31 @@ and replacement order. The checkpoints below are historical incremental work,
 not evidence that the session-wide IR is already implemented. This target and
 the acceptance criteria take precedence over earlier checkpoint next-step notes.
 
-### Session boundary
+### Ordered phase contract
+
+0. Parse source modules into a module-name/ModuleId to HIR/CST inventory.
+   A workspace name inventory does not require parsing every module body.
+1. Resolve the reachable graph from the entry. Build each module's export-name
+   index before typing; imports and lexical scopes resolve actual references to
+   stable declaration identities. A wildcard import records a search scope,
+   not bindings for every export. Declaration roles needed for pattern resolution
+   come from source declarations, not executed values or solved interfaces.
+   Type-dependent member selections become explicit constraints for phase 2.
+2. Solve all type slots in one graph, normalize their TypeIds, and validate the
+   complete typed IR. No VM or Telora execution capability is available here.
+3. Create the VM, import finalized type skeletons, and parse/inject data modules.
+   Data contents cannot feed back into type solving.
+4. Generate property values and compute top-level values, possibly on demand
+   according to their dependency graph. Module trait/property facts are static
+   inputs regardless of whether an exported value name was referenced.
+5. Dispatch execution through entry. Both execution phases consume finalized
+   typing and cannot reopen inference.
+
+`check --types-only` stops after phase 2. Ordinary check shares that same static
+artifact before continuing with its existing tooling semantics. Stable source
+IDs are session identities; cross-compilation stability is not required.
+
+### Session ownership
 
 Create module definitions, imports/exports, type terms and inference slots in one
 session-owned world from the beginning. Consumers refer to these records by

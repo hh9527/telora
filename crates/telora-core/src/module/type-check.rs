@@ -127,6 +127,8 @@ impl StaticWorkspace<'_> {
                 }
             }
             if diagnostics.is_empty() {
+                let dependency_facts = module.imports.iter()
+                    .map(|edge| self.interfaces[&edge.target].type_facts()).collect::<Vec<_>>();
                 match crate::types::check_module_types(
                     id,
                     self.sources,
@@ -135,6 +137,7 @@ impl StaticWorkspace<'_> {
                     resolution.hir,
                     imported_types,
                     imports,
+                    &dependency_facts,
                     &mut self.type_store,
                 ) {
                     Ok(solved) => {

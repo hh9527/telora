@@ -166,3 +166,38 @@ fn session_hir_resolves_reexported_members_before_dependency_type_solving() {
     assert!(snapshot.diagnostics().is_empty(), "{:?}", snapshot.diagnostics());
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn open_imports_are_search_scopes_and_only_references_create_inputs() {
+    let directory = fixture_dir();
+    fs::create_dir_all(directory.join("src")).unwrap();
+    fs::write(directory.join("src/api.telora"), r#"
+        export def used = 1; export def unused = 2; export def binder = 3;
+        export type Choice = enum { pick, skip }; export Choice.{pick, skip};
+    "#).unwrap();
+    fs::write(directory.join("src/main.telora"), r#"
+        import "./api" *;
+        export def result = match Choice.pick { pick => used, Choice.skip => 0 };
+        export def local = fn() { match 0 { binder => binder } };
+    "#).unwrap();
+    let resolver = session_workspace_resolver(&directory, &["@src/main", "@src/api"]);
+    let root = resolver.selected_root().unwrap();
+    let mut sources = SourceDatabase::default();
+    let graph = ModuleGraph::discover(&resolver, vec![root.clone()], &BTreeMap::new(),
+        builtin_list().into_iter().map(|(name, _)| ModuleCName::builtin(name)),
+        None, false, &mut sources).unwrap();
+    let root = graph.id(&root.id).unwrap();
+    let mut names = StaticNames::new(&graph);
+    assert_eq!(names.scopes[root.index()].open.len(), 1);
+    for name in ["used", "unused", "Choice", "pick", "skip", "binder"] {
+        assert!(!names.scopes[root.index()].direct.contains_key(name));
+    }
+    assert!(names.exports.is_empty(), "scope creation must not classify every export");
+    let resolved = names.module_resolution(root).unwrap();
+    assert!(resolved.diagnostics.is_empty());
+    for name in ["used", "Choice", "pick"] { assert!(resolved.imports.contains_key(name), "{name}"); }
+    for name in ["unused", "skip", "binder"] { assert!(!resolved.imports.contains_key(name), "{name}"); }
+    assert!(!names.exports.keys().any(|(_, name)| name == "unused" || name == "skip"),
+        "unreferenced exports must not become classification work");
+    fs::remove_dir_all(directory).unwrap();
+}

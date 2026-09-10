@@ -14,6 +14,7 @@ pub(crate) fn check_module_types(
     hir: HirProgram,
     imported_types: HashMap<String, TypeDescriptor>,
     mut interfaces: BTreeMap<String, ModuleInterface>,
+    dependency_facts: &[ModuleTypeFacts<'_>],
     type_store: &mut TypeStore,
 ) -> Result<CheckedModuleTypes, FrontendError> {
     let source_name = &sources.get(source_id).name;
@@ -31,7 +32,7 @@ pub(crate) fn check_module_types(
         ModuleAnalysisContext::Builtin { defines_display_trait: source_name.as_ref() == "std/fmt" }
     } else { ModuleAnalysisContext::Ordinary };
     let solved = solve_module_plan(source_name, module_id, context, program, hir, &names,
-        sources, &BTreeMap::new(), &interfaces, None, type_store)?;
+        sources, &BTreeMap::new(), &interfaces, dependency_facts, None, type_store)?;
     Ok(CheckedModuleTypes { interface: solved.module_interface, types: solved.types })
 }
 
@@ -52,6 +53,7 @@ mod static_check_tests {
             resolve_module_hir(parsed.program.as_ref().unwrap(), &BTreeSet::new(), HashSet::new()),
             HashMap::new(),
             BTreeMap::new(),
+            &[],
             &mut TypeStore::default(),
         )
         .unwrap().interface;
@@ -82,6 +84,7 @@ mod static_check_tests {
                 resolve_module_hir(parsed.program.as_ref().unwrap(), &BTreeSet::new(), HashSet::new()),
                 HashMap::new(),
                 BTreeMap::new(),
+                &[],
                 &mut TypeStore::default(),
             );
             assert_eq!(result.is_ok(), valid, "{source}: {result:?}");

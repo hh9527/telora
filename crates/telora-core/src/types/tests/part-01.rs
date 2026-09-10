@@ -9,7 +9,7 @@
             ModuleAnalysisContext::Ordinary, &program,
             resolve_module_hir(&program, &BTreeSet::new(), HashSet::new()),
             &BTreeSet::new(), &sources,
-            &BTreeMap::new(), &BTreeMap::new(), None, &mut TypeStore::default(),
+            &BTreeMap::new(), &BTreeMap::new(), &[], None, &mut TypeStore::default(),
         ).unwrap();
         assert_eq!(solved.module_interface.exports["answer"].body, TypeDescriptor::Int);
         assert_eq!(solved.module_interface.type_family_constructors["Box"].id.module,
