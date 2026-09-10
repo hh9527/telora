@@ -2,6 +2,21 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn completed_record_construction_keeps_its_static_identity_deterministically() {
+    let sources = [("@src/main", "type Item = struct {value: Int}; def item: Item = {value: 42}; def raw = {value: 42}; export def answer = [item] == [{value: 42}] && [raw] != [item];")];
+    let mut first = graph(&sources);
+    resolve(&mut first);
+    first.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", first.dump()));
+    let TypeState::Known(raw) = symbol_type(&first, "raw") else { panic!("closed raw value") };
+    let TypeState::Known(item) = symbol_type(&first, "item") else { panic!("closed nominal value") };
+    assert!(matches!(first.types[raw.index()].constructor, TypeConstructor::Record(_)));
+    assert!(matches!(first.types[item.index()].constructor, TypeConstructor::Nominal(_)));
+    let mut second = graph(&sources);
+    resolve(&mut second);
+    assert_eq!(first.dump(), second.dump());
+}
+
+#[test]
 fn metadata_equality_does_not_unify_represented_types_or_narrow_a_join() {
     for source in [
         "export def answer = Int.type != String.type;",

@@ -1423,6 +1423,22 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn existing_record_values_keep_identity_while_fresh_literals_take_context() {
+        for body in [
+            "let raw = {value: 42}; [raw] != [item] && [item] != [raw] && (raw, 1) != (item, 1)",
+            "let raw = [{value: 42}]; [...raw] != [item] && [item] != [...raw] && [...[{value: 42}]] == [item]",
+            "let raw = [{value: 42}]; choose(raw, [item]) != [item] && choose_array(raw, item) != [item]",
+            "choose_independent([{value: 42}], [item]) != [item] && choose([{value: 42}], [item]) == [item]",
+            "let raw = if True { {value: 42} } else { {value: 42} }; [raw] != [item] && [{value: 42}] == [item]",
+        ] {
+            let mir = graph(&format!("type Item = struct {{value: Int}}; def item: Item = {{value: 42}}; def choose: for(T) Fn(T, T) -> T = fn(left, right) {{left}}; def choose_array: for(T) Fn(Array(T), T) -> Array(T) = fn(left, right) {{left}}; def choose_independent: for(A, B) Fn(A, B) -> A = fn(left, right) {{left}}; export def answer = {{ {body} }};"), "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{body}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            let result = execute(artifact).unwrap();
+            assert_eq!(result.value().as_atom().unwrap().as_str(), "True", "{body}");
+        }
+    }
+
+    #[test]
     fn encoded_enum_values_equal_explicit_semantic_value_constructors() {
         let mir = graph("import \"std/codec\" as codec; import \"std/value\" { Value }; type Event = enum { Progress(Int), Finished }; def encoded = codec.encode(Value.type, Event.Progress(47)); def expected = Value.Object({Progress: Value.Int(47)}); export def answer = (encoded == expected, encoded, expected);", "");
         let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();

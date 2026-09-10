@@ -6,6 +6,8 @@ impl Solver<'_> {
         let mut changed = false;
         for task in pending {
             if let Task::ValueEqual { node, left, right } = task {
+                self.retain_comparison_origins(self.child(node, Role::Left).unwrap());
+                self.retain_comparison_origins(self.child(node, Role::Right).unwrap());
                 // Let derived expression types settle before comparison
                 // supplies evidence to genuinely unconstrained operands.
                 let metadata = [left, right].into_iter().any(|slot| self.term(slot)
@@ -19,7 +21,9 @@ impl Solver<'_> {
                     }
                     if let Some(task) = self.value_equal(node, left, right) { self.tasks.push(task); }
                 } else {
-                    self.equal(left, right, Some(self.mir.hir[node.index()].location));
+                    if self.term(left).is_some() && self.term(right).is_some() {
+                        self.value_equal(node, left, right);
+                    } else { self.equal(left, right, Some(self.mir.hir[node.index()].location)); }
                 }
                 changed = true;
             } else { self.tasks.push(task); }
@@ -69,7 +73,7 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
-            Task::ValueEqual { node, left, right } => self.value_equal(node, left, right),
+            Task::ValueEqual { node, left, right } => Some(Task::ValueEqual { node, left, right }),
             Task::Reference { node, symbol } => {
                 if self.generalizations[symbol.index()].is_some() {
                     return Ok(Some(Task::Reference { node, symbol }));
@@ -784,7 +788,9 @@ impl Solver<'_> {
                 self.fit(HirId(value.0), ty, value);
             } else { self.equal(ty, value, location); }
         }
-        self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
+        if !self.materialized_records[actual.index()] || nominal.constructor == TypeConstructor::Dict {
+            self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
+        }
         self.revision += 1;
         true
     }

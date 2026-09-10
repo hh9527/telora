@@ -12,6 +12,7 @@ impl Solver<'_> {
         );
         self.mir.ty_slots.push(TypeState::Unknown);
         self.value_slots.push(false);
+        self.materialized_records.push(false);
         id
     }
     pub(super) fn structure(
@@ -155,6 +156,7 @@ impl Solver<'_> {
                     if self.occurs(left, right) {
                         self.conflict(left, right, location, "infinite structural type".into());
                     } else {
+                        self.materialized_records[right.index()] |= self.materialized_records[left.index()];
                         self.mir.ty_slots[left.index()] = TypeState::ProxyTo(right);
                     }
                 }
@@ -162,6 +164,7 @@ impl Solver<'_> {
                     if self.occurs(right, left) {
                         self.conflict(left, right, location, "infinite structural type".into());
                     } else {
+                        self.materialized_records[left.index()] |= self.materialized_records[right.index()];
                         self.mir.ty_slots[right.index()] = TypeState::ProxyTo(left);
                     }
                 }
@@ -185,7 +188,13 @@ impl Solver<'_> {
                         self.conflict(left, right, location, message);
                     } else {
                         queue.extend(a.arguments.iter().copied().zip(b.arguments.iter().copied()));
-                        self.mir.ty_slots[right.index()] = TypeState::ProxyTo(left);
+                        // Equal shapes need not share construction ownership.
+                        // Final canonicalization still merges equal closed types.
+                        if !matches!(a.constructor, TypeConstructor::Record(_))
+                            || self.materialized_records[left.index()] == self.materialized_records[right.index()] {
+                            self.materialized_records[left.index()] |= self.materialized_records[right.index()];
+                            self.mir.ty_slots[right.index()] = TypeState::ProxyTo(left);
+                        }
                     }
                 }
                 _ => unreachable!("only provisional states exist during solving"),

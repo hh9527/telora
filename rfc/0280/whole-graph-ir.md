@@ -5,6 +5,42 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Construction origins prevent retroactive nominal branding (2026-09-11)
+
+Record shape compatibility previously proxied the actual record slot to the
+expected nominal slot. Later use could therefore change the original
+initializer's TypeId, and mechanical codegen would stamp an existing anonymous
+value with an owner it never constructed. The static solver now retains
+source-level existing-record evidence in a dense scratch table. Unannotated
+binding constructions keep their ownership; record shape checks do not merge
+existing and fresh construction roots. Equal finalized shapes still share a
+canonical TypeId. Structural Dict compatibility remains distinct from nominal
+ownership.
+
+Comparison constraints consume settled declaration/call evidence before
+literal defaulting. Existing operands preserve their record origins; direct
+aggregate literals, projections and resolved constructors retain contextual
+construction. Constructor aliases are followed through SymbolId and solved
+member selections, not their spelling. Ordinary generic function results do
+not acquire constructor status. All scratch evidence is discarded with the
+solver; codegen and VM receive the final TypeIds without new inference,
+environment copying or runtime compensating branches.
+
+Validation: 53 type-resolve tests and 73 codegen tests passed; CLI build passed.
+Static coverage checks distinct anonymous/nominal identities and deterministic
+MIR dumps. Execution coverage checks stored records, spread references, shared
+and independent generic parameters, branches and direct literal context. The
+final actual language aggregate passes nominal-equality (22/22),
+enum-constructor-context, struct-projection (including provenance) and
+tuple-types without fixture edits. Metadata array and constructor-payload
+contexts remain covered by those language fixtures. The full aggregate still
+fails other codec/newtype/property and diagnostic/query fixtures; old-path
+removal and complete acceptance remain unfinished. Logs:
+/tmp/mir-record-origin-final-types.log,
+/tmp/mir-record-origin-final-codegen.log,
+/tmp/mir-record-origin-final-build.log and
+/tmp/mir-record-origin-final-language.log. No performance measurement was made.
+
 ### Native codec output retains its solved dictionary witness (2026-09-11)
 
 The remaining enum-constructor encoding comparisons exposed a missing type
