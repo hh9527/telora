@@ -2,6 +2,49 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
+    for (body, message) in [
+        ("match value { Some(x) => x }", "missing None"),
+        ("match value { None => 0, Some(1) => 1 }", "missing Some(_)"),
+        ("match value { _ => 0, None => 1 }", "prior arms cover every value"),
+        ("match value { None => 0, Some(_) => 1, _ => 2 }", "prior arms cover every value"),
+        ("match value { Some(_) => 0, Some(1) => 1, None => 2 }", "prior arms cover Some"),
+        ("match value { None => 0, None => 1, Some(_) => 2 }", "prior arms cover None"),
+        ("match value { Some(x) if True => x, None if True => 0 }", "non-exhaustive match"),
+        ("do { let (x, 1) = (1, 2); x }", "refutable let pattern"),
+        ("do { let {x} = {x: 1} else { fail!(\"never\") }; x }", "let else pattern is irrefutable"),
+        ("match 1 { {} => 0, _ => 1 }", "Struct pattern cannot match Int"),
+        ("do { let dict: Dict(Int) = {x: 1}; match dict { {x} => x, _ => 0 } }", "Struct pattern cannot match Dict"),
+    ] {
+        let source = format!("export def read: Fn(Option(Int)) -> Int = fn(value) {{ {body} }};");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|diagnostic| diagnostic.message.contains(message)), "{source}\n{}", mir.dump());
+        assert!(mir.seal().is_err(), "{source}");
+    }
+}
+
+#[test]
+fn patterns_close_alias_selections_and_preserve_nested_irrefutability() {
+    let mut mir = graph(&[("@src/main", r#"
+        import Bool.{True as Yes, False as No};
+        type Wrapped(T) = struct(T);
+        type Event(T) = enum {Empty, Value(T)};
+        export def read: Fn(Event((Int, String))) -> Int = fn(value) {
+            match value { Event.Empty => 0, Event.Value((x, _)) => x }
+        };
+        export def boolean: Fn(Bool) -> Int = fn(value) { match value { Yes => 1, No => 0 } };
+        export def unwrap: Fn(Wrapped(Int)) -> Int = fn(value) { let Wrapped(x) = value; x };
+    "#)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let pattern = mir.hir.iter().enumerate().find(|(index, node)| matches!(node.kind, HirKind::ConstructorPattern)
+        && matches!(mir.member_selections[*index], Some(MemberSelection::EnumVariant { .. }))).unwrap().0;
+    mir.member_selections[pattern] = Some(MemberSelection::EnumVariant { index: 999 });
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn let_else_checks_divergence_without_overwriting_the_inferred_branch_type() {
     for branch in ["0", "()", "if flag { 0 } else { fail!(\"stop\") }"] {
         let source = format!("export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }}; export def independent = 42;");

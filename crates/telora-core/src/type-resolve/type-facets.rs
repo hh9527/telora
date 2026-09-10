@@ -4,8 +4,11 @@ impl Solver<'_> {
     pub(super) fn resolve_constructor_patterns(&mut self) {
         for index in 0..self.mir.hir.len() {
             let node = HirId(index as u32);
-            if !matches!(self.mir.hir[index].kind, HirKind::ConstructorPattern) || self.term(node.ty()).is_none() { continue; }
-            let mut callee = self.child(node, Role::Callee).unwrap();
+            if !matches!(self.mir.hir[index].kind, HirKind::ConstructorPattern | HirKind::PatternName(_)) || self.term(node.ty()).is_none() { continue; }
+            let mut callee = if matches!(self.mir.hir[index].kind, HirKind::PatternName(_)) {
+                if self.mir.hir_symbols[index].is_some_and(|symbol| self.mir.symbols[symbol.index()].resolution == ResolveState::Bound(symbol)) { continue; }
+                node
+            } else { self.child(node, Role::Callee).unwrap() };
             let mut seen = std::collections::BTreeSet::new();
             let mut selected = false;
             let mut value_alias = false;
@@ -17,7 +20,8 @@ impl Solver<'_> {
                         selected = true;
                         break;
                     }
-                    Some(MemberSelection::EnumVariant { .. } | MemberSelection::Boolean(_)) => {
+                    Some(selection @ (MemberSelection::EnumVariant { .. } | MemberSelection::Boolean(_))) => {
+                        self.mir.member_selections[index] = Some(selection);
                         selected = true;
                         break;
                     }

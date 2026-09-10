@@ -1,68 +1,38 @@
 use super::*;
 
 impl Emitter<'_> {
-    // Follow already-bound aliases to their statically selected constructor.
-    // This reads MIR links; it never executes a constructor or searches names.
+    // The type pass has already closed the constructor on this pattern node.
     fn pattern_constructor(&self, start: HirId) -> Result<(crate::Atom, bool), Diagnostic> {
-        let mut node = start;
-        let mut visited = std::collections::BTreeSet::new();
-        while visited.insert(node) {
-            match self.mir.member_selections[node.index()] {
-                Some(MemberSelection::Boolean(value)) => {
-                    return Ok((
-                        crate::Atom::builtin(if value {
-                            crate::BuiltinAtom::True
-                        } else {
-                            crate::BuiltinAtom::False
-                        }),
-                        false,
-                    ));
-                }
-                Some(MemberSelection::EnumVariant { index }) => {
-                    // The selected tag belongs to the aliased declaration,
-                    // but its applied type belongs to this pattern reference.
-                    let ty = self.ty(start)?;
-                    let signature = &self.mir.types[ty.index()];
-                    let payload = signature.constructor == TypeConstructor::Function;
-                    let owner = if payload {
-                        *signature.arguments.last().unwrap()
+        match self.mir.member_selections[start.index()] {
+            Some(MemberSelection::Boolean(value)) => {
+                return Ok((
+                    crate::Atom::builtin(if value {
+                        crate::BuiltinAtom::True
                     } else {
-                        ty
-                    };
-                    let constructor = &self.mir.types[owner.index()].constructor;
-                    if let Some((tag, payload)) =
-                        crate::type_image::builtin_variant(constructor, index)
-                    {
-                        return Ok((crate::Atom::named(tag), payload));
-                    }
-                    if let TypeConstructor::Nominal(symbol) = constructor {
-                        let member = self
-                            .mir
-                            .type_definitions
-                            .iter()
-                            .find(|d| d.symbol == *symbol)
-                            .and_then(|d| d.members.get(index as usize))
-                            .ok_or_else(|| self.error(start, "missing solved variant"))?;
-                        return Ok((crate::Atom::named(member.name.clone()), payload));
-                    }
-                    break;
-                }
-                _ => {}
+                        crate::BuiltinAtom::False
+                    }),
+                    false,
+                ));
             }
-            if let Some(slot) = self.mir.hir[node.index()].resolution {
-                if let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] {
-                    if let Some(declaration) = self.mir.symbols[symbol.index()].declarations.last()
-                    {
-                        node = *declaration;
-                        continue;
-                    }
+            Some(MemberSelection::EnumVariant { index }) => {
+                let owner = self.ty(start)?;
+                let constructor = &self.mir.types[owner.index()].constructor;
+                if let Some((tag, payload)) = crate::type_image::builtin_variant(constructor, index)
+                {
+                    return Ok((crate::Atom::named(tag), payload));
+                }
+                if let TypeConstructor::Nominal(symbol) = constructor {
+                    let member = self
+                        .mir
+                        .type_definitions
+                        .iter()
+                        .find(|d| d.symbol == *symbol)
+                        .and_then(|d| d.members.get(index as usize))
+                        .ok_or_else(|| self.error(start, "missing solved variant"))?;
+                    return Ok((crate::Atom::named(member.name.clone()), member.payload.is_some()));
                 }
             }
-            node = match self.mir.hir[node.index()].kind {
-                HirKind::Binding { .. } | HirKind::TypeAscription => self.child(node, Role::Value),
-                HirKind::TypeApply => self.child(node, Role::Callee),
-                _ => break,
-            };
+            _ => {}
         }
         Err(self.error(start, "pattern requires a statically selected constructor"))
     }
@@ -118,7 +88,10 @@ impl Emitter<'_> {
                 );
             }
             HirKind::ConstructorPattern => {
-                if matches!(self.mir.member_selections[node.index()], Some(MemberSelection::NewtypePattern)) {
+                if matches!(
+                    self.mir.member_selections[node.index()],
+                    Some(MemberSelection::NewtypePattern)
+                ) {
                     let dst = self.register();
                     self.emit(
                         node,
@@ -131,8 +104,7 @@ impl Emitter<'_> {
                     self.pattern(self.child(node, Role::Pattern), dst, mismatch)?;
                     return Ok(());
                 }
-                let (tag, has_payload) =
-                    self.pattern_constructor(self.child(node, Role::Callee))?;
+                let (tag, has_payload) = self.pattern_constructor(node)?;
                 let tag = self.constant(node, Constant::Atom(tag));
                 let condition = self.register();
                 self.emit(
@@ -220,7 +192,12 @@ impl Emitter<'_> {
                 self.locals.truncate(scope);
                 self.mark(next);
             }
-            self.emit(node, O::Fail { message: "no match arm accepted the value".into() });
+            self.emit(
+                node,
+                O::Fail {
+                    message: "no match arm accepted the value".into(),
+                },
+            );
         } else {
             let otherwise = self.label();
             self.pattern(self.child(node, Role::Pattern), value, otherwise)?;

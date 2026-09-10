@@ -12,6 +12,29 @@ pub struct SealedMir<'a> {
 }
 
 impl Mir {
+    fn valid_pattern_selection(&self, node: HirId, ty: TypeId) -> bool {
+        let hir = &self.hir[node.index()];
+        if matches!(hir.kind, HirKind::PatternName(_)) {
+            if self.hir_symbols[node.index()].is_some_and(|symbol| self.symbols[symbol.index()].resolution == ResolveState::Bound(symbol)) { return true; }
+        } else if !matches!(hir.kind, HirKind::ConstructorPattern) { return true; }
+        let Some(shape) = self.types.get(ty.index()) else { return false; };
+        let payload = hir.children.iter().find(|edge| edge.role == Role::Pattern);
+        match self.member_selections[node.index()] {
+            Some(MemberSelection::NewtypePattern) => self.valid_newtype_selection(node, ty) && payload.is_some(),
+            Some(MemberSelection::Boolean(_)) => shape.constructor == TypeConstructor::Bool && payload.is_none(),
+            Some(MemberSelection::EnumVariant { index }) => {
+                let has_payload = if let Some((_, payload)) = crate::type_image::builtin_variant(&shape.constructor, index) {
+                    Some(payload)
+                } else if let TypeConstructor::Nominal(symbol) = shape.constructor {
+                    self.type_definitions.iter().find(|definition| definition.symbol == symbol && definition.operation == TypeOperation::Enum)
+                        .and_then(|definition| definition.members.get(index as usize)).map(|member| member.payload.is_some())
+                } else { None };
+                has_payload == Some(payload.is_some())
+            }
+            _ => false,
+        }
+    }
+
     fn valid_properties(&self) -> bool {
         let mut keys = std::collections::BTreeSet::new();
         for record in &self.properties {
@@ -126,7 +149,9 @@ impl Mir {
                 !self.valid_newtype_selection(HirId(node as u32), *ty)
             })
             || self.generic_instances.iter().any(|instance| instance.types.iter()
-                .any(|(node, ty)| !self.valid_newtype_selection(*node, *ty)))
+                .any(|(node, ty)| !self.valid_newtype_selection(*node, *ty) || !self.valid_pattern_selection(*node, *ty)))
+            || self.hir.iter().enumerate().any(|(node, _)| matches!(self.ty_slots.get(node), Some(TypeState::Known(ty))
+                if !self.valid_pattern_selection(HirId(node as u32), *ty)))
             || self.value_adjustments.len() != self.hir.len()
             || self.propagation_boundaries.len() != self.hir.len()
             || self.hir.iter().enumerate().any(|(node, hir)| matches!(hir.kind, HirKind::Propagate)

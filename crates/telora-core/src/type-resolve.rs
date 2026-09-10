@@ -38,6 +38,8 @@ mod construction_origins;
 mod interpreters;
 #[path = "type-resolve/type-facets.rs"]
 mod type_facets;
+#[path = "type-resolve/patterns.rs"]
+mod patterns;
 #[cfg(test)]
 #[path = "type-resolve/tests.rs"]
 mod tests;
@@ -239,6 +241,7 @@ pub fn resolve(mir: &mut Mir) {
     solver.finalize_checks();
     solver.prove_bounds();
     solver.materialize_instances();
+    solver.validate_patterns();
     solver.mir.build_property_admissions();
     solver.mir.build_type_schemes();
     solver.mir.types_solved = true;

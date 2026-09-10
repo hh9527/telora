@@ -5,6 +5,37 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Pattern selection and coverage close in the static pass (2026-09-11)
+
+Constructor patterns and referenced bare variant patterns now retain their
+selected boolean/enum/newtype constructor directly on their MIR node. Seal
+checks the selected family, index and payload presence against both template
+and instantiated node types. Codegen no longer follows alias chains to discover
+pattern constructors; it reads the selection and emits ordinary tests/extracts.
+
+The static pass scans HIR in child-before-parent order with a small indexed
+coverage fact table. It diagnoses missing finite-enum variants, arms covered by
+earlier unguarded arms, refutable ordinary let patterns, and irrefutable let-else
+patterns. An unguarded constructor covers its variant when its payload pattern
+is irrefutable; guards are never evaluated to prove coverage. Shape validation
+also prevents an empty struct pattern from claiming to cover Int or Dict.
+Unknown/Conflicted pattern inputs retain their existing diagnostics rather
+than triggering another inference attempt. No old pattern/descriptor evaluator
+or VM dependency was introduced.
+
+Validation: 66 type-resolve tests, 88 codegen tests and CLI build pass. New cases
+cover missing/guarded/repeated variants, catch-all reachability, nested tuple
+payloads, newtype lets, aliased booleans, invalid struct shapes and tampered
+constructor indices. A fresh full language run reduces failing cases from
+230 to 215, including the preceding let-else divergence fix. All 9 query cases
+remain green, and test-mode failures remain only module-interfaces and
+stdlib-collections. Remaining 213 diagnostic cases include both missing rules
+and message/protocol differences; the full migration is not yet accepted.
+Logs: /tmp/mir-patterns-{types,codegen-final,build,language}.log.
+No language fixtures or runtime instructions were changed, and no performance
+assessment was made. Generic function identity and legacy pipeline removal
+remain open.
+
 ### Let-else divergence is validated without replacing type evidence (2026-09-11)
 
 The old MIR constraint assigned Never directly to a let-else failure branch.
