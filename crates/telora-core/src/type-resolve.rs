@@ -25,6 +25,8 @@ mod record_operations;
 mod sequence_spreads;
 #[path = "type-resolve/propagation.rs"]
 mod propagation;
+#[path = "type-resolve/generalization.rs"]
+mod generalization;
 #[path = "type-resolve/properties.rs"]
 mod properties;
 #[cfg(test)]
@@ -32,6 +34,9 @@ mod properties;
 mod tests;
 
 enum Task {
+    Ordered { node: HirId, operand: TypeSlotId },
+    Reference { node: HirId, symbol: SymbolId },
+    TypeApply { node: HirId },
     Propagate { node: HirId },
     PropagationBottom { body: HirId, success: TypeSlotId },
     TupleSpread { node: HirId },
@@ -119,10 +124,12 @@ struct Solver<'a> {
     pending_blocks: Vec<bool>,
     value_spreads: Vec<bool>,
     administrative: Vec<bool>,
+    scheme_references: Vec<bool>,
     decorator_contexts: Vec<Option<TypeSlotId>>,
     property_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
     check_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
     bottom_candidates: Vec<TypeSlotId>,
+    generalizations: Vec<Option<generalization::Candidate>>,
 }
 
 pub fn resolve(mir: &mut Mir) {
@@ -144,6 +151,7 @@ pub fn resolve(mir: &mut Mir) {
     }
     solver.prepare_definitions();
     solver.prepare_properties();
+    solver.prepare_generalization();
     for index in 0..solver.mir.symbols.len() {
         let slot = solver.mir.symbol_types[index];
         let symbol = &solver.mir.symbols[index];
@@ -194,7 +202,7 @@ pub fn resolve(mir: &mut Mir) {
             }
         }
         if solver.revision == revision {
-            if !solver.finish_literals() && !solver.finish_bottoms() {
+            if !solver.finish_literals() && !solver.finish_bottoms() && !solver.generalize_ready() {
                 break;
             }
         }
@@ -228,10 +236,12 @@ impl Solver<'_> {
             return_slots: vec![None; mir.hir.len()],
             pending_blocks: vec![false; mir.hir.len()],
             administrative: vec![false; mir.hir.len()],
+            scheme_references: vec![false; mir.hir.len()],
             decorator_contexts: vec![None; mir.hir.len()],
             property_declarations: vec![],
             check_declarations: vec![],
             bottom_candidates: vec![],
+            generalizations: vec![],
             mir,
             revision: 0,
             tasks: vec![],
@@ -691,23 +701,7 @@ impl Solver<'_> {
                 } else { self.tasks.push(Task::Call { node, callee: callee.ty(), arguments: args }); }
             }
             HirKind::TypeApply => {
-                let callee = self.child(node, Role::Callee).unwrap();
-                let parameters = self.mir.type_instances[callee.index()].clone();
-                let arguments = self.children(node, Role::Argument);
-                if parameters.is_empty() || parameters.len() != arguments.len() {
-                    self.conflict(
-                        node.ty(),
-                        node.ty(),
-                        Some(self.mir.hir[node.index()].location),
-                        "explicit type application requires a generic binding with matching arity"
-                            .into(),
-                    );
-                } else {
-                    for ((_, parameter), argument) in parameters.into_iter().zip(arguments) {
-                        self.assign(argument, TypeConstructor::Meta, vec![parameter]);
-                    }
-                    self.same(node, callee.ty());
-                }
+                self.tasks.push(Task::TypeApply { node });
             }
             HirKind::InferredTypeArgument => {}
             HirKind::Binary(BinaryOperator::StructUpdate) => {
@@ -737,14 +731,14 @@ impl Solver<'_> {
                             operand: left.ty(),
                         });
                     }
-                    BinaryOperator::Equal
-                    | BinaryOperator::NotEqual
-                    | BinaryOperator::LessThan
+                    BinaryOperator::LessThan
                     | BinaryOperator::LessThanOrEqual
                     | BinaryOperator::GreaterThan
                     | BinaryOperator::GreaterThanOrEqual => {
-                        self.assign(node, TypeConstructor::Bool, vec![])
+                        self.assign(node, TypeConstructor::Bool, vec![]);
+                        self.tasks.push(Task::Ordered { node, operand: left.ty() });
                     }
+                    BinaryOperator::Equal | BinaryOperator::NotEqual => self.assign(node, TypeConstructor::Bool, vec![]),
                     BinaryOperator::And | BinaryOperator::Or => {
                         self.assign(left, TypeConstructor::Bool, vec![]);
                         self.assign(node, TypeConstructor::Bool, vec![]);
@@ -806,7 +800,7 @@ impl Solver<'_> {
         let (node, dependencies) = match &task {
             Task::Tuple { node, items } => (*node, items.clone()),
             Task::Member { node, receiver, .. } => (*node, vec![*receiver]),
-            Task::Numeric { node, operand } | Task::Not { node, operand } => (*node, vec![*operand]),
+            Task::Numeric { node, operand } | Task::Not { node, operand } | Task::Ordered { node, operand } => (*node, vec![*operand]),
             _ => unreachable!(),
         };
         for dependency in dependencies {
@@ -858,6 +852,12 @@ impl Solver<'_> {
                 };
                 if !matches!(term.constructor, TypeConstructor::Bool | TypeConstructor::Int | TypeConstructor::Never) {
                     self.conflict(node.ty(), operand, Some(self.mir.hir[node.index()].location), "Bool or Int operand required for !".into());
+                }
+            }
+            Task::Ordered { node, operand } => {
+                let Some(term) = self.term(operand) else { return Some(Task::Ordered { node, operand }); };
+                if !matches!(term.constructor, TypeConstructor::Int | TypeConstructor::Float | TypeConstructor::String | TypeConstructor::Never) {
+                    self.conflict(node.ty(), operand, Some(self.mir.hir[node.index()].location), "ordered scalar operand required".into());
                 }
             }
             Task::Numeric { node, operand } => {

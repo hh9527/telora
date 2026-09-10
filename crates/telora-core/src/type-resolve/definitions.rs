@@ -29,6 +29,17 @@ impl Solver<'_> {
         })
     }
     pub(super) fn prepare_definitions(&mut self) {
+        for symbol in &self.mir.symbols {
+            if symbol.kind != SymbolKind::Export { continue; }
+            for &declaration in &symbol.declarations {
+                if matches!(self.mir.hir[declaration.index()].kind, HirKind::DictField)
+                    && let Some(value) = self.child(declaration, Role::Value) {
+                    // The synthetic module export record publishes a scheme;
+                    // it is not a monomorphic use of the exported function.
+                    self.scheme_references[value.index()] = true;
+                }
+            }
+        }
         for index in 0..self.mir.hir.len() {
             if matches!(
                 self.mir.hir[index].kind,
@@ -135,6 +146,14 @@ impl Solver<'_> {
     }
 
     pub(super) fn reference_type(&mut self, node: HirId, symbol: SymbolId) {
+        if self.scheme_references[node.index()] {
+            self.same(node, self.mir.symbol_types[symbol.index()]);
+            return;
+        }
+        if self.generalizations.get(symbol.index()).is_some_and(Option::is_some) {
+            self.tasks.push(Task::Reference { node, symbol });
+            return;
+        }
         let parameters = self.mir.symbol_generics[symbol.index()].clone();
         if parameters.is_empty() {
             self.same(node, self.mir.symbol_types[symbol.index()]);

@@ -2,6 +2,66 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn implicit_schemes_fill_independent_reference_arguments_in_dependency_order() {
+    for source in [
+        "def identity = fn(value) { value }; export def answer = (identity(1), identity(\"text\"), identity@[Int](3));",
+        "export def answer = { let identity = fn(value) { value }; (identity(1), identity(\"text\"), identity@[Int](3)) };",
+        "def first = fn(value) { second(value) }; def second = fn(value) { value }; export def answer = (first(1), first(\"text\"));",
+        "def second = fn(value) { value }; def first = fn(value) { second(value) }; export def answer = (first(1), first(\"text\"));",
+        "def keep = fn(left: Int, right) { left }; export def answer = (keep(1, True), keep(2, \"text\"));",
+        "def pair = fn(value) { (value, value) }; export def answer = (pair(1), pair(\"text\"));",
+        "def outer = fn(value) { let keep = fn(other) { value }; (keep(True), keep(\"text\")) }; export def answer = (outer(1), outer(\"text\"));",
+        "export def apply = fn(callback, value) { callback(value) };",
+        "export def select = fn(condition, value) { if condition { value } else { value } };",
+        "export def wrap = fn(value) { [value] };",
+        "def mixed = fn(value, unused) { value + value }; export def answer = mixed(21, True);",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+    }
+}
+
+#[test]
+fn implicit_schemes_publish_deterministic_signatures_without_renumbering_resolved_symbols() {
+    let sources = [("@src/main", "export def apply = fn(callback, value) { callback(value) }; export def identity = fn(value) { value };")];
+    let mut first = graph(&sources);
+    let identities = first.symbols.iter().map(|symbol| (symbol.name.clone(), symbol.declarations.clone())).collect::<Vec<_>>();
+    resolve(&mut first);
+    first.seal().unwrap();
+    for (symbol, identity) in first.symbols.iter().zip(identities) {
+        assert_eq!((&symbol.name, &symbol.declarations), (&identity.0, &identity.1));
+    }
+    let query = crate::mir_query::MirQuery::new(&first);
+    for (name, expected) in [("apply", "for(A, B) Fn(Fn(A) -> B, A) -> B"), ("identity", "for(A) Fn(A) -> A")] {
+        let symbol = first.symbols.iter().position(|symbol| symbol.name == name && symbol.kind == SymbolKind::Declaration(BindingKind::Def)).unwrap();
+        assert_eq!(query.symbol_signature(SymbolId(symbol as u32)).as_deref(), Some(expected));
+    }
+    let mut second = graph(&sources);
+    resolve(&mut second);
+    assert_eq!(first.dump(), second.dump());
+}
+
+#[test]
+fn implicit_schemes_do_not_generalize_recursive_captured_or_constrained_slots() {
+    for source in [
+        "def recur = fn(value) { if True { value } else { recur(value) } }; export def answer = (recur(1), recur(\"text\"));",
+        "def left = fn(value) { right(value) }; def right = fn(value) { left(value) }; export def answer = (left(1), left(\"text\"));",
+        "def identity = fn(value) { value }; def alias = identity; export def answer = (alias(1), alias(\"text\"));",
+        "def add = fn(left, right) { left + right }; export def answer = (add(1, 2), add(1.0, 2.0));",
+        "def mixed = fn(value, unused) { value + value }; export def answer = (mixed(21, True), mixed(21, \"text\"));",
+        "def before = fn(left, right) { left < right }; export def answer = (before(1, 2), before(\"a\", \"b\"));",
+        "def before = fn(left, right) { left < right }; export def answer = before(True, False);",
+        "export def answer = { let values = []; let keep = fn(value) { [...values, value] }; (keep(1), keep(\"text\")) };",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err(), "{source}\n{}", mir.dump());
+        assert!(!mir.type_conflicts.is_empty(), "{source}\n{}", mir.dump());
+    }
+}
+
+#[test]
 fn propagation_keeps_never_tail_error_evidence_and_infers_operand_from_return_context() {
     let mut mir = graph(&[("@src/main", "export def stopped = fn(value: Result(Int, String)) { value?; fail!(\"tail\") }; export def contextual = fn(value) -> Option(Int) { Some(value? + 1) };")]);
     resolve(&mut mir);

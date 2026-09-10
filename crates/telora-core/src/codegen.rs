@@ -13,6 +13,8 @@ use crate::{
 mod newtypes;
 #[path = "codegen/patterns.rs"]
 mod patterns;
+#[path = "codegen/local-instances.rs"]
+mod local_instances;
 #[path = "codegen/properties.rs"]
 mod properties;
 #[path = "codegen/run.rs"]
@@ -510,6 +512,7 @@ struct Emitter<'a> {
     instance: Option<GenericInstanceId>,
     function: Function,
     locals: Vec<(SymbolId, R)>,
+    local_instances: Vec<(GenericInstanceId, R)>,
     next_label: u32,
     native_links: Vec<NativeLink>,
     data_links: Vec<DataLink>,
@@ -531,6 +534,7 @@ impl<'a> Emitter<'a> {
                 items: vec![],
             },
             locals: vec![],
+            local_instances: vec![],
             next_label: 0,
             native_links: vec![],
             data_links: vec![],
@@ -655,6 +659,9 @@ impl<'a> Emitter<'a> {
                 } else {
                     self.mir.reference_instances[node.index()]
                 };
+                if let Some(value) = instance.and_then(|instance| self.lookup_instance(instance)) {
+                    return Ok(value);
+                }
                 if let Some(instance) = instance
                     && let Some(node_id) = self.graph.instance(instance)
                 {
@@ -1056,6 +1063,11 @@ impl<'a> Emitter<'a> {
                 kind: BindingKind::Let | BindingKind::Def | BindingKind::Impl,
                 ..
             } => {
+                if let Some(symbol) = self.mir.hir_symbols[node.index()]
+                    && !self.mir.symbol_generics[symbol.index()].is_empty()
+                    && self.graph.global(symbol).is_none() {
+                    return self.local_instance_binding(node, symbol);
+                }
                 let value = self.expression(self.child(node, Role::Value))?;
                 if let Some(symbol) = self.mir.hir_symbols[node.index()] {
                     if matches!(self.mir.hir[node.index()].kind, HirKind::Binding { kind: BindingKind::Def, .. })
@@ -1074,7 +1086,9 @@ impl<'a> Emitter<'a> {
             }
             HirKind::Block => {
                 let scope = self.locals.len();
+                let instance_scope = self.local_instances.len();
                 let bindings = self.children(node, Role::Binding);
+                self.allocate_local_instances(node, &bindings);
                 // Stable symbols and closed types identify the block-wide
                 // function slots. Closures capture these handles before their
                 // bodies are installed, supporting self and mutual recursion.
@@ -1083,6 +1097,7 @@ impl<'a> Emitter<'a> {
                         && self.mir.types[self.ty(binding)?.index()].constructor == TypeConstructor::Function
                     {
                         let symbol = self.mir.hir_symbols[binding.index()].expect("function SymbolId");
+                        if !self.mir.symbol_generics[symbol.index()].is_empty() { continue; }
                         if self.lookup(symbol).is_none() {
                             let dst = self.register();
                             self.emit(binding, O::AllocFunc { dst, static_id: None });
@@ -1095,6 +1110,7 @@ impl<'a> Emitter<'a> {
                 }
                 let value = self.expression(self.child(node, Role::Result))?;
                 self.locals.truncate(scope);
+                self.local_instances.truncate(instance_scope);
                 value
             }
             HirKind::InterpolatedString => {
@@ -1275,7 +1291,7 @@ impl<'a> Emitter<'a> {
                     }
                     pending.extend(runtime_children(self.mir, n));
                 }
-                let captures = references
+                let mut captures = references
                     .into_iter()
                     .map(|symbol| {
                         let capture = self.lookup(symbol).unwrap();
@@ -1284,6 +1300,13 @@ impl<'a> Emitter<'a> {
                         capture
                     })
                     .collect::<Vec<_>>();
+                for instance in self.referenced_instances(node) {
+                    if let Some(capture) = self.lookup_instance(instance) {
+                        let register = nested.register();
+                        nested.local_instances.push((instance, register));
+                        captures.push(capture);
+                    }
+                }
                 nested.function.capture_count = captures.len() as u32;
                 let result = nested.expression(self.child(node, Role::Body))?;
                 let result = nested.adjust_value(self.child(node, Role::ReturnType), result)?;
@@ -1391,6 +1414,27 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn implicit_schemes_execute_closed_global_and_local_instances() {
+        let mir = graph("import \"./math\" { identity }; export def answer = if identity(\"text\") == \"text\" { identity(42) } else { 0 };", "export def identity = fn(value) { value };");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+        for source in [
+            "def identity = fn(value) { value }; export def answer = if identity(\"text\") == \"text\" { identity(42) } else { 0 };",
+            "export def answer = { let identity = fn(value) { value }; if identity(\"text\") == \"text\" && identity@[Int](3) == 3 { identity(42) } else { 0 } };",
+            "export def answer = { def first = fn(value) { second(value) }; def second = fn(value) { value }; if first(\"text\") == \"text\" { first(42) } else { 0 } };",
+            "export def answer = { let captured = 42; let keep = fn(value) { captured }; if keep(\"text\") == 42 { keep(True) } else { 0 } };",
+            "def outer = fn(value) { let keep = fn(other) { value }; (keep(True), keep(\"text\")) }; export def answer = if outer(\"text\").0 == \"text\" { outer(42).1 } else { 0 };",
+            "export def answer = { let identity = fn(value) { value }; let use_it = fn(value: Int) { identity(value) }; if identity(\"text\") == \"text\" { use_it(42) } else { 0 } };",
+            "export def answer = { let identity = fn(value) { value }; if identity@[Int] == identity@[Int] { identity(42) } else { 0 } };",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            let artifact = compile(sealed, entry(&mir)).unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{source}");
+        }
+    }
+
     #[test]
     fn propagation_uses_solved_families_and_nearest_function_boundary() {
         for source in [

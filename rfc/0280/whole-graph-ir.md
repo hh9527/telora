@@ -5,6 +5,48 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Implicit closure schemes and local instances share the static graph (2026-09-11)
+
+Unannotated closure-valued let/def declarations now participate in a resolved
+SymbolId dependency graph. Recursive SCCs retain monomorphic slots. Other
+references wait for the declaration's generalization boundary, then instantiate
+its scheme using the existing type-argument and instance tables. Nested schemes
+finish before their containing declaration escapes. No environment is cloned
+and no legacy inference module is called.
+
+Generalization visits normalized signature leaves in structural order, retaining
+captured unknowns and solver-only restrictions. Owned numeric/not/ordered/member
+constraints cannot become unconstrained generic parameters. Ordered comparisons
+now retain an explicit Int/Float/String constraint. Synthesized type-only binders
+receive deterministic appended SymbolIds and A/B/... display names; existing
+resolved symbols and syntax references are not renumbered or re-resolved.
+
+The synthetic module export record now preserves a declaration scheme instead
+of creating a monomorphic use. This closes unused exported apply/select/wrap
+signatures as well as functions with concrete call sites. Explicit type
+applications wait for the same authoritative declaration outcome.
+
+Local generic instances are completed statically, including enclosing binder
+substitutions in their instance keys. Codegen allocates per-instance function
+handles, emits the already-instantiated closures and captures referenced local
+handles. Forward local definitions and repeated references preserve their
+instance identity. There is no downstream substitution, implementation search,
+VM change or optimization pass.
+
+Validation: 46 type-resolve and 62 codegen tests pass. Tests cover Int/String
+reuse, explicit arguments, dependency order, partial annotations, unused exported
+schemes, captures, cross-module references, recursive/alias/constraint rejection,
+stable existing symbol IDs, deterministic MIR dumps and readable signatures.
+The full language runner passes test/type-inference. test/compiler-semantics
+now executes 36 cases: 34 pass, checked_casts and tail_calls fail (the latter
+hits the 1024-frame limit). This is not full language acceptance. The
+query/inference-contracts fixture still exposes metadata branch joining and
+nested callable-shape gaps such as factory()(); provenance and other semantic
+contracts also remain open. Full legacy removal is unfinished.
+Logs: /tmp/mir-generalization-final-types.log,
+/tmp/mir-generalization-final-codegen.log and
+/tmp/mir-generalization-final-language.log. No performance measurement was made.
+
 ### Propagation closes return evidence before mechanical branching (2026-09-11)
 
 The type pass now records lexical propagation boundaries as stable HIR edges,

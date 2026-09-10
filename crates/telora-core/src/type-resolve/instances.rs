@@ -232,6 +232,17 @@ impl Solver<'_> {
                 self.substitute_resolved(ty, substitutions, canonical),
             ));
         }
+        let declaration = &self.mir.symbols[symbol.index()];
+        if declaration.module.is_some_and(|module| declaration.scope != self.mir.module_scopes[module.index()]) {
+            // Local instances also close captured enclosing binders. Preserve
+            // these substitutions in the static instance key, never in codegen.
+            for (&parameter, &ty) in substitutions {
+                if !arguments.iter().any(|(existing, _)| *existing == parameter) {
+                    arguments.push((parameter, ty));
+                }
+            }
+            arguments.sort_by_key(|(parameter, _)| *parameter);
+        }
         Some((symbol, arguments))
     }
 

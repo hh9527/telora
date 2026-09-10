@@ -23,6 +23,35 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::Reference { node, symbol } => {
+                if self.generalizations[symbol.index()].is_some() {
+                    return Ok(Some(Task::Reference { node, symbol }));
+                }
+                self.reference_type(node, symbol);
+                self.revision += 1;
+                None
+            }
+            Task::TypeApply { node } => {
+                let callee = self.child(node, Role::Callee).unwrap();
+                if self.tasks.iter().any(|task| matches!(task, Task::Reference { node, .. } if *node == callee)) {
+                    return Ok(Some(Task::TypeApply { node }));
+                }
+                if self.mir.hir[callee.index()].resolution.is_some_and(|slot| matches!(self.mir.resolve_slots[slot.index()], ResolveState::Bound(symbol) if self.generalizations[symbol.index()].is_some())) {
+                    return Ok(Some(Task::TypeApply { node }));
+                }
+                let parameters = self.mir.type_instances[callee.index()].clone();
+                let arguments = self.children(node, Role::Argument);
+                if parameters.is_empty() || parameters.len() != arguments.len() {
+                    self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
+                        "explicit type application requires a generic binding with matching arity".into());
+                } else {
+                    for ((_, parameter), argument) in parameters.into_iter().zip(arguments) {
+                        self.assign(argument, TypeConstructor::Meta, vec![parameter]);
+                    }
+                    self.same(node, callee.ty());
+                }
+                None
+            }
             Task::Propagate { node } => self.propagate(node),
             Task::PropagationBottom { body, success } => {
                 if self.pending_blocks[body.index()] || self.term(body.ty()).is_none() {
