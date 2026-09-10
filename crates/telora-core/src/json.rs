@@ -554,11 +554,10 @@ pub fn parse_json_registered(sources: &SourceDatabase, source_id: SourceId) -> J
     let value = if diagnostics.is_empty() {
         match JsonLowerer::new(source_id, source.text(), &parsed.syntax).validated_plan() {
             Ok(plan) => {
-                let contract = crate::types::data_plan_contract(&plan);
                 let mut heap = Heap::work();
                 let value = materialize_data_plan(&plan, &mut heap, None);
                 Some(SourcedValue {
-                    value: DataWorld::new(heap, value.value, contract),
+                    value: DataWorld::new(heap, value.value),
                     provenance: value.provenance,
                 })
             }

@@ -1,6 +1,5 @@
 include!("heap/value.rs");
 include!("heap/value-builder.rs");
-include!("heap/type-graph-builder.rs");
 include!("heap/object.rs");
 include!("heap/storage.rs");
 include!("heap/view.rs");

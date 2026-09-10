@@ -15,13 +15,10 @@ mod test_protocol;
 pub use test_protocol::{TestContext, TestHost, TestLimits, TestSource};
 pub mod execution_link;
 pub mod execution_graph;
-mod compiler;
 mod core;
 pub mod document;
-mod elaboration;
 mod fmt;
 mod heap;
-pub mod hir;
 pub mod json;
 pub mod lexer;
 pub mod lir;
@@ -37,7 +34,6 @@ pub mod type_resolve;
 pub mod module_id;
 pub mod package;
 pub mod parser;
-mod pattern;
 mod property;
 pub mod query;
 mod regex;
@@ -60,10 +56,6 @@ pub use document::{
     DocumentSnapshot, DocumentText, DocumentVersion, PositionEncoding, TextEdit, TextPosition,
 };
 pub use heap::TextRef;
-pub use hir::{
-    HirDefinition, HirDefinitionId, HirDefinitionKind, HirExpression, HirExpressionId, HirProgram,
-    HirReference, HirReferenceId, HirResolution, HirTypeParameter,
-};
 pub use json::{
     JsonError, JsonParse, Provenance, SourcedValue, ValuePath, ValuePathSegment, parse_json,
     parse_json_registered, parse_json_with_provenance,
@@ -92,8 +84,7 @@ pub use source::{
 pub use toml::{TomlParse, parse_toml_registered};
 pub use type_store::TypeId;
 pub use types::{
-    Analysis, AnalysisTypeId, DeclaredTypeDescriptor, ModuleInterface,
-    SemanticDependencyGraph, SemanticDependencyNode, TraitImplementation, TypeCapability,
+    AnalysisTypeId, DeclaredTypeDescriptor, TypeCapability,
     TypeConstraint, TypeGraph, TypeNode, TypeParameter, TypeParameterId, TypeScheme,
 };
 pub use value::{Atom, BuiltinAtom, NativeError, NativeFunction, NativeType, OpaqueValue};

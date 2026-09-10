@@ -104,9 +104,6 @@ pub enum TypeNode {
 #[derive(Clone, Default)]
 pub struct TypeGraph {
     nodes: Vec<TypeNode>,
-    // Static contradictions remain analysis results even when their containing
-    // type has no root yet. They must never trigger runtime type discovery.
-    elaboration_conflicts: Vec<Diagnostic>,
     names: BTreeMap<String, AnalysisTypeId>,
     declared: HashMap<crate::value::DeclaredTypeId, AnalysisTypeId>,
     interned: RawTable<AnalysisTypeId>,
@@ -160,19 +157,6 @@ impl TypeGraph {
             .iter()
             .enumerate()
             .map(|(index, node)| (AnalysisTypeId(index as u32), node))
-    }
-
-    pub(crate) fn intern_module_interface(&mut self, interface: &ModuleInterface) -> AnalysisTypeId {
-        for (name, descriptor) in &interface.concrete_types {
-            let ty = self.intern_descriptor(descriptor);
-            self.names.insert(name.clone(), ty);
-        }
-        let fields = interface
-            .exports
-            .iter()
-            .map(|(name, scheme)| (name.clone(), self.intern_descriptor(&scheme.body)))
-            .collect();
-        self.intern_node(TypeNode::Struct(fields))
     }
 
     pub fn display(&self, id: AnalysisTypeId) -> String {

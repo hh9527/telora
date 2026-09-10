@@ -165,43 +165,31 @@ pub struct DataWorld {
 
 struct HostData {
     heap: Heap,
-    contract: Option<crate::types::TypeDescriptor>,
 }
 
 impl DataWorld {
-    pub(crate) fn new(heap: Heap, root: Val, contract: Option<crate::types::TypeDescriptor>) -> Self {
+    pub(crate) fn new(heap: Heap, root: Val) -> Self {
         Self {
-            data: Arc::new(HostData { heap, contract }),
+            data: Arc::new(HostData { heap }),
             root,
         }
     }
 
     pub fn int(value: i64) -> Self {
-        Self::new(Heap::work(), Val::unknown(DecodedValue::Int(value)), Some(crate::types::TypeDescriptor::Int))
+        Self::new(Heap::work(), Val::unknown(DecodedValue::Int(value)))
     }
 
     pub fn float(value: f64) -> Result<Self, &'static str> {
         value
             .is_finite()
-            .then(|| Self::new(Heap::work(), Val::unknown(DecodedValue::Float(value)), Some(crate::types::TypeDescriptor::Float)))
+            .then(|| Self::new(Heap::work(), Val::unknown(DecodedValue::Float(value))))
             .ok_or("Telora Float must be finite")
     }
 
     pub fn string(value: &str) -> Self {
         let mut heap = Heap::work();
         let root = Val::unknown(heap.string(None, value));
-        Self::new(heap, root, Some(crate::types::TypeDescriptor::String))
-    }
-
-    pub(crate) fn static_interface(&self, name: &str) -> Option<crate::types::ModuleInterface> {
-        let body = self.data.contract.as_ref()?.clone();
-        Some(crate::types::ModuleInterface {
-            value_binding: Some(name.to_owned()),
-            exports: std::collections::BTreeMap::from([(name.to_owned(), crate::types::TypeScheme {
-                parameters: Vec::new(), constraints: Vec::new(), body,
-            })]),
-            ..Default::default()
-        })
+        Self::new(heap, root)
     }
 
     pub fn value(&self) -> ValueRef<'_> {

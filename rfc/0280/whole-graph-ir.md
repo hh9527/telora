@@ -5,6 +5,38 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove the old compiler, HIR analyzer and tool inference chain (2026-09-11)
+
+Removed the private expression compiler, elaborator, old HIR resolver and
+pattern analyzer, their tests, and the old GenericInference/tool evaluator
+chain. This includes annotation/static contract/family/property/construction
+planning, dependency plans, old analysis/interface records and the tool graph
+heap materializer. Removed the obsolete inference-profile Cargo feature.
+No compiler adapter or VM-based static-analysis fallback replaces these modules.
+The new MIR HIR arena, module/symbol/type passes and codegen remain intact.
+Repository Rust sources have no references to GenericInference, ToolEvaluator,
+ModuleInterface, PreparedExternalExpression or the old HirProgram.
+
+DataWorld no longer stores a legacy descriptor contract or exports an old
+static_interface. JSON/YAML/TOML parsing no longer constructs that unused
+contract graph after validating a data plan; value materialization and source
+provenance remain. This follows the new pipeline's separation of static data
+module interfaces from runtime data loading.
+
+About 22,000 lines were deleted. The descriptor/type graph, bound substitution
+and decoding support still consumed by VM/heap remain; this is not yet removal
+of all descriptor runtime paths. Workspace warnings fell from 353 to 46, without
+warning suppression. Old tests were removed with their implementation and are
+not counted as increased coverage.
+
+Validation: workspace compilation/build and all workspace library tests pass
+(388 total, including telora-core 336 and telora 28). Real CLI suites pass:
+compiler-semantics, data-modules, enum-codec, codec-schema and
+codec-construction-check. Logs: /tmp/mir-remove-legacy-compiler-*.log.
+No performance benchmark was run. Generic function values, outstanding
+diagnostic rules, full language acceptance, remaining descriptor runtime
+removal and final performance evaluation still require completion.
+
 ### Remove the old module type solver and execution plan (2026-09-11)
 
 Deleted the old dependency/program-solver/type-check/solved-module files and
