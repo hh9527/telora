@@ -978,6 +978,25 @@ impl<'a> Emitter<'a> {
             HirKind::Float(value) => self.constant(node, Constant::Float(*value)),
             HirKind::String(value) => self.constant(node, Constant::String(value.clone().into())),
             HirKind::Bytes(value) => self.constant(node, Constant::Bytes(value.clone().into())),
+            HirKind::FieldProjection => {
+                let ty = self.ty(node)?;
+                let dict = self.expression(self.child(node, Role::Receiver))?;
+                let mut fields = vec![];
+                for (source, target) in self.children(node, Role::Name).into_iter().zip(self.children(node, Role::Target)) {
+                    let HirKind::Name(source_name) = &self.mir.hir[source.index()].kind else { unreachable!() };
+                    let HirKind::Name(target_name) = &self.mir.hir[target.index()].kind else { unreachable!() };
+                    let field = source_name.clone();
+                    let name = target_name.clone();
+                    let dst = self.register();
+                    self.emit(source, O::GetField { dst, dict, field });
+                    fields.push((name, dst));
+                }
+                let dst = self.register();
+                self.emit(node, O::MakeDict { dst, fields });
+                self.construction_check(node, ty, PropertySite::Type, dst);
+                self.emit(node, O::StampType { dst, src: dst, ty });
+                dst
+            }
             HirKind::Dict => {
                 let ty = self.ty(node)?;
                 let supported = match self.mir.types[ty.index()].constructor {
@@ -1112,6 +1131,16 @@ impl<'a> Emitter<'a> {
                     },
                 };
                 self.emit(node, instruction);
+                dst
+            }
+            HirKind::Binary(B::StructUpdate) => {
+                let ty = self.ty(node)?;
+                let left = self.expression(self.child(node, Role::Left))?;
+                let right = self.expression(self.child(node, Role::Right))?;
+                let dst = self.register();
+                self.emit(node, O::StructUpdate { dst, left, right });
+                self.construction_check(node, ty, PropertySite::Type, dst);
+                self.emit(node, O::StampType { dst, src: dst, ty });
                 dst
             }
             HirKind::Binary(operator) => {
@@ -1506,6 +1535,45 @@ pub(crate) mod tests {
             assert_eq!(result.value().as_int(), Some(42), "{source}");
         }
     }
+    #[test]
+    fn struct_updates_preserve_identity_and_contextual_field_types() {
+        for source in [
+            "type Full = struct {x: Int, label: String}; type Patch = struct {x: Int}; def base: Full = {x: 1, label: \"base\"}; def patch: Patch = {x: 20}; def updated = base <~ patch <~ {x: 42}; export def answer = if base.x == 1 && updated.label == \"base\" { updated.x } else { 0 };",
+            "type Child = struct {value: Int}; type Parent = struct {child: Child, items: Array(Int)}; def base: Parent = {child: {value: 1}, items: [1]}; def updated = base <~ {child: {value: 42}, items: []}; export def answer = updated.child.value;",
+            "type Box(T) = struct {value: T}; def replace: for(T) Fn(Box(T), T) -> Box(T) = fn(base, value) { base <~ {value: value} }; def base: Box(Int) = {value: 1}; export def answer = replace(base, 42).value;",
+            "type Source = struct {x: Int, y: String}; type Target = struct {value: Int}; def source: Source = {x: 42, y: \"x\"}; def base: Target = {value: 1}; export def answer = (base <~ source.{x as value}).value;",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            let artifact = compile(sealed, entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{source}");
+        }
+        let source = "@check(fn(value) { if value.x > 0 { Ok(()) } else { Err(blame!(\"update rejected\", value)) } }) type Item = struct {x: Int}; def base: Item = {x: 1}; export def answer = base <~ {x: 0};";
+        let mir = graph(source, "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        assert!(execute(artifact).err().expect("construction rejection").to_string().contains("update rejected"));
+    }
+
+    #[test]
+    fn field_projection_uses_solved_nominal_shapes_and_checks() {
+        for source in [
+            "type Source = struct {x: Int, y: String}; type Target = struct {value: Int}; def source: Source = {x: 42, y: \"x\"}; def selected: Target = source.{x as value}; export def answer = selected.value;",
+            "type Source(T) = struct {value: T}; type Target(T) = struct {item: T}; def select: for(T) Fn(Source(T)) -> Target(T) = fn(value) { value.{value as item} }; def source: Source(Int) = {value: 42}; export def answer = select(source).item;",
+            "type Source(T) = struct {value: T}; type Target(T) = struct {item: T}; export def answer = do { let source: Source(Int) = {value: 42}; let projected: Target(Int) = source.{value as item}; projected.item };",
+            "type Source = struct {x: Int}; type Target = struct {a: Int, b: Int}; def source: Source = {x: 21}; def selected: Target = source.{x as a, x as b}; export def answer = selected.a + selected.b;",
+            "type Source = struct {x: Int}; type Empty = struct {}; def source: Source = {x: 42}; def selected: Empty = source.{}; export def answer = if selected == {} { 42 } else { 0 };",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            let artifact = compile(sealed, entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{source}");
+        }
+        let source = "type Source = struct {x: Int}; @check(fn(value) { Err(blame!(\"projection rejected\", value)) }) type Target = struct {x: Int}; def source: Source = {x: 42}; export def answer: Target = source.{x};";
+        let mir = graph(source, "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        assert!(execute(artifact).err().expect("construction rejection").to_string().contains("projection rejected"));
+    }
+
     #[test]
     fn interpolation_resolves_display_calls_before_codegen() {
         for source in [

@@ -19,6 +19,8 @@ mod instances;
 mod layouts;
 #[path = "type-resolve/members.rs"]
 mod members;
+#[path = "type-resolve/field-projection.rs"]
+mod field_projection;
 #[path = "type-resolve/properties.rs"]
 mod properties;
 #[cfg(test)]
@@ -26,6 +28,8 @@ mod properties;
 mod tests;
 
 enum Task {
+    StructUpdate { node: HirId, left: TypeSlotId, right: TypeSlotId },
+    FieldProjection { node: HirId, receiver: TypeSlotId },
     ShapeEqual { left: TypeSlotId, right: TypeSlotId, location: Option<Location> },
     Unchecked { node: HirId, argument: TypeSlotId },
     RefineInstance {
@@ -186,6 +190,7 @@ pub fn resolve(mir: &mut Mir) {
             }
         }
     }
+    solver.validate_field_projections();
     solver.finalize();
     solver.finalize_properties();
     solver.finalize_checks();
@@ -513,6 +518,9 @@ impl Solver<'_> {
                     .collect();
                 self.assign(node, TypeConstructor::ArrayLiteral, items);
             }
+            HirKind::FieldProjection => {
+                self.tasks.push(Task::FieldProjection { node, receiver: self.child(node, Role::Receiver).unwrap().ty() });
+            }
             HirKind::Dict => {
                 let mut fields = vec![];
                 for field in self.children(node, Role::Field) {
@@ -666,6 +674,12 @@ impl Solver<'_> {
                 }
             }
             HirKind::InferredTypeArgument => {}
+            HirKind::Binary(BinaryOperator::StructUpdate) => {
+                let left = self.child(node, Role::Left).unwrap().ty();
+                let right = self.child(node, Role::Right).unwrap().ty();
+                self.same(node, left);
+                self.tasks.push(Task::StructUpdate { node, left, right });
+            }
             HirKind::Binary(operator) => {
                 let operator = *operator;
                 let left = self.child(node, Role::Left).unwrap();

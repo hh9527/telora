@@ -2,6 +2,24 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn record_operations_reject_invalid_shapes_without_runtime_inference() {
+    for (source, message) in [
+        ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source.{x};", "field projection requires a named struct target context"),
+        ("type Foo = struct {x: Int}; def source: Dict(Int) = {x: 1}; export def bad: Foo = source.{x};", "field projection requires a named struct source"),
+        ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad: Foo = source.{missing as x};", "unknown projection source field"),
+        ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad: Foo = source.{x, x};", "duplicate projection destination"),
+        ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source <~ {missing: 1};", "unknown struct update field"),
+        ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source <~ {x: \"wrong\"};", "incompatible types"),
+        ("def source: Dict(Int) = {x: 1}; export def bad = source <~ {x: 2};", "struct update requires a named struct operand"),
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err(), "{source}");
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains(message)), "{source}\n{}", mir.dump());
+    }
+}
+
+#[test]
 fn syntax_recovery_keeps_independent_type_conflicts_without_a_fake_result_obligation() {
     let mut mir = module_resolve::resolve(vec![ModuleSpec {
         native: None, name: "main".into(), kind: ModuleKind::Source, implicit_imports: vec![],

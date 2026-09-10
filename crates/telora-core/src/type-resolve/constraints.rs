@@ -23,6 +23,8 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::StructUpdate { node, left, right } => self.struct_update(node, left, right),
+            Task::FieldProjection { node, receiver } => self.field_projection(node, receiver),
             Task::Block { node, statements, result } => {
                 let bottom = statements.iter().any(|&slot| self.term(slot).is_some_and(|term| term.constructor == TypeConstructor::Never));
                 if bottom {

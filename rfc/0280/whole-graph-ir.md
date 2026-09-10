@@ -5,6 +5,34 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Named field projection and basic struct update use solved shapes (2026-09-11)
+
+FieldProjection constraints read the source nominal member skeleton, substitute
+generic payloads, validate selected/renamed fields and duplicate destinations,
+then fit the projected record to the target nominal context. A projection used
+directly as an update contribution keeps its partial record shape. Provisional
+Record sources wait for annotation constraints to settle; after convergence,
+uncontextualized sources/targets produce static diagnostics.
+
+StructUpdate now keeps the left operand's nominal identity and checks each
+contributed field against its existing skeleton. Supported contributions are
+named structs, explicit record fields and projections. Nested field literals
+receive their existing expected-type constraints; no new nominal type is guessed.
+Spread contributions remain unsupported and are not counted as completed update
+semantics. Codegen mechanically reads/projects/updates fields with existing
+opcodes, applies construction checks and stamps the solved target TypeId. No VM
+changes are included.
+
+Validation: 58 codegen and 39 type-resolve tests pass. New tests cover renaming,
+empty/repeated-source projections, generic/local annotated projections, chained
+updates, nested contexts, immutable bases, generic identity, construction-check
+rejection and invalid field/type/source contexts. The full language aggregator
+reports test/struct-projection, query/struct-projection and query/struct-update
+as passing. It still rejects the overall suite: projection/update provenance,
+spread update semantics and several diagnostic contracts remain open. Logs:
+/tmp/mir-record-operations-codegen.log, /tmp/mir-record-operations-types.log and
+/tmp/mir-record-language.log. No performance measurement was made.
+
 ### Recovered containers do not invent result obligations (2026-09-11)
 
 Parser recovery may retain a module block without a result expression. Type
