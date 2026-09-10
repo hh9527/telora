@@ -53,18 +53,49 @@ struct StaticImportScope {
     prelude: Option<ModuleId>,
 }
 
+#[derive(Clone, Copy, Default)]
+enum StaticExportState {
+    #[default]
+    Unknown,
+    Resolving,
+    Known(StaticNameKind),
+}
+
 struct StaticNames<'a> {
     graph: &'a ModuleGraph,
-    exports: HashMap<(ModuleId, String), StaticNameKind>,
-    visiting: HashSet<(ModuleId, String)>,
+    export_names: Vec<HashMap<&'a str, u32>>,
+    exports: Vec<Vec<StaticExportState>>,
     scopes: Vec<StaticImportScope>,
     diagnostics: Vec<Vec<Diagnostic>>,
 }
 
 impl<'a> StaticNames<'a> {
     fn new(graph: &'a ModuleGraph) -> Self {
-        let mut names = Self { graph, exports: HashMap::new(), visiting: HashSet::new(),
+        let mut names = Self { graph, export_names: Vec::new(), exports: Vec::new(),
             scopes: Vec::new(), diagnostics: Vec::new() };
+        // Index every provider before resolving any consumer. Names borrow the
+        // source inventory; the row identity does not depend on lookup order.
+        for module in &graph.modules {
+            let mut index = HashMap::new();
+            let count = if let Some(program) = names.program(module.id) {
+                if let ExprKind::Dict(fields) = &program.value.body.value.result.value {
+                    for (row, field) in fields.iter().enumerate() {
+                        if let Some(name) = &field.value.name {
+                            index.entry(name.value.as_str()).or_insert_with(||
+                                u32::try_from(row).expect("export count exceeds u32"));
+                        }
+                    }
+                    fields.len()
+                } else { 0 }
+            } else if graph.resolved[module.id.index()].as_ref().is_some_and(|resolved|
+                static_data_kind(resolved.format).is_some())
+            {
+                index.insert("data", 0);
+                1
+            } else { 0 };
+            names.export_names.push(index);
+            names.exports.push(vec![StaticExportState::Unknown; count]);
+        }
         for module in &graph.modules {
             let (scope, diagnostics) = names.import_scope(module.id);
             names.scopes.push(scope);
@@ -78,19 +109,8 @@ impl<'a> StaticNames<'a> {
     }
 
     fn export_target(&self, module: ModuleId, name: &str) -> Option<StaticImportTarget> {
-        let Some(program) = self.program(module) else {
-            return if name == "data" && self.graph.resolved[module.index()].as_ref().is_some_and(|resolved|
-                static_data_kind(resolved.format).is_some())
-            { Some(StaticImportTarget::Export { module, index: 0 }) }
-            else { None };
-        };
-        match &program.value.body.value.result.value {
-            ExprKind::Dict(fields) => fields.iter().position(|field|
-                field.value.name.as_ref().is_some_and(|field| field.value == name))
-                .map(|index| StaticImportTarget::Export { module,
-                    index: u32::try_from(index).expect("export count exceeds u32") }),
-            _ => None,
-        }
+        self.export_names[module.index()].get(name)
+            .map(|index| StaticImportTarget::Export { module, index: *index })
     }
 
     fn import_scope(&self, module: ModuleId) -> (StaticImportScope, Vec<Diagnostic>) {
@@ -149,24 +169,29 @@ impl<'a> StaticNames<'a> {
     fn target_kind(&mut self, target: StaticImportTarget) -> StaticNameKind {
         match target {
             StaticImportTarget::Namespace(module) => StaticNameKind::Namespace(module),
-            StaticImportTarget::Export { module, .. } => self.export(module,
-                target.exported_name(self.graph).expect("selected export")),
+            StaticImportTarget::Export { module, index } => self.export_kind(module, index),
         }
     }
 
     fn export(&mut self, module: ModuleId, name: &str) -> StaticNameKind {
-        let key = (module, name.to_owned());
-        if let Some(kind) = self.exports.get(&key) { return *kind; }
-        if !self.visiting.insert(key.clone()) { return StaticNameKind::Unresolved; }
+        self.export_target(module, name).map_or(StaticNameKind::Unresolved,
+            |target| self.target_kind(target))
+    }
+
+    fn export_kind(&mut self, module: ModuleId, index: u32) -> StaticNameKind {
+        match self.exports[module.index()][index as usize] {
+            StaticExportState::Known(kind) => return kind,
+            StaticExportState::Resolving => return StaticNameKind::Unresolved,
+            StaticExportState::Unknown => {}
+        }
+        self.exports[module.index()][index as usize] = StaticExportState::Resolving;
         let result = self.program(module).and_then(|program| {
             let ExprKind::Dict(fields) = &program.value.body.value.result.value else { return None; };
-            fields.iter().find(|field| field.value.name.as_ref().is_some_and(|field| field.value == name))
-                .map(|field| &field.value.value)
+            Some(&fields[index as usize].value.value)
         });
         let kind = result.map_or(StaticNameKind::Data, |expression|
             self.expression(module, expression, &mut Vec::new()));
-        self.visiting.remove(&key);
-        self.exports.insert(key, kind);
+        self.exports[module.index()][index as usize] = StaticExportState::Known(kind);
         kind
     }
 

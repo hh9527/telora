@@ -135,12 +135,23 @@ export values; their availability does not depend on referencing an arbitrary
 export. This remains a descriptor-based bridge until facts and declarations
 reside in the same session arena.
 
-The current single-name export lookup still scans source result rows. The next
-resolve step must index each module's export names once and connect the indexed
-rows to canonical source declarations (following aliases/re-exports). Building
-that provider-side index is distinct from eagerly populating every consumer's
-wildcard bindings. Imported HIR references must retain those identities, rather
-than merely retaining a spelling plus a module-local External marker.
+Each module's export names are now indexed once before consumer resolution.
+The index borrows source names and points to fixed source result rows. Role
+solving uses a parallel array with Unknown/Resolving/Known states; queries do
+not allocate string-keyed role records or rescan exported fields. Building this
+provider-side index does not populate consumer wildcard bindings or classify
+unused exports. Tests check that resolution retains the preallocated targets.
+
+The next identity step must connect indexed rows to canonical source declarations
+(following aliases/re-exports). Imported HIR references must retain those
+identities, rather than merely retaining a spelling plus a module-local External
+marker. Source row identity alone is not canonical declaration identity.
+
+HIR currently normalizes local definition/reference/expression IDs after indexing
+each source. Attach cross-module declaration edges after that normalization,
+using the final module-qualified HIR identity. Export aliases need edges to that
+source record; they must not allocate independent type solutions. The session
+then assigns dense syntax-slot ranges without changing declaration identity.
 
 HIR currently marks imported references as `External` plus a name. The session
 IR must attach the resolved definition identity at that boundary, not defer the

@@ -189,15 +189,29 @@ fn open_imports_are_search_scopes_and_only_references_create_inputs() {
     let root = graph.id(&root.id).unwrap();
     let mut names = StaticNames::new(&graph);
     assert_eq!(names.scopes[root.index()].open.len(), 1);
+    let provider = names.scopes[root.index()].open[0];
+    let exported = ["used", "unused", "Choice", "pick", "skip", "binder"].map(|name|
+        (name, names.export_target(provider, name).expect("provider exports indexed before resolve")));
+    assert!(names.export_target(provider, "missing").is_none());
     for name in ["used", "unused", "Choice", "pick", "skip", "binder"] {
         assert!(!names.scopes[root.index()].direct.contains_key(name));
     }
-    assert!(names.exports.is_empty(), "scope creation must not classify every export");
+    assert!(names.exports.iter().flatten().all(|state| matches!(state, StaticExportState::Unknown)),
+        "scope creation must not classify every export");
     let resolved = names.module_resolution(root).unwrap();
     assert!(resolved.diagnostics.is_empty());
+    for (name, target) in exported {
+        assert_eq!(names.export_target(provider, name), Some(target),
+            "resolving a consumer must not change provider identities");
+        if let Some(selected) = resolved.imports.get(name) { assert_eq!(*selected, target); }
+    }
     for name in ["used", "Choice", "pick"] { assert!(resolved.imports.contains_key(name), "{name}"); }
     for name in ["unused", "skip", "binder"] { assert!(!resolved.imports.contains_key(name), "{name}"); }
-    assert!(!names.exports.keys().any(|(_, name)| name == "unused" || name == "skip"),
-        "unreferenced exports must not become classification work");
+    for name in ["unused", "skip"] {
+        let StaticImportTarget::Export { module, index } = names.export_target(provider, name).unwrap()
+            else { panic!("expected export row"); };
+        assert!(matches!(names.exports[module.index()][index as usize], StaticExportState::Unknown),
+            "unreferenced exports must not become classification work");
+    }
     fs::remove_dir_all(directory).unwrap();
 }
