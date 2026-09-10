@@ -5,6 +5,32 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Delete the legacy Engine/module implementation (2026-09-11)
+
+Removed module.rs and all 27 files under module/, including the old graph and
+static-name wrapper, loader, module preparation/cache artifacts, best-effort
+workspace evaluation, selected-entry loader and Engine run/eval/check APIs.
+Their root exports are gone; no feature flag or compatibility adapter retains
+them. This removes approximately 11,500 source/test lines. CLI configuration
+now belongs to the CLI as ExecutionConfig; its unused module_quota field was
+removed, while the existing session quota and data limits remain unchanged.
+
+Engine-dependent module and semantic integration tests were removed with the
+deleted implementation. The independent semantic-interface arena test remains.
+The catalog cycle test now checks canonical identity around the cycle through
+ModuleResolver, rather than invoking the old loader's cycle rejection policy.
+Whole-graph module/symbol/type passes own cycle handling, as already covered by
+their tests. Deleted files remain available in Git history for case migration.
+
+Validation: cargo check --workspace and CLI build succeed; codegen 88/88,
+VM 48/48, module catalog 18/18 and telora library 28/28 pass. Logs:
+/tmp/mir-remove-engine-{check,codegen,vm,catalog,editor,build}.log.
+The deletion exposes 43 unused-code warnings in remaining old compiler/HIR/
+semantic/descriptor helpers; these have not been suppressed. They identify
+further removal work, not a clean final state. Old compiler/types and VM
+descriptor dispatch still exist; full corner-case acceptance and the final
+performance assessment remain outstanding.
+
 ### Remaining runtime split: deletion must include its legacy producers (2026-09-11)
 
 Read-only call-site inspection after the host-contract extraction confirms that

@@ -34,7 +34,6 @@ pub mod module_resolve;
 pub mod symbol_resolve;
 #[path = "type-resolve.rs"]
 pub mod type_resolve;
-pub mod module;
 pub mod module_id;
 pub mod package;
 pub mod parser;
@@ -72,11 +71,6 @@ pub use json::{
     parse_json_registered, parse_json_with_provenance,
 };
 pub use lexer::{FrontendError, SourceLocation};
-pub use module::{
-    Engine, EngineBuilder, EngineConfig,
-    InstantiatedModule, LoadedModule, ModuleError, PendingModule, evaluate_expression_module,
-    evaluate_expression_module_with_quota, evaluate_expression_module_with_quota_and_debug_sink,
-};
 pub use module_id::{
     FIRST_DYNAMIC_MODULE_LOCAL, FuncId, ModuleCName, ModuleCatalogEntry, ModuleCatalogOrigin,
     ModuleFormat, ModuleId, ModuleResolver, ModuleVendor, ModuleVisibility, ResolveModuleError,

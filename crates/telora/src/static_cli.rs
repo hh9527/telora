@@ -71,12 +71,12 @@ pub fn check(
         let artifact = mir.seal().and_then(telora_core::codegen::compile_check);
         let linked = artifact.and_then(|artifact| {
             telora_core::execution_link::link_entry_with_data(artifact, |link| {
-                inventory.read_data(link, crate::engine_config().data_limits.file_size)
+                inventory.read_data(link, crate::execution_config().data_limits.file_size)
             })
         });
         match linked {
             Ok(linked) => {
-                let config = crate::engine_config();
+                let config = crate::execution_config();
                 execution_diagnostics = telora_core::Vm::new()
                     .with_debug_sink(std::sync::Arc::new(crate::StderrDebugSink))
                     .check_linked(

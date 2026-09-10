@@ -135,7 +135,7 @@ fn prepare_solved(
     }
     .map_err(&render)?;
     let linked = telora_core::execution_link::link_entry_with_data(artifact, |link| {
-        inventory.read_data(link, crate::engine_config().data_limits.file_size)
+        inventory.read_data(link, crate::execution_config().data_limits.file_size)
     })
     .map_err(&render)?;
     Ok((linked, value_type, mir.sources))
@@ -148,8 +148,8 @@ pub(crate) fn run(context: PathBuf, arguments: EvalArgs) -> Result<i32, String> 
     let result = vm
         .execute_linked(
             linked,
-            crate::engine_config().session_quota,
-            crate::engine_config().data_limits,
+            crate::execution_config().session_quota,
+            crate::execution_config().data_limits,
             &mut sources,
         )
         .map_err(|error| error.to_string())?;
@@ -161,7 +161,7 @@ pub(crate) fn run(context: PathBuf, arguments: EvalArgs) -> Result<i32, String> 
 pub(crate) fn run_with(context: PathBuf, arguments: EvalWithArgs) -> Result<i32, String> {
     let (linked, value_type, mut source_database) =
         prepare_solved(context, &arguments.selector, true)?;
-    let config = crate::engine_config();
+    let config = crate::execution_config();
     let _ = eval_source_names(&arguments.sources)?;
     let env = std::env::vars().collect::<BTreeMap<_, _>>();
     let sources = collect_eval_sources(arguments.sources, config.data_limits.file_size)?;

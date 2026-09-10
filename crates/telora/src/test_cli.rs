@@ -106,7 +106,7 @@ pub(crate) fn run(context: PathBuf, name: &str) -> Result<i32, String> {
             );
         }
     };
-    let config = crate::engine_config();
+    let config = crate::execution_config();
     let linked =
         match telora_core::execution_link::link_entry_with_data(compiled.bootstrap, |link| {
             inventory.read_data(link, config.data_limits.file_size)

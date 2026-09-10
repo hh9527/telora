@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use telora_core::lir::RegisterId;
 use telora_core::{
-    CallContext, DataLimits, DebugEvent, DebugSink, EesCall, EesReply, EngineConfig,
+    CallContext, DataLimits, DebugEvent, DebugSink, EesCall, EesReply,
     NativeError, NativeFunction, Quota, RunHost,
     RunHostFuture, RunTermination, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
 };
@@ -34,9 +34,13 @@ const STACK_SLOTS: usize = 65_536;
 const ALLOCATION_BYTES: u64 = 256 * 1024 * 1024;
 const QUERY_SCHEMA: &str = "telora.query/v1";
 
-fn engine_config() -> EngineConfig {
-    EngineConfig {
-        module_quota: Quota::new(EVALUATION_FUEL, STACK_SLOTS, ALLOCATION_BYTES),
+struct ExecutionConfig {
+    session_quota: Quota,
+    data_limits: DataLimits,
+}
+
+fn execution_config() -> ExecutionConfig {
+    ExecutionConfig {
         session_quota: Quota::new(EVALUATION_FUEL, STACK_SLOTS, ALLOCATION_BYTES),
         data_limits: DataLimits::default(),
     }
@@ -861,7 +865,7 @@ async fn run_command(
         .ok_or("entry adapter has no configuration export")?;
     let artifact = mir.seal().and_then(|sealed| telora_core::codegen::compile_run(sealed, symbol))
         .map_err(|errors| errors.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
-    let config = engine_config();
+    let config = execution_config();
     let linked = telora_core::execution_link::link_entry_with_data(artifact, |link| inventory.read_data(link, config.data_limits.file_size))
         .map_err(|errors| errors.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
     let mut host = ProcessRunHost::new(entry_sources.locators, arguments.ees_vars);
