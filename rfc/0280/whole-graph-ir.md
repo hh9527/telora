@@ -30,7 +30,7 @@ Two further dependencies are important for integration:
 
 - `types/dependency.rs::solve_module_plan` now takes already resolved HIR.
   The types-only entry obtains constructor roles from the session source graph,
-  while the ordinary analyzer still prepares HIR from its external interfaces.
+  while ordinary loader callers still prepare HIR from their external interfaces.
   Ordinary loading must migrate to the same session preparation boundary.
 - `heap/type-graph-builder.rs::type_graph_values_in` already consumes graph IDs,
   retains a flat value table, and reserves nominal metadata before following
@@ -67,6 +67,16 @@ steps 1–4. Any transitional code must serve a used path toward the shared grap
 an unused global table beside the old solver is not progress on ownership.
 
 ## First integration dependency: resolve before solving
+
+The ordinary analysis entry now also requires an owned HirProgram argument.
+It no longer constructs HIR internally from execution roots and interfaces.
+Existing direct/loader callers explicitly prepare their HIR at ingress; no
+optional-HIR fallback was introduced. A Host-interface regression attaches a
+source origin before analysis and verifies it survives in the resulting HIR.
+This API boundary allows a session-resolved HIR to reach the ordinary solver
+without losing its reference identities, but does not by itself move ordinary
+loading to full-graph resolve. Native bootstrap still parses its sources during
+installation, so its source/HIR ownership must join shared preparation as well.
 
 Moving the old HIR constructor into discovery verbatim could not work: its
 member-pattern classification depended on solved external interfaces.

@@ -684,6 +684,7 @@ impl WorkspaceBuilder<'_> {
             module_id,
             ModuleAnalysisContext::Ordinary,
             program,
+            crate::types::resolve_module_hir_with_interfaces(program, external_roots.keys().cloned(), external_interfaces),
             &mut account,
             &external_roots
                 .iter()

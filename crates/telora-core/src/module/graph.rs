@@ -831,6 +831,7 @@ fn install_native_modules_observed(
                 defines_display_trait: spec.name == FMT_MODULE,
             },
             &program,
+            crate::types::resolve_module_hir_with_interfaces(&program, external_roots.keys().cloned(), &external_interfaces),
             &mut account,
             &external_roots
                 .iter()

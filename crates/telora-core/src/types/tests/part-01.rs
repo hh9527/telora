@@ -29,6 +29,7 @@
         let error = analyze_program_with_bindings_observed(
             "static-error.telora", crate::ModuleId::ANONYMOUS,
             ModuleAnalysisContext::Ordinary, &program,
+            resolve_module_hir_with_interfaces(&program, std::iter::empty(), &BTreeMap::new()),
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
             &BTreeMap::new(), &HashSet::new(), &sources,
             &BTreeMap::new(), &BTreeMap::new(), &debug_sink,
@@ -213,7 +214,7 @@
         });
         let mut tool_heap = Heap::main();
         let mut work = Heap::work_for(&tool_heap);
-        let external_roots = natives
+        let external_roots: BTreeMap<_, _> = natives
             .iter()
             .map(|(name, arity)| {
                 let value = work.native_closure(
@@ -232,6 +233,7 @@
             crate::ModuleId::ANONYMOUS,
             ModuleAnalysisContext::Ordinary,
             &program,
+            resolve_module_hir_with_interfaces(&program, external_roots.keys().cloned(), &BTreeMap::new()),
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
             &external_roots,
             &HashSet::new(),
@@ -301,11 +303,16 @@
             .unwrap_or_default();
         let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
         let mut type_store = TypeStore::default();
+        let mut hir = resolve_module_hir_with_interfaces(&program, external_roots.keys().cloned(), &external_interfaces);
+        hir.set_import_origins(&BTreeMap::from([("host".to_owned(), crate::hir::HirImportOrigin::Export {
+            module: crate::ModuleId::ANONYMOUS, index: 0,
+        })]));
         analyze_program_with_bindings_observed(
             "host-binding.telora",
             crate::ModuleId::ANONYMOUS,
             ModuleAnalysisContext::Ordinary,
             &program,
+            hir,
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
             &external_roots,
             &dynamic_bindings,
@@ -346,6 +353,10 @@
         )
         .unwrap();
         assert_eq!(declared.display(declared.result_type), "Int");
+        let reference = declared.hir.references().iter().find(|reference| reference.name == "host").unwrap();
+        assert_eq!(declared.hir.reference_import_origin(reference.id), Some(crate::hir::HirImportOrigin::Export {
+            module: crate::ModuleId::ANONYMOUS, index: 0,
+        }), "analysis must consume the supplied HIR without rebuilding and losing its source identities");
         assert_eq!(
             declared.module_interface.exports.get("host"),
             None,

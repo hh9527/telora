@@ -541,6 +541,7 @@ impl ModuleLoader {
             skeleton.unwrap_or(ModuleId::ANONYMOUS),
             ModuleAnalysisContext::Ordinary,
             &program,
+            crate::types::resolve_module_hir_with_interfaces(&program, external_roots.keys().cloned(), &external_interfaces),
             account,
             &external_roots
                 .iter()

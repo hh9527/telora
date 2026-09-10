@@ -33,6 +33,18 @@ pub(crate) fn resolve_module_hir_with_lookup(
     })
 }
 
+pub(crate) fn resolve_module_hir_with_interfaces(
+    program: &Program,
+    external_names: impl IntoIterator<Item = String>,
+    interfaces: &BTreeMap<String, ModuleInterface>,
+) -> HirProgram {
+    resolve_module_hir(program, &external_names.into_iter().collect(),
+        interfaces.iter().filter(|(name, interface)|
+            interface.value_binding.as_deref() == Some(name.as_str())
+                && interface.member_constructors.contains_key(*name))
+            .map(|(name, _)| name.clone()).collect())
+}
+
 #[test]
 fn bootstrap_resolution_names_match_static_contracts() {
     assert_eq!(BOOTSTRAP_NAMES.iter().map(|name| name.to_string()).collect::<BTreeSet<_>>(),

@@ -127,6 +127,7 @@ pub(crate) fn analyze_program_with_bindings(
         crate::ModuleId::ANONYMOUS,
         ModuleAnalysisContext::Ordinary,
         program,
+        resolve_module_hir_with_interfaces(program, external_roots.keys().cloned(), &external_interfaces),
         account,
         &external_roots,
         dynamic_bindings,
@@ -145,6 +146,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     module_id: crate::ModuleId,
     module_context: ModuleAnalysisContext,
     program: &Program,
+    hir: HirProgram,
     account: &mut QuotaAccount,
     external_roots: &BTreeMap<String, PersistentValue>,
     dynamic_bindings: &HashSet<String>,
@@ -157,11 +159,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
 ) -> Result<Analysis, FrontendError> {
     account.register_sources(sources);
     let external_names = external_roots.keys().cloned().collect();
-    let hir = resolve_module_hir(program, &external_names,
-        external_interfaces.iter().filter(|(name, interface)|
-            interface.value_binding.as_deref() == Some(name.as_str())
-                && interface.member_constructors.contains_key(*name))
-            .map(|(name, _)| name.clone()).collect());
     let solved = solve_module_plan(source_name, module_id, module_context, program,
         hir, &external_names, sources, external_provenance, external_interfaces,
         &[], account.query_context(), type_store)?;
