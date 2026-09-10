@@ -55,10 +55,35 @@ pub enum ModuleState {
 
 #[derive(Debug)]
 pub struct Module {
+    pub native: Option<NativeModule>,
     pub name: String,
     pub kind: ModuleKind,
     pub state: ModuleState,
     pub imports: Vec<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NativeTypeId {
+    pub module: u32,
+    pub slot: u32,
+}
+impl NativeTypeId {
+    /// Native ABI identity used by diagnostic syntax and the source inventory.
+    pub const BLAME_ERROR: Self = Self {
+        module: 34,
+        slot: 0,
+    };
+}
+#[derive(Clone, Debug)]
+pub enum NativeTypeRule {
+    Primitive(TypeConstructor),
+    Constructor(TypeFunction),
+    Opaque,
+}
+#[derive(Clone, Debug)]
+pub struct NativeModule {
+    pub id: u32,
+    pub types: Vec<(u32, NativeTypeRule)>,
 }
 
 #[derive(Debug)]
@@ -93,10 +118,10 @@ pub enum SymbolKind {
     Export,
     Namespace(ModuleId),
     Data,
-    Builtin,
 }
 #[derive(Debug)]
 pub struct Symbol {
+    pub native_type: Option<NativeTypeId>,
     pub module: Option<ModuleId>,
     pub name: String,
     pub kind: SymbolKind,
@@ -149,14 +174,55 @@ pub enum TypeConstructor {
     Bytes,
     Bool,
     Never,
+    Type,
+    TypeOf,
+    Dyn,
+    Option,
+    Result,
+    FoldControl,
+    PropertyTarget,
+    PropertyBound,
+    Unchecked,
+    TypeFunction(TypeFunction),
+    Nominal(SymbolId),
+    Native(NativeTypeId),
     Tuple,
     Array,
+    ArrayLiteral,
+    TypeList,
     Dict,
     Function,
     Record(Vec<String>),
     Meta,
     Namespace(ModuleId),
     Parameter(SymbolId),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TypeFunction {
+    Array,
+    Dict,
+    Option,
+    Result,
+    FoldControl,
+    TypeOf,
+    Unchecked,
+    Tuple,
+    Func,
+    Property,
+}
+
+#[derive(Debug)]
+pub struct TypeDefinition {
+    pub symbol: SymbolId,
+    pub operation: TypeOperation,
+    pub parameters: Vec<SymbolId>,
+    pub members: Vec<TypeMember>,
+}
+#[derive(Debug)]
+pub struct TypeMember {
+    pub name: String,
+    pub syntax: HirId,
+    pub payload: Option<TypeSlotId>,
 }
 #[derive(Clone, Debug)]
 pub struct TypeTerm {
@@ -247,7 +313,12 @@ pub enum TypeOperation {
 /// edges. No node owns another HIR node or contains a resolved type descriptor.
 #[derive(Debug)]
 pub enum HirKind {
+    NativeTypeSlot(i64),
     TypeOperation(TypeOperation),
+    TypeMember {
+        name: String,
+        nullary: bool,
+    },
     Block,
     Binding {
         kind: BindingKind,
@@ -332,8 +403,10 @@ pub struct Mir {
     pub symbols_closed: bool,
     pub ty_slots: Vec<TypeState>,
     pub symbol_types: Vec<TypeSlotId>,
+    pub symbol_generics: Vec<Vec<SymbolId>>,
     pub type_terms: Vec<TypeTerm>,
     pub types: Vec<ResolvedType>,
+    pub type_definitions: Vec<TypeDefinition>,
     pub type_conflicts: Vec<TypeConflict>,
     pub type_unknowns: Vec<TypeSlotId>,
     pub required_types: Vec<bool>,
@@ -425,6 +498,14 @@ impl Mir {
         }
         for (id, term) in self.type_terms.iter().enumerate() {
             writeln!(out, "type-term {id} {term:?}").unwrap();
+        }
+        for definition in &self.type_definitions {
+            writeln!(out, "type-definition {definition:?}").unwrap();
+        }
+        for (id, parameters) in self.symbol_generics.iter().enumerate() {
+            if !parameters.is_empty() {
+                writeln!(out, "symbol-generics {id} {parameters:?}").unwrap();
+            }
         }
         for (id, ty) in self.types.iter().enumerate() {
             writeln!(out, "type {id} {ty:?}").unwrap();

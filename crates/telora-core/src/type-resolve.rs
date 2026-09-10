@@ -1,15 +1,55 @@
 //! Third MIR pass. All constraints use syntax slots and resolved SymbolIds.
-use crate::ast::{BinaryOperator, BindingKind};
+use crate::ast::{BinaryOperator, BindingKind, BlameAction, UnaryOperator};
 use crate::mir::*;
 use crate::source::{Diagnostic, Location};
 
 #[path = "type-resolve/arena.rs"]
 mod arena;
+#[path = "type-resolve/constraints.rs"]
+mod constraints;
+#[path = "type-resolve/definitions.rs"]
+mod definitions;
+#[path = "type-resolve/members.rs"]
+mod members;
 #[cfg(test)]
 #[path = "type-resolve/tests.rs"]
 mod tests;
 
 enum Task {
+    DiagnosticInput {
+        node: HirId,
+        input: TypeSlotId,
+    },
+    Instantiate {
+        source: TypeSlotId,
+        target: TypeSlotId,
+        arguments: Vec<(SymbolId, TypeSlotId)>,
+        location: Option<Location>,
+    },
+    Call {
+        node: HirId,
+        callee: TypeSlotId,
+        arguments: Vec<TypeSlotId>,
+    },
+    Join {
+        node: HirId,
+        values: Vec<TypeSlotId>,
+    },
+    Projection {
+        node: HirId,
+        receiver: TypeSlotId,
+        index: Option<usize>,
+    },
+    ConstructorPattern {
+        node: HirId,
+        constructor: TypeSlotId,
+        payload: Option<TypeSlotId>,
+    },
+    Fit {
+        node: HirId,
+        expected: TypeSlotId,
+        actual: TypeSlotId,
+    },
     Tuple {
         node: HirId,
         items: Vec<TypeSlotId>,
@@ -28,6 +68,11 @@ struct Solver<'a> {
     mir: &'a mut Mir,
     revision: usize,
     tasks: Vec<Task>,
+    nominal_index: Vec<Option<usize>>,
+    nominal_owner: Vec<Option<SymbolId>>,
+    instances: Vec<Vec<(SymbolId, TypeSlotId)>>,
+    return_slots: Vec<Option<TypeSlotId>>,
+    administrative: Vec<bool>,
 }
 
 pub fn resolve(mir: &mut Mir) {
@@ -40,35 +85,33 @@ pub fn resolve(mir: &mut Mir) {
         "type pass runs once"
     );
     mir.required_types.resize(mir.hir.len(), false);
-    let mut solver = Solver {
-        mir,
-        revision: 0,
-        tasks: vec![],
-    };
+    let mut solver = Solver::new(mir);
     for _ in 0..solver.mir.symbols.len() {
         let slot = solver.fresh();
         solver.mir.symbol_types.push(slot);
     }
+    solver.prepare_definitions();
     for index in 0..solver.mir.symbols.len() {
         let slot = solver.mir.symbol_types[index];
         let symbol = &solver.mir.symbols[index];
         let declarations = symbol.declarations.clone();
         let kind = symbol.kind;
         let outcome = symbol.resolution.clone();
-        let name = symbol.name.clone();
         for node in declarations {
             solver.equal(slot, node.ty(), Some(solver.mir.hir[node.index()].location));
         }
         match outcome {
-            ResolveState::Bound(target) if target.index() != index => {
+            ResolveState::Bound(target)
+                if target.index() != index && kind != SymbolKind::Pattern =>
+            {
                 solver.equal(slot, solver.mir.symbol_types[target.index()], None)
             }
             ResolveState::Conflicted(origin) => solver.resolve_conflict(slot, origin),
             _ => {}
         }
         match kind {
-            SymbolKind::Builtin => {
-                if let Some(ty) = solver.builtin(&name) {
+            SymbolKind::Declaration(BindingKind::NativeType) => {
+                if let Some(ty) = solver.native_type(SymbolId(index as u32)) {
                     solver.equal(slot, ty, None);
                 }
             }
@@ -97,13 +140,27 @@ pub fn resolve(mir: &mut Mir) {
             }
         }
         if solver.revision == revision {
-            break;
+            if !solver.finish_arrays() {
+                break;
+            }
         }
     }
     solver.finalize();
 }
 
 impl Solver<'_> {
+    fn new(mir: &mut Mir) -> Solver<'_> {
+        Solver {
+            nominal_index: vec![None; mir.symbols.len()],
+            nominal_owner: vec![None; mir.hir.len()],
+            instances: vec![vec![]; mir.hir.len()],
+            return_slots: vec![None; mir.hir.len()],
+            administrative: vec![false; mir.hir.len()],
+            mir,
+            revision: 0,
+            tasks: vec![],
+        }
+    }
     fn child(&self, node: HirId, role: Role) -> Option<HirId> {
         self.mir.hir[node.index()]
             .children
@@ -125,20 +182,6 @@ impl Solver<'_> {
     fn assign(&mut self, node: HirId, constructor: TypeConstructor, arguments: Vec<TypeSlotId>) {
         let ty = self.structure(constructor, arguments);
         self.same(node, ty);
-    }
-    fn builtin(&mut self, name: &str) -> Option<TypeSlotId> {
-        let constructor = match name {
-            "Int" => TypeConstructor::Int,
-            "Float" => TypeConstructor::Float,
-            "String" => TypeConstructor::String,
-            "Bytes" => TypeConstructor::Bytes,
-            "Bool" => TypeConstructor::Bool,
-            "Never" => TypeConstructor::Never,
-            "Unit" => TypeConstructor::Tuple,
-            _ => return None,
-        };
-        let ty = self.structure(constructor, vec![]);
-        Some(self.structure(TypeConstructor::Meta, vec![ty]))
     }
     fn resolve_conflict(&mut self, slot: TypeSlotId, origin: ConflictId) {
         let id = self
@@ -162,20 +205,22 @@ impl Solver<'_> {
         self.mir.ty_slots[root.index()] = TypeState::Conflicted(id);
     }
     fn generate(&mut self, node: HirId) {
+        if self.administrative[node.index()] {
+            return;
+        }
         self.mir.required_types[node.index()] = true;
         if let Some(slot) = self.mir.hir[node.index()].resolution {
             match self.mir.resolve_slots[slot.index()].clone() {
                 ResolveState::Bound(symbol) => {
                     let source = &self.mir.symbols[symbol.index()];
-                    if source.kind == SymbolKind::Builtin {
-                        let name = source.name.clone();
+                    if source.native_type.is_some() {
                         // Each occurrence supplies rigid type evidence without
                         // letting a bad annotation poison the intrinsic itself.
-                        if let Some(ty) = self.builtin(&name) {
+                        if let Some(ty) = self.native_type(symbol) {
                             self.same(node, ty);
                         }
                     } else {
-                        self.same(node, self.mir.symbol_types[symbol.index()]);
+                        self.reference_type(node, symbol);
                     }
                     return;
                 }
@@ -199,6 +244,10 @@ impl Solver<'_> {
             }
         }
         match &self.mir.hir[node.index()].kind {
+            HirKind::TypeOperation(
+                TypeOperation::Struct | TypeOperation::Enum | TypeOperation::Newtype,
+            ) => self.type_operation(node),
+            HirKind::TypeMember { .. } => {}
             HirKind::TypeOperation(
                 operation @ (TypeOperation::Function | TypeOperation::Tuple | TypeOperation::Unit),
             ) => {
@@ -224,6 +273,156 @@ impl Solver<'_> {
             HirKind::Float(_) => self.assign(node, TypeConstructor::Float, vec![]),
             HirKind::String(_) => self.assign(node, TypeConstructor::String, vec![]),
             HirKind::Bytes(_) => self.assign(node, TypeConstructor::Bytes, vec![]),
+            HirKind::InterpolatedString => self.assign(node, TypeConstructor::String, vec![]),
+            HirKind::Unary(operator) => {
+                let operator = *operator;
+                let operand = self.child(node, Role::Operand).unwrap();
+                match operator {
+                    UnaryOperator::Not | UnaryOperator::LogicalNot => {
+                        self.assign(operand, TypeConstructor::Bool, vec![]);
+                        self.assign(node, TypeConstructor::Bool, vec![]);
+                    }
+                    UnaryOperator::BitNot => {
+                        self.assign(operand, TypeConstructor::Int, vec![]);
+                        self.assign(node, TypeConstructor::Int, vec![]);
+                    }
+                    UnaryOperator::Negate => {
+                        self.same(node, operand.ty());
+                        self.tasks.push(Task::Numeric {
+                            node,
+                            operand: operand.ty(),
+                        });
+                    }
+                }
+            }
+            HirKind::Index | HirKind::TupleProjection(_) => {
+                let index = if let HirKind::TupleProjection(index) = self.mir.hir[node.index()].kind
+                {
+                    Some(index)
+                } else {
+                    None
+                };
+                let receiver = self.child(node, Role::Receiver).unwrap().ty();
+                self.tasks.push(Task::Projection {
+                    node,
+                    receiver,
+                    index,
+                });
+            }
+            HirKind::TypeMetadata => {
+                let operand = self.child(node, Role::Operand).unwrap();
+                let raw = self.fresh();
+                self.assign(operand, TypeConstructor::Meta, vec![raw]);
+                self.assign(node, TypeConstructor::TypeOf, vec![raw]);
+            }
+            HirKind::Debug { .. } => {
+                let value = self.child(node, Role::Value).unwrap();
+                self.same(node, value.ty());
+            }
+            HirKind::Return => {
+                let value = self.child(node, Role::Value).unwrap();
+                if let Some(result) = self.return_slots[node.index()] {
+                    self.fit(node, result, value.ty());
+                } else {
+                    self.mir.diagnostics.push(Diagnostic::error(
+                        "return outside a function",
+                        self.mir.hir[node.index()].location,
+                    ));
+                }
+                self.assign(node, TypeConstructor::Never, vec![]);
+            }
+            HirKind::Panic | HirKind::Raise(_) => {
+                let action = if let HirKind::Raise(action) = self.mir.hir[node.index()].kind {
+                    action
+                } else {
+                    BlameAction::Fail
+                };
+                let message = self.child(node, Role::Value).unwrap();
+                if matches!(action, BlameAction::Warn | BlameAction::Raise) {
+                    self.tasks.push(Task::DiagnosticInput {
+                        node,
+                        input: message.ty(),
+                    });
+                } else {
+                    self.assign(message, TypeConstructor::String, vec![]);
+                }
+                match action {
+                    BlameAction::Warn => {
+                        let payload = self.fresh();
+                        self.assign(node, TypeConstructor::Option, vec![payload]);
+                    }
+                    BlameAction::Build => self.assign(
+                        node,
+                        TypeConstructor::Native(NativeTypeId::BLAME_ERROR),
+                        vec![],
+                    ),
+                    BlameAction::Raise | BlameAction::Fail => {
+                        self.assign(node, TypeConstructor::Never, vec![])
+                    }
+                }
+            }
+            HirKind::Wildcard => {}
+            HirKind::TuplePattern => {
+                let items = self
+                    .children(node, Role::Item)
+                    .into_iter()
+                    .map(HirId::ty)
+                    .collect();
+                self.assign(node, TypeConstructor::Tuple, items);
+            }
+            HirKind::ConstructorPattern => {
+                let constructor = self.child(node, Role::Callee).unwrap().ty();
+                let payload = self.child(node, Role::Pattern).map(HirId::ty);
+                self.tasks.push(Task::ConstructorPattern {
+                    node,
+                    constructor,
+                    payload,
+                });
+            }
+            HirKind::MatchArm { .. } => {
+                if let Some(guard) = self.child(node, Role::Guard) {
+                    self.assign(guard, TypeConstructor::Bool, vec![]);
+                }
+                let value = self.child(node, Role::Value).unwrap();
+                self.same(node, value.ty());
+            }
+            HirKind::Match => {
+                let value = self.child(node, Role::Value).unwrap();
+                let arms = self.children(node, Role::Arm);
+                for &arm in &arms {
+                    let pattern = self.child(arm, Role::Pattern).unwrap();
+                    self.equal(
+                        value.ty(),
+                        pattern.ty(),
+                        Some(self.mir.hir[pattern.index()].location),
+                    );
+                }
+                self.tasks.push(Task::Join {
+                    node,
+                    values: arms.into_iter().map(HirId::ty).collect(),
+                });
+            }
+            HirKind::IfLet | HirKind::LetElse => {
+                let pattern = self.child(node, Role::Pattern).unwrap();
+                let value = self.child(node, Role::Value).unwrap();
+                self.equal(
+                    value.ty(),
+                    pattern.ty(),
+                    Some(self.mir.hir[pattern.index()].location),
+                );
+                if matches!(self.mir.hir[node.index()].kind, HirKind::IfLet) {
+                    let values = [Role::Then, Role::Else]
+                        .into_iter()
+                        .map(|r| self.child(node, r).unwrap().ty())
+                        .collect();
+                    self.tasks.push(Task::Join { node, values });
+                } else {
+                    let otherwise = self.child(node, Role::Else).unwrap();
+                    self.assign(otherwise, TypeConstructor::Never, vec![]);
+                    let body = self.child(node, Role::Body).unwrap();
+                    self.same(node, body.ty());
+                }
+            }
             HirKind::Tuple => {
                 let items = self
                     .children(node, Role::Item)
@@ -233,11 +432,12 @@ impl Solver<'_> {
                 self.tasks.push(Task::Tuple { node, items });
             }
             HirKind::Array => {
-                let item = self.fresh();
-                for child in self.children(node, Role::Item) {
-                    self.equal(item, child.ty(), Some(self.mir.hir[child.index()].location));
-                }
-                self.assign(node, TypeConstructor::Array, vec![item]);
+                let items = self
+                    .children(node, Role::Item)
+                    .into_iter()
+                    .map(HirId::ty)
+                    .collect();
+                self.assign(node, TypeConstructor::ArrayLiteral, items);
             }
             HirKind::Dict => {
                 let mut fields = vec![];
@@ -283,20 +483,52 @@ impl Solver<'_> {
                         | BindingKind::NativeType
                 ) {
                     if let Some(value) = self.child(node, Role::Value) {
-                        self.same(node, value.ty());
+                        self.fit(node, node.ty(), value.ty());
                     }
                 }
                 self.annotation(node);
             }
             HirKind::Parameter | HirKind::ReturnType => self.annotation(node),
+            HirKind::TypeParameter => {
+                if !self.children(node, Role::Bound).is_empty() {
+                    self.mir.diagnostics.push(Diagnostic::error(
+                        "new type pass does not yet prove generic bounds",
+                        self.mir.hir[node.index()].location,
+                    ));
+                }
+            }
+            HirKind::Decorator { configured } => {
+                let configured = *configured;
+                let callee = self.child(node, Role::Callee).unwrap().ty();
+                let provider = if configured {
+                    let mut arguments = self
+                        .children(node, Role::Argument)
+                        .into_iter()
+                        .map(HirId::ty)
+                        .collect::<Vec<_>>();
+                    let provider = self.fresh();
+                    arguments.push(provider);
+                    let factory = self.structure(TypeConstructor::Function, arguments);
+                    self.equal(callee, factory, Some(self.mir.hir[node.index()].location));
+                    provider
+                } else {
+                    callee
+                };
+                let context = self.structure(TypeConstructor::Type, vec![]);
+                let previous = self.structure(TypeConstructor::Option, vec![node.ty()]);
+                self.tasks.push(Task::Call {
+                    node,
+                    callee: provider,
+                    arguments: vec![context, previous],
+                });
+            }
             HirKind::Closure => {
                 let result = self.child(node, Role::ReturnType).unwrap();
                 let body = self.child(node, Role::Body).unwrap();
-                self.equal(
-                    result.ty(),
-                    body.ty(),
-                    Some(self.mir.hir[body.index()].location),
-                );
+                self.tasks.push(Task::Join {
+                    node: result,
+                    values: vec![body.ty()],
+                });
                 let mut args = self
                     .children(node, Role::Parameter)
                     .into_iter()
@@ -307,19 +539,37 @@ impl Solver<'_> {
             }
             HirKind::Call => {
                 let callee = self.child(node, Role::Callee).unwrap();
-                let mut args = self
+                let args = self
                     .children(node, Role::Argument)
                     .into_iter()
                     .map(HirId::ty)
                     .collect::<Vec<_>>();
-                args.push(node.ty());
-                let shape = self.structure(TypeConstructor::Function, args);
-                self.equal(
-                    callee.ty(),
-                    shape,
-                    Some(self.mir.hir[node.index()].location),
-                );
+                if self.mir.hir[callee.index()].resolution.is_some_and(|slot| matches!(self.mir.resolve_slots[slot.index()], ResolveState::Bound(symbol) if matches!(self.mir.symbols[symbol.index()].kind, SymbolKind::Parameter | SymbolKind::Pattern))) {
+                    let mut shape = args.clone(); shape.push(node.ty());
+                    let shape = self.structure(TypeConstructor::Function, shape);
+                    self.equal(callee.ty(), shape, Some(self.mir.hir[node.index()].location));
+                } else { self.tasks.push(Task::Call { node, callee: callee.ty(), arguments: args }); }
             }
+            HirKind::TypeApply => {
+                let callee = self.child(node, Role::Callee).unwrap();
+                let parameters = self.instances[callee.index()].clone();
+                let arguments = self.children(node, Role::Argument);
+                if parameters.is_empty() || parameters.len() != arguments.len() {
+                    self.conflict(
+                        node.ty(),
+                        node.ty(),
+                        Some(self.mir.hir[node.index()].location),
+                        "explicit type application requires a generic binding with matching arity"
+                            .into(),
+                    );
+                } else {
+                    for ((_, parameter), argument) in parameters.into_iter().zip(arguments) {
+                        self.assign(argument, TypeConstructor::Meta, vec![parameter]);
+                    }
+                    self.same(node, callee.ty());
+                }
+            }
+            HirKind::InferredTypeArgument => {}
             HirKind::Binary(operator) => {
                 let operator = *operator;
                 let left = self.child(node, Role::Left).unwrap();
@@ -349,16 +599,25 @@ impl Solver<'_> {
                     | BinaryOperator::GreaterThanOrEqual => {
                         self.assign(node, TypeConstructor::Bool, vec![])
                     }
+                    BinaryOperator::And | BinaryOperator::Or => {
+                        self.assign(left, TypeConstructor::Bool, vec![]);
+                        self.assign(node, TypeConstructor::Bool, vec![]);
+                    }
+                    BinaryOperator::BitAnd | BinaryOperator::BitOr | BinaryOperator::BitXor => {
+                        self.assign(left, TypeConstructor::Int, vec![]);
+                        self.assign(node, TypeConstructor::Int, vec![]);
+                    }
                     _ => self.unsupported(node),
                 }
             }
             HirKind::If => {
                 let condition = self.child(node, Role::Condition).unwrap();
                 self.assign(condition, TypeConstructor::Bool, vec![]);
-                for role in [Role::Then, Role::Else] {
-                    let branch = self.child(node, role).unwrap();
-                    self.same(node, branch.ty());
-                }
+                let values = [Role::Then, Role::Else]
+                    .into_iter()
+                    .map(|r| self.child(node, r).unwrap().ty())
+                    .collect();
+                self.tasks.push(Task::Join { node, values });
             }
             HirKind::TypeAscription => {
                 let value = self.child(node, Role::Value).unwrap();
@@ -366,7 +625,9 @@ impl Solver<'_> {
                 self.same(node, value.ty());
                 self.assign(target, TypeConstructor::Meta, vec![value.ty()]);
             }
-            HirKind::Name(_) | HirKind::Text(_) => self.mir.required_types[node.index()] = false,
+            HirKind::Name(_) | HirKind::Text(_) | HirKind::NativeTypeSlot(_) => {
+                self.mir.required_types[node.index()] = false
+            }
             _ => self.unsupported(node),
         }
     }
@@ -385,10 +646,15 @@ impl Solver<'_> {
         }
     }
     fn solve_task(&mut self, task: Task) -> Option<Task> {
+        let task = match self.solve_constraint(task) {
+            Ok(done) => return done,
+            Err(task) => task,
+        };
         let (node, dependencies) = match &task {
             Task::Tuple { node, items } => (*node, items.clone()),
             Task::Member { node, receiver, .. } => (*node, vec![*receiver]),
             Task::Numeric { node, operand } => (*node, vec![*operand]),
+            _ => unreachable!(),
         };
         for dependency in dependencies {
             if let TypeState::Conflicted(id) = self.mir.ty_slots[self.root(dependency).index()] {
@@ -432,35 +698,7 @@ impl Solver<'_> {
                 node,
                 receiver,
                 name,
-            } => {
-                let Some(term) = self.term(receiver) else {
-                    return Some(Task::Member {
-                        node,
-                        receiver,
-                        name,
-                    });
-                };
-                if let TypeConstructor::Record(fields) = &term.constructor {
-                    if let Some(index) = fields.iter().position(|field| *field == name) {
-                        let ty = term.arguments[index];
-                        self.same(node, ty);
-                    } else {
-                        self.conflict(
-                            node.ty(),
-                            node.ty(),
-                            Some(self.mir.hir[node.index()].location),
-                            format!("unknown field {name:?}"),
-                        );
-                    }
-                } else {
-                    self.conflict(
-                        node.ty(),
-                        node.ty(),
-                        Some(self.mir.hir[node.index()].location),
-                        "field receiver is not a record".into(),
-                    );
-                }
-            }
+            } => return self.member(node, receiver, name),
             Task::Numeric { node, operand } => {
                 let Some(term) = self.term(operand) else {
                     return Some(Task::Numeric { node, operand });
@@ -477,6 +715,7 @@ impl Solver<'_> {
                     );
                 }
             }
+            _ => unreachable!(),
         }
         None
     }

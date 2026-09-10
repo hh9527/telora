@@ -105,6 +105,13 @@ impl Solver<'_> {
             self.mir
                 .diagnostics
                 .push(Diagnostic::error(message, location));
+        } else {
+            self.mir.diagnostics.push(Diagnostic {
+                severity: crate::source::Severity::Error,
+                message,
+                labels: vec![],
+                notes: vec![],
+            });
         }
         self.revision += 1;
     }
@@ -126,7 +133,7 @@ impl Solver<'_> {
             match (a, b) {
                 (TypeState::Conflicted(id), _) | (_, TypeState::Conflicted(id)) => {
                     self.mir.ty_slots[left.index()] = TypeState::Conflicted(id);
-                    self.mir.ty_slots[right.index()] = TypeState::Conflicted(id);
+                    self.mir.ty_slots[right.index()] = TypeState::ProxyTo(left);
                 }
                 (TypeState::Unknown, _) => {
                     if self.occurs(left, right) {
@@ -150,6 +157,9 @@ impl Solver<'_> {
                             "incompatible types {:?} and {:?}",
                             a.constructor, b.constructor
                         );
+                        if self.compatible_structure(left, right, location) {
+                            continue;
+                        }
                         self.conflict(left, right, location, message);
                     } else {
                         queue.extend(a.arguments.iter().copied().zip(b.arguments.iter().copied()));

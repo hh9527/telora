@@ -2,12 +2,19 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 fn graph(sources: &[(&str, &str)]) -> Mir {
+    let mut sources = sources.to_vec();
+    sources.push(("std/prelude", "native type Int @4; export { Int };"));
     let inventory = sources
         .iter()
         .map(|(name, _)| ModuleSpec {
+            native: crate::static_sources::native_module(name),
             name: (*name).into(),
             kind: ModuleKind::Source,
-            implicit_imports: vec![],
+            implicit_imports: if *name == "std/prelude" {
+                vec![]
+            } else {
+                vec!["std/prelude".into()]
+            },
         })
         .collect();
     let mir = module_resolve::resolve(inventory, &[sources[0].0.into()], |_, name| {
@@ -39,7 +46,7 @@ fn closes_aliases_and_lexical_references_without_changing_syntax_or_types() {
     ]);
     let allocation = mir.hir.as_ptr();
     let slots = mir.ty_slots.len();
-    resolve(&mut mir, &["Int"]);
+    resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     assert_eq!(allocation, mir.hir.as_ptr());
     assert_eq!(slots, mir.ty_slots.len());
@@ -97,7 +104,7 @@ fn records_unused_duplicates_but_only_used_wildcard_ambiguity() {
         ("@src/a", "export def shared = 1; export def unused = 1;"),
         ("@src/b", "export def shared = 2; export def unused = 2;"),
     ]);
-    resolve(&mut mir, &[]);
+    resolve(&mut mir);
     assert_eq!(
         mir.resolve_conflicts.len(),
         2,
@@ -127,7 +134,7 @@ fn keeps_unresolved_results_and_explicit_member_constraints() {
         export def pattern = fn(x) { match x { captured => captured } };
     "#,
     )]);
-    resolve(&mut mir, &[]);
+    resolve(&mut mir);
     assert!(!mir.resolve_slots.contains(&ResolveState::Pending));
     assert!(mir.resolve_slots.contains(&ResolveState::Unresolved));
     assert!(
@@ -157,7 +164,7 @@ fn constructor_patterns_use_source_declarations_without_type_evaluation() {
         export def unwrap = fn(value) { match value { Wrap(payload) => payload } };
     "#,
     )]);
-    resolve(&mut mir, &["Int", "Struct"]);
+    resolve(&mut mir);
     let wrap = mir
         .symbols
         .iter()

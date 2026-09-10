@@ -1,4 +1,43 @@
 #[test]
+fn static_mir_generic_native_signatures_determine_check_outcome() {
+    let cwd = fixture();
+    for (annotation, expected_code) in [("Bool", 0), ("String", 1)] {
+        fs::write(
+            cwd.join("src/main.telora"),
+            format!(
+                r#"
+            import "std/array" {{ map as transform }};
+            export def mapped: Array({annotation}) = transform([1, 2], fn(x) {{ x > 0 }});
+        "#
+            ),
+        )
+        .unwrap();
+        let output = telora(&cwd)
+            .args(["check", "--only-types", "@src/main"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(expected_code),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let records = jsonl(&output.stdout);
+        let summary = records.iter().find(|r| r["record"] == "summary").unwrap();
+        assert_eq!(
+            summary["status"],
+            if expected_code == 0 { "ok" } else { "error" }
+        );
+        if expected_code == 1 {
+            assert!(summary["type_conflicts"].as_u64().unwrap() > 0);
+            assert!(records.iter().any(|r| r["record"] == "diagnostic"
+                && r["labels"].as_array().is_some_and(|l| !l.is_empty())));
+        }
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_query_returns_known_unknown_and_conflicted_without_evaluation() {
     let cwd = fixture();
     fs::write(

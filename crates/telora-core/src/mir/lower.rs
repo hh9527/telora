@@ -103,7 +103,18 @@ impl Lower<'_> {
         if let Some(annotation) = b.annotation {
             self.expression_edge(&mut edges, Role::Annotation, annotation);
         }
-        self.expression_edge(&mut edges, Role::Value, b.value);
+        if b.kind == ast::BindingKind::NativeType {
+            let E::Int(slot) = b.value.value else {
+                unreachable!("native type slot")
+            };
+            let node = self.node(b.value.location, HirKind::NativeTypeSlot(slot), vec![]);
+            edges.push(Edge {
+                role: Role::Value,
+                node,
+            });
+        } else {
+            self.expression_edge(&mut edges, Role::Value, b.value);
+        }
         self.node(
             binding.location,
             HirKind::Binding {
@@ -122,13 +133,25 @@ impl Lower<'_> {
             P::Int(value) => HirKind::Int(value),
             P::Float(value) => HirKind::Float(value),
             P::String(value) => HirKind::String(value),
-            P::Atom(value) => HirKind::Atom(value),
+            P::Atom(value) => {
+                let callee = self.node(pattern.location, HirKind::Variable(value), vec![]);
+                edges.push(Edge {
+                    role: Role::Callee,
+                    node: callee,
+                });
+                HirKind::ConstructorPattern
+            }
             P::Tagged { tag, payload } => {
                 edges.push(Edge {
                     role: Role::Pattern,
                     node: self.pattern(*payload),
                 });
-                HirKind::TaggedPattern(tag)
+                let callee = self.node(pattern.location, HirKind::Variable(tag), vec![]);
+                edges.push(Edge {
+                    role: Role::Callee,
+                    node: callee,
+                });
+                HirKind::ConstructorPattern
             }
             P::Constructor {
                 constructor,
@@ -187,6 +210,41 @@ impl Lower<'_> {
                 unreachable!()
             };
             let mut edges = vec![];
+            if matches!(
+                operation,
+                TypeOperation::Struct | TypeOperation::Newtype | TypeOperation::Enum
+            ) {
+                // The parser encodes declarations as helper(context, members).
+                // Retain source members directly; the synthetic context is not a value.
+                let members = arguments.into_iter().last().expect("type members");
+                let E::Dict(fields) = members.value else {
+                    unreachable!("type member table")
+                };
+                for field in fields {
+                    let nullary = operation == TypeOperation::Enum
+                        && matches!(&field.value.value.value, E::Atom(name) if name == "None");
+                    let mut children = vec![];
+                    self.decorators(&mut children, field.value.decorators);
+                    if !nullary {
+                        self.expression_edge(&mut children, Role::Annotation, field.value.value);
+                    }
+                    let name = field.value.name.expect("named type member").value;
+                    let node = self.node(
+                        field.location,
+                        HirKind::TypeMember { name, nullary },
+                        children,
+                    );
+                    edges.push(Edge {
+                        role: Role::Field,
+                        node,
+                    });
+                }
+                return self.node(
+                    expression.location,
+                    HirKind::TypeOperation(operation),
+                    edges,
+                );
+            }
             for (index, argument) in arguments.into_iter().enumerate() {
                 if index == 0
                     && matches!(operation, TypeOperation::Function | TypeOperation::Tuple)
@@ -220,7 +278,7 @@ impl Lower<'_> {
             E::Float(v) => HirKind::Float(v),
             E::String(v) => HirKind::String(v),
             E::Bytes(v) => HirKind::Bytes(v),
-            E::Atom(v) => HirKind::Atom(v),
+            E::Atom(v) => HirKind::Variable(v),
             E::Variable(v) => HirKind::Variable(v.value),
             E::Array(items) => {
                 for item in items {

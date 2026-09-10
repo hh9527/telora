@@ -18,12 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("expected ROOT followed by NAME=PATH entries")?;
     let mut files = BTreeMap::new();
     let mut inventory = Vec::new();
-    let mut intrinsic_names = Vec::new();
     for arg in args {
-        if let Some(name) = arg.strip_prefix("--intrinsic=") {
-            intrinsic_names.push(name.to_owned());
-            continue;
-        }
         let (name, path) = arg.split_once('=').ok_or("expected NAME=PATH")?;
         let path = PathBuf::from(path);
         let kind = match path.extension().and_then(|extension| extension.to_str()) {
@@ -35,22 +30,41 @@ fn main() -> Result<(), Box<dyn Error>> {
             return Err(format!("duplicate inventory name {name}").into());
         }
         inventory.push(ModuleSpec {
+            native: None,
             name: name.to_owned(),
             kind,
-            implicit_imports: vec![],
+            implicit_imports: vec!["std/prelude".into()],
+        });
+    }
+    for &(name, _) in telora_core::static_sources::BUILTINS {
+        if files.contains_key(name) {
+            continue;
+        }
+        inventory.push(ModuleSpec {
+            name: name.into(),
+            kind: ModuleKind::Source,
+            native: telora_core::static_sources::native_module(name),
+            implicit_imports: if name == "std/prelude" {
+                vec![]
+            } else {
+                vec!["std/prelude".into()]
+            },
         });
     }
     let mut mir = module_resolve::resolve(inventory, &[root], |_, name| {
-        std::fs::read_to_string(&files[name]).map_err(|error| error.to_string())
+        if let Some(path) = files.get(name) {
+            std::fs::read_to_string(path).map_err(|error| error.to_string())
+        } else {
+            Ok(telora_core::static_sources::BUILTINS
+                .iter()
+                .find(|(n, _)| *n == name)
+                .unwrap()
+                .1
+                .into())
+        }
     });
     if symbols {
-        telora_core::symbol_resolve::resolve(
-            &mut mir,
-            &intrinsic_names
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-        );
+        telora_core::symbol_resolve::resolve(&mut mir);
     }
     if types {
         telora_core::type_resolve::resolve(&mut mir);

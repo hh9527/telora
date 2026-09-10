@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 #[path = "symbol-resolve-tests.rs"]
 mod tests;
 
-/// Intrinsics are explicit inputs, never derived from a runtime environment.
-pub fn resolve(mir: &mut Mir, intrinsic_names: &[&str]) {
+/// All names come from declarations and imports, including the prelude.
+pub fn resolve(mir: &mut Mir) {
     assert!(
         !mir.symbols_closed && mir.symbols.is_empty(),
         "symbol pass runs once"
@@ -20,17 +20,10 @@ pub fn resolve(mir: &mut Mir, intrinsic_names: &[&str]) {
     mir.exports.resize_with(mir.modules.len(), Vec::new);
     let mut pass = Pass {
         mir,
-        builtins: BTreeMap::new(),
         active: vec![],
         reference_active: vec![],
         import_edges: BTreeMap::new(),
     };
-    for &name in intrinsic_names {
-        if !pass.builtins.contains_key(name) {
-            let id = pass.symbol(None, name.into(), SymbolKind::Builtin, None, None);
-            pass.builtins.insert(name.into(), id);
-        }
-    }
     for (id, edge) in pass.mir.imports.iter().enumerate() {
         if let Some(syntax) = edge.syntax {
             pass.import_edges.insert(syntax, id);
@@ -60,6 +53,7 @@ pub fn resolve(mir: &mut Mir, intrinsic_names: &[&str]) {
             _ => {}
         }
     }
+    pass.link_native_types();
     pass.diagnose_duplicates(false);
     pass.active.resize(pass.mir.symbols.len(), false);
     pass.reference_active
@@ -105,12 +99,67 @@ pub fn resolve(mir: &mut Mir, intrinsic_names: &[&str]) {
 
 struct Pass<'a> {
     mir: &'a mut Mir,
-    builtins: BTreeMap<String, SymbolId>,
     active: Vec<bool>,
     reference_active: Vec<bool>,
     import_edges: BTreeMap<HirId, usize>,
 }
 impl Pass<'_> {
+    fn link_native_types(&mut self) {
+        let mut slots = BTreeMap::<NativeTypeId, Vec<SymbolId>>::new();
+        for index in 0..self.mir.symbols.len() {
+            let symbol = &self.mir.symbols[index];
+            if symbol.kind != SymbolKind::Declaration(BindingKind::NativeType) {
+                continue;
+            }
+            let module = symbol.module.expect("native declaration module");
+            let declaration = symbol.declarations[0];
+            let value = self.child(declaration, Role::Value).expect("native slot");
+            let HirKind::NativeTypeSlot(slot) = self.mir.hir[value.index()].kind else {
+                unreachable!()
+            };
+            let registered = u32::try_from(slot).ok().and_then(|slot| {
+                let native = self.mir.modules[module.index()].native.as_ref()?;
+                native
+                    .types
+                    .iter()
+                    .any(|(s, _)| *s == slot)
+                    .then_some(NativeTypeId {
+                        module: native.id,
+                        slot,
+                    })
+            });
+            if let Some(id) = registered {
+                self.mir.symbols[index].native_type = Some(id);
+                slots.entry(id).or_default().push(SymbolId(index as u32));
+            } else {
+                self.mir.symbols[index].resolution = ResolveState::Unresolved;
+                self.mir.diagnostics.push(Diagnostic::error(
+                    "native type slot has no registered static contract",
+                    self.mir.hir[value.index()].location,
+                ));
+            }
+        }
+        for (native, symbols) in slots {
+            if symbols.len() < 2 {
+                continue;
+            }
+            let conflict = ConflictId(self.mir.resolve_conflicts.len() as u32);
+            self.mir
+                .resolve_conflicts
+                .push(ResolveConflict::DuplicateDefinition {
+                    name: format!("native slot {native:?}"),
+                    definitions: symbols.clone(),
+                });
+            for symbol in symbols {
+                self.mir.symbols[symbol.index()].resolution = ResolveState::Conflicted(conflict);
+                let declaration = self.mir.symbols[symbol.index()].declarations[0];
+                self.mir.diagnostics.push(Diagnostic::error(
+                    "duplicate native type slot",
+                    self.mir.hir[declaration.index()].location,
+                ));
+            }
+        }
+    }
     fn child(&self, node: HirId, role: Role) -> Option<HirId> {
         self.mir.hir[node.index()]
             .children
@@ -155,6 +204,7 @@ impl Pass<'_> {
             ResolveState::Bound(id)
         };
         self.mir.symbols.push(Symbol {
+            native_type: None,
             module,
             name,
             kind,
@@ -546,14 +596,7 @@ impl Pass<'_> {
                 None => break,
             }
         }
-        if pattern {
-            ResolveState::Unresolved
-        } else {
-            self.builtins
-                .get(name)
-                .copied()
-                .map_or(ResolveState::Unresolved, ResolveState::Bound)
-        }
+        ResolveState::Unresolved
     }
     fn constructor(&mut self, state: &ResolveState, seen: &mut Vec<SymbolId>) -> bool {
         let ResolveState::Bound(id) = *state else {
@@ -585,8 +628,68 @@ impl Pass<'_> {
                     .and_then(|value| self.reference_value(value));
                 state.is_some_and(|state| self.constructor(&state, seen))
             }
+            HirKind::Binding {
+                kind: BindingKind::Def,
+                ..
+            } => {
+                let Some(value) = self.child(node, Role::Value) else {
+                    return false;
+                };
+                if matches!(self.mir.hir[value.index()].kind, HirKind::Field) {
+                    let receiver = self.child(value, Role::Receiver).unwrap();
+                    self.constructor_namespace(receiver, seen)
+                } else {
+                    self.reference_value(value)
+                        .is_some_and(|state| self.constructor(&state, seen))
+                }
+            }
             _ => false,
         }
+    }
+    fn constructor_namespace(&mut self, node: HirId, seen: &mut Vec<SymbolId>) -> bool {
+        if matches!(
+            self.mir.hir[node.index()].kind,
+            HirKind::Call | HirKind::TypeApply
+        ) {
+            return self
+                .child(node, Role::Callee)
+                .is_some_and(|callee| self.constructor_namespace(callee, seen));
+        }
+        let Some(ResolveState::Bound(symbol)) = self.reference_value(node) else {
+            return false;
+        };
+        let declaration = &self.mir.symbols[symbol.index()];
+        if let Some(id) = declaration.native_type {
+            let native = self.mir.modules[declaration.module.unwrap().index()]
+                .native
+                .as_ref()
+                .unwrap();
+            return native.types.iter().any(|(slot, rule)| {
+                *slot == id.slot
+                    && matches!(
+                        rule,
+                        NativeTypeRule::Primitive(
+                            TypeConstructor::Bool | TypeConstructor::PropertyTarget
+                        ) | NativeTypeRule::Constructor(
+                            TypeFunction::Option | TypeFunction::Result | TypeFunction::FoldControl
+                        )
+                    )
+            });
+        }
+        if seen.contains(&symbol) {
+            return false;
+        }
+        seen.push(symbol);
+        let Some(&node) = declaration.declarations.last() else {
+            return false;
+        };
+        matches!(
+            self.mir.hir[node.index()].kind,
+            HirKind::Binding {
+                initializer: Some(DeclaredInitializerKind::Enum),
+                ..
+            }
+        )
     }
     fn namespace(&mut self, id: SymbolId, seen: &mut Vec<SymbolId>) -> Option<ModuleId> {
         if seen.contains(&id) {

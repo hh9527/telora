@@ -28,6 +28,15 @@ remove the replaced implementations. Full performance and corner-case validation
 follow integration. See the [current route and pass audit](0280/whole-graph-ir.md).
 The MIR must be inspectable between passes without triggering any solving.
 
+The only implicit source-scope rule is `import "std/prelude" *;`. Builtin type
+names are ordinary resolved declarations: their native semantics come from the
+registered native module/local slot identity, never from identifier spelling.
+Native and source functions both infer through their declared `for(...)`
+signatures, including higher-order callbacks; no `array.map` or other function
+name may select an inference rule. Explicit type arguments fill the same
+per-reference substitution slots used by implicit inference. Syntax operations
+such as `Fn` and diagnostic macros can generate constraints directly.
+
 Allocate syntax-owned slots before constraint solving. Generic instantiation and
 generated operations may allocate auxiliary slots during static solving; every
 such operation must be typed before the execution gate. Cross-module references

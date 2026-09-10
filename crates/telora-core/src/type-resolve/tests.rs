@@ -2,12 +2,24 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 fn graph(sources: &[(&str, &str)]) -> Mir {
+    let mut sources = sources.to_vec();
+    if !sources.iter().any(|(name, _)| *name == "std/prelude") {
+        sources.push((
+            "std/prelude",
+            include_str!("../../modules/std/prelude.telora"),
+        ));
+    }
     let inventory = sources
         .iter()
         .map(|(name, _)| ModuleSpec {
+            native: crate::static_sources::native_module(name),
             name: (*name).into(),
             kind: ModuleKind::Source,
-            implicit_imports: vec![],
+            implicit_imports: if *name == "std/prelude" {
+                vec![]
+            } else {
+                vec!["std/prelude".into()]
+            },
         })
         .collect();
     let mut mir = module_resolve::resolve(inventory, &[sources[0].0.into()], |_, name| {
@@ -19,7 +31,7 @@ fn graph(sources: &[(&str, &str)]) -> Mir {
             .into())
     });
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
-    crate::symbol_resolve::resolve(&mut mir, &["Int", "String"]);
+    crate::symbol_resolve::resolve(&mut mir);
     mir
 }
 fn symbol_type(mir: &Mir, name: &str) -> TypeState {
@@ -106,11 +118,7 @@ fn equal_children_canonicalize_structures_without_merging_unrelated_evidence() {
     assert_eq!(std::mem::size_of::<TypeState>(), 8);
     assert!(!std::mem::needs_drop::<TypeState>());
     let mut mir = Mir::default();
-    let mut solver = Solver {
-        mir: &mut mir,
-        revision: 0,
-        tasks: vec![],
-    };
+    let mut solver = Solver::new(&mut mir);
     let a = solver.fresh();
     let b = solver.fresh();
     let array_a = solver.structure(TypeConstructor::Array, vec![a]);
@@ -155,4 +163,225 @@ fn function_tuple_and_unit_type_syntax_are_static_ir_operations() {
         TypeConstructor::String
     );
     assert!(matches!(symbol_type(&mir, "unit"), TypeState::Known(_)));
+}
+
+#[test]
+fn native_type_identity_survives_aliases_and_ordinary_names_can_be_shadowed() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        import "std/prelude" { Int as Number };
+        type Int = String;
+        type Array = String;
+        export def number: Number = 42;
+        export def text: Int = "ok";
+        export def other: Array = "also text";
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    for (name, expected) in [
+        ("number", TypeConstructor::Int),
+        ("text", TypeConstructor::String),
+        ("other", TypeConstructor::String),
+    ] {
+        let TypeState::Known(id) = symbol_type(&mir, name) else {
+            panic!("{}", mir.dump());
+        };
+        assert_eq!(mir.types[id.index()].constructor, expected);
+    }
+}
+
+#[test]
+fn instantiates_generics_and_solves_recursive_nominal_skeletons() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        def id: for(T) Fn(T) -> T = fn(value) { value };
+        type Pair(T) = struct { first: T, second: T };
+        type Tree = enum { Leaf(Int), Branch((Tree, Tree)) };
+        def pair: Pair(Int) = { first: id(1), second: id(2) };
+        export def text = id("ok");
+        export def number = pair.first;
+        export def tree: Tree = Tree.Branch((Tree.Leaf(1), Tree.Leaf(2)));
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());
+    assert!(matches!(symbol_type(&mir, "tree"), TypeState::Known(_)));
+    let TypeState::Known(text) = symbol_type(&mir, "text") else {
+        panic!("{}", mir.dump());
+    };
+    assert_eq!(mir.types[text.index()].constructor, TypeConstructor::String);
+}
+
+#[test]
+fn solves_match_boolean_and_never_branches() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        type Choice = enum { Number(Int), Missing };
+        def read: Fn(Choice) -> Int = fn(value) {
+            match value {
+                Choice.Number(n) => if !(n < 0) && True { -n } else { fail!("bad") },
+                Choice.Missing => fail!("missing"),
+            }
+        };
+        export def answer = read(Choice.Number(3));
+        export def projection = (1, "ok").0;
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());
+}
+
+#[test]
+fn native_slot_identity_does_not_depend_on_the_declared_name() {
+    let mut mir = graph(&[
+        ("@src/main", "export def answer: Quantity = 42;"),
+        (
+            "std/prelude",
+            "native type Quantity @4; export { Quantity };",
+        ),
+    ]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    let TypeState::Known(id) = symbol_type(&mir, "answer") else {
+        panic!("{}", mir.dump());
+    };
+    assert_eq!(mir.types[id.index()].constructor, TypeConstructor::Int);
+}
+
+#[test]
+fn higher_order_native_calls_use_only_their_declared_generic_signature() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        native unrelated_name: for(A, B) Fn(Array(A), Fn(A) -> B) -> Array(B);
+        native find: for(A) Fn(Array(A), Fn(A) -> Bool) -> Option(A);
+        def ordinary: for(A, B) Fn(A, Fn(A) -> B) -> B = fn(value, callback) { callback(value) };
+        def read: Fn(Array(Tuple([Int, String]))) -> Option(String) = fn(items) {
+            match find(items, fn(item) { True }) {
+                Some(pair) => Some(`value=\{pair.0}`),
+                None => None,
+            }
+        };
+        export def mapped = unrelated_name([1, 2, 3], fn(x) { x > 1 });
+        export def explicit = unrelated_name@[Int, _]([1], fn(x) { "ok" });
+        export def text = ordinary(1, fn(x) { "ok" });
+        export def result = read([(1, "one")]);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());
+    assert!(mir.type_conflicts.is_empty(), "{:?}", mir.type_conflicts);
+    let TypeState::Known(mapped) = symbol_type(&mir, "mapped") else {
+        panic!("{}", mir.dump());
+    };
+    let array = &mir.types[mapped.index()];
+    assert_eq!(array.constructor, TypeConstructor::Array);
+    assert_eq!(
+        mir.types[array.arguments[0].index()].constructor,
+        TypeConstructor::Bool
+    );
+}
+
+#[test]
+fn generic_call_conflicts_keep_the_use_site_and_other_instances_stay_independent() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        native map: for(A, B) Fn(Array(A), Fn(A) -> B) -> Array(B);
+        export def bad: Array(String) = map([1], fn(x) { x > 0 });
+        export def good: Array(Int) = map(["ok"], fn(x) { 42 });
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(!mir.type_conflicts.is_empty());
+    assert!(mir.type_conflicts.iter().all(|c| c.location.is_some()));
+    assert!(
+        mir.diagnostics
+            .iter()
+            .any(|d| !d.labels.is_empty() && d.message.contains("incompatible types"))
+    );
+    let TypeState::Known(good) = symbol_type(&mir, "good") else {
+        panic!("{}", mir.dump());
+    };
+    let array = &mir.types[good.index()];
+    assert_eq!(array.constructor, TypeConstructor::Array);
+    assert_eq!(
+        mir.types[array.arguments[0].index()].constructor,
+        TypeConstructor::Int
+    );
+}
+
+#[test]
+fn diagnostic_macros_accept_the_native_error_identity_without_evaluation() {
+    let mut mir = graph(&[
+        (
+            "@src/main",
+            r#"
+        import "std/blame" { BlameError as Error };
+        def error: Error = blame!("bad");
+        export def abort: Fn(Error) -> Never = fn(e) { raise!(e) };
+        export def warning: Option(Int) = warn!(error);
+        export def text_warning: Option(String) = warn!("bad");
+    "#,
+        ),
+        ("std/blame", include_str!("../../modules/std/blame.telora")),
+    ]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(mir.type_conflicts.is_empty(), "{:?}", mir.type_conflicts);
+    assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());
+}
+
+#[test]
+fn unregistered_native_slots_cannot_create_intrinsic_types() {
+    for source in [
+        "native type Forged @4; export def value: Forged = 1;",
+        "native type Int @999; export def value: Int = 1;",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(
+            mir.diagnostics
+                .iter()
+                .any(|d| d.message.contains("no registered static contract"))
+        );
+        assert!(
+            mir.symbols
+                .iter()
+                .filter(
+                    |s| s.kind == SymbolKind::Declaration(BindingKind::NativeType)
+                        && s.module
+                            .is_some_and(|id| mir.modules[id.index()].name == "@src/main")
+                )
+                .all(|s| s.native_type.is_none())
+        );
+    }
+}
+
+#[test]
+fn configured_decorators_use_factory_and_provider_signatures() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type)
+        type Label = struct { value: String };
+        def make_label: Fn(String) -> Fn(Type, Option(Label)) -> Label = fn(text) {
+            fn(owner, previous) { { value: text } }
+        };
+        @make_label("name")
+        type Item = struct { value: Int };
+        export def item: Item = { value: 1 };
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(mir.type_conflicts.is_empty(), "{:?}", mir.type_conflicts);
+    assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());
 }

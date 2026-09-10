@@ -9,7 +9,7 @@ use telora_core::{
     ModuleFormat, ResolvedWorkspace,
     mir::{Mir, ModuleKind},
     module_resolve::{self, ModuleSpec},
-    static_sources::{BUILTINS, INTRINSICS},
+    static_sources::{BUILTINS, native_module},
 };
 
 enum Source {
@@ -243,6 +243,11 @@ impl Inventory {
             .entries
             .values()
             .map(|e| ModuleSpec {
+                native: if e.origin == "builtin" {
+                    native_module(&e.name)
+                } else {
+                    None
+                },
                 name: e.name.clone(),
                 kind: if e.format == ModuleFormat::Telora {
                     ModuleKind::Source
@@ -267,7 +272,7 @@ impl Inventory {
             },
             |owner, request| self.request(owner, request),
         );
-        telora_core::symbol_resolve::resolve(&mut mir, INTRINSICS);
+        telora_core::symbol_resolve::resolve(&mut mir);
         telora_core::type_resolve::resolve(&mut mir);
         mir
     }

@@ -48,7 +48,8 @@ pub fn check(context: PathBuf, selector: &str, schema: &str) -> Result<i32, Stri
         .diagnostics
         .iter()
         .any(|d| d.severity == Severity::Error)
-        || !mir.type_unknowns.is_empty();
+        || !mir.type_unknowns.is_empty()
+        || !mir.type_conflicts.is_empty();
     emit(
         json!({"schema": schema, "module": root, "record": "summary",
         "status": if failed { "error" } else { "ok" }, "types_only": true,

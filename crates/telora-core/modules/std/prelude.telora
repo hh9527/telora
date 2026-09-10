@@ -1,7 +1,37 @@
+native type Type @0;
+native type Dyn @1;
+native type Never @2;
+native type Unit @3;
+native type Int @4;
+native type Float @5;
+native type String @6;
+native type Bytes @7;
+native type Bool @8;
+native type PropertyTarget @9;
+native type Array @10;
+native type Dict @11;
+native type TypeOf @12;
+native type Unchecked @13;
+native type Tuple @14;
+native type Func @15;
+native type Option @16;
+native type Result @17;
+native type FoldControl @18;
+native type Property @19;
+
+native property: Fn(PropertyTarget) -> Fn(Type, Option(PropertyAttr)) -> PropertyAttr;
+
+export { Type, Dyn, Never, Unit, Int, Float, String, Bytes, Bool,
+    PropertyTarget, Array, Dict, TypeOf, Unchecked, Tuple, Func,
+    Option, Result, FoldControl, Property, property };
+
 @property(PropertyTarget.Type)
 type PropertyAttr = struct { bits: Int };
 
 export { PropertyAttr };
 export Bool.{True, False};
-export Option.{Some, None};
-export Result.{Ok, Err};
+def Some: for(T) Fn(T) -> Option(T) = Option(T).Some;
+def None: for(T) Option(T) = Option(T).None;
+def Ok: for(T, E) Fn(T) -> Result(T, E) = Result(T, E).Ok;
+def Err: for(T, E) Fn(E) -> Result(T, E) = Result(T, E).Err;
+export { Some, None, Ok, Err };

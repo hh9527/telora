@@ -5,6 +5,57 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Declaration-driven inference expansion (2026-09-10)
+
+The static scope rule is solely `import "std/prelude" *;`. The symbol pass no
+longer injects an intrinsic-name table. Prelude type names are ordinary exports;
+their native semantics are linked from trusted module/local slot contracts, not
+their spelling. Renaming the primitive declaration at slot 4 preserves its Int
+identity; shadowing `Int` with a source alias changes ordinary name resolution.
+Unregistered and duplicate native slots produce resolve diagnostics.
+
+Native functions and source functions use the same declared `for(...)` schemes.
+Each reference allocates fresh substitution slots; function inputs, callback
+parameters/results and the call result constrain those slots. There is no
+`array.map`/`find` name dispatch and no copied type environment. Explicit
+`f@[T, _]` fills the same instance slots. There is no new implicit let
+generalization. `Fn`, tuple/unit syntax and diagnostic macros generate their own
+syntax constraints; native type constructors use their linked ABI rules.
+Configured decorators constrain both the factory call and its returned provider
+signature; the provider's result determines the property result slot. Neither
+stage is evaluated.
+
+The expanded pass covers generic calls, nominal/recursive skeletons, constructor
+patterns, match/boolean/Never constraints, record construction, indexing and
+tuple projection. Type-list constructor arguments remain distinct from ordinary
+homogeneous arrays until their context is resolved. Generic instantiation carries
+source locations into conflict diagnostics; even a location-less conflict is
+reported, and types-only checking cannot return success with retained conflicts.
+The MIR dump includes nominal skeletons and declaration generic parameters.
+
+The ontology `@test/query` graph reached zero Unknown and zero Conflicted type
+slots with this expansion, without reading data values or executing Telora. This
+is a coverage observation, not a performance comparison or a claim of complete
+language validation. Generic bound proofs remain unimplemented and are explicitly
+diagnosed when encountered: the final ontology run exits 1 with one unsupported
+`Property(P)` bound diagnostic in `std/type-property`, despite all slots having
+normalized types. Property attachment/trait facts, full decorator
+validation, the static data `Value` contract and remaining expression forms still
+need work. A solved slot graph alone does not establish those capabilities.
+
+Validation: 20 focused core pass tests and 3 static CLI tests pass. These include
+renamed native declarations, ordinary name shadowing, unregistered slots,
+independent generic instances, higher-order native signatures, partial explicit
+type arguments, diagnostic macro inputs and decorator factory/provider typing.
+The CLI test imports `std/array.map` under an unrelated alias, accepts the inferred
+`Array(Bool)` result and rejects a `String` result annotation with a located
+diagnostic. Query tests retain facts for erroneous programs without evaluation.
+
+The prelude now declares the primitive/constructor native slots needed by the
+new pipeline. Execution assembly has not imported these contracts into the old
+bootstrap path; ordinary check/evaluation compatibility is not established by
+this milestone. No adapter to the old inference or VM was added.
+
 ### Early static CLI assembly (2026-09-10)
 
 The agreed next small integration step is now in place: `check --only-types`
@@ -15,7 +66,7 @@ assembly of execution consumers.
 `static_input.rs` builds the workspace/test/embedded-source inventory from
 package declarations and source text, then runs module, symbol and type passes
 on one MIR. It does not use the old ModuleResolver, Engine, WorkspaceSnapshot,
-type interfaces or VM. Embedded sources and intrinsic names are independent
+type interfaces or VM. Embedded sources and native slot contracts are independent
 static inputs; no native callbacks or runtime types are constructed. The module
 pass accepts a logical-request policy for owner-relative selectors, dependencies
 and private/test visibility. Root/import/read failures are MIR diagnostics.
@@ -29,8 +80,8 @@ types-only CLI call were removed, without a fallback. Ordinary check/evaluation
 and LSP remain on their existing path pending further assembly.
 
 The bridge is an observation surface for the unfinished type pass, not production
-language parity. In particular the prelude already exercises unsupported rules;
-valid source can still fail types-only checking. Static data modules export a
+language parity. Valid source can still exercise unsupported rules and fail
+types-only checking. Static data modules export a
 `data` symbol but its canonical `Value` type is not yet solved. No timing comparison
 against ordinary check is meaningful at this point.
 
@@ -170,8 +221,8 @@ module appeared without any file read. This is an explicit-inventory debug
 driver, not the final workspace CLI or configuration integration.
 
 Use `mir-dump --symbols ROOT NAME=PATH ...` to run the symbol pass before dumping
-the same MIR. Intrinsic symbol names can be supplied with `--intrinsic=NAME`;
-ordinary/prelude exports come from the module inventory, not a VM environment.
+the same MIR. Ordinary/prelude exports come from the module inventory, not a VM
+environment; the former `--intrinsic=NAME` option has been removed.
 `mir-dump --types` runs all three new passes and additionally prints provisional
 terms, canonical types, symbol type slots, conflicts and remaining Unknown slots.
 

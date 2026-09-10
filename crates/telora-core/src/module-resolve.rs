@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug)]
 pub struct ModuleSpec {
+    pub native: Option<NativeModule>,
     /// Canonical logical name, such as `@src/main` or `std/prelude`.
     pub name: String,
     pub kind: ModuleKind,
@@ -36,6 +37,7 @@ pub fn resolve_with_requests(
         let id = ModuleId(mir.modules.len().try_into().expect("module capacity"));
         names.entry(spec.name.clone()).or_default().push(id);
         mir.modules.push(Module {
+            native: spec.native.clone(),
             name: spec.name.clone(),
             kind: spec.kind,
             state: ModuleState::Unloaded,
@@ -222,12 +224,14 @@ mod tests {
         let mut inventory = sources
             .keys()
             .map(|name| ModuleSpec {
+                native: None,
                 name: (*name).into(),
                 kind: ModuleKind::Source,
                 implicit_imports: vec![],
             })
             .collect::<Vec<_>>();
         inventory.push(ModuleSpec {
+            native: None,
             name: "@src/data.json".into(),
             kind: ModuleKind::Data,
             implicit_imports: vec![],
@@ -266,6 +270,7 @@ mod tests {
         let mut inventory = ["@src/a", "@src/b", "@src/duplicate", "@src/duplicate"]
             .into_iter()
             .map(|name| ModuleSpec {
+                native: None,
                 name: name.into(),
                 kind: ModuleKind::Source,
                 implicit_imports: vec![],
