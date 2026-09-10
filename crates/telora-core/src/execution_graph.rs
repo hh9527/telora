@@ -26,6 +26,7 @@ pub struct PropertyKey {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Task {
+    ConstructionCheck { owner: TypeId, site: PropertySite, checker: HirId },
     Instance {
         instance: GenericInstanceId,
         symbol: SymbolId,
@@ -57,6 +58,7 @@ pub struct ExecutionGraph {
     globals: Vec<Option<NodeId>>,
     instances: Vec<Option<NodeId>>,
     properties: BTreeMap<PropertyKey, NodeId>,
+    checks: BTreeMap<(TypeId, PropertySite), NodeId>,
 }
 
 impl ExecutionGraph {
@@ -67,6 +69,7 @@ impl ExecutionGraph {
             globals: vec![None; mir.symbols.len()],
             instances: vec![None; mir.generic_instances.len()],
             properties: BTreeMap::new(),
+            checks: BTreeMap::new(),
         };
         for (index, symbol) in mir.symbols.iter().enumerate() {
             if !matches!(
@@ -151,6 +154,10 @@ impl ExecutionGraph {
                 "one reduced property per key"
             );
         }
+        for check in &mir.construction_checks {
+            let node = graph.push(Node { label: format!("check({:?}, {:?})", check.owner, check.site), task: Task::ConstructionCheck { owner: check.owner, site: check.site, checker: check.checker }, ty: check.signature, location: mir.hir[check.checker.index()].location });
+            assert!(graph.checks.insert((check.owner, check.site), node).is_none());
+        }
         graph
     }
 
@@ -172,6 +179,9 @@ impl ExecutionGraph {
     /// Absence is determined by static evidence; no provider is run to find it.
     pub fn property(&self, key: PropertyKey) -> Option<NodeId> {
         self.properties.get(&key).copied()
+    }
+    pub fn construction_check(&self, owner: TypeId, site: PropertySite) -> Option<NodeId> {
+        self.checks.get(&(owner, site)).copied()
     }
     pub fn evaluation<V>(&self) -> Evaluation<V> {
         Evaluation::new(self.nodes.len())

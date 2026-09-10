@@ -42,6 +42,7 @@ impl Emitter<'_> {
         let mut constructor = Self::new(self.mir, self.graph, format!("newtype:{}", owner.index()));
         constructor.function.parameter_count = 1;
         let payload = constructor.register();
+        constructor.construction_check(node, owner, PropertySite::Type, payload);
         let dst = constructor.register();
         constructor.emit(
             node,

@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Ordinary construction invokes solved checker tasks (2026-09-10)
+
+ExecutionGraph now assigns a lazy task to each construction checker, indexed by
+(owner TypeId, construction site). Codegen installs a thunk for the checker
+expression and admits its referenced globals/native dependencies before emission.
+Struct literal construction, newtype constructors and payload-variant constructors
+emit ordinary Demand/Call/Result-branch/Raise instructions using the sealed
+contract. No new inference or runtime type recovery is introduced.
+
+The VM demand table caches the checker function, not each validation result.
+Each construction calls it; Err(BlameError) is raised at the construction boundary.
+Regression cases cover all three supported boundaries, referenced global checker
+dependencies, rejection diagnostics, and two rejected values followed by an
+accepted value through the same cached checker. All 43 codegen tests pass:
+/tmp/mir-check-execution-codegen.log.
+
+Generic checker specialization and codec/parser invocation are still pending.
+Those combinations explicitly fail codegen rather than silently omitting checks;
+the earlier blanket rejection of all construction-check graphs has been removed.
+The graph lookup is now available for VM codec/parser consumers. This checkpoint
+does not close the overall migration or claim performance/full-suite acceptance.
+
 ### Construction checks have independent static contracts (2026-09-10)
 
 MIR lowering now recognizes the existing intrinsic @check syntax separately from

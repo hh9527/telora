@@ -140,8 +140,13 @@ fn compile_root(
     sealed: SealedMir<'_>,
     root: CompilationRoot,
 ) -> Result<CompiledEntry, Vec<Diagnostic>> {
-    if !sealed.mir().construction_checks.is_empty() {
-        return Err(sealed.mir().construction_checks.iter().map(|check| Diagnostic::error("construction check execution has not been lowered yet", sealed.mir().hir[check.checker.index()].location)).collect());
+    for check in &sealed.mir().construction_checks {
+        let mut pending = vec![check.signature];
+        while let Some(ty) = pending.pop() {
+            let shape = &sealed.mir().types[ty.index()];
+            if matches!(shape.constructor, TypeConstructor::Parameter(_)) { return Err(vec![Diagnostic::error("generic construction checks require static specialization", sealed.mir().hir[check.checker.index()].location)]); }
+            pending.extend(shape.arguments.iter().copied());
+        }
     }
     let graph = ExecutionGraph::from_mir(&sealed);
     let (mir, types) = sealed.into_parts();
@@ -198,6 +203,11 @@ fn compile_root(
             })
             .collect()
     };
+    let mut all = globals.into_iter().collect::<std::collections::BTreeSet<_>>();
+    for check in &mir.construction_checks {
+        for symbol in referenced_globals(mir, check.checker) { all.extend(reachable_globals(mir, symbol)); }
+    }
+    globals = all.into_iter().collect();
     let queries_properties = root == CompilationRoot::Check
         || globals.iter().any(|s| {
             matches!(
@@ -215,6 +225,9 @@ fn compile_root(
             }
         }
         globals = all.into_iter().collect();
+    }
+    if !mir.construction_checks.is_empty() && globals.iter().any(|s| matches!(native_abi(mir, *s), Some((13, "decode_with")) | Some((7, "parse_with")))) {
+        return Err(vec![emitter.error(declaration, "construction checks in codec/parser execution have not been lowered yet")]);
     }
     // Native ABI values and injected data already exist before initialization.
     for &global in &globals {
@@ -312,6 +325,19 @@ fn compile_root(
             emitter.property_thunk(record).map_err(|d| vec![d])?;
         }
     }
+    for check in &mir.construction_checks {
+        let mut thunk = Emitter::new(mir, &graph, format!("check:{}", check.checker.index()));
+        let mut captures = vec![];
+        for symbol in referenced_globals(mir, check.checker) {
+            if let Some(value) = emitter.lookup(symbol) { let register = thunk.register(); thunk.locals.push((symbol, register)); captures.push(value); }
+        }
+        thunk.function.capture_count = captures.len() as u32;
+        let value = thunk.expression(check.checker).map_err(|d| vec![d])?;
+        thunk.emit(check.checker, O::Return { src: value });
+        let dst = emitter.register();
+        emitter.emit(check.checker, O::MakeClosure { dst, function: Box::new(thunk.function), captures });
+        emitter.emit(check.checker, O::InstallTask { node: graph.construction_check(check.owner, check.site).expect("check task"), src: dst });
+    }
     let (result, result_type) = if let Some(target) = target {
         let result = if let Some(value) = emitter.lookup(target) {
             value
@@ -336,6 +362,7 @@ fn compile_root(
                 }
                 crate::execution_graph::Task::Instance { instance, .. } => graph.instance(instance),
                 crate::execution_graph::Task::Property { key, .. } => graph.property(key),
+                crate::execution_graph::Task::ConstructionCheck { owner, site, .. } => graph.construction_check(owner, site),
             };
             if let Some(node) = demand {
                 let dst = emitter.register();
@@ -547,6 +574,28 @@ impl<'a> Emitter<'a> {
         let dst = self.register();
         self.emit(node, O::LoadConst { dst, constant });
         dst
+    }
+    fn construction_check(&mut self, node: HirId, owner: TypeId, site: PropertySite, value: R) {
+        let Some(task) = self.graph.construction_check(owner, site) else { return };
+        let callee = self.register();
+        self.emit(node, O::Demand { dst: callee, node: task });
+        let base = self.register();
+        self.emit(node, O::Move { dst: base, src: callee });
+        let argument = self.register();
+        self.emit(node, O::Move { dst: argument, src: value });
+        self.emit(node, O::Call { base, argument_count: 1 });
+        let ok = self.constant(node, Constant::Atom(crate::Atom::builtin(crate::BuiltinAtom::Ok)));
+        let success = self.register();
+        self.emit(node, O::TaggedTagEquals { dst: success, value: base, tag: ok });
+        let rejected = self.label();
+        let done = self.label();
+        self.emit(node, O::JumpIfFalse { condition: success, target: rejected });
+        self.emit(node, O::Jump { target: done });
+        self.mark(rejected);
+        let blame = self.register();
+        self.emit(node, O::GetTaggedPayload { dst: blame, value: base });
+        self.emit(node, O::Raise { action: crate::ast::BlameAction::Raise, dst: blame, message: blame, subjects: vec![] });
+        self.mark(done);
     }
     fn lookup(&self, symbol: SymbolId) -> Option<R> {
         self.locals
@@ -818,6 +867,7 @@ impl<'a> Emitter<'a> {
                         Self::new(self.mir, self.graph, format!("variant:{}", node.index()));
                     nested.function.parameter_count = 1;
                     let payload = nested.register();
+                    nested.construction_check(node, owner, PropertySite::Variant(index), payload);
                     let result = nested.register();
                     nested.emit(
                         node,
@@ -920,6 +970,7 @@ impl<'a> Emitter<'a> {
                 }
                 let dst = self.register();
                 self.emit(node, O::MakeDict { dst, fields });
+                self.construction_check(node, ty, PropertySite::Type, dst);
                 dst
             }
             HirKind::Binding {
@@ -2065,11 +2116,33 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn construction_checks_cannot_be_silently_omitted_from_codegen() {
-        let mir = graph("@check(fn(value) { Ok(()) }) type Item = struct(Int); export def answer = Item(42);", "");
-        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
-        let errors = compile(mir.seal().unwrap(), entry(&mir)).err().expect("construction lowering is pending");
-        assert!(errors.iter().any(|error| error.message.contains("construction check execution")));
+    fn construction_checks_execute_at_solved_constructor_boundaries() {
+        for source in [
+            r#"def minimum = 1; def validate = fn(value) { if value >= minimum { Ok(()) } else { Err(blame!("minimum", value)) } };
+                @check(validate) type Item = struct(Int); export def answer = match Item(42) { Item(value) => value };"#,
+            r#"@check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive", value)) } }) type Item = struct(Int);
+                export def answer = match Item(42) { Item(value) => value };"#,
+            r#"@check(fn(value) { if value.number > 0 { Ok(()) } else { Err(blame!("positive", value.number)) } }) type Item = struct {number: Int};
+                def value: Item = {number: 42}; export def answer = value.number;"#,
+            r#"type Item = enum { @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive", value)) } }) Full(Int), Empty };
+                export def answer = match Item.Full(42) { Item.Full(value) => value, _ => 0 };"#,
+            r#"import "std/_rt" as rt; import "std/array" as array;
+                @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive", value)) } }) type Item = struct(Int);
+                export def answer = match rt.with_diagnostics(fn(n: Int) { Item(n) })(0) { Err(errors) => if array.length(errors) == 1 && errors[0].message == "positive" { 42 } else { 0 }, _ => 0 };"#,
+            r#"import "std/_rt" as rt; import "std/array" as array;
+                @check(fn(value) { if value.number > 0 { Ok(()) } else { Err(blame!("positive", value.number)) } }) type Item = struct {number: Int};
+                def attempt = rt.with_diagnostics(fn(n: Int) { let value: Item = {number: n}; value });
+                export def answer = match (attempt(0), attempt(0), attempt(42)) { (Err(first), Err(second), Ok((value, _))) => if array.length(first) == 1 && array.length(second) == 1 { value.number } else { 0 }, _ => 0 };"#,
+            r#"import "std/_rt" as rt; type Item = enum { @check(fn(value) { Err(blame!("rejected", value)) }) Full(Int), Empty };
+                export def answer = match rt.with_diagnostics(fn(n: Int) { Item.Full(n) })(1) { Err(_) => 42, _ => 0 };"#,
+        ] {
+            let mir = graph(source, "");
+            assert!(mir.diagnostics.is_empty(), "{source}\n{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{source}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
     }
 
     #[test]
