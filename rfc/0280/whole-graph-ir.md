@@ -5,6 +5,30 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Generic argument completion preserves directional evidence (2026-09-11)
+
+Imported generic signatures exposed an ordering bug: Fit equated an instance
+slot with Unchecked before the source supplied its nominal constructor. The
+solver now retains the pending instance producer and waits for its skeleton
+before consuming the directional boundary. Retiring a producer advances the
+solver revision even if its parameter already aliases the target.
+
+An Unchecked argument also waits for independent parameter evidence before
+choosing an unconstrained template slot. This allows the TypeOf argument of
+dyn.pack to establish the checked owner. At the fixed point, a genuinely
+unconstrained identity parameter keeps Unchecked. Conversion targets remain
+explicit MIR value adjustments; codegen and VM were not changed.
+
+Validation: final 80 codegen tests, 55 type-resolve tests and CLI build pass.
+Regression coverage includes imported generic acceptance/rejection, identity
+preserving candidate identity and a TypeOf-driven checked argument. Actual
+construction-boundaries passes 16/16, checked-recursive-types passes 5/5.
+The language aggregate still fails codec/diagnostic/data/interpreter and
+other cases; full migration and legacy removal remain incomplete. Logs:
+/tmp/mir-fit-{codegen,types,build,language,recursive,aggregate}.log.
+The aggregate preceded the final producer-retirement revision bookkeeping;
+focused suites and both actual cases were rechecked afterward. No perf run.
+
 ### Local struct updates inherit their solved source owner (2026-09-11)
 
 An unannotated local binding of a struct update incorrectly marked the update

@@ -190,6 +190,7 @@ impl Solver<'_> {
                 }
             }
         }
+        self.pending_instances.insert(target);
         self.tasks.push(Task::Instantiate {
             source: self.mir.symbol_types[symbol.index()],
             target,
@@ -205,6 +206,7 @@ impl Solver<'_> {
         location: Option<Location>,
     ) -> TypeSlotId {
         let target = self.fresh();
+        self.pending_instances.insert(target);
         self.tasks.push(Task::Instantiate {
             source,
             target,
@@ -284,6 +286,7 @@ impl Solver<'_> {
         location: Option<Location>,
     ) -> Option<Task> {
         if let TypeState::Conflicted(id) = self.mir.ty_slots[self.root(source).index()] {
+            self.pending_instances.remove(&target);
             let root = self.root(target);
             self.mir.ty_slots[root.index()] = TypeState::Conflicted(id);
             self.revision += 1;
@@ -297,6 +300,11 @@ impl Solver<'_> {
                 location,
             });
         };
+        if self.pending_instances.remove(&target) {
+            // Retiring the producer can unblock a directional constraint even
+            // when its parameter already aliases the same unknown slot.
+            self.revision += 1;
+        }
         if let TypeConstructor::Parameter(parameter) = term.constructor {
             if let Some((_, argument)) = arguments.iter().find(|(p, _)| *p == parameter) {
                 self.equal(target, *argument, location);

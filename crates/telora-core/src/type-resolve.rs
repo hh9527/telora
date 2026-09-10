@@ -2,6 +2,7 @@
 use crate::ast::{BinaryOperator, BindingKind, BlameAction, UnaryOperator};
 use crate::mir::*;
 use crate::source::{Diagnostic, Location};
+use std::collections::BTreeSet;
 
 #[path = "type-resolve/arena.rs"]
 mod arena;
@@ -130,6 +131,8 @@ struct Solver<'a> {
     nominal_owner: Vec<Option<SymbolId>>,
     return_slots: Vec<Option<TypeSlotId>>,
     pending_blocks: Vec<bool>,
+    /// Instance slots still waiting for their source constructor evidence.
+    pending_instances: BTreeSet<TypeSlotId>,
     value_spreads: Vec<bool>,
     administrative: Vec<bool>,
     scheme_references: Vec<bool>,
@@ -219,7 +222,7 @@ pub fn resolve(mir: &mut Mir) {
             }
         }
         if solver.revision == revision {
-            if !solver.finish_type_facets() && !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms() && !solver.generalize_ready() {
+            if !solver.finish_type_facets() && !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms() && !solver.finish_unchecked_fits() && !solver.generalize_ready() {
                 break;
             }
         }
@@ -253,6 +256,7 @@ impl Solver<'_> {
             nominal_owner: vec![None; mir.hir.len()],
             return_slots: vec![None; mir.hir.len()],
             pending_blocks: vec![false; mir.hir.len()],
+            pending_instances: BTreeSet::new(),
             administrative: vec![false; mir.hir.len()],
             scheme_references: vec![false; mir.hir.len()],
             type_uses: vec![false; mir.hir.len()],

@@ -1410,6 +1410,31 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn imported_generic_parameters_complete_unchecked_arguments() {
+        for body in [
+            r#"export def answer = do { let candidate: Unchecked(Box(Int)) = {value: 42, count: 2}; read(candidate) };"#,
+            r#"export def answer = match rt.with_diagnostics(fn(n: Int) {
+                let candidate: Unchecked(Box(Int)) = {value: n, count: 0}; read(candidate)
+            })(42) { Err(errors) => if errors[0].message == "count below minimum" { 42 } else { 0 }, _ => 0 };"#,
+            r#"export def answer = do { let candidate: Unchecked(Box(Int)) = {value: 42, count: 0};
+                let copy = identity(candidate);
+                match dyn.project_with(Box(Int).type, dyn.pack(Unchecked(Box(Int)).type, copy)) { None => copy.value, _ => 0 }
+            };"#,
+            r#"export def answer = match rt.with_diagnostics(fn(n: Int) {
+                let candidate: Unchecked(Box(Int)) = {value: n, count: 0}; dyn.pack(Box(Int).type, candidate)
+            })(42) { Err(errors) => if errors[0].message == "count below minimum" { 42 } else { 0 }, _ => 0 };"#,
+        ] {
+            let mir = graph(&format!(r#"import "./math" {{Box}}; import "std/_rt" as rt; import "std/dyn" as dyn;
+                def read: for(T) Fn(Box(T)) -> T = fn(value) {{ value.value }};
+                def identity: for(T) Fn(T) -> T = fn(value) {{ value }}; {body}"#),
+                r#"@check(fn(value) { if value.count >= 1 { Ok(()) } else { Err(blame!("count below minimum", value.count)) } })
+                type Box(T) = struct {value: T, count: Int}; export {Box};"#);
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{body}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{body}");
+        }
+    }
+
+    #[test]
     fn local_struct_update_chains_keep_their_nominal_type() {
         let mir = graph(r#"import "./math" {Point};
             export def answer = do { let point: Point = {x: 1}; let updated = point <~ {x: 2} <~ {x: 42}; updated.x };"#,
@@ -2978,6 +3003,7 @@ pub(crate) mod tests {
         "#;
         for body in [
             r#"export def answer = do { let candidate: Unchecked(Point) = {x: 0}; candidate.x + 42 };"#,
+            r#"def read: for(T) Fn(Box(T)) -> T = fn(value) { value.value }; export def answer = do { let candidate: Unchecked(Box(Int)) = {value: 42}; read(candidate) };"#,
             r#"export def answer = do { let candidate: Unchecked(Point) = {x: 42}; let checked: Point = candidate; checked.x };"#,
             r#"def accept: Fn(Point) -> Int = fn(point) { point.x }; export def answer = do { let candidate: Unchecked(Point) = {x: 42}; accept(candidate) };"#,
             r#"type Container = struct {point: Point}; export def answer = do { let candidate: Unchecked(Point) = {x: 42}; let value: Container = {point: candidate}; value.point.x };"#,

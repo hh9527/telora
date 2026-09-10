@@ -1,6 +1,26 @@
 use super::*;
 
 impl Solver<'_> {
+    pub(super) fn finish_unchecked_fits(&mut self) -> bool {
+        let pending = std::mem::take(&mut self.tasks);
+        let mut changed = false;
+        for task in pending {
+            if let Task::Fit { node, expected, actual } = task
+                && self.mir.ty_slots[self.root(expected).index()] == TypeState::Unknown
+                && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
+                && !self.pending_instances.iter().any(|&target| self.root(target) == self.root(expected))
+            {
+                // No independent contract chose a checked owner. A genuinely
+                // unconstrained parameter (e.g. identity) keeps Unchecked.
+                self.equal(expected, actual, Some(self.mir.hir[node.index()].location));
+                changed = true;
+            } else {
+                self.tasks.push(task);
+            }
+        }
+        changed
+    }
+
     pub(super) fn finish_value_equalities(&mut self) -> bool {
         let pending = std::mem::take(&mut self.tasks);
         let mut changed = false;
@@ -257,6 +277,17 @@ impl Solver<'_> {
                 actual,
             } => {
                 if self.pending_blocks.get(actual.index()).copied().unwrap_or(false) {
+                    return Ok(Some(Task::Fit { node, expected, actual }));
+                }
+                // An unresolved instance is not a free inference variable.
+                // Its source may still supply an Unchecked/nominal boundary;
+                // equality now would erase the directional conversion.
+                if [expected, actual].into_iter().any(|slot| self.term(slot).is_none()
+                    && self.pending_instances.iter().any(|&target| self.root(target) == self.root(slot))) {
+                    return Ok(Some(Task::Fit { node, expected, actual }));
+                }
+                if self.mir.ty_slots[self.root(expected).index()] == TypeState::Unknown
+                    && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Unchecked) {
                     return Ok(Some(Task::Fit { node, expected, actual }));
                 }
                 if self.term(expected).is_some_and(|term| term.constructor == TypeConstructor::TypeOf)
