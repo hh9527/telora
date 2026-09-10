@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Empty Option instances close from constructor evidence (2026-09-11)
+
+An unconstrained use such as option.is_some(None) left the Option argument and
+both generic references unknown. At the fixed point, the solver now follows
+resolved declaration/alias identities to the already selected empty Option
+variant. An unknown argument at that concrete use receives Never: the empty
+constructor has no payload evidence. This does not match the spelling None.
+
+This happens after ordinary constraints and generalization: explicit Option(Int)
+contexts retain Int, and an exported generic empty declaration retains its
+parameter. Arbitrary generic functions returning Option(_) receive no such
+evidence and remain unknown when genuinely unconstrained. Codegen is unchanged.
+
+Validation: 83 codegen tests, 56 type-resolve tests and CLI build pass. Tests
+cover renamed imports/aliases, direct member syntax, contextual Int, retained
+generic declarations and rejection of an unknown generic native result.
+Actual stdlib-semantics now passes 5/5 and its aggregate checker passes.
+Remaining test-mode aggregate failures: codec-schema, initialization,
+interpreter, module-interfaces and stdlib-collections. Other diagnostic/query
+gates and legacy removal remain outstanding. Logs:
+/tmp/mir-empty-{codegen,types,build,language,aggregate}.log. No perf run or fixture changes.
+
 ### Match failures keep the established runtime category (2026-09-11)
 
 Codegen now emits the existing Fail instruction when no match arm accepts a

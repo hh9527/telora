@@ -2,6 +2,29 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn empty_option_bottom_evidence_does_not_default_arbitrary_generic_results() {
+    let mut mir = graph(&[("@src/main", "def inspect: for(T) Fn(Option(T)) -> Bool = fn(value) { match value { None => False, Some(_) => True } }; export def empty = Option.None; export def constrained: Option(Int) = None; export def observed = inspect(empty);")]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let TypeState::Known(empty) = symbol_type(&mir, "empty") else { panic!("empty") };
+    let TypeState::Known(constrained) = symbol_type(&mir, "constrained") else { panic!("constrained") };
+    assert_eq!(mir.types[empty.index()].constructor, TypeConstructor::Option);
+    assert!(matches!(mir.types[mir.types[empty.index()].arguments[0].index()].constructor, TypeConstructor::Parameter(_)));
+    assert_eq!(mir.types[mir.types[constrained.index()].arguments[0].index()].constructor, TypeConstructor::Int);
+    assert!(mir.hir.iter().enumerate().any(|(index, node)| {
+        matches!(&node.kind, HirKind::Variable(name) if name == "empty")
+            && matches!(mir.ty_slots[index], TypeState::Known(instance)
+                if mir.types[instance.index()].constructor == TypeConstructor::Option
+                    && mir.types[mir.types[instance.index()].arguments[0].index()].constructor == TypeConstructor::Never)
+    }), "{}", mir.dump());
+
+    let mut mir = graph(&[("@src/main", "native unknown: for(T) Fn() -> Option(T); export def answer = unknown();")]);
+    resolve(&mut mir);
+    assert!(mir.seal().is_err());
+    assert!(mir.diagnostics.iter().any(|d| d.message == "unknown generic argument"), "{}", mir.dump());
+}
+
+#[test]
 fn newtype_reference_facets_preserve_declarations_and_reject_function_patterns() {
     let mut mir = graph(&[("@src/main", "type Id = struct(Int); def make: Fn(Int) -> Id = Id; export def value = make(42);")]);
     resolve(&mut mir);

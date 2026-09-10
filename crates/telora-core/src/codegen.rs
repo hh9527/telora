@@ -1410,6 +1410,20 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn empty_option_variants_close_without_context() {
+        for body in [
+            "export def answer = if option.is_some(None) { 0 } else { 42 };",
+            "import \"std/prelude\" {None as absent}; def renamed = absent; export def answer = if option.is_some(renamed) { 0 } else { 42 };",
+            "export def answer = if option.is_some(Option.None) { 0 } else { 42 };",
+            "export def answer = do { let empty: Option(Int) = None; option.unwrap_or(empty, 42) };",
+        ] {
+            let mir = graph(&format!("import \"std/option\" as option; {body}"), "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{body}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+        }
+    }
+
+    #[test]
     fn temporal_decoding_obeys_payload_types_and_construction_checks() {
         let mir = graph(r#"import "std/codec" as codec; import "std/_rt" as rt;
             type WrongPayload = enum {LocalDate(Int)};

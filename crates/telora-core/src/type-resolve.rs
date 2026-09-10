@@ -222,7 +222,7 @@ pub fn resolve(mir: &mut Mir) {
             }
         }
         if solver.revision == revision {
-            if !solver.finish_type_facets() && !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms() && !solver.finish_unchecked_fits() && !solver.generalize_ready() {
+            if !solver.finish_type_facets() && !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms() && !solver.finish_unchecked_fits() && !solver.generalize_ready() && !solver.finish_empty_options() {
                 break;
             }
         }
