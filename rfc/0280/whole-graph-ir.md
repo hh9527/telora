@@ -5,6 +5,31 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Demand publication preserves value origin (2026-09-11)
+
+The first lazy export/property read formerly rebased a generated initializer
+origin through its Register return target, while cache hits returned the cached
+value directly. Publication now preserves the initializer's existing origin
+and returns the same value without read-site rebasing. This changes provenance
+flags only: the heap handle and solved type stamp are retained, with no payload
+copy or recursive traversal. Failure continuations are unchanged.
+
+Validation: 67 codegen tests and 48 VM tests passed. The final focused test also
+checks that a nominal record retains its solved type, raw handle and location
+across first/cached reads and an identity-function return. The actual language
+fixtures check-result-provenance, struct-projection-provenance,
+struct-update-provenance and tuple-spread-provenance now pass without changing
+their expectations. The full language aggregate still fails other fixtures;
+this is not a complete provenance audit or full migration acceptance. Logs:
+/tmp/mir-demand-origin-codegen.log, /tmp/mir-demand-origin-vm.log,
+/tmp/mir-demand-origin-final-tests.log and /tmp/mir-demand-origin-language.log.
+No performance measurement was made.
+
+Codegen remains a mechanical consumer of sealed MIR. Types, inferred generic
+arguments, call targets and value adjustments belong to the static result;
+missing evidence must be fixed there rather than inferred during emission.
+Additional optimization passes remain outside the current integration scope.
+
 ### Mechanical tail calls preserve native completion boundaries (2026-09-11)
 
 Codegen now propagates syntactic tail position through function/block results,

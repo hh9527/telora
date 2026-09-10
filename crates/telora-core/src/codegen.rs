@@ -1423,6 +1423,28 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn first_and_cached_demands_preserve_initializer_origin_through_function_returns() {
+        let mir = graph("import \"./math\" { original }; def echo: Fn(Int) -> Int = fn(value) { value }; export def answer = (echo(original), echo(original), original);", "export def original = -7;");
+        let expected = mir.hir.iter().find(|node| matches!(node.kind, HirKind::Unary(crate::ast::UnaryOperator::Negate))).unwrap().location;
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let result = execute(artifact).unwrap();
+        for index in 0..3 {
+            let value = result.value().sequence_get(index).unwrap();
+            assert_eq!(value.as_int(), Some(-7));
+            assert_eq!(value.runtime().loc(), Some(expected));
+        }
+        let mir = graph("import \"./math\" { Item, original }; def echo: Fn(Item) -> Item = fn(value) { value }; export def answer = (echo(original), original);", "export type Item = struct {value: Int}; export def original: Item = {value: 42};");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let result = execute(artifact).unwrap();
+        let first = result.value().sequence_get(0).unwrap();
+        let cached = result.value().sequence_get(1).unwrap();
+        assert!(first.solved_type_id().is_some());
+        assert_eq!(first.solved_type_id(), cached.solved_type_id());
+        assert_eq!(first.runtime().value(), cached.runtime().value());
+        assert_eq!(first.runtime().loc(), cached.runtime().loc());
+    }
+
+    #[test]
     fn tail_positions_use_existing_frame_replacement_without_skipping_followup_work() {
         for source in [
             "def count: Fn(Int) -> Int = fn(n) { if n == 0 { 42 } else { count(n - 1) } }; export def answer = count(2000);",

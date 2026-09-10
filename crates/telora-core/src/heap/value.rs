@@ -539,6 +539,12 @@ impl Val {
         }
     }
 
+    pub(crate) fn preserve_origin(self) -> Self {
+        if self.loc().is_some() {
+            Self { meta: self.meta.with_provenance(Provenance::Original), ..self }
+        } else { self }
+    }
+
     pub(crate) fn rebase_generated(self, call_site: Option<Loc>) -> Self {
         // Dyn carries the erased value's origin, including an absent origin.
         // Returning the wrapper must not replace it with the packing call site.

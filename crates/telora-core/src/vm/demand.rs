@@ -22,6 +22,11 @@ impl NativeContinuation for DemandContinuation {
         _: &Heap,
         _: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError> {
+        // Publication fixes the initializer's existing source, rather than
+        // treating the first read as a call that generated the exported value.
+        // Cache hits and the first return must carry the identical handle,
+        // solved type and provenance flags.
+        let value = value.preserve_origin();
         current
             .solved_evaluation
             .as_mut()
@@ -37,7 +42,12 @@ impl NativeContinuation for DemandContinuation {
             })?;
         Ok(VmAction::Return {
             value,
-            return_target: self.return_target,
+            return_target: match self.return_target {
+                // A cache read is not a value-producing call. In particular,
+                // an absent initializer origin must stay absent on first use.
+                ReturnTarget::Register { destination, .. } => ReturnTarget::Register { destination, call_site: None },
+                target => target,
+            },
         })
     }
 
