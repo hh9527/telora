@@ -60,15 +60,18 @@ impl Lower<'_> {
     fn decorators(&mut self, children: &mut Vec<Edge>, decorators: Vec<ast::Decorator>) {
         for decorator in decorators {
             let mut edges = vec![];
-            self.expression_edge(&mut edges, Role::Callee, decorator.value.callee);
+            // @check is an intrinsic construction boundary, not a lookup of a
+            // prelude provider. Its argument still undergoes ordinary resolve.
+            let check = matches!(&decorator.value.callee.value, ast::ExprKind::Variable(name) if name.value == "check");
+            if !check { self.expression_edge(&mut edges, Role::Callee, decorator.value.callee); }
             for argument in decorator.value.arguments {
                 self.expression_edge(&mut edges, Role::Argument, argument);
             }
             let node = self.node(
                 decorator.location,
-                HirKind::Decorator {
+                if check { HirKind::ConstructionCheck { configured: decorator.value.configured } } else { HirKind::Decorator {
                     configured: decorator.value.configured,
-                },
+                } },
                 edges,
             );
             children.push(Edge {

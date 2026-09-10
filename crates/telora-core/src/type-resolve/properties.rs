@@ -34,6 +34,10 @@ impl Solver<'_> {
 
     fn attach_properties(&mut self, syntax: HirId, owner: TypeSlotId, site: PropertySite) {
         for decorator in self.children(syntax, Role::Decorator) {
+            if matches!(self.mir.hir[decorator.index()].kind, HirKind::ConstructionCheck { .. }) {
+                self.attach_check(decorator, owner, site);
+                continue;
+            }
             let context = match site {
                 PropertySite::Type => self.structure(TypeConstructor::Type, vec![]),
                 PropertySite::Field(_) | PropertySite::Variant(_) => {
@@ -64,6 +68,40 @@ impl Solver<'_> {
             };
             self.decorator_contexts[decorator.index()] = Some(context);
             self.property_declarations.push((owner, site, decorator));
+        }
+    }
+
+    fn attach_check(&mut self, decorator: HirId, owner: TypeSlotId, site: PropertySite) {
+        let Some(term) = self.term(owner).cloned() else { return };
+        let TypeConstructor::Nominal(symbol) = term.constructor else { return };
+        let Some((operation, members)) = self.nominal_members(symbol, &term.arguments) else { return };
+        let input = match (operation, site) {
+            (TypeOperation::Struct, PropertySite::Type) => self.structure(TypeConstructor::Unchecked, vec![owner]),
+            (TypeOperation::Newtype, PropertySite::Type) => members[0].1.expect("newtype payload"),
+            (TypeOperation::Enum, PropertySite::Variant(index)) => {
+                let Some(payload) = members[index as usize].1 else { return }; payload
+            }
+            _ => return,
+        };
+        let arguments = self.children(decorator, Role::Argument);
+        if arguments.len() != 1 { return; }
+        if self.check_declarations.iter().any(|(other, other_site, _)| *other == owner && *other_site == site) {
+            self.mir.diagnostics.push(Diagnostic::error("duplicate @check on the same construction boundary", self.mir.hir[decorator.index()].location));
+        }
+        let unit = self.structure(TypeConstructor::Tuple, vec![]);
+        let blame = self.structure(TypeConstructor::Native(NativeTypeId::BLAME_ERROR), vec![]);
+        let result = self.structure(TypeConstructor::Result, vec![unit, blame]);
+        let signature = self.structure(TypeConstructor::Function, vec![input, result]);
+        self.equal(arguments[0].ty(), signature, Some(self.mir.hir[decorator.index()].location));
+        self.same(decorator, arguments[0].ty());
+        self.check_declarations.push((owner, site, decorator));
+    }
+
+    pub(super) fn finalize_checks(&mut self) {
+        for &(owner, site, decorator) in &self.check_declarations {
+            let (Some(owner), Some(signature)) = (self.known(owner), self.known(decorator.ty())) else { continue };
+            let checker = self.child(decorator, Role::Argument).expect("check argument");
+            self.mir.construction_checks.push(ConstructionCheck { owner, site, checker, signature });
         }
     }
 

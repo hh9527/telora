@@ -94,6 +94,7 @@ struct Solver<'a> {
     administrative: Vec<bool>,
     decorator_contexts: Vec<Option<TypeSlotId>>,
     property_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
+    check_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
     bottom_candidates: Vec<TypeSlotId>,
 }
 
@@ -172,6 +173,7 @@ pub fn resolve(mir: &mut Mir) {
     }
     solver.finalize();
     solver.finalize_properties();
+    solver.finalize_checks();
     solver.prove_bounds();
     solver.materialize_instances();
     solver.materialize_layouts();
@@ -187,6 +189,7 @@ impl Solver<'_> {
             administrative: vec![false; mir.hir.len()],
             decorator_contexts: vec![None; mir.hir.len()],
             property_declarations: vec![],
+            check_declarations: vec![],
             bottom_candidates: vec![],
             mir,
             revision: 0,
@@ -574,6 +577,15 @@ impl Solver<'_> {
                     callee: provider,
                     arguments: vec![context, previous],
                 });
+            }
+            HirKind::ConstructionCheck { configured } => {
+                if !*configured || self.children(node, Role::Argument).len() != 1 {
+                    self.mir.diagnostics.push(Diagnostic::error("@check requires exactly one check function", self.mir.hir[node.index()].location));
+                    self.mir.required_types[node.index()] = false;
+                } else if !self.check_declarations.iter().any(|(_, _, check)| *check == node) {
+                    self.mir.diagnostics.push(Diagnostic::error("@check is supported on structs, newtypes and payload variants", self.mir.hir[node.index()].location));
+                    self.mir.required_types[node.index()] = false;
+                }
             }
             HirKind::Closure => {
                 let result = self.child(node, Role::ReturnType).unwrap();

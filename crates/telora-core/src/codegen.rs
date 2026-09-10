@@ -140,6 +140,9 @@ fn compile_root(
     sealed: SealedMir<'_>,
     root: CompilationRoot,
 ) -> Result<CompiledEntry, Vec<Diagnostic>> {
+    if !sealed.mir().construction_checks.is_empty() {
+        return Err(sealed.mir().construction_checks.iter().map(|check| Diagnostic::error("construction check execution has not been lowered yet", sealed.mir().hir[check.checker.index()].location)).collect());
+    }
     let graph = ExecutionGraph::from_mir(&sealed);
     let (mir, types) = sealed.into_parts();
     let (target, declaration, name) = if let CompilationRoot::Export(entry) = root {
@@ -2059,6 +2062,14 @@ pub(crate) mod tests {
             assert_eq!(signature.constructor, TypeConstructor::Function);
             assert_eq!(result.types().types[signature.arguments[0].index()].constructor, expected);
         }
+    }
+
+    #[test]
+    fn construction_checks_cannot_be_silently_omitted_from_codegen() {
+        let mir = graph("@check(fn(value) { Ok(()) }) type Item = struct(Int); export def answer = Item(42);", "");
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        let errors = compile(mir.seal().unwrap(), entry(&mir)).err().expect("construction lowering is pending");
+        assert!(errors.iter().any(|error| error.message.contains("construction check execution")));
     }
 
     #[test]

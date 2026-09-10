@@ -2,6 +2,60 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn construction_checks_are_separate_closed_contracts_without_execution() {
+    let mut mir = graph(&[("@src/main", r#"
+        @check(fn(value) { if value.port > 0 { Ok(()) } else { Err(blame!("positive port", value.port)) } })
+        type Endpoint = struct { port: Int };
+        @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive count", value)) } })
+        type Count = struct(Int);
+        type Event = enum { @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive payload", value)) } }) Item(Int), Empty };
+        @check(fn(value) { fail!("must not execute during static solving") })
+        type Deferred = struct { value: Int };
+        export def answer = Endpoint.type;
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    mir.seal().unwrap();
+    assert_eq!(mir.construction_checks.len(), 4);
+    assert!(mir.properties.iter().all(|property| !mir.construction_checks.iter().any(|check| check.owner == property.owner)));
+    for check in &mir.construction_checks {
+        let signature = &mir.types[check.signature.index()];
+        assert_eq!(signature.constructor, TypeConstructor::Function);
+        assert_eq!(signature.arguments.len(), 2);
+        let result = &mir.types[signature.arguments[1].index()];
+        assert_eq!(result.constructor, TypeConstructor::Result);
+        assert_eq!(mir.types[result.arguments[0].index()].constructor, TypeConstructor::Tuple);
+        assert!(mir.types[result.arguments[0].index()].arguments.is_empty());
+        assert_eq!(mir.types[result.arguments[1].index()].constructor, TypeConstructor::Native(NativeTypeId::BLAME_ERROR));
+        let input = &mir.types[signature.arguments[0].index()];
+        let TypeConstructor::Nominal(symbol) = mir.types[check.owner.index()].constructor else { panic!("owner") };
+        if ["Endpoint", "Deferred"].contains(&mir.symbols[symbol.index()].name.as_str()) {
+            assert_eq!(input.constructor, TypeConstructor::Unchecked);
+            assert_eq!(input.arguments, [check.owner]);
+        } else { assert_eq!(input.constructor, TypeConstructor::Int); }
+    }
+}
+
+#[test]
+fn construction_checks_reject_wrong_boundaries_and_signatures() {
+    for source in [
+        "@check type Item = struct(Int);",
+        "@check(fn(x) { Ok(()) }, fn(x) { Ok(()) }) type Item = struct(Int);",
+        "@check(fn(x) { Ok(()) }) @check(fn(x) { Ok(()) }) type Item = struct(Int);",
+        "@check(fn(x) { Ok(()) }) type Item = enum { One(Int) };",
+        "type Item = enum { @check(fn(x) { Ok(()) }) Empty };",
+        "type Item = struct { @check(fn(x) { Ok(()) }) value: Int };",
+        "@check(fn(x) { 42 }) type Item = struct(Int);",
+        "@check(fn(x) { Err(\"wrong error type\") }) type Item = struct(Int);",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(!mir.diagnostics.is_empty(), "{source}");
+        assert!(mir.seal().is_err(), "{source}");
+    }
+}
+
+#[test]
 fn never_returning_provider_preserves_its_declared_nominal_result() {
     let mut mir = graph(&[("@src/main", r#"
         @property(PropertyTarget.Type) type Tag = struct { value: Int };

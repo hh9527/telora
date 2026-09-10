@@ -298,6 +298,14 @@ pub struct PropertyRecord {
     pub providers: Vec<HirId>,
 }
 
+#[derive(Debug)]
+pub struct ConstructionCheck {
+    pub owner: TypeId,
+    pub site: PropertySite,
+    pub checker: HirId,
+    pub signature: TypeId,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoundState {
     Pending,
@@ -454,6 +462,7 @@ pub enum HirKind {
     Decorator {
         configured: bool,
     },
+    ConstructionCheck { configured: bool },
     Int(i64),
     Float(f64),
     String(String),
@@ -539,6 +548,7 @@ pub struct Mir {
     pub member_selections: Vec<Option<MemberSelection>>,
     pub type_definitions: Vec<TypeDefinition>,
     pub properties: Vec<PropertyRecord>,
+    pub construction_checks: Vec<ConstructionCheck>,
     pub bound_requirements: Vec<BoundRequirement>,
     pub trait_implementations: Vec<TraitImplementation>,
     pub evidence: Vec<EvidenceNode>,
@@ -641,6 +651,9 @@ impl Mir {
         }
         for (id, property) in self.properties.iter().enumerate() {
             writeln!(out, "property {id} {property:?}").unwrap();
+        }
+        for (id, check) in self.construction_checks.iter().enumerate() {
+            writeln!(out, "construction-check {id} {check:?}").unwrap();
         }
         for (id, bound) in self.bound_requirements.iter().enumerate() {
             writeln!(out, "bound {id} {bound:?}").unwrap();

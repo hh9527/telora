@@ -5,6 +5,30 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Construction checks have independent static contracts (2026-09-10)
+
+MIR lowering now recognizes the existing intrinsic @check syntax separately from
+property decorators. Only the checker expression participates in ordinary symbol
+resolution; no fictional prelude check provider is resolved. The static pass
+retains owner TypeId, construction site, checker HirId and complete signature in
+construction_checks, exposed in MIR dumps and validated at seal.
+
+Struct checkers take Unchecked(owner); newtype and payload-variant checkers take
+the payload type. Their result is Result((), BlameError), with BlameError selected
+by its native identity. Field access through Unchecked consumes the owner's
+existing member skeleton. Duplicate checks, unsupported boundaries, malformed
+arguments and incompatible result types are diagnosed statically. Even a checker
+body containing fail! can be solved/sealed without execution.
+
+Validation: all 31 type-pass tests and 43 codegen tests pass. New cases cover four
+valid boundary/signature contracts and eight invalid declarations. Logs:
+/tmp/mir-check-contracts.log and /tmp/mir-check-contract-codegen.log.
+This is static admission only: execution installation, generic application
+specialization and constructor/codec/parser invocation are next. Codegen currently
+explicitly rejects graphs containing construction checks, preventing silent
+omission while this handoff is incomplete. No full-suite or performance claim;
+the overall migration gates remain open.
+
 ### Solved regex preparation, string parsing and codec text decode (2026-09-10)
 
 regex.prepare now validates capture names and optionality against the already

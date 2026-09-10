@@ -16,6 +16,11 @@ impl Solver<'_> {
         };
         let mut ty = receiver;
         let mut metadata = false;
+        if term.constructor == TypeConstructor::Unchecked {
+            ty = term.arguments[0];
+            let Some(raw) = self.term(ty).cloned() else { return Some(Task::Member { node, receiver, name }); };
+            term = raw;
+        }
         if term.constructor == TypeConstructor::Meta {
             ty = term.arguments[0];
             let Some(raw) = self.term(ty).cloned() else {
