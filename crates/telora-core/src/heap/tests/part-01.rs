@@ -298,7 +298,7 @@
     }
 
     #[test]
-    fn failed_nodes_cross_module_publication_but_not_host_publication() {
+    fn failed_nodes_can_relocate_within_execution_but_cannot_be_published_to_host() {
         let main = Heap::main();
         let mut source = Heap::work();
         let root = Val::unknown(DecodedValue::Array(source.allocate(Object::Array(
@@ -316,16 +316,6 @@
         assert!(matches!(items[0].value(), DecodedValue::Failed(7)));
         let mut destination = Heap::main();
         assert!(publish_root(&mut destination, &source, root).is_err());
-        let published = publish_module_root(&mut destination, &source, root).unwrap();
-        assert_eq!(
-            HeapView {
-                current: &destination,
-                background: None,
-            }
-            .first_data_failure(published.runtime())
-            .unwrap(),
-            Some(7)
-        );
     }
 
     #[test]

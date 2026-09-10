@@ -263,43 +263,6 @@ impl WorkWorld {
         .resolved_function_arity(value)
     }
 
-    pub(crate) fn seal_module(mut self) -> Result<Self, crate::heap::HeapError> {
-        self.root = self.heap.seal_module(self.root)?;
-        Ok(self)
-    }
-
-    pub(crate) fn module_fields(
-        &self,
-        world: &Heap,
-    ) -> Result<Vec<String>, crate::heap::HeapError> {
-        let view = WorkView {
-            main: world,
-            work: &self.heap,
-        }
-        .heap_view();
-        let DecodedValue::Module(handle) = self.root.value() else {
-            return Err(crate::heap::HeapError::new(
-                "execution root is not a Module",
-            ));
-        };
-        view.exports_fields(handle)
-            .map(|fields| fields.into_iter().map(str::to_owned).collect())
-    }
-
-    pub(crate) fn publish(
-        self,
-        world: &mut Heap,
-    ) -> Result<PersistentValue, crate::heap::HeapError> {
-        publish_module_root(world, &self.heap, self.root)
-    }
-
-    pub(crate) fn publish_module(
-        mut self,
-        world: &mut Heap,
-    ) -> Result<PersistentValue, crate::heap::HeapError> {
-        self.root = self.heap.seal_module(self.root)?;
-        publish_module_root(world, &self.heap, self.root)
-    }
 
     pub(crate) fn into_reducer_transition(
         mut self,

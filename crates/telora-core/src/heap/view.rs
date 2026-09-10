@@ -293,15 +293,6 @@ impl<'a> HeapView<'a> {
         Ok(index.and_then(|index| exports.values.get(index).copied()))
     }
 
-    pub(crate) fn exports_fields(&self, handle: Handle) -> Result<Vec<&'a str>, HeapError> {
-        let Object::Module { exports, .. } = self.object(handle)? else {
-            return Err(HeapError("handle is not a Module"));
-        };
-        self.shape(exports.shape)?
-            .iter()
-            .map(|field| self.text(*field))
-            .collect()
-    }
 
     pub(crate) fn dict_fields(&self, handle: Handle) -> Result<Vec<&'a str>, HeapError> {
         let Object::Dict { shape, .. } = self.object(handle)? else {

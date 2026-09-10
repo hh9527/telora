@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Delete obsolete per-module world publication (2026-09-11)
+
+Removed WorkWorld module sealing/field enumeration/publication methods,
+Heap::seal_module, unused static-function preallocation, and
+publish_module_root. The removed publication path copied a module root and its
+static functions from Work to Main and sealed the corresponding function slots.
+It lost all production callers with Engine deletion; the MIR execution graph
+does not use it. No replacement per-module copy or publication adapter was added.
+
+The existing failure-boundary test now retains its relevant assertions: failed
+values can relocate between execution heaps, but publish_root rejects them at
+the Host boundary. Its assertion for the deleted module-publication exception
+was removed. Module value representation and still-used general value copying
+remain separate follow-up work, not implicitly claimed deleted here.
+
+Validation: workspace compilation succeeds, heap tests 17/17 and VM tests 48/48
+pass. Logs: /tmp/mir-remove-module-publication-{check,heap,vm}.log.
+Unused warnings fall from 37 to 34 without suppressions. Old compiler/type
+analysis and descriptor execution paths still require removal; migration and
+final acceptance remain incomplete.
+
 ### Delete the old partial type analyzer (2026-09-11)
 
 Removed PartialAnalysis and all analyze_partial_types entry points, the entire

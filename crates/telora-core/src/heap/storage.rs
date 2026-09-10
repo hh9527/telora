@@ -55,17 +55,6 @@ impl Heap {
         self.objects.len()
     }
 
-    pub(crate) fn preallocate_func(&mut self, id: crate::FuncId) -> Result<(), HeapError> {
-        if self.storage != Storage::Main {
-            return Err(HeapError(
-                "static function slots must be preallocated in Main world",
-            ));
-        }
-        if self.functions.insert(id, None).is_some() {
-            return Err(HeapError("duplicate static function slot"));
-        }
-        Ok(())
-    }
 
     pub(crate) fn seal_static_func(
         &mut self,
@@ -136,30 +125,6 @@ impl Heap {
         Ok(Val::unknown(DecodedValue::Module(handle)))
     }
 
-    pub(crate) fn seal_module(&mut self, root: Val) -> Result<Val, HeapError> {
-        if matches!(root.value(), DecodedValue::Module(_)) {
-            return Ok(root);
-        }
-        let DecodedValue::Dict(handle) = root.value() else {
-            return Err(HeapError(
-                "module evaluation must produce a Dict of exports",
-            ));
-        };
-        if handle.storage != self.storage {
-            return Err(HeapError("module exports Dict belongs to another world"));
-        }
-        let object = self
-            .objects
-            .get_mut(handle.slot as usize)
-            .ok_or(HeapError("module exports Dict is out of bounds"))?;
-        let Object::Dict { shape, values } = std::mem::replace(object, Object::Reserved) else {
-            return Err(HeapError("module exports handle has another object kind"));
-        };
-        *object = Object::Module {
-            exports: ExportTable { shape, values },
-        };
-        Ok(root.with_value(DecodedValue::Module(handle)))
-    }
 
     pub(crate) fn work() -> Self {
         Self::new(Storage::Work, crate::type_store::shared_type_store())
