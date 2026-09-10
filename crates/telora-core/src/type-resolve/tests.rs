@@ -48,6 +48,25 @@ fn symbol_type(mir: &Mir, name: &str) -> TypeState {
 }
 
 #[test]
+fn generic_alias_application_uses_declared_parameters_including_unused_parameters() {
+    let mut mir = graph(&[("@src/main", r#"
+        type Pair(A, B) = Tuple([B, A]);
+        type Keep(A, B) = Array(A);
+        def pair: Pair(Int, String) = ("text", 42);
+        export def number = pair.1;
+        export def values: Keep(Int, String) = [1, 2];
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(mir.type_unknowns.is_empty());
+    let TypeState::Known(number) = symbol_type(&mir, "number") else { panic!("known number"); };
+    assert_eq!(mir.types[number.index()].constructor, TypeConstructor::Int);
+    let TypeState::Known(values) = symbol_type(&mir, "values") else { panic!("known values"); };
+    assert_eq!(mir.types[values.index()].constructor, TypeConstructor::Array);
+    assert_eq!(mir.types[mir.types[values.index()].arguments[0].index()].constructor, TypeConstructor::Int);
+}
+
+#[test]
 fn solves_function_calls_across_modules_in_one_arena() {
     let mut mir = graph(&[
         (

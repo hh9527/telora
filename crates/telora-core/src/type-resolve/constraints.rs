@@ -349,6 +349,24 @@ impl Solver<'_> {
                 }
             }
             TypeConstructor::Meta => {
+                // A generic alias can expand to any type constructor. Bind
+                // its declared parameter instances, not the shape of its body.
+                let instances = self.child(node, Role::Callee)
+                    .map(|syntax| self.instances[syntax.index()].clone())
+                    .unwrap_or_default();
+                if !instances.is_empty() && arguments.iter().any(|&argument| self.term(argument).is_none()) {
+                    return Some(Task::Call { node, callee, arguments });
+                }
+                if !instances.is_empty() && arguments.len() == instances.len()
+                    && arguments.iter().all(|&argument| self.term(argument).is_some_and(|ty| ty.constructor == TypeConstructor::Meta))
+                {
+                    for ((_, parameter), argument) in instances.into_iter().zip(arguments) {
+                        let meta = self.structure(TypeConstructor::Meta, vec![parameter]);
+                        self.equal(argument, meta, Some(self.mir.hir[node.index()].location));
+                    }
+                    self.same(node, callee);
+                    return None;
+                }
                 let Some(raw) = self.term(term.arguments[0]).cloned() else {
                     return Some(Task::Call {
                         node,

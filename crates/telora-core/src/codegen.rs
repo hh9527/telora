@@ -87,26 +87,26 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
         .filter(move |edge| {
             // A native declaration's Value edge stores its signature, not an
             // initializer. Its executable value is supplied by ABI linking.
-            mir.member_selections[node.index()].is_none()
-                && !matches!(
-                    mir.hir[node.index()].kind,
-                    HirKind::Binding {
-                        kind: BindingKind::Native,
-                        ..
-                    }
-                )
-                && !matches!(
-                    edge.role,
-                    Role::Annotation
-                        | Role::TypeParameter
-                        | Role::Bound
-                        | Role::ReturnType
-                        | Role::Decorator
-                        | Role::Name
-                        | Role::Target
-                )
-                && (!matches!(mir.hir[node.index()].kind, HirKind::TypeApply)
-                    || edge.role == Role::Callee)
+            !matches!(
+                mir.member_selections[node.index()],
+                Some(MemberSelection::EnumVariant { .. } | MemberSelection::Boolean(_))
+            ) && !matches!(
+                mir.hir[node.index()].kind,
+                HirKind::Binding {
+                    kind: BindingKind::Native,
+                    ..
+                }
+            ) && !matches!(
+                edge.role,
+                Role::Annotation
+                    | Role::TypeParameter
+                    | Role::Bound
+                    | Role::ReturnType
+                    | Role::Decorator
+                    | Role::Name
+                    | Role::Target
+            ) && (!matches!(mir.hir[node.index()].kind, HirKind::TypeApply)
+                || edge.role == Role::Callee)
         })
         .map(|edge| edge.node)
 }
@@ -259,6 +259,48 @@ impl<'a> Emitter<'a> {
             }
         }
         let result = match &self.mir.hir[node.index()].kind {
+            HirKind::Field
+                if matches!(
+                    self.mir.member_selections[node.index()],
+                    Some(MemberSelection::Boolean(_))
+                ) =>
+            {
+                let Some(MemberSelection::Boolean(value)) =
+                    self.mir.member_selections[node.index()]
+                else {
+                    unreachable!()
+                };
+                self.constant(
+                    node,
+                    Constant::Atom(crate::Atom::builtin(if value {
+                        crate::BuiltinAtom::True
+                    } else {
+                        crate::BuiltinAtom::False
+                    })),
+                )
+            }
+            HirKind::Field
+                if matches!(
+                    self.mir.member_selections[node.index()],
+                    Some(MemberSelection::RecordField)
+                ) =>
+            {
+                let slot = self.mir.hir[node.index()]
+                    .resolution
+                    .expect("resolved field");
+                let ResolveState::Member { receiver, name } = self.mir.resolve_slots[slot.index()]
+                else {
+                    unreachable!()
+                };
+                let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
+                    unreachable!()
+                };
+                let field = name.clone();
+                let dict = self.expression(receiver)?;
+                let dst = self.register();
+                self.emit(node, O::GetField { dst, dict, field });
+                dst
+            }
             HirKind::Field if self.mir.member_selections[node.index()].is_some() => {
                 let Some(MemberSelection::EnumVariant { index }) =
                     self.mir.member_selections[node.index()]
@@ -364,10 +406,29 @@ impl<'a> Emitter<'a> {
             HirKind::String(value) => self.constant(node, Constant::String(value.clone().into())),
             HirKind::Bytes(value) => self.constant(node, Constant::Bytes(value.clone().into())),
             HirKind::Dict => {
-                if self.mir.types[self.ty(node)?.index()].constructor != TypeConstructor::Dict {
-                    return Err(
-                        self.error(node, "record/struct layout lowering is not implemented yet")
-                    );
+                let ty = self.ty(node)?;
+                let supported = match self.mir.types[ty.index()].constructor {
+                    TypeConstructor::Dict | TypeConstructor::Record(_) => true,
+                    TypeConstructor::Nominal(symbol) => self
+                        .mir
+                        .type_definitions
+                        .iter()
+                        .any(|d| d.symbol == symbol && d.operation == TypeOperation::Struct),
+                    _ => false,
+                };
+                if !supported {
+                    return Err(self.error(node, "unsupported solved record construction type"));
+                }
+                if self
+                    .mir
+                    .properties
+                    .iter()
+                    .any(|property| property.owner == ty)
+                {
+                    return Err(self.error(
+                        node,
+                        "record property execution lowering is not implemented yet",
+                    ));
                 }
                 let mut fields = vec![];
                 for field in self.children(node, Role::Field) {
@@ -743,7 +804,7 @@ mod tests {
     fn codegen_rejects_invalid_or_unsupported_mir_and_leaves_runtime_failures_to_vm() {
         for source in [
             "export def answer = missing;",
-            "export def answer = { value: 1 };",
+            "export def answer = match 1 { 1 => 2, _ => 3 };",
         ] {
             let mir = graph(source, "");
             assert!(
@@ -812,6 +873,52 @@ mod tests {
         })
         .unwrap_err();
         assert!(errors.iter().any(|d| d.message.contains("arity")));
+    }
+
+    #[test]
+    fn records_and_nominal_configs_use_existing_vm_storage_and_field_operations() {
+        for main in [
+            "def config = { evaluate: fn(x) { if True { x + 1 } else { 0 } }, seed: 41 }; export def answer = config.evaluate(config.seed);",
+            "import \"./math\" { Config }; def config: Config = { evaluate: fn(x) { x + 1 }, seed: 41 }; export def answer = config.evaluate(config.seed);",
+        ] {
+            let mir = graph(
+                main,
+                "export type Config = struct { seed: Int, evaluate: Fn(Int) -> Int };",
+            );
+            assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+            let before = mir.dump();
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            assert_eq!(mir.dump(), before);
+            let linked = crate::execution_link::link_entry(artifact).unwrap();
+            let result = crate::Vm::new()
+                .execute_linked(linked, crate::Quota::with_fuel(10000))
+                .unwrap();
+            assert_eq!(result.value().as_int(), Some(42));
+        }
+    }
+
+    #[test]
+    fn executes_the_standard_entry_main_wrapper_without_the_old_compiler() {
+        let mir = graph(
+            r#"
+            import "std/entry" { main };
+            import "std/value" { Value };
+            import "std/array" { length };
+            def evaluator = main({ sources: [], envs: [], args: True }, fn(ctx) {
+                Value.Int(length(ctx.args) * 21)
+            });
+            export def answer = evaluator.evaluate({ sources: {}, env: {}, args: ["one", "two"] });
+        "#,
+            "",
+        );
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let result_type = artifact.result_type;
+        let linked = crate::execution_link::link_entry(artifact).unwrap();
+        let result = crate::Vm::new()
+            .execute_linked(linked, crate::Quota::with_fuel(10000))
+            .unwrap();
+        assert_eq!(result.to_json(result_type).unwrap(), "42");
     }
 
     #[test]

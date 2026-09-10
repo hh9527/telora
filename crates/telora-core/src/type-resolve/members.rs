@@ -46,6 +46,7 @@ impl Solver<'_> {
             TypeConstructor::Record(fields) if !metadata => {
                 if let Some(index) = fields.iter().position(|f| f == &name) {
                     self.same(node, term.arguments[index]);
+                    self.mir.member_selections[node.index()] = Some(MemberSelection::RecordField);
                 } else {
                     self.bad_member(node, &name);
                 }
@@ -79,6 +80,7 @@ impl Solver<'_> {
                 }
                 if operation == TypeOperation::Struct && !metadata {
                     self.same(node, payload.unwrap());
+                    self.mir.member_selections[node.index()] = Some(MemberSelection::RecordField);
                     return None;
                 }
                 if operation != TypeOperation::Enum || !metadata {
@@ -90,7 +92,11 @@ impl Solver<'_> {
                 });
                 payload
             }
-            TypeConstructor::Bool if metadata && matches!(name.as_str(), "True" | "False") => None,
+            TypeConstructor::Bool if metadata && matches!(name.as_str(), "True" | "False") => {
+                self.mir.member_selections[node.index()] =
+                    Some(MemberSelection::Boolean(name == "True"));
+                None
+            }
             TypeConstructor::PropertyTarget
                 if metadata && matches!(name.as_str(), "Type" | "Field" | "Variant") =>
             {

@@ -5,6 +5,35 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Prioritize pipeline assembly; reuse record storage (2026-09-10)
+
+The agreed priority is replacing the complete compiler pipeline. A distinct
+Struct runtime representation, fixed record layouts and related VM redesign
+are deferred to a separate RFC. The initial uncommitted representation changes
+were withdrawn. Assembly may reuse existing MakeDict/GetField storage and
+instructions, while consuming static type-pass conclusions without old resolver
+or inference adapters.
+
+The new codegen now supports structural records and nominal Struct initializers
+using that retained representation. The type pass records successful record-field
+selection; codegen consumes it and emits GetField without revalidating the field
+against a type. Native Bool member selection likewise lowers directly to the
+existing boolean representation. Property-bearing initializers remain explicitly
+unsupported until property execution is connected.
+
+An actual std/entry.main wrapper now compiles and executes through the new path:
+construct its config, select evaluate, supply a Context record, call array.length
+inside its callback and serialize the resulting Value as JSON 42. This uncovered
+and fixed generic type-alias application (actor.Transition): parameter application
+must use the declaration's instantiated parameter slots, including unused
+parameters, rather than assume the alias body is a nominal constructor.
+
+Validation includes record/config field calls with reordered source fields,
+booleans, the real std/entry wrapper and a generic-alias parameter-order/unused-
+parameter regression. The 22 type-pass tests pass. Host-side eval-with input
+injection and invocation, ordinary check, property/data execution and entry
+dispatch remain integration work. No performance claim is made.
+
 ### Ordinary eval uses the sealed execution path (2026-09-10)
 
 The `eval MODULE:NAME` CLI now uses inventory discovery, the three MIR passes,
