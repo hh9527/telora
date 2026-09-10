@@ -435,17 +435,55 @@ impl Vm {
                                     RuntimeErrorKind::InvalidBytecode, "demand task must be a function", function, pc)); }
                                 *slot = Some(value);
                             }
-                            Opcode::Demand { dst, node } => {
+                            Opcode::MakeSome { dst, value } => {
+                                let value = *read_register(&registers, *value, function, pc)?;
+                                let value = solved_some(value, &mut current, account, function, pc)?;
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::Demand { .. } | Opcode::GetTypeProp { .. } | Opcode::GetMemberProp { .. } | Opcode::HasTypeProp { .. } | Opcode::HasMemberProp { .. } => {
                                 use crate::execution_graph::{Request, EvaluationError};
+                                let (node_id, destination) = match instruction {
+                                    Opcode::Demand { node, dst } => (*node, *dst),
+                                    Opcode::GetTypeProp { dst, owner, property } | Opcode::GetMemberProp { dst, owner, property, .. } | Opcode::HasTypeProp { dst, owner, property } | Opcode::HasMemberProp { dst, owner, property, .. } => {
+                                        let site = if let Opcode::GetMemberProp { index, variant, .. } | Opcode::HasMemberProp { index, variant, .. } = instruction {
+                                            let index = read_register(&registers, *index, function, pc)?;
+                                            let DecodedValue::Int(index) = index.value() else {
+                                                return Err(error(RuntimeErrorKind::TypeMismatch, "property member index must be Int", function, pc));
+                                            };
+                                            let index = u32::try_from(index).map_err(|_| error(RuntimeErrorKind::TypeMismatch, "property member index must fit u32", function, pc))?;
+                                            if *variant { crate::mir::PropertySite::Variant(index) } else { crate::mir::PropertySite::Field(index) }
+                                        } else { crate::mir::PropertySite::Type };
+                                        let owner = *read_register(&registers, *owner, function, pc)?;
+                                        let property = *read_register(&registers, *property, function, pc)?;
+                                        let (DecodedValue::SolvedType(owner), DecodedValue::SolvedType(property)) = (owner.value(), property.value()) else {
+                                            return Err(error(RuntimeErrorKind::TypeMismatch, "property query requires solved Type metadata", function, pc));
+                                        };
+                                        let graph = background.solved_graph.as_ref().ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode, "property query requires a solved graph", function, pc))?;
+                                        let found = graph.property(crate::execution_graph::PropertyKey { owner, property, site });
+                                        if matches!(instruction, Opcode::HasTypeProp { .. } | Opcode::HasMemberProp { .. }) {
+                                            let value = if found.is_some() { crate::BuiltinAtom::True } else { crate::BuiltinAtom::False };
+                                            write_register(&mut registers, *dst, Val::unknown(DecodedValue::BuiltinAtom(value)), function, pc)?;
+                                            frames.last_mut().expect("query frame").pc += 1;
+                                            continue;
+                                        }
+                                        let node = found.ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode, "property read requires a proven presence record", function, pc))?;
+                                        (node, *dst)
+                                    }
+                                    _ => unreachable!(),
+                                };
+                                let (node, dst) = (&node_id, &destination);
                                 let state = current.solved_evaluation.as_mut().ok_or_else(|| error(
                                     RuntimeErrorKind::InvalidBytecode, "demand instruction requires a solved session", function, pc))?;
                                 match state.request(*node) {
                                     Ok(Request::Ready(value)) => {
-                                        write_register(&mut registers, *dst, *value, function, pc)?;
+                                        let value = *value;
+                                        write_register(&mut registers, *dst, value, function, pc)?;
                                     }
-                                    Ok(Request::Failed(failure)) => {
-                                        return Err(error(RuntimeErrorKind::ReportedDiagnostic,
-                                            format!("demand task previously failed (diagnostic {})", failure.0), function, pc));
+                                    Err(EvaluationError::Failed(failure)) => {
+                                        if current.solved_failures.get(failure.0 as usize).is_none() {
+                                            return Err(error(RuntimeErrorKind::InvalidBytecode, "demand failure has no session diagnostic", function, pc));
+                                        }
+                                        return Err(propagated_failure_error(failure.0, instruction_location(function, pc), function, pc));
                                     }
                                     Err(EvaluationError::Cycle(path)) => {
                                         let path = path.iter().map(|n| background.solved_graph.as_ref()
@@ -2136,16 +2174,20 @@ impl Vm {
             }
         })();
         if result.is_ok() && current.solved_evaluation.as_ref().is_some_and(|e| !e.can_publish()) {
-            result = Err(error(RuntimeErrorKind::ReportedDiagnostic,
-                "demand session contains failed or unfinished tasks", function, 0));
+            result = Err(if current.solved_failures.is_empty() {
+                error(RuntimeErrorKind::InvalidBytecode, "demand session contains unfinished tasks", function, 0)
+            } else { propagated_failure_error(0, instruction_location(function, 0), function, 0) });
         }
         if let Err(runtime_error) = &mut result {
-            if let Some(evaluation) = &mut current.solved_evaluation {
-                evaluation.fail_active(crate::execution_graph::FailureId(
-                    runtime_error.propagated_failure.unwrap_or(failures.len() as u32),
-                ));
-            }
             append_runtime_trace(runtime_error, &frames);
+            if let Some(evaluation) = &mut current.solved_evaluation {
+                let id = runtime_error.propagated_failure.unwrap_or_else(|| {
+                    let id = current.solved_failures.len() as u32;
+                    current.solved_failures.push(runtime_error.clone());
+                    id
+                });
+                evaluation.fail_active(crate::execution_graph::FailureId(id));
+            }
         }
         match result {
             Ok(root) => Ok(VmExecution {

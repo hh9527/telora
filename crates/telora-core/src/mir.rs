@@ -231,6 +231,7 @@ pub struct TypeMember {
 
 #[derive(Clone, Copy, Debug)]
 pub enum MemberSelection {
+    PropertyTarget(u8),
     Boolean(bool),
     RecordField,
     EnumVariant { index: u32 },

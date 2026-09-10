@@ -15,6 +15,11 @@ pub struct LabelId(pub u32);
 
 #[derive(Clone, Debug)]
 pub enum Operation {
+    HasTypeProp { dst: RegisterId, owner: RegisterId, property: RegisterId },
+    HasMemberProp { dst: RegisterId, owner: RegisterId, index: RegisterId, property: RegisterId, variant: bool },
+    GetMemberProp { dst: RegisterId, owner: RegisterId, index: RegisterId, property: RegisterId, variant: bool },
+    GetTypeProp { dst: RegisterId, owner: RegisterId, property: RegisterId },
+    MakeSome { dst: RegisterId, value: RegisterId },
     Demand { dst: RegisterId, node: crate::execution_graph::NodeId },
     InstallTask { node: crate::execution_graph::NodeId, src: RegisterId },
     MakeVariant {
@@ -390,6 +395,11 @@ fn lower_operation(
             dst: register(dst)?,
             src: register(src)?,
         },
+        Operation::HasTypeProp { dst, owner, property } => Instruction::HasTypeProp { dst: register(dst)?, owner: register(owner)?, property: register(property)? },
+        Operation::HasMemberProp { dst, owner, index, property, variant } => Instruction::HasMemberProp { dst: register(dst)?, owner: register(owner)?, index: register(index)?, property: register(property)?, variant },
+        Operation::GetMemberProp { dst, owner, index, property, variant } => Instruction::GetMemberProp { dst: register(dst)?, owner: register(owner)?, index: register(index)?, property: register(property)?, variant },
+        Operation::GetTypeProp { dst, owner, property } => Instruction::GetTypeProp { dst: register(dst)?, owner: register(owner)?, property: register(property)? },
+        Operation::MakeSome { dst, value } => Instruction::MakeSome { dst: register(dst)?, value: register(value)? },
         Operation::Demand { dst, node } => Instruction::Demand { dst: register(dst)?, node },
         Operation::InstallTask { node, src } => Instruction::InstallTask { node, src: register(src)? },
         Operation::MakeVariant { dst, ty, variant, payload } => Instruction::MakeVariant {

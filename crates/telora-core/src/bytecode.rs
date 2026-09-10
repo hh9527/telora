@@ -27,6 +27,11 @@ pub enum Constant {
 
 #[derive(Clone, Debug)]
 pub enum Instruction {
+    HasTypeProp { dst: Register, owner: Register, property: Register },
+    HasMemberProp { dst: Register, owner: Register, index: Register, property: Register, variant: bool },
+    GetMemberProp { dst: Register, owner: Register, index: Register, property: Register, variant: bool },
+    GetTypeProp { dst: Register, owner: Register, property: Register },
+    MakeSome { dst: Register, value: Register },
     Demand { dst: Register, node: crate::execution_graph::NodeId },
     InstallTask { node: crate::execution_graph::NodeId, src: Register },
     MakeVariant {
@@ -268,6 +273,11 @@ pub enum Instruction {
 
 #[derive(Clone, Debug)]
 pub enum Opcode {
+    HasTypeProp { dst: Register, owner: Register, property: Register },
+    HasMemberProp { dst: Register, owner: Register, index: Register, property: Register, variant: bool },
+    GetMemberProp { dst: Register, owner: Register, index: Register, property: Register, variant: bool },
+    GetTypeProp { dst: Register, owner: Register, property: Register },
+    MakeSome { dst: Register, value: Register },
     Demand { dst: Register, node: crate::execution_graph::NodeId },
     InstallTask { node: crate::execution_graph::NodeId, src: Register },
     MakeVariant {
@@ -749,6 +759,11 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
             value: ValueLinkId(constant),
         },
         Instruction::Move { dst, src } => Opcode::Move { dst, src },
+        Instruction::HasTypeProp { dst, owner, property } => Opcode::HasTypeProp { dst, owner, property },
+        Instruction::HasMemberProp { dst, owner, index, property, variant } => Opcode::HasMemberProp { dst, owner, index, property, variant },
+        Instruction::GetMemberProp { dst, owner, index, property, variant } => Opcode::GetMemberProp { dst, owner, index, property, variant },
+        Instruction::GetTypeProp { dst, owner, property } => Opcode::GetTypeProp { dst, owner, property },
+        Instruction::MakeSome { dst, value } => Opcode::MakeSome { dst, value },
         Instruction::Demand { dst, node } => Opcode::Demand { dst, node },
         Instruction::InstallTask { node, src } => Opcode::InstallTask { node, src },
         Instruction::MakeVariant { dst, ty, variant, payload } => Opcode::MakeVariant { dst, ty, variant, payload },

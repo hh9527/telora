@@ -2,6 +2,11 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
     match instruction {
         Opcode::LoadConst { dst, .. }
         | Opcode::Demand { dst, .. }
+        | Opcode::GetTypeProp { dst, .. }
+        | Opcode::HasTypeProp { dst, .. }
+        | Opcode::HasMemberProp { dst, .. }
+        | Opcode::GetMemberProp { dst, .. }
+        | Opcode::MakeSome { dst, .. }
         | Opcode::MakeVariant { dst, .. }
         | Opcode::Move { dst, .. }
         | Opcode::OwnDeclared { dst, .. }

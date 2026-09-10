@@ -5,6 +5,45 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Required property reads and VM-local lazy results (2026-09-10)
+
+GetTypeProp/GetMemberProp now demand the execution slot selected by solved
+owner/property IDs and member position. Codegen installs provider thunks; the VM
+alone owns their Pending/Running/Ready/Failed state. Providers reduce in declaration
+order, may demand top-level globals, and cache only their final raw property value.
+Field/variant contexts use the sealed skeleton's owner, index, name and payload
+type IDs. No runtime resolver, inference or old Engine participates in this path.
+
+Required reads cannot return language None: missing presence is invalid bytecode.
+The source-level optional query remains explicit: known absence emits None;
+known presence emits GetTypeProp followed by Some. First-class/dynamic queries
+branch on HasTypeProp/HasMemberProp before issuing the required read. ABI adapters
+are selected by admitted native module identity and defining ABI key.
+
+The cached result is a VM Val, not a host PropertyValue or DataWorld. Completion
+and repeated reads transfer handles inside the same Work world; they neither
+export/reimport nor relocate the property object. Only intermediate reduce inputs
+need Some wrappers. Failed reads return Err(Failed(id)), reuse the recorded root
+failure, and neither retry the provider nor emit another diagnostic.
+
+Tests cover declaration-order reduction, first-class queries, shared global
+dependencies, absent/present reads, actual property/global cycles and field/variant
+contexts. A retained-VM test compares exact heap handles across repeated required
+reads and checks that failed reads reuse one diagnostic ID and execute once.
+Malformed required reads are rejected rather than converted to None.
+
+Validation: six focused CLI eval/eval-with tests pass. Full core tests report
+404 passed and 74 failed; the HEAD baseline c7e37b2 reports 400 passed and the
+same 74 failing test names. Those existing legacy module/semantic/workspace
+failures remain an assembly gap, not a passing full-suite claim. Logs:
+`/tmp/property-{baseline,current}-core-tests.log`, `/tmp/property-cli-tests.log`.
+Diff and source-size checks pass (existing large-file review warnings remain).
+
+Generic property specialization, evidence adapters, automatic construction checks
+and the remaining metadata consumers are still pending. Ordinary check/run/serve
+and full removal of the old pipeline remain unfinished. No performance result is
+claimed for this checkpoint.
+
 ### Concrete TypeId metadata values (2026-09-10)
 
 Concrete T.type now lowers to a solved TypeId constant. The runtime value has a

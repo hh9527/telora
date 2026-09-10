@@ -6,6 +6,7 @@ impl Heap {
             solved_graph: None,
             solved_evaluation: None,
             solved_tasks: vec![],
+            solved_failures: vec![],
             types,
             objects: Vec::new(),
             text: TextTable::default(),

@@ -1,4 +1,60 @@
 #[test]
+fn static_mir_eval_property_queries_execute_lazily_in_both_entry_modes() {
+    let cwd = fixture();
+    for (mode, fail, queried_type, succeeds) in [
+        ("eval", false, "Item", true),
+        ("eval", true, "Int", true),
+        ("eval", true, "Item", false),
+        ("eval-with", false, "Item", true),
+        ("eval-with", true, "Item", false),
+    ] {
+        let body = format!("let property = query({queried_type}.type, Mark.type); Value.Int(42)");
+        let entry = if mode == "eval" {
+            format!("do {{ {body} }}")
+        } else {
+            format!("main({{ sources: [], envs: [], args: False }}, fn(ctx) {{ {body} }})")
+        };
+        let provider = if fail {
+            "fail!(\"property-query-sentinel\")"
+        } else {
+            "{ value: config }"
+        };
+        fs::write(
+            cwd.join("src/main.telora"),
+            format!(
+                r#"
+            import "std/value" {{ Value }};
+            import "std/entry" {{ main }};
+            import "std/type-property" {{ get_type_prop as query }};
+            @property(PropertyTarget.Type) type Mark = struct {{ value: Int }};
+            def config = 42;
+            def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) {{ {provider} }};
+            @mark type Item = struct {{ value: Int }};
+            export def answer = {entry};
+        "#
+            ),
+        )
+        .unwrap();
+        let output = telora(&cwd)
+            .args([mode, "@src/main:answer"])
+            .output()
+            .unwrap();
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.success(), succeeds, "{mode}: {error}");
+        if succeeds {
+            assert_eq!(
+                serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+                serde_json::json!(42)
+            );
+        } else {
+            assert!(output.stdout.is_empty());
+            assert!(error.contains("property-query-sentinel"), "{error}");
+        }
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_eval_reads_type_metadata_without_forcing_properties() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), r#"

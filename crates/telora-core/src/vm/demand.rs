@@ -70,3 +70,25 @@ impl NativeContinuation for DemandContinuation {
         })
     }
 }
+
+fn solved_some(
+    value: Val,
+    current: &mut Heap,
+    account: &mut QuotaAccount,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> Result<Val, RuntimeError> {
+    charge_allocation(
+        account,
+        logical_value_bytes(2).map_err(|e| allocation_error(e.message, function, pc))?,
+        function,
+        pc,
+    )?;
+    Ok(Val::new(
+        DecodedValue::Tagged(current.allocate(Object::Tagged {
+            tag: Val::unknown(DecodedValue::BuiltinAtom(crate::BuiltinAtom::Some)),
+            payload: value,
+        })),
+        instruction_location(function, pc),
+    ))
+}

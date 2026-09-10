@@ -165,11 +165,12 @@ enum State {
 pub enum Request<'a, V> {
     Start,
     Ready(&'a V),
-    Failed(FailureId),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum EvaluationError {
+    /// User evaluation already failed; propagate this ID without retrying or diagnosing.
+    Failed(FailureId),
     InvalidNode(NodeId),
     /// Includes the repeated node at both ends; unrelated callers are omitted.
     Cycle(Vec<NodeId>),
@@ -217,7 +218,7 @@ impl<V> Evaluation<V> {
                 Err(EvaluationError::Cycle(path))
             }
             State::Ready(index) => Ok(Request::Ready(&self.values[index])),
-            State::Failed(failure) => Ok(Request::Failed(failure)),
+            State::Failed(failure) => Err(EvaluationError::Failed(failure)),
         }
     }
 
@@ -299,8 +300,16 @@ mod tests {
         for node in [global, property, root] {
             session.fail(node, failure).unwrap();
         }
-        assert_eq!(session.request(property), Ok(Request::Failed(failure)));
-        assert_eq!(session.request(global), Ok(Request::Failed(failure)));
+        for _ in 0..3 {
+            assert_eq!(
+                session.request(property),
+                Err(EvaluationError::Failed(failure))
+            );
+            assert_eq!(
+                session.request(global),
+                Err(EvaluationError::Failed(failure))
+            );
+        }
         assert_eq!(session.request(independent), Ok(Request::Start));
         session.complete(independent, 42).unwrap();
         assert_eq!(session.request(independent), Ok(Request::Ready(&42)));

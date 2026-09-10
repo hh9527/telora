@@ -9,6 +9,10 @@ use crate::{
     source::{Diagnostic, Origin, Severity, WithOrigin},
 };
 
+#[path = "codegen/properties.rs"]
+mod properties;
+use properties::native_abi;
+
 pub struct CompiledEntry {
     pub graph: ExecutionGraph,
     pub symbol: SymbolId,
@@ -136,7 +140,24 @@ pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, 
         }]);
     };
     let mut emitter = Emitter::new(mir, &graph, symbol.name.clone());
-    let globals = reachable_globals(mir, target);
+    let mut globals = reachable_globals(mir, target);
+    let queries_properties = globals.iter().any(|s| {
+        matches!(
+            native_abi(mir, *s),
+            Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop"))
+        )
+    });
+    if queries_properties {
+        let mut all = globals
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        for provider in mir.properties.iter().flat_map(|p| &p.providers) {
+            for symbol in referenced_globals(mir, *provider) {
+                all.extend(reachable_globals(mir, symbol));
+            }
+        }
+        globals = all.into_iter().collect();
+    }
     // Native ABI values and injected data already exist before initialization.
     for &global in &globals {
         if !matches!(
@@ -188,6 +209,11 @@ pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, 
             .ok_or_else(|| vec![emitter.error(declaration, "global has no execution slot")])?;
         emitter.emit(declaration, O::InstallTask { node, src: dst });
     }
+    if queries_properties {
+        for record in &mir.properties {
+            emitter.property_thunk(record).map_err(|d| vec![d])?;
+        }
+    }
     let result = if let Some(value) = emitter.lookup(target) {
         value
     } else {
@@ -227,7 +253,11 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
             // Their executable values are supplied by linking.
             !matches!(
                 mir.member_selections[node.index()],
-                Some(MemberSelection::EnumVariant { .. } | MemberSelection::Boolean(_))
+                Some(
+                    MemberSelection::EnumVariant { .. }
+                        | MemberSelection::Boolean(_)
+                        | MemberSelection::PropertyTarget(_)
+                )
             ) && !matches!(
                 mir.hir[node.index()].kind,
                 HirKind::Binding {
@@ -397,6 +427,44 @@ impl<'a> Emitter<'a> {
             }
         }
         let result = match &self.mir.hir[node.index()].kind {
+            HirKind::Field
+                if matches!(
+                    self.mir.member_selections[node.index()],
+                    Some(MemberSelection::PropertyTarget(_))
+                ) =>
+            {
+                let Some(MemberSelection::PropertyTarget(bits)) =
+                    self.mir.member_selections[node.index()]
+                else {
+                    unreachable!()
+                };
+                self.constant(node, Constant::Int(bits as i64))
+            }
+            HirKind::Panic => {
+                let message = self.expression(self.child(node, Role::Value))?;
+                self.emit(node, O::Panic { message });
+                message
+            }
+            HirKind::Raise(action) => {
+                let action = *action;
+                let message = self.expression(self.child(node, Role::Value))?;
+                let subjects = self
+                    .children(node, Role::Subject)
+                    .into_iter()
+                    .map(|n| self.expression(n))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let dst = self.register();
+                self.emit(
+                    node,
+                    O::Raise {
+                        action,
+                        dst,
+                        message,
+                        subjects,
+                    },
+                );
+                dst
+            }
             HirKind::TypeMetadata => {
                 let ty = &self.mir.types[self.ty(node)?.index()];
                 if ty.constructor != TypeConstructor::TypeOf || ty.arguments.len() != 1 {
@@ -491,17 +559,6 @@ impl<'a> Emitter<'a> {
                 } else {
                     ty
                 };
-                if self
-                    .mir
-                    .properties
-                    .iter()
-                    .any(|property| property.owner == owner)
-                {
-                    return Err(self.error(
-                        node,
-                        "enum property execution lowering is not implemented yet",
-                    ));
-                }
                 let mut pending = vec![owner];
                 while let Some(id) = pending.pop() {
                     let ty = &self.mir.types[id.index()];
@@ -557,6 +614,9 @@ impl<'a> Emitter<'a> {
                 ..
             } => {
                 let symbol = self.mir.hir_symbols[node.index()].expect("native declaration");
+                if let Some(value) = self.property_native(node, symbol)? {
+                    return Ok(value);
+                }
                 let declaration = &self.mir.symbols[symbol.index()];
                 let ty = &self.mir.types[self.ty(node)?.index()];
                 if ty.constructor != TypeConstructor::Function {
@@ -596,17 +656,6 @@ impl<'a> Emitter<'a> {
                 };
                 if !supported {
                     return Err(self.error(node, "unsupported solved record construction type"));
-                }
-                if self
-                    .mir
-                    .properties
-                    .iter()
-                    .any(|property| property.owner == ty)
-                {
-                    return Err(self.error(
-                        node,
-                        "record property execution lowering is not implemented yet",
-                    ));
                 }
                 let mut fields = vec![];
                 for field in self.children(node, Role::Field) {
@@ -787,6 +836,9 @@ impl<'a> Emitter<'a> {
                 dst
             }
             HirKind::Call => {
+                if let Some(value) = self.property_call(node)? {
+                    return Ok(value);
+                }
                 let callee = self.expression(self.child(node, Role::Callee))?;
                 let arguments = self
                     .children(node, Role::Argument)
@@ -836,8 +888,188 @@ impl<'a> Emitter<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn member_properties_receive_solved_skeleton_contexts() {
+        let mir = graph(
+            r#"
+            import "std/type-property" { get_field_prop, get_variant_prop, FieldPropertyCtx, VariantPropertyCtx };
+            @property(PropertyTarget.Field) type FieldMark = struct { context: FieldPropertyCtx };
+            @property(PropertyTarget.Variant) type VariantMark = struct { context: VariantPropertyCtx };
+            def field: Fn(FieldPropertyCtx, Option(FieldMark)) -> FieldMark = fn(ctx, previous) { { context: ctx } };
+            def variant: Fn(VariantPropertyCtx, Option(VariantMark)) -> VariantMark = fn(ctx, previous) { { context: ctx } };
+            type Item = struct { @field first: Int, @field second: String };
+            type Choice = enum { @variant Empty, @variant Value(Int) };
+            export def answer = (get_field_prop(Item.type, 1, FieldMark.type),
+                get_variant_prop(Choice.type, 0, VariantMark.type),
+                get_variant_prop(Choice.type, 1, VariantMark.type), Item.type, Choice.type, String.type, Int.type);
+        "#,
+            "",
+        );
+        let result = execute(compile(mir.seal().unwrap(), entry(&mir)).unwrap()).unwrap();
+        for (index, name, position, owner_index) in
+            [(0, "second", 1, 3), (1, "Empty", 0, 4), (2, "Value", 1, 4)]
+        {
+            let (_, mark) = result
+                .value()
+                .sequence_get(index)
+                .unwrap()
+                .tagged_parts()
+                .unwrap();
+            let context = mark.dict_get("context").unwrap();
+            assert_eq!(
+                context.dict_get("name").unwrap().as_str().unwrap().as_str(),
+                name
+            );
+            assert_eq!(context.dict_get("index").unwrap().as_int(), Some(position));
+            assert_eq!(
+                context.dict_get("owner").unwrap().represented_type_id(),
+                result
+                    .value()
+                    .sequence_get(owner_index)
+                    .unwrap()
+                    .represented_type_id()
+            );
+            if index == 0 {
+                assert_eq!(
+                    context.dict_get("ty").unwrap().represented_type_id(),
+                    result
+                        .value()
+                        .sequence_get(5)
+                        .unwrap()
+                        .represented_type_id()
+                );
+            } else if index == 1 {
+                assert_eq!(
+                    context
+                        .dict_get("payload")
+                        .unwrap()
+                        .as_atom()
+                        .unwrap()
+                        .as_str(),
+                    "None"
+                );
+            } else {
+                let (_, payload) = context.dict_get("payload").unwrap().tagged_parts().unwrap();
+                assert_eq!(
+                    payload.represented_type_id(),
+                    result
+                        .value()
+                        .sequence_get(6)
+                        .unwrap()
+                        .represented_type_id()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn property_queries_reduce_once_and_share_lazy_global_dependencies() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        CALLS.store(0, Ordering::SeqCst);
+        let mir = graph(
+            r#"
+            import "std/type-property" { get_type_prop as query };
+            native tick: Fn() -> Int;
+            @property(PropertyTarget.Type)
+            @property(PropertyTarget.Field)
+            type Mark = struct { value: Int };
+            def config = tick();
+            def make: Fn(Int) -> Fn(Type, Option(Mark)) -> Mark = fn(n) {
+                fn(owner, previous) { let counted = tick(); { value: config + n } }
+            };
+            @make(1)
+            @make(2)
+            type Item = struct { value: Int };
+            export def answer = (query(Item.type, Mark.type), (fn(read) { read(Item.type, Mark.type) })(query),
+                query(Int.type, Mark.type), query(Mark.type, PropertyAttr.type));
+        "#,
+            "",
+        );
+        let mut artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        artifact.bytecode = crate::execution_link::link_with(&artifact, |_| {
+            Some(crate::NativeFunction::new("test.tick", 0, |ctx| {
+                CALLS.fetch_add(1, Ordering::SeqCst);
+                ctx.set_int(ctx.result(), 21)
+            }))
+        })
+        .unwrap();
+        artifact.native_links.clear();
+        let result = execute(artifact).unwrap();
+        for index in [0, 1] {
+            let (tag, payload) = result
+                .value()
+                .sequence_get(index)
+                .unwrap()
+                .tagged_parts()
+                .unwrap();
+            assert_eq!(tag.as_atom().unwrap().as_str(), "Some");
+            assert_eq!(payload.dict_get("value").unwrap().as_int(), Some(23));
+        }
+        assert_eq!(
+            result
+                .value()
+                .sequence_get(2)
+                .unwrap()
+                .as_atom()
+                .unwrap()
+                .as_str(),
+            "None"
+        );
+        let (_, attr) = result
+            .value()
+            .sequence_get(3)
+            .unwrap()
+            .tagged_parts()
+            .unwrap();
+        assert_eq!(attr.dict_get("bits").unwrap().as_int(), Some(3));
+        assert_eq!(CALLS.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn property_absence_is_lazy_and_actual_property_global_cycles_fail() {
+        for (query, expected) in [
+            ("query(Int.type, Mark.type)", None),
+            ("query(Item.type, Mark.type)", Some("provider failed")),
+        ] {
+            let source = format!(
+                r#"
+                import "std/type-property" {{ get_type_prop as query }};
+                @property(PropertyTarget.Type) type Mark = struct {{ value: Int }};
+                def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) {{ fail!("provider failed") }};
+                @mark type Item = struct {{ value: Int }};
+                export def answer = {query};
+            "#
+            );
+            let mir = graph(&source, "");
+            let result = execute(compile(mir.seal().unwrap(), entry(&mir)).unwrap());
+            if let Some(expected) = expected {
+                assert!(result.err().unwrap().contains(expected));
+            } else {
+                assert_eq!(result.unwrap().value().as_atom().unwrap().as_str(), "None");
+            }
+        }
+        let mir = graph(
+            r#"
+            import "std/type-property" { get_type_prop as query };
+            @property(PropertyTarget.Type) type Mark = struct { value: Int };
+            def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { let dependency = a; { value: 1 } };
+            @mark type Item = struct { value: Int };
+            def a: Option(Mark) = query(Item.type, Mark.type);
+            export def answer = a;
+        "#,
+            "",
+        );
+        let error = execute(compile(mir.seal().unwrap(), entry(&mir)).unwrap())
+            .err()
+            .unwrap();
+        assert!(
+            error.contains("cyclic demand") && error.contains("property(") && error.contains("::a"),
+            "{error}"
+        );
+    }
     #[test]
     fn type_metadata_retains_solved_ids_without_executing_property_providers() {
         let mir = graph(
@@ -1001,7 +1233,7 @@ mod tests {
         }
     }
 
-    fn graph(main: &str, math: &str) -> Mir {
+    pub(crate) fn graph(main: &str, math: &str) -> Mir {
         graph_order(main, math, 0)
     }
     fn graph_order(main: &str, math: &str, order: usize) -> Mir {
@@ -1050,7 +1282,7 @@ mod tests {
         crate::type_resolve::resolve(&mut mir);
         mir
     }
-    fn entry(mir: &Mir) -> SymbolId {
+    pub(crate) fn entry(mir: &Mir) -> SymbolId {
         let ModuleTarget::Bound(module) = mir.roots[0] else {
             panic!("root");
         };

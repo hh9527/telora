@@ -100,6 +100,13 @@ impl Solver<'_> {
             TypeConstructor::PropertyTarget
                 if metadata && matches!(name.as_str(), "Type" | "Field" | "Variant") =>
             {
+                self.mir.member_selections[node.index()] =
+                    Some(MemberSelection::PropertyTarget(match name.as_str() {
+                        "Type" => 1,
+                        "Field" => 2,
+                        "Variant" => 4,
+                        _ => unreachable!(),
+                    }));
                 None
             }
             TypeConstructor::Option if metadata => match name.as_str() {
