@@ -67,6 +67,10 @@ impl Solver<'_> {
                     return None;
                 };
                 if metadata && self.is_trait(*symbol) {
+                    self.mir.member_selections[node.index()] = Some(MemberSelection::TraitMember {
+                        index: index as u32,
+                        implementation: None,
+                    });
                     self.same(node, payload.unwrap());
                     let bound = self.structure(TypeConstructor::Meta, vec![ty]);
                     self.mir.bound_requirements.push(BoundRequirement {

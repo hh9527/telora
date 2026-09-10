@@ -5,6 +5,45 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Newtype values and statically selected trait implementations (2026-09-10)
+
+Newtype constructor occurrences now consume their solved nominal TypeId.
+MakeNewtype validates the indexed skeleton and allocates the existing one-element
+VM container, retaining the payload Val. Nested newtypes keep both the original
+payload object and its inner TypeId. Constructor patterns extract that payload
+from the statically established shape. Concrete applications of generic newtype
+families work; constructing a parameter-dependent nominal type inside generic
+code still requires a compiled type witness and is explicitly rejected.
+
+Trait member selection now records the member index and the implementation
+SymbolId chosen by the static evidence graph. Codegen emits a demand of that
+implementation's session slot followed by the existing field read. Impl method
+tables are lazy global tasks, so recursive trait methods reuse the same table
+without recursively expanding code or resolving methods in the VM. Ordinary
+runtime dependencies include the selected implementation's globals. Concrete
+and property-blanket selections work where the method body needs no additional
+runtime evidence witness; assumed generic evidence still has an explicit gap.
+
+Array indexing and tuple projection also lower from their solved shape. No
+constructor or trait operation calls the old compiler, type store inference or
+host property materialization. This retains existing container/field layout;
+runtime representation redesign remains separate work.
+
+Twenty-two codegen tests and the previously failing provider alias/factory CLI
+regression pass. Coverage includes nested and concrete-generic newtypes, nominal
+equality, concrete and blanket trait choices, recursive methods, first-class
+method references and global captures. A VM test compares exact nested heap
+handles and TypeIds, proving that newtype wrapping does not copy payload data.
+
+Twenty-two type-pass tests and thirteen static-MIR CLI tests also pass. Logs:
+`/tmp/mir-newtype-trait-{core,types,cli,static-cli}.log`. Diff/source-size checks
+pass with large-file review warnings.
+
+This closes the newtype/trait failure reached by that check regression, not all
+generic evidence/codegen cases. Parser recovery diagnostics, run/serve/LSP,
+construction checks, generic witnesses, remaining metadata consumers and final
+old-pipeline removal/acceptance remain pending. No performance claim is made.
+
 ### Ordinary check uses a sealed session initialization root (2026-09-10)
 
 The CLI check command no longer calls Engine.recover_with_resolver. Both modes

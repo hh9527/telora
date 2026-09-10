@@ -65,7 +65,11 @@ impl ExecutionGraph {
             if !matches!(
                 symbol.kind,
                 SymbolKind::Declaration(
-                    BindingKind::Let | BindingKind::Def | BindingKind::Native | BindingKind::Decl
+                    BindingKind::Let
+                        | BindingKind::Def
+                        | BindingKind::Native
+                        | BindingKind::Decl
+                        | BindingKind::Impl
                 )
             ) || !symbol.module.is_some_and(|module| {
                 symbol.scope.is_some() && symbol.scope == mir.module_scopes[module.index()]

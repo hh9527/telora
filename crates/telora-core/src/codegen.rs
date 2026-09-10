@@ -9,6 +9,8 @@ use crate::{
     source::{Diagnostic, Origin, Severity, WithOrigin},
 };
 
+#[path = "codegen/newtypes.rs"]
+mod newtypes;
 #[path = "codegen/patterns.rs"]
 mod patterns;
 #[path = "codegen/properties.rs"]
@@ -326,6 +328,7 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
                 mir.member_selections[node.index()],
                 Some(
                     MemberSelection::EnumVariant { .. }
+                        | MemberSelection::TraitMember { .. }
                         | MemberSelection::Boolean(_)
                         | MemberSelection::PropertyTarget(_)
                 )
@@ -372,6 +375,13 @@ fn referenced_globals(mir: &Mir, root: HirId) -> Vec<SymbolId> {
     let mut seen = std::collections::BTreeSet::new();
     let mut pending = vec![root];
     while let Some(node) = pending.pop() {
+        if let Some(MemberSelection::TraitMember {
+            implementation: Some(symbol),
+            ..
+        }) = mir.member_selections[node.index()]
+        {
+            seen.insert(symbol);
+        }
         if let Some(slot) = mir.hir[node.index()].resolution
             && let ResolveState::Bound(target) = mir.resolve_slots[slot.index()]
         {
@@ -379,7 +389,15 @@ fn referenced_globals(mir: &Mir, root: HirId) -> Vec<SymbolId> {
             if let Some(module) = symbol.module
                 && symbol.scope.is_some()
                 && symbol.scope == mir.module_scopes[module.index()]
-                && matches!(symbol.kind, SymbolKind::Declaration(_))
+                && matches!(
+                    symbol.kind,
+                    SymbolKind::Declaration(
+                        BindingKind::Let
+                            | BindingKind::Def
+                            | BindingKind::Native
+                            | BindingKind::Decl
+                    )
+                )
             {
                 seen.insert(target);
             }
@@ -480,6 +498,9 @@ impl<'a> Emitter<'a> {
 
     fn expression(&mut self, node: HirId) -> Result<R, Diagnostic> {
         self.ty(node)?;
+        if let Some(owner) = self.newtype_owner(node)? {
+            return self.newtype_constructor(node, owner);
+        }
         if let Some(slot) = self.mir.hir[node.index()].resolution {
             if let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] {
                 if self.lookup(symbol).is_none()
@@ -498,6 +519,61 @@ impl<'a> Emitter<'a> {
             }
         }
         let result = match &self.mir.hir[node.index()].kind {
+            HirKind::Index => {
+                let receiver = self.child(node, Role::Receiver);
+                if self.mir.types[self.ty(receiver)?.index()].constructor != TypeConstructor::Array
+                {
+                    return Err(self.error(node, "index lowering requires a solved Array"));
+                }
+                let array = self.expression(receiver)?;
+                let index = self.expression(self.child(node, Role::Index))?;
+                let dst = self.register();
+                self.emit(node, O::GetArray { dst, array, index });
+                dst
+            }
+            HirKind::TupleProjection(index) => {
+                let index = *index;
+                let tuple = self.expression(self.child(node, Role::Receiver))?;
+                let dst = self.register();
+                self.emit(node, O::ProjectTuple { dst, tuple, index });
+                dst
+            }
+            HirKind::Field
+                if matches!(
+                    self.mir.member_selections[node.index()],
+                    Some(MemberSelection::TraitMember { .. })
+                ) =>
+            {
+                let Some(MemberSelection::TraitMember {
+                    implementation: Some(symbol),
+                    ..
+                }) = self.mir.member_selections[node.index()]
+                else {
+                    return Err(self.error(
+                        node,
+                        "generic trait dispatch requires a compiled evidence witness",
+                    ));
+                };
+                let slot = self.graph.global(symbol).ok_or_else(|| {
+                    self.error(node, "selected implementation has no execution slot")
+                })?;
+                let dict = self.register();
+                self.emit(
+                    node,
+                    O::Demand {
+                        dst: dict,
+                        node: slot,
+                    },
+                );
+                let name = self.child(node, Role::Name);
+                let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
+                    unreachable!()
+                };
+                let field = name.clone();
+                let dst = self.register();
+                self.emit(node, O::GetField { dst, dict, field });
+                dst
+            }
             HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node)?,
             HirKind::Field
                 if matches!(
@@ -762,7 +838,7 @@ impl<'a> Emitter<'a> {
                 dst
             }
             HirKind::Binding {
-                kind: BindingKind::Let | BindingKind::Def,
+                kind: BindingKind::Let | BindingKind::Def | BindingKind::Impl,
                 ..
             } => {
                 let value = self.expression(self.child(node, Role::Value))?;
@@ -991,6 +1067,27 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn newtypes_and_selected_trait_implementations_execute_from_solved_ids() {
+        for source in [
+            "type Inner = struct(Array(Int)); type Outer = struct(Inner); def input = [20, 22]; export def answer = match Outer(Inner(input)) { Outer(Inner(items)) => items[0] + items[1] };",
+            "type Box(T) = struct(T); type IntBox = Box(Int); export def answer = match IntBox(42) { IntBox(value) => value };",
+            "type A = struct(Int); type B = struct(A); export def answer = if B(A(42)) == B(A(42)) { 42 } else { 0 };",
+            "trait Name { name: Fn(Self) -> Int }; impl Name for Int { name: fn(value) { value + 1 } }; impl Name for String { name: fn(value) { 42 } }; export def answer = Name.name(\"input\");",
+            "trait Name { name: Fn(Self) -> Int }; impl Name for Int { name: fn(value) { base + value } }; def base = 40; def method = Name.name; export def answer = method(2);",
+            "trait Count { step: Fn(Self, Int) -> Int }; impl Count for Int { step: fn(value, n) { if n == 0 { value } else { Count.step(value + 1, n - 1) } } }; export def answer = Count.step(0, 42);",
+            "@property(PropertyTarget.Type) type Tag = struct(Int); def tag: Fn(Type, Option(Tag)) -> Tag = fn(owner, previous) { Tag(1) }; @tag type Item = struct(Int); trait Name { name: Fn(Self) -> Int }; impl(T: Property(Tag)) Name for T { name: fn(value) { 42 } }; export def answer = Name.name(Item(1));",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir
+                .seal()
+                .unwrap_or_else(|d| panic!("{source}\n{d:?}\n{:?}", mir.diagnostics));
+            let artifact =
+                compile(sealed, entry(&mir)).unwrap_or_else(|d| panic!("{source}\n{d:?}"));
+            let result = execute(artifact).unwrap_or_else(|d| panic!("{source}\n{d}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
     #[test]
     fn check_root_initializes_all_globals_and_properties_without_calling_functions() {
         for (source, expected) in [

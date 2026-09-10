@@ -231,10 +231,16 @@ pub struct TypeMember {
 
 #[derive(Clone, Copy, Debug)]
 pub enum MemberSelection {
+    TraitMember {
+        index: u32,
+        implementation: Option<SymbolId>,
+    },
     PropertyTarget(u8),
     Boolean(bool),
     RecordField,
-    EnumVariant { index: u32 },
+    EnumVariant {
+        index: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

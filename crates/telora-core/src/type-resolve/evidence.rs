@@ -208,6 +208,16 @@ impl Solver<'_> {
             let state = root.map_or(BoundState::Unresolved, |root| nodes[root].state);
             self.mir.bound_requirements[index].state = state;
             self.mir.bound_requirements[index].evidence = root;
+            let reference = self.mir.bound_requirements[index].reference;
+            if let Some(MemberSelection::TraitMember { index, .. }) =
+                self.mir.member_selections[reference.index()]
+            {
+                self.mir.member_selections[reference.index()] =
+                    Some(MemberSelection::TraitMember {
+                        index,
+                        implementation: root.and_then(|root| nodes[root].implementation),
+                    });
+            }
             let message = match state {
                 BoundState::Rejected => {
                     Some("generic bound has no static evidence (including unproven cycles)")

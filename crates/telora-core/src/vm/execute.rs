@@ -514,6 +514,20 @@ impl Vm {
                                     }
                                 }
                             }
+                            Opcode::MakeNewtype { dst, ty, payload } => {
+                                let types = background.solved_types.as_ref().ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode, "newtype requires a solved image", function, pc))?;
+                                let definition = types.types.get(ty.index()).and_then(|ty| {
+                                    if let crate::mir::TypeConstructor::Nominal(symbol) = ty.constructor { types.definition(symbol) } else { None }
+                                });
+                                if definition.is_none_or(|d| d.operation != crate::mir::TypeOperation::Newtype || d.members.len() != 1) {
+                                    return Err(error(RuntimeErrorKind::InvalidBytecode, "invalid solved newtype constructor", function, pc));
+                                }
+                                let payload = *read_register(&registers, *payload, function, pc)?;
+                                charge_allocation(account, logical_value_bytes(1).map_err(|e| allocation_error(e.message, function, pc))?, function, pc)?;
+                                let value = Val::unknown(DecodedValue::Tuple(current.allocate(Object::Tuple(vec![payload].into_boxed_slice()))))
+                                    .with_type_id(crate::TypeId::solved(*ty)).with_loc(instruction_location(function, pc));
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
                             Opcode::MakeVariant { dst, ty, variant, payload } => {
                                 if let Some((tag, has_payload)) = background.solved_types.as_ref()
                                     .and_then(|types| types.types.get(ty.index()))

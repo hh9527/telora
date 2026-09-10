@@ -1,4 +1,55 @@
 #[test]
+fn solved_newtypes_preserve_nested_payload_handles_and_type_ids() {
+    let mir = crate::codegen::tests::graph(
+        "type Inner = struct(Array(Int)); type Outer = struct(Inner); def input = [20, 22]; def inner = Inner(input); export def answer = (input, inner, Outer(inner));",
+        "",
+    );
+    let artifact =
+        crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    let linked = crate::execution_link::link_entry(artifact).unwrap();
+    let result = Vm::new()
+        .execute_linked(
+            linked,
+            Quota::with_fuel(10000),
+            crate::DataLimits::default(),
+            &mut SourceDatabase::default(),
+        )
+        .unwrap();
+    let view = HeapView {
+        current: &result.world.work.heap,
+        background: Some(&result.world.main),
+    };
+    let items = |value: Val| {
+        let DecodedValue::Tuple(handle) = value.value() else {
+            panic!("expected tuple container");
+        };
+        let Object::Tuple(items) = view.object(handle).unwrap() else {
+            panic!("expected tuple object");
+        };
+        items
+    };
+    let values = items(result.world.work.root);
+    let inner_payload = items(values[1])[0];
+    let outer_payload = items(values[2])[0];
+    assert_eq!(inner_payload.value(), values[0].value());
+    assert_eq!(outer_payload.value(), values[1].value());
+    assert_eq!(outer_payload.type_id(), values[1].type_id());
+    assert!(
+        values[1]
+            .type_id()
+            .and_then(crate::TypeId::solved_id)
+            .is_some()
+    );
+    assert!(
+        values[2]
+            .type_id()
+            .and_then(crate::TypeId::solved_id)
+            .is_some()
+    );
+    assert_ne!(values[1].type_id(), values[2].type_id());
+}
+
+#[test]
 fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
     use crate::execution_graph::{EvaluationError, Request};
     use std::sync::atomic::{AtomicUsize, Ordering};

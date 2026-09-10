@@ -116,6 +116,22 @@ impl Emitter<'_> {
                 );
             }
             HirKind::ConstructorPattern => {
+                if self
+                    .newtype_owner(self.child(node, Role::Callee))?
+                    .is_some()
+                {
+                    let dst = self.register();
+                    self.emit(
+                        node,
+                        O::GetTuple {
+                            dst,
+                            tuple: value,
+                            index: 0,
+                        },
+                    );
+                    self.pattern(self.child(node, Role::Pattern), dst, mismatch)?;
+                    return Ok(());
+                }
                 let (tag, has_payload) =
                     self.pattern_constructor(self.child(node, Role::Callee))?;
                 let tag = self.constant(node, Constant::Atom(tag));
