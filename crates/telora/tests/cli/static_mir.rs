@@ -8,7 +8,7 @@ fn static_mir_eval_property_queries_execute_lazily_in_both_entry_modes() {
         ("eval-with", false, "Item", true),
         ("eval-with", true, "Item", false),
     ] {
-        let body = format!("let property = query({queried_type}.type, Mark.type); Value.Int(42)");
+        let body = format!("match query({queried_type}.type, Mark.type) {{ Some(property) => Value.Int(property.value), None => Value.Int(42) }}");
         let entry = if mode == "eval" {
             format!("do {{ {body} }}")
         } else {

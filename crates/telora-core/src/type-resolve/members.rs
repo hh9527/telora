@@ -110,24 +110,48 @@ impl Solver<'_> {
                 None
             }
             TypeConstructor::Option if metadata => match name.as_str() {
-                "Some" => Some(term.arguments[0]),
-                "None" => None,
+                "Some" => {
+                    self.mir.member_selections[node.index()] =
+                        Some(MemberSelection::EnumVariant { index: 1 });
+                    Some(term.arguments[0])
+                }
+                "None" => {
+                    self.mir.member_selections[node.index()] =
+                        Some(MemberSelection::EnumVariant { index: 0 });
+                    None
+                }
                 _ => {
                     self.bad_member(node, &name);
                     return None;
                 }
             },
             TypeConstructor::Result if metadata => match name.as_str() {
-                "Ok" => Some(term.arguments[0]),
-                "Err" => Some(term.arguments[1]),
+                "Ok" => {
+                    self.mir.member_selections[node.index()] =
+                        Some(MemberSelection::EnumVariant { index: 0 });
+                    Some(term.arguments[0])
+                }
+                "Err" => {
+                    self.mir.member_selections[node.index()] =
+                        Some(MemberSelection::EnumVariant { index: 1 });
+                    Some(term.arguments[1])
+                }
                 _ => {
                     self.bad_member(node, &name);
                     return None;
                 }
             },
             TypeConstructor::FoldControl if metadata => match name.as_str() {
-                "Continue" => Some(term.arguments[0]),
-                "Break" => Some(term.arguments[1]),
+                "Continue" => {
+                    self.mir.member_selections[node.index()] =
+                        Some(MemberSelection::EnumVariant { index: 0 });
+                    Some(term.arguments[0])
+                }
+                "Break" => {
+                    self.mir.member_selections[node.index()] =
+                        Some(MemberSelection::EnumVariant { index: 1 });
+                    Some(term.arguments[1])
+                }
                 _ => {
                     self.bad_member(node, &name);
                     return None;

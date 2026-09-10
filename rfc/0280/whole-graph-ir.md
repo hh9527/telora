@@ -5,6 +5,36 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Solved pattern branches and native algebraic values (2026-09-10)
+
+The new emitter now lowers match, guards, if-let, let-else and boolean short
+circuiting. Pattern binders and bare constructor names consume the resolver's
+distinct Bound outcomes, including imported aliases. Constructor patterns follow
+already-bound declaration links to the selected variant; they never evaluate a
+constructor to discover its tag. Tuple/record extraction uses the solved shape,
+and record pattern field constraints now run in the static type pass.
+
+Option, Result and FoldControl member selection records a variant index in MIR.
+MakeVariant consumes that index and the native family identity from TypeImage,
+using the existing VM representation. These native layouts are independent of
+their generic arguments; constructing them does not require runtime type
+inference or a reconstructed descriptor. Generic nominal type witnesses remain
+separate unfinished work. Solved nominal enum payload extraction validates the
+session TypeId directly instead of consulting the old declared-type metadata map.
+
+Twenty codegen tests pass, including std/option.map through its ordinary generic
+signature, imported constructor aliases, native fold-control callbacks, nested
+patterns, guards, early returns, short-circuit laziness, escaping pattern captures,
+record field errors and property providers reducing previous values. Twenty-two
+type-pass tests and six focused CLI eval/eval-with tests pass. CLI property
+fixtures now consume query results through match rather than discarding them
+before returning a constant. Logs: `/tmp/mir-pattern-{core,types,cli}-tests.log`.
+
+This closes prerequisites for ordinary module initialization; ordinary check is
+still on the old Engine and is not claimed migrated. Session-wide check roots,
+construction checks, generic metadata/evidence, run/serve and old-pipeline removal
+remain pending. No performance claim or full-suite acceptance is made here.
+
 ### Required property reads and VM-local lazy results (2026-09-10)
 
 GetTypeProp/GetMemberProp now demand the execution slot selected by solved

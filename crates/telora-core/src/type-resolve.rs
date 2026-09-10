@@ -379,7 +379,26 @@ impl Solver<'_> {
                     }
                 }
             }
-            HirKind::Wildcard => {}
+            HirKind::Wildcard | HirKind::PatternField => {}
+            HirKind::StructPattern => {
+                for field in self.children(node, Role::Field) {
+                    let name = self.child(field, Role::Name).unwrap();
+                    let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
+                        unreachable!()
+                    };
+                    self.tasks.push(Task::Member {
+                        node: field,
+                        receiver: node.ty(),
+                        name: name.clone(),
+                    });
+                    let pattern = self.child(field, Role::Pattern).unwrap();
+                    self.equal(
+                        field.ty(),
+                        pattern.ty(),
+                        Some(self.mir.hir[field.index()].location),
+                    );
+                }
+            }
             HirKind::TuplePattern => {
                 let items = self
                     .children(node, Role::Item)

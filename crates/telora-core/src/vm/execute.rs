@@ -515,6 +515,22 @@ impl Vm {
                                 }
                             }
                             Opcode::MakeVariant { dst, ty, variant, payload } => {
+                                if let Some((tag, has_payload)) = background.solved_types.as_ref()
+                                    .and_then(|types| types.types.get(ty.index()))
+                                    .and_then(|ty| crate::type_image::builtin_variant(&ty.constructor, *variant)) {
+                                    if has_payload != payload.is_some() {
+                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "invalid native variant payload", function, pc));
+                                    }
+                                    let tag = Val::unknown(current.atom(Some(background), tag));
+                                    let value = if let Some(src) = payload {
+                                        let payload = *read_register(&registers, *src, function, pc)?;
+                                        charge_allocation(account, logical_value_bytes(2).map_err(|e| allocation_error(e.message, function, pc))?, function, pc)?;
+                                        Val::unknown(DecodedValue::Tagged(current.allocate(Object::Tagged { tag, payload })))
+                                    } else { tag };
+                                    write_register(&mut registers, *dst, value.with_loc(instruction_location(function, pc)), function, pc)?;
+                                    frames.last_mut().expect("variant frame").pc += 1;
+                                    continue;
+                                }
                                 let member = background.solved_types.as_ref()
                                     .and_then(|types| types.variant(*ty, *variant))
                                     .filter(|member| member.payload.is_some() == payload.is_some())

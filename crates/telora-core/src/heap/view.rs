@@ -82,7 +82,15 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn unwrap_declared(&self, mut value: Val) -> Result<Val, HeapError> {
-        if value.type_id().is_some() {
+        if let Some(id) = value.type_id().and_then(crate::TypeId::solved_id) {
+            let types = self.current.solved_types.as_ref()
+                .or_else(|| self.background.and_then(|heap| heap.solved_types.as_ref()))
+                .ok_or(HeapError("solved value requires its session type image"))?;
+            if types.types.get(id.index()).is_none() {
+                return Err(HeapError("solved value type is outside its session image"));
+            }
+            value = value.without_type_id();
+        } else if value.type_id().is_some() {
             self.type_witness(value)?;
             value = value.without_type_id();
         }

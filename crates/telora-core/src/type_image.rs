@@ -6,6 +6,24 @@ use crate::{
     source::Diagnostic,
 };
 
+/// Native algebraic families have a fixed representation, independent of their
+/// type parameters. The type pass has already selected the variant index.
+pub(crate) fn builtin_variant(
+    constructor: &crate::mir::TypeConstructor,
+    index: u32,
+) -> Option<(&'static str, bool)> {
+    use crate::mir::TypeConstructor as T;
+    Some(match (constructor, index) {
+        (T::Option, 0) => ("None", false),
+        (T::Option, 1) => ("Some", true),
+        (T::Result, 0) => ("Ok", true),
+        (T::Result, 1) => ("Err", true),
+        (T::FoldControl, 0) => ("Continue", true),
+        (T::FoldControl, 1) => ("Break", true),
+        _ => return None,
+    })
+}
+
 #[derive(Debug)]
 pub struct TypeImage {
     /// Indices are exactly the TypeIds assigned by the static pass.

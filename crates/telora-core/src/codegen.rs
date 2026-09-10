@@ -9,6 +9,8 @@ use crate::{
     source::{Diagnostic, Origin, Severity, WithOrigin},
 };
 
+#[path = "codegen/patterns.rs"]
+mod patterns;
 #[path = "codegen/properties.rs"]
 mod properties;
 use properties::native_abi;
@@ -427,6 +429,7 @@ impl<'a> Emitter<'a> {
             }
         }
         let result = match &self.mir.hir[node.index()].kind {
+            HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node)?,
             HirKind::Field
                 if matches!(
                     self.mir.member_selections[node.index()],
@@ -559,7 +562,16 @@ impl<'a> Emitter<'a> {
                 } else {
                     ty
                 };
-                let mut pending = vec![owner];
+                let mut pending = if crate::type_image::builtin_variant(
+                    &self.mir.types[owner.index()].constructor,
+                    index,
+                )
+                .is_some()
+                {
+                    vec![]
+                } else {
+                    vec![owner]
+                };
                 while let Some(id) = pending.pop() {
                     let ty = &self.mir.types[id.index()];
                     if matches!(ty.constructor, TypeConstructor::Parameter(_)) {
@@ -727,7 +739,27 @@ impl<'a> Emitter<'a> {
             }
             HirKind::Binary(operator) => {
                 if matches!(operator, B::And | B::Or) {
-                    return Err(self.error(node, "short-circuit lowering is not implemented yet"));
+                    let is_and = *operator == B::And;
+                    let left = self.expression(self.child(node, Role::Left))?;
+                    let dst = self.register();
+                    self.emit(node, O::Move { dst, src: left });
+                    let rhs = self.label();
+                    let done = self.label();
+                    self.emit(
+                        node,
+                        O::JumpIfFalse {
+                            condition: left,
+                            target: if is_and { done } else { rhs },
+                        },
+                    );
+                    if !is_and {
+                        self.emit(node, O::Jump { target: done });
+                    }
+                    self.mark(rhs);
+                    let right = self.expression(self.child(node, Role::Right))?;
+                    self.emit(node, O::Move { dst, src: right });
+                    self.mark(done);
+                    return Ok(dst);
                 }
                 let left = self.expression(self.child(node, Role::Left))?;
                 let right = self.expression(self.child(node, Role::Right))?;
@@ -890,6 +922,40 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn solved_patterns_and_native_variants_execute_with_lexical_scopes() {
+        for source in [
+            "export def answer = match Some((20, 22)) { Some((x, y)) => x + y, None => 0 };",
+            "export def answer = match Result(Int, String).Err(\"bad\") { Ok(x) => x, Err(\"bad\") => 42, _ => 0 };",
+            "type E = enum { A(Int), B }; export def answer = match E.A(21) { E.B => 0, E.A(x) if x < 0 => 1, E.A(x) => x * 2 };",
+            "export def answer = if let Some(x) = Some(42) { x } else { 0 };",
+            "def absent: Option(Int) = None; export def answer = if let Some(x) = absent { x } else { 42 };",
+            "export def answer = do { let Some(x) = Some(42) else { fail!(\"absent\") }; x };",
+            "type Rec = struct { x: Int, y: String }; def v: Rec = { x: 42, y: \"unused\" }; export def answer = match v { { x: n } => n };",
+            "import \"std/array\" { fold_control }; type Control = FoldControl(Int, Int); export def answer = match fold_control([20, 22, 99], 0, fn(a, b) { if a == 42 { Control.Break(a) } else { Control.Continue(a + b) } }) { Control.Break(x) => x, Control.Continue(x) => x };",
+            "def crash: Fn() -> Bool = fn() { fail!(\"must remain lazy\") }; export def answer = if (False && crash()) || (True || crash()) { 42 } else { 0 };",
+            "def f: Fn(Option(Int)) -> Int = fn(v) { let Some(x) = v else { return 42; }; x }; export def answer = f(None);",
+            "export def answer = (match Some(21) { Some(x) if False => fn() { 0 }, Some(x) => fn() { x * 2 }, None => fn() { 0 } })();",
+            "import \"std/option\" { map, unwrap_or }; export def answer = unwrap_or(map(Some(21), fn(x) { x * 2 }), 0);",
+            "import \"std/prelude\" { Some as Present, None as Absent }; export def answer = match Present(42) { Present(x) => x, Absent => 0 };",
+            "import \"std/type-property\" { get_type_prop }; @property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { { value: 21 + match previous { Some(p) => p.value, None => 0 } } }; @mark @mark type Item = struct { x: Int }; export def answer = match get_type_prop(Item.type, Mark.type) { Some(p) => p.value, None => 0 };",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir
+                .seal()
+                .unwrap_or_else(|d| panic!("{source}\n{d:?}\n{:?}", mir.diagnostics));
+            let artifact =
+                compile(sealed, entry(&mir)).unwrap_or_else(|d| panic!("{source}\n{d:?}"));
+            let result = execute(artifact).unwrap_or_else(|d| panic!("{source}\n{d}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+    #[test]
+    fn record_pattern_fields_are_checked_before_codegen() {
+        let mir = graph("type Rec = struct { x: Int }; def v: Rec = { x: 1 }; export def answer = match v { { missing: n } => n };", "");
+        assert!(mir.seal().is_err());
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains("missing")), "{:?}", mir.diagnostics);
+    }
     #[test]
     fn member_properties_receive_solved_skeleton_contexts() {
         let mir = graph(
@@ -1368,10 +1434,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn codegen_rejects_invalid_or_unsupported_mir_and_leaves_runtime_failures_to_vm() {
+    fn codegen_rejects_invalid_mir_and_leaves_runtime_failures_to_vm() {
         for source in [
             "export def answer = missing;",
-            "export def answer = match 1 { 1 => 2, _ => 3 };",
+            "export def answer: Int = \"wrong\";",
         ] {
             let mir = graph(source, "");
             assert!(
