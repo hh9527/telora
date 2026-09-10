@@ -151,9 +151,26 @@ impl Solver<'_> {
                 }
                 let mut types = vec![];
                 let mut references = vec![];
+                let mut implementations = vec![];
                 let mut adjustments = vec![];
                 let mut translated = BTreeMap::new();
                 for node in nodes {
+                    if matches!(self.mir.member_selections[node.index()], Some(MemberSelection::TraitMember { .. })) {
+                        if let Some(template) = self.mir.bound_requirements.iter().find(|r| r.reference == node)
+                            .and_then(|r| r.evidence).map(|id| (self.mir.evidence[id].subject, self.mir.evidence[id].bound))
+                        {
+                            let subject = self.substitute_resolved(template.0, &substitutions, &mut canonical);
+                            let bound = self.substitute_resolved(template.1, &substitutions, &mut canonical);
+                            if let Some((symbol, arguments)) = self.mir.evidence.iter().find(|e| e.subject == subject && e.bound == bound && e.state.is_proven())
+                                .and_then(|e| e.implementation.map(|symbol| (symbol, e.arguments.clone())))
+                                && let Some(instance) = self.admit_instance((symbol, arguments), &mut indices, &mut canonical)
+                            {
+                                implementations.push((node, instance));
+                            } else if self.mir.generic_instances[next].concrete {
+                                self.mir.diagnostics.push(Diagnostic::error("generic trait member has no closed implementation evidence", self.mir.hir[node.index()].location));
+                            }
+                        }
+                    }
                     if let Some(slot) = self.mir.value_adjustments[node.index()] {
                         if let TypeState::Known(ty) = self.mir.ty_slots[slot.index()] {
                             adjustments.push((node, self.substitute_resolved(ty, &substitutions, &mut canonical)));
@@ -174,6 +191,7 @@ impl Solver<'_> {
                 }
                 self.mir.generic_instances[next].types = types;
                 self.mir.generic_instances[next].references = references;
+                self.mir.generic_instances[next].implementations = implementations;
                 self.mir.generic_instances[next].adjustments = adjustments;
                 next += 1;
             }
@@ -260,6 +278,7 @@ impl Solver<'_> {
             signature,
             types: vec![],
             references: vec![],
+            implementations: vec![],
             adjustments: vec![],
         });
         indices.insert(key, id);

@@ -651,7 +651,12 @@ fn higher_order_native_calls_use_only_their_declared_generic_signature() {
         export def text = ordinary(1, fn(x) { "ok" });
         export def result = read([(1, "one")]);
     "#,
-    )]);
+    ), ("std/fmt", r#"
+        type Fmt = struct(String);
+        trait Display { display: Fn(Self) -> Fmt };
+        impl Display for Int { display: fn(value) { Fmt("int") } };
+        export { Display };
+    "#)]);
     resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     assert!(mir.type_unknowns.is_empty(), "{}", mir.dump());

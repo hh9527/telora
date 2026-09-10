@@ -43,10 +43,14 @@ pub struct GenericInstance {
     pub signature: TypeId,
     pub types: Vec<(HirId, TypeId)>,
     pub references: Vec<(HirId, GenericInstanceId)>,
+    pub implementations: Vec<(HirId, GenericInstanceId)>,
     pub adjustments: Vec<(HirId, TypeId)>,
 }
 
 impl GenericInstance {
+    pub fn implementation(&self, node: HirId) -> Option<GenericInstanceId> {
+        self.implementations.binary_search_by_key(&node, |(node, _)| *node).ok().map(|index| self.implementations[index].1)
+    }
     pub fn adjustment(&self, node: HirId) -> Option<TypeId> {
         self.adjustments.binary_search_by_key(&node, |(node, _)| *node).ok().map(|index| self.adjustments[index].1)
     }

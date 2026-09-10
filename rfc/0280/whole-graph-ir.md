@@ -5,6 +5,36 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Interpolation and generic trait dispatch close in MIR (2026-09-11)
+
+Syntax lowering now expands interpolated expressions into ordinary
+Display.display(value) calls. A compiler-generated hygienic import of the
+std/fmt Display export participates in module and symbol resolution, including
+when std/fmt itself contains interpolation. Raw text parts stay String nodes.
+The normal trait and call constraints select the conversion and close its types;
+codegen merely emits the resulting calls and the existing interpolation opcode.
+
+Generic interpolation exposed a broader omission: concrete function instances
+retained substituted node types but not their trait-member implementation
+choices. GenericInstance now also records per-node implementation instance IDs,
+derived during static materialization from already-proved concrete evidence.
+Missing implementation evidence in a concrete instance produces a static
+diagnostic. Codegen reads those IDs and includes their implementation dependencies
+in compilation, including implementations used by checks or property providers.
+It does not select implementations or substitute types downstream.
+
+Validation: 37 type-resolve tests, 56 codegen tests and all 28 telora library/LSP
+tests pass. New cases cover primitive/custom/generic Display, hygienic name
+shadowing and static rejection without a Display implementation. The existing
+display language fixture now passes, including property-driven formatting and
+explicit implementation precedence. The minimal higher-order inference test
+inventory now supplies a small std/fmt interface because its interpolation
+actually participates in module resolution. Logs:
+/tmp/mir-interpolation-types.log, /tmp/mir-interpolation-codegen.log,
+/tmp/mir-interpolation-lsp.log and /tmp/mir-interpolation-display.jsonl.
+Full language/CLI acceptance and legacy removal remain open. No VM change or
+performance measurement is included.
+
 ### Proven property evidence lowers to a VM demand (2026-09-11)
 
 The std/type-property evidence native now lowers to GetTypeProp with its two

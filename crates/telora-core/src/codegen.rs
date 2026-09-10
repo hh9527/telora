@@ -212,6 +212,7 @@ fn compile_root(
     for check in mir.construction_checks.iter().filter(|check| check.concrete) {
         for symbol in referenced_globals(mir, check.checker) { all.extend(reachable_globals(mir, symbol)); }
     }
+    include_instance_implementations(mir, &mut all);
     globals = all.into_iter().collect();
     let queries_properties = matches!(root, CompilationRoot::Check | CompilationRoot::Tests(_))
         || globals.iter().any(|s| {
@@ -229,6 +230,7 @@ fn compile_root(
                 all.extend(reachable_globals(mir, symbol));
             }
         }
+        include_instance_implementations(mir, &mut all);
         globals = all.into_iter().collect();
     }
     // Native ABI values and injected data already exist before initialization.
@@ -439,6 +441,17 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
 
 /// Discover code to compile, including function bodies. This is deliberately
 /// not an initialization order: references in uncalled bodies do not demand values.
+fn include_instance_implementations(mir: &Mir, globals: &mut std::collections::BTreeSet<SymbolId>) {
+    loop {
+        let before = globals.len();
+        let implementations = mir.generic_instances.iter().filter(|instance| globals.contains(&instance.symbol))
+            .flat_map(|instance| instance.implementations.iter().map(|(_, id)| mir.generic_instances[id.index()].symbol))
+            .collect::<Vec<_>>();
+        for symbol in implementations { globals.extend(reachable_globals(mir, symbol)); }
+        if globals.len() == before { break; }
+    }
+}
+
 fn reachable_globals(mir: &Mir, root: SymbolId) -> Vec<SymbolId> {
     let mut seen = std::collections::BTreeSet::new();
     let mut pending = vec![root];
@@ -709,19 +722,11 @@ impl<'a> Emitter<'a> {
                     Some(MemberSelection::TraitMember { .. })
                 ) =>
             {
-                let Some(MemberSelection::TraitMember {
-                    implementation: Some(symbol),
-                    ..
-                }) = self.mir.member_selections[node.index()]
-                else {
-                    return Err(self.error(
-                        node,
-                        "generic trait dispatch requires a compiled evidence witness",
-                    ));
-                };
-                let slot = if let Some(instance) = self.mir.implementation_instances[node.index()] {
+                let specialized = self.instance.and_then(|id| self.mir.generic_instances[id.index()].implementation(node));
+                let slot = if let Some(instance) = specialized.or(self.mir.implementation_instances[node.index()]) {
                     self.graph.instance(instance)
-                } else if self.mir.symbol_generics[symbol.index()].is_empty() {
+                } else if let Some(MemberSelection::TraitMember { implementation: Some(symbol), .. }) = self.mir.member_selections[node.index()]
+                    && self.mir.symbol_generics[symbol.index()].is_empty() {
                     self.graph.global(symbol)
                 } else {
                     None
@@ -1501,6 +1506,24 @@ pub(crate) mod tests {
             assert_eq!(result.value().as_int(), Some(42), "{source}");
         }
     }
+    #[test]
+    fn interpolation_resolves_display_calls_before_codegen() {
+        for source in [
+            r#"export def answer = if `n=\{42}` == "n=42" { 42 } else { 0 };"#,
+            r#"import "std/fmt" as fmt; type Item = struct {value: Int}; impl fmt.Display for Item { display: fn(value) { fmt.from_string("item") } }; def value: Item = {value: 1}; export def answer = if `\{value}` == "item" { 42 } else { 0 };"#,
+            r#"import "std/fmt" as fmt; def render: for(T: fmt.Display) Fn(T) -> String = fn(value) { `\{value}` }; export def answer = if render(42) == "42" && render("ok") == "ok" { 42 } else { 0 };"#,
+            r#"def Display = 0; export def answer = if `\{42}` == "42" { 42 } else { 0 };"#,
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            let artifact = compile(sealed, entry(&mir)).unwrap_or_else(|d| panic!("{source}\n{d:?}"));
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{source}");
+        }
+        let missing = graph(r#"type Item = struct {value: Int}; def value: Item = {value: 1}; export def answer = `\{value}`;"#, "");
+        assert!(missing.seal().is_err());
+        assert!(missing.bound_requirements.iter().any(|bound| !bound.state.is_proven()));
+    }
+
     #[test]
     fn property_evidence_demands_the_statically_proven_value() {
         let source = r#"

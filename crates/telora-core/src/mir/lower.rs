@@ -6,9 +6,22 @@ use crate::ast::{self, ExprKind as E, PatternKind as P};
 pub(crate) struct Lower<'a> {
     pub mir: &'a mut Mir,
     pub module: ModuleId,
+    pub needs_display: bool,
 }
 
 impl Lower<'_> {
+    pub(crate) fn finish_module(&mut self, body: HirId) {
+        if !self.needs_display { return; }
+        // Interpolation expands to ordinary trait calls. A hygienic import
+        // makes their identity an input to the normal module/symbol passes.
+        let location = self.mir.hir[body.index()].location;
+        let name = self.node(location, HirKind::Name("\0interpolation_display".into()), vec![]);
+        let value = self.node(location, HirKind::String("std/fmt".into()), vec![]);
+        let binding = self.node(location, HirKind::Binding {
+            kind: ast::BindingKind::Import, initializer: None, imported: Some("Display".into()),
+        }, vec![Edge { role: Role::Name, node: name }, Edge { role: Role::Value, node: value }]);
+        self.mir.hir[body.index()].children.insert(0, Edge { role: Role::Binding, node: binding });
+    }
     fn type_operation(name: &str) -> Option<TypeOperation> {
         match name {
             "\0telora_function_type" => Some(TypeOperation::Function),
@@ -301,7 +314,21 @@ impl Lower<'_> {
                         ast::StringPartKind::Text(text) => {
                             self.node(part.location, HirKind::String(text), vec![])
                         }
-                        ast::StringPartKind::Expression(expr) => self.expr(expr),
+                        ast::StringPartKind::Expression(expr) => {
+                            self.needs_display = true;
+                            let location = expr.location;
+                            let argument = self.expr(expr);
+                            let receiver = self.node(location, HirKind::Variable("\0interpolation_display".into()), vec![]);
+                            let name = self.node(location, HirKind::Name("display".into()), vec![]);
+                            let callee = self.node(location, HirKind::Field, vec![
+                                Edge { role: Role::Receiver, node: receiver },
+                                Edge { role: Role::Name, node: name },
+                            ]);
+                            self.node(location, HirKind::Call, vec![
+                                Edge { role: Role::Callee, node: callee },
+                                Edge { role: Role::Argument, node: argument },
+                            ])
+                        },
                     };
                     edges.push(Edge {
                         role: Role::Part,

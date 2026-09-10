@@ -94,6 +94,7 @@ pub fn resolve_with_requests(
         let mut lower = mir::lower::Lower {
             mir: &mut mir,
             module: id,
+            needs_display: false,
         };
         let body = match parsed.program {
             Some(program) => lower.body(
@@ -107,6 +108,7 @@ pub fn resolve_with_requests(
                 parsed.recovered.result,
             ),
         };
+        lower.finish_module(body);
         mir.modules[id.index()].state = if spec.kind == ModuleKind::Data {
             ModuleState::Data { body }
         } else {
