@@ -366,6 +366,15 @@ fn solved_codec_failed_property_is_not_retried_or_reported_twice() {
         @broken type Item = struct { some_value: Int };
         def attempt = rt.with_diagnostics(fn(n: Int) { codec.decode(Item.type, codec.Value.Object({someValue: codec.Value.Int(n)})) });
         export def answer = (attempt(1), attempt(2));
+    "#, r#"
+        import "std/codec" as codec;
+        import "std/_rt" as rt;
+        def broken: Fn(Type, Option(codec.JsonRenameAll)) -> codec.JsonRenameAll = fn(owner, previous) { fail!("nested decode property failed") };
+        @broken type Item = struct { some_value: Int };
+        import "std/json" as json;
+        @json.untagged type Choice = enum { Plain(Dict(Int)), Broken(Item) };
+        def attempt = rt.with_diagnostics(fn(n: Int) { codec.decode(Choice.type, codec.Value.Object({someValue: codec.Value.Int(n)})) });
+        export def answer = (attempt(1), attempt(2));
     "#] {
     let mir = crate::codegen::tests::graph(source, "");
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);

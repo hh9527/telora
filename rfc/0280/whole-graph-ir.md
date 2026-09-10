@@ -5,6 +5,23 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Untagged decode uses VM-local alternative frames (2026-09-10)
+
+The solved decoder now evaluates untagged enum alternatives from the already
+applied member layout. A task-stack boundary retains output depth, next member
+and successful Val handles. Only one matching alternative is accepted; zero or
+multiple matches return a decode error, including ambiguous nullary alternatives.
+Nested data mismatches discard candidate output handles without copying types,
+input graphs or VM state. Pending frames survive lazy property suspension.
+
+Property execution failures propagate through the existing failure channel and
+are never treated as candidate mismatches, even after an earlier alternative
+succeeded. The failure-cache regression covers this case and repeated calls.
+Seven codec regressions and all 34 codegen tests pass. Logs:
+/tmp/mir-decode-untagged.log and /tmp/mir-untagged-codegen.log.
+No performance or full-suite claim. Parse/display bridges, construction checks,
+schema, generic evidence and remaining consumer/legacy migration remain open.
+
 ### Solved decode and dictionary handle reuse (2026-09-10)
 
 codec.decode now consumes the native instance signature and TypeImage member

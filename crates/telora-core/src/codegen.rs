@@ -2007,6 +2007,43 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn solved_codec_decode_untagged_requires_one_match_and_preserves_nested_work() {
+        for source in [
+            r#"import "std/json" as json;
+                @json.untagged type Inner = enum { Text(String), Flag(Bool) };
+                @json.untagged type Outer = enum { Inner(Inner), Number(Int) };
+                export def answer = match json.decode(Outer.type, "42").unwrap!() { Outer.Number(n) => n, _ => 0 };"#,
+            r#"import "std/json" as json;
+                @json.untagged type Item = enum { Empty, Missing };
+                export def answer = match json.decode(Item.type, "null") { Err(_) => 42, _ => 0 };"#,
+            r#"import "std/json" as json;
+                @json.untagged type Item = enum { Text(String), Number(Int), Empty };
+                export def answer = match json.decode(Item.type, "42").unwrap!() { Item.Number(n) => n, _ => 0 };"#,
+            r#"import "std/json" as json;
+                @json.untagged type Item = enum { Text(String), Number(Int), Empty };
+                export def answer = match json.decode(Item.type, "null").unwrap!() { Item.Empty => 42, _ => 0 };"#,
+            r#"import "std/json" as json;
+                @json.untagged type Item = enum { First(Int), Second(Int) };
+                export def answer = match json.decode(Item.type, "42") { Err(_) => 42, _ => 0 };"#,
+            r#"import "std/json" as json;
+                @json.untagged type Item = enum { Text(String), Number(Int) };
+                export def answer = match json.decode(Item.type, "true") { Err(_) => 42, _ => 0 };"#,
+            r#"import "std/json" as json;
+                @json.rename_all(json.RenameCase.CamelCase) type Named = struct { some_value: Int };
+                @json.untagged type Item = enum { Wrong((Int, String)), Pair((Int, Int)), Named(Named) };
+                def items = json.decode(Array(Item).type, "[[1,2],{\"someValue\":39}]").unwrap!();
+                export def answer = match items[0] { Item.Pair(pair) => match items[1] { Item.Named(named) => pair.0 + pair.1 + named.some_value, _ => 0 }, _ => 0 };"#,
+        ] {
+            let mir = graph(source, "");
+            assert!(mir.diagnostics.is_empty(), "{source}\n{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{source}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+
+    #[test]
     fn solved_codec_decode_uses_generic_recursive_layouts_and_reports_mismatches() {
         for source in [
             r#"import "std/json" as json;

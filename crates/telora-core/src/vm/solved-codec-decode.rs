@@ -1,5 +1,14 @@
 #[derive(Debug)]
 enum SolvedDecodeTask {
+    Untagged {
+        value: Val,
+        owner: crate::mir::TypeId,
+        path: String,
+        next: usize,
+        output_start: usize,
+        matches: Vec<Val>,
+        awaiting: bool,
+    },
     Visit {
         value: Val,
         ty: crate::mir::TypeId,
@@ -203,9 +212,105 @@ fn continue_solved_decode(
         .as_ref()
         .expect("solved decode image");
     let mut rejection = None::<(String, Val)>;
-    while let Some(task) = pending.pop() {
+    loop {
+        // Only data mismatches unwind to an alternative boundary. VM failures
+        // leave through Result/NativeContinuation and are never trial failures.
+        if rejection.is_some() {
+            if let Some(index) = pending
+                .iter()
+                .rposition(|task| matches!(task, SolvedDecodeTask::Untagged { .. }))
+            {
+                pending.truncate(index + 1);
+            } else {
+                break;
+            }
+        }
+        let Some(task) = pending.pop() else { break };
         consume_fuel(account, function, pc)?;
         let (value, ty, path) = match task {
+            SolvedDecodeTask::Untagged {
+                value,
+                owner,
+                path,
+                mut next,
+                output_start,
+                mut matches,
+                awaiting,
+            } => {
+                if awaiting {
+                    if rejection.take().is_none() {
+                        matches.push(output.pop().expect("untagged candidate result"));
+                    }
+                    output.truncate(output_start);
+                }
+                let T::Nominal(symbol) = types.types[owner.index()].constructor else {
+                    unreachable!()
+                };
+                let definition = types.definition(symbol).expect("untagged definition");
+                let layout = types.layout(owner).expect("untagged layout");
+                let mut scheduled = false;
+                while next < layout.members.len() {
+                    let index = next;
+                    next += 1;
+                    if let Some(ty) = layout.members[index] {
+                        pending.push(SolvedDecodeTask::Untagged {
+                            value,
+                            owner,
+                            path: path.clone(),
+                            next,
+                            output_start,
+                            matches: std::mem::take(&mut matches),
+                            awaiting: true,
+                        });
+                        pending.push(SolvedDecodeTask::Variant {
+                            owner,
+                            name: definition.members[index].name.clone(),
+                            loc: value.loc(),
+                        });
+                        pending.push(SolvedDecodeTask::Visit {
+                            value,
+                            ty,
+                            path: path.clone(),
+                        });
+                        scheduled = true;
+                        break;
+                    }
+                    let view = HeapView {
+                        current,
+                        background: Some(background),
+                    };
+                    if (ValueRef { value, view })
+                        .as_atom()
+                        .is_some_and(|atom| atom.as_str() == "None")
+                    {
+                        matches.push(
+                            Val::new(
+                                current.atom(Some(background), &definition.members[index].name),
+                                value.loc(),
+                            )
+                            .with_type_id(crate::TypeId::solved(owner)),
+                        );
+                    }
+                }
+                if !scheduled {
+                    if matches.len() == 1 {
+                        output.push(matches.pop().unwrap());
+                    } else {
+                        rejection = Some((
+                            format!(
+                                "{path}: {}",
+                                if matches.is_empty() {
+                                    "no matching untagged variant"
+                                } else {
+                                    "ambiguous untagged variants"
+                                }
+                            ),
+                            value,
+                        ));
+                    }
+                }
+                continue;
+            }
             SolvedDecodeTask::Sequence { count, tuple, loc } => {
                 let values = output.split_off(output.len() - count).into_boxed_slice();
                 charge_allocation(
@@ -313,6 +418,7 @@ fn continue_solved_decode(
             continue;
         }
         let mut rename = false;
+        let mut untagged = false;
         if matches!(types.types[ty.index()].constructor, T::Nominal(_)) {
             let graph = background.solved_graph.as_ref().expect("decode graph");
             for (index, &property) in property_ids.iter().enumerate() {
@@ -323,10 +429,10 @@ fn continue_solved_decode(
                 }) else {
                     continue;
                 };
-                if index != 2 {
+                if index < 2 {
                     return Err(error(
                         RuntimeErrorKind::InvalidBytecode,
-                        "solved decode parse/display/untagged rules are not implemented yet",
+                        "solved decode parse/display rules are not implemented yet",
                         function,
                         pc,
                     ));
@@ -404,6 +510,10 @@ fn continue_solved_decode(
                         ));
                     }
                 };
+                if index == 3 {
+                    untagged = true;
+                    continue;
+                }
                 let view = HeapView {
                     current,
                     background: Some(background),
@@ -565,6 +675,26 @@ fn continue_solved_decode(
                                 continue;
                             }
                             TypeOperation::Enum => {
+                                if untagged {
+                                    if rename {
+                                        return Err(error(
+                                            RuntimeErrorKind::TypeMismatch,
+                                            "rename_all is not meaningful on an untagged Enum",
+                                            function,
+                                            pc,
+                                        ));
+                                    }
+                                    pending.push(SolvedDecodeTask::Untagged {
+                                        value,
+                                        owner: ty,
+                                        path,
+                                        next: 0,
+                                        output_start: output.len(),
+                                        matches: vec![],
+                                        awaiting: false,
+                                    });
+                                    continue;
+                                }
                                 let selected = if tag.as_deref() == Some("String") {
                                     payload
                                         .and_then(|p| p.as_str())
@@ -741,9 +871,6 @@ fn continue_solved_decode(
                     pc,
                 ));
             }
-        }
-        if rejection.is_some() {
-            break;
         }
     }
     if let Some((message, input)) = rejection {
