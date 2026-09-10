@@ -18,6 +18,9 @@ impl Solver<'_> {
         constructor: TypeConstructor,
         arguments: Vec<TypeSlotId>,
     ) -> TypeSlotId {
+        if constructor == TypeConstructor::Unchecked && arguments.len() == 1
+            && self.term(arguments[0]).is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
+        { return arguments[0]; }
         let slot = self.fresh();
         let term = TypeTermId(
             self.mir

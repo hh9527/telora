@@ -596,6 +596,28 @@ impl<'a> Emitter<'a> {
     }
 
     fn expression(&mut self, node: HirId) -> Result<R, Diagnostic> {
+        let value = self.expression_unadjusted(node)?;
+        self.adjust_value(node, value)
+    }
+    fn adjust_value(&mut self, node: HirId, value: R) -> Result<R, Diagnostic> {
+        if let Some(slot) = self.mir.value_adjustments[node.index()] {
+            let target = if let Some(instance) = self.instance {
+                self.mir.generic_instances[instance.index()].adjustment(node)
+                    .ok_or_else(|| self.error(node, "instance has no closed construction adjustment"))?
+            } else {
+                match self.mir.ty_slots[slot.index()] {
+                    TypeState::Known(ty) => ty,
+                    _ => return Err(self.error(node, "construction adjustment has no closed target")),
+                }
+            };
+            self.construction_check(node, target, PropertySite::Type, value);
+            let dst = self.register();
+            self.emit(node, O::StampType { dst, src: value, ty: target });
+            return Ok(dst);
+        }
+        Ok(value)
+    }
+    fn expression_unadjusted(&mut self, node: HirId) -> Result<R, Diagnostic> {
         self.ty(node)?;
         if let Some(owner) = self.newtype_owner(node)? {
             return self.newtype_constructor(node, owner);
@@ -928,7 +950,7 @@ impl<'a> Emitter<'a> {
             HirKind::Dict => {
                 let ty = self.ty(node)?;
                 let supported = match self.mir.types[ty.index()].constructor {
-                    TypeConstructor::Dict | TypeConstructor::Record(_) => true,
+                    TypeConstructor::Dict | TypeConstructor::Record(_) | TypeConstructor::Unchecked => true,
                     TypeConstructor::Nominal(symbol) => self
                         .mir
                         .type_definitions
@@ -961,6 +983,7 @@ impl<'a> Emitter<'a> {
                 let dst = self.register();
                 self.emit(node, O::MakeDict { dst, fields });
                 self.construction_check(node, ty, PropertySite::Type, dst);
+                self.emit(node, O::StampType { dst, src: dst, ty });
                 dst
             }
             HirKind::Binding {
@@ -1127,6 +1150,7 @@ impl<'a> Emitter<'a> {
                     .collect::<Vec<_>>();
                 nested.function.capture_count = captures.len() as u32;
                 let result = nested.expression(self.child(node, Role::Body))?;
+                let result = nested.adjust_value(self.child(node, Role::ReturnType), result)?;
                 if !nested.native_links.is_empty() {
                     return Err(self.error(
                         node,
@@ -2111,6 +2135,39 @@ pub(crate) mod tests {
             let signature = &result.types().types[id.index()];
             assert_eq!(signature.constructor, TypeConstructor::Function);
             assert_eq!(result.types().types[signature.arguments[0].index()].constructor, expected);
+        }
+    }
+
+    #[test]
+    fn unchecked_values_complete_at_explicit_mir_boundaries() {
+        let definitions = r#"
+            import "std/dyn" as dyn; import "std/_rt" as rt;
+            @check(fn(value) { if value.x > 0 { Ok(()) } else { Err(blame!("positive x", value.x)) } }) type Point = struct {x: Int};
+            type Box(T) = struct {value: T};
+        "#;
+        for body in [
+            r#"export def answer = do { let candidate: Unchecked(Point) = {x: 0}; candidate.x + 42 };"#,
+            r#"export def answer = do { let candidate: Unchecked(Point) = {x: 42}; let checked: Point = candidate; checked.x };"#,
+            r#"def accept: Fn(Point) -> Int = fn(point) { point.x }; export def answer = do { let candidate: Unchecked(Point) = {x: 42}; accept(candidate) };"#,
+            r#"type Container = struct {point: Point}; export def answer = do { let candidate: Unchecked(Point) = {x: 42}; let value: Container = {point: candidate}; value.point.x };"#,
+            r#"export def answer = match rt.with_diagnostics(fn(x: Int) { let candidate: Unchecked(Point) = {x: x}; let values: Array(Point) = [candidate]; values })(0) { Err(errors) => if errors[0].message == "positive x" { 42 } else { 0 }, _ => 0 };"#,
+            r#"export def answer = do { let candidate: Unchecked(Unchecked(Point)) = {x: 42}; if Unchecked(Unchecked(Point)).type == Unchecked(Point).type { candidate.x } else { 0 } };"#,
+            r#"export def answer = do { let candidate: Unchecked(Point) = {x: 42}; match candidate.cast!(Point) { Ok(value) => value.x, _ => 0 } };"#,
+            r#"export def answer = do { let candidate: Unchecked(Point) = {x: 42}; let packed = dyn.pack(Unchecked(Point).type, candidate); match dyn.project_with(Point.type, packed) { None => 42, _ => 0 } };"#,
+            r#"def finish: for(T) Fn(Unchecked(Box(T))) -> Box(T) = fn(candidate) { candidate }; export def answer = do { let candidate: Unchecked(Box(Int)) = {value: 42}; finish(candidate).value };"#,
+            r#"def finish: Fn(Unchecked(Point)) -> Point = fn(candidate) { candidate };
+                export def answer = match rt.with_diagnostics(fn(x: Int) { let candidate: Unchecked(Point) = {x: x}; finish(candidate) })(0) { Err(errors) => if errors[0].message == "positive x" { 42 } else { 0 }, _ => 0 };"#,
+            r#"@check(fn(value) { if value.valid { Ok(()) } else { Err(blame!("invalid box", value.value)) } }) type CheckedBox(T) = struct {value: T, valid: Bool};
+                def finish: for(T) Fn(Unchecked(CheckedBox(T))) -> CheckedBox(T) = fn(candidate) { candidate };
+                export def answer = match rt.with_diagnostics(fn(x: Int) { let candidate: Unchecked(CheckedBox(Int)) = {value: x, valid: False}; finish(candidate) })(0) { Err(errors) => if errors[0].message == "invalid box" { 42 } else { 0 }, _ => 0 };"#,
+            r#"export def answer = match rt.with_diagnostics(fn(x: Int) { let candidate: Unchecked(Point) = {x: x}; let checked: Point = candidate; checked })(0) { Err(errors) => if errors[0].message == "positive x" { 42 } else { 0 }, _ => 0 };"#,
+        ] {
+            let mir = graph(&format!("{definitions}{body}"), "");
+            assert!(mir.diagnostics.is_empty(), "{body}\n{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{body}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{body}");
         }
     }
 

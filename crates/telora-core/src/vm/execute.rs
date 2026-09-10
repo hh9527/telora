@@ -421,6 +421,10 @@ impl Vm {
                                     pc,
                                 )?;
                             }
+                            Opcode::StampType { dst, src, ty } => {
+                                let value = *read_register(&registers, *src, function, pc)?;
+                                write_register(&mut registers, *dst, value.with_type_id(crate::TypeId::solved(*ty)), function, pc)?;
+                            }
                             Opcode::Move { dst, src } => {
                                 let value = *read_register(&registers, *src, function, pc)?;
                                 write_register(&mut registers, *dst, value, function, pc)?;

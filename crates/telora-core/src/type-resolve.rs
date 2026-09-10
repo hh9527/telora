@@ -24,6 +24,8 @@ mod properties;
 mod tests;
 
 enum Task {
+    ShapeEqual { left: TypeSlotId, right: TypeSlotId, location: Option<Location> },
+    Unchecked { node: HirId, argument: TypeSlotId },
     RefineInstance {
         source: TypeSlotId,
         target: TypeSlotId,
@@ -181,6 +183,7 @@ pub fn resolve(mir: &mut Mir) {
 
 impl Solver<'_> {
     fn new(mir: &mut Mir) -> Solver<'_> {
+        mir.value_adjustments.resize(mir.hir.len(), None);
         Solver {
             nominal_index: vec![None; mir.symbols.len()],
             nominal_owner: vec![None; mir.hir.len()],
@@ -589,10 +592,7 @@ impl Solver<'_> {
             HirKind::Closure => {
                 let result = self.child(node, Role::ReturnType).unwrap();
                 let body = self.child(node, Role::Body).unwrap();
-                self.tasks.push(Task::Join {
-                    node: result,
-                    values: vec![body.ty()],
-                });
+                self.fit(body, result.ty(), body.ty());
                 let mut args = self
                     .children(node, Role::Parameter)
                     .into_iter()

@@ -23,6 +23,16 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::ShapeEqual { left, right, location } => { self.equal(left, right, location); None }
+            Task::Unchecked { node, argument } => {
+                let Some(term) = self.term(argument).cloned() else { return Ok(Some(Task::Unchecked { node, argument })); };
+                match term.constructor {
+                    TypeConstructor::Unchecked | TypeConstructor::Parameter(_) => {}
+                    TypeConstructor::Nominal(symbol) if self.nominal_index[symbol.index()].is_some_and(|index| self.mir.type_definitions[index].operation == TypeOperation::Struct) => {}
+                    _ => self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location), "Unchecked requires a named-field struct type".into()),
+                }
+                None
+            }
             Task::RefineInstance { source, target, arguments, location, constructor } => {
                 if self.term(source).is_some_and(|term| term.constructor == constructor) {
                     Some(Task::RefineInstance { source, target, arguments, location, constructor })
@@ -117,7 +127,18 @@ impl Solver<'_> {
                 expected,
                 actual,
             } => {
-                if self
+                if let (Some(expected_type), Some(actual_type)) = (self.term(expected).cloned(), self.term(actual).cloned())
+                    && matches!(expected_type.constructor, TypeConstructor::Nominal(_))
+                    && actual_type.constructor == TypeConstructor::Unchecked
+                {
+                    self.equal(expected, actual_type.arguments[0], Some(self.mir.hir[node.index()].location));
+                    if actual.index() < self.mir.hir.len() {
+                        self.mir.value_adjustments[actual.index()] = Some(expected);
+                    } else {
+                        self.conflict(expected, actual, Some(self.mir.hir[node.index()].location), "unchecked conversion requires a value boundary".into());
+                    }
+                    None
+                } else if self
                     .term(actual)
                     .is_some_and(|t| t.constructor == TypeConstructor::Never)
                 {
@@ -389,6 +410,9 @@ impl Solver<'_> {
                         self.equal(argument, meta, Some(self.mir.hir[node.index()].location));
                         raw.push(slot);
                     }
+                    if function == TypeFunction::Unchecked {
+                        self.tasks.push(Task::Unchecked { node, argument: raw[0] });
+                    }
                     let ty = self.structure(cons, raw);
                     self.assign(node, TypeConstructor::Meta, vec![ty]);
                 }
@@ -506,7 +530,9 @@ impl Solver<'_> {
                 (right, left, b.arguments[0], a.arguments)
             };
             for item in items {
-                self.equal(element, item, location);
+                if item.index() < self.mir.hir.len() {
+                    self.fit(HirId(item.0), element, item);
+                } else { self.equal(element, item, location); }
             }
             self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
             self.revision += 1;
@@ -532,6 +558,15 @@ impl Solver<'_> {
             unreachable!()
         };
         let fields = match nominal.constructor {
+            TypeConstructor::Unchecked => {
+                let Some(owner) = self.term(nominal.arguments[0]).cloned() else {
+                    self.tasks.push(Task::ShapeEqual { left, right, location });
+                    return true;
+                };
+                let TypeConstructor::Nominal(symbol) = owner.constructor else { return false; };
+                let Some((TypeOperation::Struct, members)) = self.nominal_members(symbol, &owner.arguments) else { return false; };
+                members.into_iter().map(|(name, ty)| (name, ty.unwrap())).collect::<Vec<_>>()
+            }
             TypeConstructor::Nominal(symbol) => {
                 let Some((TypeOperation::Struct, members)) =
                     self.nominal_members(symbol, &nominal.arguments)
@@ -554,7 +589,10 @@ impl Solver<'_> {
         }
         for (name, ty) in fields {
             let index = names.iter().position(|n| n == &name).unwrap();
-            self.equal(ty, record.arguments[index], location);
+            let value = record.arguments[index];
+            if value.index() < self.mir.hir.len() {
+                self.fit(HirId(value.0), ty, value);
+            } else { self.equal(ty, value, location); }
         }
         self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
         self.revision += 1;

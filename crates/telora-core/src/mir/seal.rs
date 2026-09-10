@@ -20,6 +20,17 @@ impl Mir {
             || self.reference_instances.len() != self.hir.len()
             || self.implementation_instances.len() != self.hir.len()
             || self.type_layouts.len() != self.types.len()
+            || self.value_adjustments.len() != self.hir.len()
+            || self.generic_instances.iter().any(|instance| instance.types.iter().any(|(node, source)| {
+                if self.value_adjustments.get(node.index()).is_none_or(Option::is_none) { return false; }
+                let Some(target) = instance.adjustment(*node) else { return true; };
+                self.types[source.index()].constructor != TypeConstructor::Unchecked || self.types[source.index()].arguments != [target]
+            }))
+            || self.value_adjustments.iter().enumerate().any(|(node, slot)| {
+                let Some(slot) = slot else { return false; };
+                let (Some(TypeState::Known(source)), Some(TypeState::Known(target))) = (self.ty_slots.get(node), self.ty_slots.get(slot.index())) else { return true; };
+                self.types[source.index()].constructor != TypeConstructor::Unchecked || self.types[source.index()].arguments != [*target]
+            })
             || self.construction_checks.iter().any(|check| {
                 let signature = if let Some(instance) = check.instance {
                     self.generic_instances.get(instance.index()).filter(|instance| instance.concrete).and_then(|instance| instance.ty(check.checker))

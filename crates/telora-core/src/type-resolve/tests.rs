@@ -2,6 +2,36 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn unchecked_identity_and_conversion_evidence_are_separate() {
+    let mut mir = graph(&[("@src/main", r#"
+        type Point = struct {x: Int};
+        def candidate: Unchecked(Unchecked(Point)) = {x: 42};
+        export def checked: Point = candidate;
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    mir.seal().unwrap();
+    let TypeState::Known(candidate) = symbol_type(&mir, "candidate") else { panic!("candidate"); };
+    let TypeState::Known(checked) = symbol_type(&mir, "checked") else { panic!("checked"); };
+    assert_ne!(candidate, checked);
+    assert_eq!(mir.types[candidate.index()].constructor, TypeConstructor::Unchecked);
+    assert_eq!(mir.types[candidate.index()].arguments, [checked]);
+    assert_eq!(mir.value_adjustments.iter().flatten().count(), 1);
+    for source in [
+        "export type Bad = Unchecked(Int);",
+        "type Item = struct(Int); export type Bad = Unchecked(Item);",
+        "type Item = enum {One}; export type Bad = Unchecked(Item);",
+        "type A = struct {x: Int}; type B = struct {x: Int}; def candidate: Unchecked(A) = {x: 1}; export def wrong: B = candidate;",
+        "type Wrap(T) = Unchecked(T); export type Bad = Wrap(Int);",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(!mir.diagnostics.is_empty(), "{source}\n{}", mir.dump());
+        assert!(mir.seal().is_err());
+    }
+}
+
+#[test]
 fn generic_construction_checks_close_bodies_and_member_discovered_owners() {
     let mut mir = graph(&[("@src/main", r#"
         def identity: for(T) Fn(T) -> T = fn(value) { value };

@@ -43,9 +43,13 @@ pub struct GenericInstance {
     pub signature: TypeId,
     pub types: Vec<(HirId, TypeId)>,
     pub references: Vec<(HirId, GenericInstanceId)>,
+    pub adjustments: Vec<(HirId, TypeId)>,
 }
 
 impl GenericInstance {
+    pub fn adjustment(&self, node: HirId) -> Option<TypeId> {
+        self.adjustments.binary_search_by_key(&node, |(node, _)| *node).ok().map(|index| self.adjustments[index].1)
+    }
     pub fn ty(&self, node: HirId) -> Option<TypeId> {
         self.types.binary_search_by_key(&node, |(node, _)| *node)
             .ok().map(|index| self.types[index].1)
@@ -553,6 +557,8 @@ pub struct Mir {
     pub type_definitions: Vec<TypeDefinition>,
     pub properties: Vec<PropertyRecord>,
     pub construction_checks: Vec<ConstructionCheck>,
+    /// Implicit construction boundaries; the source expression retains its own type.
+    pub value_adjustments: Vec<Option<TypeSlotId>>,
     pub bound_requirements: Vec<BoundRequirement>,
     pub trait_implementations: Vec<TraitImplementation>,
     pub evidence: Vec<EvidenceNode>,
@@ -658,6 +664,9 @@ impl Mir {
         }
         for (id, check) in self.construction_checks.iter().enumerate() {
             writeln!(out, "construction-check {id} {check:?}").unwrap();
+        }
+        for (node, target) in self.value_adjustments.iter().enumerate() {
+            if let Some(target) = target { writeln!(out, "value-adjustment {node} {:?}", self.ty_slots[target.index()]).unwrap(); }
         }
         for (id, bound) in self.bound_requirements.iter().enumerate() {
             writeln!(out, "bound {id} {bound:?}").unwrap();

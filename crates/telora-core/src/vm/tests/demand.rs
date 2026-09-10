@@ -380,6 +380,27 @@ fn solved_dyn_member_access_preserves_payload_handles() {
 }
 
 #[test]
+fn solved_unchecked_completion_preserves_the_candidate_handle() {
+    let mir = crate::codegen::tests::graph(r#"
+        @check(fn(value) { Ok(()) }) type Item = struct {text: String};
+        def candidate: Unchecked(Item) = {text: "shared"};
+        def checked: Item = candidate;
+        export def answer = (candidate, checked);
+    "#, "");
+    let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    let expected = artifact.types.types[artifact.result_type.index()].arguments.clone();
+    let linked = crate::execution_link::link_entry(artifact).unwrap();
+    let result = Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
+    let candidate = result.value().sequence_get(0).unwrap();
+    let checked = result.value().sequence_get(1).unwrap();
+    assert_eq!(candidate.value.value(), checked.value.value());
+    assert_ne!(expected[0], expected[1]);
+    assert_eq!(candidate.solved_type_id(), Some(expected[0]));
+    assert_eq!(checked.solved_type_id(), Some(expected[1]));
+    assert_eq!(candidate.dict_get("text").unwrap().value.loc(), checked.dict_get("text").unwrap().value.loc());
+}
+
+#[test]
 fn solved_cast_preserves_data_handles_and_nominal_identity() {
     let mir = crate::codegen::tests::graph(r#"
         type Item = struct {text: String};

@@ -254,6 +254,9 @@ impl Solver<'_> {
             .into_iter()
             .map(|a| self.substitute_resolved(a, substitutions, canonical))
             .collect::<Vec<_>>();
+        if template.constructor == TypeConstructor::Unchecked && arguments.len() == 1
+            && self.mir.types[arguments[0].index()].constructor == TypeConstructor::Unchecked
+        { return arguments[0]; }
         let key = (template.constructor, arguments);
         *canonical.entry(key.clone()).or_insert_with(|| {
             let id = TypeId(self.mir.types.len() as u32);

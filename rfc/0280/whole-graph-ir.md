@@ -5,6 +5,36 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Unchecked construction and explicit MIR completion boundaries (2026-09-10)
+
+Unchecked(T) now admits named-field Struct candidates, exposes their fields and
+preserves distinct identity without running the outer checker. Nested Unchecked
+applications collapse; direct and instantiated non-Struct applications produce
+static diagnostics. A pending generic owner skeleton remains a shape-equality
+constraint until its definition is available instead of prematurely conflicting.
+
+Implicit completion is recorded separately in MIR value_adjustments. The source
+slot stays Unchecked(T), while each consuming boundary names its target T. Generic
+instances retain concrete adjustment targets. Seal verifies both source and target
+records; missing instance adjustments are rejected rather than silently skipped.
+Codegen emits the existing checker call followed by StampType, preserving the
+candidate's heap handle. Return-slot adjustments are emitted at the closure return
+boundary. Record construction also stamps its statically determined identity.
+
+Covered paths include bindings, function arguments, implicit returns (including
+generic checker instances), record fields, contextual array literals and cast!.
+Dyn packaging keeps checked and unchecked identities separate. Wrong nominal
+targets remain conflicts. The VM test verifies that completing a candidate keeps
+the original record handle and field provenance while changing only its TypeId.
+
+Validation: 33 type-pass tests, 47 codegen tests and 14 solved VM tests pass;
+cargo check -p telora passes. Logs: /tmp/mir-unchecked-static.log,
+/tmp/mir-unchecked-codegen.log, /tmp/mir-unchecked-vm.log and
+/tmp/mir-unchecked-cli.log. No performance measurement or full-suite claim.
+Remaining boundary coverage includes tuple/branch contextual conversions and
+Unchecked metadata consumers; remaining generic evidence/property work, command
+and LSP integration, and removal of the old pipeline are still required.
+
 ### CheckedCast uses solved IDs and VM construction tasks (2026-09-10)
 
 The static pass now gives cast! its Result(Target, String) contract without

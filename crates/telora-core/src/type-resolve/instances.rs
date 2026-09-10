@@ -151,8 +151,14 @@ impl Solver<'_> {
                 }
                 let mut types = vec![];
                 let mut references = vec![];
+                let mut adjustments = vec![];
                 let mut translated = BTreeMap::new();
                 for node in nodes {
+                    if let Some(slot) = self.mir.value_adjustments[node.index()] {
+                        if let TypeState::Known(ty) = self.mir.ty_slots[slot.index()] {
+                            adjustments.push((node, self.substitute_resolved(ty, &substitutions, &mut canonical)));
+                        }
+                    }
                     if let TypeState::Known(ty) = self.mir.ty_slots[node.ty().index()] {
                         let ty = *translated.entry(ty).or_insert_with(|| {
                             self.substitute_resolved(ty, &substitutions, &mut canonical)
@@ -168,6 +174,7 @@ impl Solver<'_> {
                 }
                 self.mir.generic_instances[next].types = types;
                 self.mir.generic_instances[next].references = references;
+                self.mir.generic_instances[next].adjustments = adjustments;
                 next += 1;
             }
         }
@@ -253,6 +260,7 @@ impl Solver<'_> {
             signature,
             types: vec![],
             references: vec![],
+            adjustments: vec![],
         });
         indices.insert(key, id);
         Some(id)

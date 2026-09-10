@@ -32,6 +32,7 @@ pub enum Constant {
 
 #[derive(Clone, Debug)]
 pub enum Instruction {
+    StampType { dst: Register, src: Register, ty: crate::mir::TypeId },
     CheckedCast { dst: Register, src: Register, source: crate::mir::TypeId, target: crate::mir::TypeId },
     MakeNewtype { dst: Register, ty: crate::mir::TypeId, payload: Register },
     HasTypeProp { dst: Register, owner: Register, property: Register },
@@ -280,6 +281,7 @@ pub enum Instruction {
 
 #[derive(Clone, Debug)]
 pub enum Opcode {
+    StampType { dst: Register, src: Register, ty: crate::mir::TypeId },
     CheckedCast { dst: Register, src: Register, source: crate::mir::TypeId, target: crate::mir::TypeId },
     MakeNewtype { dst: Register, ty: crate::mir::TypeId, payload: Register },
     HasTypeProp { dst: Register, owner: Register, property: Register },
@@ -774,6 +776,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::GetTypeProp { dst, owner, property } => Opcode::GetTypeProp { dst, owner, property },
         Instruction::MakeSome { dst, value } => Opcode::MakeSome { dst, value },
         Instruction::MakeNewtype { dst, ty, payload } => Opcode::MakeNewtype { dst, ty, payload },
+        Instruction::StampType { dst, src, ty } => Opcode::StampType { dst, src, ty },
         Instruction::CheckedCast { dst, src, source, target } => Opcode::CheckedCast { dst, src, source, target },
         Instruction::Demand { dst, node } => Opcode::Demand { dst, node },
         Instruction::InstallTask { node, src } => Opcode::InstallTask { node, src },

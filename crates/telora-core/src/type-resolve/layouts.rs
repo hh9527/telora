@@ -22,6 +22,18 @@ impl Solver<'_> {
             self.mir.type_layouts.push(None);
             let owner = self.mir.types[index].clone();
             index += 1;
+            if owner.constructor == TypeConstructor::Unchecked {
+                let valid = match self.mir.types[owner.arguments[0].index()].constructor {
+                    TypeConstructor::Parameter(_) => true,
+                    TypeConstructor::Nominal(symbol) => self.nominal_index[symbol.index()].is_some_and(|i| self.mir.type_definitions[i].operation == TypeOperation::Struct),
+                    _ => false,
+                };
+                if !valid {
+                    self.mir.diagnostics.push(Diagnostic { severity: crate::source::Severity::Error,
+                        message: "Unchecked application requires a named-field struct type".into(), labels: vec![], notes: vec![] });
+                }
+                continue;
+            }
             let TypeConstructor::Nominal(symbol) = owner.constructor else {
                 continue;
             };
