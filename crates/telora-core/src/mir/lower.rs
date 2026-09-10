@@ -296,7 +296,7 @@ impl Lower<'_> {
                 for part in parts {
                     let node = match part.value {
                         ast::StringPartKind::Text(text) => {
-                            self.node(part.location, HirKind::Text(text), vec![])
+                            self.node(part.location, HirKind::String(text), vec![])
                         }
                         ast::StringPartKind::Expression(expr) => self.expr(expr),
                     };

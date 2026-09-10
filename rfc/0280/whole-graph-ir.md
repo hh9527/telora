@@ -5,6 +5,34 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Static body IDs and prepared DisplayBy execution (2026-09-10)
+
+Nominal applied layouts now include a structural body TypeId allocated by the
+static pass. Struct bodies reuse Record; Newtype and Enum body constructors
+retain child IDs in the same arena, with enum payload-presence flags. Recursive
+edges retain their nominal owner IDs. Sealing validates body/member ID bounds.
+TypeDesc resolve returns this existing ID rather than building descriptors in VM.
+Kind, children, fields, variants and opaque_name consume the immutable image;
+nominal TypeDescKind/FieldDesc/VariantDesc results use the native signature's
+result IDs. Property values are not needed for any skeleton observation.
+
+A real @fmt.display_by("{host}:{port}") provider now prepares and executes through
+the new chain, rendering localhost:8080 after dropping MIR. This exposed two
+assembly gaps, now fixed: interpolation text parts were untyped auxiliary nodes
+(they are now ordinary String HIR nodes), and a decl followed by def was mistaken
+for an externally supplied binding (task generation now reads the final binding).
+Codegen emits the existing interpolation instruction mechanically; it does no
+type inference. The unused untyped Text HIR variant was removed.
+
+Validation: all 37 codegen tests and 29 type-pass tests pass, including recursive
+generic body closure, direct decl/def and interpolation, metadata observations,
+and the real prepared display. Logs: /tmp/mir-type-desc-{codegen,static}.log.
+A broader solved_ filter also selected a still-legacy semantic completion test,
+which fails on obsolete std/prelude native property registration; it is not
+included in these passing totals (/tmp/mir-type-desc-regressions.log).
+No full-suite/performance claim. Codec parse/display bridging, regex preparation,
+construction checks, schema, generic evidence and old consumer removal remain.
+
 ### Dyn member observations consume applied IDs (2026-09-10)
 
 Text codec integration exposed a prerequisite: std/fmt's prepared display uses

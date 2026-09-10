@@ -40,6 +40,12 @@ impl Solver<'_> {
                 .iter()
                 .map(|member| (member.syntax, member.payload))
                 .collect::<Vec<_>>();
+            let operation = definition.operation;
+            let names = definition
+                .members
+                .iter()
+                .map(|m| m.name.clone())
+                .collect::<Vec<_>>();
             let mut applied = vec![];
             let mut valid = true;
             for (syntax, slot) in members {
@@ -64,7 +70,31 @@ impl Solver<'_> {
                 applied.push(payload);
             }
             if valid {
-                self.mir.type_layouts[index - 1] = Some(TypeLayout { members: applied });
+                let constructor = match operation {
+                    TypeOperation::Struct => TypeConstructor::Record(names),
+                    TypeOperation::Newtype => TypeConstructor::Newtype,
+                    TypeOperation::Enum => TypeConstructor::Enum(
+                        names
+                            .into_iter()
+                            .zip(applied.iter().map(Option::is_some))
+                            .collect(),
+                    ),
+                    _ => continue,
+                };
+                let arguments = applied.iter().flatten().copied().collect::<Vec<_>>();
+                let key = (constructor.clone(), arguments.clone());
+                let body = *canonical.entry(key).or_insert_with(|| {
+                    let id = TypeId(self.mir.types.len() as u32);
+                    self.mir.types.push(ResolvedType {
+                        constructor,
+                        arguments,
+                    });
+                    id
+                });
+                self.mir.type_layouts[index - 1] = Some(TypeLayout {
+                    members: applied,
+                    body,
+                });
             }
             if self.mir.types.len() > 65_536 {
                 let declaration = self.mir.symbols[symbol.index()].declarations[0];

@@ -219,8 +219,8 @@ fn compile_root(
             continue;
         }
         if !matches!(
-            mir.symbols[global.index()].kind,
-            SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl)
+            mir.hir[mir.symbols[global.index()].declarations.last().expect("global declaration").index()].kind,
+            HirKind::Binding { kind: BindingKind::Native | BindingKind::Decl, .. }
         ) {
             continue;
         }
@@ -232,8 +232,8 @@ fn compile_root(
     }
     for &global in &globals {
         if matches!(
-            mir.symbols[global.index()].kind,
-            SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl)
+            mir.hir[mir.symbols[global.index()].declarations.last().expect("global declaration").index()].kind,
+            HirKind::Binding { kind: BindingKind::Native | BindingKind::Decl, .. }
         ) {
             continue;
         }
@@ -938,6 +938,12 @@ impl<'a> Emitter<'a> {
                 self.locals.truncate(scope);
                 value
             }
+            HirKind::InterpolatedString => {
+                let parts = self.children(node, Role::Part).into_iter().map(|part| self.expression(part)).collect::<Result<Vec<_>, _>>()?;
+                let dst = self.register();
+                self.emit(node, O::InterpolateString { dst, parts });
+                dst
+            }
             HirKind::Tuple | HirKind::Array => {
                 let ty = &self.mir.types[self.ty(node)?.index()];
                 if !matches!(
@@ -1240,6 +1246,52 @@ pub(crate) mod tests {
         ].iter().enumerate() {
             assert_eq!(result.value().sequence_get(index).unwrap().as_str().unwrap().as_str(), *expected);
         }
+    }
+
+    #[test]
+    fn solved_type_desc_observes_static_bodies_and_applied_members() {
+        for source in [
+            r#"decl message: Fn(Int) -> String; def message = fn(n) { `value=\{n}` }; export def answer = if message(42) == "value=42" { 42 } else { 0 };"#,
+            r#"import "std/type-desc" as td;
+                type Box(T) = struct { value: T }; type Tree = enum { Empty, Branch(Array(Tree)) };
+                def body = match td.resolve(Box(Int).type) { Ok(value) => value, Err(_) => fail!("resolve") };
+                export def answer = if td.kind(Box(Int).type) == td.TypeDescKind.Ref && td.kind(body) == td.TypeDescKind.Struct && td.fields(body)[0].ty == Int.type { 42 } else { 0 };"#,
+            r#"import "std/type-desc" as td;
+                type Box(T) = struct(T);
+                def body = match td.resolve(Box(Int).type) { Ok(value) => value, Err(_) => fail!("resolve") };
+                export def answer = if td.kind(body) == td.TypeDescKind.Newtype && td.children(body)[0] == Int.type { 42 } else { 0 };"#,
+            r#"import "std/type-desc" as td;
+                type Tree(T) = enum { Empty, Branch(Array(Tree(T))), Leaf(T) };
+                def body = match td.resolve(Tree(Int).type) { Ok(value) => value, Err(_) => fail!("resolve") };
+                def variants = td.variants(body);
+                export def answer = if variants[0].payload == None && variants[1].payload == Some(Array(Tree(Int)).type) && variants[2].payload == Some(Int.type) && td.kind(body) == td.TypeDescKind.Enum { 42 } else { 0 };"#,
+            r#"import "std/type-desc" as td; import "std/array" as array;
+                export def answer = if td.kind(Int.type) == td.TypeDescKind.Int && td.variants(Option(Int).type)[1].payload == Some(Int.type) && array.length(td.children((Fn(Int) -> String).type)) == 0 { 42 } else { 0 };"#,
+            r#"import "std/type-desc" as td; export def answer = match td.resolve(Int.type) { Err(_) => 42, _ => 0 };"#,
+        ] {
+            let mir = graph(source, "");
+            assert!(mir.diagnostics.is_empty(), "{source}\n{:?}", mir.diagnostics);
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{source}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+
+    #[test]
+    fn solved_prepared_display_uses_type_desc_and_dyn_member_ids() {
+        let mir = graph(r#"
+            import "std/fmt" as fmt; import "std/type-property" as properties; import "std/dyn" as dyn;
+            @fmt.display_by("{host}:{port}") type Endpoint = struct { host: String, port: Int };
+            def value: Endpoint = {host: "localhost", port: 8080};
+            def property = match properties.get_type_prop(Endpoint.type, fmt.DisplayBy.type) { Some(p) => p, None => fail!("missing display") };
+            export def answer = fmt.render(property.display(dyn.pack(Endpoint.type, value)));
+        "#, "");
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        drop(mir);
+        let result = execute(artifact).unwrap();
+        assert_eq!(result.value().as_str().unwrap().as_str(), "localhost:8080");
     }
 
     #[test]

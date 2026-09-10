@@ -40,7 +40,12 @@ fn nominal_member_layouts_close_generic_and_recursive_type_references() {
     assert_eq!(branch.constructor, TypeConstructor::Array);
     assert_eq!(branch.arguments, [tree]);
     assert_eq!(layout.members[2], None);
+    let body = &image.types[layout.body.index()];
+    assert_eq!(body.constructor, TypeConstructor::Enum(vec![("Leaf".into(), true), ("Branch".into(), true), ("Empty".into(), false)]));
+    assert_eq!(body.arguments, layout.members.iter().flatten().copied().collect::<Vec<_>>());
     let layout = image.layout(boxed).unwrap();
+    assert_eq!(image.types[layout.body.index()].constructor, TypeConstructor::Record(vec!["value".into(), "children".into()]));
+    assert_eq!(image.types[layout.body.index()].arguments, layout.members.iter().flatten().copied().collect::<Vec<_>>());
     assert_eq!(image.types[layout.members[0].unwrap().index()].constructor, TypeConstructor::String);
     let children = &image.types[layout.members[1].unwrap().index()];
     assert_eq!(children.constructor, TypeConstructor::Array);

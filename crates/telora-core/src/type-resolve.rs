@@ -678,7 +678,7 @@ impl Solver<'_> {
                 self.same(node, value.ty());
                 self.assign(target, TypeConstructor::Meta, vec![value.ty()]);
             }
-            HirKind::Name(_) | HirKind::Text(_) | HirKind::NativeTypeSlot(_) => {
+            HirKind::Name(_) | HirKind::NativeTypeSlot(_) => {
                 self.mir.required_types[node.index()] = false
             }
             _ => self.unsupported(node),

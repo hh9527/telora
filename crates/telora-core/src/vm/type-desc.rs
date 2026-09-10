@@ -2,6 +2,7 @@
 fn run_core_type_desc(
     operation: CoreTypeDescFunction,
     arguments: &[Val],
+    signature: Option<Val>,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -9,6 +10,9 @@ fn run_core_type_desc(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
+    if background.solved_types.is_some() {
+        return run_solved_type_desc(operation, arguments, signature, return_target, function, pc, current, background, account);
+    }
     let input = arguments[0];
     let view = HeapView {
         current,

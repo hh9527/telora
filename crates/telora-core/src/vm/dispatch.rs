@@ -599,6 +599,7 @@ fn drive_vm_action(
                             NativeKind::CoreTypeDesc(operation) => run_core_type_desc(
                                 operation,
                                 &arguments,
+                                upvalues.last().copied(),
                                 return_target,
                                 &call_function,
                                 call_pc,

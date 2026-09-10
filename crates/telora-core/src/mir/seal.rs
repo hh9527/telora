@@ -20,6 +20,7 @@ impl Mir {
             || self.reference_instances.len() != self.hir.len()
             || self.implementation_instances.len() != self.hir.len()
             || self.type_layouts.len() != self.types.len()
+            || self.type_layouts.iter().flatten().any(|layout| layout.body.index() >= self.types.len() || layout.members.iter().flatten().any(|id| id.index() >= self.types.len()))
             || self.type_instances.iter().enumerate().any(|(node, arguments)| {
                 !arguments.is_empty()
                     && (arguments.iter().any(|(_, slot)| !matches!(self.ty_slots[slot.index()], TypeState::Known(_)))

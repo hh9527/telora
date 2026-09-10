@@ -223,6 +223,10 @@ pub enum TypeConstructor {
     Dict,
     Function,
     Record(Vec<String>),
+    /// Structural bodies exposed by metadata resolve; all child IDs are solved
+    /// before sealing. Enum flags identify which members consume an argument.
+    Newtype,
+    Enum(Vec<(String, bool)>),
     Meta,
     Namespace(ModuleId),
     Parameter(SymbolId),
@@ -260,6 +264,7 @@ pub struct TypeMember {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeLayout {
     pub members: Vec<Option<TypeId>>,
+    pub body: TypeId,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -456,7 +461,6 @@ pub enum HirKind {
     Atom(String),
     Variable(String),
     InterpolatedString,
-    Text(String),
     Array,
     Tuple,
     Spread,

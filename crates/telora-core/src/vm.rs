@@ -27,6 +27,7 @@ include!("vm/execute.rs");
 include!("vm/dispatch.rs");
 include!("vm/solved-codec-encode.rs");
 include!("vm/solved-codec-decode.rs");
+include!("vm/solved-type-desc.rs");
 include!("vm/array.rs");
 include!("vm/string.rs");
 include!("vm/path.rs");
