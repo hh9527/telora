@@ -1,39 +1,6 @@
 pub(crate) use crate::test_protocol::{TestDescription, TestKind, TEST_NATIVE_TYPE};
 
-/// Finite bounds on deferred expansion and Host-retained fixture data.
-#[derive(Clone, Copy, Debug)]
-pub struct TestLimits {
-    pub cases: usize,
-    pub depth: usize,
-    pub fixture_bytes: usize,
-}
-
-impl Default for TestLimits {
-    fn default() -> Self {
-        Self {
-            cases: 10_000,
-            depth: 64,
-            fixture_bytes: 256 * 1024 * 1024,
-        }
-    }
-}
-
-/// A private Host key, never a module identity or a public diagnostic label.
-#[derive(Clone, Debug)]
-pub struct TestSource {
-    pub key: String,
-    pub format: SystemDataFormat,
-}
-
-pub trait TestHost {
-    fn resolve(
-        &mut self,
-        declaring_module: &str,
-        declaring_path: Option<&Path>,
-        source: &str,
-    ) -> Result<TestSource, String>;
-    fn read(&mut self, source: &TestSource, max_bytes: usize) -> Result<String, String>;
-}
+pub use crate::test_protocol::{TestHost, TestLimits, TestSource};
 
 #[derive(Clone, Debug)]
 pub struct TestCase {

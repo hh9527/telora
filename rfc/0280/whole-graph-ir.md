@@ -5,6 +5,43 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Fixture expansion uses the solved test session (2026-09-10)
+
+Vm.test_linked now expands with_fixtures through an explicit depth-first work
+stack. Each group resolves, reads and validates all immediate inputs before any
+factory executes, caching source text once per host key within that group.
+Validated data is materialized directly into the existing Work heap; factories,
+returned Test witnesses and captured fixture values retain their original VM
+handles. There is no world import or user-data graph copy between cases.
+
+TestPlan records the factory input TypeId from the sealed native module 33
+with_fixtures ABI signature. Runtime materialization consumes that ID without
+searching for a type named Value or inferring a factory signature. Neutral
+TestHost/TestLimits/TestSource now live with the shared test protocol, together
+with TestContext's host and physical module paths.
+
+Reports retain nested fixture indexes, source labels, validation diagnostics and
+factory notices. Recoverable factory/data failures allow siblings and later
+exports to run; terminal failures abort. Expansion count, nesting depth, aggregate
+fixture retention and VM allocation charges bound the work. Synthetic fixture
+sources use the existing @test-ctx namespace and preserve individual occurrence
+locations even when the input text was read from the same cached source.
+
+The ordering regression exposed a missing Debug lowering. Codegen now evaluates
+the operand, emits the existing Debug instruction with source metadata and
+returns the same register. No inference or optimization was added to codegen.
+
+Validation: 47 VM tests and 51 codegen tests pass; cargo check -p telora passes.
+Four new fixture regressions cover input caching/provenance, invalid data with
+successful siblings, nested depth-first expansion, recoverable factory failures,
+expansion/retention limits, prepare-before-factory ordering and factory warnings.
+Logs: /tmp/mir-fixtures-vm.log, /tmp/mir-fixtures-codegen.log and
+/tmp/mir-fixtures-cli.log. No full-suite or performance claim.
+
+The core runner's fixture gate is removed. CLI test still uses its old route;
+the next assembly step is connecting the inventory and v2 report formatter to
+this runner and deleting that route. LSP and broader old-pipeline removal remain.
+
 ### Direct test cases execute in one solved VM session (2026-09-10)
 
 Vm.test_linked consumes the compiled test bootstrap and static TestPlan, loads

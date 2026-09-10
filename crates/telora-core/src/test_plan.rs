@@ -21,12 +21,17 @@ pub struct TestExport {
 #[derive(Debug)]
 pub struct TestPlan {
     pub module: ModuleId,
+    pub module_name: String,
+    /// Input of the native fixture factory, read from its solved ABI signature.
+    pub fixture_type: Option<TypeId>,
     pub exports: Vec<TestExport>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TestResult {
     pub name: String,
+    pub fixtures: Vec<usize>,
+    pub sources: Vec<String>,
     pub phase: &'static str,
     pub passed: bool,
     pub diagnostics: Vec<Diagnostic>,
@@ -35,8 +40,15 @@ pub struct TestResult {
 #[derive(Debug, Default)]
 pub struct TestReport {
     pub cases: Vec<TestResult>,
+    pub notices: Vec<TestNotice>,
     pub diagnostics: Vec<Diagnostic>,
     pub aborted: bool,
+}
+
+#[derive(Debug)]
+pub struct TestNotice {
+    pub before_case: usize,
+    pub context: TestResult,
 }
 
 impl TestPlan {
@@ -85,8 +97,42 @@ impl TestPlan {
         if selected.is_empty() {
             return Err(fail("test module has no direct Test exports"));
         }
+        let mut fixture_type = None;
+        for symbol in &mir.symbols {
+            if symbol.name != "with_fixtures"
+                || !symbol.module.is_some_and(|module| {
+                    mir.modules[module.index()]
+                        .native
+                        .as_ref()
+                        .is_some_and(|native| native.id == NativeTypeId::TEST.module)
+                })
+            {
+                continue;
+            }
+            let ResolveState::Bound(target) = symbol.resolution else {
+                continue;
+            };
+            let TypeState::Known(signature) =
+                mir.ty_slots[mir.symbol_types[target.index()].index()]
+            else {
+                continue;
+            };
+            let signature = &mir.types[signature.index()];
+            if signature.constructor != TypeConstructor::Function || signature.arguments.len() != 3
+            {
+                return Err(fail("invalid native fixture constructor signature"));
+            }
+            let factory = &mir.types[signature.arguments[1].index()];
+            if factory.constructor != TypeConstructor::Function || factory.arguments.len() != 2 {
+                return Err(fail("invalid native fixture factory signature"));
+            }
+            fixture_type = Some(factory.arguments[0]);
+            break;
+        }
         Ok(Self {
             module,
+            module_name: mir.modules[module.index()].name.clone(),
+            fixture_type,
             exports: selected,
         })
     }

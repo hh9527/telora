@@ -12,6 +12,7 @@ pub mod codegen;
 pub mod type_image;
 pub mod test_plan;
 mod test_protocol;
+pub use test_protocol::{TestContext, TestHost, TestLimits, TestSource};
 pub mod execution_link;
 pub mod execution_graph;
 pub mod compiler;

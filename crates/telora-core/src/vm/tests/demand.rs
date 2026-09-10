@@ -400,7 +400,7 @@ fn solved_test_session_runs_cases_after_cached_and_expected_failures() {
     let crate::mir::ModuleTarget::Bound(module) = mir.roots[0] else { panic!("root"); };
     let compiled = crate::codegen::compile_tests(mir.seal().unwrap(), module).unwrap();
     let linked = crate::execution_link::link_entry(compiled.bootstrap).unwrap();
-    let report = Vm::new().test_linked(linked, compiled.plan, Quota::with_fuel(10000), crate::DataLimits::default(), &mut mir.sources).unwrap();
+    let report = Vm::new().test_linked(linked, compiled.plan, Quota::with_fuel(10000), crate::DataLimits::default(), &mut mir.sources, crate::TestContext::default()).unwrap();
     assert!(!report.aborted, "{report:?}");
     assert_eq!(report.cases.iter().map(|case| case.passed).collect::<Vec<_>>(), [true, true, true, false, false, true], "{report:?}");
     assert!(report.cases[0].diagnostics.is_empty(), "{report:?}");
@@ -419,7 +419,7 @@ fn solved_test_session_does_not_accept_terminal_failures_as_expected() {
     let crate::mir::ModuleTarget::Bound(module) = mir.roots[0] else { panic!("root"); };
     let compiled = crate::codegen::compile_tests(mir.seal().unwrap(), module).unwrap();
     let linked = crate::execution_link::link_entry(compiled.bootstrap).unwrap();
-    let report = Vm::new().test_linked(linked, compiled.plan, Quota::with_fuel(1000), crate::DataLimits::default(), &mut mir.sources).unwrap();
+    let report = Vm::new().test_linked(linked, compiled.plan, Quota::with_fuel(1000), crate::DataLimits::default(), &mut mir.sources, crate::TestContext::default()).unwrap();
     assert!(report.aborted, "{report:?}");
     assert_eq!(report.cases.len(), 1);
     assert!(!report.cases[0].passed);
@@ -444,6 +444,141 @@ fn solved_unchecked_completion_preserves_the_candidate_handle() {
     assert_eq!(candidate.solved_type_id(), Some(expected[0]));
     assert_eq!(checked.solved_type_id(), Some(expected[1]));
     assert_eq!(candidate.dict_get("text").unwrap().value.loc(), checked.dict_get("text").unwrap().value.loc());
+}
+
+#[derive(Default)]
+struct SolvedFixtureHost {
+    reads: Vec<String>,
+}
+
+impl crate::TestHost for SolvedFixtureHost {
+    fn resolve(&mut self, module: &str, _: Option<&std::path::Path>, source: &str) -> Result<crate::TestSource, String> {
+        assert!(!module.starts_with("@test-ctx/"), "factory origin must remain its declaring module");
+        Ok(crate::TestSource { key: source.into(), format: crate::SystemDataFormat::Json })
+    }
+    fn read(&mut self, source: &crate::TestSource, _: usize) -> Result<String, String> {
+        self.reads.push(source.key.clone());
+        Ok(if source.key == "bad" { "{" } else { "42" }.into())
+    }
+}
+
+fn solved_fixture_report(source: &str, host: &mut dyn crate::TestHost, limits: crate::TestLimits)
+    -> (crate::test_plan::TestReport, SourceDatabase) {
+    let mut mir = crate::codegen::tests::graph(source, "");
+    assert!(mir.diagnostics.is_empty(), "{}", mir.diagnostics.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"));
+    let crate::mir::ModuleTarget::Bound(module) = mir.roots[0] else { panic!("root"); };
+    let compiled = crate::codegen::compile_tests(mir.seal().unwrap(), module).unwrap();
+    assert!(compiled.plan.fixture_type.is_some(), "fixture input must be statically known");
+    let linked = crate::execution_link::link_entry(compiled.bootstrap).unwrap();
+    let report = Vm::new().test_linked(linked, compiled.plan, Quota::with_fuel(100_000),
+        crate::DataLimits::default(), &mut mir.sources,
+        crate::TestContext { host: Some(host), limits, ..Default::default() }).unwrap();
+    (report, mir.sources)
+}
+
+#[test]
+fn solved_test_fixtures_cache_inputs_keep_provenance_and_continue_after_invalid_data() {
+    let mut host = SolvedFixtureHost::default();
+    let (report, sources) = solved_fixture_report(r#"
+        import "std/test" as test;
+        import "std/value" {Value};
+        export def cases = test.with_fixtures(["one", "bad", "one"], fn(value) {
+            test.should_ok(fn() { match value { Value.Int(n) => n + 1, _ => fail!("wrong fixture type") } })
+        });
+    "#, &mut host, crate::TestLimits::default());
+    assert!(!report.aborted, "{report:?}");
+    assert_eq!(host.reads, ["one", "bad"]);
+    assert_eq!(report.cases.iter().map(|c| c.passed).collect::<Vec<_>>(), [true, false, true], "{report:?}");
+    assert_eq!(report.cases[1].phase, "fixture");
+    assert_eq!(report.cases[2].fixtures, [2]);
+    assert_eq!(report.cases[2].sources, ["one"]);
+    let label = &report.cases[1].diagnostics[0].labels[0];
+    assert!(sources.get(label.location.source).name.starts_with("@test-ctx/"));
+    assert!(sources.get(label.location.source).name.ends_with("/cases/1"));
+}
+
+#[test]
+fn solved_test_fixtures_expand_depth_first_and_recover_from_factory_failure() {
+    let mut host = SolvedFixtureHost::default();
+    let (report, _) = solved_fixture_report(r#"
+        import "std/test" as test;
+        export def a_nested = test.with_fixtures(["outer", "outer"], fn(outer) {
+            test.with_fixtures(["inner"], fn(inner) { test.should_ok(fn() { (outer, inner) }) })
+        });
+        export def b_failed = test.with_fixtures(["failure", "failure"], fn(value) { fail!("factory failed") });
+        export def c_after = test.should_ok(fn() { 42 });
+    "#, &mut host, crate::TestLimits::default());
+    assert!(!report.aborted, "{report:?}");
+    assert_eq!(report.cases.iter().map(|c| c.passed).collect::<Vec<_>>(), [true, true, false, false, true], "{report:?}");
+    assert_eq!(report.cases[0].fixtures, [0, 0]);
+    assert_eq!(report.cases[1].fixtures, [1, 0]);
+    assert_eq!(report.cases[1].sources, ["outer", "inner"]);
+    assert_eq!(report.cases[2].phase, "factory");
+    assert_eq!(host.reads, ["outer", "inner", "inner", "failure"]);
+}
+
+#[test]
+fn solved_test_fixtures_enforce_expansion_and_retained_budgets() {
+    let code = r#"
+        import "std/test" as test;
+        def group: Fn() -> test.Test = fn() { test.with_fixtures(["one"], fn(value) { group() }) };
+        export def cases = group();
+    "#;
+    for limits in [
+        crate::TestLimits { depth: 3, ..Default::default() },
+        crate::TestLimits { cases: 2, ..Default::default() },
+        crate::TestLimits { fixture_bytes: 1, ..Default::default() },
+    ] {
+        let (report, _) = solved_fixture_report(code, &mut SolvedFixtureHost::default(), limits);
+        assert!(report.aborted, "{report:?}");
+        assert_eq!(report.cases.len(), 1);
+        assert!(!report.cases[0].passed);
+        assert!(report.cases[0].diagnostics.iter().any(|d| d.message.contains("limit") || d.message.contains("budget")), "{report:?}");
+    }
+}
+
+#[test]
+fn solved_test_fixtures_prepare_all_inputs_before_factories_and_keep_group_notices() {
+    struct Observer(Arc<std::sync::Mutex<Vec<String>>>);
+    impl crate::DebugSink for Observer {
+        fn emit(&self, _: crate::DebugEvent) { self.0.lock().unwrap().push("factory".into()); }
+    }
+    impl crate::TestHost for Observer {
+        fn resolve(&mut self, _: &str, _: Option<&std::path::Path>, source: &str) -> Result<crate::TestSource, String> {
+            Ok(crate::TestSource { key: source.into(), format: crate::SystemDataFormat::Json })
+        }
+        fn read(&mut self, source: &crate::TestSource, _: usize) -> Result<String, String> {
+            self.0.lock().unwrap().push(source.key.clone());
+            Ok("42".into())
+        }
+    }
+    let mut mir = crate::codegen::tests::graph(r#"
+        import "std/test" as test;
+        export def cases = test.with_fixtures(["a", "b", "a"], fn(value) {
+            let observed = dbg!(value);
+            let warning: Option(Int) = warn!("factory warning");
+            test.should_ok(fn() { observed })
+        });
+    "#, "");
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    let crate::mir::ModuleTarget::Bound(module) = mir.roots[0] else { panic!("root"); };
+    let compiled = crate::codegen::compile_tests(mir.seal().unwrap(), module).unwrap();
+    let linked = crate::execution_link::link_entry(compiled.bootstrap).unwrap();
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut host = Observer(events.clone());
+    let report = Vm::new().with_debug_sink(Arc::new(Observer(events.clone())))
+        .test_linked(linked, compiled.plan, Quota::with_fuel(100_000), crate::DataLimits::default(),
+            &mut mir.sources, crate::TestContext { host: Some(&mut host), ..Default::default() }).unwrap();
+    assert!(!report.aborted && report.cases.iter().all(|c| c.passed), "{report:?}");
+    assert_eq!(*events.lock().unwrap(), ["a", "b", "factory", "factory", "factory"]);
+    assert_eq!(report.notices.len(), 3, "{report:?}");
+    for (index, notice) in report.notices.iter().enumerate() {
+        assert_eq!(notice.before_case, index);
+        assert_eq!(notice.context.fixtures, [index]);
+        assert_eq!(notice.context.phase, "factory");
+        assert!(notice.context.diagnostics.iter().any(|d| d.message.contains("factory warning")));
+        assert!(report.cases[index].diagnostics.is_empty());
+    }
 }
 
 #[test]

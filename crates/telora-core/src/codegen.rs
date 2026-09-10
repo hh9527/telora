@@ -671,6 +671,19 @@ impl<'a> Emitter<'a> {
             }
         }
         let result = match &self.mir.hir[node.index()].kind {
+            HirKind::Debug { message, expression } => {
+                let value = self.expression(self.child(node, Role::Value))?;
+                let location = self.mir.hir[node.index()].location;
+                let source = self.mir.sources.get(location.source);
+                self.emit(node, O::Debug {
+                    value,
+                    module: source.name.to_string(),
+                    line: u32::try_from(source.position(location.start).line).unwrap_or(u32::MAX),
+                    name: expression.clone(),
+                    message: message.clone(),
+                });
+                value
+            }
             HirKind::Index => {
                 let receiver = self.child(node, Role::Receiver);
                 if self.mir.types[self.ty(receiver)?.index()].constructor != TypeConstructor::Array
