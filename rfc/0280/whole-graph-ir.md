@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Initialization acceptance follows lazy session semantics (2026-09-11)
+
+The old initialization fixture assumed that an unread top-level failure was
+eagerly executed before test thunks. That contradicts the adopted session-wide
+lazy demand strategy. Runtime behavior was already correct; this milestone
+changes acceptance rather than restoring eager module initialization.
+
+The fixture now distinguishes a first demanded failure caught by should_fail_with,
+a repeated cached failure caught by should_fail, an unread failing initializer,
+and a Test export whose own initialization fails. The old substring expectation
+is replaced by a structured checker requiring two passed thunks, one failed
+export, exactly one initialization diagnostic, no abort and a nonzero exit.
+
+Validation: the complete language aggregate reports test/initialization=true.
+The underlying negative test session intentionally reports 2 passed / 1 failed.
+No Rust implementation changed and no core rebuild or performance test was
+required. Log: /tmp/mir-initialization-language.log. Remaining test-mode failures
+are interpreter, module-interfaces and stdlib-collections; the last two involve
+unspecialized generic function identity comparisons. Other diagnostic/query
+gates and legacy removal remain outstanding.
+
 ### Decoded dictionaries retain their solved identity (2026-09-11)
 
 The dictionary decode completion task dropped its known target TypeId. A

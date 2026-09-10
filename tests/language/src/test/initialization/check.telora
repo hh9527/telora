@@ -1,0 +1,30 @@
+import "@src/support" as support;
+import "std/value" {Value};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    let passed: Fn(Int, String) -> Bool = fn(index, name) {
+        match support.stream_item(actual, "stdout", index) {
+            Some(record) => support.string_field_equals(record, "record", "case")
+                && support.string_field_equals(record, "test", name)
+                && support.string_field_equals(record, "status", "passed"),
+            _ => False,
+        }
+    };
+    let initialization_error = match support.stream_item(actual, "stdout", 2) {
+        Some(record) => support.string_field_equals(record, "record", "diagnostic")
+            && support.string_field_equals(record, "test", "initializer_failure")
+            && support.string_field_equals(record, "phase", "initialization")
+            && support.string_field_equals(record, "message", "test export initialization failure"),
+        _ => False,
+    };
+    match support.stream_item(actual, "stdout", 4) {
+        Some(Value.Object(summary)) => support.bool_value(
+            support.exit_code(actual) == Some(1)
+                && support.stream_length(actual, "stdout") == Some(5)
+                && passed(0, "a_demand_failure") && passed(1, "b_cached_failure")
+                && initialization_error
+                && summary.total == Value.Int(3) && summary.passed == Value.Int(2)
+                && summary.failed == Value.Int(1) && summary.aborted == Value.False),
+        _ => Value.False,
+    }
+};
