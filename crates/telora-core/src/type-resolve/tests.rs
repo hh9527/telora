@@ -2,6 +2,34 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn nominal_member_layouts_close_generic_and_recursive_type_references() {
+    let mut mir = graph(&[("@src/main", r#"
+        type Tree(T) = enum { Leaf(T), Branch(Array(Tree(T))), Empty };
+        type Box(T) = struct { value: T, children: Array(Box(T)) };
+        export def tree: Tree(Int) = Tree(Int).Leaf(42);
+        export def boxed: Box(String) = { value: "ok", children: [] };
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    let TypeState::Known(tree) = symbol_type(&mir, "tree") else { panic!("tree"); };
+    let TypeState::Known(boxed) = symbol_type(&mir, "boxed") else { panic!("boxed"); };
+    let (_, image) = mir.seal().unwrap().into_parts();
+    drop(mir);
+    let layout = image.layout(tree).unwrap();
+    assert_eq!(layout.members.len(), 3);
+    assert_eq!(image.types[layout.members[0].unwrap().index()].constructor, TypeConstructor::Int);
+    let branch = &image.types[layout.members[1].unwrap().index()];
+    assert_eq!(branch.constructor, TypeConstructor::Array);
+    assert_eq!(branch.arguments, [tree]);
+    assert_eq!(layout.members[2], None);
+    let layout = image.layout(boxed).unwrap();
+    assert_eq!(image.types[layout.members[0].unwrap().index()].constructor, TypeConstructor::String);
+    let children = &image.types[layout.members[1].unwrap().index()];
+    assert_eq!(children.constructor, TypeConstructor::Array);
+    assert_eq!(children.arguments, [boxed]);
+}
+
+#[test]
 fn generic_instances_close_body_types_and_transitive_references() {
     let mut mir = graph(&[("@src/main", r#"
         def metadata: for(T) Fn(T) -> TypeOf(Array(T)) = fn(value) { Array(T).type };

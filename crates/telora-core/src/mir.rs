@@ -255,6 +255,13 @@ pub struct TypeMember {
     pub payload: Option<TypeSlotId>,
 }
 
+/// Fully applied nominal member types, indexed by the owner's TypeId. Member
+/// order is the declaration order; None denotes a nullary enum variant only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeLayout {
+    pub members: Vec<Option<TypeId>>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum MemberSelection {
     TraitMember {
@@ -524,6 +531,7 @@ pub struct Mir {
     pub implementation_instances: Vec<Option<GenericInstanceId>>,
     pub type_terms: Vec<TypeTerm>,
     pub types: Vec<ResolvedType>,
+    pub type_layouts: Vec<Option<TypeLayout>>,
     pub member_selections: Vec<Option<MemberSelection>>,
     pub type_definitions: Vec<TypeDefinition>,
     pub properties: Vec<PropertyRecord>,
@@ -664,6 +672,11 @@ impl Mir {
         }
         for (id, ty) in self.types.iter().enumerate() {
             writeln!(out, "type {id} {ty:?}").unwrap();
+        }
+        for (id, layout) in self.type_layouts.iter().enumerate() {
+            if let Some(layout) = layout {
+                writeln!(out, "type-layout {id} {layout:?}").unwrap();
+            }
         }
         for (id, selection) in self.member_selections.iter().enumerate() {
             if let Some(selection) = selection {

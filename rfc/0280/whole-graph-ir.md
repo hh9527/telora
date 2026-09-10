@@ -5,6 +5,26 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Applied nominal member skeletons belong to MIR (2026-09-10)
+
+The static type pass now builds a TypeId-indexed member-layout table after
+generic instance elaboration. It applies each nominal definition's solved
+arguments to its member payloads, interns resulting types in the same arena,
+and follows newly discovered member types until the table is closed. Recursive
+edges retain the original owner TypeId. None denotes a nullary variant, never an
+unknown field type; unknown member slots produce static diagnostics.
+
+TypeImage imports this flat table and exposes layout(TypeId) as an array lookup.
+No generic parameter substitution is delegated to VM/native consumers. Sealing
+requires table coverage of the final type arena. Static member expansion has a
+65,536-type resource bound; exceeding it diagnoses and prevents publication.
+
+All 28 type-pass tests and 30 codegen tests pass. A new test checks Tree(Int)
+and Box(String), their concrete payloads, nullary variants, and recursive member
+TypeIds after dropping MIR. Logs: /tmp/mir-applied-layouts.log and
+/tmp/mir-applied-layout-codegen.log. Solved codec consumers and instance-specific
+property/trait evidence remain incomplete. No performance/full-suite claim.
+
 ### Native instances carry their statically selected signatures (2026-09-10)
 
 Concrete native instances now use execution tasks as ordinary generic functions

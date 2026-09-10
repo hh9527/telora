@@ -28,6 +28,7 @@ pub(crate) fn builtin_variant(
 pub struct TypeImage {
     /// Indices are exactly the TypeIds assigned by the static pass.
     pub types: Vec<ResolvedType>,
+    pub layouts: Vec<Option<crate::mir::TypeLayout>>,
     pub definitions: Vec<TypeDefinition>,
     pub(crate) native_definitions: Vec<(crate::mir::NativeTypeId, String)>,
     /// Input identity from the admitted JSON formatter's solved ABI signature.
@@ -53,6 +54,12 @@ pub struct TypeMember {
 }
 
 impl TypeImage {
+    /// Applied member types in declaration order. This is an array lookup,
+    /// including for recursive and generic nominal applications.
+    pub fn layout(&self, ty: TypeId) -> Option<&crate::mir::TypeLayout> {
+        self.layouts.get(ty.index())?.as_ref()
+    }
+
     pub fn variant(&self, ty: TypeId, index: u32) -> Option<&TypeMember> {
         let crate::mir::TypeConstructor::Nominal(symbol) = self.types.get(ty.index())?.constructor
         else {
@@ -109,6 +116,7 @@ impl TypeImage {
         }
         Ok(Self {
             types: mir.types.clone(),
+            layouts: mir.type_layouts.clone(),
             definitions,
             native_definitions: mir
                 .symbols

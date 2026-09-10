@@ -13,6 +13,8 @@ mod definitions;
 mod evidence;
 #[path = "type-resolve/instances.rs"]
 mod instances;
+#[path = "type-resolve/layouts.rs"]
+mod layouts;
 #[path = "type-resolve/members.rs"]
 mod members;
 #[path = "type-resolve/properties.rs"]
@@ -171,6 +173,7 @@ pub fn resolve(mir: &mut Mir) {
     solver.finalize_properties();
     solver.prove_bounds();
     solver.materialize_instances();
+    solver.materialize_layouts();
     solver.mir.types_solved = true;
 }
 
