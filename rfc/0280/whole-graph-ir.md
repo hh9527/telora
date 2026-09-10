@@ -142,10 +142,23 @@ not allocate string-keyed role records or rescan exported fields. Building this
 provider-side index does not populate consumer wildcard bindings or classify
 unused exports. Tests check that resolution retains the preallocated targets.
 
-The next identity step must connect indexed rows to canonical source declarations
-(following aliases/re-exports). Imported HIR references must retain those
-identities, rather than merely retaining a spelling plus a module-local External
-marker. Source row identity alone is not canonical declaration identity.
+After preparing all reachable HIR, export alias resolution now uses the final
+local HIR definition IDs to connect duplicate export names to one source row.
+Imported re-exports follow their already resolved targets, including namespace
+imports. The types-only loader consumes these canonical targets when selecting
+type inputs, instead of selecting the same declaration again from each bridge
+module. Module dependencies and their trait/property facts are retained.
+
+An independently authored def whose initializer names another def remains a
+distinct declaration. This is source binding identity, not equality of inferred
+types. Tests cover direct aliases, a re-export chain, a namespace re-export and
+that distinction, then run the actual checker against the resolved graph.
+
+The next identity step must retain module-qualified definition identities on
+imported HIR references, rather than merely retaining a spelling plus a
+module-local External marker. The canonical source export row is still an
+interface-selection bridge, not a session type slot. No shared arena or complete
+cross-module reference table is claimed by this change.
 
 HIR currently normalizes local definition/reference/expression IDs after indexing
 each source. Attach cross-module declaration edges after that normalization,

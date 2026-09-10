@@ -296,6 +296,63 @@ impl<'a> StaticNames<'a> {
             }
             hir[id.index()] = self.module_resolution(id);
         }
+        self.resolve_export_aliases(&mut hir);
         hir
+    }
+
+    fn resolve_export_aliases(&mut self, modules: &mut [Option<ResolvedStaticModule>]) {
+        // These edges describe source identity, not type equality. In particular,
+        // a new def whose initializer refers to another def remains distinct.
+        let mut aliases = self.exports.iter().enumerate().map(|(module, rows)|
+            (0..rows.len()).map(|index| StaticImportTarget::Export {
+                module: self.graph.modules[module].id, index: index as u32,
+            }).collect::<Vec<_>>()).collect::<Vec<_>>();
+        for module in &self.graph.modules {
+            let Some(resolved) = &modules[module.id.index()] else { continue; };
+            let Some(program) = self.program(module.id) else { continue; };
+            let ExprKind::Dict(fields) = &program.value.body.value.result.value else { continue; };
+            let mut declarations = HashMap::new();
+            for (index, field) in fields.iter().enumerate() {
+                let target = aliases[module.id.index()][index];
+                let origin = match &field.value.value.value {
+                    ExprKind::Variable(name) => resolved.hir.reference_at(name.location, &name.value)
+                        .and_then(|reference| match reference.resolution {
+                            crate::hir::HirResolution::Definition(id) => {
+                                let definition = resolved.hir.definition(id).expect("resolved definition");
+                                if definition.kind == crate::hir::HirDefinitionKind::Import {
+                                    resolved.imports.get(&definition.name).copied()
+                                } else {
+                                    Some(*declarations.entry(id).or_insert(target))
+                                }
+                            }
+                            crate::hir::HirResolution::External => resolved.imports.get(&name.value).copied(),
+                            crate::hir::HirResolution::Unresolved => None,
+                        }),
+                    ExprKind::Field { receiver, field } => {
+                        if let StaticNameKind::Namespace(provider) =
+                            self.expression(module.id, receiver, &mut Vec::new())
+                        { self.export_target(provider, &field.value) } else { None }
+                    }
+                    _ => None,
+                };
+                if let Some(origin) = origin { aliases[module.id.index()][index] = origin; }
+            }
+        }
+        for resolved in modules.iter_mut().flatten() {
+            for target in resolved.imports.values_mut() {
+                let mut current = *target;
+                let mut path = Vec::new();
+                while let StaticImportTarget::Export { module, index } = current {
+                    let next = aliases[module.index()][index as usize];
+                    if next == current { break; }
+                    // A source cycle is not a successful identity solution.
+                    // Preserve its target for the module-cycle diagnostic.
+                    if path.contains(&current) { current = *target; break; }
+                    path.push(current);
+                    current = next;
+                }
+                *target = current;
+            }
+        }
     }
 }

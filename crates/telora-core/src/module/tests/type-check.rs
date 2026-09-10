@@ -215,3 +215,42 @@ fn open_imports_are_search_scopes_and_only_references_create_inputs() {
     }
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn session_export_aliases_share_source_identity_without_merging_new_definitions() {
+    let directory = fixture_dir();
+    fs::create_dir_all(directory.join("src")).unwrap();
+    fs::write(directory.join("src/model.telora"), r#"
+        export def original = 1;
+        export { original as alias };
+        export def separate = original;
+    "#).unwrap();
+    fs::write(directory.join("src/bridge.telora"), r#"
+        import "./model" { alias as forwarded };
+        import "./model" as model;
+        export { forwarded, model };
+    "#).unwrap();
+    fs::write(directory.join("src/main.telora"), r#"
+        import "./model" { original, alias, separate };
+        import "./bridge" { forwarded, model };
+        export def result = original + alias + forwarded + separate + model.original;
+    "#).unwrap();
+    let resolver = session_workspace_resolver(&directory, &["@src/main", "@src/model", "@src/bridge"]);
+    let root = resolver.selected_root().unwrap();
+    let mut sources = SourceDatabase::default();
+    let graph = ModuleGraph::discover(&resolver, vec![root.clone()], &BTreeMap::new(),
+        builtin_list().into_iter().map(|(name, _)| ModuleCName::builtin(name)),
+        None, false, &mut sources).unwrap();
+    let root = graph.id(&root.id).unwrap();
+    let modules = StaticNames::new(&graph).resolve(root);
+    let resolved = modules[root.index()].as_ref().unwrap();
+    assert!(resolved.diagnostics.is_empty(), "{:?}", resolved.diagnostics);
+    assert_eq!(resolved.imports["original"], resolved.imports["alias"]);
+    assert_eq!(resolved.imports["original"], resolved.imports["forwarded"]);
+    assert_eq!(resolved.imports["model"], StaticImportTarget::Namespace(resolved.imports["original"].module()));
+    assert_ne!(resolved.imports["original"], resolved.imports["separate"],
+        "equal values/types must not merge independently authored definitions");
+    let snapshot = recovery_engine().check_types_with_resolver(resolver).unwrap();
+    assert!(snapshot.diagnostics().is_empty(), "{:?}", snapshot.diagnostics());
+    fs::remove_dir_all(directory).unwrap();
+}
