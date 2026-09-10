@@ -5,6 +5,21 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Generic reference substitutions survive the type pass (2026-09-10)
+
+The per-reference parameter-to-argument-slot table previously lived only in
+Solver and was discarded after resolution. It now belongs to MIR as
+type_instances, indexed by HirId, and appears in the staged graph dump. Its
+slots undergo the existing final normalization, preserving Known/Unknown/
+Conflicted outcomes and rigid outer parameters without repeating signature
+matching in codegen. This retains static evidence; passing runtime witnesses
+through generic closures/native calls remains the next implementation step.
+
+All 24 type-pass tests pass. The new regression checks independent Int/String
+instantiations, forwarding a rigid outer generic parameter, sealing, and equal
+slot IDs/full dumps across repeated builds. Log:
+/tmp/mir-retained-generic-arguments.log.
+
 ### Solved parsers and real serve request diagnostics (2026-09-10)
 
 JSON/YAML/TOML parsing now consumes the solved Value metadata argument and

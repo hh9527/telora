@@ -137,7 +137,7 @@ impl Solver<'_> {
             .into_iter()
             .map(|p| (p, self.fresh()))
             .collect::<Vec<_>>();
-        self.instances[node.index()] = arguments.clone();
+        self.mir.type_instances[node.index()] = arguments.clone();
         for &(parameter, subject) in &arguments {
             let declarations = self.mir.symbols[parameter.index()].declarations.clone();
             for declaration in declarations {

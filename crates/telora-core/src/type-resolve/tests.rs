@@ -2,6 +2,41 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn retains_per_reference_generic_arguments_for_codegen() {
+    let source = [("@src/main", r#"
+        def identity: for(T) Fn(T) -> T = fn(value) { value };
+        def forward: for(U) Fn(U) -> U = fn(value) { identity(value) };
+        export def number = identity(1);
+        export def text = identity("ok");
+        export def forwarded = forward(True);
+    "#)];
+    let mut mir = graph(&source);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    let identity = mir.symbols.iter().position(|s| s.name == "identity").unwrap();
+    let parameter = mir.symbol_generics[identity][0];
+    let arguments = mir.type_instances.iter().filter_map(|instance| {
+        let &(p, slot) = instance.first()?;
+        if p != parameter { return None; }
+        assert_eq!(instance.len(), 1);
+        let TypeState::Known(ty) = mir.ty_slots[slot.index()] else {
+            panic!("generic argument was not normalized: {}", mir.dump());
+        };
+        Some(mir.types[ty.index()].constructor.clone())
+    }).collect::<Vec<_>>();
+    assert_eq!(arguments.len(), 3);
+    assert!(arguments.contains(&TypeConstructor::Int));
+    assert!(arguments.contains(&TypeConstructor::String));
+    assert!(arguments.iter().any(|ty| matches!(ty, TypeConstructor::Parameter(_))));
+    mir.seal().expect("closed generic argument graph");
+
+    let mut repeated = graph(&source);
+    resolve(&mut repeated);
+    assert_eq!(mir.type_instances, repeated.type_instances);
+    assert_eq!(mir.dump(), repeated.dump());
+}
+
+#[test]
 fn phantom_generic_results_keep_their_argument_evidence_across_calls() {
     let mut mir = graph(&[("@src/main", r#"
         import "./lib" as lib;

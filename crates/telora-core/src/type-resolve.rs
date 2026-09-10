@@ -86,7 +86,6 @@ struct Solver<'a> {
     tasks: Vec<Task>,
     nominal_index: Vec<Option<usize>>,
     nominal_owner: Vec<Option<SymbolId>>,
-    instances: Vec<Vec<(SymbolId, TypeSlotId)>>,
     return_slots: Vec<Option<TypeSlotId>>,
     administrative: Vec<bool>,
     decorator_contexts: Vec<Option<TypeSlotId>>,
@@ -104,6 +103,7 @@ pub fn resolve(mir: &mut Mir) {
     );
     mir.required_types.resize(mir.hir.len(), false);
     mir.member_selections.resize(mir.hir.len(), None);
+    mir.type_instances.resize_with(mir.hir.len(), Vec::new);
     let mut solver = Solver::new(mir);
     for _ in 0..solver.mir.symbols.len() {
         let slot = solver.fresh();
@@ -176,7 +176,6 @@ impl Solver<'_> {
         Solver {
             nominal_index: vec![None; mir.symbols.len()],
             nominal_owner: vec![None; mir.hir.len()],
-            instances: vec![vec![]; mir.hir.len()],
             return_slots: vec![None; mir.hir.len()],
             administrative: vec![false; mir.hir.len()],
             decorator_contexts: vec![None; mir.hir.len()],
@@ -598,7 +597,7 @@ impl Solver<'_> {
             }
             HirKind::TypeApply => {
                 let callee = self.child(node, Role::Callee).unwrap();
-                let parameters = self.instances[callee.index()].clone();
+                let parameters = self.mir.type_instances[callee.index()].clone();
                 let arguments = self.children(node, Role::Argument);
                 if parameters.is_empty() || parameters.len() != arguments.len() {
                     self.conflict(

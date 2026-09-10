@@ -488,6 +488,11 @@ pub struct Mir {
     pub ty_slots: Vec<TypeState>,
     pub symbol_types: Vec<TypeSlotId>,
     pub symbol_generics: Vec<Vec<SymbolId>>,
+    /// Per-reference generic substitutions produced by the type pass. Argument
+    /// slots are normalized with the rest of the graph; consumers must use
+    /// their solved outcome rather than matching signatures again. A generic
+    /// body may refer to a rigid outer parameter here.
+    pub type_instances: Vec<Vec<(SymbolId, TypeSlotId)>>,
     pub type_terms: Vec<TypeTerm>,
     pub types: Vec<ResolvedType>,
     pub member_selections: Vec<Option<MemberSelection>>,
@@ -608,6 +613,11 @@ impl Mir {
         for (id, parameters) in self.symbol_generics.iter().enumerate() {
             if !parameters.is_empty() {
                 writeln!(out, "symbol-generics {id} {parameters:?}").unwrap();
+            }
+        }
+        for (id, arguments) in self.type_instances.iter().enumerate() {
+            if !arguments.is_empty() {
+                writeln!(out, "type-instance {id} {arguments:?}").unwrap();
             }
         }
         for (id, ty) in self.types.iter().enumerate() {

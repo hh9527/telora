@@ -359,7 +359,7 @@ impl Solver<'_> {
                 // A generic alias can expand to any type constructor. Bind
                 // its declared parameter instances, not the shape of its body.
                 let instances = self.child(node, Role::Callee)
-                    .map(|syntax| self.instances[syntax.index()].clone())
+                    .map(|syntax| self.mir.type_instances[syntax.index()].clone())
                     .unwrap_or_default();
                 if !instances.is_empty() && arguments.iter().any(|&argument| self.term(argument).is_none()) {
                     return Some(Task::Call { node, callee, arguments });
