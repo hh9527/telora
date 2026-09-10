@@ -5,6 +5,35 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Block bottom propagation is solved before tail fitting (2026-09-11)
+
+Blocks now have an explicit static constraint over evaluated binding initializers
+and the tail. A Never initializer makes the block Never, including discarded
+expressions, explicit return, and `let x: Int = fail!(...)`; the annotation must
+not hide the initializer's control-flow result. Otherwise the block takes its
+tail type after initializer evidence is available. Fit constraints wait for this
+decision instead of prematurely merging the block with a Unit tail or contextual
+return type. Function bodies are not executed or inspected by a runtime fallback.
+
+The changed scheduling also exposed indexing an ArrayLiteral before literal
+normalization. Static indexing now accepts that existing provisional constructor
+and supplies the same Int index and element constraints as Array.
+
+Validation on the final change: 37 type-resolve and 54 codegen tests pass; the
+unit-blocks language fixture passes all five cases, and the success-check
+aggregate passes. Added cases cover discarded/bound Never, annotated bottom
+initializers, early return, a declared Never-returning call, ordinary Unit tails,
+and inferred/contextual types. Production codegen and VM are unchanged.
+Logs: /tmp/mir-block-types.log, /tmp/mir-block-codegen.log,
+/tmp/mir-unit-blocks-fixture.jsonl and /tmp/mir-block-success-check.jsonl.
+
+A broader core run before the final initializer refinement completed with 486
+passes and 71 failures, all reported in old module/semantic/module-id consumers;
+the first failure is old native registration rejecting std/prelude.property.
+This is not a green full-core acceptance result. These old consumer tests and
+their retained semantics still need migration alongside legacy-path removal.
+Log: /tmp/mir-block-core.log. No performance measurement was made.
+
 ### Local recursive closures consume resolved block identities (2026-09-11)
 
 Local function references previously failed codegen because closures were emitted

@@ -1502,6 +1502,26 @@ pub(crate) mod tests {
         }
     }
     #[test]
+    fn block_bottoms_preserve_unit_tails_and_contextual_types() {
+        for source in [
+            "export def answer = if False { fail!(\"unreachable\"); } else { 42 };",
+            "export def answer = if True { 42 } else { let x = fail!(\"unreachable\"); };",
+            "export def answer = if True { 42 } else { let x: Int = fail!(\"unreachable\"); };",
+            "def early: Fn() -> Int = fn() { 1; return 42; }; export def answer = early();",
+            "def stop: Fn() -> Never = fn() { fail!(\"unreachable\") }; export def answer = if True { 42 } else { stop(); };",
+            "def copy = fn(x) { let y = x; y }; export def answer = copy(42);",
+            "def value: Fn() -> Int = fn() { let x = [42]; x[0] }; export def answer = value();",
+            "export def answer = if (do {42;}) == () { 42 } else { 0 };",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            let artifact = compile(sealed, entry(&mir)).unwrap();
+            let result = execute(artifact).unwrap();
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+
+    #[test]
     fn local_recursive_functions_capture_block_slots_and_invocation_values() {
         for source in [
             "export def answer = do { def down: Fn(Int) -> Int = fn(n) { if n == 0 { 42 } else { down(n - 1) } }; down(4) };",

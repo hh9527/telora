@@ -23,6 +23,21 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::Block { node, statements, result } => {
+                let bottom = statements.iter().any(|&slot| self.term(slot).is_some_and(|term| term.constructor == TypeConstructor::Never));
+                if bottom {
+                    self.assign(node, TypeConstructor::Never, vec![]);
+                } else if let Some(&slot) = statements.iter().find(|&&slot| matches!(self.mir.ty_slots[self.root(slot).index()], TypeState::Conflicted(_))) {
+                    self.same(node, slot);
+                } else if statements.iter().any(|&slot| self.term(slot).is_none()) {
+                    return Ok(Some(Task::Block { node, statements, result }));
+                } else {
+                    self.same(node, result);
+                }
+                self.pending_blocks[node.index()] = false;
+                self.revision += 1;
+                None
+            }
             Task::ShapeEqual { left, right, location } => { self.equal(left, right, location); None }
             Task::Unchecked { node, argument } => {
                 let Some(term) = self.term(argument).cloned() else { return Ok(Some(Task::Unchecked { node, argument })); };
@@ -127,6 +142,9 @@ impl Solver<'_> {
                 expected,
                 actual,
             } => {
+                if self.pending_blocks.get(actual.index()).copied().unwrap_or(false) {
+                    return Ok(Some(Task::Fit { node, expected, actual }));
+                }
                 if let (Some(expected_type), Some(actual_type)) = (self.term(expected).cloned(), self.term(actual).cloned())
                     && matches!(expected_type.constructor, TypeConstructor::Nominal(_))
                     && actual_type.constructor == TypeConstructor::Unchecked
@@ -255,11 +273,11 @@ impl Solver<'_> {
                     (Some(i), TypeConstructor::Tuple | TypeConstructor::TupleLiteral) if i < term.arguments.len() => {
                         self.same(node, term.arguments[i])
                     }
-                    (None, TypeConstructor::Array | TypeConstructor::Dict) => {
+                    (None, TypeConstructor::Array | TypeConstructor::ArrayLiteral | TypeConstructor::Dict) => {
                         let key = self.child(node, Role::Index).expect("index");
                         self.assign(
                             key,
-                            if term.constructor == TypeConstructor::Array {
+                            if matches!(term.constructor, TypeConstructor::Array | TypeConstructor::ArrayLiteral) {
                                 TypeConstructor::Int
                             } else {
                                 TypeConstructor::String

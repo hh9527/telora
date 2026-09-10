@@ -59,6 +59,11 @@ enum Task {
         node: HirId,
         values: Vec<TypeSlotId>,
     },
+    Block {
+        node: HirId,
+        statements: Vec<TypeSlotId>,
+        result: TypeSlotId,
+    },
     Projection {
         node: HirId,
         receiver: TypeSlotId,
@@ -99,6 +104,7 @@ struct Solver<'a> {
     nominal_index: Vec<Option<usize>>,
     nominal_owner: Vec<Option<SymbolId>>,
     return_slots: Vec<Option<TypeSlotId>>,
+    pending_blocks: Vec<bool>,
     administrative: Vec<bool>,
     decorator_contexts: Vec<Option<TypeSlotId>>,
     property_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
@@ -195,6 +201,7 @@ impl Solver<'_> {
             nominal_index: vec![None; mir.symbols.len()],
             nominal_owner: vec![None; mir.hir.len()],
             return_slots: vec![None; mir.hir.len()],
+            pending_blocks: vec![false; mir.hir.len()],
             administrative: vec![false; mir.hir.len()],
             decorator_contexts: vec![None; mir.hir.len()],
             property_declarations: vec![],
@@ -529,7 +536,16 @@ impl Solver<'_> {
             }
             HirKind::Block => {
                 if let Some(value) = self.child(node, Role::Result) {
-                    self.same(node, value.ty());
+                    self.pending_blocks[node.index()] = true;
+                    self.tasks.push(Task::Block {
+                        node,
+                        statements: self.children(node, Role::Binding).into_iter()
+                            .filter(|binding| matches!(self.mir.hir[binding.index()].kind,
+                                HirKind::Binding { kind: BindingKind::Let | BindingKind::Def | BindingKind::Impl, .. }))
+                            .filter_map(|binding| self.child(binding, Role::Value))
+                            .map(HirId::ty).collect(),
+                        result: value.ty(),
+                    });
                 }
             }
             HirKind::DictField => {
