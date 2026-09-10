@@ -162,6 +162,7 @@ pub fn compile_source(source_name: &str, source: &str) -> Result<CompiledSource,
         &debug_sink,
         &mut main,
         &mut type_store,
+        &[],
     )?;
     let promoted_types = program
         .value
@@ -249,7 +250,7 @@ pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
     erased_bindings: &HashSet<String>,
     static_funcs: &HashMap<String, crate::FuncId>,
 ) -> Result<BytecodeFunction, FrontendError> {
-    validate_hir(source_file, &analysis.hir, &analysis.external_bindings)?;
+    validate_hir(source_file, &analysis.hir)?;
     let mut program = program.clone();
     crate::elaboration::lower_block_constructor_patterns(&mut program.value.body, &analysis.value_constructors);
     program.value.body.value.bindings.retain(|binding| {
@@ -412,11 +413,16 @@ pub(crate) fn prepare_expression_with_external_bindings(
     let mut required = BTreeSet::new();
     free_expr(&expression, &HashSet::new(), &mut required);
     for evidence in declared_value_owners.values() { evidence.collect_bindings(&mut required); }
-    let hir = HirProgram::resolve_runtime_expression(&expression, Vec::new());
-    required.extend(hir.unresolved()
-        .map(|reference| reference.name.clone()));
-    let bindings = required.into_iter().filter(|name| binding_exists(name)).collect::<Vec<_>>();
-    validate_hir(source_file, &hir, &bindings.iter().cloned().collect())?;
+    let bindings = required.into_iter().collect::<Vec<_>>();
+    if let Some(name) = bindings.iter().find(|name| !binding_exists(name)) {
+        let diagnostic = Diagnostic::error(format!("prepared expression is missing runtime binding {name:?}"), expression.location);
+        let position = source_file.position(expression.location.start);
+        return Err(FrontendError {
+            source_name: source_file.name.to_string(),
+            location: SourceLocation { offset: expression.location.start as usize, line: position.line, column: position.column },
+            message: diagnostic.message.clone(), diagnostic: Some(Box::new(diagnostic)),
+        });
+    }
     Ok((PreparedExternalExpression { expression, declared_value_owners, value_constructors }, bindings))
 }
 
@@ -466,16 +472,14 @@ pub(crate) fn compile_prepared_external_expression(
 fn validate_hir(
     source_file: &SourceFile,
     hir: &HirProgram,
-    external_bindings: &HashSet<String>,
 ) -> Result<(), FrontendError> {
-    let Some(reference) = hir
-        .unresolved()
-        .find(|reference| !external_bindings.contains(&reference.name))
+    let Some(reference) = hir.unresolved().next()
     else {
         return Ok(());
     };
     let position = source_file.position(reference.location.start);
-    let message = format!("unknown binding {:?}", reference.name);
+    let diagnostic = hir.resolution_diagnostic(reference);
+    let message = diagnostic.message.clone();
     Err(FrontendError {
         source_name: source_file.name.to_string(),
         location: SourceLocation {
@@ -484,6 +488,6 @@ fn validate_hir(
             column: position.column,
         },
         message: message.clone(),
-        diagnostic: Some(Box::new(Diagnostic::error(message, reference.location))),
+        diagnostic: Some(Box::new(diagnostic)),
     })
 }

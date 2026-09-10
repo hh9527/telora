@@ -669,16 +669,6 @@ fn expression_references_names(
     }
 }
 
-pub(crate) fn program_references_name(program: &Program, name: &str, member_candidate: bool) -> bool {
-    HirProgram::resolve_with_member_constructors(program, Vec::<String>::new(),
-        if member_candidate { HashSet::from([name.to_owned()]) } else { HashSet::new() })
-        .references()
-        .iter()
-        .any(|reference| {
-            reference.name == name && reference.resolution.is_unresolved()
-        })
-}
-
 fn validate_export_references<'a>(
     program: &Program,
     prelude: impl Iterator<Item = &'a String>,
@@ -726,22 +716,6 @@ fn validate_export_references<'a>(
         }
     }
     Ok(())
-}
-
-pub(crate) fn recovered_reference_locations(
-    program: &crate::parser::RecoveredProgram,
-    name: &str,
-    member_candidate: bool,
-) -> Vec<crate::source::Location> {
-    HirProgram::resolve_recovered_with_member_constructors(program, Vec::<String>::new(),
-        if member_candidate { HashSet::from([name.to_owned()]) } else { HashSet::new() })
-        .references()
-        .iter()
-        .filter(|reference| {
-            reference.name == name && reference.resolution.is_unresolved()
-        })
-        .map(|reference| reference.location)
-        .collect()
 }
 
 fn contains_inference_variable_at_or_after(ty: &TypeDescriptor, first: u32) -> bool {

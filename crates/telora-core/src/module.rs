@@ -30,7 +30,7 @@ use crate::type_store::TypeStore;
 use crate::types::{
     Analysis, ModuleAnalysisContext, ModuleInterface, PartialAnalysisControl, TraitImplementation,
     TypeDescriptor, TypeScheme, analyze_partial_types_recovered_with_query,
-    analyze_program_with_bindings_observed, program_references_name, recovered_reference_locations,
+    analyze_program_with_bindings_observed,
 };
 use crate::vm::WorkWorld;
 use crate::yaml::validate_yaml_registered;

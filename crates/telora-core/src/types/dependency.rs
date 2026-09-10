@@ -137,6 +137,7 @@ pub(crate) fn analyze_program_with_bindings(
         &debug_sink,
         &mut tool_heap,
         &mut type_store,
+        &[],
     )
 }
 
@@ -156,12 +157,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
     debug_sink: &Arc<dyn DebugSink>,
     tool_heap: &mut Heap,
     type_store: &mut TypeStore,
+    dependency_facts: &[ModuleTypeFacts<'_>],
 ) -> Result<Analysis, FrontendError> {
     account.register_sources(sources);
     let external_names = external_roots.keys().cloned().collect();
     let solved = solve_module_plan(source_name, module_id, module_context, program,
         hir, &external_names, sources, external_provenance, external_interfaces,
-        &[], account.query_context(), type_store)?;
+        dependency_facts, account.query_context(), type_store)?;
     execute_module_plan(source_name, module_id, program, solved, account,
         external_roots, dynamic_bindings, sources, debug_sink, tool_heap)
 }
@@ -296,7 +298,12 @@ fn solve_module_plan<'a>(
             continue;
         }
         let interface = qualified_external_interfaces.get(name);
-        let scheme = imported_binding_contract(name, &qualified_external_interfaces);
+        let scheme = imported_binding_contract(name, &qualified_external_interfaces)
+            .or_else(|| dependency_facts.iter().find_map(|facts|
+                facts.trait_implementations.iter().find(|implementation| implementation.dictionary == *name)
+                    .map(|implementation| implementation.dictionary_scheme.clone())
+                    .or_else(|| facts.type_properties.iter().find(|property| property.root == *name)
+                        .map(|property| TypeScheme { parameters: Vec::new(), constraints: Vec::new(), body: property.property.clone() }))));
         let inferred = scheme.as_ref().map(|scheme| scheme.body.clone())
             .or_else(|| interface.and_then(imported_interface_descriptor))
             .ok_or_else(|| frontend_error(source_name, format!("Host binding {name:?} requires an explicit type interface")))?;

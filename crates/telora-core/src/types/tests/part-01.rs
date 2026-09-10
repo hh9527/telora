@@ -33,7 +33,7 @@
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
             &BTreeMap::new(), &HashSet::new(), &sources,
             &BTreeMap::new(), &BTreeMap::new(), &debug_sink,
-            &mut heap, &mut TypeStore::default(),
+            &mut heap, &mut TypeStore::default(), &[],
         ).err().expect("invalid annotation must fail statically");
         assert!(error.to_string().contains("cannot unify String with Int"), "{error}");
         assert_eq!(heap.allocation_count(), allocations,
@@ -243,6 +243,7 @@
             &debug_sink,
             &mut tool_heap,
             &mut type_store,
+            &[],
         )
     }
 
@@ -322,6 +323,7 @@
             &debug_sink,
             &mut tool_heap,
             &mut type_store,
+            &[],
         )
     }
 

@@ -803,6 +803,9 @@ fn install_native_modules_observed(
             }
         }
         let mut account = QuotaAccount::new(Quota::new(100_000, 1_000, u64::MAX));
+        let dependency_facts = main.modules.module(module_id).imports.iter().filter_map(|edge|
+            modules.get(&main.modules.module(edge.target).cname.to_string()).map(|module| module.interface.type_facts()))
+            .collect::<Vec<_>>();
         let analysis = analyze_program_with_bindings_observed(
             &source_name,
             module_id,
@@ -824,6 +827,7 @@ fn install_native_modules_observed(
             debug_sink,
             &mut main.heap,
             &mut main.types,
+            &dependency_facts,
         )
         .map_err(|error| {
             error.diagnostic.as_ref().map_or_else(

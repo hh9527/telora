@@ -96,6 +96,21 @@ them through later same-named environments or schemes. This mechanism is tested
 independently of the still-present early session gate; it does not prove that
 the driver already continues global type solving after resolve diagnostics.
 
+Execution import preparation now consumes the session's selected imports instead
+of rebuilding HIR to decide whether wildcard candidates are referenced. Module
+trait/property facts flow along dependency edges even when no export from that
+module is selected; fact availability is independent of name selection. Tool
+expression preparation no longer builds runtime HIR: solved constructor evidence
+drives pattern lowering, and capture collection only checks required runtime
+links. Compiler validation accepts HIR resolution outcomes directly, with no
+same-named external-binding repair. These changes remove downstream resolution
+paths; they do not remove the early diagnostic gate or module-owned type solvers.
+Validation: 426 core tests passed before removing the now-unused runtime HIR
+constructor; the subsequent CLI build and both open-import tests passed. These
+cover unused ambiguity, used ambiguity, explicit/local bindings, repeated imports,
+constructor references, and private trait facts from an otherwise unused import
+in ordinary and types-only modes. No performance measurement was taken here.
+
 Validation of the conflict/result handoff changes: 426 core tests pass.
 The export-completion regressions passed after the static-name handoff. A
 workspace run reached language acceptance and failed there (46 other CLI tests

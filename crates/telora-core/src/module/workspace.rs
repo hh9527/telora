@@ -408,40 +408,15 @@ impl WorkspaceBuilder<'_> {
                 external_interfaces
                     .insert(FMT_CAPABILITY_BINDING.into(), module.interface.clone());
             }
-            let parsed = self.main.modules.prepared(&module_id).expect("session syntax");
-            let explicit_names = parsed
-                .recovered
-                .bindings
-                .iter()
-                .filter(|binding| {
-                    !matches!(
-                        binding.value.kind,
-                        BindingKind::OpenImport | BindingKind::Export
-                    )
-                })
-                .map(|binding| binding.value.name.value.as_str())
-                .collect::<HashSet<_>>();
+            let resolved_id = self.main.modules.id(&module_id).expect("session module");
+            let resolution = self.main.resolved.modules[resolved_id.index()].as_ref().expect("session resolve result");
             for (name, mut candidates) in open_candidates {
-                if explicit_names.contains(name.as_str()) || external_roots.contains_key(&name) {
+                if !resolution.imports.contains_key(&name) || external_roots.contains_key(&name) {
                     continue;
                 }
                 candidates.sort_by(|left, right| left.provider.cmp(&right.provider));
                 candidates.dedup_by(|left, right| left.provider == right.provider);
-                if candidates.len() > 1 {
-                    let providers = candidates
-                        .iter()
-                        .map(|candidate| candidate.provider.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    for location in recovered_reference_locations(&parsed.recovered, &name,
-                        candidates.iter().any(|candidate| candidate.member_constructor.is_some())) {
-                        diagnostics.push(Diagnostic::error(
-                            format!("open import name {name:?} is ambiguous between {providers}"),
-                            location,
-                        ));
-                    }
-                    continue;
-                }
+                assert_eq!(candidates.len(), 1, "resolved import must have one runtime provider: {name}");
                 let candidate = candidates.into_iter().next().expect("one candidate");
                 external_roots.insert(name.clone(), candidate.root);
                 external_interfaces.insert(
@@ -660,6 +635,11 @@ impl WorkspaceBuilder<'_> {
             account = account.with_query(query.clone());
         }
         let source = self.sources.get(source_id);
+        let dependency_facts = self.main.modules.module(module_id).imports.iter().filter_map(|edge| {
+            let provider = &self.main.modules.module(edge.target).cname;
+            self.builtin_modules.get(&provider.to_string()).map(|module| &module.interface)
+                .or_else(|| self.interfaces.get(provider)).map(ModuleInterface::type_facts)
+        }).collect::<Vec<_>>();
         let analysis = match analyze_program_with_bindings_observed(
             &source.name,
             module_id,
@@ -679,6 +659,7 @@ impl WorkspaceBuilder<'_> {
             &self.engine.debug_sink,
             &mut self.main.heap,
             &mut self.main.types,
+            &dependency_facts,
         ) {
             Ok(analysis) => analysis,
             Err(error) => {

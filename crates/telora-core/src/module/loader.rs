@@ -406,41 +406,14 @@ impl ModuleLoader {
         let program = self.main.modules.prepared(module_id)
             .expect("session syntax remains available after dependencies")
             .program.as_ref().expect("validated program");
-        let explicit_names = program
-            .value
-            .body
-            .value
-            .bindings
-            .iter()
-            .filter(|binding| {
-                !matches!(
-                    binding.value.kind,
-                    BindingKind::OpenImport | BindingKind::Export
-                )
-            })
-            .map(|binding| binding.value.name.value.as_str())
-            .collect::<HashSet<_>>();
+        let resolution = self.main.resolved.modules[skeleton.index()].as_ref().expect("session resolve result");
         for (name, mut candidates) in open_candidates {
-            if explicit_names.contains(name.as_str()) || external_roots.contains_key(&name) {
+            if !resolution.imports.contains_key(&name) || external_roots.contains_key(&name) {
                 continue;
             }
             candidates.sort_by(|left, right| left.provider.cmp(&right.provider));
             candidates.dedup_by(|left, right| left.provider == right.provider);
-            if candidates.len() > 1 {
-                if program_references_name(&program, &name, candidates.iter().any(|candidate| candidate.member_constructor.is_some())) {
-                    let providers = candidates
-                        .iter()
-                        .map(|candidate| candidate.provider.to_string())
-                        .collect::<BTreeSet<_>>()
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return Err(ModuleError::new(format!(
-                        "open import name {name:?} is ambiguous between {providers}"
-                    )));
-                }
-                continue;
-            }
+            assert_eq!(candidates.len(), 1, "resolved import must have one runtime provider: {name}");
             let candidate = candidates.into_iter().next().expect("one candidate");
             external_roots.insert(name.clone(), candidate.root);
             external_interfaces.insert(
@@ -491,6 +464,12 @@ impl ModuleLoader {
         if is_root && external_roots.contains_key("input") {
             dynamic_bindings.insert("input".to_owned());
         }
+        let dependency_facts = self.main.modules.module(skeleton).imports.iter().filter_map(|edge| {
+            let provider = &self.main.modules.module(edge.target).cname;
+            self.builtin_modules.get(&provider.to_string()).map(|module| &module.interface)
+                .or_else(|| self.cache.get(provider).map(|ModuleState::Ready(module)| &module.interface))
+                .map(ModuleInterface::type_facts)
+        }).collect::<Vec<_>>();
         let analysis = analyze_program_with_bindings_observed(
             &source_name,
             skeleton,
@@ -510,6 +489,7 @@ impl ModuleLoader {
             &self.debug_sink,
             &mut self.main.heap,
             &mut self.main.types,
+            &dependency_facts,
         )
         .map_err(|error| {
             error.diagnostic.as_ref().map_or_else(

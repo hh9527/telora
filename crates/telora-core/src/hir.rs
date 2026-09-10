@@ -215,17 +215,6 @@ impl HirProgram {
         resolver.hir
     }
 
-    pub(crate) fn resolve_runtime_expression(
-        expression: &Expr,
-        external_names: impl IntoIterator<Item = String>,
-    ) -> Self {
-        let mut lookup = named_external_lookup(external_names, HashSet::new());
-        let mut resolver = Resolver::new(&mut lookup, false);
-        resolver.index_expr(expression, &mut Vec::new());
-        resolver.hir.normalize_order();
-        resolver.hir
-    }
-
     pub fn resolve_recovered(
         program: &RecoveredProgram,
         external_names: impl IntoIterator<Item = String>,
