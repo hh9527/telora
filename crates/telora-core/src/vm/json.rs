@@ -273,6 +273,23 @@ fn run_core_json(
         | CoreJsonFunction::ParseToml
         | CoreJsonFunction::Schema => unreachable!(),
     };
+    if let Some(types) = &background.solved_types {
+        let expected = types.json_value_type.ok_or_else(|| error(
+            RuntimeErrorKind::InvalidBytecode,
+            "JSON formatter has no statically linked Value contract",
+            function,
+            pc,
+        ))?;
+        let view = HeapView { current, background: Some(background) };
+        propagate_data_failures(&[arguments[0]], &view, function, pc)?;
+        let output = write_solved_json(view, arguments[0], expected, indent)
+            .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
+        charge_allocation(account, output.len() as u64, function, pc)?;
+        return Ok(VmAction::Return {
+            value: Val::new(current.string(Some(background), &output), instruction_location(function, pc)),
+            return_target,
+        });
+    }
     let owner = {
         let view = HeapView {
             current,

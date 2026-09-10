@@ -1068,6 +1068,83 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn sealed_run_policy_configures_and_initializes_in_one_graph() {
+        let mir = graph(
+            r#"
+            import "./math" as policy;
+            import "std/entry" as entry;
+            import "std/ees" as ees;
+            import "std/_rt" as rt;
+            def app = entry.run(Int.type, {sources: [], envs: [], args: False}, ees.none,
+                fn(ctx) { (42, fn(state, event) { (state, []) }) });
+            def main: policy.MainType = {config: app.config, ees: app.ees, start: app.start};
+            def configured = policy.config({args: [], ees: {}, mode: rt.EntryMode.Run,
+                platform: {os: "linux", arch: "x86_64"}, sources: {}}, main);
+            def initialized = configured.1({data: {}, texts: {}, vars: {}, stdin: None}, main);
+            def transition = initialized.1(initialized.0, rt.SystemEvent.Initialize);
+            export def answer = if transition.0.completed == False { 42 } else { 0 };
+            "#,
+            include_str!("../modules/std/_entry/run.telora"),
+        );
+        let sealed = mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{:?}", mir.diagnostics));
+        let artifact = compile(sealed, entry(&mir)).unwrap();
+        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+    }
+
+    #[test]
+    fn sealed_run_policy_emits_json_reply_and_exit() {
+        let mir = graph(
+            r#"
+            import "./math" as policy;
+            import "std/entry" as entry;
+            import "std/ees" as ees;
+            import "std/actor" as actor;
+            import "std/value" {Value};
+            import "std/_rt" as rt;
+            def app = entry.run(Int.type, {sources: [], envs: [], args: False}, ees.none,
+                fn(ctx) { (42, fn(state, event) {
+                    (state, [actor.Effect.Reply({request_id: "run", value: Value.Int(state)})])
+                }) });
+            def main: policy.MainType = {config: app.config, ees: app.ees, start: app.start};
+            def configured = policy.config({args: [], ees: {}, mode: rt.EntryMode.Run,
+                platform: {os: "linux", arch: "x86_64"}, sources: {}}, main);
+            def initialized = configured.1({data: {}, texts: {}, vars: {}, stdin: None}, main);
+            def transition = initialized.1(initialized.0, rt.SystemEvent.Initialize);
+            export def answer = if transition.0.completed {
+                match (transition.1[0], transition.1[1]) {
+                    (rt.SystemEffect.Output("42"), rt.SystemEffect.Exit(0)) => 42,
+                    _ => 0,
+                }
+            } else { 0 };
+            "#,
+            include_str!("../modules/std/_entry/run.telora"),
+        );
+        let sealed = mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{:?}", mir.diagnostics));
+        let artifact = compile(sealed, entry(&mir)).unwrap();
+        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+    }
+
+    #[test]
+    fn solved_json_formatters_read_the_original_value_graph() {
+        let source = r#"
+            import "std/json" as json;
+            import "std/value" {Value};
+            def input = Value.Object({a: Value.Array([Value.Int(42), Value.True]), b: Value.Object({})});
+            export def answer = (json.stringify(input), json.stringify_pretty(2)(input), json.stringify_pretty(0)(input));
+        "#;
+        let mir = graph(source, "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let result = execute(artifact).unwrap();
+        for (index, expected) in [
+            r#"{"a":[42,true],"b":{}}"#,
+            "{\n  \"a\": [\n    42,\n    true\n  ],\n  \"b\": {}\n}",
+            "{\n\"a\": [\n42,\ntrue\n],\n\"b\": {}\n}",
+        ].iter().enumerate() {
+            assert_eq!(result.value().sequence_get(index).unwrap().as_str().unwrap().as_str(), *expected);
+        }
+    }
+
+    #[test]
     fn solved_dyn_and_actor_service_keep_type_witnesses_in_the_vm() {
         for source in [
             "import \"std/dyn\" as dyn; export def answer = match dyn.project_with(Int.type, dyn.pack(Int.type, 42)) { Some(value) => value, None => 0 };",

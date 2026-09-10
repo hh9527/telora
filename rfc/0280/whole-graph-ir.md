@@ -5,6 +5,35 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Run policy executes in a single graph; JSON borrows VM values (2026-09-10)
+
+The existing std/_entry/run policy now has assembly tests placing it and an
+entry.run application in one MIR. A source adapter forms the policy MainType
+record, allowing the static pass to prove the interface. The resulting single
+compiled session configures sources/capabilities, creates the initializer and
+reducer, handles Initialize and emits Output("42") plus Exit(0) after an actor
+Reply. Another case exercises a transition without a reply. No Engine, runtime
+assignability check or world transfer participates in these tests.
+
+JSON stringify and configured pretty formatters in solved sessions now borrow
+the original Value graph, sharing the direct serializer used by CLI eval.
+TypeImage records the formatter input TypeId from the admitted native ABI's
+solved signature. Runtime serialization checks that ID instead of inferring an
+owner from the input or constructing old metadata. The writer takes immutable
+heap views and allocates traversal scratch/output only, without unwrapping into
+a second VM value graph. Pretty formatting covers nested and empty containers,
+including zero-width indentation.
+
+Validation: all 26 codegen tests and 14 static-MIR CLI tests pass; logs are
+/tmp/mir-run-policy-{core,cli}.log. Diff/source-size checks pass with existing
+large-file review warnings. No performance measurement was made.
+
+The actual run/serve CLI still requires the host adapter and event loop using
+one retained VM world. These tests establish the policy path, not CLI migration.
+Serve additionally needs solved JSON parsing and diagnostic/codec support.
+Remaining generic witnesses, construction checks and final old-pipeline removal
+are still open.
+
 ### Solved Dyn witnesses and actor state stay inside the VM (2026-09-10)
 
 Solved sessions now implement Dyn pack, project_with, desc and primitive checks

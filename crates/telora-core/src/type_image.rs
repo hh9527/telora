@@ -29,6 +29,9 @@ pub struct TypeImage {
     /// Indices are exactly the TypeIds assigned by the static pass.
     pub types: Vec<ResolvedType>,
     pub definitions: Vec<TypeDefinition>,
+    /// Input identity from the admitted JSON formatter's solved ABI signature.
+    /// Runtime serializers must not infer this contract from the payload stamp.
+    pub(crate) json_value_type: Option<TypeId>,
     definition_by_symbol: Vec<Option<usize>>,
 }
 
@@ -106,6 +109,27 @@ impl TypeImage {
         Ok(Self {
             types: mir.types.clone(),
             definitions,
+            json_value_type: mir.symbols.iter().find_map(|symbol| {
+                use crate::{
+                    ast::BindingKind,
+                    mir::{SymbolKind, TypeConstructor},
+                };
+                if symbol.kind != SymbolKind::Declaration(BindingKind::Native)
+                    || symbol.name != "stringify"
+                    || mir.modules[symbol.module?.index()].native.as_ref()?.id != 17
+                {
+                    return None;
+                }
+                let TypeState::Known(signature) =
+                    mir.ty_slots[symbol.declarations.first()?.ty().index()]
+                else {
+                    return None;
+                };
+                let signature = &mir.types[signature.index()];
+                (signature.constructor == TypeConstructor::Function
+                    && signature.arguments.len() == 2)
+                    .then(|| signature.arguments[0])
+            }),
             definition_by_symbol,
         })
     }
