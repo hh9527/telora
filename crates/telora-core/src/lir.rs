@@ -15,6 +15,7 @@ pub struct LabelId(pub u32);
 
 #[derive(Clone, Debug)]
 pub enum Operation {
+    CheckedCast { dst: RegisterId, src: RegisterId, source: crate::mir::TypeId, target: crate::mir::TypeId },
     MakeNewtype { dst: RegisterId, ty: crate::mir::TypeId, payload: RegisterId },
     HasTypeProp { dst: RegisterId, owner: RegisterId, property: RegisterId },
     HasMemberProp { dst: RegisterId, owner: RegisterId, index: RegisterId, property: RegisterId, variant: bool },
@@ -401,6 +402,7 @@ fn lower_operation(
         Operation::GetMemberProp { dst, owner, index, property, variant } => Instruction::GetMemberProp { dst: register(dst)?, owner: register(owner)?, index: register(index)?, property: register(property)?, variant },
         Operation::GetTypeProp { dst, owner, property } => Instruction::GetTypeProp { dst: register(dst)?, owner: register(owner)?, property: register(property)? },
         Operation::MakeSome { dst, value } => Instruction::MakeSome { dst: register(dst)?, value: register(value)? },
+        Operation::CheckedCast { dst, src, source, target } => Instruction::CheckedCast { dst: register(dst)?, src: register(src)?, source, target },
         Operation::MakeNewtype { dst, ty, payload } => Instruction::MakeNewtype { dst: register(dst)?, ty, payload: register(payload)? },
         Operation::Demand { dst, node } => Instruction::Demand { dst: register(dst)?, node },
         Operation::InstallTask { node, src } => Instruction::InstallTask { node, src: register(src)? },

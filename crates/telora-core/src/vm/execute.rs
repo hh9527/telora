@@ -435,6 +435,18 @@ impl Vm {
                                     RuntimeErrorKind::InvalidBytecode, "demand task must be a function", function, pc)); }
                                 *slot = Some(value);
                             }
+                            Opcode::CheckedCast { dst, src, source, target } => {
+                                let value = *read_register(&registers, *src, function, pc)?;
+                                let action = run_solved_cast(value, *source, *target,
+                                    ReturnTarget::Register { destination: *dst, call_site: instruction_location(function, pc) },
+                                    function, pc, &mut current, background, account)?;
+                                frames.last_mut().expect("cast caller").pc += 1;
+                                let _ = registers;
+                                match drive_vm_action(action, &mut frames, &mut stack, &mut current, background, account)? {
+                                    DriveOutcome::Pending => continue,
+                                    DriveOutcome::Root(value) => return Ok(value),
+                                }
+                            }
                             Opcode::MakeSome { dst, value } => {
                                 let value = *read_register(&registers, *value, function, pc)?;
                                 let value = solved_some(value, &mut current, account, function, pc)?;

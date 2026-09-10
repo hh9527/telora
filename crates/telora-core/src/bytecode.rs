@@ -32,6 +32,7 @@ pub enum Constant {
 
 #[derive(Clone, Debug)]
 pub enum Instruction {
+    CheckedCast { dst: Register, src: Register, source: crate::mir::TypeId, target: crate::mir::TypeId },
     MakeNewtype { dst: Register, ty: crate::mir::TypeId, payload: Register },
     HasTypeProp { dst: Register, owner: Register, property: Register },
     HasMemberProp { dst: Register, owner: Register, index: Register, property: Register, variant: bool },
@@ -279,6 +280,7 @@ pub enum Instruction {
 
 #[derive(Clone, Debug)]
 pub enum Opcode {
+    CheckedCast { dst: Register, src: Register, source: crate::mir::TypeId, target: crate::mir::TypeId },
     MakeNewtype { dst: Register, ty: crate::mir::TypeId, payload: Register },
     HasTypeProp { dst: Register, owner: Register, property: Register },
     HasMemberProp { dst: Register, owner: Register, index: Register, property: Register, variant: bool },
@@ -772,6 +774,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::GetTypeProp { dst, owner, property } => Opcode::GetTypeProp { dst, owner, property },
         Instruction::MakeSome { dst, value } => Opcode::MakeSome { dst, value },
         Instruction::MakeNewtype { dst, ty, payload } => Opcode::MakeNewtype { dst, ty, payload },
+        Instruction::CheckedCast { dst, src, source, target } => Opcode::CheckedCast { dst, src, source, target },
         Instruction::Demand { dst, node } => Opcode::Demand { dst, node },
         Instruction::InstallTask { node, src } => Opcode::InstallTask { node, src },
         Instruction::MakeVariant { dst, ty, variant, payload } => Opcode::MakeVariant { dst, ty, variant, payload },

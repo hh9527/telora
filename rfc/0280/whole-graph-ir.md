@@ -5,6 +5,38 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### CheckedCast uses solved IDs and VM construction tasks (2026-09-10)
+
+The static pass now gives cast! its Result(Target, String) contract without
+executing the target type expression. Codegen mechanically emits CheckedCast
+with the closed source and target TypeIds, including inside generic instances.
+The solved VM path is independent of the old cast native/TypeDescriptor pipeline.
+
+A flat work stack first validates the complete representation without executing
+checkers, then refines nominal boundaries and invokes their lazy checker tasks.
+Shape mismatch returns Err(String) with a root-relative path; construction
+rejection raises the original BlameError, and checker execution failures propagate.
+Existing nominal identity is preserved: same-type casts skip checks, while a
+different nominal source is not treated as an unowned record. No parsing, numeric
+conversion or codec property interpretation is performed.
+
+Record/Dict, Array, Tuple/newtype, Option and Result traversal uses image child IDs.
+Unchanged values retain their handles and provenance. Refined record roots reuse
+the underlying dictionary; when nested type stamps change, only necessary parent
+containers are rebuilt. Exact static identity does not add redundant scalar
+stamps that would force otherwise unnecessary container copies.
+
+Validation: 46 codegen tests and 13 solved VM tests pass; cargo check -p telora
+passes. Added execution cases cover nested checks, array/Option/Result/newtype
+casts, nominal isolation, generic bodies, mismatch-before-check ordering and
+failure propagation. VM tests assert original record/String handles, nested
+nominal stamps and input locations. Logs: /tmp/mir-cast-codegen.log,
+/tmp/mir-cast-vm.log and /tmp/mir-cast-cli-check.log.
+
+Unchecked construction and implicit completion are still open, so their cast
+entry cases are not yet end-to-end supported. Remaining command/LSP migration,
+legacy removal and full corner-case/performance acceptance remain required.
+
 ### Generic construction checker bodies close in the static graph (2026-09-10)
 
 ConstructionCheck now retains template/concrete status and, for applied owners,
