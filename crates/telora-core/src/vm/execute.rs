@@ -10,6 +10,7 @@ impl Vm {
     ) -> Result<crate::execution_link::SolvedExecution, String> {
         let mut main = Heap::main();
         main.solved_types = Some(entry.types);
+        main.solved_graph = Some(entry.graph);
         let mut account = QuotaAccount::new(quota).with_sources(sources);
         let externals = solved_module_data(&mut main, entry.data, limits, sources, &mut account)?;
         let main = Arc::new(main);
@@ -217,6 +218,10 @@ impl Vm {
         // recursion off callers' often-small test or embedding threads; VM calls
         // themselves use the explicit frame stack below.
         let mut current = initial_work.unwrap_or_else(|| Heap::work_for(background));
+        if current.solved_evaluation.is_none() && let Some(graph) = &background.solved_graph {
+            current.solved_evaluation = Some(graph.evaluation());
+            current.solved_tasks.resize(graph.nodes().len(), None);
+        }
         let linked = std::thread::scope(|scope| {
             std::thread::Builder::new()
                 .name("telora-bytecode-linker".into())
@@ -419,6 +424,57 @@ impl Vm {
                             Opcode::Move { dst, src } => {
                                 let value = *read_register(&registers, *src, function, pc)?;
                                 write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::InstallTask { node, src } => {
+                                let value = *read_register(&registers, *src, function, pc)?;
+                                let slot = current.solved_tasks.get_mut(node.index()).ok_or_else(|| error(
+                                    RuntimeErrorKind::InvalidBytecode, "invalid demand task slot", function, pc))?;
+                                if slot.is_some() { return Err(error(RuntimeErrorKind::InvalidBytecode,
+                                    "demand task installed twice", function, pc)); }
+                                if !matches!(value.value(), DecodedValue::Func(_)) { return Err(error(
+                                    RuntimeErrorKind::InvalidBytecode, "demand task must be a function", function, pc)); }
+                                *slot = Some(value);
+                            }
+                            Opcode::Demand { dst, node } => {
+                                use crate::execution_graph::{Request, EvaluationError};
+                                let state = current.solved_evaluation.as_mut().ok_or_else(|| error(
+                                    RuntimeErrorKind::InvalidBytecode, "demand instruction requires a solved session", function, pc))?;
+                                match state.request(*node) {
+                                    Ok(Request::Ready(value)) => {
+                                        write_register(&mut registers, *dst, *value, function, pc)?;
+                                    }
+                                    Ok(Request::Failed(failure)) => {
+                                        return Err(error(RuntimeErrorKind::ReportedDiagnostic,
+                                            format!("demand task previously failed (diagnostic {})", failure.0), function, pc));
+                                    }
+                                    Err(EvaluationError::Cycle(path)) => {
+                                        let path = path.iter().map(|n| background.solved_graph.as_ref()
+                                            .and_then(|g| g.nodes().get(n.index())).map(|n| n.label.clone())
+                                            .unwrap_or_else(|| n.index().to_string())).collect::<Vec<_>>().join(" -> ");
+                                        return Err(error(RuntimeErrorKind::UninitializedDefinition,
+                                            format!("cyclic demand: {path}"), function, pc));
+                                    }
+                                    Err(e) => return Err(error(RuntimeErrorKind::InvalidBytecode, format!("invalid demand: {e:?}"), function, pc)),
+                                    Ok(Request::Start) => {
+                                        let callee = current.solved_tasks.get(node.index()).copied().flatten().ok_or_else(|| error(
+                                            RuntimeErrorKind::InvalidBytecode, "demand task has no compiled initializer", function, pc))?;
+                                        let continuation = DemandContinuation {
+                                            node: *node,
+                                            return_target: ReturnTarget::Register { destination: *dst, call_site: instruction_location(function, pc) },
+                                            trace_frame: RuntimeFrame { function: function.name().to_owned(), instruction: pc, origin: function.origin_at(pc) },
+                                            call_function: Arc::clone(&function_arc), call_pc: pc,
+                                        };
+                                        frames.last_mut().expect("caller frame").pc += 1;
+                                        let _ = registers;
+                                        match drive_vm_action(VmAction::Call {
+                                            callee, arguments: vec![], return_target: ReturnTarget::Native(Box::new(continuation)),
+                                            call_function: function_arc, call_pc: pc, rule_boundary: None,
+                                        }, &mut frames, &mut stack, &mut current, background, account)? {
+                                            DriveOutcome::Pending => continue,
+                                            DriveOutcome::Root(value) => return Ok(value),
+                                        }
+                                    }
+                                }
                             }
                             Opcode::MakeVariant { dst, ty, variant, payload } => {
                                 let member = background.solved_types.as_ref()
@@ -2079,7 +2135,16 @@ impl Vm {
                 }
             }
         })();
+        if result.is_ok() && current.solved_evaluation.as_ref().is_some_and(|e| !e.can_publish()) {
+            result = Err(error(RuntimeErrorKind::ReportedDiagnostic,
+                "demand session contains failed or unfinished tasks", function, 0));
+        }
         if let Err(runtime_error) = &mut result {
+            if let Some(evaluation) = &mut current.solved_evaluation {
+                evaluation.fail_active(crate::execution_graph::FailureId(
+                    runtime_error.propagated_failure.unwrap_or(failures.len() as u32),
+                ));
+            }
             append_runtime_trace(runtime_error, &frames);
         }
         match result {

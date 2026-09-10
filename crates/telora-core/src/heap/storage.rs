@@ -3,6 +3,9 @@ impl Heap {
         Self {
             storage,
             solved_types: None,
+            solved_graph: None,
+            solved_evaluation: None,
+            solved_tasks: vec![],
             types,
             objects: Vec::new(),
             text: TextTable::default(),

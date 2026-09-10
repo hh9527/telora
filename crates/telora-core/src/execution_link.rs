@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 /// Executable and its sealed static type data, ready to move into a VM session.
 pub struct LinkedEntry {
+    pub(crate) graph: crate::execution_graph::ExecutionGraph,
     pub(crate) bytecode: BytecodeFunction,
     pub(crate) types: crate::type_image::TypeImage,
     pub(crate) result_type: crate::mir::TypeId,
@@ -43,6 +44,7 @@ pub fn link_entry_with_data(
         return Err(diagnostics);
     }
     Ok(LinkedEntry {
+        graph: artifact.graph,
         bytecode,
         types: artifact.types,
         result_type: artifact.result_type,

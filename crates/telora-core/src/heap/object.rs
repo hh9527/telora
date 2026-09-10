@@ -125,6 +125,9 @@ impl TextTable {
 }
 
 pub(crate) struct Heap {
+    pub(crate) solved_graph: Option<crate::execution_graph::ExecutionGraph>,
+    pub(crate) solved_evaluation: Option<crate::execution_graph::Evaluation<Val>>,
+    pub(crate) solved_tasks: Vec<Option<Val>>,
     // Installed once in the main world by the solved execution path. Work heaps
     // borrow it through their background; no descriptor reconstruction occurs.
     pub(crate) solved_types: Option<crate::type_image::TypeImage>,

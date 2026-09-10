@@ -1,4 +1,54 @@
 #[test]
+fn static_mir_eval_demands_globals_in_the_vm() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
+        import "std/value" { Value };
+        def unused: Int = 1 / 0;
+        def recurse: Fn(Int) -> Int = fn(n) { if n > 0 { recurse(n - 1) } else { 42 } };
+        export def answer = Value.Int(if True { recurse(3) } else { unused });
+    "#,
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args(["eval", "@src/main:answer"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        serde_json::json!(42)
+    );
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
+        import "std/value" { Value };
+        def a: Int = b;
+        def b: Int = a;
+        export def answer = Value.Int(a);
+    "#,
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args(["eval", "@src/main:answer"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("cyclic demand") && error.contains("::a") && error.contains("::b"),
+        "{error}"
+    );
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_eval_imports_data_after_static_solving() {
     let cwd = fixture();
     fs::write(

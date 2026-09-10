@@ -5,6 +5,33 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Global demand instructions connected to the VM (2026-09-10)
+
+The new codegen no longer uses global_order or rejects syntactic global cycles.
+It discovers reachable code, emits an initializer function for each source
+global, installs these functions by execution NodeId, then reads the entry using
+Demand. Native ABI bindings and injected data are available before initialization.
+Ordinary global references in function bodies emit Demand; creating the function
+does not evaluate those references. Import aliases retain the defining slot.
+
+The executable carries an immutable task layout into Main. Only the VM Work
+world creates and mutates the evaluation state/value arrays. Demand either reads
+a saved value or pushes a normal VM call with a completion continuation, so
+nested initialization uses the existing explicit VM stack. The same table stays
+with the world through eval-with initialization and callback execution. Actual
+cycles report the participating global names; failed/unfinished demand sessions
+cannot return a successful result. Codegen never owns live evaluation state.
+
+Fourteen codegen tests pass, including recursive functions, syntactic cycles in
+uncalled function bodies, unexecuted failing branches, real initialization cycles,
+and a counted native initializer proving repeated reads/calls compute once.
+Four focused CLI eval tests pass, including recursive demand evaluation, cycle
+errors with no partial output, module data and eval-with host inputs.
+
+Property query/provider codegen and solved metadata consumption remain pending;
+this checkpoint connects global reads to the VM, not full lazy property support.
+Ordinary check, run/serve and complete pipeline replacement remain unfinished.
+
 ### Shared demand-evaluation state (2026-09-10)
 
 The agreed execution policy is lazy evaluation of top-level values and property

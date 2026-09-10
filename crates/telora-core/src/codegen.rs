@@ -3,12 +3,14 @@
 use crate::{
     ast::{BinaryOperator as B, BindingKind},
     bytecode::{BytecodeFunction, Constant},
+    execution_graph::ExecutionGraph,
     lir::{self, ConstantId, Function, Item, LabelId, Operation as O, RegisterId as R},
     mir::*,
     source::{Diagnostic, Origin, Severity, WithOrigin},
 };
 
 pub struct CompiledEntry {
+    pub graph: ExecutionGraph,
     pub symbol: SymbolId,
     pub result_type: TypeId,
     pub bytecode: BytecodeFunction,
@@ -107,6 +109,7 @@ pub struct NativeLink {
 }
 
 pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, Vec<Diagnostic>> {
+    let graph = ExecutionGraph::from_mir(&sealed);
     let (mir, types) = sealed.into_parts();
     let Some(symbol) = mir.symbols.get(entry.index()) else {
         return Err(vec![Diagnostic {
@@ -132,17 +135,69 @@ pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, 
             notes: vec![],
         }]);
     };
-    let mut emitter = Emitter::new(mir, symbol.name.clone());
-    for global in global_order(mir, target).map_err(|d| vec![d])? {
+    let mut emitter = Emitter::new(mir, &graph, symbol.name.clone());
+    let globals = reachable_globals(mir, target);
+    // Native ABI values and injected data already exist before initialization.
+    for &global in &globals {
+        if !matches!(
+            mir.symbols[global.index()].kind,
+            SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl)
+        ) {
+            continue;
+        }
         let declaration = *mir.symbols[global.index()]
             .declarations
             .last()
             .expect("global declaration");
         emitter.expression(declaration).map_err(|d| vec![d])?;
     }
-    let result = emitter
-        .lookup(target)
-        .ok_or_else(|| vec![emitter.error(declaration, "entry did not produce a value binding")])?;
+    for global in globals {
+        if matches!(
+            mir.symbols[global.index()].kind,
+            SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl)
+        ) {
+            continue;
+        }
+        let declaration = *mir.symbols[global.index()]
+            .declarations
+            .last()
+            .expect("global declaration");
+        let mut thunk = Emitter::new(mir, &graph, format!("global:{}", global.index()));
+        let mut captures = vec![];
+        for reference in referenced_globals(mir, declaration) {
+            if let Some(value) = emitter.lookup(reference) {
+                let register = thunk.register();
+                thunk.locals.push((reference, register));
+                captures.push(value);
+            }
+        }
+        thunk.function.capture_count = captures.len() as u32;
+        let value = thunk.expression(declaration).map_err(|d| vec![d])?;
+        thunk.emit(declaration, O::Return { src: value });
+        let dst = emitter.register();
+        emitter.emit(
+            declaration,
+            O::MakeClosure {
+                dst,
+                function: Box::new(thunk.function),
+                captures,
+            },
+        );
+        let node = graph
+            .global(global)
+            .ok_or_else(|| vec![emitter.error(declaration, "global has no execution slot")])?;
+        emitter.emit(declaration, O::InstallTask { node, src: dst });
+    }
+    let result = if let Some(value) = emitter.lookup(target) {
+        value
+    } else {
+        let dst = emitter.register();
+        let node = graph
+            .global(target)
+            .ok_or_else(|| vec![emitter.error(declaration, "entry has no execution slot")])?;
+        emitter.emit(declaration, O::Demand { dst, node });
+        dst
+    };
     emitter.emit(declaration, O::Return { src: result });
     let result_type = emitter.ty(declaration).map_err(|d| vec![d])?;
     let bytecode = lir::assemble(emitter.function).map_err(|e| {
@@ -159,6 +214,7 @@ pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, 
         types,
         eval_call: None,
         data_links: emitter.data_links,
+        graph,
     })
 }
 
@@ -193,58 +249,48 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
         .map(|edge| edge.node)
 }
 
-/// A dependency order over authoritative SymbolIds, not a second resolver.
-/// Initialization cycles are explicit unsupported outcomes until module thunks
-/// and recursive function shells are emitted by this pipeline.
-fn global_order(mir: &Mir, root: SymbolId) -> Result<Vec<SymbolId>, Diagnostic> {
-    let mut states = vec![0u8; mir.symbols.len()];
-    let mut stack = vec![(root, false)];
-    let mut order = vec![];
-    while let Some((symbol, expanded)) = stack.pop() {
-        if states[symbol.index()] == 2 {
-            continue;
-        }
-        if expanded {
-            states[symbol.index()] = 2;
-            order.push(symbol);
+/// Discover code to compile, including function bodies. This is deliberately
+/// not an initialization order: references in uncalled bodies do not demand values.
+fn reachable_globals(mir: &Mir, root: SymbolId) -> Vec<SymbolId> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut pending = vec![root];
+    while let Some(symbol) = pending.pop() {
+        if !seen.insert(symbol) {
             continue;
         }
         let declaration = *mir.symbols[symbol.index()]
             .declarations
             .last()
             .expect("global declaration");
-        if states[symbol.index()] == 1 {
-            return Err(Diagnostic::error(
-                "recursive global initialization lowering is not implemented yet",
-                mir.hir[declaration.index()].location,
-            ));
-        }
-        states[symbol.index()] = 1;
-        stack.push((symbol, true));
-        let mut pending = vec![declaration];
-        let mut dependencies = std::collections::BTreeSet::new();
-        while let Some(node) = pending.pop() {
-            if let Some(slot) = mir.hir[node.index()].resolution
-                && let ResolveState::Bound(target) = mir.resolve_slots[slot.index()]
-            {
-                let symbol = &mir.symbols[target.index()];
-                if let Some(module) = symbol.module
-                    && symbol.scope.is_some()
-                    && symbol.scope == mir.module_scopes[module.index()]
-                    && matches!(symbol.kind, SymbolKind::Declaration(_))
-                {
-                    dependencies.insert(target);
-                }
-            }
-            pending.extend(runtime_children(mir, node));
-        }
-        stack.extend(dependencies.into_iter().rev().map(|id| (id, false)));
+        pending.extend(referenced_globals(mir, declaration));
     }
-    Ok(order)
+    seen.into_iter().collect()
+}
+
+fn referenced_globals(mir: &Mir, root: HirId) -> Vec<SymbolId> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if let Some(slot) = mir.hir[node.index()].resolution
+            && let ResolveState::Bound(target) = mir.resolve_slots[slot.index()]
+        {
+            let symbol = &mir.symbols[target.index()];
+            if let Some(module) = symbol.module
+                && symbol.scope.is_some()
+                && symbol.scope == mir.module_scopes[module.index()]
+                && matches!(symbol.kind, SymbolKind::Declaration(_))
+            {
+                seen.insert(target);
+            }
+        }
+        pending.extend(runtime_children(mir, node));
+    }
+    seen.into_iter().collect()
 }
 
 struct Emitter<'a> {
     mir: &'a Mir,
+    graph: &'a ExecutionGraph,
     function: Function,
     locals: Vec<(SymbolId, R)>,
     next_label: u32,
@@ -253,9 +299,10 @@ struct Emitter<'a> {
 }
 
 impl<'a> Emitter<'a> {
-    fn new(mir: &'a Mir, name: String) -> Self {
+    fn new(mir: &'a Mir, graph: &'a ExecutionGraph, name: String) -> Self {
         Self {
             mir,
+            graph,
             function: Function {
                 name,
                 memoized_interpreter: false,
@@ -334,6 +381,13 @@ impl<'a> Emitter<'a> {
         self.ty(node)?;
         if let Some(slot) = self.mir.hir[node.index()].resolution {
             if let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] {
+                if self.lookup(symbol).is_none()
+                    && let Some(node_id) = self.graph.global(symbol)
+                {
+                    let dst = self.register();
+                    self.emit(node, O::Demand { dst, node: node_id });
+                    return Ok(dst);
+                }
                 return self.lookup(symbol).ok_or_else(|| {
                     self.error(
                         node,
@@ -444,7 +498,8 @@ impl<'a> Emitter<'a> {
                 let dst = self.register();
                 if signature.constructor == TypeConstructor::Function {
                     let owner = *signature.arguments.last().expect("constructor result");
-                    let mut nested = Self::new(self.mir, format!("variant:{}", node.index()));
+                    let mut nested =
+                        Self::new(self.mir, self.graph, format!("variant:{}", node.index()));
                     nested.function.parameter_count = 1;
                     let payload = nested.register();
                     let result = nested.register();
@@ -662,7 +717,8 @@ impl<'a> Emitter<'a> {
             }
             HirKind::Closure => {
                 let parameters = self.children(node, Role::Parameter);
-                let mut nested = Self::new(self.mir, format!("closure:{}", node.index()));
+                let mut nested =
+                    Self::new(self.mir, self.graph, format!("closure:{}", node.index()));
                 nested.function.parameter_count = parameters.len() as u32;
                 for parameter in parameters {
                     let register = nested.register();
@@ -764,6 +820,56 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn execute(artifact: CompiledEntry) -> Result<crate::execution_link::SolvedExecution, String> {
+        let linked = crate::execution_link::link_entry(artifact).map_err(|d| format!("{d:?}"))?;
+        crate::Vm::new().execute_linked(
+            linked,
+            crate::Quota::with_fuel(10000),
+            crate::DataLimits::default(),
+            &mut crate::SourceDatabase::default(),
+        )
+    }
+
+    #[test]
+    fn global_result_is_computed_once_across_repeated_reads_and_calls() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        CALLS.store(0, Ordering::SeqCst);
+        let mir = graph(
+            "native tick: Fn() -> Int; def cached = tick(); def read: Fn() -> Int = fn() { cached }; export def answer = cached + read();",
+            "",
+        );
+        let mut artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        artifact.bytecode = crate::execution_link::link_with(&artifact, |_| {
+            Some(crate::NativeFunction::new("test.tick", 0, |ctx| {
+                CALLS.fetch_add(1, Ordering::SeqCst);
+                ctx.set_int(ctx.result(), 21)
+            }))
+        })
+        .unwrap();
+        artifact.native_links.clear();
+        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+        assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn global_demands_allow_recursive_functions_and_ignore_uncalled_dependencies() {
+        for source in [
+            "def recurse: Fn(Int) -> Int = fn(n) { if n > 0 { recurse(n - 1) } else { 42 } }; export def answer = recurse(5);",
+            "def a: Int = (fn(f) { 42 })(fn(x: Int) { b }); def b: Int = a; export def answer = a;",
+            "def unused: Int = 1 / 0; export def answer = if True { 42 } else { unused };",
+        ] {
+            let mir = graph(source, "");
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+        }
+        let mir = graph("def a: Int = b; def b: Int = a; export def answer = a;", "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let error = execute(artifact)
+            .err()
+            .expect("actual value cycle must fail");
+        assert!(error.contains("cyclic demand"), "{error}");
+    }
     #[test]
     fn execution_graph_uses_sealed_identities_and_one_slot_per_property_chain() {
         use crate::execution_graph::{ExecutionGraph, PropertyKey, Request, Task};
@@ -945,11 +1051,11 @@ mod tests {
             .seal()
             .and_then(|sealed| compile(sealed, entry(&mir)))
             .unwrap();
-        let mut vm = crate::Vm::new();
-        let result = vm.execute(&artifact.bytecode, 10000).unwrap();
+        let result_type = artifact.result_type;
+        let result = execute(artifact).unwrap();
         assert_eq!(result.value().as_int(), Some(42));
         assert_eq!(
-            mir.types[artifact.result_type.index()].constructor,
+            mir.types[result_type.index()].constructor,
             TypeConstructor::Int
         );
     }
@@ -967,14 +1073,7 @@ mod tests {
             .and_then(|sealed| compile(sealed, entry(&mir)))
             .unwrap();
         assert_eq!(mir.dump(), before);
-        assert_eq!(
-            crate::Vm::new()
-                .execute(&artifact.bytecode, 10000)
-                .unwrap()
-                .value()
-                .as_int(),
-            Some(42)
-        );
+        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
     }
 
     #[test]
@@ -995,7 +1094,8 @@ mod tests {
             .seal()
             .and_then(|sealed| compile(sealed, entry(&mir)))
             .unwrap();
-        assert!(crate::Vm::new().execute(&artifact.bytecode, 10000).is_err());
+        let error = execute(artifact).err().expect("division must fail");
+        assert!(error.contains("division by zero"), "{error}");
     }
 
     #[test]
@@ -1190,13 +1290,6 @@ mod tests {
                 TypeConstructor::Nominal(tree.symbol)
             );
         }
-        assert_eq!(
-            crate::Vm::new()
-                .execute(&artifact.bytecode, 10000)
-                .unwrap()
-                .value()
-                .as_int(),
-            Some(42)
-        );
+        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
     }
 }

@@ -26,6 +26,8 @@ pub enum Constant {
 
 #[derive(Clone, Debug)]
 pub enum Instruction {
+    Demand { dst: Register, node: crate::execution_graph::NodeId },
+    InstallTask { node: crate::execution_graph::NodeId, src: Register },
     MakeVariant {
         dst: Register,
         ty: crate::mir::TypeId,
@@ -265,6 +267,8 @@ pub enum Instruction {
 
 #[derive(Clone, Debug)]
 pub enum Opcode {
+    Demand { dst: Register, node: crate::execution_graph::NodeId },
+    InstallTask { node: crate::execution_graph::NodeId, src: Register },
     MakeVariant {
         dst: Register,
         ty: crate::mir::TypeId,
@@ -744,6 +748,8 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
             value: ValueLinkId(constant),
         },
         Instruction::Move { dst, src } => Opcode::Move { dst, src },
+        Instruction::Demand { dst, node } => Opcode::Demand { dst, node },
+        Instruction::InstallTask { node, src } => Opcode::InstallTask { node, src },
         Instruction::MakeVariant { dst, ty, variant, payload } => Opcode::MakeVariant { dst, ty, variant, payload },
         Instruction::OwnDeclared { dst, owner, value } => Opcode::OwnDeclared { dst, owner, value },
         Instruction::AllocFunc { dst, static_id } => Opcode::AllocFunc { dst, static_id },

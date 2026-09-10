@@ -159,7 +159,10 @@ IDs are session identities; cross-compilation stability is not required.
 ### Demand evaluation of properties and globals
 
 Top-level values and property records share one session evaluation table, keyed
-by stable IDs. A concrete property query selects `(TypeId, site, PropertyTypeId)`
+by stable IDs. Mutable evaluation state belongs exclusively to the VM session.
+Codegen emits the immutable task layout, initializer functions and ID-based read
+instructions; it never shares or mutates the VM's running/ready/failed table.
+A concrete property query selects `(TypeId, site, PropertyTypeId)`
 from the static presence index. An absent key returns None without executing
 providers. A pending task starts its compiled code; a completed task returns the
 saved value. All providers of one property key reduce in declaration order, with

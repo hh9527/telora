@@ -15,6 +15,8 @@ pub struct LabelId(pub u32);
 
 #[derive(Clone, Debug)]
 pub enum Operation {
+    Demand { dst: RegisterId, node: crate::execution_graph::NodeId },
+    InstallTask { node: crate::execution_graph::NodeId, src: RegisterId },
     MakeVariant {
         dst: RegisterId,
         ty: crate::mir::TypeId,
@@ -388,6 +390,8 @@ fn lower_operation(
             dst: register(dst)?,
             src: register(src)?,
         },
+        Operation::Demand { dst, node } => Instruction::Demand { dst: register(dst)?, node },
+        Operation::InstallTask { node, src } => Instruction::InstallTask { node, src: register(src)? },
         Operation::MakeVariant { dst, ty, variant, payload } => Instruction::MakeVariant {
             dst: register(dst)?,
             ty,

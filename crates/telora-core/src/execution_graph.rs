@@ -38,6 +38,7 @@ pub enum Task {
 
 #[derive(Debug)]
 pub struct Node {
+    pub label: String,
     pub task: Task,
     pub ty: TypeId,
     pub location: Location,
@@ -79,6 +80,11 @@ impl ExecutionGraph {
                 unreachable!("sealed global type")
             };
             let node = graph.push(Node {
+                label: format!(
+                    "{}::{}",
+                    mir.modules[symbol.module.unwrap().index()].name,
+                    symbol.name
+                ),
                 task: Task::Global {
                     symbol: SymbolId(index as u32),
                     declaration,
@@ -102,6 +108,10 @@ impl ExecutionGraph {
                 property: record.property,
             };
             let node = graph.push(Node {
+                label: format!(
+                    "property({:?}, {:?}, {:?})",
+                    key.owner, key.site, key.property
+                ),
                 task: Task::Property {
                     key,
                     providers: record.providers.clone().into_boxed_slice(),
@@ -241,6 +251,14 @@ impl<V> Evaluation<V> {
     /// were evaluated. Unrequested nodes may remain pending under lazy semantics.
     pub fn can_publish(&self) -> bool {
         !self.failed && self.active.is_empty()
+    }
+
+    /// Abort active dependent computations after an uncaught task failure.
+    pub fn fail_active(&mut self, failure: FailureId) {
+        while let Some(node) = self.active.pop() {
+            self.states[node.index()] = State::Failed(failure);
+        }
+        self.failed = true;
     }
 }
 

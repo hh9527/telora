@@ -1,6 +1,7 @@
 fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register> {
     match instruction {
         Opcode::LoadConst { dst, .. }
+        | Opcode::Demand { dst, .. }
         | Opcode::MakeVariant { dst, .. }
         | Opcode::Move { dst, .. }
         | Opcode::OwnDeclared { dst, .. }
@@ -45,6 +46,7 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
         Opcode::Panic { message } => Some(*message),
         Opcode::Raise { dst, .. } => Some(*dst),
         Opcode::SealFunc { .. }
+        | Opcode::InstallTask { .. }
         | Opcode::SealTypeSlot { .. }
         | Opcode::AssertTypeSlotReady { .. }
         | Opcode::TailCall { .. }
