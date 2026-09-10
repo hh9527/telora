@@ -526,7 +526,7 @@ export def output = (compared, selected);"#,
             assert_eq!(exports.len(), 1, "{file}");
             assert_eq!(exports[0].name, "data", "{file}");
             assert_eq!(
-                snapshot.types().display(exports[0].ty).unwrap(),
+                snapshot.types().display(exports[0].ty.unwrap()).unwrap(),
                 "Value",
                 "{file}"
             );
@@ -557,7 +557,7 @@ export def output = (compared, selected);"#,
         let exports = recovered.exports_of(yaml.id);
         assert_eq!(exports.len(), 1);
         assert_eq!(exports[0].name, "data");
-        assert_eq!(recovered.types().display(exports[0].ty).unwrap(), "Value");
+        assert_eq!(recovered.types().display(exports[0].ty.unwrap()).unwrap(), "Value");
         assert!(!recovered.diagnostics().is_empty());
         fs::remove_dir_all(directory).unwrap();
     }

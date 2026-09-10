@@ -222,7 +222,7 @@ impl Engine {
         )?;
         // Resolve every reachable source before solving any dependency. Module
         // solvers consume this inventory rather than rebuilding HIR from types.
-        let resolved = StaticNames::new(&graph).resolve(graph.id(&root.id).expect("discovered root"));
+        let mut resolved = StaticNames::new(&graph).resolve(graph.id(&root.id).expect("discovered root"));
         let native_ids = specs.iter().map(|spec|
             (ModuleCName::builtin(spec.name), spec.native_id)).collect();
         if let Some(inputs) = resolved.diagnostic_inputs(&graph) {

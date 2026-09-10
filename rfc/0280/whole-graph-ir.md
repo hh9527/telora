@@ -39,7 +39,8 @@ Two further dependencies are important for integration:
 ## Two completion boundaries
 
 1. Close resolve for the whole session: inventory source and exports, allocate
-   module/symbol identities, link every reference, and require all module
+   module/symbol identities, settle each reference as bound, Unresolved or
+   Conflicted, and require all module
    consumers to use that result. Source declarations determine constructor
    roles; no type solving or VM execution is needed for this boundary.
 2. Close types for that same graph: preallocate required slots, apply evidence,
@@ -64,27 +65,43 @@ queries also build a real inventory, with no provisional ModuleId fallback.
 Missing session import records are errors; loaders no longer reparse missing
 syntax or retry name resolution against a live resolver.
 
-Every external HIR reference must carry a source origin, including bootstrap
-symbols and Host bindings registered before resolution. Ordinary recovery and
-test entry points stop at session resolve diagnostics before creating MainWorld;
-native installation also rejects a graph with resolve errors. Such a failed
-resolve returns diagnostics and source records, not partially solved type facts.
-This does not yet complete global type solving: module-owned inference and
-solve/execute interleaving remain the next boundary to replace.
+Every bound external HIR reference must carry a source origin, including
+bootstrap symbols and Host bindings registered before resolution. Unresolved
+and Conflicted references are explicit results and must be passed into type
+solving together with known references. They are not reasons to reject the
+resolve artifact. Static diagnostics prevent execution/final output, not the
+collection of further independent type facts.
+
+The previous integration's early `diagnostic_inputs` gate is contrary to this
+contract and must be removed as part of the handoff. At present ordinary recovery,
+tests and types-only still stop there; merely preserving HIR for editor completion
+does not implement continued type solving. Do not restore a separate fallback
+solver or VM-backed recovery to conceal this gap. Module-owned inference and
+solve/execute interleaving remain to be replaced.
 
 The resolve integration is not yet accepted as fully closed for all consumers.
-Two LSP completion regressions currently expect export completion through a
-solved dependency result type, even when the requesting source has parse/resolve
-errors. `semantic.rs::WorkspaceSnapshot::exports_of` still reads the module's
-result type. Replace that consumer with the static export-name inventory; do
-not restore early type inference to make these tests pass. The failed resolve
-projection currently retains sources and diagnostics but drops its symbol graph.
-Preserving that graph for editor queries is the remaining resolve handoff gap.
+The working tree now carries export names in HIR, preserves its graph in diagnostic
+snapshots without rerunning resolution, and exposes optional export types.
+The two LSP completion regressions pass without type solving. Standard-library
+symbol ownership in ordinary snapshots still needs the same treatment; completion
+must not fall back to guessing exports from a namespace variable's type.
+Continued type solving after Unresolved/Conflicted results is a separate remaining
+handoff requirement, not something these completion tests establish.
 
-Validation of this integration: 422 core tests pass, release builds, and the
-ontology `check @test/query` command passes in ordinary and types-only modes.
-The workspace suite stops at the two LSP export-completion failures described
-above; it is not green. No performance comparison was run for this change.
+Resolve conflicts now have arena IDs and categorized evidence: duplicate
+declarations retain separate definition IDs, while used ambiguous wildcard names
+retain candidate source IDs. References point at the conflict record. Inference
+preallocates Unknown/Conflicted slots for these references and does not reinterpret
+them through later same-named environments or schemes. This mechanism is tested
+independently of the still-present early session gate; it does not prove that
+the driver already continues global type solving after resolve diagnostics.
+
+Validation of the conflict/result handoff changes: 426 core tests pass.
+The export-completion regressions passed after the static-name handoff. A
+workspace run reached language acceptance and failed there (46 other CLI tests
+passed); the complete workspace suite is not established as green. No new
+performance comparison was run. The prior commit's release/ontology checks
+are historical evidence, not verification of these later changes.
 
 Moving the old HIR constructor into discovery verbatim could not work: its
 member-pattern classification depended on solved external interfaces.

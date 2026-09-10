@@ -39,6 +39,16 @@ impl<'a> GenericInference<'a> {
                 declared_bodies.to_mut().insert(identity.clone(), body);
             }
         }
+        let mut variables = annotation_inputs.variables;
+        let unresolved_reference_slots = hir.references().iter().map(|reference| {
+            if !reference.resolution.is_unresolved() { return None; }
+            let slot = variables.fresh();
+            if let HirResolution::Conflicted(conflict) = reference.resolution {
+                variables.record_conflict(&TypeDescriptor::Inference(slot),
+                    &format!("conflicted symbol {:?}: {:?}", reference.name, hir.conflict(conflict)));
+            }
+            Some(slot)
+        }).collect();
         Self {
             schemes,
             scheme_scopes: vec![HashMap::new()],
@@ -80,7 +90,8 @@ impl<'a> GenericInference<'a> {
             value_constructors: HashMap::new(),
             type_facet_locations: HashSet::new(),
             recursive_equations: HashMap::new(),
-            variables: annotation_inputs.variables,
+            variables,
+            unresolved_reference_slots,
             definition_bindings: vec![None; hir.definitions().len()],
             import_bindings: HashMap::new(),
             definition_schemes: Vec::new(),
@@ -620,6 +631,10 @@ impl<'a> GenericInference<'a> {
         }
         match &callee.value {
             ExprKind::Variable(name) => {
+                if self.hir.reference_at(name.location, &name.value)
+                    .is_some_and(|reference| reference.resolution.is_unresolved()) {
+                    return None;
+                }
                 if let Some(binding) = self.resolved_binding(name) {
                     return (binding.scheme != u32::MAX).then(|| self.definition_schemes[binding.scheme as usize].clone());
                 }

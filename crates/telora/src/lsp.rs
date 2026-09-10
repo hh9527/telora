@@ -301,7 +301,7 @@ async fn semantic_request(
                             CompletionKind::ModuleExport => lsp::CompletionItemKind::MODULE,
                             CompletionKind::StructField => lsp::CompletionItemKind::FIELD,
                         }),
-                        detail: snapshot.types().display(candidate.ty),
+                        detail: candidate.ty.and_then(|ty| snapshot.types().display(ty)),
                         sort_text: Some(candidate.label.clone()),
                         text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                             range,

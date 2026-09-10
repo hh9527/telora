@@ -1237,7 +1237,7 @@ impl<'a> GenericInference<'a> {
                     .and_then(|definition| definition.value)
                     .and_then(|value| self.hir.expression(value))
                     .map(|expression| expression.location),
-                HirResolution::External | HirResolution::Unresolved => None,
+                HirResolution::External | HirResolution::Unresolved | HirResolution::Conflicted(_) => None,
             })
             .unwrap_or(expression.location)
     }

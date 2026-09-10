@@ -118,7 +118,8 @@ mod tool_plan_tests {
             let ExprKind::Variable(name) = &mut arguments[0].value else { panic!("expected variable"); };
             name.value = PROPERTY_PREVIOUS_BINDING.into();
             let prelude = BootstrapPrelude::new();
-            let hir = HirProgram::resolve(&program, prelude.types.keys().cloned());
+            let hir = HirProgram::resolve(&program, prelude.types.keys().cloned()
+                .chain(["provider".into(), PROPERTY_PREVIOUS_BINDING.into()]));
             let mut context = ToolInferenceContext::new(TypeGraph::default(), &hir, BTreeMap::new(), prelude.types,
                 prelude.schemes, BTreeMap::new(), true, HashSet::new());
             let before = context.environment.clone();

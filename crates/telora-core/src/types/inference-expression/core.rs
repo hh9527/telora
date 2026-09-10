@@ -214,12 +214,17 @@ impl<'a> GenericInference<'a> {
         }
         self.value_constructors.remove(&expression.location);
         let inferred = match &expression.value {
-            ExprKind::Variable(name) => match self.explicit_scheme(expression) {
+            ExprKind::Variable(name) => if let Some(slot) = self.hir.reference_at(name.location, &name.value)
+                .and_then(|reference| self.unresolved_reference_slots[reference.id.index()]) {
+                // Resolve is authoritative even when it has no unique target.
+                // A same-named type environment entry cannot repair that result.
+                TypeDescriptor::Inference(slot)
+            } else { match self.explicit_scheme(expression) {
                 Some(scheme) => self.instantiate(&scheme, expression.location),
                 None => self.resolved_binding(name).map(|binding| TypeDescriptor::Inference(binding.slot))
                     .or_else(|| environment.get(&name.value).cloned())
                     .ok_or_else(|| format!("unknown binding {:?}", name.value))?,
-            },
+            } },
             ExprKind::Int(_) => TypeDescriptor::Int,
             ExprKind::Float(_) => TypeDescriptor::Float,
             ExprKind::String(_) => TypeDescriptor::String,

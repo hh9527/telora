@@ -108,7 +108,7 @@ impl Engine {
             true,
             &mut sources,
         )?;
-        let resolved = StaticNames::new(&graph).resolve_all();
+        let mut resolved = StaticNames::new(&graph).resolve_all();
         if let Some(inputs) = resolved.diagnostic_inputs(&graph) {
             let snapshot = WorkspaceSnapshot::build(sources.clone(), inputs);
             return Ok(TestOutcome {

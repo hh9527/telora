@@ -1,4 +1,35 @@
 #[test]
+fn open_import_conflicts_keep_candidate_ids_and_require_a_reference() {
+    let directory = fixture_dir();
+    fs::create_dir_all(directory.join("src")).unwrap();
+    for name in ["left", "right"] {
+        fs::write(directory.join(format!("src/{name}.telora")), "export def value = 1;").unwrap();
+    }
+    for (body, expected) in [("export def result = 0;", false), ("export def result = value;", true)] {
+        fs::write(directory.join("src/main.telora"), format!("import \"./left\" *; import \"./right\" *; {body}")).unwrap();
+        let resolver = session_workspace_resolver(&directory, &["@src/main", "@src/left", "@src/right"]);
+        let root = resolver.selected_root().unwrap();
+        let mut sources = SourceDatabase::default();
+        let graph = ModuleGraph::discover(&resolver, vec![root.clone()], &BTreeMap::new(),
+            std::iter::empty(), None, false, &mut sources).unwrap();
+        let modules = StaticNames::new(&graph).resolve(graph.id(&root.id).unwrap()).modules;
+        let resolved = modules[graph.id(&root.id).unwrap().index()].as_ref().unwrap();
+        let conflicts = resolved.hir.conflicts();
+        assert_eq!(!conflicts.is_empty(), expected);
+        if expected {
+            let crate::hir::HirResolveConflict::AmbiguousImport { name, candidates } = &conflicts[0] else { panic!("import conflict"); };
+            assert_eq!(name, "value");
+            assert_eq!(candidates.len(), 2);
+            assert_ne!(candidates[0], candidates[1]);
+            let reference = resolved.hir.references().iter().find(|reference| reference.name == "value").unwrap();
+            assert!(matches!(reference.resolution, crate::hir::HirResolution::Conflicted(id) if id.index() == 0));
+            assert_eq!(resolved.diagnostics.len(), 1);
+        }
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn types_only_checks_imports_and_never_executes_module_values() {
     let directory = fixture_dir();
     fs::create_dir_all(directory.join("src")).unwrap();

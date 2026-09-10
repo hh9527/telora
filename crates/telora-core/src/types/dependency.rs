@@ -749,10 +749,7 @@ fn solve_module_plan<'a>(
     if let Some(reference) = hir.unresolved().next() {
         return Err(FrontendError::from_diagnostic(
             sources,
-            Diagnostic::error(
-                format!("unknown binding {:?}", reference.name),
-                reference.location,
-            ),
+            hir.resolution_diagnostic(reference),
         ));
     }
 

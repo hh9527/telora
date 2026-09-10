@@ -1260,7 +1260,7 @@ fn query_exports(
     for export in exports {
         let ty = export
             .scheme
-            .or_else(|| workspace.types().display(export.ty));
+            .or_else(|| export.ty.and_then(|ty| workspace.types().display(ty)));
         emit(
             json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"export","authority":authority,"name":export.name,"type":ty}),
         )?;

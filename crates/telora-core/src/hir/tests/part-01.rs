@@ -1,4 +1,26 @@
     #[test]
+    fn duplicate_definitions_keep_distinct_ids_and_one_conflict() {
+        let program = parse("duplicate.telora", "def a = 1; def a = 2; def a = 3; a").unwrap();
+        let hir = HirProgram::resolve(&program, []);
+        let HirResolveConflict::DuplicateDefinition { name, definitions } = &hir.conflicts()[0] else { panic!("duplicate conflict"); };
+        assert_eq!(name, "a");
+        assert_eq!(definitions.len(), 3);
+        assert!(definitions.windows(2).all(|ids| ids[0] != ids[1]));
+        assert_eq!(hir.definitions().len(), 3);
+        for id in definitions { assert_eq!(hir.definition(*id).unwrap().name, "a"); }
+        assert!(matches!(hir.references()[0].resolution, HirResolution::Conflicted(id) if id.index() == 0));
+    }
+
+    #[test]
+    fn nested_definition_shadowing_is_not_a_duplicate() {
+        let program = parse("shadow.telora", "def a = 1; def inner = do { def a = 2; a }; a").unwrap();
+        let hir = HirProgram::resolve(&program, []);
+        assert!(hir.conflicts().is_empty());
+        let references = hir.references().iter().filter(|reference| reference.name == "a").collect::<Vec<_>>();
+        assert_ne!(references[0].resolution, references[1].resolution);
+    }
+
+    #[test]
     fn generic_parameter_references_close_over_their_own_nested_binders() {
         let program = parse("generic-scopes.telora", r#"
             def outer: for(T) Fn(T) -> T = fn(value: T) {

@@ -549,7 +549,14 @@
             .unwrap();
         assert_eq!(main.state, WorkspaceModuleState::Unavailable);
         assert_eq!(model.state, WorkspaceModuleState::Unavailable);
-        assert!(snapshot.definitions().is_empty(), "resolve errors must not publish type-analysis facts");
+        for name in ["Local", "Uses", "Down", "Good", "Broken"] {
+            let definition = snapshot.definitions().iter().find(|definition| definition.name == name).unwrap();
+            assert!(definition.ty.value.is_none(), "resolve must preserve symbols without solving their types");
+        }
+        let exports = snapshot.exports_of(model.id);
+        assert_eq!(exports.iter().map(|export| export.name.as_str()).collect::<Vec<_>>(), ["Good"]);
+        assert!(exports[0].ty.is_none());
+        assert!(main.imports.iter().any(|import| import.target == model.id));
         assert!(snapshot.diagnostics().iter().any(|diagnostic|
             diagnostic.message.contains("unknown binding \"missing\"")));
         assert_ne!(main.source, model.source);

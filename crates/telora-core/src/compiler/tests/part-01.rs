@@ -58,11 +58,11 @@
         assert!(shadow.to_string().contains("cannot shadow"));
 
         let let_shadow = run("let value = 1; def value = 2; value").unwrap_err();
-        assert!(let_shadow.to_string().contains("cannot shadow"));
+        assert!(let_shadow.to_string().contains("duplicate definition"), "{let_shadow}");
 
         let declaration_conflict =
             run("decl value: Int; let value = 1; def value = 2; value").unwrap_err();
-        assert!(declaration_conflict.to_string().contains("cannot shadow"));
+        assert!(declaration_conflict.to_string().contains("duplicate definition"), "{declaration_conflict}");
 
         let wrong_arity = run(
             "decl f: Fn(Int) -> Int; let build = fn(value) { value }; def f = build(fn(a, b) { a + b }); f",

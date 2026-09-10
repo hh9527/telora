@@ -26,12 +26,12 @@ fn collect_static_results<T, C: FromIterator<T>>(
 impl StaticContractScope<'_> {
     fn unknown_diagnostic(&self, expression: &Expr) -> Diagnostic {
         if let Some(reference) = self.hir.references().iter().find(|reference| {
-            reference.resolution == HirResolution::Unresolved
+            reference.resolution.is_unresolved()
                 && reference.location.source == expression.location.source
                 && expression.location.start <= reference.location.start
                 && reference.location.end <= expression.location.end
         }) {
-            Diagnostic::error(format!("unknown binding {:?}", reference.name), reference.location)
+            self.hir.resolution_diagnostic(reference)
         } else {
             Diagnostic::error("type remains unknown after static solving", expression.location)
         }

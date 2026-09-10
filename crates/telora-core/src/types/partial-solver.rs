@@ -445,7 +445,7 @@ fn solve_partial_types(
             FactIdentity::HirDefinition(*definition))) { continue; }
         let binding = bindings[definition];
         let unresolved = hir.references().iter().find(|reference| {
-            reference.resolution == HirResolution::Unresolved
+            reference.resolution.is_unresolved()
                 && reference.location.source == binding.location.source
                 && binding.location.start <= reference.location.start
                 && reference.location.end <= binding.location.end

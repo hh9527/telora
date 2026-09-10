@@ -22,6 +22,13 @@ macro_rules! hir_id {
 hir_id!(HirDefinitionId);
 hir_id!(HirReferenceId);
 hir_id!(HirExpressionId);
+hir_id!(HirConflictId);
+
+#[derive(Clone, Debug)]
+pub(crate) enum HirResolveConflict {
+    DuplicateDefinition { name: String, definitions: Vec<HirDefinitionId> },
+    AmbiguousImport { name: String, candidates: Vec<HirImportOrigin> },
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HirDefinitionKind {
@@ -41,6 +48,13 @@ pub enum HirResolution {
     Definition(HirDefinitionId),
     External,
     Unresolved,
+    Conflicted(HirConflictId),
+}
+
+impl HirResolution {
+    pub(crate) fn is_unresolved(self) -> bool {
+        matches!(self, Self::Unresolved | Self::Conflicted(_))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -112,6 +126,9 @@ pub(crate) struct HirMemberAccess {
 
 #[derive(Clone, Debug, Default)]
 pub struct HirProgram {
+    conflicts: Vec<HirResolveConflict>,
+    definition_conflicts: Vec<Option<HirConflictId>>,
+    exports: Vec<String>,
     definitions: Vec<HirDefinition>,
     definition_locations: Vec<(Location, HirDefinitionId)>,
     definition_dependencies: Vec<Vec<HirDefinitionId>>,
@@ -147,7 +164,7 @@ impl HirProgram {
         self.reference_import_origins = self.references.iter().map(|reference| match reference.resolution {
             HirResolution::Definition(id) => self.definition_import_origins[id.index()],
             HirResolution::External => origins.get(&reference.name).copied(),
-            HirResolution::Unresolved => None,
+            HirResolution::Unresolved | HirResolution::Conflicted(_) => None,
         }).collect();
     }
 
@@ -222,7 +239,14 @@ impl HirProgram {
         external_member_names: HashSet<String>,
     ) -> Self {
         let mut lookup = named_external_lookup(external_names, external_member_names);
-        let mut resolver = Resolver::new(&mut lookup, true);
+        Self::resolve_recovered_with_lookup(program, &mut lookup)
+    }
+
+    pub(crate) fn resolve_recovered_with_lookup(
+        program: &RecoveredProgram,
+        lookup: &mut dyn FnMut(&str) -> HirExternalName,
+    ) -> Self {
+        let mut resolver = Resolver::new(lookup, true);
         resolver.index_block_parts(
             &program.bindings,
             program.result.as_ref(),
@@ -235,6 +259,44 @@ impl HirProgram {
 
     pub fn definitions(&self) -> &[HirDefinition] {
         &self.definitions
+    }
+
+    pub fn exports(&self) -> &[String] {
+        &self.exports
+    }
+
+    pub(crate) fn conflict_external(&mut self, name: &str, candidates: Vec<HirImportOrigin>) {
+        let id = HirConflictId(self.conflicts.len() as u32);
+        self.conflicts.push(HirResolveConflict::AmbiguousImport { name: name.into(), candidates });
+        for reference in &mut self.references {
+            if reference.name == name && reference.resolution == HirResolution::External {
+                reference.resolution = HirResolution::Conflicted(id);
+            }
+        }
+    }
+
+    pub(crate) fn conflicts(&self) -> &[HirResolveConflict] { &self.conflicts }
+
+    pub(crate) fn conflict(&self, id: HirConflictId) -> &HirResolveConflict { &self.conflicts[id.index()] }
+
+    pub(crate) fn resolution_diagnostic(&self, reference: &HirReference) -> crate::source::Diagnostic {
+        use crate::source::Diagnostic;
+        match reference.resolution {
+            HirResolution::Conflicted(id) => match self.conflict(id) {
+                HirResolveConflict::DuplicateDefinition { name, definitions } => {
+                    let mut diagnostic = Diagnostic::error(format!("duplicate definition {name:?}"),
+                        self.definition(definitions[1]).unwrap().location)
+                        .with_secondary("first bound here", self.definition(definitions[0]).unwrap().location);
+                    for definition in &definitions[2..] {
+                        diagnostic = diagnostic.with_secondary("also bound here", self.definition(*definition).unwrap().location);
+                    }
+                    diagnostic
+                }
+                HirResolveConflict::AmbiguousImport { name, candidates } => Diagnostic::error(
+                    format!("ambiguous import {name:?}: {} candidate sources", candidates.len()), reference.location),
+            },
+            _ => Diagnostic::error(format!("unknown binding {:?}", reference.name), reference.location),
+        }
     }
 
     pub fn definition(&self, id: HirDefinitionId) -> Option<&HirDefinition> {
@@ -308,7 +370,7 @@ impl HirProgram {
     pub fn unresolved(&self) -> impl Iterator<Item = &HirReference> {
         self.references
             .iter()
-            .filter(|reference| reference.resolution == HirResolution::Unresolved)
+            .filter(|reference| reference.resolution.is_unresolved())
     }
 
     fn normalize_order(&mut self) {
@@ -327,10 +389,22 @@ impl HirProgram {
             definitions[old.index()] = new;
         }
         for reference in &mut self.references {
-            if let HirResolution::Definition(definition) = &mut reference.resolution {
-                *definition = definitions[definition.index()];
+            if let HirResolution::Definition(definition) = reference.resolution {
+                reference.resolution = self.definition_conflicts[definition.index()]
+                    .map(HirResolution::Conflicted)
+                    .unwrap_or(HirResolution::Definition(definitions[definition.index()]));
             }
         }
+        for conflict in &mut self.conflicts {
+            if let HirResolveConflict::DuplicateDefinition { definitions: candidates, .. } = conflict {
+                for candidate in candidates { *candidate = definitions[candidate.index()]; }
+            }
+        }
+        let mut definition_conflicts = vec![None; self.definition_conflicts.len()];
+        for (old, new) in definitions.iter().enumerate() {
+            definition_conflicts[new.index()] = self.definition_conflicts[old];
+        }
+        self.definition_conflicts = definition_conflicts;
         for definition in &mut self.definitions {
             for parameter in &mut definition.type_parameters {
                 parameter.id = definitions[parameter.id.index()];
@@ -474,6 +548,22 @@ impl<'a> Resolver<'a> {
             value: None,
             member_import: None,
         });
+        self.hir.definition_conflicts.push(None);
+        if kind != HirDefinitionKind::Let && let Some(previous) = scope.get(name).copied() {
+            let conflict = if let Some(conflict) = self.hir.definition_conflicts[previous.index()] {
+                let HirResolveConflict::DuplicateDefinition { definitions, .. } = &mut self.hir.conflicts[conflict.index()] else { unreachable!() };
+                definitions.push(id);
+                conflict
+            } else {
+                let conflict = HirConflictId(self.hir.conflicts.len() as u32);
+                self.hir.conflicts.push(HirResolveConflict::DuplicateDefinition {
+                    name: name.into(), definitions: vec![previous, id],
+                });
+                self.hir.definition_conflicts[previous.index()] = Some(conflict);
+                conflict
+            };
+            self.hir.definition_conflicts[id.index()] = Some(conflict);
+        }
         scope.insert(name.into(), id);
         id
     }
@@ -494,6 +584,14 @@ impl<'a> Resolver<'a> {
         scopes: &mut Vec<Scope>,
         top_level: bool,
     ) {
+        if top_level {
+            self.hir.exports = match result.map(|result| &result.value) {
+                Some(ExprKind::Dict(fields)) => fields.iter()
+                    .filter_map(|field| field.value.name.as_ref().map(|name| name.value.clone())).collect(),
+                _ => bindings.iter().filter(|binding| binding.value.kind == BindingKind::Export)
+                    .map(|binding| binding.value.name.value.clone()).collect(),
+            };
+        }
         scopes.push(Scope::new());
         for binding in bindings {
             if matches!(
@@ -540,7 +638,14 @@ impl<'a> Resolver<'a> {
                 }
                 BindingKind::Def | BindingKind::Impl => {
                     let definition =
-                        if let Some(id) = resolve_name(scopes, &binding.value.name.value) {
+                        if let Some(id) = self.hir.definitions.iter()
+                            .find(|definition| definition.location == binding.value.name.location).map(|definition| definition.id)
+                            .or_else(|| scopes.last().unwrap().get(&binding.value.name.value).copied()
+                                .filter(|id| self.hir.definitions[id.index()].kind == HirDefinitionKind::DefinitionSlot
+                                    && (self.hir.definitions[id.index()].value.is_none()
+                                        || self.hir.definitions[id.index()].additional_locations.is_empty()
+                                            && bindings.iter().any(|binding| binding.value.kind == BindingKind::Decl
+                                                && binding.value.name.location == self.hir.definitions[id.index()].location)))) {
                             if binding.value.annotation.is_none()
                                 && self.hir.definitions[id.index()].location
                                     != binding.value.name.location

@@ -66,23 +66,46 @@ the acceptance criteria take precedence over earlier checkpoint next-step notes.
 
 ### Ordered phase contract
 
-The symbol phase is complete only when every module, export, import and local
+The symbol phase is complete when every module, export, import and local
 symbol has stable session identity, and every symbol reference in all reachable
-code is linked to its target. First inventory each module's exports globally;
+code has a settled resolve result: linked to a target, Unresolved, or Conflicted.
+Unresolved and Conflicted are graph results carrying diagnostics, not failures
+of the resolve procedure. They do not prevent proceeding to type solving.
+Independent evidence still produces types; affected slots retain unavailable
+or conflicting evidence. Gate execution and final session output after static
+solving, rather than requiring an error-free symbol graph before type solving.
+First inventory each module's exports globally;
 then close lexical and imported references against that inventory. Both named
 and wildcard imports use the same provider inventory; wildcard imports establish
 search scopes. Source aliases retain their own authored identity and link to the
 target declaration. Independent declarations must never merge because their
 values or inferred types happen to be equal.
 
-The type phase is complete only when every type has a stable finalized TypeId
-and all type references in the code are linked. First allocate all required
-reference slots, then apply evidence to fill and refine them. Equality evidence
-may merge type slots through proxies; normalize the graph and validate every
-required slot before producing the typed artifact. Generic instantiations have
-distinct inference slots even when they reference the same generic declaration.
+Stage conclusions are authoritative even when incomplete or conflicted. Type
+solving must not rerun name resolution, select one ambiguous import candidate,
+or repair an Unresolved reference using a later same-named environment entry.
+Likewise execution and code generation consume type results without reinference.
 
-These are two graph-closure phases with distinct identity semantics. Merely
+`Conflicted(ConflictId)` indexes a separate evidence table. At minimum distinguish
+`DuplicateDefinition`, retaining the distinct declaration IDs and locations,
+from `AmbiguousImport`, retaining the referenced name and candidate source IDs.
+Duplicate declarations are diagnosed even without a use. Overlapping wildcard
+search scopes alone are not conflicts; ambiguity arises only at an actual use.
+Nested lexical scopes have distinct identities; any additional language policy
+on forbidden shadowing is separate from same-scope duplicate identity.
+
+The type phase is complete when every required slot has a settled result:
+Known with a normalized TypeId, Unknown, or Conflicted. First allocate all
+required reference slots, then apply evidence to fill and refine them. Equality
+evidence may merge type slots through proxies. Normalize and inspect all slots
+without discarding independent facts because another slot is invalid. Only the
+execution-ready typed artifact requires all necessary types and references to
+be valid. Generic instantiations have distinct inference slots even when they
+reference the same generic declaration.
+
+These are two graph-closure phases with distinct identity semantics. Closure
+means every reference has an explicit result, not that every result is valid.
+Merely
 indexing exports, retaining per-module solutions, or registering IDs without
 closing the code's references does not complete either phase.
 

@@ -143,6 +143,7 @@ pub struct WorkspaceImport {
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceModule {
+    pub export_names: Vec<String>,
     pub id: WorkspaceModuleId,
     pub name: String,
     pub path: Option<PathBuf>,
@@ -204,7 +205,7 @@ pub struct WorkspaceExpression {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceExport {
     pub name: String,
-    pub ty: WorkspaceTypeId,
+    pub ty: Option<WorkspaceTypeId>,
     pub scheme: Option<String>,
 }
 
@@ -218,7 +219,7 @@ pub enum CompletionKind {
 pub struct CompletionCandidate {
     pub label: String,
     pub kind: CompletionKind,
-    pub ty: WorkspaceTypeId,
+    pub ty: Option<WorkspaceTypeId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -312,7 +313,7 @@ impl WorkspaceTypeGraph {
                         .iter()
                         .map(|(name, ty)| WorkspaceExport {
                             name: name.clone(),
-                            ty: *ty,
+                            ty: Some(*ty),
                             scheme: None,
                         })
                         .collect();
@@ -508,7 +509,7 @@ impl WorkspaceSnapshot {
                     HirResolution::Definition(definition) => {
                         Some(DefinitionId(definition.index() as u32))
                     }
-                    HirResolution::External | HirResolution::Unresolved => None,
+                    HirResolution::External | HirResolution::Unresolved | HirResolution::Conflicted(_) => None,
                 },
                 external: reference.resolution == HirResolution::External,
             })
@@ -520,7 +521,7 @@ impl WorkspaceSnapshot {
                 let unresolved = expression
                     .reference
                     .and_then(|reference| hir.reference(reference))
-                    .is_some_and(|reference| reference.resolution == HirResolution::Unresolved);
+                    .is_some_and(|reference| reference.resolution.is_unresolved());
                 WorkspaceExpression {
                     id: WorkspaceExpressionId(expression.id.index() as u32),
                     module,
@@ -540,6 +541,7 @@ impl WorkspaceSnapshot {
             revision: crate::query::Revision::default(),
             sources,
             modules: vec![WorkspaceModule {
+                export_names: hir.exports().to_vec(),
                 id: module,
                 name: source_name,
                 path: None,
@@ -688,16 +690,9 @@ impl WorkspaceSnapshot {
                 let definition = matches.next()?;
                 matches.next().is_none().then_some(definition)
             });
-        let (kind, members) = if let Some(module) = definition.and_then(|item| item.import_target) {
-            let exports = self.query_exports_of(context, module).await?;
-            let members = if exports.is_empty() {
-                definition
-                    .and_then(|item| item.ty.value)
-                    .map_or_else(Vec::new, |ty| self.types.members_of(ty))
-            } else {
-                exports
-            };
-            (CompletionKind::ModuleExport, members)
+        let (kind, members) = if let Some(module) = definition
+            .filter(|item| item.import_namespace).and_then(|item| item.import_target) {
+            (CompletionKind::ModuleExport, self.query_exports_of(context, module).await?)
         } else {
             let members = self
                 .type_at(receiver)
@@ -913,21 +908,15 @@ impl WorkspaceSnapshot {
     }
 
     pub fn exports_of(&self, module: WorkspaceModuleId) -> Vec<WorkspaceExport> {
-        let Some(result) = self.module(module).and_then(|module| module.result_type) else {
-            return Vec::new();
-        };
-        let Some(WorkspaceTypeNode::Struct(fields)) = self.types.node(result) else {
-            return Vec::new();
-        };
-        fields
-            .iter()
-            .map(|(name, ty)| WorkspaceExport {
+        let Some(module) = self.module(module) else { return Vec::new(); };
+        let fields = module.result_type.and_then(|result| match self.types.node(result) {
+            Some(WorkspaceTypeNode::Struct(fields)) => Some(fields),
+            _ => None,
+        });
+        module.export_names.iter().map(|name| WorkspaceExport {
                 name: name.clone(),
-                ty: *ty,
-                scheme: self
-                    .module(module)
-                    .and_then(|module| module.export_schemes.get(name))
-                    .cloned(),
+                ty: fields.and_then(|fields| fields.get(name).copied()),
+                scheme: module.export_schemes.get(name).cloned(),
             })
             .collect()
     }
@@ -1020,6 +1009,9 @@ impl WorkspaceSnapshot {
                         .map(|interface| type_maps[index].project(interface.result_type))
                 });
             modules.push(WorkspaceModule {
+                export_names: input_hir(input).map(|hir| hir.exports().to_vec())
+                    .unwrap_or_else(|| input.interface.as_ref()
+                        .map(|interface| interface.export_schemes.keys().cloned().collect()).unwrap_or_default()),
                 id,
                 name: input.key.clone(),
                 path: input.path.clone(),
@@ -1204,7 +1196,7 @@ impl WorkspaceSnapshot {
                         HirResolution::Definition(definition) => {
                             Some(definition_maps[index][definition.index()])
                         }
-                        HirResolution::External | HirResolution::Unresolved => None,
+                        HirResolution::External | HirResolution::Unresolved | HirResolution::Conflicted(_) => None,
                     },
                     external: reference.resolution == HirResolution::External,
                 });
@@ -1234,7 +1226,7 @@ impl WorkspaceSnapshot {
                                     .reference
                                     .and_then(|id| hir.reference(id))
                                     .is_some_and(|reference| {
-                                        reference.resolution == HirResolution::Unresolved
+                                        reference.resolution.is_unresolved()
                                     })
                                 {
                                     UnknownReason::UnresolvedName
@@ -1253,7 +1245,7 @@ impl WorkspaceSnapshot {
                                         .reference
                                         .and_then(|id| hir.reference(id))
                                         .is_some_and(|reference| {
-                                            reference.resolution == HirResolution::Unresolved
+                                            reference.resolution.is_unresolved()
                                         });
                                     SemanticFact::unknown(if unresolved {
                                         UnknownReason::UnresolvedName

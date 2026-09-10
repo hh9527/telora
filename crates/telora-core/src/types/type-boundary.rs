@@ -141,7 +141,7 @@ impl<'a> TypeBoundary<'a> {
                             _ => SurfaceRole::Data,
                         }
                     }
-                    Some(HirResolution::Unresolved) => SurfaceRole::Unresolved,
+                    Some(HirResolution::Unresolved | HirResolution::Conflicted(_)) => SurfaceRole::Unresolved,
                     _ => self.external_role(&name.value),
                 }
             }

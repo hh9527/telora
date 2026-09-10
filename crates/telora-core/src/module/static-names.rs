@@ -51,7 +51,7 @@ struct ResolvedStaticGraph {
 }
 
 impl ResolvedStaticGraph {
-    fn diagnostic_inputs(&self, graph: &ModuleGraph)
+    fn diagnostic_inputs(&mut self, graph: &ModuleGraph)
         -> Option<Vec<SemanticModuleInput>>
     {
         let diagnostics = |id: ModuleId| graph.module(id).prepared.iter()
@@ -66,6 +66,27 @@ impl ResolvedStaticGraph {
             let module = graph.module(*id);
             let resolved = graph.resolved[id.index()].as_ref();
             let prepared = module.prepared.as_ref();
+            let mut diagnostics = prepared.iter().flat_map(|prepared| prepared.diagnostics.iter()).cloned().collect::<Vec<_>>();
+            let partial = self.modules[id.index()].take().map(|resolved| {
+                diagnostics.extend(resolved.diagnostics);
+                crate::types::PartialAnalysis {
+                    hir: resolved.hir,
+                    dependencies: Default::default(), definition_facts: BTreeMap::new(),
+                    definition_schemes: BTreeMap::new(), diagnostics: Vec::new(), types: Default::default(),
+                }
+            });
+            let imports = prepared.iter().flat_map(|prepared| &prepared.recovered.bindings)
+                .filter(|binding| matches!(binding.value.kind, BindingKind::Import | BindingKind::OpenImport))
+                .filter_map(|binding| {
+                    let Ok(target) = graph.import_targets.target(binding.value.value.location)? else { return None; };
+                    Some(SemanticImport {
+                        name: if binding.value.kind == BindingKind::OpenImport { "*".into() }
+                            else { binding.value.name.value.clone() },
+                        location: binding.value.name.location,
+                        target: graph.module(target).cname.clone(),
+                        namespace: binding.value.kind == BindingKind::Import && binding.value.imported_name.is_none(),
+                    })
+                }).collect();
             SemanticModuleInput {
                 key: module.cname.to_string(),
                 path: resolved.and_then(|module| module.path()).map(Path::to_owned),
@@ -75,10 +96,10 @@ impl ResolvedStaticGraph {
                 source: prepared.map(|prepared| prepared.source_id),
                 result_location: prepared.and_then(|prepared| prepared.program.as_ref())
                     .map(|program| program.value.body.value.result.location),
-                analysis: None, partial: None, interface: None,
+                analysis: None, partial, interface: None,
                 state: WorkspaceModuleState::Unavailable,
-                imports: Vec::new(),
-                diagnostics: diagnostics(*id).cloned().collect(),
+                imports,
+                diagnostics,
             }
         }).collect())
     }
@@ -297,31 +318,67 @@ impl<'a> StaticNames<'a> {
     }
 
     fn module_resolution(&mut self, module: ModuleId) -> Option<ResolvedStaticModule> {
-        let program = self.program(module)?;
+        let prepared = self.graph.module(module).prepared.as_ref()?;
+        let program = prepared.program.as_ref();
         let mut queried = BTreeMap::<String, Vec<StaticImportTarget>>::new();
-        let hir = crate::types::resolve_module_hir_with_lookup(program, |name| {
+        let mut lookup = |name: &str| {
             let targets = queried.entry(name.to_owned()).or_insert_with(|| self.candidates(module, name));
             crate::hir::HirExternalName { declared: !targets.is_empty()
                 || self.graph.host_symbols.get(&module).is_some_and(|symbols| symbols.contains_key(name)),
                 member: targets.iter().any(|target| matches!(self.target_kind(*target),
                     StaticNameKind::Newtype | StaticNameKind::Member)) }
-        });
+        };
+        let mut hir = match program {
+            Some(program) => crate::types::resolve_module_hir_with_lookup(program, &mut lookup),
+            None => crate::hir::HirProgram::resolve_recovered_with_lookup(&prepared.recovered, &mut |name| {
+                let mut external = lookup(name);
+                external.declared |= crate::types::bootstrap_symbol(name).is_some();
+                external
+            }),
+        };
         let mut diagnostics = std::mem::take(&mut self.diagnostics[module.index()]);
-        diagnostics.extend(module_binding_diagnostics(program));
-        diagnostics.extend(hir.unresolved().map(|reference|
+        diagnostics.extend(hir.unresolved().filter(|reference| reference.resolution == crate::hir::HirResolution::Unresolved).map(|reference|
             Diagnostic::error(format!("unknown binding {:?}", reference.name), reference.location)));
         let mut imports = self.scopes[module.index()].direct.clone();
         for (name, targets) in queried {
-            let Some(reference) = hir.references().iter().find(|reference|
+            let Some(_) = hir.references().iter().find(|reference|
                 reference.name == name && reference.resolution == crate::hir::HirResolution::External)
                 else { continue; };
             if targets.len() == 1 {
                 imports.insert(name, targets[0]);
             } else if targets.len() > 1 {
-                let providers = targets.iter().map(|target| self.graph.module(target.module()).cname.to_string())
-                    .collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>().join(", ");
-                diagnostics.push(Diagnostic::error(
-                    format!("open import name {name:?} is ambiguous between {providers}"), reference.location));
+                hir.conflict_external(&name, targets.iter().map(|target| match *target {
+                    StaticImportTarget::Namespace(module) => crate::hir::HirImportOrigin::Namespace(module),
+                    StaticImportTarget::Export { module, index } => crate::hir::HirImportOrigin::Export { module, index },
+                }).collect());
+            }
+        }
+        for (index, conflict) in hir.conflicts().iter().enumerate() {
+            use crate::hir::{HirImportOrigin as Origin, HirResolveConflict as Conflict};
+            match conflict {
+                Conflict::DuplicateDefinition { name, definitions } => {
+                    let first = hir.definition(definitions[0]).unwrap();
+                    let second = hir.definition(definitions[1]).unwrap();
+                    let prefix = if first.top_level { "module binding" } else { "binding" };
+                    let mut diagnostic = Diagnostic::error(
+                        format!("{prefix} {name:?} conflicts with an earlier explicit binding"), second.location)
+                        .with_secondary("first bound here", first.location);
+                    for definition in &definitions[2..] {
+                        diagnostic = diagnostic.with_secondary("also bound here", hir.definition(*definition).unwrap().location);
+                    }
+                    if !diagnostics.contains(&diagnostic) { diagnostics.push(diagnostic); }
+                }
+                Conflict::AmbiguousImport { name, candidates } => {
+                    let providers = candidates.iter().filter_map(|candidate| match candidate {
+                        Origin::Definition { module, .. } | Origin::Export { module, .. }
+                        | Origin::Host { module, .. } | Origin::Namespace(module) => Some(self.graph.module(*module).cname.to_string()),
+                        Origin::Bootstrap(_) => None,
+                    }).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>().join(", ");
+                    let reference = hir.references().iter().find(|reference|
+                        matches!(reference.resolution, crate::hir::HirResolution::Conflicted(id) if id.index() == index)).unwrap();
+                    diagnostics.push(Diagnostic::error(
+                        format!("open import name {name:?} is ambiguous between {providers}"), reference.location));
+                }
             }
         }
         Some(ResolvedStaticModule { hir, imports, diagnostics })
@@ -467,7 +524,7 @@ impl<'a> StaticNames<'a> {
                                 }
                             }
                             crate::hir::HirResolution::External => resolved.imports.get(&name.value).copied(),
-                            crate::hir::HirResolution::Unresolved => None,
+                            crate::hir::HirResolution::Unresolved | crate::hir::HirResolution::Conflicted(_) => None,
                         }),
                     ExprKind::Field { receiver, field } => {
                         if let StaticNameKind::Namespace(provider) =

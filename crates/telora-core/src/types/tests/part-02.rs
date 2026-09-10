@@ -1,4 +1,36 @@
     #[test]
+    fn unresolved_and_conflicted_references_ignore_later_same_named_contracts() {
+        let program = crate::parser::parse("resolve-results.telora", "(absent, ambiguous)").unwrap();
+        let mut hir = HirProgram::resolve(&program, ["ambiguous".into()]);
+        hir.conflict_external("ambiguous", vec![crate::hir::HirImportOrigin::Bootstrap(0), crate::hir::HirImportOrigin::Bootstrap(1)]);
+        let schemes = ["absent", "ambiguous"].into_iter().map(|name| (name.to_owned(), TypeScheme {
+            parameters: Vec::new(), constraints: Vec::new(), body: TypeDescriptor::String,
+        })).collect();
+        let interfaces = BTreeMap::new();
+        let named_types = BTreeMap::new();
+        let trait_ids = BTreeMap::new();
+        let dyn_namespaces = HashSet::new();
+        let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &named_types,
+            InferenceAnnotationInputs::default(), &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None);
+        let environment = HashMap::from([("absent".into(), TypeDescriptor::Int), ("ambiguous".into(), TypeDescriptor::Int)]);
+        for reference in hir.references() {
+            let expression = crate::ast::located(ExprKind::Variable(crate::ast::located(
+                reference.name.clone(), reference.location)), reference.location);
+            assert!(inference.explicit_scheme(&expression).is_none());
+            let inferred = inference.infer_inner(&expression, &environment, None).unwrap();
+            assert!(matches!(inferred, TypeDescriptor::Inference(_)));
+            match reference.resolution {
+                HirResolution::Unresolved => assert!(matches!(inference.variables.view(&inferred), InferenceView::Unknown(_))),
+                HirResolution::Conflicted(_) => assert!(matches!(inference.variables.view(&inferred), InferenceView::Conflicted(_))),
+                _ => panic!("fixture must contain only unresolved/conflicted references"),
+            }
+        }
+        let literal = crate::ast::located(ExprKind::Int(42), program.location);
+        let inferred = inference.infer_inner(&literal, &environment, None).unwrap();
+        assert_eq!(inference.normalize(&inferred), TypeDescriptor::Int);
+    }
+
+    #[test]
     fn resolved_import_aliases_read_one_source_slot_without_name_lookup() {
         let program = crate::parser::parse("import-slots.telora", "(left, right)").unwrap();
         let mut hir = HirProgram::resolve(&program, ["left".into(), "right".into()]);

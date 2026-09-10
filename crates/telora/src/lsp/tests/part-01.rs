@@ -672,6 +672,7 @@ export def output = render(1);"#;
             vec!["alpha", "beta"]
         );
         for item in list.items {
+            assert!(item.detail.is_none(), "export completion must not require type solving");
             let Some(lsp::CompletionTextEdit::Edit(edit)) = item.text_edit else {
                 panic!("expected completion text edit");
             };

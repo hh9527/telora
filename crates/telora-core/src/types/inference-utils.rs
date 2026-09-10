@@ -675,7 +675,7 @@ pub(crate) fn program_references_name(program: &Program, name: &str, member_cand
         .references()
         .iter()
         .any(|reference| {
-            reference.name == name && reference.resolution == HirResolution::Unresolved
+            reference.name == name && reference.resolution.is_unresolved()
         })
 }
 
@@ -738,7 +738,7 @@ pub(crate) fn recovered_reference_locations(
         .references()
         .iter()
         .filter(|reference| {
-            reference.name == name && reference.resolution == HirResolution::Unresolved
+            reference.name == name && reference.resolution.is_unresolved()
         })
         .map(|reference| reference.location)
         .collect()
