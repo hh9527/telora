@@ -12,6 +12,17 @@ pub struct CompiledEntry {
     pub symbol: SymbolId,
     pub result_type: TypeId,
     pub bytecode: BytecodeFunction,
+    pub native_links: Vec<NativeLink>,
+}
+
+#[derive(Debug)]
+pub struct NativeLink {
+    pub constant: usize,
+    pub symbol: SymbolId,
+    pub module: Option<u32>,
+    pub name: String,
+    pub arity: usize,
+    pub location: crate::source::Location,
 }
 
 pub fn compile(mir: &Mir, entry: SymbolId) -> Result<CompiledEntry, Vec<Diagnostic>> {
@@ -79,6 +90,7 @@ pub fn compile(mir: &Mir, entry: SymbolId) -> Result<CompiledEntry, Vec<Diagnost
         symbol: entry,
         result_type,
         bytecode,
+        native_links: emitter.native_links,
     })
 }
 
@@ -87,7 +99,15 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
         .children
         .iter()
         .filter(move |edge| {
+            // A native declaration's Value edge stores its signature, not an
+            // initializer. Its executable value is supplied by ABI linking.
             !matches!(
+                mir.hir[node.index()].kind,
+                HirKind::Binding {
+                    kind: BindingKind::Native,
+                    ..
+                }
+            ) && !matches!(
                 edge.role,
                 Role::Annotation
                     | Role::TypeParameter
@@ -157,6 +177,7 @@ struct Emitter<'a> {
     function: Function,
     locals: Vec<(SymbolId, R)>,
     next_label: u32,
+    native_links: Vec<NativeLink>,
 }
 
 impl<'a> Emitter<'a> {
@@ -174,6 +195,7 @@ impl<'a> Emitter<'a> {
             },
             locals: vec![],
             next_label: 0,
+            native_links: vec![],
         }
     }
     fn error(&self, node: HirId, message: impl Into<String>) -> Diagnostic {
@@ -248,6 +270,33 @@ impl<'a> Emitter<'a> {
             }
         }
         let result = match &self.mir.hir[node.index()].kind {
+            HirKind::Binding {
+                kind: BindingKind::Native,
+                ..
+            } => {
+                let symbol = self.mir.hir_symbols[node.index()].expect("native declaration");
+                let declaration = &self.mir.symbols[symbol.index()];
+                let ty = &self.mir.types[self.ty(node)?.index()];
+                if ty.constructor != TypeConstructor::Function {
+                    return Err(
+                        self.error(node, "native value linking requires a function signature")
+                    );
+                }
+                let link = NativeLink {
+                    constant: self.function.constants.len(),
+                    symbol,
+                    module: declaration
+                        .module
+                        .and_then(|m| self.mir.modules[m.index()].native.as_ref().map(|n| n.id)),
+                    name: declaration.name.clone(),
+                    arity: ty.arguments.len() - 1,
+                    location: self.mir.hir[node.index()].location,
+                };
+                self.native_links.push(link);
+                let value = self.constant(node, Constant::Placeholder);
+                self.locals.push((symbol, value));
+                value
+            }
             HirKind::Int(value) => self.constant(node, Constant::Int(*value)),
             HirKind::Float(value) => self.constant(node, Constant::Float(*value)),
             HirKind::String(value) => self.constant(node, Constant::String(value.clone().into())),
@@ -388,6 +437,12 @@ impl<'a> Emitter<'a> {
                     .collect::<Vec<_>>();
                 nested.function.capture_count = captures.len() as u32;
                 let result = nested.expression(self.child(node, Role::Body))?;
+                if !nested.native_links.is_empty() {
+                    return Err(self.error(
+                        node,
+                        "local native relocation lowering is not implemented yet",
+                    ));
+                }
                 nested.emit(node, O::Return { src: result });
                 let dst = self.register();
                 self.emit(
@@ -551,5 +606,45 @@ mod tests {
         let mir = graph("export def answer = 1 / 0;", "");
         let artifact = compile(&mir, entry(&mir)).unwrap();
         assert!(crate::Vm::new().execute(&artifact.bytecode, 10000).is_err());
+    }
+
+    #[test]
+    fn links_native_higher_order_calls_after_codegen_without_recompiling() {
+        let mir = graph(
+            r#"
+            import "std/array" { map as transform, fold };
+            export def answer = fold(transform([1, 2, 3], fn(x) { x * 7 }), 0, fn(a, b) { a + b });
+        "#,
+            "",
+        );
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        let artifact = compile(&mir, entry(&mir)).unwrap();
+        assert_eq!(artifact.native_links.len(), 2);
+        assert!(artifact.native_links.iter().all(|l| l.module == Some(5)));
+        let bytecode = crate::execution_link::link_builtins(&artifact).unwrap();
+        assert!(bytecode.shares_code_with(&artifact.bytecode));
+        assert_eq!(
+            crate::Vm::new()
+                .execute(&bytecode, 10000)
+                .unwrap()
+                .value()
+                .as_int(),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn native_link_requires_an_admitted_binding_with_the_declared_arity() {
+        let mir = graph(
+            "native map: Fn(Int) -> Int; export def answer = map(1);",
+            "",
+        );
+        let artifact = compile(&mir, entry(&mir)).unwrap();
+        assert!(crate::execution_link::link_builtins(&artifact).is_err());
+        let errors = crate::execution_link::link_with(&artifact, |_| {
+            Some(crate::NativeFunction::new("wrong", 2, |_| unreachable!()))
+        })
+        .unwrap_err();
+        assert!(errors.iter().any(|d| d.message.contains("arity")));
     }
 }

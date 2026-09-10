@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Native execution ABI linking (2026-09-10)
+
+Codegen now emits native function relocations from resolved declaration IDs and
+solved signatures. The execution linker admits callbacks through trusted numeric
+module ABI identities, validates arity, and replaces constant placeholders while
+sharing the assembled instruction code. Imported aliases do not affect native
+identity. Neither codegen nor the linker invokes the old compiler or inference.
+Native declarations' signature syntax is excluded from runtime dependencies.
+
+Five focused codegen tests pass, including imported `array.map`/`fold` with
+Telora closure callbacks returning 42, unchanged bytecode instructions across
+linking, rejected unadmitted native declarations, and rejected ABI arity mismatch.
+The `mir-dump --run` driver uses this linker after code generation.
+
+This is not completed CLI assembly. Ordinary `eval` requires a `std/value.Value`
+export and JSON output; routing raw primitive results into that command would
+change its contract. Solved type skeleton import and nominal/enum construction
+must therefore precede that switch. Recursive initialization, type witnesses,
+trait dictionaries, property/data execution and remaining expression lowering
+also remain open. No new performance claim is made at this milestone.
+
 ### First vertical codegen path (2026-09-10)
 
 The new `codegen` module consumes `&Mir` plus an entry SymbolId and emits retained

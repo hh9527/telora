@@ -86,7 +86,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let artifact = telora_core::codegen::compile(&mir, symbol)
             .map_err(|diagnostics| format!("codegen: {diagnostics:?}"))?;
         let mut vm = telora_core::Vm::new();
-        let result = vm.execute(&artifact.bytecode, 1_000_000)?;
+        let bytecode = telora_core::execution_link::link_builtins(&artifact)
+            .map_err(|diagnostics| format!("link: {diagnostics:?}"))?;
+        let result = vm.execute(&bytecode, 1_000_000)?;
         println!("{}", result.value());
     } else {
         print!("{}", mir.dump());
