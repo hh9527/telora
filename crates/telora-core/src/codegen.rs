@@ -1107,26 +1107,37 @@ impl<'a> Emitter<'a> {
                 let ty = &self.mir.types[self.ty(node)?.index()];
                 if !matches!(
                     ty.constructor,
-                    TypeConstructor::Tuple | TypeConstructor::Array
+                    TypeConstructor::Tuple | TypeConstructor::Array | TypeConstructor::Never
                 ) {
                     return Err(
                         self.error(node, "type-valued syntax requires the type skeleton linker")
                     );
                 }
-                let items = self
-                    .children(node, Role::Item)
-                    .into_iter()
-                    .map(|n| self.expression(n))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let tuple = matches!(self.mir.hir[node.index()].kind, HirKind::Tuple);
+                let mut items = vec![];
+                let mut parts = vec![];
+                for item in self.children(node, Role::Item) {
+                    if matches!(self.mir.hir[item.index()].kind, HirKind::Spread) {
+                        if !items.is_empty() {
+                            let dst = self.register();
+                            let values = std::mem::take(&mut items);
+                            self.emit(node, if tuple { O::MakeTuple { dst, items: values } } else { O::MakeArray { dst, items: values } });
+                            parts.push(dst);
+                        }
+                        parts.push(self.expression(self.child(item, Role::Operand))?);
+                    } else { items.push(self.expression(item)?); }
+                }
                 let dst = self.register();
-                self.emit(
-                    node,
-                    if matches!(self.mir.hir[node.index()].kind, HirKind::Tuple) {
-                        O::MakeTuple { dst, items }
-                    } else {
-                        O::MakeArray { dst, items }
-                    },
-                );
+                if parts.is_empty() {
+                    self.emit(node, if tuple { O::MakeTuple { dst, items } } else { O::MakeArray { dst, items } });
+                } else {
+                    if !items.is_empty() {
+                        let part = self.register();
+                        self.emit(node, if tuple { O::MakeTuple { dst: part, items } } else { O::MakeArray { dst: part, items } });
+                        parts.push(part);
+                    }
+                    self.emit(node, if tuple { O::ConcatTuples { dst, tuples: parts } } else { O::ConcatArrays { dst, arrays: parts } });
+                }
                 dst
             }
             HirKind::Unary(operator) => {
@@ -1554,6 +1565,33 @@ pub(crate) mod tests {
             assert_eq!(result.value().as_int(), Some(42), "{source}");
         }
     }
+    #[test]
+    fn sequence_spreads_close_element_slots_and_preserve_evaluation_order() {
+        for source in [
+            "def empty = []; def a = [...empty, 42]; def b = [42, ...empty]; export def answer = if a == b { a[0] } else { 0 };",
+            "def value = [...[[]], [42]]; export def answer = value[1][0];",
+            "def value = (1, \"ok\"); export def answer = if (...(), ...value, 42, ...()) == (1, \"ok\", 42) { 42 } else { 0 };",
+            "type Item = struct {value: Int}; def values: (Int, Item, String) = (...(1, {value: 42}), \"ok\"); export def answer = values.1.value;",
+            "type Item = struct {value: Int}; def values: (Item, Int) = (...(...({value: 42},), 3)); export def answer = values.0.value;",
+            "def append: for(T) Fn((T, String)) -> (T, String, Int) = fn(value) { (...value, 42) }; export def answer = append((1, \"ok\")).2;",
+            "def copy: for(T) Fn(Array(T)) -> Array(T) = fn(value) { [...value] }; export def answer = copy([42])[0];",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            let artifact = compile(sealed, entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{source}");
+        }
+        for source in [
+            "def stop: Fn() -> Array(Int) = fn() { fail!(\"first operand\") }; export def answer = [...stop(), fail!(\"later operand\")];",
+            "def stop: Fn() -> (Int,) = fn() { fail!(\"first operand\") }; export def answer = (...stop(), fail!(\"later operand\"));",
+            "export def answer = (...fail!(\"first operand\"), 42);",
+        ] {
+            let mir = graph(source, "");
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            assert!(execute(artifact).err().expect("eager failure").to_string().contains("first operand"));
+        }
+    }
+
     #[test]
     fn record_spreads_keep_winning_types_and_evaluate_overwritten_expressions() {
         for source in [

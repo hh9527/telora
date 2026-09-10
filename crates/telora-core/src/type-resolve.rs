@@ -21,6 +21,8 @@ mod layouts;
 mod members;
 #[path = "type-resolve/record-operations.rs"]
 mod record_operations;
+#[path = "type-resolve/sequence-spreads.rs"]
+mod sequence_spreads;
 #[path = "type-resolve/properties.rs"]
 mod properties;
 #[cfg(test)]
@@ -28,6 +30,7 @@ mod properties;
 mod tests;
 
 enum Task {
+    TupleSpread { node: HirId },
     RecordSpread { node: HirId },
     StructUpdate { node: HirId, left: TypeSlotId, right: TypeSlotId },
     FieldProjection { node: HirId, receiver: TypeSlotId },
@@ -110,7 +113,7 @@ struct Solver<'a> {
     nominal_owner: Vec<Option<SymbolId>>,
     return_slots: Vec<Option<TypeSlotId>>,
     pending_blocks: Vec<bool>,
-    record_spreads: Vec<bool>,
+    value_spreads: Vec<bool>,
     administrative: Vec<bool>,
     decorator_contexts: Vec<Option<TypeSlotId>>,
     property_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
@@ -204,18 +207,18 @@ pub fn resolve(mir: &mut Mir) {
 impl Solver<'_> {
     fn new(mir: &mut Mir) -> Solver<'_> {
         mir.value_adjustments.resize(mir.hir.len(), None);
-        let mut record_spreads = vec![false; mir.hir.len()];
+        let mut value_spreads = vec![false; mir.hir.len()];
         for field in &mir.hir {
-            if matches!(field.kind, HirKind::DictField) {
+            if matches!(field.kind, HirKind::DictField | HirKind::Array | HirKind::Tuple) {
                 for edge in &field.children {
-                    if edge.role == Role::Value && matches!(mir.hir[edge.node.index()].kind, HirKind::Spread) {
-                        record_spreads[edge.node.index()] = true;
+                    if matches!(edge.role, Role::Value | Role::Item) && matches!(mir.hir[edge.node.index()].kind, HirKind::Spread) {
+                        value_spreads[edge.node.index()] = true;
                     }
                 }
             }
         }
         Solver {
-            record_spreads,
+            value_spreads,
             nominal_index: vec![None; mir.symbols.len()],
             nominal_owner: vec![None; mir.hir.len()],
             return_slots: vec![None; mir.hir.len()],
@@ -516,6 +519,10 @@ impl Solver<'_> {
                 }
             }
             HirKind::Tuple => {
+                if self.has_sequence_spread(node) {
+                    self.tasks.push(Task::TupleSpread { node });
+                    return;
+                }
                 let items = self
                     .children(node, Role::Item)
                     .into_iter()
@@ -524,6 +531,10 @@ impl Solver<'_> {
                 self.tasks.push(Task::Tuple { node, items });
             }
             HirKind::Array => {
+                if self.has_sequence_spread(node) {
+                    self.array_spread(node);
+                    return;
+                }
                 let items = self
                     .children(node, Role::Item)
                     .into_iter()
@@ -534,7 +545,7 @@ impl Solver<'_> {
             HirKind::FieldProjection => {
                 self.tasks.push(Task::FieldProjection { node, receiver: self.child(node, Role::Receiver).unwrap().ty() });
             }
-            HirKind::Spread if self.record_spreads[node.index()] => {
+            HirKind::Spread if self.value_spreads[node.index()] => {
                 self.same(node, self.child(node, Role::Operand).unwrap().ty());
             }
             HirKind::Dict => {

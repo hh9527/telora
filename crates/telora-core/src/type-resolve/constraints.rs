@@ -23,6 +23,7 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::TupleSpread { node } => self.tuple_spread(node),
             Task::RecordSpread { node } => self.record_spread(node),
             Task::StructUpdate { node, left, right } => self.struct_update(node, left, right),
             Task::FieldProjection { node, receiver } => self.field_projection(node, receiver),

@@ -5,6 +5,31 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Sequence spreads consume statically closed element slots (2026-09-11)
+
+Array spreads constrain every contribution to the common element slot, including
+shared empty arrays and nested contextual literals. Tuple spreads flatten the
+operand's solved element slots and reuse ordinary tuple classification, retaining
+heterogeneous elements and nominal target contexts without mixing type and value
+worlds. Wrong containers, nominal tuple operands and incompatible shared element
+evidence produce static conflicts.
+
+Codegen mechanically emits existing MakeArray/MakeTuple and ConcatArrays/
+ConcatTuples instructions, preserving authored evaluation order. It neither
+infers element types nor introduces a VM change or optimization pass. MIR must
+carry every solved type argument and implementation choice needed downstream;
+missing information is a static-stage gap, not a codegen recovery opportunity.
+
+Validation: 60 codegen and 41 type-resolve tests pass. The full language runner
+reports test/array-spread-inference, test/tuple-spread and test/struct-update as
+passing. The overall suite still fails: tuple-spread query, spread diagnostic
+contracts and provenance cases remain open, alongside other migration gaps.
+Focused tests cover shared/nested empty arrays, heterogeneous/empty tuples,
+generic copies, nominal element contexts, invalid operands and failure order.
+Logs: /tmp/mir-sequence-spread-codegen.log,
+/tmp/mir-sequence-spread-types.log and /tmp/mir-sequence-spread-language.log.
+No performance measurement was made.
+
 ### Record spreads preserve winners and declared generic identities (2026-09-11)
 
 Record/StructUpdate spread constraints now collect field contributions in source

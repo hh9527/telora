@@ -2,6 +2,22 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn sequence_spreads_reject_wrong_containers_and_conflicting_element_evidence() {
+    for source in [
+        "export def bad = [...(1, 2)];",
+        "export def bad = (...[1, 2], 3);",
+        "type Wrapped = struct((Int, String)); export def bad = (...Wrapped((1, \"x\")), 3);",
+        "export def bad = (...(1,), Int);",
+        "def empty = []; def numbers = [...empty, 1]; export def bad = [...empty, \"x\"];",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err(), "{source}");
+        assert!(!mir.type_conflicts.is_empty(), "{source}\n{}", mir.dump());
+    }
+}
+
+#[test]
 fn record_spreads_reject_incompatible_modes_and_duplicate_explicit_fields() {
     for (source, message) in [
         ("type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = base <~ {x: 2, ...base, x: 3};", "duplicate update field"),
