@@ -300,7 +300,6 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::NativeType(_)
                 | DecodedValue::SolvedType(_)
                 | DecodedValue::DeclaredType(_)
-                | DecodedValue::SymbolicType(_)
                 | DecodedValue::Func(_) => continue,
             };
             if !visited.insert(handle) {
@@ -326,7 +325,6 @@ impl<'a> HeapView<'a> {
                 Object::Bytes(_)
                 | Object::Opaque(_)
                 | Object::DeclaredType { .. }
-                | Object::SymbolicType { .. }
                 | Object::Closure { .. }
                 | Object::ByteCodeProto { .. }
                 | Object::OpenFunc

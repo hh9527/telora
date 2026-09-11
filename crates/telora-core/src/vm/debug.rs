@@ -77,14 +77,6 @@ impl<'a> DebugValueFormatter<'a> {
                 }
                 _ => return Err(crate::heap::HeapError::new("invalid DeclaredType handle")),
             },
-            DecodedValue::SymbolicType(handle) => match self.view.object(handle)? {
-                Object::SymbolicType { name, .. } => {
-                    self.push("<symbolic-type ");
-                    self.push(name);
-                    self.push(">");
-                }
-                _ => return Err(crate::heap::HeapError::new("invalid SymbolicType handle")),
-            },
             DecodedValue::Array(handle) => self.sequence(handle, false, depth, "[", "]")?,
             DecodedValue::Tuple(handle) => self.sequence(handle, true, depth, "(", ")")?,
             DecodedValue::Tagged(handle) => {

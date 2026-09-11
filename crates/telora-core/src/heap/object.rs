@@ -17,13 +17,6 @@ pub(crate) enum Object {
         sealed: bool,
         application_arguments: Option<Box<[Val]>>,
     },
-    SymbolicType {
-        id: crate::value::DeclaredTypeId,
-        name: Arc<str>,
-        body: Val,
-        sealed: bool,
-        application_arguments: Option<Box<[Val]>>,
-    },
     Opaque(crate::value::OpaqueValue),
     Array(Box<[Val]>),
     Tuple(Box<[Val]>),

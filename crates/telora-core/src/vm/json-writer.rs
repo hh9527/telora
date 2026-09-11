@@ -50,7 +50,7 @@ impl<'a> JsonWriter<'a> {
             DecodedValue::Bytes(_) => return Err("JSON cannot encode Bytes".into()),
             DecodedValue::Opaque(_) => return Err("JSON cannot encode Opaque values".into()),
             DecodedValue::NativeType(_) => return Err("JSON cannot encode Type values".into()),
-            DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) => {
+            DecodedValue::DeclaredType(_) => {
                 return Err("JSON cannot encode Type values".into());
             }
             DecodedValue::Tuple(_) => {

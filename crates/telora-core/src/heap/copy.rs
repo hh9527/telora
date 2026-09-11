@@ -84,27 +84,6 @@ impl PendingCopy {
             DecodedValue::DeclaredType(handle) => {
                 DecodedValue::DeclaredType(self.copy_object(target, source, handle)?)
             }
-            DecodedValue::SymbolicType(handle) => {
-                let copied = self.copy_object(target, source, handle)?;
-                if copied == handle {
-                    return Ok(value.with_value(DecodedValue::SymbolicType(copied)));
-                }
-                let Object::SymbolicType { id, .. } = source.object(handle)? else {
-                    return Err(HeapError(
-                        "SymbolicType handle refers to another object kind",
-                    ));
-                };
-                let id = id.clone();
-                let remains_symbolic = id
-                    .arguments()
-                    .iter()
-                    .any(crate::types::type_identity_is_symbolic);
-                if remains_symbolic {
-                    DecodedValue::SymbolicType(copied)
-                } else {
-                    DecodedValue::DeclaredType(copied)
-                }
-            }
             DecodedValue::Array(handle) => {
                 DecodedValue::Array(self.copy_object(target, source, handle)?)
             }
@@ -245,51 +224,6 @@ impl PendingCopy {
                     body: self.copy_value(target, source, *body)?,
                     sealed: true,
                     application_arguments,
-                }
-            }
-            Object::SymbolicType {
-                id,
-                name,
-                body,
-                sealed,
-                application_arguments,
-            } => {
-                if !sealed {
-                    return Err(HeapError("cannot copy an unsealed symbolic type ref"));
-                }
-                let application_arguments = if let Some(arguments) = application_arguments {
-                    Some(
-                        arguments
-                            .iter()
-                            .map(|argument| self.copy_value(target, source, *argument))
-                            .collect::<Result<Box<[_]>, _>>()?,
-                    )
-                } else {
-                    None
-                };
-                let id = id.clone();
-                let body = self.copy_value(target, source, *body)?;
-                if id
-                    .arguments()
-                    .iter()
-                    .any(crate::types::type_identity_is_symbolic)
-                {
-                    Object::SymbolicType {
-                        id,
-                        name: Arc::clone(name),
-                        body,
-                        sealed: true,
-                        application_arguments,
-                    }
-                } else {
-                    Object::DeclaredType {
-                        type_id: target.canonical_declared_type_id(&id)?,
-                        id,
-                        name: Arc::clone(name),
-                        body,
-                        sealed: true,
-                        application_arguments,
-                    }
                 }
             }
             Object::Array(values) => Object::Array(copy_values(self, values)?),
@@ -497,7 +431,6 @@ fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
         DecodedValue::Bytes(handle)
         | DecodedValue::Opaque(handle)
         | DecodedValue::DeclaredType(handle)
-        | DecodedValue::SymbolicType(handle)
         | DecodedValue::Array(handle)
         | DecodedValue::Tuple(handle)
         | DecodedValue::Tagged(handle)
@@ -532,7 +465,6 @@ fn object_contains_disallowed(
             DecodedValue::Bytes(handle)
             | DecodedValue::Opaque(handle)
             | DecodedValue::DeclaredType(handle)
-            | DecodedValue::SymbolicType(handle)
             | DecodedValue::Array(handle)
             | DecodedValue::Tuple(handle)
             | DecodedValue::Tagged(handle)
@@ -550,7 +482,6 @@ fn object_contains_disallowed(
     match object {
         Object::Reserved | Object::OpenFunc => true,
         Object::DeclaredType { sealed: false, .. } => true,
-        Object::SymbolicType { sealed: false, .. } => true,
         Object::Array(values) | Object::Tuple(values) => {
             values.iter().any(|value| value_foreign(*value))
         }
@@ -563,7 +494,6 @@ fn object_contains_disallowed(
             descriptor, value, ..
         } => value_foreign(*descriptor) || value_foreign(*value),
         Object::DeclaredType { body, .. } => value_foreign(*body),
-        Object::SymbolicType { body, .. } => value_foreign(*body),
         Object::ByteCodeProto {
             values,
             text,

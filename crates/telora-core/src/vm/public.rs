@@ -355,7 +355,6 @@ impl<'a> ValueRef<'a> {
             DecodedValue::Bytes(handle)
             | DecodedValue::Opaque(handle)
             | DecodedValue::DeclaredType(handle)
-            | DecodedValue::SymbolicType(handle)
             | DecodedValue::Array(handle)
             | DecodedValue::Tagged(handle)
             | DecodedValue::Tuple(handle)
@@ -376,7 +375,7 @@ impl<'a> ValueRef<'a> {
             DecodedValue::InlineString(_) | DecodedValue::ShortString(_) => ValueKind::String,
             DecodedValue::Bytes(_) => ValueKind::Bytes,
             DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => ValueKind::Type,
-            DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) => ValueKind::Type,
+            DecodedValue::DeclaredType(_) => ValueKind::Type,
             DecodedValue::Opaque(_) => ValueKind::Opaque,
             DecodedValue::Dict(_) => ValueKind::Dict,
             DecodedValue::Array(_) => ValueKind::Array,
@@ -452,12 +451,11 @@ impl<'a> ValueRef<'a> {
         self,
     ) -> Option<(&'a crate::value::DeclaredTypeId, &'a str, ValueRef<'a>)> {
         let handle = match self.value.value() {
-            DecodedValue::DeclaredType(handle) | DecodedValue::SymbolicType(handle) => handle,
+            DecodedValue::DeclaredType(handle) => handle,
             _ => return None,
         };
         let (id, name, body) = match self.view.object(handle).ok()? {
             Object::DeclaredType { id, name, body, .. } => (id, name, *body),
-            Object::SymbolicType { id, name, body, .. } => (id, name, *body),
             _ => return None,
         };
         Some((

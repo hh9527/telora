@@ -92,8 +92,7 @@ fn wrap_semantic_value_with_origin(
             RawNode::Temporal(tag, payload.without_type_id())
         }
         DecodedValue::NativeType(_)
-        | DecodedValue::DeclaredType(_)
-        | DecodedValue::SymbolicType(_) => {
+        | DecodedValue::DeclaredType(_) => {
             return Err(HeapError("semantic Value cannot encode Type"));
         }
         _ => {
@@ -260,8 +259,7 @@ pub(crate) fn semantic_value_wrapper_bytes(
                 Ok(tagged_bytes)
             }
             DecodedValue::NativeType(_)
-            | DecodedValue::DeclaredType(_)
-            | DecodedValue::SymbolicType(_) => Err(HeapError("semantic Value cannot encode Type")),
+            | DecodedValue::DeclaredType(_) => Err(HeapError("semantic Value cannot encode Type")),
             _ => Err(HeapError::owned(format!(
                 "raw data graph contains unsupported {:?}",
                 raw.value()

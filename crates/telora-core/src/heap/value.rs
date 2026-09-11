@@ -87,7 +87,6 @@ enum HeapKind {
     Dict,
     Func,
     Dyn,
-    SymbolicType = 11,
 }
 
 impl HeapKind {
@@ -102,7 +101,6 @@ impl HeapKind {
             7 => Self::Dict,
             8 => Self::Func,
             9 => Self::Dyn,
-            11 => Self::SymbolicType,
             _ => Self::None,
         }
     }
@@ -115,7 +113,6 @@ impl HeapKind {
             | Self::Dict
             | Self::Func
             | Self::DeclaredType
-            | Self::SymbolicType
             | Self::Dyn => TRAIT_TRACE,
             Self::None | Self::Bytes | Self::Opaque => 0,
         }
@@ -380,7 +377,6 @@ pub(crate) enum DecodedValue {
     Bytes(Handle),
     NativeType(crate::value::NativeTypeId),
     DeclaredType(Handle),
-    SymbolicType(Handle),
     Opaque(Handle),
     Array(Handle),
     Tuple(Handle),
@@ -423,7 +419,6 @@ impl DecodedValue {
                 u64::from(id.module.0) | (u64::from(id.local) << 32),
             ),
             Self::DeclaredType(handle) => heap_parts(handle, HeapKind::DeclaredType),
-            Self::SymbolicType(handle) => heap_parts(handle, HeapKind::SymbolicType),
             Self::Opaque(handle) => heap_parts(handle, HeapKind::Opaque),
             Self::Array(handle) => heap_parts(handle, HeapKind::Array),
             Self::Tuple(handle) => heap_parts(handle, HeapKind::Tuple),
@@ -581,7 +576,6 @@ impl Val {
                 local: (self.raw >> 32) as u32,
             }),
             (FlatKind::Heap, HeapKind::DeclaredType) => DecodedValue::DeclaredType(handle()),
-            (FlatKind::Heap, HeapKind::SymbolicType) => DecodedValue::SymbolicType(handle()),
             (FlatKind::Heap, HeapKind::Opaque) => DecodedValue::Opaque(handle()),
             (FlatKind::Heap, HeapKind::Array) => DecodedValue::Array(handle()),
             (FlatKind::Heap, HeapKind::Tuple) => DecodedValue::Tuple(handle()),

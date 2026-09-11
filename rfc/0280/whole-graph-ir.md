@@ -5,6 +5,25 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove the obsolete runtime SymbolicType representation (2026-09-11)
+
+Removed SymbolicType from heap tags, decoded values, heap objects, copying,
+tracing/classification, public value views and debug/JSON handling. There was no
+remaining construction entry outside its self-copy path. That path still walked
+descriptor argument trees and conditionally converted symbolic metadata into
+DeclaredType during world publication; it is deleted along with the now-unused
+types/relations.rs symbolic-tree predicate. Existing solved metadata retains its
+TypeId path. No replacement runtime inference or compatibility representation is
+introduced; other heap tag numbers are unchanged.
+
+Validation: all 396 workspace library tests, CLI build and all-target compilation
+pass. Full acceptance is 273/400 with no regressions against the preceding full
+270/400 snapshot. The three newly passing explicit-type-application cases come
+from the preceding diagnostic fix, not this representation deletion. Expectations
+remain unchanged. Logs: /tmp/mir-remove-symbolic-*.log. No performance claim.
+DeclaredType/descriptor runtime remnants, generic function values, 127 acceptance
+failures and final performance assessment remain open.
+
 ### Collect every unresolved generic argument before rejecting an instance (2026-09-11)
 
 Instance closure no longer returns at its first Unknown/Conflicted argument.
