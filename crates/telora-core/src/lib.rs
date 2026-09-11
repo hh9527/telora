@@ -11,6 +11,8 @@ pub mod bytecode;
 pub mod codegen;
 pub mod type_image;
 pub mod candidate_layout;
+#[cfg(feature = "experimental-layout-runtime")]
+pub mod layout_runtime;
 pub mod test_plan;
 mod test_protocol;
 pub use test_protocol::{TestContext, TestHost, TestLimits, TestSource};

@@ -345,3 +345,25 @@ DictTable 对象头占 16 字节：len/capacity/buckets/reserved 各 u32。entri
 | world-model | 3742 | 1747 | 1743 | 251 | 1 |
 
 这些是完整图的分类与布局覆盖数据，不是运行时性能数据。具体布局缺失现已属于导出错误；新语言能力或 native ABI 需要显式增加规则。#178 的布局闭合范围完成，运行时接入仍需独立方案。
+
+## 布局闭合后的隔离存储实验
+
+新增 `experimental-layout-runtime` Cargo feature，默认关闭。启用后导出独立的 `layout_runtime` 模块，只消费 SealedMir 和候选布局；不依赖旧 heap/Val/VM，不进入任何现有执行入口。
+
+实验实现的范围：
+
+- 每个值按 loc[3]+TypeId+data 编码为 word 描述；arena 身份是访问上下文，不进入 ABI 字节。跨 arena 引用显式拒绝，尚无 world 发布或复制机制。
+- Tuple/Record 共用固定字段的构造、读取和更新实现，仍使用不同分类表。空 Tuple/Unit 仅有 16 字节头部，无堆对象。
+- Array 按完整元素步长连续存储，slice 只改变 HeapId/start/end 描述；索引返回借用的 ValueRef。更新生成新容器，保留旧容器和元素来源。
+- Dict 按头部、entries、buckets 布局构造；支持内容查找、碰撞、覆盖、删除和稳定插入顺序。实验采用 FNV-1a 的 u32 hash，桶内仍以 String 内容确认相等。
+- String 作为字段和 Dict 键的配套类型支持 inline/heaped；普通标量保存原始 u64 位模式。表采用扁平 word/byte arena，HeapId 是表内索引。
+- Owned Value 只拥有值描述，克隆不递归复制引用对象；读取字段、数组元素和字典结果借用 arena 数据。持久更新目前重建容器的浅层描述，不是运行时性能优化实现。
+
+验证仅为新模块单元测试：
+
+```sh
+cargo test -p telora-core --features experimental-layout-runtime layout_runtime
+cargo check -p telora-core --no-default-features
+```
+
+覆盖 Tuple/Record 字段偏移及表内同号 ID、空 Tuple、来源保留、嵌套 slice 与越界、持久更新、Dict 碰撞与重复键、长字符串和嵌套数组的浅层共享、跨 arena 拒绝。没有接入 codegen、初始化、CLI 或现有 VM，也未进行性能评价。本实验不实现语言级 @check、arena 发布/回收或全部候选类型。
