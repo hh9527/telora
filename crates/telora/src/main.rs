@@ -551,7 +551,7 @@ enum Command {
     Ees(EesArgs),
     /// Resolve package sources and rewrite telora-lock.json.
     Lock,
-    /// Check a module with best-effort evaluation and emit JSONL diagnostics.
+    /// Check modules through type closure or initialization and emit JSONL diagnostics.
     Check(CheckArgs),
     /// Initialize one test module and execute its directly exported Test values.
     Test(TestArgs),
@@ -601,15 +601,21 @@ struct ApplicationSelector {
 
 #[derive(Args)]
 #[command(
-    after_help = "Examples:\n  telora check @src/lib\n  telora -C examples/app check @src/main\n  telora check @test/compiler"
+    after_help = "Examples:\n  telora check @src/lib\n  telora -C examples/app check --lib\n  telora check --tests --only-types\n  telora check --lib --tests"
 )]
 struct CheckArgs {
     /// Solve types without executing tool, property, or runtime code.
     #[arg(long = "only-types")]
     types_only: bool,
+    /// Check all declared modules in the current crate, including private modules.
+    #[arg(long)]
+    lib: bool,
+    /// Check all modules recursively below the current crate's tests/ directory.
+    #[arg(long)]
+    tests: bool,
     /// Canonical module selector, such as @src/lib, @test/compiler, or std/string.
-    #[arg(value_name = "MODULE_ID")]
-    module_id: String,
+    #[arg(value_name = "MODULE_ID", required_unless_present_any = ["lib", "tests"], conflicts_with_all = ["lib", "tests"])]
+    module_id: Option<String>,
 }
 
 #[derive(Args)]
@@ -902,7 +908,7 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
 }
 
 fn check_command(context: PathBuf, arguments: CheckArgs, schema: &str) -> Result<i32, String> {
-    static_cli::check(context, &arguments.module_id, schema, arguments.types_only)
+    static_cli::check(context, arguments, schema)
 }
 
 fn kind_name(kind: ShowKind) -> &'static str {

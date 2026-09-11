@@ -36,13 +36,24 @@ pub(crate) fn diagnostic(mir: &Mir, schema: &str, root: &str, d: &Diagnostic) ->
 
 pub fn check(
     context: PathBuf,
-    selector: &str,
+    args: crate::CheckArgs,
     schema: &str,
-    types_only: bool,
 ) -> Result<i32, String> {
+    let types_only = args.types_only;
     let started = Instant::now();
-    let mut inventory = Inventory::new(&context, selector.starts_with("std/"))?;
-    let root = inventory.select(selector)?;
+    let mut inventory = Inventory::new(&context, args.module_id.as_deref().is_some_and(|s| s.starts_with("std/")))?;
+    let roots = if let Some(selector) = &args.module_id {
+        vec![inventory.select(selector)?]
+    } else {
+        inventory.check_roots(args.lib, args.tests)?
+    };
+    let root = if args.module_id.is_some() { roots[0].clone() } else {
+        match (args.lib, args.tests) {
+            (true, true) => "--lib --tests",
+            (true, false) => "--lib",
+            _ => "--tests",
+        }.to_owned()
+    };
     for message in inventory.undeclared_warnings()? {
         emit(
             json!({"schema": schema, "module": root, "record": "diagnostic",
@@ -51,7 +62,7 @@ pub fn check(
     }
     let catalog_seconds = started.elapsed().as_secs_f64();
     let started = Instant::now();
-    let mut mir = inventory.solve(&root);
+    let mut mir = inventory.solve_roots(&roots);
     let unproven_bounds = mir
         .bound_requirements
         .iter()
@@ -76,7 +87,7 @@ pub fn check(
     let static_seconds = started.elapsed().as_secs_f64();
     let execution_started = Instant::now();
     let mut execution_diagnostics = vec![];
-    if let Some(sealed) = sealed.filter(|_| !types_only) {
+    if let Some(sealed) = sealed.filter(|_| !types_only && !roots.is_empty()) {
         let artifact = telora_core::codegen::compile_check(sealed);
         let linked = artifact.and_then(|artifact| {
             telora_core::execution_link::link_entry_with_data(artifact, |link| {
@@ -98,7 +109,7 @@ pub fn check(
             Err(diagnostics) => execution_diagnostics = diagnostics,
         }
     }
-    let execution_seconds = if types_only || static_failed {
+    let execution_seconds = if types_only || static_failed || roots.is_empty() {
         0.0
     } else {
         execution_started.elapsed().as_secs_f64()
@@ -114,8 +125,10 @@ pub fn check(
     emit(
         json!({"schema": schema, "module": root, "record": "summary",
         "status": if failed { "error" } else { "ok" }, "types_only": types_only,
+        "roots": roots,
         "dependencies": mir.modules.iter().filter(|m| !matches!(m.state, ModuleState::Unloaded)
-            && inventory.entries.get(&m.name).is_some_and(|entry| entry.origin != "builtin")).count().saturating_sub(1),
+            && inventory.entries.get(&m.name).is_some_and(|entry| entry.origin != "builtin")
+            && roots.binary_search(&m.name).is_err()).count(),
         "unknown_types": mir.type_unknowns.len(), "type_conflicts": mir.type_conflicts.len(),
         "property_records": mir.properties.len(), "bound_requirements": mir.bound_requirements.len(), "unproven_bounds": unproven_bounds,
         "check_seconds": check_seconds, "static_seconds": static_seconds, "execution_seconds": execution_seconds,

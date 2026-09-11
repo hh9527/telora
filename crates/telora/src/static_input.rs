@@ -382,6 +382,28 @@ impl Inventory {
         self.solve_with_entry(root, None)
     }
 
+    /// Batch roots belong to the current crate; dependencies join through imports.
+    pub fn check_roots(&mut self, lib: bool, tests: bool) -> Result<Vec<String>, String> {
+        if tests {
+            let root = self.workspace.as_ref()
+                .and_then(|w| w.crate_root(&self.owner))
+                .ok_or("test selection requires a workspace")?
+                .join("tests");
+            match fs::symlink_metadata(&root) {
+                Ok(_) => self.scan_tests(&root, &root)?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                Err(error) => return Err(format!("{}: {error}", root.display())),
+            }
+        }
+        Ok(self.entries.values()
+            .filter(|entry| entry.origin == "crate" && if entry.test { tests } else { lib })
+            .map(|entry| entry.name.clone()).collect())
+    }
+
+    pub fn solve_roots(&self, roots: &[String]) -> Mir {
+        self.solve_inputs(roots, None, &BTreeMap::new())
+    }
+
     /// Compiler-owned entry sources share the application's graph and passes.
     pub fn solve_run(&mut self, application: &str, export: &str, mode: telora_core::codegen::RunMode) -> Result<Mir, String> {
         let adapter = mode.adapter_source(application, export)?;

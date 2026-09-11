@@ -77,6 +77,8 @@ export def run = entry.run(State.type, config, ees.none, fn(ctx) {
 target/release/telora -C hello lock
 target/release/telora -C hello check @src/app
 target/release/telora -C hello check --only-types @src/app
+target/release/telora -C hello check --lib
+target/release/telora -C hello check --tests --only-types
 target/release/telora -C hello run @src/app:run
 target/release/telora -C hello query exports @src/app
 ```
@@ -92,7 +94,15 @@ target/release/telora -C hello query exports @src/app
 Unknown 或 Conflicted 诊断；查询仍返回已确定的信息，不回退到旧求解器。
 普通 `check` 保持完整检查行为。两种模式的 JSON summary
 均包含 `catalog_seconds` 和 `check_seconds`，分别记录清单准备及所选检查路径耗时。
-普通 `check` 尚未总装到新 MIR，两个路径的耗时之差不能作为工具阶段耗时。
+两种模式共用 MIR 类型闭合阶段；`static_seconds` 包含类型闭合，
+`execution_seconds` 包含 codegen、链接和 VM 初始化（`--only-types` 时为零）。
+
+`check --lib` 一次检查当前 crate 清单中的全部模块（包含私有模块和数据模块）；
+`check --tests` 递归检查当前 crate 的 `tests/` 下全部模块，包含辅助模块，
+但不执行 Test 用例。两个开关可以组合使用，与显式模块选择器互斥。
+所选模块作为多个根进入同一张 MIR 图，共享依赖只求解和初始化一次。
+带 `--only-types` 时停在类型闭合阶段，否则完成整图初始化，不调度 entry。
+空集合检查成功；JSON summary 的 `roots` 列出按名称排序的根模块。
 
 ## 语言模型
 

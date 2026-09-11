@@ -1,4 +1,62 @@
 #[test]
+fn check_batch_roots_share_a_graph_and_obey_phase_boundaries() {
+    let cwd = fixture();
+    fs::create_dir_all(cwd.join("tests/nested")).unwrap();
+    fs::write(cwd.join("src/main.telora"), "export def answer = 42;").unwrap();
+    fs::write(cwd.join("src/_private.telora"), "export def unused = 1 / 0;").unwrap();
+    fs::write(cwd.join("tests/nested/helper.telora"), "export def answer = 42;").unwrap();
+    fs::write(cwd.join("tests/main.telora"), "import \"./nested/helper\" {answer}; export def result = answer;").unwrap();
+    for (flags, count, initializes) in [
+        (vec!["--lib"], 2, false),
+        (vec!["--tests"], 2, true),
+        (vec!["--lib", "--tests"], 4, false),
+    ] {
+        for types_only in [true, false] {
+            let mut command = telora(&cwd);
+            command.arg("check").args(&flags);
+            if types_only { command.arg("--only-types"); }
+            let output = command.output().unwrap();
+            let text = String::from_utf8(output.stdout).unwrap();
+            assert_eq!(output.status.success(), types_only || initializes, "{flags:?}: {text}\n{}", String::from_utf8_lossy(&output.stderr));
+            let records = text.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+            let summaries = records.iter().filter(|r| r["record"] == "summary").collect::<Vec<_>>();
+            assert_eq!(summaries.len(), 1);
+            assert_eq!(summaries[0]["roots"].as_array().unwrap().len(), count);
+            if types_only { assert_eq!(summaries[0]["execution_seconds"], 0.0); }
+        }
+    }
+    fs::write(cwd.join("tests/nested/helper.telora"), "export def answer: Int = \"wrong\";").unwrap();
+    for flags in [vec!["check", "--tests"], vec!["check", "--tests", "--only-types"]] {
+        let output = telora(&cwd).args(flags).output().unwrap();
+        assert!(!output.status.success());
+        let summary: Value = serde_json::from_str(String::from_utf8_lossy(&output.stdout).lines().last().unwrap()).unwrap();
+        assert_eq!(summary["execution_seconds"], 0.0);
+    }
+    for args in [vec!["check"], vec!["check", "--lib", "@src/main"], vec!["check", "--tests", "@test/main"]] {
+        assert_eq!(telora(&cwd).args(args).output().unwrap().status.code(), Some(2));
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
+fn check_empty_batch_is_successful() {
+    let cwd = fixture();
+    fs::remove_dir(cwd.join("tests")).unwrap();
+    for flag in ["--lib", "--tests"] {
+        for types_only in [true, false] {
+            let mut command = telora(&cwd);
+            command.args(["check", flag]);
+            if types_only { command.arg("--only-types"); }
+            let output = command.output().unwrap();
+            assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            let summary: Value = serde_json::from_str(String::from_utf8_lossy(&output.stdout).lines().last().unwrap()).unwrap();
+            assert_eq!(summary["roots"], serde_json::json!([]));
+        }
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_eval_with_executes_actor_service_with_solved_dyn_state() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), r#"
