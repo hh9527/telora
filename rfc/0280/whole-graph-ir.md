@@ -5,6 +5,30 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove heap descriptor materialization and old property publication (2026-09-11)
+
+Deleted the unused descriptor-to-heap metadata builder, origin callback,
+nominal/symbolic reservation/sealing helpers and old bootstrap root. Removed
+the old heap property table, staging/query helpers, PropertyKey and batch
+publication function, including the separate PropertyAttr marker bookkeeping.
+New property state remains in the solved execution graph and VM demand state;
+there is no replacement property copy/publication layer.
+
+Removed the batch-publication implementation test with that obsolete API.
+Ordinary explicit-root relocation/publication and its failure-boundary tests
+remain; tests access the existing internal PersistentValue payload directly
+after removal of the unused wrapper helpers. Descriptor and old metadata
+representations still exist in other heap/value consumers and must be removed.
+
+Validation: all 381 workspace library tests pass (telora-core 329, telora 28),
+CLI build and all-target compilation pass. Six real CLI suites pass, 64 cases:
+properties, property-target, codec-construction-check, checked-recursive-types,
+newtype-metadata and compiler-semantics. Logs:
+/tmp/mir-remove-heap-metadata-builder-*.log. About 650 lines removed; no
+performance benchmark. Generic function values, outstanding diagnostic rules,
+remaining metadata representations, full acceptance and final performance
+assessment are incomplete.
+
 ### Remove old property callbacks and canonical metadata graph (2026-09-11)
 
 Removed std/type-property's obsolete Rust callbacks from the builtin runtime

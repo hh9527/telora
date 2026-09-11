@@ -2,7 +2,7 @@ use crate::bytecode::Constant;
 use crate::source::Loc;
 use crate::{BuiltinAtom, BytecodeFunction, FuncByteCode, NativeFunction};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 

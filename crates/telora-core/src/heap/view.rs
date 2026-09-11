@@ -12,29 +12,6 @@ type BytecodeLinks<'a> = (
 );
 
 impl<'a> HeapView<'a> {
-    pub(crate) fn property(&self, key: PropertyKey) -> Option<Val> {
-        self.current
-            .properties
-            .get(&key)
-            .or_else(|| {
-                self.background?
-                    .properties
-                    .get(&key)
-            })
-            .copied()
-    }
-
-    pub(crate) fn type_property(
-        &self,
-        target: crate::TypeId,
-        property: crate::TypeId,
-    ) -> Option<Val> {
-        self.property(PropertyKey::Ty {
-            ty: target,
-            property_ty: property,
-        })
-    }
-
     pub(crate) fn resolve_func(&self, value: Val) -> Result<Option<Handle>, HeapError> {
         Ok(match value.value() {
             DecodedValue::Func(handle) => Some(handle),
@@ -612,19 +589,5 @@ impl<'a> HeapView<'a> {
             }
         }
         Ok(true)
-    }
-}
-
-impl Heap {
-    pub(crate) fn persistent_type_property(
-        &self,
-        target: crate::TypeId,
-        property: crate::TypeId,
-    ) -> Option<PersistentValue> {
-        (self.storage == Storage::Main)
-            .then(|| self.properties.get(&PropertyKey::Ty { ty: target, property_ty: property }))
-            .flatten()
-            .copied()
-            .map(PersistentValue)
     }
 }

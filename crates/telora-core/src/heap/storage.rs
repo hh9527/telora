@@ -13,10 +13,7 @@ impl Heap {
             native_types: HashMap::new(),
             shapes: Vec::new(),
             shape_slots: HashMap::new(),
-            bootstrap_root: None,
             declared_types: HashMap::new(),
-            properties: BTreeMap::new(),
-            property_attr_type: None,
             memoized_interpreters: HashMap::new(),
         }
     }
@@ -54,15 +51,6 @@ impl Heap {
         self.objects.len()
     }
 
-
-    pub(crate) fn bootstrap_root(&self) -> Option<PersistentValue> {
-        self.bootstrap_root
-    }
-
-    pub(crate) fn set_bootstrap_root(&mut self, root: PersistentValue) {
-        debug_assert!(self.bootstrap_root.is_none());
-        self.bootstrap_root = Some(root);
-    }
 
     pub(crate) fn module(
         &mut self,
@@ -124,17 +112,6 @@ impl Heap {
         })
     }
 
-    pub(crate) fn canonical_descriptor_type_id(
-        &self,
-        descriptor: &crate::types::TypeDescriptor,
-    ) -> Result<crate::TypeId, HeapError> {
-        self.types
-            .lock()
-            .map_err(|_| HeapError("type store poisoned"))?
-            .intern_descriptor(descriptor)
-            .map_err(HeapError::owned)
-    }
-
     pub(crate) fn canonical_type_name(
         &self,
         type_id: crate::TypeId,
@@ -144,70 +121,6 @@ impl Heap {
             .lock()
             .map_err(|_| HeapError("type store poisoned"))?;
         Ok(types.get(type_id).map(|data| data.name.clone()))
-    }
-
-    pub(crate) fn property_attr_value(&mut self, type_id: crate::TypeId, bits: u32) -> Val {
-        let field = self.intern("bits");
-        let shape = self.intern_shape(vec![field]);
-        Val::unknown(DecodedValue::Dict(self.allocate(Object::Dict {
-            shape,
-            values: Box::new([self.int(i64::from(bits))]),
-        })))
-        .with_type_id(type_id)
-    }
-
-    pub(crate) fn option_value(&mut self, value: Option<Val>) -> Val {
-        let Some(value) = value else {
-            return Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None));
-        };
-        Val::new(
-            DecodedValue::Tagged(self.allocate(Object::Tagged {
-                tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Some), value.loc()),
-                payload: value,
-            })),
-            value.loc(),
-        )
-    }
-
-    pub(crate) fn stage_property(
-        &mut self,
-        key: PropertyKey,
-        value: Val,
-    ) -> Result<(), HeapError> {
-        if self.storage != Storage::Work {
-            return Err(HeapError("property staging requires a Work world"));
-        }
-        if key.property_type().is_some_and(|ty| value.type_id() != Some(ty)) {
-            return Err(HeapError(
-                "staged property runtime witness does not match its property TypeId",
-            ));
-        }
-        self.properties.insert(key, value);
-        Ok(())
-    }
-
-    pub(crate) fn property_attr_type(&self) -> Option<crate::TypeId> {
-        self.property_attr_type
-    }
-
-    pub(crate) fn establish_property_attr_type(
-        &mut self,
-        type_id: crate::TypeId,
-    ) -> Result<(), HeapError> {
-        if self.storage != Storage::Work {
-            return Err(HeapError(
-                "PropertyAttr staging requires a Work world",
-            ));
-        }
-        match self.property_attr_type {
-            Some(existing) if existing != type_id => {
-                Err(HeapError("PropertyAttr TypeId is already established"))
-            }
-            _ => {
-                self.property_attr_type = Some(type_id);
-                Ok(())
-            }
-        }
     }
 
     #[cfg(test)]

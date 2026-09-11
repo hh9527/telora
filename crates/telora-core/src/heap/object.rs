@@ -139,42 +139,6 @@ pub(crate) struct Heap {
     native_types: HashMap<crate::value::NativeTypeId, crate::NativeType>,
     shapes: Vec<Box<[InternId]>>,
     shape_slots: HashMap<Vec<InternId>, u32>,
-    bootstrap_root: Option<PersistentValue>,
     declared_types: HashMap<crate::TypeId, Val>,
-    properties: BTreeMap<PropertyKey, Val>,
-    property_attr_type: Option<crate::TypeId>,
     memoized_interpreters: HashMap<usize, HashMap<Vec<crate::TypeId>, Val>>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum PropertyKey {
-    Construction {
-        constructor: crate::TypeConstructorId,
-        variant: Option<u32>,
-    },
-    Ty {
-        ty: crate::TypeId,
-        property_ty: crate::TypeId,
-    },
-    Field {
-        ty: crate::TypeId,
-        member_index: u32,
-        property_ty: crate::TypeId,
-    },
-    Variant {
-        ty: crate::TypeId,
-        member_index: u32,
-        property_ty: crate::TypeId,
-    },
-}
-
-impl PropertyKey {
-    pub(crate) const fn property_type(self) -> Option<crate::TypeId> {
-        match self {
-            Self::Construction { .. } => None,
-            Self::Ty { property_ty, .. }
-            | Self::Field { property_ty, .. }
-            | Self::Variant { property_ty, .. } => Some(property_ty),
-        }
-    }
 }
