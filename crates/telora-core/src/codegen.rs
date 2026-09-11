@@ -200,38 +200,16 @@ fn compile_root(
     if target.is_some_and(|symbol| !mir.symbol_generics[symbol.index()].is_empty()) {
         return Err(vec![emitter.error(declaration, "runtime entry requires a concrete generic instance")]);
     }
-    let mut globals = if let Some(target) = target {
-        reachable_globals(mir, target)
-    } else {
-        graph
-            .nodes()
-            .iter()
-            .filter_map(|node| match node.task {
-                crate::execution_graph::Task::Global { symbol, .. } => Some(symbol),
-                _ => None,
-            })
-            .collect()
-    };
-    let mut all = globals.into_iter().collect::<std::collections::BTreeSet<_>>();
-    for check in mir.construction_checks.iter().filter(|check| check.concrete) {
-        for symbol in referenced_globals(mir, check.checker) { all.extend(reachable_globals(mir, symbol)); }
-    }
-    include_instance_implementations(mir, &mut all);
-    globals = all.into_iter().collect();
-    // Every admitted property has executable code. Whether a provider runs is
-    // decided by VM demand, not by guessing which native calls might query it.
-    {
-        let mut all = globals
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>();
-        for provider in mir.properties.iter().filter(|p| p.concrete).flat_map(|p| &p.providers) {
-            for symbol in referenced_globals(mir, *provider) {
-                all.extend(reachable_globals(mir, symbol));
-            }
-        }
-        include_instance_implementations(mir, &mut all);
-        globals = all.into_iter().collect();
-    }
+    // Emit the admitted graph in its stable order. Entry selection controls
+    // demand, not which solved definitions have executable tasks installed.
+    let globals = graph
+        .nodes()
+        .iter()
+        .filter_map(|node| match node.task {
+            crate::execution_graph::Task::Global { symbol, .. } => Some(symbol),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     // Native ABI values and injected data already exist before initialization.
     for &global in &globals {
         if !mir.symbol_generics[global.index()].is_empty() {
@@ -291,7 +269,6 @@ fn compile_root(
     }
     for task in graph.nodes() {
         let crate::execution_graph::Task::Instance { instance, symbol, declaration } = task.task else { continue; };
-        if !globals.contains(&symbol) { continue; }
         let mut thunk = Emitter::new(mir, &graph, task.label.clone());
         thunk.instance = Some(instance);
         if mir.symbols[symbol.index()].kind == SymbolKind::Declaration(BindingKind::Native) {
@@ -434,35 +411,6 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
                 || edge.role == Role::Callee)
         })
         .map(|edge| edge.node)
-}
-
-/// Discover code to compile, including function bodies. This is deliberately
-/// not an initialization order: references in uncalled bodies do not demand values.
-fn include_instance_implementations(mir: &Mir, globals: &mut std::collections::BTreeSet<SymbolId>) {
-    loop {
-        let before = globals.len();
-        let implementations = mir.generic_instances.iter().filter(|instance| globals.contains(&instance.symbol))
-            .flat_map(|instance| instance.implementations.iter().map(|(_, id)| mir.generic_instances[id.index()].symbol))
-            .collect::<Vec<_>>();
-        for symbol in implementations { globals.extend(reachable_globals(mir, symbol)); }
-        if globals.len() == before { break; }
-    }
-}
-
-fn reachable_globals(mir: &Mir, root: SymbolId) -> Vec<SymbolId> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut pending = vec![root];
-    while let Some(symbol) = pending.pop() {
-        if !seen.insert(symbol) {
-            continue;
-        }
-        let declaration = *mir.symbols[symbol.index()]
-            .declarations
-            .last()
-            .expect("global declaration");
-        pending.extend(referenced_globals(mir, declaration));
-    }
-    seen.into_iter().collect()
 }
 
 fn referenced_globals(mir: &Mir, root: HirId) -> Vec<SymbolId> {
@@ -2786,6 +2734,38 @@ pub(crate) mod tests {
         artifact.native_links.clear();
         assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
         assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn entry_codegen_installs_unreferenced_globals_and_instances_without_demanding_them() {
+        let mir = graph(r#"
+            def identity: for(T) Fn(T) -> T = fn(value) { value };
+            def unused: Int = identity(1 / 0);
+            export def answer = 42;
+        "#, "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let mut globals = 0;
+        let mut instances = 0;
+        for task in artifact.graph.nodes() {
+            let node = match task.task {
+                crate::execution_graph::Task::Global { symbol, .. }
+                    if mir.symbols[symbol.index()].name == "unused" => {
+                    globals += 1;
+                    artifact.graph.global(symbol).unwrap()
+                }
+                crate::execution_graph::Task::Instance { instance, symbol, .. }
+                    if mir.symbols[symbol.index()].name == "identity" => {
+                    instances += 1;
+                    artifact.graph.instance(instance).unwrap()
+                }
+                _ => continue,
+            };
+            assert!(artifact.bytecode.instructions().iter().any(|instruction|
+                matches!(instruction, crate::bytecode::Opcode::InstallTask { node: installed, .. } if *installed == node)));
+        }
+        assert_eq!((globals, instances), (1, 1));
+        drop(mir);
+        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
     }
 
     #[test]

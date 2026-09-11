@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Generate the admitted graph without entry reachability pruning (2026-09-11)
+
+Codegen now walks execution-graph globals and concrete instances in stable order
+for every entry. Removed its separate entry-reachability walk, repeated trait
+implementation dependency expansion and instance filtering. Property and check
+dependencies consequently need no special reachability expansion either. Entry
+selection determines which installed tasks are demanded, not which concrete
+definitions get executable code. Native/data bindings still use their explicit
+link path; unspecialized generic templates remain the separate open value-model
+problem described below.
+
+A regression uses an unreferenced global initialized by a generic call containing
+division by zero. Both its global task and concrete generic instance must be
+installed, and evaluating the independent entry still returns 42 without running
+the unused initializer. All 394 workspace library tests, CLI build and all-target
+compilation pass. Full language acceptance remains 270/400 with exactly the same
+passing/failing cases as the preceding full run. Logs:
+/tmp/mir-complete-emission-*.log. No benchmark was run; emitting more admitted
+code can increase code size/installation cost. Generic function values, the 130
+remaining acceptance failures, metadata migration and final performance
+assessment remain open.
+
 ### Emit every admitted property task mechanically (2026-09-11)
 
 Codegen no longer predicts property demand from a hard-coded list of native
