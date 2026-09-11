@@ -46,6 +46,28 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
 }
 
 #[test]
+fn invalid_check_signatures_keep_the_original_conflict_and_contract_context() {
+    for expression in ["fn(value) {True}", "fn(value) {Ok(value)}", "fn(value) {Err(\"bad\")}", "fn(value) {None}"] {
+        let source = format!("@check({expression}) type Checked = struct(Int); export def independent = 42;");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        let diagnostics = mir.diagnostics.iter().filter(|d| d.message.starts_with("invalid @check function:")).collect::<Vec<_>>();
+        assert_eq!(diagnostics.len(), 1, "{}", mir.dump());
+        assert!(diagnostics[0].message.contains("Result((), BlameError)"));
+        assert!(diagnostics[0].message.contains("cannot unify"));
+        assert!(!diagnostics[0].labels.is_empty());
+        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(mir.seal().is_err());
+    }
+    let mut mir = graph(&[("@src/main", "@check(missing) type Checked = struct(Int); export def independent = 42;")]);
+    let count = mir.diagnostics.len();
+    resolve(&mut mir);
+    assert_eq!(mir.diagnostics.len(), count);
+    assert!(!mir.diagnostics.iter().any(|d| d.message.starts_with("invalid @check")));
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn conflicts_render_both_type_shapes_before_poisoning_the_slots() {
     let mut mir = graph(&[("@src/main", r#"
         def values: Array(Int) = [1];

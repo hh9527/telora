@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Attach @check contracts to existing type conflicts (2026-09-11)
+
+When a checker signature inherits a type conflict, finalize_checks enriches
+the original diagnostic with the @check input/result contract and declaration
+location. It retains the original conflict evidence and does not emit a second
+diagnostic for that cause. Inherited resolve failures retain their original
+explanation instead of being relabeled as checker signature failures.
+
+Validation: all 390 workspace library tests, CLI build and all-target compilation
+pass. Ten existing negative fixtures (ok-payload, empty-body, input, return-unit,
+result-statement, err-payload, legacy-some, result, warning-tail, legacy-none)
+exit 1 and match their original invalid @check function expectations. Expected
+files are unchanged. Regression tests cover contract context, retained conflict
+information, independent solving and unresolved checker names without additional
+diagnostics. Logs: /tmp/mir-check-contract-*.log.
+
+Full acceptance/performance were not rerun; the last complete snapshot remains
+248/400 followed by targeted fixes. Unsupported @check sites, other diagnostic
+expectations, generic function values and remaining metadata migration still
+require work. This does not alter checker execution or its accepted signature.
+
 ### Carry unresolved symbol outcomes into type solving (2026-09-11)
 
 Unresolved references/imports no longer enter the type pass as unconstrained

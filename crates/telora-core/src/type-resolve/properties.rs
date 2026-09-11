@@ -98,7 +98,26 @@ impl Solver<'_> {
     }
 
     pub(super) fn finalize_checks(&mut self) {
+        let mut described = std::collections::BTreeSet::new();
         for &(owner, site, decorator) in &self.check_declarations {
+            if let TypeState::Conflicted(id) = self.mir.ty_slots[decorator.ty().index()]
+                && described.insert(id) {
+                let conflict = &self.mir.type_conflicts[id.index()];
+                // Preserve the diagnostic emitted with the original evidence.
+                // A failed name resolution already has its own explanation.
+                if conflict.resolve_origin.is_none()
+                    && let Some(diagnostic) = self.mir.diagnostics.iter_mut().find(|diagnostic|
+                        diagnostic.message == conflict.message
+                            && diagnostic.labels.iter().any(|label| Some(label.location) == conflict.location)) {
+                    diagnostic.message = format!("invalid @check function: {}; expected one construction input and Result((), BlameError)", diagnostic.message);
+                    let location = self.mir.hir[decorator.index()].location;
+                    if !diagnostic.labels.iter().any(|label| label.location == location) {
+                        diagnostic.labels.push(crate::source::Label {
+                            location, message: "@check contract required here".into(), primary: false,
+                        });
+                    }
+                }
+            }
             let (Some(owner), Some(signature)) = (self.known(owner), self.known(decorator.ty())) else { continue };
             let checker = self.child(decorator, Role::Argument).expect("check argument");
             let concrete = !self.contains_parameter(owner) && !self.contains_parameter(signature);
