@@ -52,7 +52,6 @@ pub fn check(
     let catalog_seconds = started.elapsed().as_secs_f64();
     let started = Instant::now();
     let mut mir = inventory.solve(&root);
-    let static_seconds = started.elapsed().as_secs_f64();
     let unproven_bounds = mir
         .bound_requirements
         .iter()
@@ -65,10 +64,20 @@ pub fn check(
         || !mir.type_unknowns.is_empty()
         || !mir.type_conflicts.is_empty()
         || unproven_bounds != 0;
+    let (sealed, seal_diagnostics) = if static_failed {
+        (None, vec![])
+    } else {
+        match mir.seal() {
+            Ok(sealed) => (Some(sealed), vec![]),
+            Err(diagnostics) => (None, diagnostics),
+        }
+    };
+    let static_failed = static_failed || !seal_diagnostics.is_empty();
+    let static_seconds = started.elapsed().as_secs_f64();
     let execution_started = Instant::now();
     let mut execution_diagnostics = vec![];
-    if !types_only && !static_failed {
-        let artifact = mir.seal().and_then(telora_core::codegen::compile_check);
+    if let Some(sealed) = sealed.filter(|_| !types_only) {
+        let artifact = telora_core::codegen::compile_check(sealed);
         let linked = artifact.and_then(|artifact| {
             telora_core::execution_link::link_entry_with_data(artifact, |link| {
                 inventory.read_data(link, crate::execution_config().data_limits.file_size)
@@ -98,7 +107,7 @@ pub fn check(
         || execution_diagnostics
             .iter()
             .any(|d| d.severity == Severity::Error);
-    for d in mir.diagnostics.iter().chain(&execution_diagnostics) {
+    for d in mir.diagnostics.iter().chain(&seal_diagnostics).chain(&execution_diagnostics) {
         emit(diagnostic(&mir, schema, &root, d))?;
     }
     let check_seconds = static_seconds + execution_seconds;

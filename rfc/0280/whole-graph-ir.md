@@ -9,6 +9,27 @@ samples and phase summaries. It makes no baseline comparison or completion claim
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Shared check seal gate and canonical discovery (2026-09-11)
+
+Both check modes now validate the same SealedMir boundary after successful
+solving. The ordinary mode consumes that sealed result directly for codegen;
+only-types drops it without codegen, data parsing or VM creation. Seal failures
+are static diagnostics and seal time is included in static_seconds. There is
+no second seal or alternate successful path in ordinary check.
+
+Workspace discovery canonicalizes its starting path before comparing canonical
+member directories. Crate ownership uses the same path identity, canonicalizing
+the existing ancestor for editor paths whose file has not yet been saved. The
+existing package test now covers parent-directory components and a new-file path.
+The original relative ontology command works in both check modes, each reporting
+zero Unknown, Conflicted and unproven bounds. These were debug correctness runs,
+not performance samples.
+
+Validation: library tests 393/393, CLI integration 65/65, language acceptance
+403/403 and all-target checking pass. No new Rust tests were added. Final audit
+of deterministic identity, phase ownership and downstream consumers remains;
+these two known boundary gaps are closed, not the entire migration audit.
+
 ### CLI session-boundary acceptance (2026-09-11)
 
 MIR source modules retain the parser's validity outcome. Source admission still
