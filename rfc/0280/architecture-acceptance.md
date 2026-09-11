@@ -7,9 +7,14 @@ claim or of the separately deferred runtime representation optimization.
 Final acceptance remains open. The subsequent nine-module ontology observation
 found seven static failures. A temporary isolated copy with explicitly qualified
 prelude property declarations removes the shared 17 Unknown slots, but
-`@test/test_knowledge` still reports `cannot unify Order with Customer`.
-The original ontology assets remain unchanged. These additional conflicts need
-classification and, where caused by the compiler, regression coverage and fixes.
+`@test/test_knowledge` initially still reported `cannot unify Order with Customer`.
+This was reduced to a cross-module configured decorator equating metadata
+arguments instead of fitting its function parameter contracts, and is now fixed
+with language regression coverage. Six formerly failing selectors complete
+ordinary check in that isolated copy. `model-rules` still exposes a separate
+Unchecked completion conflict; it now has a small isolated reproduction involving
+an earlier construction with an empty array. The original ontology assets remain
+unchanged. Final acceptance is still open pending that boundary investigation.
 See [the broader observation](observations/2026-09-11-ontology-modules.md).
 
 ## Scope and evidence

@@ -18,3 +18,10 @@ def name: for(T: Named) Fn(T) -> String = fn(value) {
 };
 
 export {Label, Item, Named, name};
+
+@property(PropertyTarget.Type)
+type Link = struct {target: Type};
+def link: Fn(Type) -> Fn(Type, Option(Link)) -> Link = fn(target) {
+    fn(owner, previous) { {target} }
+};
+export {Link, link};

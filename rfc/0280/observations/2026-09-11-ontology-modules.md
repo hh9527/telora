@@ -56,3 +56,24 @@ A small isolated module reusing a `Fn(Type) -> Fn(Type, Option(Link)) -> Link`
 provider on distinct nominal types, including a forward-referenced
 `Array(Type)` with heterogeneous metadata, passes. Thus the remaining conflict
 has not yet been reduced to a generic property-reuse or metadata-array failure.
+
+## Configured decorator correction
+
+Subsequent reduction isolated the missing condition: the provider is imported
+from another module. A `Fn(Type) -> Fn(Type, Option(Link)) -> Link` factory used
+with `A.type` and `B.type` incorrectly unified A with B. Configured decorators
+now allocate parameter slots and fit argument values to those contracts, matching
+ordinary call semantics instead of directly equating actual argument types.
+The language `static-property-evidence` case checks both resulting Link values.
+
+With this compiler fix and only the temporary prelude qualification, ordinary
+check succeeds for src/ontology, src/intent, test/ontology, test/intent,
+test/test_knowledge and test/diagnostics/rejections. These were debug semantic
+checks, not performance samples. model-rules retains one Unchecked completion
+conflict and zero Unknown. A reduced two-module fixture reproduces that conflict
+when a checked record construction with an empty array precedes the Unchecked
+completion. The isolated fixture is under /tmp/telora-ontology-audit-bItBfg.
+
+Validation: complete `cargo test --workspace`, the 403-case language runner,
+release build and `git diff --check` pass. Logs are /tmp/mir-decorator-workspace.log,
+/tmp/mir-decorator-language.log and /tmp/mir-decorator-release.log.

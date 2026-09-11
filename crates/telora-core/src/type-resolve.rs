@@ -733,11 +733,15 @@ impl Solver<'_> {
                 }
                 let callee = self.child(node, Role::Callee).unwrap().ty();
                 let provider = if configured {
-                    let mut arguments = self
-                        .children(node, Role::Argument)
-                        .into_iter()
-                        .map(HirId::ty)
-                        .collect::<Vec<_>>();
+                    // Configuration is a function call: argument values fit
+                    // the provider's parameter contracts, rather than making
+                    // those contracts equal to each argument's narrow type.
+                    let mut arguments = vec![];
+                    for argument in self.children(node, Role::Argument) {
+                        let parameter = self.fresh();
+                        self.fit(argument, parameter, argument.ty());
+                        arguments.push(parameter);
+                    }
                     let provider = self.fresh();
                     arguments.push(provider);
                     let factory = self.structure(TypeConstructor::Function, arguments);
