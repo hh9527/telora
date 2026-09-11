@@ -9,6 +9,19 @@ samples and phase summaries. It makes no baseline comparison or completion claim
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Final branch audit and ontology behavioral validation (2026-09-11)
+
+`4dd7c67` completes the two defects found by broader ontology checks: configured
+decorator arguments now fit parameter contracts, and Unchecked boundaries await
+nominal identity instead of equating provisional record evidence. Full workspace
+tests pass, including 404 language cases; release build and source-size checks
+pass. The isolated ontology copy passes 402 ordinary tests and six host-verified
+diagnostic cases. The original ontology assets remain unchanged.
+
+The [acceptance record](architecture-acceptance.md) now includes the concluding
+production-source audit. Branch implementation validation is complete; main
+integration remains a separate delivery action. Performance remains observational.
+
 ### Architecture acceptance and documentation reconciliation (2026-09-11)
 
 The [acceptance record](architecture-acceptance.md) maps the final three-pass and

@@ -1,6 +1,6 @@
 # RFC 0280: Session-Wide Type World and Execution-Free Inference
 
-- Status: Architecture integrated; broader ontology validation remains open. Performance remains observational.
+- Status: Architecture implemented and branch validation complete; main-branch integration pending. Performance remains observational.
 - Revision: 2026-09-10, making the session-wide typed IR and its completion gate
   explicit; independently solved module artifacts are transitional only.
 - Tracking: [#175](https://github.com/hh9527/telora/issues/175).
@@ -896,6 +896,14 @@ Logical sharing and removing execution dependencies take priority over packing.
 
 ## Implementation Plan
 
+The implementation and branch validation below are complete as of `4dd7c67`;
+see the current acceptance record. The earlier instrumentation/performance plan
+is retained as investigation history, not a new performance claim: the user
+subsequently requested release observations without conclusions or immediate
+optimization. Main-branch integration and closing #175 remain delivery actions;
+the current session has explicitly authorized development and pushes on the
+feature branch.
+
 Each milestone needs a reviewable diff, its specific tests and updated evidence.
 The accepted direction is implemented locally; commit/push follows the user's
 authorization and is not a prerequisite for investigating or implementing it.
@@ -940,11 +948,11 @@ a VM or runtime heap. It checks function bodies and static tool contracts but
 does not execute properties, `@check`, or module values. Ordinary `check` retains
 its existing full-check behavior.
 
-Both modes emit `catalog_seconds` and `check_seconds` in their JSON summary.
-The static and ordinary loaders are not yet one shared pipeline, so subtracting
-these measurements does not give exact metadata/runtime phase time. Unifying
-the ordinary path behind complete static solving remains required; the new flag
-does not satisfy that architecture gate by itself.
+Both modes use the same Inventory, three static passes and seal gate. They emit
+`catalog_seconds`, `static_seconds`, `execution_seconds` and `check_seconds` in
+their JSON summary. Static time includes sealing; execution time includes
+codegen, data linking and VM initialization, and is zero for `--only-types`.
+It is therefore not a measurement of VM instructions alone.
 
 ## Acceptance
 

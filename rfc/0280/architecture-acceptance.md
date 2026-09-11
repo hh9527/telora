@@ -4,7 +4,8 @@ This records the current validation of the replacement compiler/execution pipeli
 `feat/0280-arena-type-consumers`. It is not acceptance of a comparative performance
 claim or of the separately deferred runtime representation optimization.
 
-Final acceptance remains open. The subsequent nine-module ontology observation
+Branch implementation validation is complete at `4dd7c67`; integration into main
+and closing #175 remain delivery actions. The subsequent nine-module ontology observation
 found seven static failures. A temporary isolated copy with explicitly qualified
 prelude property declarations removes the shared 17 Unknown slots, but
 `@test/test_knowledge` initially still reported `cannot unify Order with Customer`.
@@ -21,9 +22,9 @@ The expanded 404-case language suite and complete workspace suite pass. Release
 execution of the temporary ontology copy passes 402 ordinary tests (10 model-rules,
 239 query, 24 intent, 129 ontology). Its unchanged host diagnostic checker also
 passes all six intentional rejection cases, including exact subject spans.
-test_knowledge is a support module and correctly has no direct Test exports. Final
-acceptance still requires the concluding audit of all gates; these module checks
-alone are not a substitute for that audit.
+test_knowledge is a support module and correctly has no direct Test exports.
+The concluding source audit below checks architectural boundaries independently
+of these module results.
 See [the broader observation](observations/2026-09-11-ontology-modules.md).
 
 ## Scope and evidence
@@ -55,7 +56,7 @@ within initialization remain demand evaluated. No compatibility resolver is used
 ## Verification
 
 `cargo test --workspace` passed: 393 library tests, 2 binary unit tests and 66 CLI
-integration tests. The latter includes the complete 403-case language acceptance
+integration tests. The latter includes the complete 404-case language acceptance
 runner. Doc tests also passed. After mechanically moving codegen tests into
 separate files, all 89 codegen tests passed again, including the expanded
 determinism fixture. Two moved `include_str!` paths were updated to their new
@@ -67,7 +68,9 @@ notices remain for `type-resolve/tests.rs` and `vm/execute.rs`; no size baseline
 exception was added. The oversized production-plus-test `codegen.rs` was split
 into production code and two included test files without removing assertions.
 
-Logs: `/tmp/mir-final-audit-workspace.log`,
+Latest full-suite and release logs: `/tmp/mir-unchecked-workspace.log` and
+`/tmp/mir-unchecked-release.log`. Earlier determinism/test-organization logs:
+`/tmp/mir-final-audit-workspace.log`,
 `/tmp/mir-final-audit-codegen.log`, `/tmp/mir-final-audit-release.log`,
 `/tmp/mir-final-audit-source-size.log`, and `/tmp/mir-final-audit-targets.log`.
 
@@ -79,8 +82,41 @@ The user requested a release observation without a new performance conclusion.
 measurement of the later seal/path/documentation changes. No cumulative speedup,
 comparative allocation gain or broad benchmark acceptance is inferred here.
 
-The architecture replacement is integrated and its existing semantic/CLI suite
-passes; broader ontology validation is not complete. More economical initialization allocation, direct field offsets and
+The architecture replacement is integrated and its semantic/CLI and isolated
+ontology validation passes. More economical initialization allocation, direct field offsets and
 broader performance characterization are subsequent work, not fallback paths in
 the delivered compiler. The historical incremental RFC checkpoints must not be
 read as present implementation or current initialization semantics.
+
+## Concluding source audit
+
+The final audit re-read the production entry points, not only the tests:
+
+- `Inventory::solve_inputs` creates exactly one MIR and invokes the three passes
+  in order. The module source callback returns text only; data modules bypass
+  it. `module-resolve` retains reachable CST and lowers into this same arena.
+- `symbol-resolve::resolve` indexes providers before reference closure;
+  `type_resolve::resolve` consumes those outcomes, releases its Solver on return,
+  and leaves slots, generic instances, layouts and diagnostics in MIR.
+- All public codegen entry points accept SealedMir. `Mir::seal` checks required
+  slots, instance coverage, layouts, patterns, checks, properties and bounds;
+  `TypeImage::from_mir` creates detached flat type data. The read-only seal
+  rejection and four-inventory determinism tests exercise these contracts.
+- `static_cli`, `eval_cli`, `test_cli`, run/serve setup and `mir_workspace` use
+  that path. Query/LSP retain failed MIR for diagnostics. Cancellation/stale
+  snapshot tests verify a rebuild cannot replace a newer published graph.
+- Execution linking accepts compiled artifacts and native/data inputs only.
+  VM TypeDesc operations index the immutable TypeImage; they do not infer types.
+  The old Engine/WorkspaceBuilder inference routes are not exported by core or
+  referenced by these command consumers.
+- VM initialization installs TypeImage and ExecutionGraph in MainWorld before
+  importing data and executing roots. `freeze_initialized_world` requires all
+  initializer IDs ready and no failed/active tasks. One PendingCopy forwarding
+  table validates every root before committing; the next WorkWorld is empty.
+  The VM sharing test asserts property/global alias identity and unchanged main
+  storage when initialization is incomplete.
+
+The remote main reference was refreshed after validation and is an ancestor of
+this feature branch. No automatic merge or issue closure is included in branch
+validation. No external ontology migration is required of this repository:
+the prelude-shadowing correction was isolated in /tmp and is explicitly disclosed.
