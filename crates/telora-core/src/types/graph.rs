@@ -510,14 +510,6 @@ impl TypeGraph {
         self.intern_node(node)
     }
 
-    fn intern_resolved_descriptor(&mut self, descriptor: &TypeDescriptor) -> Option<AnalysisTypeId> {
-        if contains_type_variable(descriptor) || contains_pending_alternatives(descriptor)
-            || contains_standalone_sum(descriptor) {
-            return None;
-        }
-        Some(self.intern_descriptor(descriptor))
-    }
-
     fn descriptor(&self, root: AnalysisTypeId) -> Result<TypeDescriptor, String> {
         #[derive(Default)]
         struct DescriptorPath {

@@ -3401,6 +3401,10 @@ pub(crate) mod tests {
                 export def answer = match string.parse(Item.type, "42") { Ok(value) => if value.note == None { value.value } else { 0 }, Err(_) => 0 };"#,
             r#"import "std/string" as string; export def answer = match string.parse(Int.type, "bad") { Err(error) => if error.value == "bad" { 42 } else { 0 }, _ => 0 };"#,
             r#"import "std/string" as string; export def answer = match string.parse(Float.type, "NaN") { Err(_) => 42, _ => 0 };"#,
+            r#"import "std/string" as string; export def answer = match string.parse(Float.type, "inf") { Err(_) => 42, _ => 0 };"#,
+            r#"import "std/string" as string; export def answer = match string.parse(Float.type, "-inf") { Err(_) => 42, _ => 0 };"#,
+            r#"import "std/string" as string; export def answer = match string.parse(Float.type, "1e9999") { Err(_) => 42, _ => 0 };"#,
+            r#"import "std/string" as string; export def answer = match string.parse(Float.type, "1.5") { Ok(value) => if value == 1.5 { 42 } else { 0 }, Err(_) => 0 };"#,
         ] {
             let mir = graph(source, "");
             assert!(mir.diagnostics.is_empty(), "{source}\n{:?}", mir.diagnostics);

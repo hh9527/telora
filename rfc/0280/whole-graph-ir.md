@@ -5,6 +5,30 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove regex metadata fallback and descriptor substitution helpers (2026-09-11)
+
+std/regex.prepare now requires the linked image and validates captures through
+solved fields and static property presence. Removed its recursive dictionary
+metadata fallback, ParsePlan/FieldPlan/ParsedValue and old parse executor. The
+non-finite Float test moved from the deleted executor into the existing full
+MIR codegen/runtime test, covering NaN, inf, -inf, overflow and a valid decimal.
+
+Deleted the now-unused descriptor substitution/alternative helpers, old
+recursive descriptor decoder, publication checks and unused unchecked/decode
+entry helpers. types/expression.rs and inference-utils.rs are gone. Retained
+the canonical metadata-to-TypeId decoder and symbolic-identity inspection that
+heap still consumes; removing those consumers remains necessary.
+
+Validation: all 384 workspace library tests pass (telora-core 332, telora 28),
+CLI build and all-target compilation pass. Five normal CLI suites pass, 25
+cases: regex, parse-construction-check, codec-construction-check, reflection,
+native-errors. parse-check-provenance intentionally exits 1 with two failed
+cases: its checker expects this. Actual provider source labels match lines 1
+and 2 as required by the checker, independently verified from JSON output.
+Logs: /tmp/mir-remove-descriptor-helpers-*.log. About 800 lines removed; no
+performance benchmark. Remaining heap metadata, generic function value closure,
+diagnostic rules, full acceptance and final performance assessment are unfinished.
+
 ### Remove old type-slot opcodes and runtime family instantiation (2026-09-11)
 
 Deleted OwnDeclared, AllocTypeSlot, ReadTypeSlot, SealTypeSlot and
