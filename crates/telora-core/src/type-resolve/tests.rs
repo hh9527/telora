@@ -46,6 +46,32 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
 }
 
 #[test]
+fn list_type_constructors_reject_variadic_and_non_list_arguments() {
+    for (expression, message) in [
+        ("Tuple(Int, String)", "expected 1 arguments, got 2"),
+        ("Tuple()", "expected 1 arguments, got 0"),
+        ("Tuple(Int)", "requires a static type list"),
+        ("Func(Int, String)", "requires a static type list"),
+        ("Func([Int])", "expected 2 arguments, got 1"),
+        ("Func([Int], String, Bool)", "expected 2 arguments, got 3"),
+    ] {
+        let source = format!("type Invalid = {expression}; export def independent = 42;");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains(message)), "{expression}\n{}", mir.dump());
+        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(mir.seal().is_err());
+    }
+    let mut mir = graph(&[("@src/main", "import \"std/prelude\" {Tuple as Product}; type Bad = Product(Int, String); export {Bad};")]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.iter().any(|d| d.message.contains("expected 1 arguments, got 2")));
+    assert!(mir.seal().is_err());
+    let mut mir = graph(&[("@src/main", "type Pair = Tuple([Int, String]); type Empty = Tuple([]); type Function = Func([Int], String); export {Pair, Empty, Function};")]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+}
+
+#[test]
 fn bottom_tails_wait_for_explicit_return_evidence_from_generalized_constructors() {
     let mut mir = graph(&[("@src/main", r#"
         export def choose = fn(flag) {

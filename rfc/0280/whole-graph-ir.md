@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Enforce static list-constructor contracts (2026-09-11)
+
+Removed a fallback in type solving that accepted arbitrary Tuple/Func argument
+counts when the first argument was not a type-list literal. The documented
+Tuple([A, B]) and Func([A], R) forms retain their fixed arity and static-list
+requirements. Constructor aliases obey the same native TypeFunction identity;
+no source-name special case or downstream rejection was added. The (A, B) type
+syntax and ()/Unit behavior are unchanged.
+
+Validation: all 384 workspace library tests, CLI build and all-target compilation
+pass. New tests cover missing/excess arguments, non-list arguments, renamed
+native imports and valid empty/nonempty list constructors. tuple-types,
+tuple-spread, unit-blocks, prelude-constructors and type-families pass (20 CLI
+cases). diag-tuple-constructor-arity now exits 1 with its original expected
+message and execution_seconds = 0. Logs: /tmp/mir-list-constructor-*.log.
+No complete acceptance or performance run was repeated; the latest full
+acceptance snapshot remains 200/400, with this additional targeted fix.
+
+Other acceptance failures, generic function values, remaining runtime metadata
+consumers and final performance evaluation are still outstanding.
+
 ### Preserve constructor declaration identity in patterns (2026-09-11)
 
 Enum pattern selection now rejects traversal through ordinary function-value

@@ -570,6 +570,14 @@ impl Solver<'_> {
                 }
             }
             TypeConstructor::TypeFunction(function) => {
+                if matches!(function, TypeFunction::Tuple | TypeFunction::Func) {
+                    let expected = if function == TypeFunction::Tuple { 1 } else { 2 };
+                    if arguments.len() != expected {
+                        self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
+                            format!("type constructor expected {expected} arguments, got {}", arguments.len()));
+                        return None;
+                    }
+                }
                 if matches!(function, TypeFunction::Tuple | TypeFunction::Func)
                     && !arguments.is_empty()
                     && let Some(list) = self.term(arguments[0]).cloned()
@@ -614,6 +622,11 @@ impl Solver<'_> {
                     self.assign(node, TypeConstructor::Meta, vec![ty]);
                     return None;
                 }
+                if matches!(function, TypeFunction::Tuple | TypeFunction::Func) {
+                    self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
+                        "type constructor requires a static type list as its first argument".into());
+                    return None;
+                }
                 let (cons, arity) = match function {
                     TypeFunction::Array => (TypeConstructor::Array, 1),
                     TypeFunction::Dict => (TypeConstructor::Dict, 1),
@@ -623,8 +636,7 @@ impl Solver<'_> {
                     TypeFunction::TypeOf => (TypeConstructor::TypeOf, 1),
                     TypeFunction::Unchecked => (TypeConstructor::Unchecked, 1),
                     TypeFunction::Property => (TypeConstructor::PropertyBound, 1),
-                    TypeFunction::Tuple => (TypeConstructor::Tuple, arguments.len()),
-                    TypeFunction::Func => (TypeConstructor::Function, arguments.len()),
+                    TypeFunction::Tuple | TypeFunction::Func => unreachable!("list constructors handled above"),
                 };
                 if arguments.len() != arity {
                     self.conflict(
