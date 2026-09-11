@@ -56,31 +56,12 @@ pub enum Instruction {
         dst: Register,
         src: Register,
     },
-    OwnDeclared {
-        dst: Register,
-        owner: Register,
-        value: Register,
-    },
     AllocFunc {
         dst: Register,
     },
     SealFunc {
         target: Register,
         source: Register,
-    },
-    AllocTypeSlot {
-        dst: Register,
-    },
-    ReadTypeSlot {
-        dst: Register,
-        link: Register,
-    },
-    SealTypeSlot {
-        link: Register,
-        src: Register,
-    },
-    AssertTypeSlotReady {
-        link: Register,
     },
     Add {
         dst: Register,
@@ -304,31 +285,12 @@ pub enum Opcode {
         dst: Register,
         src: Register,
     },
-    OwnDeclared {
-        dst: Register,
-        owner: Register,
-        value: Register,
-    },
     AllocFunc {
         dst: Register,
     },
     SealFunc {
         target: Register,
         source: Register,
-    },
-    AllocTypeSlot {
-        dst: Register,
-    },
-    ReadTypeSlot {
-        dst: Register,
-        link: Register,
-    },
-    SealTypeSlot {
-        link: Register,
-        src: Register,
-    },
-    AssertTypeSlotReady {
-        link: Register,
     },
     Add {
         dst: Register,
@@ -779,13 +741,8 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::Demand { dst, node } => Opcode::Demand { dst, node },
         Instruction::InstallTask { node, src } => Opcode::InstallTask { node, src },
         Instruction::MakeVariant { dst, ty, variant, payload } => Opcode::MakeVariant { dst, ty, variant, payload },
-        Instruction::OwnDeclared { dst, owner, value } => Opcode::OwnDeclared { dst, owner, value },
         Instruction::AllocFunc { dst } => Opcode::AllocFunc { dst },
         Instruction::SealFunc { target, source } => Opcode::SealFunc { target, source },
-        Instruction::AllocTypeSlot { dst } => Opcode::AllocTypeSlot { dst },
-        Instruction::ReadTypeSlot { dst, link } => Opcode::ReadTypeSlot { dst, link },
-        Instruction::SealTypeSlot { link, src } => Opcode::SealTypeSlot { link, src },
-        Instruction::AssertTypeSlotReady { link } => Opcode::AssertTypeSlotReady { link },
         Instruction::Add { dst, left, right } => Opcode::Add { dst, left, right },
         Instruction::Subtract { dst, left, right } => Opcode::Subtract { dst, left, right },
         Instruction::Multiply { dst, left, right } => Opcode::Multiply { dst, left, right },

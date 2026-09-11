@@ -39,31 +39,12 @@ pub enum Operation {
         dst: RegisterId,
         src: RegisterId,
     },
-    OwnDeclared {
-        dst: RegisterId,
-        owner: RegisterId,
-        value: RegisterId,
-    },
     AllocFunc {
         dst: RegisterId,
     },
     SealFunc {
         target: RegisterId,
         source: RegisterId,
-    },
-    AllocTypeSlot {
-        dst: RegisterId,
-    },
-    ReadTypeSlot {
-        dst: RegisterId,
-        link: RegisterId,
-    },
-    SealTypeSlot {
-        link: RegisterId,
-        src: RegisterId,
-    },
-    AssertTypeSlotReady {
-        link: RegisterId,
     },
     Add {
         dst: RegisterId,
@@ -413,31 +394,12 @@ fn lower_operation(
             variant,
             payload: payload.map(register).transpose()?,
         },
-        Operation::OwnDeclared { dst, owner, value } => Instruction::OwnDeclared {
-            dst: register(dst)?,
-            owner: register(owner)?,
-            value: register(value)?,
-        },
         Operation::AllocFunc { dst } => Instruction::AllocFunc {
             dst: register(dst)?,
         },
         Operation::SealFunc { target, source } => Instruction::SealFunc {
             target: register(target)?,
             source: register(source)?,
-        },
-        Operation::AllocTypeSlot { dst } => Instruction::AllocTypeSlot {
-            dst: register(dst)?,
-        },
-        Operation::ReadTypeSlot { dst, link } => Instruction::ReadTypeSlot {
-            dst: register(dst)?,
-            link: register(link)?,
-        },
-        Operation::SealTypeSlot { link, src } => Instruction::SealTypeSlot {
-            link: register(link)?,
-            src: register(src)?,
-        },
-        Operation::AssertTypeSlotReady { link } => Instruction::AssertTypeSlotReady {
-            link: register(link)?,
         },
         Operation::Add { dst, left, right } => Instruction::Add {
             dst: register(dst)?,

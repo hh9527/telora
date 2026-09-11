@@ -21,7 +21,6 @@ include!("vm/public.rs");
 include!("vm/call-context.rs");
 include!("vm/error.rs");
 include!("vm/runtime.rs");
-include!("vm/construction.rs");
 include!("vm/diagnostic-scope.rs");
 include!("vm/execute.rs");
 include!("vm/dispatch.rs");

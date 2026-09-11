@@ -12,10 +12,7 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
         | Opcode::MakeSome { dst, .. }
         | Opcode::MakeVariant { dst, .. }
         | Opcode::Move { dst, .. }
-        | Opcode::OwnDeclared { dst, .. }
         | Opcode::AllocFunc { dst, .. }
-        | Opcode::AllocTypeSlot { dst }
-        | Opcode::ReadTypeSlot { dst, .. }
         | Opcode::Add { dst, .. }
         | Opcode::Subtract { dst, .. }
         | Opcode::Multiply { dst, .. }
@@ -55,8 +52,6 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
         Opcode::Raise { dst, .. } => Some(*dst),
         Opcode::SealFunc { .. }
         | Opcode::InstallTask { .. }
-        | Opcode::SealTypeSlot { .. }
-        | Opcode::AssertTypeSlotReady { .. }
         | Opcode::TailCall { .. }
         | Opcode::Jump { .. }
         | Opcode::JumpIfFalse { .. }

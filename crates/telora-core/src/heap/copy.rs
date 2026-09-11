@@ -1,3 +1,19 @@
+fn copy_roots(
+    target: &mut Heap,
+    source: HeapView<'_>,
+    roots: &[Val],
+) -> Result<Vec<Val>, HeapError> {
+    let mut pending = PendingCopy::new(target, &source);
+    let roots = roots
+        .iter()
+        .map(|root| pending.copy_value(target, &source, *root))
+        .collect::<Result<Vec<_>, _>>()?;
+    pending.validate()?;
+    pending.commit(target);
+    Ok(roots)
+}
+
+
 struct PendingCopy {
     target_storage: Storage,
     source_storage: Storage,
@@ -12,10 +28,6 @@ struct PendingCopy {
     text_forwarded: HashMap<InternId, InternId>,
     shapes_forwarded: HashMap<ShapeId, ShapeId>,
     native_types: HashMap<crate::value::NativeTypeId, crate::NativeType>,
-    value_replacements: HashMap<Handle, Val>,
-    forced_objects: HashSet<Handle>,
-    type_argument_values: Option<Arc<[Val]>>,
-    type_arguments: Option<Arc<[crate::types::TypeDescriptor]>>,
 }
 
 impl PendingCopy {
@@ -34,27 +46,6 @@ impl PendingCopy {
             text_forwarded: HashMap::new(),
             shapes_forwarded: HashMap::new(),
             native_types: HashMap::new(),
-            value_replacements: HashMap::new(),
-            forced_objects: HashSet::new(),
-            type_argument_values: None,
-            type_arguments: None,
-        }
-    }
-
-    fn new_type_application(
-        target: &Heap,
-        source: &HeapView<'_>,
-        value_replacements: HashMap<Handle, Val>,
-        forced_objects: HashSet<Handle>,
-        type_argument_values: &[Val],
-        type_arguments: &[crate::types::TypeDescriptor],
-    ) -> Self {
-        Self {
-            value_replacements,
-            forced_objects,
-            type_argument_values: Some(type_argument_values.into()),
-            type_arguments: Some(type_arguments.into()),
-            ..Self::new(target, source)
         }
     }
 
@@ -64,15 +55,6 @@ impl PendingCopy {
         source: &HeapView<'_>,
         value: Val,
     ) -> Result<Val, HeapError> {
-        if let Some(handle) = runtime_object_handle(value.value())
-            && let Some(replacement) = self.value_replacements.get(&handle)
-        {
-            return Ok(if replacement.loc().is_some() {
-                *replacement
-            } else {
-                replacement.with_loc(value.loc())
-            });
-        }
         let copied = match value.value() {
             DecodedValue::SolvedType(_) => return Err(HeapError("solved type metadata cannot be copied through the legacy world publisher")),
             // Failure ids belong to the Main world's stable failure arena.
@@ -112,10 +94,7 @@ impl PendingCopy {
                         "SymbolicType handle refers to another object kind",
                     ));
                 };
-                let id = self.type_arguments.as_ref().map_or_else(
-                    || id.clone(),
-                    |arguments| crate::types::apply_declared_type_arguments(id, arguments),
-                );
+                let id = id.clone();
                 let remains_symbolic = id
                     .arguments()
                     .iter()
@@ -153,7 +132,7 @@ impl PendingCopy {
         };
         let mut copied = value.with_value(copied).without_type_id();
         if let Some(type_id) = value.type_id() {
-            if self.type_arguments.is_none() && target.declared_types.contains_key(&type_id) {
+            if target.declared_types.contains_key(&type_id) {
                 return Ok(copied.with_type_id(type_id));
             }
             let owner = source
@@ -177,10 +156,7 @@ impl PendingCopy {
         target: &Heap,
         id: &crate::value::DeclaredTypeId,
     ) -> Result<crate::TypeId, HeapError> {
-        let id = self.type_arguments.as_ref().map_or_else(
-            || id.clone(),
-            |arguments| crate::types::apply_declared_type_arguments(id, arguments),
-        );
+        let id = id.clone();
         target.canonical_declared_type_id(&id)
     }
 
@@ -190,7 +166,7 @@ impl PendingCopy {
         source: &HeapView<'_>,
         handle: Handle,
     ) -> Result<Handle, HeapError> {
-        if handle.storage != self.source_storage && !self.forced_objects.contains(&handle) {
+        if handle.storage != self.source_storage {
             if handle.storage == self.target_storage {
                 target.object(handle)?;
             } else {
@@ -256,10 +232,7 @@ impl PendingCopy {
                 if !sealed {
                     return Err(HeapError("cannot copy an unsealed type ref"));
                 }
-                let type_argument_values = self.type_argument_values.clone();
-                let application_arguments = if let Some(arguments) = type_argument_values {
-                    Some(arguments.as_ref().into())
-                } else if let Some(arguments) = application_arguments {
+                let application_arguments = if let Some(arguments) = application_arguments {
                     Some(
                         arguments
                             .iter()
@@ -269,10 +242,7 @@ impl PendingCopy {
                 } else {
                     None
                 };
-                let id = self.type_arguments.as_ref().map_or_else(
-                    || id.clone(),
-                    |arguments| crate::types::apply_declared_type_arguments(id, arguments),
-                );
+                let id = id.clone();
                 let type_id = target.canonical_declared_type_id(&id)?;
                 Object::DeclaredType {
                     type_id,
@@ -293,10 +263,7 @@ impl PendingCopy {
                 if !sealed {
                     return Err(HeapError("cannot copy an unsealed symbolic type ref"));
                 }
-                let type_argument_values = self.type_argument_values.clone();
-                let application_arguments = if let Some(arguments) = type_argument_values {
-                    Some(arguments.as_ref().into())
-                } else if let Some(arguments) = application_arguments {
+                let application_arguments = if let Some(arguments) = application_arguments {
                     Some(
                         arguments
                             .iter()
@@ -306,10 +273,7 @@ impl PendingCopy {
                 } else {
                     None
                 };
-                let id = self.type_arguments.as_ref().map_or_else(
-                    || id.clone(),
-                    |arguments| crate::types::apply_declared_type_arguments(id, arguments),
-                );
+                let id = id.clone();
                 let body = self.copy_value(target, source, *body)?;
                 if id
                     .arguments()

@@ -5,6 +5,34 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove old type-slot opcodes and runtime family instantiation (2026-09-11)
+
+Deleted OwnDeclared, AllocTypeSlot, ReadTypeSlot, SealTypeSlot and
+AssertTypeSlotReady throughout LIR, bytecode lowering and VM execution/dispatch.
+Reference inspection found no producer in the new codegen. Removed the old
+construction_check_action/ConstructionContinuation and its three implementation
+tests; solved construction, cast, codec and parse checks remain the active path.
+
+Removed CallContext's old type-family instantiation and declared-application
+builders, the heap family scanner/replacement planner and PendingCopy's template
+substitution mode. Ordinary copying no longer carries replacement/forced-object
+maps or template argument arrays. Its existing explicit-root copy helper moved
+to heap/copy.rs; normal relocation and publication checks remain.
+
+Validation: all 385 workspace library tests pass (telora-core 333, telora 28),
+CLI build and all-target compilation pass. Ten real CLI suites pass, 104 cases:
+compiler-semantics, type-families, checked-recursive-types, construction-check,
+construction-check-once, cast-construction-check, codec-construction-check,
+parse-construction-check, newtype-constructors and enum-constructors.
+Logs: /tmp/mir-remove-type-opcodes-*.log. About 800 net lines removed. No
+performance measurement or claim, and removed old tests are not counted as
+additional correctness coverage.
+
+Heap TypeSlot/declared/symbolic metadata representations and descriptor helpers
+still remain and require removal. Generic function value closure, outstanding
+diagnostic rules, full language acceptance and final performance evaluation are
+also incomplete.
+
 ### Remove descriptor-based native runtime fallbacks (2026-09-11)
 
 Dyn observation, type reflection, codec, string parsing and JSON operations now
