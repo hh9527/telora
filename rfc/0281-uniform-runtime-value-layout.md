@@ -259,3 +259,89 @@ Record 字段访问按已确定的 RecordTable 选择和字段偏移执行；Arr
 - Type/TypeOf 没有 heap 引用；Bytes 的 data 偏移 0/4/8 依次为 HeapId/start/end，相对于完整值为 16/20/24。
 
 原生不透明类型、Never、聚合包装、递归 enum、闭包/dyn 和 Dict 的完整存储规则尚未完成，不将本批视为 #178 已完成。
+
+### #178 闭合规则（后续修订，取代上文对应的待定项）
+
+这些是独立候选 ABI 的确定规则，不是当前 VM 的实现声明。word 固定为 8 字节，值对齐为 8 字节，所有 padding 写零且不参与引用遍历。TypeId、HeapId、计数和偏移为 u32；所有大小计算检查加法、乘法和对齐溢出。
+
+#### 类型分类与成功门槛
+
+- `compile_time` 仅对应 Meta、Namespace、TypeFunction、TypeList、PropertyBound、Bound：分别是静态类型表达式、命名空间、类型构造器、类型列表、约束及绑定变量。不能把 Type、TypeOf 或函数值归入此类。
+- 另有明确来源的静态 Record：模块 body 对应的导出记录可能包含 Meta/Namespace 等声明。通过 MIR 模块 body 的已求解 TypeId 识别，且要求成员包含上述编译期项；这种导出清单标为 compile_time。不能仅凭 Record 名称、字段名或“含未知项”分类。普通运行时 Record 含编译期成员仍失败。
+- `template` 必须存在可追溯的自由 Parameter 或未被 Quantified 绑定的 Bound。自由参数沿真实类型参数和成员边传播。Quantified 只截断 Bound 的传播，不截断外层自由 Parameter；有闭合量化契约的函数本身是可物化值。
+- `uninhabited` 由有限构造的最小不动点确定：Never 无值，聚合要求全部成员可构造，enum 要求至少一个分支可构造。无基例的递归类型无有限值；Array(Never)、Dict(Never) 仍有空集合值，函数仍可接受/返回 Never。
+- 其他具体类型必须具有 `known` 布局；运行时成员不能含编译期类型。未注册 native ABI、缺失表示、非法组成或溢出直接导致布局导出失败，保留目标文件。
+- 删除“pending 也视为最终成功”的完成标准。报告 summary 的 closed=true 只在所有条目分类及对象规则成功验证后产生，pending 为零。模板和不可构造项不是已知对象大小，不输出伪造大小。
+
+#### 聚合与包装
+
+Record、非空 Tuple、newtype 的 data 都是 HeapId:u32，完整值 24 字节，分别指向 RecordTable、TupleTable、NewtypeTable。所有具体 Record 共用 RecordTable，由 TypeId 解释字段；其余两表同理。
+
+对象成员是连续完整值，每个成员有独立来源和 TypeId。字段按 MIR 的规范顺序，Tuple 按元素序号，newtype 保存其被包装的完整值。对象字节数为各完整成员大小之和，字段偏移为前缀和。空 Tuple/Unit 无 data，完整值为 16 字节。Unchecked 仅改变保证，复用其具体 owner 的 data 与对象布局。
+
+#### enum：普通分支内联，递归边间接
+
+enum data 的前 8 字节是 tag:u32 和 padding:u32。普通分支在 data+8（完整值+24）保存完整 payload；最大可构造分支决定大小，最后向 word 对齐。无 payload 的 enum 仍只用一个 data word。不可构造分支不占 payload 空间。
+
+建立只含 enum payload 和透明 Unchecked 边的内联依赖图；对象引用会终止该图。对每条 payload 边检查是否处于有向环中，且仅把这些环内边改为 HeapId:u32，引用 ValueTable 中的完整 payload。所有环内边同时确定，不按 DFS 首次遇到的位置或 ID 顺序选择。
+
+因此 `enum { End, More(Self) }` 的完整值是 32 字节，More 引用 ValueTable；互递归同理。`enum { Items(Array(Self)) }` 的数组已经打断内联依赖，不再额外装箱 Array 描述。嵌套但无环的 enum 继续内联。布局记录逐分支的 storage、table 和 offset；不读取非活跃分支。
+
+#### String、Bytes 与数组
+
+String data 固定 16 字节：tag=0 时为 tag:u8、UTF-8 字节长度:u8、inline:[u8;14]；tag=1 时为 tag:u8、padding:[u8;3]、HeapId/start/end:u32。StringTable 保存原始 UTF-8 字节，slice 必须位于字符边界。String 的编码独立于 enum/dyn，不复用其标签位。
+
+Bytes 与 Array data 均为 HeapId/start/end:u32。BytesTable 保存连续字节；ArrayTable 保存连续完整元素值。表记录底层长度，范围满足 start<=end<=length。序列内容区域大小为 length*stride，Array(Never) 只能 length=0，不虚构 Never 元素大小。
+
+#### 函数与捕获环境
+
+Function 和已绑定的 Quantified data 为 function_id:u32、environment_id:u32，完整值 24 字节。无捕获时环境 ID 为 0；函数身份未来由已闭合代码实例分配，不按运行时参数重新推断。此处不生成实际 function ID 或字节码。
+
+ClosureEnvTable 采用统一变长布局，允许同一函数签名对应不同捕获列表：对象头 capture_count:u32、total_bytes:u32；offsets[count]:u32 从偏移 8 开始；完整捕获值从 align8(8+4*count) 开始按稳定捕获顺序排列。offsets 相对对象起点，total_bytes 指向末尾，所有偏移必须可用 u32 表示。每个捕获值保留自身头部，可以据其 TypeId 遍历引用。
+
+函数 TypeId 不足以确定某一个闭包的捕获数，但上述形状和大小公式是确定的；不因此标为 pending，也不声称捕获环境具有统一固定字节数。
+
+#### Dyn 与间接值
+
+Dyn data 固定 24 字节：concrete_type:u32、storage:u32、payload:[u8;16]，完整值为 40 字节。storage=0 时，data_bytes<=16 且 alignment<=8 的具体值直接复制原 data；来源由 Dyn 外层 loc 保留，具体身份由 concrete_type 保留。storage=1 时，payload 开头的 HeapId 引用 ValueTable 中的一个完整具体值，其余字节为零。
+
+这让标量、String、Array、Record 引用进入 Dyn 时不额外装箱；更宽 enum/Dyn 通过 ValueTable 间接存储。Array(Dyn) 因而有固定 40 字节步长。内联 data 的 heap 引用仍按实际具体类型选择原对象表。
+
+ValueTable 的每个对象从偏移 0 保存一个完整具体值，大小由其头部 TypeId 对应的已知布局确定。递归 enum 和超宽 Dyn 共用这一表。未来 trait object 不在语言范围内，不能借本 RFC 声称其语义已实现；若引入，需要另定实现表身份契约。
+
+#### Dict
+
+DictTable 对象头占 16 字节：len/capacity/buckets/reserved 各 u32。entries 从偏移 16 开始，capacity 个槽，每槽为 String 完整键（32 字节）加完整值；只遍历前 len 个已初始化槽。桶区从 align8(16+capacity*entry_stride) 开始，buckets 个 8 字节桶（hash:u32、entry_plus_one:u32，0 表示空桶）。
+
+采用插入顺序 entries 和线性探测桶，buckets 是不小于 2*capacity 的二次幂；空表可取 capacity=0、buckets=1。桶只保存索引，不复制键值。哈希比较最终依靠 String 内容相等；具体 hash 算法不改变布局，不承诺当前 VM 已采用该结构。
+
+对象大小公式为 align8(16+capacity*entry_stride)+8*buckets。长度不得超过容量。Dict(Never) 只能为空，不能实际存储无值类型。扩容、删除时桶重建等运行策略留给未来实现，不改变上述稳定存储形状。
+
+#### Native 不透明资源
+
+现有 native ABI 身份 (19,0)、(20,1)、(16,3)、(33,0)、(34,0) 采用固定资源引用契约：值 data 是 HeapId:u32，完整值 24 字节；NativeResourceTable 按 native module/slot 分区，每条目是 host_resource_token:u64。
+
+宿主资源注册表拥有实际 regex/fmt/hash/test/blame 资源，负责 clone/drop/trace，包括资源可能保留的 Telora 值。token 不按 Telora 对象或宿主裸指针解释。固定的是语言与宿主之间的资源 ABI，不虚构第三方对象内部字节布局。未列出的 native 身份必须显式注册布局契约，否则失败。
+
+#### 可计算的对象描述与引用遍历
+
+报告的 storage 字段是带标签的 Fixed/Sequence/Dictionary/Captures/FullValue 描述；`Storage::allocation_bytes` 根据具体长度、容量、捕获值大小或完整值大小计算对象字节数并验证约束。storage_rule 提供对应文字说明，不以说明文本代替实际计算规则。
+
+固定对象通过成员 TypeId 与偏移遍历，序列按元素类型和步长遍历，Dict 只遍历 live entries，闭包通过 offsets 和捕获值头遍历，ValueTable 通过值头遍历；native 通过注册 host trace。所有分类表的 HeapId 都需要所属 world 上下文，实际发布/复制仍不在本轮实施范围内。
+
+### #178 验收记录
+
+- CLI 全套 70 项通过，包含普通执行回归和语言验收；核心布局 4 项通过。补充嵌套 enum 和 Array(Dyn) 的断言后单独重跑布局专项。
+- 布局专项覆盖普通/互递归/无基例 enum、Tuple、newtype、Unchecked、具体泛型实例、带捕获函数、已绑定的多态函数、Dyn 及其数组、Array(Never)、Dict 和 native 资源。
+- 核心测试确认 Quantified 只绑定 Bound，不误消除自由 Parameter；未知 native 契约和非模块运行时 Record 中的 Meta 成员失败。对象公式测试覆盖合法容量、非法长度、u32 捕获偏移上限与 u64 乘加溢出。
+- 导出保持逐字节确定，静态/写入失败保留目标文件；不向普通文档或帮助暴露隐藏选项。
+- 四个实际项目分别运行全库 JSON 导出，全部 closed=true、pending=0；源码 Unknown/Conflicted 均为零，执行阶段均为零。
+
+| 项目 | 条目 | known | compile_time | template | uninhabited |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ontology | 3502 | 1678 | 1627 | 196 | 1 |
+| spider-model | 3779 | 1774 | 1753 | 251 | 1 |
+| dog-model | 3761 | 1763 | 1746 | 251 | 1 |
+| world-model | 3742 | 1747 | 1743 | 251 | 1 |
+
+这些是完整图的分类与布局覆盖数据，不是运行时性能数据。具体布局缺失现已属于导出错误；新语言能力或 native ABI 需要显式增加规则。#178 的布局闭合范围完成，运行时接入仍需独立方案。

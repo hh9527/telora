@@ -895,7 +895,12 @@ fn dump_types_layout_is_static_deterministic_and_hidden() {
     assert_eq!(choices["entry"]["layout"]["shape"]["value_bytes"], 56);
     assert_eq!(choices["entry"]["variants"][1]["offset"], 24);
     assert!(first.iter().any(|r| r["entry"]["layout"]["status"] == "template"));
-    assert!(first.iter().any(|r| r["entry"]["layout"]["status"] == "pending" && r["entry"]["variants"].as_array().is_some_and(|v| v.iter().any(|v| v["name"] == "More"))));
+    let recursive = first.iter().find(|r| r["entry"]["variants"].as_array().is_some_and(|v| v.iter().any(|v| v["name"] == "More"))).unwrap();
+    assert_eq!(recursive["entry"]["layout"]["status"], "known");
+    assert_eq!(recursive["entry"]["variants"][1]["storage"], "heap_id");
+    assert_eq!(recursive["entry"]["layout"]["shape"]["value_bytes"], 32);
+    assert_eq!(report["summary"]["closed"], true);
+    assert!(first.iter().all(|r| r["entry"]["layout"]["status"] != "pending"));
     assert!(!telora(&cwd).args(["check", "@src/main"]).output().unwrap().status.success());
     for selection in [vec!["--lib"], vec!["--tests"], vec!["--lib", "--tests"]] {
         let mut flags = vec!["--dump-types-layout", "layout.json"];
@@ -919,5 +924,66 @@ fn dump_types_layout_is_static_deterministic_and_hidden() {
     assert!(!output.status.success());
     assert!(!cwd.join("absent.json").exists());
     assert!(!String::from_utf8_lossy(&output.stdout).contains("\"record\":\"type_layout\""));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
+fn concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), r#"
+        import "std/regex" as regex;
+        import "std/hash" as hash;
+        export type Left = enum { Stop, Next(Right) };
+        export type Right = enum { Step(Left) };
+        export type Dead = enum { Again(Dead) };
+        export type Nested = enum { Value(Left), Flag(Bool) };
+        export type Wrapped = struct(Int);
+        export type Rec = struct { item: Int };
+        export def pair: (Int, String) = (1, "hello");
+        export def wrapped = Wrapped(1);
+        export def factory = fn(x: Int) { fn(y: Int) { x + y } };
+        export def poly: for(T) Fn(T) -> T = fn(x) { x };
+        export def inferred_identity = fn(x) { x };
+        export def same_poly = poly == poly;
+        export def unchecked: Fn(Unchecked(Rec)) -> Int = fn(x) { x.item };
+        export def empty: Array(Never) = [];
+        export def dictionary: Dict(Int) = {x: 1};
+        export def accepts_dyn = fn(value: Dyn) { value };
+        export def dynamics: Array(Dyn) = [];
+    "#).unwrap();
+    let output = telora(&cwd).args(["check", "@src/main", "--dump-types-layout", "layout.json"]).output().unwrap();
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&fs::read(cwd.join("layout.json")).unwrap()).unwrap();
+    assert_eq!(report["summary"]["closed"], true);
+    let entries = report["types"].as_array().unwrap();
+    for name in ["Left", "Right"] {
+        let row = entries.iter().find(|r| r["type_name"] == name && r["entry"]["constructor"] == "Nominal").unwrap();
+        assert_eq!(row["entry"]["layout"]["shape"]["value_bytes"], 32);
+        assert!(row["entry"]["variants"].as_array().unwrap().iter().any(|v| v["storage"] == "heap_id"));
+    }
+    assert!(entries.iter().any(|r| r["type_name"] == "Dead" && r["entry"]["layout"]["status"] == "uninhabited"));
+    let nested = entries.iter().find(|r| r["type_name"] == "Nested" && r["entry"]["constructor"] == "Nominal").unwrap();
+    assert_eq!(nested["entry"]["layout"]["shape"]["value_bytes"], 56);
+    assert!(nested["entry"]["variants"].as_array().unwrap().iter().all(|v| v["storage"] == "full_value"));
+    let wrapped = entries.iter().find(|r| r["type_name"] == "Wrapped" && r["entry"]["constructor"] == "Nominal").unwrap();
+    assert_eq!(wrapped["entry"]["object"]["bytes"], 24);
+    assert_eq!(wrapped["entry"]["layout"]["shape"]["table"], "NewtypeTable");
+    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Tuple" && r["entry"]["object"]["bytes"] == 56));
+    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Dyn" && r["entry"]["layout"]["shape"]["value_bytes"] == 40));
+    assert!(entries.iter().any(|r| r["type_name"] == "Array(Dyn)" && r["entry"]["object"]["element_stride"] == 40));
+    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Record" && r["entry"]["layout"]["status"] == "compile_time" && r["entry"]["layout"]["reason"].as_str().is_some_and(|s| s.contains("module body"))));
+    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Quantified" && r["entry"]["layout"]["status"] == "known"));
+    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Function" && r["entry"]["layout"]["shape"]["table"] == "ClosureEnvTable"));
+    assert!(entries.iter().any(|r| r["type_name"] == "Array(Never)" && r["entry"]["object"]["element_stride"] == 0));
+    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Native" && r["entry"]["object"]["bytes"] == 8));
+    assert!(entries.iter().any(|r| r["type_name"] == "Dict(Int)" && r["entry"]["object"]["element_stride"] == 56));
+    for row in entries {
+        if matches!(row["entry"]["constructor"].as_str(), Some("Meta" | "Namespace" | "TypeList" | "PropertyBound" | "TypeFunction" | "Bound")) {
+            assert_eq!(row["entry"]["layout"]["status"], "compile_time");
+        }
+        if row["entry"]["layout"]["status"] == "template" {
+            assert!(row["entry"]["layout"]["reason"].as_str().unwrap().contains("free type parameter"));
+        }
+    }
     fs::remove_dir_all(cwd).unwrap();
 }

@@ -89,19 +89,25 @@ pub fn check(
         let entries = if roots.is_empty() { vec![] } else {
             telora_core::candidate_layout::calculate(sealed)?
         };
-        let mut pending = 0;
         let mut templates = 0;
+        let mut compile_time = 0;
+        let mut uninhabited = 0;
         let mut layouts = Vec::with_capacity(entries.len());
         for entry in &entries {
-            if matches!(entry.layout, telora_core::candidate_layout::State::Template) { templates += 1; }
-            if matches!(entry.layout, telora_core::candidate_layout::State::Pending { .. })
-                || entry.object.as_ref().is_some_and(|o| o.status == "pending") { pending += 1; }
+            match entry.layout {
+                telora_core::candidate_layout::State::Template { .. } => templates += 1,
+                telora_core::candidate_layout::State::CompileTime { .. } => compile_time += 1,
+                telora_core::candidate_layout::State::Uninhabited { .. } => uninhabited += 1,
+                _ => {},
+            }
             let type_name = MirQuery::new(sealed.mir()).type_name(entry.id());
             layouts.push(json!({"type_name": type_name, "entry": entry}));
         }
         let report = json!({"schema": "telora.types-layout/v1", "candidate": true, "roots": roots,
             "target": {"word_bytes": 8, "heap_id_bytes": 4, "type_id_bytes": 4},
-            "types": layouts, "summary": {"types": entries.len(), "pending": pending, "templates": templates},
+            "types": layouts, "summary": {"types": entries.len(), "pending": 0, "templates": templates,
+                "compile_time": compile_time, "uninhabited": uninhabited,
+                "known": entries.len()-templates-compile_time-uninhabited, "closed": true},
             "header": {"loc_offset": 0, "type_id_offset": 12, "data_offset": 16},
             "offset_bases": {"members": "object_start", "variants": "value_start"}});
         write_layout_report(path, &report)?;
