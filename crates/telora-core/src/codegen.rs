@@ -218,14 +218,9 @@ fn compile_root(
     }
     include_instance_implementations(mir, &mut all);
     globals = all.into_iter().collect();
-    let queries_properties = matches!(root, CompilationRoot::Check | CompilationRoot::Tests(_))
-        || globals.iter().any(|s| {
-            matches!(
-                native_abi(mir, *s),
-                Some((25, "get_type_prop" | "get_field_prop" | "get_variant_prop" | "evidence")) | Some((13, _)) | Some((7, "parse_with")) | Some((17, "schema_with"))
-            )
-        });
-    if queries_properties {
+    // Every admitted property has executable code. Whether a provider runs is
+    // decided by VM demand, not by guessing which native calls might query it.
+    {
         let mut all = globals
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>();
@@ -328,10 +323,8 @@ fn compile_root(
         emitter.emit(declaration, O::MakeClosure { dst, function: Box::new(thunk.function), captures });
         emitter.emit(declaration, O::InstallTask { node: graph.instance(instance).expect("instance task"), src: dst });
     }
-    if queries_properties {
-        for record in mir.properties.iter().filter(|record| record.concrete) {
-            emitter.property_thunk(record).map_err(|d| vec![d])?;
-        }
+    for record in mir.properties.iter().filter(|record| record.concrete) {
+        emitter.property_thunk(record).map_err(|d| vec![d])?;
     }
     for check in mir.construction_checks.iter().filter(|check| check.concrete) {
         let mut thunk = Emitter::new(mir, &graph, format!("check:{}", check.checker.index()));
@@ -2687,6 +2680,18 @@ pub(crate) mod tests {
             "",
         );
         let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        // This entry only returns metadata. Its property tasks must still be
+        // installed, while the failing provider below must remain unexecuted.
+        let property_tasks = artifact.graph.nodes().iter().filter_map(|node| {
+            if let crate::execution_graph::Task::Property { key, .. } = node.task {
+                artifact.graph.property(key)
+            } else { None }
+        }).collect::<Vec<_>>();
+        assert!(!property_tasks.is_empty());
+        for task in property_tasks {
+            assert!(artifact.bytecode.instructions().iter().any(|instruction|
+                matches!(instruction, crate::bytecode::Opcode::InstallTask { node, .. } if *node == task)));
+        }
         let types = &artifact.types;
         let expected = types.types[artifact.result_type.index()]
             .arguments

@@ -5,6 +5,33 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Emit every admitted property task mechanically (2026-09-11)
+
+Codegen no longer predicts property demand from a hard-coded list of native
+module/function names. Every concrete property record in sealed MIR now gets a
+provider thunk and its required global/instance dependencies. Installation does
+not execute providers: VM demand still controls evaluation and caching. This
+removes premature property-code pruning; it may increase emitted code and task
+installation work, and no performance improvement is claimed.
+
+The metadata-only entry regression checks that property tasks really are
+installed and that a failing, unqueried provider remains unexecuted. All 393
+workspace library tests, CLI build and all-target compilation pass. Six CLI
+suites pass: properties, property-target, static-property-evidence,
+construction-check, checked-recursive-types and codec-construction-check.
+Logs: /tmp/mir-property-emission-*.log. Full acceptance was not rerun; its latest
+complete result remains 270/400.
+
+The separate polymorphic-value gap is confirmed in module-interfaces: the two
+references in `direct == relayed` receive fresh, unsolved generic arguments.
+Principal schemes currently describe declarations only after solving; execution
+tasks admit concrete instances only. Closing this gap requires representing a
+quantified function value independently of a concrete call instance and retaining
+runtime closure identity through aliases. Filling the arguments with an arbitrary
+type or emitting an uncallable placeholder would not complete this requirement.
+This gap, other acceptance failures, metadata migration and final performance
+assessment remain open.
+
 ### Keep runtime metadata out of static type construction (2026-09-11)
 
 Static type uses now consume resolved symbol identity: type declarations, type
