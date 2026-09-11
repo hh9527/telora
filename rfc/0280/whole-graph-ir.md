@@ -5,6 +5,26 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Seal construction-check record coverage (2026-09-11)
+
+Seal now checks both directions of construction-check coverage: every authored
+@check has exactly one argument and a corresponding checker record, and records
+must point to authored checker arguments. Multiple specialized records can share
+their original syntax. Previously seal validated only records that still existed,
+so deleting all records could silently remove a solved obligation.
+
+Regression coverage removes a valid record and clears diagnostics on an invalid
+nullary-variant placement with fully known, nonconflicting checker types. Both
+remain rejected by seal itself. This is a publication invariant, not a new
+codegen recovery path or a change to checker execution.
+
+Validation: all 391 workspace library tests, CLI build and all-target compilation
+pass. construction-check, checked-recursive-types and codec-construction-check
+pass (25 CLI cases). Logs: /tmp/mir-check-coverage-*.log. Full acceptance and
+performance were not repeated; the latest complete acceptance remains 248/400,
+with subsequent targeted changes documented above. Generic function values,
+remaining acceptance failures and metadata migration remain outstanding.
+
 ### Attach @check contracts to existing type conflicts (2026-09-11)
 
 When a checker signature inherits a type conflict, finalize_checks enriches

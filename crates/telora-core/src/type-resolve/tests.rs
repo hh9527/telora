@@ -46,6 +46,27 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
 }
 
 #[test]
+fn seal_requires_a_record_for_every_construction_check() {
+    let mut mir = graph(&[("@src/main", "@check(fn(value) {Ok(())}) type Checked = struct(Int); export {Checked};")]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    mir.construction_checks.clear();
+    assert!(mir.seal().is_err(), "a solved checker must not disappear before codegen");
+
+    let mut mir = graph(&[("@src/main", r#"
+        def verify: Fn(Int) -> Result((), Never) = fn(value) {Ok(())};
+        type Choice = enum { @check(verify) Empty };
+        export {Choice};
+    "#)]);
+    resolve(&mut mir);
+    assert!(!mir.diagnostics.is_empty());
+    assert!(mir.type_conflicts.is_empty(), "the invalid placement has a well-typed checker");
+    assert!(mir.type_unknowns.is_empty(), "checker types are fully determined");
+    mir.diagnostics.clear();
+    assert!(mir.seal().is_err(), "unsupported check sites cannot bypass seal by clearing diagnostics");
+}
+
+#[test]
 fn invalid_check_signatures_keep_the_original_conflict_and_contract_context() {
     for expression in ["fn(value) {True}", "fn(value) {Ok(value)}", "fn(value) {Err(\"bad\")}", "fn(value) {None}"] {
         let source = format!("@check({expression}) type Checked = struct(Int); export def independent = 42;");

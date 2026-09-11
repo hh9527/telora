@@ -59,6 +59,25 @@ impl Mir {
         }
     }
 
+    fn valid_check_coverage(&self) -> bool {
+        let mut expected = vec![false; self.hir.len()];
+        for node in &self.hir {
+            let HirKind::ConstructionCheck { configured } = node.kind else { continue; };
+            if !configured { return false; }
+            let mut arguments = node.children.iter().filter(|edge| edge.role == Role::Argument);
+            let Some(argument) = arguments.next() else { return false; };
+            if arguments.next().is_some() { return false; }
+            let Some(slot) = expected.get_mut(argument.node.index()) else { return false; };
+            *slot = true;
+        }
+        let mut recorded = vec![false; self.hir.len()];
+        for check in &self.construction_checks {
+            if expected.get(check.checker.index()) != Some(&true) { return false; }
+            recorded[check.checker.index()] = true;
+        }
+        expected == recorded
+    }
+
     fn valid_properties(&self) -> bool {
         let mut keys = std::collections::BTreeSet::new();
         let mut recorded = vec![false; self.hir.len()];
@@ -167,6 +186,7 @@ impl Mir {
             || self.member_selections.len() != self.hir.len()
             || !self.valid_type_schemes()
             || !self.valid_properties()
+            || !self.valid_check_coverage()
             || !self.valid_property_admissions()
             || self.hir.iter().enumerate().any(|(node, _)| matches!(self.ty_slots.get(node), Some(TypeState::Known(ty))
                 if self.value_shape_error(HirId(node as u32), *ty).is_some()))
