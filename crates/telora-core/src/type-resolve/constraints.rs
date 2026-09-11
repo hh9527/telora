@@ -560,7 +560,7 @@ impl Solver<'_> {
                         node.ty(),
                         node.ty(),
                         Some(self.mir.hir[node.index()].location),
-                        "function arity mismatch".into(),
+                        format!("call expects {} arguments, found {}", term.arguments.len().saturating_sub(1), arguments.len()),
                     );
                 } else {
                     for (&expected, &actual) in term.arguments.iter().zip(&arguments) {

@@ -5,6 +5,23 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Report call arity from solved signatures (2026-09-11)
+
+Call conflicts now report expected and actual argument counts from the existing
+Function term instead of the generic "function arity mismatch" message. No type
+reconstruction or downstream inference is involved. A regression covers ordinary
+calls, pipeline calls, zero-argument functions and newtype constructors, including
+continued solving of an independent declaration and rejection by seal.
+
+Validation: all 73 type-resolve tests and CLI build pass. The existing negative
+fixtures diag-call-arity, diag-call-inconsistent-arity,
+diag-newtype-constructor-arity and diag-pipeline each exit 1 and emit the exact
+expected call-count message; expected files were not changed. Logs:
+/tmp/mir-call-arity-*.log. Full acceptance/performance were not rerun; the latest
+full snapshot remains 200/400, followed by the documented targeted fixes.
+Non-callable type rendering and other diagnostic gaps remain open, alongside
+generic function values, remaining metadata migration and final evaluation.
+
 ### Enforce static list-constructor contracts (2026-09-11)
 
 Removed a fallback in type solving that accepted arbitrary Tuple/Func argument

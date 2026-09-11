@@ -46,6 +46,23 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
 }
 
 #[test]
+fn call_arity_diagnostics_use_the_solved_signature() {
+    for (source, expected) in [
+        ("def f = fn(a) {a}; export def bad = f(1, 2);", "call expects 1 arguments, found 2"),
+        ("def f: Fn(Int, Int) -> Int = fn(a, b) {a + b}; export def bad = 1 |> f;", "call expects 2 arguments, found 1"),
+        ("type Id = struct(Int); export def bad = Id();", "call expects 1 arguments, found 0"),
+        ("def f: Fn() -> Int = fn() {42}; export def bad = f(1);", "call expects 0 arguments, found 1"),
+    ] {
+        let source = format!("{source} export def independent = 42;");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|d| d.message == expected), "{}", mir.dump());
+        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(mir.seal().is_err());
+    }
+}
+
+#[test]
 fn list_type_constructors_reject_variadic_and_non_list_arguments() {
     for (expression, message) in [
         ("Tuple(Int, String)", "expected 1 arguments, got 2"),
