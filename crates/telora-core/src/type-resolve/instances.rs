@@ -272,6 +272,15 @@ impl Solver<'_> {
         indices: &mut BTreeMap<Key, GenericInstanceId>,
         canonical: &mut Canonical,
     ) -> Option<GenericInstanceId> {
+        // A nominal definition with conflicted member evidence cannot produce
+        // instances. In particular, do not restart an argument-growth cycle
+        // already rejected before layout materialization.
+        if let Some(definition) = self.nominal_index[key.0.index()]
+            && self.mir.type_definitions[definition].members.iter().any(|member| {
+                member.payload.is_some_and(|slot| !matches!(self.mir.ty_slots[slot.index()], TypeState::Known(_)))
+            }) {
+            return None;
+        }
         if let Some(&id) = indices.get(&key) {
             return Some(id);
         }

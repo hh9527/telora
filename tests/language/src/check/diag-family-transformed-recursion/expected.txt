@@ -1,1 +1,1 @@
-must use its bound parameters unchanged
+recursive type family expands its type arguments without a finite layout graph

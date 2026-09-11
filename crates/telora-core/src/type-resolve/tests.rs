@@ -426,6 +426,35 @@ fn principal_schemes_preserve_quantified_bounds() {
 }
 
 #[test]
+fn recursive_family_growth_is_a_static_conflict_but_permutations_and_resets_close() {
+    for source in [
+        "type Grow(A) = struct {next: Grow(Array(A))}; export {Grow}; export def independent = 42;",
+        "type Left(A) = struct {next: Right(Array(A))}; type Right(B) = struct {next: Left(B)}; export {Left}; export def independent = 42;",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains("recursive type family expands")), "{}", mir.dump());
+        assert!(!mir.type_conflicts.is_empty());
+        assert!(mir.types.len() < 1000, "{} types: {:?}", mir.types.len(), mir.diagnostics);
+        let symbol = mir.symbols.iter().position(|s| s.name == "independent" && matches!(s.kind, SymbolKind::Declaration(_))).unwrap();
+        let TypeState::Known(ty) = mir.ty_slots[mir.symbol_types[symbol].index()] else { panic!("independent result stays solved") };
+        assert_eq!(mir.types[ty.index()].constructor, TypeConstructor::Int);
+        assert!(mir.seal().is_err());
+    }
+    for source in [
+        "type Swap(A, B) = struct {next: Swap(B, A)}; export {Swap};",
+        "type Left(A) = struct {next: Right(Array(A))}; type Right(B) = struct {next: Left(Int)}; export {Left};",
+        "type Tree(A) = struct {children: Array(Tree(A))}; export {Tree};",
+        "type Wrapped(A) = struct {next: Wrapped(Unchecked(A))}; export {Wrapped};",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+        assert!(mir.types.len() < 1000, "{} types", mir.types.len());
+    }
+}
+
+#[test]
 fn generic_references_distinguish_exported_schemes_and_call_instances() {
     let mut mir = graph(&[("@src/main", r#"
         export def identity: for(T) Fn(T) -> T = fn(value) { value };

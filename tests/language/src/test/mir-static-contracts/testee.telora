@@ -1,0 +1,41 @@
+import "std/test" as test;
+import "std/dyn" as dyn;
+import "std/type-property" {get_type_prop};
+import "@src/test-support" {expect};
+
+def project: for(A) Fn(Dyn) -> Option(A) = fn(value) { dyn.project@[A](value) };
+type Item = struct {x: Int};
+type Swap(A, B) = struct {next: Swap(B, A)};
+@property(PropertyTarget.Type)
+type Prop(T) = struct {value: T};
+def mark: Fn(Type, Option(Prop(Int))) -> Prop(Int) = fn(owner, previous) { {value: 42} };
+@mark type Marked = struct(Int);
+
+export def static_projection = test.should_ok(fn() {
+    expect(project@[Int](dyn.pack(Int.type, 42)) == Some(42)
+        && project@[String](dyn.pack(Int.type, 42)) == None)
+});
+
+export def local_alias_instances = test.should_ok(fn() {
+    let identity = fn(value) { value };
+    let alias = identity;
+    expect(alias(42) == 42 && alias("text") == "text")
+});
+
+export def generic_property_value = test.should_ok(fn() {
+    expect(match get_type_prop(Marked.type, Prop(Int).type) {
+        Some(property) => property.value == 42,
+        None => False,
+    })
+});
+
+export def struct_spread_context = test.should_ok(fn() {
+    let original: Item = {x: 42};
+    let copied: Item = {...original};
+    expect(copied.x == 42)
+});
+
+export def finite_recursive_layout = test.should_ok(fn() {
+    expect(Swap(Int, String).type == Swap(Int, String).type
+        && Swap(Int, String).type != Swap(String, Int).type)
+});

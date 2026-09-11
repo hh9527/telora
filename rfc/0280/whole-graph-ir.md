@@ -5,6 +5,42 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Reject unbounded family growth and review superseded negative fixtures (2026-09-11)
+
+Nominal layout expansion previously discovered Grow(A) -> Grow(Array(A)) only
+after reaching the 65,536-type expansion guard. A static parameter-flow graph now
+detects constructor-growing edges inside strongly connected components before
+layout/instance materialization. The offending member receives Conflicted and a
+source diagnostic; unrelated definitions continue solving. Instance admission
+also consumes the conflict, so it cannot restart the rejected expansion through
+the generic-instance graph. Existing resource guards remain for other compiler
+resource limits, not as the primary diagnostic for proven argument-growth cycles.
+
+Permutations, unchanged arguments, constant resets and idempotent Unchecked
+wrapping remain legal. Tests cover direct/mutual growth, finite swaps, a mutual
+cycle cut by a constant, ordinary recursive trees and Unchecked normalization.
+Rejected examples stay below 1,000 types instead of expanding thousands; this is
+an allocation-size regression assertion, not a general performance benchmark.
+
+Five older negative fixtures were explicitly reviewed and converted to positive
+checks: static generic dyn.project, generalized local aliases, generic property
+carriers, finite reordered family recursion and contextual named-struct spread.
+These behaviors already have MIR implementations. A new five-case runtime suite
+checks concrete projection success/failure, two alias instantiations, property
+value retrieval, spread field access and recursive metadata identities. The
+unconstrained nullary generic enum export remains under review, not converted to
+a passing fixture. The transformed-recursion diagnostic expectation now describes
+unbounded growth rather than prohibiting all argument transformations.
+
+Validation: 393 workspace library tests, CLI build and all-target check pass.
+Full language acceptance is 280/401 (121 failures), with no previously passing
+case regressing. This consists of five reviewed positive replacements, one new
+runtime suite and the corrected growing-recursion diagnostic. Logs:
+/tmp/mir-family-growth-*.log. First-class generic function values are still not
+implemented; investigation confirms a quantified signature requires a real
+runtime function-family value with static instance selections, not a placeholder
+closure. Remaining diagnostics and final performance evaluation remain open.
+
 ### Explicit generic reference outcomes (2026-09-11)
 
 Replaced the optional reference-instance table with GenericReference outcomes:

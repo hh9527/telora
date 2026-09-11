@@ -14,6 +14,8 @@ mod diagnostics;
 mod definitions;
 #[path = "type-resolve/alias-cycles.rs"]
 mod alias_cycles;
+#[path = "type-resolve/family-cycles.rs"]
+mod family_cycles;
 #[path = "type-resolve/evidence.rs"]
 mod evidence;
 #[path = "type-resolve/instances.rs"]
@@ -239,6 +241,7 @@ pub fn resolve(mir: &mut Mir) {
     solver.validate_field_projections();
     solver.resolve_constructor_patterns();
     solver.finalize();
+    solver.reject_expanding_families();
     solver.validate_diverging_branches();
     solver.finalize_properties();
     solver.finalize_checks();
