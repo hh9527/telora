@@ -355,6 +355,13 @@ impl Solver<'_> {
             match self.mir.resolve_slots[slot.index()].clone() {
                 ResolveState::Bound(symbol) => {
                     let source = &self.mir.symbols[symbol.index()];
+                    if self.type_uses[node.index()] && !matches!(source.kind,
+                        SymbolKind::Declaration(BindingKind::Type | BindingKind::NativeType | BindingKind::Trait)
+                            | SymbolKind::TypeParameter | SymbolKind::Namespace(_)) {
+                        self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
+                            "metadata data cannot become a type; use a type declaration or type parameter".into());
+                        return;
+                    }
                     if source.native_type.is_some() {
                         // Each occurrence supplies rigid type evidence without
                         // letting a bad annotation poison the intrinsic itself.

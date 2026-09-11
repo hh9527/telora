@@ -5,6 +5,23 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Keep runtime metadata out of static type construction (2026-09-11)
+
+Static type uses now consume resolved symbol identity: type declarations, type
+parameters and namespaces are allowed; ordinary value bindings and function
+results cannot reenter the type world. Invalid uses produce a type conflict while
+independent declarations continue solving. Imported aliases and type families
+remain supported. No VM execution or codegen inference is introduced.
+
+Validation: all 393 workspace library tests, CLI build and all-target compilation
+pass. Full language acceptance is 270/400, up from the immediately preceding
+268/400: diag-check-tool-construction and diag-metadata-import-reentry now pass,
+with no regressions or changed expectations. Logs:
+/tmp/mir-static-type-boundary-*.log. The remaining 130 acceptance failures,
+polymorphic function values, metadata migration and final performance assessment
+remain open. Codegen continues to mechanically consume sealed MIR facts; missing
+implicit generic arguments must be solved upstream, not guessed during emission.
+
 ### Report authored names in unresolved-symbol diagnostics (2026-09-11)
 
 Resolve diagnostics now display the missing binding name instead of a HIR debug

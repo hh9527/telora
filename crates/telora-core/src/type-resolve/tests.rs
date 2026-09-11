@@ -46,6 +46,33 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
 }
 
 #[test]
+fn static_type_uses_reject_value_metadata_and_ordinary_function_results() {
+    for source in [
+        "def metadata: TypeOf(Int) = Int.type; type Invalid = metadata; export def independent = 42;",
+        "def choose: for(A) Fn(A) -> A = fn(value) {value}; type Invalid = choose(Int); export def independent = 42;",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains("metadata data cannot become a type")), "{}", mir.dump());
+        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(mir.seal().is_err());
+    }
+    let mut mir = graph(&[
+        ("@src/main", "import \"@src/types\" {metadata}; type Invalid = metadata; export def independent = 42;"),
+        ("@src/types", "export def metadata: TypeOf(Int) = Int.type;"),
+    ]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.iter().any(|d| d.message.contains("metadata data cannot become a type")));
+    assert!(mir.seal().is_err());
+    let mut mir = graph(&[
+        ("@src/main", "import \"@src/types\" {Family as Renamed}; type Alias(T) = Renamed(T); export def answer: Alias(Int) = {value: 42};"),
+        ("@src/types", "export type Family(T) = struct {value: T};"),
+    ]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+}
+
+#[test]
 fn seal_requires_a_record_for_every_construction_check() {
     let mut mir = graph(&[("@src/main", "@check(fn(value) {Ok(())}) type Checked = struct(Int); export {Checked};")]);
     resolve(&mut mir);
