@@ -88,6 +88,18 @@ impl Solver<'_> {
         for slot in std::mem::take(&mut self.bottom_candidates) {
             let root = self.root(slot);
             if self.mir.ty_slots[root.index()] == TypeState::Unknown {
+                // Explicit returns may still await a generalized reference.
+                // Their evidence must arrive before a bottom-only tail can
+                // default the shared result slot to Never.
+                if self.tasks.iter().any(|task| match task {
+                    Task::Fit { expected, actual, .. } => self.root(*expected) == root
+                        && !self.term(*actual).is_some_and(|term| term.constructor == TypeConstructor::Never),
+                    Task::Call { node, .. } => self.root(node.ty()) == root,
+                    _ => false,
+                }) {
+                    self.bottom_candidates.push(slot);
+                    continue;
+                }
                 let never = self.structure(TypeConstructor::Never, vec![]);
                 self.equal(root, never, None);
                 changed = true;

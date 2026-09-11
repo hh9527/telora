@@ -30,8 +30,5 @@ type PropertyAttr = struct { bits: Int };
 
 export { PropertyAttr };
 export Bool.{True, False};
-def Some: for(T) Fn(T) -> Option(T) = Option(T).Some;
-def None: for(T) Option(T) = Option(T).None;
-def Ok: for(T, E) Fn(T) -> Result(T, E) = Result(T, E).Ok;
-def Err: for(T, E) Fn(E) -> Result(T, E) = Result(T, E).Err;
-export { Some, None, Ok, Err };
+export Option.{Some, None};
+export Result.{Ok, Err};

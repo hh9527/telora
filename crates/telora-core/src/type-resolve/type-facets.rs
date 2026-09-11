@@ -21,6 +21,7 @@ impl Solver<'_> {
                         break;
                     }
                     Some(selection @ (MemberSelection::EnumVariant { .. } | MemberSelection::Boolean(_))) => {
+                        if value_alias && matches!(selection, MemberSelection::EnumVariant { .. }) { break; }
                         self.mir.member_selections[index] = Some(selection);
                         selected = true;
                         break;
@@ -35,7 +36,7 @@ impl Solver<'_> {
                 }
                 let role = match self.mir.hir[callee.index()].kind {
                     HirKind::TypeApply => Role::Callee,
-                    HirKind::Binding { kind: BindingKind::Let | BindingKind::Def, .. } => {
+                    HirKind::Binding { kind: BindingKind::Let | BindingKind::Def, imported: None, .. } => {
                         value_alias = true;
                         Role::Value
                     }

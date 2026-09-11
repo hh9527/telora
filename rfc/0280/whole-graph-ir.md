@@ -5,6 +5,33 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Preserve constructor declaration identity in patterns (2026-09-11)
+
+Enum pattern selection now rejects traversal through ordinary function-value
+aliases, matching RFC 0274's declaration-origin requirement. The existing HIR
+imported marker distinguishes member imports from authored Def/Let aliases;
+qualified and renamed member imports keep their constructor identity. Prelude
+Some/None/Ok/Err now use ordinary Option/Result member exports instead of Def
+aliases, without native-name exceptions or codegen recovery.
+
+The prelude change exposed a timing bug: a bottom-only tail could default the
+shared return slot to Never while explicit return calls still awaited constructor
+generalization. Bottom completion now waits for pending Fit/Call evidence on
+that root. Regression tests cover direct/import-derived/chained value aliases,
+valid member renaming and an all-return function solved as Result(String, Int).
+
+Validation: all 383 workspace library tests, CLI build and all-target compilation
+pass. Full language acceptance is now 200/400 pass, 200 fail. Compared with the
+previous complete 197/400 run, diag-enum-pattern-function,
+diag-member-import-function-pattern and the preceding stage's
+diag-property-carrier-scalar now pass, with no newly failing fixtures. Both enum
+rejections happen statically with execution_seconds = 0. Logs:
+/tmp/mir-enum-pattern-alias-{libs,build,targets,final-language}.log.
+
+The 200 remaining acceptance failures, first-class polymorphic function values,
+remaining runtime metadata migration and final performance evaluation remain
+open. This milestone changes static correctness, not codegen optimization.
+
 ### Reject silently discarded decorators on aliases (2026-09-11)
 
 Investigating the twelve unexpectedly successful negative checks found a real

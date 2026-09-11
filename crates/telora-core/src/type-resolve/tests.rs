@@ -46,6 +46,43 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
 }
 
 #[test]
+fn bottom_tails_wait_for_explicit_return_evidence_from_generalized_constructors() {
+    let mut mir = graph(&[("@src/main", r#"
+        export def choose = fn(flag) {
+            if flag { return Ok("hi"); } else { return Err(2); }
+        };
+        export def answer = choose(True) == Ok("hi") && choose(False) == Err(2);
+    "#)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let TypeState::Known(signature) = symbol_type(&mir, "choose") else { panic!("closed signature") };
+    let result = *mir.types[signature.index()].arguments.last().unwrap();
+    assert_eq!(mir.types[result.index()].constructor, TypeConstructor::Result);
+    let arguments = &mir.types[result.index()].arguments;
+    assert_eq!(mir.types[arguments[0].index()].constructor, TypeConstructor::String);
+    assert_eq!(mir.types[arguments[1].index()].constructor, TypeConstructor::Int);
+}
+
+#[test]
+fn function_value_aliases_do_not_become_enum_pattern_constructors() {
+    for setup in [
+        "def make: Fn(Int) -> Event = Event.Progress;",
+        "import Event.{Progress}; def make: Fn(Int) -> Event = Progress;",
+        "def first = Event.Progress; def make = first;",
+    ] {
+        let source = format!("type Event = enum {{Progress(Int), Finished}}; {setup} export def invalid = match Event.Progress(1) {{make(value) => value, _ => 0}}; export def independent = 42;");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains("constructor pattern requires a type declaration")), "{}", mir.dump());
+        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(mir.seal().is_err());
+    }
+    let mut mir = graph(&[("@src/main", "type Event = enum {Progress(Int)}; import Event.{Progress as Advance}; export def read = match Advance(42) {Advance(value) => value};")]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+}
+
+#[test]
 fn patterns_close_alias_selections_and_preserve_nested_irrefutability() {
     let mut mir = graph(&[("@src/main", r#"
         import Bool.{True as Yes, False as No};
