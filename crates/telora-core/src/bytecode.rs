@@ -217,6 +217,7 @@ pub enum Instruction {
     },
     MakeFunctionFamily {
         dst: Register,
+        identity: Option<Register>,
         variants: Vec<(Vec<crate::mir::TypeId>, Register)>,
     },
     SpecializeFunction {
@@ -455,6 +456,7 @@ pub enum Opcode {
     },
     MakeFunctionFamily {
         dst: Register,
+        identity: Option<Register>,
         variants: Vec<(Vec<crate::mir::TypeId>, Register)>,
     },
     SpecializeFunction {
@@ -816,7 +818,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
             Opcode::TaggedTagEquals { dst, value, tag }
         }
         Instruction::GetTaggedPayload { dst, value } => Opcode::GetTaggedPayload { dst, value },
-        Instruction::MakeFunctionFamily { dst, variants } => Opcode::MakeFunctionFamily { dst, variants },
+        Instruction::MakeFunctionFamily { dst, identity, variants } => Opcode::MakeFunctionFamily { dst, identity, variants },
         Instruction::SpecializeFunction { dst, family, arguments } => Opcode::SpecializeFunction { dst, family, arguments },
         Instruction::MakeClosure {
             dst,

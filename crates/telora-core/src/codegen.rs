@@ -236,7 +236,13 @@ fn compile_root(
                     let node = graph.global(*target).ok_or_else(|| vec![thunk.error(declaration, "family alias has no global execution node")])?;
                     thunk.emit(declaration, O::Demand { dst: result, node });
                 }
-                FunctionFamily::Variants(instances) => {
+                FunctionFamily::Variants { identity, instances } => {
+                    let identity = if let Some(source) = identity {
+                        let value = thunk.register();
+                        let node = graph.global(*source).ok_or_else(|| vec![thunk.error(declaration, "restricted family has no identity source")])?;
+                        thunk.emit(declaration, O::Demand { dst: value, node });
+                        Some(value)
+                    } else { None };
                     let mut variants = vec![];
                     for (arguments, instance) in instances {
                         let value = thunk.register();
@@ -244,7 +250,7 @@ fn compile_root(
                         thunk.emit(declaration, O::Demand { dst: value, node });
                         variants.push((arguments.clone(), value));
                     }
-                    thunk.emit(declaration, O::MakeFunctionFamily { dst: result, variants });
+                    thunk.emit(declaration, O::MakeFunctionFamily { dst: result, identity, variants });
                 }
             }
             thunk.emit(declaration, O::Return { src: result });
@@ -638,7 +644,7 @@ impl<'a> Emitter<'a> {
                     }
                     return Ok(dst);
                 }
-                if matches!(self.mir.generic_references[node.index()], Some(GenericReference::Scheme { .. })) {
+                if matches!(self.mir.generic_references[node.index()], Some(GenericReference::Scheme { .. } | GenericReference::Quantified { .. })) {
                     if let Some(value) = self.lookup(symbol) { return Ok(value); }
                     let node_id = self.graph.global(symbol).ok_or_else(|| self.error(node, "quantified function has no family execution node"))?;
                     let dst = self.register();
@@ -1213,7 +1219,7 @@ impl<'a> Emitter<'a> {
             HirKind::Closure => {
                 if matches!(self.mir.types[self.ty(node)?.index()].constructor, TypeConstructor::Quantified(_)) {
                     let dst = self.register();
-                    self.emit(node, O::MakeFunctionFamily { dst, variants: vec![] });
+                    self.emit(node, O::MakeFunctionFamily { dst, identity: None, variants: vec![] });
                     return Ok(dst);
                 }
                 let parameters = self.children(node, Role::Parameter);

@@ -48,7 +48,12 @@ impl Mir {
                 FunctionFamily::Alias(target) => target.index() != index
                     && self.symbol_schemes.get(target.index()) == Some(&Some(scheme))
                     && self.function_families.get(target.index()).is_some_and(Option::is_some),
-                FunctionFamily::Variants(variants) => {
+                FunctionFamily::Variants { identity, instances: variants } => {
+                    if *identity != self.restricted_family_source(SymbolId(index as u32)) { return false; }
+                    if let Some(source) = identity {
+                        if source.index() == index || self.function_families.get(source.index()).is_none_or(Option::is_none)
+                            { return false; }
+                    }
                     // A local declaration can have the same own arguments in
                     // distinct enclosing instances. Codegen selects its local
                     // instance set in that enclosing context before emission.
@@ -103,9 +108,19 @@ impl Mir {
                         (arguments, GenericInstanceId(id as u32))
                     }).collect::<Vec<_>>();
                 variants.sort_by(|a, b| a.0.cmp(&b.0));
-                FunctionFamily::Variants(variants)
+                FunctionFamily::Variants { identity: self.restricted_family_source(SymbolId(index as u32)), instances: variants }
             });
         }
+    }
+
+    fn restricted_family_source(&self, symbol: SymbolId) -> Option<SymbolId> {
+        let declaration = *self.symbols[symbol.index()].declarations.last()?;
+        let value = self.hir[declaration.index()].children.iter().find(|edge| edge.role == Role::Value)?.node;
+        if !matches!(self.hir[value.index()].kind, HirKind::TypeApply) { return None; }
+        let callee = self.hir[value.index()].children.iter().find(|edge| edge.role == Role::Callee)?.node;
+        let slot = self.hir[callee.index()].resolution?;
+        let ResolveState::Bound(source) = self.resolve_slots[slot.index()] else { return None; };
+        Some(source)
     }
 
     pub(super) fn valid_generic_references(&self) -> bool {
@@ -120,9 +135,13 @@ impl Mir {
                     symbol == target
                         && self.symbol_schemes.get(symbol.index()) == Some(&Some(*scheme))
                         && self.type_instances[index].is_empty()
-                        && (self.ty_slots.get(index) == self.symbol_types.get(symbol.index())
+                        && self.ty_slots.get(index) == self.symbol_types.get(symbol.index())
                             .and_then(|slot| self.ty_slots.get(slot.index()))
-                            || matches!(self.ty_slots.get(index), Some(TypeState::Known(ty)) if self.quantified_matches(*ty, *scheme)))
+                }
+                GenericReference::Quantified { symbol, scheme } => {
+                    symbol == target
+                        && self.symbol_schemes.get(symbol.index()) == Some(&Some(*scheme))
+                        && self.quantified_reference_matches(HirId(index as u32), *symbol, *scheme)
                 }
                 GenericReference::Instance(id) => {
                     self.generic_instances.get(id.index()).is_some_and(|instance| {
@@ -138,33 +157,71 @@ impl Mir {
         })
     }
 
-    fn quantified_matches(&self, ty: TypeId, scheme: TypeSchemeId) -> bool {
+    fn quantified_reference_matches(&self, node: HirId, symbol: SymbolId, scheme: TypeSchemeId) -> bool {
         let Some(scheme) = self.type_schemes.get(scheme.index()) else { return false; };
+        let Some(TypeState::Known(ty)) = self.ty_slots.get(node.index()) else { return false; };
         let Some(ty) = self.types.get(ty.index()) else { return false; };
-        if ty.constructor != TypeConstructor::Quantified(scheme.parameter_count) || ty.arguments.len() != 1 + scheme.bounds.len() { return false; }
-        if !self.quantified_node_matches(ty.arguments[0], scheme.body, scheme.parameter_count) { return false; }
-        let mut matched = std::collections::BTreeSet::new();
+        let TypeConstructor::Quantified(count) = ty.constructor else { return false; };
+        if count == 0 || ty.arguments.is_empty() { return false; }
+        let slots = &self.type_instances[node.index()];
+        if slots.len() != scheme.parameter_count as usize || slots.len() != self.symbol_generics[symbol.index()].len() { return false; }
+        let mut arguments = vec![];
+        for ((parameter, slot), expected) in slots.iter().zip(&self.symbol_generics[symbol.index()]) {
+            if parameter != expected { return false; }
+            let Some(TypeState::Known(argument)) = self.ty_slots.get(slot.index()) else { return false; };
+            arguments.push(*argument);
+        }
+        // Retained substitutions may contain ordinal binders, but none may
+        // escape the reference's own quantified contract.
+        let mut pending = arguments.iter().map(|&ty| (ty, count)).collect::<Vec<_>>();
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some((id, count)) = pending.pop() {
+            if !seen.insert((id, count)) { continue; }
+            let Some(ty) = self.types.get(id.index()) else { return false; };
+            let count = match ty.constructor {
+                TypeConstructor::Bound(index) => {
+                    if index >= count || !ty.arguments.is_empty() { return false; }
+                    continue;
+                }
+                TypeConstructor::Quantified(inner) => inner,
+                _ => count,
+            };
+            pending.extend(ty.arguments.iter().map(|&child| (child, count)));
+        }
+        if !self.quantified_node_matches(ty.arguments[0], scheme.body, &arguments) { return false; }
+        let mut constraints = vec![];
         for &constraint in &ty.arguments[1..] {
             let Some(pair) = self.types.get(constraint.index()) else { return false; };
             if pair.constructor != TypeConstructor::Tuple || pair.arguments.len() != 2 { return false; }
             let Some(subject) = self.types.get(pair.arguments[0].index()) else { return false; };
             let TypeConstructor::Bound(parameter) = subject.constructor else { return false; };
-            if parameter >= scheme.parameter_count || !subject.arguments.is_empty() { return false; }
-            let Some(index) = scheme.bounds.iter().position(|&(p, bound)| p == parameter
-                && self.quantified_node_matches(pair.arguments[1], bound, scheme.parameter_count)) else { return false; };
-            if !matched.insert(index) { return false; }
+            if parameter >= count || !subject.arguments.is_empty() { return false; }
+            let pair = (pair.arguments[0], pair.arguments[1]);
+            if constraints.contains(&pair) { return false; }
+            constraints.push(pair);
+        }
+        if constraints.iter().any(|&(subject, bound)| !scheme.bounds.iter().any(|&(parameter, expected)|
+            arguments.get(parameter as usize) == Some(&subject)
+                && self.quantified_node_matches(bound, expected, &arguments))) { return false; }
+        for &(parameter, expected) in &scheme.bounds {
+            let Some(&subject) = arguments.get(parameter as usize) else { return false; };
+            if constraints.iter().any(|&(p, bound)| p == subject
+                && self.quantified_node_matches(bound, expected, &arguments)) { continue; }
+            if !self.bound_requirements.iter().any(|requirement| requirement.reference == node
+                && requirement.state.is_proven()
+                && self.ty_slots.get(requirement.subject.index()) == Some(&TypeState::Known(subject))
+                && matches!(self.ty_slots.get(requirement.bound.index()), Some(TypeState::Known(bound))
+                    if self.quantified_node_matches(*bound, expected, &arguments))) { return false; }
         }
         true
     }
 
-    fn quantified_node_matches(&self, ty: TypeId, node: SchemeNodeId, parameter_count: u32) -> bool {
+    fn quantified_node_matches(&self, ty: TypeId, node: SchemeNodeId, substitutions: &[TypeId]) -> bool {
         let mut pending = vec![(ty, node)];
         while let Some((ty, node)) = pending.pop() {
             let Some(ty_data) = self.types.get(ty.index()) else { return false; };
             match self.scheme_nodes.get(node.index()) {
-                Some(SchemeNode::Bound(index)) if *index < parameter_count
-                    && ty_data.constructor == TypeConstructor::Bound(*index)
-                    && ty_data.arguments.is_empty() => {}
+                Some(SchemeNode::Bound(index)) if substitutions.get(*index as usize) == Some(&ty) => {}
                 Some(SchemeNode::Known(known)) if *known == ty => {}
                 Some(SchemeNode::Apply { constructor, arguments }) if ty_data.constructor == *constructor && ty_data.arguments.len() == arguments.len() => {
                     pending.extend(ty_data.arguments.iter().copied().zip(arguments.iter().copied()));

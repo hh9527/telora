@@ -2,4 +2,6 @@ import "std/eq" as eq;
 trait Display { display: Fn(Self) -> String };
 def identity: for(T: Display) Fn(T) -> T = fn(value) { value };
 export def same_function = eq.equal(identity, identity);
+def select: for(A: Display, B) Fn(A, B) -> A = fn(left, right) { left };
+export def invalid_partial = eq.equal(select@[Int, _], select@[Int, _]);
 export def invalid = identity(1);

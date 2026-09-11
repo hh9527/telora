@@ -221,7 +221,7 @@ impl Solver<'_> {
         substitutions: &BTreeMap<SymbolId, TypeId>,
         canonical: &mut Canonical,
     ) -> Option<Key> {
-        if self.mir.type_instances[node.index()].is_empty() {
+        if self.scheme_references[node.index()] || self.mir.type_instances[node.index()].is_empty() {
             return None;
         }
         let slot = self.mir.hir[node.index()].resolution?;

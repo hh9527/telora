@@ -35,9 +35,13 @@ impl Solver<'_> {
             if leaves.is_empty() { continue; }
             let arguments = &self.mir.type_instances[index];
             if !arguments.is_empty() {
-                let parameters = arguments.iter().map(|(_, slot)| self.root(*slot)).collect::<Vec<_>>();
-                if parameters.iter().any(|slot| self.mir.ty_slots[slot.index()] != TypeState::Unknown)
-                    || leaves.iter().copied().collect::<BTreeSet<_>>() != parameters.iter().copied().collect() {
+                let mut parameters = vec![];
+                for (_, slot) in arguments {
+                    for leaf in self.unknown_leaves(*slot) {
+                        if !parameters.contains(&leaf) { parameters.push(leaf); }
+                    }
+                }
+                if leaves.iter().copied().collect::<BTreeSet<_>>() != parameters.iter().copied().collect() {
                     continue;
                 }
                 let group = groups.entry(root).or_insert_with(|| (parameters.clone(), vec![]));
@@ -66,6 +70,19 @@ impl Solver<'_> {
                 if roots.contains(&self.root(node.ty())) && !self.mir.type_instances[index].is_empty()
                     && !references.contains(&node) {
                     references.push(node);
+                }
+            }
+            let mut body_nodes = BTreeSet::new();
+            // Explicit type-argument holes are part of this contract, not
+            // escaping runtime results. Only the argument subtrees are exempt.
+            for index in 0..self.mir.hir.len() {
+                if matches!(self.mir.hir[index].kind, HirKind::TypeApply)
+                    && roots.contains(&self.root(TypeSlotId(index as u32))) {
+                    let mut pending = self.children(HirId(index as u32), Role::Argument);
+                    while let Some(node) = pending.pop() {
+                        if !body_nodes.insert(node) { continue; }
+                        pending.extend(self.mir.hir[node.index()].children.iter().map(|edge| edge.node));
+                    }
                 }
             }
             let leaves = parameters.iter().copied().collect::<BTreeSet<_>>();
@@ -99,7 +116,6 @@ impl Solver<'_> {
             }
             if blocked || references.iter().any(|reference|
                 reference_bounds.get(reference).map_or(0, BTreeSet::len) != bounds.len()) { continue; }
-            let mut body_nodes = BTreeSet::new();
             for index in 0..self.mir.hir.len() {
                 if matches!(self.mir.hir[index].kind, HirKind::Closure) && roots.contains(&self.root(TypeSlotId(index as u32))) {
                     let mut pending = vec![HirId(index as u32)];
@@ -137,7 +153,6 @@ impl Solver<'_> {
             let quantified = self.structure(TypeConstructor::Quantified(parameters.len() as u32), contract);
             for root in roots { self.mir.ty_slots[root.index()] = TypeState::ProxyTo(quantified); }
             for node in references {
-                self.mir.type_instances[node.index()].clear();
                 self.scheme_references[node.index()] = true;
             }
             self.revision += 1;

@@ -1597,7 +1597,7 @@ impl Vm {
                                 })?;
                                 write_register(&mut registers, *dst, payload, function, pc)?;
                             }
-                            Opcode::MakeFunctionFamily { dst, variants } => {
+                            Opcode::MakeFunctionFamily { dst, identity, variants } => {
                                 let Some(types) = background.solved_types.as_ref() else {
                                     return Err(error(RuntimeErrorKind::InvalidBytecode, "function family requires a sealed type image", function, pc));
                                 };
@@ -1618,8 +1618,19 @@ impl Vm {
                                     entries.push((arguments.clone().into_boxed_slice(), value));
                                     previous = Some(arguments);
                                 }
+                                let identity = if let Some(source) = identity {
+                                    let value = *read_register(&registers, *source, function, pc)?;
+                                    let DecodedValue::Func(handle) = value.value() else {
+                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "function identity source is not a function", function, pc));
+                                    };
+                                    let Object::FunctionFamily { identity, .. } = view.object(handle)
+                                        .map_err(|e| error(RuntimeErrorKind::InvalidBytecode, e.to_string(), function, pc))? else {
+                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "restricted function requires a family identity", function, pc));
+                                    };
+                                    Arc::clone(identity)
+                                } else { Arc::new(()) };
                                 let family = Val::new(DecodedValue::Func(current.allocate(Object::FunctionFamily {
-                                    identity: Arc::new(()), variants: entries.into(),
+                                    identity, variants: entries.into(),
                                 })), instruction_location(function, pc));
                                 write_register(&mut registers, *dst, family, function, pc)?;
                             }

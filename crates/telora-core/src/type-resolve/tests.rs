@@ -459,6 +459,7 @@ fn generic_references_distinguish_exported_schemes_and_call_instances() {
     let mut mir = graph(&[("@src/main", r#"
         export def identity: for(T) Fn(T) -> T = fn(value) { value };
         export def answer = identity(42);
+        export def same = identity == identity;
     "#)]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
@@ -474,6 +475,21 @@ fn generic_references_distinguish_exported_schemes_and_call_instances() {
         }).expect("call selects its concrete instance");
     let GenericReference::Instance(id) = instance else { unreachable!() };
     assert!(mir.generic_instances[id.index()].concrete);
+    let (value_node, value_reference) = mir.generic_references.iter().enumerate()
+        .find_map(|(node, reference)| match reference {
+            Some(reference @ GenericReference::Quantified { .. }) => Some((node, *reference)),
+            _ => None,
+        }).expect("function values retain their substitution contract");
+    let argument = mir.type_instances[value_node][0].1;
+    let original = mir.ty_slots[argument.index()];
+    let concrete = mir.generic_instances[id.index()].arguments[0].1;
+    mir.ty_slots[argument.index()] = TypeState::Known(concrete);
+    assert!(mir.seal().is_err(), "a quantified substitution must agree with its contract");
+    mir.ty_slots[argument.index()] = original;
+    mir.generic_references[value_node] = Some(scheme);
+    assert!(mir.seal().is_err(), "a substituted function value is not an uninstantiated scheme export");
+    mir.generic_references[value_node] = Some(value_reference);
+    mir.seal().unwrap();
     mir.generic_references[scheme_node] = None;
     assert!(mir.seal().is_err(), "generic references must carry the type pass outcome");
     mir.generic_references[scheme_node] = Some(instance);

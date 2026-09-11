@@ -5,6 +5,33 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Partially specialized function-value contracts (2026-09-11)
+
+GenericReference now has three explicit outcomes: Scheme for an uninstantiated
+export, Quantified for a function value retaining its substitution table, and
+Instance for a concrete specialization. Value references no longer discard their
+arguments when quantifying. For example, choose_left@[Int, _] retains A=Int and
+B=Bound(0), with only B bound by the resulting function contract. Explicit type
+argument holes belong to that contract; runtime expression results still cannot
+escape unresolved. Instance materialization consumes the value outcome without
+admitting its bound variables as executable specialization arguments.
+
+Seal compares the partially substituted body with the original scheme and checks
+each bound against either the residual quantified contract or a proven concrete
+obligation. The existing seal test now corrupts a retained substitution and swaps
+a value outcome for an export outcome, verifying rejection in both cases.
+
+Restricted aliases preserve their source function identity with their own static
+instance key table. MIR records that identity source, and the family instruction
+retains it; no source-level type matching happens in the VM. Language cases cover
+local/global partial aliases, equality with the original partial expression,
+multiple concrete calls, and simultaneous proven/residual trait/property bounds.
+The missing-trait-evidence fixture also includes invalid partial applications, so
+quantification cannot silently discard a failed concrete obligation.
+
+Phantom parameter value contracts remain an open investigation. Diagnostics and
+the final architecture/performance acceptance remain pending.
+
 ### Quantified function values and deferred declaration bounds (2026-09-11)
 
 Function values now retain identity separately from their statically compiled

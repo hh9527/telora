@@ -78,7 +78,15 @@ impl Emitter<'_> {
                         self.emit(node, O::Demand { dst: family, node: target });
                     }
                 }
-                FunctionFamily::Variants(_) => {
+                FunctionFamily::Variants { identity, .. } => {
+                    let identity = if let Some(source) = identity {
+                        if let Some(value) = self.lookup(*source) { Some(value) } else {
+                            let value = self.register();
+                            let source = self.graph.global(*source).ok_or_else(|| self.error(node, "restricted family has no captured identity source"))?;
+                            self.emit(node, O::Demand { dst: value, node: source });
+                            Some(value)
+                        }
+                    } else { None };
                     let mut variants = instances.iter().map(|(instance, value)| {
                         let instance = &self.mir.generic_instances[instance.index()];
                         let arguments = self.mir.symbol_generics[symbol.index()].iter().map(|parameter|
@@ -86,7 +94,7 @@ impl Emitter<'_> {
                         (arguments, *value)
                     }).collect::<Vec<_>>();
                     variants.sort_by(|a, b| a.0.cmp(&b.0));
-                    self.emit(node, O::MakeFunctionFamily { dst: family, variants });
+                    self.emit(node, O::MakeFunctionFamily { dst: family, identity, variants });
                 }
             }
             let target = self.lookup(symbol).ok_or_else(|| self.error(node, "local function family has no allocated slot"))?;

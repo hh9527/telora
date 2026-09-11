@@ -60,20 +60,27 @@ id!(PropertyId);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GenericReference {
     Scheme { symbol: SymbolId, scheme: TypeSchemeId },
+    /// A value contract with substitutions retained in type_instances: some
+    /// arguments may be concrete and others are bound by its Quantified type.
+    Quantified { symbol: SymbolId, scheme: TypeSchemeId },
     Instance(GenericInstanceId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FunctionFamily {
     Alias(SymbolId),
-    Variants(Vec<(Vec<TypeId>, GenericInstanceId)>),
+    Variants {
+        /// A restricted alias keeps the source identity with its own key table.
+        identity: Option<SymbolId>,
+        instances: Vec<(Vec<TypeId>, GenericInstanceId)>,
+    },
 }
 
 impl GenericReference {
     pub fn instance(self) -> Option<GenericInstanceId> {
         match self {
             Self::Instance(instance) => Some(instance),
-            Self::Scheme { .. } => None,
+            Self::Scheme { .. } | Self::Quantified { .. } => None,
         }
     }
 }

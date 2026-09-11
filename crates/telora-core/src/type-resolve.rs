@@ -276,7 +276,11 @@ pub fn resolve(mir: &mut Mir) {
         let Some(slot) = solver.mir.hir[index].resolution else { continue; };
         let ResolveState::Bound(symbol) = solver.mir.resolve_slots[slot.index()] else { continue; };
         if let Some(scheme) = solver.mir.symbol_schemes[symbol.index()] {
-            solver.mir.generic_references[index] = Some(GenericReference::Scheme { symbol, scheme });
+            solver.mir.generic_references[index] = Some(if solver.mir.type_instances[index].is_empty() {
+                GenericReference::Scheme { symbol, scheme }
+            } else {
+                GenericReference::Quantified { symbol, scheme }
+            });
         }
     }
     solver.mir.types_solved = true;

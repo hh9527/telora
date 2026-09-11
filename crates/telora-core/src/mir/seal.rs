@@ -236,7 +236,7 @@ impl Mir {
             || self.type_instances.iter().enumerate().any(|(node, arguments)| {
                 !arguments.is_empty()
                     && (arguments.iter().any(|(_, slot)| !matches!(self.ty_slots[slot.index()], TypeState::Known(_)))
-                        || !matches!(self.generic_references[node], Some(GenericReference::Instance(_))))
+                        || !matches!(self.generic_references[node], Some(GenericReference::Instance(_) | GenericReference::Quantified { .. })))
             })
             || self.bound_requirements.iter().any(|b| !b.state.is_proven())
             || self

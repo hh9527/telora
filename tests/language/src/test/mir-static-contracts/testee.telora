@@ -12,9 +12,12 @@ type Prop(T) = struct {value: T};
 def mark: Fn(Type, Option(Prop(Int))) -> Prop(Int) = fn(owner, previous) { {value: 42} };
 @mark type Marked = struct(Int);
 trait Printable { print: Fn(Self) -> String };
+impl Printable for Int { print: fn(value) { "int" } };
 def bounded_identity: for(T: Printable) Fn(T) -> T = fn(value) { value };
 def property_identity: for(T: Property(Prop(Int))) Fn(T) -> T = fn(value) { value };
 def choose_left: for(A, B) Fn(A, B) -> A = fn(left, right) { left };
+def choose_int_global = choose_left@[Int, _];
+def choose_bounded: for(A: Printable, B: Property(Prop(Int))) Fn(A, B) -> A = fn(left, right) { left };
 def make_identity = fn() { fn(value) { value } };
 
 export def bounded_function_value = test.should_ok(fn() {
@@ -24,7 +27,15 @@ export def bounded_function_value = test.should_ok(fn() {
 
 export def partially_applied_function = test.should_ok(fn() {
     let choose_int = choose_left@[Int, _];
-    expect(choose_int(42, "text") == 42 && choose_int(43, True) == 43)
+    expect(choose_int(42, "text") == 42 && choose_int(43, True) == 43
+        && eq.equal(choose_int, choose_int)
+        && eq.equal(choose_int, choose_left@[Int, _])
+        && eq.equal(choose_int_global, choose_left@[Int, _])
+        && choose_int_global(42, "global") == 42
+        && choose_int_global(43, True) == 43
+        && eq.equal(choose_left@[Int, _], choose_left@[Int, _])
+        && eq.equal(choose_bounded@[Int, _], choose_bounded@[Int, _])
+        && choose_bounded(42, Marked(1)) == 42)
 });
 
 export def returned_function = test.should_ok(fn() {

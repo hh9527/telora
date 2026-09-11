@@ -200,6 +200,7 @@ pub enum Operation {
     },
     MakeFunctionFamily {
         dst: RegisterId,
+        identity: Option<RegisterId>,
         variants: Vec<(Vec<crate::mir::TypeId>, RegisterId)>,
     },
     SpecializeFunction {
@@ -565,8 +566,9 @@ fn lower_operation(
             dst: register(dst)?,
             value: register(value)?,
         },
-        Operation::MakeFunctionFamily { dst, variants } => Instruction::MakeFunctionFamily {
+        Operation::MakeFunctionFamily { dst, identity, variants } => Instruction::MakeFunctionFamily {
             dst: register(dst)?,
+            identity: identity.map(register).transpose()?,
             variants: variants.into_iter().map(|(arguments, value)| Ok((arguments, register(value)?))).collect::<Result<_, AssembleError>>()?,
         },
         Operation::SpecializeFunction { dst, family, arguments } => Instruction::SpecializeFunction {
