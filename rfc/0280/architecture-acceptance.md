@@ -4,8 +4,10 @@ This records the current validation of the replacement compiler/execution pipeli
 `feat/0280-arena-type-consumers`. It is not acceptance of a comparative performance
 claim or of the separately deferred runtime representation optimization.
 
-Branch implementation validation is complete at `4dd7c67`; integration into main
-and closing #175 remain delivery actions. The subsequent nine-module ontology observation
+The architecture was merged into main through #176 (`a408c68`), followed by
+batch `check --lib` / `--tests` support in `cb0e23b`. The validation below records
+the implementation at `4dd7c67`; its counts and observations are historical.
+The subsequent nine-module ontology observation
 found seven static failures. A temporary isolated copy with explicitly qualified
 prelude property declarations removes the shared 17 Unknown slots, but
 `@test/test_knowledge` initially still reported `cannot unify Order with Customer`.

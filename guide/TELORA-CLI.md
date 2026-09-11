@@ -36,7 +36,25 @@ telora -C examples/my-crate run @src/invalid:run --best-effort
 telora -C examples/my-crate lock
 ```
 
-`check` 的输入仍是完整 Module，不是任意表达式 scratch。模块顶层使用 `def` 声明
+批量检查当前 crate：
+
+```sh
+telora -C examples/my-crate check --lib
+telora -C examples/my-crate check --tests
+telora -C examples/my-crate check --lib --tests --only-types
+```
+
+`--lib` 选择清单中的全部模块，含私有模块与数据模块；`--tests` 递归选择 tests/ 下
+全部模块，含辅助模块，但不执行测试用例。两者可组合，与显式 MODULE_ID 互斥。
+多个根共用一次整图求解和初始化，空集合成功；summary 的 `roots` 列出按名称排序的根。
+任何静态错误都会阻止整图初始化，不提供每个目标独立的 summary。
+
+`--only-types` 在类型闭合及 seal 后停止，不读取数据内容、不执行 property 或模块值。
+普通 check 继续到整图初始化完成。summary 的 `static_seconds` 包含 seal，
+`execution_seconds` 包含 codegen、链接和 VM 初始化；纯类型模式、静态失败或空集合时
+后者为零。`check_seconds` 为这两个阶段之和，`catalog_seconds` 单独记录清单准备。
+
+`check` 的输入是完整模块或批量模块选择，不是任意表达式 scratch。模块顶层使用 `def` 声明
 计算根并至少显式 export 一项；顶层 `let`、裸调用和 final expression 均不合法。
 需要局部步骤时把它们放进 `do`：
 
@@ -132,25 +150,23 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
   路径；该来源名不是模块，不能 import，也不会由 `query modules` 列出。
 - `telora -C context run module:name` 从 `context` 开始向上发现 workspace config，并以包含
   `context` 的 member crate 解析 module selector。
-- `run ... --best-effort` 只在遇到问题时用于扩大诊断覆盖。它在启动 Entry 前对 Main 做
-  best-effort 诊断求值；只要出现任何 error，stderr 输出 `telora.run/v1` JSONL 诊断与
-  error summary，非零退出且不产生任何 Entry effect，即使一个不依赖失败的干净根值仍能
-  算出。没有 error 时仍重新走严格 Entry/运行时 lifecycle；成功结果的最终验收使用普通
-  `run`。本参数用于调查问题时扩大诊断覆盖。
+- `run ... --best-effort` 当前把静态 Pass 诊断以 `telora.run/v1` JSONL 输出到 stderr；
+  静态错误时输出 error summary 并非零退出，不启动 Entry。它与普通 run 共用 MIR、
+  seal 和初始化路径，不另跑一轮恢复类型推导或严格编译。seal、链接和运行期错误仍按
+  相应命令错误路径报告，不能把该开关理解为所有阶段都采用相同 JSONL 格式。
 - `run`、`check` 和 `query` 的 `-C context` 都从 `context` 开始向上发现 workspace；
   `check` 和 `query` 接受完整稳定模块 ID，`check @test/...` 检查测试入口；`run` 和
   `serve` 接受 `MODULE:EXPORT`。
-- `check` 用 best-effort 模式继续彼此独立的求值，以一次收集更多诊断；最终判定仍然
-  严格。stdout 完全采用 `telora.check/v1` JSONL：先输出诊断 records，最后输出一条
-  `summary` record。只有完整求值并形成内部 semantic Module graph 时 summary 才是
-  `status: "ok"`；它不把递归 TypeMetadata 等内部图物化为外部 owned value。任何
-  语法、类型、解析或运行时失败都会得到 `status: "error"` 和非零退出。
+- `check` 先完成全图模块、符号和类型求解及 seal，再编译并初始化；静态阶段不执行
+  Telora 代码。静态错误阻止整图初始化。初始化可继续独立任务以收集诊断，但最终判定
+  仍然严格。stdout 使用 `telora.check/v1` JSONL，先输出诊断，最后输出一份 summary；
+  任一静态或初始化错误都得到 `status: "error"` 和非零退出。
   纯导出以 `eval` / `eval-with` 验收；应用 service 仍以 `run` 为准，因为 `run` 还经过
   Entry 和 reducer/effect 调度。
 - `query`（可见别名 `q`）输出 `telora.query/v1` JSONL 语义记录。`query modules`
   列出当前 crate 可见的规范模块 ID；`query exports <module>` 查询公共接口；
   `query at <module>` 查询顶层 local definitions，追加 `:<line>` 或 `:<line>:<column>`
-  查询与源码行或位置相交的事实。它查询 recoverable CST 和部分语义/求值证据图，因此
+  查询与源码行或位置相交的事实。它查询静态 MIR，不执行元数据或模块值，因此
   在模块损坏时仍可返回不受影响的事实；命令成功只表示查询完成，不表示模块能够通过
   `check` 或 `run`。
 - `query modules` 列出本 crate 的 public/private source、dependency 的 public source

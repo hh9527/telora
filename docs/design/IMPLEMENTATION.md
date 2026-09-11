@@ -1,597 +1,274 @@
 # Telora 当前实现架构
 
-本文档描述当前语言设计如何落到编译器、运行时、模块系统和 Host 中。它是实现架构的
-SSOT，帮助维护者在不回看 RFC 的情况下建立当前实现模型。
+本文描述当前 main 的编译器、运行时、模块系统与 Host。语言可观察语义以
+[LANGUAGE.md](LANGUAGE.md) 为准，术语以 [CONCEPT.md](CONCEPT.md) 为准。
+Rust 类型名、文件名和内存布局是实现事实，不构成公开 ABI 承诺。
 
-语言可观察语义以 [`LANGUAGE.md`](LANGUAGE.md) 为准，稳定术语以
-[`CONCEPT.md`](CONCEPT.md) 为准。本文出现的 Rust 类型名、文件名、数字布局和处理阶段
-是当前实现事实，不自动构成公开兼容性承诺；如果实现改变但语言语义不变，应更新本文，
-而不是把私有结构提升为语言概念。
+RFC 0280 的整图 MIR 流水线已通过 #176 合入 main（`a408c68`），批量检查随后在
+`cb0e23b` 落地。历史迁移过程和测量保留在 RFC 中；本文只描述当前路径。
 
 ## 1. 总体管线
 
-当前实现只有一门 Telora 语言，但为严格执行和工具 recovery 保留不同的消费路径：
+所有编译入口共用同一个 session MIR：
 
 ```text
-SourceDatabase 中的 revisioned source
-  -> lossless CST + syntax diagnostics
-  -> 严格 AST / recovered program
-  -> HIR name resolution
-  -> type analysis + semantic facts
-  -> elaborated AST
-  -> register-oriented LIR
-  -> bytecode
-  -> register VM + QuotaAccount
-  -> WorkWorld
-  -> 校验后原子晋升到 MainWorld，或整体丢弃
+workspace/package 清单 + 所选根模块
+  -> module-resolve：模块图、可达 CST、扁平 HIR
+  -> symbol-resolve：符号与引用槽闭合
+  -> type-resolve：全图类型槽、泛型实例与静态证据闭合
+  -> SealedMir
+  -> codegen：bytecode + TypeImage + ExecutionGraph
+  -> 链接 native 与数据模块
+  -> VM：安装 TypeImage，注入数据
+  -> 一个 Initialize WorkWorld：求值全部初始化根
+  -> 一次发布到 MainWorld
+  -> 新 WorkWorld：eval 调用、Test 或 Entry 调度
 ```
 
-源码位置从 parser 一直保留到 bytecode debug origin、运行时值和诊断。工具查询使用
-workspace snapshot 中的 source、定义、引用、类型图和诊断，不从 CLI 文本输出反向解析
-语义。
+前三个 Pass 不持有 VM 或运行时 heap，不执行 Telora 代码。Query/LSP 可以读取未成功
+seal 的 MIR；执行入口必须通过 seal。后续阶段直接使用静态结果，不重新 resolve 名称、
+推断类型或通过求值补全类型骨架。
 
-`SourceDatabase.name` 保存 canonical source path，而不是物理文件名。workspace module
-同时在 Host 私有结构中保留 resolver path，LSP 由 source id 反查该结构后生成 file URI。
-运行上下文 source 以 `@run-ctx/<percent-encoded-key>` 注册；CLI Host 另存从这个公开名字
-到文件或 stdin locator 的私有映射。该 source 不进入 module graph，不分配 `ModuleId`，
-也不参与 import resolution。文件读取错误、provenance 和普通诊断只公开 canonical
-source path。`eval-with` 使用相同机制，但 canonical 前缀为 `@eval-ctx/`；它在目标执行
-共享的 `SourceDatabase` 中完成格式验证和 Value 物化。
-
-主要实现入口是：
+主要源码入口如下，core 路径相对于 `crates/telora-core/src/`：
 
 | 层次 | 当前实现 |
 | --- | --- |
-| Telora grammar/lexer/CST | `syntax/telora/grammar.llw`、`syntax/telora/` |
-| CST 到 AST/recovery | `parser.rs`、`ast.rs` |
-| 名字解析 | `hir.rs` |
-| 类型分析与 partial facts | `types.rs`、`semantic.rs` |
-| elaboration、LIR、bytecode | `elaboration.rs`、`lir.rs`、`compiler.rs`、`bytecode.rs` |
-| VM、配额、失败 | `vm.rs`、`evaluation.rs` |
-| 值、heap、复制 | `heap.rs`、`value.rs` |
-| typed property registry / 反射 bridge | `property.rs`、`heap/`、`types/dependency.rs` |
-| workspace/package model | `package.rs` |
-| 模块解析与 Host 生命周期 | `module_id.rs`、`module.rs` |
-| canonical runtime types | `type_store.rs` |
-| CLI/LSP package Host | `crates/telora/src/package_host.rs` |
-| CLI Host | `crates/telora/src/main.rs` |
+| grammar、CST、parser | `syntax/telora/`、`parser.rs`、`ast.rs` |
+| session 图与 HIR lowering | `mir.rs`、`mir/lower.rs`、`module-resolve.rs` |
+| 符号、类型求解 | `symbol-resolve.rs`、`type-resolve.rs` 及其子目录 |
+| 封闭与只读查询 | `mir/seal.rs`、`mir_query.rs` |
+| 代码与运行时静态数据 | `codegen.rs`、`bytecode.rs`、`type_image.rs`、`execution_graph.rs` |
+| 链接 | `execution_link.rs` |
+| 初始化、需求求值与发布 | `vm/solved-check.rs`、`vm/demand.rs`、`heap/publish.rs` |
+| 运行时、值与复制 | `vm.rs`、`heap.rs`、`heap/value.rs`、`heap/copy.rs` |
+| package 与 Host 契约 | `package.rs`、`runtime_host.rs` |
+| CLI 静态输入与编辑器快照 | `crates/telora/src/static_input.rs`、`crates/telora/src/mir_workspace.rs` |
+| CLI 命令消费者 | `crates/telora/src/{static_cli,eval_cli,test_cli,main}.rs` |
 
-以上路径均相对于 `crates/telora-core/src/`，除非另有说明。
+codegen 直接消费 SealedMir 并生成寄存器 bytecode。仓库中仍有 `lir.rs`，但当前主流程
+不经过旧的 elaborated AST / compiler 管线。
 
-## 2. Frontend 与 recovery
+## 2. Frontend 与静态诊断
 
-`parse_registered` 总是产生 CST、recovered program 和有序诊断；只有
-不存在 frontend diagnostic 时才产生严格 `Program`。因此 CST 可用于损坏文档上的
-定位和编辑，而严格编译不会把 recovered node 当成有效程序。
+parser 保留 lossless CST、恢复后的语法和诊断。module Pass 将可达源码挂入 MIR，
+记录源码有效性，并分配扁平 HIR 节点及相应 resolve/type 槽。源码不完整也能产生可查询图，
+但不能因此获得执行资格。
 
-HIR 给 definition 和 reference 建立稳定的分析期身份，并区分本地 definition、external
-binding 与 unresolved name。完整分析服务严格编译；partial analysis 则按定义依赖保留
-仍有依据的事实。当前公开事实状态为：
+模块状态包括 `Unloaded`、`Source`、`Data` 和 `Unavailable`。符号求解结果包括
+`Bound`、`Unresolved` 和 `Conflicted`；冲突区分重复定义、多个 import 候选等。
+`ResolveState::Member` 表示已交给类型阶段的成员约束，不是遗留的词法名称查找。
+
+类型求解中的槽状态为：
 
 ```text
-Known
-Unknown(MissingSyntax | InvalidSyntax | UnresolvedName |
-        BlockedBy(fact) | UnavailableDependency)
-Conflicted(DuplicateDefinition | IncompatibleContract)
-Incomputable(QuotaExceeded | RuntimeOnly | UnsupportedOperation |
-             CyclicEvaluation | Cancelled)
+Unknown
+ProxyTo(TypeSlotId)
+Structure(TypeTermId)
+Known(TypeId)
+Conflicted(TypeConflictId)
 ```
 
-`Unknown` 表示尚未取得类型依据的分析状态。Module 只有源码层面的 `Available` / `Unavailable`，细粒度状态
-属于 definition、expression 和 type fact。
+冲突发现时记录证据与诊断，最终归一化后记录仍未确定的必需槽。Unresolved/Conflicted
+是前一阶段的权威结果；后续阶段继续处理独立信息，不回退到另一套解析或推导器。
+静态阶段的诊断积累不采用 VM 的失败恢复语义。
 
-编译器借用推导生成的构造器与名义 owner 证据表；所有子闭包共用同一份只读事实，
-不在每次闭包编译时克隆整表。局部寄存器、捕获、定义及类型槽的可变状态仍独立维护。
-工具表达式编译同样借用本次操作拥有的证据；借用不会进入生成的 LIR 或 bytecode。
-每次编译入口一次性建立按 SourceId/位置排序的 owner 证据借用数组，闭包捕获分析
-二分定位后只扫描自身源码范围内的记录，避免逐闭包遍历模块全表。重叠但越界的
-记录和其他源码的同偏移记录不进入该闭包的隐藏捕获。
-
-严格 AST 经类型分析后先 elaboration，再降低为寄存器 LIR，并组装为 bytecode。静态
-annotation 和仅用于元数据计算的 helper 可以在 program bytecode 中擦除；被普通运行时
-值引用的 TypeMetadata、函数和 closure 则必须保留。
-
-Module body 与普通 block body 使用独立语法规则，只有后者接受表达式语句。CST
-保留分号和后续 body；lowering 迭代展开为顺序绑定，表达式语句使用源码不可命名的
-局部 `let`，复用现有检查和执行机制，不引入新 VM 指令。无尾表达式时合成空 Tuple。
-前置投影和严格推导跟踪不正常完成的初始化表达式，block 仍推导为 `Never`，而非
-将隐式 Unit 当作可达返回值。后续表达式仍接受静态检查。
-
-显式类型槽位的空 `()` 降低为内部空 Tuple 元数据绑定，不受公开 `Unit` 名称遮蔽
-影响。Prelude 的静态投影与工具值环境同时提供 `Unit` 别名；两者复用现有 Tuple
-descriptor、TypeId 和值表示，不增加 Unit runtime kind。普通调用实参不做该转换。
-
-RFC 0277 第二阶段增加 `TypeSyntax` / `TypeMetadata` AST 边界。显式类型位置的
-非空 Tuple 降低到内部结构构造器，Fn 也使用内部绑定，均不受公开 Tuple/Func 名称
-遮蔽影响。HIR 保留边界并解析其引用；静态/数据检查使用声明身份、泛型参数和模块接口，
-而非名称大小写或 TypeOf 值内容。类型角色在导入和再导出时保留。
-普通函数和元数据数据不能进入静态类型表达式。`.type` 的结果保留精确 TypeOf 见证；
-不增加运行时 kind、VM 指令或推导环境副本。恢复分析将非法类型表达式标记为冲突，
-阻止执行其 helper，同时继续独立定义的分析。Property 仍是独立的带外查询。
+源码位置从 CST/HIR 保留到 bytecode 和运行时值。逻辑模块名用于诊断，物理路径由 Host
+单独保存。CLI JSONL 使用 1-based line、0-based UTF-8 byte column；LSP 根据客户端协商
+编码转换位置。
 
 ## 3. 模块图、骨架和静态身份
 
-crate mode 在构造 `ModuleResolver` 前执行 package preparation：向上发现
-`telora-config.json`，严格校验 `telora-lock.json`，将远程 tarball 转成确定的 IMOS plan，
-通过内嵌 `telora-ees` facade 提交 `InstallShared` 并取得 immutable installation root，
-再校验每个 `telora-crate.json`。开发 override 只在 baseline package 与 lock 一致后替换
-effective root。准备结果是 `ResolvedWorkspace`，同时供 CLI 和 LSP 使用；resolver、
-module loader 和 VM 不执行 package acquisition，也不改写 lock。
+CLI 的 `package_host` 先准备 `ResolvedWorkspace`：发现 workspace、校验 lock 与 crate
+manifest，并完成需要的 package 安装。解析器和 VM 不执行 package acquisition，也不
+隐式重写 lock。package preparation 与应用 EES service 是两个独立的 Host 生命周期。
 
-Cargo workspace 中的 `telora-ees` 是 Native Actor Components 的组合根，依赖 `imos`
-和 `sqlite-query` components。强类型 manifest 在 Service 启动前绑定逻辑 actor name 与
-物理构造参数；通用 `Call {id, actor, operation, input}` 只能调度已构造 actor。
-`telora` package Host 和应用 RunHost 都依赖该 facade；
-`telora-core` 只拥有 component-neutral `EesCall/EesReply` Entry ABI，不依赖 EES、IMOS
-或 SQLite 实现。
+`static_input::Inventory` 从所有可用模块名称建立清单。module Pass 先排序清单并分配
+ModuleId，再从所选根逐级读取可达源码。共享依赖只读入并解析一次，未到达模块保持
+Unloaded。完整 inventory 的身份分配与源码读取、初始化顺序无关。
 
-Package preparation 构造私有 `telora-packages` IMOS Service。`run/serve` 从选中 export
-的 `ees.Config` 单独构造应用 Service。CLI 校验并替换 `--ees-var`，component adapter 把 `user-*:` locator
-解析为 XDG/HOME 物理路径；解析结果不进入 Telora World。RunHost 异步 dispatch call，
-把终态转为一个关联 `EesReply` event。Engine 与 RunHost 都按 `SystemCaps.ees` 校验 actor name。
+`telora-crate.json` 的 modules 是源码与静态数据模块的权威清单。未声明文件只能产生
+warning，不能成为隐式 import 候选。测试选择额外递归建立当前 crate 的 `tests/` 清单，
+拒绝 symlink；测试模块可相互导入，普通源码不能反向导入测试。
 
-`telora-crate.json` 的 `modules` 是 `src/` module 的权威清单。清单项在准备阶段映射并
-canonicalize 到物理文件；未列出的文件不会进入 catalog。`telora check` 在准备后扫描
-`src/`，为未声明文件输出 warning，但不改变 resolver 输入。
+数据模块在静态阶段只有编译器生成的接口：
 
-选择测试根时，`ModuleResolver` 在图发现前通过 `module_id/test_catalog.rs` 递归建立
-当前 crate 的 `tests/**` 清单，以 `Arc` 在本次 resolver 的副本间共享。清单包含所有
-合法的 Telora/静态数据文件，拒绝 symlink，但不解析源码内容。顶层和嵌套测试都使用
-`ModuleCName::Test`，relative、`@test/` 和 canonical import 统一查该清单，并检查
-importer 必须是当前 crate 的测试模块。选中根的回边也交给统一 cycle 检测。
-
-CLI 的 `test`、`check` 与显式 query 将已准备的 resolver 直接交给
-`Engine::recover_with_resolver`，避免一个调用重复扫描测试清单。graph discovery
-仍只预扫描选中根的可达依赖，并在求值前完成 import/export 和 slot 分配。
-未引用测试的语法或运行时失败不进入本次结果。测试清单不扩展 source manifest、lock
-或普通 module catalog，也不会在求值时接纳新增文件。
-
-图发现与后续加载使用同一个 session 的 SourceDatabase。已发现的 Telora 源码保留
-共享的 PreparedModule（SourceId、AST、恢复语法和诊断），严格加载和恢复分析复用
-该记录，不再次读取文件或解析；不额外保留模块加载不使用的 CST。语法错误也是
-可登记的内部状态。图发现后的磁盘变更由下一 session 读取，本 session 持续使用
-已捕获的源码快照。当前 HIR 和类型推导仍有独立构建路径，尚未完成 RFC 0280 的
-全局类型世界与无 Telora 执行的类型阶段。
-
-显式 import 在 session 图中先登记稳定 ImportId，数组节点从 Pending 填充为
-目标 ModuleId 或名称解析诊断 ID；源码位置只是入口索引。目标描述保存在按 ModuleId
-索引的表里。严格/恢复加载读取同一节点，
-不再次解析已发现的 import；未经过 discovery 的直接入口仍可调用 resolver。
-目标 ID 不代表源码已成功读取、类型已求解或值已初始化，失败解析也不撤销其他记录。
-
-模块骨架记录其 SourceId；严格加载同一源码节点时直接携带 ModuleId，不再克隆骨架
-并重新扫描声明、exports/imports 来比较两份副本。未经过 discovery 的旧入口仍保留
-原有一致性检查。正式/恢复分析各自拥有 HIR，工具推导上下文借用同一 HIR，结束时
-直接转交给现有公开 Analysis；该转交不复制 HIR，也不使用引用计数。跨阶段的 HIR 预先解析与跨模块声明边
-尚未统一，因此这里不宣称已完成全局 HIR 求解。
-
-已发现模块的 PreparedModule 现在归属于 ModuleId 索引的节点；未发现入口保留独立
-兼容存储。恢复分析借用该节点中的 AST，语义快照输入只携带所需的结果位置，不再
-持有整份 AST 副本。PreparedModule 由节点直接拥有，不再使用 Arc；ModuleGraph 和
-ModuleSkeleton 不实现 Clone。严格 loader 将依赖准备与编译分开，递归期间只保留
-import 操作数和 binding 游标，结束后重新借用 session 语法。恢复路径同样在递归前
-结束借用，在分析时重新借用；语法记录始终留在图中。依赖准备仍可能执行旧模块值，
-AST/HIR 内部节点扁平化和下游统一 ID 消费仍待迁移。
-
-语义快照构建只借用输入分析事实，排序时保留输入引用；严格加载、run/eval 和 test
-交接不再先克隆整份 SemanticModuleInput（包含 HIR/类型图）。最终快照仍拥有投影后的
-记录。类型图按源数组顺序投影到连续区间，边通过区间起点加原 ID 换算，使用每模块
-一个区间记录替代逐类型映射数组；不递归遍历，也不预填 Pending 再回填。定义 ID
-重映射仍存在。严格 loader 的语义输入表独占 Analysis；编译产物仅保留该表的模块键，
-执行与契约检查借用分析结果。完成快照投影后，选中模块的 Analysis 才移入 LoadedModule，
-不克隆整份 HIR/类型图。依赖产物仍复制所需的 ModuleInterface/result scheme，模块键
-仍沿用现有语义表的字符串键；这尚不是统一 session arena 的最终 ID 消费形式。
-
-类型名称发布复用已有名义类型 ID；确需预留的前向名称槽保留 Ref 边，名称表最终
-指向求解所得根，不再把构造器和子节点列表克隆到名称槽中。类型图仍可能保留前向
-引用的代理槽，尚未完成全局归一化。
-
-声明契约的静态展开入口只读取 AST、HIR 名称解析、模块接口、类型环境和符号参数，不接收 VM
-或 heap。已知类型引用、函数、元组、Unit、Array/Dict/TypeOf 直接进入同一个最终
-Analysis 类型图；普通内建名称受遮蔽检查约束。现有 TypeScheme 边界仍会物化描述符。
-限定类型引用（如 pkg.inner.Item）从嵌套模块接口的具体类型声明取得类型，尊重局部与
-泛型参数遮蔽，不将普通元数据值作为类型声明；接口的构建仍依赖现有模块加载流程。
-已完成符号模板的本地／导入类型族，可在声明契约中按图节点 ID 替换参数；递归应用先
-登记名义身份再填充类型体，幽灵参数仍进入身份。同一次应用只记录访问到的节点映射，
-不复制类型环境；名义身份参数仍通过描述符适配。
-非循环声明调度现在也尝试直接展开类型本体，支持编译器生成的 struct/enum/newtype，
-并立即登记可用的类型族模板。元数据仍在旧消费者的适配边界生成；该边界从 AST 和
-已有模板投射使用位置，保留 codec 的字段规则位置，不把来源混入共享类型身份。
-已知类型引用复用元数据对象，只在引用值上附加本次位置；符号参数不会复用同名外部类型。
-已支持的静态声明不消耗 VM 执行 fuel；工具代码和 property provider 仍遵守执行配额。
-静态声明和契约展开前不再准备整份模块的 construction／`@check` 值依赖；该准备延后到
-值阶段，仍需执行的旧类型路径则在执行前准备。检查注册和实际构造验证仍然保留，
-静态声明错误可先于 checker 依赖执行报告；这尚未分离整个值推导与工具执行阶段。
-声明和类型族签名中的 trait／Property(T) 约束现在也尝试直接读取身份和类型图，
-不求值 property provider；可静态求解时无需创建临时参数元数据。调用时的约束验证仍保留。
-带约束类型族的可展开结构也进入类型图；原 TypeScheme 保留完整约束，最终推导检查
-类型定义体中的应用，并单独收集声明签名中的带约束应用，使用该声明的词法 evidence
-验证义务。普通签名结构不作为值表达式重新推导。未解析名称等形式仍有旧路径，
-类型声明本体、约束和 property 阶段尚未全部静态化，不能据此声称整个推导已零执行。
-
-类型图接收到名义引用占位后，后来的完整定义可填充原类型行，已有引用保留 ID。
-具体名义类型的递归分量现在先登记全部身份，再静态展开各类型体，并直接以节点 ID
-填充名义类型行。支持的自递归／互递归声明无需 VM fuel；形状验证和类型签名发布
-直接读取已求解图，不再解码刚生成的元数据。旧值消费者仍需要预留、封闭运行时
-类型引用。无约束的自递归名义类型族也先登记带符号参数的 owner，再填充类型体；
-自引用只能原样、按声明顺序传入参数。其模板签名读取已求解图，运行时 family 闭包
-仍在适配边界创建。带约束递归类型族、恢复分析和未支持表达式仍保留旧求值路径。
-描述符转换按名义边界识别递归：跨过名义边界后再次遇到共享结构不构成非法结构环，
-直到名义身份重现才生成递归引用；不经过名义身份的纯结构环仍被拒绝。
-
-恢复加载先尝试正式分析；已有正式 Analysis 时，编译或运行失败也继续使用其中的
-类型事实，不另外执行 partial 分析。只有未能取得正式分析结果（包括语法错误、
-类型错误、缺失导出或循环依赖）时才执行恢复分析。失败路径仍可能重复部分工作，
-尚不等同于统一的全局求解器。
-
-`ModuleResolver` 消费已经准备好的 crate source 清单。`builtin_list()` 先登记 builtin
-vendor 的 crate，resolver 随后登记当前 crate 和 manifest dependencies；
-同名登记使用 first-win，已选 source 不再改变。import 先按 selector 首段选择 crate，
-再只在该 crate 中解析 module，因此 configured `std` 不能补充 builtin `std`。
-
-模块加载不是逐条执行 `import`。Host 先解析根及其全部静态依赖，完成 canonical module
-name 解析和图发现，再建立模块骨架：
-
-1. 扫描 Telora module 的 import、显式 export、顶层 `decl` / `def` 和具名 Struct/Enum
-   type constructor；JSON、TOML、YAML 与 builtin opaque module 也占据图中节点。
-2. 默认 prelude 作为每个非 prelude module 的 open-import edge 加入图。
-3. 按 canonical module name 的 UTF-8 bytes 排序，为完整图分配 `ModuleId`。
-4. 为顶层递归函数和名义 type constructor 分配确定的模块内 slot。
-5. 校验实际加载时看到的 import graph 和 skeleton 没有在扫描后变化。
-
-动态 `ModuleId` 从 16 开始；模块内动态 `FuncId` 和 `TypeConstructorId` slot 从 1024
-开始。较低范围保留给匿名或稳定 Host contract 身份；builtin module 与其他图节点一起
-按 cname 排序并从 16 分配。具体数字是 Host 与 native contract 当前使用的稳定实现
-边界，但用户代码应通过名字而不是数字引用普通模块定义。
-
-`FuncId` 和 `TypeConstructorId` 都是 `(ModuleId, local slot)`。`decl f: ...; def f = ...;`
-在骨架阶段建立一个函数 slot，编译后的 `FuncRef` 只携带这个静态身份；定义求值时再
-seal 对应函数。普通值没有开放 slot，因而不能用 `decl` 建立任意值循环。
-
-Import edge 指向已发现的模块身份。一个依赖模块只初始化一次，完成的 module export
-root 保存在 MainWorld；菱形依赖中的后续 import 复用同一个持久 root，再向使用方建立
-binding。当前拒绝模块初始化 cycle，模块内函数和 TypeMetadata 的递归由专用 slot
-机制闭合。
-
-普通 Telora module 与 static data module 的 canonical source path 等于 canonical module
-name，例如 `my-crate/model`、`my-crate/bin/main` 或 `standalone/main`。嵌入式
-builtin ABI source 同样使用 `std/...` canonical name，不通过 synthetic source name
-取得额外权限。`@run-ctx/config` 等非模块 Source 不能转换为 module name。
-
-## 4. 分析期类型与运行时类型
-
-Tool expression inference 共享模块的 scheme 与 declared body 输入，只解码表达式
-实际引用的外部值；每次查询的 substitution 与诊断仍独立。普通函数体由模块推导
-检查，只有类型计算、注解等 tool root 的传递依赖才提前求值。
-严格推导与前置类型投影的局部环境借用父环境，以 `Vec` 保存局部覆盖并反向查找，
-不复制模块绑定。未知局部类型用显式遮蔽记录表示，避免意外回退到同名外部绑定。
-模块级环境仍使用 HashMap；match 分支需要 freshen 推导变量时保留独立的变换环境。
-工具值环境也借用模块绑定，以局部覆盖注入泛型参数和 provider 参数；编译器结合
-runtime HIR、自由变量和 constructor owner 链接收集实际依赖，只将这些值传入 VM。
-HIR 保存表达式子节点索引，依赖查询只遍历目标子树。类型依赖图一次计算 SCC，
-完整分析按分组的依赖计数与就绪队列调度；partial 分析复用同样的分组和依赖顺序。
-Property provider 的返回 contract 在模块推导前登记静态 evidence 和未来的 runtime
-binding，不依赖 payload 求值；模块静态检查通过后才物化 property records，失败则
-阻止发布。Decorator 引用不构成类型骨架的调度依赖。
-
-实现有三个必须区分的层次：
-
-| 层次 | 用途 | 身份范围 |
-| --- | --- | --- |
-| `TypeDescriptor` / analysis type graph | 推断、scheme、Bound、错误恢复和接口检查 | 分析期 |
-| TypeMetadata value | Telora 中可计算、可来源化的规范类型描述 | tool/program stage 的值图 |
-| `TypeId` / `TypeStore` | 已封闭 concrete type 的运行时 canonical identity | MainWorld 构建期与持久 witness |
-
-Bound parameter、inference variable 和 unresolved named type 不能直接 canonicalize 为
-`TypeId`。具体类型跨越运行时边界前必须已经消除这些分析期占位符；需要富结构时从
-`TypeStore` 或权威 TypeMetadata 读取，不把 analysis ID 当作运行时相等依据。
-
-内建 canonical `TypeId` 当前固定为：
-
-```text
-Never = 2, Type = 3, Dyn = 4,
-Int = 5, Float = 6, String = 7, Bytes = 8, Atom = 9
+```telora
+import "std/value" { Value };
+decl data: Value;
+export { data };
 ```
 
-动态 `TypeId` 从 1024 开始。名义实例的 intern key 是
-`(TypeConstructorId, Array(TypeId))`；因此同一 constructor 用相同 type arguments
-应用任意多次都得到同一个 `TypeId`。结构类型按规范 `TypeShape` intern。递归名义类型
-先 reserve identity，再 seal body；若构造失败则 abort pending slot。这使 body 可以
-回指已经确定、但尚未封闭的本类型，同时阻止未封闭引用越过发布边界。
+数据内容在静态阶段不读取、不解析；因此类型检查成功不代表 JSON/YAML/TOML 内容有效。
+实际内容在链接和 VM 数据注入阶段接受格式与 DataLimits 检查。
 
-参数化 TypeMetadata family 的模板包含 Bound，而不是 concrete `TypeId`。应用 family
-时用 concrete arguments 替换模板中的 Bound、重建受影响子图，并通过上述 constructor
-key 取得 canonical identity；不会把源码名字当作 intern key，也不会把 family body
-作为任意运行时 type function 重复求值。
+symbol Pass 先索引模块的声明、导出和作用域，再闭合引用。import * 建立搜索范围，
+具体引用才选择绑定；显式绑定与遮蔽按普通名称解析规则处理。内置类型的特殊身份来自
+native 声明的 NativeTypeId，不能根据 Int、Array 等拼写识别。默认的
+`import "std/prelude" *;` 提供普通名称；`@property` 等装饰器也遵循这些绑定规则。
 
-## 5. `Val`、对象和 heap
+MIR 的模块、符号和类型身份都是本次完整构建中的索引。不要把旧 module/package API
+的 ID 编码或预留区间套用到 MIR 的 ID，也不承诺源码改变后数字保持不变。
 
-VM 寄存器和 heap object 字段统一保存 32-byte `Val`：
+## 4. 全图类型求解与 SealedMir
 
-```text
-PackedLoc { source: u32, start: u32, end: u32 }  12 bytes
-Meta { flat kind, heap sub-kind, traits, provenance } 4 bytes
-ty: u32                                           4 bytes
-narrow: u32                                       4 bytes（保留）
-raw payload / scoped handle                       8 bytes
-```
+MIR 拥有 HIR、resolve_slots、ty_slots、结构类型项、最终类型表及各种证据表。源码节点
+在 lowering 时得到槽位；泛型实例等辅助槽在求解时按需增加。求解器通过相等、适配、
+调用和成员等约束填空，合并代理根，再完成结构类型归一化。分支不复制整份模块类型环境。
 
-`meta` 描述运行时表示，不等于静态/名义 `ty`。例如 Int 和名义 wrapper 可以共享 Int
-表示而携带不同 `TypeId`。`narrow` 已预留但当前没有公开 trait/interface narrowing
-语义。
+`TypeTerm` 的参数仍可指向未知或代理槽；最终 `ResolvedType` 的参数都是 TypeId。
+名义实例保留声明身份及类型实参。递归、泛型、部分应用和隐式类型实参的证据也进入图，
+不能把尚未闭合的泛型调用留给 codegen 猜测。
 
-Int、Float、短 String/Atom、内建 Atom、native type identity 和静态 `FuncRef` 可以
-直接编码在 `Val` 中。Bytes、Array、Tuple、Tagged、Dict、closure、Dyn、Module、
-Declared/Symbolic TypeMetadata 和 opaque value 使用 scoped handle 指向 heap object。
-handle 的 work bit 让复制器无需间接查询即可区分 Main 与 Work 引用。
+`Mir::seal` 检查必需类型槽、泛型实例、成员选择、类型布局、构造检查、property 与 bound
+证据是否完整。成功返回只读借用 `SealedMir` 和独立的 TypeImage；seal 不重新编号。
+失败保留原 MIR 和诊断，供 query/LSP 使用。
 
-Heap 是按 storage scope 管理的对象、text、shape、静态函数、类型 witness 和 typed
-property 集合。
+相同完整输入应产生确定的 MIR ID、TypeImage、bytecode 和执行图，不受 inventory
+枚举顺序影响。这是完整构建的确定性，不是跨版本或增量编辑的永久 ID 保证。
 
-Newtype 在类型描述符、分析图和 canonical type store 中具有独立的 Newtype 节点。
-其值使用单元素 Tuple 容器保存载荷 Val，外层容器携带具名 TypeId；`.0` 复制内部
-Val，所以嵌套具名载荷的身份和位置不被外层构造覆盖。codec 对外使用载荷表示，
-decode 分别建立载荷容器与外层身份，encode 先验证外层身份再读取载荷。
+TypeImage 是扁平只读数组，保存类型、已应用布局和类型定义。其索引对应静态 Pass
+分配的 TypeId。VM 安装该图后，TypeDesc、codec、Dyn 与类型元数据操作查询已有类型
+和布局；它们可以物化元数据值，但不能分配新的推导槽或求值生成类型骨架。
 
-严格推断依据 HIR 声明和模块接口的 `type_declarations` 识别 newtype 名称，
-根据 Type 上下文选择类型用途或构造器用途。构造器表达式记录位置与构造器种类，
-编译为单参数闭包，使用 `MakeTuple` 和可用的 `OwnDeclared` 类型证据。
-导出记录保留声明本身；普通函数的 TypeOf 返回契约不提供声明身份。
-构造器模式在 HIR 中保留声明引用，严格推断先统一具名目标类型，再递归分析载荷
-模式。newtype 解构编译为 `GetTuple(0)`，直接读取原始载荷 Val。
+`T` 是静态类型，`T.type` 生成带精确见证的元数据值。普通函数返回的元数据不能反向
+成为静态类型声明。Fn 和 tuple 的语法 lowering 与普通内置名称绑定保持区分；
+`()` 复用空 Tuple，Unit 是其别名。
 
-工具阶段根据当前已经建立的声明、模块接口与泛型契约复用严格推断，向表达式
-编译器传递构造器位置与具名类型证据。工具函数、类型计算和 decorator 参数中的
-构造器使用相同的单元素 Tuple 表示。推断期间的注解求值使用静默观察，正式的
-元数据初始化负责输出诊断。错误恢复分析同步维护声明与泛型构造器的类型证据。
-带类型描述符的工具表达式要求构造器推断成功，推断错误在求值前作为源码诊断
-返回；普通增量类型初始化可以推迟尚未完成的推断，由最终检查确认声明是否合法。
+## 5. codegen、构造校验与运行时表示
 
-工具表达式 evidence 拥有独立的 `TypeGraph`，表达式位置和运行时类型证据通过
-该图内的 `AnalysisTypeId` 引用类型。同一次发布复用 slot 到图节点的映射，求解器
-销毁后不保留指向它的 ID；函数 arity 与候选名义 owner 的筛选直接读取图节点。
-尚未解决或不满足正式类型发布条件的中间记录暂时保留显式 descriptor 兼容分支，
-以保留开放函数的 arity 和既有错误行为。工具运行时类型参数的无来源元数据构建
-直接消费图 ID，按节点记录已生成值，先预留名义 owner 再遍历 body；跨名义边界的
-结构回边有效，无名义边界的结构环仍拒绝。同一工具表达式的全部类型根批量构建，
-共享一份节点到元数据的临时表，避免多个根重复展开相同节点；临时表不跨 heap、
-图或求值操作保留，纯 descriptor 分支不创建图构建临时表。类型参数 arity 直接扫描图，同时计入
-名义身份参数中的 phantom bound。带来源构建、owner 泛型替换及名义参数身份仍有
-descriptor 适配；当前并非所有工具消费者都已直接读图。
+codegen 的公开编译入口接受 SealedMir。表达式类型、泛型实例、模式构造器和成员选择
+来自已完成的证据表；生成闭包、调用和构造代码不再启动类型推导。
 
-enum 成员解析使用同一份值构造器证据。限定成员读取先解析所属类型声明，再得到
-成员的完整泛型契约；带载荷成员编译为单参数闭包，无载荷成员编译为 Atom 值。
-具名 enum 使用同样的 `OwnDeclared` 证据保留身份，底层 Atom/Tagged 表示保持一致。
-限定 enum 模式先通过同一份证据验证声明归属与载荷数量，再转换为内部的
-Atom/Tagged 模式进行嵌套类型检查和穷尽性分析。编译器使用已验证的成员证据
-生成匹配指令；普通函数别名不提供模式构造器身份。
+`@check` 的静态阶段确定校验器签名与构造目标；校验函数在 VM 中执行。具名字段 struct
+接收 Unchecked(T)，newtype/带载荷 enum variant 接收载荷，返回 Result((), BlameError)。
+普通构造拒绝产生运行时失败，codec 解码拒绝返回 Err。读取或复制已完成的值不会重新
+执行构造校验；新构造与 `<~` 更新会检查其结果。
 
-模块接口用 `value_binding` 区分命名空间与被选择的值。选择性导入、开放导入的
-值以及独立文件的直接结果记录绑定名，模块命名空间保留完整导出表。类型方案
-与构造器身份依据这个来源读取，限定链不依赖模块别名是否恰好出现在导出表中。
-选择性 enum 成员导入降为携带 `imported_name` 的定义绑定，HIR 保留原声明选择
-表达式。严格推断使用成员原有的泛型契约，模块接口的 `member_constructors`
-记录公开成员的 tag 与载荷形式；所属具名类型和类型参数由公开契约保持。模块的
-选择性导入、开放导入和 reexport 同步传播这份证据。普通定义不继承该证据。
-HIR 根据本地成员导入和外部接口，将模式中的裸成员名称记录为声明引用，其他
-名称记录为模式绑定。严格推断沿用限定构造器的类型与穷尽性检查。编译前根据
-已验证的证据将裸成员模式规范化为构造器模式，使运行时与工具阶段的闭包捕获
-一致。开放导入在名称仅出现在模式中时同样检查成员候选的歧义。
+Struct 暂仍复用 Dict 的字段表示。merge-update 根据左侧已解出的具名类型和字段契约
+生成代码，新建外层容器并复用保留字段的 Val；projection 同样消费静态字段证据。
+它们保留嵌套值的身份和来源。当前没有将全部 field access 降为固定偏移量。
 
-`std/prelude` 显式导出 Bool、Option 和 Result 成员。标准库启动安装预设名称时，
-同时传递值与所选成员的 ModuleInterface，保留泛型契约和构造器来源。普通模块
-将隐式 prelude 作为名称 fallback，显式模块导入的候选优先；多个显式来源仍须
-消除歧义。
+寄存器和对象字段使用 32-byte Val，包含来源、表示标签、类型标记和 payload。
+静态 TypeId 与底层表示不同：具名 newtype 使用单元素 Tuple，enum 使用内部 Atom/Tagged
+表示。内部表示标签不重新成为公开的表面类型。
 
-String/Atom 与 Dict shape 分别 intern；复合值不可变。Host 对值的观察通过借用式
-`ValueRef` 和受控转换完成，不存在一份与 VM 图竞争的 legacy/owned Host value model。
+类型元数据可以用 `SolvedType(TypeId)` 表示。复制器验证其属于同一个 session TypeImage，
+直接复用身份，不递归重建类型描述符。复合数据和闭包仍由 scoped handle 指向 heap；
+不能据此宣称所有运行时值都已消除深复制或引用计数。
 
-Main heap 的 property registry 使用有序的 `PropertyKey`：`Ty(TypeId, TypeId)`、
-`Field(TypeId, u32, TypeId)`、`Variant(TypeId, u32, TypeId)`，值是 MainWorld `Val`。
-Tool stage 先封闭具名 Struct/Enum 的 TypeMetadata、TypeId 和 canonical member index，
-再执行 decorator provider。provider 从只读 context 计算 property value，结果写入
-独立的 property registry；这个单向数据流保持目标 descriptor 稳定。provider 的静态
-结果、运行时 `Val.ty` 与 property carrier TypeId 必须一致。
-carrier 的 owner 能力由
-`Ty(Carrier, PropertyAttr) -> PropertyAttr { bits }` 记录；`PropertyAttr` 自举自己的
-TypeId，内部 capability 使用 `u32` 位集。
+typed equality 使用类型身份及对应值表示，来源位置不参与相等；Dyn 的投影与 codec
+通过已确定的见证检查契约。动态值检查属于运行时行为，不是重新推断表达式类型。
 
-同 key provider 以 `Fn(Ctx, Option(P)) -> P` 逐个 fold，只保留成功的最终 head。
-member property 完成并暂存后才运行 type property，因此 type provider 可读取完整
-member snapshot。整个声明的 effective heads 在失败检查后一次复制和提交；失败 fold
-不会发布部分结果。`std/type-property` 的 `get_type_prop`、`get_field_prop` 和
-`get_variant_prop` 只读取 registry，并返回引用同一 Main 值的 `Option(P)`。
+## 6. Property、MainWorld 与 WorkWorld
 
-运行时相等先服从 [`LANGUAGE.md`](LANGUAGE.md#33-相等性和顺序) 的 typed equality：
-名义值需要 canonical `TypeId` 一致，再按表示递归比较；循环图使用 visited pair 防止
-无限递归；函数和 opaque value 使用各自的不透明身份规则。来源位置不参与相等。
+静态 property 记录说明某个 owner/member 是否具有特定 carrier，以及 provider 的
+签名和来源。判断 HasProperty 不需要执行 provider。property 内容则是运行时值，
+不属于类型骨架。
 
-具名 enum 构造器通过名称解析获得声明来源、variant 名称和完整泛型契约；
-`value_constructors` 按源码位置把构造器证据传递给编译阶段。调用上下文补全泛型
-参数，并把 payload 上下文传入直接构造的嵌套值。同一类型族的分支、返回值和
-集合元素共享参数证据合并，具体证据迭代传播至没有新增解，支持 enum 参数补全后
-继续确定空集合的元素类型。不同声明及冲突的具体参数保持类型错误。VM 使用
-Atom/Tagged 表示，复制 payload 的 Val 来源位置不变。
+ExecutionGraph 从 SealedMir 建立全局值、泛型实例、property fold 和构造检查等任务。
+property 使用 TypeId、carrier TypeId 和 member/site 身份建立键。同一键的 provider
+按既定顺序 fold，最终只有一个有效结果；不同成员仍是不同键。
 
-底层表示描述符及工具阶段的 provisional constructor evidence 可以保留内部
-Atom/Tagged 标记；它们不能成为完成后的表达式类型、binding scheme 或模块接口。
-公开 Type 元数据解析、静态反射和 codec 只接受 enum 契约。`std/dyn.kind` 继续
-报告底层值类别，`std/dyn.desc` 返回装箱时的静态契约。
+VM 持有可变求值状态表，任务经历 Pending、Running、Ready 或 Failed。需求指令读取
+已完成的 Val，或启动目标任务；再次请求 Running 节点报告依赖环，Failed 传播已有失败。
+codegen 只生成利用这张表的代码，不与 VM 共用可变推导状态。
 
-Struct 合并更新复用 Dict 的运行时字段表示。严格推断根据 `<~` 左侧具名 Struct
-确定结果类型；更新字面量先收集 spread 的静态字段集合和覆盖关系，再为最终
-生效的显式字段传递 expected type，并检查字段子集与类型兼容性。初步类型证据
-同样保留左侧具名身份，供后续推断与语义查询使用。
+初始化时先安装 TypeImage 和执行图，再注入数据。整张可达图使用一个 Initialize
+WorkWorld，主动完成全部初始化根；顶层值与 property 的相互依赖通过需求求值处理。
+初始化不调用普通函数的函数体，除非某个初始化计算实际调用它。
 
-编译器按源码顺序求值操作数，更新字面量复用 `MakeDict` / `MergeDicts`。
-`StructUpdate` 指令复用字段合并逻辑，`BitAnd` 指令执行整数按位与。更新指令
-创建新容器并复制 base 的 `TypeId`。字段直接复制 `Val`，保留嵌套身份及来源
-位置，新容器使用指令位置，分配纳入当前 quota account。
+完成后 `freeze_initialized_world` 验证所有初始化根 Ready，再用一次多根复制把全局值与
+property 结果发布到 MainWorld。共用 forwarding map 保留跨根共享、闭包引用及来源，
+Main 对象不能引用即将释放的 Work storage。失败或未完成任务不能作为成功初始化发布。
 
-字段投影以 `FieldProjection` AST 节点保存 receiver 与有位置的源名/目标名。
-严格推断从源具名 Struct 读取字段类型；普通构造检查 exact nominal target，
-更新右侧检查字段子集。初步推断只遍历 receiver，不从投影形状猜测目标身份。
-编译器把 receiver 求值到一个寄存器，再发出各字段的 `GetField` 和一次
-`MakeDict`；普通构造沿用 `OwnDeclared` 附加目标身份。字段值直接复制，
-保持来源位置，投影无需额外 VM 指令。
+之后创建新的 WorkWorld。执行读取 Main 中的已完成结果，不在新的 WorkWorld 中重新
+启动初始化。Work-to-Work 的值迁移也使用根驱动复制；已有 Main 引用可直接保留。
+外层结构仍会分配，普通值图复制的成本没有在本次架构改造中全部消除。
 
-Tuple spread 复用 `Spread` AST 项。初步推断按静态 Tuple 形状展开位置类型；
-严格推断和上下文字面量检查按展开后的下标分配 expected type。编译器将普通
-元素构造成单元素 Tuple，将 spread 操作数作为完整 Tuple 片段，最终发出
-`ConcatTuples`。VM 与 `ConcatArrays` 共享有序复制及配额核算逻辑，分别检查
-Tuple/Array 表示并创建对应容器；元素直接复制 Val。无 spread 的 Tuple 仍
-通过 `MakeTuple` 构造。
+## 7. 诊断、失败与发布
 
-`Dyn.project_with` 对目标 witness 和 package descriptor 直接执行
-`TypeGraph::decode_persistent + canonicalize`。它先为 declared node 建立 canonical
-TypeId，再闭合递归边；不能先降成扁平 `TypeDescriptor`，否则 `Option(Node)` 一类
-递归复合 witness 会丢失名义回边并退化成不可 canonicalize 的结构递归。
+静态诊断由三个 Pass 和 seal 产生。无静态执行，所以 Unknown/Conflicted 不等于一次
+运行失败，也无需通过重建 VM 或重跑旧求解器恢复。存在静态错误时不进入初始化。
 
-## 6. MainWorld、WorkWorld 与原子晋升
+运行时失败保留规则位置和数据来源；`raise!` 产生 Never，`warn!` 产生值为 None 的
+Option(T)。`blame!` 构造错误数据，规则归因由调用/构造边界与 VM 诊断逻辑共同保留。
+`@check` 的 Err 路径不会把失败候选发布成合法 T。
 
-构建期 `MainWorld` 持有本次封闭模块图的 persistent heap、module skeleton、canonical
-`TypeStore`、typed property registry，并在 best-effort 路径持有稳定 failure arena。
-模块依赖和静态根成功晋升
-后，当前严格运行路径把 persistent heap 封装为只读 `FrozenMainWorld`；运行期所需的
-canonical witness 已经在该 heap 内闭合，构建用 `TypeStore` 本身不进入 Frozen API。
-所选根模块的执行结果、Entry transition、pure eval 调用和普通调用仍位于 Work heap，并把冻结 Main
-作为只读 background。
+初始化的 best-effort 可以继续独立任务，失败依赖传播已有错误；资源、取消或一致性等
+终止错误仍中止 session。没有任何 error 才能把 session 当作成功对外输出。这个保证
+针对 session 结果，不是外部 Host 已执行 effect 的事务回滚。
 
-Work 到 Main、Work 到新 Work 都使用根驱动的 copy collector：
+源码名与字节范围保留在 VM debug origins 和值来源中。fixture、eval/run 输入等来源
+由 Host 注册，物理文件定位不授予语言额外文件访问权限。
 
-1. 从 module export root、调用结果或显式迁移 roots 开始扫描可达图；
-2. 用 forwarding map 为每个 source object、text 和 shape 只分配一个 target identity；
-3. 保留已经属于 Main 的 uplink，重定位 Work handle；
-4. 复制并 seal 可达静态函数、递归类型 slot 和 canonical type witness；
-5. 完整验证 pending graph 后一次 commit。
+## 8. 资源与 Host 边界
 
-Forwarding 使共享结构和循环保持共享/循环，也让多 root 复制不会重复对象。复制失败时
-pending allocation 不进入目标 heap。普通 Host publication 还会拒绝任何可达 Fail；
-模块内部的 best-effort 固化可以保留失败 export，以便下游独立诊断，但只要本轮存在
-任何 error root，最终结果和 effect 都不能发布。
+VM 的 QuotaAccount 核算 fuel、栈与分配，并携带诊断和取消上下文。静态类型求解不
+消耗 VM fuel；这不表示解析、求解或编辑器请求没有资源与取消约束。
 
-Entry reducer 每处理一个 event 后，新的 `(State, effects)` 会连同 reducer closure
-一起迁移到新的 WorkWorld，旧 WorkWorld 随后释放。这避免长期状态引用已经丢弃的临时
-heap；当前实现每轮都迁移一次，没有可观察的 mutable heap。
+数据入口单独使用 DataLimits 检查文件大小、节点数、深度、单容器成员数和 payload
+大小。通过 admission 后才物化 Value。运行时 codec/parse 仍受 VM 配额约束。
+错误消息和来源应保留，但配额的具体数值是 Host 配置，不是语言语法。
 
-## 7. 严格求值与 best-effort
+`telora-ees` 组合 IMOS 与 sqlite-query 等 native actor components。package preparation
+使用自己的 Service，run/serve 根据应用配置另建 Service；core 仅依赖 component-neutral
+Host ABI。实际文件、环境、stdin 与 EES 调用由 Host 执行，纯 Telora 代码不能直接访问。
 
-严格执行遇到未处理的 recoverable failure 就终止当前结果；资源、一致性或取消失败
-终止整个 session。Best-effort 使用同一 VM 指令和普通值语义，但在 evaluator 中把
-可独立的 module binding / computation 建成 evaluation units，并把失败保存在 MainWorld
-的稳定 failure arena。
+run/serve 的生成 adapter 与应用在同一 MIR 中求解，wrapper family 和具体泛型实参
+在静态阶段闭合。初始化完成后才进入资源协商和 Entry 调度；Host 根据声明的 capabilities
+读取输入并检查 effects。eval/eval-with 不启动 reducer loop 或应用 EES service。
 
-失败 arena 区分 root failure 与 propagation node。复合 diagnostic value 可以暂存
-Fail child，以保留形状并继续健康的独立分支；Fail 不是用户可构造或匹配的普通值。
-依赖失败的 unit 不执行，独立 unit 继续。传播节点保留有界 lineage，但不产生新的
-“类型不对”根因。
+## 9. CLI 与 LSP 的阶段边界
 
-`RuntimeError` 为 contextual failure 保存一个 rule location、有序去重的 data source
-locations，以及可选的 intrinsic implementation location。执行帧同时携带最外层
-authored rule boundary；普通调用继承该边界，第一次调用建立边界，tail call 显式搬运
-边界，native continuation 回调使用其 authored call site。`Raise` 读取
-消息和 subject 寄存器后一次建立 root diagnostic。failure arena 的传播节点只保存 root
-failure id，因此 strict 与 best-effort 不会产生两套归因路径。
+| 命令 | 消费边界 |
+| --- | --- |
+| query modules | inventory 清单 |
+| query exports / at、LSP 语义查询 | 三个静态 Pass 后的 MIR，可保留错误和未知事实 |
+| check --only-types | 三个 Pass 与 seal，不读取数据内容或执行 Telora 代码 |
+| check | seal、codegen、链接、数据注入及整图初始化 |
+| eval | 初始化后取得选中 Value 导出 |
+| eval-with | 初始化后调用选中 entry.Eval |
+| test NAME | 初始化后执行该测试模块直接导出的 Test |
+| run / serve | 初始化后按 Entry 策略调度 |
 
-Entry runtime 的 `with_diagnostics` 使用 native continuation 在同一 WorkWorld 中调用
-目标 closure。continuation 记录 `QuotaAccount.diagnostics` 的起点；成功或可恢复失败
-时只取出并消费该区间。可恢复 failure 通过运行时统一的诊断转换得到 severity、
-labels 和 notes，再物化为 `std/_rt.Diagnostic`；标签保留源码名称和字节范围。
-快照与嵌套字段使用显式类型见证，分配计入当前 account。terminal failure 不进入该
-continuation 的 catch 路径。
+`check MODULE_ID` 选择一个根。`check --lib` 选择当前 crate 清单里的全部模块，包括
+私有模块和数据模块；`check --tests` 递归选择当前 crate 的 tests/ 模块。两个开关
+可以组合，与显式 selector 互斥。依赖按导入加入同一张图；不会对每个根重启编译器。
+空集合成功，未声明文件仍不进入图。
 
-Best-effort 不是另一套成功语义。没有 error 时，它与严格执行同属成功并产生相同
-可观察值；存在任意 root error 时，即使某个最终表达式可算出，也没有可发布结果。
-`check` 使用这条恢复管线；`run --best-effort` 在 Entry 启动前做诊断求值。
+批量 check 输出一份 `telora.check/v1` summary，roots 列出所选根。独立静态问题可
+一起报告，但任一静态错误都会阻止整图初始化，不提供逐模块独立成功/失败 session。
+`--tests` 不执行 Test thunk，也不因 Test 描述而读取 fixture。
 
-## 8. 资源核算
+summary 中 catalog_seconds 是清单准备时间，static_seconds 包含三个 Pass 与 seal，
+execution_seconds 包含 codegen、链接与 VM 初始化；only-types、静态失败或空根集合时
+execution_seconds 为零。check_seconds 是 static 与 execution 之和，不含 catalog。
+这些是阶段观测，不自动构成不同版本的性能比较。
 
-VM 的 `QuotaAccount` 同时核算 fuel、stack slots 和 requested allocation bytes，并携带
-诊断与 cancellation query context。当前 VM 另有固定最大 call depth 1024 和 stack
-slots 1048576；Host 提供的 quota 可以进一步收紧边界。Module/tool 初始化与 session
-执行使用独立 account，debug sink 不消耗 Telora fuel 或 allocation。
+test 的每个 thunk/factory 在运行时检查自己的结果；可恢复预期失败由测试断言消费，
+终止错误中止 runner。Host 负责 fixture 定位和限量读取，测试结果使用
+`telora.test/v2`。成功的 check 不代表测试断言已运行。
 
-静态数据和 Entry 声明的数据源不按可递归 VM 计算核算 fuel。它们在解析/规范化前后
-按独立 `DataLimits` admission：原文件大小、逻辑 node 总数、深度、单容器成员数、
-单 Bytes 长度、单 String/key/temporal UTF-8 长度，以及全部 decoded payload bytes。
-通过 admission 后才把规范 Value 图物化到相应 World；运行时 codec/parse 仍属于普通
-VM 计算并按 VM allocation 核算。
-
-## 9. Entry wrapper 与 CLI Host 生命周期
-
-普通模块通过 `std/entry` 构造 `Eval`、`Run(State)` 或 `Serve(State)` 名义值。CLI 解析
-`MODULE:EXPORT` 并检查 wrapper family；resolver 不赋予目标模块额外执行身份。内置工具
-Entry 实现以下私有 ABI：
-
-```text
-config: Fn(Env, MainType) -> Tuple([SystemCaps, Initializer])
-Initializer: Fn(SystemResources, MainType) -> Tuple([State, Reducer])
-Reducer: Fn(State, SystemEvent) -> Tuple([State, Array(SystemEffect)])
-```
-
-文件 stem 以 `_` 开头的模块由 resolver 统一控制，只允许同 crate 模块访问。内置工具
-Entry 属于 `std` crate，可以访问 `std/_...` 协议模块。只有内置 `std` crate 的模块编译
-时具有 native authority。
-
-当前 Host 顺序是：
-
-1. 发现并执行普通 module，按工具要求选择 export 并验证 `Eval` / `Run(State)` /
-   `Serve(State)` 名义 family；
-2. 解开 wrapper payload，在准备 WorkWorld 中检查并执行内置 `config(env, main)`；
-3. 解析 `SystemCaps`，由 `RunHost.configure` 一次性确认 data/env/stdin 与 EES 诉求；
-4. Host 按 caps 读取并校验资源，由私有 runtime bridge 在 Entry WorkWorld 中构造
-   `SystemResources`，再与 wrapper payload 一起传给 Initializer；
-5. 发送 `Initialize` 及后续 stdin/EES event，每次调用 reducer；
-6. Host 先完整解析和审计一批 SystemEffect，再执行第一个 effect。
-
-应用不直接读取 open world。wrapper 声明 capabilities；实际文件、环境、stdin 和 EES
-调用由 CLI `RunHost` 执行。module graph 在应用求值前封闭。
-
-CLI 的公开命令有 `eval`、`eval-with`、`run`、`serve`、`lock`、`check`、`test`、`query`（别名
-`q`）和 `lsp`。`eval` 选择一个 module 的 `Value` 导出；`eval-with` 选择一个
-`entry.Eval`。两条 pure eval 路径直接执行 module 与普通调用，不初始化 reducer loop、
-RunHost 或应用 EES。
-
-`run` 与 `serve --bind stdio://` 选择 `std/_entry` 的对应运行策略。目标 export 分别是
-`entry.Run(State)` 与 `entry.Serve(State)`。
-wrapper 的初始化函数返回具体 State 和 reducer；标准 Entry 边界将 State 擦除为 Dyn，
-并保存一个接受 `(Dyn, Event)` 的 reducer wrapper。Entry 将 application
-`EesCall` 映射成 component-neutral SystemEffect，将相关 Host reply 映射回 `EesReply`；
-是否声明 EES model 不改变 reducer 接口。
-`test NAME` 复用 WorkspaceBuilder 检查和初始化图，再从根接口选择精确 Test 导出，
-以 `telora.test/v2` 报告独立用例。`check @test/NAME` 保留 `telora.check/v1`，
-不执行 Test。Test 的 opaque 载荷保存描述和构造位置，闭包引用放在受 World collector
-追踪的槽中；复制和类型元数据图遍历均包含这些槽。native 类型在签名求值前进入
-工具环境，保持 Test 等 native 类型的精确签名。
-每次 thunk/factory 调用使用严格 VM 和独立 WorkWorld，共享一个 QuotaAccount。
-调用结束后提取局部诊断，可恢复的预期失败不进入外层错误集合；终止错误中止 runner。
-动态子 Test 保留活跃 WorkWorld；兄弟 factory 从父 Test 根复制引用图。
-Host 负责 fixture 文件定位和限量读取，core 复用数据计划验证、DataLimits 和 sourced
-Value 物化。每组先准备全部直接输入，缓存同一路径的读取，随后深度优先执行。
-默认展开节点上限 10,000、嵌套深度 64、累计 fixture 保留预算 256 MiB；预算计入
-源码、每个逻辑节点 64 字节及 payload，数据物化也扣除共享 session allocation。
-fixture 来源为 `@test-ctx/`，没有 ModuleId 或 import 边，物理定位只经过 Host 边界。
-`check`、`test`、`query` 和 `lsp` 当前是
-Host 固定工具路径，不通过用户 Entry ABI。
+LSP 的 `mir_workspace` 把文档覆盖内容和磁盘清单送入同一静态流水线，快照拥有 MIR。
+查询通过 MirQuery 返回确定的信息与诊断，不从 CLI 文本反推语义，也不持有 VM。
+取消或过期快照不能发布成最新结果。当前不承诺每次编辑只重算最小依赖子图。
 
 ## 10. 维护不变量与验证入口
 
-修改当前实现时至少保持以下不变量：
+- 名称解析只做一次，类型阶段接受其 Bound/Unresolved/Conflicted 结论。
+- 类型推导只在静态阶段完成；codegen 与 VM 消费完整证据，不补猜类型。
+- seal 不隐藏未知、冲突或遗漏的泛型/构造证据，也不重新编号。
+- native 特殊身份来自声明的稳定标识，普通名称受 import、遮蔽和作用域规则约束。
+- 类型骨架不依赖 property 值，数据内容不进入静态求解。
+- 初始化覆盖整图并统一发布；共享和来源跨 World 复制后保持正确。
+- 构造校验覆盖新的合法值边界，不能用跳过检查换取性能。
+- query/LSP 可观察失败图，执行入口只能接受成功 seal 的图。
 
-- CST recovery 必须保留未知或冲突的 fact state；
-- module identity 和静态 slot 不依赖文件发现、HashMap 或求值顺序；
-- concrete nominal identity 只由 constructor identity 与 type arguments 决定；
-- Main 中的持久对象不能引用已释放的 Work storage；
-- copy/promotion 对共享、循环、closure、type witness 和 provenance 保持闭合且原子；
-- Fail 传播不产生二次根因，任何 error 都阻止最终 publication；
-- Entry capability negotiation 发生在 effect 执行前，Main 仍是封闭纯计算；
-- actor transition 显式返回完整 State，Event 与 Effect 不包含 callback 或 continuation；
-- pure eval 不创建 Entry、RunHost 或 application EES；
-- `query` / JSONL 的位置默认是 1-based line、0-based UTF-8 byte column；LSP 单独按
-  客户端协商的 position encoding 转换。
+验证入口包括三个 resolve 模块的单元测试、`codegen/tests/` 的确定性与执行测试、
+`vm/tests/demand.rs` 的初始化/共享测试，以及 `crates/telora/tests/cli.rs` 和
+`tests/language/`。语言规则与诊断回归优先使用 Telora 用例，检查成功、拒绝、来源、
+泛型实例以及构造/解码/更新边界。
 
-主要可执行证据位于各实现模块的单元测试和 `crates/telora/tests/cli.rs`。其中
-`module.rs` 覆盖模块图、类型 family、静态数据、Entry 和 recovery；`heap.rs` 覆盖
-值布局、相等、循环复制与 promotion；`types.rs` 覆盖推断、scheme 和 partial fact；
-`evaluation.rs` 覆盖 best-effort unit 与 Fail 传播；CLI 集成测试覆盖命令、JSONL、
-退出状态和位置协议。设计变更应同时更新相应 SSOT 和至少一处可执行证据。
+完整构建确定性测试比较不同 inventory 顺序下的 MIR dump、TypeImage、bytecode、
+native links 和 ExecutionGraph。运行时布局分离、字段偏移量 codegen、native backend
+和进一步减少值复制仍是后续工作，不能描述为本轮已经实现。

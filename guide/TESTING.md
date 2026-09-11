@@ -10,6 +10,11 @@
 问题。`telora test NAME` 在这些步骤成功后，执行 `tests/NAME.telora` 直接导出的
 `std/test.Test`。`check` 成功不代表行为断言通过。
 
+`check --lib` 检查当前 crate 清单中的全部模块；`check --tests` 检查 tests/ 下全部
+模块，也可组合使用。多个根共用一张图并输出一份 summary，不逐模块独立运行。
+加 `--only-types` 时只检查静态类型闭合，不初始化、不执行 Test，也不读取数据内容。
+批量检查适合库的静态/初始化门禁；运行期正反例仍应放在 Test thunk 中。
+
 | 要验证的契约 | 合适的验证方式 |
 | --- | --- |
 | 普通计算的结果、转换、边界条件 | `test.should_ok` 内显式断言 |

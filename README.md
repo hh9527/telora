@@ -9,7 +9,8 @@ Telora 是一门实验性的静态类型语言，用于在封闭、纯、确定�
 
 ```text
 静态模块 + 显式输入
-  -> 类型检查与元数据计算
+  -> 全图符号与类型求解（不执行 Telora 代码）
+  -> 编译、数据注入与顶层值/property 初始化
   -> 有界的纯数据计算
   -> 完整值或来源化诊断
   -> Host 决定是否发布或执行
@@ -89,9 +90,9 @@ target/release/telora -C hello query exports @src/app
 `check --only-types` 和 `query` 已接入新的三个静态 Pass，直接消费 MIR，
 不执行 property、`@check` 或模块值。JSON/TOML/YAML 模块不读取或解析内容；
 内容语法及数据限制由后续加载阶段检查。
-新类型 Pass 尚在建设：泛型、名义类型、trait/property 和数据模块的 `Value`
-类型契约等规则还未完整覆盖，包括部分内置 prelude。有效程序也可能收到未支持规则、
-Unknown 或 Conflicted 诊断；查询仍返回已确定的信息，不回退到旧求解器。
+所有编译入口共用 module-resolve、symbol-resolve、type-resolve 三个 Pass。
+执行前由 SealedMir 确认类型、泛型实例和必要证据已经闭合，codegen 和 VM 直接消费
+这些结果。查询可以保留错误图中的已确定信息，不回退到旧求解器。
 普通 `check` 保持完整检查行为。两种模式的 JSON summary
 均包含 `catalog_seconds` 和 `check_seconds`，分别记录清单准备及所选检查路径耗时。
 两种模式共用 MIR 类型闭合阶段；`static_seconds` 包含类型闭合，
@@ -219,8 +220,9 @@ def require_positive: Fn(Int) -> Int = fn(value) {
 向 Host 报告诊断就把所有 API 改写为领域 `Rejection`。业务调用者确实需要恢复或
 分支时，再显式使用 `Option`、`Result` 或领域 enum。
 
-严格执行遇到失败立即中止。`--best-effort` 会在内部传播 Fail，并继续彼此独立的
-计算，以便一次获得更多有意义的诊断；它不保证与严格模式经过完全相同的求值路径。
+静态阶段收集独立诊断，类型未闭合时不进入求值。初始化可以传播已有失败并继续独立
+任务，但任何错误都会阻止成功发布。`run --best-effort` 当前提供静态诊断的 JSONL
+输出，与普通 run 共用编译和初始化路径，详见 [CLI 指南](guide/TELORA-CLI.md)。
 只要存在 error，最终返回值和效果都不会越过 Host 发布边界。
 
 常用诊断组合包括：
@@ -261,7 +263,9 @@ telora eval-with <module:name> [--source ...] [-- args...]  调用一个 entry.E
 telora run <module:name>   向一个 entry.Run(State) 投递请求
 telora serve <module:name> 通过 stdio JSONL 驱动一个 entry.Serve(State)
 telora lock                物化 package source 并原子刷新 workspace lock
-telora check <module-id>   以 best-effort 策略检查并求值模块导出
+telora check <module-id>   类型闭合后完成可达模块图初始化
+telora check --lib [--tests] [--only-types]  批量检查当前 crate
+telora check --tests [--only-types]         批量检查当前 crate 的测试模块
 telora test <name>         初始化 tests/<name>.telora，执行其直接导出的 Test
 telora query ...           以 JSONL 查询模块和语义事实；别名 q
 telora lsp                 启动语言服务器
@@ -288,9 +292,9 @@ telora query at <module-id>[:line[:column]] [-p pattern] [-k kinds]
 ```
 
 JSONL 位置默认使用 1-based line 和 0-based UTF-8 byte column；LSP 按协议协商位置
-编码。`check` 不进行 Entry 调度，也不会调用已导出的函数；纯导出由 `eval` 或
-`eval-with` 验收，应用 service 由严格 `run` 验收。遇到应用初始化问题时可使用
-`run --best-effort` 扩大诊断覆盖。
+编码。`check` 不进行 Entry 调度，也不把导出函数当作入口调用；初始化计算可以调用函数。
+纯导出由 `eval` 或 `eval-with` 验收，应用 service 由严格 `run` 验收。调查静态错误时可使用
+`run --best-effort` 获取静态阶段的 JSONL 诊断。
 
 `test parser/expressions` 支持嵌套测试入口。Host 为当前 crate 的整个 `tests/` 建立
 临时模块清单，测试模块可以互相 import，但只求值从选中入口可达的模块。源码不能

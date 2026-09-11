@@ -697,6 +697,33 @@ Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函�
 先完成自身校验，再校验外层候选值。读取、复制、编码和传递已构造的值不重复
 校验。运行时用类型见证实例化泛型函数体内的构造目标，并保留规则与输入来源。
 
+构造校验适合表达值自身的不变量，merge-update 则复用已有合法值的其余字段：
+
+```telora
+@check(fn(window) {
+    if window.limit <= 0 {
+        Err(blame!("limit must be positive", window.limit))
+    } else if window.offset < 0 {
+        Err(blame!("offset must be non-negative", window.offset))
+    } else {
+        Ok(())
+    }
+})
+type Window = struct { limit: Int, offset: Int };
+
+def first: Window = { limit: 10, offset: 0 };
+def next = first <~ { offset: 10 };
+```
+
+`next` 保留 limit，更新后的整个 Window 再接受校验；`first <~ { limit: 0 }` 会被拒绝。
+同时修改互相约束的字段时，应放在同一次更新中，避免要求中间值也满足最终约束。
+需要外部授权、关系图或最终排序信息的规则仍由掌握这些信息的函数检查，不能仅凭
+局部对象的字段完成。校验器返回 `Err(blame!(...))` 可保留具体字段的输入来源。
+
+装饰器名称也遵循普通 resolve 规则。例如 `import "std/type-property" as property;`
+会遮蔽 prelude 的 `property` 函数；需要同时使用时可显式导入
+`import "std/prelude" as prelude;`，并写 `@prelude.property(...)`。
+
 `type A = struct(B);` 声明单元素具名 tuple（newtype），具有独立的 nominal
 identity。`a.0` 返回 B，并保留载荷的类型身份和来源；其他位置索引不成立。
 newtype 和 B 不存在隐式包装或解包转换。其元数据解析后的 kind 为 Newtype，

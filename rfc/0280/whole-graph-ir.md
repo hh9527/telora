@@ -9,6 +9,15 @@ samples and phase summaries. It makes no baseline comparison or completion claim
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Main integration (2026-09-11)
+
+The replacement pipeline was merged through #176 (`a408c68`). Batch check support
+followed in `cb0e23b`: multiple roots share one MIR and initialization session;
+`--only-types` stops at the common seal gate. The implementation branch has been
+deleted. Current architecture is documented in
+[IMPLEMENTATION.md](../../docs/design/IMPLEMENTATION.md).
+Earlier entries below retain their checkpoint-specific status and measurements.
+
 ### Final branch audit and ontology behavioral validation (2026-09-11)
 
 `4dd7c67` completes the two defects found by broader ontology checks: configured

@@ -1,10 +1,10 @@
 # RFC 0280: Session-Wide Type World and Execution-Free Inference
 
-- Status: Architecture implemented and branch validation complete; main-branch integration pending. Performance remains observational.
+- Status: Implemented and merged into main via #176 (`a408c68`); batch check followed in `cb0e23b`. Performance remains observational.
 - Revision: 2026-09-10, making the session-wide typed IR and its completion gate
   explicit; independently solved module artifacts are transitional only.
 - Tracking: [#175](https://github.com/hh9527/telora/issues/175).
-- Branch: `feat/0280-arena-type-consumers`.
+- Implementation branch: `feat/0280-arena-type-consumers` (merged; branch deleted).
 - Related: RFC 0276, RFC 0277, RFC 0279; performance investigation in #173.
 - Evidence: [historical measurements](0280/measurements.md), including the
   regression at checkpoint `293098c`. No performance claim for this redesign.
