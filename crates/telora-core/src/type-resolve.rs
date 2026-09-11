@@ -195,7 +195,8 @@ pub fn resolve(mir: &mut Mir) {
             {
                 solver.equal(slot, solver.mir.symbol_types[target.index()], None)
             }
-            ResolveState::Conflicted(origin) => solver.resolve_conflict(slot, origin),
+            ResolveState::Conflicted(origin) => solver.inherit_resolve_failure(slot, ResolveFailure::Conflict(origin)),
+            ResolveState::Unresolved => solver.inherit_resolve_failure(slot, ResolveFailure::Symbol(SymbolId(index as u32))),
             _ => {}
         }
         match kind {
@@ -324,7 +325,7 @@ impl Solver<'_> {
         let ty = self.structure(constructor, arguments);
         self.same(node, ty);
     }
-    fn resolve_conflict(&mut self, slot: TypeSlotId, origin: ConflictId) {
+    fn inherit_resolve_failure(&mut self, slot: TypeSlotId, origin: ResolveFailure) {
         let id = self
             .mir
             .type_conflicts
@@ -337,7 +338,7 @@ impl Solver<'_> {
                     left: slot,
                     right: slot,
                     location: None,
-                    message: format!("symbol conflict {origin:?}"),
+                    message: format!("inherited resolve failure {origin:?}"),
                     resolve_origin: Some(origin),
                 });
                 id
@@ -366,10 +367,13 @@ impl Solver<'_> {
                     return;
                 }
                 ResolveState::Conflicted(origin) => {
-                    self.resolve_conflict(node.ty(), origin);
+                    self.inherit_resolve_failure(node.ty(), ResolveFailure::Conflict(origin));
                     return;
                 }
-                ResolveState::Unresolved => return,
+                ResolveState::Unresolved => {
+                    self.inherit_resolve_failure(node.ty(), ResolveFailure::Reference(slot));
+                    return;
+                }
                 ResolveState::Member { receiver, name } => {
                     let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
                         unreachable!()

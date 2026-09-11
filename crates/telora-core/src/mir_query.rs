@@ -552,6 +552,10 @@ mod tests {
             ResolveState::Unresolved
         ));
         assert!(query.target_at(missing).is_none());
-        assert!(matches!(query.type_at(missing), Some(TypeState::Unknown)));
+        let Some(TypeState::Conflicted(failure)) = query.type_at(missing) else {
+            panic!("type query must retain the unresolved reference as its failure cause");
+        };
+        assert!(matches!(mir.type_conflicts[failure.index()].resolve_origin,
+            Some(crate::mir::ResolveFailure::Reference(_))));
     }
 }

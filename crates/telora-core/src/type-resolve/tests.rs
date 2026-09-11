@@ -1266,18 +1266,35 @@ fn retains_independent_conflicts_and_does_not_poison_intrinsic_types() {
 }
 
 #[test]
-fn unresolved_symbols_remain_authoritative_while_other_slots_are_solved() {
-    let mut mir = graph(&[("@src/main", "def missing = absent; export def good = 1;")]);
+fn unresolved_imports_are_inherited_without_new_type_diagnostics() {
+    let mut mir = graph(&[
+        ("@src/main", "import \"@src/other\" {missing}; export def bad = missing; export def good = 42;"),
+        ("@src/other", "export def present = 1;"),
+    ]);
     let references = mir.resolve_slots.clone();
+    let diagnostics = mir.diagnostics.len();
     resolve(&mut mir);
     assert_eq!(references, mir.resolve_slots);
-    assert_eq!(symbol_type(&mir, "missing"), TypeState::Unknown);
+    assert!(matches!(symbol_type(&mir, "bad"), TypeState::Conflicted(_)));
+    assert!(mir.type_conflicts.iter().any(|failure| matches!(failure.resolve_origin, Some(ResolveFailure::Symbol(_)))));
     assert!(matches!(symbol_type(&mir, "good"), TypeState::Known(_)));
-    assert!(
-        mir.diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message == "unknown type")
-    );
+    assert_eq!(mir.diagnostics.len(), diagnostics, "{}", mir.dump());
+    assert!(mir.seal().is_err());
+}
+
+#[test]
+fn unresolved_symbols_remain_authoritative_while_other_slots_are_solved() {
+    let mut mir = graph(&[("@src/main", "def missing = absent; def dependent = [missing.item]; export def good = 1;")]);
+    let references = mir.resolve_slots.clone();
+    let diagnostics = mir.diagnostics.len();
+    resolve(&mut mir);
+    assert_eq!(references, mir.resolve_slots);
+    let TypeState::Conflicted(failure) = symbol_type(&mir, "missing") else { panic!("{}", mir.dump()); };
+    assert!(matches!(mir.type_conflicts[failure.index()].resolve_origin, Some(ResolveFailure::Reference(_))));
+    assert_eq!(symbol_type(&mir, "dependent"), TypeState::Conflicted(failure));
+    assert!(matches!(symbol_type(&mir, "good"), TypeState::Known(_)));
+    assert_eq!(mir.diagnostics.len(), diagnostics, "the type pass must not repeat the resolve failure: {}", mir.dump());
+    assert!(mir.seal().is_err());
 }
 
 #[test]

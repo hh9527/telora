@@ -423,7 +423,15 @@ pub struct TypeConflict {
     pub right: TypeSlotId,
     pub location: Option<Location>,
     pub message: String,
-    pub resolve_origin: Option<ConflictId>,
+    pub resolve_origin: Option<ResolveFailure>,
+}
+
+/// An inherited static result, not a new type-solver diagnostic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResolveFailure {
+    Conflict(ConflictId),
+    Reference(ResolveSlotId),
+    Symbol(SymbolId),
 }
 
 /// Syntax-owned type slots use the HIR node's index; additional inference slots

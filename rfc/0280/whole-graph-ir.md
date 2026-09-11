@@ -5,6 +5,29 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Carry unresolved symbol outcomes into type solving (2026-09-11)
+
+Unresolved references/imports no longer enter the type pass as unconstrained
+Unknown slots. They become inherited failure states with a ResolveFailure
+origin (reference slot, symbol, or existing resolve conflict). Existing equality
+and structural propagation carry that result to dependent nodes without a new
+diagnostic or name lookup. Independent nodes still solve normally, and the
+authoritative resolve tables are unchanged.
+
+MIR query now exposes the inherited failed type result while keeping the symbol
+result Unresolved and its target absent. Tests verify the actual origin, rather
+than accepting an arbitrary error. The conflict count includes these inherited
+failures; it must not be read as a count of new type-incompatibility diagnostics.
+
+Validation: all 389 workspace library tests, CLI build and all-target compilation
+pass. Tests cover an unresolved reference through a field/array dependency and
+an unresolved selective import, with no additional type diagnostics. Actual
+check --only-types on diag-unknown-binding now emits just the original resolve
+diagnostic, unknown_types = 0 and execution_seconds = 0. Logs:
+/tmp/mir-resolve-outcomes-*.log. Full language acceptance was not repeated; the
+latest full snapshot remains 248/400. Remaining diagnostic expectations,
+generic function values, metadata migration and final evaluation remain open.
+
 ### Preserve both conflicting type shapes in diagnostics (2026-09-11)
 
 Structural conflicts now render both existing type shapes before poisoning
