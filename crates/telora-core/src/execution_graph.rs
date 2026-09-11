@@ -109,8 +109,8 @@ impl ExecutionGraph {
                 location: mir.hir[declaration.index()].location,
             });
             graph.globals[index] = Some(node);
-            if mir.symbol_generics[index].is_empty()
-                && !matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl)) {
+            if mir.function_families[index].is_some() || (mir.symbol_generics[index].is_empty()
+                && !matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl))) {
                 graph.initializers.push(node);
             }
         }

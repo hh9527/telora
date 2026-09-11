@@ -215,6 +215,15 @@ pub enum Instruction {
         dst: Register,
         value: Register,
     },
+    MakeFunctionFamily {
+        dst: Register,
+        variants: Vec<(Vec<crate::mir::TypeId>, Register)>,
+    },
+    SpecializeFunction {
+        dst: Register,
+        family: Register,
+        arguments: Vec<crate::mir::TypeId>,
+    },
     MakeClosure {
         dst: Register,
         function: Arc<BytecodeFunction>,
@@ -443,6 +452,15 @@ pub enum Opcode {
     GetTaggedPayload {
         dst: Register,
         value: Register,
+    },
+    MakeFunctionFamily {
+        dst: Register,
+        variants: Vec<(Vec<crate::mir::TypeId>, Register)>,
+    },
+    SpecializeFunction {
+        dst: Register,
+        family: Register,
+        arguments: Vec<crate::mir::TypeId>,
     },
     MakeClosure {
         dst: Register,
@@ -798,6 +816,8 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
             Opcode::TaggedTagEquals { dst, value, tag }
         }
         Instruction::GetTaggedPayload { dst, value } => Opcode::GetTaggedPayload { dst, value },
+        Instruction::MakeFunctionFamily { dst, variants } => Opcode::MakeFunctionFamily { dst, variants },
+        Instruction::SpecializeFunction { dst, family, arguments } => Opcode::SpecializeFunction { dst, family, arguments },
         Instruction::MakeClosure {
             dst,
             function,

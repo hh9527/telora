@@ -270,7 +270,8 @@ impl Solver<'_> {
 
     pub(super) fn contains_parameter(&self, ty: TypeId) -> bool {
         let ty = &self.mir.types[ty.index()];
-        matches!(ty.constructor, TypeConstructor::Parameter(_))
+        if matches!(ty.constructor, TypeConstructor::Quantified(_)) { return false; }
+        matches!(ty.constructor, TypeConstructor::Parameter(_) | TypeConstructor::Bound(_))
             || ty.arguments.iter().any(|&a| self.contains_parameter(a))
     }
 

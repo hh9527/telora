@@ -75,7 +75,7 @@ impl Solver<'_> {
         }
     }
 
-    fn unknown_leaves(&self, slot: TypeSlotId) -> Vec<TypeSlotId> {
+    pub(super) fn unknown_leaves(&self, slot: TypeSlotId) -> Vec<TypeSlotId> {
         let mut pending = vec![slot];
         let mut seen = BTreeSet::new();
         let mut result = vec![];

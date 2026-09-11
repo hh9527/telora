@@ -89,8 +89,8 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn function_identity(&self, handle: Handle) -> Result<usize, HeapError> {
-        let Object::Closure { identity, .. } = self.object(handle)? else {
-            return Err(HeapError("handle is not a closure"));
+        let (Object::Closure { identity, .. } | Object::FunctionFamily { identity, .. }) = self.object(handle)? else {
+            return Err(HeapError("handle is not a function"));
         };
         Ok(Arc::as_ptr(identity) as usize)
     }
@@ -280,6 +280,7 @@ impl<'a> HeapView<'a> {
                 Object::Bytes(_)
                 | Object::Opaque(_)
                 | Object::Closure { .. }
+                | Object::FunctionFamily { .. }
                 | Object::ByteCodeProto { .. }
                 | Object::OpenFunc
                 | Object::Reserved => {}
@@ -309,16 +310,7 @@ impl<'a> HeapView<'a> {
         let right = right.without_type_id();
         match (left.value(), right.value()) {
             (DecodedValue::Func(left), DecodedValue::Func(right)) => {
-                let Object::Closure { identity: left, .. } = self.object(left)? else {
-                    return Err(HeapError("Func handle refers to another object kind"));
-                };
-                let Object::Closure {
-                    identity: right, ..
-                } = self.object(right)?
-                else {
-                    return Err(HeapError("Func handle refers to another object kind"));
-                };
-                Ok(Arc::ptr_eq(left, right))
+                Ok(self.function_identity(left)? == self.function_identity(right)?)
             }
             (DecodedValue::Dyn(left), DecodedValue::Dyn(right)) => {
                 let (left, _, _) = self.dyn_parts(left)?;

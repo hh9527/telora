@@ -186,6 +186,7 @@ impl Mir {
             || self.member_selections.len() != self.hir.len()
             || !self.valid_type_schemes()
             || !self.valid_generic_references()
+            || !self.valid_function_families()
             || !self.valid_properties()
             || !self.valid_check_coverage()
             || !self.valid_property_admissions()

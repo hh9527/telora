@@ -1,5 +1,6 @@
 import "std/test" as test;
 import "std/dyn" as dyn;
+import "std/eq" as eq;
 import "std/type-property" {get_type_prop};
 import "@src/test-support" {expect};
 
@@ -20,6 +21,23 @@ export def local_alias_instances = test.should_ok(fn() {
     let identity = fn(value) { value };
     let alias = identity;
     expect(alias(42) == 42 && alias("text") == "text")
+});
+
+export def generic_value_identity_and_calls = test.should_ok(fn() {
+    let identity = fn(value) { value };
+    let alias = identity;
+    expect(eq.equal(identity, alias)
+        && !eq.equal(identity, fn(value) { value })
+        && identity(42) == 42
+        && alias("text") == "text")
+});
+
+export def captured_generic_value = test.should_ok(fn() {
+    let identity = fn(value) { value };
+    let alias = identity;
+    let inspect = fn() { eq.equal(identity, alias) };
+    let use = fn() { identity(42) == 42 && alias("text") == "text" };
+    expect(inspect() && use())
 });
 
 export def generic_property_value = test.should_ok(fn() {

@@ -32,6 +32,8 @@ mod sequence_spreads;
 mod propagation;
 #[path = "type-resolve/generalization.rs"]
 mod generalization;
+#[path = "type-resolve/function-values.rs"]
+mod function_values;
 #[path = "type-resolve/metadata-joins.rs"]
 mod metadata_joins;
 #[path = "type-resolve/properties.rs"]
@@ -233,7 +235,7 @@ pub fn resolve(mir: &mut Mir) {
             }
         }
         if solver.revision == revision {
-            if !solver.finish_type_facets() && !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms() && !solver.finish_unchecked_fits() && !solver.generalize_ready() && !solver.finish_empty_options() {
+            if !solver.finish_type_facets() && !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms() && !solver.finish_unchecked_fits() && !solver.generalize_ready() && !solver.finish_empty_options() && !solver.generalize_function_values() {
                 break;
             }
         }
@@ -268,6 +270,7 @@ pub fn resolve(mir: &mut Mir) {
     solver.validate_patterns();
     solver.mir.build_property_admissions();
     solver.mir.build_type_schemes();
+    solver.mir.build_function_families();
     for (index, &publishes_scheme) in solver.scheme_references.iter().enumerate() {
         if !publishes_scheme { continue; }
         let Some(slot) = solver.mir.hir[index].resolution else { continue; };

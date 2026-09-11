@@ -2,6 +2,105 @@ use super::*;
 use std::collections::BTreeMap;
 
 impl Mir {
+    fn closed_function_value_type(&self, root: TypeId) -> bool {
+        let mut pending = vec![(root, None)];
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some((id, binder)) = pending.pop() {
+            if !seen.insert((id, binder)) { continue; }
+            let Some(ty) = self.types.get(id.index()) else { return false; };
+            match ty.constructor {
+                TypeConstructor::Parameter(_) => return false,
+                TypeConstructor::Bound(index) => {
+                    if !ty.arguments.is_empty() || binder.is_none_or(|count| index >= count) { return false; }
+                }
+                TypeConstructor::Quantified(count) => {
+                    if count == 0 || ty.arguments.len() != 1
+                        || self.types.get(ty.arguments[0].index()).is_none_or(|body| body.constructor != TypeConstructor::Function) {
+                        return false;
+                    }
+                    pending.push((ty.arguments[0], Some(count)));
+                }
+                _ => pending.extend(ty.arguments.iter().map(|&child| (child, binder))),
+            }
+        }
+        true
+    }
+
+    pub(super) fn valid_function_families(&self) -> bool {
+        if self.function_families.len() != self.symbols.len() {
+            return false;
+        }
+        self.function_families.iter().enumerate().all(|(index, family)| {
+            let Some(family) = family else { return true; };
+            let Some(scheme) = self.symbol_schemes[index] else { return false; };
+            let Some(TypeState::Known(signature)) = self.ty_slots.get(self.symbol_types[index].index()) else { return false; };
+            if self.types.get(signature.index()).is_none_or(|ty| ty.constructor != TypeConstructor::Function) {
+                return false;
+            }
+            match family {
+                FunctionFamily::Alias(target) => target.index() != index
+                    && self.symbol_schemes.get(target.index()) == Some(&Some(scheme))
+                    && self.function_families.get(target.index()).is_some_and(Option::is_some),
+                FunctionFamily::Variants(variants) => {
+                    // A local declaration can have the same own arguments in
+                    // distinct enclosing instances. Codegen selects its local
+                    // instance set in that enclosing context before emission.
+                    let symbol = &self.symbols[index];
+                    let global = symbol.module.is_some_and(|module|
+                        symbol.scope.is_some() && symbol.scope == self.module_scopes[module.index()]);
+                    !variants.windows(2).any(|pair| if global {
+                        pair[0].0 >= pair[1].0
+                    } else {
+                        pair[0].0 > pair[1].0
+                    })
+                        && variants.iter().all(|(arguments, id)| {
+                            arguments.len() == self.symbol_generics[index].len()
+                                && self.generic_instances.get(id.index()).is_some_and(|instance| {
+                                    instance.concrete && instance.symbol.index() == index
+                                        && self.closed_function_value_type(instance.signature)
+                                        && self.symbol_generics[index].iter().zip(arguments).all(|(parameter, ty)| {
+                                            self.closed_function_value_type(*ty)
+                                                && instance.arguments.contains(&(*parameter, *ty))
+                                        })
+                                })
+                        })
+                }
+            }
+        })
+    }
+
+    pub(crate) fn build_function_families(&mut self) {
+        self.function_families = vec![None; self.symbols.len()];
+        for index in 0..self.symbols.len() {
+            let Some(scheme) = self.symbol_schemes[index] else { continue; };
+            let TypeState::Known(signature) = self.ty_slots[self.symbol_types[index].index()] else { continue; };
+            if self.types[signature.index()].constructor != TypeConstructor::Function { continue; }
+            let symbol = &self.symbols[index];
+            let value = symbol.declarations.last().and_then(|declaration|
+                self.hir[declaration.index()].children.iter().find(|edge| edge.role == Role::Value).map(|edge| edge.node));
+            let alias = value.and_then(|node| {
+                if !matches!(self.hir[node.index()].kind, HirKind::Variable(_) | HirKind::Field) { return None; }
+                let slot = self.hir[node.index()].resolution?;
+                let ResolveState::Bound(target) = self.resolve_slots[slot.index()] else { return None; };
+                (target.index() != index && self.symbol_schemes[target.index()] == Some(scheme)).then_some(target)
+            });
+            self.function_families[index] = Some(if let Some(target) = alias {
+                FunctionFamily::Alias(target)
+            } else {
+                let mut variants = self.generic_instances.iter().enumerate().filter(|(_, instance)|
+                    instance.symbol.index() == index && instance.concrete
+                        && self.closed_function_value_type(instance.signature))
+                    .map(|(id, instance)| {
+                        let arguments = self.symbol_generics[index].iter().map(|parameter|
+                            instance.arguments.iter().find(|(p, _)| p == parameter).expect("instance parameter").1).collect::<Vec<_>>();
+                        (arguments, GenericInstanceId(id as u32))
+                    }).collect::<Vec<_>>();
+                variants.sort_by(|a, b| a.0.cmp(&b.0));
+                FunctionFamily::Variants(variants)
+            });
+        }
+    }
+
     pub(super) fn valid_generic_references(&self) -> bool {
         self.generic_references.iter().enumerate().all(|(index, reference)| {
             let Some(slot) = self.hir[index].resolution else { return reference.is_none(); };
@@ -14,8 +113,9 @@ impl Mir {
                     symbol == target
                         && self.symbol_schemes.get(symbol.index()) == Some(&Some(*scheme))
                         && self.type_instances[index].is_empty()
-                        && self.ty_slots.get(index) == self.symbol_types.get(symbol.index())
+                        && (self.ty_slots.get(index) == self.symbol_types.get(symbol.index())
                             .and_then(|slot| self.ty_slots.get(slot.index()))
+                            || matches!(self.ty_slots.get(index), Some(TypeState::Known(ty)) if self.quantified_matches(*ty, *scheme)))
                 }
                 GenericReference::Instance(id) => {
                     self.generic_instances.get(id.index()).is_some_and(|instance| {
@@ -29,6 +129,27 @@ impl Mir {
                 }
             }
         })
+    }
+
+    fn quantified_matches(&self, ty: TypeId, scheme: TypeSchemeId) -> bool {
+        let Some(scheme) = self.type_schemes.get(scheme.index()) else { return false; };
+        let Some(ty) = self.types.get(ty.index()) else { return false; };
+        if ty.constructor != TypeConstructor::Quantified(scheme.parameter_count) || ty.arguments.len() != 1 || !scheme.bounds.is_empty() { return false; }
+        let mut pending = vec![(ty.arguments[0], scheme.body)];
+        while let Some((ty, node)) = pending.pop() {
+            let Some(ty_data) = self.types.get(ty.index()) else { return false; };
+            match self.scheme_nodes.get(node.index()) {
+                Some(SchemeNode::Bound(index)) if *index < scheme.parameter_count
+                    && ty_data.constructor == TypeConstructor::Bound(*index)
+                    && ty_data.arguments.is_empty() => {}
+                Some(SchemeNode::Known(known)) if *known == ty => {}
+                Some(SchemeNode::Apply { constructor, arguments }) if ty_data.constructor == *constructor && ty_data.arguments.len() == arguments.len() => {
+                    pending.extend(ty_data.arguments.iter().copied().zip(arguments.iter().copied()));
+                }
+                _ => return false,
+            }
+        }
+        true
     }
 
     fn scheme_bounds(&self, parameters: &[SymbolId]) -> Option<Vec<(u32, TypeId)>> {
