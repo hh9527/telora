@@ -34,7 +34,6 @@ pub mod type_resolve;
 pub mod module_id;
 pub mod package;
 pub mod parser;
-mod property;
 pub mod query;
 mod regex;
 pub mod runtime_host;
@@ -84,8 +83,8 @@ pub use source::{
 pub use toml::{TomlParse, parse_toml_registered};
 pub use type_store::TypeId;
 pub use types::{
-    AnalysisTypeId, DeclaredTypeDescriptor, TypeCapability,
-    TypeConstraint, TypeGraph, TypeNode, TypeParameter, TypeParameterId, TypeScheme,
+    DeclaredTypeDescriptor, TypeCapability,
+    TypeConstraint, TypeParameter, TypeParameterId, TypeScheme,
 };
 pub use value::{Atom, BuiltinAtom, NativeError, NativeFunction, NativeType, OpaqueValue};
 pub use vm::{

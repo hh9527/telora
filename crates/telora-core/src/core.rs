@@ -134,40 +134,7 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
             native_id: 25,
             name: TYPE_PROPERTY_MODULE,
             source: include_str!("../modules/std/type-property.telora"),
-            functions: vec![
-                (
-                    "get_type_prop",
-                    NativeFunction::new(
-                        "std/type-property.get_type_prop",
-                        2,
-                        crate::property::native_get_type,
-                    ),
-                ),
-                (
-                    "get_field_prop",
-                    NativeFunction::new(
-                        "std/type-property.get_field_prop",
-                        3,
-                        crate::property::native_get_field,
-                    ),
-                ),
-                (
-                    "get_variant_prop",
-                    NativeFunction::new(
-                        "std/type-property.get_variant_prop",
-                        3,
-                        crate::property::native_get_variant,
-                    ),
-                ),
-                (
-                    "evidence",
-                    NativeFunction::new(
-                        "std/type-property.evidence",
-                        3,
-                        crate::property::native_evidence,
-                    ),
-                ),
-            ],
+            functions: vec![],
         },
         BuiltinModuleSpec {
             native_id: 23,

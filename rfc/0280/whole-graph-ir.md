@@ -5,6 +5,30 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove old property callbacks and canonical metadata graph (2026-09-11)
+
+Removed std/type-property's obsolete Rust callbacks from the builtin runtime
+table and deleted their CallContext query helpers. The source module's native
+declarations remain; codegen's existing intrinsic wrappers implement type,
+field and variant queries and evidence through the solved execution graph.
+No replacement Rust callback or eager property evaluation was introduced.
+
+Deleted unused canonical_type_value_id/canonical_type_ref_id entry points and
+the entire old TypeGraph/TypeNode/AnalysisTypeId implementation and public
+exports. Its two old graph tests were removed with the implementation. The
+descriptor display-name helper moved to descriptor.rs; runtime descriptor and
+heap metadata representations remain for subsequent deletion. Repository Rust
+sources no longer reference the removed graph or canonical decoding entries.
+
+Validation: all 382 workspace library tests pass (telora-core 330, telora 28),
+CLI build and all-target compilation pass. Eight real CLI suites pass, 63
+cases: properties, property-target, static-property-evidence, newtype-metadata,
+reflection, interpreter, codec-construction-check and compiler-semantics.
+Logs: /tmp/mir-remove-runtime-type-graph-*.log. About 1,300 lines removed; no
+performance benchmark or claim. Remaining heap descriptor cleanup, generic
+function values, diagnostic rules, full acceptance and final performance
+assessment are still unfinished.
+
 ### Remove regex metadata fallback and descriptor substitution helpers (2026-09-11)
 
 std/regex.prepare now requires the linked image and validates captures through

@@ -1,3 +1,7 @@
+fn display_named_type(name: &str) -> &str {
+    name.rsplit(':').next().unwrap_or(name)
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TypeParameterId(u32);
 

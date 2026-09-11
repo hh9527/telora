@@ -162,13 +162,6 @@ impl<'a> HeapView<'a> {
         Ok(Arc::as_ptr(identity) as usize)
     }
 
-    pub(crate) fn canonical_type_value_id(&self, value: Val) -> Result<crate::TypeId, HeapError> {
-        self.current.canonical_type_value_id(
-            crate::ValueRef::work(value, self.current, self.background.unwrap_or(self.current)),
-            "interpreter static argument",
-        )
-    }
-
     pub(crate) fn closure(
         &self,
         handle: Handle,
