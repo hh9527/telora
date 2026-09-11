@@ -5,6 +5,26 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Recursive generalization through ordinary values (2026-09-11)
+
+The indirect-recursive-field acceptance failure exposed a solver defect rather
+than just outdated wording. Generalization dependencies omitted ordinary record
+bindings, so `a -> b -> holder.call -> a` was treated as separate polymorphic
+functions. The resulting quantified contracts failed the seal invariant without
+a source diagnostic. The dependency graph now includes ordinary value bindings;
+recursive components retain shared monomorphic slots, and ordering follows
+dependencies through non-generalizable bindings. Candidate syntax vectors are
+borrowed rather than copied for this analysis.
+
+The conflicting Int/String calls now report their conflict during static solving.
+Three existing indirect-recursion language expectations check that evidence.
+A new language runtime suite verifies terminating mutual recursion through a
+record field and verifies that a nonrecursive stored instance does not
+monomorphize independent uses of the source function. Both runtime cases pass.
+Workspace library tests pass 393/393 and all-target checking passes. Full language
+acceptance advances from 335/402 to 339/403 with no regressions; 64 check cases
+remain to review. No Rust tests were added and no performance result is claimed.
+
 ### Member and pending-constraint diagnostics (2026-09-11)
 
 Following the generic-function acceptance fixes, member diagnostics now retain

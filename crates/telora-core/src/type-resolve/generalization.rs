@@ -46,11 +46,31 @@ impl Solver<'_> {
         }
         let mut edges = vec![vec![]; count];
         for index in 0..count {
-            let Some(candidate) = &self.generalizations[index] else { continue; };
-            let owned = candidate.nodes.iter().copied().collect::<BTreeSet<_>>();
+            // Expansive bindings can connect recursive functions too, e.g.
+            // a -> b -> {call: a}. Keep them in the dependency graph even
+            // though they cannot introduce an implicit scheme themselves.
+            let extra_nodes;
+            let nodes = if let Some(candidate) = &self.generalizations[index] {
+                &candidate.nodes
+            } else {
+                let symbol = &self.mir.symbols[index];
+                if !matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Let | BindingKind::Def)) {
+                    continue;
+                }
+                let mut pending = symbol.declarations.iter()
+                    .filter_map(|&node| self.child(node, Role::Value)).collect::<Vec<_>>();
+                let mut nodes = vec![];
+                while let Some(node) = pending.pop() {
+                    nodes.push(node);
+                    pending.extend(self.mir.hir[node.index()].children.iter().map(|edge| edge.node));
+                }
+                extra_nodes = nodes;
+                &extra_nodes
+            };
+            let owned = nodes.iter().copied().collect::<BTreeSet<_>>();
             let mut captures = BTreeSet::new();
             let mut dependencies = BTreeSet::new();
-            for &node in &candidate.nodes {
+            for &node in nodes {
                 // Complete nested schemes before a containing signature can escape.
                 if let Some(symbol) = self.mir.hir_symbols[node.index()]
                     && symbol.index() != index && self.generalizations[symbol.index()].is_some() {
@@ -58,20 +78,38 @@ impl Solver<'_> {
                 }
                 if let Some(slot) = self.mir.hir[node.index()].resolution
                     && let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] {
-                    if self.generalizations[symbol.index()].is_some() { dependencies.insert(symbol); }
+                    if matches!(self.mir.symbols[symbol.index()].kind,
+                        SymbolKind::Declaration(BindingKind::Let | BindingKind::Def)) {
+                        dependencies.insert(symbol);
+                    }
                     if !self.mir.symbols[symbol.index()].declarations.iter().any(|node| owned.contains(node)) {
                         captures.insert(symbol);
                     }
                 }
             }
             edges[index] = dependencies.iter().map(|symbol| symbol.index()).collect();
-            let candidate = self.generalizations[index].as_mut().unwrap();
-            candidate.dependencies = dependencies.into_iter().collect();
-            candidate.captures = captures.into_iter().collect();
+            if let Some(candidate) = self.generalizations[index].as_mut() {
+                candidate.captures = captures.into_iter().collect();
+            }
         }
         for index in recursive_nodes(&edges) {
             // Recursive components retain the original shared monomorphic slots.
             self.generalizations[index] = None;
+        }
+        for index in 0..count {
+            if self.generalizations[index].is_none() { continue; }
+            let mut pending = edges[index].clone();
+            let mut seen = BTreeSet::new();
+            let mut dependencies = vec![];
+            while let Some(target) = pending.pop() {
+                if !seen.insert(target) { continue; }
+                if self.generalizations[target].is_some() {
+                    dependencies.push(SymbolId(target as u32));
+                } else {
+                    pending.extend(edges[target].iter().copied());
+                }
+            }
+            self.generalizations[index].as_mut().unwrap().dependencies = dependencies;
         }
     }
 
