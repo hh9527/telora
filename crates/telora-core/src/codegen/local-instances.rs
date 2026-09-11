@@ -12,7 +12,7 @@ impl Emitter<'_> {
         while let Some(node) = pending.pop() {
             let instance = if let Some(instance) = self.instance {
                 self.mir.generic_instances[instance.index()].reference(node)
-            } else { self.mir.reference_instances[node.index()] };
+            } else { self.mir.generic_references[node.index()].and_then(GenericReference::instance) };
             instances.extend(instance);
             pending.extend(runtime_children(self.mir, node));
         }

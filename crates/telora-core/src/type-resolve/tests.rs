@@ -426,6 +426,37 @@ fn principal_schemes_preserve_quantified_bounds() {
 }
 
 #[test]
+fn generic_references_distinguish_exported_schemes_and_call_instances() {
+    let mut mir = graph(&[("@src/main", r#"
+        export def identity: for(T) Fn(T) -> T = fn(value) { value };
+        export def answer = identity(42);
+    "#)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let (scheme_node, scheme) = mir.generic_references.iter().enumerate()
+        .find_map(|(node, reference)| match reference {
+            Some(reference @ GenericReference::Scheme { .. }) => Some((node, *reference)),
+            _ => None,
+        }).expect("export preserves its quantified contract");
+    let (instance_node, instance) = mir.generic_references.iter().enumerate()
+        .find_map(|(node, reference)| match reference {
+            Some(reference @ GenericReference::Instance(_)) => Some((node, *reference)),
+            _ => None,
+        }).expect("call selects its concrete instance");
+    let GenericReference::Instance(id) = instance else { unreachable!() };
+    assert!(mir.generic_instances[id.index()].concrete);
+    mir.generic_references[scheme_node] = None;
+    assert!(mir.seal().is_err(), "generic references must carry the type pass outcome");
+    mir.generic_references[scheme_node] = Some(instance);
+    assert!(mir.seal().is_err(), "a scheme export is not a call instance");
+    mir.generic_references[scheme_node] = Some(scheme);
+    mir.generic_references[instance_node] = Some(scheme);
+    assert!(mir.seal().is_err(), "a concrete use cannot discard its arguments");
+    mir.generic_references[instance_node] = Some(GenericReference::Instance(GenericInstanceId(u32::MAX)));
+    assert!(mir.seal().is_err(), "references must close over admitted instances");
+}
+
+#[test]
 fn principal_schemes_share_alpha_equivalent_contracts_but_not_function_symbols() {
     let mut mir = graph(&[("@src/main", r#"
         export def first: for(T) Fn(T) -> T = fn(value) { value };

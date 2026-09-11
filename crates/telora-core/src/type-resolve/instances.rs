@@ -10,7 +10,7 @@ type Canonical = BTreeMap<(TypeConstructor, Vec<TypeId>), TypeId>;
 impl Solver<'_> {
     pub(super) fn materialize_instances(&mut self) {
         self.mir
-            .reference_instances
+            .generic_references
             .resize(self.mir.hir.len(), None);
         let mut canonical: Canonical = self
             .mir
@@ -54,8 +54,8 @@ impl Solver<'_> {
             if let Some(key) =
                 self.instance_key(HirId(index as u32), &BTreeMap::new(), &mut canonical)
             {
-                self.mir.reference_instances[index] =
-                    self.admit_instance(key, &mut indices, &mut canonical);
+                self.mir.generic_references[index] =
+                    self.admit_instance(key, &mut indices, &mut canonical).map(GenericReference::Instance);
             }
         }
         let mut next = 0;

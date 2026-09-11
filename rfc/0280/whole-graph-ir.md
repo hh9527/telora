@@ -5,6 +5,36 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Explicit generic reference outcomes (2026-09-11)
+
+Replaced the optional reference-instance table with GenericReference outcomes:
+Scheme carries the resolved SymbolId and normalized TypeSchemeId, while Instance
+carries a statically admitted GenericInstanceId. Synthetic exports now explicitly
+publish the quantified contract instead of relying on a missing instance. Codegen
+consumes this outcome; it no longer inspects declaration generic parameters to
+guess whether a missing instance means a generic reference. An unimplemented
+scheme value reports that boundary explicitly and never emits a dummy closure.
+
+Sealing checks that required generic references have an outcome, each scheme
+matches its resolved symbol and signature, and instance arguments match the
+reference's solved substitution slots. Missing, swapped and out-of-range outcomes
+are rejected. The old reference_instances table is removed.
+
+This is the contract boundary for the remaining generic-value implementation,
+not a claim that first-class polymorphic values already work. Ordinary source
+references still instantiate immediately; unconstrained identity comparisons
+therefore still expose Unknown. The next work must retain a quantified value
+contract until use-site evidence selects a concrete instance, and represent its
+runtime identity independently from both TypeSchemeId and instance identity.
+Calls must still receive closed static instance selections; an empty/dummy
+callable or arbitrary default type would not satisfy this requirement.
+
+Validation: all 392 workspace library tests, CLI build and all-target compilation
+pass. Full language acceptance remains 273/400 with the same pass/fail set and
+unchanged expectations. Logs: /tmp/mir-generic-references-*.log. No performance
+measurement was run. First-class generic values and the remaining acceptance
+failures are still open.
+
 ### Remove the old runtime type store and descriptor trees (2026-09-11)
 
 Removed TypeStore, its interning keys/shapes and mutable reserve/seal/abort state,

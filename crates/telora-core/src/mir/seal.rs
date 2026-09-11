@@ -180,11 +180,12 @@ impl Mir {
             || !self.type_unknowns.is_empty()
             || !self.type_conflicts.is_empty()
             || self.types.iter().any(|ty| matches!(ty.constructor, TypeConstructor::ArrayLiteral | TypeConstructor::TupleLiteral))
-            || self.reference_instances.len() != self.hir.len()
+            || self.generic_references.len() != self.hir.len()
             || self.implementation_instances.len() != self.hir.len()
             || self.type_layouts.len() != self.types.len()
             || self.member_selections.len() != self.hir.len()
             || !self.valid_type_schemes()
+            || !self.valid_generic_references()
             || !self.valid_properties()
             || !self.valid_check_coverage()
             || !self.valid_property_admissions()
@@ -234,7 +235,7 @@ impl Mir {
             || self.type_instances.iter().enumerate().any(|(node, arguments)| {
                 !arguments.is_empty()
                     && (arguments.iter().any(|(_, slot)| !matches!(self.ty_slots[slot.index()], TypeState::Known(_)))
-                        || self.reference_instances[node].is_none())
+                        || !matches!(self.generic_references[node], Some(GenericReference::Instance(_))))
             })
             || self.bound_requirements.iter().any(|b| !b.state.is_proven())
             || self

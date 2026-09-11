@@ -591,7 +591,7 @@ impl<'a> Emitter<'a> {
                 let instance = if let Some(instance) = self.instance {
                     self.mir.generic_instances[instance.index()].reference(node)
                 } else {
-                    self.mir.reference_instances[node.index()]
+                    self.mir.generic_references[node.index()].and_then(GenericReference::instance)
                 };
                 if let Some(value) = instance.and_then(|instance| self.lookup_instance(instance)) {
                     return Ok(value);
@@ -603,10 +603,10 @@ impl<'a> Emitter<'a> {
                     self.emit(node, O::Demand { dst, node: node_id });
                     return Ok(dst);
                 }
-                if !self.mir.symbol_generics[symbol.index()].is_empty()
-                    && matches!(self.mir.symbols[symbol.index()].kind,
-                        SymbolKind::Declaration(BindingKind::Def | BindingKind::Decl | BindingKind::Let | BindingKind::Impl))
-                {
+                if matches!(self.mir.generic_references[node.index()], Some(GenericReference::Scheme { .. })) {
+                    return Err(self.error(node, "quantified function value codegen is not implemented yet"));
+                }
+                if matches!(self.mir.generic_references[node.index()], Some(GenericReference::Instance(_))) {
                     return Err(self.error(node, "generic reference has no executable MIR instance"));
                 }
                 if self.lookup(symbol).is_none()

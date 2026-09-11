@@ -54,6 +54,24 @@ id!(TypeTermId, TypeConflictId);
 id!(GenericInstanceId);
 id!(PropertyId);
 
+/// The type pass decides whether a reference publishes a quantified contract
+/// or selects a declaration instance. Consumers must not infer this from names
+/// or from missing instance IDs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GenericReference {
+    Scheme { symbol: SymbolId, scheme: TypeSchemeId },
+    Instance(GenericInstanceId),
+}
+
+impl GenericReference {
+    pub fn instance(self) -> Option<GenericInstanceId> {
+        match self {
+            Self::Instance(instance) => Some(instance),
+            Self::Scheme { .. } => None,
+        }
+    }
+}
+
 /// A statically instantiated declaration. The source HIR is shared; this
 /// instance supplies its normalized types and reference edges without cloning
 /// syntax or requiring downstream consumers to apply substitutions.
@@ -611,7 +629,7 @@ pub struct Mir {
     /// body may refer to a rigid outer parameter here.
     pub type_instances: Vec<Vec<(SymbolId, TypeSlotId)>>,
     pub generic_instances: Vec<GenericInstance>,
-    pub reference_instances: Vec<Option<GenericInstanceId>>,
+    pub generic_references: Vec<Option<GenericReference>>,
     pub implementation_instances: Vec<Option<GenericInstanceId>>,
     pub type_terms: Vec<TypeTerm>,
     pub types: Vec<ResolvedType>,
@@ -759,9 +777,9 @@ impl Mir {
         for (id, instance) in self.generic_instances.iter().enumerate() {
             writeln!(out, "generic-instance {id} {instance:?}").unwrap();
         }
-        for (id, instance) in self.reference_instances.iter().enumerate() {
-            if let Some(instance) = instance {
-                writeln!(out, "reference-instance {id} {instance:?}").unwrap();
+        for (id, reference) in self.generic_references.iter().enumerate() {
+            if let Some(reference) = reference {
+                writeln!(out, "generic-reference {id} {reference:?}").unwrap();
             }
         }
         for (id, instance) in self.implementation_instances.iter().enumerate() {

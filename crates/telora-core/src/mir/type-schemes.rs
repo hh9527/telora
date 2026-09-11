@@ -2,6 +2,35 @@ use super::*;
 use std::collections::BTreeMap;
 
 impl Mir {
+    pub(super) fn valid_generic_references(&self) -> bool {
+        self.generic_references.iter().enumerate().all(|(index, reference)| {
+            let Some(slot) = self.hir[index].resolution else { return reference.is_none(); };
+            let Some(ResolveState::Bound(target)) = self.resolve_slots.get(slot.index()) else { return reference.is_none(); };
+            let Some(reference) = reference else {
+                return !self.required_types[index] || self.symbol_schemes[target.index()].is_none();
+            };
+            match reference {
+                GenericReference::Scheme { symbol, scheme } => {
+                    symbol == target
+                        && self.symbol_schemes.get(symbol.index()) == Some(&Some(*scheme))
+                        && self.type_instances[index].is_empty()
+                        && self.ty_slots.get(index) == self.symbol_types.get(symbol.index())
+                            .and_then(|slot| self.ty_slots.get(slot.index()))
+                }
+                GenericReference::Instance(id) => {
+                    self.generic_instances.get(id.index()).is_some_and(|instance| {
+                        instance.symbol == *target
+                            && !self.type_instances[index].is_empty()
+                            && self.type_instances[index].iter().all(|(parameter, slot)| {
+                                instance.arguments.iter().any(|(p, ty)| parameter == p
+                                    && self.ty_slots.get(slot.index()) == Some(&TypeState::Known(*ty)))
+                            })
+                    })
+                }
+            }
+        })
+    }
+
     fn scheme_bounds(&self, parameters: &[SymbolId]) -> Option<Vec<(u32, TypeId)>> {
         let mut bounds = vec![];
         for (index, parameter) in parameters.iter().enumerate() {
