@@ -77,3 +77,34 @@ completion. The isolated fixture is under /tmp/telora-ontology-audit-bItBfg.
 Validation: complete `cargo test --workspace`, the 403-case language runner,
 release build and `git diff --check` pass. Logs are /tmp/mir-decorator-workspace.log,
 /tmp/mir-decorator-language.log and /tmp/mir-decorator-release.log.
+
+## Unchecked boundary correction
+
+The second reduction confirmed that an earlier construction with an empty array
+can supply a provisional record shape before the imported nominal annotation
+arrives. Unchecked construction must await its owner's nominal identity, and
+Unchecked completion must preserve its directional Fit edge while the expected
+type still has that provisional shape. Equating either too early contaminated
+the common type slots and produced a misleading @check contract error.
+
+The new unchecked-array-boundary language fixture fails with the preceding
+release binary and passes with the fix. It checks ordinary valid construction,
+empty-array rejection, invalid candidate rejection and valid candidate completion.
+The full language suite now contains 404 cases. Workspace tests also pass.
+Ordinary check of model-rules in the temporary copy now succeeds with zero
+Unknown, Conflicted and unproven bounds; all seven previously failing selectors
+have now completed ordinary check after the isolated source qualification and
+the two compiler corrections. Original ontology assets remain unchanged.
+
+Semantic logs: /tmp/mir-unchecked-language.log, /tmp/mir-unchecked-workspace.log,
+and /tmp/mir-unchecked-model-rules.jsonl. No new performance conclusion is drawn.
+
+The new release build also passes the isolated workspace's ordinary tests:
+model-rules 10/10, query 239/239, intent 24/24 and ontology 129/129. The unchanged
+`scripts/test-model-diagnostics.py`, copied beside this temporary workspace and
+run against the new release executable, verifies all six intentional rejection
+cases (messages, execution phase, rule modules and exact subject spans).
+test_knowledge exports support data rather than Test values; `test` correctly
+reports no direct Test exports, while its ordinary check succeeds.
+Release build log: /tmp/mir-unchecked-release.log. Test JSONL files:
+/tmp/mir-unchecked-tests-{model-rules,query,intent,ontology,diagnostics-rejections}.jsonl.

@@ -11,10 +11,19 @@ prelude property declarations removes the shared 17 Unknown slots, but
 This was reduced to a cross-module configured decorator equating metadata
 arguments instead of fitting its function parameter contracts, and is now fixed
 with language regression coverage. Six formerly failing selectors complete
-ordinary check in that isolated copy. `model-rules` still exposes a separate
-Unchecked completion conflict; it now has a small isolated reproduction involving
-an earlier construction with an empty array. The original ontology assets remain
-unchanged. Final acceptance is still open pending that boundary investigation.
+ordinary check in that isolated copy. The remaining `model-rules` Unchecked
+completion conflict was reduced to an earlier construction with an empty array
+supplying provisional record evidence before nominal identity. Construction and
+completion constraints now remain pending until that identity arrives; a new
+language fixture checks both valid completion and actual rejection. model-rules
+ordinary check now also passes. The original ontology assets remain unchanged.
+The expanded 404-case language suite and complete workspace suite pass. Release
+execution of the temporary ontology copy passes 402 ordinary tests (10 model-rules,
+239 query, 24 intent, 129 ontology). Its unchanged host diagnostic checker also
+passes all six intentional rejection cases, including exact subject spans.
+test_knowledge is a support module and correctly has no direct Test exports. Final
+acceptance still requires the concluding audit of all gates; these module checks
+alone are not a substitute for that audit.
 See [the broader observation](observations/2026-09-11-ontology-modules.md).
 
 ## Scope and evidence

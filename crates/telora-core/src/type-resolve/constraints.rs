@@ -324,6 +324,13 @@ impl Solver<'_> {
                     && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Unchecked) {
                     return Ok(Some(Task::Fit { node, expected, actual }));
                 }
+                if self.term(expected).is_some_and(|term| matches!(term.constructor, TypeConstructor::Record(_)))
+                    && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Unchecked) {
+                    // A construction can supply fields before its annotation
+                    // supplies nominal identity. Keep the completion edge
+                    // directional until that identity arrives.
+                    return Ok(Some(Task::Fit { node, expected, actual }));
+                }
                 if self.term(expected).is_some_and(|term| term.constructor == TypeConstructor::TypeOf)
                     && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Type) {
                     self.conflict(expected, actual, Some(self.mir.hir[node.index()].location),
@@ -840,6 +847,12 @@ impl Solver<'_> {
                     self.tasks.push(Task::ShapeEqual { left, right, location });
                     return true;
                 };
+                if matches!(owner.constructor, TypeConstructor::Record(_)) {
+                    // Other constructions may have supplied provisional
+                    // fields to this owner before its nominal annotation.
+                    self.tasks.push(Task::ShapeEqual { left, right, location });
+                    return true;
+                }
                 let TypeConstructor::Nominal(symbol) = owner.constructor else { return false; };
                 let Some((TypeOperation::Struct, members)) = self.nominal_members(symbol, &owner.arguments) else { return false; };
                 members.into_iter().map(|(name, ty)| (name, ty.unwrap())).collect::<Vec<_>>()
