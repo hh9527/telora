@@ -51,53 +51,9 @@ impl<'a> HeapView<'a> {
             }
             value = value.without_type_id();
         } else if value.type_id().is_some() {
-            self.type_witness(value)?;
-            value = value.without_type_id();
+            return Err(HeapError("runtime value requires a solved session TypeId"));
         }
         Ok(value)
-    }
-
-    pub(crate) fn type_witness(&self, value: Val) -> Result<Option<Val>, HeapError> {
-        let Some(type_id) = value.type_id() else {
-            return Ok(None);
-        };
-        let owner = self
-            .current
-            .declared_types
-            .get(&type_id)
-            .or_else(|| self.background?.declared_types.get(&type_id))
-            .copied();
-        let owner = owner.ok_or(HeapError("canonical type ID has no metadata in this world"))?;
-        let DecodedValue::DeclaredType(handle) = owner.value() else {
-            return Err(HeapError("type metadata has another value kind"));
-        };
-        if !matches!(self.object(handle)?, Object::DeclaredType { .. }) {
-            return Err(HeapError("type metadata refers to another object kind"));
-        }
-        Ok(Some(owner))
-    }
-
-    pub(crate) fn declared_type_id(&self, owner: Val) -> Result<crate::TypeId, HeapError> {
-        let DecodedValue::DeclaredType(handle) = owner.value() else {
-            return Err(HeapError("declared value owner is not a declared Type"));
-        };
-        let Object::DeclaredType {
-            type_id, sealed, ..
-        } = self.object(handle)?
-        else {
-            return Err(HeapError("declared value owner has another object kind"));
-        };
-        if !sealed {
-            return Err(HeapError("declared value owner is not sealed"));
-        }
-        Ok(*type_id)
-    }
-
-    pub(crate) fn canonical_type_name(
-        &self,
-        type_id: crate::TypeId,
-    ) -> Result<Option<String>, HeapError> {
-        self.current.canonical_type_name(type_id)
     }
 
     pub(crate) fn text(&self, id: InternId) -> Result<&'a str, HeapError> {
@@ -299,7 +255,6 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::Opaque(_)
                 | DecodedValue::NativeType(_)
                 | DecodedValue::SolvedType(_)
-                | DecodedValue::DeclaredType(_)
                 | DecodedValue::Func(_) => continue,
             };
             if !visited.insert(handle) {
@@ -324,7 +279,6 @@ impl<'a> HeapView<'a> {
                 }
                 Object::Bytes(_)
                 | Object::Opaque(_)
-                | Object::DeclaredType { .. }
                 | Object::Closure { .. }
                 | Object::ByteCodeProto { .. }
                 | Object::OpenFunc
@@ -411,21 +365,6 @@ impl<'a> HeapView<'a> {
             }
             (DecodedValue::NativeType(left), DecodedValue::NativeType(right)) => Ok(left == right),
             (DecodedValue::SolvedType(left), DecodedValue::SolvedType(right)) => Ok(left == right),
-            (DecodedValue::DeclaredType(left), DecodedValue::DeclaredType(right)) => {
-                let left_handle = left;
-                let right_handle = right;
-                let Object::DeclaredType { type_id: left, .. } = self.object(left_handle)? else {
-                    return Err(HeapError(
-                        "DeclaredType handle refers to another object kind",
-                    ));
-                };
-                let Object::DeclaredType { type_id: right, .. } = self.object(right_handle)? else {
-                    return Err(HeapError(
-                        "DeclaredType handle refers to another object kind",
-                    ));
-                };
-                Ok(left == right)
-            }
             (DecodedValue::Array(left), DecodedValue::Array(right))
             | (DecodedValue::Tuple(left), DecodedValue::Tuple(right)) => {
                 self.sequence_handles_equal(left, right, visited)

@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove declared heap metadata and reuse session TypeIds during relocation (2026-09-11)
+
+Removed the legacy DeclaredType heap tag/object, metadata registry, allocator,
+accessor APIs and publication-time descriptor interning. Other heap tag numbers
+remain unchanged. Heap no longer owns or shares Arc<Mutex<TypeStore>>; main and
+work heaps do not allocate the old mutable store. Runtime type information comes
+from the immutable TypeImage installed in MainWorld.
+
+Work relocation explicitly receives the shared MainWorld. Solved metadata and
+Val type stamps retain their original TypeIds after validation against that
+image. MainWorld data handles remain shared; only source-WorkWorld data storage
+needs relocation. Raw host publication cannot reconstruct typed session values.
+Tests verify unchanged values/IDs/Main handles with no added object/text/shape
+allocations, reject out-of-range IDs, and check failed host publication leaves
+the destination untouched. No type metadata copying or interning is performed.
+
+Validation: all 398 workspace library tests, CLI build and all-target compilation
+pass. Full acceptance remains 273/400 with identical pass/fail sets and unchanged
+expectations. Logs: /tmp/mir-remove-declared-*.log. No performance benchmark was
+run. Standalone descriptor/TypeStore definitions, generic function values, 127
+acceptance failures and final performance assessment remain open.
+
 ### Remove legacy semantic Value wrapping and unwrapping (2026-09-11)
 
 Deleted heap/semantic.rs and its old recursive raw-data/semantic-Value wrapping,

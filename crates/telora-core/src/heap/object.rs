@@ -9,14 +9,6 @@ pub(crate) enum Object {
     Reserved,
     OpenFunc,
     Bytes(Box<[u8]>),
-    DeclaredType {
-        type_id: crate::TypeId,
-        id: crate::value::DeclaredTypeId,
-        name: Arc<str>,
-        body: Val,
-        sealed: bool,
-        application_arguments: Option<Box<[Val]>>,
-    },
     Opaque(crate::value::OpaqueValue),
     Array(Box<[Val]>),
     Tuple(Box<[Val]>),
@@ -112,12 +104,10 @@ pub(crate) struct Heap {
     // borrow it through their background; no descriptor reconstruction occurs.
     pub(crate) solved_types: Option<crate::type_image::TypeImage>,
     storage: Storage,
-    types: crate::type_store::SharedTypeStore,
     objects: Vec<Object>,
     text: TextTable,
     native_types: HashMap<crate::value::NativeTypeId, crate::NativeType>,
     shapes: Vec<Box<[InternId]>>,
     shape_slots: HashMap<Vec<InternId>, u32>,
-    declared_types: HashMap<crate::TypeId, Val>,
     memoized_interpreters: HashMap<usize, HashMap<Vec<crate::TypeId>, Val>>,
 }

@@ -220,7 +220,7 @@ impl Vm {
         // Linking recursively walks the immutable prototype graph. Keep that host
         // recursion off callers' often-small test or embedding threads; VM calls
         // themselves use the explicit frame stack below.
-        let mut current = initial_work.unwrap_or_else(|| Heap::work_for(background));
+        let mut current = initial_work.unwrap_or_else(Heap::work);
         if current.solved_evaluation.is_none() && let Some(graph) = &background.solved_graph {
             current.solved_evaluation = Some(graph.evaluation());
             current.solved_tasks.resize(graph.nodes().len(), None);

@@ -56,7 +56,10 @@ impl PendingCopy {
         value: Val,
     ) -> Result<Val, HeapError> {
         let copied = match value.value() {
-            DecodedValue::SolvedType(_) => return Err(HeapError("solved type metadata cannot be copied through the legacy world publisher")),
+            DecodedValue::SolvedType(id) => {
+                self.validate_session_type(source, id)?;
+                value.value()
+            }
             // Failure ids belong to the Main world's stable failure arena.
             // Work executions inherit that arena as a prefix and append new
             // roots, so the identity does not need relocation during copy.
@@ -81,9 +84,6 @@ impl PendingCopy {
                 self.copy_native_type(target, source, id)?;
                 DecodedValue::NativeType(id)
             }
-            DecodedValue::DeclaredType(handle) => {
-                DecodedValue::DeclaredType(self.copy_object(target, source, handle)?)
-            }
             DecodedValue::Array(handle) => {
                 DecodedValue::Array(self.copy_object(target, source, handle)?)
             }
@@ -103,34 +103,24 @@ impl PendingCopy {
                 DecodedValue::Dyn(self.copy_object(target, source, handle)?)
             }
         };
-        let mut copied = value.with_value(copied).without_type_id();
         if let Some(type_id) = value.type_id() {
-            if target.declared_types.contains_key(&type_id) {
-                return Ok(copied.with_type_id(type_id));
-            }
-            let owner = source
-                .type_witness(value)?
-                .expect("value with a TypeId has registered metadata");
-            let DecodedValue::DeclaredType(owner_handle) = owner.value() else {
-                unreachable!("type metadata is a declared Type")
-            };
-            let Object::DeclaredType { id, .. } = source.object(owner_handle)? else {
-                unreachable!("type metadata is a declared Type")
-            };
-            let copied_id = self.canonical_declared_type_id(target, id)?;
-            self.copy_object(target, source, owner_handle)?;
-            copied = copied.with_type_id(copied_id);
+            let id = type_id.solved_id().ok_or(HeapError("runtime value requires a solved session TypeId"))?;
+            self.validate_session_type(source, id)?;
         }
-        Ok(copied)
+        Ok(value.with_value(copied))
     }
 
-    fn canonical_declared_type_id(
-        &self,
-        target: &Heap,
-        id: &crate::value::DeclaredTypeId,
-    ) -> Result<crate::TypeId, HeapError> {
-        let id = id.clone();
-        target.canonical_declared_type_id(&id)
+    fn validate_session_type(&self, source: &HeapView<'_>, id: crate::mir::TypeId) -> Result<(), HeapError> {
+        // Work relocation explicitly supplies the common Main world. Its type
+        // image is shared, so type identities need no copying or interning.
+        let types = source.background.filter(|main| main.storage == Storage::Main)
+            .and_then(|main| main.solved_types.as_ref())
+            .filter(|_| self.target_storage == Storage::Work)
+            .ok_or(HeapError("typed values require work relocation within a shared session"))?;
+        if id.index() >= types.types.len() {
+            return Err(HeapError("solved value type is outside its session image"));
+        }
+        Ok(())
     }
 
     fn copy_object(
@@ -193,38 +183,6 @@ impl PendingCopy {
                     .map(|value| self.copy_value(target, source, *value))
                     .collect::<Result<_, _>>()?;
                 Object::Opaque(value)
-            }
-            Object::DeclaredType {
-                id,
-                name,
-                body,
-                sealed,
-                application_arguments,
-                ..
-            } => {
-                if !sealed {
-                    return Err(HeapError("cannot copy an unsealed type ref"));
-                }
-                let application_arguments = if let Some(arguments) = application_arguments {
-                    Some(
-                        arguments
-                            .iter()
-                            .map(|argument| self.copy_value(target, source, *argument))
-                            .collect::<Result<Box<[_]>, _>>()?,
-                    )
-                } else {
-                    None
-                };
-                let id = id.clone();
-                let type_id = target.canonical_declared_type_id(&id)?;
-                Object::DeclaredType {
-                    type_id,
-                    id,
-                    name: Arc::clone(name),
-                    body: self.copy_value(target, source, *body)?,
-                    sealed: true,
-                    application_arguments,
-                }
             }
             Object::Array(values) => Object::Array(copy_values(self, values)?),
             Object::Tuple(values) => Object::Tuple(copy_values(self, values)?),
@@ -394,26 +352,8 @@ impl PendingCopy {
     }
 
     fn commit(self, target: &mut Heap) {
-        let declared_types = self
-            .objects
-            .iter()
-            .enumerate()
-            .filter_map(|(index, object)| match object {
-                Object::DeclaredType { type_id, .. } => Some((
-                    *type_id,
-                    Val::unknown(DecodedValue::DeclaredType(Handle {
-                        storage: self.target_storage,
-                        slot: self.object_base + index as u32,
-                    })),
-                )),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
         target.objects.extend(self.objects);
         target.native_types.extend(self.native_types);
-        for (type_id, value) in declared_types {
-            target.declared_types.entry(type_id).or_insert(value);
-        }
         for value in self.text.values {
             target.text.insert(&value);
         }
@@ -430,7 +370,6 @@ fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
         DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => false,
         DecodedValue::Bytes(handle)
         | DecodedValue::Opaque(handle)
-        | DecodedValue::DeclaredType(handle)
         | DecodedValue::Array(handle)
         | DecodedValue::Tuple(handle)
         | DecodedValue::Tagged(handle)
@@ -464,7 +403,6 @@ fn object_contains_disallowed(
             DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => false,
             DecodedValue::Bytes(handle)
             | DecodedValue::Opaque(handle)
-            | DecodedValue::DeclaredType(handle)
             | DecodedValue::Array(handle)
             | DecodedValue::Tuple(handle)
             | DecodedValue::Tagged(handle)
@@ -481,7 +419,6 @@ fn object_contains_disallowed(
     };
     match object {
         Object::Reserved | Object::OpenFunc => true,
-        Object::DeclaredType { sealed: false, .. } => true,
         Object::Array(values) | Object::Tuple(values) => {
             values.iter().any(|value| value_foreign(*value))
         }
@@ -493,7 +430,6 @@ fn object_contains_disallowed(
         Object::Dyn {
             descriptor, value, ..
         } => value_foreign(*descriptor) || value_foreign(*value),
-        Object::DeclaredType { body, .. } => value_foreign(*body),
         Object::ByteCodeProto {
             values,
             text,

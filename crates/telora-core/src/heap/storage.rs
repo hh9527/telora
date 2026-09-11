@@ -1,5 +1,5 @@
 impl Heap {
-    fn new(storage: Storage, types: crate::type_store::SharedTypeStore) -> Self {
+    fn new(storage: Storage) -> Self {
         Self {
             storage,
             solved_types: None,
@@ -7,13 +7,11 @@ impl Heap {
             solved_evaluation: None,
             solved_tasks: vec![],
             solved_failures: vec![],
-            types,
             objects: Vec::new(),
             text: TextTable::default(),
             native_types: HashMap::new(),
             shapes: Vec::new(),
             shape_slots: HashMap::new(),
-            declared_types: HashMap::new(),
             memoized_interpreters: HashMap::new(),
         }
     }
@@ -53,48 +51,11 @@ impl Heap {
 
 
     pub(crate) fn work() -> Self {
-        Self::new(Storage::Work, crate::type_store::shared_type_store())
+        Self::new(Storage::Work)
     }
 
     pub(crate) fn main() -> Self {
-        Self::new(Storage::Main, crate::type_store::shared_type_store())
-    }
-
-    pub(crate) fn work_for(background: &Self) -> Self {
-        Self::new(Storage::Work, Arc::clone(&background.types))
-    }
-
-    pub(crate) fn canonical_declared_type_id(
-        &self,
-        declared: &crate::value::DeclaredTypeId,
-    ) -> Result<crate::TypeId, HeapError> {
-        let mut types = self
-            .types
-            .lock()
-            .map_err(|_| HeapError("type store poisoned"))?;
-        let arguments = declared
-            .arguments()
-            .iter()
-            .map(|argument| types.intern_descriptor(argument))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| {
-                HeapError::owned(format!("declared type argument is not canonical: {error}"))
-            })?;
-        Ok(match types.begin(declared.constructor(), arguments) {
-            crate::type_store::InternType::Existing(id)
-            | crate::type_store::InternType::Reserved(id) => id,
-        })
-    }
-
-    pub(crate) fn canonical_type_name(
-        &self,
-        type_id: crate::TypeId,
-    ) -> Result<Option<String>, HeapError> {
-        let types = self
-            .types
-            .lock()
-            .map_err(|_| HeapError("type store poisoned"))?;
-        Ok(types.get(type_id).map(|data| data.name.clone()))
+        Self::new(Storage::Main)
     }
 
     #[cfg(test)]
@@ -112,18 +73,6 @@ impl Heap {
             slot: self.objects.len() as u32,
         };
         self.objects.push(object);
-        handle
-    }
-
-    pub(crate) fn allocate_declared_type(&mut self, object: Object) -> Handle {
-        let Object::DeclaredType { type_id, .. } = &object else {
-            panic!("allocate_declared_type requires declared type metadata")
-        };
-        let type_id = *type_id;
-        let handle = self.allocate(object);
-        self.declared_types
-            .entry(type_id)
-            .or_insert_with(|| Val::unknown(DecodedValue::DeclaredType(handle)));
         handle
     }
 
@@ -298,13 +247,6 @@ impl Heap {
                         .get(key)
                         .copied()
                         .ok_or(HeapError("external value link is unresolved"))?;
-                    if key.starts_with("\0declared-owner:")
-                        && !matches!(resolved.value(), DecodedValue::DeclaredType(_))
-                    {
-                        return Err(HeapError(
-                            "declared owner external link did not resolve to a TypeRef",
-                        ));
-                    }
                     return Ok(resolved);
                 }
                 Ok(match value {

@@ -4,13 +4,6 @@ use hashbrown::raw::RawTable;
 use std::collections::HashMap;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
-use std::sync::{Arc, Mutex};
-
-pub(crate) type SharedTypeStore = Arc<Mutex<TypeStore>>;
-
-pub(crate) fn shared_type_store() -> SharedTypeStore {
-    Arc::new(Mutex::new(TypeStore::default()))
-}
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

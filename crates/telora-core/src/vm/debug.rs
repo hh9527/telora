@@ -68,15 +68,6 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push(self.view.native_type(id)?.qualified_name());
                 self.push(">");
             }
-            DecodedValue::DeclaredType(handle) => match self.view.object(handle)? {
-                Object::DeclaredType { type_id, name, .. } => {
-                    let canonical_name = self.view.canonical_type_name(*type_id)?;
-                    self.push("<type ");
-                    self.push(canonical_name.as_deref().unwrap_or(name));
-                    self.push(">");
-                }
-                _ => return Err(crate::heap::HeapError::new("invalid DeclaredType handle")),
-            },
             DecodedValue::Array(handle) => self.sequence(handle, false, depth, "[", "]")?,
             DecodedValue::Tuple(handle) => self.sequence(handle, true, depth, "(", ")")?,
             DecodedValue::Tagged(handle) => {

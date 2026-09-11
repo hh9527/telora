@@ -79,8 +79,7 @@ impl FlatKind {
 enum HeapKind {
     None,
     Bytes,
-    DeclaredType,
-    Opaque,
+    Opaque = 3,
     Array,
     Tuple,
     Tagged,
@@ -93,7 +92,6 @@ impl HeapKind {
     fn from_bits(bits: u32) -> Self {
         match bits {
             1 => Self::Bytes,
-            2 => Self::DeclaredType,
             3 => Self::Opaque,
             4 => Self::Array,
             5 => Self::Tuple,
@@ -112,7 +110,6 @@ impl HeapKind {
             | Self::Tagged
             | Self::Dict
             | Self::Func
-            | Self::DeclaredType
             | Self::Dyn => TRAIT_TRACE,
             Self::None | Self::Bytes | Self::Opaque => 0,
         }
@@ -376,7 +373,6 @@ pub(crate) enum DecodedValue {
     ShortString(InternId),
     Bytes(Handle),
     NativeType(crate::value::NativeTypeId),
-    DeclaredType(Handle),
     Opaque(Handle),
     Array(Handle),
     Tuple(Handle),
@@ -418,7 +414,6 @@ impl DecodedValue {
                 HeapKind::None,
                 u64::from(id.module.0) | (u64::from(id.local) << 32),
             ),
-            Self::DeclaredType(handle) => heap_parts(handle, HeapKind::DeclaredType),
             Self::Opaque(handle) => heap_parts(handle, HeapKind::Opaque),
             Self::Array(handle) => heap_parts(handle, HeapKind::Array),
             Self::Tuple(handle) => heap_parts(handle, HeapKind::Tuple),
@@ -575,7 +570,6 @@ impl Val {
                 module: crate::value::NativeModuleId(self.raw as u32),
                 local: (self.raw >> 32) as u32,
             }),
-            (FlatKind::Heap, HeapKind::DeclaredType) => DecodedValue::DeclaredType(handle()),
             (FlatKind::Heap, HeapKind::Opaque) => DecodedValue::Opaque(handle()),
             (FlatKind::Heap, HeapKind::Array) => DecodedValue::Array(handle()),
             (FlatKind::Heap, HeapKind::Tuple) => DecodedValue::Tuple(handle()),

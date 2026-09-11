@@ -59,6 +59,44 @@
     }
 
     #[test]
+    fn raw_world_publication_rejects_typed_values_without_mutating_destination() {
+        let mut source = Heap::work();
+        let text = Val::unknown(source.string(None, "pending long text"));
+        let typed = Val::unknown(DecodedValue::Int(42))
+            .with_type_id(crate::TypeId::solved(crate::mir::TypeId(0)));
+        let root = Val::unknown(DecodedValue::Array(source.allocate(Object::Array(vec![text, typed].into()))));
+        let mut destination = Heap::main();
+        let before = destination.counts();
+        let error = publish_root(&mut destination, &source, root).unwrap_err();
+        assert!(error.to_string().contains("typed values require work relocation within a shared session"));
+        assert_eq!(destination.counts(), before);
+    }
+
+    #[test]
+    fn work_relocation_preserves_shared_type_ids_and_main_handles_without_allocating() {
+        let mir = crate::codegen::tests::graph("export def answer = [42];", "");
+        let (_, types) = mir.seal().unwrap().into_parts();
+        let int = crate::mir::TypeId(types.types.iter().position(|ty| ty.constructor == crate::mir::TypeConstructor::Int).unwrap() as u32);
+        let array = crate::mir::TypeId(types.types.iter().position(|ty| ty.constructor == crate::mir::TypeConstructor::Array && ty.arguments == [int]).unwrap() as u32);
+        let mut main = Heap::main();
+        main.solved_types = Some(types);
+        let scalar = Val::unknown(DecodedValue::Int(42)).with_type_id(crate::TypeId::solved(int));
+        let metadata = Val::unknown(DecodedValue::SolvedType(array));
+        let shared = Val::unknown(DecodedValue::Array(main.allocate(Object::Array(vec![scalar].into()))))
+            .with_type_id(crate::TypeId::solved(array));
+        let source = Heap::work();
+        let mut target = Heap::work();
+        let before = (main.counts(), target.counts());
+        let roots = [scalar, metadata, shared];
+        let copied = relocate_work_roots(&mut target, &main, &source, &roots).unwrap();
+        assert_eq!(copied, roots);
+        assert_eq!((main.counts(), target.counts()), before);
+        let invalid = Val::unknown(DecodedValue::SolvedType(crate::mir::TypeId(u32::MAX)));
+        assert!(relocate_work_roots(&mut target, &main, &source, &[invalid]).is_err());
+        assert_eq!(target.counts(), before.1);
+    }
+
+    #[test]
     fn canonical_type_id_is_independent_from_value_storage() {
         let raw = Val::unknown(DecodedValue::Int(1));
         let typed = raw.with_type_id(crate::TypeId::builtin(7));
