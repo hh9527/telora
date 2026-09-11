@@ -178,13 +178,11 @@ impl Solver<'_> {
                         continue;
                     }
                     if a.constructor != b.constructor || a.arguments.len() != b.arguments.len() {
-                        let message = format!(
-                            "incompatible types {:?} and {:?}",
-                            a.constructor, b.constructor
-                        );
                         if self.compatible_structure(left, right, location) {
                             continue;
                         }
+                        let message = format!("cannot unify {} with {}",
+                            self.diagnostic_type(left), self.diagnostic_type(right));
                         self.conflict(left, right, location, message);
                     } else {
                         queue.extend(a.arguments.iter().copied().zip(b.arguments.iter().copied()));

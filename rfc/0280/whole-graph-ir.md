@@ -5,6 +5,31 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Preserve both conflicting type shapes in diagnostics (2026-09-11)
+
+Structural conflicts now render both existing type shapes before poisoning
+their slots, using the bounded arena renderer. Rendering happens only after
+structural compatibility fails; successful comparisons do not format messages.
+Messages use "cannot unify A with B" and retain arguments instead of Rust
+constructor debug identities. Internal type/LSP assertions follow this wording;
+language expected files are unchanged.
+
+The run CLI previously detected entry mismatches by diagnostic message prefix.
+It now uses adapter locations from MIR's TypeConflict records, preserving the
+entry-export context independently of prose. An actual invalid run entry still
+reports expected Run(State), with Run(?) versus Int as the conflicting evidence.
+
+Validation: all 388 workspace library tests, CLI build and all-target compilation
+pass. Full language acceptance: 248/400 pass, 152 fail (150 check + 2 test).
+Compared with the preceding full 200/400 run, 48 fixtures now pass and none
+regress. This is cumulative across recent constructor/arity/type-diagnostic
+changes, not a performance result. Logs: /tmp/mir-conflict-types-*.log.
+
+The remaining diagnostic/semantic assertions, two generic function identity
+fixtures, runtime metadata migration and final performance evaluation remain
+open. This full run supersedes the earlier acceptance snapshot, but does not
+establish overall completion.
+
 ### Render non-callable type evidence without inference (2026-09-11)
 
 Non-callable diagnostics now render the existing slot/TypeId evidence before

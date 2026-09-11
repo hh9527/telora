@@ -843,8 +843,12 @@ async fn run_command(
     let mut inventory = static_input::Inventory::new(&context, module_id.starts_with("std/"))?;
     let application = inventory.select(module_id)?;
     let mut mir = inventory.solve_run(&application, &arguments.selector.export, mode)?;
+    let adapter_conflicts = mir.type_conflicts.iter().filter_map(|conflict| conflict.location)
+        .filter(|location| mir.sources.get(location.source).name.as_ref() == "std/_entry/adapter")
+        .collect::<std::collections::BTreeSet<_>>();
     for diagnostic in &mut mir.diagnostics {
-        if diagnostic.message.starts_with("incompatible types") && diagnostic.labels.iter().any(|label| mir.sources.get(label.location.source).name.as_ref() == "std/_entry/adapter") {
+        if diagnostic.severity == telora_core::source::Severity::Error
+            && diagnostic.labels.iter().any(|label| label.primary && adapter_conflicts.contains(&label.location)) {
             diagnostic.message = format!("entry export {:?}: expected {}(State); {}", arguments.selector.export, if entry == "run" { "Run" } else { "Serve" }, diagnostic.message);
         }
     }

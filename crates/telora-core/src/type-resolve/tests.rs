@@ -46,6 +46,23 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
 }
 
 #[test]
+fn conflicts_render_both_type_shapes_before_poisoning_the_slots() {
+    let mut mir = graph(&[("@src/main", r#"
+        def values: Array(Int) = [1];
+        export def bad: Bool = values;
+        export def independent = 42;
+    "#)]);
+    resolve(&mut mir);
+    let conflict = mir.type_conflicts.iter().find(|conflict| conflict.message.contains("cannot unify")).unwrap();
+    assert!(conflict.message.contains("Array<Int>"), "{}", conflict.message);
+    assert!(conflict.message.contains("Bool"), "{}", conflict.message);
+    assert!(!conflict.message.contains("SymbolId"));
+    assert!(mir.diagnostics.iter().any(|d| d.message == conflict.message && d.labels.iter().any(|label| Some(label.location) == conflict.location)));
+    assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn diagnostic_type_rendering_is_bounded_and_read_only() {
     let mut mir = graph(&[("@src/main", "export def answer = 42;")]);
     let mut solver = Solver::new(&mut mir);
@@ -351,7 +368,7 @@ fn interpreter_contracts_reject_invalid_witnesses_and_nested_parameters() {
         ("export def bad: for(T) Fn(TypeOf(Int)) -> Fn(T) -> Bool = interpreter!(fn(x) { True });", "quantified type parameter"),
         ("export def bad: for(T) Fn(TypeOf(T)) -> Fn(Array(T)) -> Bool = interpreter!(fn(x) { True });", "cannot nest"),
         ("export def bad: for(T) Fn(TypeOf(T)) -> Fn(T) -> Array(T) = interpreter!(fn(x) { [] });", "result cannot contain"),
-        ("def erased: Fn(Int) -> Bool = fn(x) { True }; export def bad: for(T) Fn(TypeOf(T)) -> Fn(T) -> Bool = interpreter!(erased);", "incompatible types"),
+        ("def erased: Fn(Int) -> Bool = fn(x) { True }; export def bad: for(T) Fn(TypeOf(T)) -> Fn(T) -> Bool = interpreter!(erased);", "cannot unify"),
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -728,7 +745,7 @@ fn record_spreads_reject_incompatible_modes_and_duplicate_explicit_fields() {
         ("type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = base <~ {x: 2, ...base, x: 3};", "duplicate update field"),
         ("type Item = struct {x: Int}; def base: Item = {x: 1}; def dict: Dict(Int) = {x: 2}; export def bad: Item = {...base, ...dict};", "cannot mix Dict and named struct spreads"),
         ("type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = {...base};", "record spread requires a named struct target context"),
-        ("def base: Dict(Int) = {x: 1}; export def bad = {...base, y: \"wrong\"};", "incompatible types"),
+        ("def base: Dict(Int) = {x: 1}; export def bad = {...base, y: \"wrong\"};", "cannot unify"),
         ("type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = base <~ {extra: 1, ...base};", "unknown struct update field"),
     ] {
         let mut mir = graph(&[("@src/main", source)]);
@@ -746,7 +763,7 @@ fn record_operations_reject_invalid_shapes_without_runtime_inference() {
         ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad: Foo = source.{missing as x};", "unknown projection source field"),
         ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad: Foo = source.{x, x};", "duplicate projection destination"),
         ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source <~ {missing: 1};", "unknown struct update field"),
-        ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source <~ {x: \"wrong\"};", "incompatible types"),
+        ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source <~ {x: \"wrong\"};", "cannot unify"),
         ("def source: Dict(Int) = {x: 1}; export def bad = source <~ {x: 2};", "struct update requires a named struct operand"),
     ] {
         let mut mir = graph(&[("@src/main", source)]);
@@ -768,7 +785,7 @@ fn syntax_recovery_keeps_independent_type_conflicts_without_a_fake_result_obliga
     resolve(&mut mir);
     assert!(matches!(symbol_type(&mir, "healthy"), TypeState::Known(_)));
     assert!(matches!(symbol_type(&mir, "bad"), TypeState::Conflicted(_)));
-    assert!(mir.diagnostics.iter().any(|d| d.message.contains("incompatible types")));
+    assert!(mir.diagnostics.iter().any(|d| d.message.contains("cannot unify")));
     assert!(!mir.diagnostics.iter().any(|d| d.message == "unknown type"), "{}", mir.dump());
     assert!(mir.seal().is_err());
 }
@@ -1460,7 +1477,7 @@ fn generic_call_conflicts_keep_the_use_site_and_other_instances_stay_independent
     assert!(
         mir.diagnostics
             .iter()
-            .any(|d| !d.labels.is_empty() && d.message.contains("incompatible types"))
+            .any(|d| !d.labels.is_empty() && d.message.contains("cannot unify"))
     );
     let TypeState::Known(good) = symbol_type(&mir, "good") else {
         panic!("{}", mir.dump());
@@ -1656,7 +1673,7 @@ fn trait_evidence_rejects_missing_cycles_overlap_and_wrong_member_signatures() {
         ),
         (
             "trait Show { show: Fn(Self) -> String }; impl Show for Int { show: fn(x) { 42 } }; export { Show };",
-            "incompatible types",
+            "cannot unify",
         ),
     ] {
         let mut mir = graph(&[("@src/main", source)]);
