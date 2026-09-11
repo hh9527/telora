@@ -3,6 +3,10 @@
 Date: 2026-09-11. This is an implementation audit, not a performance result.
 The controlling target is RFC 0280's session-wide typed IR.
 
+The user-requested release observation after `4ee3312` is recorded separately in
+[observations/2026-09-11-release.md](observations/2026-09-11-release.md), with raw
+samples and phase summaries. It makes no baseline comparison or completion claim.
+
 ## Implementation route (supersedes incremental consumer migration)
 
 ### Declaration, trait and language diagnostic acceptance (2026-09-11)

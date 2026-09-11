@@ -1,0 +1,1 @@
+{"bound_requirements":230,"catalog_seconds":0.000715891,"check_seconds":0.265515644,"dependencies":1,"execution_seconds":0.0,"module":"ontology/tests/query","property_records":8,"record":"summary","schema":"telora.check/v1","static_seconds":0.265515644,"status":"ok","type_conflicts":0,"types_only":true,"unknown_types":0,"unproven_bounds":0}
