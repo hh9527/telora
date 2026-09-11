@@ -1,1 +1,1 @@
-does not declare dependency "missing"
+module import "missing/module" is not resolved

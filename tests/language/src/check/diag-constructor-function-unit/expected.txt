@@ -1,1 +1,1 @@
-with Fn(Int) -> enum {None, Some(Int)}
+cannot unify Fn(Int) -> Option<Int> with Option

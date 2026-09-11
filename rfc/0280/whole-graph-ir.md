@@ -9,6 +9,24 @@ samples and phase summaries. It makes no baseline comparison or completion claim
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Interpreter evidence and type-family arity (2026-09-11)
+
+Interpreter diagnostics now retain the offending type parameter and argument
+position for duplicate/missing witnesses, nested input parameters and escaping
+result parameters. Existing generic solver tests remain unchanged. Generic type
+alias applications check declared argument count before inspecting their body,
+so `Box(Int, String)` for `type Box(A) = Array(A)` reports the arity error instead
+of a non-callable metadata value.
+
+Reviewed language expectations check actual operand types, named missing generic
+arguments and bound evidence. The guard-type fixture now uses a valid module-level
+def so the targeted guard conflict is not mixed with an unrelated top-level let
+error. Workspace library tests pass 393/393 and all-target checking passes.
+Full language acceptance advances from 372/403 to 398/403, with no regressions.
+The five remaining cases cover bare constructor payload patterns, missing enum
+or Result context, and recursive values without type evidence. These still
+require review; no performance measurement was repeated for this stage.
+
 ### Declaration, trait and language diagnostic acceptance (2026-09-11)
 
 Duplicate declarations distinguish type parameters and pattern bindings while

@@ -1,1 +1,1 @@
-does not implement std/fmt.Display
+Array<Int> does not implement Display(Array<Int>): no static evidence

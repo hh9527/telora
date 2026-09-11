@@ -682,6 +682,11 @@ impl Solver<'_> {
                 let instances = self.child(node, Role::Callee)
                     .map(|syntax| self.mir.type_instances[syntax.index()].clone())
                     .unwrap_or_default();
+                if !instances.is_empty() && arguments.len() != instances.len() {
+                    self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
+                        format!("type constructor expected {} arguments, got {}", instances.len(), arguments.len()));
+                    return None;
+                }
                 if !instances.is_empty() && arguments.iter().any(|&argument| self.term(argument).is_none()) {
                     return Some(Task::Call { node, callee, arguments });
                 }
