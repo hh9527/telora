@@ -1,6 +1,6 @@
 # RFC 0280: Session-Wide Type World and Execution-Free Inference
 
-- Status: Revised accepted direction; implementation incomplete.
+- Status: Architecture integrated; broader ontology validation remains open. Performance remains observational.
 - Revision: 2026-09-10, making the session-wide typed IR and its completion gate
   explicit; independently solved module artifacts are transitional only.
 - Tracking: [#175](https://github.com/hh9527/telora/issues/175).
@@ -8,6 +8,16 @@
 - Related: RFC 0276, RFC 0277, RFC 0279; performance investigation in #173.
 - Evidence: [historical measurements](0280/measurements.md), including the
   regression at checkpoint `293098c`. No performance claim for this redesign.
+
+Current implementation evidence is in [the pass audit](0280/whole-graph-ir.md).
+The [architecture acceptance record](0280/architecture-acceptance.md) maps the
+controlling requirements to implementation and validation evidence.
+Earlier incremental checkpoint narratives below are historical, including their
+references to replaced modules and unfinished adapters. The session initialization
+contract below reflects the later decision to initialize the whole graph before
+entry dispatch. The latest requested performance activity was observation only;
+[the release sample](0280/observations/2026-09-11-release.md) is not a comparative
+performance acceptance result.
 
 ## Decision and Scope
 
@@ -76,11 +86,10 @@ resolves their module identity but does not read or parse their contents, enforc
 data-size limits or produce data-content diagnostics. Those checks belong to
 subsequent loading. This also applies when a data module is the selected root.
 
-The current per-module implementation does **not** meet this target. The
-[whole-graph migration audit](0280/whole-graph-ir.md) records the concrete gaps
-and replacement order. The checkpoints below are historical incremental work,
-not evidence that the session-wide IR is already implemented. This target and
-the acceptance criteria take precedence over earlier checkpoint next-step notes.
+The [whole-graph migration audit](0280/whole-graph-ir.md) records the integrated
+implementation and outstanding audit gates. The checkpoints below are historical
+incremental work. This target and the acceptance criteria take precedence over
+earlier checkpoint next-step notes.
 
 ### Ordered phase contract
 
@@ -144,13 +153,13 @@ additional constraint. Do not add compatibility paths for that purpose.
    complete typed IR. No VM or Telora execution capability is available here.
 3. Create the VM, import finalized type skeletons, and parse/inject data modules.
    Data contents cannot feed back into type solving.
-4. Prepare demand-evaluated property and top-level value tasks. Static facts,
-   compiled provider code and session slots exist before entry dispatch; a
-   property's concrete value is computed on its first actual consumption.
-   Module trait/property facts are static inputs regardless of whether an
-   exported value name was referenced.
-5. Dispatch execution through entry. Both execution phases consume finalized
-   typing and cannot reopen inference.
+4. Evaluate all reachable modules' top-level values and property tasks in one
+   Initialize WorkWorld. ID-based reads evaluate dependencies on demand within
+   initialization. Once every required task succeeds, copy the complete root set
+   into MainWorld in one publication operation, preserving shared objects.
+5. Dispatch execution through entry in a fresh WorkWorld backed by the initialized
+   MainWorld. Both execution phases consume finalized typing and cannot reopen
+   inference.
 
 `check --only-types` stops after phase 2. Ordinary check shares that same static
 artifact before continuing with its existing tooling semantics. Stable source
@@ -183,11 +192,13 @@ retry user code or duplicate its diagnostic. Execution may continue for diagnost
 collection, but a failed session cannot publish a final result. State and values
 belong to the session, not to a process-wide cache or a module transaction.
 
-The preparation/entry boundary does not imply eagerly computing every property.
-An entry may first consume a previously unrequested property. Lazy property code
-still has only its resolved lexical dependencies; it does not implicitly acquire
-entry arguments or request-local state. Static dependency scheduling can later
-optimize proven cases without changing this demand-driven behavior.
+Demand evaluation is the dependency strategy inside initialization, not permission
+to leave declared global/property roots uninitialized until entry dispatch. Force
+all required roots before publication, including unreferenced top-level values.
+Property code has only its resolved lexical dependencies; it does not acquire
+entry arguments or request-local state. Closure creation does not invoke its body.
+Publishing all roots uses one forwarding table, then discards the initialization
+work heap. More economical runtime allocation strategies are deferred.
 
 ### Test command assembly
 
@@ -196,14 +207,12 @@ commands. TestPlan selects direct root exports by the resolved native Test type
 identity, including reexports, before any initializer executes. After codegen
 and linking, data modules are validated and injected before the VM bootstrap.
 Invalid data produces structured diagnostics and prevents user-code execution.
-The bootstrap installs lazy tasks; each selected export is then demanded in name
-order and its deferred thunk or fixture factory runs in that same VM session.
-
-This applies the demand semantics above to tests, superseding RFC 0266/0267's
-eager whole-module initialization and rejection based solely on import cycles.
-Unused top-level values are not forced. Import cycles belong to the static graph;
-only an actual read of a Running evaluation task is an evaluation-cycle failure.
-Ordinary check retains its explicit session-root evaluation behavior.
+The bootstrap initializes the entire reachable graph and publishes its roots
+before selected test thunks or fixture factories run. An initialization failure
+aborts dispatch before any case starts; it cannot publish a partly initialized
+test session. Import cycles belong to the static graph; only an actual read of a
+Running evaluation task is an evaluation-cycle failure. Recoverable failures
+inside dispatched test thunks still use the test-result protocol.
 
 The test catalog, visibility rules, local fixture-source restrictions, expansion
 limits and `telora.test/v2` report schema remain. Expected recoverable failures
@@ -812,7 +821,8 @@ properties. It executes the declaration chain's ordered reduce and exposes one
 final value per key. Consumers query that final record, not a list of competing
 declarations. Failed or pending value/applicability work blocks successful final
 output, without requiring provider execution to establish static presence. This
-is the target phase separation; existing eager paths still require migration.
+is the target phase separation; all required property roots are completed during
+the session initialization pass before entry dispatch.
 
 The dynamic property-target example is supported by the existing
 `tests/language/src/test/property-target/testee.telora` test. Do not restrict it

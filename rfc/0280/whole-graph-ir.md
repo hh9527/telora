@@ -9,6 +9,22 @@ samples and phase summaries. It makes no baseline comparison or completion claim
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Architecture acceptance and documentation reconciliation (2026-09-11)
+
+The [acceptance record](architecture-acceptance.md) maps the final three-pass and
+session-initialization requirements to implementation and tests. The determinism
+fixture now includes partial generic function values and property/global
+dependencies, comparing execution graphs as well as MIR, types and bytecode.
+The primary RFC's stale lazy-entry initialization text is reconciled with the
+later user decision: initialize all roots in one WorkWorld, publish once, then
+dispatch through a fresh WorkWorld.
+
+Full workspace tests pass (393 library, 2 binary, 66 CLI including 403 language
+cases), and release builds. Codegen tests were split out of the oversized source
+file; all 89 codegen tests pass after the move. Source-size hard limits and diff
+checks pass. Architecture replacement is integrated and validated; the recorded
+performance observation is retained without a new comparative claim.
+
 ### Shared check seal gate and canonical discovery (2026-09-11)
 
 Both check modes now validate the same SealedMir boundary after successful
