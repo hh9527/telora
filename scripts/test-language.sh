@@ -34,7 +34,6 @@ fi
 cases=()
 case_checks=()
 declare -A aggregate_success_cases
-declare -A aggregate_diagnostic_cases
 for testee in "${testees[@]}"; do
     relative=${testee#"$workspace/src/"}
     case_id=${relative%/testee.telora}
@@ -64,21 +63,6 @@ success_all="$workspace/src/generated/check-success-all.telora"
     done
     echo "export def all_loaded: Bool = True;"
 } >"$success_all"
-
-diagnostics_all="$workspace/src/generated/check-diagnostics-all.telora"
-{
-    diagnostic_index=0
-    for index in "${!cases[@]}"; do
-        case_id=${cases[$index]}
-        mode=${case_id%%/*}
-        if [[ $mode == check && ${case_checks[$index]} -eq 2 ]]; then
-            printf 'import "@src/%s/testee" as diagnostic_%s;\n' "$case_id" "$diagnostic_index"
-            aggregate_diagnostic_cases["$case_id"]=1
-            diagnostic_index=$((diagnostic_index + 1))
-        fi
-    done
-    echo "export def all_loaded: Bool = True;"
-} >"$diagnostics_all"
 
 generated="$workspace/src/generated/check-all.telora"
 {
@@ -155,14 +139,9 @@ set +e
 success_exit=$?
 set -e
 
-diagnostics_stdout="$actual_root/check-diagnostics-all.stdout.jsonl"
-diagnostics_stderr="$actual_root/check-diagnostics-all.stderr.jsonl"
-set +e
-"$telora_bin" -C "$workspace" check "@src/generated/check-diagnostics-all" \
-    >"$diagnostics_stdout" 2>"$diagnostics_stderr"
-diagnostics_exit=$?
-set -e
-
+# Error fixtures need separate sessions: a static error prevents that session
+# from entering tool/runtime execution. Combining them would suppress unrelated
+# runtime diagnostics and share an exit status between independent assertions.
 for case_id in "${cases[@]}"; do
     mode=${case_id%%/*}
 
@@ -170,13 +149,6 @@ for case_id in "${cases[@]}"; do
         raw_stdout=$success_stdout
         raw_stderr=$success_stderr
         exit_code=$success_exit
-    elif [[ -n ${aggregate_diagnostic_cases[$case_id]+x} ]]; then
-        raw_stdout="$actual_root/${case_id//\//__}.stdout.jsonl"
-        raw_stderr=$diagnostics_stderr
-        exit_code=$diagnostics_exit
-        jaq -c --arg source "language-tests/$case_id/testee" \
-            'select(any(.labels[]?; .source == $source))' \
-            "$diagnostics_stdout" >"$raw_stdout"
     else
         raw_stdout="$actual_root/${case_id//\//__}.stdout.jsonl"
         raw_stderr="$actual_root/${case_id//\//__}.stderr.jsonl"

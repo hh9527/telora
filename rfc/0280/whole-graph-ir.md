@@ -5,6 +5,40 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Isolate negative acceptance fixtures at the session boundary (2026-09-11)
+
+The full language runner previously imported every expected-error check into
+one graph and reused that session's exit status for all fixtures. Static errors
+correctly prevent tool/runtime execution for the entire session, so this hid
+unrelated runtime diagnostics. Each negative fixture now runs its own check
+session. Expected messages and checker assertions are unchanged; successful
+aggregate checks remain unchanged.
+
+Fresh full acceptance before this harness fix: 189/400 pass, 211 fail (209 check,
+2 test). After isolation: 197/400 pass, 203 fail (201 check, 2 test). Eight cases
+now pass with their actual tool/runtime diagnostics: diag-check-result-tool-stage,
+diag-display-field, diag-display-template, diag-fmt-concat, diag-non-tail-depth,
+diag-property-provider-publication, diag-property-wrong-target, diag-regex-fields.
+No previously passing case regressed. bash syntax and git whitespace checks pass.
+Logs: /tmp/mir-current-language.log and /tmp/mir-isolated-language.log.
+
+Of the 201 remaining check failures, 189 exit 1 and emit diagnostics, but fail
+the existing assertions; these need message/location/semantic review, not blind
+snapshot updates. Twelve unexpectedly exit 0: diag-check-tool-construction,
+diag-dyn-project-generic, diag-enum-constructor-unit-context,
+diag-enum-pattern-function, diag-family-reordered-recursion, diag-local-alias,
+diag-member-import-function-pattern, diag-metadata-import-reentry,
+diag-property-carrier-family, diag-property-carrier-scalar,
+diag-struct-update-standalone, diag-tuple-constructor-arity. Some may encode
+superseded language rules; each still needs an explicit disposition.
+
+The two test-mode failures remain module-interfaces and stdlib-collections:
+generic function identity-only uses create unsolved instance arguments. A
+quantified function value and a concrete callable instance must be distinguished
+in MIR; replacing Unknown with an arbitrary type or compiling an unusable closure
+is not an acceptable fix. No claim of full migration completion or performance
+gain is made by this acceptance-runner change.
+
 ### Remove runtime TypeSlot links (2026-09-11)
 
 Removed the remaining heap TypeSlot representation, packed tag/trait, initializer,
