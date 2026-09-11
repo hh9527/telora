@@ -693,6 +693,12 @@ impl Solver<'_> {
             }
             HirKind::Decorator { configured } => {
                 let configured = *configured;
+                if self.decorator_contexts[node.index()].is_none() {
+                    self.mir.diagnostics.push(Diagnostic::error(
+                        "decorators require concrete nominal type declarations; aliases cannot own properties",
+                        self.mir.hir[node.index()].location,
+                    ));
+                }
                 let callee = self.child(node, Role::Callee).unwrap().ty();
                 let provider = if configured {
                     let mut arguments = self

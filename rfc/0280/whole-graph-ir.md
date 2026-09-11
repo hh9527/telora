@@ -5,6 +5,30 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Reject silently discarded decorators on aliases (2026-09-11)
+
+Investigating the twelve unexpectedly successful negative checks found a real
+static gap: decorators on aliases were signature-checked but never attached to
+property records, and seal accepted their disappearance. Type resolve now emits
+a diagnostic when a decorator has no nominal owner context, while continuing to
+solve independent nodes. Seal requires every ordinary decorator to occur in a
+property record and validates provider HIR identities; clearing diagnostics or
+removing all records no longer bypasses that obligation.
+
+Validation: all 381 library tests, CLI build and all-target compilation pass.
+The new regression covers primitive and nominal aliases, independent type
+completion after diagnostics, and record removal before seal. properties,
+property-target, static-property-evidence and checked-recursive-types pass
+(10 CLI cases). diag-property-carrier-scalar now exits 1 with its expected
+"concrete nominal" diagnostic and execution_seconds = 0. Logs:
+/tmp/mir-property-coverage-*.log. Full acceptance was not repeated; the latest
+full result remains the preceding 197/400 snapshot, with this one targeted fix.
+
+Generic property carriers remain supported and their existing static/codegen
+tests pass. Their older expected-error fixture needs separate semantic review;
+it must not be "fixed" by removing current generic property functionality.
+The generic function value gap and other acceptance failures remain open.
+
 ### Isolate negative acceptance fixtures at the session boundary (2026-09-11)
 
 The full language runner previously imported every expected-error check into

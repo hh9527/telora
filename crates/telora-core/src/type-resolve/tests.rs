@@ -90,6 +90,28 @@ fn let_else_checks_divergence_without_overwriting_the_inferred_branch_type() {
 }
 
 #[test]
+fn decorators_on_aliases_are_diagnosed_and_cannot_be_silently_dropped() {
+    for declaration in ["type Prop = Int;", "type Base = struct {value: Int}; @property(PropertyTarget.Type) type Prop = Base;"] {
+        let source = if declaration.starts_with("type Prop") {
+            format!("@property(PropertyTarget.Type) {declaration} export def independent = 42;")
+        } else {
+            format!("{declaration} export def independent = 42;")
+        };
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains("aliases cannot own properties")), "{}", mir.dump());
+        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        mir.diagnostics.clear();
+        assert!(mir.seal().is_err(), "seal must reject unrecorded decorators independently of diagnostics");
+    }
+    let mut mir = graph(&[("@src/main", "@property(PropertyTarget.Type) type Mark = struct {value: Int}; export {Mark};")]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    mir.properties.clear();
+    assert!(mir.seal().is_err(), "removing all property records must not erase the obligations");
+}
+
+#[test]
 fn property_admission_links_capabilities_without_evaluating_targets() {
     let mut mir = graph(&[("@src/main", r#"
         import "std/prelude" {property as marker};

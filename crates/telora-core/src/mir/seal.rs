@@ -61,6 +61,7 @@ impl Mir {
 
     fn valid_properties(&self) -> bool {
         let mut keys = std::collections::BTreeSet::new();
+        let mut recorded = vec![false; self.hir.len()];
         for record in &self.properties {
             if record.owner.index() >= self.types.len() || record.property.index() >= self.types.len()
                 || record.providers.is_empty() || !keys.insert((record.owner, record.site, record.property)) {
@@ -83,6 +84,9 @@ impl Mir {
                 Some(instance)
             } else { None };
             if record.providers.iter().any(|provider| {
+                let Some(node) = self.hir.get(provider.index()) else { return true; };
+                if !matches!(node.kind, HirKind::Decorator { .. }) { return true; }
+                recorded[provider.index()] = true;
                 let ty = if let Some(instance) = instance { instance.ty(*provider) }
                     else { match self.ty_slots.get(provider.index()) { Some(TypeState::Known(ty)) => Some(*ty), _ => None } };
                 ty != Some(record.property)
@@ -91,6 +95,10 @@ impl Mir {
                 let Some(layout) = self.type_layouts.get(record.owner.index()).and_then(Option::as_ref) else { return false; };
                 if index as usize >= layout.members.len() || matches!(record.site, PropertySite::Field(_)) && layout.members[index as usize].is_none() { return false; }
             }
+        }
+        if self.hir.iter().enumerate().any(|(index, node)|
+            matches!(node.kind, HirKind::Decorator { .. }) && !recorded[index]) {
+            return false;
         }
         for template in self.properties.iter().filter(|record| !record.concrete && record.instance.is_none()) {
             let TypeConstructor::Nominal(symbol) = self.types[template.owner.index()].constructor else { return false; };
