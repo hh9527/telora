@@ -83,8 +83,7 @@ pub use source::{
 pub use toml::{TomlParse, parse_toml_registered};
 pub use type_store::TypeId;
 pub use types::{
-    DeclaredTypeDescriptor, TypeCapability,
-    TypeConstraint, TypeParameter, TypeParameterId, TypeScheme,
+    DeclaredTypeDescriptor, TypeParameterId,
 };
 pub use value::{Atom, BuiltinAtom, NativeError, NativeFunction, NativeType, OpaqueValue};
 pub use vm::{

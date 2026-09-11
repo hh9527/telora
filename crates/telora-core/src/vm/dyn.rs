@@ -105,8 +105,6 @@ fn finish_dyn_observation(
                         identity: Arc::new(()),
                         descriptor,
                         value,
-                        scheme: None,
-                        origin: None,
                     })))
                 }
                 DynObservation::Children(children) => {
@@ -117,8 +115,6 @@ fn finish_dyn_observation(
                                 identity: Arc::new(()),
                                 descriptor,
                                 value,
-                                scheme: None,
-                                origin: None,
                             })))
                         })
                         .collect();
@@ -138,8 +134,6 @@ fn finish_dyn_observation(
                                     identity: Arc::new(()),
                                     descriptor,
                                     value,
-                                    scheme: None,
-                                    origin: None,
                                 },
                             )));
                             Val::new(
@@ -167,8 +161,6 @@ fn finish_dyn_observation(
                             identity: Arc::new(()),
                             descriptor,
                             value,
-                            scheme: None,
-                            origin: None,
                         })));
                     Val::new(
                         DecodedValue::Tagged(current.allocate(Object::Tagged {

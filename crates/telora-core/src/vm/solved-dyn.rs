@@ -47,8 +47,6 @@ fn run_solved_dyn(
             identity: Arc::new(()),
             descriptor: arguments[0],
             value: payload,
-            scheme: None,
-            origin: None,
         });
         return Ok(VmAction::Return {
             value: Val::new(DecodedValue::Dyn(handle), payload.loc()),
@@ -320,8 +318,6 @@ fn pack_solved_dyn(
             identity: Arc::new(()),
             descriptor: Val::new(DecodedValue::SolvedType(ty), value.loc()),
             value,
-            scheme: None,
-            origin: None,
         })),
         value.loc(),
     ))

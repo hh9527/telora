@@ -327,14 +327,10 @@ impl PendingCopy {
                 identity,
                 descriptor,
                 value,
-                scheme,
-                origin,
             } => Object::Dyn {
                 identity: Arc::clone(identity),
                 descriptor: self.copy_value(target, source, *descriptor)?,
                 value: self.copy_value(target, source, *value)?,
-                scheme: scheme.clone(),
-                origin: origin.clone(),
             },
             Object::TypeSlot { value } => Object::TypeSlot {
                 value: Some(self.copy_value(

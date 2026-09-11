@@ -5,6 +5,31 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove dormant Dyn descriptor schemes (2026-09-11)
+
+Removed Dyn.scheme and Dyn.origin: all remaining constructors supplied None and
+there were no readers. Ordinary relocation no longer clones this dormant
+descriptor contract. Removed the old TypeScheme/TypeParameter/TypeConstraint/
+TypeCapability records, their public exports and scheme formatter. MIR's own
+TypeScheme arena and symbol scheme IDs are unchanged and remain the static
+representation. Runtime TypeDescriptor/TypeParameterId consumers still exist.
+
+Validation: all 381 workspace library tests pass, CLI build and all-target
+compilation pass; reflection and compiler-semantics pass, 39 CLI cases total.
+No tests were deleted. Logs: /tmp/mir-remove-dyn-scheme-*.log.
+
+Rechecked module-interfaces and stdlib-collections: both still abort before
+execution on unknown types/generic arguments in generic function equality
+(module-interfaces line 138, stdlib-collections lines 116-117). This is the
+previously tracked first-class generic value gap, not resolved by deleting the
+unused runtime scheme. reference_type allocates fresh instance argument slots;
+build_type_schemes runs after solving and is not yet consumed to close such
+value references. This requires static-solver work, not a runtime fallback.
+
+About 200 lines removed. No performance measurement. Remaining metadata
+representation cleanup, generic function values, diagnostic rules, full
+acceptance and final performance assessment remain incomplete.
+
 ### Remove heap descriptor materialization and old property publication (2026-09-11)
 
 Deleted the unused descriptor-to-heap metadata builder, origin callback,

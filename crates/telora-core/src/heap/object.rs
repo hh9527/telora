@@ -53,8 +53,6 @@ pub(crate) enum Object {
         identity: Arc<()>,
         descriptor: Val,
         value: Val,
-        scheme: Option<crate::TypeScheme>,
-        origin: Option<Arc<str>>,
     },
     TypeSlot {
         value: Option<Val>,
