@@ -5,6 +5,40 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Quantified function values and deferred declaration bounds (2026-09-11)
+
+Function values now retain identity separately from their statically compiled
+instances. MIR publishes a function-family plan; codegen emits family creation
+and exact static instance selection. Aliases preserve identity and initialization
+copies these values through the existing shared forwarding map. VM execution
+does not infer types or construct new specializations.
+
+At solver quiescence, unconstrained function-value parameters can become ordinal
+binders in a Quantified contract. Equivalent function terms whose children were
+equated by shape evidence are closed together, including intermediate argument
+slots. Operational constraints and escaping unknown results are not generalized.
+Declaration bounds belonging to uninstantiated references move into the contract
+as (binder, bound) type pairs; they are not evidence obligations until a concrete
+use requires them. Bounds from actual calls/member uses remain obligations.
+Seal checks the contract against the source scheme, including all bounds and
+binder ranges, and checks executable family signatures and static instance keys.
+Free outer parameters inside a quantified contract still prevent that contract
+from being classified as concrete.
+
+Language tests cover identity and distinct anonymous functions, aliases, captures,
+Int/String specializations, trait/property-bounded function values, partially
+specified arguments followed by calls, and returned functions followed by calls.
+The missing-trait-evidence fixture now also compares the same function as a value:
+that comparison closes, while the invalid call retains one unproven obligation
+and no unknown types. No new Rust test cases were added for this work.
+
+Full language acceptance is 281/401 with no new failing cases compared with the
+previous function-value milestone. The focused runtime suite has 10 passing
+cases. This is not a claim of unrestricted first-class polymorphism: phantom
+parameters and partially specialized functions used as quantified values still
+need investigation. Diagnostic acceptance and final performance assessment remain
+open; diagnostic work stays behind the outstanding generic work.
+
 ### Reject unbounded family growth and review superseded negative fixtures (2026-09-11)
 
 Nominal layout expansion previously discovered Grow(A) -> Grow(Array(A)) only

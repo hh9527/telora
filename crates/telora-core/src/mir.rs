@@ -278,7 +278,8 @@ pub enum TypeConstructor {
     TypeList,
     Dict,
     Function,
-    /// A closed function-value contract with ordinal binders in its body.
+    /// A closed function-value contract: body followed by (binder, bound)
+    /// type pairs. Bounds are obligations only when the contract is applied.
     Quantified(u32),
     Bound(u32),
     Record(Vec<String>),

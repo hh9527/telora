@@ -11,6 +11,25 @@ type Swap(A, B) = struct {next: Swap(B, A)};
 type Prop(T) = struct {value: T};
 def mark: Fn(Type, Option(Prop(Int))) -> Prop(Int) = fn(owner, previous) { {value: 42} };
 @mark type Marked = struct(Int);
+trait Printable { print: Fn(Self) -> String };
+def bounded_identity: for(T: Printable) Fn(T) -> T = fn(value) { value };
+def property_identity: for(T: Property(Prop(Int))) Fn(T) -> T = fn(value) { value };
+def choose_left: for(A, B) Fn(A, B) -> A = fn(left, right) { left };
+def make_identity = fn() { fn(value) { value } };
+
+export def bounded_function_value = test.should_ok(fn() {
+    expect(eq.equal(bounded_identity, bounded_identity)
+        && eq.equal(property_identity, property_identity))
+});
+
+export def partially_applied_function = test.should_ok(fn() {
+    let choose_int = choose_left@[Int, _];
+    expect(choose_int(42, "text") == 42 && choose_int(43, True) == 43)
+});
+
+export def returned_function = test.should_ok(fn() {
+    expect(make_identity()(42) == 42 && make_identity()("text") == "text")
+});
 
 export def static_projection = test.should_ok(fn() {
     expect(project@[Int](dyn.pack(Int.type, 42)) == Some(42)

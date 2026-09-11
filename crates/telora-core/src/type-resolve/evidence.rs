@@ -269,10 +269,17 @@ impl Solver<'_> {
     }
 
     pub(super) fn contains_parameter(&self, ty: TypeId) -> bool {
-        let ty = &self.mir.types[ty.index()];
-        if matches!(ty.constructor, TypeConstructor::Quantified(_)) { return false; }
-        matches!(ty.constructor, TypeConstructor::Parameter(_) | TypeConstructor::Bound(_))
-            || ty.arguments.iter().any(|&a| self.contains_parameter(a))
+        fn visit(solver: &Solver<'_>, ty: TypeId, binder: Option<u32>) -> bool {
+            let ty = &solver.mir.types[ty.index()];
+            let binder = match ty.constructor {
+                TypeConstructor::Parameter(_) => return true,
+                TypeConstructor::Bound(index) => return binder.is_none_or(|count| index >= count),
+                TypeConstructor::Quantified(count) => Some(count),
+                _ => binder,
+            };
+            ty.arguments.iter().any(|&child| visit(solver, child, binder))
+        }
+        visit(self, ty, None)
     }
 
     fn concrete_implementation(&self, implementation: &TraitImplementation) -> bool {

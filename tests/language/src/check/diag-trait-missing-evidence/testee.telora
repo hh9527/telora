@@ -1,3 +1,5 @@
+import "std/eq" as eq;
 trait Display { display: Fn(Self) -> String };
 def identity: for(T: Display) Fn(T) -> T = fn(value) { value };
+export def same_function = eq.equal(identity, identity);
 export def invalid = identity(1);

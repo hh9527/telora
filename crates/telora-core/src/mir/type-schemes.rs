@@ -14,11 +14,18 @@ impl Mir {
                     if !ty.arguments.is_empty() || binder.is_none_or(|count| index >= count) { return false; }
                 }
                 TypeConstructor::Quantified(count) => {
-                    if count == 0 || ty.arguments.len() != 1
+                    if count == 0 || ty.arguments.is_empty()
                         || self.types.get(ty.arguments[0].index()).is_none_or(|body| body.constructor != TypeConstructor::Function) {
                         return false;
                     }
-                    pending.push((ty.arguments[0], Some(count)));
+                    for &constraint in &ty.arguments[1..] {
+                        let Some(pair) = self.types.get(constraint.index()) else { return false; };
+                        if pair.constructor != TypeConstructor::Tuple || pair.arguments.len() != 2
+                            || !matches!(self.types.get(pair.arguments[0].index()).map(|ty| &ty.constructor), Some(TypeConstructor::Bound(index)) if *index < count) {
+                            return false;
+                        }
+                    }
+                    pending.extend(ty.arguments.iter().map(|&child| (child, Some(count))));
                 }
                 _ => pending.extend(ty.arguments.iter().map(|&child| (child, binder))),
             }
@@ -134,12 +141,28 @@ impl Mir {
     fn quantified_matches(&self, ty: TypeId, scheme: TypeSchemeId) -> bool {
         let Some(scheme) = self.type_schemes.get(scheme.index()) else { return false; };
         let Some(ty) = self.types.get(ty.index()) else { return false; };
-        if ty.constructor != TypeConstructor::Quantified(scheme.parameter_count) || ty.arguments.len() != 1 || !scheme.bounds.is_empty() { return false; }
-        let mut pending = vec![(ty.arguments[0], scheme.body)];
+        if ty.constructor != TypeConstructor::Quantified(scheme.parameter_count) || ty.arguments.len() != 1 + scheme.bounds.len() { return false; }
+        if !self.quantified_node_matches(ty.arguments[0], scheme.body, scheme.parameter_count) { return false; }
+        let mut matched = std::collections::BTreeSet::new();
+        for &constraint in &ty.arguments[1..] {
+            let Some(pair) = self.types.get(constraint.index()) else { return false; };
+            if pair.constructor != TypeConstructor::Tuple || pair.arguments.len() != 2 { return false; }
+            let Some(subject) = self.types.get(pair.arguments[0].index()) else { return false; };
+            let TypeConstructor::Bound(parameter) = subject.constructor else { return false; };
+            if parameter >= scheme.parameter_count || !subject.arguments.is_empty() { return false; }
+            let Some(index) = scheme.bounds.iter().position(|&(p, bound)| p == parameter
+                && self.quantified_node_matches(pair.arguments[1], bound, scheme.parameter_count)) else { return false; };
+            if !matched.insert(index) { return false; }
+        }
+        true
+    }
+
+    fn quantified_node_matches(&self, ty: TypeId, node: SchemeNodeId, parameter_count: u32) -> bool {
+        let mut pending = vec![(ty, node)];
         while let Some((ty, node)) = pending.pop() {
             let Some(ty_data) = self.types.get(ty.index()) else { return false; };
             match self.scheme_nodes.get(node.index()) {
-                Some(SchemeNode::Bound(index)) if *index < scheme.parameter_count
+                Some(SchemeNode::Bound(index)) if *index < parameter_count
                     && ty_data.constructor == TypeConstructor::Bound(*index)
                     && ty_data.arguments.is_empty() => {}
                 Some(SchemeNode::Known(known)) if *known == ty => {}
