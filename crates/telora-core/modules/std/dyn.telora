@@ -5,6 +5,9 @@ type ValueKind = enum {
 };
 native pack: for(A) Fn(TypeOf(A), A) -> Dyn;
 native project_with: for(A) Fn(TypeOf(A), Dyn) -> Option(A);
+def project: for(A) Fn(Dyn) -> Option(A) = fn(value) {
+    project_with(A.type, value)
+};
 native desc: Fn(Dyn) -> Type;
 native kind: Fn(Dyn) -> ValueKind;
 native check_int: Fn(Dyn) -> Option(Int);
@@ -51,6 +54,7 @@ export {
     ValueKind,
     pack,
     project_with,
+    project,
     desc,
     kind,
     check_int,

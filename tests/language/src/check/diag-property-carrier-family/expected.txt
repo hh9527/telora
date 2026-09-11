@@ -1,1 +1,0 @@
-concrete nominal struct or enum declarations

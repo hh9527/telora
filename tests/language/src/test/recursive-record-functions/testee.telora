@@ -1,0 +1,18 @@
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+def even = fn(value) { if value == 0 { True } else { odd(value - 1) } };
+def holder = {call: even};
+def odd = fn(value) { if value == 0 { False } else { holder.call(value - 1) } };
+
+export def recursive_record = test.should_ok(fn() {
+    expect(even(10) && odd(9) && !holder.call(3))
+});
+
+def identity = fn(value) { value };
+def functions = {call: identity};
+def forwarded = fn(value) { functions.call(value) };
+
+export def nonrecursive_record = test.should_ok(fn() {
+    expect(forwarded(7) == 7 && functions.call(8) == 8 && identity("text") == "text")
+});

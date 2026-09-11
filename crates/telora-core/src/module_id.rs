@@ -136,12 +136,6 @@ impl ModuleId {
 pub const FIRST_DYNAMIC_MODULE_LOCAL: u32 = 1024;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct FuncId {
-    pub module: ModuleId,
-    pub local: u32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TypeConstructorId {
     pub module: ModuleId,
     pub local: u32,
@@ -309,6 +303,22 @@ pub struct ModuleResolver {
 }
 
 impl ModuleResolver {
+    pub(crate) fn builtin_inventory(builtins: impl IntoIterator<Item = (String, u32)>) -> Self {
+        Self {
+            crate_name: "std".into(),
+            standalone: false,
+            workspace_root: PathBuf::new(),
+            source_root: PathBuf::new(),
+            root_path: PathBuf::new(),
+            root_id: ModuleCName::builtin("std/prelude"),
+            dependencies: BTreeMap::new(),
+            builtins: builtins.into_iter().collect(),
+            selected_entry: None,
+            workspace: None,
+            tests: None,
+        }
+    }
+
     pub fn standalone(root_module: &Path) -> Result<Self, ResolveModuleError> {
         Self::standalone_with_source(root_module, None)
     }

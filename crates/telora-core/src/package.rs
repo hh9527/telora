@@ -127,6 +127,10 @@ impl std::error::Error for PackageError {}
 impl WorkspaceSpec {
     pub fn discover(start: &Path) -> Result<Self, PackageError> {
         let start = absolute(start)?;
+        // Workspace containment compares canonical member directories. Use
+        // the same identity for discovery, including relative paths with '..'.
+        let start = fs::canonicalize(&start).map_err(|error| PackageError::new(
+            format!("cannot resolve workspace discovery start {}: {error}", start.display())))?;
         let search = if start.is_file() {
             start.parent().unwrap_or(&start)
         } else {
@@ -447,6 +451,24 @@ impl ResolvedWorkspace {
 
     pub fn crate_for_path(&self, path: &Path) -> Result<&str, PackageError> {
         let path = absolute(path)?;
+        // Editors may ask about a new file before it exists. Canonicalize
+        // its existing ancestor, retaining the unpublished path suffix.
+        let mut ancestor = path.as_path();
+        let mut suffix = Vec::new();
+        let mut path = loop {
+            match fs::canonicalize(ancestor) {
+                Ok(path) => break path,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let Some(name) = ancestor.file_name() else {
+                        return Err(PackageError::new(format!("cannot resolve {}: {error}", ancestor.display())));
+                    };
+                    suffix.push(name);
+                    ancestor = ancestor.parent().expect("named path has a parent");
+                }
+                Err(error) => return Err(PackageError::new(format!("cannot resolve {}: {error}", ancestor.display()))),
+            }
+        };
+        for name in suffix.into_iter().rev() { path.push(name); }
         let mut matches = self
             .crates
             .iter()

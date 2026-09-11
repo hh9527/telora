@@ -1,0 +1,9 @@
+import "std/array" as array;
+
+@check(fn(value) {
+    if array.length(value.by) == 0 { Err(blame!("empty groups", value.by)) }
+    else if value.take <= 0 { Err(blame!("invalid take", value.take)) }
+    else { Ok(()) }
+})
+type Request = struct {by: Array(String), take: Int};
+export {Request};

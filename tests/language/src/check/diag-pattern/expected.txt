@@ -1,1 +1,1 @@
-cannot unify Int with enum {None, Some(
+cannot unify Int with Option

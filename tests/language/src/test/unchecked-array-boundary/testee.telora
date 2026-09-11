@@ -1,0 +1,21 @@
+import "./provider" as model;
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+def request: Fn(Int) -> model.Request = fn(take) { {by: ["region"], take} };
+
+export def accepts = test.should_ok(fn() { expect(request(1).take == 1) });
+export def empty = test.should_fail_with(fn() {
+    let value: model.Request = {by: [], take: 1};
+    value
+}, "empty groups");
+export def rejects_completion = test.should_fail_with(fn() {
+    let candidate: Unchecked(model.Request) = {by: ["region"], take: 0};
+    let value: model.Request = candidate;
+    value
+}, "invalid take");
+export def accepts_completion = test.should_ok(fn() {
+    let candidate: Unchecked(model.Request) = {by: ["region"], take: 2};
+    let value: model.Request = candidate;
+    expect(value.take == 2)
+});

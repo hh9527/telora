@@ -1,1 +1,1 @@
-Struct has no field "present"
+cannot unify {present: Int} with {other: Int}

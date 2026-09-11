@@ -43,12 +43,13 @@ fn fixture() -> PathBuf {
 #[test]
 fn discovers_workspace_and_authoritative_modules() {
     let root = fixture();
-    let spec = WorkspaceSpec::discover(&root.join("app/src")).unwrap();
+    let spec = WorkspaceSpec::discover(&root.join("app/src/../src")).unwrap();
     let workspace = spec.resolve_workspace_only().unwrap();
     assert_eq!(
-        workspace.crate_for_path(&root.join("app/src")).unwrap(),
+        workspace.crate_for_path(&root.join("app/src/../src")).unwrap(),
         "app"
     );
+    assert_eq!(workspace.crate_for_path(&root.join("app/src/new.telora")).unwrap(), "app");
     let module = workspace.module("app", "@src/model").unwrap();
     assert_eq!(module.logical_path, Path::new("model"));
     assert_eq!(module.format, ModuleFormat::Telora);

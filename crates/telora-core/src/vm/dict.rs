@@ -1,7 +1,22 @@
+// The type image, when linked, supplies the native's exact result identity.
+// Untyped bytecode clients have no image; no signature is inferred from values.
+fn dict_result_type(signature: Option<Val>, background: &Heap, function: &BytecodeFunction, pc: usize) -> Result<Option<crate::mir::TypeId>, RuntimeError> {
+    let Some(types) = &background.solved_types else { return Ok(None); };
+    let signature = signature.ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode, "Dict native requires a compiled signature", function, pc))?;
+    let signature = solved_metadata_id(signature, types, function, pc)?;
+    let signature = &types.types[signature.index()];
+    if signature.constructor != crate::mir::TypeConstructor::Function || signature.arguments.is_empty() {
+        return Err(error(RuntimeErrorKind::InvalidBytecode, "invalid Dict native signature", function, pc));
+    }
+    let result = *signature.arguments.last().unwrap();
+    Ok((types.types[result.index()].constructor == crate::mir::TypeConstructor::Dict).then_some(result))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_core_dict(
     operation: CoreDictFunction,
     arguments: &[Val],
+    output_type: Option<crate::mir::TypeId>,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -248,7 +263,7 @@ fn run_core_dict(
         }
     };
     Ok(VmAction::Return {
-        value,
+        value: output_type.map_or(value, |ty| value.with_type_id(crate::TypeId::solved(ty))),
         return_target,
     })
 }
@@ -257,6 +272,7 @@ fn run_core_dict(
 fn start_dict_continuation(
     function: CoreDictFunction,
     arguments: Vec<Val>,
+    output_type: Option<crate::mir::TypeId>,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
@@ -314,6 +330,7 @@ fn start_dict_continuation(
     next_dict_action(
         DictContinuation {
             function,
+            output_type,
             entries,
             callback,
             next_index: 0,
@@ -435,7 +452,7 @@ fn next_dict_action(
             )
         };
         return Ok(VmAction::Return {
-            value,
+            value: continuation.output_type.map_or(value, |ty| value.with_type_id(crate::TypeId::solved(ty))),
             return_target: continuation.return_target,
         });
     }
@@ -579,4 +596,3 @@ fn core_dict_heap_error(
         pc,
     )
 }
-

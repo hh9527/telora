@@ -1,1 +1,1 @@
-indirect recursive definition requires an explicit contract
+cannot unify Int with String

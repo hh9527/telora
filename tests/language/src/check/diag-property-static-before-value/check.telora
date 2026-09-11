@@ -1,0 +1,20 @@
+import "std/array" as array;
+import "std/value" {Value};
+import "@src/support" as support;
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    let skipped_execution = match support.record_field(actual, "stdout") {
+        Some(Value.Array(items)) => array.fold(items, False, fn(found, item) {
+            found || (support.string_field_equals(item, "record", "summary")
+                && match support.record_field(item, "execution_seconds") {
+                    Some(Value.Float(seconds)) => seconds == 0.0,
+                    Some(Value.Int(seconds)) => seconds == 0,
+                    _ => False,
+                })
+        }),
+        _ => False,
+    };
+    support.bool_value(skipped_execution
+        && support.failed_with(actual, "cannot unify String with Int")
+        && !support.failed_with(actual, "property provider must not run before static checking"))
+};

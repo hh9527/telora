@@ -7,6 +7,15 @@
 
 ## Summary
 
+RFC 0280 migration clarification: query records consume the single MIR's final
+pass outcomes, including for invalid source. Successfully solved definitions
+remain `authority: authoritative`; parse diagnostics do not move them into a
+second recovery graph. Type display retains applied generic arguments (for
+example `TypeOf(Tree(Int))` and `Array(Box((N, M)))`), uses `Bool` for the native
+boolean family, and renders opaque native identities as `opaque(module#Name)`.
+Quantified type families display their parameterized type facet, such as
+`for(A) TypeOf(Box(A))`, rather than a legacy descriptor with erased arguments.
+
 Telora exposes semantic observation through one structured query command:
 
 ```text

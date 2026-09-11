@@ -17,6 +17,9 @@ struct ExecutionFrame {
     pc: usize,
     return_target: ReturnTarget,
     rule_boundary: Option<crate::Loc>,
+    /// A native continuation owns pending completion/failure work. A tail
+    /// transfer retains that boundary until its callee has produced a value.
+    tail_return: Option<Register>,
 }
 
 #[derive(Debug)]
@@ -68,6 +71,7 @@ trait NativeContinuation: fmt::Debug {
 #[derive(Debug)]
 struct DiagnosticContinuation {
     diagnostic_start: usize,
+    demand_start: usize,
     types: DiagnosticTypes,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
@@ -101,6 +105,7 @@ struct ArrayContinuation {
 #[derive(Debug)]
 struct DictContinuation {
     function: CoreDictFunction,
+    output_type: Option<crate::mir::TypeId>,
     entries: Vec<(String, Val)>,
     callback: Val,
     next_index: usize,
@@ -118,17 +123,6 @@ struct InterpreterMemoContinuation {
     identity: usize,
     arguments: Vec<crate::TypeId>,
     return_target: ReturnTarget,
-    trace_frame: RuntimeFrame,
-}
-
-#[derive(Debug)]
-struct CodecDisplayContinuation {
-    node: CodecNode,
-    diagnostic_input: Val,
-    return_target: ReturnTarget,
-    rule_boundary: Option<crate::Loc>,
-    call_function: Arc<BytecodeFunction>,
-    call_pc: usize,
     trace_frame: RuntimeFrame,
 }
 
@@ -184,10 +178,6 @@ impl<'a> WorkView<'a> {
 }
 
 impl WorkWorld {
-    pub(crate) fn new(heap: Heap, root: Val) -> Self {
-        Self { heap, root }
-    }
-
     pub(crate) fn root_ref<'a>(&'a self, world: &'a Heap) -> ValueRef<'a> {
         self.value_ref(world, self.root)
     }
@@ -215,90 +205,6 @@ impl WorkWorld {
     ) -> Result<(Self, Val), crate::heap::HeapError> {
         let roots = relocate_work_roots(&mut self.heap, background, &source.heap, &[source.root])?;
         Ok((self, roots[0]))
-    }
-
-    fn module_member(
-        &self,
-        world: &Heap,
-        name: &str,
-    ) -> Result<Option<Val>, crate::heap::HeapError> {
-        let view = WorkView {
-            main: world,
-            work: &self.heap,
-        }
-        .heap_view();
-        let DecodedValue::Module(handle) = self.root.value() else {
-            return Err(crate::heap::HeapError::new(
-                "execution root is not a Module",
-            ));
-        };
-        let Some(field) = self.heap.find_text(name).or_else(|| world.find_text(name)) else {
-            return Ok(None);
-        };
-        view.exports_get(handle, field)
-    }
-
-    pub(crate) fn module_member_ref<'a>(
-        &'a self,
-        world: &'a Heap,
-        name: &str,
-    ) -> Result<Option<ValueRef<'a>>, crate::heap::HeapError> {
-        self.module_member(world, name)
-            .map(|value| value.map(|value| self.value_ref(world, value)))
-    }
-
-    pub(crate) fn member_function_arity(
-        &self,
-        world: &Heap,
-        name: &str,
-    ) -> Result<Option<usize>, crate::heap::HeapError> {
-        let Some(value) = self.module_member(world, name)? else {
-            return Ok(None);
-        };
-        WorkView {
-            main: world,
-            work: &self.heap,
-        }
-        .heap_view()
-        .resolved_function_arity(value)
-    }
-
-    pub(crate) fn seal_module(mut self) -> Result<Self, crate::heap::HeapError> {
-        self.root = self.heap.seal_module(self.root)?;
-        Ok(self)
-    }
-
-    pub(crate) fn module_fields(
-        &self,
-        world: &Heap,
-    ) -> Result<Vec<String>, crate::heap::HeapError> {
-        let view = WorkView {
-            main: world,
-            work: &self.heap,
-        }
-        .heap_view();
-        let DecodedValue::Module(handle) = self.root.value() else {
-            return Err(crate::heap::HeapError::new(
-                "execution root is not a Module",
-            ));
-        };
-        view.exports_fields(handle)
-            .map(|fields| fields.into_iter().map(str::to_owned).collect())
-    }
-
-    pub(crate) fn publish(
-        self,
-        world: &mut Heap,
-    ) -> Result<PersistentValue, crate::heap::HeapError> {
-        publish_module_root(world, &self.heap, self.root)
-    }
-
-    pub(crate) fn publish_module(
-        mut self,
-        world: &mut Heap,
-    ) -> Result<PersistentValue, crate::heap::HeapError> {
-        self.root = self.heap.seal_module(self.root)?;
-        publish_module_root(world, &self.heap, self.root)
     }
 
     pub(crate) fn into_reducer_transition(

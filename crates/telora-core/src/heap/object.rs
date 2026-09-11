@@ -5,31 +5,10 @@ pub(crate) enum RuntimePrototype {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ExportTable {
-    shape: ShapeId,
-    values: Box<[Val]>,
-}
-
-#[derive(Clone, Debug)]
 pub(crate) enum Object {
     Reserved,
     OpenFunc,
     Bytes(Box<[u8]>),
-    DeclaredType {
-        type_id: crate::TypeId,
-        id: crate::value::DeclaredTypeId,
-        name: Arc<str>,
-        body: Val,
-        sealed: bool,
-        application_arguments: Option<Box<[Val]>>,
-    },
-    SymbolicType {
-        id: crate::value::DeclaredTypeId,
-        name: Arc<str>,
-        body: Val,
-        sealed: bool,
-        application_arguments: Option<Box<[Val]>>,
-    },
     Opaque(crate::value::OpaqueValue),
     Array(Box<[Val]>),
     Tuple(Box<[Val]>),
@@ -41,23 +20,19 @@ pub(crate) enum Object {
         shape: ShapeId,
         values: Box<[Val]>,
     },
-    Module {
-        exports: ExportTable,
-    },
     Closure {
         identity: Arc<()>,
         prototype: RuntimePrototype,
         upvalues: Box<[Val]>,
     },
+    FunctionFamily {
+        identity: Arc<()>,
+        variants: Box<[(Box<[crate::mir::TypeId]>, Val)]>,
+    },
     Dyn {
         identity: Arc<()>,
         descriptor: Val,
         value: Val,
-        scheme: Option<crate::TypeScheme>,
-        origin: Option<Arc<str>>,
-    },
-    TypeSlot {
-        value: Option<Val>,
     },
     ByteCodeProto {
         code: Arc<FuncByteCode>,
@@ -125,50 +100,18 @@ impl TextTable {
 }
 
 pub(crate) struct Heap {
+    pub(crate) solved_graph: Option<crate::execution_graph::ExecutionGraph>,
+    pub(crate) solved_evaluation: Option<crate::execution_graph::Evaluation<Val>>,
+    pub(crate) solved_tasks: Vec<Option<Val>>,
+    pub(crate) solved_failures: Vec<crate::RuntimeError>,
+    // Installed once in the main world by the solved execution path. Work heaps
+    // borrow it through their background; no descriptor reconstruction occurs.
+    pub(crate) solved_types: Option<crate::type_image::TypeImage>,
     storage: Storage,
-    types: crate::type_store::SharedTypeStore,
     objects: Vec<Object>,
     text: TextTable,
     native_types: HashMap<crate::value::NativeTypeId, crate::NativeType>,
     shapes: Vec<Box<[InternId]>>,
     shape_slots: HashMap<Vec<InternId>, u32>,
-    bootstrap_root: Option<PersistentValue>,
-    functions: HashMap<crate::FuncId, Option<Val>>,
-    declared_types: HashMap<crate::TypeId, Val>,
-    properties: BTreeMap<PropertyKey, Val>,
-    property_attr_type: Option<crate::TypeId>,
     memoized_interpreters: HashMap<usize, HashMap<Vec<crate::TypeId>, Val>>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum PropertyKey {
-    Construction {
-        constructor: crate::TypeConstructorId,
-        variant: Option<u32>,
-    },
-    Ty {
-        ty: crate::TypeId,
-        property_ty: crate::TypeId,
-    },
-    Field {
-        ty: crate::TypeId,
-        member_index: u32,
-        property_ty: crate::TypeId,
-    },
-    Variant {
-        ty: crate::TypeId,
-        member_index: u32,
-        property_ty: crate::TypeId,
-    },
-}
-
-impl PropertyKey {
-    pub(crate) const fn property_type(self) -> Option<crate::TypeId> {
-        match self {
-            Self::Construction { .. } => None,
-            Self::Ty { property_ty, .. }
-            | Self::Field { property_ty, .. }
-            | Self::Variant { property_ty, .. } => Some(property_ty),
-        }
-    }
 }

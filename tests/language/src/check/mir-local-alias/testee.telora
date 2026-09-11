@@ -1,0 +1,5 @@
+export def result = {
+    let identity = fn(value) { value };
+    let alias = identity;
+    (alias(1), alias("text"))
+};

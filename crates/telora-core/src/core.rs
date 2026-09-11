@@ -70,25 +70,25 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
                 (
                     "should_ok",
                     NativeFunction::new_with_native_type("std/test.should_ok", 1, 0, |cx| {
-                        cx.make_test(crate::module::TestKind::ShouldOk)
+                        cx.make_test(crate::test_protocol::TestKind::ShouldOk)
                     }),
                 ),
                 (
                     "should_fail",
                     NativeFunction::new_with_native_type("std/test.should_fail", 1, 0, |cx| {
-                        cx.make_test(crate::module::TestKind::ShouldFail)
+                        cx.make_test(crate::test_protocol::TestKind::ShouldFail)
                     }),
                 ),
                 (
                     "should_fail_with",
                     NativeFunction::new_with_native_type("std/test.should_fail_with", 2, 0, |cx| {
-                        cx.make_test(crate::module::TestKind::ShouldFailWith)
+                        cx.make_test(crate::test_protocol::TestKind::ShouldFailWith)
                     }),
                 ),
                 (
                     "with_fixtures",
                     NativeFunction::new_with_native_type("std/test.with_fixtures", 2, 0, |cx| {
-                        cx.make_test(crate::module::TestKind::Fixtures)
+                        cx.make_test(crate::test_protocol::TestKind::Fixtures)
                     }),
                 ),
             ],
@@ -134,40 +134,7 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
             native_id: 25,
             name: TYPE_PROPERTY_MODULE,
             source: include_str!("../modules/std/type-property.telora"),
-            functions: vec![
-                (
-                    "get_type_prop",
-                    NativeFunction::new(
-                        "std/type-property.get_type_prop",
-                        2,
-                        crate::property::native_get_type,
-                    ),
-                ),
-                (
-                    "get_field_prop",
-                    NativeFunction::new(
-                        "std/type-property.get_field_prop",
-                        3,
-                        crate::property::native_get_field,
-                    ),
-                ),
-                (
-                    "get_variant_prop",
-                    NativeFunction::new(
-                        "std/type-property.get_variant_prop",
-                        3,
-                        crate::property::native_get_variant,
-                    ),
-                ),
-                (
-                    "evidence",
-                    NativeFunction::new(
-                        "std/type-property.evidence",
-                        3,
-                        crate::property::native_evidence,
-                    ),
-                ),
-            ],
+            functions: vec![],
         },
         BuiltinModuleSpec {
             native_id: 23,

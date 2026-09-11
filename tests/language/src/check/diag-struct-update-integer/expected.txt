@@ -1,1 +1,1 @@
-struct update requires a named struct base
+struct update requires a named struct operand

@@ -17,6 +17,7 @@ impl<'a> JsonWriter<'a> {
 
     fn value(&mut self, value: Val, depth: usize) -> Result<(), String> {
         match value.value() {
+            DecodedValue::SolvedType(_) => return Err("JSON cannot encode Type metadata".into()),
             DecodedValue::Failed(_) => {
                 return Err("JSON cannot encode a failed evaluation node".into());
             }
@@ -49,9 +50,6 @@ impl<'a> JsonWriter<'a> {
             DecodedValue::Bytes(_) => return Err("JSON cannot encode Bytes".into()),
             DecodedValue::Opaque(_) => return Err("JSON cannot encode Opaque values".into()),
             DecodedValue::NativeType(_) => return Err("JSON cannot encode Type values".into()),
-            DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) => {
-                return Err("JSON cannot encode Type values".into());
-            }
             DecodedValue::Tuple(_) => {
                 return Err("JSON cannot encode Tuple; use a codec first".into());
             }
@@ -59,12 +57,7 @@ impl<'a> JsonWriter<'a> {
                 return Err("JSON cannot encode Tagged; use a codec first".into());
             }
             DecodedValue::Func(_) => return Err("JSON cannot encode Func".into()),
-            DecodedValue::FuncRef(_) => return Err("JSON cannot encode Func".into()),
             DecodedValue::Dyn(_) => return Err("JSON cannot encode Dyn".into()),
-            DecodedValue::Module(_) => return Err("JSON cannot encode Module".into()),
-            DecodedValue::TypeSlot(_) => {
-                return Err("JSON cannot encode an internal up-link".into());
-            }
         }
         Ok(())
     }

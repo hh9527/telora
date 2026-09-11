@@ -1,1 +1,1 @@
-unit variants do not accept @check
+@check is supported on structs, newtypes and payload variants

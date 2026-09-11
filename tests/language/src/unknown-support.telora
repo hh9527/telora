@@ -1,0 +1,37 @@
+import "std/array" as array;
+import "std/value" {Value};
+import "./support" as support;
+
+export def unknown_at: Fn(Value, String, Int) -> Bool = fn(actual, source, line) {
+    let items = match support.record_field(actual, "stdout") {
+        Some(Value.Array(items)) => items,
+        _ => [],
+    };
+    let summary = array.fold(items, False, fn(found, item) {
+        found || (support.string_field_equals(item, "record", "summary")
+            && support.string_field_equals(item, "status", "error")
+            && match support.record_field(item, "unknown_types") {
+                Some(Value.Int(count)) => count > 0, _ => False,
+            }
+            && match support.record_field(item, "execution_seconds") {
+                Some(Value.Float(seconds)) => seconds == 0.0,
+                Some(Value.Int(seconds)) => seconds == 0,
+                _ => False,
+            })
+    });
+    let located = array.fold(items, False, fn(found, item) {
+        found || (support.string_field_equals(item, "message", "unknown type")
+            && match support.record_field(item, "labels") {
+                Some(Value.Array(labels)) => array.fold(labels, False, fn(found, label) {
+                    found || (support.string_field_equals(label, "source", source)
+                        && support.record_field(label, "primary") == Some(Value.True)
+                        && match support.record_field(label, "location") {
+                            Some(location) => support.record_field(location, "line") == Some(Value.Int(line)),
+                            _ => False,
+                        })
+                }),
+                _ => False,
+            })
+    });
+    support.exit_code(actual) == Some(1) && summary && located
+};

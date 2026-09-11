@@ -1,3 +1,6 @@
 import "std/test" as test;
 def bad = fail!("initialization failure");
-export def cannot_catch = test.should_fail(fn() { bad });
+def unread = fail!("unread initializer must remain lazy");
+export def a_demand_failure = test.should_fail_with(fn() { bad }, "initialization failure");
+export def b_cached_failure = test.should_fail(fn() { bad });
+export def initializer_failure: test.Test = fail!("test export initialization failure");

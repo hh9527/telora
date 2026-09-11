@@ -16,9 +16,19 @@ pub(crate) fn semantic_tag(
     heap: &mut Heap,
     target: SemanticDataTarget<'_>,
     tag: &str,
-    payload: Val,
+    mut payload: Val,
     location: Location,
 ) -> Val {
+    if tag == "Object" && let Some(owner) = target.type_id.solved_id() {
+        let types = heap.solved_types.as_ref()
+            .or_else(|| target.background.and_then(|heap| heap.solved_types.as_ref()))
+            .expect("solved data requires its session type image");
+        let payload_type = types.semantic_object_payload(owner)
+            .expect("solved data Object requires its closed Dict(Value) payload");
+        // Keep the parsed dictionary handle and its provenance; attach only
+        // the type ID already provided by the native Value contract.
+        payload = payload.with_type_id(crate::TypeId::solved(payload_type));
+    }
     let tag = Val::original(heap.atom(target.background, tag), Some(location));
     Val::original(
         DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload })),
@@ -159,6 +169,16 @@ pub(crate) struct ValidatedDataPlan {
 }
 
 impl ValidatedDataPlan {
+    /// Runtime string parsing attributes values to the input expression, not
+    /// to temporary parser SourceIds which are outside the session database.
+    pub(crate) fn set_location(&mut self, location: Location) {
+        for node in &mut self.nodes {
+            node.location = location;
+            if let DataPlanNodeKind::Object(fields) = &mut node.kind {
+                for field in fields.values_mut() { field.key_location = location; }
+            }
+        }
+    }
     pub(crate) fn scalar(&mut self, value: DataScalar, location: Location) -> DataNodeId {
         self.push(DataPlanNodeKind::Scalar(value), location)
     }

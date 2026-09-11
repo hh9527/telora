@@ -1,18 +1,17 @@
 impl Heap {
-    fn new(storage: Storage, types: crate::type_store::SharedTypeStore) -> Self {
+    fn new(storage: Storage) -> Self {
         Self {
             storage,
-            types,
+            solved_types: None,
+            solved_graph: None,
+            solved_evaluation: None,
+            solved_tasks: vec![],
+            solved_failures: vec![],
             objects: Vec::new(),
             text: TextTable::default(),
             native_types: HashMap::new(),
             shapes: Vec::new(),
             shape_slots: HashMap::new(),
-            bootstrap_root: None,
-            functions: HashMap::new(),
-            declared_types: HashMap::new(),
-            properties: BTreeMap::new(),
-            property_attr_type: None,
             memoized_interpreters: HashMap::new(),
         }
     }
@@ -50,238 +49,13 @@ impl Heap {
         self.objects.len()
     }
 
-    pub(crate) fn preallocate_func(&mut self, id: crate::FuncId) -> Result<(), HeapError> {
-        if self.storage != Storage::Main {
-            return Err(HeapError(
-                "static function slots must be preallocated in Main world",
-            ));
-        }
-        if self.functions.insert(id, None).is_some() {
-            return Err(HeapError("duplicate static function slot"));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn seal_static_func(
-        &mut self,
-        id: crate::FuncId,
-        value: Val,
-    ) -> Result<(), HeapError> {
-        if !matches!(
-            value.value(),
-            DecodedValue::Func(_) | DecodedValue::FuncRef(_)
-        ) {
-            return Err(HeapError(
-                "static function definition did not produce a closure",
-            ));
-        }
-        match self.functions.entry(id) {
-            std::collections::hash_map::Entry::Vacant(entry) if self.storage == Storage::Work => {
-                entry.insert(Some(value));
-                Ok(())
-            }
-            std::collections::hash_map::Entry::Occupied(mut entry) if entry.get().is_none() => {
-                entry.insert(Some(value));
-                Ok(())
-            }
-            std::collections::hash_map::Entry::Vacant(_) => {
-                Err(HeapError("unknown static function slot"))
-            }
-            std::collections::hash_map::Entry::Occupied(_) => {
-                Err(HeapError("static function slot is already sealed"))
-            }
-        }
-    }
-
-    pub(crate) fn static_func(&self, id: crate::FuncId) -> Option<Val> {
-        self.functions.get(&id).copied().flatten()
-    }
-
-    pub(crate) fn bootstrap_root(&self) -> Option<PersistentValue> {
-        self.bootstrap_root
-    }
-
-    pub(crate) fn set_bootstrap_root(&mut self, root: PersistentValue) {
-        debug_assert!(self.bootstrap_root.is_none());
-        self.bootstrap_root = Some(root);
-    }
-
-    pub(crate) fn module(
-        &mut self,
-        entries: impl IntoIterator<Item = (String, Val)>,
-    ) -> Result<Val, HeapError> {
-        let mut entries = entries.into_iter().collect::<Vec<_>>();
-        entries.sort_by(|left, right| left.0.cmp(&right.0));
-        if entries.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-            return Err(HeapError("Module exports contain a duplicate field"));
-        }
-        let mut fields = Vec::with_capacity(entries.len());
-        let mut values = Vec::with_capacity(entries.len());
-        for (field, value) in entries {
-            fields.push(self.intern(&field));
-            values.push(value);
-        }
-        let shape = self.intern_shape(fields);
-        let handle = self.allocate(Object::Module {
-            exports: ExportTable {
-                shape,
-                values: values.into_boxed_slice(),
-            },
-        });
-        Ok(Val::unknown(DecodedValue::Module(handle)))
-    }
-
-    pub(crate) fn seal_module(&mut self, root: Val) -> Result<Val, HeapError> {
-        if matches!(root.value(), DecodedValue::Module(_)) {
-            return Ok(root);
-        }
-        let DecodedValue::Dict(handle) = root.value() else {
-            return Err(HeapError(
-                "module evaluation must produce a Dict of exports",
-            ));
-        };
-        if handle.storage != self.storage {
-            return Err(HeapError("module exports Dict belongs to another world"));
-        }
-        let object = self
-            .objects
-            .get_mut(handle.slot as usize)
-            .ok_or(HeapError("module exports Dict is out of bounds"))?;
-        let Object::Dict { shape, values } = std::mem::replace(object, Object::Reserved) else {
-            return Err(HeapError("module exports handle has another object kind"));
-        };
-        *object = Object::Module {
-            exports: ExportTable { shape, values },
-        };
-        Ok(root.with_value(DecodedValue::Module(handle)))
-    }
 
     pub(crate) fn work() -> Self {
-        Self::new(Storage::Work, crate::type_store::shared_type_store())
+        Self::new(Storage::Work)
     }
 
     pub(crate) fn main() -> Self {
-        Self::new(Storage::Main, crate::type_store::shared_type_store())
-    }
-
-    pub(crate) fn work_for(background: &Self) -> Self {
-        Self::new(Storage::Work, Arc::clone(&background.types))
-    }
-
-    pub(crate) fn canonical_declared_type_id(
-        &self,
-        declared: &crate::value::DeclaredTypeId,
-    ) -> Result<crate::TypeId, HeapError> {
-        let mut types = self
-            .types
-            .lock()
-            .map_err(|_| HeapError("type store poisoned"))?;
-        let arguments = declared
-            .arguments()
-            .iter()
-            .map(|argument| types.intern_descriptor(argument))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| {
-                HeapError::owned(format!("declared type argument is not canonical: {error}"))
-            })?;
-        Ok(match types.begin(declared.constructor(), arguments) {
-            crate::type_store::InternType::Existing(id)
-            | crate::type_store::InternType::Reserved(id) => id,
-        })
-    }
-
-    pub(crate) fn canonical_descriptor_type_id(
-        &self,
-        descriptor: &crate::types::TypeDescriptor,
-    ) -> Result<crate::TypeId, HeapError> {
-        self.types
-            .lock()
-            .map_err(|_| HeapError("type store poisoned"))?
-            .intern_descriptor(descriptor)
-            .map_err(HeapError::owned)
-    }
-
-    pub(crate) fn canonical_type_value_id(
-        &self,
-        value: crate::ValueRef<'_>,
-        path: &str,
-    ) -> Result<crate::TypeId, HeapError> {
-        crate::types::canonical_type_ref_id(value, path, &self.types).map_err(HeapError::owned)
-    }
-
-    pub(crate) fn canonical_type_name(
-        &self,
-        type_id: crate::TypeId,
-    ) -> Result<Option<String>, HeapError> {
-        let types = self
-            .types
-            .lock()
-            .map_err(|_| HeapError("type store poisoned"))?;
-        Ok(types.get(type_id).map(|data| data.name.clone()))
-    }
-
-    pub(crate) fn property_attr_value(&mut self, type_id: crate::TypeId, bits: u32) -> Val {
-        let field = self.intern("bits");
-        let shape = self.intern_shape(vec![field]);
-        Val::unknown(DecodedValue::Dict(self.allocate(Object::Dict {
-            shape,
-            values: Box::new([self.int(i64::from(bits))]),
-        })))
-        .with_type_id(type_id)
-    }
-
-    pub(crate) fn option_value(&mut self, value: Option<Val>) -> Val {
-        let Some(value) = value else {
-            return Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None));
-        };
-        Val::new(
-            DecodedValue::Tagged(self.allocate(Object::Tagged {
-                tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Some), value.loc()),
-                payload: value,
-            })),
-            value.loc(),
-        )
-    }
-
-    pub(crate) fn stage_property(
-        &mut self,
-        key: PropertyKey,
-        value: Val,
-    ) -> Result<(), HeapError> {
-        if self.storage != Storage::Work {
-            return Err(HeapError("property staging requires a Work world"));
-        }
-        if key.property_type().is_some_and(|ty| value.type_id() != Some(ty)) {
-            return Err(HeapError(
-                "staged property runtime witness does not match its property TypeId",
-            ));
-        }
-        self.properties.insert(key, value);
-        Ok(())
-    }
-
-    pub(crate) fn property_attr_type(&self) -> Option<crate::TypeId> {
-        self.property_attr_type
-    }
-
-    pub(crate) fn establish_property_attr_type(
-        &mut self,
-        type_id: crate::TypeId,
-    ) -> Result<(), HeapError> {
-        if self.storage != Storage::Work {
-            return Err(HeapError(
-                "PropertyAttr staging requires a Work world",
-            ));
-        }
-        match self.property_attr_type {
-            Some(existing) if existing != type_id => {
-                Err(HeapError("PropertyAttr TypeId is already established"))
-            }
-            _ => {
-                self.property_attr_type = Some(type_id);
-                Ok(())
-            }
-        }
+        Self::new(Storage::Main)
     }
 
     #[cfg(test)]
@@ -299,18 +73,6 @@ impl Heap {
             slot: self.objects.len() as u32,
         };
         self.objects.push(object);
-        handle
-    }
-
-    pub(crate) fn allocate_declared_type(&mut self, object: Object) -> Handle {
-        let Object::DeclaredType { type_id, .. } = &object else {
-            panic!("allocate_declared_type requires declared type metadata")
-        };
-        let type_id = *type_id;
-        let handle = self.allocate(object);
-        self.declared_types
-            .entry(type_id)
-            .or_insert_with(|| Val::unknown(DecodedValue::DeclaredType(handle)));
         handle
     }
 
@@ -339,36 +101,20 @@ impl Heap {
         Ok(())
     }
 
-    pub(crate) fn initialize_type_slot(
-        &mut self,
-        handle: Handle,
-        value: Val,
-    ) -> Result<(), HeapError> {
-        if handle.storage != Storage::Work {
-            return Err(HeapError("Main up-links are read-only"));
-        }
-        let Object::TypeSlot { value: slot } = self.object_mut(handle)? else {
-            return Err(HeapError("handle is not an up-link"));
-        };
-        if slot.is_some() {
-            return Err(HeapError("up-link is already initialized"));
-        }
-        *slot = Some(value);
-        Ok(())
-    }
-
     pub(crate) fn seal_local_func(
         &mut self,
+        main: &Heap,
         target: Handle,
         source: Handle,
     ) -> Result<(), HeapError> {
-        if target.storage != Storage::Work || source.storage != Storage::Work {
+        if target.storage != Storage::Work {
             return Err(HeapError(
-                "function refs can only be sealed in their Work world",
+                "function ref targets can only be sealed in their Work world",
             ));
         }
-        let closure = match self.object(source)? {
-            Object::Closure { .. } => self.object(source)?.clone(),
+        let source_heap: &Heap = if source.storage == Storage::Main { main } else { self };
+        let closure = match source_heap.object(source)? {
+            closure @ (Object::Closure { .. } | Object::FunctionFamily { .. }) => closure.clone(),
             _ => return Err(HeapError("function ref source is not a sealed function")),
         };
         let slot = self.object_mut(target)?;
@@ -503,13 +249,6 @@ impl Heap {
                         .get(key)
                         .copied()
                         .ok_or(HeapError("external value link is unresolved"))?;
-                    if key.starts_with("\0declared-owner:")
-                        && !matches!(resolved.value(), DecodedValue::DeclaredType(_))
-                    {
-                        return Err(HeapError(
-                            "declared owner external link did not resolve to a TypeRef",
-                        ));
-                    }
                     return Ok(resolved);
                 }
                 Ok(match value {
@@ -527,6 +266,25 @@ impl Heap {
                     )),
                     Constant::Atom(value) => Val::unknown(self.atom(background, value.name())),
                     Constant::Native(function) => self.native_closure(*function, []),
+                    Constant::SolvedNative { function, signature, native_type } => {
+                        let types = self.solved_types.as_ref().or_else(|| background.and_then(|h| h.solved_types.as_ref()));
+                        if types.is_none_or(|types| signature.index() >= types.types.len()) {
+                            return Err(HeapError("native signature is not in the solved type image"));
+                        }
+                        let mut captures = vec![];
+                        if let Some(ty) = native_type {
+                            captures.push(self.native_type_value(ty.clone()));
+                        }
+                        captures.push(Val::unknown(DecodedValue::SolvedType(*signature)));
+                        self.native_closure(*function, captures)
+                    }
+                    Constant::SolvedType(id) => {
+                        let types = self.solved_types.as_ref().or_else(|| background.and_then(|h| h.solved_types.as_ref()));
+                        if types.is_none_or(|types| id.index() >= types.types.len()) {
+                            return Err(HeapError("type metadata ID is not in the solved type image"));
+                        }
+                        Val::unknown(DecodedValue::SolvedType(*id))
+                    }
                 })
             })
             .collect::<Result<Box<[_]>, _>>()?;

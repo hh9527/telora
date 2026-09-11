@@ -1,1 +1,1 @@
-Struct has no field "missing"
+record {present: Int} has no field "missing"

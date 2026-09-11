@@ -1,1 +1,1 @@
-cannot infer monomorphic binding
+cannot infer numeric operand type

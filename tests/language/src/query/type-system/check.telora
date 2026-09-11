@@ -20,10 +20,10 @@ def has_type: Fn(Value, String, String) -> Bool = fn(actual, name, expected) {
 
 export def check: Fn(Value) -> Value = fn(actual) {
     if support.exit_code(actual) == Some(0)
-        && has_type(actual, "Box", "for(A) Fn(TypeOf(A)) -> TypeOf(Box)")
-        && has_type(actual, "Tree", "for(A) Fn(TypeOf(A)) -> TypeOf(Tree)")
-        && has_type(actual, "IntTree", "TypeOf(Tree)")
-        && has_type(actual, "collect", "for(N, M) Fn(Array<Box>) -> Array<Box>")
+        && has_type(actual, "Box", "for(A) TypeOf(Box(A))")
+        && has_type(actual, "Tree", "for(A) TypeOf(Tree(A))")
+        && has_type(actual, "IntTree", "TypeOf(Tree(Int))")
+        && has_type(actual, "collect", "for(N, M) Fn(Array(Box((N, M)))) -> Array(Box((N, M)))")
         && has_type(actual, "identity", "for(A) Fn(A) -> A")
         && has_type(actual, "keep", "for(A) Fn(Int, A) -> (Int, A)")
         && has_type(actual, "nested", "Fn(Int) -> Fn(Int) -> Int")

@@ -1,6 +1,7 @@
 # RFC 0267: Deferred Tests and Host-Prepared Fixture Sources
 
 - Status: Accepted
+- Partial supersession by [RFC 0280](0280-demand-driven-inference-materialization.md#test-command-assembly): static test discovery, session-owned lazy initialization and demand-cycle detection replace eager module initialization and import-cycle rejection. Fixture and report contracts remain.
 - Partial supersession by [RFC 0269](0269-remove-any.md): Discovery boundary fixtures use typed containers or explicit Dyn instead of Any erasure.
 - Tracking: [#151](https://github.com/hh9527/telora/issues/151)
 - Builds on: RFC 0266

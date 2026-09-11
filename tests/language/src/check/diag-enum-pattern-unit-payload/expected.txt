@@ -1,1 +1,1 @@
-unit enum member does not accept a payload pattern
+nullary constructor has no payload

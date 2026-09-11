@@ -15,6 +15,22 @@ pub struct LabelId(pub u32);
 
 #[derive(Clone, Debug)]
 pub enum Operation {
+    StampType { dst: RegisterId, src: RegisterId, ty: crate::mir::TypeId },
+    CheckedCast { dst: RegisterId, src: RegisterId, source: crate::mir::TypeId, target: crate::mir::TypeId },
+    MakeNewtype { dst: RegisterId, ty: crate::mir::TypeId, payload: RegisterId },
+    HasTypeProp { dst: RegisterId, owner: RegisterId, property: RegisterId },
+    HasMemberProp { dst: RegisterId, owner: RegisterId, index: RegisterId, property: RegisterId, variant: bool },
+    GetMemberProp { dst: RegisterId, owner: RegisterId, index: RegisterId, property: RegisterId, variant: bool },
+    GetTypeProp { dst: RegisterId, owner: RegisterId, property: RegisterId },
+    MakeSome { dst: RegisterId, value: RegisterId },
+    Demand { dst: RegisterId, node: crate::execution_graph::NodeId },
+    InstallTask { node: crate::execution_graph::NodeId, src: RegisterId },
+    MakeVariant {
+        dst: RegisterId,
+        ty: crate::mir::TypeId,
+        variant: u32,
+        payload: Option<RegisterId>,
+    },
     LoadConst {
         dst: RegisterId,
         constant: ConstantId,
@@ -23,32 +39,12 @@ pub enum Operation {
         dst: RegisterId,
         src: RegisterId,
     },
-    OwnDeclared {
-        dst: RegisterId,
-        owner: RegisterId,
-        value: RegisterId,
-    },
     AllocFunc {
         dst: RegisterId,
-        static_id: Option<crate::FuncId>,
     },
     SealFunc {
         target: RegisterId,
         source: RegisterId,
-    },
-    AllocTypeSlot {
-        dst: RegisterId,
-    },
-    ReadTypeSlot {
-        dst: RegisterId,
-        link: RegisterId,
-    },
-    SealTypeSlot {
-        link: RegisterId,
-        src: RegisterId,
-    },
-    AssertTypeSlotReady {
-        link: RegisterId,
     },
     Add {
         dst: RegisterId,
@@ -201,6 +197,16 @@ pub enum Operation {
     GetTaggedPayload {
         dst: RegisterId,
         value: RegisterId,
+    },
+    MakeFunctionFamily {
+        dst: RegisterId,
+        identity: Option<RegisterId>,
+        variants: Vec<(Vec<crate::mir::TypeId>, RegisterId)>,
+    },
+    SpecializeFunction {
+        dst: RegisterId,
+        family: RegisterId,
+        arguments: Vec<crate::mir::TypeId>,
     },
     MakeClosure {
         dst: RegisterId,
@@ -382,32 +388,28 @@ fn lower_operation(
             dst: register(dst)?,
             src: register(src)?,
         },
-        Operation::OwnDeclared { dst, owner, value } => Instruction::OwnDeclared {
+        Operation::HasTypeProp { dst, owner, property } => Instruction::HasTypeProp { dst: register(dst)?, owner: register(owner)?, property: register(property)? },
+        Operation::HasMemberProp { dst, owner, index, property, variant } => Instruction::HasMemberProp { dst: register(dst)?, owner: register(owner)?, index: register(index)?, property: register(property)?, variant },
+        Operation::GetMemberProp { dst, owner, index, property, variant } => Instruction::GetMemberProp { dst: register(dst)?, owner: register(owner)?, index: register(index)?, property: register(property)?, variant },
+        Operation::GetTypeProp { dst, owner, property } => Instruction::GetTypeProp { dst: register(dst)?, owner: register(owner)?, property: register(property)? },
+        Operation::MakeSome { dst, value } => Instruction::MakeSome { dst: register(dst)?, value: register(value)? },
+        Operation::StampType { dst, src, ty } => Instruction::StampType { dst: register(dst)?, src: register(src)?, ty },
+        Operation::CheckedCast { dst, src, source, target } => Instruction::CheckedCast { dst: register(dst)?, src: register(src)?, source, target },
+        Operation::MakeNewtype { dst, ty, payload } => Instruction::MakeNewtype { dst: register(dst)?, ty, payload: register(payload)? },
+        Operation::Demand { dst, node } => Instruction::Demand { dst: register(dst)?, node },
+        Operation::InstallTask { node, src } => Instruction::InstallTask { node, src: register(src)? },
+        Operation::MakeVariant { dst, ty, variant, payload } => Instruction::MakeVariant {
             dst: register(dst)?,
-            owner: register(owner)?,
-            value: register(value)?,
+            ty,
+            variant,
+            payload: payload.map(register).transpose()?,
         },
-        Operation::AllocFunc { dst, static_id } => Instruction::AllocFunc {
+        Operation::AllocFunc { dst } => Instruction::AllocFunc {
             dst: register(dst)?,
-            static_id,
         },
         Operation::SealFunc { target, source } => Instruction::SealFunc {
             target: register(target)?,
             source: register(source)?,
-        },
-        Operation::AllocTypeSlot { dst } => Instruction::AllocTypeSlot {
-            dst: register(dst)?,
-        },
-        Operation::ReadTypeSlot { dst, link } => Instruction::ReadTypeSlot {
-            dst: register(dst)?,
-            link: register(link)?,
-        },
-        Operation::SealTypeSlot { link, src } => Instruction::SealTypeSlot {
-            link: register(link)?,
-            src: register(src)?,
-        },
-        Operation::AssertTypeSlotReady { link } => Instruction::AssertTypeSlotReady {
-            link: register(link)?,
         },
         Operation::Add { dst, left, right } => Instruction::Add {
             dst: register(dst)?,
@@ -563,6 +565,14 @@ fn lower_operation(
         Operation::GetTaggedPayload { dst, value } => Instruction::GetTaggedPayload {
             dst: register(dst)?,
             value: register(value)?,
+        },
+        Operation::MakeFunctionFamily { dst, identity, variants } => Instruction::MakeFunctionFamily {
+            dst: register(dst)?,
+            identity: identity.map(register).transpose()?,
+            variants: variants.into_iter().map(|(arguments, value)| Ok((arguments, register(value)?))).collect::<Result<_, AssembleError>>()?,
+        },
+        Operation::SpecializeFunction { dst, family, arguments } => Instruction::SpecializeFunction {
+            dst: register(dst)?, family: register(family)?, arguments,
         },
         Operation::MakeClosure {
             dst,

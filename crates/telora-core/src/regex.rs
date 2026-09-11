@@ -1,6 +1,6 @@
 use crate::{CallContext, NativeError, NativeType};
 use regex_syntax::hir::{Hir, HirKind};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 #[derive(Clone)]
 struct CompiledRegex {
@@ -17,32 +17,6 @@ impl PartialEq for CompiledRegex {
 }
 
 impl Eq for CompiledRegex {}
-
-#[derive(Clone)]
-enum ParsePlan {
-    String,
-    Int,
-    Float,
-    Regex {
-        compiled: CompiledRegex,
-        fields: BTreeMap<String, FieldPlan>,
-    },
-}
-
-#[derive(Clone)]
-struct FieldPlan {
-    plan: ParsePlan,
-    optional: bool,
-}
-
-pub(crate) enum ParsedValue {
-    String(String),
-    Int(i64),
-    Float(f64),
-    None,
-    Some(Box<Self>),
-    Struct(Vec<(String, Self)>),
-}
 
 fn regex_type(context: &CallContext<'_, '_>) -> Result<NativeType, NativeError> {
     context
@@ -146,230 +120,112 @@ pub(crate) fn native_is_match(context: &mut CallContext<'_, '_>) -> Result<(), N
     )
 }
 
-fn resolve_metadata(mut metadata: crate::ValueRef<'_>) -> Result<crate::ValueRef<'_>, NativeError> {
-    for _ in 0..128 {
-        if let Some(body) = metadata.declared_type_body() {
-            metadata = body;
-            continue;
-        }
-        if metadata.is_hidden_type_slot() {
-            metadata = metadata
-                .resolve_hidden_type_slot()
-                .map_err(NativeError::new)?;
-            continue;
-        }
-        return Ok(metadata);
-    }
-    Err(NativeError::new(
-        "std/regex metadata resolution exceeds the recursive type limit",
-    ))
+pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let native_type = regex_type(context)?;
+    let (types, graph) = context
+        .solved_image()
+        .ok_or_else(|| NativeError::new("std/regex.prepare requires a linked type image"))?;
+    let compiled = context
+        .value(context.argument(0)?)?
+        .as_opaque::<CompiledRegex>(&native_type)
+        .ok_or_else(|| NativeError::new("expected Regex"))?;
+    let property = context
+        .value(context.argument(1)?)?
+        .represented_type_id()
+        .ok_or_else(|| NativeError::new("expected solved ParseBy metadata"))?;
+    let owner = context
+        .value(context.argument(2)?)?
+        .represented_type_id()
+        .ok_or_else(|| NativeError::new("expected solved target metadata"))?;
+    solved_fields(compiled, owner, property, types, graph)?;
+    return context.copy(context.result(), context.argument(0)?);
 }
 
-fn option_payload(metadata: crate::ValueRef<'_>) -> Option<crate::ValueRef<'_>> {
-    let metadata = resolve_metadata(metadata).ok()?;
-    if metadata.dict_get("kind")?.as_atom()? != "Enum" {
-        return None;
-    }
-    let variants = metadata.dict_get("variants")?;
-    if variants.dict_fields()?.as_slice() != ["None", "Some"] {
-        return None;
-    }
-    let none = resolve_metadata(variants.dict_get("None")?).ok()?;
-    if none.as_atom()? != "None" {
-        return None;
-    }
-    let payload = resolve_metadata(variants.dict_get("Some")?).ok()?;
-    (!payload.as_atom().is_some_and(|atom| atom == "None")).then_some(payload)
-}
-
-fn attached_regex(
-    mut metadata: crate::ValueRef<'_>,
-    property_type: crate::TypeId,
-) -> Result<Option<CompiledRegex>, NativeError> {
-    for _ in 0..128 {
-        if metadata.is_hidden_type_slot() {
-            metadata = metadata
-                .resolve_hidden_type_slot()
-                .map_err(NativeError::new)?;
-            continue;
-        }
-        break;
-    }
-    let Some(property) = metadata.type_property(property_type) else {
-        return Ok(None);
-    };
-    let payload = property
-        .dict_get("regex")
-        .ok_or_else(|| NativeError::new("regex ParseBy property has no regex"))?;
-    let native_type = payload
-        .opaque_native_type()
-        .ok_or_else(|| NativeError::new("regex ParseBy property has an invalid payload"))?;
-    if native_type.qualified_name() != "std/regex#Regex" {
-        return Err(NativeError::new(
-            "regex ParseBy property has an invalid payload",
-        ));
-    }
-    payload
-        .as_opaque::<CompiledRegex>(native_type)
-        .cloned()
-        .map(Some)
-        .ok_or_else(|| NativeError::new("regex ParseBy property has an invalid payload"))
-}
-
-fn parse_plan(
-    metadata: crate::ValueRef<'_>,
-    property_type: crate::TypeId,
-) -> Result<ParsePlan, NativeError> {
-    if let Some(compiled) = attached_regex(metadata, property_type)? {
-        let fields = validate_relation(&compiled, metadata, property_type)?;
-        return Ok(ParsePlan::Regex { compiled, fields });
-    }
-    let metadata = resolve_metadata(metadata)?;
-    let kind = metadata.dict_get("kind").and_then(|kind| kind.as_atom());
-    match kind.as_ref().map(crate::TextRef::as_str) {
-        Some("String") => Ok(ParsePlan::String),
-        Some("Int") => Ok(ParsePlan::Int),
-        Some("Float") => Ok(ParsePlan::Float),
-        _ => Err(NativeError::new("type has no std/string.parse capability")),
-    }
-}
-
-fn validate_relation(
+/// Capture validation consumes solved member identities and static property
+/// presence. It does not evaluate nested properties or reconstruct descriptors.
+fn solved_fields(
     compiled: &CompiledRegex,
-    metadata: crate::ValueRef<'_>,
-    property_type: crate::TypeId,
-) -> Result<BTreeMap<String, FieldPlan>, NativeError> {
-    let metadata = resolve_metadata(metadata)?;
-    if !metadata
-        .dict_get("kind")
-        .and_then(|kind| kind.as_atom())
-        .is_some_and(|kind| kind == "Struct")
-    {
+    owner: crate::mir::TypeId,
+    property: crate::mir::TypeId,
+    types: &crate::type_image::TypeImage,
+    graph: &crate::execution_graph::ExecutionGraph,
+) -> Result<Vec<(String, crate::mir::TypeId)>, NativeError> {
+    use crate::mir::{PropertySite, TypeConstructor as T};
+    let body = types.layout(owner).map_or(owner, |layout| layout.body);
+    let shape = &types.types[body.index()];
+    let T::Record(names) = &shape.constructor else {
         return Err(NativeError::new(
             "std/regex.parse_by requires a struct type",
         ));
-    }
-    let fields = metadata
-        .dict_get("fields")
-        .ok_or_else(|| NativeError::new("struct type metadata has no fields"))?;
-    let names = fields
-        .dict_fields()
-        .ok_or_else(|| NativeError::new("struct fields metadata must be a Dict"))?
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-    if names != compiled.captures {
-        let missing = names
-            .difference(&compiled.captures)
-            .cloned()
-            .collect::<Vec<_>>();
-        let extra = compiled
-            .captures
-            .difference(&names)
-            .cloned()
-            .collect::<Vec<_>>();
+    };
+    let expected = names.iter().cloned().collect::<BTreeSet<_>>();
+    if expected != compiled.captures {
+        let missing = expected.difference(&compiled.captures).collect::<Vec<_>>();
+        let extra = compiled.captures.difference(&expected).collect::<Vec<_>>();
         return Err(NativeError::new(format!(
             "regex captures must match struct fields; missing captures {missing:?}, extra captures {extra:?}"
         )));
     }
-    names
-        .into_iter()
-        .map(|name| {
-            let metadata = fields
-                .dict_get(&name)
-                .expect("field name came from metadata");
-            let (optional, metadata) =
-                option_payload(metadata).map_or((false, metadata), |payload| (true, payload));
-            let plan = parse_plan(metadata, property_type).map_err(|error| {
-                NativeError::new(format!(
-                    "regex field {name:?} is not string-parsable: {}",
-                    error.message
-                ))
-            })?;
-            let capture_optional = !compiled.required.contains(&name);
-            if capture_optional != optional {
-                return Err(NativeError::new(format!(
-                    "regex capture {name:?} is {}, but its field is {}",
-                    if capture_optional {
-                        "optional"
-                    } else {
-                        "required"
-                    },
-                    if optional { "optional" } else { "required" }
-                )));
-            }
-            Ok((name, FieldPlan { plan, optional }))
-        })
-        .collect()
-}
-
-pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let native_type = regex_type(context)?;
-    let compiled = compiled_argument(context, 0, &native_type)?;
-    let property_type = context
-        .value(context.argument(1)?)?
-        .declared_type_id()
-        .ok_or_else(|| NativeError::new("std/regex.prepare expects ParseBy Type metadata"))?;
-    validate_relation(
-        &compiled,
-        context.value(context.argument(2)?)?,
-        property_type,
-    )?;
-    context.copy(context.result(), context.argument(0)?)
-}
-
-fn execute_plan(plan: &ParsePlan, input: &str) -> Result<ParsedValue, String> {
-    match plan {
-        ParsePlan::String => Ok(ParsedValue::String(input.to_owned())),
-        ParsePlan::Int => input
-            .parse::<i64>()
-            .map_err(|_| "input is not a valid Int".to_owned())
-            .map(ParsedValue::Int),
-        ParsePlan::Float => {
-            let value = input
-                .parse::<f64>()
-                .map_err(|_| "input is not a valid Float".to_owned())?;
-            value
-                .is_finite()
-                .then_some(ParsedValue::Float(value))
-                .ok_or_else(|| "input is not a finite Float".to_owned())
+    for (name, &ty) in names.iter().zip(&shape.arguments) {
+        let field = &types.types[ty.index()];
+        let optional = field.constructor == T::Option;
+        let inner = if optional { field.arguments[0] } else { ty };
+        if !matches!(
+            types.types[inner.index()].constructor,
+            T::Int | T::Float | T::String
+        ) && graph
+            .property(crate::execution_graph::PropertyKey {
+                owner: inner,
+                site: PropertySite::Type,
+                property,
+            })
+            .is_none()
+        {
+            return Err(NativeError::new(format!(
+                "regex field {name:?} is not string-parsable"
+            )));
         }
-        ParsePlan::Regex { compiled, fields } => {
-            let captures = compiled
-                .regex
-                .captures(input)
-                .ok_or_else(|| "input does not match regular expression".to_owned())?;
-            let mut values = Vec::with_capacity(fields.len());
-            for (name, field) in fields {
-                let value = match captures.name(name).map(|capture| capture.as_str()) {
-                    Some(text) => {
-                        let value = execute_plan(&field.plan, text)
-                            .map_err(|message| format!("capture {name:?}: {message}"))?;
-                        if field.optional {
-                            ParsedValue::Some(Box::new(value))
-                        } else {
-                            value
-                        }
-                    }
-                    None if field.optional => ParsedValue::None,
-                    None => return Err(format!("required capture {name:?} is absent")),
-                };
-                values.push((name.clone(), value));
-            }
-            Ok(ParsedValue::Struct(values))
+        if optional == compiled.required.contains(name) {
+            return Err(NativeError::new(format!(
+                "regex capture {name:?} is {}, but its field is {}",
+                if optional { "required" } else { "optional" },
+                if optional { "optional" } else { "required" }
+            )));
         }
     }
+    Ok(names
+        .iter()
+        .cloned()
+        .zip(shape.arguments.iter().copied())
+        .collect())
 }
 
-pub(crate) fn parse_value(
-    metadata: crate::ValueRef<'_>,
+/// Return offsets into the caller's original String. No captured payload is
+/// copied into a Rust value tree, and every capture already has its TypeId.
+pub(crate) fn solved_captures(
+    regex: crate::ValueRef<'_>,
     input: &str,
-    property_type: crate::TypeId,
-) -> Result<ParsedValue, String> {
-    let plan = parse_plan(metadata, property_type).map_err(|error| error.message)?;
-    execute_plan(&plan, input)
+    owner: crate::mir::TypeId,
+    property: crate::mir::TypeId,
+    types: &crate::type_image::TypeImage,
+    graph: &crate::execution_graph::ExecutionGraph,
+) -> Result<Vec<(String, crate::mir::TypeId, Option<std::ops::Range<usize>>)>, NativeError> {
+    let native = regex
+        .opaque_native_type()
+        .ok_or_else(|| NativeError::new("ParseBy has no Regex value"))?;
+    let compiled = regex
+        .as_opaque::<CompiledRegex>(native)
+        .ok_or_else(|| NativeError::new("ParseBy has an invalid Regex value"))?;
+    let fields = solved_fields(compiled, owner, property, types, graph)?;
+    let captures = compiled
+        .regex
+        .captures(input)
+        .ok_or_else(|| NativeError::new("input does not match regular expression"))?;
+    Ok(fields
+        .into_iter()
+        .map(|(name, ty)| {
+            let range = captures.name(&name).map(|capture| capture.range());
+            (name, ty, range)
+        })
+        .collect())
 }
-
-#[cfg(test)]
-#[path = "regex/tests/mod.rs"]
-mod tests;

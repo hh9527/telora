@@ -1,7 +1,7 @@
 import "std/test" as test;
 import "std/codec" as codec;
 import "std/value" { Value };
-import "std/type-property" as property;
+import "std/type-property" as props;
 import "@src/test-support" { expect };
 import "@src/test/newtype-tool-stage/generic" as generic;
 import "@src/test/newtype-tool-stage/generic" { Box as ImportedBox };
@@ -35,7 +35,7 @@ def stamp: Fn(Count) -> Fn(Type, Option(Stamp)) -> Stamp = fn(count) {
 type Annotated = struct { value: Int };
 
 export def decorator_argument = test.should_ok(fn() {
-    expect(match property.get_type_prop(Annotated.type, Stamp.type) {
+    expect(match props.get_type_prop(Annotated.type, Stamp.type) {
         Some(stamp) => stamp.value == 45,
         None => False,
     })

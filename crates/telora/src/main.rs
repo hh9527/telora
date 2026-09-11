@@ -9,10 +9,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use telora_core::lir::RegisterId;
 use telora_core::{
-    CallContext, DataLimits, DebugEvent, DebugSink, DefinitionKind, EesCall, EesReply, Engine,
-    EngineConfig, FactState, Location, ModuleResolver, NativeError, NativeFunction,
-    PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination, SystemCaps, SystemDataSource,
-    SystemEvent, SystemStdin, TextPosition, WorkspaceSnapshot,
+    CallContext, DataLimits, DebugEvent, DebugSink, EesCall, EesReply,
+    NativeError, NativeFunction, Quota, RunHost,
+    RunHostFuture, RunTermination, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::{mpsc, watch};
@@ -21,6 +20,8 @@ mod ees_arg;
 mod ees_cli;
 mod eval_cli;
 mod source_arg;
+mod static_cli;
+use telora::static_input;
 mod test_cli;
 use ees_arg::{NamedEesVar, collect_ees_models, parse_named_ees_var};
 use ees_cli::EesArgs;
@@ -33,16 +34,16 @@ const STACK_SLOTS: usize = 65_536;
 const ALLOCATION_BYTES: u64 = 256 * 1024 * 1024;
 const QUERY_SCHEMA: &str = "telora.query/v1";
 
-fn engine_config() -> EngineConfig {
-    EngineConfig {
-        module_quota: Quota::new(EVALUATION_FUEL, STACK_SLOTS, ALLOCATION_BYTES),
+struct ExecutionConfig {
+    session_quota: Quota,
+    data_limits: DataLimits,
+}
+
+fn execution_config() -> ExecutionConfig {
+    ExecutionConfig {
         session_quota: Quota::new(EVALUATION_FUEL, STACK_SLOTS, ALLOCATION_BYTES),
         data_limits: DataLimits::default(),
     }
-}
-
-fn engine() -> Engine {
-    Engine::new(engine_config()).with_debug_sink(Arc::new(StderrDebugSink))
 }
 
 struct StderrDebugSink;
@@ -603,6 +604,9 @@ struct ApplicationSelector {
     after_help = "Examples:\n  telora check @src/lib\n  telora -C examples/app check @src/main\n  telora check @test/compiler"
 )]
 struct CheckArgs {
+    /// Solve types without executing tool, property, or runtime code.
+    #[arg(long = "only-types")]
+    types_only: bool,
     /// Canonical module selector, such as @src/lib, @test/compiler, or std/string.
     #[arg(value_name = "MODULE_ID")]
     module_id: String,
@@ -807,13 +811,13 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             .and_then(|path| emit(json!(path.to_string_lossy())).map(|()| 0)),
         Command::Check(arguments) => check_command(context, arguments, "telora.check/v1"),
         Command::Test(arguments) => test_cli::run(context, &arguments.name),
-        Command::Query(arguments) => query_command(context, arguments),
+        Command::Query(arguments) => static_cli::query(context, arguments),
         Command::Lsp => lsp_command(context).map(|()| 0),
     }
 }
 
 fn lsp_command(root: PathBuf) -> Result<(), String> {
-    telora::lsp::run_stdio(root, engine_config()).map_err(|error| error.to_string())
+    telora::lsp::run_stdio(root).map_err(|error| error.to_string())
 }
 
 async fn run_command(
@@ -822,7 +826,6 @@ async fn run_command(
     arguments: ApplicationArgs,
 ) -> Result<i32, String> {
     let entry_sources = collect_entry_sources(arguments.sources.clone())?;
-    let prepared = package_host::prepare(&context)?;
     if entry == "serve"
         && entry_sources
             .locators
@@ -832,50 +835,56 @@ async fn run_command(
         return Err("serve --bind stdio:// reserves standard input for JSONL requests".into());
     }
     let module_id = &arguments.selector.module_id;
-    if arguments.best_effort {
-        let recovery_engine = Engine::new(engine_config());
-        let workspace = recovery_engine
-            .recover_workspace_id_in_workspace(Arc::clone(&prepared), &context, module_id)
-            .map_err(|error| error.to_string())?;
-        let selected = module_id;
-        for diagnostic in workspace.diagnostics() {
-            emit_stderr(diagnostic_record(
-                "telora.run/v1",
-                selected,
-                &workspace,
-                diagnostic,
-            ))?;
-        }
-        let failed = workspace
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.severity == telora_core::source::Severity::Error);
-        if failed {
-            emit_stderr(json!({
-                "schema": "telora.run/v1",
-                "module": selected,
-                "record": "summary",
-                "status": "error",
-            }))?;
-            return Ok(1);
+    let mode = match entry {
+        "run" => telora_core::codegen::RunMode::Run,
+        "serve" => telora_core::codegen::RunMode::Serve,
+        _ => return Err(format!("unknown entry mode {entry:?}")),
+    };
+    let mut inventory = static_input::Inventory::new(&context, module_id.starts_with("std/"))?;
+    let application = inventory.select(module_id)?;
+    let mut mir = inventory.solve_run(&application, &arguments.selector.export, mode)?;
+    let adapter_conflicts = mir.type_conflicts.iter().filter_map(|conflict| conflict.location)
+        .filter(|location| mir.sources.get(location.source).name.as_ref() == "std/_entry/adapter")
+        .collect::<std::collections::BTreeSet<_>>();
+    for diagnostic in &mut mir.diagnostics {
+        if diagnostic.severity == telora_core::source::Severity::Error
+            && diagnostic.labels.iter().any(|label| label.primary && adapter_conflicts.contains(&label.location)) {
+            diagnostic.message = format!("entry export {:?}: expected {}(State); {}", arguments.selector.export, if entry == "run" { "Run" } else { "Serve" }, diagnostic.message);
         }
     }
-    let engine = engine();
-    let pending = engine
-        .prepare_module_id_in_workspace(prepared, context, module_id)
-        .map_err(|error| error.to_string())?;
+    let static_failed = mir.diagnostics.iter().any(|d| d.severity == telora_core::source::Severity::Error);
+    if arguments.best_effort {
+        for diagnostic in &mir.diagnostics {
+            emit_stderr(static_cli::diagnostic(&mir, "telora.run/v1", module_id, diagnostic))?;
+        }
+        if static_failed {
+            emit_stderr(json!({"schema": "telora.run/v1", "module": module_id, "record": "summary", "status": "error"}))?;
+            return Ok(1);
+        }
+    } else if static_failed {
+        return Err(mir.diagnostics.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"));
+    }
+    let telora_core::mir::ModuleTarget::Bound(root) = mir.roots[0] else { return Err("entry adapter module is unresolved".into()) };
+    let symbol = *mir.exports[root.index()].iter().find(|s| mir.symbols[s.index()].name == "configure")
+        .ok_or("entry adapter has no configuration export")?;
+    let artifact = mir.seal().and_then(|sealed| telora_core::codegen::compile_run(sealed, symbol))
+        .map_err(|errors| errors.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
+    let config = execution_config();
+    let linked = telora_core::execution_link::link_entry_with_data(artifact, |link| inventory.read_data(link, config.data_limits.file_size))
+        .map_err(|errors| errors.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
     let mut host = ProcessRunHost::new(entry_sources.locators, arguments.ees_vars);
-    let outcome = engine
-        .run_pending_with_sources_and_host(
-            pending,
-            entry,
-            &arguments.selector.export,
+    let outcome = telora_core::Vm::new().with_debug_sink(Arc::new(StderrDebugSink))
+        .execute_run(
+            linked,
+            mode,
             &arguments.args,
             &entry_sources.entry,
             &mut host,
+            config.session_quota,
+            config.data_limits,
+            &mut mir.sources,
         )
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     io::stdout()
         .write_all(outcome.output.as_bytes())
         .and_then(|()| io::stdout().flush())
@@ -893,233 +902,9 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
 }
 
 fn check_command(context: PathBuf, arguments: CheckArgs, schema: &str) -> Result<i32, String> {
-    let prepared = package_host::prepare(&context)?;
-    let resolver =
-        ModuleResolver::from_workspace(Arc::clone(&prepared), &context, &arguments.module_id)
-            .map_err(|error| error.to_string())?;
-    let module_name = resolver
-        .selected_root()
-        .map(|module| module.id.to_string())
-        .map_err(|error| error.to_string())?;
-    let workspace = engine()
-        .recover_with_resolver(resolver)
-        .map_err(|error| error.to_string())?;
-    for (crate_name, _) in prepared.crates() {
-        for undeclared in prepared
-            .undeclared_modules(crate_name)
-            .map_err(|error| error.to_string())?
-        {
-            emit(json!({
-                "schema": schema,
-                "module": module_name,
-                "record": "diagnostic",
-                "severity": "warning",
-                "message": format!(
-                    "crate {:?} contains undeclared module file {}; add {:?} to telora-crate.json modules",
-                    undeclared.crate_name,
-                    undeclared.relative_path.display(),
-                    undeclared.selector,
-                ),
-                "labels": [],
-                "notes": [],
-            }))?;
-        }
-    }
-    let has_error_diagnostic = workspace
-        .diagnostics()
-        .iter()
-        .any(|diagnostic| diagnostic.severity == telora_core::source::Severity::Error);
-    for diagnostic in workspace.diagnostics() {
-        let severity = match diagnostic.severity {
-            telora_core::source::Severity::Error => "error",
-            telora_core::source::Severity::Warning => "warning",
-            telora_core::source::Severity::Info => "info",
-        };
-        let labels = diagnostic
-            .labels
-            .iter()
-            .map(|label| {
-                let source = workspace.sources().get(label.location.source);
-                json!({
-                    "source": source.name.as_ref(),
-                    "location": location_json(&workspace, label.location),
-                    "message": label.message,
-                    "primary": label.primary,
-                })
-            })
-            .collect::<Vec<_>>();
-        emit(json!({
-            "schema": schema,
-            "module": module_name,
-            "record": "diagnostic",
-            "severity": severity,
-            "message": diagnostic.message,
-            "labels": labels,
-            "notes": diagnostic.notes,
-        }))?;
-    }
-    let failed = has_error_diagnostic;
-    emit(json!({
-        "schema": schema,
-        "module": module_name,
-        "record": "summary",
-        "status": if failed { "error" } else { "ok" },
-        "dependencies": workspace.modules().len().saturating_sub(1),
-    }))?;
-    Ok(i32::from(failed))
+    static_cli::check(context, &arguments.module_id, schema, arguments.types_only)
 }
 
-enum ModuleQuery {
-    Exports {
-        pattern: Option<String>,
-    },
-    Definitions {
-        pattern: Option<String>,
-        kinds: Option<KindSet>,
-    },
-    Position(QueryPosition),
-}
-
-fn query_command(context: PathBuf, arguments: QueryArgs) -> Result<i32, String> {
-    if let QueryCommand::Modules(arguments) = &arguments.command {
-        let prepared = package_host::prepare(&context)?;
-        let modules = match engine().module_catalog_in_workspace(prepared, context) {
-            Ok(modules) => modules,
-            Err(error) => {
-                emit(json!({
-                    "schema": QUERY_SCHEMA,
-                    "record": "diagnostic",
-                    "authority": "recovery",
-                    "severity": "error",
-                    "message": error.to_string(),
-                }))?;
-                return Ok(1);
-            }
-        };
-        for module in modules.into_iter().filter(|module| {
-            arguments
-                .pattern
-                .as_deref()
-                .is_none_or(|pattern| module.id.to_string().contains(pattern))
-        }) {
-            emit(json!({
-                "schema": QUERY_SCHEMA,
-                "record": "module",
-                "module": module.id.to_string(),
-                "origin": module.origin.name(),
-                "visibility": module.visibility.name(),
-                "format": module.format.name(),
-            }))?;
-        }
-        return Ok(0);
-    }
-    let (module_id, query) = match arguments.command {
-        QueryCommand::Exports(arguments) => (
-            arguments.module_id,
-            ModuleQuery::Exports {
-                pattern: arguments.pattern,
-            },
-        ),
-        QueryCommand::At(arguments) => {
-            let ModuleSelector {
-                module_id,
-                position,
-            } = arguments.selector;
-            let query = if let Some(position) = position {
-                if arguments.pattern.is_some() || arguments.kinds.is_some() {
-                    return Err(
-                        "-p/--pattern and -k/--kind require a module-only query target".into(),
-                    );
-                }
-                ModuleQuery::Position(position)
-            } else {
-                ModuleQuery::Definitions {
-                    pattern: arguments.pattern,
-                    kinds: arguments.kinds,
-                }
-            };
-            (module_id, query)
-        }
-        QueryCommand::Modules(_) => unreachable!("handled above"),
-    };
-    let prepared = if module_id.starts_with("std/") {
-        None
-    } else {
-        Some(package_host::prepare(&context)?)
-    };
-    let mut canonical_module_id = module_id.clone();
-    let workspace = if let Some(prepared) = prepared {
-        ModuleResolver::from_workspace(prepared, &context, &module_id)
-            .map_err(|error| error.to_string())
-            .and_then(|resolver| {
-                canonical_module_id = resolver
-                    .selected_root()
-                    .map(|module| module.id.to_string())
-                    .map_err(|error| error.to_string())?;
-                engine()
-                    .recover_with_resolver(resolver)
-                    .map_err(|error| error.to_string())
-            })
-    } else {
-        engine()
-            .recover_builtin_workspace(&module_id)
-            .map_err(|error| error.to_string())
-    };
-    let workspace = match workspace {
-        Ok(workspace) => workspace,
-        Err(error) => {
-            emit(json!({
-                "schema": QUERY_SCHEMA,
-                "module": module_id,
-                "record": "diagnostic",
-                "authority": "recovery",
-                "severity": "error",
-                "message": error.to_string(),
-            }))?;
-            return Ok(1);
-        }
-    };
-    let root = workspace
-        .modules()
-        .iter()
-        .find(|module| module.name == canonical_module_id)
-        .ok_or_else(|| {
-            format!(
-                "selected module {:?} is absent from the workspace",
-                canonical_module_id
-            )
-        })?;
-    match query {
-        ModuleQuery::Exports { pattern } => query_exports(
-            &workspace,
-            root.id,
-            &canonical_module_id,
-            pattern.as_deref(),
-        ),
-        ModuleQuery::Definitions { pattern, kinds } => query_definitions(
-            &workspace,
-            root.id,
-            &canonical_module_id,
-            pattern.as_deref(),
-            kinds.as_ref().map(|set| set.0.as_slice()),
-        ),
-        ModuleQuery::Position(position) => {
-            query_position(&workspace, root.id, &canonical_module_id, position)
-        }
-    }?;
-    Ok(0)
-}
-
-fn kind_of(kind: DefinitionKind) -> Option<ShowKind> {
-    match kind {
-        DefinitionKind::Type => Some(ShowKind::Type),
-        DefinitionKind::Let => Some(ShowKind::Let),
-        DefinitionKind::DefinitionSlot | DefinitionKind::Native => Some(ShowKind::Def),
-        DefinitionKind::NativeType => Some(ShowKind::Type),
-        DefinitionKind::Import => Some(ShowKind::Import),
-        _ => None,
-    }
-}
 fn kind_name(kind: ShowKind) -> &'static str {
     match kind {
         ShowKind::Type => "type",
@@ -1127,59 +912,6 @@ fn kind_name(kind: ShowKind) -> &'static str {
         ShowKind::Def => "def",
         ShowKind::Import => "import",
     }
-}
-fn authority(state: &FactState) -> &'static str {
-    if matches!(state, FactState::Known) {
-        "authoritative"
-    } else {
-        "recovery"
-    }
-}
-fn location_json(workspace: &WorkspaceSnapshot, location: Location) -> serde_json::Value {
-    let source = workspace.sources().get(location.source);
-    let start = source
-        .text()
-        .position(location.start, PositionEncoding::Utf8)
-        .expect("semantic locations are valid UTF-8 source boundaries");
-    let end = source
-        .text()
-        .position(location.end, PositionEncoding::Utf8)
-        .expect("semantic locations are valid UTF-8 source boundaries");
-    json!({"line":start.line + 1,"column":start.character,"end_line":end.line + 1,"end_column":end.character})
-}
-fn diagnostic_record(
-    schema: &str,
-    module: &str,
-    workspace: &WorkspaceSnapshot,
-    diagnostic: &telora_core::source::Diagnostic,
-) -> serde_json::Value {
-    let severity = match diagnostic.severity {
-        telora_core::source::Severity::Error => "error",
-        telora_core::source::Severity::Warning => "warning",
-        telora_core::source::Severity::Info => "info",
-    };
-    let labels = diagnostic
-        .labels
-        .iter()
-        .map(|label| {
-            let source = workspace.sources().get(label.location.source);
-            json!({
-                "source": source.name.as_ref(),
-                "location": location_json(workspace, label.location),
-                "message": label.message,
-                "primary": label.primary,
-            })
-        })
-        .collect::<Vec<_>>();
-    json!({
-        "schema": schema,
-        "module": module,
-        "record": "diagnostic",
-        "severity": severity,
-        "message": diagnostic.message,
-        "labels": labels,
-        "notes": diagnostic.notes,
-    })
 }
 fn emit(record: serde_json::Value) -> Result<(), String> {
     println!(
@@ -1193,130 +925,5 @@ fn emit_stderr(record: serde_json::Value) -> Result<(), String> {
         "{}",
         serde_json::to_string(&record).map_err(|error| error.to_string())?
     );
-    Ok(())
-}
-
-fn query_definitions(
-    workspace: &WorkspaceSnapshot,
-    module: telora_core::WorkspaceModuleId,
-    module_name: &str,
-    pattern: Option<&str>,
-    kinds: Option<&[ShowKind]>,
-) -> Result<(), String> {
-    let mut definitions = workspace
-        .definitions()
-        .iter()
-        .filter(|d| d.module == module && d.top_level)
-        .filter_map(|d| kind_of(d.kind).map(|kind| (d, kind)))
-        .filter(|(d, kind)| {
-            pattern.is_none_or(|p| d.name.contains(p)) && kinds.is_none_or(|ks| ks.contains(kind))
-        })
-        .collect::<Vec<_>>();
-    definitions.sort_by_key(|(d, kind)| (&d.name, *kind, d.location.start));
-    for (d, kind) in definitions {
-        if kind == ShowKind::Import && d.import_namespace {
-            let target = d
-                .import_target
-                .and_then(|target| workspace.module(target))
-                .map(|module| module.name.as_str());
-            emit(
-                json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"target":target,"location":location_json(workspace,d.location)}),
-            )?;
-            continue;
-        }
-        let ty = d
-            .scheme
-            .clone()
-            .or_else(|| d.ty.value.and_then(|id| workspace.types().display(id)));
-        emit(
-            json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"type":ty,"location":location_json(workspace,d.location)}),
-        )?;
-    }
-    Ok(())
-}
-fn query_exports(
-    workspace: &WorkspaceSnapshot,
-    module: telora_core::WorkspaceModuleId,
-    module_name: &str,
-    pattern: Option<&str>,
-) -> Result<(), String> {
-    let authority = "authoritative";
-    let mut exports = workspace.exports_of(module);
-    exports.retain(|e| pattern.is_none_or(|p| e.name.contains(p)));
-    exports.sort_by(|a, b| a.name.cmp(&b.name));
-    for export in exports {
-        let ty = export
-            .scheme
-            .or_else(|| workspace.types().display(export.ty));
-        emit(
-            json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"export","authority":authority,"name":export.name,"type":ty}),
-        )?;
-    }
-    Ok(())
-}
-fn query_position(
-    workspace: &WorkspaceSnapshot,
-    module: telora_core::WorkspaceModuleId,
-    module_name: &str,
-    at: QueryPosition,
-) -> Result<(), String> {
-    let source_id = workspace
-        .module(module)
-        .and_then(|m| m.source)
-        .ok_or_else(|| "selected module has no source".to_owned())?;
-    let source = workspace.sources().get(source_id);
-    let line = u32::try_from(at.line - 1)
-        .map_err(|_| format!("line {} is outside {module_name}", at.line))?;
-    let (start, end) = if let Some(column) = at.column {
-        let column = u32::try_from(column)
-            .map_err(|_| format!("position {}:{} is outside {module_name}", at.line, column))?;
-        let offset = source
-            .text()
-            .offset(TextPosition::new(line, column), PositionEncoding::Utf8)
-            .map_err(|_| format!("position {}:{} is outside {module_name}", at.line, column))?;
-        (offset, offset)
-    } else {
-        source
-            .text()
-            .line_content_offsets(line)
-            .map_err(|_| format!("line {} is outside {module_name}", at.line))?
-    };
-    let intersects = |loc: Location| {
-        loc.source == source_id
-            && if at.column.is_some() {
-                loc.start <= start && start < loc.end
-            } else {
-                loc.start < end && start < loc.end
-            }
-    };
-    for d in workspace
-        .definitions()
-        .iter()
-        .filter(|d| d.module == module && intersects(d.location))
-    {
-        if let Some(kind) = kind_of(d.kind) {
-            emit(
-                json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"type":d.scheme.clone().or_else(||d.ty.value.and_then(|id|workspace.types().display(id))),"location":location_json(workspace,d.location)}),
-            )?;
-        }
-    }
-    for r in workspace
-        .references()
-        .iter()
-        .filter(|r| r.module == module && intersects(r.location))
-    {
-        emit(
-            json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"reference","authority":if r.definition.is_some()||r.external{"authoritative"}else{"recovery"},"name":r.name,"resolved":r.definition.is_some(),"external":r.external,"location":location_json(workspace,r.location)}),
-        )?;
-    }
-    for e in workspace
-        .expressions()
-        .iter()
-        .filter(|e| e.module == module && intersects(e.location))
-    {
-        emit(
-            json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"expression","authority":"debug","state":format!("{:?}",e.ty.state),"type":e.ty.value.and_then(|id|workspace.types().display(id)),"location":location_json(workspace,e.location)}),
-        )?;
-    }
     Ok(())
 }

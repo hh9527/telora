@@ -1,4 +1,28 @@
 impl Vm {
+    /// Import the immutable type arena into Main before executing any bytecode.
+    /// Data imports are materialized with their statically solved type IDs.
+    pub fn execute_linked(
+        &mut self,
+        entry: crate::execution_link::LinkedEntry,
+        quota: Quota,
+        limits: crate::DataLimits,
+        sources: &mut SourceDatabase,
+    ) -> Result<crate::execution_link::SolvedExecution, String> {
+        let mut main = Heap::main();
+        main.solved_types = Some(entry.types);
+        main.solved_graph = Some(entry.graph);
+        let mut account = QuotaAccount::new(quota).with_data_limits(limits).with_sources(sources);
+        let externals = solved_module_data(&mut main, entry.data, limits, sources, &mut account)?;
+        let work = self.initialize_linked_world(
+            &mut main, &externals, &entry.bytecode, &mut account, sources,
+        )?;
+        let main = Arc::new(main);
+        Ok(crate::execution_link::SolvedExecution {
+            world: ExecutionWorld::new(main, work),
+            result_type: entry.result_type,
+        })
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -111,6 +135,7 @@ impl Vm {
             account,
             true,
             inherited_failure_count,
+            true,
         )
     }
 
@@ -170,6 +195,7 @@ impl Vm {
             account,
             false,
             0,
+            true,
         )
         .map(|execution| execution.world)
         .map_err(|failure| failure.error)
@@ -189,11 +215,16 @@ impl Vm {
         account: &mut QuotaAccount,
         best_effort: bool,
         inherited_failure_count: usize,
+        publish: bool,
     ) -> Result<VmExecution, VmExecutionFailure> {
         // Linking recursively walks the immutable prototype graph. Keep that host
         // recursion off callers' often-small test or embedding threads; VM calls
         // themselves use the explicit frame stack below.
-        let mut current = initial_work.unwrap_or_else(|| Heap::work_for(background));
+        let mut current = initial_work.unwrap_or_else(Heap::work);
+        if current.solved_evaluation.is_none() && background.solved_evaluation.is_none() && let Some(graph) = &background.solved_graph {
+            current.solved_evaluation = Some(graph.evaluation());
+            current.solved_tasks.resize(graph.nodes().len(), None);
+        }
         let linked = std::thread::scope(|scope| {
             std::thread::Builder::new()
                 .name("telora-bytecode-linker".into())
@@ -331,7 +362,7 @@ impl Vm {
         let mut frames = vec![root_frame];
         let debug_sink = Arc::clone(&self.debug_sink);
 
-        // A failed node may arrive through an imported Main-world Module. Its
+        // A failed node may arrive through an imported Main-world value. Its
         // id is below the stable prefix length owned by that Main world; only
         // newly created roots need to be retained by this execution.
         let mut failures = Vec::new();
@@ -346,7 +377,9 @@ impl Vm {
                             .clone();
                         let function = function_arc.as_ref();
                         let pc = frames.last().expect("execution frame").pc;
-                        let instruction = function.instructions().get(pc).ok_or_else(|| {
+                        let tail_return = frames.last().expect("execution frame").tail_return
+                            .map(|src| Opcode::Return { src });
+                        let instruction = tail_return.as_ref().or_else(|| function.instructions().get(pc)).ok_or_else(|| {
                             error(
                                 RuntimeErrorKind::InvalidBytecode,
                                 "instruction pointer is out of bounds",
@@ -393,66 +426,179 @@ impl Vm {
                                     pc,
                                 )?;
                             }
+                            Opcode::StampType { dst, src, ty } => {
+                                let value = *read_register(&registers, *src, function, pc)?;
+                                write_register(&mut registers, *dst, value.with_type_id(crate::TypeId::solved(*ty)), function, pc)?;
+                            }
                             Opcode::Move { dst, src } => {
                                 let value = *read_register(&registers, *src, function, pc)?;
                                 write_register(&mut registers, *dst, value, function, pc)?;
                             }
-                            Opcode::OwnDeclared { dst, owner, value } => {
-                                let owner = *read_register(&registers, *owner, function, pc)?;
+                            Opcode::InstallTask { node, src } => {
+                                let value = *read_register(&registers, *src, function, pc)?;
+                                let slot = current.solved_tasks.get_mut(node.index()).ok_or_else(|| error(
+                                    RuntimeErrorKind::InvalidBytecode, "invalid demand task slot", function, pc))?;
+                                if slot.is_some() { return Err(error(RuntimeErrorKind::InvalidBytecode,
+                                    "demand task installed twice", function, pc)); }
+                                if !matches!(value.value(), DecodedValue::Func(_)) { return Err(error(
+                                    RuntimeErrorKind::InvalidBytecode, "demand task must be a function", function, pc)); }
+                                *slot = Some(value);
+                            }
+                            Opcode::CheckedCast { dst, src, source, target } => {
+                                let value = *read_register(&registers, *src, function, pc)?;
+                                let action = run_solved_cast(value, *source, *target,
+                                    ReturnTarget::Register { destination: *dst, call_site: instruction_location(function, pc) },
+                                    function, pc, &mut current, background, account)?;
+                                frames.last_mut().expect("cast caller").pc += 1;
+                                let _ = registers;
+                                match drive_vm_action(action, &mut frames, &mut stack, &mut current, background, account)? {
+                                    DriveOutcome::Pending => continue,
+                                    DriveOutcome::Root(value) => return Ok(value),
+                                }
+                            }
+                            Opcode::MakeSome { dst, value } => {
                                 let value = *read_register(&registers, *value, function, pc)?;
-                                let type_id =
-                                    view.declared_type_id(owner).map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })?;
-                                if let Some(action) = construction_check_action(
-                                    owner, value, type_id,
-                                    || ReturnTarget::Register { destination: *dst, call_site: None },
-                                    false,
-                                    Arc::clone(&function_arc), pc, &mut current, background, account,
-                                )? {
-                                    frames.last_mut().expect("construction frame").pc += 1;
-                                    let _ = registers;
-                                    match drive_vm_action(action, &mut frames, &mut stack,
-                                        &mut current, background, account)? {
-                                        DriveOutcome::Pending => continue,
-                                        DriveOutcome::Root(value) => return Ok(value),
+                                let value = solved_some(value, &mut current, account, function, pc)?;
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::Demand { .. } | Opcode::GetTypeProp { .. } | Opcode::GetMemberProp { .. } | Opcode::HasTypeProp { .. } | Opcode::HasMemberProp { .. } => {
+                                use crate::execution_graph::{Request, EvaluationError};
+                                let (node_id, destination) = match instruction {
+                                    Opcode::Demand { node, dst } => (*node, *dst),
+                                    Opcode::GetTypeProp { dst, owner, property } | Opcode::GetMemberProp { dst, owner, property, .. } | Opcode::HasTypeProp { dst, owner, property } | Opcode::HasMemberProp { dst, owner, property, .. } => {
+                                        let site = if let Opcode::GetMemberProp { index, variant, .. } | Opcode::HasMemberProp { index, variant, .. } = instruction {
+                                            let index = read_register(&registers, *index, function, pc)?;
+                                            let DecodedValue::Int(index) = index.value() else {
+                                                return Err(error(RuntimeErrorKind::TypeMismatch, "property member index must be Int", function, pc));
+                                            };
+                                            let index = u32::try_from(index).map_err(|_| error(RuntimeErrorKind::TypeMismatch, "property member index must fit u32", function, pc))?;
+                                            if *variant { crate::mir::PropertySite::Variant(index) } else { crate::mir::PropertySite::Field(index) }
+                                        } else { crate::mir::PropertySite::Type };
+                                        let owner = *read_register(&registers, *owner, function, pc)?;
+                                        let property = *read_register(&registers, *property, function, pc)?;
+                                        let (DecodedValue::SolvedType(owner), DecodedValue::SolvedType(property)) = (owner.value(), property.value()) else {
+                                            return Err(error(RuntimeErrorKind::TypeMismatch, "property query requires solved Type metadata", function, pc));
+                                        };
+                                        let graph = background.solved_graph.as_ref().ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode, "property query requires a solved graph", function, pc))?;
+                                        let found = graph.property(crate::execution_graph::PropertyKey { owner, property, site });
+                                        if matches!(instruction, Opcode::HasTypeProp { .. } | Opcode::HasMemberProp { .. }) {
+                                            let value = if found.is_some() { crate::BuiltinAtom::True } else { crate::BuiltinAtom::False };
+                                            write_register(&mut registers, *dst, Val::unknown(DecodedValue::BuiltinAtom(value)), function, pc)?;
+                                            frames.last_mut().expect("query frame").pc += 1;
+                                            continue;
+                                        }
+                                        let node = found.ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode, "property read requires a proven presence record", function, pc))?;
+                                        (node, *dst)
+                                    }
+                                    _ => unreachable!(),
+                                };
+                                let (node, dst) = (&node_id, &destination);
+                                match request_solved(&mut current, background, *node) {
+                                    Ok(Request::Ready(value)) => {
+                                        let value = *value;
+                                        write_register(&mut registers, *dst, value, function, pc)?;
+                                    }
+                                    Err(EvaluationError::Failed(failure)) => {
+                                        if current.solved_failures.get(failure.0 as usize).is_none() {
+                                            return Err(error(RuntimeErrorKind::InvalidBytecode, "demand failure has no session diagnostic", function, pc));
+                                        }
+                                        return Err(propagated_failure_error(failure.0, instruction_location(function, pc), function, pc));
+                                    }
+                                    Err(EvaluationError::Cycle(path)) => {
+                                        let path = path.iter().map(|n| background.solved_graph.as_ref()
+                                            .and_then(|g| g.nodes().get(n.index())).map(|n| n.label.clone())
+                                            .unwrap_or_else(|| n.index().to_string())).collect::<Vec<_>>().join(" -> ");
+                                        return Err(error(RuntimeErrorKind::UninitializedDefinition,
+                                            format!("cyclic demand: {path}"), function, pc));
+                                    }
+                                    Err(e) => return Err(error(RuntimeErrorKind::InvalidBytecode, format!("invalid demand: {e:?}"), function, pc)),
+                                    Ok(Request::Start) => {
+                                        let callee = current.solved_tasks.get(node.index()).copied().flatten().ok_or_else(|| error(
+                                            RuntimeErrorKind::InvalidBytecode, "demand task has no compiled initializer", function, pc))?;
+                                        let continuation = DemandContinuation {
+                                            node: *node,
+                                            return_target: ReturnTarget::Register { destination: *dst, call_site: instruction_location(function, pc) },
+                                            trace_frame: RuntimeFrame { function: function.name().to_owned(), instruction: pc, origin: function.origin_at(pc) },
+                                            call_function: Arc::clone(&function_arc), call_pc: pc,
+                                        };
+                                        frames.last_mut().expect("caller frame").pc += 1;
+                                        let _ = registers;
+                                        match drive_vm_action(VmAction::Call {
+                                            callee, arguments: vec![], return_target: ReturnTarget::Native(Box::new(continuation)),
+                                            call_function: function_arc, call_pc: pc, rule_boundary: None,
+                                        }, &mut frames, &mut stack, &mut current, background, account)? {
+                                            DriveOutcome::Pending => continue,
+                                            DriveOutcome::Root(value) => return Ok(value),
+                                        }
                                     }
                                 }
-                                write_register(
-                                    &mut registers,
-                                    *dst,
-                                    value.with_type_id(type_id),
+                            }
+                            Opcode::MakeNewtype { dst, ty, payload } => {
+                                let types = background.solved_types.as_ref().ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode, "newtype requires a solved image", function, pc))?;
+                                let definition = types.types.get(ty.index()).and_then(|ty| {
+                                    if let crate::mir::TypeConstructor::Nominal(symbol) = ty.constructor { types.definition(symbol) } else { None }
+                                });
+                                if definition.is_none_or(|d| d.operation != crate::mir::TypeOperation::Newtype || d.members.len() != 1) {
+                                    return Err(error(RuntimeErrorKind::InvalidBytecode, "invalid solved newtype constructor", function, pc));
+                                }
+                                let payload = *read_register(&registers, *payload, function, pc)?;
+                                charge_allocation(account, logical_value_bytes(1).map_err(|e| allocation_error(e.message, function, pc))?, function, pc)?;
+                                let value = Val::unknown(DecodedValue::Tuple(current.allocate(Object::Tuple(vec![payload].into_boxed_slice()))))
+                                    .with_type_id(crate::TypeId::solved(*ty)).with_loc(instruction_location(function, pc));
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::MakeVariant { dst, ty, variant, payload } => {
+                                if let Some((tag, has_payload)) = background.solved_types.as_ref()
+                                    .and_then(|types| types.types.get(ty.index()))
+                                    .and_then(|ty| crate::type_image::builtin_variant(&ty.constructor, *variant)) {
+                                    if has_payload != payload.is_some() {
+                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "invalid native variant payload", function, pc));
+                                    }
+                                    let tag = Val::unknown(current.atom(Some(background), tag));
+                                    let value = if let Some(src) = payload {
+                                        let payload = *read_register(&registers, *src, function, pc)?;
+                                        charge_allocation(account, logical_value_bytes(2).map_err(|e| allocation_error(e.message, function, pc))?, function, pc)?;
+                                        Val::unknown(DecodedValue::Tagged(current.allocate(Object::Tagged { tag, payload })))
+                                    } else { tag };
+                                    let value = if background.solved_types.as_ref().unwrap().types[ty.index()].constructor == crate::mir::TypeConstructor::PropertyTarget {
+                                        value.with_type_id(crate::TypeId::solved(*ty))
+                                    } else { value };
+                                    write_register(&mut registers, *dst, value.with_loc(instruction_location(function, pc)), function, pc)?;
+                                    frames.last_mut().expect("variant frame").pc += 1;
+                                    continue;
+                                }
+                                let member = background.solved_types.as_ref()
+                                    .and_then(|types| types.variant(*ty, *variant))
+                                    .filter(|member| member.payload.is_some() == payload.is_some())
+                                    .ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode,
+                                        "invalid solved enum constructor", function, pc))?;
+                                let bytes = logical_value_bytes(if payload.is_some() { 2 } else { 0 })
+                                    .map_err(|e| allocation_error(e.message, function, pc))?;
+                                charge_allocation(account, bytes + member.name.len() as u64, function, pc)?;
+                                let tag = Val::unknown(current.atom(Some(background), &member.name));
+                                let value = if let Some(src) = payload {
+                                    let payload = *read_register(&registers, *src, function, pc)?;
+                                    Val::unknown(DecodedValue::Tagged(current.allocate(Object::Tagged { tag, payload })))
+                                } else { tag };
+                                let value = value.with_type_id(crate::TypeId::solved(*ty))
+                                    .with_loc(instruction_location(function, pc));
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::AllocFunc { dst } => {
+                                charge_allocation(
+                                    account,
+                                    logical_value_bytes(1).map_err(|native_error| {
+                                        allocation_error(native_error.message, function, pc)
+                                    })?,
                                     function,
                                     pc,
                                 )?;
-                            }
-                            Opcode::AllocFunc { dst, static_id } => {
-                                let value = if let Some(id) = static_id {
-                                    Val::new(
-                                        DecodedValue::FuncRef(*id),
-                                        instruction_location(function, pc),
-                                    )
-                                } else {
-                                    charge_allocation(
-                                        account,
-                                        logical_value_bytes(1).map_err(|native_error| {
-                                            allocation_error(native_error.message, function, pc)
-                                        })?,
-                                        function,
-                                        pc,
-                                    )?;
-                                    Val::new(
-                                        DecodedValue::Func(
-                                            current.allocate(crate::heap::Object::OpenFunc),
-                                        ),
-                                        instruction_location(function, pc),
-                                    )
-                                };
+                                let value = Val::new(
+                                    DecodedValue::Func(
+                                        current.allocate(crate::heap::Object::OpenFunc),
+                                    ),
+                                    instruction_location(function, pc),
+                                );
                                 write_register(&mut registers, *dst, value, function, pc)?;
                             }
                             Opcode::SealFunc { target, source } => {
@@ -472,7 +618,7 @@ impl Vm {
                                 {
                                     return Err(error(
                                         RuntimeErrorKind::TypeMismatch,
-                                        "function definition did not produce a FuncRef",
+                                        "function definition did not produce a function",
                                         function,
                                         pc,
                                     ));
@@ -487,7 +633,7 @@ impl Vm {
                                                 pc,
                                             ));
                                         };
-                                        current.seal_local_func(target, source).map_err(
+                                        current.seal_local_func(background, target, source).map_err(
                                             |heap_error| {
                                                 error(
                                                     RuntimeErrorKind::DuplicateDefinition,
@@ -498,146 +644,14 @@ impl Vm {
                                             },
                                         )?;
                                     }
-                                    DecodedValue::FuncRef(id) => current
-                                        .seal_static_func(id, source)
-                                        .map_err(|heap_error| {
-                                            error(
-                                                RuntimeErrorKind::DuplicateDefinition,
-                                                heap_error.to_string(),
-                                                function,
-                                                pc,
-                                            )
-                                        })?,
                                     _ => {
                                         return Err(error(
                                             RuntimeErrorKind::InvalidBytecode,
-                                            "function ref target is not a FuncRef",
+                                            "function target is not an open closure",
                                             function,
                                             pc,
                                         ));
                                     }
-                                }
-                            }
-                            Opcode::AllocTypeSlot { dst } => {
-                                charge_allocation(
-                                    account,
-                                    logical_value_bytes(1).map_err(|native_error| {
-                                        allocation_error(native_error.message, function, pc)
-                                    })?,
-                                    function,
-                                    pc,
-                                )?;
-                                let link =
-                                    Val::new(
-                                        DecodedValue::TypeSlot(current.allocate(
-                                            crate::heap::Object::TypeSlot { value: None },
-                                        )),
-                                        instruction_location(function, pc),
-                                    );
-                                write_register(&mut registers, *dst, link, function, pc)?;
-                            }
-                            Opcode::ReadTypeSlot { dst, link } => {
-                                let DecodedValue::TypeSlot(handle) =
-                                    read_register(&registers, *link, function, pc)?.value()
-                                else {
-                                    return Err(error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        "up-link read operand is not an up-link",
-                                        function,
-                                        pc,
-                                    ));
-                                };
-                                let value = view
-                                    .type_slot(handle)
-                                    .map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })?
-                                    .ok_or_else(|| {
-                                        error(
-                                            RuntimeErrorKind::UninitializedDefinition,
-                                            "definition was read before initialization",
-                                            function,
-                                            pc,
-                                        )
-                                    })?;
-                                write_register(&mut registers, *dst, value, function, pc)?;
-                            }
-                            Opcode::SealTypeSlot { link, src } => {
-                                let DecodedValue::TypeSlot(handle) =
-                                    read_register(&registers, *link, function, pc)?.value()
-                                else {
-                                    return Err(error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        "up-link initialization operand is not an up-link",
-                                        function,
-                                        pc,
-                                    ));
-                                };
-                                if view
-                                    .type_slot(handle)
-                                    .map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })?
-                                    .is_some()
-                                {
-                                    return Err(error(
-                                        RuntimeErrorKind::DuplicateDefinition,
-                                        "definition was initialized more than once",
-                                        function,
-                                        pc,
-                                    ));
-                                }
-                                let value = *read_register(&registers, *src, function, pc)?;
-                                current.initialize_type_slot(handle, value).map_err(
-                                    |heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    },
-                                )?;
-                            }
-                            Opcode::AssertTypeSlotReady { link } => {
-                                let DecodedValue::TypeSlot(handle) =
-                                    read_register(&registers, *link, function, pc)?.value()
-                                else {
-                                    return Err(error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        "up-link assertion operand is not an up-link",
-                                        function,
-                                        pc,
-                                    ));
-                                };
-                                if view
-                                    .type_slot(handle)
-                                    .map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })?
-                                    .is_none()
-                                {
-                                    return Err(error(
-                                        RuntimeErrorKind::UninitializedDefinition,
-                                        "declaration was not initialized before block completion",
-                                        function,
-                                        pc,
-                                    ));
                                 }
                             }
                             Opcode::Add { dst, left, right } => {
@@ -1297,10 +1311,9 @@ impl Vm {
                                 })?;
                                 let value = match dict.value() {
                                     DecodedValue::Dict(handle) => view.dict_get(handle, field),
-                                    DecodedValue::Module(handle) => view.exports_get(handle, field),
                                     _ => {
                                         return Err(runtime_type_error(
-                                            "Dict or Module",
+                                            "Dict",
                                             &dict,
                                             &view,
                                             function,
@@ -1584,6 +1597,56 @@ impl Vm {
                                 })?;
                                 write_register(&mut registers, *dst, payload, function, pc)?;
                             }
+                            Opcode::MakeFunctionFamily { dst, identity, variants } => {
+                                let Some(types) = background.solved_types.as_ref() else {
+                                    return Err(error(RuntimeErrorKind::InvalidBytecode, "function family requires a sealed type image", function, pc));
+                                };
+                                let mut entries = Vec::with_capacity(variants.len());
+                                let mut previous: Option<&[crate::mir::TypeId]> = None;
+                                for (arguments, register) in variants {
+                                    if arguments.iter().any(|ty| ty.index() >= types.types.len())
+                                        || previous.is_some_and(|previous| previous >= arguments.as_slice()) {
+                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "function family has invalid or duplicate static instance keys", function, pc));
+                                    }
+                                    let value = *read_register(&registers, *register, function, pc)?;
+                                    let DecodedValue::Func(handle) = value.value() else {
+                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "function family instance is not a function", function, pc));
+                                    };
+                                    view.closure(handle).map_err(|e| error(RuntimeErrorKind::InvalidBytecode, e.to_string(), function, pc))?;
+                                    let bytes = logical_value_bytes(arguments.len() + 1).map_err(|e| allocation_error(e.message, function, pc))?;
+                                    charge_allocation(account, bytes, function, pc)?;
+                                    entries.push((arguments.clone().into_boxed_slice(), value));
+                                    previous = Some(arguments);
+                                }
+                                let identity = if let Some(source) = identity {
+                                    let value = *read_register(&registers, *source, function, pc)?;
+                                    let DecodedValue::Func(handle) = value.value() else {
+                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "function identity source is not a function", function, pc));
+                                    };
+                                    let Object::FunctionFamily { identity, .. } = view.object(handle)
+                                        .map_err(|e| error(RuntimeErrorKind::InvalidBytecode, e.to_string(), function, pc))? else {
+                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "restricted function requires a family identity", function, pc));
+                                    };
+                                    Arc::clone(identity)
+                                } else { Arc::new(()) };
+                                let family = Val::new(DecodedValue::Func(current.allocate(Object::FunctionFamily {
+                                    identity, variants: entries.into(),
+                                })), instruction_location(function, pc));
+                                write_register(&mut registers, *dst, family, function, pc)?;
+                            }
+                            Opcode::SpecializeFunction { dst, family, arguments } => {
+                                let family = *read_register(&registers, *family, function, pc)?;
+                                let DecodedValue::Func(handle) = family.value() else {
+                                    return Err(error(RuntimeErrorKind::InvalidBytecode, "specialization requires a function family", function, pc));
+                                };
+                                let Object::FunctionFamily { variants, .. } = view.object(handle)
+                                    .map_err(|e| error(RuntimeErrorKind::InvalidBytecode, e.to_string(), function, pc))? else {
+                                    return Err(error(RuntimeErrorKind::InvalidBytecode, "specialization requires a quantified function value", function, pc));
+                                };
+                                let index = variants.binary_search_by(|(key, _)| key.as_ref().cmp(arguments))
+                                    .map_err(|_| error(RuntimeErrorKind::InvalidBytecode, "function family has no statically compiled instance for these arguments", function, pc))?;
+                                write_register(&mut registers, *dst, variants[index].1, function, pc)?;
+                            }
                             Opcode::MakeClosure {
                                 dst,
                                 prototype,
@@ -1677,17 +1740,27 @@ impl Vm {
                                     function,
                                     pc,
                                 )?;
-                                let completed = frames.pop().expect("tail caller frame");
-                                let rule_boundary = completed
-                                    .rule_boundary
-                                    .or_else(|| instruction_location(function, pc));
+                                let (return_target, rule_boundary, truncate) = if matches!(frames.last().expect("tail caller").return_target, ReturnTarget::Native(_)) {
+                                    // Native continuations include diagnostic scopes and
+                                    // lazy-task completion. Keep their failure boundary
+                                    // while native dispatch can still fail synchronously.
+                                    // The callee receives a Register target, so subsequent
+                                    // tail recursion replaces frames normally.
+                                    let frame = frames.last_mut().expect("native boundary");
+                                    frame.tail_return = Some(*call_base);
+                                    (ReturnTarget::Register { destination: *call_base, call_site: instruction_location(function, pc) }, frame.rule_boundary, None)
+                                } else {
+                                    let completed = frames.pop().expect("tail caller frame");
+                                    (completed.return_target, completed.rule_boundary, Some(completed.base))
+                                };
+                                let rule_boundary = rule_boundary.or_else(|| instruction_location(function, pc));
                                 let _ = registers;
-                                stack.truncate(completed.base);
+                                if let Some(base) = truncate { stack.truncate(base); }
                                 match drive_vm_action(
                                     VmAction::Call {
                                         callee,
                                         arguments,
-                                        return_target: completed.return_target,
+                                        return_target,
                                         call_function: function_arc,
                                         call_pc: pc,
                                         rule_boundary,
@@ -1871,7 +1944,7 @@ impl Vm {
                 match attempt {
                     Err(mut runtime_error)
                         if runtime_error.failure_class()
-                            == crate::evaluation::FailureClass::Recoverable
+                            == FailureClass::Recoverable
                             && frames.iter().any(|frame| {
                                 matches!(
                                     &frame.return_target,
@@ -1918,7 +1991,7 @@ impl Vm {
                     Err(mut runtime_error)
                         if best_effort
                             && runtime_error.failure_class()
-                                == crate::evaluation::FailureClass::Recoverable =>
+                                == FailureClass::Recoverable =>
                     {
                         let failure_location = runtime_error.data_location();
                         let failed_instruction = runtime_error.instruction;
@@ -2038,8 +2111,21 @@ impl Vm {
                 }
             }
         })();
+        if publish && result.is_ok() && current.solved_evaluation.as_ref().is_some_and(|e| !e.can_publish()) {
+            result = Err(if current.solved_failures.is_empty() {
+                error(RuntimeErrorKind::InvalidBytecode, "demand session contains unfinished tasks", function, 0)
+            } else { propagated_failure_error(0, instruction_location(function, 0), function, 0) });
+        }
         if let Err(runtime_error) = &mut result {
             append_runtime_trace(runtime_error, &frames);
+            if let Some(evaluation) = &mut current.solved_evaluation {
+                let id = runtime_error.propagated_failure.unwrap_or_else(|| {
+                    let id = current.solved_failures.len() as u32;
+                    current.solved_failures.push(runtime_error.clone());
+                    id
+                });
+                evaluation.fail_active(crate::execution_graph::FailureId(id));
+            }
         }
         match result {
             Ok(root) => Ok(VmExecution {
@@ -2079,6 +2165,7 @@ impl Vm {
                 account,
                 false,
                 0,
+                true,
             )
             .map_err(|failure| (failure.heap, failure.error))?;
         let world = execution.world;

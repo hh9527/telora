@@ -132,11 +132,6 @@ pub enum ExprKind {
         value: Box<Expr>,
         target: Box<Expr>,
     },
-    DynProject {
-        namespace: Box<Expr>,
-        target: Box<Expr>,
-        value: Box<Expr>,
-    },
     Binary {
         operator: Located<BinaryOperator>,
         left: Box<Expr>,

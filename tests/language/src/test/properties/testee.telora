@@ -1,6 +1,6 @@
 import "@src/eval/properties/model" as model;
 import "std/fmt" as fmt;
-import "std/type-property" as property;
+import "std/type-property" as props;
 import "std/type-property" {FieldPropertyCtx, VariantPropertyCtx};
 import "std/test" as test;
 import "@src/test-support" {expect};
@@ -19,7 +19,7 @@ def count: Fn(Int) -> Fn(FieldPropertyCtx, Option(Count)) -> Count = fn(value) {
 };
 
 def total: Fn(Type, Option(Total)) -> Total = fn(target, previous) {
-    let count_value = match property.get_field_prop(target, 0, (Count).type) {
+    let count_value = match props.get_field_prop(target, 0, (Count).type) {
         Some(item) => item.value,
         None => 0,
     };
@@ -68,19 +68,19 @@ def accepts: for(T: Property(fmt.DisplayBy)) Fn(TypeOf(T)) -> Bool = fn(target) 
 
 export def verified_case = test.should_ok(fn() {
     let endpoint: model.Endpoint = {host: "localhost", port: 8080};
-    let verified = match property.get_field_prop((User).type, 0, (Count).type) {
+    let verified = match props.get_field_prop((User).type, 0, (Count).type) {
         Some(item) => item.value == 5,
         None => False,
-    } && match property.get_type_prop((User).type, (Total).type) {
+    } && match props.get_type_prop((User).type, (Total).type) {
         Some(item) => item.value == 5,
         None => False,
-    } && match property.get_type_prop((Marked).type, (Mark).type) {
+    } && match props.get_type_prop((Marked).type, (Mark).type) {
         Some(item) => item.value == 42,
         None => False,
-    } && match property.get_field_prop((Marked).type, 0, (Mark).type) {
+    } && match props.get_field_prop((Marked).type, 0, (Mark).type) {
         Some(item) => item.value == 10,
         None => False,
-    } && match property.get_variant_prop((Choice).type, 1, (Mark).type) {
+    } && match props.get_variant_prop((Choice).type, 1, (Mark).type) {
         Some(item) => item.value == 21,
         None => False,
     } && accepts((model.Endpoint).type)

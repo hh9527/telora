@@ -28,6 +28,7 @@ impl<'a> DebugValueFormatter<'a> {
             return Ok(());
         }
         match value.value() {
+            DecodedValue::SolvedType(id) => self.push(&format!("<TypeId:{}>", id.index())),
             DecodedValue::Failed(_) => self.push("<failed>"),
             DecodedValue::Int(value) => self.push(&value.to_string()),
             DecodedValue::Float(value) => self.push(&format!("{value:?}")),
@@ -67,23 +68,6 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push(self.view.native_type(id)?.qualified_name());
                 self.push(">");
             }
-            DecodedValue::DeclaredType(handle) => match self.view.object(handle)? {
-                Object::DeclaredType { type_id, name, .. } => {
-                    let canonical_name = self.view.canonical_type_name(*type_id)?;
-                    self.push("<type ");
-                    self.push(canonical_name.as_deref().unwrap_or(name));
-                    self.push(">");
-                }
-                _ => return Err(crate::heap::HeapError::new("invalid DeclaredType handle")),
-            },
-            DecodedValue::SymbolicType(handle) => match self.view.object(handle)? {
-                Object::SymbolicType { name, .. } => {
-                    self.push("<symbolic-type ");
-                    self.push(name);
-                    self.push(">");
-                }
-                _ => return Err(crate::heap::HeapError::new("invalid SymbolicType handle")),
-            },
             DecodedValue::Array(handle) => self.sequence(handle, false, depth, "[", "]")?,
             DecodedValue::Tuple(handle) => self.sequence(handle, true, depth, "(", ")")?,
             DecodedValue::Tagged(handle) => {
@@ -115,23 +99,7 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push(name);
                 self.push(">");
             }
-            DecodedValue::FuncRef(id) => {
-                self.push("<fn-ref ");
-                self.push(&format!("{}:{}", id.module.raw(), id.local));
-                self.push(">");
-            }
             DecodedValue::Dyn(_) => self.push("<dyn>"),
-            DecodedValue::Module(_) => self.push("<module>"),
-            DecodedValue::TypeSlot(handle) => {
-                if !self.enter(handle, depth) {
-                    return Ok(());
-                }
-                match self.view.type_slot(handle)? {
-                    Some(value) => self.value(value, depth + 1)?,
-                    None => self.push("<uninitialized up-link>"),
-                }
-                self.active.remove(&handle);
-            }
         }
         Ok(())
     }

@@ -68,95 +68,6 @@ pub struct NativeType {
     qualified_name: Arc<str>,
 }
 
-#[derive(Clone, Debug)]
-pub struct DeclaredTypeId {
-    module: crate::ModuleId,
-    declaration: u32,
-    arguments: Arc<[crate::types::TypeDescriptor]>,
-    argument_ids: Arc<[crate::types::TypeExprId]>,
-}
-
-impl DeclaredTypeId {
-    pub(crate) fn concrete(module: crate::ModuleId, declaration: u32) -> Self {
-        Self {
-            module,
-            declaration,
-            arguments: Arc::new([]),
-            argument_ids: Arc::new([]),
-        }
-    }
-
-    pub(crate) fn applied(
-        module: crate::ModuleId,
-        declaration: u32,
-        arguments: &[crate::types::TypeDescriptor],
-    ) -> Self {
-        Self {
-            module,
-            declaration,
-            arguments: arguments.into(),
-            argument_ids: arguments
-                .iter()
-                .map(crate::types::TypeExprId::from_descriptor)
-                .collect::<Vec<_>>()
-                .into(),
-        }
-    }
-
-    pub(crate) fn reapply(&self, arguments: &[crate::types::TypeDescriptor]) -> Self {
-        Self::applied(self.module, self.declaration, arguments)
-    }
-
-    pub(crate) fn arguments(&self) -> &[crate::types::TypeDescriptor] {
-        &self.arguments
-    }
-
-    pub(crate) fn constructor(&self) -> crate::TypeConstructorId {
-        crate::TypeConstructorId {
-            module: self.module,
-            local: self.declaration,
-        }
-    }
-
-    pub(crate) fn has_same_head(&self, other: &Self) -> bool {
-        self.module == other.module && self.declaration == other.declaration
-    }
-}
-
-impl PartialEq for DeclaredTypeId {
-    fn eq(&self, other: &Self) -> bool {
-        self.module == other.module
-            && self.declaration == other.declaration
-            && self.argument_ids == other.argument_ids
-    }
-}
-
-impl Eq for DeclaredTypeId {}
-
-impl std::hash::Hash for DeclaredTypeId {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.module.hash(state);
-        self.declaration.hash(state);
-        self.argument_ids.hash(state);
-    }
-}
-
-impl PartialOrd for DeclaredTypeId {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for DeclaredTypeId {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (&self.module, self.declaration, &self.argument_ids).cmp(&(
-            &other.module,
-            other.declaration,
-            &other.argument_ids,
-        ))
-    }
-}
-
 impl NativeType {
     pub(crate) fn bind(id: NativeTypeId, qualified_name: impl Into<Arc<str>>) -> Self {
         Self {
@@ -359,51 +270,6 @@ pub(crate) enum CorePathFunction {
     Normalize,
     Parent,
     FileName,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CoreModelFunction {
-    Struct,
-    Newtype,
-    Enum,
-}
-
-impl CoreModelFunction {
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Struct => "\0telora_struct",
-            Self::Newtype => "\0telora_newtype",
-            Self::Enum => "\0telora_enum",
-        }
-    }
-
-    pub(crate) const fn arity(self) -> usize {
-        2
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CoreBuiltinTypeFunction {
-    FoldControl,
-    Option,
-    Result,
-}
-
-impl CoreBuiltinTypeFunction {
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::FoldControl => "FoldControl",
-            Self::Option => "Option",
-            Self::Result => "Result",
-        }
-    }
-
-    pub(crate) const fn arity(self) -> usize {
-        match self {
-            Self::Option => 1,
-            Self::FoldControl | Self::Result => 2,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -696,10 +562,7 @@ impl CoreArrayFunction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeKind {
     Synchronous,
-    CheckedCast,
     CoreArray(CoreArrayFunction),
-    CoreModel(CoreModelFunction),
-    CoreBuiltinType(CoreBuiltinTypeFunction),
     CoreDict(CoreDictFunction),
     CoreString(CoreStringFunction),
     CorePath(CorePathFunction),
@@ -722,13 +585,6 @@ pub struct NativeFunction {
 }
 
 impl NativeFunction {
-    pub(crate) const fn checked_cast(callback: NativeCallback) -> Self {
-        Self {
-            name: "\0telora_cast", arity: 2, callback,
-            kind: NativeKind::CheckedCast, native_type_local: None,
-        }
-    }
-
     pub const fn new(name: &'static str, arity: usize, callback: NativeCallback) -> Self {
         Self {
             name,
@@ -760,26 +616,6 @@ impl NativeFunction {
             arity: function.arity(),
             callback: unavailable_core_callback,
             kind: NativeKind::CoreArray(function),
-            native_type_local: None,
-        }
-    }
-
-    pub(crate) const fn core_model(function: CoreModelFunction) -> Self {
-        Self {
-            name: function.name(),
-            arity: function.arity(),
-            callback: unavailable_core_callback,
-            kind: NativeKind::CoreModel(function),
-            native_type_local: None,
-        }
-    }
-
-    pub(crate) const fn core_builtin_type(function: CoreBuiltinTypeFunction) -> Self {
-        Self {
-            name: function.name(),
-            arity: function.arity(),
-            callback: unavailable_core_callback,
-            kind: NativeKind::CoreBuiltinType(function),
             native_type_local: None,
         }
     }

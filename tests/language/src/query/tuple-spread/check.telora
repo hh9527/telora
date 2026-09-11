@@ -5,7 +5,7 @@ export def check: Fn(Value) -> Value = fn(actual) {
         Some(value) => support.bool_value(
             support.exit_code(actual) == Some(0)
                 && support.string_field_equals(value, "name", "result")
-                && support.string_field_equals(value, "type", "(Int, String, enum {False, True}, Int)")
+                && support.string_field_equals(value, "type", "(Int, String, Bool, Int)")
                 && support.stream_length(actual, "stderr") == Some(0)),
         _ => Value.False,
     }

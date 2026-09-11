@@ -20,7 +20,7 @@ def has_type: Fn(Value, String, String) -> Bool = fn(actual, name, expected) {
 
 export def check: Fn(Value) -> Value = fn(actual) {
     if support.exit_code(actual) == Some(0)
-        && has_type(actual, "Render", "for(Self) Fn(TypeOf(Self)) -> TypeOf(Render)")
+        && has_type(actual, "Render", "for(Self) TypeOf(Render(Self))")
         && has_type(actual, "Name", "TypeOf(Name)")
         && has_type(actual, "identity", "for(T: Render) Fn(T) -> T")
         && has_type(actual, "render", "for(T: Render) Fn(T) -> String")

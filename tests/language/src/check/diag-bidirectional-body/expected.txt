@@ -1,1 +1,1 @@
-cannot unify String with Int
+numeric operand requires Int or Float, found String

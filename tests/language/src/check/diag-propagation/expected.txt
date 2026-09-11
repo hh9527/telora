@@ -1,1 +1,1 @@
-cannot mix Option and Result
+cannot unify Option<?> with Result<?, ?>

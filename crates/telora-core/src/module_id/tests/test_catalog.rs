@@ -167,7 +167,7 @@ fn test_catalog_rejects_symlinks_and_path_replacement() {
 }
 
 #[test]
-fn test_catalog_strict_loader_rejects_cycles_after_graph_discovery() {
+fn test_catalog_cycle_edges_retain_canonical_module_identity() {
     let (root, app) = test_catalog_fixture("strict-cycle");
     std::fs::write(
         app.join("tests/a.telora"),
@@ -179,14 +179,11 @@ fn test_catalog_strict_loader_rejects_cycles_after_graph_discovery() {
         "import \"app/tests/a\" as a; export def value = 2;",
     )
     .unwrap();
-    let engine = crate::Engine::new(crate::EngineConfig {
-        module_quota: crate::Quota::with_fuel(1_000_000),
-        session_quota: crate::Quota::with_fuel(1_000_000),
-        data_limits: crate::DataLimits::default(),
-    });
-    let error = engine
-        .load_module_id(&app, "@test/a", BTreeMap::new())
-        .unwrap_err();
-    assert!(error.to_string().contains("module import cycle"), "{error}");
+    let resolver = ModuleResolver::from_cwd(&app, "@test/a").unwrap();
+    let a = resolver.selected_root().unwrap();
+    let b = resolver.resolve_import(&a.id, "./b").unwrap();
+    let back = resolver.resolve_import(&b.id, "app/tests/a").unwrap();
+    assert_eq!(a.id, back.id);
+    assert_eq!(a.path(), back.path());
     std::fs::remove_dir_all(root).unwrap();
 }

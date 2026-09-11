@@ -2,7 +2,7 @@ use crate::bytecode::Constant;
 use crate::source::Loc;
 use crate::{BuiltinAtom, BytecodeFunction, FuncByteCode, NativeFunction};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -20,7 +20,6 @@ const TRAIT_REFERENCE: u16 = 1 << 0;
 const TRAIT_TEXT: u16 = 1 << 1;
 const TRAIT_INLINE: u16 = 1 << 2;
 const TRAIT_HEAP: u16 = 1 << 3;
-const TRAIT_TYPE_SLOT: u16 = 1 << 4;
 const TRAIT_TRACE: u16 = 1 << 5;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -41,8 +40,7 @@ enum FlatKind {
     Atom,
     NativeType,
     Heap,
-    TypeSlot,
-    FuncRef,
+    SolvedType = 11,
     Invalid = 63,
 }
 
@@ -58,21 +56,19 @@ impl FlatKind {
             6 => Self::Atom,
             7 => Self::NativeType,
             8 => Self::Heap,
-            9 => Self::TypeSlot,
-            10 => Self::FuncRef,
+            11 => Self::SolvedType,
             _ => Self::Invalid,
         }
     }
 
     const fn traits(self) -> u16 {
         match self {
-            Self::Never | Self::Int | Self::Float | Self::NativeType | Self::FuncRef => {
+            Self::Never | Self::Int | Self::Float | Self::NativeType | Self::SolvedType => {
                 TRAIT_INLINE
             }
             Self::InlineString | Self::InlineAtom => TRAIT_INLINE | TRAIT_TEXT,
             Self::String | Self::Atom => TRAIT_REFERENCE | TRAIT_TEXT,
             Self::Heap => TRAIT_REFERENCE | TRAIT_HEAP,
-            Self::TypeSlot => TRAIT_REFERENCE | TRAIT_TYPE_SLOT | TRAIT_TRACE,
             Self::Invalid => 0,
         }
     }
@@ -83,23 +79,19 @@ impl FlatKind {
 enum HeapKind {
     None,
     Bytes,
-    DeclaredType,
-    Opaque,
+    Opaque = 3,
     Array,
     Tuple,
     Tagged,
     Dict,
     Func,
     Dyn,
-    Module,
-    SymbolicType,
 }
 
 impl HeapKind {
     fn from_bits(bits: u32) -> Self {
         match bits {
             1 => Self::Bytes,
-            2 => Self::DeclaredType,
             3 => Self::Opaque,
             4 => Self::Array,
             5 => Self::Tuple,
@@ -107,8 +99,6 @@ impl HeapKind {
             7 => Self::Dict,
             8 => Self::Func,
             9 => Self::Dyn,
-            10 => Self::Module,
-            11 => Self::SymbolicType,
             _ => Self::None,
         }
     }
@@ -120,10 +110,7 @@ impl HeapKind {
             | Self::Tagged
             | Self::Dict
             | Self::Func
-            | Self::DeclaredType
-            | Self::SymbolicType
-            | Self::Dyn
-            | Self::Module => TRAIT_TRACE,
+            | Self::Dyn => TRAIT_TRACE,
             Self::None | Self::Bytes | Self::Opaque => 0,
         }
     }
@@ -375,6 +362,7 @@ pub(crate) struct ShapeId {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum DecodedValue {
+    SolvedType(crate::mir::TypeId),
     Failed(u32),
     Int(i64),
     Float(f64),
@@ -385,8 +373,6 @@ pub(crate) enum DecodedValue {
     ShortString(InternId),
     Bytes(Handle),
     NativeType(crate::value::NativeTypeId),
-    DeclaredType(Handle),
-    SymbolicType(Handle),
     Opaque(Handle),
     Array(Handle),
     Tuple(Handle),
@@ -394,14 +380,12 @@ pub(crate) enum DecodedValue {
     Dict(Handle),
     Func(Handle),
     Dyn(Handle),
-    Module(Handle),
-    TypeSlot(Handle),
-    FuncRef(crate::FuncId),
 }
 
 impl DecodedValue {
     fn encode(self) -> (Meta, u64) {
         let (kind, sub_kind, raw) = match self {
+            Self::SolvedType(id) => (FlatKind::SolvedType, HeapKind::None, id.index() as u64),
             Self::Failed(id) => (FlatKind::Never, HeapKind::None, ((id as u64) << 1) | 1),
             Self::Int(value) => (FlatKind::Int, HeapKind::None, value as u64),
             Self::Float(value) => (FlatKind::Float, HeapKind::None, value.to_bits()),
@@ -430,8 +414,6 @@ impl DecodedValue {
                 HeapKind::None,
                 u64::from(id.module.0) | (u64::from(id.local) << 32),
             ),
-            Self::DeclaredType(handle) => heap_parts(handle, HeapKind::DeclaredType),
-            Self::SymbolicType(handle) => heap_parts(handle, HeapKind::SymbolicType),
             Self::Opaque(handle) => heap_parts(handle, HeapKind::Opaque),
             Self::Array(handle) => heap_parts(handle, HeapKind::Array),
             Self::Tuple(handle) => heap_parts(handle, HeapKind::Tuple),
@@ -439,17 +421,6 @@ impl DecodedValue {
             Self::Dict(handle) => heap_parts(handle, HeapKind::Dict),
             Self::Func(handle) => heap_parts(handle, HeapKind::Func),
             Self::Dyn(handle) => heap_parts(handle, HeapKind::Dyn),
-            Self::Module(handle) => heap_parts(handle, HeapKind::Module),
-            Self::TypeSlot(handle) => (
-                FlatKind::TypeSlot,
-                HeapKind::None,
-                ScopedId::new(handle.storage, handle.slot).raw(),
-            ),
-            Self::FuncRef(id) => (
-                FlatKind::FuncRef,
-                HeapKind::None,
-                u64::from(id.module.raw()) | (u64::from(id.local) << 32),
-            ),
         };
         (Meta::new(kind, sub_kind, Provenance::Unknown), raw)
     }
@@ -535,6 +506,12 @@ impl Val {
         }
     }
 
+    pub(crate) fn preserve_origin(self) -> Self {
+        if self.loc().is_some() {
+            Self { meta: self.meta.with_provenance(Provenance::Original), ..self }
+        } else { self }
+    }
+
     pub(crate) fn rebase_generated(self, call_site: Option<Loc>) -> Self {
         // Dyn carries the erased value's origin, including an absent origin.
         // Returning the wrapper must not replace it with the packing call site.
@@ -567,6 +544,7 @@ impl Val {
             slot: scoped_id().slot(),
         };
         match (self.meta.kind(), self.meta.sub_kind()) {
+            (FlatKind::SolvedType, _) => DecodedValue::SolvedType(crate::mir::TypeId(self.raw as u32)),
             (FlatKind::Never, _) => DecodedValue::Failed((self.raw >> 1) as u32),
             (FlatKind::Int, _) => DecodedValue::Int(self.raw as i64),
             (FlatKind::Float, _) => DecodedValue::Float(f64::from_bits(self.raw)),
@@ -592,8 +570,6 @@ impl Val {
                 module: crate::value::NativeModuleId(self.raw as u32),
                 local: (self.raw >> 32) as u32,
             }),
-            (FlatKind::Heap, HeapKind::DeclaredType) => DecodedValue::DeclaredType(handle()),
-            (FlatKind::Heap, HeapKind::SymbolicType) => DecodedValue::SymbolicType(handle()),
             (FlatKind::Heap, HeapKind::Opaque) => DecodedValue::Opaque(handle()),
             (FlatKind::Heap, HeapKind::Array) => DecodedValue::Array(handle()),
             (FlatKind::Heap, HeapKind::Tuple) => DecodedValue::Tuple(handle()),
@@ -601,12 +577,6 @@ impl Val {
             (FlatKind::Heap, HeapKind::Dict) => DecodedValue::Dict(handle()),
             (FlatKind::Heap, HeapKind::Func) => DecodedValue::Func(handle()),
             (FlatKind::Heap, HeapKind::Dyn) => DecodedValue::Dyn(handle()),
-            (FlatKind::Heap, HeapKind::Module) => DecodedValue::Module(handle()),
-            (FlatKind::TypeSlot, _) => DecodedValue::TypeSlot(handle()),
-            (FlatKind::FuncRef, _) => DecodedValue::FuncRef(crate::FuncId {
-                module: crate::ModuleId::from_raw(self.raw as u32),
-                local: (self.raw >> 32) as u32,
-            }),
             _ => unreachable!("invalid runtime Meta combination"),
         }
     }
@@ -659,34 +629,3 @@ impl From<DecodedValue> for Val {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PersistentValue(Val);
-
-impl PersistentValue {
-    pub(crate) fn export_get(self, heap: &Heap, name: &str) -> Result<Option<Self>, HeapError> {
-        if heap.storage != Storage::Main {
-            return Err(HeapError("persistent values require a Main world"));
-        }
-        let (shape, values) = match self.0.value() {
-            DecodedValue::Module(handle) => {
-                let Object::Module { exports } = heap.object(handle)? else {
-                    return Err(HeapError(
-                        "persistent Module handle has another object kind",
-                    ));
-                };
-                (exports.shape, exports.values.as_ref())
-            }
-            DecodedValue::Dict(handle) => {
-                let Object::Dict { shape, values } = heap.object(handle)? else {
-                    return Err(HeapError("persistent Dict handle has another object kind"));
-                };
-                (*shape, values.as_ref())
-            }
-            _ => return Err(HeapError("persistent value has no exports")),
-        };
-        for (field, value) in heap.shape(shape)?.iter().zip(values) {
-            if heap.resolve_text(*field)? == name {
-                return Ok(Some(Self(*value)));
-            }
-        }
-        Ok(None)
-    }
-}

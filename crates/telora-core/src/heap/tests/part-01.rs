@@ -59,10 +59,48 @@
     }
 
     #[test]
+    fn raw_world_publication_rejects_typed_values_without_mutating_destination() {
+        let mut source = Heap::work();
+        let text = Val::unknown(source.string(None, "pending long text"));
+        let typed = Val::unknown(DecodedValue::Int(42))
+            .with_type_id(crate::TypeId::solved(crate::mir::TypeId(0)));
+        let root = Val::unknown(DecodedValue::Array(source.allocate(Object::Array(vec![text, typed].into()))));
+        let mut destination = Heap::main();
+        let before = destination.counts();
+        let error = publish_root(&mut destination, &source, root).unwrap_err();
+        assert!(error.to_string().contains("typed values require their shared session type image"));
+        assert_eq!(destination.counts(), before);
+    }
+
+    #[test]
+    fn work_relocation_preserves_shared_type_ids_and_main_handles_without_allocating() {
+        let mir = crate::codegen::tests::graph("export def answer = [42];", "");
+        let (_, types) = mir.seal().unwrap().into_parts();
+        let int = crate::mir::TypeId(types.types.iter().position(|ty| ty.constructor == crate::mir::TypeConstructor::Int).unwrap() as u32);
+        let array = crate::mir::TypeId(types.types.iter().position(|ty| ty.constructor == crate::mir::TypeConstructor::Array && ty.arguments == [int]).unwrap() as u32);
+        let mut main = Heap::main();
+        main.solved_types = Some(types);
+        let scalar = Val::unknown(DecodedValue::Int(42)).with_type_id(crate::TypeId::solved(int));
+        let metadata = Val::unknown(DecodedValue::SolvedType(array));
+        let shared = Val::unknown(DecodedValue::Array(main.allocate(Object::Array(vec![scalar].into()))))
+            .with_type_id(crate::TypeId::solved(array));
+        let source = Heap::work();
+        let mut target = Heap::work();
+        let before = (main.counts(), target.counts());
+        let roots = [scalar, metadata, shared];
+        let copied = relocate_work_roots(&mut target, &main, &source, &roots).unwrap();
+        assert_eq!(copied, roots);
+        assert_eq!((main.counts(), target.counts()), before);
+        let invalid = Val::unknown(DecodedValue::SolvedType(crate::mir::TypeId(u32::MAX)));
+        assert!(relocate_work_roots(&mut target, &main, &source, &[invalid]).is_err());
+        assert_eq!(target.counts(), before.1);
+    }
+
+    #[test]
     fn canonical_type_id_is_independent_from_value_storage() {
         let raw = Val::unknown(DecodedValue::Int(1));
-        let typed = raw.with_type_id(crate::TypeId::builtin(7));
-        assert_eq!(typed.type_id(), Some(crate::TypeId::builtin(7)));
+        let typed = raw.with_type_id(crate::TypeId::solved(crate::mir::TypeId(7)));
+        assert_eq!(typed.type_id(), Some(crate::TypeId::solved(crate::mir::TypeId(7))));
         assert_eq!(typed.value(), DecodedValue::Int(1));
     }
 
@@ -74,7 +112,7 @@
             background: None,
         };
         let raw = Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::True));
-        let typed = raw.with_type_id(crate::TypeId::builtin(7));
+        let typed = raw.with_type_id(crate::TypeId::solved(crate::mir::TypeId(7)));
         assert!(!view.values_equal(typed, raw).unwrap());
         assert!(!view.values_equal(raw, typed).unwrap());
         assert!(view.values_equal(typed, typed).unwrap());
@@ -298,7 +336,7 @@
     }
 
     #[test]
-    fn failed_nodes_cross_module_publication_but_not_host_publication() {
+    fn failed_nodes_can_relocate_within_execution_but_cannot_be_published_to_host() {
         let main = Heap::main();
         let mut source = Heap::work();
         let root = Val::unknown(DecodedValue::Array(source.allocate(Object::Array(
@@ -316,51 +354,6 @@
         assert!(matches!(items[0].value(), DecodedValue::Failed(7)));
         let mut destination = Heap::main();
         assert!(publish_root(&mut destination, &source, root).is_err());
-        let published = publish_module_root(&mut destination, &source, root).unwrap();
-        assert_eq!(
-            HeapView {
-                current: &destination,
-                background: None,
-            }
-            .first_data_failure(published.runtime())
-            .unwrap(),
-            Some(7)
-        );
-    }
-
-    #[test]
-    fn typed_property_batch_failure_publishes_no_partial_heads() {
-        let mut main = Heap::main();
-        let work = Heap::work_for(&main);
-        let property_ty = crate::TypeId::builtin(2);
-        let first = PropertyKey::Ty {
-            ty: crate::TypeId::builtin(3),
-            property_ty,
-        };
-        let second = PropertyKey::Field {
-            ty: crate::TypeId::builtin(3),
-            member_index: 0,
-            property_ty,
-        };
-        let valid = work.int(1).with_type_id(property_ty);
-        let failed = Val::unknown(DecodedValue::Failed(7)).with_type_id(property_ty);
-
-        assert!(
-            publish_type_properties(
-                &mut main,
-                &work,
-                Some(property_ty),
-                &[(first, valid), (second, failed)],
-            )
-            .is_err()
-        );
-        let view = HeapView {
-            current: &main,
-            background: None,
-        };
-        assert!(view.property(first).is_none());
-        assert!(view.property(second).is_none());
-        assert_eq!(main.property_attr_type(), None);
     }
 
     #[test]
@@ -374,7 +367,7 @@
 
         let published = publish_root(&mut main, &work, rv(DecodedValue::Array(work_root)))
             .unwrap()
-            .runtime();
+            .0;
         let DecodedValue::Array(main_root) = published.value() else {
             panic!("expected published Array")
         };
@@ -416,47 +409,5 @@
                 rv(DecodedValue::Array(right))
             )
             .unwrap()
-        );
-    }
-
-    #[test]
-    fn promotion_copies_ready_type_slots_and_rejects_uninitialized_links() {
-        let mut local = Heap::work();
-        let link = local.allocate(Object::TypeSlot { value: None });
-        let array = local.allocate(Object::Array(vec![rv(DecodedValue::TypeSlot(link))].into()));
-        local
-            .initialize_type_slot(link, rv(DecodedValue::Array(array)))
-            .unwrap();
-        let mut world = Heap::main();
-        let DecodedValue::TypeSlot(persistent_link) =
-            publish_root(&mut world, &local, rv(DecodedValue::TypeSlot(link)))
-                .unwrap()
-                .runtime()
-                .value()
-        else {
-            panic!("expected persistent up-link")
-        };
-        let reader = Heap::work();
-        let view = HeapView {
-            current: &reader,
-            background: Some(&world),
-        };
-        let DecodedValue::Array(array) = view
-            .type_slot(persistent_link)
-            .unwrap()
-            .expect("published up-link is ready")
-            .value()
-        else {
-            panic!("expected Array")
-        };
-        assert_eq!(
-            view.sequence(array, false).unwrap(),
-            &[rv(DecodedValue::TypeSlot(persistent_link))]
-        );
-
-        let mut uninitialized = Heap::work();
-        let link = uninitialized.allocate(Object::TypeSlot { value: None });
-        assert!(
-            publish_root(&mut world, &uninitialized, rv(DecodedValue::TypeSlot(link))).is_err()
         );
     }

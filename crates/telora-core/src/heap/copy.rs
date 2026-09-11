@@ -1,3 +1,19 @@
+fn copy_roots(
+    target: &mut Heap,
+    source: HeapView<'_>,
+    roots: &[Val],
+) -> Result<Vec<Val>, HeapError> {
+    let mut pending = PendingCopy::new(target, &source);
+    let roots = roots
+        .iter()
+        .map(|root| pending.copy_value(target, &source, *root))
+        .collect::<Result<Vec<_>, _>>()?;
+    pending.validate()?;
+    pending.commit(target);
+    Ok(roots)
+}
+
+
 struct PendingCopy {
     target_storage: Storage,
     source_storage: Storage,
@@ -12,10 +28,6 @@ struct PendingCopy {
     text_forwarded: HashMap<InternId, InternId>,
     shapes_forwarded: HashMap<ShapeId, ShapeId>,
     native_types: HashMap<crate::value::NativeTypeId, crate::NativeType>,
-    value_replacements: HashMap<Handle, Val>,
-    forced_objects: HashSet<Handle>,
-    type_argument_values: Option<Arc<[Val]>>,
-    type_arguments: Option<Arc<[crate::types::TypeDescriptor]>>,
 }
 
 impl PendingCopy {
@@ -34,27 +46,6 @@ impl PendingCopy {
             text_forwarded: HashMap::new(),
             shapes_forwarded: HashMap::new(),
             native_types: HashMap::new(),
-            value_replacements: HashMap::new(),
-            forced_objects: HashSet::new(),
-            type_argument_values: None,
-            type_arguments: None,
-        }
-    }
-
-    fn new_type_application(
-        target: &Heap,
-        source: &HeapView<'_>,
-        value_replacements: HashMap<Handle, Val>,
-        forced_objects: HashSet<Handle>,
-        type_argument_values: &[Val],
-        type_arguments: &[crate::types::TypeDescriptor],
-    ) -> Self {
-        Self {
-            value_replacements,
-            forced_objects,
-            type_argument_values: Some(type_argument_values.into()),
-            type_arguments: Some(type_arguments.into()),
-            ..Self::new(target, source)
         }
     }
 
@@ -64,16 +55,11 @@ impl PendingCopy {
         source: &HeapView<'_>,
         value: Val,
     ) -> Result<Val, HeapError> {
-        if let Some(handle) = runtime_object_handle(value.value())
-            && let Some(replacement) = self.value_replacements.get(&handle)
-        {
-            return Ok(if replacement.loc().is_some() {
-                *replacement
-            } else {
-                replacement.with_loc(value.loc())
-            });
-        }
         let copied = match value.value() {
+            DecodedValue::SolvedType(id) => {
+                self.validate_session_type(source, id)?;
+                value.value()
+            }
             // Failure ids belong to the Main world's stable failure arena.
             // Work executions inherit that arena as a prefix and append new
             // roots, so the identity does not need relocation during copy.
@@ -81,8 +67,7 @@ impl PendingCopy {
             DecodedValue::Int(_)
             | DecodedValue::BuiltinAtom(_)
             | DecodedValue::InlineAtom(_)
-            | DecodedValue::InlineString(_)
-            | DecodedValue::FuncRef(_) => value.value(),
+            | DecodedValue::InlineString(_) => value.value(),
             DecodedValue::Float(float) if float.is_finite() => value.value(),
             DecodedValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
             DecodedValue::Atom(id) => DecodedValue::Atom(self.copy_text(target, source, id)?),
@@ -99,33 +84,6 @@ impl PendingCopy {
                 self.copy_native_type(target, source, id)?;
                 DecodedValue::NativeType(id)
             }
-            DecodedValue::DeclaredType(handle) => {
-                DecodedValue::DeclaredType(self.copy_object(target, source, handle)?)
-            }
-            DecodedValue::SymbolicType(handle) => {
-                let copied = self.copy_object(target, source, handle)?;
-                if copied == handle {
-                    return Ok(value.with_value(DecodedValue::SymbolicType(copied)));
-                }
-                let Object::SymbolicType { id, .. } = source.object(handle)? else {
-                    return Err(HeapError(
-                        "SymbolicType handle refers to another object kind",
-                    ));
-                };
-                let id = self.type_arguments.as_ref().map_or_else(
-                    || id.clone(),
-                    |arguments| crate::types::apply_declared_type_arguments(id, arguments),
-                );
-                let remains_symbolic = id
-                    .arguments()
-                    .iter()
-                    .any(crate::types::type_identity_is_symbolic);
-                if remains_symbolic {
-                    DecodedValue::SymbolicType(copied)
-                } else {
-                    DecodedValue::DeclaredType(copied)
-                }
-            }
             DecodedValue::Array(handle) => {
                 DecodedValue::Array(self.copy_object(target, source, handle)?)
             }
@@ -138,50 +96,30 @@ impl PendingCopy {
             DecodedValue::Dict(handle) => {
                 DecodedValue::Dict(self.copy_object(target, source, handle)?)
             }
-            DecodedValue::Module(handle) => {
-                DecodedValue::Module(self.copy_object(target, source, handle)?)
-            }
             DecodedValue::Func(handle) => {
                 DecodedValue::Func(self.copy_object(target, source, handle)?)
             }
             DecodedValue::Dyn(handle) => {
                 DecodedValue::Dyn(self.copy_object(target, source, handle)?)
             }
-            DecodedValue::TypeSlot(handle) => {
-                DecodedValue::TypeSlot(self.copy_object(target, source, handle)?)
-            }
         };
-        let mut copied = value.with_value(copied).without_type_id();
         if let Some(type_id) = value.type_id() {
-            if self.type_arguments.is_none() && target.declared_types.contains_key(&type_id) {
-                return Ok(copied.with_type_id(type_id));
-            }
-            let owner = source
-                .type_witness(value)?
-                .expect("value with a TypeId has registered metadata");
-            let DecodedValue::DeclaredType(owner_handle) = owner.value() else {
-                unreachable!("type metadata is a declared Type")
-            };
-            let Object::DeclaredType { id, .. } = source.object(owner_handle)? else {
-                unreachable!("type metadata is a declared Type")
-            };
-            let copied_id = self.canonical_declared_type_id(target, id)?;
-            self.copy_object(target, source, owner_handle)?;
-            copied = copied.with_type_id(copied_id);
+            let id = type_id.solved_id().ok_or(HeapError("runtime value requires a solved session TypeId"))?;
+            self.validate_session_type(source, id)?;
         }
-        Ok(copied)
+        Ok(value.with_value(copied))
     }
 
-    fn canonical_declared_type_id(
-        &self,
-        target: &Heap,
-        id: &crate::value::DeclaredTypeId,
-    ) -> Result<crate::TypeId, HeapError> {
-        let id = self.type_arguments.as_ref().map_or_else(
-            || id.clone(),
-            |arguments| crate::types::apply_declared_type_arguments(id, arguments),
-        );
-        target.canonical_declared_type_id(&id)
+    fn validate_session_type(&self, source: &HeapView<'_>, id: crate::mir::TypeId) -> Result<(), HeapError> {
+        // Work relocation and initialization publication supply the common Main world. Its type
+        // image is shared, so type identities need no copying or interning.
+        let types = source.background.filter(|main| main.storage == Storage::Main)
+            .and_then(|main| main.solved_types.as_ref())
+            .ok_or(HeapError("typed values require their shared session type image"))?;
+        if id.index() >= types.types.len() {
+            return Err(HeapError("solved value type is outside its session image"));
+        }
+        Ok(())
     }
 
     fn copy_object(
@@ -190,7 +128,7 @@ impl PendingCopy {
         source: &HeapView<'_>,
         handle: Handle,
     ) -> Result<Handle, HeapError> {
-        if handle.storage != self.source_storage && !self.forced_objects.contains(&handle) {
+        if handle.storage != self.source_storage {
             if handle.storage == self.target_storage {
                 target.object(handle)?;
             } else {
@@ -245,95 +183,6 @@ impl PendingCopy {
                     .collect::<Result<_, _>>()?;
                 Object::Opaque(value)
             }
-            Object::DeclaredType {
-                id,
-                name,
-                body,
-                sealed,
-                application_arguments,
-                ..
-            } => {
-                if !sealed {
-                    return Err(HeapError("cannot copy an unsealed type ref"));
-                }
-                let type_argument_values = self.type_argument_values.clone();
-                let application_arguments = if let Some(arguments) = type_argument_values {
-                    Some(arguments.as_ref().into())
-                } else if let Some(arguments) = application_arguments {
-                    Some(
-                        arguments
-                            .iter()
-                            .map(|argument| self.copy_value(target, source, *argument))
-                            .collect::<Result<Box<[_]>, _>>()?,
-                    )
-                } else {
-                    None
-                };
-                let id = self.type_arguments.as_ref().map_or_else(
-                    || id.clone(),
-                    |arguments| crate::types::apply_declared_type_arguments(id, arguments),
-                );
-                let type_id = target.canonical_declared_type_id(&id)?;
-                Object::DeclaredType {
-                    type_id,
-                    id,
-                    name: Arc::clone(name),
-                    body: self.copy_value(target, source, *body)?,
-                    sealed: true,
-                    application_arguments,
-                }
-            }
-            Object::SymbolicType {
-                id,
-                name,
-                body,
-                sealed,
-                application_arguments,
-            } => {
-                if !sealed {
-                    return Err(HeapError("cannot copy an unsealed symbolic type ref"));
-                }
-                let type_argument_values = self.type_argument_values.clone();
-                let application_arguments = if let Some(arguments) = type_argument_values {
-                    Some(arguments.as_ref().into())
-                } else if let Some(arguments) = application_arguments {
-                    Some(
-                        arguments
-                            .iter()
-                            .map(|argument| self.copy_value(target, source, *argument))
-                            .collect::<Result<Box<[_]>, _>>()?,
-                    )
-                } else {
-                    None
-                };
-                let id = self.type_arguments.as_ref().map_or_else(
-                    || id.clone(),
-                    |arguments| crate::types::apply_declared_type_arguments(id, arguments),
-                );
-                let body = self.copy_value(target, source, *body)?;
-                if id
-                    .arguments()
-                    .iter()
-                    .any(crate::types::type_identity_is_symbolic)
-                {
-                    Object::SymbolicType {
-                        id,
-                        name: Arc::clone(name),
-                        body,
-                        sealed: true,
-                        application_arguments,
-                    }
-                } else {
-                    Object::DeclaredType {
-                        type_id: target.canonical_declared_type_id(&id)?,
-                        id,
-                        name: Arc::clone(name),
-                        body,
-                        sealed: true,
-                        application_arguments,
-                    }
-                }
-            }
             Object::Array(values) => Object::Array(copy_values(self, values)?),
             Object::Tuple(values) => Object::Tuple(copy_values(self, values)?),
             Object::Tagged { tag, payload } => Object::Tagged {
@@ -344,12 +193,6 @@ impl PendingCopy {
                 shape: self.copy_shape(target, source, *shape)?,
                 values: copy_values(self, values)?,
             },
-            Object::Module { exports } => Object::Module {
-                exports: ExportTable {
-                    shape: self.copy_shape(target, source, exports.shape)?,
-                    values: copy_values(self, &exports.values)?,
-                },
-            },
             Object::Closure {
                 identity,
                 prototype,
@@ -359,25 +202,22 @@ impl PendingCopy {
                 prototype: self.copy_prototype(target, source, prototype)?,
                 upvalues: copy_values(self, upvalues)?,
             },
+            Object::FunctionFamily { identity, variants } => {
+                let mut copied = Vec::with_capacity(variants.len());
+                for (arguments, value) in variants {
+                    for &ty in arguments { self.validate_session_type(source, ty)?; }
+                    copied.push((arguments.clone(), self.copy_value(target, source, *value)?));
+                }
+                Object::FunctionFamily { identity: Arc::clone(identity), variants: copied.into() }
+            }
             Object::Dyn {
                 identity,
                 descriptor,
                 value,
-                scheme,
-                origin,
             } => Object::Dyn {
                 identity: Arc::clone(identity),
                 descriptor: self.copy_value(target, source, *descriptor)?,
                 value: self.copy_value(target, source, *value)?,
-                scheme: scheme.clone(),
-                origin: origin.clone(),
-            },
-            Object::TypeSlot { value } => Object::TypeSlot {
-                value: Some(self.copy_value(
-                    target,
-                    source,
-                    value.ok_or(HeapError("cannot publish an uninitialized up-link"))?,
-                )?),
             },
             Object::ByteCodeProto {
                 code,
@@ -519,26 +359,8 @@ impl PendingCopy {
     }
 
     fn commit(self, target: &mut Heap) {
-        let declared_types = self
-            .objects
-            .iter()
-            .enumerate()
-            .filter_map(|(index, object)| match object {
-                Object::DeclaredType { type_id, .. } => Some((
-                    *type_id,
-                    Val::unknown(DecodedValue::DeclaredType(Handle {
-                        storage: self.target_storage,
-                        slot: self.object_base + index as u32,
-                    })),
-                )),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
         target.objects.extend(self.objects);
         target.native_types.extend(self.native_types);
-        for (type_id, value) in declared_types {
-            target.declared_types.entry(type_id).or_insert(value);
-        }
         for value in self.text.values {
             target.text.insert(&value);
         }
@@ -552,26 +374,21 @@ impl PendingCopy {
 fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
     match value {
         DecodedValue::Atom(id) | DecodedValue::ShortString(id) => id.storage != target,
-        DecodedValue::NativeType(_) => false,
+        DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => false,
         DecodedValue::Bytes(handle)
         | DecodedValue::Opaque(handle)
-        | DecodedValue::DeclaredType(handle)
-        | DecodedValue::SymbolicType(handle)
         | DecodedValue::Array(handle)
         | DecodedValue::Tuple(handle)
         | DecodedValue::Tagged(handle)
         | DecodedValue::Dict(handle)
-        | DecodedValue::Module(handle)
         | DecodedValue::Func(handle)
-        | DecodedValue::Dyn(handle)
-        | DecodedValue::TypeSlot(handle) => handle.storage != target,
+        | DecodedValue::Dyn(handle) => handle.storage != target,
         DecodedValue::Failed(_)
         | DecodedValue::Int(_)
         | DecodedValue::Float(_)
         | DecodedValue::BuiltinAtom(_)
         | DecodedValue::InlineAtom(_)
-        | DecodedValue::InlineString(_)
-        | DecodedValue::FuncRef(_) => false,
+        | DecodedValue::InlineString(_) => false,
     }
 }
 
@@ -590,32 +407,25 @@ fn object_contains_disallowed(
 
         match value.value() {
             DecodedValue::Atom(id) | DecodedValue::ShortString(id) => foreign(id.storage),
-            DecodedValue::NativeType(_) => false,
+            DecodedValue::NativeType(_) | DecodedValue::SolvedType(_) => false,
             DecodedValue::Bytes(handle)
             | DecodedValue::Opaque(handle)
-            | DecodedValue::DeclaredType(handle)
-            | DecodedValue::SymbolicType(handle)
             | DecodedValue::Array(handle)
             | DecodedValue::Tuple(handle)
             | DecodedValue::Tagged(handle)
             | DecodedValue::Dict(handle)
-            | DecodedValue::Module(handle)
             | DecodedValue::Func(handle)
-            | DecodedValue::Dyn(handle)
-            | DecodedValue::TypeSlot(handle) => foreign(handle.storage),
+            | DecodedValue::Dyn(handle) => foreign(handle.storage),
             DecodedValue::Failed(_)
             | DecodedValue::Int(_)
             | DecodedValue::Float(_)
             | DecodedValue::BuiltinAtom(_)
             | DecodedValue::InlineAtom(_)
-            | DecodedValue::InlineString(_)
-            | DecodedValue::FuncRef(_) => false,
+            | DecodedValue::InlineString(_) => false,
         }
     };
     match object {
         Object::Reserved | Object::OpenFunc => true,
-        Object::DeclaredType { sealed: false, .. } => true,
-        Object::SymbolicType { sealed: false, .. } => true,
         Object::Array(values) | Object::Tuple(values) => {
             values.iter().any(|value| value_foreign(*value))
         }
@@ -623,17 +433,11 @@ fn object_contains_disallowed(
         Object::Dict { shape, values } => {
             foreign(shape.storage) || values.iter().any(|value| value_foreign(*value))
         }
-        Object::Module { exports } => {
-            foreign(exports.shape.storage)
-                || exports.values.iter().any(|value| value_foreign(*value))
-        }
         Object::Closure { upvalues, .. } => upvalues.iter().any(|value| value_foreign(*value)),
+        Object::FunctionFamily { variants, .. } => variants.iter().any(|(_, value)| value_foreign(*value)),
         Object::Dyn {
             descriptor, value, ..
         } => value_foreign(*descriptor) || value_foreign(*value),
-        Object::DeclaredType { body, .. } => value_foreign(*body),
-        Object::SymbolicType { body, .. } => value_foreign(*body),
-        Object::TypeSlot { value } => value.is_none_or(value_foreign),
         Object::ByteCodeProto {
             values,
             text,

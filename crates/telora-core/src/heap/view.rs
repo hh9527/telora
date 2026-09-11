@@ -12,51 +12,11 @@ type BytecodeLinks<'a> = (
 );
 
 impl<'a> HeapView<'a> {
-    pub(crate) fn property(&self, key: PropertyKey) -> Option<Val> {
-        self.current
-            .properties
-            .get(&key)
-            .or_else(|| {
-                self.background?
-                    .properties
-                    .get(&key)
-            })
-            .copied()
-    }
-
-    pub(crate) fn type_property(
-        &self,
-        target: crate::TypeId,
-        property: crate::TypeId,
-    ) -> Option<Val> {
-        self.property(PropertyKey::Ty {
-            ty: target,
-            property_ty: property,
+    pub(crate) fn resolve_func(&self, value: Val) -> Result<Option<Handle>, HeapError> {
+        Ok(match value.value() {
+            DecodedValue::Func(handle) => Some(handle),
+            _ => None,
         })
-    }
-
-    pub(crate) fn static_func(&self, id: crate::FuncId) -> Option<Val> {
-        self.current
-            .static_func(id)
-            .or_else(|| self.background.and_then(|heap| heap.static_func(id)))
-    }
-
-    pub(crate) fn resolve_func(&self, mut value: Val) -> Result<Option<Handle>, HeapError> {
-        let mut visited = HashSet::new();
-        loop {
-            match value.value() {
-                DecodedValue::Func(handle) => return Ok(Some(handle)),
-                DecodedValue::FuncRef(id) => {
-                    if !visited.insert(id) {
-                        return Err(HeapError("cyclic static function alias"));
-                    }
-                    value = self
-                        .static_func(id)
-                        .ok_or(HeapError("static function slot is not sealed"))?;
-                }
-                _ => return Ok(None),
-            }
-        }
     }
 
     pub(crate) fn resolved_function_arity(&self, value: Val) -> Result<Option<usize>, HeapError> {
@@ -82,54 +42,18 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn unwrap_declared(&self, mut value: Val) -> Result<Val, HeapError> {
-        if value.type_id().is_some() {
-            self.type_witness(value)?;
+        if let Some(id) = value.type_id().and_then(crate::TypeId::solved_id) {
+            let types = self.current.solved_types.as_ref()
+                .or_else(|| self.background.and_then(|heap| heap.solved_types.as_ref()))
+                .ok_or(HeapError("solved value requires its session type image"))?;
+            if types.types.get(id.index()).is_none() {
+                return Err(HeapError("solved value type is outside its session image"));
+            }
             value = value.without_type_id();
+        } else if value.type_id().is_some() {
+            return Err(HeapError("runtime value requires a solved session TypeId"));
         }
         Ok(value)
-    }
-
-    pub(crate) fn type_witness(&self, value: Val) -> Result<Option<Val>, HeapError> {
-        let Some(type_id) = value.type_id() else {
-            return Ok(None);
-        };
-        let owner = self
-            .current
-            .declared_types
-            .get(&type_id)
-            .or_else(|| self.background?.declared_types.get(&type_id))
-            .copied();
-        let owner = owner.ok_or(HeapError("canonical type ID has no metadata in this world"))?;
-        let DecodedValue::DeclaredType(handle) = owner.value() else {
-            return Err(HeapError("type metadata has another value kind"));
-        };
-        if !matches!(self.object(handle)?, Object::DeclaredType { .. }) {
-            return Err(HeapError("type metadata refers to another object kind"));
-        }
-        Ok(Some(owner))
-    }
-
-    pub(crate) fn declared_type_id(&self, owner: Val) -> Result<crate::TypeId, HeapError> {
-        let DecodedValue::DeclaredType(handle) = owner.value() else {
-            return Err(HeapError("declared value owner is not a declared Type"));
-        };
-        let Object::DeclaredType {
-            type_id, sealed, ..
-        } = self.object(handle)?
-        else {
-            return Err(HeapError("declared value owner has another object kind"));
-        };
-        if !sealed {
-            return Err(HeapError("declared value owner is not sealed"));
-        }
-        Ok(*type_id)
-    }
-
-    pub(crate) fn canonical_type_name(
-        &self,
-        type_id: crate::TypeId,
-    ) -> Result<Option<String>, HeapError> {
-        self.current.canonical_type_name(type_id)
     }
 
     pub(crate) fn text(&self, id: InternId) -> Result<&'a str, HeapError> {
@@ -165,17 +89,10 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn function_identity(&self, handle: Handle) -> Result<usize, HeapError> {
-        let Object::Closure { identity, .. } = self.object(handle)? else {
-            return Err(HeapError("handle is not a closure"));
+        let (Object::Closure { identity, .. } | Object::FunctionFamily { identity, .. }) = self.object(handle)? else {
+            return Err(HeapError("handle is not a function"));
         };
         Ok(Arc::as_ptr(identity) as usize)
-    }
-
-    pub(crate) fn canonical_type_value_id(&self, value: Val) -> Result<crate::TypeId, HeapError> {
-        self.current.canonical_type_value_id(
-            crate::ValueRef::work(value, self.current, self.background.unwrap_or(self.current)),
-            "interpreter static argument",
-        )
     }
 
     pub(crate) fn closure(
@@ -204,13 +121,6 @@ impl<'a> HeapView<'a> {
                 Ok(code.parameter_count())
             }
         }
-    }
-
-    pub(crate) fn type_slot(&self, handle: Handle) -> Result<Option<Val>, HeapError> {
-        let Object::TypeSlot { value } = self.object(handle)? else {
-            return Err(HeapError("handle is not an up-link"));
-        };
-        Ok(*value)
     }
 
     pub(crate) fn dyn_parts(&self, handle: Handle) -> Result<(&'a Arc<()>, Val, Val), HeapError> {
@@ -263,38 +173,6 @@ impl<'a> HeapView<'a> {
         Ok(index.and_then(|index| values.get(index).copied()))
     }
 
-    pub(crate) fn exports_get(
-        &self,
-        handle: Handle,
-        field: InternId,
-    ) -> Result<Option<Val>, HeapError> {
-        let Object::Module { exports, .. } = self.object(handle)? else {
-            return Err(HeapError("handle is not a Module"));
-        };
-        let wanted = self.text(field)?;
-        let fields = self.shape(exports.shape)?;
-        let index = fields
-            .binary_search_by(|candidate| {
-                if *candidate == field {
-                    Ordering::Equal
-                } else {
-                    self.text(*candidate).unwrap_or("").cmp(wanted)
-                }
-            })
-            .ok();
-        Ok(index.and_then(|index| exports.values.get(index).copied()))
-    }
-
-    pub(crate) fn exports_fields(&self, handle: Handle) -> Result<Vec<&'a str>, HeapError> {
-        let Object::Module { exports, .. } = self.object(handle)? else {
-            return Err(HeapError("handle is not a Module"));
-        };
-        self.shape(exports.shape)?
-            .iter()
-            .map(|field| self.text(*field))
-            .collect()
-    }
-
     pub(crate) fn dict_fields(&self, handle: Handle) -> Result<Vec<&'a str>, HeapError> {
         let Object::Dict { shape, .. } = self.object(handle)? else {
             return Err(HeapError("handle is not a Dict"));
@@ -303,31 +181,6 @@ impl<'a> HeapView<'a> {
             .iter()
             .map(|field| self.text(*field))
             .collect()
-    }
-
-    pub(crate) fn module_fields(&self, handle: Handle) -> Result<Vec<&'a str>, HeapError> {
-        let Object::Module { exports } = self.object(handle)? else {
-            return Err(HeapError("handle is not a Module"));
-        };
-        self.shape(exports.shape)?
-            .iter()
-            .map(|field| self.text(*field))
-            .collect()
-    }
-
-    pub(crate) fn module_get_text(
-        &self,
-        handle: Handle,
-        field: &str,
-    ) -> Result<Option<Val>, HeapError> {
-        let Object::Module { exports } = self.object(handle)? else {
-            return Err(HeapError("handle is not a Module"));
-        };
-        let fields = self.shape(exports.shape)?;
-        let index = fields
-            .binary_search_by(|candidate| self.text(*candidate).unwrap_or("").cmp(field))
-            .ok();
-        Ok(index.and_then(|index| exports.values.get(index).copied()))
     }
 
     pub(crate) fn dict_parts(
@@ -390,8 +243,7 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::Tuple(handle)
                 | DecodedValue::Tagged(handle)
                 | DecodedValue::Dict(handle)
-                | DecodedValue::Dyn(handle)
-                | DecodedValue::Module(handle) => handle,
+                | DecodedValue::Dyn(handle) => handle,
                 DecodedValue::Int(_)
                 | DecodedValue::Float(_)
                 | DecodedValue::BuiltinAtom(_)
@@ -402,11 +254,8 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::Bytes(_)
                 | DecodedValue::Opaque(_)
                 | DecodedValue::NativeType(_)
-                | DecodedValue::DeclaredType(_)
-                | DecodedValue::SymbolicType(_)
-                | DecodedValue::Func(_)
-                | DecodedValue::TypeSlot(_)
-                | DecodedValue::FuncRef(_) => continue,
+                | DecodedValue::SolvedType(_)
+                | DecodedValue::Func(_) => continue,
             };
             if !visited.insert(handle) {
                 continue;
@@ -422,9 +271,6 @@ impl<'a> HeapView<'a> {
                 Object::Dict { values, .. } => {
                     pending.extend(values.iter().rev().copied());
                 }
-                Object::Module { exports, .. } => {
-                    pending.extend(exports.values.iter().rev().copied());
-                }
                 Object::Dyn {
                     descriptor, value, ..
                 } => {
@@ -433,10 +279,8 @@ impl<'a> HeapView<'a> {
                 }
                 Object::Bytes(_)
                 | Object::Opaque(_)
-                | Object::DeclaredType { .. }
-                | Object::SymbolicType { .. }
                 | Object::Closure { .. }
-                | Object::TypeSlot { .. }
+                | Object::FunctionFamily { .. }
                 | Object::ByteCodeProto { .. }
                 | Object::OpenFunc
                 | Object::Reserved => {}
@@ -464,46 +308,14 @@ impl<'a> HeapView<'a> {
         }
         let left = left.without_type_id();
         let right = right.without_type_id();
-        if matches!(left.value(), DecodedValue::FuncRef(_))
-            || matches!(right.value(), DecodedValue::FuncRef(_))
-        {
-            let Some(left) = self.resolve_func(left)? else {
-                return Ok(false);
-            };
-            let Some(right) = self.resolve_func(right)? else {
-                return Ok(false);
-            };
-            let Object::Closure { identity: left, .. } = self.object(left)? else {
-                return Err(HeapError("Func handle refers to another object kind"));
-            };
-            let Object::Closure {
-                identity: right, ..
-            } = self.object(right)?
-            else {
-                return Err(HeapError("Func handle refers to another object kind"));
-            };
-            return Ok(Arc::ptr_eq(left, right));
-        }
         match (left.value(), right.value()) {
             (DecodedValue::Func(left), DecodedValue::Func(right)) => {
-                let Object::Closure { identity: left, .. } = self.object(left)? else {
-                    return Err(HeapError("Func handle refers to another object kind"));
-                };
-                let Object::Closure {
-                    identity: right, ..
-                } = self.object(right)?
-                else {
-                    return Err(HeapError("Func handle refers to another object kind"));
-                };
-                Ok(Arc::ptr_eq(left, right))
+                Ok(self.function_identity(left)? == self.function_identity(right)?)
             }
             (DecodedValue::Dyn(left), DecodedValue::Dyn(right)) => {
                 let (left, _, _) = self.dyn_parts(left)?;
                 let (right, _, _) = self.dyn_parts(right)?;
                 Ok(Arc::ptr_eq(left, right))
-            }
-            (DecodedValue::TypeSlot(_), _) | (_, DecodedValue::TypeSlot(_)) => {
-                Err(HeapError("up-link escaped into equality"))
             }
             (DecodedValue::Int(left), DecodedValue::Int(right)) => Ok(left == right),
             (DecodedValue::Float(left), DecodedValue::Float(right)) => Ok(left == right),
@@ -544,21 +356,7 @@ impl<'a> HeapView<'a> {
                 Ok(left.logical_eq(right))
             }
             (DecodedValue::NativeType(left), DecodedValue::NativeType(right)) => Ok(left == right),
-            (DecodedValue::DeclaredType(left), DecodedValue::DeclaredType(right)) => {
-                let left_handle = left;
-                let right_handle = right;
-                let Object::DeclaredType { type_id: left, .. } = self.object(left_handle)? else {
-                    return Err(HeapError(
-                        "DeclaredType handle refers to another object kind",
-                    ));
-                };
-                let Object::DeclaredType { type_id: right, .. } = self.object(right_handle)? else {
-                    return Err(HeapError(
-                        "DeclaredType handle refers to another object kind",
-                    ));
-                };
-                Ok(left == right)
-            }
+            (DecodedValue::SolvedType(left), DecodedValue::SolvedType(right)) => Ok(left == right),
             (DecodedValue::Array(left), DecodedValue::Array(right))
             | (DecodedValue::Tuple(left), DecodedValue::Tuple(right)) => {
                 self.sequence_handles_equal(left, right, visited)
@@ -656,19 +454,5 @@ impl<'a> HeapView<'a> {
             }
         }
         Ok(true)
-    }
-}
-
-impl Heap {
-    pub(crate) fn persistent_type_property(
-        &self,
-        target: crate::TypeId,
-        property: crate::TypeId,
-    ) -> Option<PersistentValue> {
-        (self.storage == Storage::Main)
-            .then(|| self.properties.get(&PropertyKey::Ty { ty: target, property_ty: property }))
-            .flatten()
-            .copied()
-            .map(PersistentValue)
     }
 }

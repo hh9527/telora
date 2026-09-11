@@ -1,14 +1,13 @@
 use crate::bytecode::{BytecodeFunction, Opcode, Register};
 use crate::heap::{
-    DecodedValue, Handle, Heap, HeapView, Object, PersistentValue, PropertyKey, Val,
-    publish_module_root, publish_root, relocate_work_roots, semantic_value_unwrap_bytes,
-    semantic_value_wrapper_bytes, unwrap_semantic_value, wrap_semantic_value,
+    DecodedValue, Handle, Heap, HeapView, Object, PersistentValue, Val,
+    publish_root, relocate_work_roots,
 };
 use crate::lir::RegisterId;
 use crate::value::{
-    BuiltinAtom, CoreArrayFunction, CoreBuiltinTypeFunction, CoreCodecFunction,
+    BuiltinAtom, CoreArrayFunction, CoreCodecFunction,
     CoreDictFunction, CoreDynFunction, CoreEqFunction, CoreHashFunction,
-    CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreRuntimeFunction,
+    CoreJsonFunction, CorePathFunction, CoreRuntimeFunction,
     CoreStringFunction, CoreTypeDescFunction, NativeError, NativeKind, NativeLimit,
 };
 use crate::{Diagnostic, Origin, SourceDatabase};
@@ -21,30 +20,36 @@ include!("vm/public.rs");
 include!("vm/call-context.rs");
 include!("vm/error.rs");
 include!("vm/runtime.rs");
-include!("vm/construction.rs");
 include!("vm/diagnostic-scope.rs");
 include!("vm/execute.rs");
 include!("vm/dispatch.rs");
+include!("vm/solved-codec-encode.rs");
+include!("vm/solved-codec-decode.rs");
+include!("vm/solved-type-desc.rs");
+include!("vm/solved-string-parse.rs");
+include!("vm/solved-construction.rs");
+include!("vm/solved-cast.rs");
 include!("vm/array.rs");
 include!("vm/string.rs");
 include!("vm/path.rs");
 include!("vm/hash.rs");
 include!("vm/dict.rs");
-include!("vm/model.rs");
-include!("vm/type-desc.rs");
 include!("vm/dyn.rs");
-include!("vm/model-type.rs");
+include!("vm/solved-dyn.rs");
 include!("vm/codec-entry.rs");
-include!("vm/codec-decode.rs");
-include!("vm/checked-cast.rs");
-include!("vm/codec-encode.rs");
-include!("vm/codec-type.rs");
-include!("vm/codec-transform.rs");
-include!("vm/codec-plan.rs");
-include!("vm/codec-enum.rs");
-include!("vm/codec-schema.rs");
+include!("vm/codec-value.rs");
+include!("vm/codec-names.rs");
+include!("vm/solved-schema.rs");
 include!("vm/json.rs");
 include!("vm/json-writer.rs");
+include!("vm/solved-json.rs");
+include!("vm/solved-parse.rs");
+include!("vm/solved-eval.rs");
+include!("vm/demand.rs");
+include!("vm/solved-check.rs");
+include!("vm/solved-tests.rs");
+include!("vm/solved-run.rs");
+include!("vm/solved-run-host.rs");
 include!("vm/debug.rs");
 include!("vm/helpers.rs");
 

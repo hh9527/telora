@@ -1,1 +1,1 @@
-interpolation type remains unresolved
+Array<Int> does not implement Display(Array<Int>): no static evidence

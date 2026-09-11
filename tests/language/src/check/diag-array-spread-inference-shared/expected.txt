@@ -1,1 +1,1 @@
-no common type
+cannot unify Int with String

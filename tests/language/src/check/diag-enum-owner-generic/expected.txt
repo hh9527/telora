@@ -1,1 +1,1 @@
-cannot unify enum {Ready} with T0
+cannot unify A with State

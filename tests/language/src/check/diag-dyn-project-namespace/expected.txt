@@ -1,1 +1,1 @@
-imported std/dyn namespace
+explicit type application cannot specialize a monomorphic binding

@@ -639,3 +639,7 @@ pub(crate) fn render_value(value: ValueRef<'_>) -> Result<String, NativeError> {
     debug_assert_eq!(output.len(), length);
     Ok(output)
 }
+
+pub(crate) fn rendered_value_len(value: ValueRef<'_>) -> Result<usize, NativeError> {
+    measure_fmt(fmt_value(value)?)
+}

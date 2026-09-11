@@ -1,1 +1,1 @@
-duplicate trait implementation
+overlapping trait implementations: Display(Endpoint) and Display(Endpoint)

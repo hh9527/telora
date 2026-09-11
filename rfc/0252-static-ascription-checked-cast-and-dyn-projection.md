@@ -99,6 +99,15 @@ value.cast!(User);    // Err when value is the public tagged Value sum
 
 ## Exact Dyn projection
 
+Implementation update (RFC 0280, 2026-09-11): the closed MIR pipeline implements
+`project` as an ordinary exported generic function calling
+`project_with(T.type, value)`. Its type metadata comes from the solved generic
+instance, including transitive generic calls. This supersedes the dedicated
+sugar and frontend witness restriction described below. Parser spelling checks
+and the DynProject AST/MIR operation have been removed. Renaming, explicit type
+application, contextual inference and function values follow ordinary symbol
+and type resolution; exact runtime identity checks remain unchanged.
+
 `Dyn` is an existential package:
 
 ```text

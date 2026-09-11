@@ -1,0 +1,168 @@
+//! Link already-compiled ABI references. No source parsing, resolution, type
+//! inference or Telora execution happens here.
+use crate::{
+    NativeFunction,
+    bytecode::{BytecodeFunction, Constant},
+    codegen::{CompiledEntry, NativeLink},
+    source::Diagnostic,
+};
+use std::collections::BTreeMap;
+
+/// Executable and its sealed static type data, ready to move into a VM session.
+pub struct LinkedEntry {
+    pub(crate) root: crate::codegen::CompilationRoot,
+    pub(crate) graph: crate::execution_graph::ExecutionGraph,
+    pub(crate) bytecode: BytecodeFunction,
+    pub(crate) types: crate::type_image::TypeImage,
+    pub(crate) result_type: crate::mir::TypeId,
+    pub(crate) eval_call: Option<crate::codegen::EvalCall>,
+    pub(crate) run_calls: Option<crate::codegen::RunCalls>,
+    pub(crate) data: Vec<(crate::codegen::DataLink, crate::EvalSource)>,
+}
+
+pub fn link_entry(artifact: CompiledEntry) -> Result<LinkedEntry, Vec<Diagnostic>> {
+    link_entry_with_data(artifact, |_| {
+        Err("data module source provider is missing".into())
+    })
+}
+
+pub fn link_entry_with_data(
+    artifact: CompiledEntry,
+    mut read: impl FnMut(&crate::codegen::DataLink) -> Result<crate::EvalSource, String>,
+) -> Result<LinkedEntry, Vec<Diagnostic>> {
+    let mut bytecode = link_builtins(&artifact)?;
+    let mut data = vec![];
+    let mut diagnostics = vec![];
+    for link in artifact.data_links {
+        match read(&link) {
+            Ok(source) => {
+                bytecode.bind_external_value(link.constant, link.key());
+                data.push((link, source));
+            }
+            Err(message) => diagnostics.push(Diagnostic::error(message, link.location)),
+        }
+    }
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+    Ok(LinkedEntry {
+        root: artifact.root,
+        graph: artifact.graph,
+        bytecode,
+        types: artifact.types,
+        result_type: artifact.result_type,
+        eval_call: artifact.eval_call,
+        run_calls: artifact.run_calls,
+        data,
+    })
+}
+
+/// The result type comes from static solving, never from inspecting the value.
+pub struct SolvedExecution {
+    pub(crate) world: crate::ExecutionWorld,
+    pub(crate) result_type: crate::mir::TypeId,
+}
+
+impl SolvedExecution {
+    pub fn to_json(&self, value_type: crate::mir::TypeId) -> Result<String, String> {
+        if self.result_type != value_type {
+            return Err("eval result must be std/value.Value".into());
+        }
+        self.world.solved_json(value_type)
+    }
+    pub fn value(&self) -> crate::ValueRef<'_> {
+        self.world.value()
+    }
+    pub fn result_type(&self) -> crate::mir::TypeId {
+        self.result_type
+    }
+    pub fn types(&self) -> &crate::type_image::TypeImage {
+        self.world
+            .solved_types()
+            .expect("solved execution owns its type image")
+    }
+}
+
+pub fn link_with(
+    artifact: &CompiledEntry,
+    mut native: impl FnMut(&NativeLink) -> Option<NativeFunction>,
+) -> Result<BytecodeFunction, Vec<Diagnostic>> {
+    let mut replacements = BTreeMap::new();
+    let mut diagnostics = vec![];
+    for link in &artifact.native_links {
+        match native(link) {
+            Some(function) if function.arity() == link.arity => {
+                let native_type = if let Some(local) = function.native_type_local() {
+                    let native = link.module.and_then(|module| {
+                        artifact
+                            .types
+                            .native_definitions
+                            .iter()
+                            .find(|(id, _)| id.module == module && id.slot == local)
+                    });
+                    let Some((id, name)) = native else {
+                        diagnostics.push(Diagnostic::error(
+                            "native function references an unadmitted type slot",
+                            link.location,
+                        ));
+                        continue;
+                    };
+                    Some(crate::NativeType::bind(
+                            crate::value::NativeTypeId {
+                                module: crate::value::NativeModuleId(id.module),
+                                local: id.slot,
+                            },
+                            name.clone(),
+                        ))
+                } else {
+                    None
+                };
+                let constant = Constant::SolvedNative { function, signature: link.signature, native_type };
+                replacements.insert(link.constant, constant);
+            }
+            Some(_) => diagnostics.push(Diagnostic::error(
+                "native ABI arity does not match the solved signature",
+                link.location,
+            )),
+            None => diagnostics.push(Diagnostic::error(
+                format!(
+                    "native ABI binding is unavailable: {:?}/{}",
+                    link.module, link.name
+                ),
+                link.location,
+            )),
+        }
+    }
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+    let mut index = 0;
+    Ok(artifact.bytecode.relink_with(
+        |constant| {
+            let value = replacements
+                .remove(&index)
+                .unwrap_or_else(|| constant.clone());
+            index += 1;
+            value
+        },
+        |text| text.into(),
+        std::sync::Arc::clone,
+    ))
+}
+
+/// Admission uses the trusted module ABI identity. Source aliases have already
+/// resolved to the defining symbol; export spelling is only an ABI linker key.
+pub fn link_builtins(artifact: &CompiledEntry) -> Result<BytecodeFunction, Vec<Diagnostic>> {
+    let registry = crate::core::module_specs()
+        .into_iter()
+        .flat_map(|module| {
+            module
+                .functions
+                .into_iter()
+                .map(move |(name, function)| ((module.native_id, name), function))
+        })
+        .collect::<BTreeMap<_, _>>();
+    link_with(artifact, |link| {
+        registry.get(&(link.module?, link.name.as_str())).copied()
+    })
+}
