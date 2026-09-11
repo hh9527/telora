@@ -167,13 +167,6 @@ impl<'a> HeapView<'a> {
         }
     }
 
-    pub(crate) fn type_slot(&self, handle: Handle) -> Result<Option<Val>, HeapError> {
-        let Object::TypeSlot { value } = self.object(handle)? else {
-            return Err(HeapError("handle is not an up-link"));
-        };
-        Ok(*value)
-    }
-
     pub(crate) fn dyn_parts(&self, handle: Handle) -> Result<(&'a Arc<()>, Val, Val), HeapError> {
         let Object::Dyn {
             identity,
@@ -308,8 +301,7 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::SolvedType(_)
                 | DecodedValue::DeclaredType(_)
                 | DecodedValue::SymbolicType(_)
-                | DecodedValue::Func(_)
-                | DecodedValue::TypeSlot(_) => continue,
+                | DecodedValue::Func(_) => continue,
             };
             if !visited.insert(handle) {
                 continue;
@@ -336,7 +328,6 @@ impl<'a> HeapView<'a> {
                 | Object::DeclaredType { .. }
                 | Object::SymbolicType { .. }
                 | Object::Closure { .. }
-                | Object::TypeSlot { .. }
                 | Object::ByteCodeProto { .. }
                 | Object::OpenFunc
                 | Object::Reserved => {}
@@ -381,9 +372,6 @@ impl<'a> HeapView<'a> {
                 let (left, _, _) = self.dyn_parts(left)?;
                 let (right, _, _) = self.dyn_parts(right)?;
                 Ok(Arc::ptr_eq(left, right))
-            }
-            (DecodedValue::TypeSlot(_), _) | (_, DecodedValue::TypeSlot(_)) => {
-                Err(HeapError("up-link escaped into equality"))
             }
             (DecodedValue::Int(left), DecodedValue::Int(right)) => Ok(left == right),
             (DecodedValue::Float(left), DecodedValue::Float(right)) => Ok(left == right),

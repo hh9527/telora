@@ -350,13 +350,6 @@ impl<'a> ValueRef<'a> {
         }
     }
 
-    pub(crate) fn hidden_type_slot_handle(self) -> Option<Handle> {
-        let DecodedValue::TypeSlot(handle) = self.value.value() else {
-            return None;
-        };
-        Some(handle)
-    }
-
     pub(crate) fn object_handle(self) -> Option<Handle> {
         match self.value.value() {
             DecodedValue::Bytes(handle)
@@ -371,25 +364,6 @@ impl<'a> ValueRef<'a> {
             | DecodedValue::Dyn(handle) => Some(handle),
             _ => None,
         }
-    }
-
-    pub(crate) fn is_hidden_type_slot(self) -> bool {
-        matches!(self.value.value(), DecodedValue::TypeSlot(_))
-    }
-
-    pub(crate) fn resolve_hidden_type_slot(self) -> Result<Self, String> {
-        let DecodedValue::TypeSlot(handle) = self.value.value() else {
-            return Ok(self);
-        };
-        let value = self
-            .view
-            .type_slot(handle)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "recursive type link is not initialized".to_owned())?;
-        Ok(Self {
-            value,
-            view: self.view,
-        })
     }
 
     pub fn kind(self) -> ValueKind {
@@ -413,9 +387,6 @@ impl<'a> ValueRef<'a> {
             DecodedValue::Tuple(_) => ValueKind::Tuple,
             DecodedValue::Func(_) => ValueKind::Func,
             DecodedValue::Dyn(_) => ValueKind::Dyn,
-            DecodedValue::TypeSlot(_) => {
-                unreachable!("up-links are private VM values")
-            }
         }
     }
 

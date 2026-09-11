@@ -152,24 +152,6 @@ impl Heap {
         Ok(())
     }
 
-    pub(crate) fn initialize_type_slot(
-        &mut self,
-        handle: Handle,
-        value: Val,
-    ) -> Result<(), HeapError> {
-        if handle.storage != Storage::Work {
-            return Err(HeapError("Main up-links are read-only"));
-        }
-        let Object::TypeSlot { value: slot } = self.object_mut(handle)? else {
-            return Err(HeapError("handle is not an up-link"));
-        };
-        if slot.is_some() {
-            return Err(HeapError("up-link is already initialized"));
-        }
-        *slot = Some(value);
-        Ok(())
-    }
-
     pub(crate) fn seal_local_func(
         &mut self,
         target: Handle,

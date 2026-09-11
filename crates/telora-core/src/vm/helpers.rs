@@ -357,7 +357,6 @@ fn runtime_value_kind(actual: Val) -> &'static str {
         DecodedValue::Dict(_) => "Dict",
         DecodedValue::Func(_) => "Func",
         DecodedValue::Dyn(_) => "Dyn",
-        DecodedValue::TypeSlot(_) => "internal up-link",
     }
 }
 

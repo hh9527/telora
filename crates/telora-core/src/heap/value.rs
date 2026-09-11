@@ -20,7 +20,6 @@ const TRAIT_REFERENCE: u16 = 1 << 0;
 const TRAIT_TEXT: u16 = 1 << 1;
 const TRAIT_INLINE: u16 = 1 << 2;
 const TRAIT_HEAP: u16 = 1 << 3;
-const TRAIT_TYPE_SLOT: u16 = 1 << 4;
 const TRAIT_TRACE: u16 = 1 << 5;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -41,7 +40,6 @@ enum FlatKind {
     Atom,
     NativeType,
     Heap,
-    TypeSlot,
     SolvedType = 11,
     Invalid = 63,
 }
@@ -58,7 +56,6 @@ impl FlatKind {
             6 => Self::Atom,
             7 => Self::NativeType,
             8 => Self::Heap,
-            9 => Self::TypeSlot,
             11 => Self::SolvedType,
             _ => Self::Invalid,
         }
@@ -72,7 +69,6 @@ impl FlatKind {
             Self::InlineString | Self::InlineAtom => TRAIT_INLINE | TRAIT_TEXT,
             Self::String | Self::Atom => TRAIT_REFERENCE | TRAIT_TEXT,
             Self::Heap => TRAIT_REFERENCE | TRAIT_HEAP,
-            Self::TypeSlot => TRAIT_REFERENCE | TRAIT_TYPE_SLOT | TRAIT_TRACE,
             Self::Invalid => 0,
         }
     }
@@ -392,7 +388,6 @@ pub(crate) enum DecodedValue {
     Dict(Handle),
     Func(Handle),
     Dyn(Handle),
-    TypeSlot(Handle),
 }
 
 impl DecodedValue {
@@ -436,11 +431,6 @@ impl DecodedValue {
             Self::Dict(handle) => heap_parts(handle, HeapKind::Dict),
             Self::Func(handle) => heap_parts(handle, HeapKind::Func),
             Self::Dyn(handle) => heap_parts(handle, HeapKind::Dyn),
-            Self::TypeSlot(handle) => (
-                FlatKind::TypeSlot,
-                HeapKind::None,
-                ScopedId::new(handle.storage, handle.slot).raw(),
-            ),
         };
         (Meta::new(kind, sub_kind, Provenance::Unknown), raw)
     }
@@ -599,7 +589,6 @@ impl Val {
             (FlatKind::Heap, HeapKind::Dict) => DecodedValue::Dict(handle()),
             (FlatKind::Heap, HeapKind::Func) => DecodedValue::Func(handle()),
             (FlatKind::Heap, HeapKind::Dyn) => DecodedValue::Dyn(handle()),
-            (FlatKind::TypeSlot, _) => DecodedValue::TypeSlot(handle()),
             _ => unreachable!("invalid runtime Meta combination"),
         }
     }

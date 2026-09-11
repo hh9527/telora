@@ -5,6 +5,24 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove runtime TypeSlot links (2026-09-11)
+
+Removed the remaining heap TypeSlot representation, packed tag/trait, initializer,
+reader, relocation and equality/formatting branches, and host hidden-link APIs.
+Only an old heap publication test still created these links; production had no
+remaining producer after the earlier type-opcode removal. MIR TypeSlotId and the
+static solver arena are unchanged. Other packed value tag numbers are preserved.
+
+Validation: all 380 workspace library tests pass, CLI build and all-target
+compilation pass. checked-recursive-types, type-families, newtype-metadata and
+compiler-semantics pass (51 CLI cases). Removed one test solely for the deleted
+runtime-link publication API; the lower test count is not new coverage. Logs:
+/tmp/mir-remove-runtime-slots-*.log. No performance benchmark was run.
+
+Remaining work still includes generic function values, legacy descriptor-based
+metadata consumers, full acceptance and final performance evaluation. Runtime
+slot removal does not close the first-class polymorphic value gap in MIR.
+
 ### Remove legacy heap Module values (2026-09-11)
 
 Removed the unused heap Module constructor, ExportTable, packed value variant,

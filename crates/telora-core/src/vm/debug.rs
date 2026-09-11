@@ -117,16 +117,6 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push(">");
             }
             DecodedValue::Dyn(_) => self.push("<dyn>"),
-            DecodedValue::TypeSlot(handle) => {
-                if !self.enter(handle, depth) {
-                    return Ok(());
-                }
-                match self.view.type_slot(handle)? {
-                    Some(value) => self.value(value, depth + 1)?,
-                    None => self.push("<uninitialized up-link>"),
-                }
-                self.active.remove(&handle);
-            }
         }
         Ok(())
     }

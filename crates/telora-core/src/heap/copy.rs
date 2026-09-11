@@ -123,9 +123,6 @@ impl PendingCopy {
             DecodedValue::Dyn(handle) => {
                 DecodedValue::Dyn(self.copy_object(target, source, handle)?)
             }
-            DecodedValue::TypeSlot(handle) => {
-                DecodedValue::TypeSlot(self.copy_object(target, source, handle)?)
-            }
         };
         let mut copied = value.with_value(copied).without_type_id();
         if let Some(type_id) = value.type_id() {
@@ -323,13 +320,6 @@ impl PendingCopy {
                 descriptor: self.copy_value(target, source, *descriptor)?,
                 value: self.copy_value(target, source, *value)?,
             },
-            Object::TypeSlot { value } => Object::TypeSlot {
-                value: Some(self.copy_value(
-                    target,
-                    source,
-                    value.ok_or(HeapError("cannot publish an uninitialized up-link"))?,
-                )?),
-            },
             Object::ByteCodeProto {
                 code,
                 values,
@@ -513,8 +503,7 @@ fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
         | DecodedValue::Tagged(handle)
         | DecodedValue::Dict(handle)
         | DecodedValue::Func(handle)
-        | DecodedValue::Dyn(handle)
-        | DecodedValue::TypeSlot(handle) => handle.storage != target,
+        | DecodedValue::Dyn(handle) => handle.storage != target,
         DecodedValue::Failed(_)
         | DecodedValue::Int(_)
         | DecodedValue::Float(_)
@@ -549,8 +538,7 @@ fn object_contains_disallowed(
             | DecodedValue::Tagged(handle)
             | DecodedValue::Dict(handle)
             | DecodedValue::Func(handle)
-            | DecodedValue::Dyn(handle)
-            | DecodedValue::TypeSlot(handle) => foreign(handle.storage),
+            | DecodedValue::Dyn(handle) => foreign(handle.storage),
             DecodedValue::Failed(_)
             | DecodedValue::Int(_)
             | DecodedValue::Float(_)
@@ -576,7 +564,6 @@ fn object_contains_disallowed(
         } => value_foreign(*descriptor) || value_foreign(*value),
         Object::DeclaredType { body, .. } => value_foreign(*body),
         Object::SymbolicType { body, .. } => value_foreign(*body),
-        Object::TypeSlot { value } => value.is_none_or(value_foreign),
         Object::ByteCodeProto {
             values,
             text,

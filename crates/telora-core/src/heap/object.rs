@@ -45,9 +45,6 @@ pub(crate) enum Object {
         descriptor: Val,
         value: Val,
     },
-    TypeSlot {
-        value: Option<Val>,
-    },
     ByteCodeProto {
         code: Arc<FuncByteCode>,
         values: Box<[Val]>,
