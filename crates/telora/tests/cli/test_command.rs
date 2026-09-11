@@ -134,21 +134,16 @@ fn test_command_import_cycles_are_static_and_demand_cycles_fail() {
         import "std/test" as test;
         def cycle: Int = cycle;
         export def a_cycle = test.should_ok(fn() { cycle });
-        export def first: test.Test = fail!("first failure");
-        export def second: test.Test = fail!("second failure");
         export def healthy = test.should_ok(fn() { 42 });
     "#).unwrap();
     let output = test_command(&cwd, "t1");
     assert_eq!(output.status.code(), Some(1));
     let records = jsonl(&output.stdout);
-    for expected in ["cycle", "first failure", "second failure"] {
-        assert!(
-            records.iter().any(|record| record["message"]
-                .as_str()
-                .is_some_and(|message| message.contains(expected))),
-            "{records:?}"
-        );
-    }
+    assert!(records.iter().any(|record| record["message"].as_str()
+        .is_some_and(|message| message.contains("cyclic demand"))), "{records:?}");
+    assert!(!records.iter().any(|record| record["record"] == "case"));
+    assert_eq!(records.last().unwrap()["aborted"], true);
+    assert_eq!(records.last().unwrap()["total"], 0);
     fs::remove_dir_all(cwd).unwrap();
 }
 
@@ -259,7 +254,7 @@ fn test_command_rejects_invalid_roots_and_source_to_test_imports() {
         assert_eq!(output.status.code(), Some(1));
         assert_eq!(jsonl(&output.stdout).last().unwrap()["status"], "error");
     }
-    fs::write(cwd.join("tests/t1.telora"), "import \"std/test\" as test; def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked = reject().ok_or_warn!(); def unused: Int = fail!(\"must stay lazy\"); export def value = test.should_ok(fn() { checked });").unwrap();
+    fs::write(cwd.join("tests/t1.telora"), "import \"std/test\" as test; def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked = reject().ok_or_warn!(); def unused: Fn() -> Int = fn() { fail!(\"unused closure must not be called\") }; export def value = test.should_ok(fn() { checked });").unwrap();
     let output = test_command(&cwd, "t1");
     assert!(output.status.success());
     assert!(

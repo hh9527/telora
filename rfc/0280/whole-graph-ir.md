@@ -9,6 +9,29 @@ samples and phase summaries. It makes no baseline comparison or completion claim
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### CLI session-boundary acceptance (2026-09-11)
+
+MIR source modules retain the parser's validity outcome. Source admission still
+checks recovered declarations but does not infer missing exports/top-level
+expression errors from incomplete recovered HIR. This removes the parser
+recovery cascade without dropping independent declaration checks.
+
+Existing CLI fixtures now exercise session initialization: failing unused globals
+or properties prevent output, a failed initialization aborts test dispatch before
+any case starts, and unused closure bodies are not invoked. Data/property
+fixtures include required exports. Query acceptance separately verifies a true
+Unknown from an evidence-free recursive value and Conflicted inherited from an
+unresolved symbol; no downstream retry resolves that symbol.
+
+All 65 CLI integration tests pass, with the language runner skipped there because
+it was run independently and passes 403/403. Library tests pass 393/393, binary
+unit tests pass 2/2, and all-target checking passes. No new Rust tests were added.
+Architecture completion is still unproven: audit found that only-types check
+does not invoke the seal validation used by ordinary check, and the previously
+observed relative `-C` path failure remains open. Continue boundary and consumer
+audit rather than treating passing current tests as completion. No new performance
+measurement was performed.
+
 ### Complete current language acceptance; expand CLI audit (2026-09-11)
 
 Bare imported constructor patterns now diagnose a missing payload before

@@ -32,6 +32,7 @@ fn static_mir_check_injects_data_and_blocks_execution_after_type_errors() {
             match data { Value.Int(n) => { value: n }, _ => fail!("data must precede property") }
         };
         @mark type Item = struct { value: Int };
+        export {Item};
     "#).unwrap();
     for (data, valid) in [("42", true), ("invalid-json", false)] {
         fs::write(cwd.join("src/data.json"), data).unwrap();
@@ -43,7 +44,7 @@ fn static_mir_check_injects_data_and_blocks_execution_after_type_errors() {
             assert_eq!(output.status.success(), types_only || valid, "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
         }
     }
-    fs::write(cwd.join("src/main.telora"), "def bad: Int = \"wrong\"; def forbidden: Int = fail!(\"must not execute\");").unwrap();
+    fs::write(cwd.join("src/main.telora"), "export def bad: Int = \"wrong\"; def forbidden: Int = fail!(\"must not execute\");").unwrap();
     let output = telora(&cwd).args(["check", "@src/main"]).output().unwrap();
     let records = String::from_utf8(output.stdout).unwrap().lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
     assert!(!output.status.success());
@@ -58,7 +59,7 @@ fn static_mir_check_executes_session_roots_after_static_solving() {
     for (source, expected) in [
         ("def unused = 1 / 0; export def answer = 42;", Some("division")),
         ("def unused: Fn() -> Int = fn() { fail!(\"not called\") }; export def answer = 42;", None),
-        ("@property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!(\"check property sentinel\") }; @mark type Item = struct { value: Int };", Some("check property sentinel")),
+        ("@property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!(\"check property sentinel\") }; @mark type Item = struct { value: Int }; export {Item};", Some("check property sentinel")),
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
         for types_only in [true, false] {
@@ -82,11 +83,11 @@ fn static_mir_check_executes_session_roots_after_static_solving() {
 }
 
 #[test]
-fn static_mir_eval_property_queries_execute_lazily_in_both_entry_modes() {
+fn static_mir_eval_property_initialization_precedes_both_entry_modes() {
     let cwd = fixture();
     for (mode, fail, queried_type, succeeds) in [
         ("eval", false, "Item", true),
-        ("eval", true, "Int", true),
+        ("eval", true, "Int", false),
         ("eval", true, "Item", false),
         ("eval-with", false, "Item", true),
         ("eval-with", true, "Item", false),
@@ -138,13 +139,13 @@ fn static_mir_eval_property_queries_execute_lazily_in_both_entry_modes() {
 }
 
 #[test]
-fn static_mir_eval_reads_type_metadata_without_forcing_properties() {
+fn static_mir_eval_initializes_properties_before_reading_type_metadata() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), r#"
         import "std/value" { Value };
         @property(PropertyTarget.Type)
         type Mark = struct { value: Int };
-        def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!("must remain lazy") };
+        def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!("initialization sentinel") };
         @mark
         type Item = struct { value: Int };
         type Alias = Item;
@@ -154,20 +155,14 @@ fn static_mir_eval_reads_type_metadata_without_forcing_properties() {
         .args(["eval", "@src/main:answer"])
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-        serde_json::json!(42)
-    );
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("initialization sentinel"));
     fs::remove_dir_all(cwd).unwrap();
 }
 
 #[test]
-fn static_mir_eval_demands_globals_in_the_vm() {
+fn static_mir_eval_initializes_globals_before_publishing_a_result() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
@@ -183,15 +178,9 @@ fn static_mir_eval_demands_globals_in_the_vm() {
         .args(["eval", "@src/main:answer"])
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-        serde_json::json!(42)
-    );
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("division by zero"));
     fs::write(
         cwd.join("src/main.telora"),
         r#"
@@ -562,7 +551,8 @@ fn static_mir_query_returns_known_unknown_and_conflicted_without_evaluation() {
         r#"
 import "./data.json" { data };
 export def answer = 1 / 0;
-export def unknown = missing;
+export def unknown = unknown;
+export def unresolved = missing;
 export def bad: Int = "wrong";
 "#,
     )
@@ -588,12 +578,13 @@ export def bad: Int = "wrong";
     assert_eq!(export("answer")["type"], "Int");
     assert!(export("answer")["type_id"].is_number());
     assert_eq!(export("unknown")["state"], "Unknown");
+    assert_eq!(export("unresolved")["state"], "Conflicted");
     assert_eq!(export("bad")["state"], "Conflicted");
     assert!(records.iter().any(|r| {
         r["record"] == "diagnostic"
             && r["message"]
                 .as_str()
-                .is_some_and(|m| m.contains("unresolved symbol"))
+                .is_some_and(|m| m.contains("unknown binding \"missing\""))
     }));
     assert!(!String::from_utf8_lossy(&output.stdout).contains("division by zero"));
 

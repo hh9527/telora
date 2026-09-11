@@ -136,6 +136,7 @@ pub enum ModuleState {
     Unloaded,
     Source {
         source: SourceId,
+        syntax_valid: bool,
         cst: CstData,
         body: HirId,
     },

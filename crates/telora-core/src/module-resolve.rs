@@ -95,6 +95,7 @@ pub fn resolve_with_requests(
         };
         let source = mir.sources.add(source_name, text);
         let parsed = parse_registered(&mir.sources, source);
+        let syntax_valid = parsed.program.is_some();
         mir.diagnostics.extend(parsed.diagnostics);
         let mut lower = mir::lower::Lower {
             mir: &mut mir,
@@ -119,6 +120,7 @@ pub fn resolve_with_requests(
         } else {
             ModuleState::Source {
                 source,
+                syntax_valid,
                 cst: parsed.cst,
                 body,
             }
@@ -187,7 +189,7 @@ pub fn validate_source_modules(mir: &mut Mir, trusted: impl Fn(&str) -> bool) {
     use crate::syntax::telora::ast::Program;
 
     for module in &mir.modules {
-        let ModuleState::Source { cst, body, .. } = &module.state else { continue };
+        let ModuleState::Source { cst, body, syntax_valid, .. } = &module.state else { continue };
         let location = mir.hir[body.index()].location;
         let authored_result = Program::root(cst).body().is_some_and(|body| body.result().is_some());
         let mut has_exports = false;
@@ -208,12 +210,14 @@ pub fn validate_source_modules(mir: &mut Mir, trusted: impl Fn(&str) -> bool) {
             }
         }
         // The parser already diagnoses the explicit-export + expression case.
-        if authored_result && !has_exports {
+        if *syntax_valid && authored_result && !has_exports {
             mir.diagnostics.push(Diagnostic::error(
                 "top-level expressions are not supported; bind the computation with def and export the intended result", location,
             ));
         }
-        if !has_exports {
+        // Recovery may have dropped an export declaration. Preserve the
+        // parser's outcome rather than diagnosing absence from partial HIR.
+        if *syntax_valid && !has_exports {
             mir.diagnostics.push(Diagnostic::error("source module requires at least one explicit export", location));
         }
     }
