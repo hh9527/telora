@@ -1,4 +1,58 @@
 #[test]
+fn initialization_snapshot_keeps_graph_keys_and_shared_objects_in_main() {
+    let mir = crate::codegen::tests::graph(r#"
+        @property(PropertyTarget.Type) type Mark = struct { value: Array(Int) };
+        def shared = [42];
+        def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: shared} };
+        @mark type Item = struct(Int);
+        export def answer = shared;
+    "#, "");
+    for complete in [false, true] {
+        let artifact = if complete { crate::codegen::compile_check(mir.seal().unwrap()).unwrap() }
+            else { crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap() };
+        let linked = crate::execution_link::link_entry(artifact).unwrap();
+        let mut main = Heap::main();
+        main.solved_types = Some(linked.types);
+        main.solved_graph = Some(linked.graph);
+        let mut account = QuotaAccount::new(Quota::with_fuel(10000));
+        let mut world = Vm::new().execute_in_work(&main, &HashMap::new(), &linked.bytecode, &[], &mut account).unwrap();
+        if !complete { world.heap.solved_evaluation = Some(main.solved_graph.as_ref().unwrap().evaluation()); }
+        let before = main.counts();
+        let frozen = freeze_initialized_world(&mut main, world);
+        if !complete {
+            assert!(frozen.err().unwrap().contains("initialization is incomplete"));
+            assert_eq!(main.counts(), before);
+            assert!(main.solved_evaluation.is_none());
+            continue;
+        }
+        let mut work = frozen.unwrap();
+        assert_eq!(work.heap.counts(), (0, 0, 0));
+        let graph = main.solved_graph.as_ref().unwrap();
+        let evaluation = main.solved_evaluation.as_ref().unwrap();
+        assert!(graph.initializers().iter().all(|&node| evaluation.ready(node).is_some()));
+        for &node in graph.initializers() {
+            let crate::execution_graph::Request::Ready(value) = request_solved(&mut work.heap, &main, node).unwrap() else {
+                panic!("runtime must only read initialized values");
+            };
+            assert_eq!(Some(value), evaluation.ready(node));
+        }
+        assert!(work.heap.solved_evaluation.is_none());
+        assert_eq!(work.heap.counts(), (0, 0, 0));
+        let symbol = mir.symbols.iter().position(|symbol| symbol.name == "shared").unwrap();
+        let shared = *evaluation.ready(graph.global(crate::mir::SymbolId(symbol as u32)).unwrap()).unwrap();
+        let property = mir.properties.iter().find(|record|
+            matches!(mir.types[record.owner.index()].constructor, crate::mir::TypeConstructor::Nominal(symbol) if mir.symbols[symbol.index()].name == "Item")).unwrap();
+        let key = crate::execution_graph::PropertyKey { owner: property.owner, site: property.site, property: property.property };
+        let value = *evaluation.ready(graph.property(key).unwrap()).unwrap();
+        let view = ValueRef::work(value, &work.heap, &main);
+        assert_eq!(view.dict_get("value").unwrap().value, shared);
+        let DecodedValue::Array(handle) = shared.value() else { panic!("shared array") };
+        assert!(main.object(handle).is_ok());
+        assert_eq!(view.dict_get("value").unwrap().sequence_get(0).unwrap().as_int(), Some(42));
+    }
+}
+
+#[test]
 fn solved_actor_state_keeps_the_original_payload_through_dyn_projection() {
     let mir = crate::codegen::tests::graph(
         r#"
@@ -397,7 +451,7 @@ fn solved_dyn_member_access_preserves_payload_handles() {
 }
 
 #[test]
-fn solved_test_session_runs_cases_after_cached_and_expected_failures() {
+fn solved_test_session_aborts_before_cases_after_initialization_failure() {
     let mut mir = crate::codegen::tests::graph(r#"
         import "std/test" as test;
         def broken: Int = fail!("cached dependency failure");
@@ -413,11 +467,9 @@ fn solved_test_session_runs_cases_after_cached_and_expected_failures() {
     let compiled = crate::codegen::compile_tests(mir.seal().unwrap(), module).unwrap();
     let linked = crate::execution_link::link_entry(compiled.bootstrap).unwrap();
     let report = Vm::new().test_linked(linked, compiled.plan, Quota::with_fuel(10000), crate::DataLimits::default(), &mut mir.sources, crate::TestContext::default()).unwrap();
-    assert!(!report.aborted, "{report:?}");
-    assert_eq!(report.cases.iter().map(|case| case.passed).collect::<Vec<_>>(), [true, true, true, false, false, true], "{report:?}");
-    assert!(report.cases[0].diagnostics.is_empty(), "{report:?}");
-    assert!(report.cases[1].diagnostics.is_empty(), "{report:?}");
-    assert_eq!(report.cases[4].phase, "initialization");
+    assert!(report.aborted, "{report:?}");
+    assert!(report.cases.is_empty(), "no test body runs after failed initialization");
+    assert!(report.diagnostics.iter().any(|d| d.message.contains("cached dependency failure")), "{report:?}");
 }
 
 #[test]
@@ -715,7 +767,7 @@ fn solved_codec_display_calls_fail_per_value_without_poisoning_provider() {
     let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
     let linked = crate::execution_link::link_entry(artifact).unwrap();
     let result = Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
-    assert_eq!(result.world.work.heap.solved_failures.len(), 2);
+    assert_eq!(result.world.main.solved_failures.len(), 2);
     for index in [0, 1] {
         let (tag, reports) = result.value().sequence_get(index).unwrap().tagged_parts().unwrap();
         assert_eq!(tag.as_atom().unwrap().as_str(), "Err");
@@ -724,7 +776,7 @@ fn solved_codec_display_calls_fail_per_value_without_poisoning_provider() {
 }
 
 #[test]
-fn solved_codec_failed_property_is_not_retried_or_reported_twice() {
+fn solved_codec_failed_property_aborts_initialization() {
     for source in [r#"
         import "std/codec" as codec; import "std/json" as json; import "std/_rt" as rt;
         def broken: Fn(Type, Option(codec.JsonRenameAll)) -> codec.JsonRenameAll = fn(owner, previous) { fail!("schema property failed") };
@@ -775,13 +827,8 @@ fn solved_codec_failed_property_is_not_retried_or_reported_twice() {
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
     let linked = crate::execution_link::link_entry(artifact).unwrap();
-    let result = Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
-    assert_eq!(result.world.work.heap.solved_failures.len(), 1);
-    for index in [0, 1] {
-        let (tag, reports) = result.value().sequence_get(index).unwrap().tagged_parts().unwrap();
-        assert_eq!(tag.as_atom().unwrap().as_str(), "Err");
-        assert_eq!(reports.sequence_len(), Some(if index == 0 { 1 } else { 0 }));
-    }
+    assert!(Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).is_err(),
+        "a failed property initializer must prevent session publication");
     }
 }
 #[test]

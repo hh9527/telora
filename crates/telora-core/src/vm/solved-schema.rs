@@ -172,7 +172,7 @@ fn continue_solved_schema(
             for &(name, property) in &state.properties {
                 if bridged && matches!(name, "json_rename_all" | "json_untagged") { continue; }
                 let Some(node) = graph.property(PropertyKey { owner: ty, site: PropertySite::Type, property }) else { continue; };
-                let result = current.solved_evaluation.as_mut().expect("schema evaluation state").request(node);
+                let result = request_solved(current, background, node);
                 let property = match result {
                     Ok(Request::Ready(value)) => *value,
                     Ok(Request::Start) => {

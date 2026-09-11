@@ -13,10 +13,10 @@ impl Vm {
         main.solved_graph = Some(entry.graph);
         let mut account = QuotaAccount::new(quota).with_data_limits(limits).with_sources(sources);
         let externals = solved_module_data(&mut main, entry.data, limits, sources, &mut account)?;
+        let work = self.initialize_linked_world(
+            &mut main, &externals, &entry.bytecode, &mut account, sources,
+        )?;
         let main = Arc::new(main);
-        let work = self
-            .execute_in_work(&main, &externals, &entry.bytecode, &[], &mut account)
-            .map_err(|error| error.with_sources(sources).to_string())?;
         Ok(crate::execution_link::SolvedExecution {
             world: ExecutionWorld::new(main, work),
             result_type: entry.result_type,
@@ -221,7 +221,7 @@ impl Vm {
         // recursion off callers' often-small test or embedding threads; VM calls
         // themselves use the explicit frame stack below.
         let mut current = initial_work.unwrap_or_else(Heap::work);
-        if current.solved_evaluation.is_none() && let Some(graph) = &background.solved_graph {
+        if current.solved_evaluation.is_none() && background.solved_evaluation.is_none() && let Some(graph) = &background.solved_graph {
             current.solved_evaluation = Some(graph.evaluation());
             current.solved_tasks.resize(graph.nodes().len(), None);
         }
@@ -493,9 +493,7 @@ impl Vm {
                                     _ => unreachable!(),
                                 };
                                 let (node, dst) = (&node_id, &destination);
-                                let state = current.solved_evaluation.as_mut().ok_or_else(|| error(
-                                    RuntimeErrorKind::InvalidBytecode, "demand instruction requires a solved session", function, pc))?;
-                                match state.request(*node) {
+                                match request_solved(&mut current, background, *node) {
                                     Ok(Request::Ready(value)) => {
                                         let value = *value;
                                         write_register(&mut registers, *dst, value, function, pc)?;
@@ -635,7 +633,7 @@ impl Vm {
                                                 pc,
                                             ));
                                         };
-                                        current.seal_local_func(target, source).map_err(
+                                        current.seal_local_func(background, target, source).map_err(
                                             |heap_error| {
                                                 error(
                                                     RuntimeErrorKind::DuplicateDefinition,

@@ -314,11 +314,7 @@ fn continue_solved_string_parse(
                     rejection = Some(format!("{path}: type has no std/string.parse capability"));
                     break;
                 };
-                let property = match current
-                    .solved_evaluation
-                    .as_mut()
-                    .expect("parse evaluation")
-                    .request(node)
+                let property = match request_solved(current, background, node)
                 {
                     Ok(Request::Ready(value)) => *value,
                     Ok(Request::Start) => {

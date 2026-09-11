@@ -103,16 +103,18 @@ impl Heap {
 
     pub(crate) fn seal_local_func(
         &mut self,
+        main: &Heap,
         target: Handle,
         source: Handle,
     ) -> Result<(), HeapError> {
-        if target.storage != Storage::Work || source.storage != Storage::Work {
+        if target.storage != Storage::Work {
             return Err(HeapError(
-                "function refs can only be sealed in their Work world",
+                "function ref targets can only be sealed in their Work world",
             ));
         }
-        let closure = match self.object(source)? {
-            Object::Closure { .. } => self.object(source)?.clone(),
+        let source_heap: &Heap = if source.storage == Storage::Main { main } else { self };
+        let closure = match source_heap.object(source)? {
+            closure @ Object::Closure { .. } => closure.clone(),
             _ => return Err(HeapError("function ref source is not a sealed function")),
         };
         let slot = self.object_mut(target)?;

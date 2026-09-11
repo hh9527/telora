@@ -111,12 +111,11 @@ impl PendingCopy {
     }
 
     fn validate_session_type(&self, source: &HeapView<'_>, id: crate::mir::TypeId) -> Result<(), HeapError> {
-        // Work relocation explicitly supplies the common Main world. Its type
+        // Work relocation and initialization publication supply the common Main world. Its type
         // image is shared, so type identities need no copying or interning.
         let types = source.background.filter(|main| main.storage == Storage::Main)
             .and_then(|main| main.solved_types.as_ref())
-            .filter(|_| self.target_storage == Storage::Work)
-            .ok_or(HeapError("typed values require work relocation within a shared session"))?;
+            .ok_or(HeapError("typed values require their shared session type image"))?;
         if id.index() >= types.types.len() {
             return Err(HeapError("solved value type is outside its session image"));
         }

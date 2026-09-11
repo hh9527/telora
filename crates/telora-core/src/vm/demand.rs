@@ -1,3 +1,15 @@
+// Initialization owns the mutable table. Once MainWorld is frozen, a read may
+// only consume its completed result; it cannot restart initialization in Work.
+fn request_solved<'a>(current: &'a mut Heap, main: &'a Heap, node: crate::execution_graph::NodeId)
+    -> Result<crate::execution_graph::Request<'a, Val>, crate::execution_graph::EvaluationError>
+{
+    use crate::execution_graph::{EvaluationError, Request};
+    if let Some(values) = &main.solved_evaluation {
+        return values.ready(node).map(Request::Ready).ok_or(EvaluationError::InvalidNode(node));
+    }
+    current.solved_evaluation.as_mut().ok_or(EvaluationError::InvalidNode(node))?.request(node)
+}
+
 #[derive(Debug)]
 struct DemandContinuation {
     node: crate::execution_graph::NodeId,

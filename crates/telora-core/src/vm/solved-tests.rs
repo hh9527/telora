@@ -80,7 +80,15 @@ impl Vm {
                 return Ok(report);
             }
         };
-        let mut current = Some(bootstrap.world.heap);
+        let initialized = match freeze_initialized_world(&mut main, bootstrap.world) {
+            Ok(world) => world,
+            Err(error) => {
+                report.aborted = true;
+                report.diagnostics.push(Diagnostic { severity: crate::source::Severity::Error, message: error, labels: vec![], notes: vec![] });
+                return Ok(report);
+            }
+        };
+        let mut current = Some(initialized.heap);
         let mut report = TestReport {
             diagnostics: account.take_diagnostics(),
             ..TestReport::default()

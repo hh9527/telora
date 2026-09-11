@@ -227,11 +227,11 @@ mod tests {
     }
 
     #[test]
-    fn test_bootstrap_installs_tasks_without_evaluating_test_exports() {
+    fn test_bootstrap_initializes_exports_without_running_test_bodies() {
         let mut mir = crate::codegen::tests::graph(
             r#"
             import "std/test" as testing;
-            export def first: testing.Test = fail!("do not initialize a test during bootstrap");
+            export def first = testing.should_ok(fn() { 42 });
             export def second = testing.should_ok(fn() { fail!("do not run a thunk during bootstrap") });
         "#,
             "",

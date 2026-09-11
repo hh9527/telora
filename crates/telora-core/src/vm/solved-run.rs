@@ -231,10 +231,10 @@ impl SolvedRunSession {
         main.solved_graph = Some(entry.graph);
         let mut account = QuotaAccount::new(quota).with_data_limits(limits).with_sources(sources);
         let externals = solved_module_data(&mut main, entry.data, limits, sources, &mut account)?;
+        let world = vm.initialize_linked_world(
+            &mut main, &externals, &entry.bytecode, &mut account, sources,
+        )?;
         let main = Arc::new(main);
-        let world = vm
-            .execute_in_work(&main, &externals, &entry.bytecode, &[], &mut account)
-            .map_err(|e| e.with_sources(sources).to_string())?;
         Ok(Self {
             main,
             world: Some(world),

@@ -1,6 +1,6 @@
 impl Vm {
     /// Initialize entry.Eval, inject declared host inputs, and invoke its
-    /// precompiled adapter in the same world with the same quota account.
+    /// precompiled adapter in a fresh WorkWorld with the same quota account.
     pub fn execute_eval_with(
         &mut self,
         entry: crate::execution_link::LinkedEntry,
@@ -17,10 +17,10 @@ impl Vm {
         main.solved_graph = Some(entry.graph);
         let mut account = QuotaAccount::new(quota).with_data_limits(limits).with_sources(sources);
         let externals = solved_module_data(&mut main, entry.data, limits, sources, &mut account)?;
+        let mut world = self.initialize_linked_world(
+            &mut main, &externals, &entry.bytecode, &mut account, sources,
+        )?;
         let main = Arc::new(main);
-        let mut world = self
-            .execute_in_work(&main, &externals, &entry.bytecode, &[], &mut account)
-            .map_err(|error| error.with_sources(sources).to_string())?;
         let root = ValueRef::work(world.root, &world.heap, &main);
         let config = root
             .dict_get("config")

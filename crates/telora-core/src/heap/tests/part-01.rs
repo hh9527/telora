@@ -68,7 +68,7 @@
         let mut destination = Heap::main();
         let before = destination.counts();
         let error = publish_root(&mut destination, &source, root).unwrap_err();
-        assert!(error.to_string().contains("typed values require work relocation within a shared session"));
+        assert!(error.to_string().contains("typed values require their shared session type image"));
         assert_eq!(destination.counts(), before);
     }
 

@@ -409,11 +409,7 @@ fn continue_solved_encode(
                 }) else {
                     continue;
                 };
-                let result = current
-                    .solved_evaluation
-                    .as_mut()
-                    .expect("solved codec state")
-                    .request(node);
+                let result = request_solved(current, background, node);
                 let property = match result {
                     Ok(Request::Ready(value)) => *value,
                     Ok(Request::Start) => {

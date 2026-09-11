@@ -55,6 +55,7 @@ pub struct Node {
 #[derive(Debug)]
 pub struct ExecutionGraph {
     nodes: Vec<Node>,
+    initializers: Vec<NodeId>,
     globals: Vec<Option<NodeId>>,
     instances: Vec<Option<NodeId>>,
     properties: BTreeMap<PropertyKey, NodeId>,
@@ -66,6 +67,7 @@ impl ExecutionGraph {
         let mir = sealed.mir();
         let mut graph = Self {
             nodes: vec![],
+            initializers: vec![],
             globals: vec![None; mir.symbols.len()],
             instances: vec![None; mir.generic_instances.len()],
             properties: BTreeMap::new(),
@@ -107,6 +109,10 @@ impl ExecutionGraph {
                 location: mir.hir[declaration.index()].location,
             });
             graph.globals[index] = Some(node);
+            if mir.symbol_generics[index].is_empty()
+                && !matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl)) {
+                graph.initializers.push(node);
+            }
         }
         // Import/export aliases use the resolver's final target, never a name
         // search or another evaluation slot.
@@ -130,6 +136,7 @@ impl ExecutionGraph {
                 location: mir.hir[declaration.index()].location,
             });
             graph.instances[index] = Some(node);
+            graph.initializers.push(node);
         }
         for record in mir.properties.iter().filter(|record| record.concrete) {
             let key = PropertyKey {
@@ -153,10 +160,12 @@ impl ExecutionGraph {
                 graph.properties.insert(key, node).is_none(),
                 "one reduced property per key"
             );
+            graph.initializers.push(node);
         }
         for check in mir.construction_checks.iter().filter(|check| check.concrete) {
             let node = graph.push(Node { label: format!("check({:?}, {:?})", check.owner, check.site), task: Task::ConstructionCheck { owner: check.owner, site: check.site, checker: check.checker }, ty: check.signature, location: mir.hir[check.checker.index()].location });
             assert!(graph.checks.insert((check.owner, check.site), node).is_none());
+            graph.initializers.push(node);
         }
         graph
     }
@@ -186,6 +195,8 @@ impl ExecutionGraph {
     pub fn evaluation<V>(&self) -> Evaluation<V> {
         Evaluation::new(self.nodes.len())
     }
+
+    pub fn initializers(&self) -> &[NodeId] { &self.initializers }
 }
 
 /// The embedding executor owns diagnostics. All dependants may retain the same
@@ -292,6 +303,23 @@ impl<V> Evaluation<V> {
     /// were evaluated. Unrequested nodes may remain pending under lazy semantics.
     pub fn can_publish(&self) -> bool {
         !self.failed && self.active.is_empty()
+    }
+
+    /// Read a completed initializer without starting work. Frozen MainWorld
+    /// consumers must never use request() to initialize another task.
+    pub(crate) fn ready(&self, node: NodeId) -> Option<&V> {
+        match self.states.get(node.index())? {
+            State::Ready(index) => self.values.get(*index),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn values(&self) -> &[V] { &self.values }
+
+    /// Preserve every graph key while replacing its storage-domain handles.
+    pub(crate) fn with_values<U>(self, values: Vec<U>) -> Evaluation<U> {
+        assert_eq!(values.len(), self.values.len());
+        Evaluation { states: self.states, values, active: self.active, failed: self.failed }
     }
 
     /// Abort active dependent computations after an uncaught task failure.

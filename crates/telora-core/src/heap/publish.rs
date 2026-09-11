@@ -53,3 +53,23 @@ pub(crate) fn publish_root(
     )?;
     Ok(PersistentValue(roots[0]))
 }
+
+/// Copy a completed initialization graph into its own MainWorld. One forwarding
+/// table spans every export/property root, preserving sharing and recursive
+/// closures. Commit only after the entire object graph has been validated.
+pub(crate) fn publish_initialized_roots(
+    main: &mut Heap,
+    work: &Heap,
+    roots: &[Val],
+) -> Result<Vec<Val>, HeapError> {
+    if main.storage != Storage::Main || work.storage != Storage::Work || main.solved_types.is_none() {
+        return Err(HeapError("initialization publication requires a typed Main world and a Work world"));
+    }
+    let source = HeapView { current: work, background: Some(main) };
+    let mut pending = PendingCopy::new(main, &source);
+    let copied = roots.iter().map(|root| pending.copy_value(main, &source, *root))
+        .collect::<Result<Vec<_>, _>>()?;
+    pending.validate()?;
+    pending.commit(main);
+    Ok(copied)
+}

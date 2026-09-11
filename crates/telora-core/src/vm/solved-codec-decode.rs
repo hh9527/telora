@@ -641,11 +641,7 @@ fn continue_solved_decode(
                 }) else {
                     continue;
                 };
-                let property = match current
-                    .solved_evaluation
-                    .as_mut()
-                    .expect("solved evaluation")
-                    .request(node)
+                let property = match request_solved(current, background, node)
                 {
                     Ok(Request::Ready(value)) => *value,
                     Ok(Request::Start) => {

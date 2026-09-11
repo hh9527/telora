@@ -85,11 +85,7 @@ fn continue_solved_check(
         .location,
     );
     consume_fuel(account, &function, pc)?;
-    match current
-        .solved_evaluation
-        .as_mut()
-        .expect("check evaluation")
-        .request(state.node)
+    match request_solved(current, background, state.node)
     {
         Ok(Request::Ready(callee)) => Ok(VmAction::Call {
             callee: *callee,

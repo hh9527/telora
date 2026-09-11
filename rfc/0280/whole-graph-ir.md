@@ -5,6 +5,37 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### One session-wide Initialize WorkWorld (2026-09-11)
+
+This supersedes entry-time lazy initialization. After static sealing and importing
+the type image, bytecode and data, one Initialize WorkWorld evaluates all admitted
+top-level globals, concrete instances, properties and construction-check functions.
+Dependency reads retain the demand state machine for ordering, caching and cycle
+diagnostics. Initializing a function value does not execute its body.
+
+Only after all required tasks complete successfully are the root and evaluation
+values deep-copied together into MainWorld, using one forwarding map to preserve
+sharing. Graph keys, ExportIds and TypeIds remain stable. Failed or incomplete
+initialization cannot publish the snapshot or execute entry callbacks. Original
+dependency failure diagnostics are retained by the common eval/run initializer.
+
+Entry, eval-with, run/serve and test bodies then use a fresh WorkWorld. Runtime
+dependency/property reads consume completed MainWorld values and cannot restart
+initialization. MainWorld remains immutable throughout this runtime phase.
+This deliberately accepts a one-time data copy; arena transfer and explicit copy
+allocation quota accounting remain separate runtime follow-ups.
+
+Validation: 399 workspace library tests pass; CLI build and all-target compilation
+pass. Snapshot tests verify atomic rejection of incomplete initialization, stable
+graph keys, shared export/property objects and read-only runtime cache access with
+an empty WorkWorld. Full language acceptance is 273/400, the same pass/fail set as
+the preceding milestone, after updating the initialization fixture to require
+session abort before any test body. The first run exposed a local function alias
+assuming its source closure was in WorkWorld; sealing now accepts a MainWorld
+source while keeping captured handles shared. The constructor-context suite
+passes again. Logs: /tmp/mir-freeze-initialization-*.log. The existing 127 acceptance
+failures and final performance assessment remain open; no benchmark was run.
+
 ### Remove declared heap metadata and reuse session TypeIds during relocation (2026-09-11)
 
 Removed the legacy DeclaredType heap tag/object, metadata registry, allocator,

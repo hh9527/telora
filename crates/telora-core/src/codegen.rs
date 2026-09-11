@@ -316,6 +316,10 @@ fn compile_root(
         emitter.emit(check.checker, O::MakeClosure { dst, function: Box::new(thunk.function), captures });
         emitter.emit(check.checker, O::InstallTask { node: graph.construction_check(check.owner, check.site).expect("check task"), src: dst });
     }
+    for &node in graph.initializers() {
+        let dst = emitter.register();
+        emitter.emit(declaration, O::Demand { dst, node });
+    }
     let (result, result_type) = if let Some(target) = target {
         let result = if let Some(value) = emitter.lookup(target) {
             value
@@ -329,24 +333,6 @@ fn compile_root(
         };
         (result, emitter.ty(declaration).map_err(|d| vec![d])?)
     } else {
-        for node in graph.nodes().iter().filter(|_| root == CompilationRoot::Check) {
-            let demand = match node.task {
-                crate::execution_graph::Task::Global { symbol, .. } => {
-                    if emitter.lookup(symbol).is_some() || !mir.symbol_generics[symbol.index()].is_empty() {
-                        None
-                    } else {
-                        graph.global(symbol)
-                    }
-                }
-                crate::execution_graph::Task::Instance { instance, .. } => graph.instance(instance),
-                crate::execution_graph::Task::Property { key, .. } => graph.property(key),
-                crate::execution_graph::Task::ConstructionCheck { owner, site, .. } => graph.construction_check(owner, site),
-            };
-            if let Some(node) = demand {
-                let dst = emitter.register();
-                emitter.emit(declaration, O::Demand { dst, node });
-            }
-        }
         let unit = mir
             .types
             .iter()
@@ -1353,7 +1339,7 @@ pub(crate) mod tests {
                 export def answer = do { let a = first(Int.type); let b = first(Int.type); let c = second(Int.type);
                     if a == b && a != c { a(0) } else { 0 }
                 };"#,
-            r#"def operand: Fn(Dyn) -> Int = fail!("operand must remain lazy");
+            r#"def operand: Fn(Dyn) -> Int = fn(value) { fail!("operand body must remain lazy") };
                 def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(operand);
                 export def answer = do { let adapter = factory(Int.type); 42 };"#,
             r#"def run: Fn(Int) -> Int = fn(offset) {
@@ -2348,7 +2334,7 @@ pub(crate) mod tests {
         );
     }
     #[test]
-    fn property_admission_stays_lazy_and_uses_existing_cycle_detection() {
+    fn property_admission_initializes_all_capabilities_and_detects_cycles() {
         for (target, query, cycle) in [
             ("fail!(\"unused capability must stay lazy\")", "get_type_prop(Int.type, Mark.type)", false),
             ("do { let value = get_type_prop(Item.type, Mark.type); PropertyTarget.Type }", "get_type_prop(Item.type, Mark.type)", true),
@@ -2363,10 +2349,8 @@ pub(crate) mod tests {
             "#);
             let mir = graph(&source, "");
             let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
-            match execute(artifact) {
-                Ok(result) => { assert!(!cycle); assert_eq!(result.value().as_int(), Some(42)); }
-                Err(error) => { assert!(cycle, "{error}"); assert!(error.to_string().contains("cyclic demand"), "{error}"); }
-            }
+            let error = execute(artifact).err().expect("initialization must fail");
+            assert!(error.contains(if cycle { "cyclic demand" } else { "unused capability must stay lazy" }), "{error}");
         }
     }
 
@@ -2395,8 +2379,12 @@ pub(crate) mod tests {
                 "#);
                 let mir = graph(&source, "");
                 let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
-                let result = execute(artifact).unwrap();
-                assert_eq!(result.value().as_int(), Some(if allowed & bit != 0 { 42 } else { -1 }), "{source}");
+                let result = execute(artifact);
+                if allowed & bit != 0 {
+                    assert_eq!(result.unwrap().value().as_int(), Some(42), "{source}");
+                } else {
+                    assert!(result.is_err(), "invalid property must prevent session publication: {source}");
+                }
             }
         }
     }
@@ -2571,9 +2559,9 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn property_absence_is_lazy_and_actual_property_global_cycles_fail() {
+    fn property_initialization_fails_even_when_entry_queries_an_absent_property() {
         for (query, expected) in [
-            ("query(Int.type, Mark.type)", None),
+            ("query(Int.type, Mark.type)", Some("provider failed")),
             ("query(Item.type, Mark.type)", Some("provider failed")),
         ] {
             let source = format!(
@@ -2613,12 +2601,12 @@ pub(crate) mod tests {
         );
     }
     #[test]
-    fn type_metadata_retains_solved_ids_without_executing_property_providers() {
+    fn type_metadata_retains_solved_ids_after_property_initialization() {
         let mir = graph(
             r#"
             @property(PropertyTarget.Type)
             type Mark = struct { value: Int };
-            def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!("must remain lazy") };
+            def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: 42} };
             @mark
             type Item = struct { next: Array(Item) };
             type Alias = Item;
@@ -2627,8 +2615,7 @@ pub(crate) mod tests {
             "",
         );
         let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
-        // This entry only returns metadata. Its property tasks must still be
-        // installed, while the failing provider below must remain unexecuted.
+        // Returning metadata still requires full session initialization.
         let property_tasks = artifact.graph.nodes().iter().filter_map(|node| {
             if let crate::execution_graph::Task::Property { key, .. } = node.task {
                 artifact.graph.property(key)
@@ -2736,7 +2723,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn entry_codegen_installs_unreferenced_globals_and_instances_without_demanding_them() {
+    fn entry_codegen_initializes_unreferenced_globals_and_instances() {
         let mir = graph(r#"
             def identity: for(T) Fn(T) -> T = fn(value) { value };
             def unused: Int = identity(1 / 0);
@@ -2764,7 +2751,7 @@ pub(crate) mod tests {
         }
         assert_eq!((globals, instances), (1, 1));
         drop(mir);
-        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+        assert!(execute(artifact).err().unwrap().contains("division by zero"));
     }
 
     #[test]
@@ -2772,7 +2759,7 @@ pub(crate) mod tests {
         for source in [
             "def recurse: Fn(Int) -> Int = fn(n) { if n > 0 { recurse(n - 1) } else { 42 } }; export def answer = recurse(5);",
             "def a: Int = (fn(f) { 42 })(fn(x: Int) { b }); def b: Int = a; export def answer = a;",
-            "def unused: Int = 1 / 0; export def answer = if True { 42 } else { unused };",
+            "def unused: Fn() -> Int = fn() { 1 / 0 }; export def answer = if True { 42 } else { unused() };",
         ] {
             let mir = graph(source, "");
             let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
