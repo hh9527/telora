@@ -52,32 +52,6 @@ impl Heap {
     }
 
 
-    pub(crate) fn module(
-        &mut self,
-        entries: impl IntoIterator<Item = (String, Val)>,
-    ) -> Result<Val, HeapError> {
-        let mut entries = entries.into_iter().collect::<Vec<_>>();
-        entries.sort_by(|left, right| left.0.cmp(&right.0));
-        if entries.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-            return Err(HeapError("Module exports contain a duplicate field"));
-        }
-        let mut fields = Vec::with_capacity(entries.len());
-        let mut values = Vec::with_capacity(entries.len());
-        for (field, value) in entries {
-            fields.push(self.intern(&field));
-            values.push(value);
-        }
-        let shape = self.intern_shape(fields);
-        let handle = self.allocate(Object::Module {
-            exports: ExportTable {
-                shape,
-                values: values.into_boxed_slice(),
-            },
-        });
-        Ok(Val::unknown(DecodedValue::Module(handle)))
-    }
-
-
     pub(crate) fn work() -> Self {
         Self::new(Storage::Work, crate::type_store::shared_type_store())
     }

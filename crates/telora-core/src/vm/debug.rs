@@ -117,7 +117,6 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push(">");
             }
             DecodedValue::Dyn(_) => self.push("<dyn>"),
-            DecodedValue::Module(_) => self.push("<module>"),
             DecodedValue::TypeSlot(handle) => {
                 if !self.enter(handle, depth) {
                     return Ok(());

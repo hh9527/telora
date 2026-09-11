@@ -61,7 +61,6 @@ impl<'a> JsonWriter<'a> {
             }
             DecodedValue::Func(_) => return Err("JSON cannot encode Func".into()),
             DecodedValue::Dyn(_) => return Err("JSON cannot encode Dyn".into()),
-            DecodedValue::Module(_) => return Err("JSON cannot encode Module".into()),
             DecodedValue::TypeSlot(_) => {
                 return Err("JSON cannot encode an internal up-link".into());
             }

@@ -206,53 +206,6 @@ impl WorkWorld {
         Ok((self, roots[0]))
     }
 
-    fn module_member(
-        &self,
-        world: &Heap,
-        name: &str,
-    ) -> Result<Option<Val>, crate::heap::HeapError> {
-        let view = WorkView {
-            main: world,
-            work: &self.heap,
-        }
-        .heap_view();
-        let DecodedValue::Module(handle) = self.root.value() else {
-            return Err(crate::heap::HeapError::new(
-                "execution root is not a Module",
-            ));
-        };
-        let Some(field) = self.heap.find_text(name).or_else(|| world.find_text(name)) else {
-            return Ok(None);
-        };
-        view.exports_get(handle, field)
-    }
-
-    pub(crate) fn module_member_ref<'a>(
-        &'a self,
-        world: &'a Heap,
-        name: &str,
-    ) -> Result<Option<ValueRef<'a>>, crate::heap::HeapError> {
-        self.module_member(world, name)
-            .map(|value| value.map(|value| self.value_ref(world, value)))
-    }
-
-    pub(crate) fn member_function_arity(
-        &self,
-        world: &Heap,
-        name: &str,
-    ) -> Result<Option<usize>, crate::heap::HeapError> {
-        let Some(value) = self.module_member(world, name)? else {
-            return Ok(None);
-        };
-        WorkView {
-            main: world,
-            work: &self.heap,
-        }
-        .heap_view()
-        .resolved_function_arity(value)
-    }
-
-
     pub(crate) fn into_reducer_transition(
         mut self,
         world: &Heap,

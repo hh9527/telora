@@ -5,12 +5,6 @@ pub(crate) enum RuntimePrototype {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ExportTable {
-    shape: ShapeId,
-    values: Box<[Val]>,
-}
-
-#[derive(Clone, Debug)]
 pub(crate) enum Object {
     Reserved,
     OpenFunc,
@@ -40,9 +34,6 @@ pub(crate) enum Object {
     Dict {
         shape: ShapeId,
         values: Box<[Val]>,
-    },
-    Module {
-        exports: ExportTable,
     },
     Closure {
         identity: Arc<()>,

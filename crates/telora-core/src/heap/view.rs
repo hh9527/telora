@@ -224,29 +224,6 @@ impl<'a> HeapView<'a> {
         Ok(index.and_then(|index| values.get(index).copied()))
     }
 
-    pub(crate) fn exports_get(
-        &self,
-        handle: Handle,
-        field: InternId,
-    ) -> Result<Option<Val>, HeapError> {
-        let Object::Module { exports, .. } = self.object(handle)? else {
-            return Err(HeapError("handle is not a Module"));
-        };
-        let wanted = self.text(field)?;
-        let fields = self.shape(exports.shape)?;
-        let index = fields
-            .binary_search_by(|candidate| {
-                if *candidate == field {
-                    Ordering::Equal
-                } else {
-                    self.text(*candidate).unwrap_or("").cmp(wanted)
-                }
-            })
-            .ok();
-        Ok(index.and_then(|index| exports.values.get(index).copied()))
-    }
-
-
     pub(crate) fn dict_fields(&self, handle: Handle) -> Result<Vec<&'a str>, HeapError> {
         let Object::Dict { shape, .. } = self.object(handle)? else {
             return Err(HeapError("handle is not a Dict"));
@@ -255,31 +232,6 @@ impl<'a> HeapView<'a> {
             .iter()
             .map(|field| self.text(*field))
             .collect()
-    }
-
-    pub(crate) fn module_fields(&self, handle: Handle) -> Result<Vec<&'a str>, HeapError> {
-        let Object::Module { exports } = self.object(handle)? else {
-            return Err(HeapError("handle is not a Module"));
-        };
-        self.shape(exports.shape)?
-            .iter()
-            .map(|field| self.text(*field))
-            .collect()
-    }
-
-    pub(crate) fn module_get_text(
-        &self,
-        handle: Handle,
-        field: &str,
-    ) -> Result<Option<Val>, HeapError> {
-        let Object::Module { exports } = self.object(handle)? else {
-            return Err(HeapError("handle is not a Module"));
-        };
-        let fields = self.shape(exports.shape)?;
-        let index = fields
-            .binary_search_by(|candidate| self.text(*candidate).unwrap_or("").cmp(field))
-            .ok();
-        Ok(index.and_then(|index| exports.values.get(index).copied()))
     }
 
     pub(crate) fn dict_parts(
@@ -342,8 +294,7 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::Tuple(handle)
                 | DecodedValue::Tagged(handle)
                 | DecodedValue::Dict(handle)
-                | DecodedValue::Dyn(handle)
-                | DecodedValue::Module(handle) => handle,
+                | DecodedValue::Dyn(handle) => handle,
                 DecodedValue::Int(_)
                 | DecodedValue::Float(_)
                 | DecodedValue::BuiltinAtom(_)
@@ -373,9 +324,6 @@ impl<'a> HeapView<'a> {
                 }
                 Object::Dict { values, .. } => {
                     pending.extend(values.iter().rev().copied());
-                }
-                Object::Module { exports, .. } => {
-                    pending.extend(exports.values.iter().rev().copied());
                 }
                 Object::Dyn {
                     descriptor, value, ..

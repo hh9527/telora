@@ -143,7 +143,6 @@ pub enum ValueKind {
     Tuple,
     Func,
     Dyn,
-    Module,
 }
 
 #[derive(Clone, Copy)]
@@ -251,7 +250,6 @@ impl ExecutionWorld {
         let selected = self
             .value()
             .dict_get(field)
-            .or_else(|| self.value().module_get(field))
             .ok_or_else(|| format!("value has no field {field:?}"))?
             .value;
         self.work.root = selected;
@@ -415,7 +413,6 @@ impl<'a> ValueRef<'a> {
             DecodedValue::Tuple(_) => ValueKind::Tuple,
             DecodedValue::Func(_) => ValueKind::Func,
             DecodedValue::Dyn(_) => ValueKind::Dyn,
-            DecodedValue::Module(_) => ValueKind::Module,
             DecodedValue::TypeSlot(_) => {
                 unreachable!("up-links are private VM values")
             }
@@ -639,28 +636,6 @@ impl<'a> ValueRef<'a> {
 
     pub fn declared_body(self) -> Option<ValueRef<'a>> {
         self.declared_type_body()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn module_fields(self) -> Option<Vec<&'a str>> {
-        let DecodedValue::Module(handle) = self.value.value() else {
-            return None;
-        };
-        self.view.module_fields(handle).ok()
-    }
-
-    pub(crate) fn module_get(self, field: &str) -> Option<ValueRef<'a>> {
-        let DecodedValue::Module(handle) = self.value.value() else {
-            return None;
-        };
-        self.view
-            .module_get_text(handle, field)
-            .ok()
-            .flatten()
-            .map(|value| ValueRef {
-                value,
-                view: self.view,
-            })
     }
 
     pub fn function_arity(self) -> Option<usize> {

@@ -117,9 +117,6 @@ impl PendingCopy {
             DecodedValue::Dict(handle) => {
                 DecodedValue::Dict(self.copy_object(target, source, handle)?)
             }
-            DecodedValue::Module(handle) => {
-                DecodedValue::Module(self.copy_object(target, source, handle)?)
-            }
             DecodedValue::Func(handle) => {
                 DecodedValue::Func(self.copy_object(target, source, handle)?)
             }
@@ -307,12 +304,6 @@ impl PendingCopy {
             Object::Dict { shape, values } => Object::Dict {
                 shape: self.copy_shape(target, source, *shape)?,
                 values: copy_values(self, values)?,
-            },
-            Object::Module { exports } => Object::Module {
-                exports: ExportTable {
-                    shape: self.copy_shape(target, source, exports.shape)?,
-                    values: copy_values(self, &exports.values)?,
-                },
             },
             Object::Closure {
                 identity,
@@ -521,7 +512,6 @@ fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
         | DecodedValue::Tuple(handle)
         | DecodedValue::Tagged(handle)
         | DecodedValue::Dict(handle)
-        | DecodedValue::Module(handle)
         | DecodedValue::Func(handle)
         | DecodedValue::Dyn(handle)
         | DecodedValue::TypeSlot(handle) => handle.storage != target,
@@ -558,7 +548,6 @@ fn object_contains_disallowed(
             | DecodedValue::Tuple(handle)
             | DecodedValue::Tagged(handle)
             | DecodedValue::Dict(handle)
-            | DecodedValue::Module(handle)
             | DecodedValue::Func(handle)
             | DecodedValue::Dyn(handle)
             | DecodedValue::TypeSlot(handle) => foreign(handle.storage),
@@ -580,10 +569,6 @@ fn object_contains_disallowed(
         Object::Tagged { tag, payload } => value_foreign(*tag) || value_foreign(*payload),
         Object::Dict { shape, values } => {
             foreign(shape.storage) || values.iter().any(|value| value_foreign(*value))
-        }
-        Object::Module { exports } => {
-            foreign(exports.shape.storage)
-                || exports.values.iter().any(|value| value_foreign(*value))
         }
         Object::Closure { upvalues, .. } => upvalues.iter().any(|value| value_foreign(*value)),
         Object::Dyn {

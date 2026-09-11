@@ -91,8 +91,7 @@ enum HeapKind {
     Dict,
     Func,
     Dyn,
-    Module,
-    SymbolicType,
+    SymbolicType = 11,
 }
 
 impl HeapKind {
@@ -107,7 +106,6 @@ impl HeapKind {
             7 => Self::Dict,
             8 => Self::Func,
             9 => Self::Dyn,
-            10 => Self::Module,
             11 => Self::SymbolicType,
             _ => Self::None,
         }
@@ -122,8 +120,7 @@ impl HeapKind {
             | Self::Func
             | Self::DeclaredType
             | Self::SymbolicType
-            | Self::Dyn
-            | Self::Module => TRAIT_TRACE,
+            | Self::Dyn => TRAIT_TRACE,
             Self::None | Self::Bytes | Self::Opaque => 0,
         }
     }
@@ -395,7 +392,6 @@ pub(crate) enum DecodedValue {
     Dict(Handle),
     Func(Handle),
     Dyn(Handle),
-    Module(Handle),
     TypeSlot(Handle),
 }
 
@@ -440,7 +436,6 @@ impl DecodedValue {
             Self::Dict(handle) => heap_parts(handle, HeapKind::Dict),
             Self::Func(handle) => heap_parts(handle, HeapKind::Func),
             Self::Dyn(handle) => heap_parts(handle, HeapKind::Dyn),
-            Self::Module(handle) => heap_parts(handle, HeapKind::Module),
             Self::TypeSlot(handle) => (
                 FlatKind::TypeSlot,
                 HeapKind::None,
@@ -604,7 +599,6 @@ impl Val {
             (FlatKind::Heap, HeapKind::Dict) => DecodedValue::Dict(handle()),
             (FlatKind::Heap, HeapKind::Func) => DecodedValue::Func(handle()),
             (FlatKind::Heap, HeapKind::Dyn) => DecodedValue::Dyn(handle()),
-            (FlatKind::Heap, HeapKind::Module) => DecodedValue::Module(handle()),
             (FlatKind::TypeSlot, _) => DecodedValue::TypeSlot(handle()),
             _ => unreachable!("invalid runtime Meta combination"),
         }
@@ -658,34 +652,3 @@ impl From<DecodedValue> for Val {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PersistentValue(Val);
-
-impl PersistentValue {
-    pub(crate) fn export_get(self, heap: &Heap, name: &str) -> Result<Option<Self>, HeapError> {
-        if heap.storage != Storage::Main {
-            return Err(HeapError("persistent values require a Main world"));
-        }
-        let (shape, values) = match self.0.value() {
-            DecodedValue::Module(handle) => {
-                let Object::Module { exports } = heap.object(handle)? else {
-                    return Err(HeapError(
-                        "persistent Module handle has another object kind",
-                    ));
-                };
-                (exports.shape, exports.values.as_ref())
-            }
-            DecodedValue::Dict(handle) => {
-                let Object::Dict { shape, values } = heap.object(handle)? else {
-                    return Err(HeapError("persistent Dict handle has another object kind"));
-                };
-                (*shape, values.as_ref())
-            }
-            _ => return Err(HeapError("persistent value has no exports")),
-        };
-        for (field, value) in heap.shape(shape)?.iter().zip(values) {
-            if heap.resolve_text(*field)? == name {
-                return Ok(Some(Self(*value)));
-            }
-        }
-        Ok(None)
-    }
-}

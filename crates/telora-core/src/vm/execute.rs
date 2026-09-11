@@ -362,7 +362,7 @@ impl Vm {
         let mut frames = vec![root_frame];
         let debug_sink = Arc::clone(&self.debug_sink);
 
-        // A failed node may arrive through an imported Main-world Module. Its
+        // A failed node may arrive through an imported Main-world value. Its
         // id is below the stable prefix length owned by that Main world; only
         // newly created roots need to be retained by this execution.
         let mut failures = Vec::new();
@@ -1313,10 +1313,9 @@ impl Vm {
                                 })?;
                                 let value = match dict.value() {
                                     DecodedValue::Dict(handle) => view.dict_get(handle, field),
-                                    DecodedValue::Module(handle) => view.exports_get(handle, field),
                                     _ => {
                                         return Err(runtime_type_error(
-                                            "Dict or Module",
+                                            "Dict",
                                             &dict,
                                             &view,
                                             function,

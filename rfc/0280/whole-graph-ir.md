@@ -5,6 +5,24 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove legacy heap Module values (2026-09-11)
+
+Removed the unused heap Module constructor, ExportTable, packed value variant,
+relocation/traversal branches and host module-member lookup APIs. GetField now
+only accepts ordinary Dict values; module export demands continue to use the
+MIR-linked execution graph. Kept the remaining packed heap tag numbers stable.
+This removes a second runtime module representation, not a new optimization.
+
+Validation: all 381 workspace library tests pass, CLI build and all-target
+compilation pass. compiler-semantics, data-modules, properties and property-target
+pass (44 CLI cases). No tests were removed. Logs:
+/tmp/mir-remove-module-values-*.log. No performance benchmark was run.
+
+Still incomplete: first-class unspecialized generic function values, remaining
+legacy runtime type metadata, full language acceptance and final performance
+assessment. Codegen must consume fully determined MIR results; these gaps must
+not be repaired by downstream inference or compatibility fallbacks.
+
 ### Remove dormant Dyn descriptor schemes (2026-09-11)
 
 Removed Dyn.scheme and Dyn.origin: all remaining constructors supplied None and
