@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Member and pending-constraint diagnostics (2026-09-11)
+
+Following the generic-function acceptance fixes, member diagnostics now retain
+the receiver type and distinguish enum members, record fields and unsupported
+field access. Positional projection errors identify the receiver and index.
+Unsolved numeric, logical, ordered-comparison and member constraints explain the
+missing operand evidence. These diagnostics leave slot outcomes unchanged;
+finalization still records every required Unknown while suppressing duplicate
+messages at locations already carrying a primary diagnostic.
+
+Reviewed language expectations now check concrete conflicting types or specific
+requirements instead of obsolete wording. No Rust tests were added; one existing
+projection assertion was updated. Workspace library tests pass 393/393 and the
+all-target check passes. Full language acceptance improves from 293/402 to
+335/402, with 42 existing cases repaired and no regressions. Runtime suites remain
+passing. The remaining 67 check failures need individual review, including an
+indirect-recursive-field case that currently reports only a MIR sealing failure;
+rejection alone is not evidence of a correct diagnosis. Final architecture
+acceptance and performance assessment remain open. No performance claim is made
+for this diagnostic stage.
+
 ### Phantom evidence, dictionary results and diagnostic acceptance (2026-09-11)
 
 The phantom-argument audit follows RFC 0274's existing requirement for evidence:

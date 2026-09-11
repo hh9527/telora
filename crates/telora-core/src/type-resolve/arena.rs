@@ -256,7 +256,9 @@ impl Solver<'_> {
                 state => state,
             };
         }
-        let mut reported_unknowns = BTreeSet::new();
+        let mut reported_unknowns = self.mir.diagnostics.iter().flat_map(|diagnostic|
+            diagnostic.labels.iter().filter(|label| label.primary).map(|label| label.location))
+            .collect::<BTreeSet<_>>();
         for (index, required) in self.mir.required_types.iter().enumerate() {
             if *required && self.mir.ty_slots[index] == TypeState::Unknown {
                 self.mir.type_unknowns.push(TypeSlotId(index as u32));

@@ -1,1 +1,1 @@
-cannot unify struct(Int) with Int
+cannot unify Int with UserId

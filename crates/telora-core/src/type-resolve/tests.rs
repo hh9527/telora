@@ -970,7 +970,7 @@ fn positional_projection_requires_a_tuple_or_the_single_newtype_payload() {
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
-        assert!(mir.diagnostics.iter().any(|d| d.message == "invalid projection or index"), "{source}\n{}", mir.dump());
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains("has no item at index")), "{source}\n{}", mir.dump());
         assert!(mir.seal().is_err());
     }
 }

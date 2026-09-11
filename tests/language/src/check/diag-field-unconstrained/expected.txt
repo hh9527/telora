@@ -1,1 +1,1 @@
-cannot infer monomorphic binding
+cannot infer receiver type for field "name"

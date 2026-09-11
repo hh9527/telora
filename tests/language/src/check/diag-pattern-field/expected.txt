@@ -1,1 +1,1 @@
-Struct has no field "age"
+User has no field "age"

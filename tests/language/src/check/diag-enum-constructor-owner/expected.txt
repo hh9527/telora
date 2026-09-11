@@ -1,1 +1,1 @@
-cannot unify A with B
+cannot unify B with A

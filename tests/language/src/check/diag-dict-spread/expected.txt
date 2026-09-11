@@ -1,1 +1,1 @@
-Dict spread requires Dict
+record spread requires a named struct operand

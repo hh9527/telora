@@ -38,7 +38,7 @@ impl Solver<'_> {
                 TypeFunction::Result => (TypeConstructor::Result, 2),
                 TypeFunction::FoldControl => (TypeConstructor::FoldControl, 2),
                 _ => {
-                    self.bad_member(node, &name);
+                    self.bad_member(node, receiver, &name);
                     return None;
                 }
             };
@@ -58,14 +58,14 @@ impl Solver<'_> {
                     self.same(node, term.arguments[index]);
                     self.mir.member_selections[node.index()] = Some(MemberSelection::RecordField);
                 } else {
-                    self.bad_member(node, &name);
+                    self.bad_member(node, receiver, &name);
                 }
                 return None;
             }
             TypeConstructor::Nominal(symbol) => {
                 let Some((operation, members)) = self.nominal_members(*symbol, &term.arguments)
                 else {
-                    self.bad_member(node, &name);
+                    self.bad_member(node, receiver, &name);
                     return None;
                 };
                 let Some((index, (_, payload))) = members
@@ -73,7 +73,7 @@ impl Solver<'_> {
                     .enumerate()
                     .find(|(_, (n, _))| n == &name)
                 else {
-                    self.bad_member(node, &name);
+                    self.bad_member(node, receiver, &name);
                     return None;
                 };
                 if metadata && self.is_trait(*symbol) {
@@ -98,7 +98,7 @@ impl Solver<'_> {
                     return None;
                 }
                 if operation != TypeOperation::Enum || !metadata {
-                    self.bad_member(node, &name);
+                    self.bad_member(node, receiver, &name);
                     return None;
                 }
                 self.mir.member_selections[node.index()] = Some(MemberSelection::EnumVariant {
@@ -113,7 +113,7 @@ impl Solver<'_> {
             }
             TypeConstructor::PropertyTarget if metadata => {
                 let Some(index) = crate::type_image::PROPERTY_TARGET_VARIANTS.iter().position(|member| *member == name) else {
-                    self.bad_member(node, &name);
+                    self.bad_member(node, receiver, &name);
                     return None;
                 };
                 self.mir.member_selections[node.index()] = Some(MemberSelection::EnumVariant { index: index as u32 });
@@ -131,7 +131,7 @@ impl Solver<'_> {
                     None
                 }
                 _ => {
-                    self.bad_member(node, &name);
+                    self.bad_member(node, receiver, &name);
                     return None;
                 }
             },
@@ -147,7 +147,7 @@ impl Solver<'_> {
                     Some(term.arguments[1])
                 }
                 _ => {
-                    self.bad_member(node, &name);
+                    self.bad_member(node, receiver, &name);
                     return None;
                 }
             },
@@ -163,12 +163,12 @@ impl Solver<'_> {
                     Some(term.arguments[1])
                 }
                 _ => {
-                    self.bad_member(node, &name);
+                    self.bad_member(node, receiver, &name);
                     return None;
                 }
             },
             _ => {
-                self.bad_member(node, &name);
+                self.bad_member(node, receiver, &name);
                 return None;
             }
         };
@@ -179,12 +179,33 @@ impl Solver<'_> {
         }
         None
     }
-    fn bad_member(&mut self, node: HirId, name: &str) {
+    fn bad_member(&mut self, node: HirId, receiver: TypeSlotId, name: &str) {
+        let mut raw = receiver;
+        let mut metadata = false;
+        while let Some(term) = self.term(raw) {
+            match term.constructor {
+                TypeConstructor::Meta | TypeConstructor::Unchecked => {
+                    metadata |= term.constructor == TypeConstructor::Meta;
+                    raw = term.arguments[0];
+                }
+                _ => break,
+            }
+        }
+        let ty = self.diagnostic_type(raw);
+        let message = match self.term(raw).map(|term| &term.constructor) {
+            Some(TypeConstructor::Nominal(symbol)) if self.nominal_index[symbol.index()]
+                .is_some_and(|index| self.mir.type_definitions[index].operation == TypeOperation::Enum) =>
+                format!("enum {ty} has no member {name:?}"),
+            Some(TypeConstructor::Record(_)) if !metadata => format!("record {ty} has no field {name:?}"),
+            Some(TypeConstructor::Nominal(_)) if !metadata => format!("{ty} has no field {name:?}"),
+            _ if metadata => format!("type {ty} has no member {name:?}"),
+            _ => format!("cannot access field {name:?} on {ty}"),
+        };
         self.conflict(
             node.ty(),
             node.ty(),
             Some(self.mir.hir[node.index()].location),
-            format!("type has no member {name:?}"),
+            message,
         );
     }
 }

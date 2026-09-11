@@ -9,6 +9,26 @@ enum Reference {
 }
 
 impl Solver<'_> {
+    pub(super) fn diagnose_pending_constraints(&mut self) {
+        let mut reported = self.mir.diagnostics.iter().flat_map(|diagnostic|
+            diagnostic.labels.iter().filter(|label| label.primary).map(|label| label.location))
+            .collect::<BTreeSet<_>>();
+        for task in &self.tasks {
+            let (node, operand, message) = match task {
+                Task::Numeric { node, operand } => (*node, *operand, "cannot infer numeric operand type (Int or Float required)".to_string()),
+                Task::Not { node, operand } => (*node, *operand, "cannot infer ! operand type (Int or Bool required)".to_string()),
+                Task::Ordered { node, operand } => (*node, *operand, "cannot infer ordered comparison operand type (Int, Float, or String required)".to_string()),
+                Task::Member { node, receiver, name } => (*node, *receiver, format!("cannot infer receiver type for field {name:?}")),
+                _ => continue,
+            };
+            if self.mir.ty_slots[self.root(operand).index()] != TypeState::Unknown { continue; }
+            let location = self.mir.hir[node.index()].location;
+            if reported.insert(location) {
+                self.mir.diagnostics.push(Diagnostic::error(message, location));
+            }
+        }
+    }
+
     pub(super) fn diagnostic_type(&self, slot: TypeSlotId) -> String {
         self.render_evidence(Reference::Slot(slot), 0, &mut 128)
     }

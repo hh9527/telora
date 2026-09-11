@@ -454,7 +454,7 @@ impl Solver<'_> {
                             self.conflict(
                                 node.ty(), node.ty(),
                                 Some(self.mir.hir[node.index()].location),
-                                "invalid projection or index".into(),
+                                format!("{} has no item at index 0", self.diagnostic_type(receiver)),
                             );
                         }
                     }
@@ -478,7 +478,10 @@ impl Solver<'_> {
                         node.ty(),
                         node.ty(),
                         Some(self.mir.hir[node.index()].location),
-                        "invalid projection or index".into(),
+                        match index {
+                            Some(index) => format!("{} has no item at index {index}", self.diagnostic_type(receiver)),
+                            None => format!("indexing requires an Array or Dict, found {}", self.diagnostic_type(receiver)),
+                        },
                     ),
                 }
                 None

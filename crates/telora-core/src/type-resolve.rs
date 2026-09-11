@@ -242,6 +242,7 @@ pub fn resolve(mir: &mut Mir) {
     }
     solver.validate_field_projections();
     solver.resolve_constructor_patterns();
+    solver.diagnose_pending_constraints();
     solver.finalize();
     solver.reject_expanding_families();
     solver.validate_diverging_branches();
