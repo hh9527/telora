@@ -23,7 +23,6 @@ mod properties;
 mod run;
 pub use run::{RunCalls, RunContract, RunMode, compile_run};
 pub(crate) use run::RunHostTypes;
-use properties::native_abi;
 
 pub struct CompiledEntry {
     pub graph: ExecutionGraph,

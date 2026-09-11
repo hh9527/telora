@@ -448,31 +448,6 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.set(destination, payload)
     }
 
-    pub fn set_semantic_value(
-        &mut self,
-        destination: RegisterId,
-        source: &DataWorld,
-        owner: RegisterId,
-        allocation_hint: usize,
-    ) -> Result<(), NativeError> {
-        let background = self
-            .background
-            .ok_or_else(|| NativeError::new("semantic Value requires a Main world"))?;
-        let owner = self.owned(owner)?;
-        self.charge_allocation(allocation_hint)?;
-        let raw = source
-            .relocate_into(self.current, background)
-            .map_err(|error| NativeError::new(error.to_string()))?;
-        let wrapper_bytes = semantic_value_wrapper_bytes(self.current, Some(background), raw)
-            .map_err(|error| NativeError::new(error.to_string()))?;
-        self.account
-            .charge_allocation(wrapper_bytes)
-            .map_err(|()| NativeError::allocation_limit("native allocation quota exceeded"))?;
-        let value = wrap_semantic_value(self.current, Some(background), raw, owner)
-            .map_err(|error| NativeError::new(error.to_string()))?;
-        self.set(destination, value)
-    }
-
     pub fn make_array(
         &mut self,
         destination: RegisterId,

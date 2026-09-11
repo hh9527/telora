@@ -5,6 +5,26 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove legacy semantic Value wrapping and unwrapping (2026-09-11)
+
+Deleted heap/semantic.rs and its old recursive raw-data/semantic-Value wrapping,
+unwrapping and allocation-estimation routines. Its only remaining external
+call sites were two otherwise unreferenced old Rust APIs, CallContext's
+set_semantic_value and ExecutionWorld's into_semantic_json; both are removed
+rather than retained as compatibility paths. The former relocated data into the
+work heap before recursively rebuilding wrappers with legacy declared metadata.
+Current solved parsing, codec and output implementations remain the product path.
+Also removed the unused codegen native_abi import left by heuristic pruning removal.
+
+Validation: all 396 workspace library tests, CLI build and all-target compilation
+pass. data-modules, enum-codec, codec-schema, codec-construction-check and
+newtype-metadata pass all 23 CLI cases. No new tests duplicate deleted code;
+existing solved-runtime tests exercise active parsing/formatting and type identity.
+Logs: /tmp/mir-remove-semantic-*.log. Full acceptance/performance were not rerun;
+the latest full acceptance remains 273/400. Remaining declared heap metadata,
+descriptor machinery, generic function values, acceptance gaps and final
+performance assessment remain open.
+
 ### Remove the obsolete runtime SymbolicType representation (2026-09-11)
 
 Removed SymbolicType from heap tags, decoded values, heap objects, copying,
