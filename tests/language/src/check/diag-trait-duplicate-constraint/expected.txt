@@ -1,1 +1,1 @@
-duplicate type parameter constraint
+duplicate generic bound Display(T)

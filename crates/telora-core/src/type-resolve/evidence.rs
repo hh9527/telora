@@ -70,7 +70,9 @@ impl Solver<'_> {
                     let previous = self.mir.symbols[other.symbol.index()].declarations[0];
                     self.mir.diagnostics.push(
                         Diagnostic::error(
-                            "overlapping trait implementations",
+                            format!("overlapping trait implementations: {} and {}",
+                                self.diagnostic_type(self.mir.symbol_types[implementation.symbol.index()]),
+                                self.diagnostic_type(self.mir.symbol_types[other.symbol.index()])),
                             self.mir.hir[here.index()].location,
                         )
                         .with_secondary(
@@ -96,7 +98,7 @@ impl Solver<'_> {
                 {
                     self.mir.diagnostics.push(
                         Diagnostic::error(
-                            "duplicate generic bound",
+                            format!("duplicate generic bound {}", self.diagnostic_bound(bound.ty())),
                             self.mir.hir[bound.index()].location,
                         )
                         .with_secondary("previous bound", self.mir.hir[previous.index()].location),

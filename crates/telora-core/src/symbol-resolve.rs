@@ -430,9 +430,17 @@ impl Pass<'_> {
                 });
                 let first = self.mir.symbols[definitions[0].index()].declarations[0];
                 let second = self.mir.symbols[definitions[1].index()].declarations[0];
+                let description = if definitions.iter().all(|id|
+                    self.mir.symbols[id.index()].kind == SymbolKind::TypeParameter) {
+                    "type parameter"
+                } else if patterns {
+                    "pattern binding"
+                } else {
+                    "definition"
+                };
                 self.mir.diagnostics.push(
                     Diagnostic::error(
-                        format!("duplicate definition {name:?}"),
+                        format!("duplicate {description} {name:?}"),
                         self.mir.hir[second.index()].location,
                     )
                     .with_secondary("first declared here", self.mir.hir[first.index()].location),

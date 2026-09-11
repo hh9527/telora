@@ -504,7 +504,11 @@ impl Solver<'_> {
                             node.ty(),
                             node.ty(),
                             Some(self.mir.hir[node.index()].location),
-                            "constructor pattern payload mismatch".into(),
+                            if payload.is_none() {
+                                "constructor pattern requires a payload pattern".into()
+                            } else {
+                                "constructor pattern requires a single payload argument".into()
+                            },
                         );
                     } else {
                         self.equal(

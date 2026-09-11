@@ -5,6 +5,25 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Declaration, trait and language diagnostic acceptance (2026-09-11)
+
+Duplicate declarations distinguish type parameters and pattern bindings while
+retaining the first-declaration secondary label. Trait overlap diagnostics name
+both applications and duplicate bounds name the bound. Missing constructor
+payloads explain the required pattern. Reviewed language expectations retain
+concrete conflicting types, binding names or requirements for property, pattern,
+import and Unchecked errors. The static-before-property fixture now uses a
+language checker that requires zero execution time and absence of the provider's
+failure message, in addition to the static type conflict.
+
+Workspace library tests pass 393/393; all-target checking passes. Full language
+acceptance improves from 339/403 to 372/403, repairing 33 existing cases without
+regressions. No Rust tests were added. The remaining 31 check failures are not
+assumed to be wording-only: Unknown/generic evidence, recursive aliases and old
+semantic expectations still require review. In particular a module cycle alone
+is not a static error in the whole-graph architecture; cyclic aliases without
+type evidence remain Unknown. Final acceptance is still open.
+
 ### Recursive generalization through ordinary values (2026-09-11)
 
 The indirect-recursive-field acceptance failure exposed a solver defect rather

@@ -1,1 +1,1 @@
-concrete nominal property type
+decorator result must be a nominal property type

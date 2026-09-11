@@ -1,1 +1,1 @@
-open import name "Ok" is ambiguous
+ambiguous import "Ok"

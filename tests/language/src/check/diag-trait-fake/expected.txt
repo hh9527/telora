@@ -1,1 +1,1 @@
-not a visible trait
+impl target must be a trait application

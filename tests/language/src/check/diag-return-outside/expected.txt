@@ -1,1 +1,1 @@
-only inside a Function
+return outside a function

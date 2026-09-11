@@ -1,1 +1,1 @@
-@property requires PropertyTarget
+cannot unify PropertyTarget with String
