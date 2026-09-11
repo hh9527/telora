@@ -607,9 +607,9 @@ struct CheckArgs {
     /// Solve types without executing tool, property, or runtime code.
     #[arg(long = "only-types")]
     types_only: bool,
-    /// Display experimental MIR-derived layouts without execution.
-    #[arg(long, hide = true)]
-    new_types_layout: bool,
+    /// Export experimental MIR-derived layouts without execution.
+    #[arg(long, hide = true, value_name = "FILENAME")]
+    dump_types_layout: Option<PathBuf>,
     /// Check all declared modules in the current crate, including private modules.
     #[arg(long)]
     lib: bool,

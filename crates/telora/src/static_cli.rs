@@ -39,7 +39,7 @@ pub fn check(
     args: crate::CheckArgs,
     schema: &str,
 ) -> Result<i32, String> {
-    let types_only = args.types_only || args.new_types_layout;
+    let types_only = args.types_only || args.dump_types_layout.is_some();
     let started = Instant::now();
     let mut inventory = Inventory::new(&context, args.module_id.as_deref().is_some_and(|s| s.starts_with("std/")))?;
     let roots = if let Some(selector) = &args.module_id {
@@ -85,26 +85,26 @@ pub fn check(
     };
     let static_failed = static_failed || !seal_diagnostics.is_empty();
     let static_seconds = started.elapsed().as_secs_f64();
-    if args.new_types_layout && let Some(sealed) = &sealed {
-        let layout_started = Instant::now();
+    if let (Some(path), Some(sealed)) = (&args.dump_types_layout, &sealed) {
         let entries = if roots.is_empty() { vec![] } else {
             telora_core::candidate_layout::calculate(sealed)?
         };
-        let layout_seconds = layout_started.elapsed().as_secs_f64();
         let mut pending = 0;
         let mut templates = 0;
+        let mut layouts = Vec::with_capacity(entries.len());
         for entry in &entries {
             if matches!(entry.layout, telora_core::candidate_layout::State::Template) { templates += 1; }
             if matches!(entry.layout, telora_core::candidate_layout::State::Pending { .. })
                 || entry.object.as_ref().is_some_and(|o| o.status == "pending") { pending += 1; }
             let type_name = MirQuery::new(sealed.mir()).type_name(entry.id());
-            emit(json!({"schema": schema, "module": root, "record": "type_layout", "candidate": true,
-                "type_name": type_name, "entry": entry}))?;
+            layouts.push(json!({"type_name": type_name, "entry": entry}));
         }
-        emit(json!({"schema": schema, "module": root, "record": "layout_summary", "candidate": true,
-            "types": entries.len(), "pending": pending, "templates": templates, "layout_seconds": layout_seconds,
+        let report = json!({"schema": "telora.types-layout/v1", "candidate": true, "roots": roots,
+            "target": {"word_bytes": 8, "heap_id_bytes": 4, "type_id_bytes": 4},
+            "types": layouts, "summary": {"types": entries.len(), "pending": pending, "templates": templates},
             "header": {"loc_offset": 0, "type_id_offset": 12, "data_offset": 16},
-            "offset_bases": {"members": "object_start", "variants": "value_start"}}))?;
+            "offset_bases": {"members": "object_start", "variants": "value_start"}});
+        write_layout_report(path, &report)?;
     }
     let execution_started = Instant::now();
     let mut execution_diagnostics = vec![];
@@ -156,6 +156,22 @@ pub fn check(
         "catalog_seconds": catalog_seconds}),
     )?;
     Ok(i32::from(failed))
+}
+
+/// Stage in the destination directory so replacement stays on one filesystem.
+/// Serialization and write failures leave an existing destination untouched.
+fn write_layout_report(path: &std::path::Path, report: &Value) -> Result<(), String> {
+    use std::io::Write;
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    let write = || -> Result<(), Box<dyn std::error::Error>> {
+        let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+        serde_json::to_writer_pretty(&mut staged, report)?;
+        staged.write_all(b"\n")?;
+        staged.flush()?;
+        staged.persist(path)?;
+        Ok(())
+    };
+    write().map_err(|e| format!("cannot export type layouts to {}: {e}", path.display()))
 }
 
 fn type_fields(mir: &Mir, state: TypeState) -> (Option<usize>, Option<String>, &'static str) {

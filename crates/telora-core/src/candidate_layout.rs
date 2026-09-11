@@ -43,9 +43,48 @@ pub struct Object {
 #[derive(Debug, Serialize)]
 pub struct Entry {
     pub type_id: usize,
+    /// Actual MIR constructor, independent of the human-readable type name.
+    pub constructor: &'static str,
     pub layout: State,
     pub object: Option<Object>,
     pub variants: Vec<Member>,
+}
+fn constructor_name(constructor: &T) -> &'static str {
+    match constructor {
+        T::Int => "Int",
+        T::Float => "Float",
+        T::String => "String",
+        T::Bytes => "Bytes",
+        T::Bool => "Bool",
+        T::Never => "Never",
+        T::Type => "Type",
+        T::TypeOf => "TypeOf",
+        T::Dyn => "Dyn",
+        T::Option => "Option",
+        T::Result => "Result",
+        T::FoldControl => "FoldControl",
+        T::PropertyTarget => "PropertyTarget",
+        T::PropertyBound => "PropertyBound",
+        T::Unchecked => "Unchecked",
+        T::TypeFunction(_) => "TypeFunction",
+        T::Nominal(_) => "Nominal",
+        T::Native(_) => "Native",
+        T::Tuple => "Tuple",
+        T::Array => "Array",
+        T::ArrayLiteral => "ArrayLiteral",
+        T::TupleLiteral => "TupleLiteral",
+        T::TypeList => "TypeList",
+        T::Dict => "Dict",
+        T::Function => "Function",
+        T::Quantified(_) => "Quantified",
+        T::Bound(_) => "Bound",
+        T::Record(_) => "Record",
+        T::Newtype => "Newtype",
+        T::Enum(_) => "Enum",
+        T::Meta => "Meta",
+        T::Namespace(_) => "Namespace",
+        T::Parameter(_) => "Parameter",
+    }
 }
 impl Entry {
     pub fn id(&self) -> TypeId {
@@ -147,6 +186,9 @@ impl Builder<'_> {
             T::Parameter(_) | T::Quantified(_) | T::TypeFunction(_) => State::Template,
             T::Int | T::Float | T::Bool => shape(8, 8, None)?,
             T::String => shape(16, 8, Some("StringTable"))?,
+            // The outer stamp describes the value; data names the represented type.
+            T::Type | T::TypeOf => shape(4, 4, None)?,
+            T::Bytes => shape(12, 4, Some("BytesTable"))?,
             T::Array => shape(12, 4, Some("ArrayTable"))?,
             T::Dict => shape(4, 4, Some("DictTable"))?,
             T::Record(_) => shape(4, 4, Some("RecordTable"))?,
@@ -232,7 +274,7 @@ impl Builder<'_> {
             reason: None,
         };
         match table {
-            "StringTable" => {
+            "StringTable" | "BytesTable" => {
                 object.element_stride = Some(1);
             }
             "ArrayTable" => {
@@ -363,6 +405,7 @@ pub fn calculate(sealed: &SealedMir<'_>) -> Result<Vec<Entry>, String> {
                 .collect();
             Ok(Entry {
                 type_id: i,
+                constructor: constructor_name(&image.types[i].constructor),
                 layout: b.states[i].clone().unwrap(),
                 object: b.object(id)?,
                 variants,

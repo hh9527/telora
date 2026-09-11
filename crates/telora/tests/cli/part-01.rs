@@ -847,8 +847,8 @@ fn data_contents_are_checked_after_types_only() {
         fs::write(&path, invalid).unwrap();
         refresh_fixture_workspace(&cwd);
         for root in ["@src/data-user", module.as_str()] {
-            for mode in ["--only-types", "--new-types-layout"] {
-                let output = telora(&cwd).args(["check", mode, root]).output().unwrap();
+            for mode in [vec!["--only-types"], vec!["--dump-types-layout", "layout.json"]] {
+                let output = telora(&cwd).arg("check").args(mode).arg(root).output().unwrap();
                 assert!(output.status.success(), "{root}: {}\n{}",
                     String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
             }

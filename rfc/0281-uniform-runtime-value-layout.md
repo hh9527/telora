@@ -2,15 +2,17 @@
 
 - 状态：已实现并验证，布局计算与展示范围完成；运行时接入不在本 RFC 范围内
 - 跟踪：[#177](https://github.com/hh9527/telora/issues/177)
+- 后续布局闭合：[#178](https://github.com/hh9527/telora/issues/178)，分支 `feat/concrete-type-layout-closure`
 - 独立分支：`feat/0281-mir-type-layout`
 - 日期：2026-09-11
 - 修订：2026-09-12，范围收敛为独立布局计算及隐藏 CLI 展示，不接入运行时
+- 接口修订：2026-09-12，改为隐藏选项 `--dump-types-layout <filename>`，导出单份 JSON；移除旧选项，不保留别名
 - 前置：[RFC 0280](0280-demand-driven-inference-materialization.md)
 - 讨论来源：[利用已闭合 MIR 设计运行时数据布局](../discuss/mir-directed-runtime-layout.md)
 
 ## 动机与范围
 
-本 RFC 的交付仅为：独立消费 SealedMir 的候选布局器，以及隐藏选项 `check --new-types-layout`。该选项等同于 `check --only-types` 的静态检查，再增加布局计算和展示。不创建 VM，不生成字节码，不实例化分类对象表，不替换现有运行时表示。
+本 RFC 的交付仅为：独立消费 SealedMir 的候选布局器，以及隐藏选项 `check --dump-types-layout <filename>`。该选项等同于 `check --only-types` 的静态检查，再增加布局计算和 JSON 导出。不创建 VM，不生成字节码，不实例化分类对象表，不替换现有运行时表示。
 
 下文的值头部、对象表和生命周期讨论定义候选布局的含义及未来接入约束，不构成本轮 heap/codegen/VM 改造任务。运行时接入应另行提出后续 RFC。
 
@@ -27,16 +29,22 @@ heap 按对象类别建立独立表。统一的是外层值头部，各类对象
 新增隐藏选项：
 
 ```sh
-telora check --new-types-layout <selector>
-telora check --lib --new-types-layout
-telora check --tests --new-types-layout
+telora check --dump-types-layout layout.json <selector>
+telora check --lib --dump-types-layout layout.json
+telora check --tests --dump-types-layout layout.json
 ```
 
 选项不出现在普通帮助中。它隐含 `--only-types`，两者同时传入时按同一静态流程执行一次。模块选择、`--lib`/`--tests` 组合规则及静态诊断行为沿用 check。
 
 流程为：模块图 → 符号求解 → 类型求解 → seal → 候选布局计算 → 展示。静态错误仍输出现有诊断并返回失败，不对未 seal 的 MIR 伪造最终布局。全流程不读取数据模块内容、不执行 property 或顶层值、不创建 VM。
 
-布局输出至少展示最终 TypeId、可读类型、布局状态、data 实际大小和对齐、完整值大小及步长、字段/分支偏移、对象表类别与对象形状。按最终 TypeId 和稳定字段/分支顺序输出，注明这是候选布局而非当前 VM 的实际布局。沿用 CLI 现有输出约定；结构化输出使用独立布局记录，不混入不可解析的文本。
+布局文件至少展示最终 TypeId、可读类型、布局状态、data 实际大小和对齐、完整值大小及步长、字段/分支偏移、对象表类别与对象形状。按最终 TypeId 和稳定字段/分支顺序输出，注明这是候选布局而非当前 VM 的实际布局。
+
+文件是一份 `schema: telora.types-layout/v1` 的 JSON，包含 roots、target、header、offset_bases、types 和 summary。target 记录 word、HeapId、TypeId 宽度。文件不包含耗时、时间戳或目标文件名等波动信息，相同输入应产生逐字节相同的导出。
+
+stdout 只保留现有 check 诊断与 summary，不输出布局记录。目标相对路径以进程工作目录为基准，`-C` 只选择项目上下文。不自动创建父目录，也不提供 `-` 表示 stdout 的特殊约定。
+
+在静态检查和布局计算成功后，先写入目标目录中的临时文件，再原子替换目标文件。静态失败、计算失败或文件写入失败时保留已有目标文件，未存在的目标不产生半成品；文件错误返回非零退出码并包含目标路径。待定布局不属于导出失败。
 
 未实例化的泛型模板标为“不适用具体布局”；未定表示规则标为“待定”并说明依赖，不能静默使用旧 Val 的大小。已支持规则的计算错误或溢出返回失败。静态检查通过但含待定设计项时可以成功输出报告，同时明确展示未完成数量，不声称布局全覆盖。空模块集合输出空布局报告并成功。
 
@@ -189,7 +197,7 @@ Record 字段访问按已确定的 RecordTable 选择和字段偏移执行；Arr
 ## 实施计划
 
 1. **独立布局器**：消费 SealedMir，区分 data/完整值/对象布局，实现已确定规则及待定状态传播。少量单元测试核对大小、对齐、递归引用和确定性；不依赖 VM 或旧 Val 布局。
-2. **隐藏 CLI 展示**：将 `--new-types-layout` 接到现有静态检查成功后的 seal 结果，输出稳定布局报告，复用模块选择与诊断逻辑。
+2. **隐藏 CLI 导出**：将 `--dump-types-layout <filename>` 接到现有静态检查成功后的 seal 结果，原子写入稳定 JSON，复用模块选择与诊断逻辑。
 3. **验证与记录**：用小型 `.telora` 输入核对 CLI 报告，再对 ontology 等实际模块生成布局报告，记录覆盖范围和未定项。本轮无需运行时性能评估；不把预测布局大小解释为实际 RSS。
 
 ## 可执行的验收条件
@@ -213,6 +221,8 @@ Record 字段访问按已确定的 RecordTable 选择和字段偏移执行；Arr
 
 ## 实施与验收记录（2026-09-12）
 
+下面的 JSONL 输出及 layout_seconds 为 #177 首次合入时的历史记录。后续接口修订以“用户可见语义”中的单份 JSON 文件为准，移除 stdout 布局记录和导出中的耗时字段。
+
 - 独立模块：`crates/telora-core/src/candidate_layout.rs`，入口只接收 `&SealedMir`。
 - CLI 只在新隐藏选项启用且 seal 成功后调用；现有执行入口不消费候选布局。
 - 报告使用 `type_layout` 和 `layout_summary` JSONL 记录，明确标记 `candidate: true`。
@@ -233,3 +243,19 @@ Record 字段访问按已确定的 RecordTable 选择和字段偏移执行；Arr
 - ontology 全库实际报告成功：3502 个类型条目，其中 394 个模板、2687 个含待定值或对象布局的条目；静态 unknown/conflict 均为零，execution_seconds 为零。待定条目是候选表示未定义，不是类型推断失败。
 
 这些数据用于布局覆盖观察，不构成运行时性能或内存收益结论。
+
+## 后续：具体类型布局闭合（#178）
+
+#177 完成的是独立计算与展示能力。#178 的完成条件更强：所有需要物化的具体类型及其对象存储规则必须闭合，不能以部分 pending 留存作为终点。按分类审计、基础类型、聚合包装、递归 enum、函数/动态值、heap 对象、最终闭合的顺序推进；仍不接入运行时。
+
+导出条目增加真实的 `constructor` 类别，独立于可读 type_name。尤其 Meta(T) 在可读名称中也显示为 TypeOf(T)，不能因此将其当成运行时 TypeOf 值。类型分类依据 MIR 构造器而非显示名称。模板、编译期项、不可构造类型的完整分类继续在 #178 中收敛。
+
+### 首批确定：Type、TypeOf(T)、Bytes
+
+- Type 与具体 TypeOf(T) 的 data 为一个 `represented_type_id: u32`，对齐 4 字节，完整值占 24 字节。值头部的 TypeId 表示该值自身的类型，data 中的 TypeId 表示其引用的类型；两者不能混淆。具体 TypeOf(T) 不依赖 T 的数据布局是否已知。
+- Meta(T) 是静态类型表达式的构造器，不套用上述运行时规则。此批先明确区分，后续分类规则不得以运行时 TypeOf 的布局掩盖它。
+- Bytes 的 data 为 `HeapId/start/end: u32`，实际 12 字节，对齐 4 字节，完整值占 32 字节。HeapId 属于独立 BytesTable，底层是连续原始字节，元素步长 1，不给每个字节加完整值头。
+- BytesTable 的内容区域大小为 byte_length，slice 的有效区间满足 `start <= end <= byte_length`。本轮报告描述区和对象内容，不决定表条目的宿主管理字段或实际分配策略。来源仍属于外层 Bytes 值。
+- Type/TypeOf 没有 heap 引用；Bytes 的 data 偏移 0/4/8 依次为 HeapId/start/end，相对于完整值为 16/20/24。
+
+原生不透明类型、Never、聚合包装、递归 enum、闭包/dyn 和 Dict 的完整存储规则尚未完成，不将本批视为 #178 已完成。

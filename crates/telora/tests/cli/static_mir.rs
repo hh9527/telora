@@ -837,7 +837,7 @@ fn static_mir_serve_collects_a_failed_request_and_continues() {
     fs::remove_dir_all(cwd).unwrap();
 }
 #[test]
-fn new_types_layout_is_static_deterministic_and_hidden() {
+fn dump_types_layout_is_static_deterministic_and_hidden() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), r#"
         import "std/prelude" {Int as Number};
@@ -848,19 +848,44 @@ fn new_types_layout_is_static_deterministic_and_hidden() {
         export def x: Rec = { a: 1 / 0, b: [1, 2] };
         export def choice: Choices = Choices.Items([1]);
         export def boxed: Box(Int) = {value: 1};
+        export def metadata = Int.type;
     "#).unwrap();
     let help = telora(&cwd).args(["check", "--help"]).output().unwrap();
-    assert!(!String::from_utf8_lossy(&help.stdout).contains("new-types-layout"));
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("dump-types-layout"));
+    assert!(!telora(&cwd).args(["check", "--new-types-layout", "@src/main"]).output().unwrap().status.success());
+    assert!(!telora(&cwd).args(["check", "@src/main", "--dump-types-layout"]).output().unwrap().status.success());
     let run = |flags: &[&str]| {
         let output = telora(&cwd).arg("check").args(flags).output().unwrap();
         assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-        String::from_utf8(output.stdout).unwrap().lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).collect::<Vec<_>>()
+        let records = String::from_utf8(output.stdout).unwrap().lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).collect::<Vec<_>>();
+        assert!(records.iter().all(|r| r["record"] == "diagnostic" || r["record"] == "summary"));
+        assert_eq!(records.last().unwrap()["execution_seconds"], 0.0);
+        assert_eq!(records.last().unwrap()["types_only"], true);
+        serde_json::from_slice::<Value>(&fs::read(cwd.join("layout.json")).unwrap()).unwrap()
     };
-    let flags = ["--new-types-layout", "@src/main"];
-    let first = run(&flags);
-    let layouts = |records: Vec<Value>| records.into_iter().filter(|r| r["record"] == "type_layout").collect::<Vec<_>>();
-    assert_eq!(layouts(first.clone()), layouts(run(&flags)));
-    assert_eq!(layouts(first.clone()), layouts(run(&["--new-types-layout", "--only-types", "@src/main"])));
+    let flags = ["--dump-types-layout", "layout.json", "@src/main"];
+    fs::write(cwd.join("layout.json"), "old content").unwrap();
+    let report = run(&flags);
+    assert_eq!(report["schema"], "telora.types-layout/v1");
+    let bytes = fs::read(cwd.join("layout.json")).unwrap();
+    assert_eq!(report, run(&flags));
+    assert_eq!(bytes, fs::read(cwd.join("layout.json")).unwrap());
+    assert_eq!(report, run(&["--dump-types-layout", "layout.json", "--only-types", "@src/main"]));
+    let first = report["types"].as_array().unwrap();
+    for row in first {
+        let entry = &row["entry"];
+        if entry["constructor"] == "Type" || (entry["constructor"] == "TypeOf" && entry["layout"]["status"] != "template") {
+            assert_eq!(entry["layout"]["shape"]["data_bytes"], 4);
+            assert_eq!(entry["layout"]["shape"]["value_bytes"], 24);
+        }
+        if entry["constructor"] == "Bytes" {
+            assert_eq!(entry["layout"]["shape"]["value_bytes"], 32);
+            assert_eq!(entry["layout"]["shape"]["table"], "BytesTable");
+            assert_eq!(entry["object"]["element_stride"], 1);
+        }
+    }
+    assert!(first.iter().any(|r| r["entry"]["constructor"] == "TypeOf" && r["entry"]["layout"]["status"] == "known"));
+    assert!(first.iter().any(|r| r["entry"]["constructor"] == "Meta"));
     let rec = first.iter().find(|r| r["entry"]["object"]["members"].as_array().is_some_and(|m| m.len() == 2 && m[0]["name"] == "a" && m[1]["name"] == "b")).unwrap();
     assert_eq!(rec["entry"]["object"]["members"][0]["offset"], 0);
     assert_eq!(rec["entry"]["object"]["members"][1]["offset"], 24);
@@ -871,19 +896,28 @@ fn new_types_layout_is_static_deterministic_and_hidden() {
     assert_eq!(choices["entry"]["variants"][1]["offset"], 24);
     assert!(first.iter().any(|r| r["entry"]["layout"]["status"] == "template"));
     assert!(first.iter().any(|r| r["entry"]["layout"]["status"] == "pending" && r["entry"]["variants"].as_array().is_some_and(|v| v.iter().any(|v| v["name"] == "More"))));
-    assert_eq!(first.last().unwrap()["execution_seconds"], 0.0);
     assert!(!telora(&cwd).args(["check", "@src/main"]).output().unwrap().status.success());
     for selection in [vec!["--lib"], vec!["--tests"], vec!["--lib", "--tests"]] {
-        let mut flags = vec!["--new-types-layout"];
+        let mut flags = vec!["--dump-types-layout", "layout.json"];
         flags.extend(selection);
-        let records = run(&flags);
-        assert_eq!(records.last().unwrap()["types_only"], true);
+        run(&flags);
     }
-    let empty = run(&["--new-types-layout", "--tests"]);
-    assert_eq!(empty.iter().find(|r| r["record"] == "layout_summary").unwrap()["types"], 0);
+    let empty = run(&["--dump-types-layout", "layout.json", "--tests"]);
+    assert_eq!(empty["summary"]["types"], 0);
+    let before = fs::read(cwd.join("layout.json")).unwrap();
+    fs::create_dir(cwd.join("destination-dir")).unwrap();
+    fs::write(cwd.join("destination-dir/keep"), "keep").unwrap();
+    let output = telora(&cwd).args(["check", "@src/main", "--dump-types-layout", "destination-dir"]).output().unwrap();
+    assert!(!output.status.success());
+    assert_eq!(fs::read_to_string(cwd.join("destination-dir/keep")).unwrap(), "keep");
+    assert_eq!(fs::read_dir(&cwd).unwrap().filter_map(Result::ok).filter(|e| e.file_name().to_string_lossy().starts_with(".tmp")).count(), 0);
     fs::write(cwd.join("src/main.telora"), "export def x: Int = \"bad\";").unwrap();
     let output = telora(&cwd).arg("check").args(flags).output().unwrap();
     assert!(!output.status.success());
+    assert_eq!(before, fs::read(cwd.join("layout.json")).unwrap());
+    let output = telora(&cwd).args(["check", "@src/main", "--dump-types-layout", "absent.json"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(!cwd.join("absent.json").exists());
     assert!(!String::from_utf8_lossy(&output.stdout).contains("\"record\":\"type_layout\""));
     fs::remove_dir_all(cwd).unwrap();
 }
