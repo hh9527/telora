@@ -39,7 +39,7 @@ pub fn check(
     args: crate::CheckArgs,
     schema: &str,
 ) -> Result<i32, String> {
-    let types_only = args.types_only;
+    let types_only = args.types_only || args.new_types_layout;
     let started = Instant::now();
     let mut inventory = Inventory::new(&context, args.module_id.as_deref().is_some_and(|s| s.starts_with("std/")))?;
     let roots = if let Some(selector) = &args.module_id {
@@ -85,6 +85,27 @@ pub fn check(
     };
     let static_failed = static_failed || !seal_diagnostics.is_empty();
     let static_seconds = started.elapsed().as_secs_f64();
+    if args.new_types_layout && let Some(sealed) = &sealed {
+        let layout_started = Instant::now();
+        let entries = if roots.is_empty() { vec![] } else {
+            telora_core::candidate_layout::calculate(sealed)?
+        };
+        let layout_seconds = layout_started.elapsed().as_secs_f64();
+        let mut pending = 0;
+        let mut templates = 0;
+        for entry in &entries {
+            if matches!(entry.layout, telora_core::candidate_layout::State::Template) { templates += 1; }
+            if matches!(entry.layout, telora_core::candidate_layout::State::Pending { .. })
+                || entry.object.as_ref().is_some_and(|o| o.status == "pending") { pending += 1; }
+            let type_name = MirQuery::new(sealed.mir()).type_name(entry.id());
+            emit(json!({"schema": schema, "module": root, "record": "type_layout", "candidate": true,
+                "type_name": type_name, "entry": entry}))?;
+        }
+        emit(json!({"schema": schema, "module": root, "record": "layout_summary", "candidate": true,
+            "types": entries.len(), "pending": pending, "templates": templates, "layout_seconds": layout_seconds,
+            "header": {"loc_offset": 0, "type_id_offset": 12, "data_offset": 16},
+            "offset_bases": {"members": "object_start", "variants": "value_start"}}))?;
+    }
     let execution_started = Instant::now();
     let mut execution_diagnostics = vec![];
     if let Some(sealed) = sealed.filter(|_| !types_only && !roots.is_empty()) {

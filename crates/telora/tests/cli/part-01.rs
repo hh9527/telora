@@ -847,9 +847,11 @@ fn data_contents_are_checked_after_types_only() {
         fs::write(&path, invalid).unwrap();
         refresh_fixture_workspace(&cwd);
         for root in ["@src/data-user", module.as_str()] {
-            let output = telora(&cwd).args(["check", "--only-types", root]).output().unwrap();
-            assert!(output.status.success(), "{root}: {}\n{}",
-                String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            for mode in ["--only-types", "--new-types-layout"] {
+                let output = telora(&cwd).args(["check", mode, root]).output().unwrap();
+                assert!(output.status.success(), "{root}: {}\n{}",
+                    String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            }
             let output = telora(&cwd).args(["check", root]).output().unwrap();
             assert!(!output.status.success(), "invalid {extension} must fail ordinary check");
         }

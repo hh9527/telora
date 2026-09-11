@@ -1,6 +1,6 @@
 # RFC 0281：MIR 驱动的候选类型布局计算与展示
 
-- 状态：草案，待讨论；尚未实施
+- 状态：已实现并验证，布局计算与展示范围完成；运行时接入不在本 RFC 范围内
 - 跟踪：[#177](https://github.com/hh9527/telora/issues/177)
 - 独立分支：`feat/0281-mir-type-layout`
 - 日期：2026-09-11
@@ -210,3 +210,26 @@ Record 字段访问按已确定的 RecordTable 选择和字段偏移执行；Arr
 本轮只计算与展示上述成本，不实际分配这些运行时值。报告中的字节数不是实际堆占用，也不能据此声称 CLI 运行速度或内存得到改善。新选项本身会增加布局计算与输出的时间和内存。
 
 布局观察结果用于收敛后续运行时 RFC；来源分列等改动应显式修订候选规则。完成本 RFC 不要求完成运行时迁移或解决所有未来表示问题。
+
+## 实施与验收记录（2026-09-12）
+
+- 独立模块：`crates/telora-core/src/candidate_layout.rs`，入口只接收 `&SealedMir`。
+- CLI 只在新隐藏选项启用且 seal 成功后调用；现有执行入口不消费候选布局。
+- 报告使用 `type_layout` 和 `layout_summary` JSONL 记录，明确标记 `candidate: true`。
+- `known`、`pending`、`template` 分别表示已知布局、未定规则及未实例化模板；泛型依赖沿已求解类型图传播。值布局与对象布局分别报告，Record 引用大小已知不意味着所有字段布局都已知。
+- 字段 offset 相对于对象起点；已知 enum 的 payload offset 相对于完整值起点，当前为 24（16 字节头部加 8 字节 tag）。未定分支不报告已确定的 payload 偏移。
+- Array 描述为 12 字节，完整值为 32 字节。完整 Int 元素步长为 24 字节；`struct {a: Int, b: Array(Int)}` 的字段偏移为 0/24，对象大小为 56 字节。
+- Tuple、闭包、dyn、原生不透明对象、新类型包装等尚未规定的表示，以及需要间接规则的递归 enum，显式保留为待定；Dict 引用大小已知，哈希对象内部布局待定。
+- `layout_seconds` 仅记录候选布局计算，不包含打印时间，也不计入原有 check_seconds。
+- 隐藏选项不加入普通帮助、CLI 指南或当前实现文档；开发契约保留在本 RFC。
+
+验证结果：
+
+- `cargo test -p telora --test cli`：69 项通过，包含既有语言验收。
+- `cargo test -p telora-core candidate_layout`：大小、对齐取整及溢出验证通过。
+- 最后布局细节调整后重跑 `new_types_layout` CLI 用例与布局单元测试通过。
+- CLI 用例核对确定性、字段偏移、Array 步长、enum payload、递归待定、泛型模板、重命名导入、隐藏帮助、组合参数、空集合和静态失败。
+- 非法 JSON/TOML/YAML 用例同时验证 only-types 与新选项不读取内容；普通 check 仍拒绝非法内容。顶层除零在新选项下不执行，普通 check 仍失败。
+- ontology 全库实际报告成功：3502 个类型条目，其中 394 个模板、2687 个含待定值或对象布局的条目；静态 unknown/conflict 均为零，execution_seconds 为零。待定条目是候选表示未定义，不是类型推断失败。
+
+这些数据用于布局覆盖观察，不构成运行时性能或内存收益结论。

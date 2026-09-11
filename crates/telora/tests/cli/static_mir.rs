@@ -836,3 +836,54 @@ fn static_mir_serve_collects_a_failed_request_and_continues() {
     assert_eq!(replies[1]["ok"], 42);
     fs::remove_dir_all(cwd).unwrap();
 }
+#[test]
+fn new_types_layout_is_static_deterministic_and_hidden() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), r#"
+        import "std/prelude" {Int as Number};
+        export type Rec = struct { a: Number, b: Array(Int) };
+        export type Choices = enum { Empty, Items(Array(Int)) };
+        export type Recursive = enum { End, More(Recursive) };
+        export type Box(T) = struct { value: T };
+        export def x: Rec = { a: 1 / 0, b: [1, 2] };
+        export def choice: Choices = Choices.Items([1]);
+        export def boxed: Box(Int) = {value: 1};
+    "#).unwrap();
+    let help = telora(&cwd).args(["check", "--help"]).output().unwrap();
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("new-types-layout"));
+    let run = |flags: &[&str]| {
+        let output = telora(&cwd).arg("check").args(flags).output().unwrap();
+        assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap().lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).collect::<Vec<_>>()
+    };
+    let flags = ["--new-types-layout", "@src/main"];
+    let first = run(&flags);
+    let layouts = |records: Vec<Value>| records.into_iter().filter(|r| r["record"] == "type_layout").collect::<Vec<_>>();
+    assert_eq!(layouts(first.clone()), layouts(run(&flags)));
+    assert_eq!(layouts(first.clone()), layouts(run(&["--new-types-layout", "--only-types", "@src/main"])));
+    let rec = first.iter().find(|r| r["entry"]["object"]["members"].as_array().is_some_and(|m| m.len() == 2 && m[0]["name"] == "a" && m[1]["name"] == "b")).unwrap();
+    assert_eq!(rec["entry"]["object"]["members"][0]["offset"], 0);
+    assert_eq!(rec["entry"]["object"]["members"][1]["offset"], 24);
+    assert_eq!(rec["entry"]["object"]["bytes"], 56);
+    assert!(first.iter().any(|r| r["entry"]["object"]["element_stride"] == 24));
+    let choices = first.iter().find(|r| r["entry"]["variants"].as_array().is_some_and(|v| v.iter().any(|v| v["name"] == "Items"))).unwrap();
+    assert_eq!(choices["entry"]["layout"]["shape"]["value_bytes"], 56);
+    assert_eq!(choices["entry"]["variants"][1]["offset"], 24);
+    assert!(first.iter().any(|r| r["entry"]["layout"]["status"] == "template"));
+    assert!(first.iter().any(|r| r["entry"]["layout"]["status"] == "pending" && r["entry"]["variants"].as_array().is_some_and(|v| v.iter().any(|v| v["name"] == "More"))));
+    assert_eq!(first.last().unwrap()["execution_seconds"], 0.0);
+    assert!(!telora(&cwd).args(["check", "@src/main"]).output().unwrap().status.success());
+    for selection in [vec!["--lib"], vec!["--tests"], vec!["--lib", "--tests"]] {
+        let mut flags = vec!["--new-types-layout"];
+        flags.extend(selection);
+        let records = run(&flags);
+        assert_eq!(records.last().unwrap()["types_only"], true);
+    }
+    let empty = run(&["--new-types-layout", "--tests"]);
+    assert_eq!(empty.iter().find(|r| r["record"] == "layout_summary").unwrap()["types"], 0);
+    fs::write(cwd.join("src/main.telora"), "export def x: Int = \"bad\";").unwrap();
+    let output = telora(&cwd).arg("check").args(flags).output().unwrap();
+    assert!(!output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("\"record\":\"type_layout\""));
+    fs::remove_dir_all(cwd).unwrap();
+}

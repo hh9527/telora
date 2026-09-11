@@ -10,6 +10,7 @@ pub mod ast;
 pub mod bytecode;
 pub mod codegen;
 pub mod type_image;
+pub mod candidate_layout;
 pub mod test_plan;
 mod test_protocol;
 pub use test_protocol::{TestContext, TestHost, TestLimits, TestSource};
