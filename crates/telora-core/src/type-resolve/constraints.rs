@@ -130,6 +130,10 @@ impl Solver<'_> {
             }
             Task::TypeApply { node } => {
                 let callee = self.child(node, Role::Callee).unwrap();
+                if matches!(self.mir.ty_slots[self.root(callee.ty()).index()], TypeState::Conflicted(_)) {
+                    self.same(node, callee.ty());
+                    return Ok(None);
+                }
                 if self.tasks.iter().any(|task| matches!(task, Task::Reference { node, .. } if *node == callee)) {
                     return Ok(Some(Task::TypeApply { node }));
                 }
@@ -158,8 +162,13 @@ impl Solver<'_> {
                 }
                 let arguments = self.children(node, Role::Argument);
                 if parameters.is_empty() || parameters.len() != arguments.len() {
+                    let message = if parameters.is_empty() {
+                        "explicit type application cannot specialize a monomorphic binding".into()
+                    } else {
+                        format!("explicit type application expects {} arguments, found {}", parameters.len(), arguments.len())
+                    };
                     self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
-                        "explicit type application requires a generic binding with matching arity".into());
+                        message);
                 } else {
                     for (parameter, argument) in parameters.into_iter().zip(arguments) {
                         self.assign(argument, TypeConstructor::Meta, vec![parameter]);

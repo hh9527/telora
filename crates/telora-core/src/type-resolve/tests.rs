@@ -2,6 +2,31 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn explicit_type_application_reports_contract_arity_and_inherits_resolution_failures() {
+    for (declaration, application, expected) in [
+        ("def identity: Fn(Int) -> Int = fn(value) {value};", "identity@[Int](1)", "monomorphic binding"),
+        ("def identity: for(T) Fn(T) -> T = fn(value) {value};", "identity@[Int, String](1)", "expects 1 arguments, found 2"),
+        ("def pair: for(A, B) Fn(A, B) -> A = fn(left, right) {left};", "pair@[Int](1, 2)", "expects 2 arguments, found 1"),
+    ] {
+        let source = format!("{declaration} export def bad = {application}; export def independent = 42;");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains(expected)), "{}", mir.dump());
+        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(mir.seal().is_err());
+    }
+    let mut mir = graph(&[("@src/main", "export def bad = missing@[Int](1); export def independent = 42;")]);
+    resolve(&mut mir);
+    assert_eq!(mir.diagnostics.len(), 1, "{}", mir.dump());
+    assert!(mir.diagnostics[0].message.contains("unknown binding"));
+    let application = mir.hir.iter().position(|node| matches!(node.kind, HirKind::TypeApply)).unwrap();
+    let TypeState::Conflicted(conflict) = mir.ty_slots[application] else { panic!("{}", mir.dump()) };
+    assert!(mir.type_conflicts[conflict.index()].resolve_origin.is_some());
+    assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn native_value_shapes_are_diagnosed_before_codegen_and_enforced_by_seal() {
     let mut mir = graph(&[("@src/main", "native value: Int; export { value }; export def independent = 42;")]);
     resolve(&mut mir);

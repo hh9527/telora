@@ -5,6 +5,24 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Preserve explicit type-application outcomes (2026-09-11)
+
+Explicit type application now inherits a conflicted callee, including its
+resolve origin, without manufacturing another type-application diagnostic.
+Known contracts distinguish a monomorphic target from a mismatched number of
+type arguments and report expected/actual counts from the instance slots.
+Independent declarations continue solving; no codegen recovery is introduced.
+
+Validation: all 395 workspace library tests, CLI build and all-target compilation
+pass. Regression coverage checks both arity directions, monomorphic application,
+and a missing binding whose application retains the original resolve failure
+with exactly one diagnostic. The original diag-type-apply-target,
+diag-type-apply-count-short and diag-type-apply-count-long CLI expectations pass
+unchanged. Logs: /tmp/mir-type-apply-*.log. Full acceptance was not repeated:
+the latest complete result remains 270/400, before these targeted fixes.
+Polymorphic function values, remaining acceptance gaps, metadata migration and
+final performance assessment are still outstanding.
+
 ### Generate the admitted graph without entry reachability pruning (2026-09-11)
 
 Codegen now walks execution-graph globals and concrete instances in stable order
