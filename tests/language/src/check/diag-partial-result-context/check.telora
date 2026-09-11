@@ -1,0 +1,9 @@
+import "std/value" {Value};
+import "@src/support" as support;
+import "@src/unknown-support" {unknown_at};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    support.bool_value(unknown_at(actual, "language-tests/check/diag-partial-result-context/testee", 3)
+        && support.failed_with(actual, "unknown generic argument for parameter \"A\"")
+        && support.failed_with(actual, "unknown generic argument for parameter \"B\""))
+};

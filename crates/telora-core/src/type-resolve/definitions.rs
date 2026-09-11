@@ -155,6 +155,14 @@ impl Solver<'_> {
             self.tasks.push(Task::Reference { node, symbol });
             return;
         }
+        if matches!(self.mir.hir[node.index()].kind, HirKind::PatternName(_))
+            && self.mir.symbols[symbol.index()].kind != SymbolKind::Pattern
+            && self.term(self.mir.symbol_types[symbol.index()])
+                .is_some_and(|term| term.constructor == TypeConstructor::Function) {
+            self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
+                "constructor pattern requires a payload pattern".into());
+            return;
+        }
         let parameters = self.mir.symbol_generics[symbol.index()].clone();
         let target = if !self.type_uses[node.index()]
             && matches!(self.mir.symbols[symbol.index()].kind, SymbolKind::Declaration(BindingKind::Type)) {

@@ -1,6 +1,8 @@
 import "@src/support" as support;
 import "std/value" {Value};
+import "@src/unknown-support" {unknown_at};
 
 export def check: Fn(Value) -> Value = fn(actual) {
-    support.bool_value(support.failed_with(actual, "module cycle"))
+    support.bool_value(unknown_at(actual, "language-tests/check/diag-module-cycle/a", 2)
+        && unknown_at(actual, "language-tests/check/diag-module-cycle/b", 2))
 };

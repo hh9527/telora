@@ -9,6 +9,30 @@ samples and phase summaries. It makes no baseline comparison or completion claim
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Complete current language acceptance; expand CLI audit (2026-09-11)
+
+Bare imported constructor patterns now diagnose a missing payload before
+instantiating a callable contract against the scrutinee. Unknown-result language
+checkers require a primary diagnostic at the originating source/line, positive
+unresolved-slot count, error status and zero execution time. Recursive aliases
+without type evidence remain Unknown rather than inheriting the old module-cycle
+or closure-only restrictions. The partial Result context checker requires both
+missing generic parameters as well as the located static Unknown.
+
+Language acceptance passes 403/403. Workspace library tests pass 393/393 and
+all-target checking passes. No Rust tests were added. Expanded CLI integration
+testing (skipping the independently successful language runner) passes 56 cases
+and fails 9. This is not final acceptance: existing fixtures still assume lazy
+uninitialized globals/properties, some omit now-required exports, the query test
+expects an unresolved symbol to become Unknown instead of inherited Conflicted,
+and parser recovery emits an additional missing-export diagnostic. The test
+command's initialization failure assertions also need review against the session
+publication boundary. Relevant log: `/tmp/mir-final-language-cli.log`.
+
+Next gate: resolve those CLI discrepancies and audit the full new-pipeline
+invariants; language success alone does not close the migration. No performance
+measurement was repeated.
+
 ### Interpreter evidence and type-family arity (2026-09-11)
 
 Interpreter diagnostics now retain the offending type parameter and argument
