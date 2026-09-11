@@ -5,6 +5,24 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Report authored names in unresolved-symbol diagnostics (2026-09-11)
+
+Resolve diagnostics now display the missing binding name instead of a HIR debug
+node. Missing selective imports retain their remote name and authored module
+request, not the local alias. Export failures likewise identify the exported
+name. This consumes the pass's existing results without changing resolution,
+IDs or the closed-with-errors contract.
+
+Validation: all 392 workspace library tests, CLI build and all-target compilation
+pass. A regression checks remote/local-name distinction and retained Unresolved
+results. Ten existing negative CLI fixtures match their original unknown-binding
+expectations: enum-owner-unit/discarded/closure/overwritten, invalid-reexport,
+generic-param-leak, removed-blame-error, unknown-binding, removed-validate,
+removed-atom-type. Expected files are unchanged. Logs:
+/tmp/mir-resolve-diagnostics-*.log. No full acceptance/performance rerun; the
+last full result remains 248/400 followed by targeted fixes. Remaining semantic
+and diagnostic failures, generic function values and metadata migration are open.
+
 ### Seal construction-check record coverage (2026-09-11)
 
 Seal now checks both directions of construction-check coverage: every authored

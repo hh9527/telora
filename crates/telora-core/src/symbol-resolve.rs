@@ -60,9 +60,22 @@ pub fn resolve(mir: &mut Mir) {
         if state == ResolveState::Unresolved
             && matches!(symbol.kind, SymbolKind::Import | SymbolKind::Export)
         {
-            let location = pass.mir.hir[symbol.declarations[0].index()].location;
+            let declaration = symbol.declarations[0];
+            let location = pass.mir.hir[declaration.index()].location;
+            let message = if symbol.kind == SymbolKind::Import {
+                let imported = match &pass.mir.hir[declaration.index()].kind {
+                    HirKind::Binding { imported: Some(name), .. } => name,
+                    _ => &symbol.name,
+                };
+                match pass.import_edges.get(&declaration) {
+                    Some(edge) => format!("unknown imported binding {imported:?} from {:?}", pass.mir.imports[*edge].request),
+                    None => format!("unknown imported binding {imported:?}"),
+                }
+            } else {
+                format!("unknown exported binding {:?}", symbol.name)
+            };
             pass.mir.diagnostics.push(Diagnostic::error(
-                format!("unresolved {:?} {:?}", symbol.kind, symbol.name),
+                message,
                 location,
             ));
         }
@@ -77,8 +90,16 @@ pub fn resolve(mir: &mut Mir) {
         if let Some(slot) = node.resolution {
             assert_ne!(pass.mir.resolve_slots[slot.index()], ResolveState::Pending);
             if pass.mir.resolve_slots[slot.index()] == ResolveState::Unresolved {
+                let name = match &node.kind {
+                    HirKind::Variable(name) | HirKind::PatternName(name) | HirKind::Name(name) => Some(name.as_str()),
+                    HirKind::Field => node.children.iter().find(|edge| edge.role == Role::Name)
+                        .and_then(|edge| match &pass.mir.hir[edge.node.index()].kind {
+                            HirKind::Name(name) => Some(name.as_str()), _ => None,
+                        }),
+                    _ => None,
+                };
                 pass.mir.diagnostics.push(Diagnostic::error(
-                    format!("unresolved symbol at {:?}", node.kind),
+                    name.map_or_else(|| "unresolved reference".into(), |name| format!("unknown binding {name:?}")),
                     node.location,
                 ));
             }
