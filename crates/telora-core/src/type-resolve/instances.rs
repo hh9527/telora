@@ -229,6 +229,7 @@ impl Solver<'_> {
             return None;
         };
         let mut arguments = vec![];
+        let mut complete = true;
         for (parameter, slot) in self.mir.type_instances[node.index()].clone() {
             let TypeState::Known(ty) = self.mir.ty_slots[slot.index()] else {
                 // Keep the original Unknown/Conflicted outcome. It must prevent
@@ -238,17 +239,19 @@ impl Solver<'_> {
                 {
                     self.mir.type_unknowns.push(slot);
                     self.mir.diagnostics.push(Diagnostic::error(
-                        "unknown generic argument",
+                        format!("unknown generic argument for parameter {:?}", self.mir.symbols[parameter.index()].name),
                         self.mir.hir[node.index()].location,
                     ));
                 }
-                return None;
+                complete = false;
+                continue;
             };
             arguments.push((
                 parameter,
                 self.substitute_resolved(ty, substitutions, canonical),
             ));
         }
+        if !complete { return None; }
         let declaration = &self.mir.symbols[symbol.index()];
         if declaration.module.is_some_and(|module| declaration.scope != self.mir.module_scopes[module.index()]) {
             // Local instances also close captured enclosing binders. Preserve

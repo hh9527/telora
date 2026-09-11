@@ -5,6 +5,24 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Collect every unresolved generic argument before rejecting an instance (2026-09-11)
+
+Instance closure no longer returns at its first Unknown/Conflicted argument.
+It scans the full parameter list, records all remaining Unknown slots and names
+their parameters in diagnostics, then admits a key only when every argument is
+known. Existing conflicts retain their original diagnostic. This preserves the
+solver's complete-results contract without inventing types or downstream work.
+
+Regressions cover three phantom holes, a known argument followed by two holes,
+and a conflicted first argument followed by an unknown one. Every unknown
+instance slot appears in type_unknowns; an independent declaration still solves.
+All 396 workspace library tests, CLI build and all-target compilation pass.
+The unresolved explicit-argument CLI case names parameter A and exits before
+execution (execution_seconds: 0). Logs: /tmp/mir-all-generic-holes-*.log.
+No full acceptance/performance rerun; the latest complete acceptance remains
+270/400 before subsequent targeted fixes. Generic function values, remaining
+acceptance gaps, metadata migration and final performance assessment remain open.
+
 ### Preserve explicit type-application outcomes (2026-09-11)
 
 Explicit type application now inherits a conflicted callee, including its

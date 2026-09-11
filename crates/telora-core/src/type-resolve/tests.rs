@@ -517,7 +517,7 @@ fn empty_option_bottom_evidence_does_not_default_arbitrary_generic_results() {
     let mut mir = graph(&[("@src/main", "native unknown: for(T) Fn() -> Option(T); export def answer = unknown();")]);
     resolve(&mut mir);
     assert!(mir.seal().is_err());
-    assert!(mir.diagnostics.iter().any(|d| d.message == "unknown generic argument"), "{}", mir.dump());
+    assert!(mir.diagnostics.iter().any(|d| d.message.starts_with("unknown generic argument")), "{}", mir.dump());
 }
 
 #[test]
@@ -1157,13 +1157,38 @@ fn generic_instances_close_body_types_and_transitive_references() {
 }
 
 #[test]
+fn generic_instance_closure_reports_all_unsolved_arguments() {
+    for (declaration, call, expected) in [
+        ("def phantom: for(A, B, C) Fn() -> Int = fn() {42};", "phantom@[_ , _, _]()", vec!["A", "B", "C"]),
+        ("def phantom: for(A, B, C) Fn() -> Int = fn() {42};", "phantom@[Int, _, _]()", vec!["B", "C"]),
+        ("def accept: for(A, B) Fn(A) -> Int = fn(value) {42};", "accept@[String, _](1)", vec!["B"]),
+    ] {
+        let source = format!("{declaration} export def bad = {call}; export def independent = 42;");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        let messages = mir.diagnostics.iter().filter(|d| d.message.starts_with("unknown generic argument"))
+            .map(|d| d.message.clone()).collect::<Vec<_>>();
+        assert_eq!(messages, expected.iter().map(|name| format!("unknown generic argument for parameter {name:?}")).collect::<Vec<_>>(), "{}", mir.dump());
+        for arguments in &mir.type_instances {
+            for &(_, slot) in arguments {
+                if mir.ty_slots[slot.index()] == TypeState::Unknown {
+                    assert!(mir.type_unknowns.contains(&slot), "{}", mir.dump());
+                }
+            }
+        }
+        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(mir.seal().is_err());
+    }
+}
+
+#[test]
 fn an_unfilled_implicit_generic_argument_prevents_sealing() {
     let mut mir = graph(&[("@src/main", r#"
         def phantom: for(T) Fn() -> Int = fn() { 42 };
         export def answer = phantom();
     "#)]);
     resolve(&mut mir);
-    assert!(mir.diagnostics.iter().any(|d| d.message == "unknown generic argument"));
+    assert!(mir.diagnostics.iter().any(|d| d.message.starts_with("unknown generic argument")));
     assert!(!mir.type_unknowns.is_empty());
     assert!(mir.seal().is_err());
 }
