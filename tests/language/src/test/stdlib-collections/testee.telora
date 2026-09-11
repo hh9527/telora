@@ -49,25 +49,32 @@ export def arrays_ok = test.should_ok(fn() {
     expect(arrays_ok)
 });
 
-export def dicts_ok = test.should_ok(fn() {
-    let dicts_ok = {
-        let source: Dict(Int) = {z: 3, a: 1, middle: 2};
-        let empty: Dict(Int) = {};
-        let mapped: Dict(String) = dict.map_values(source, fn(value) { `v\{value}` });
-        let expected_mapped: Dict(String) = {a: "v1", middle: "v2", z: "v3"};
-        let filtered: Dict(Int) = dict.filter(source, fn(value) { 1 < value });
-        let expected_filtered: Dict(Int) = {middle: 2, z: 3};
-        let empty_strings: Dict(String) = {};
-        mapped == expected_mapped
-            && filtered == expected_filtered
-            && dict.fold(source, "", fn(total, key, value) {
-                `\{total}\{key}=\{value};`
-            }) == "a=1;middle=2;z=3;"
-            && dict.map_values(empty, fn(value) { `v\{value}` }) == empty_strings
-            && dict.filter(empty, fn(value) { 0 < value }) == empty
-            && dict.fold(empty, 42, fn(total, key, value) { total + value }) == 42
-    };
-    expect(dicts_ok)
+export def dict_mapping = test.should_ok(fn() {
+    let source: Dict(Int) = {z: 3, a: 1, middle: 2};
+    let empty: Dict(Int) = {};
+    let mapped: Dict(String) = dict.map_values(source, fn(value) { `v\{value}` });
+    let expected_mapped: Dict(String) = {a: "v1", middle: "v2", z: "v3"};
+    let empty_strings: Dict(String) = {};
+    expect(mapped == expected_mapped
+        && dict.map_values(empty, fn(value) { `v\{value}` }) == empty_strings)
+});
+
+export def dict_filtering = test.should_ok(fn() {
+    let source: Dict(Int) = {z: 3, a: 1, middle: 2};
+    let empty: Dict(Int) = {};
+    let filtered: Dict(Int) = dict.filter(source, fn(value) { 1 < value });
+    let expected_filtered: Dict(Int) = {middle: 2, z: 3};
+    expect(filtered == expected_filtered
+        && dict.filter(empty, fn(value) { 0 < value }) == empty)
+});
+
+export def dict_folding = test.should_ok(fn() {
+    let source: Dict(Int) = {z: 3, a: 1, middle: 2};
+    let empty: Dict(Int) = {};
+    expect(dict.fold(source, "", fn(total, key, value) {
+        `\{total}\{key}=\{value};`
+    }) == "a=1;middle=2;z=3;"
+        && dict.fold(empty, 42, fn(total, key, value) { total + value }) == 42)
 });
 
 export def text_and_path_ok = test.should_ok(fn() {

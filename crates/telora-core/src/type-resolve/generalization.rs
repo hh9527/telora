@@ -138,8 +138,13 @@ impl Solver<'_> {
             let candidate = self.generalizations[index].take().unwrap();
             if !self.term(self.mir.symbol_types[index]).is_some_and(|term| match term.constructor {
                 TypeConstructor::Function | TypeConstructor::Option | TypeConstructor::Result | TypeConstructor::FoldControl => true,
+                // A nominal enum value must establish its family identity.
+                // Missing phantom arguments cannot become an implicit value
+                // scheme just because the selected variant has no payload.
                 TypeConstructor::Nominal(symbol) => self.nominal_index[symbol.index()]
-                    .is_some_and(|definition| self.mir.type_definitions[definition].operation == TypeOperation::Enum),
+                    .is_some_and(|definition| self.mir.type_definitions[definition].operation == TypeOperation::Enum)
+                    && self.mir.symbols[index].declarations.iter().any(|node|
+                        matches!(self.mir.hir[node.index()].kind, HirKind::Binding { imported: Some(_), .. })),
                 _ => false,
             }) {
                 continue;

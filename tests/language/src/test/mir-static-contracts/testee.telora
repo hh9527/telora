@@ -19,6 +19,21 @@ def choose_left: for(A, B) Fn(A, B) -> A = fn(left, right) { left };
 def choose_int_global = choose_left@[Int, _];
 def choose_bounded: for(A: Printable, B: Property(Prop(Int))) Fn(A, B) -> A = fn(left, right) { left };
 def make_identity = fn() { fn(value) { value } };
+def phantom_identity: for(Tag) Fn(Int) -> Int = fn(value) { value };
+type Message(T) = enum {Data(T), Empty};
+
+export def contextual_nullary_value = test.should_ok(fn() {
+    let empty = Message.Empty;
+    let concrete: Message(String) = empty;
+    expect(concrete == Message.Empty@[String])
+});
+
+export def phantom_specialization = test.should_ok(fn() {
+    let first = phantom_identity@[String];
+    let second = phantom_identity@[Bool];
+    expect(first(42) == 42 && second(43) == 43
+        && eq.equal(first, phantom_identity@[String]))
+});
 
 export def bounded_function_value = test.should_ok(fn() {
     expect(eq.equal(bounded_identity, bounded_identity)

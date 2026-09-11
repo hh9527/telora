@@ -936,13 +936,15 @@ impl Solver<'_> {
                     return Some(Task::Not { node, operand });
                 };
                 if !matches!(term.constructor, TypeConstructor::Bool | TypeConstructor::Int | TypeConstructor::Never) {
-                    self.conflict(node.ty(), operand, Some(self.mir.hir[node.index()].location), "Bool or Int operand required for !".into());
+                    let message = format!("! requires Int or Bool, found {}", self.diagnostic_type(operand));
+                    self.conflict(node.ty(), operand, Some(self.mir.hir[node.index()].location), message);
                 }
             }
             Task::Ordered { node, operand } => {
                 let Some(term) = self.term(operand) else { return Some(Task::Ordered { node, operand }); };
                 if !matches!(term.constructor, TypeConstructor::Int | TypeConstructor::Float | TypeConstructor::String | TypeConstructor::Never) {
-                    self.conflict(node.ty(), operand, Some(self.mir.hir[node.index()].location), "ordered scalar operand required".into());
+                    let message = format!("ordered comparison requires Int, Float, or String, found {}", self.diagnostic_type(operand));
+                    self.conflict(node.ty(), operand, Some(self.mir.hir[node.index()].location), message);
                 }
             }
             Task::Numeric { node, operand } => {
@@ -957,7 +959,7 @@ impl Solver<'_> {
                         node.ty(),
                         operand,
                         Some(self.mir.hir[node.index()].location),
-                        "numeric operand required".into(),
+                        format!("numeric operand requires Int or Float, found {}", self.diagnostic_type(operand)),
                     );
                 }
             }

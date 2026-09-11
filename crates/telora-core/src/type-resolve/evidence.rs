@@ -218,16 +218,20 @@ impl Solver<'_> {
                         implementation: root.and_then(|root| nodes[root].implementation),
                     });
             }
-            let message = match state {
-                BoundState::Rejected => {
-                    Some("generic bound has no static evidence (including unproven cycles)")
-                }
-                BoundState::Unresolved => Some("generic bound remains unresolved"),
-                BoundState::Ambiguous => Some("generic bound has overlapping implementations"),
-                _ => None,
-            };
-            if let Some(message) = message {
-                let node = self.mir.bound_requirements[index].reference;
+            if matches!(state, BoundState::Rejected | BoundState::Unresolved | BoundState::Ambiguous) {
+                let requirement = &self.mir.bound_requirements[index];
+                let subject = self.diagnostic_type(requirement.subject);
+                let bound = self.diagnostic_bound(requirement.bound);
+                let property_bound = self.known(requirement.bound).and_then(|ty| self.meta_type(ty))
+                    .is_some_and(|ty| self.mir.types[ty.index()].constructor == TypeConstructor::PropertyBound);
+                let message = match state {
+                    BoundState::Rejected if property_bound => format!("{subject} does not satisfy {bound}: no static evidence"),
+                    BoundState::Rejected => format!("{subject} does not implement {bound}: no static evidence"),
+                    BoundState::Unresolved => format!("cannot establish {bound} for {subject}: unresolved type evidence"),
+                    BoundState::Ambiguous => format!("{subject} has overlapping implementations of {bound}"),
+                    _ => unreachable!(),
+                };
+                let node = requirement.reference;
                 self.mir.diagnostics.push(Diagnostic::error(
                     message,
                     self.mir.hir[node.index()].location,

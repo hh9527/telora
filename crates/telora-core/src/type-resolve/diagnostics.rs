@@ -13,6 +13,14 @@ impl Solver<'_> {
         self.render_evidence(Reference::Slot(slot), 0, &mut 128)
     }
 
+    pub(super) fn diagnostic_bound(&self, slot: TypeSlotId) -> String {
+        if let Some(ty) = self.known(slot).and_then(|ty| self.meta_type(ty)) {
+            self.render_evidence(Reference::Known(ty), 0, &mut 128)
+        } else {
+            self.diagnostic_type(slot)
+        }
+    }
+
     fn render_evidence(&self, reference: Reference, depth: usize, budget: &mut usize) -> String {
         if *budget == 0 { return "…".into(); }
         *budget -= 1;
@@ -51,6 +59,7 @@ impl Solver<'_> {
                 None => "Fn(?) -> ?".into(),
             },
             TypeConstructor::Meta | TypeConstructor::TypeOf => format!("TypeOf({})", args.join(", ")),
+            TypeConstructor::PropertyBound => format!("Property({})", args.join(", ")),
             TypeConstructor::Nominal(symbol) | TypeConstructor::Parameter(symbol) => {
                 let name = &self.mir.symbols[symbol.index()].name;
                 if args.is_empty() { name.clone() } else { format!("{name}({})", args.join(", ")) }

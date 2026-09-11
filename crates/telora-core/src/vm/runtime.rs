@@ -105,6 +105,7 @@ struct ArrayContinuation {
 #[derive(Debug)]
 struct DictContinuation {
     function: CoreDictFunction,
+    output_type: Option<crate::mir::TypeId>,
     entries: Vec<(String, Val)>,
     callback: Val,
     next_index: usize,

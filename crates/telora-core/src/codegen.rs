@@ -2273,7 +2273,7 @@ pub(crate) mod tests {
         }
         let mir = graph("export def answer = !1.5;", "");
         assert!(mir.seal().is_err());
-        assert!(mir.diagnostics.iter().any(|d| d.message == "Bool or Int operand required for !"));
+        assert!(mir.diagnostics.iter().any(|d| d.message.starts_with("! requires Int or Bool, found ")));
     }
 
     #[test]

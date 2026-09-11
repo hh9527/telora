@@ -1,0 +1,3 @@
+def phantom: for(A, B, C) Fn(Int) -> Int = fn(value) { value };
+export def missing = phantom@[_, _, _](42);
+export def independent = 7;

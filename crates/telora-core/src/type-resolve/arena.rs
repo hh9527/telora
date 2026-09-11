@@ -256,13 +256,14 @@ impl Solver<'_> {
                 state => state,
             };
         }
+        let mut reported_unknowns = BTreeSet::new();
         for (index, required) in self.mir.required_types.iter().enumerate() {
             if *required && self.mir.ty_slots[index] == TypeState::Unknown {
                 self.mir.type_unknowns.push(TypeSlotId(index as u32));
-                self.mir.diagnostics.push(Diagnostic::error(
-                    "unknown type",
-                    self.mir.hir[index].location,
-                ));
+                let location = self.mir.hir[index].location;
+                if reported_unknowns.insert(location) {
+                    self.mir.diagnostics.push(Diagnostic::error("unknown type", location));
+                }
             }
         }
         for &slot in &self.mir.symbol_types {

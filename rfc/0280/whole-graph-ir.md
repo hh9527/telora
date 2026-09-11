@@ -5,6 +5,39 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Phantom evidence, dictionary results and diagnostic acceptance (2026-09-11)
+
+The phantom-argument audit follows RFC 0274's existing requirement for evidence:
+explicit function specializations execute, while every unresolved phantom call
+argument is reported before evaluation. A new language checker requires the
+diagnostics for all three missing parameters. A real acceptance hole was found
+in nominal nullary enum values: an ordinary `def value = Message.Empty` could
+silently generalize the absent family parameter and pass check. Implicit value
+generalization no longer does that. Named constructor imports retain their
+family contract, and contextual nullary values still close normally; existing
+cross-module constructor tests and new language cases cover those distinctions.
+
+Native dictionary outputs now consume the native closure's compiled signature
+to retain the solved dictionary TypeId. This applies to synchronous producers
+and callback continuations, without copying the result graph or inferring its
+type from contents. Dictionary literals and codec results retain their existing
+stamps. This repairs equality between map/filter results and dictionary literals
+while preserving decoded/encoded dictionary identity. The collection language
+suite separates mapping, filtering and folding and passes all six cases.
+
+With the observed generic/runtime acceptance failures addressed, diagnostic
+quality work resumes. Operator conflicts identify the actual operand type;
+trait/property failures identify the subject and required evidence. Unknown
+diagnostics deduplicate source locations without dropping any unresolved slots.
+Checks use language fixtures and existing library tests; no new Rust tests were
+added in this stage. Workspace library tests pass 393/393. Full language
+acceptance advances from 281/401 to 293/402: eleven existing cases repaired and
+one new phantom-evidence checker, with no regressions. All 109 remaining failures
+are rejected check cases whose diagnostic acceptance remains unsatisfied. The
+nullary-value example retains ten unresolved slots but emits five distinct
+Unknown locations, with zero execution time. Final acceptance and performance
+assessment remain open.
+
 ### Partially specialized function-value contracts (2026-09-11)
 
 GenericReference now has three explicit outcomes: Scheme for an uninstantiated

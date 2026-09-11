@@ -1,0 +1,8 @@
+import "std/value" {Value};
+import "@src/support" as support;
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    support.bool_value(support.failed_with(actual, "unknown generic argument for parameter \"A\"")
+        && support.failed_with(actual, "unknown generic argument for parameter \"B\"")
+        && support.failed_with(actual, "unknown generic argument for parameter \"C\""))
+};

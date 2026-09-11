@@ -508,6 +508,7 @@ fn drive_vm_action(
                                 account,
                             )?,
                             NativeKind::CoreDict(function) => {
+                                let output_type = dict_result_type(upvalues.last().copied(), background, &call_function, call_pc)?;
                                 if matches!(
                                     function,
                                     CoreDictFunction::MapValues
@@ -517,6 +518,7 @@ fn drive_vm_action(
                                     start_dict_continuation(
                                         function,
                                         arguments,
+                                        output_type,
                                         return_target,
                                         call_function,
                                         call_pc,
@@ -528,6 +530,7 @@ fn drive_vm_action(
                                     run_core_dict(
                                         function,
                                         &arguments,
+                                        output_type,
                                         return_target,
                                         &call_function,
                                         call_pc,
