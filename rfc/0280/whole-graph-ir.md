@@ -5,6 +5,24 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Render non-callable type evidence without inference (2026-09-11)
+
+Non-callable diagnostics now render the existing slot/TypeId evidence before
+recording the conflict. The read-only renderer follows the arena directly, with
+depth and node budgets, and creates no TypeDescriptor tree or solver state.
+It preserves record fields, array element evidence, nominal names and metadata
+types rather than reporting only "value is not callable".
+
+Validation: all 75 type-resolve tests and CLI build pass. Regression coverage
+includes independent nodes after an error and bounded rendering of deep/wide
+graphs without slot/term mutation. diag-call-int, diag-call-string,
+diag-call-array, diag-call-record and diag-call-type each exit 1 with their
+original expected type message; no expected files changed. Logs:
+/tmp/mir-call-types-*.log. Full acceptance/performance were not repeated.
+The last full snapshot remains 200/400, followed by targeted fixes above.
+Remaining diagnostics, generic function values and metadata migration still
+prevent claiming complete architecture migration.
+
 ### Report call arity from solved signatures (2026-09-11)
 
 Call conflicts now report expected and actual argument counts from the existing

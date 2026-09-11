@@ -8,6 +8,8 @@ use std::collections::BTreeSet;
 mod arena;
 #[path = "type-resolve/constraints.rs"]
 mod constraints;
+#[path = "type-resolve/diagnostics.rs"]
+mod diagnostics;
 #[path = "type-resolve/definitions.rs"]
 mod definitions;
 #[path = "type-resolve/alias-cycles.rs"]

@@ -720,7 +720,7 @@ impl Solver<'_> {
                         node.ty(),
                         node.ty(),
                         Some(self.mir.hir[node.index()].location),
-                        "type is not a constructor".into(),
+                        format!("cannot call value of type {}", self.diagnostic_type(callee)),
                     );
                 }
             }
@@ -728,7 +728,7 @@ impl Solver<'_> {
                 node.ty(),
                 node.ty(),
                 Some(self.mir.hir[node.index()].location),
-                "value is not callable".into(),
+                format!("cannot call value of type {}", self.diagnostic_type(callee)),
             ),
         }
         None

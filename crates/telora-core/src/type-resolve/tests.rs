@@ -46,6 +46,41 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
 }
 
 #[test]
+fn diagnostic_type_rendering_is_bounded_and_read_only() {
+    let mut mir = graph(&[("@src/main", "export def answer = 42;")]);
+    let mut solver = Solver::new(&mut mir);
+    let integer = solver.structure(TypeConstructor::Int, vec![]);
+    let wide = solver.structure(TypeConstructor::Tuple, vec![integer; 1000]);
+    let mut deep = wide;
+    for _ in 0..31 { deep = solver.structure(TypeConstructor::Array, vec![deep]); }
+    let before = solver.mir.ty_slots.clone();
+    let terms = solver.mir.type_terms.len();
+    for slot in [wide, deep] {
+        let text = solver.diagnostic_type(slot);
+        assert!(text.contains('…'));
+        assert!(text.len() < 2048);
+    }
+    assert_eq!(solver.mir.ty_slots, before);
+    assert_eq!(solver.mir.type_terms.len(), terms);
+}
+
+#[test]
+fn non_callable_diagnostics_render_existing_type_evidence() {
+    for (value, expected) in [
+        ("1", "Int"), ("\"text\"", "String"), ("[1]", "Array<Int>"),
+        ("{item: 1}", "{item: Int}"), ("Int", "TypeOf(Int)"),
+    ] {
+        let source = format!("export def bad = {{ let value = {value}; value(2) }}; export def independent = 42;");
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        let message = format!("cannot call value of type {expected}");
+        assert!(mir.diagnostics.iter().any(|d| d.message == message), "{}", mir.dump());
+        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(mir.seal().is_err());
+    }
+}
+
+#[test]
 fn call_arity_diagnostics_use_the_solved_signature() {
     for (source, expected) in [
         ("def f = fn(a) {a}; export def bad = f(1, 2);", "call expects 1 arguments, found 2"),
