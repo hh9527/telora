@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove the old runtime type store and descriptor trees (2026-09-11)
+
+Removed TypeStore, its interning keys/shapes and mutable reserve/seal/abort state,
+TypeDescriptor/TypeExprId recursive trees, DeclaredTypeId and their old public
+exports. Repository consumers were confined to that obsolete subsystem. Runtime
+TypeId now lives in a separate type_id module and only encodes sealed TypeImage
+IDs plus the unchecked marker. Removed legacy builtin/dynamic ID constructors;
+raw stamp decoding rejects those old ID domains. No fallback reconstruction path
+remains in these removed modules. The unused direct hashbrown dependency and its
+now-unneeded transitive dependencies were removed from the lockfile.
+
+Validation: 391 workspace library tests pass (eight obsolete store tests removed;
+the stamp round-trip test now also rejects legacy IDs). CLI build and all-target
+compilation pass. Six CLI suites covering data modules, enum codecs, schema,
+construction checks, newtype metadata and constructor context pass. Logs:
+/tmp/mir-remove-type-store-*.log. Full acceptance/performance were not rerun;
+the preceding full result remains 273/400. Generic function values still require
+principal schemes during value inference rather than unconditional fresh
+concrete instances at every reference. That work and the other acceptance gaps
+remain open.
+
 ### One session-wide Initialize WorkWorld (2026-09-11)
 
 This supersedes entry-time lazy initialization. After static sealing and importing

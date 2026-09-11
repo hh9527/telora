@@ -99,8 +99,8 @@
     #[test]
     fn canonical_type_id_is_independent_from_value_storage() {
         let raw = Val::unknown(DecodedValue::Int(1));
-        let typed = raw.with_type_id(crate::TypeId::builtin(7));
-        assert_eq!(typed.type_id(), Some(crate::TypeId::builtin(7)));
+        let typed = raw.with_type_id(crate::TypeId::solved(crate::mir::TypeId(7)));
+        assert_eq!(typed.type_id(), Some(crate::TypeId::solved(crate::mir::TypeId(7))));
         assert_eq!(typed.value(), DecodedValue::Int(1));
     }
 
@@ -112,7 +112,7 @@
             background: None,
         };
         let raw = Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::True));
-        let typed = raw.with_type_id(crate::TypeId::builtin(7));
+        let typed = raw.with_type_id(crate::TypeId::solved(crate::mir::TypeId(7)));
         assert!(!view.values_equal(typed, raw).unwrap());
         assert!(!view.values_equal(raw, typed).unwrap());
         assert!(view.values_equal(typed, typed).unwrap());

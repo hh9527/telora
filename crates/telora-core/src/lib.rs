@@ -41,8 +41,7 @@ mod sha256;
 pub mod source;
 pub mod syntax;
 pub mod toml;
-mod type_store;
-pub mod types;
+mod type_id;
 pub mod value;
 pub mod vm;
 pub mod yaml;
@@ -81,10 +80,7 @@ pub use source::{
     WithOrigin,
 };
 pub use toml::{TomlParse, parse_toml_registered};
-pub use type_store::TypeId;
-pub use types::{
-    DeclaredTypeDescriptor, TypeParameterId,
-};
+pub use type_id::TypeId;
 pub use value::{Atom, BuiltinAtom, NativeError, NativeFunction, NativeType, OpaqueValue};
 pub use vm::{
     CallContext, DataWorld, DebugEvent, DebugSink, DiscardDebugSink, ExecutionWorld, Quota,
