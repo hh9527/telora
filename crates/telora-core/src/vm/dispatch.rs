@@ -339,6 +339,15 @@ fn drive_vm_action(
                             call_pc,
                         ));
                     }
+                    if let crate::heap::RuntimePrototype::Native(native) = runtime_prototype
+                        && matches!(native.kind(), NativeKind::CoreDyn(_) | NativeKind::CoreTypeDesc(_)
+                            | NativeKind::CoreCodec(_) | NativeKind::CoreJson(_)
+                            | NativeKind::CoreString(CoreStringFunction::Parse))
+                        && background.solved_types.is_none()
+                    {
+                        return Err(error(RuntimeErrorKind::InvalidBytecode,
+                            "typed native call has no linked type image", &call_function, call_pc));
+                    }
                     let memo = match runtime_prototype {
                         crate::heap::RuntimePrototype::Bytecode(prototype) => {
                             let (code, _, _, _) =
@@ -351,6 +360,10 @@ fn drive_vm_action(
                                     )
                                 })?;
                             if code.is_memoized_interpreter() {
+                                let types = background.solved_types.as_ref().ok_or_else(|| error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "interpreter call has no linked type image", &call_function, call_pc,
+                                ))?;
                                 let identity = view.function_identity(closure_handle).map_err(
                                     |heap_error| {
                                         error(
@@ -364,13 +377,9 @@ fn drive_vm_action(
                                 let arguments = arguments
                                     .iter()
                                     .map(|argument| {
-                                        if let Some(types) = background.solved_types.as_ref() {
-                                            match argument.value() {
-                                                DecodedValue::SolvedType(id) if id.index() < types.types.len() => Ok(crate::TypeId::solved(id)),
-                                                _ => Err(crate::heap::HeapError::owned("interpreter witness is outside the solved type image".into())),
-                                            }
-                                        } else {
-                                            view.canonical_type_value_id(*argument)
+                                        match argument.value() {
+                                            DecodedValue::SolvedType(id) if id.index() < types.types.len() => Ok(crate::TypeId::solved(id)),
+                                            _ => Err(crate::heap::HeapError::owned("interpreter witness is outside the solved type image".into())),
                                         }
                                     })
                                     .collect::<Result<Vec<_>, _>>()
@@ -448,9 +457,7 @@ fn drive_vm_action(
                             return Ok(DriveOutcome::Pending);
                         }
                         crate::heap::RuntimePrototype::Native(native) => match native.kind() {
-                            NativeKind::Synchronous | NativeKind::CheckedCast => {
-                                let cast_owner = matches!(native.kind(), NativeKind::CheckedCast)
-                                    .then(|| arguments[0]);
+                            NativeKind::Synchronous => {
                                 let mut context = CallContext::new(
                                     current,
                                     Some(background),
@@ -484,43 +491,20 @@ fn drive_vm_action(
                                         call_pc,
                                     )
                                 })?;
-                                if let Some(owner) = cast_owner {
-                                    start_checked_cast(owner, value, return_target, call_function,
-                                        call_pc, current, background, account)?
-                                } else { VmAction::Return {
+                                VmAction::Return {
                                     value: value.with_loc(
                                         value
                                             .loc()
                                             .or(instruction_location(&call_function, call_pc)),
                                     ),
                                     return_target,
-                                } }
+                                }
                             }
                             NativeKind::CoreArray(function) => start_array_continuation(
                                 function,
                                 arguments,
                                 return_target,
                                 call_function,
-                                call_pc,
-                                current,
-                                background,
-                                account,
-                            )?,
-                            NativeKind::CoreModel(function) => run_core_model(
-                                function,
-                                &arguments,
-                                return_target,
-                                &call_function,
-                                call_pc,
-                                current,
-                                background,
-                                account,
-                            )?,
-                            NativeKind::CoreBuiltinType(function) => run_core_builtin_type(
-                                function,
-                                &arguments,
-                                return_target,
-                                &call_function,
                                 call_pc,
                                 current,
                                 background,
@@ -608,7 +592,7 @@ fn drive_vm_action(
                                 background,
                                 account,
                             )?,
-                            NativeKind::CoreTypeDesc(operation) => run_core_type_desc(
+                            NativeKind::CoreTypeDesc(operation) => run_solved_type_desc(
                                 operation,
                                 &arguments,
                                 upvalues.last().copied(),
@@ -619,7 +603,7 @@ fn drive_vm_action(
                                 background,
                                 account,
                             )?,
-                            NativeKind::CoreDyn(operation) => run_core_dyn(
+                            NativeKind::CoreDyn(operation) => run_solved_dyn(
                                 operation,
                                 &arguments,
                                 upvalues.last().copied(),
@@ -756,39 +740,6 @@ impl NativeContinuation for InterpreterMemoContinuation {
             value,
             return_target: self.return_target,
         })
-    }
-
-    fn resume_failed(
-        self: Box<Self>,
-        failure: Val,
-        _current: &mut Heap,
-        _background: &Heap,
-        _account: &mut QuotaAccount,
-    ) -> Result<VmAction, RuntimeError> {
-        Ok(VmAction::Return {
-            value: failure,
-            return_target: self.return_target,
-        })
-    }
-}
-
-impl NativeContinuation for CodecDisplayContinuation {
-    fn return_target(&self) -> &ReturnTarget {
-        &self.return_target
-    }
-
-    fn trace_frame(&self) -> &RuntimeFrame {
-        &self.trace_frame
-    }
-
-    fn resume(
-        self: Box<Self>,
-        value: Val,
-        current: &mut Heap,
-        background: &Heap,
-        account: &mut QuotaAccount,
-    ) -> Result<VmAction, RuntimeError> {
-        resume_codec_display(*self, value, current, background, account)
     }
 
     fn resume_failed(

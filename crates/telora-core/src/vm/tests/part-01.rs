@@ -1,15 +1,23 @@
     #[test]
-    fn semantic_value_measurement_does_not_report_invalid_graphs_as_quota_failures() {
-        let current = Heap::work();
-        let background = Heap::main();
-        let error = semantic_codec_wrapper_bytes(
-            &CodecNode::Tuple(Vec::new(), None),
-            &current,
-            &background,
-        )
-        .unwrap_err();
-        assert_eq!(error.limit(), None);
-        assert!(error.message.contains("unsupported semantic Value"));
+    fn typed_native_calls_require_a_linked_type_image() {
+        for native in [
+            NativeFunction::core_dyn(CoreDynFunction::Pack),
+            NativeFunction::core_type_desc(CoreTypeDescFunction::Kind),
+            NativeFunction::core_codec(CoreCodecFunction::Decode),
+            NativeFunction::core_string(CoreStringFunction::Parse),
+            NativeFunction::core_json(CoreJsonFunction::Parse),
+        ] {
+            let mut instructions = vec![Instruction::LoadConst { dst: Register(0), constant: 0 }];
+            for index in 1..=native.arity() {
+                instructions.push(Instruction::LoadConst { dst: Register(index), constant: 1 });
+            }
+            instructions.push(Instruction::Call { base: Register(0), argument_count: native.arity() });
+            instructions.push(Instruction::Return { src: Register(0) });
+            let error = run(&mut Vm::new(), native.arity() + 1,
+                vec![Constant::Native(native), Constant::Int(0)], instructions).unwrap_err();
+            assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode, "{}", native.name());
+            assert!(error.message.contains("no linked type image"), "{}", error.message);
+        }
     }
 
     #[test]

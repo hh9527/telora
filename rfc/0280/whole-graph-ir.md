@@ -5,6 +5,39 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove descriptor-based native runtime fallbacks (2026-09-11)
+
+Dyn observation, type reflection, codec, string parsing and JSON operations now
+use the solved TypeId paths exclusively. Removed their old descriptor branches,
+old model/builtin type constructor natives and the checked-cast native entry
+(the solved checked-cast opcode remains). Interpreter memo keys now require
+TypeIds from the linked image instead of canonicalizing runtime metadata.
+Typed native calls without an image return InvalidBytecode before dispatch;
+the new boundary test covers Dyn, reflection, codec, string parse and JSON parse.
+Diagnostic snapshots also require and validate the linked image.
+
+Deleted the old codec type-tree decoder, transform/struct/enum/schema plans,
+decode/display continuations and cast-refinement helper. Shared value and
+diagnostic result construction lives in codec-value.rs; shared name formatting
+lives in codec-names.rs. CodecNode now describes only value construction,
+without type-discovery, delayed decode or refinement variants. Decode failures
+retain their original traced input and use the existing VM-owned Blame value.
+The obsolete semantic-wrapper measurement test was removed with that helper;
+new pipeline and construction-failure regression tests remain.
+
+Validation: all 388 workspace library tests pass (telora-core 336, telora 28),
+CLI build and all-target compilation pass. Twelve actual CLI suites pass, 86
+cases total: compiler-semantics, data-modules, enum-codec, codec-schema,
+codec-construction-check, reflection, regex, encode, decode-errors,
+parse-construction-check, cast-construction-check and interpreter.
+Logs: /tmp/mir-remove-runtime-fallback-*.log. About 5,000 net lines removed;
+no performance benchmark or performance claim in this stage.
+
+Remaining legacy OwnDeclared/type-slot instructions, construction and heap
+descriptor support still need removal. Generic function values, remaining
+diagnostic rules, full language acceptance and final performance evaluation
+remain incomplete.
+
 ### Remove the old compiler, HIR analyzer and tool inference chain (2026-09-11)
 
 Removed the private expression compiler, elaborator, old HIR resolver and

@@ -1160,13 +1160,11 @@ fn continue_solved_decode(
         );
     }
     if let Some((message, input)) = rejection {
-        return finish_decode_result(
-            Err(CodecFailure {
+        return finish_decode_failure(
+            CodecFailure {
                 message,
-                data: input,
-                rule: arguments[1],
                 input: Some(input),
-            }),
+            },
             arguments[2],
             return_target,
             function,

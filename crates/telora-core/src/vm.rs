@@ -1,14 +1,14 @@
 use crate::bytecode::{BytecodeFunction, Opcode, Register};
 use crate::heap::{
     DecodedValue, Handle, Heap, HeapView, Object, PersistentValue, PropertyKey, Val,
-    publish_root, relocate_work_roots, semantic_value_unwrap_bytes,
+    publish_root, relocate_work_roots,
     semantic_value_wrapper_bytes, unwrap_semantic_value, wrap_semantic_value,
 };
 use crate::lir::RegisterId;
 use crate::value::{
-    BuiltinAtom, CoreArrayFunction, CoreBuiltinTypeFunction, CoreCodecFunction,
+    BuiltinAtom, CoreArrayFunction, CoreCodecFunction,
     CoreDictFunction, CoreDynFunction, CoreEqFunction, CoreHashFunction,
-    CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreRuntimeFunction,
+    CoreJsonFunction, CorePathFunction, CoreRuntimeFunction,
     CoreStringFunction, CoreTypeDescFunction, NativeError, NativeKind, NativeLimit,
 };
 use crate::{Diagnostic, Origin, SourceDatabase};
@@ -36,20 +36,11 @@ include!("vm/string.rs");
 include!("vm/path.rs");
 include!("vm/hash.rs");
 include!("vm/dict.rs");
-include!("vm/model.rs");
-include!("vm/type-desc.rs");
 include!("vm/dyn.rs");
 include!("vm/solved-dyn.rs");
-include!("vm/model-type.rs");
 include!("vm/codec-entry.rs");
-include!("vm/codec-decode.rs");
-include!("vm/checked-cast.rs");
-include!("vm/codec-encode.rs");
-include!("vm/codec-type.rs");
-include!("vm/codec-transform.rs");
-include!("vm/codec-plan.rs");
-include!("vm/codec-enum.rs");
-include!("vm/codec-schema.rs");
+include!("vm/codec-value.rs");
+include!("vm/codec-names.rs");
 include!("vm/solved-schema.rs");
 include!("vm/json.rs");
 include!("vm/json-writer.rs");

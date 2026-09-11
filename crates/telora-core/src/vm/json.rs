@@ -12,205 +12,29 @@ fn run_core_json(
 ) -> Result<VmAction, RuntimeError> {
     if matches!(
         operation,
-        CoreJsonFunction::Parse
-            | CoreJsonFunction::ParseYaml
-            | CoreJsonFunction::ParseToml
+        CoreJsonFunction::Parse | CoreJsonFunction::ParseYaml | CoreJsonFunction::ParseToml
     ) {
-        if background.solved_types.is_some() {
-            return run_solved_parse(operation, arguments, return_target, function, pc, current, background, account);
-        }
-        let input_index = 1;
-        let view = HeapView {
-            current,
-            background: Some(background),
-        };
-        let Some(source) = ValueRef {
-            value: arguments[input_index],
-            view,
-        }
-        .as_str() else {
-            return Err(runtime_type_error(
-                "String",
-                &arguments[input_index],
-                &view,
-                function,
-                pc,
-            ));
-        };
-        let parsed = match operation {
-            CoreJsonFunction::Parse => {
-                crate::json::parse_json("<json string>", source.as_str())
-                    .map_err(|error| error.to_string())
-            }
-            CoreJsonFunction::ParseYaml => {
-                let mut sources = SourceDatabase::default();
-                let source_id = sources.add("<yaml string>", source.as_str());
-                let parsed = crate::yaml::parse_yaml_registered(&sources, source_id);
-                parsed.value.map(|value| value.value).ok_or_else(|| {
-                    parsed.diagnostics.first().map_or_else(
-                        || "invalid YAML".into(),
-                        |diagnostic| sources.render(diagnostic),
-                    )
-                })
-            }
-            CoreJsonFunction::ParseToml => {
-                let mut sources = SourceDatabase::default();
-                let source_id = sources.add("<toml string>", source.as_str());
-                let parsed = crate::toml::parse_toml_registered(&sources, source_id);
-                parsed.value.map(|value| value.value).ok_or_else(|| {
-                    parsed.diagnostics.first().map_or_else(
-                        || "invalid TOML".into(),
-                        |diagnostic| sources.render(diagnostic),
-                    )
-                })
-            }
-            _ => unreachable!(),
-        };
-        let parsed = match parsed {
-            Ok(value) => {
-                charge_allocation(account, source.len() as u64, function, pc)?;
-                value
-                    .relocate_into(current, background)
-                    .map_err(|heap_error| {
-                        error(
-                            RuntimeErrorKind::TypeMismatch,
-                            heap_error.to_string(),
-                            function,
-                            pc,
-                        )
-                    })?
-            }
-            Err(parse_error) => {
-                let rule = Val::new(
-                    current.atom(
-                        Some(background),
-                        match operation {
-                            CoreJsonFunction::ParseYaml => "Yaml",
-                            CoreJsonFunction::ParseToml => "Toml",
-                            _ => "Json",
-                        },
-                    ),
-                    arguments[input_index].loc(),
-                );
-                let wrapper_bytes = semantic_value_wrapper_bytes(current, Some(background), arguments[input_index])
-                    .map_err(|heap_error| error(RuntimeErrorKind::TypeMismatch, heap_error.to_string(), function, pc))?;
-                charge_allocation(account, wrapper_bytes, function, pc)?;
-                let input = wrap_semantic_value(current, Some(background), arguments[input_index], arguments[0])
-                    .map_err(|heap_error| error(RuntimeErrorKind::TypeMismatch, heap_error.to_string(), function, pc))?;
-                return finish_decode_result(
-                    Err(CodecFailure {
-                        message: parse_error,
-                        data: arguments[input_index],
-                        rule,
-                        input: Some(input),
-                    }),
-                    input,
-                    return_target,
-                    function,
-                    pc,
-                    current,
-                    background,
-                    account,
-                );
-            }
-        };
-        if matches!(
+        return run_solved_parse(
             operation,
-            CoreJsonFunction::Parse | CoreJsonFunction::ParseYaml | CoreJsonFunction::ParseToml
-        ) {
-            let wrapper_bytes = semantic_value_wrapper_bytes(current, Some(background), parsed)
-                .map_err(|heap_error| {
-                    error(
-                        RuntimeErrorKind::TypeMismatch,
-                        heap_error.to_string(),
-                        function,
-                        pc,
-                    )
-                })?;
-            charge_allocation(account, wrapper_bytes, function, pc)?;
-            let parsed = crate::heap::wrap_parsed_semantic_value(current, Some(background), parsed, arguments[0], arguments[input_index])
-                .map_err(|heap_error| {
-                    error(
-                        RuntimeErrorKind::TypeMismatch,
-                        heap_error.to_string(),
-                        function,
-                        pc,
-                    )
-                })?;
-            return finish_codec_payload(
-                BuiltinAtom::Ok,
-                CodecNode::Existing(parsed),
-                arguments[input_index],
-                return_target,
-                function,
-                pc,
-                current,
-                background,
-                account,
-            );
-        }
-        unreachable!("all text parser operations returned above");
+            arguments,
+            return_target,
+            function,
+            pc,
+            current,
+            background,
+            account,
+        );
     }
     if operation == CoreJsonFunction::Schema {
-        if background.solved_types.is_some() {
-            return run_solved_json_schema(arguments, return_target, function, pc, current, background, account);
-        }
-        let properties = decode_codec_properties(arguments[0], current, background)
-            .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
-        let schema = decode_runtime_type(arguments[1], current, background)
-            .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
-        assert_codec_graph_ready(&schema, current, background).map_err(|graph_error| {
-            match graph_error {
-                CodecGraphError::Pending => error(
-                    RuntimeErrorKind::UninitializedDefinition,
-                    "schema generation was invoked before recursive type metadata was sealed",
-                    function,
-                    pc,
-                ),
-                CodecGraphError::Invalid(message) => {
-                    error(RuntimeErrorKind::TypeMismatch, message, function, pc)
-                }
-            }
-        })?;
-        let mut node = generate_json_schema(&schema, &properties, arguments[1], current, background).map_err(
-            |failure| {
-                let mut runtime = error(
-                    RuntimeErrorKind::TypeMismatch,
-                    failure.message,
-                    function,
-                    pc,
-                );
-                runtime.set_locations(failure.data.loc(), failure.rule.loc());
-                runtime
-            },
-        )?;
-        let CodecNode::Dict(fields, _) = &mut node else {
-            unreachable!("root schema is always an object")
-        };
-        fields.push((
-            "$schema".into(),
-            CodecNode::String(
-                "https://json-schema.org/draft/2020-12/schema".into(),
-                arguments[1].loc(),
-            ),
-        ));
-        let bytes = codec_node_bytes(&node, current, background)
-            .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
-        charge_allocation(account, bytes, function, pc)?;
-        let value = materialize_codec_node(node, current, background);
-        let wrapper_bytes = semantic_value_wrapper_bytes(current, Some(background), value)
-            .map_err(|heap_error| {
-                error(RuntimeErrorKind::TypeMismatch, heap_error.to_string(), function, pc)
-            })?;
-        charge_allocation(account, wrapper_bytes, function, pc)?;
-        let value = wrap_semantic_value(current, Some(background), value, arguments[2])
-            .map_err(|heap_error| {
-                error(RuntimeErrorKind::TypeMismatch, heap_error.to_string(), function, pc)
-            })?;
-        return Ok(VmAction::Return {
-            value,
+        return run_solved_json_schema(
+            arguments,
             return_target,
-        });
+            function,
+            pc,
+            current,
+            background,
+            account,
+        );
     }
     if operation == CoreJsonFunction::StringifyPretty {
         let DecodedValue::Int(indent) = arguments[0].value() else {
@@ -279,85 +103,35 @@ fn run_core_json(
         | CoreJsonFunction::ParseToml
         | CoreJsonFunction::Schema => unreachable!(),
     };
-    if let Some(types) = &background.solved_types {
-        let expected = types.json_value_type.ok_or_else(|| error(
+    let types = background.solved_types.as_ref().ok_or_else(|| {
+        error(
+            RuntimeErrorKind::InvalidBytecode,
+            "JSON formatter has no linked type image",
+            function,
+            pc,
+        )
+    })?;
+    let expected = types.json_value_type.ok_or_else(|| {
+        error(
             RuntimeErrorKind::InvalidBytecode,
             "JSON formatter has no statically linked Value contract",
             function,
             pc,
-        ))?;
-        let view = HeapView { current, background: Some(background) };
-        propagate_data_failures(&[arguments[0]], &view, function, pc)?;
-        let output = write_solved_json(view, arguments[0], expected, indent)
-            .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
-        charge_allocation(account, output.len() as u64, function, pc)?;
-        return Ok(VmAction::Return {
-            value: Val::new(current.string(Some(background), &output), instruction_location(function, pc)),
-            return_target,
-        });
-    }
-    let owner = {
-        let view = HeapView {
-            current,
-            background: Some(background),
-        };
-        propagate_data_failures(&[arguments[0]], &view, function, pc)?;
-        view.type_witness(arguments[0])
-            .map_err(|heap_error| {
-                error(
-                    RuntimeErrorKind::TypeMismatch,
-                    heap_error.to_string(),
-                    function,
-                    pc,
-                )
-            })?
-            .ok_or_else(|| {
-                error(
-                    RuntimeErrorKind::TypeMismatch,
-                    "std/json.stringify expects std/value.Value",
-                    function,
-                    pc,
-                )
-            })?
+        )
+    })?;
+    let view = HeapView {
+        current,
+        background: Some(background),
     };
-    let unwrap_bytes = semantic_value_unwrap_bytes(current, Some(background), arguments[0], owner)
-        .map_err(|heap_error| {
-            error(
-                RuntimeErrorKind::TypeMismatch,
-                heap_error.to_string(),
-                function,
-                pc,
-            )
-        })?;
-    charge_allocation(account, unwrap_bytes, function, pc)?;
-    let raw = unwrap_semantic_value(current, Some(background), arguments[0], owner).map_err(
-        |heap_error| {
-            error(
-                RuntimeErrorKind::TypeMismatch,
-                heap_error.to_string(),
-                function,
-                pc,
-            )
-        },
-    )?;
-    let mut writer = JsonWriter::new(
-        HeapView {
-            current,
-            background: Some(background),
-        },
-        indent,
-    );
-    writer
-        .value(raw, 0)
+    propagate_data_failures(&[arguments[0]], &view, function, pc)?;
+    let output = write_solved_json(view, arguments[0], expected, indent)
         .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
-    let output = writer.output;
     charge_allocation(account, output.len() as u64, function, pc)?;
-    let value = Val::new(
-        current.string(Some(background), &output),
-        instruction_location(function, pc),
-    );
-    Ok(VmAction::Return {
-        value,
+    return Ok(VmAction::Return {
+        value: Val::new(
+            current.string(Some(background), &output),
+            instruction_location(function, pc),
+        ),
         return_target,
-    })
+    });
 }

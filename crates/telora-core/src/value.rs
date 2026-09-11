@@ -362,51 +362,6 @@ pub(crate) enum CorePathFunction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CoreModelFunction {
-    Struct,
-    Newtype,
-    Enum,
-}
-
-impl CoreModelFunction {
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Struct => "\0telora_struct",
-            Self::Newtype => "\0telora_newtype",
-            Self::Enum => "\0telora_enum",
-        }
-    }
-
-    pub(crate) const fn arity(self) -> usize {
-        2
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CoreBuiltinTypeFunction {
-    FoldControl,
-    Option,
-    Result,
-}
-
-impl CoreBuiltinTypeFunction {
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::FoldControl => "FoldControl",
-            Self::Option => "Option",
-            Self::Result => "Result",
-        }
-    }
-
-    pub(crate) const fn arity(self) -> usize {
-        match self {
-            Self::Option => 1,
-            Self::FoldControl | Self::Result => 2,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreRuntimeFunction {
     CallWithDiagnostics,
 }
@@ -696,10 +651,7 @@ impl CoreArrayFunction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeKind {
     Synchronous,
-    CheckedCast,
     CoreArray(CoreArrayFunction),
-    CoreModel(CoreModelFunction),
-    CoreBuiltinType(CoreBuiltinTypeFunction),
     CoreDict(CoreDictFunction),
     CoreString(CoreStringFunction),
     CorePath(CorePathFunction),
@@ -722,13 +674,6 @@ pub struct NativeFunction {
 }
 
 impl NativeFunction {
-    pub(crate) const fn checked_cast(callback: NativeCallback) -> Self {
-        Self {
-            name: "\0telora_cast", arity: 2, callback,
-            kind: NativeKind::CheckedCast, native_type_local: None,
-        }
-    }
-
     pub const fn new(name: &'static str, arity: usize, callback: NativeCallback) -> Self {
         Self {
             name,
@@ -760,26 +705,6 @@ impl NativeFunction {
             arity: function.arity(),
             callback: unavailable_core_callback,
             kind: NativeKind::CoreArray(function),
-            native_type_local: None,
-        }
-    }
-
-    pub(crate) const fn core_model(function: CoreModelFunction) -> Self {
-        Self {
-            name: function.name(),
-            arity: function.arity(),
-            callback: unavailable_core_callback,
-            kind: NativeKind::CoreModel(function),
-            native_type_local: None,
-        }
-    }
-
-    pub(crate) const fn core_builtin_type(function: CoreBuiltinTypeFunction) -> Self {
-        Self {
-            name: function.name(),
-            arity: function.arity(),
-            callback: unavailable_core_callback,
-            kind: NativeKind::CoreBuiltinType(function),
             native_type_local: None,
         }
     }

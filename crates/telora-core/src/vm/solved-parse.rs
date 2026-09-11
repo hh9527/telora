@@ -106,13 +106,11 @@ fn run_solved_parse(
                 input,
                 location,
             );
-            finish_decode_result(
-                Err(CodecFailure {
+            finish_decode_failure(
+                CodecFailure {
                     message,
-                    data: input,
-                    rule: input,
                     input: Some(original),
-                }),
+                },
                 input,
                 return_target,
                 function,
