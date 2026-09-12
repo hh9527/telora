@@ -4,6 +4,42 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
+fn resource_budgets_cover_construction_and_shared_publication() {
+    let mir = crate::test_support::graph_with("import \"std/hash\" as hash; import \"std/test\" as test; export def state = hash.new(); export def error = blame!(\"x\"); export def callback = fn() {42}; export def test_case = test.should_ok(callback); export def text = \"x\";", telora_core::static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    for kind in 0..3 {
+        let build = |rt: &mut Runtime| -> Result<Value> {
+            match kind {
+                0 => rt.hash(value_type(&mir, "state"), &[], [1, 0, 1], 1),
+                1 => {
+                    let message = rt.string(value_type(&mir, "text"), [1, 0, 1], "x")?;
+                    rt.blame(value_type(&mir, "error"), [1, 0, 1], &message, vec![crate::abi::Origin::from_words([1, 0, 1])?])
+                }
+                _ => {
+                    let callback = rt.closure(value_type(&mir, "callback"), [1, 0, 1], 0, &[])?;
+                    rt.make_test(value_type(&mir, "test_case"), [1, 0, 1], 0, &[callback])
+                }
+            }
+        };
+        let mut rt = Runtime::new(&sealed).unwrap();
+        let value = build(&mut rt).unwrap();
+        let construction = rt.requested_allocation_bytes();
+        assert!(construction > 0);
+        let published = rt.publish(&[value.clone(), value]).unwrap();
+        assert_eq!(rt.requested_allocation_bytes(), construction * 2);
+        assert_eq!(published[0].words(), published[1].words());
+        let mut limited = Runtime::new(&sealed).unwrap().with_allocation_limit(construction - 1);
+        assert!(build(&mut limited).is_err());
+        assert!(limited.allocation_exhausted());
+        let mut limited = Runtime::new(&sealed).unwrap().with_allocation_limit(construction * 2 - 1);
+        let value = build(&mut limited).unwrap();
+        assert!(limited.publish(&[value]).is_err());
+        assert!(!limited.published);
+        assert!(limited.main.hashes.is_empty() && limited.main.blames.is_empty() && limited.main.tests.is_empty());
+    }
+}
+
+#[test]
 fn allocation_budget_spans_publication_and_counts_shared_backing_once() {
     let mir = graph(SOURCE);
     let sealed = mir.seal().unwrap();

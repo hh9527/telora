@@ -233,6 +233,7 @@ impl Runtime {
                 let old = words[2] as u32;
                 let description = self.test_description(&value)?;
                 words[2] = u64::from(if let Some(&id) = copies.tests.get(&old) { id } else {
+                    self.charge_test(description.inputs.iter().map(|words| words.len()))?;
                     let mut description = description.clone();
                     for input in &mut description.inputs { self.copy_value(input, target, copies, depth + 1)?; }
                     let id = HeapRef::new(World::Main, u32::try_from(target.tests.len()).map_err(|_| "Test table overflow")?)?.raw();
@@ -246,6 +247,7 @@ impl Runtime {
                 let old = words[2] as u32;
                 let blame = self.blame_object(&value)?;
                 words[2] = u64::from(if let Some(&id) = copies.blames.get(&old) { id } else {
+                    self.charge_blame(blame.message.len(), blame.subjects.len())?;
                     let mut blame = blame.clone();
                     self.copy_value(&mut blame.message, target, copies, depth + 1)?;
                     let id = HeapRef::new(World::Main, u32::try_from(target.blames.len()).map_err(|_| "Blame table overflow")?)?.raw();
@@ -259,6 +261,7 @@ impl Runtime {
                 let state = self.hash_state(&value)?;
                 let old = words[2] as u32;
                 words[2] = u64::from(if let Some(&id) = copies.hashes.get(&old) { id } else {
+                    self.charge_allocation(1, std::mem::size_of::<sha256::Context>(), 0)?;
                     let id = HeapRef::new(World::Main, u32::try_from(target.hashes.len()).map_err(|_| "HashState table overflow")?)?.raw();
                     target.hashes.push(state.clone());
                     copies.hashes.insert(old, id);

@@ -13,6 +13,7 @@ impl Runtime {
             let output = sha256::hex(self.text(inputs[0].as_ref())?.as_str().as_bytes());
             return self.owned_string(ty, loc, output);
         }
+        if (1..=4).contains(&operation) { self.charge_allocation(1, std::mem::size_of::<Context>(), 0)?; }
         let mut state = if operation == 1 {
             let mut state = Context::default();
             state.update(b"telora.hash\0\x01");

@@ -36,6 +36,8 @@
 
 ## 验收条件
 
+HashState、Blame、Test 独立槽位也已纳入累计分配预算：HashState 计固定上下文大小，Blame 计槽项、消息描述符及来源列表，Test 计槽项、参数槽数组及参数描述符。引用到的 backing 对象由其自身表单独计费；发布只对首次转发的资源计费，构造与发布采用相同规则。测试覆盖构造拒绝、发布中途拒绝及共享根只复制一次。Regex 编译程序/捕获名称、helper 临时缓冲及其他未计量项仍继续推进。
+
 Native allocation_bytes 开始在 Runtime 内累计，跨初始化、发布与 entry 不重置。基础 word 表按 payload word 字节数加槽项大小计费，String/Bytes backing 按长度加槽项大小计费；inline String 不分配 backing。发布沿转发表对每个实际复制的 backing/word 对象计费一次，超限保留旧 world 和来源，后续 helper 将其传播为不可捕获 abort。计量是逻辑累计请求量，不是 RSS，也不包含 Vec 预留容量、描述符临时副本、helper 临时缓冲、JIT 代码或独立资源表；这些遗漏仍需继续补齐，不能据此宣称完整分配防护。
 
 Native 栈预算开始消费 CLI session_quota.stack_slots，以显式临时槽的 u64 word 为单位。函数生成结束后把全部显式槽宽度写入入口 admission 常量，进入时累加、所有返回/失败路径归还；超限为不可捕获 abort。预算不按运行时类型猜测。递归正常/超限/零预算用例验证余额和调用深度均归零。当前是逻辑显式槽预算，不包含 Cranelift spill、机器帧开销或 Rust helper 临时空间，不能宣称完整物理栈防护；allocation_bytes 及 helper 工作量计费继续推进。

@@ -25,6 +25,7 @@ impl Runtime {
             if self.layout(inputs[1].type_id())?.arguments.first() != Some(&value_ty) { return Err("fixture callback does not consume the sealed Value identity".into()); }
             for index in 0..self.array_len(&inputs[0])? { self.text(self.array_get(&inputs[0], index)?)?; }
         }
+        self.charge_test(inputs.iter().map(|value| value.words().len()))?;
         let id = HeapRef::new(World::Work, u32::try_from(self.work.tests.len()).map_err(|_| "Test table overflow")?)?;
         self.work.tests.push(TestDescription { operation, inputs: inputs.iter().map(|value| value.words().into()).collect() });
         self.pack(ty, loc, &[u64::from(id.raw())])

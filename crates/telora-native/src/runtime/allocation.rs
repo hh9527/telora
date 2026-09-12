@@ -10,6 +10,15 @@ impl Default for Allocation {
     fn default() -> Self { Self { limit: u64::MAX, requested: Cell::new(0), exhausted: Cell::new(false) } }
 }
 impl Runtime {
+    pub(super) fn charge_blame(&self, message_words: usize, subjects: usize) -> Result<()> {
+        self.charge_allocation(message_words, 8, std::mem::size_of::<blame::Blame>())?;
+        self.charge_allocation(subjects, std::mem::size_of::<crate::abi::Origin>(), 0)
+    }
+    pub(super) fn charge_test(&self, lengths: impl ExactSizeIterator<Item = usize>) -> Result<()> {
+        self.charge_allocation(lengths.len(), std::mem::size_of::<Box<[u64]>>(), std::mem::size_of::<test_description::TestDescription>())?;
+        for length in lengths { self.charge_allocation(length, 8, 0)?; }
+        Ok(())
+    }
     pub fn with_allocation_limit(mut self, bytes: u64) -> Self { self.allocation.limit = bytes; self }
     pub fn requested_allocation_bytes(&self) -> u64 { self.allocation.requested.get() }
     pub fn allocation_exhausted(&self) -> bool { self.allocation.exhausted.get() }

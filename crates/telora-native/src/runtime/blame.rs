@@ -10,6 +10,7 @@ impl Runtime {
     pub(crate) fn blame(&mut self, ty: TypeId, loc: Location, message: &Value, subjects: Vec<Origin>) -> Result<Value> {
         self.expect(ty, Kind::Blame)?;
         self.text(message.as_ref())?;
+        self.charge_blame(message.words().len(), subjects.len())?;
         let id = HeapRef::new(World::Work, u32::try_from(self.work.blames.len()).map_err(|_| "Blame table overflow")?)?;
         self.work.blames.push(Blame { message: message.words().into(), subjects });
         self.pack(ty, loc, &[u64::from(id.raw())])
