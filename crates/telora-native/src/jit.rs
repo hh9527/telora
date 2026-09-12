@@ -918,7 +918,10 @@ impl Lower<'_, '_> {
                 &payload,
             );
         }
-        let local = if let Some(slot) = self.mir.hir[callee_node.index()].resolution
+        let local = if let Some(instance) = self.instance_reference(callee_node)
+            && let Some(value) = self.local_instances.get(&instance) {
+            Some(value.clone())
+        } else if let Some(slot) = self.mir.hir[callee_node.index()].resolution
             && let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()]
             && let Some(value) = self.locals.get(&symbol)
         {

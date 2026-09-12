@@ -51,6 +51,22 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_local_recursive_closures_keep_lexical_environment() {
+    for source in [
+        "export def answer = do { let offset = 2; def sum: Fn(Int) -> Int = fn(n) {if n == 0 {offset} else {n + sum(n - 1)}}; sum(8) };",
+        "export def answer = do {let offset = 2; def add: for(T) Fn(T) -> Int = fn(value) {offset}; let nested = fn() {add(0) + 40}; nested() };",
+    ] {
+        let (mir, root) = graph(source);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap_or_else(|e| panic!("{e}\n{source}"));
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+        let expected = if source.contains("sum(8)") { 38 } else { 42 };
+        assert_eq!(context.runtime().unwrap().scalar_bits(result.as_ref()).unwrap(), expected);
+    }
+}
+
+#[test]
 fn native_interpreter_propagates_operand_failure_once() {
     let (mir, root) = graph("def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(fn(value) {fail!(\"interpreter failed\")}); export def answer = factory(Int.type)(42);");
     let sealed = mir.seal().unwrap();
