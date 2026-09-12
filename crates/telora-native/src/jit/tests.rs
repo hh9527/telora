@@ -51,6 +51,27 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_cast_finite_array_does_not_charge_each_element() {
+    let (mir, root) = graph("type Item = struct(Int); export def answer = fn(values: Array((Int,))) {values.cast!(Array(Item))};");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut rt = crate::runtime::Runtime::new(&sealed).unwrap();
+    let array = compiled.arguments[0];
+    let record = TypeKey::try_from(mir.types[array.index()].arguments[0]).unwrap();
+    let integer = TypeKey::try_from(mir.types[record.index()].arguments[0]).unwrap();
+    let number = rt.scalar(integer, [1, 0, 1], 42).unwrap();
+    let item = rt.aggregate(record, [1, 0, 1], &[number]).unwrap();
+    let input = rt.array(array, [1, 0, 1], &vec![item; 10_000]).unwrap();
+    let mut context = CallContext::with_runtime(rt).with_fuel(1000);
+    let result = compiled.call(&mut context, &[input]).unwrap();
+    let rt = context.runtime().unwrap();
+    let output = rt.enum_payload(&result).unwrap().unwrap().to_owned();
+    assert_eq!(rt.array_len(&output).unwrap(), 10_000);
+    assert!(context.remaining_fuel().unwrap() > 0);
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
 fn native_text_parse_returns_parse_errors_without_per_byte_fuel() {
     let (mir, root) = graph_with(r#"import "std/string" as string;
         export def answer: Fn(String) -> Bool = fn(input) {

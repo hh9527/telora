@@ -3,7 +3,7 @@
 use super::*;
 use super::codec::{Codec, DecodeFailure};
 
-struct Visit { value: Value, target: TypeId, path: String }
+struct Visit { value: Value, target: TypeId, path: String, depth: usize }
 enum Task {
     Visit(Visit),
     Build { original: Value, target: TypeId, children: Vec<Value>, names: Vec<(String, Option<Value>)>, tag: Option<u32> },
@@ -36,11 +36,11 @@ impl Codec<'_> {
     }
 
     fn cast_pass(&mut self, target: TypeId, input: &Value, string: TypeId, validating: bool) -> std::result::Result<Value, DecodeFailure> {
-        let mut pending = vec![Task::Visit(Visit { value: input.clone(), target, path: "value".into() })];
+        let mut pending = vec![Task::Visit(Visit { value: input.clone(), target, path: "value".into(), depth: 0 })];
         let mut output: Vec<Value> = vec![];
         while let Some(task) = pending.pop() {
-            if self.context.consume_fuel(1, input.origin()) != crate::abi::Status::Success { return Err(DecodeFailure::Failed); }
-            let Visit { value, target, path } = match task {
+            if self.context.is_aborted() { return Err(DecodeFailure::Failed); }
+            let Visit { value, target, path, depth } = match task {
                 Task::Visit(visit) => visit,
                 Task::Build { original, target, children, names, tag } => {
                     let values = output.split_off(output.len() - children.len());
@@ -82,6 +82,10 @@ impl Codec<'_> {
                     continue;
                 }
             };
+            if depth > 512 {
+                self.context.abort_at("native cast nesting limit", value.origin());
+                return Err(DecodeFailure::Failed);
+            }
             let rt = self.runtime()?;
             rt.validate(value.as_ref(), value.type_id())?;
             if value.type_id() == target { output.push(value); continue; }
@@ -113,7 +117,7 @@ impl Codec<'_> {
                                     found
                                 };
                                 let Some(child) = child else { mismatch = true; break; };
-                                visits.push(Visit { value: child.to_owned(), target: target_shape.fields[index].0, path: format!("{path}.{name}") });
+                                visits.push(Visit { value: child.to_owned(), target: target_shape.fields[index].0, path: format!("{path}.{name}"), depth: depth + 1 });
                             }
                         }
                     }
@@ -124,7 +128,7 @@ impl Codec<'_> {
                                 let (key, child) = rt.dict_entry(&value, index)?;
                                 (rt.text(key)?.as_str().to_owned(), Some(key.to_owned()), child)
                             } else { (source.field_names[index].clone(), None, rt.field(&value, index)?) };
-                            visits.push(Visit { value: child.to_owned(), target: target_shape.arguments[0], path: format!("{path}.{name}") });
+                            visits.push(Visit { value: child.to_owned(), target: target_shape.arguments[0], path: format!("{path}.{name}"), depth: depth + 1 });
                             names.push((name, key));
                         }
                     }
@@ -136,7 +140,7 @@ impl Codec<'_> {
                             for index in 0..count {
                                 let child = if array { rt.array_get(&value, index)? } else { rt.field(&value, index)? };
                                 let target = if array { target_shape.arguments[0] } else { target_shape.fields[index].0 };
-                                visits.push(Visit { value: child.to_owned(), target, path: format!("{path}[{index}]") });
+                                visits.push(Visit { value: child.to_owned(), target, path: format!("{path}[{index}]"), depth: depth + 1 });
                             }
                         }
                     }
@@ -144,7 +148,7 @@ impl Codec<'_> {
                         let index = rt.enum_tag(&value)?;
                         tag = Some(index);
                         if let Some(child) = rt.enum_payload(&value)? {
-                            visits.push(Visit { value: child.to_owned(), target: target_shape.variants[index as usize].payload.ok_or("cast payload absent from sealed variant")?, path: format!("{path}.payload") });
+                            visits.push(Visit { value: child.to_owned(), target: target_shape.variants[index as usize].payload.ok_or("cast payload absent from sealed variant")?, path: format!("{path}.payload"), depth: depth + 1 });
                         }
                     }
                     _ => mismatch = true,

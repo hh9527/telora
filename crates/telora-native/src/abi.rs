@@ -399,7 +399,7 @@ impl CallContext {
     }
     /// One budget spans initialization, demand callbacks and entry execution.
     /// Generated functions charge at invocation, not at each HIR expression.
-    /// Some runtime helpers still carry finer-grained legacy work charges.
+    /// Finite helper traversal and copying do not consume per-item fuel.
     pub fn with_fuel(mut self, fuel: u64) -> Self {
         self.fuel = Some(fuel);
         self
