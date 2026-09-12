@@ -4,16 +4,20 @@ type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *co
 
 /// The packet contains a generated dispatcher, container, accumulator and
 /// closure. Only descriptor words cross callbacks; heap objects stay in place.
-pub(super) unsafe fn fold(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, dictionary: bool) -> u32 {
+pub(super) unsafe fn fold(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, operation: u64) -> u32 {
     context.boundary(|context| {
         let result = (|| {
             let rt = context.runtime()?;
+            let dictionary = operation == 1;
+            let controlled = operation == 2;
             let width = rt.layout(ty)?.words;
+            let state_type = if controlled { rt.layout(ty)?.arguments[0] } else { ty };
+            let state_width = rt.layout(state_type)?.words;
             let address = unsafe { *data };
             let container = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(1), 4) }.into() };
-            let mut accumulator = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(5), width) }.into() };
-            let closure = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(5 + width), 3) }.into() };
-            rt.validate(accumulator.as_ref(), ty)?;
+            let mut accumulator = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(5), state_width) }.into() };
+            let closure = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(5 + state_width), 3) }.into() };
+            rt.validate(accumulator.as_ref(), state_type)?;
             rt.function_id(&closure)?;
             let count = if dictionary { rt.dict_len(&container)? } else { rt.array_len(&container)? };
             let callback = unsafe { std::mem::transmute::<usize, Callback>(address as usize) };
@@ -29,9 +33,20 @@ pub(super) unsafe fn fold(context: &mut CallContext, ty: TypeId, data: *const u6
                 let status = unsafe { callback(context, arguments.as_ptr(), words.as_mut_ptr(), closure.words().as_ptr()) };
                 if status == 1 { return Ok(Status::Failed); }
                 if status != 0 { return Err("native callback returned invalid status".into()); }
-                accumulator = Value { arena: context.runtime()?.identity, words };
-                context.runtime()?.validate(accumulator.as_ref(), ty)?;
+                let value = Value { arena: context.runtime()?.identity, words };
+                let rt = context.runtime()?;
+                rt.validate(value.as_ref(), ty)?;
+                if controlled {
+                    // The sealed native FoldControl ABI is Break=0, Continue=1.
+                    if rt.enum_tag(&value)? == 0 {
+                        unsafe { std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, width); }
+                        return Ok(Status::Success);
+                    }
+                    accumulator = rt.enum_payload(&value)?.ok_or("FoldControl lacks a state payload")?.to_owned();
+                    rt.validate(accumulator.as_ref(), state_type)?;
+                } else { accumulator = value; }
             }
+            if controlled { accumulator = context.runtime_mut()?.named_variant(ty, origin.words(), "Continue", Some(&accumulator))?; }
             unsafe { std::ptr::copy_nonoverlapping(accumulator.words().as_ptr(), out, width); }
             Ok::<Status, String>(Status::Success)
         })();

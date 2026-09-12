@@ -77,7 +77,7 @@ pub(crate) unsafe extern "C" fn object(
         return unsafe { callbacks::array_map(context, TypeId(ty), data, out, origin, count) };
     }
     if operation == FOLD {
-        return unsafe { callbacks::fold(context, TypeId(ty), data, out, origin, count == 1) };
+        return unsafe { callbacks::fold(context, TypeId(ty), data, out, origin, count) };
     }
     if operation == FAIL_VALUES {
         return context.boundary(|context| {

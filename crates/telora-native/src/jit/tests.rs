@@ -615,6 +615,26 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_fold_control_breaks_early_and_keeps_distinct_state_result_types() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/fold-control.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    let broken = rt.field(&result, 1).unwrap().to_owned();
+    assert_eq!(rt.enum_tag(&broken).unwrap(), 0);
+    assert_eq!(rt.enum_payload(&broken).unwrap().unwrap().words(), rt.field(&result, 0).unwrap().words());
+    for (index, expected) in [(2, 43), (3, 42)] {
+        let value = rt.field(&result, index).unwrap().to_owned();
+        assert_eq!(rt.enum_tag(&value).unwrap(), 1);
+        assert_eq!(rt.scalar_bits(rt.enum_payload(&value).unwrap().unwrap()).unwrap(), expected);
+    }
+    assert!(context.diagnostics().is_empty());
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
 fn native_flat_map_preserves_order_aliases_and_failure_propagation() {
     let (mir, root) = graph_with("import \"std/array\" { flat_map }; export def answer = do { let text = \"long shared flat-map payload\"; let empty: Array(Int) = []; (text, flat_map([1, 2, 3], fn(value) { if value == 2 { [] } else { [text, text] } }), flat_map(empty, fn(value) -> Array(String) { fail!(\"empty flat-map called\") })) };", static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();

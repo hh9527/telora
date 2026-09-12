@@ -1,0 +1,17 @@
+import "std/array" {fold_control};
+type Control = FoldControl(Int, String);
+
+export def answer = do {
+    let text = "shared long early-break payload";
+    let empty: Array(Int) = [];
+    (
+        text,
+        fold_control([1, 2, 99], 0, fn(state, value) {
+            if value == 99 { fail!("fold_control did not stop") }
+            else if value == 2 { Control.Break(text) }
+            else { Control.Continue(state + value) }
+        }),
+        fold_control([1, 2], 40, fn(state, value) { Control.Continue(state + value) }),
+        fold_control(empty, 42, fn(state, value) -> Control { fail!("empty fold_control called") }),
+    )
+};

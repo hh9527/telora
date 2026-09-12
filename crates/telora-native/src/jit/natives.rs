@@ -544,8 +544,13 @@ impl Lower<'_, '_> {
                 site,
             );
         }
-        if matches!((module.id, declaration.name.as_str()), (5 | 6, "fold")) {
-            if arguments.len() != 3 || arguments[1] != self.return_type { return Err("native fold signature mismatch".into()); }
+        if matches!((module.id, declaration.name.as_str()), (5 | 6, "fold") | (5, "fold_control")) {
+            let controlled = declaration.name == "fold_control";
+            if arguments.len() != 3 { return Err("native fold signature mismatch".into()); }
+            let output = &self.mir.types[self.return_type.index()];
+            if if controlled { output.constructor != TypeConstructor::FoldControl || output.arguments.len() != 2 || output.arguments[0].index() != arguments[1].index() } else { arguments[1] != self.return_type } {
+                return Err("native fold accumulator/result signature mismatch".into());
+            }
             let dictionary = module.id == 6;
             let container = &self.mir.types[arguments[0].index()];
             let callback = &self.mir.types[arguments[2].index()];
@@ -563,7 +568,7 @@ impl Lower<'_, '_> {
             let width = arguments.iter().map(|&ty| self.layouts.words(ty)).collect::<Result<Vec<_>>>()?.into_iter().sum::<usize>();
             for i in 0..width { packet.push(self.builder.ins().load(types::I64, MemFlagsData::new(), data, (i * 8) as i32)); }
             let data = self.stack_words(&packet)?;
-            let count = self.builder.ins().iconst(types::I64, i64::from(dictionary));
+            let count = self.builder.ins().iconst(types::I64, if controlled { 2 } else { i64::from(dictionary) });
             let result = self.object(node, helpers::FOLD, self.return_type, data, count)?;
             return self.write_return(&result);
         }
