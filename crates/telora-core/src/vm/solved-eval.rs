@@ -9,6 +9,8 @@ impl Vm {
         quota: Quota,
         sources: &mut SourceDatabase,
     ) -> Result<crate::execution_link::SolvedExecution, String> {
+        let timing = std::env::var_os("TELORA_DEFAULT_TIMINGS").as_deref() == Some(std::ffi::OsStr::new("1"));
+        let started = timing.then(std::time::Instant::now);
         let call = entry
             .eval_call
             .ok_or("missing statically compiled entry.Eval adapter")?;
@@ -21,6 +23,8 @@ impl Vm {
             &mut main, &externals, &entry.bytecode, &mut account, sources,
         )?;
         let main = Arc::new(main);
+        if let Some(started) = started { eprintln!("{}", serde_json::json!({"default_phase":"initialize", "elapsed_ns":started.elapsed().as_nanos()})); }
+        let started = timing.then(std::time::Instant::now);
         let root = ValueRef::work(world.root, &world.heap, &main);
         let config = root
             .dict_get("config")
@@ -96,6 +100,8 @@ impl Vm {
                 ("args".into(), args),
             ],
         )?;
+        if let Some(started) = started { eprintln!("{}", serde_json::json!({"default_phase":"entry_input", "elapsed_ns":started.elapsed().as_nanos()})); }
+        let started = timing.then(std::time::Instant::now);
         let world = self
             .execute_in_existing_world_with_runtime_args(
                 &main,
@@ -107,6 +113,7 @@ impl Vm {
                 &mut account,
             )
             .map_err(|error| error.with_sources(sources).to_string())?;
+        if let Some(started) = started { eprintln!("{}", serde_json::json!({"default_phase":"execute", "elapsed_ns":started.elapsed().as_nanos()})); }
         Ok(crate::execution_link::SolvedExecution {
             world: ExecutionWorld::new(main, world),
             result_type: call.result_type,

@@ -82,6 +82,39 @@ native 整进程 4.05 秒、峰值 70,400 KiB；同一 release 二进制默认�
 
 验证默认路径不变、隐藏帮助、显式 unsupported、only-types 零执行、各命令停止阶段正确。先少量冒烟，再补完整 corner cases；完成总装后才测编译/初始化/执行耗时和峰值内存，不承诺性能收益。
 
+### 默认后端分阶段参照（2026-09-12）
+
+按用户要求补充原路径参照。`TELORA_DEFAULT_TIMINGS=1` 内部入口向 stderr 输出成功走过的阶段；未设置时不读取时钟、不输出计时，不进入公开帮助/用户文档。eval/eval-with 的前端、codegen、link 分开记录，后续 initialize/entry_input/execute 目前只在 eval-with 记录。它不改变执行结果或阶段顺序。
+
+构建为 `e32e20f` 加本次默认路径计时改动，执行 `cargo build --release -p telora`；机器、Rust 版本、lab-ontology 版本和完整输入与上节相同。先运行默认后端，再运行 native，没有同时启动两个负载：
+
+```sh
+TELORA_DEFAULT_TIMINGS=1 /usr/bin/time -f 'elapsed_s=%e peak_rss_kib=%M' \
+  target/release/telora -C ../lab-ws/lab-ontology/world-model \
+  eval-with @src/bin/make-query:main --source input=/tmp/native-world-input.json
+
+TELORA_NATIVE_TIMINGS=1 /usr/bin/time -f 'elapsed_s=%e peak_rss_kib=%M' \
+  target/release/telora -C ../lab-ws/lab-ontology/world-model \
+  eval-with --native @src/bin/make-query:main --source input=/tmp/native-world-input.json
+```
+
+| 阶段 | 默认路径（毫秒） | native（毫秒） |
+|---|---:|---:|
+| frontend | 354.056 | 350.472 |
+| codegen | 17.641 | 3750.783 |
+| link | 0.212 | 未单列 |
+| runtime_setup | 包含于 initialize | 3.347 |
+| initialize | 11.980 | 4.476 |
+| entry_input | 0.215 | 0.101 |
+| execute | 1.166 | 0.690 |
+| output | 未单列 | 0.027 |
+| 整进程（秒） | 0.40 | 4.13 |
+| 峰值 RSS（KiB） | 46,372 | 71,108 |
+
+codegen 分别是字节码生成和 Cranelift 机器码生成，包含各自编译准备。默认 initialize 包含 main/account 创建、数据物化、初始化执行及发布；native 将 runtime_setup 单列。默认数据文件读取在 link 中，native 在 initialize 内完成，因此两者 initialize 不是逐操作完全相同的边界。entry_input 均包含 VM 中的 Context 构造，但外部文件读取在 CLI 中的位置不同；这里只作阶段分布参照，不据此得出普遍性能结论。
+
+两条路径 stdout 经 cmp 完全一致；再次关闭默认计时运行，stdout 仍一致、stderr 为零字节。以上各一次性能观测，未做统计分布，也未借此修改优化策略。
+
 ## 延后与备选方案
 
 不采用 Wasm/Wasmtime、多层编译链或新字节码解释器作为本阶段前置。不提前替换默认运行时。性能优化、AOT 分发、跨平台覆盖与生产切换按证据另立后续 RFC；本子项完成不等于新路线全量验收。

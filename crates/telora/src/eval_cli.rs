@@ -64,6 +64,8 @@ fn prepare_solved(
     String,
 > {
     use telora_core::mir::{ModuleTarget, ResolveState, TypeConstructor, TypeState};
+    let timing = std::env::var_os("TELORA_DEFAULT_TIMINGS").as_deref() == Some(std::ffi::OsStr::new("1"));
+    let started = timing.then(std::time::Instant::now);
     let mut inventory =
         crate::static_input::Inventory::new(&context, selector.module_id.starts_with("std/"))?;
     let root = inventory.select(&selector.module_id)?;
@@ -132,16 +134,21 @@ fn prepare_solved(
     if mir.ty_slots[mir.symbol_types[target.index()].index()] != TypeState::Known(expected) {
         return Err(expected_message.into());
     }
+    if let Some(started) = started { eprintln!("{}", serde_json::json!({"default_phase":"frontend", "elapsed_ns":started.elapsed().as_nanos()})); }
+    let started = timing.then(std::time::Instant::now);
     let artifact = if with_context {
         telora_core::codegen::compile_eval(sealed, symbol, value_type)
     } else {
         telora_core::codegen::compile(sealed, symbol)
     }
     .map_err(&render)?;
+    if let Some(started) = started { eprintln!("{}", serde_json::json!({"default_phase":"codegen", "elapsed_ns":started.elapsed().as_nanos()})); }
+    let started = timing.then(std::time::Instant::now);
     let linked = telora_core::execution_link::link_entry_with_data(artifact, |link| {
         inventory.read_data(link, crate::execution_config().data_limits.file_size)
     })
     .map_err(&render)?;
+    if let Some(started) = started { eprintln!("{}", serde_json::json!({"default_phase":"link", "elapsed_ns":started.elapsed().as_nanos()})); }
     Ok((linked, value_type, mir.sources))
 }
 
