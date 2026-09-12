@@ -84,8 +84,8 @@ impl Runtime {
                     if left.words()[3] != right.words()[3] { return Ok(false); }
                 }
                 Kind::Function => {
-                    let left = self.resolve_function_metered(left.as_ref(), charge)?;
-                    let right = self.resolve_function_metered(right.as_ref(), charge)?;
+                    let left = self.resolve_function_ref(left.as_ref())?;
+                    let right = self.resolve_function_ref(right.as_ref())?;
                     for value in [&left, &right] {
                         let environment = (value.words()[2] >> 32) as u32;
                         self.object_words(Table::Environments, environment.checked_sub(1).ok_or("function value has no identity")?)?;

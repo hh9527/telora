@@ -141,7 +141,10 @@ Host 入口和生成代码的间接分派都处理这种槽。函数自身已捕
 
 调整对照范围后，普通/泛型互递归的 CLI eval 与 eval-with 定向回归通过。后续继续覆盖函数别名和提前调用诊断。不依赖默认 VM 的 AllocFunc/SealFunc。
 
-槽链解析已纳入同一 session fuel：每读取一个槽或最终函数描述符前扣一个单位，host 入口和生成代码 dispatcher 共用这条路径。遍历时借用 arena 内描述符，仅最终返回复制一次描述符，不按链长反复分配临时 Value。八层槽加最终函数的边界测试验证 9 单位成功、8 单位耗尽、不写输出缓冲、保留 helper 提供的来源和 sticky abort；这不等于验证所有调用场景的诊断定位，也不表示其他 native helper 的预算已全部闭合。
+槽链解析不再按别名链长度扣 fuel；host 入口与 dispatcher 共用有界遍历，最多
+检查分类表中环境槽数量加一次，保留 Pending 和环错误。遍历借用 arena 内描述符，
+最终只复制一次描述符。八层槽回归验证零剩余 fuel 下解析成功，但已经中止的
+session 仍拒绝解析、不写结果、不重复报告。函数实际执行由调用边界扣 fuel。
 
 源码间接调用在参数求值后、进入公共 dispatcher 前解析词法槽，解析失败使用调用 HIR 的位置。修复前 `later(42)` 的 Pending 错误标在外层 block，现精确覆盖调用范围。`function-before-initialization.telora` 由 JIT 和真实 `check --native --lib` 验证，失败只报告一次、调用深度归零、命令失败退出；参数自身 fail 的变体仍优先报告参数错误。公共 dispatcher 保留解析检查以覆盖原生回调，回调场景的定位需另行核对，不能用直接源码调用的证据代替。
 

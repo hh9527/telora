@@ -4,7 +4,7 @@ type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *co
 
 fn prepare_callback(context: &mut CallContext, closure: &Value) -> Option<Value> {
     let origin = closure.origin();
-    match context.runtime_work(origin, |rt, charge| rt.resolve_function_metered(closure.as_ref(), charge)) {
+    match context.runtime_work(origin, |rt, _| rt.resolve_function_ref(closure.as_ref())) {
         Ok(value) => value,
         Err(error) => { context.fail_at(error, origin); None }
     }
@@ -331,9 +331,6 @@ pub(super) unsafe fn array_map(
                     let count = rt.array_len(&value)?;
                     let child = rt.layout(value.type_id())?.arguments[0];
                     let width = rt.layout(child)?.words;
-                    let work = (count as u64).checked_mul(width as u64).ok_or("flat_map output work overflow")?;
-                    if context.consume_fuel(work, origin) != Status::Success { return Ok(Status::Failed); }
-                    let rt = context.runtime()?;
                     reserve_callback_values(rt, &mut mapped, count)?;
                     rt.charge_allocation(count, width.checked_mul(8).ok_or("flat_map value width overflow")?, 0)?;
                     for index in 0..count { mapped.push(rt.array_get(&value, index)?.to_owned()); }

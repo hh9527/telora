@@ -44,18 +44,16 @@ impl Runtime {
         Ok(())
     }
 
-    /// Follow lexical slots only at invocation. Equality and captured aliases
-    /// retain the slot descriptor, so installing a body never changes identity.
+    /// Resolve aliases to their function body for invocation and equality.
     #[cfg(test)]
     pub(crate) fn resolve_function(&self, value: &Value) -> Result<Value> {
-        self.resolve_function_metered(value.as_ref(), &mut |_| Ok(()))
+        self.resolve_function_ref(value.as_ref())
     }
-    pub(crate) fn resolve_function_metered(&self, value: ValueRef<'_>, charge: &mut dyn FnMut(u64) -> Result<()>) -> Result<Value> {
+    pub(crate) fn resolve_function_ref(&self, value: ValueRef<'_>) -> Result<Value> {
         let mut current = value;
         let limit = self.main.environments.entries.len()
             .saturating_add(self.work.environments.entries.len());
         for _ in 0..=limit {
-            charge(1)?;
             self.validate(current, value.type_id())?;
             self.expect(current.type_id(), Kind::Function)?;
             if current.words[2] as u32 != FUNCTION_SLOT { return Ok(current.to_owned()); }

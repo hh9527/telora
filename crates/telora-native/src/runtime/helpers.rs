@@ -202,10 +202,10 @@ pub(crate) unsafe extern "C" fn object(
                 return Err(String::from_utf8_lossy(message).into_owned());
             }
             if operation == RESOLVE_FUNCTION {
-                let resolved = context.runtime_work(origin, |rt, charge| {
+                let resolved = context.runtime_work(origin, |rt, _| {
                     let width = rt.layout(TypeId(ty))?.words;
                     let value = ValueRef { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) } };
-                    rt.resolve_function_metered(value, charge)
+                    rt.resolve_function_ref(value)
                 })?;
                 let Some(value) = resolved else { return Ok(Status::Failed); };
                 unsafe { std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, value.words().len()); }

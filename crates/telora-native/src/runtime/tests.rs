@@ -428,7 +428,7 @@ fn initialization_demands_cache_publish_and_report_cycles_once() {
 }
 
 #[test]
-fn function_slot_resolution_meters_each_link_before_reading_it() {
+fn function_slot_resolution_does_not_charge_alias_links() {
     use crate::abi::{CallContext, Status};
     let mir = graph(SOURCE);
     let sealed = mir.seal().unwrap();
@@ -441,7 +441,7 @@ fn function_slot_resolution_meters_each_link_before_reading_it() {
         rt.fill_function(&slot, &value).unwrap();
         value = slot;
     }
-    let mut context = CallContext::with_runtime(rt).with_fuel(9);
+    let mut context = CallContext::with_runtime(rt).with_fuel(0);
     let mut output = [u64::MAX; 3];
     let invoke = |context: &mut CallContext, output: &mut [u64; 3]| unsafe {
         helpers::object(context, helpers::RESOLVE_FUNCTION, ty.raw(), 1 | (10u64 << 32), 12, value.words().as_ptr(), 0, output.as_mut_ptr())
@@ -449,7 +449,8 @@ fn function_slot_resolution_meters_each_link_before_reading_it() {
     assert_eq!(invoke(&mut context, &mut output), Status::Success as u32);
     assert_eq!(output, body.words());
     assert_eq!(context.remaining_fuel(), Some(0));
-    context = context.with_fuel(8);
+    // An already-aborted session must still reject internal resolution.
+    context.abort_at("stopped", crate::abi::Origin::from_words([1, 10, 12]).unwrap());
     output.fill(u64::MAX);
     assert_eq!(invoke(&mut context, &mut output), Status::Failed as u32);
     assert_eq!(output, [u64::MAX; 3]);
