@@ -46,6 +46,7 @@ pub(crate) const BYTES_EQUAL: u32 = 51;
 pub(crate) const DIAGNOSTIC_SCOPE: u32 = 52;
 pub(crate) const EQUAL: u32 = 53;
 pub(crate) const FLOAT_REMAINDER: u32 = 54;
+pub(crate) const MAKE_TEST: u32 = 55;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -247,6 +248,17 @@ pub(crate) unsafe extern "C" fn object(
                     } else {
                         rt.dict_column(ty, loc, &dict, count == 1)?
                     }
+                }
+                MAKE_TEST => {
+                    let mut inputs = vec![];
+                    let mut cursor = data;
+                    for _ in 0..if count < 2 { 1 } else { 2 } {
+                        let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+                        let width = rt.layout(input)?.words;
+                        inputs.push(Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(cursor, width) }.into() });
+                        cursor = unsafe { cursor.add(width) };
+                    }
+                    rt.make_test(ty, loc, count, &inputs)?
                 }
                 FLOAT_REMAINDER => {
                     let values = unsafe { std::slice::from_raw_parts(data, 6) };

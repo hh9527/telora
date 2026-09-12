@@ -77,6 +77,8 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+std/test.should_ok/should_fail/should_fail_with/with_fixtures 已按 native 模块身份及封闭签名接通测试描述构造。CLI 验证包含会失败但不能在初始化执行的测试体、缺失但不能在初始化加载的 fixture、发布后的身份比较，以及空错误期望拒绝。
+
 BlameError 采用对象身份相等，重复引用相等、独立 blame 构造不相等，即使消息和来源相同也不按内容合并；发布转发表保留该身份关系。Float remainder 已通过独立原生 helper 接通 Rust 浮点 remainder 语义，拒绝非有限结果并保留运算来源，测试覆盖负数与负零。该项补齐早期进展记录中的 Float remainder 缺口。
 
 Regex 的相等按原始 pattern 字符串判断，不按匹配语言是否等价判断。Fmt 按节点操作和子节点结构比较，不先渲染；Float 格式节点保持 bit 相等语义，区别于普通 Float 数值相等。两者读取原生表并共享已验证的节点读取逻辑。语言资产覆盖独立构造、发布后读取、等价但不同 pattern、相同输出的不同格式树及格式正负零。HashState 按完整摘要状态与缓冲区比较，已有默认/native 对比；其余 opaque 相等契约仍继续核对。

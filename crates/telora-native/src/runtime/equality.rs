@@ -30,6 +30,11 @@ impl Runtime {
                     self.blame_object(&right)?;
                     if left.words()[2] != right.words()[2] { return Ok(false); }
                 }
+                Kind::Test => {
+                    self.test_description(&left)?;
+                    self.test_description(&right)?;
+                    if left.words()[2] != right.words()[2] { return Ok(false); }
+                }
                 Kind::Format => {
                     if !visited.insert((ty, left.words()[2..].to_vec(), right.words()[2..].to_vec())) { continue; }
                     let (a, av) = self.format_parts(&left)?;

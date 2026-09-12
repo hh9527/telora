@@ -1,0 +1,11 @@
+import "std/test" as test;
+import "std/eq" as eq;
+import "std/codec" {encode, Value};
+import "std/entry" as entry;
+
+export def passing = test.should_ok(fn() { fail!("must not execute during initialization") });
+export def failing = test.should_fail(fn() { 42 });
+export def matching = test.should_fail_with(fn() { fail!("expected message") }, "expected");
+export def fixtures = test.with_fixtures(["missing.json", "missing.json"], fn(value) { fail!("must not load fixture or invoke factory") });
+export def answer = encode(Value.type, [eq.equal(passing, passing), !eq.equal(failing, test.should_fail(fn() {42}))]);
+export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { answer });

@@ -27,6 +27,7 @@ enum Kind {
     Regex,
     Hash,
     Blame,
+    Test,
     Other,
 }
 struct Variant {
@@ -165,6 +166,7 @@ struct Tables {
     regexes: Vec<pattern::CompiledRegex>,
     hashes: Vec<sha256::Context>,
     blames: Vec<blame::Blame>,
+    tests: Vec<test_description::TestDescription>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Table {
@@ -293,6 +295,7 @@ impl Runtime {
                 T::Native(native) if (native.module, native.slot) == (20, 1) => Kind::Format,
                 T::Native(native) if (native.module, native.slot) == (19, 0) => Kind::Regex,
                 T::Native(native) if (native.module, native.slot) == (16, 3) => Kind::Hash,
+                T::Native(native) if (native.module, native.slot) == (33, 0) => Kind::Test,
                 T::Native(native) if (native.module, native.slot) == (34, 0) => Kind::Blame,
                 _ if !entry.variants.is_empty() => Kind::Enum,
                 _ if shape.table == Some("RecordTable") => Kind::Record,
@@ -687,6 +690,7 @@ mod hash;
 mod sha256;
 mod diagnostics;
 mod equality;
+mod test_description;
 mod array_ops;
 mod blame;
 pub use dynamic::DynamicQuery;

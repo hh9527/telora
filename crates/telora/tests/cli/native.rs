@@ -86,6 +86,25 @@ fn native_structural_equality_matches_default_across_worlds() {
 }
 
 #[test]
+fn native_test_descriptions_initialize_without_running_tests_or_fixtures() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/test-description.telora")).unwrap();
+    let check = telora(&cwd).args(["check", "--native", "@src/main"]).output().unwrap();
+    assert!(check.status.success(), "{} {}", String::from_utf8_lossy(&check.stdout), String::from_utf8_lossy(&check.stderr));
+    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
+        let selector = format!("@src/main:{export}");
+        let native = telora(&cwd).args([command, "--native", &selector]).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(serde_json::from_slice::<Value>(&native.stdout).unwrap(), serde_json::json!([true, true]));
+    }
+    fs::write(cwd.join("src/main.telora"), "import \"std/test\" as test; export def invalid = test.should_fail_with(fn() {42}, \"\");").unwrap();
+    let check = telora(&cwd).args(["check", "--native", "@src/main"]).output().unwrap();
+    assert!(!check.status.success());
+    assert!(String::from_utf8_lossy(&check.stdout).contains("nonempty expectation"));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_data_depth_limit_applies_before_materialization() {
     let cwd = fixture();
     let input = format!("{}0{}", "[".repeat(256), "]".repeat(256));

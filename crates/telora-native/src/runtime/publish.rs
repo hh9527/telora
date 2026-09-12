@@ -8,6 +8,7 @@ struct Copies {
     bytes: BTreeMap<u32, u32>,
     regexes: BTreeMap<u32, u32>,
     hashes: BTreeMap<u32, u32>,
+    tests: BTreeMap<u32, u32>,
     blames: BTreeMap<u32, u32>,
 }
 impl Runtime {
@@ -224,6 +225,19 @@ impl Runtime {
                     copies,
                     depth + 1,
                 )?);
+            }
+            Kind::Test => {
+                let value = Value { arena: self.identity, words: words.to_vec().into_boxed_slice() };
+                let old = words[2] as u32;
+                let description = self.test_description(&value)?;
+                words[2] = u64::from(if let Some(&id) = copies.tests.get(&old) { id } else {
+                    let mut description = description.clone();
+                    for input in &mut description.inputs { self.copy_value(input, target, copies, depth + 1)?; }
+                    let id = HeapRef::new(World::Main, u32::try_from(target.tests.len()).map_err(|_| "Test table overflow")?)?.raw();
+                    target.tests.push(description);
+                    copies.tests.insert(old, id);
+                    id
+                });
             }
             Kind::Blame => {
                 let value = Value { arena: self.identity, words: words.to_vec().into_boxed_slice() };

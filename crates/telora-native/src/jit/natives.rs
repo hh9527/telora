@@ -479,6 +479,22 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 33 && let Some(operation) = ["should_ok", "should_fail", "should_fail_with", "with_fixtures"].iter().position(|name| *name == declaration.name) {
+            if arguments.len() != if operation < 2 { 1 } else { 2 }
+                || !matches!(self.mir.types[self.return_type.index()].constructor, TypeConstructor::Native(id) if (id.module, id.slot) == (33, 0)) { return Err("native test result/arity mismatch".into()); }
+            let callback = &self.mir.types[arguments[usize::from(operation == 3)].index()];
+            if callback.constructor != TypeConstructor::Function || callback.arguments.len() != if operation == 3 { 2 } else { 1 } { return Err("native test callback signature mismatch".into()); }
+            if operation == 2 && self.mir.types[arguments[1].index()].constructor != TypeConstructor::String { return Err("native test expectation must be String".into()); }
+            if operation == 3 {
+                let sources = &self.mir.types[arguments[0].index()];
+                if sources.constructor != TypeConstructor::Array || sources.arguments.len() != 1
+                    || self.mir.types[sources.arguments[0].index()].constructor != TypeConstructor::String
+                    || TypeKey::try_from(callback.arguments[1])? != self.return_type { return Err("native fixture signature mismatch".into()); }
+            }
+            let count = self.builder.ins().iconst(types::I64, operation as i64);
+            let value = self.object(node, helpers::MAKE_TEST, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 1 && declaration.name == "equal" {
             if arguments.len() != 2 || arguments[0] != arguments[1] || self.mir.types[self.return_type.index()].constructor != TypeConstructor::Bool { return Err("native equality signature mismatch".into()); }
             let zero = self.builder.ins().iconst(types::I64, 0);
