@@ -45,6 +45,8 @@ FieldPropertyCtx / VariantPropertyCtx 与对应查询已接入，字段名、索
 
 数据注入已接入：core 暴露只读 `data_plan` 解析接口，复用 JSON/YAML/TOML 的扁平验证计划，不创建 Heap/VM。Native 根据已登记 std/value.Value 导出及封闭 payload 类型直接物化，保留值/键来源、YAML Bytes 和 TOML 时间标签。数据模块使用稳定 SymbolId 的需求槽，必须在初始化前注入；重复注入被拒绝，漏注入明确失败并禁止发布。已验证命名空间读取、初始化发布，以及 Bytes 切片的 backing 共享。
 
+Native 语义 Value 已支持直接输出紧凑 JSON：迭代遍历原有表，只构造输出文本和遍历栈，不转换为旧 VM 或 host Value 树。Object 按有序 Dict 输出，保留字符串转义；Bytes、时间值及非有限 Float 明确拒绝。已验证发布前后输出一致，以及 JSON 不支持的数据标签诊断。
+
 更丰富的 owner 上下文、泛型函数族/所需 native 操作及 CLI 初始化入口尚未完成，因此暂未覆盖包含整个标准库的全图，不据此宣称 CLI 初始化已可用。
 
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。

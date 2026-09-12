@@ -4,6 +4,28 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
+fn semantic_json_reads_native_graph_before_and_after_publication() {
+    use telora_core::data_plan::{self, Format};
+    let mut mir = crate::test_support::graph_with(
+        "import \"std/value\" { Value }; export def answer = Value.None;",
+        telora_core::static_sources::BUILTINS,
+    );
+    let source = mir.sources.add(
+        "output.json",
+        r#"{"z":[null,true,false,-42,1.25],"a":"line\n\"quoted\""}"#,
+    );
+    let plan = data_plan::parse_registered(&mir.sources, source, Format::Json).unwrap();
+    let sealed = mir.seal().unwrap();
+    let contract = DataContract::from_mir(&sealed).unwrap();
+    let mut rt = Runtime::new(&sealed).unwrap();
+    let data = rt.materialize_data(&contract, &plan).unwrap();
+    let expected = r#"{"a":"line\n\"quoted\"","z":[null,true,false,-42,1.25]}"#;
+    assert_eq!(rt.semantic_json(&contract, &data).unwrap(), expected);
+    let roots = rt.publish(&[data]).unwrap();
+    assert_eq!(rt.semantic_json(&contract, &roots[0]).unwrap(), expected);
+}
+
+#[test]
 fn data_plans_materialize_json_yaml_toml_with_source_locations() {
     use telora_core::data_plan::{self, Format};
     for (format, text) in [
@@ -64,6 +86,14 @@ fn yaml_bytes_share_backing_with_slices_and_toml_keeps_date_tags() {
     let slice = rt.bytes_slice(&bytes, 1, 2, bytes.location()).unwrap();
     assert!(rt.bytes_slice(&bytes, 2, 3, bytes.location()).is_err());
     let date = rt.materialize_data(&contract, &date_plan).unwrap();
+    assert_eq!(
+        rt.semantic_json(&contract, &data).unwrap_err(),
+        "JSON cannot encode Bytes"
+    );
+    assert_eq!(
+        rt.semantic_json(&contract, &date).unwrap_err(),
+        "JSON cannot encode temporal values; use a codec first"
+    );
     let roots = rt.publish(&[data, slice, date]).unwrap();
     assert_eq!(rt.bytes_data(&roots[1]).unwrap(), b"i");
     assert_eq!(rt.main.bytes.entries.len(), 1);

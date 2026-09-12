@@ -600,6 +600,8 @@ mod demands;
 #[path = "runtime/metadata.rs"]
 mod metadata;
 pub use data::DataContract;
+#[path = "runtime/json.rs"]
+mod json;
 pub use demands::{Demand, DemandKey};
 #[path = "runtime/dict.rs"]
 mod dict;

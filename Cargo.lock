@@ -1947,6 +1947,7 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-jit",
  "cranelift-module",
+ "serde_json",
  "telora-core",
 ]
 

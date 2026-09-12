@@ -44,14 +44,20 @@ impl Runtime {
         self.pack(ty, loc, &data)
     }
     pub fn enum_tag(&self, value: &Value) -> Result<u32> {
-        self.validate(value.as_ref(), value.type_key())?;
+        self.enum_tag_ref(value.as_ref())
+    }
+    pub(super) fn enum_tag_ref(&self, value: ValueRef<'_>) -> Result<u32> {
+        self.validate(value, value.type_id())?;
         let index = u32::try_from(value.words[2]).map_err(|_| "invalid enum tag word")?;
-        self.variant_name(value.type_key(), index)?;
+        self.variant_name(value.type_id(), index)?;
         Ok(index)
     }
     pub fn enum_payload<'a>(&'a self, value: &'a Value) -> Result<Option<ValueRef<'a>>> {
-        let index = self.enum_tag(value)?;
-        let variant = &self.layout(value.type_key())?.variants[index as usize];
+        self.enum_payload_ref(value.as_ref())
+    }
+    pub fn enum_payload_ref<'a>(&'a self, value: ValueRef<'a>) -> Result<Option<ValueRef<'a>>> {
+        let index = self.enum_tag_ref(value)?;
+        let variant = &self.layout(value.type_id())?.variants[index as usize];
         let Some(ty) = variant.payload else {
             return Ok(None);
         };
