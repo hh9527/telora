@@ -51,6 +51,20 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_explicit_generic_enum_constructor_preserves_sealed_selection() {
+    let (mir, root) = graph(r#"type Message(T) = enum {Data(T), Empty}; export def answer = do {
+        let direct = Message.Data@[String]("ok");
+        let make: Fn(Int) -> Message(Int) = Message.Data@[Int];
+        match direct {Message.Data(text) => text == "ok", Message.Empty => False}
+            && match make(42) {Message.Data(value) => value == 42, Message.Empty => False}
+    };"#);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 1);
+}
+
+#[test]
 fn native_string_ordering_is_lexical_for_inline_heap_and_unicode() {
     let (mir, root) = graph(r#"export def answer = "app" < "apple" && "10" < "2" && "Z" < "a" && "é" < "中" && "same" <= "same" && "z" > "a" && "z" >= "z" && "a deliberately heap-backed string" > "a" && !("same" < "same") && !("z" <= "a") && !("a" >= "z");"#);
     let sealed = mir.seal().unwrap();

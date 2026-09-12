@@ -16,6 +16,9 @@ pub(super) fn constructor(graph: &Mir, node: HirId) -> Option<MemberSelection> {
     if let Some(selection @ (MemberSelection::EnumVariant { .. } | MemberSelection::NewtypeConstructor)) = graph.member_selections[node.index()] {
         return Some(selection);
     }
+    if matches!(graph.hir[node.index()].kind, HirKind::TypeApply) {
+        return constructor(graph, child(graph, node, Role::Callee).ok()?);
+    }
     let slot = graph.hir[node.index()].resolution?;
     let ResolveState::Bound(symbol) = graph.resolve_slots[slot.index()] else {
         return None;

@@ -793,6 +793,9 @@ impl Lower<'_, '_> {
         if let Some(selected) = self.mir.member_selections[node.index()] {
             return Some(selected);
         }
+        if matches!(self.mir.hir[node.index()].kind, HirKind::TypeApply) {
+            return self.selected_member(child(self.mir, node, Role::Callee).ok()?);
+        }
         let slot = self.mir.hir[node.index()].resolution?;
         let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] else {
             return None;
@@ -874,7 +877,7 @@ impl Lower<'_, '_> {
                     .resolution
                     .ok_or("native callable missing resolve slot")?;
                 let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] else {
-                    return Err("native callable not bound".into());
+                    return Err(format!("native callable not bound at {:?}: {:?}", self.mir.hir[node.index()].location, self.mir.resolve_slots[slot.index()]).into());
                 };
                 let declaration = self.mir.symbols[symbol.index()]
                     .declarations

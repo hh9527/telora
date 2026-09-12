@@ -77,6 +77,11 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+显式泛型构造函数引用现在穿过 HIR `TypeApply` 读取既有 member selection，覆盖
+`Message.Data@[String](...)` 及 `let make = Message.Data@[Int]`，不在 codegen
+重新推导类型。现有 `enum-constructors` 语言资产 native check 从 callable 未绑定
+变为成功；JIT 回归实际执行直接构造与作为函数值保存后的调用。
+
 整体验收发现并修复 String 排序运算缺口：`<`、`<=`、`>`、`>=` 现在按字符串
 内容的字典序比较，支持 inline、heap-backed 和 Unicode 文本。现有语言资产
 `tests/language/src/test/compiler-semantics/testee.telora` 的 native check 从
