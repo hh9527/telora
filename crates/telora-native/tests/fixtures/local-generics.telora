@@ -7,7 +7,7 @@ def make: Fn(Int) -> Fn() -> Int = fn(offset) {
 def shared = make(21);
 def checks: Fn() -> Value = fn() {
     let offset = 2;
-    def sum: Fn(Int) -> Int = fn(n) {if n == 0 {offset} else {n + sum(n - 1)}};
+    def sum: Fn(Int) -> Int = fn(n) {if n == 0 {if sum == sum {offset} else {0}} else {n + sum(n - 1)}};
     encode(Value.type, [shared() == 42, make(20)() == 40, sum(8) == 38])
 };
 export def answer = checks();

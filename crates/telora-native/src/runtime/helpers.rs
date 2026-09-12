@@ -52,6 +52,7 @@ pub(crate) const CHECKED_CAST: u32 = 57;
 pub(crate) const BYTES_LITERAL: u32 = 58;
 pub(crate) const DEBUG: u32 = 59;
 pub(crate) const INTERPRETER_ADAPTER: u32 = 60;
+pub(crate) const SELF_CLOSURE: u32 = 61;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -545,6 +546,16 @@ pub(crate) unsafe extern "C" fn object(
                         .0;
                     let bits = rt.scalar(bit_type, loc, bits)?;
                     rt.aggregate(ty, loc, &[bits])?
+                }
+                SELF_CLOSURE => {
+                    if data.is_null() {
+                        rt.closure(ty, loc, u32::try_from(count).map_err(|_| "recursive function ID overflow")?, &[])?
+                    } else {
+                        let value = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, rt.layout(ty)?.words) }.into() };
+                        rt.validate(value.as_ref(), ty)?;
+                        if rt.function_id(&value)? as usize != count { return Err("recursive closure code identity mismatch".into()); }
+                        value
+                    }
                 }
                 CLOSURE | INTERPRETER_ADAPTER => {
                     let words = unsafe { std::slice::from_raw_parts(data, count) };

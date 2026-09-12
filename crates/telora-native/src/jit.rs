@@ -439,7 +439,7 @@ fn compile_plan(
     let helper = module
         .declare_function("telora_native_object", Linkage::Import, &helper_signature)
         .map_err(|e| e.to_string())?;
-    let mut functions = functions::Functions::new(ctx.func.signature.clone());
+    let mut functions = functions::Functions::new(ctx.func.signature.clone(), graph);
     for &root in &roots {
         functions::shape(graph, &layouts, root.into())?;
         let function = module

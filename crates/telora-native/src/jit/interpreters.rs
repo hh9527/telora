@@ -17,7 +17,8 @@ impl Lower<'_, '_> {
         let mut pending = vec![self.function_key.node];
         while let Some(reference) = pending.pop() {
             if let Some(instance) = self.instance_reference(reference)
-                && self.mir.generic_instances[instance.index()].symbol == symbol {
+                && self.mir.generic_instances[instance.index()].symbol == symbol
+                && self.mir.generic_instances[instance.index()].concrete {
                 selected.insert(instance);
             }
             pending.extend(self.mir.hir[reference.index()].children.iter().map(|edge| edge.node));

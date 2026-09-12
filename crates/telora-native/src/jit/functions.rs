@@ -95,6 +95,7 @@ pub(super) struct Functions {
     pub pending: Vec<Key>,
     pub captures: BTreeMap<Key, Vec<(SymbolId, TypeKey)>>,
     pub instance_captures: BTreeMap<Key, Vec<(GenericInstanceId, TypeKey)>>,
+    pub self_bindings: BTreeMap<HirId, SymbolId>,
     pub globals: BTreeMap<SymbolId, (u32, Key, TypeKey)>,
     pub instances: BTreeMap<GenericInstanceId, (u32, Key, TypeKey)>,
     pub properties: BTreeMap<usize, (u32, FuncId)>,
@@ -103,8 +104,32 @@ pub(super) struct Functions {
     pub(super) signature: ir::Signature,
 }
 impl Functions {
-    pub fn new(signature: ir::Signature) -> Self {
+    pub fn new(signature: ir::Signature, graph: &Mir) -> Self {
+        let mut parents = vec![None; graph.hir.len()];
+        let mut closures = BTreeMap::new();
+        for (index, node) in graph.hir.iter().enumerate() {
+            for edge in &node.children { parents[edge.node.index()] = Some(index); }
+            if let Some(symbol) = graph.hir_symbols[index]
+                && matches!(node.kind, HirKind::Binding { .. })
+                && let Some(value) = node.children.iter().find(|edge| edge.role == Role::Value).map(|edge| edge.node)
+                && matches!(graph.hir[value.index()].kind, HirKind::Closure) {
+                closures.insert(symbol, value);
+            }
+        }
+        let mut self_bindings = BTreeMap::new();
+        for (index, node) in graph.hir.iter().enumerate() {
+            if let Some(slot) = node.resolution
+                && let ResolveState::Bound(symbol) = graph.resolve_slots[slot.index()]
+                && let Some(&closure) = closures.get(&symbol) {
+                let mut parent = parents[index];
+                while let Some(node) = parent {
+                    if node == closure.index() { self_bindings.insert(closure, symbol); break; }
+                    parent = parents[node];
+                }
+            }
+        }
         Self {
+            self_bindings,
             registered: BTreeMap::new(),
             pending: vec![],
             captures: BTreeMap::new(),
@@ -476,6 +501,17 @@ pub(super) fn emit(
             lower.locals.insert(symbol, value);
         }
         lower.load_instance_captures(key, environment).map_err(|e| format!("native instance capture: {e:?}"))?;
+        if !key.initializer && let Some(&symbol) = lower.functions.self_bindings.get(&key.node) {
+            let ty = TypeKey::try_from(key.ty(graph, key.node)?)?;
+            let id = lower.builder.ins().iconst(types::I64, i64::from(function.as_u32()));
+            let value = lower.object(key.node, helpers::SELF_CLOSURE, ty, environment, id)
+                .map_err(|e| format!("native recursive closure: {e:?}"))?;
+            lower.locals.insert(symbol, value.clone());
+            if let Some(instance) = key.instance
+                && graph.generic_instances[instance.index()].symbol == symbol {
+                lower.local_instances.insert(instance, value);
+            }
+        }
         let outcome = if let Some(constructor) = constructor(graph, key.node).filter(|_| !key.initializer)
         {
             (|| {
