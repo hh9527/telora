@@ -157,6 +157,7 @@ enum Table {
 }
 
 pub struct Runtime {
+    code_plan: Option<u64>,
     identity: u64,
     layouts: Vec<Option<Layout>>,
     main: Tables,
@@ -165,6 +166,17 @@ pub struct Runtime {
 }
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
 impl Runtime {
+    pub(crate) fn bind_code_plan(&mut self, identity: u64) -> Result<()> {
+        match self.code_plan {
+            Some(previous) if previous != identity => {
+                Err("native runtime belongs to another code plan".into())
+            }
+            _ => {
+                self.code_plan = Some(identity);
+                Ok(())
+            }
+        }
+    }
     pub(crate) fn check_argument(&self, value: &Value) -> Result<()> {
         if value.arena == 0 {
             // Host-created scalar and Unit values carry no heap references.
@@ -285,6 +297,7 @@ impl Runtime {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| "arena identity overflow")?;
         Ok(Self {
+            code_plan: None,
             identity,
             layouts,
             main: Tables::default(),

@@ -9,7 +9,7 @@ pub type Result<T> = std::result::Result<T, String>;
 pub const HEADER_WORDS: usize = 2;
 
 /// The numeric identity is the sealed MIR index, never a second type allocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypeKey(pub(crate) u32);
 impl TypeKey {
     pub fn index(self) -> usize {

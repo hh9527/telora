@@ -34,6 +34,7 @@ pub(super) struct Functions {
     pub registered: BTreeMap<Key, FuncId>,
     pub pending: Vec<Key>,
     pub captures: BTreeMap<Key, Vec<(SymbolId, TypeKey)>>,
+    dispatchers: BTreeMap<TypeKey, FuncId>,
     signature: ir::Signature,
 }
 impl Functions {
@@ -42,8 +43,23 @@ impl Functions {
             registered: BTreeMap::new(),
             pending: vec![],
             captures: BTreeMap::new(),
+            dispatchers: BTreeMap::new(),
             signature,
         }
+    }
+    pub fn dispatcher(&mut self, ty: TypeKey, module: &mut JITModule) -> Result<FuncId> {
+        if let Some(&id) = self.dispatchers.get(&ty) {
+            return Ok(id);
+        }
+        let id = module
+            .declare_function(
+                &format!("telora_dispatch_{}", ty.raw()),
+                Linkage::Local,
+                &self.signature,
+            )
+            .map_err(|e| e.to_string())?;
+        self.dispatchers.insert(ty, id);
+        Ok(id)
     }
     pub fn declare(&mut self, mir: &Mir, key: Key, module: &mut JITModule) -> Result<FuncId> {
         if let Some(&function) = self.registered.get(&key) {
@@ -70,6 +86,88 @@ impl Functions {
         self.pending.push(key);
         Ok(function)
     }
+}
+
+pub(super) fn emit_dispatchers(
+    graph: &Mir,
+    layouts: &Layouts,
+    root: HirId,
+    helper: FuncId,
+    module: &mut JITModule,
+    functions: &mut Functions,
+) -> Result<()> {
+    for (ty, dispatcher) in functions.dispatchers.clone() {
+        let candidates = functions
+            .registered
+            .iter()
+            .filter_map(|(key, &id)| {
+                if !matches!(graph.hir[key.node.index()].kind, HirKind::Closure) {
+                    return None;
+                }
+                Some(key.ty(graph, key.node).map(|actual| (actual, id)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut ctx = module.make_context();
+        ctx.func.signature = functions.signature.clone();
+        let object_helper = module.declare_func_in_func(helper, &mut ctx.func);
+        let mut fbctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fbctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let args = builder.block_params(entry).to_vec();
+        let packed = builder
+            .ins()
+            .load(types::I64, MemFlagsData::new(), args[3], 16);
+        let id = builder.ins().ireduce(types::I32, packed);
+        for (actual, candidate) in candidates {
+            if TypeKey::try_from(actual)? != ty {
+                continue;
+            }
+            let yes = builder.create_block();
+            let no = builder.create_block();
+            let selected = builder.ins().icmp_imm_s(
+                cranelift_codegen::ir::condcodes::IntCC::Equal,
+                id,
+                i64::from(candidate.as_u32()),
+            );
+            builder.ins().brif(selected, yes, &[], no, &[]);
+            builder.switch_to_block(yes);
+            builder.seal_block(yes);
+            let callee = module.declare_func_in_func(candidate, builder.func);
+            let call = builder.ins().call(callee, &args);
+            let status = builder.inst_results(call)[0];
+            builder.ins().return_(&[status]);
+            builder.switch_to_block(no);
+            builder.seal_block(no);
+        }
+        let mut lower = Lower {
+            mir: graph,
+            layouts,
+            builder,
+            locals: BTreeMap::new(),
+            module,
+            context: args[0],
+            object_helper,
+            functions,
+            function_key: root.into(),
+            return_pointer: args[2],
+            return_type: ty,
+        };
+        lower
+            .report_failure(
+                root,
+                "native function ID does not match the closed call signature",
+            )
+            .map_err(|e| format!("native dispatcher: {e:?}"))?;
+        let config = lower.module.target_config();
+        lower.builder.finalize(config);
+        module
+            .define_function(dispatcher, &mut ctx)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 pub(super) fn shape(
     graph: &Mir,

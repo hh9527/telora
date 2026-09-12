@@ -332,6 +332,64 @@ fn machine_code_reads_lexical_closure_environments() {
 }
 
 #[test]
+fn indirect_calls_consume_closed_signatures_and_returned_environments() {
+    for source in [
+        "def apply: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, x) { f(x) }; export def answer = apply(fn(x) { x + 2 }, 40);",
+        "def inc: Fn(Int) -> Int = fn(x) { x + 2 }; def apply: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, x) { f(x) }; export def answer = apply(inc, 40);",
+        "def identity: for(T) Fn(T) -> T = fn(x) { x }; def apply: for(T) Fn(Fn(T) -> T, T) -> T = fn(f, x) { f(x) }; export def answer = apply(identity@[Int], 42);",
+        "def make: Fn(Int) -> Fn(Int) -> Int = fn(base) { fn(x) { base + x } }; export def answer = do { let f = make(40); f(2) };",
+        "export def answer = do { let a: Fn(Int) -> Int = fn(x) { x + 2 }; let b: Fn(Int) -> Int = fn(x) { x + 3 }; let f = if False { b } else { a }; f(40) };",
+    ] {
+        let (mir, root) = graph(source);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        assert_eq!(
+            compiled.call(&mut context, &[]).unwrap().words()[2],
+            42,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn runtime_rejects_a_different_executable_plan() {
+    let (mir, root) = graph("export def answer = 42;");
+    let sealed = mir.seal().unwrap();
+    let first = compile(&sealed, root).unwrap();
+    let second = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    first.call(&mut context, &[]).unwrap();
+    assert!(
+        second
+            .call(&mut context, &[])
+            .unwrap_err()
+            .contains("another code plan")
+    );
+    assert!(context.diagnostics().is_empty());
+    first.call(&mut context, &[]).unwrap();
+}
+
+#[test]
+fn indirect_unknown_function_reports_one_failure_without_reading_result() {
+    let (mir, root) = graph("export def answer: Fn(Fn(Int) -> Int) -> Int = fn(f) { f(42) };");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut runtime = crate::runtime::Runtime::new(&sealed).unwrap();
+    let invalid = runtime
+        .closure(compiled.arguments()[0], [1, 0, 1], u32::MAX, &[])
+        .unwrap();
+    let mut context = CallContext::with_runtime(runtime);
+    assert!(compiled.call(&mut context, &[invalid]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(
+        context.diagnostics()[0]
+            .message
+            .contains("closed call signature")
+    );
+}
+
+#[test]
 fn patterns_select_payloads_and_preserve_diverging_paths() {
     for source in [
         "export def answer = match 2 { 1 => 0, 2 => 42, _ => 7 };",

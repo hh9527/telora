@@ -32,6 +32,7 @@ type EmitResult<T> = std::result::Result<T, EmitError>;
 
 /// Owns executable memory. No raw entry address escapes this owner.
 pub struct Compiled {
+    identity: u64,
     _memory: CodeMemory,
     entry: Entry,
     layouts: Layouts,
@@ -72,6 +73,9 @@ impl Compiled {
         &self.layouts
     }
     pub fn call(&self, context: &mut CallContext, values: &[Value]) -> Result<Value> {
+        if let Ok(runtime) = context.runtime_mut() {
+            runtime.bind_code_plan(self.identity)?;
+        }
         if values.len() != self.arguments.len() {
             return Err("native argument count mismatch".into());
         }
@@ -182,11 +186,19 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
         next += 1;
         functions::emit(graph, &layouts, node, helper, &mut module, &mut functions)?;
     }
+    functions::emit_dispatchers(graph, &layouts, root, helper, &mut module, &mut functions)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let address = module.get_finalized_function(function);
     // SAFETY: target default C ABI, exactly four pointers and a u32 status.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(address) };
     Ok(Compiled {
+        identity: NEXT_CODE_PLAN
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |id| id.checked_add(1),
+            )
+            .map_err(|_| "native code plan identity overflow")?,
         _memory: module,
         entry,
         layouts,
@@ -194,6 +206,8 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
         output,
     })
 }
+
+static NEXT_CODE_PLAN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 struct Lower<'a, 'b> {
     mir: &'a Mir,
@@ -368,29 +382,57 @@ impl Lower<'_, '_> {
                 &payload,
             );
         }
-        let callee = functions::Key {
-            node: self.callable(callee_node, 0)?,
-            instance: self.instance_reference(callee_node),
-        };
-        let function = self.functions.declare(self.mir, callee, self.module)?;
-        let closure = if let Some(slot) = self.mir.hir[callee_node.index()].resolution
+        let local = if let Some(slot) = self.mir.hir[callee_node.index()].resolution
             && let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()]
             && let Some(value) = self.locals.get(&symbol)
         {
-            value.clone()
+            Some(value.clone())
         } else {
-            self.function_value(callee_node, callee)?
+            None
         };
+        let (function, closure, output, expected) =
+            if local.is_some() || self.callable(callee_node, 0).is_err() {
+                let ty = self.ty(callee_node)?;
+                let signature = &self.mir.types[ty.index()];
+                if signature.constructor != TypeConstructor::Function {
+                    return Err("native indirect callee must have closed function type".into());
+                }
+                let (&output, parameters) = signature
+                    .arguments
+                    .split_last()
+                    .ok_or("native function signature missing result")?;
+                let output = TypeKey::try_from(output)?;
+                let expected = parameters
+                    .iter()
+                    .copied()
+                    .map(TypeKey::try_from)
+                    .collect::<Result<Vec<_>>>()?;
+                let closure = match local {
+                    Some(value) => value,
+                    None => self.expression(callee_node, depth + 1)?,
+                };
+                let function = self
+                    .functions
+                    .dispatcher(TypeKey::try_from(ty)?, self.module)?;
+                (function, closure, output, expected)
+            } else {
+                let callee = functions::Key {
+                    node: self.callable(callee_node, 0)?,
+                    instance: self.instance_reference(callee_node),
+                };
+                let function = self.functions.declare(self.mir, callee, self.module)?;
+                let closure = self.function_value(callee_node, callee)?;
+                let (_, _, output, expected) = functions::shape(self.mir, self.layouts, callee)?;
+                (function, closure, output, expected)
+            };
         let environment = self.stack_words(&closure)?;
-        let (parameters, _, output, expected) = functions::shape(self.mir, self.layouts, callee)
-            .map_err(|e| format!("{e}; callee {callee:?} from HIR {}, parent {:?}, reference {:?}, callee syntax {:?}", node.index(), self.function_key, self.mir.generic_references[callee_node.index()], self.mir.hir[callee_node.index()].kind))?;
         let arguments = self.mir.hir[node.index()]
             .children
             .iter()
             .filter(|e| e.role == Role::Argument)
             .map(|e| e.node)
             .collect::<Vec<_>>();
-        if parameters.len() != arguments.len() {
+        if expected.len() != arguments.len() {
             return Err("native direct argument count mismatch".into());
         }
         if output != TypeKey::try_from(self.ty(node)?)? {
@@ -804,6 +846,17 @@ impl Lower<'_, '_> {
                 if let Some(value) = self.locals.get(&symbol) {
                     return Ok(value.clone());
                 }
+                if self.mir.types[self.ty(node)?.index()].constructor == TypeConstructor::Function
+                    && let Ok(function) = self.callable(node, 0)
+                {
+                    return self.function_value(
+                        node,
+                        functions::Key {
+                            node: function,
+                            instance: self.instance_reference(node),
+                        },
+                    );
+                }
                 // Resolved exports of a statically selected Boolean member are
                 // constants. Never recognize prelude names or execute a provider.
                 for &declaration in &self.mir.symbols[symbol.index()].declarations {
@@ -820,6 +873,16 @@ impl Lower<'_, '_> {
             }
             HirKind::TypeAscription => {
                 self.expression(child(self.mir, node, Role::Value)?, depth + 1)
+            }
+            HirKind::TypeApply => {
+                let function = self.callable(node, 0)?;
+                self.function_value(
+                    node,
+                    functions::Key {
+                        node: function,
+                        instance: self.instance_reference(node),
+                    },
+                )
             }
             HirKind::Binding { .. } => {
                 let value = self.expression(child(self.mir, node, Role::Value)?, depth + 1)?;
