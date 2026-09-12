@@ -693,7 +693,16 @@ impl Lower<'_, '_> {
         if expected.len() != arguments.len() {
             return Err("native direct argument count mismatch".into());
         }
-        if output != TypeKey::try_from(self.ty(node)?)? {
+        let result_ty = TypeKey::try_from(self.ty(node)?)?;
+        let metadata_result = matches!(
+            (
+                &self.mir.types[output.index()].constructor,
+                &self.mir.types[result_ty.index()].constructor
+            ),
+            (TypeConstructor::Type, TypeConstructor::TypeOf)
+                | (TypeConstructor::TypeOf, TypeConstructor::Type)
+        );
+        if output != result_ty && !metadata_result {
             return Err("native direct result type mismatch".into());
         }
         let mut words = Vec::new();
@@ -730,13 +739,22 @@ impl Lower<'_, '_> {
             self.report_failure(node, "native Never function returned unexpectedly")?;
             return Err(EmitError::Diverged);
         }
-        Ok((0..width)
+        let mut result = (0..width)
             .map(|i| {
                 self.builder
                     .ins()
                     .load(types::I64, MemFlagsData::new(), out, (i * 8) as i32)
             })
-            .collect())
+            .collect::<Vec<_>>();
+        if output != result_ty {
+            let origin = self.builder.ins().band_imm_s(result[1], 0xffff_ffff);
+            let stamp = self
+                .builder
+                .ins()
+                .iconst(types::I64, (u64::from(result_ty.raw()) << 32) as i64);
+            result[1] = self.builder.ins().bor(origin, stamp);
+        }
+        Ok(result)
     }
     fn function_value(&mut self, origin: HirId, key: functions::Key) -> EmitResult<Vec<ir::Value>> {
         let function = self.functions.declare(self.mir, key, self.module)?;
