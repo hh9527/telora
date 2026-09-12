@@ -1,0 +1,31 @@
+def identity: Fn(Int) -> Int = fn(value) { value };
+def relay: for(T) Fn(Fn(T) -> T, T) -> T = fn(action, value) { action(value) };
+
+decl wide: Fn(Int, (), Array(String), Fn(Int) -> Int) -> Array(String);
+def narrow: Fn(Int, Array(String)) -> Array(String) = fn(depth, values) {
+    if depth == 0 { values }
+    else { wide(depth - 1, (), values, fn(value) { relay(identity, value) }) }
+};
+def wide = fn(depth, unit, values, callback) {
+    # The nested callback also tail-transfers, overwriting the handoff packet.
+    let observed = callback(7);
+    if observed == 7 && unit == () { return narrow(depth, values); }
+    else { fail!("tail call corrupted arguments") }
+};
+
+@check(fn(value) {
+    if value.count >= 0 { Ok(()) } else { Err(blame!("negative tail candidate", value)) }
+})
+type Positive = struct {count: Int};
+def candidate: Fn(Int) -> Unchecked(Positive) = fn(count) { {count} };
+def complete: Fn(Int) -> Positive = fn(count) { candidate(count) };
+def witness: Fn() -> TypeOf(Int) = fn() { Int.type };
+def erase: Fn() -> Type = fn() { witness() };
+
+export def answer = fn() {
+    let source = ["shared tail-call payload"];
+    let read = fn() { source };
+    let zero = fn() { read() };
+    (source, narrow(1500, source), zero(), complete(42), erase())
+};
+export def rejected = fn() { complete(-1) };

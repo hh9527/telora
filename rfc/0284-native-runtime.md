@@ -45,6 +45,12 @@ enum 的 nullary/full_value/ValueTable 间接 payload 以已 seal 的 variant �
 
 ## 验收条件
 
+尾调用转交使用 CallContext 拥有的可复用 word 缓冲，增长前检查分配预算。
+只转交值描述符，不复制对象 backing，不把机器码指针发布到 main-world。
+参数与捕获在被调用 body 中先保存，嵌套 callback 可以安全复用该缓冲。
+本轮完整 workspace 测试通过，native 为 141 项单测与 3 项独立实验；
+另行运行的语言闭包审计为 402/402 一致。
+
 数组 backing 的分配准入已提前到内容构造之前：普通 array、spread、push、
 enumerate、concat 和 zip 均先确定长度及封闭元素宽度，检查配额后直接填充最终
 word 缓冲。取消构造 helper 的整批临时 Value 列表，spread 不再保留区间列表；

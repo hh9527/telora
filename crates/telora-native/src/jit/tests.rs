@@ -1469,10 +1469,36 @@ fn native_dictionary_reads_preserve_sorted_columns_and_aliases_after_publication
 }
 
 #[test]
+fn native_tail_calls_keep_mixed_arguments_captures_and_completion_boundaries() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/tail-calls.telora"), static_sources::BUILTINS);
+    let rejected = crate::test_support::value_node(&mir, "rejected");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_roots(&sealed, &[root, rejected]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap())
+        .with_call_depth_limit(8).with_stack_limit(8192).with_fuel(100_000);
+    compiled.initialize(&mut context).unwrap();
+    let result = compiled.call_root(root, &mut context, &[]).unwrap();
+    let runtime = context.runtime().unwrap();
+    let source = runtime.field(&result, 0).unwrap();
+    for index in [1, 2] { assert_eq!(runtime.field(&result, index).unwrap().words(), source.words()); }
+    let positive = runtime.field(&result, 3).unwrap().to_owned();
+    assert_eq!(runtime.scalar_bits(runtime.field(&positive, 0).unwrap()).unwrap(), 42);
+    let metadata = runtime.field(&result, 4).unwrap();
+    assert_eq!(mir.types[runtime.represented_type(metadata).unwrap().index()].constructor, telora_core::mir::TypeConstructor::Int);
+    assert_eq!(context.call_depth(), 0);
+    assert_eq!(context.stack_words(), 0);
+    assert!(compiled.call_root(rejected, &mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "negative tail candidate");
+    assert_eq!(context.call_depth(), 0);
+    assert_eq!(context.stack_words(), 0);
+}
+
+#[test]
 fn native_call_depth_unwinds_direct_and_indirect_failures() {
     for source in [
-        "def recur: Fn(Int) -> Int = fn(n) { recur(n + 1) }; export def answer = recur(0);",
-        "def apply: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, n) { f(n) }; def recur: Fn(Int) -> Int = fn(n) { apply(recur, n + 1) }; export def answer = recur(0);",
+        "def recur: Fn(Int) -> Int = fn(n) { 1 + recur(n + 1) }; export def answer = recur(0);",
+        "def apply: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, n) { 1 + f(n) }; def recur: Fn(Int) -> Int = fn(n) { apply(recur, n + 1) }; export def answer = recur(0);",
     ] {
         let (mir, root) = graph(source);
         let sealed = mir.seal().unwrap();
@@ -1925,7 +1951,7 @@ fn native_diagnostic_scope_preserves_source_ranges_and_cannot_catch_limits() {
     assert_eq!(json["Err"][0]["labels"][0]["location"]["source"], mir.sources.get(mir.hir[root.index()].location.source).name.as_ref());
     assert_eq!(json["Err"][0]["labels"][0]["location"]["start"], source.find("fail!(").unwrap());
 
-    let (mir, root) = graph_with("import \"std/_rt\" as rt; def recurse: Fn(Int) -> Int = fn(n) { recurse(n + 1) }; export def answer = rt.with_diagnostics(recurse)(0);", static_sources::BUILTINS);
+    let (mir, root) = graph_with("import \"std/_rt\" as rt; def recurse: Fn(Int) -> Int = fn(n) { 1 + recurse(n + 1) }; export def answer = rt.with_diagnostics(recurse)(0);", static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();
     let compiled = compile(&sealed, root).unwrap();
     for fuel in [false, true] {

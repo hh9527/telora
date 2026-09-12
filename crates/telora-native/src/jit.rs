@@ -703,6 +703,7 @@ struct Lower<'a, 'b> {
     local_instances: BTreeMap<telora_core::mir::GenericInstanceId, Vec<ir::Value>>,
     return_pointer: ir::Value,
     return_type: TypeKey,
+    tail_calls: std::collections::BTreeSet<HirId>,
 }
 impl Lower<'_, '_> {
     fn return_value(&mut self, node: HirId, result: &[ir::Value]) -> EmitResult<()> {
@@ -1051,6 +1052,9 @@ impl Lower<'_, '_> {
             let resolved = self.object(node, helpers::RESOLVE_FUNCTION, ty, environment, zero)?;
             self.stack_words(&resolved)?
         } else { environment };
+        if self.tail_calls.contains(&node) && output == self.return_type && result_ty == output {
+            return self.transfer_tail(node, TypeKey::try_from(self.ty(callee_node)?)?, environment, &words);
+        }
         let data = self.stack_words(&words)?;
         let never = self.layouts.is_never(output)?;
         let width = if never {
@@ -1877,6 +1881,7 @@ impl Lower<'_, '_> {
 }
 #[path = "jit/functions.rs"]
 mod functions;
+mod tail;
 #[path = "jit/natives.rs"]
 mod natives;
 #[path = "jit/patterns.rs"]

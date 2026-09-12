@@ -56,6 +56,7 @@ pub(super) fn emit(
     let context = builder.block_params(entry)[0];
     let out = builder.block_params(entry)[2];
     let mut lower = Lower {
+        tail_calls: Default::default(),
         local_instances: BTreeMap::new(),
         guarded: false, frame_charge: None,
         mir: graph,

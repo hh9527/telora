@@ -333,6 +333,8 @@ pub struct CallContext {
     stack_limit: Option<u64>,
     stack_words: u64,
     frames: Vec<u64>,
+    tail_packet: Vec<u64>,
+    tail_pending: bool,
     call_depth_limit: Option<u32>,
     fuel: Option<u64>,
     aborted: bool,
@@ -355,6 +357,31 @@ pub struct NativeDiagnostic {
     pub subjects: Vec<Origin>,
 }
 impl CallContext {
+    pub(crate) fn prepare_tail(&mut self, packet: &[u64], origin: Origin) -> Status {
+        if self.aborted { return Status::Failed; }
+        if self.tail_pending || packet.len() < 5 { return self.abort_at("invalid native tail transfer", origin); }
+        if packet.len() > self.tail_packet.capacity() {
+            let additional = packet.len() - self.tail_packet.capacity();
+            if let Some(runtime) = &self.runtime {
+                if let Err(error) = runtime.charge_tail_words(additional) { return self.abort_at(error, origin); }
+            }
+            if self.tail_packet.try_reserve_exact(packet.len() - self.tail_packet.len()).is_err() {
+                return self.abort_at("native tail argument allocation failed", origin);
+            }
+        }
+        self.tail_packet.clear();
+        self.tail_packet.extend_from_slice(packet);
+        self.tail_pending = true;
+        Status::Success
+    }
+
+    pub(crate) fn take_tail(&mut self) -> Result<[u64; 3]> {
+        if self.aborted || !self.tail_pending { return Err("native tail transfer is not pending".into()); }
+        self.tail_pending = false;
+        let address = self.tail_packet[0];
+        self.tail_packet[0] = 0; // code addresses live only during this invocation
+        Ok([address, self.tail_packet[5..].as_ptr() as u64, self.tail_packet[1..].as_ptr() as u64])
+    }
     pub fn with_debug_sink(mut self, sink: impl Fn(DebugEvent) + Send + Sync + 'static) -> Self {
         self.debug_sink = Some(std::sync::Arc::new(sink));
         self

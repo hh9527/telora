@@ -95,6 +95,8 @@ impl From<HirId> for Key {
 
 pub(super) struct Functions {
     pub registered: BTreeMap<Key, FuncId>,
+    bodies: BTreeMap<FuncId, FuncId>,
+    tail_dispatchers: BTreeMap<TypeKey, FuncId>,
     pub pending: Vec<Key>,
     pub captures: BTreeMap<Key, Vec<(SymbolId, TypeKey)>>,
     pub instance_captures: BTreeMap<Key, Vec<(GenericInstanceId, TypeKey)>>,
@@ -145,6 +147,8 @@ impl Functions {
         Self {
             self_bindings,
             registered: BTreeMap::new(),
+            bodies: BTreeMap::new(),
+            tail_dispatchers: BTreeMap::new(),
             pending: vec![],
             captures: BTreeMap::new(),
             instance_captures: BTreeMap::new(),
@@ -263,6 +267,12 @@ impl Functions {
         self.dispatchers.insert(ty, id);
         Ok(id)
     }
+    pub fn tail_dispatcher(&mut self, ty: TypeKey, module: &mut JITModule) -> Result<FuncId> {
+        if let Some(&id) = self.tail_dispatchers.get(&ty) { return Ok(id); }
+        let id = module.declare_function(&format!("telora_tail_dispatch_{}", ty.raw()), Linkage::Local, &self.signature).map_err(|error| error.to_string())?;
+        self.tail_dispatchers.insert(ty, id);
+        Ok(id)
+    }
     pub fn declare(&mut self, mir: &Mir, key: Key, module: &mut JITModule) -> Result<FuncId> {
         if let Some(&function) = self.registered.get(&key) {
             return Ok(function);
@@ -299,7 +309,9 @@ pub(super) fn emit_dispatchers(
     module: &mut JITModule,
     functions: &mut Functions,
 ) -> Result<()> {
-    for (ty, dispatcher) in functions.dispatchers.clone() {
+    let dispatchers = functions.dispatchers.iter().map(|(&ty, &id)| (ty, id, false))
+        .chain(functions.tail_dispatchers.iter().map(|(&ty, &id)| (ty, id, true))).collect::<Vec<_>>();
+    for (ty, dispatcher, tail) in dispatchers {
         let candidates = functions
             .registered
             .iter()
@@ -323,7 +335,7 @@ pub(super) fn emit_dispatchers(
         // Resolve a stable lexical slot to its installed body at invocation.
         // Captured values and equality continue to use the original identity.
         let mut resolver = Lower {
-            local_instances: BTreeMap::new(), guarded: false, frame_charge: None,
+            local_instances: BTreeMap::new(), guarded: false, frame_charge: None, tail_calls: Default::default(),
             mir: graph, layouts, builder, locals: BTreeMap::new(), module,
             context: args[0], object_helper, functions, function_key: root.into(),
             return_pointer: args[2], return_type: ty,
@@ -351,7 +363,8 @@ pub(super) fn emit_dispatchers(
             builder.ins().brif(selected, yes, &[], no, &[]);
             builder.switch_to_block(yes);
             builder.seal_block(yes);
-            let callee = module.declare_func_in_func(candidate, builder.func);
+            let target = if tail { functions.bodies[&candidate] } else { candidate };
+            let callee = module.declare_func_in_func(target, builder.func);
             let call = builder.ins().call(callee, &args);
             let status = builder.inst_results(call)[0];
             builder.ins().return_(&[status]);
@@ -359,6 +372,7 @@ pub(super) fn emit_dispatchers(
             builder.seal_block(no);
         }
         let mut lower = Lower {
+            tail_calls: Default::default(),
             local_instances: BTreeMap::new(),
             guarded: false, frame_charge: None,
             mir: graph,
@@ -464,6 +478,8 @@ pub(super) fn emit(
     let uncallable = arguments.iter().try_fold(false, |found, &ty| layouts.is_never(ty).map(|never| found || never))?;
 
     let function = functions.registered[&key];
+    let body_id = module.declare_function(&format!("telora_body_{}", function.as_u32()), Linkage::Local, &functions.signature).map_err(|error| error.to_string())?;
+    functions.bodies.insert(function, body_id);
     let mut ctx = module.make_context();
     ctx.func.signature = functions.signature.clone();
     let object_helper = module.declare_func_in_func(helper, &mut ctx.func);
@@ -500,6 +516,7 @@ pub(super) fn emit(
             locals.insert(symbol, values);
         }
         let mut lower = Lower {
+            tail_calls: Default::default(),
             local_instances: BTreeMap::new(),
             guarded: false, frame_charge: None,
             mir: graph,
@@ -518,6 +535,19 @@ pub(super) fn emit(
         // Charge once per generated function/initializer invocation. Straight-line
         // expression lowering must not turn fuel into an instruction cost model.
         lower.charge_fuel(key.node);
+        lower.find_tail_calls(body).map_err(|error| format!("native tail positions: {error:?}"))?;
+        // Tail packets are reused by nested invocations. Snapshot the incoming
+        // descriptors before any callback can replace that packet.
+        let width = if uncallable { 0 } else {
+            arguments.iter().try_fold(0usize, |width, &ty| width.checked_add(layouts.words(ty)?).ok_or_else(|| "native argument width overflow".to_owned()))?
+        };
+        let mut words = Vec::with_capacity(width);
+        for index in 0..width {
+            let offset = i32::try_from(index.checked_mul(8).ok_or("native argument offset overflow")?).map_err(|_| "native argument offset overflow")?;
+            words.push(lower.builder.ins().load(types::I64, MemFlagsData::new(), args, offset));
+        }
+        let args = lower.stack_words(&words).map_err(|error| format!("native argument snapshot: {error:?}"))?;
+        let environment = lower.save_environment(environment).map_err(|error| format!("native environment snapshot: {error:?}"))?;
         for (index, (symbol, ty)) in lower
             .functions
             .captures
@@ -599,8 +629,8 @@ pub(super) fn emit(
         lower.builder.finalize(config);
     }
     module
-        .define_function(function, &mut ctx)
+        .define_function(body_id, &mut ctx)
         .map_err(|e| e.to_string())?;
 
-    Ok(())
+    tail::emit_wrapper(module, function, body_id, helper, &functions.signature)
 }

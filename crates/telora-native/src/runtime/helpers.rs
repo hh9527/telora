@@ -56,6 +56,8 @@ pub(crate) const RESERVE_FUNCTION: u32 = 62;
 pub(crate) const FILL_FUNCTION: u32 = 63;
 pub(crate) const RESOLVE_FUNCTION: u32 = 64;
 pub(crate) const TEXT_ORDER: u32 = 65;
+pub(crate) const TAIL_PREPARE: u32 = 66;
+pub(crate) const TAIL_TAKE: u32 = 67;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -90,6 +92,22 @@ pub(crate) unsafe extern "C" fn object(
         Err(e) => return context.fail(e) as u32,
     };
     if operation == ENTER_CALL { return context.enter_frame(count, origin) as u32; }
+    if operation == TAIL_PREPARE {
+        return context.boundary(|context| {
+            let Ok(count) = usize::try_from(count) else { return context.abort_at("native tail packet overflow", origin); };
+            let packet = unsafe { std::slice::from_raw_parts(data, count) };
+            context.prepare_tail(packet, origin)
+        }) as u32;
+    }
+    if operation == TAIL_TAKE {
+        return context.boundary(|context| match context.take_tail() {
+            Ok(packet) => {
+                unsafe { std::ptr::copy_nonoverlapping(packet.as_ptr(), out, packet.len()); }
+                Status::Success
+            }
+            Err(error) => context.abort_at(error, origin),
+        }) as u32;
+    }
     if operation == DIAGNOSTIC_SCOPE { return unsafe { callbacks::diagnostic_scope(context, TypeId(ty), data, out, origin) }; }
     if operation == DEBUG { return unsafe { callbacks::debug(context, TypeId(ty), data, out, origin) }; }
     if operation == LEAVE_CALL { return context.leave_call() as u32; }

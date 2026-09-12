@@ -10,6 +10,9 @@ impl Default for Allocation {
     fn default() -> Self { Self { limit: u64::MAX, requested: Cell::new(0), exhausted: Cell::new(false) } }
 }
 impl Runtime {
+    pub(crate) fn charge_tail_words(&self, words: usize) -> Result<()> {
+        self.charge_allocation(words, 8, 0)
+    }
     pub(super) fn charge_blame(&self, message_words: usize, subjects: usize) -> Result<()> {
         self.charge_allocation(message_words, 8, std::mem::size_of::<blame::Blame>())?;
         self.charge_allocation(subjects, std::mem::size_of::<crate::abi::Origin>(), 0)

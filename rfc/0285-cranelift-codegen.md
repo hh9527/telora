@@ -52,14 +52,24 @@
 经过了额外合成函数而提前触及调用深度限制；现在和 enum 构造一样，直接根据
 封闭选择生成 payload 检查及构造，仍保留作为一等函数传递的构造器路径。
 
-修复后 401 个闭包结果一致，剩余 `compiler-semantics/tail_calls`：1500 次尾递归
-仍因 native 调用深度上限而失败。这是下一项明确的 codegen 缺口；不通过提高
-深度上限、改低测试次数或排除该用例来宣称验收通过。必须保留参数求值顺序、
-失败传播、来源，以及调用后仍有类型适配/构造检查时的完成边界。
+最初修复后 401 个闭包结果一致；剩余 `compiler-semantics/tail_calls` 的 1500 次
+尾递归现已通过，402 个非 fixture 闭包全部与默认观察一致，没有提高深度上限、
+减少次数或排除用例。
+
+尾位置调用使用生成的 C ABI wrapper 循环：私有函数体退出自己的调用/栈 guard
+后返回内部状态 2，wrapper 取出下一次调用描述并执行私有 body，公开入口仍只
+返回 Success/Failed。转交保持实参求值顺序，只复制描述符；目标函数在任何 callback
+前保存参数及闭包描述符，防止嵌套调用复用转交缓冲时覆盖当前输入。
+需要返回类型适配或构造检查的路径不转交，保留原有完成边界。
+
+`tail-calls.telora` 另外在调用深度 8、显式栈 8192 words 下覆盖 1500 次异宽互递归、
+零参数捕获闭包、嵌套 callback，以及 Unchecked 构造检查和 TypeOf 元数据适配。
+非尾递归仍受深度限制，无限尾递归仍由 fuel 中止。
 
 复跑：先 `bash scripts/test-language.sh`，再
 `cargo test -p telora-native --features jit published_language_test_closures -- --ignored --nocapture`。
-该手动审计当前明确失败于尾调用；常规 native 单测仍单独运行。
+该手动审计已通过；最终 workspace all-features 验证包括 141 项 native 单测
+（另有 1 项手动审计默认忽略）、3 项独立实验和 84 项 CLI 测试，均无失败。
 
 ### 表达式支持清单（35e9cad）
 
