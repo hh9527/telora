@@ -35,7 +35,7 @@ struct Variant {
 }
 struct Layout {
     kind: Kind,
-    construction_checks: bool,
+    construction_checks: Vec<u64>,
     optional: bool,
     dynamic_kind: Option<&'static str>,
     field_names: Vec<String>,
@@ -317,7 +317,9 @@ impl Runtime {
                 .unwrap_or_default();
             layouts.push(Some(Layout {
                 kind,
-                construction_checks: sealed.mir().construction_checks.iter().any(|check| check.concrete && check.owner.index() == entry.type_id),
+                construction_checks: sealed.mir().construction_checks.iter()
+                    .filter(|check| check.concrete && check.owner.index() == entry.type_id)
+                    .map(|check| match check.site { telora_core::mir::PropertySite::Type => 0, telora_core::mir::PropertySite::Variant(index) => u64::from(index) + 1, _ => unreachable!("sealed checker site") }).collect(),
                 optional: ty.constructor == T::Option,
                 field_names: entry
                     .object

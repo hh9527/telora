@@ -1,0 +1,41 @@
+import "std/codec" {decode, encode, Value};
+
+@check(fn(value) {
+    let value = match decode(Int.type, Value.Int(value)) {
+        Ok(value) => value,
+        Err(error) => raise!(error),
+    };
+    if value > 0 { Ok(()) } else { Err(blame!("positive required", value)) }
+})
+type Positive = struct(Int);
+
+@check(fn(value) {
+    if value.item.0 > 0 { Ok(()) } else { fail!("unchecked child reached parent") }
+})
+type Parent = struct {item: Positive};
+type Pair = struct {a: Positive, z: Int};
+type Choice = enum {
+    @check(fn(value) {
+        if value > 0 { Ok(()) } else { Err(blame!("variant positive", value)) }
+    })
+    Full(Int),
+    Empty,
+};
+
+def identity: for(T) Fn(T) -> T = fn(value) { value };
+@check(fn(value) {
+    let copied = identity(value.item);
+    if value.valid { Ok(()) } else { Err(blame!("invalid generic item", copied)) }
+})
+type Box(T) = struct {item: T, valid: Bool};
+
+export def answer = encode(Value.type, (
+    match decode(Positive.type, Value.Int(42)) { Ok(value) => value.0, Err(error) => raise!(error) },
+    match decode(Positive.type, Value.Int(0)) { Err(_) => True, Ok(_) => False },
+    match decode(Parent.type, Value.Object({item: Value.Int(0)})) { Err(_) => True, Ok(_) => False },
+    match decode(Parent.type, Value.Object({item: Value.Int(2)})) { Ok(value) => value.item.0, Err(error) => raise!(error) },
+    match decode(Choice.type, Value.Object({Full: Value.Int(0)})) { Err(_) => True, Ok(_) => False },
+    match decode(Choice.type, Value.Object({Full: Value.Int(3)})) { Ok(Choice.Full(value)) => value, _ => 0 },
+    match decode(Box(String).type, Value.Object({item: Value.String("ok"), valid: Value.True})) { Ok(value) => value.item, Err(error) => raise!(error) },
+    match decode(Box(Int).type, Value.Object({item: Value.Int(1), valid: Value.False})) { Err(_) => True, Ok(_) => False },
+));

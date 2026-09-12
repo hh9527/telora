@@ -59,7 +59,9 @@
 
 直接构造的 struct、newtype、payload variant 已执行 MIR 中对应 owner/site 的封闭 checker。checker 表达式作为独立初始化项求值一次，生成普通闭包；缓存以 owner/site 为身份，随全图初始化发布到 main world。构造时通过封闭函数签名和现有 FunctionId 分派器调用，不重新推导泛型参数。返回 Err(BlameError) 在构造位置报告一次诊断；checker 自身失败直接传播，不读取结果槽或重复报告。
 
-struct checker 的 Unchecked(T) 参数使用同一静态骨架，只变更描述符的类型标记；字段读取沿封闭 owner 骨架取类型。newtype 构造器作为普通一等函数注册，构造前检查 payload；投影和模式解构直接读取封闭成员类型。泛型 checker、工厂只初始化一次、发布后重复构造、拒绝与执行失败已有覆盖。codec 解码的检查回调尚未接入，仍显式拒绝，不能把直接构造的完成当作 codec 检查完成。
+struct checker 的 Unchecked(T) 参数使用同一静态骨架，只变更描述符的类型标记；字段读取沿封闭 owner 骨架取类型。newtype 构造器作为普通一等函数注册，构造前检查 payload；投影和模式解构直接读取封闭成员类型。泛型 checker、工厂只初始化一次、发布后重复构造、拒绝与执行失败已有覆盖。
+
+codec 解码也通过普通分派器调用这些 checker。codegen 沿封闭目标类型的成员/参数边，收集可达检查，生成包含 owner/site、初始化槽及临时代码地址的调用包；这些地址仅借用于当前调用，不进入 heap。解码器在构造边界释放 Runtime 借用再调用 checker：子值检查先于父值与后续兄弟字段；检查拒绝保留为原生 Err(BlameError)，执行失败直接传播。缺失的封闭检查记录报内部错误，不补猜或跳过。codec property 的编码/解码回调仍待接入。
 
 ## 验收条件
 

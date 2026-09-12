@@ -3,6 +3,11 @@ import "std/codec" {encode, decode, Value};
 import "std/dict" as dict;
 import "./base.json" as base;
 
+@check(fn(value) {
+    if value > 0 { Ok(()) } else { Err(blame!("positive input required", value)) }
+})
+type Count = struct(Int);
+
 export def answer = entry.main(
     { sources: ["input"], envs: ["TELORA_NATIVE_TEST_ENV"], args: True },
     fn(ctx) { encode(Value.type, (ctx, base.data)) },
@@ -25,7 +30,7 @@ export def decoded = entry.main(
             Some(value) => value,
             None => fail!("declared input is absent"),
         };
-        match decode(Dict(Int).type, input) {
+        match decode(Dict(Count).type, input) {
             Ok(value) => encode(Value.type, value),
             Err(error) => raise!(error),
         }

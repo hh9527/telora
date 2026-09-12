@@ -2,6 +2,38 @@ use super::*;
 
 type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *const u64) -> u32;
 
+/// A decode packet borrows initializer and dispatcher addresses from its
+/// generated adapter. No code address is stored in a runtime heap object.
+pub(super) unsafe fn decode(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, count: u64) -> u32 {
+    context.boundary(|context| {
+        let result = (|| -> Result<Status> {
+            let rt = context.runtime()?;
+            let mut cursor = unsafe { *data } as *const u64;
+            let mut inputs = Vec::with_capacity(3);
+            for _ in 0..3 {
+                let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+                let width = rt.layout(input)?.words;
+                inputs.push(Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(cursor, width) }.into() });
+                cursor = unsafe { cursor.add(width) };
+            }
+            let target = rt.represented_type(inputs[1].as_ref())?;
+            let count = usize::try_from(count).map_err(|_| "decode check count overflow")?;
+            let mut checks = Vec::with_capacity(count);
+            for index in 0..count {
+                let words = unsafe { std::slice::from_raw_parts(data.add(1 + index * 6), 6) };
+                checks.push(codec::CheckPlan { owner: TypeId(words[0] as u32), site: words[1], slot: words[2], signature: TypeId(words[3] as u32), initializer: words[4] as usize, dispatcher: words[5] as usize });
+            }
+            let mut decoder = codec::Decoder { context, checks: &checks };
+            let Some(value) = decoder.decode(ty, target, &inputs[0], &inputs[2], origin.words())? else { return Ok(Status::Failed); };
+            let rt = context.runtime()?;
+            rt.validate(value.as_ref(), ty)?;
+            unsafe { std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, value.words().len()); }
+            Ok(Status::Success)
+        })();
+        match result { Ok(status) => status, Err(error) => context.fail_at(error, origin) }
+    }) as u32
+}
+
 /// The packet contains a generated dispatcher, container, accumulator and
 /// closure. Only descriptor words cross callbacks; heap objects stay in place.
 pub(super) unsafe fn fold(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, operation: u64) -> u32 {

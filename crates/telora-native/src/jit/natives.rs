@@ -416,8 +416,34 @@ impl Lower<'_, '_> {
                 || output.arguments.len() != 2
                 || output.arguments[0] != self.mir.types[arguments[1].index()].arguments[0]
             { return Err("native codec decode signature mismatch".into()); }
-            let count = self.builder.ins().iconst(types::I64, 0);
-            let result = self.object(node, helpers::DECODE, self.return_type, data, count)?;
+            let mut pending = vec![output.arguments[0]];
+            let mut reachable = std::collections::BTreeSet::new();
+            while let Some(ty) = pending.pop() {
+                if !reachable.insert(ty) { continue; }
+                pending.extend(self.mir.types[ty.index()].arguments.iter().copied());
+                if let Some(layout) = &self.mir.type_layouts[ty.index()] {
+                    pending.extend(layout.members.iter().flatten().copied());
+                }
+            }
+            let checks = self.mir.construction_checks.iter().enumerate()
+                .filter(|(_, check)| check.concrete && reachable.contains(&check.owner))
+                .map(|(index, check)| (index, check.owner, check.site)).collect::<Vec<_>>();
+            let mut packet = vec![data];
+            for &(index, owner, site) in &checks {
+                let (slot, initializer, signature) = self.functions.check(self.mir, index, self.module)?;
+                let dispatcher = self.functions.dispatcher(signature, self.module)?;
+                let site = match site { telora_core::mir::PropertySite::Type => 0, telora_core::mir::PropertySite::Variant(index) => u64::from(index) + 1, _ => return Err("unsupported checker site".into()) };
+                for word in [owner.index() as u64, site, u64::from(slot), u64::from(signature.raw())] {
+                    packet.push(self.builder.ins().iconst(types::I64, word as i64));
+                }
+                for function in [initializer, dispatcher] {
+                    let reference = self.module.declare_func_in_func(function, self.builder.func);
+                    packet.push(self.builder.ins().func_addr(self.module.target_config().pointer_type(), reference));
+                }
+            }
+            let packet = self.stack_words(&packet)?;
+            let count = self.builder.ins().iconst(types::I64, checks.len() as i64);
+            let result = self.object(node, helpers::DECODE, self.return_type, packet, count)?;
             return self.write_return(&result);
         }
         if (module.id, declaration.name.as_str()) == (13, "encode_with") {

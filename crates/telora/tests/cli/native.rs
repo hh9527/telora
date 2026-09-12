@@ -87,6 +87,13 @@ fn native_eval_with_initializes_then_injects_declared_context() {
     assert!(diagnostic.contains("expected Int"), "{diagnostic}");
     assert!(diagnostic.contains("@eval-ctx/input:1:11"), "{diagnostic}");
     assert!(diagnostic.contains("fixture/main:"), "{diagnostic}");
+    fs::write(cwd.join("rejected.json"), "{\"answer\":0}").unwrap();
+    let rejected = telora(&cwd).args(["eval-with", "--native", "@src/main:decoded", "--source", "input=rejected.json"]).output().unwrap();
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    let diagnostic = String::from_utf8_lossy(&rejected.stderr);
+    assert!(diagnostic.contains("positive input required"), "{diagnostic}");
+    assert!(diagnostic.contains("@eval-ctx/input:1:11"), "{diagnostic}");
     let output = telora(&cwd).args(["eval-with", "--native", "@src/main:answer"]).output().unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("eval sources do not match"));

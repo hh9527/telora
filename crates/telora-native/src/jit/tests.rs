@@ -1060,10 +1060,8 @@ fn native_codec_decodes_nominal_skeletons_and_recursive_instances() {
 }
 
 #[test]
-fn native_codec_rejects_unlinked_checks_and_properties() {
+fn native_codec_rejects_unlinked_properties() {
     for (declaration, expected) in [
-        ("@check(fn(value) { Ok(()) }) type Item = struct(Int);", "native codec construction checks are not yet linked"),
-        ("type Item = enum { @check(fn(value) { Ok(()) }) Payload(Int) };", "native codec construction checks are not yet linked"),
         ("import \"std/_codec\" { rename_all, RenameCase }; @rename_all(RenameCase.CamelCase) type Item = struct { a: Int };", "native codec property execution is not yet linked"),
     ] {
         let source = format!("import \"std/codec\" {{decode, Value}}; {declaration} export def answer = decode(Item.type, Value.Int(1));");
@@ -1074,6 +1072,48 @@ fn native_codec_rejects_unlinked_checks_and_properties() {
         assert!(compiled.call(&mut context, &[]).is_err());
         assert_eq!(context.diagnostics().len(), 1);
         assert_eq!(context.diagnostics()[0].message, expected);
+    }
+}
+
+#[test]
+fn native_codec_checkers_return_blame_and_check_children_before_parents() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/codec-checks.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.runtime().unwrap().semantic_json(&contract, &value).unwrap(), "[42,true,true,2,true,3,\"ok\",true]");
+    assert!(context.diagnostics().is_empty());
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
+fn native_codec_checker_rejection_precedes_later_sibling_decode_and_failure_aborts() {
+    for (checker, expected, fails) in [
+        ("Err(blame!(\"first child rejected\", value))", "first child rejected", false),
+        ("fail!(\"checker execution failed\", value)", "checker execution failed", true),
+    ] {
+        let source = format!("import \"std/codec\" {{decode, Value}}; @check(fn(value) {{ {checker} }}) type Child = struct(Int); type Parent = struct {{a: Child, z: Int}}; export def answer = decode(Parent.type, Value.Object({{a: Value.Int(0), z: Value.String(\"wrong\")}}));");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]);
+        if fails {
+            assert!(result.is_err());
+            assert_eq!(context.diagnostics().len(), 1);
+            assert_eq!(context.diagnostics()[0].message, expected);
+        } else {
+            let value = result.unwrap();
+            assert!(context.diagnostics().is_empty());
+            let rt = context.runtime().unwrap();
+            let blame = rt.enum_payload(&value).unwrap().unwrap().to_owned();
+            let (message, subjects) = rt.blame_diagnostic(&blame).unwrap();
+            assert_eq!(message, expected);
+            assert_eq!(subjects.len(), 1);
+        }
+        assert_eq!(context.call_depth(), 0);
     }
 }
 
