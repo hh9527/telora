@@ -57,11 +57,11 @@ pub(super) struct Codec<'a> {
 }
 
 impl Codec<'_> {
-    pub(super) fn charge(&mut self, amount: u64, input: &Value) -> std::result::Result<(), DecodeFailure> {
-        if self.context.consume_fuel(amount, input.origin()) != crate::abi::Status::Success {
-            return Err(DecodeFailure::Failed);
-        }
-        Ok(())
+    fn temporary<T>(&self, count: usize) -> std::result::Result<Vec<T>, DecodeFailure> {
+        self.runtime()?.charge_allocation(count, std::mem::size_of::<T>(), 0)?;
+        let mut values = Vec::new();
+        values.try_reserve_exact(count).map_err(|_| "native codec temporary allocation failed")?;
+        Ok(values)
     }
     pub(super) fn runtime(&self) -> Result<&Runtime> { self.context.runtime() }
     pub(super) fn runtime_mut(&mut self) -> Result<&mut Runtime> { self.context.runtime_mut() }
@@ -170,7 +170,7 @@ impl Codec<'_> {
     }
 
     fn decode_value(&mut self, contract: &DataContract, properties: &[(String, TypeId)], target: TypeId, input: &Value, path: &str, depth: usize) -> std::result::Result<Value, DecodeFailure> {
-        self.charge(1, input)?;
+        if self.context.is_aborted() { return Err(DecodeFailure::Failed); }
         if depth > 512 { return Err(DecodeFailure::Runtime("native codec nesting limit".into())); }
         if target == contract.value_type() { return Ok(input.clone()); }
         let info = self.runtime()?.type_info[target.index()].kind;
@@ -206,7 +206,6 @@ impl Codec<'_> {
                 let mut matches = Vec::new();
                 let mut failures = Vec::new();
                 for (index, child) in variants.into_iter().enumerate() {
-                    self.charge(1, input)?;
                     let candidate = if let Some(child) = child {
                         (|| {
                             let value = self.decode_value(contract, properties, child, input, path, depth + 1)?;
@@ -277,8 +276,7 @@ impl Codec<'_> {
             let payload = payload.ok_or_else(|| DecodeFailure::Runtime("missing semantic Array payload".into()))?;
             let count = self.runtime()?.array_len(&payload)?;
             if !array && count != children.len() { return Err(reject("tuple with the declared arity")); }
-            self.charge(count as u64, input)?;
-            let mut values = Vec::with_capacity(count);
+            let mut values = self.temporary(count)?;
             for i in 0..count {
                 let value = self.runtime()?.array_get(&payload, i)?.to_owned();
                 values.push(self.decode_value(contract, properties, children[if array { 0 } else { i }], &value, &format!("{path}[{i}]"), depth + 1)?);
@@ -293,7 +291,6 @@ impl Codec<'_> {
             let payload = payload.ok_or_else(|| DecodeFailure::Runtime("missing semantic Object payload".into()))?;
             let mut inputs = std::collections::BTreeMap::new();
             for i in 0..self.runtime()?.dict_len(&payload)? {
-                self.charge(1, input)?;
                 let (key, value) = self.runtime()?.dict_entry(&payload, i)?;
                 let name = self.runtime()?.text(key)?.as_str().to_owned();
                 if !names.contains(&name) {
@@ -303,7 +300,6 @@ impl Codec<'_> {
             }
             let mut values = Vec::with_capacity(fields.len());
             for (name, ty) in fields {
-                self.charge(1, input)?;
                 if let Some(value) = inputs.remove(&name) {
                     values.push(self.decode_value(contract, properties, ty, &value, &format!("{path}.{name}"), depth + 1)?);
                 } else if self.runtime()?.layout(ty)?.optional {
@@ -321,8 +317,7 @@ impl Codec<'_> {
             let child = layout.arguments[0];
             let payload = payload.ok_or_else(|| DecodeFailure::Runtime("missing semantic Object payload".into()))?;
             let count = self.runtime()?.dict_len(&payload)?;
-            self.charge(count as u64, input)?;
-            let mut pairs = Vec::with_capacity(count);
+            let mut pairs = self.temporary(count)?;
             for i in 0..self.runtime()?.dict_len(&payload)? {
                 let (key, value) = self.runtime()?.dict_entry(&payload, i)?;
                 let (key, value) = (key.to_owned(), value.to_owned());
@@ -366,7 +361,7 @@ impl Codec<'_> {
         input: &Value,
         depth: usize,
     ) -> std::result::Result<Value, DecodeFailure> {
-        self.charge(1, input)?;
+        if self.context.is_aborted() { return Err(DecodeFailure::Failed); }
         if depth > 512 {
             return Err("native codec nesting limit".into());
         }
@@ -420,8 +415,7 @@ impl Codec<'_> {
             } else {
                 layout.fields.len()
             };
-            self.charge(count as u64, input)?;
-            let mut values = Vec::with_capacity(count);
+            let mut values = self.temporary(count)?;
             for i in 0..count {
                 let value = if array {
                     self.runtime()?.array_get(input, i)?
@@ -442,8 +436,7 @@ impl Codec<'_> {
             } else {
                 names.len()
             };
-            self.charge(count as u64, input)?;
-            let mut pairs = Vec::with_capacity(count);
+            let mut pairs = self.temporary(count)?;
             for i in 0..count {
                 let (key, value) = if dictionary {
                     let (key, value) = self.runtime()?.dict_entry(input, i)?;

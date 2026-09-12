@@ -48,7 +48,7 @@ impl Codec<'_> {
     }
 
     pub(super) fn parse_value(&mut self, target: TypeId, property: TypeId, input: &Value, range: Option<Range<usize>>, path: &str, depth: usize) -> std::result::Result<Value, DecodeFailure> {
-        self.charge(1, input)?;
+        if self.context.is_aborted() { return Err(DecodeFailure::Failed); }
         if depth > 512 { return Err("native string parse nesting limit".into()); }
         let loc = input.origin().words();
         let layout = self.runtime()?.layout(target)?;
@@ -60,8 +60,6 @@ impl Codec<'_> {
         }
         let reject = |message: &str| DecodeFailure::Rejected(format!("{path}: {message}"), vec![input.origin()]);
         let range = range.ok_or_else(|| reject("required capture is absent"))?;
-        let bytes = self.runtime()?.byte_span_len(input.as_ref())?;
-        self.charge(bytes as u64, input)?;
         let rt = self.runtime()?;
         let source = rt.text(input.as_ref())?;
         let text = source.as_str().get(range.clone()).ok_or("invalid regex capture range")?;
@@ -82,13 +80,14 @@ impl Codec<'_> {
             _ => {}
         }
         let capability = self.property(target, property, input.origin())?.ok_or_else(|| reject("type has no std/string.parse capability"))?;
-        self.charge(bytes as u64, input)?;
         let rt = self.runtime()?;
         let index = rt.layout(capability.type_id())?.field_names.iter().position(|name| name == "regex").ok_or("ParseBy has no regex")?;
         let regex = rt.field(&capability, index)?.to_owned();
         let source = rt.text(input.as_ref())?;
         let captures = rt.regex_captures(&regex, &source.as_str()[range.clone()], target, property).map_err(|error| reject(&error))?;
-        let mut fields = Vec::with_capacity(captures.len());
+        rt.charge_allocation(captures.len(), std::mem::size_of::<Value>(), 0)?;
+        let mut fields = Vec::new();
+        fields.try_reserve_exact(captures.len()).map_err(|_| "native parse field allocation failed")?;
         for (name, child, capture) in captures {
             let range = capture.map(|capture| range.start + capture.start..range.start + capture.end);
             fields.push(self.parse_value(child, property, input, range, &format!("{path}.{name}"), depth + 1)?);

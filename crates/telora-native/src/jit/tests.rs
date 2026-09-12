@@ -51,7 +51,7 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
-fn native_text_parse_admits_bytes_before_returning_a_parse_error() {
+fn native_text_parse_returns_parse_errors_without_per_byte_fuel() {
     let (mir, root) = graph_with(r#"import "std/string" as string;
         export def answer: Fn(String) -> Bool = fn(input) {
             match string.parse(Int.type, input) {Ok(_) => True, Err(_) => False}
@@ -65,15 +65,15 @@ fn native_text_parse_admits_bytes_before_returning_a_parse_error() {
     let value = compiled.call(&mut context, &[small]).unwrap();
     assert_eq!(context.runtime().unwrap().scalar_bits(value.as_ref()).unwrap(), 1);
     context = context.with_fuel(1000);
-    assert!(compiled.call(&mut context, &[large]).is_err());
-    assert_eq!(context.diagnostics().len(), 1);
-    assert_eq!(context.diagnostics()[0].message, "native execution fuel exhausted");
-    assert_eq!(context.diagnostics()[0].origin.words(), [1, 0, 2]);
+    let value = compiled.call(&mut context, &[large]).unwrap();
+    assert_eq!(context.runtime().unwrap().scalar_bits(value.as_ref()).unwrap(), 0);
+    assert!(context.diagnostics().is_empty());
+    assert!(!context.is_aborted());
     assert_eq!(context.call_depth(), 0);
 }
 
 #[test]
-fn native_codec_fuel_exhaustion_is_not_a_recoverable_decode_error() {
+fn native_codec_finite_traversal_does_not_consume_per_node_fuel() {
     let (mir, encode) = graph_with(r#"import "std/codec" as codec;
         import "std/_codec" {untagged};
         @untagged type Choice = enum {Numbers(Array(Int)), Strings(Array(String))};
@@ -96,12 +96,24 @@ fn native_codec_fuel_exhaustion_is_not_a_recoverable_decode_error() {
         let input = compiled.call_root(encode, &mut context, &[if decoding {large.clone()} else {small.clone()}]).unwrap();
         context = context.with_fuel(1000);
         let (root, argument) = if decoding { (decode, input) } else { (encode, large) };
-        assert!(compiled.call_root(root, &mut context, &[argument]).is_err());
-        assert_eq!(context.diagnostics().len(), 1);
-        assert_eq!(context.diagnostics()[0].message, "native execution fuel exhausted");
+        let result = compiled.call_root(root, &mut context, &[argument]).unwrap();
+        if decoding { assert_eq!(context.runtime().unwrap().scalar_bits(result.as_ref()).unwrap(), 1); }
+        assert!(context.diagnostics().is_empty());
         assert_eq!(context.call_depth(), 0);
-        assert_eq!(context.remaining_fuel(), Some(0));
+        assert!(context.remaining_fuel().unwrap() > 0);
     }
+    // A large admitted input still needs a separate budget for codec output
+    // and temporary descriptors; available fuel cannot substitute for memory.
+    let mut rt = crate::runtime::Runtime::new(&sealed).unwrap();
+    let item = rt.scalar(integer, [1, 0, 1], 42).unwrap();
+    let input = rt.array(array, [1, 0, 1], &vec![item; 10_000]).unwrap();
+    let limit = rt.requested_allocation_bytes() + 4096;
+    let mut context = CallContext::with_runtime(rt.with_allocation_limit(limit)).with_fuel(1000);
+    assert!(compiled.call_root(encode, &mut context, &[input]).is_err());
+    assert!(context.runtime().unwrap().allocation_exhausted());
+    assert!(context.is_aborted());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.call_depth(), 0);
 }
 
 #[test]
