@@ -526,7 +526,8 @@ pub(super) fn emit(
         }
         lower.load_instance_captures(key, environment).map_err(|e| format!("native instance capture: {e:?}"))?;
         if !key.initializer && let Some(&symbol) = lower.functions.self_bindings.get(&key.node)
-            && !lower.locals.contains_key(&symbol) {
+            && !lower.locals.contains_key(&symbol)
+            && !key.instance.is_some_and(|id| lower.local_instances.contains_key(&id)) {
             let ty = TypeKey::try_from(key.ty(graph, key.node)?)?;
             let id = lower.builder.ins().iconst(types::I64, i64::from(function.as_u32()));
             let value = lower.object(key.node, helpers::SELF_CLOSURE, ty, environment, id)

@@ -106,13 +106,15 @@ fn native_codec_fuel_exhaustion_is_not_a_recoverable_decode_error() {
 
 #[test]
 fn native_local_mutual_recursion_uses_stable_function_slots() {
-    let (mir, root) = graph_with(include_str!("../../tests/fixtures/mutual-recursive-closures.telora"), static_sources::BUILTINS);
+    for source in [include_str!("../../tests/fixtures/mutual-recursive-closures.telora"), include_str!("../../tests/fixtures/generic-mutual-closures.telora")] {
+    let (mir, root) = graph_with(source, static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();
     let compiled = compile(&sealed, root).unwrap();
     let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
     let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
     let result = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
     assert_eq!(context.runtime().unwrap().semantic_json(&contract, &result).unwrap(), "42");
+    }
 }
 
 #[test]

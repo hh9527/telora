@@ -1719,7 +1719,11 @@ impl Lower<'_, '_> {
                     let binding = &self.mir.hir[edge.node.index()];
                     if !matches!(binding.kind, HirKind::Binding { kind: telora_core::ast::BindingKind::Def | telora_core::ast::BindingKind::Decl, .. }) { continue; }
                     let Some(symbol) = self.mir.hir_symbols[edge.node.index()] else { continue; };
-                    if !self.mir.symbol_generics[symbol.index()].is_empty() || self.locals.contains_key(&symbol) { continue; }
+                    if !self.mir.symbol_generics[symbol.index()].is_empty() {
+                        self.reserve_local_template(edge.node, symbol)?;
+                        continue;
+                    }
+                    if self.locals.contains_key(&symbol) { continue; }
                     let ty = self.ty(edge.node)?;
                     if self.mir.types[ty.index()].constructor != TypeConstructor::Function { continue; }
                     let zero = self.builder.ins().iconst(types::I64, 0);

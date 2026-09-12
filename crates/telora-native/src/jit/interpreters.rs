@@ -10,25 +10,60 @@ impl Lower<'_, '_> {
         }
         Ok(())
     }
-    pub(super) fn local_template(&mut self, node: HirId) -> EmitResult<bool> {
-        let Some(symbol) = self.mir.hir_symbols[node.index()] else { return Ok(false); };
-        if self.mir.symbol_generics[symbol.index()].is_empty() { return Ok(false); }
+    fn local_template_instances(&self, symbol: SymbolId) -> Vec<telora_core::mir::GenericInstanceId> {
         let mut selected = std::collections::BTreeSet::new();
         let mut pending = vec![self.function_key.node];
         while let Some(reference) = pending.pop() {
             if let Some(instance) = self.instance_reference(reference)
-                && self.mir.generic_instances[instance.index()].symbol == symbol
                 && self.mir.generic_instances[instance.index()].concrete {
                 selected.insert(instance);
             }
             pending.extend(self.mir.hir[reference.index()].children.iter().map(|edge| edge.node));
         }
+        // Follow already sealed instance references, including siblings only
+        // referenced by another template body. No substitution is performed.
+        let mut pending = selected.iter().copied().collect::<Vec<_>>();
+        while let Some(instance) = pending.pop() {
+            for &(_, next) in &self.mir.generic_instances[instance.index()].references {
+                if self.mir.generic_instances[next.index()].concrete && selected.insert(next) {
+                    pending.push(next);
+                }
+            }
+        }
+        selected.into_iter().filter(|id| self.mir.generic_instances[id.index()].symbol == symbol).collect()
+    }
+    pub(super) fn reserve_local_template(&mut self, node: HirId, symbol: SymbolId) -> EmitResult<()> {
+        for instance in self.local_template_instances(symbol) {
+            if self.local_instances.contains_key(&instance) { continue; }
+            let key = functions::Key { instance: Some(instance), ..self.function_key };
+            let ty = key.ty(self.mir, node)?;
+            if self.mir.types[ty.index()].constructor != TypeConstructor::Function { continue; }
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            let value = self.object(node, helpers::RESERVE_FUNCTION, TypeKey::try_from(ty)?, zero, zero)?;
+            self.local_instances.insert(instance, value);
+        }
+        Ok(())
+    }
+    pub(super) fn local_template(&mut self, node: HirId) -> EmitResult<bool> {
+        let Some(symbol) = self.mir.hir_symbols[node.index()] else { return Ok(false); };
+        if self.mir.symbol_generics[symbol.index()].is_empty() { return Ok(false); }
+        if matches!(self.mir.hir[node.index()].kind, HirKind::Binding { kind: telora_core::ast::BindingKind::Decl, .. }) {
+            return Ok(true);
+        }
+        let selected = self.local_template_instances(symbol);
         let previous = self.function_key;
         for instance in selected {
             self.function_key.instance = Some(instance);
             let value = self.expression(child(self.mir, node, Role::Value)?, 0);
             self.function_key = previous;
-            self.local_instances.insert(instance, value?);
+            let value = value?;
+            if let Some(mut target) = self.local_instances.get(&instance).cloned() {
+                let ty = TypeKey::try_from(functions::Key { instance: Some(instance), ..previous }.ty(self.mir, node)?)?;
+                target.extend(value);
+                let data = self.stack_words(&target)?;
+                let zero = self.builder.ins().iconst(types::I64, 0);
+                self.object(node, helpers::FILL_FUNCTION, ty, data, zero)?;
+            } else { self.local_instances.insert(instance, value); }
         }
         Ok(true)
     }

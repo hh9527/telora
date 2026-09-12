@@ -1,0 +1,19 @@
+import "std/value" as value;
+import "std/codec" as codec;
+import "std/entry" as entry;
+def functions = do {
+    let offset = 42;
+    decl even: for(T) Fn(Int, T) -> Int;
+    def even = fn(n, witness) {
+        if n == 0 {offset} else {odd(n - 1, witness)}
+    };
+    def odd: for(T) Fn(Int, T) -> Int = fn(n, witness) {
+        if n == 0 {0} else {even(n - 1, witness)}
+    };
+    (even@[String], even@[Int])
+};
+export def answer = codec.encode(value.Value.type, functions.0(4, "text"));
+export def main = entry.main(
+    {sources: [], envs: [], args: False},
+    fn(ctx) {codec.encode(value.Value.type, functions.1(4, 7))},
+);
