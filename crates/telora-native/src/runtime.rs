@@ -265,6 +265,10 @@ impl Runtime {
     }
     fn push_words(&mut self, table: Table, words: Vec<u64>) -> Result<u32> {
         self.charge_allocation(words.len(), 8, std::mem::size_of::<WordItem>())?;
+        self.push_precharged_words(table, words)
+    }
+    /// The caller must charge payload words and the WordItem before insertion.
+    fn push_precharged_words(&mut self, table: Table, words: Vec<u64>) -> Result<u32> {
         let slot = match table {
             Table::Records => self.work.records.push(words)?,
             Table::Newtypes => self.work.newtypes.push(words)?,

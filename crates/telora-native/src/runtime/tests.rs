@@ -4,6 +4,30 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
+fn array_spread_respects_slices_origins_and_preallocates_within_budget() {
+    let mir = graph(SOURCE);
+    let sealed = mir.seal().unwrap();
+    let mut rt = Runtime::new(&sealed).unwrap();
+    let int = value_type(&mir, "integer");
+    let array = value_type(&mir, "ints");
+    let items = [rt.scalar(int, [1, 1, 2], 10).unwrap(), rt.scalar(int, [1, 3, 4], 20).unwrap(), rt.scalar(int, [1, 5, 6], 30).unwrap()];
+    let original = rt.array(array, [1, 0, 7], &items).unwrap();
+    let original = rt.publish(&[original]).unwrap().remove(0);
+    let middle = rt.slice(&original, 1, 2, [1, 8, 9]).unwrap();
+    let joined = rt.array_concat(array, [1, 10, 11], &[middle.clone(), original.clone()]).unwrap();
+    assert_eq!(rt.array_len(&joined).unwrap(), 4);
+    assert_eq!(rt.array_get(&joined, 0).unwrap().words(), rt.array_get(&original, 1).unwrap().words());
+    for index in 0..3 { assert_eq!(rt.array_get(&joined, index + 1).unwrap().words(), rt.array_get(&original, index).unwrap().words()); }
+    let requested = rt.requested_allocation_bytes();
+    let cost = 4 * 3 * 8 + std::mem::size_of::<WordItem>() as u64;
+    let mut rt = rt.with_allocation_limit(requested + cost - 1);
+    let count = rt.work.arrays.entries.len();
+    assert!(rt.array_concat(array, [1, 10, 11], &[middle, original]).is_err());
+    assert!(rt.allocation_exhausted());
+    assert_eq!(rt.work.arrays.entries.len(), count);
+}
+
+#[test]
 fn regex_budget_counts_compiled_state_cache_and_shared_publication() {
     let mir = crate::test_support::graph_with("import \"std/regex\" as regex; export def pattern = regex.compile(\"(?P<word>[a-z]+)\"); export def text = \"abc\";", telora_core::static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();

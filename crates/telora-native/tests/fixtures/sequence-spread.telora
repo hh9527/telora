@@ -1,0 +1,33 @@
+import "std/codec" {encode, Value};
+import "std/entry" as entry;
+type Item = struct {value: Int};
+def append: for(T) Fn((T, String)) -> (T, String, Int) = fn(value) { (...value, 3) };
+def append_array: for(T) Fn(Array(T), T) -> Array(T) = fn(values, value) { [...values, value] };
+def base = (1, "text");
+def shared: Item = {value: 42};
+def items: Array(Item) = [shared];
+def checks: Fn() -> Value = fn() {
+    let empty = [];
+    let before = [...empty, 1];
+    let after = [1, ...empty];
+    let middle = [...[], 1, ...[], 2, ...[]];
+    let nested = [...[[]], [1]];
+    let copied = [...items, shared, ...items];
+    let empty_spreads: Array(Int) = [...[], ...[]];
+    let nominal: (Int, Item, String) = (...(1, {value: 2}), "hi");
+    let metadata: (Type, Int) = (...(Int.type,), 42);
+    encode(Value.type, [
+        (...base, True, 3) == (1, "text", True, 3),
+        (...(), ...base, ...(2,), ...()) == (1, "text", 2),
+        (...base) == base, (...base,) == base, (...()) == (),
+        (...((1, 2),), 3) == ((1, 2), 3),
+        append(base) == (1, "text", 3), nominal.1.value == 2,
+        metadata.0 == Int.type, metadata.1 == 42,
+        before == [1], after == [1], middle == [1, 2], nested == [[], [1]],
+        copied == [shared, shared, shared], items == [shared],
+        append_array([1, 2], 3) == [1, 2, 3],
+        empty_spreads == [],
+    ])
+};
+export def answer = checks();
+export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });

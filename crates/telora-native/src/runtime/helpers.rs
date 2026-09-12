@@ -47,6 +47,7 @@ pub(crate) const DIAGNOSTIC_SCOPE: u32 = 52;
 pub(crate) const EQUAL: u32 = 53;
 pub(crate) const FLOAT_REMAINDER: u32 = 54;
 pub(crate) const MAKE_TEST: u32 = 55;
+pub(crate) const ARRAY_CONCAT: u32 = 56;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -209,6 +210,11 @@ pub(crate) unsafe extern "C" fn object(
                         words = &words[width..];
                     }
                     rt.blame(ty, loc, &message.ok_or("blame message missing")?, subjects)?
+                }
+                ARRAY_CONCAT => {
+                    let words = unsafe { std::slice::from_raw_parts(data, count.checked_mul(4).ok_or("array spread packet overflow")?) };
+                    let arrays = words.chunks_exact(4).map(|words| Value { arena: rt.identity, words: words.into() }).collect::<Vec<_>>();
+                    rt.array_concat(ty, loc, &arrays)?
                 }
                 ARRAY_BUILD => {
                     let mut inputs = Vec::new();

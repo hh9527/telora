@@ -1,0 +1,17 @@
+type Record = struct {x: Int};
+export def answer: Fn(Int) -> () = fn(mode) {
+    if mode == 0 {
+        let base: Record = {x: 1};
+        let patch: Record = {x: 2};
+        let ignored = base <~ {x: fail!("spread failed"), ...patch};
+        ()
+    } else if mode == 1 {
+        let broken: Fn() -> (Int,) = fn() { fail!("spread failed") };
+        let ignored = (...broken(), 2);
+        ()
+    } else {
+        let broken: Fn() -> Array(Int) = fn() { fail!("spread failed") };
+        let ignored = [...broken(), 2];
+        ()
+    }
+};

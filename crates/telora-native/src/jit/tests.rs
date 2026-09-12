@@ -51,6 +51,21 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_spread_failures_are_not_hidden_by_later_contributions() {
+    let (mir, root) = graph(include_str!("../../tests/fixtures/spread-failures.telora"));
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    for mode in 0..3 {
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let argument = context.runtime().unwrap().scalar(compiled.arguments[0], [0, 0, 0], mode).unwrap();
+        assert!(compiled.call(&mut context, &[argument]).is_err());
+        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.diagnostics()[0].message, "spread failed");
+        assert_eq!(context.call_depth(), 0);
+    }
+}
+
+#[test]
 fn native_record_spreads_keep_effect_order_origins_and_shared_backing() {
     let (mir, root) = graph(include_str!("../../tests/fixtures/record-effects.telora"));
     let sealed = mir.seal().unwrap();

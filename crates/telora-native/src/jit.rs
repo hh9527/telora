@@ -1373,6 +1373,7 @@ impl Lower<'_, '_> {
                 let count = self.builder.ins().iconst(types::I64, count);
                 self.object(node, helpers::INTERPOLATE, key, data, count)
             }
+            HirKind::Array | HirKind::Tuple if syntax.children.iter().any(|edge| edge.role == Role::Item && matches!(self.mir.hir[edge.node.index()].kind, HirKind::Spread)) => self.sequence_spread(node, depth),
             HirKind::Array | HirKind::Tuple => {
                 if self
                     .mir
@@ -1739,5 +1740,7 @@ mod properties;
 mod scalars;
 #[path = "jit/records.rs"]
 mod records;
+#[path = "jit/sequences.rs"]
+mod sequences;
 #[cfg(test)]
 mod tests;
