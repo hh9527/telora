@@ -535,6 +535,24 @@ fn never_global_reference_propagates_initializer_failure() {
     let error = compiled.call(&mut context, &[]).unwrap_err();
     assert_eq!(context.diagnostics().len(), 1, "{error}");
     assert!(context.diagnostics()[0].message.contains("initialization failure"));
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.call_depth(), 0);
+    assert_eq!(context.stack_words(), 0);
+    let runtime = context.runtime_mut().unwrap();
+    assert!(runtime.publish(&[]).is_err());
+    assert!(!runtime.is_published());
+
+    let module = mir.hir[root.index()].module;
+    let executable = mir.seal().unwrap().seal_modules(&[module]).unwrap();
+    let compiled = compile_executable(&executable).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.initialize(&mut context).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(context.diagnostics()[0].message.contains("initialization failure"));
+    assert!(compiled.initialize(&mut context).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(!context.runtime().unwrap().is_published());
 }
 
 #[test]

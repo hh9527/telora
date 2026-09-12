@@ -302,7 +302,7 @@ fn native_check_obeys_phase_boundaries_and_preserves_failure_location() {
     );
     fs::write(
         cwd.join("src/main.telora"),
-        "def unused: Int = fail!(\"native initializer failed\"); export def answer = 42;",
+        "def unused = fail!(\"native initializer failed\"); export def answer = 42;",
     )
     .unwrap();
     let output = telora(&cwd)

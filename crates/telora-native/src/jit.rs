@@ -152,7 +152,8 @@ impl Compiled {
             .runtime_mut()?
             .bind_code_plan(self.identity, &self.demands)?;
         let ty = self.demands[slot].1;
-        let width = self.layouts.words(ty)?;
+        let never = self.layouts.is_never(ty)?;
+        let width = if never { 0 } else { self.layouts.words(ty)? };
         let mut words = vec![0; width].into_boxed_slice();
         let (address, origin) = self.initializers[slot];
         // SAFETY: these addresses belong to this borrowed owner, each is a
