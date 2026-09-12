@@ -163,7 +163,7 @@ struct Tables {
     environments: WordTable,
     formats: WordTable,
     regexes: Vec<pattern::CompiledRegex>,
-    hashes: Vec<sha2::Sha256>,
+    hashes: Vec<sha256::Context>,
     blames: Vec<blame::Blame>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -684,6 +684,7 @@ mod reflection;
 mod schema;
 mod path;
 mod hash;
+mod sha256;
 mod diagnostics;
 mod equality;
 mod array_ops;

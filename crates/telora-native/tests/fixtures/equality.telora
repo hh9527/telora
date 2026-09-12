@@ -19,6 +19,7 @@ def empty = empty_factory();
 def captured = captured_factory(1);
 def pattern = regex.compile("a+");
 def formatted = fmt.concat(["before", "after"], [fmt.from_int(42)]);
+def state = hash.update_string(hash.new(), "prefix");
 def checks: Fn() -> Value = fn() {
     encode(Value.type, [
         eq.equal(first, second), first == second,
@@ -42,6 +43,10 @@ def checks: Fn() -> Value = fn() {
         !eq.equal(formatted, fmt.from_string("before42after")),
         !eq.equal(fmt.from_int(1), fmt.from_string("1")),
         !eq.equal(fmt.from_float(0.0), fmt.from_float(-0.0)),
+        eq.equal(state, hash.update_string(hash.new(), "prefix")),
+        !eq.equal(state, hash.update_string(hash.new(), "different")),
+        eq.equal(hash.update_int(state, -42), hash.update_int(state, -42)),
+        !eq.equal(hash.update_int(state, -42), hash.update_int(state, 42)),
     ])
 };
 export def answer = checks();
