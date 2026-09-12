@@ -169,8 +169,10 @@ impl Runtime {
     pub(super) fn regex_captures(&self, pattern: &Value, input: &str, owner: TypeId, property: TypeId) -> Result<Vec<(String, TypeId, Option<std::ops::Range<usize>>)>> {
         let compiled = self.regex_object(pattern)?;
         self.regex_contract(compiled, property, owner)?;
+        // Captures::all allocates exactly group_info.slot_len() slots. Admit
+        // that known storage before asking the engine to allocate it.
+        self.charge_allocation(compiled.regex.group_info().slot_len(), std::mem::size_of::<Option<regex_automata::util::primitives::NonMaxUsize>>(), 0)?;
         let mut captures = compiled.regex.create_captures();
-        self.charge_allocation(captures.slots().len(), std::mem::size_of::<Option<regex_automata::util::primitives::NonMaxUsize>>(), 0)?;
         let mut cache = compiled.cache.borrow_mut();
         let before = cache.memory_usage();
         compiled.regex.search_captures_with(&mut cache, &Input::new(input), &mut captures);

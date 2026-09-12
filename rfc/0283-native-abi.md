@@ -87,6 +87,8 @@ codec 编码/解码及文本解析的递归节点已扣减同一 fuel，容器�
 
 这里的高水位只记录请求存活量，realloc 按净增量更新，不包含分配器开销、复制时的瞬时双份内存或 RSS。三个样本分别暴露了 API 未计入的 64/64/128 字节保留容量；这些样本不构成通用内存/工作量上界证明。继续研究准入必须覆盖 epsilon 栈容量，不能只按该 API 报告值计费；也不能用表面 pattern 长度代替 Unicode 展开后的程序规模。生产仍使用 meta 引擎。
 
+已将生产捕获结果存储的配额检查移到 `create_captures()` 之前：依据 `group_info().slot_len()` 计算 `Option<NonMaxUsize>` 数组的请求大小，与当前依赖 `Captures::all` 的构造一致。三个 native string-parse 回归通过，覆盖命名捕获、嵌套解析、来源/字符串复用及 checker 失败。这只修正捕获数组的准入顺序，不涵盖搜索缓存和引擎编译的临时分配。
+
 实验还修复了独立构建缺口：runtime helper 不依赖 Cranelift，因此不再被 `jit` feature 隐藏；不开启该 feature 时 codec 也能正常编译。无 jit 的 22 项 runtime/ABI 测试及两项引擎对照/缓存观察实验通过。
 
 用简单 Rust ABI 单测验证混合宽度参数/返回、递归帧互不覆盖、错误不读取未初始化结果、来源完整保留。记录首个支持的 target 和 word/endian 约束；不宣称 ABI 跨 target 稳定。
