@@ -1,0 +1,8 @@
+export def integer = 1;
+export def text = "text";
+export def ints: Array(Int) = [1, 2];
+export def mapping: Dict(Array(Int)) = {a: ints};
+export def repeated = (ints, ints);
+export type Rec = struct {count: Int, label: String};
+export def record: Rec = {count: 1, label: "text"};
+export def pair = (1, "text");

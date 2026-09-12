@@ -1,6 +1,6 @@
 # RFC 0284：Native 分类对象表与 world runtime
 
-- 状态：草案；由伞 RFC 跟踪，尚未实现
+- 状态：实施中；基础分类表和初始化发布已实现，剩余对象类别及 JIT helper 继续推进
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -21,6 +21,14 @@
 - helper 使用 RFC 0283 ABI，不借用旧 Val 转换桥；明确 borrowed view 在分配和回收期间的有效期。
 
 ## 实施计划
+
+### 基础表与发布进展
+
+独立 `telora-native::runtime` 复用 RFC 0281 实验的存储设计，不导入旧 VM/Val/Heap。与 native ABI 共用完整 Value 描述，描述外携带 session 身份以拒绝跨 session 和过期初始化引用。分配发生在 work，读取根据 HeapRef 的 world 位选择 main/work。
+
+已支持 String（inline/heaped）、Tuple/Record 共表、Array/slice、有序双列 Dict。`publish` 对整个根集合使用一次转发表复制，保留共享和来源；临时 main 全部构建成功后才替换状态，清空初始化 work 并更新 session 身份。发布失败不改变旧 world，重复发布拒绝。新 work 可引用已发布 main 对象，但不能写入 main 表。
+
+验证：`cargo test -p telora-native --features jit` 通过 9 项测试，其中 3 项 runtime 测试覆盖分类表共享、持久更新、Dict/Array 嵌套别名发布、来源保留、初始化句柄失效和失败原子性。测试源码放在 `tests/fixtures/runtime.telora`。enum/闭包/dyn/native resource、真实环以及机器码 helper 尚待覆盖；不据此关闭 #181。
 
 先落实本模块契约并保证可独立编译，再用简单单测或少量语言用例验证，然后进入后继模块。允许 native 路线阶段性缺失能力，不要求每次提交完成整个语言。实现前将本草案中的待定项补成明确决议，不引入兼容兜底。
 

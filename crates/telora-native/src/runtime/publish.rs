@@ -1,0 +1,212 @@
+use super::*;
+use std::collections::BTreeMap;
+
+#[derive(Default)]
+struct Copies {
+    objects: BTreeMap<(Table, u32), u32>,
+    strings: BTreeMap<u32, u32>,
+}
+impl Runtime {
+    /// Publish initialization atomically, preserving aliases in the whole root
+    /// set. Only after all copies succeed do we retire the initialize world.
+    pub fn publish(&mut self, roots: &[Value]) -> Result<Vec<Value>> {
+        if self.published {
+            return Err("main world is already sealed".into());
+        }
+        let mut target = Tables::default();
+        let mut copies = Copies::default();
+        let mut result = Vec::with_capacity(roots.len());
+        for root in roots {
+            self.validate(root.as_ref(), root.type_id())?;
+            let mut words = root.words.to_vec();
+            self.copy_value(&mut words, &mut target, &mut copies, 0)?;
+            result.push(Value {
+                arena: 0,
+                words: words.into_boxed_slice(),
+            });
+        }
+        let identity = NEXT_ARENA
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .map_err(|_| "arena identity overflow")?;
+        for root in &mut result {
+            root.arena = identity;
+        }
+        self.main = target;
+        self.work = Tables::default();
+        self.identity = identity; // all escaped initialize descriptors become stale
+        self.published = true;
+        Ok(result)
+    }
+    fn copy_value(
+        &self,
+        words: &mut [u64],
+        target: &mut Tables,
+        copies: &mut Copies,
+        depth: usize,
+    ) -> Result<()> {
+        if depth > 512 {
+            return Err("native publication nesting limit".into());
+        }
+        if words.len() < 2 {
+            return Err("truncated published value".into());
+        }
+        let ty = TypeId((words[1] >> 32) as u32);
+        let layout = self.layout(ty)?;
+        self.validate(
+            ValueRef {
+                arena: self.identity,
+                words,
+            },
+            ty,
+        )?;
+        match layout.kind {
+            Kind::Scalar => {}
+            Kind::Tuple if layout.fields.is_empty() => {}
+            Kind::String => {
+                // Validate both inline and heap string encodings before copying.
+                self.text(ValueRef {
+                    arena: self.identity,
+                    words,
+                })?;
+                if words[2] as u8 == 1 {
+                    let old = (words[2] >> 32) as u32;
+                    let id = if let Some(&id) = copies.strings.get(&old) {
+                        id
+                    } else {
+                        let bytes = self.string_bytes(old)?;
+                        let id = HeapRef::new(World::Main, target.strings.push(bytes)?)?.raw();
+                        copies.strings.insert(old, id);
+                        id
+                    };
+                    words[2] = (words[2] & 0xffff_ffff) | (u64::from(id) << 32);
+                }
+            }
+            Kind::Tuple | Kind::Record => {
+                let id = self.copy_object(
+                    Table::Records,
+                    words[2] as u32,
+                    Some(ty),
+                    target,
+                    copies,
+                    depth + 1,
+                )?;
+                words[2] = u64::from(id);
+            }
+            Kind::Array => {
+                let array = Value {
+                    arena: self.identity,
+                    words: words.to_vec().into_boxed_slice(),
+                };
+                self.array_range(&array)?;
+                let id = self.copy_object(
+                    Table::Arrays,
+                    words[2] as u32,
+                    Some(layout.arguments[0]),
+                    target,
+                    copies,
+                    depth + 1,
+                )?;
+                words[2] = (words[2] & 0xffff_ffff_0000_0000) | u64::from(id);
+            }
+            Kind::Dict => {
+                let dict = Value {
+                    arena: self.identity,
+                    words: words.to_vec().into_boxed_slice(),
+                };
+                self.dict_parts(&dict)?;
+                let keys = self.copy_object(
+                    Table::Arrays,
+                    words[2] as u32,
+                    None,
+                    target,
+                    copies,
+                    depth + 1,
+                )?;
+                let values = self.copy_object(
+                    Table::Arrays,
+                    words[3] as u32,
+                    Some(layout.arguments[0]),
+                    target,
+                    copies,
+                    depth + 1,
+                )?;
+                words[2] = (words[2] & 0xffff_ffff_0000_0000) | u64::from(keys);
+                words[3] = u64::from(values);
+            }
+            Kind::Other => {
+                return Err(format!(
+                    "native publication unsupported TypeId {}",
+                    ty.index()
+                ));
+            }
+        }
+        Ok(())
+    }
+    fn copy_object(
+        &self,
+        table: Table,
+        old: u32,
+        ty: Option<TypeId>,
+        target: &mut Tables,
+        copies: &mut Copies,
+        depth: usize,
+    ) -> Result<u32> {
+        if let Some(&id) = copies.objects.get(&(table, old)) {
+            return Ok(id);
+        }
+        let mut words = self.object_words(table, old)?.to_vec();
+        let slot = match table {
+            Table::Records => target.records.push(vec![])?,
+            Table::Arrays => target.arrays.push(vec![])?,
+        };
+        let id = HeapRef::new(World::Main, slot)?.raw();
+        copies.objects.insert((table, old), id); // register before traversing cycles
+        match table {
+            Table::Records => {
+                let layout = self.layout(ty.ok_or("record copy needs type")?)?;
+                let mut end = 0;
+                for &(field, offset) in &layout.fields {
+                    let size = self.layout(field)?.words;
+                    if offset != end {
+                        return Err("non-contiguous record layout".into());
+                    }
+                    end = offset.checked_add(size).ok_or("record size overflow")?;
+                    let value = words.get_mut(offset..end).ok_or("truncated record")?;
+                    if (value[1] >> 32) as u32 != field.0 {
+                        return Err("record field type mismatch".into());
+                    }
+                    self.copy_value(value, target, copies, depth)?;
+                }
+                if end != words.len() {
+                    return Err("record extent mismatch".into());
+                }
+            }
+            Table::Arrays if !words.is_empty() => {
+                let stride = match ty {
+                    Some(t) => self.layout(t)?.words,
+                    None => 4, // Dict's String column
+                };
+                if words.len() % stride != 0 {
+                    return Err("array extent mismatch".into());
+                }
+                for value in words.chunks_mut(stride) {
+                    let actual = TypeId((value[1] >> 32) as u32);
+                    if let Some(t) = ty {
+                        if actual != t {
+                            return Err("array element type mismatch".into());
+                        }
+                    } else {
+                        self.expect(actual, Kind::String)?;
+                    }
+                    self.copy_value(value, target, copies, depth)?;
+                }
+            }
+            Table::Arrays => {}
+        }
+        match table {
+            Table::Records => target.records.entries[slot as usize].words = words,
+            Table::Arrays => target.arrays.entries[slot as usize].words = words,
+        }
+        Ok(id)
+    }
+}

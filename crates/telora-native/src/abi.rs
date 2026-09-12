@@ -10,8 +10,11 @@ pub const HEADER_WORDS: usize = 2;
 
 /// The numeric identity is the sealed MIR index, never a second type allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TypeKey(u32);
+pub struct TypeKey(pub(crate) u32);
 impl TypeKey {
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
     pub fn raw(self) -> u32 {
         self.0
     }
@@ -36,6 +39,9 @@ pub enum World {
 #[repr(transparent)]
 pub struct HeapRef(u32);
 impl HeapRef {
+    pub(crate) fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
     pub fn new(world: World, slot: u32) -> Result<Self> {
         if slot >= 1 << 31 {
             return Err("HeapId exceeds 31-bit slot space".into());
@@ -154,6 +160,7 @@ impl Layouts {
         words.push(u64::from(end) | (u64::from(ty.0) << 32));
         words.extend_from_slice(data);
         Ok(Value {
+            arena: 0,
             words: words.into_boxed_slice(),
         })
     }
@@ -161,7 +168,8 @@ impl Layouts {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Value {
-    words: Box<[u64]>,
+    pub(crate) arena: u64,
+    pub(crate) words: Box<[u64]>,
 }
 impl Value {
     #[cfg(feature = "jit")]
@@ -169,7 +177,7 @@ impl Value {
         if words.len() != size || size < HEADER_WORDS {
             return Err("native result width mismatch".into());
         }
-        let value = Self { words };
+        let value = Self { arena: 0, words };
         if value.type_key() != expected {
             return Err("native result TypeId mismatch".into());
         }
