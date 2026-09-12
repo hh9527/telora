@@ -1,0 +1,6 @@
+export def answer = do {
+    decl later: Fn(Int) -> Int;
+    let result = later(42);
+    def later = fn(value) {value};
+    result
+};

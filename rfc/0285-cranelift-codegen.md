@@ -143,6 +143,8 @@ Host 入口和生成代码的间接分派都处理这种槽。函数自身已捕
 
 槽链解析已纳入同一 session fuel：每读取一个槽或最终函数描述符前扣一个单位，host 入口和生成代码 dispatcher 共用这条路径。遍历时借用 arena 内描述符，仅最终返回复制一次描述符，不按链长反复分配临时 Value。八层槽加最终函数的边界测试验证 9 单位成功、8 单位耗尽、不写输出缓冲、保留 helper 提供的来源和 sticky abort；这不等于验证所有调用场景的诊断定位，也不表示其他 native helper 的预算已全部闭合。
 
+源码间接调用在参数求值后、进入公共 dispatcher 前解析词法槽，解析失败使用调用 HIR 的位置。修复前 `later(42)` 的 Pending 错误标在外层 block，现精确覆盖调用范围。`function-before-initialization.telora` 由 JIT 和真实 `check --native --lib` 验证，失败只报告一次、调用深度归零、命令失败退出；参数自身 fail 的变体仍优先报告参数错误。公共 dispatcher 保留解析检查以覆盖原生回调，回调场景的定位需另行核对，不能用直接源码调用的证据代替。
+
 `.cast!` 已消费封闭目标类型与 checker 实例生成调用包；运行时先验证整个输入的表示，再转换并执行声明检查，不调用 encode/decode，也不重新推导类型。支持 Record/Dict、Array、Tuple/Newtype、Option/Result 和 Unchecked 到 owner；拒绝不同 nominal 身份以及数值隐式转换。未改变的子对象保留 backing 与来源。结构不匹配返回 Err(String)，checker 失败只产生一次执行诊断。
 
 CLI 语言资产覆盖 eval/eval-with 的 19 项类型身份与转换检查，并将解包后的容器数据与默认后端比较。默认后端对 cast 容器写入类型标记、对普通容器不总是写入相同标记，其相等比较会受此影响；因此不以该差异规定 native 的相等语义。默认运行时代码保持不变。

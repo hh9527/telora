@@ -931,10 +931,10 @@ impl Lower<'_, '_> {
         } else {
             None
         };
-        let (function, closure, output, expected) = if local.is_some()
+        let indirect = local.is_some()
             || self.global_instance(callee_node).is_some()
-            || self.callable(callee_node, 0).is_err()
-        {
+            || self.callable(callee_node, 0).is_err();
+        let (function, closure, output, expected) = if indirect {
             let ty = self.ty(callee_node)?;
             let signature = &self.mir.types[ty.index()];
             if signature.constructor != TypeConstructor::Function {
@@ -997,6 +997,15 @@ impl Lower<'_, '_> {
             let value = self.expression(arg, depth + 1)?;
             words.extend(self.fit_metadata(arg, ty, value)?);
         }
+        // Resolve at the source call after evaluating its arguments, so a
+        // pending lexical slot reports this call rather than a shared
+        // dispatcher's compilation root. Callbacks still use dispatcher checks.
+        let environment = if indirect {
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            let ty = TypeKey::try_from(self.ty(callee_node)?)?;
+            let resolved = self.object(node, helpers::RESOLVE_FUNCTION, ty, environment, zero)?;
+            self.stack_words(&resolved)?
+        } else { environment };
         let data = self.stack_words(&words)?;
         let never = self.layouts.is_never(output)?;
         let width = if never {

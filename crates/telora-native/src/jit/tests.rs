@@ -105,6 +105,31 @@ fn native_codec_fuel_exhaustion_is_not_a_recoverable_decode_error() {
 }
 
 #[test]
+fn native_pending_function_failure_points_to_the_call() {
+    let source = include_str!("../../tests/fixtures/function-before-initialization.telora");
+    let (mir, root) = graph(source);
+    let call = mir.hir.iter().find(|node| node.module == mir.hir[root.index()].module && matches!(node.kind, HirKind::Call)
+        && &source[node.location.start as usize..node.location.end as usize] == "later(42)").unwrap().location;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(context.diagnostics()[0].message.contains("before its declaration"));
+    assert_eq!(context.diagnostics()[0].origin, Origin::from_loc(Some(call)));
+    assert_eq!(context.call_depth(), 0);
+    let source = source.replace("later(42)", "later(fail!(\"argument failed first\"))");
+    let (mir, root) = graph(&source);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "argument failed first");
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
 fn native_local_mutual_recursion_uses_stable_function_slots() {
     for source in [include_str!("../../tests/fixtures/mutual-recursive-closures.telora"), include_str!("../../tests/fixtures/generic-mutual-closures.telora")] {
     let (mir, root) = graph_with(source, static_sources::BUILTINS);

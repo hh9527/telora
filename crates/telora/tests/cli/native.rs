@@ -325,6 +325,15 @@ fn native_check_obeys_phase_boundaries_and_preserves_failure_location() {
         .collect::<Vec<_>>();
     assert_eq!(failures.len(), 1, "{records:?}");
     assert_eq!(failures[0]["labels"][0]["location"]["line"], 1);
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/function-before-initialization.telora")).unwrap();
+    let output = telora(&cwd).args(["check", "--native", "--lib"]).output().unwrap();
+    assert!(!output.status.success());
+    let records = String::from_utf8(output.stdout).unwrap().lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+    let errors = records.iter().filter(|record| record["severity"] == "error").collect::<Vec<_>>();
+    assert_eq!(errors.len(), 1, "{records:?}");
+    assert!(errors[0]["message"].as_str().unwrap().contains("before its declaration"));
+    assert_eq!(errors[0]["labels"][0]["location"]["line"], 3);
     fs::write(
         cwd.join("src/main.telora"),
         include_str!("../../../telora-native/tests/fixtures/failure-subjects.telora"),
