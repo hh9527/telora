@@ -155,8 +155,6 @@ struct Solver<'a> {
     /// evidence lets calls constrain unknown value slots without guessing that
     /// an unresolved type-level callee is an ordinary function.
     value_slots: Vec<bool>,
-    /// Source-level existing-value evidence, not execution/materialization.
-    materialized_records: Vec<bool>,
 }
 
 pub fn resolve(mir: &mut Mir) {
@@ -181,7 +179,6 @@ pub fn resolve(mir: &mut Mir) {
     solver.prepare_type_uses();
     solver.prepare_properties();
     solver.prepare_generalization();
-    solver.prepare_construction_origins();
     for index in 0..solver.mir.symbols.len() {
         let slot = solver.mir.symbol_types[index];
         let symbol = &solver.mir.symbols[index];
@@ -310,7 +307,6 @@ impl Solver<'_> {
             bottom_candidates: vec![],
             generalizations: vec![],
             value_slots: vec![false; mir.hir.len()],
-            materialized_records: vec![false; mir.hir.len()],
             mir,
             revision: 0,
             tasks: vec![],

@@ -4,6 +4,11 @@ import "std/value" {ScalarValue, Value};
 
 type Request = Tuple([String, String, Value]);
 
+type SqliteQuery = struct {
+    sql: String,
+    bindings: Array(ScalarValue),
+};
+
 type Model = struct {
     kind: String,
     name: String,
@@ -30,10 +35,11 @@ def sqlite_model: Fn(String, String) -> Model = fn(name, path) {
 };
 
 def sqlite_query: Fn(String, String, Array(ScalarValue)) -> Request = fn(actor, sql, bindings) {
+    let query: SqliteQuery = {sql, bindings};
     request(
         actor,
         "Query",
-        codec.encode(codec.Value.type, {sql, bindings}),
+        codec.encode(codec.Value.type, query),
     )
 };
 

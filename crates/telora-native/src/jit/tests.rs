@@ -1129,16 +1129,16 @@ fn selected_export_prunes_unreferenced_values_but_module_check_initializes_them(
 }
 
 #[test]
-fn container_comparisons_preserve_existing_record_identity() {
+fn container_comparisons_propagate_context_through_bindings() {
     let (mir, root) = graph(r#"
         type Item = struct { value: Int };
         def item: Item = {value: 42};
         export def answer = {
             let raw = {value: 42};
             let raw_array = [raw];
-            if [item] != [raw] && [raw] != [item]
-                && (item, 1) != (raw, 1) && (raw, 1) != (item, 1)
-                && [item] != [...raw_array] && [...raw_array] != [item]
+            if [item] == [raw] && [raw] == [item]
+                && (item, 1) == (raw, 1) && (raw, 1) == (item, 1)
+                && [item] == [...raw_array] && [...raw_array] == [item]
                 && [item] == [{value: 42}] && [{value: 42}] == [item] {
                 42
             } else { 0 }

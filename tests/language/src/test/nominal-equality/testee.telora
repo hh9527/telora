@@ -52,10 +52,10 @@ export def tagged_payload = test.should_ok(fn() {
     expect(Some([item]).ty!(Option(Array(Item))) == Some([{value: 42}])
         && Some([{value: 42}]) == Some([item]).ty!(Option(Array(Item))))
 });
-export def existing_anonymous = test.should_ok(fn() {
+export def context_through_binding = test.should_ok(fn() {
     let raw = {value: 42};
-    expect([item] != [raw] && [raw] != [item]
-        && (item, 1) != (raw, 1) && (raw, 1) != (item, 1))
+    expect([item] == [raw] && [raw] == [item]
+        && (item, 1) == (raw, 1) && (raw, 1) == (item, 1))
 });
 export def dynamic_boundary = test.should_ok(fn() {
     let dynamic = dyn.pack((Item).type, item);
@@ -67,7 +67,7 @@ export def dynamic_boundary = test.should_ok(fn() {
 export def spreads = test.should_ok(fn() {
     let raw = [{value: 42}];
     expect([item] == [...[{value: 42}]] && [...[{value: 42}]] == [item]
-        && [item] != [...raw] && [...raw] != [item])
+        && [item] == [...raw] && [...raw] == [item])
 });
 export def enum_payload = test.should_ok(fn() {
     let wrapped: Wrapped = Wrapped.Some([item]);
@@ -86,12 +86,12 @@ export def generic_nested_parameter = test.should_ok(fn() {
         && choose_array([item], {value: 42}) == [item])
 });
 export def generic_independent_parameters = test.should_ok(fn() {
-    expect(choose_independent([{value: 42}], [item]) != [item])
+    expect(choose_independent([{value: 42}], [item]) == [item])
 });
 export def generic_existing_value = test.should_ok(fn() {
     let raw = [{value: 42}];
-    expect(choose(raw, [item]) != [item]
-        && choose_array(raw, item) != [item])
+    expect(choose(raw, [item]) == [item]
+        && choose_array(raw, item) == [item])
 });
 export def generic_callback_evidence = test.should_ok(fn() {
     expect(choose_with_factory([{value: 42}], fn() { item }) == [item])

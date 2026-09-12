@@ -38,8 +38,6 @@ impl Solver<'_> {
         let mut changed = false;
         for task in pending {
             if let Task::ValueEqual { node, left, right } = task {
-                self.retain_comparison_origins(self.child(node, Role::Left).unwrap());
-                self.retain_comparison_origins(self.child(node, Role::Right).unwrap());
                 // Let derived expression types settle before comparison
                 // supplies evidence to genuinely unconstrained operands.
                 let metadata = [left, right].into_iter().any(|slot| self.term(slot)
@@ -928,9 +926,7 @@ impl Solver<'_> {
                 self.fit(HirId(value.0), ty, value);
             } else { self.equal(ty, value, location); }
         }
-        if !self.materialized_records[actual.index()] || nominal.constructor == TypeConstructor::Dict {
-            self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
-        }
+        self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
         self.revision += 1;
         true
     }

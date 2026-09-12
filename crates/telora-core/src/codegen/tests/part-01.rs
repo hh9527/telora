@@ -264,13 +264,13 @@ fn property_target_enum_computes_matches_reflects_and_reduces_all_categories() {
 }
 
 #[test]
-fn existing_record_values_keep_identity_while_fresh_literals_take_context() {
+fn record_construction_accepts_context_across_local_bindings() {
     for body in [
-        "let raw = {value: 42}; [raw] != [item] && [item] != [raw] && (raw, 1) != (item, 1)",
-        "let raw = [{value: 42}]; [...raw] != [item] && [item] != [...raw] && [...[{value: 42}]] == [item]",
-        "let raw = [{value: 42}]; choose(raw, [item]) != [item] && choose_array(raw, item) != [item]",
-        "choose_independent([{value: 42}], [item]) != [item] && choose([{value: 42}], [item]) == [item]",
-        "let raw = if True { {value: 42} } else { {value: 42} }; [raw] != [item] && [{value: 42}] == [item]",
+        "let raw = {value: 42}; [raw] == [item] && [item] == [raw] && (raw, 1) == (item, 1)",
+        "let raw = [{value: 42}]; [...raw] == [item] && [item] == [...raw] && [...[{value: 42}]] == [item]",
+        "let raw = [{value: 42}]; choose(raw, [item]) == [item] && choose_array(raw, item) == [item]",
+        "choose_independent([{value: 42}], [item]) == [item] && choose([{value: 42}], [item]) == [item]",
+        "let raw = if True { {value: 42} } else { {value: 42} }; [raw] == [item] && [{value: 42}] == [item]",
     ] {
         let mir = graph(&format!("type Item = struct {{value: Int}}; def item: Item = {{value: 42}}; def choose: for(T) Fn(T, T) -> T = fn(left, right) {{left}}; def choose_array: for(T) Fn(Array(T), T) -> Array(T) = fn(left, right) {{left}}; def choose_independent: for(A, B) Fn(A, B) -> A = fn(left, right) {{left}}; export def answer = {{ {body} }};"), "");
         let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{body}\n{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
@@ -301,10 +301,10 @@ fn encoded_enum_values_equal_explicit_semantic_value_constructors() {
 #[test]
 fn encoded_object_payload_witnesses_cover_nested_and_dictionary_outputs() {
     for (source, expected) in [
-        ("{a: 47}", "Value.Object({a: Value.Int(47)})"),
+        ("{a: 47}.ty!(Dict(Int))", "Value.Object({a: Value.Int(47)})"),
         ("{let value: Dict(Int) = {a: 47}; value}", "Value.Object({a: Value.Int(47)})"),
-        ("[{a: 47}]", "Value.Array([Value.Object({a: Value.Int(47)})])"),
-        ("{a: {b: 47}}", "Value.Object({a: Value.Object({b: Value.Int(47)})})"),
+        ("[{a: 47}].ty!(Array(Dict(Int)))", "Value.Array([Value.Object({a: Value.Int(47)})])"),
+        ("{a: {b: 47}}.ty!(Dict(Dict(Int)))", "Value.Object({a: Value.Object({b: Value.Int(47)})})"),
         ("Event.Finished", "Value.String(\"Finished\")"),
     ] {
         let mir = graph(&format!("import \"std/codec\" as codec; import \"std/value\" {{ Value }}; type Event = enum {{ Finished }}; export def answer = codec.encode(Value.type, {source}) == {expected};"), "");

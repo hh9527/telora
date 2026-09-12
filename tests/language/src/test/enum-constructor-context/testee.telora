@@ -98,5 +98,5 @@ export def existing_payload_identity = test.should_ok(fn() {
     let raw = {value: 7};
     let expected: Option(Array(Item)) = Some([item]);
     let values = pair(Some([raw]), expected);
-    expect(values.0 != values.1 && Some([raw]) != expected)
+    expect(values.0 == values.1 && Some([raw]) == expected)
 });

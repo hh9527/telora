@@ -38,7 +38,7 @@ fn native_value_shapes_are_diagnosed_before_codegen_and_enforced_by_seal() {
 
 #[test]
 fn seal_rejects_record_nodes_with_non_record_skeletons() {
-    let mut mir = graph(&[("@src/main", "export def value = { item: 42 }; export def scalar = 42;")]);
+    let mut mir = graph(&[("@src/main", "export def value: Dict(Int) = { item: 42 }; export def scalar = 42;")]);
     resolve(&mut mir);
     mir.seal().unwrap();
     let TypeState::Known(scalar) = symbol_type(&mir, "scalar") else { panic!("scalar type") };
@@ -622,14 +622,14 @@ fn property_target_members_use_native_identity_and_ordinary_resolution() {
 }
 
 #[test]
-fn completed_record_construction_keeps_its_static_identity_deterministically() {
+fn record_construction_uses_whole_graph_context_deterministically() {
     let sources = [("@src/main", "type Item = struct {value: Int}; def item: Item = {value: 42}; def raw = {value: 42}; export def answer = [item] == [{value: 42}] && [raw] != [item];")];
     let mut first = graph(&sources);
     resolve(&mut first);
     first.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", first.dump()));
     let TypeState::Known(raw) = symbol_type(&first, "raw") else { panic!("closed raw value") };
     let TypeState::Known(item) = symbol_type(&first, "item") else { panic!("closed nominal value") };
-    assert!(matches!(first.types[raw.index()].constructor, TypeConstructor::Record(_)));
+    assert_eq!(raw, item);
     assert!(matches!(first.types[item.index()].constructor, TypeConstructor::Nominal(_)));
     let mut second = graph(&sources);
     resolve(&mut second);
