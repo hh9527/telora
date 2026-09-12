@@ -640,6 +640,7 @@ fn compile_plan(
 static NEXT_CODE_PLAN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 struct Lower<'a, 'b> {
+    guarded: bool,
     mir: &'a Mir,
     layouts: &'a Layouts,
     builder: FunctionBuilder<'b>,
@@ -674,7 +675,7 @@ impl Lower<'_, '_> {
             );
         }
         let status = self.builder.ins().iconst(types::I32, 0);
-        self.builder.ins().return_(&[status]);
+        self.return_status(status);
         Ok(())
     }
     fn fit_metadata(
@@ -739,7 +740,7 @@ impl Lower<'_, '_> {
             &[self.context, operation, ty, loc0, end, data, count, out],
         );
         let status = self.builder.inst_results(call)[0];
-        self.builder.ins().return_(&[status]);
+        self.return_status(status);
         Ok(())
     }
     fn selected_member(&self, node: HirId) -> Option<MemberSelection> {
@@ -972,7 +973,7 @@ impl Lower<'_, '_> {
         self.builder.ins().brif(status, failed, &[], success, &[]);
         self.builder.switch_to_block(failed);
         self.builder.seal_block(failed);
-        self.builder.ins().return_(&[status]);
+        self.return_status(status);
         self.builder.switch_to_block(success);
         self.builder.seal_block(success);
         if never {
@@ -1112,7 +1113,7 @@ impl Lower<'_, '_> {
         self.builder.ins().brif(status, failed, &[], success, &[]);
         self.builder.switch_to_block(failed);
         self.builder.seal_block(failed);
-        self.builder.ins().return_(&[status]);
+        self.return_status(status);
         self.builder.switch_to_block(success);
         self.builder.seal_block(success);
         Ok((0..width)

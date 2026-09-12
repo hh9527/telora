@@ -56,6 +56,7 @@ pub(super) fn emit(
     let context = builder.block_params(entry)[0];
     let out = builder.block_params(entry)[2];
     let mut lower = Lower {
+        guarded: false,
         mir: graph,
         layouts,
         builder,
@@ -73,6 +74,7 @@ pub(super) fn emit(
         return_pointer: out,
         return_type: TypeKey::try_from(record.property)?,
     };
+    lower.enter_call(node);
     match lower.property_chain(index) {
         Ok(()) | Err(EmitError::Diverged) => {}
         Err(EmitError::Message(message)) => return Err(message),
@@ -245,7 +247,7 @@ impl Lower<'_, '_> {
         self.builder.ins().brif(status, fail, &[], ready, &[]);
         self.builder.switch_to_block(fail);
         self.builder.seal_block(fail);
-        self.builder.ins().return_(&[status]);
+        self.return_status(status);
         self.builder.switch_to_block(ready);
         self.builder.seal_block(ready);
         Ok((0..width)

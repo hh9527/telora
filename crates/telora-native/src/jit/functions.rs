@@ -275,6 +275,7 @@ pub(super) fn emit_dispatchers(
             builder.seal_block(no);
         }
         let mut lower = Lower {
+            guarded: false,
             mir: graph,
             layouts,
             builder,
@@ -409,6 +410,7 @@ pub(super) fn emit(
             locals.insert(symbol, values);
         }
         let mut lower = Lower {
+            guarded: false,
             mir: graph,
             layouts: &layouts,
             builder,
@@ -421,6 +423,7 @@ pub(super) fn emit(
             return_pointer: out,
             return_type: output,
         };
+        lower.enter_call(key.node);
         for (index, (symbol, ty)) in lower
             .functions
             .captures

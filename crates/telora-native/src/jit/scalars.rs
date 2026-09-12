@@ -3,6 +3,34 @@ use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use telora_core::ast::{BinaryOperator as B, UnaryOperator as U};
 
 impl Lower<'_, '_> {
+    fn call_guard_helper(&mut self, node: HirId, operation: u32) -> ir::Value {
+        let operation = self.builder.ins().iconst(types::I32, operation as i64);
+        let ty = self.builder.ins().iconst(types::I32, 0);
+        let origin = Origin::from_loc(Some(self.mir.hir[node.index()].location)).words();
+        let loc0 = self.builder.ins().iconst(types::I64, (u64::from(origin[0]) | (u64::from(origin[1]) << 32)) as i64);
+        let end = self.builder.ins().iconst(types::I32, origin[2] as i64);
+        let null = self.builder.ins().iconst(self.module.target_config().pointer_type(), 0);
+        let count = self.builder.ins().iconst(types::I64, 0);
+        let call = self.builder.ins().call(self.object_helper, &[self.context, operation, ty, loc0, end, null, count, null]);
+        self.builder.inst_results(call)[0]
+    }
+    pub(super) fn enter_call(&mut self, node: HirId) {
+        let status = self.call_guard_helper(node, helpers::ENTER_CALL);
+        let fail = self.builder.create_block();
+        let ready = self.builder.create_block();
+        self.builder.ins().brif(status, fail, &[], ready, &[]);
+        self.builder.switch_to_block(fail);
+        self.builder.seal_block(fail);
+        // Failed admission did not increment the depth.
+        self.builder.ins().return_(&[status]);
+        self.builder.switch_to_block(ready);
+        self.builder.seal_block(ready);
+        self.guarded = true;
+    }
+    pub(super) fn return_status(&mut self, status: ir::Value) {
+        if self.guarded { self.call_guard_helper(self.function_key.node, helpers::LEAVE_CALL); }
+        self.builder.ins().return_(&[status]);
+    }
     pub(super) fn charge_fuel(&mut self, node: HirId) -> EmitResult<()> {
         let operation = self.builder.ins().iconst(types::I32, helpers::FUEL as i64);
         let ty = self.builder.ins().iconst(types::I32, 0);
@@ -18,7 +46,7 @@ impl Lower<'_, '_> {
         self.builder.ins().brif(status, failed, &[], next, &[]);
         self.builder.switch_to_block(failed);
         self.builder.seal_block(failed);
-        self.builder.ins().return_(&[status]);
+        self.return_status(status);
         self.builder.switch_to_block(next);
         self.builder.seal_block(next);
         Ok(())
@@ -60,7 +88,7 @@ impl Lower<'_, '_> {
             &[self.context, operation, ty, loc0, end, data, count, out],
         );
         let status = self.builder.inst_results(call)[0];
-        self.builder.ins().return_(&[status]);
+        self.return_status(status);
         self.builder.switch_to_block(next);
         self.builder.seal_block(next);
         Ok(())

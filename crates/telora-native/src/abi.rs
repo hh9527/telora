@@ -327,6 +327,8 @@ pub enum Status {
 }
 #[derive(Default)]
 pub struct CallContext {
+    call_depth: u32,
+    call_depth_limit: Option<u32>,
     fuel: Option<u64>,
     fuel_exhausted: bool,
     diagnostics: Vec<NativeDiagnostic>,
@@ -339,6 +341,23 @@ pub struct NativeDiagnostic {
     pub subjects: Vec<Origin>,
 }
 impl CallContext {
+    pub fn with_call_depth_limit(mut self, limit: u32) -> Self {
+        self.call_depth_limit = Some(limit);
+        self
+    }
+    pub fn call_depth(&self) -> u32 { self.call_depth }
+    pub(crate) fn enter_call(&mut self, origin: Origin) -> Status {
+        if self.call_depth >= self.call_depth_limit.unwrap_or(128) {
+            return self.fail_at("native call depth limit exceeded", origin);
+        }
+        self.call_depth += 1;
+        Status::Success
+    }
+    pub(crate) fn leave_call(&mut self) -> Status {
+        if self.call_depth == 0 { return self.fail("native call depth underflow"); }
+        self.call_depth -= 1;
+        Status::Success
+    }
     /// One budget spans initialization, demand callbacks and entry execution.
     /// Native fuel counts executed HIR expressions, not machine instructions.
     pub fn with_fuel(mut self, fuel: u64) -> Self {

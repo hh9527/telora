@@ -35,6 +35,8 @@ pub(crate) const REFLECT: u32 = 29;
 pub(crate) const ENCODE: u32 = 30;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
+pub(crate) const ENTER_CALL: u32 = 33;
+pub(crate) const LEAVE_CALL: u32 = 34;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -57,6 +59,8 @@ pub(crate) unsafe extern "C" fn object(
         Ok(origin) => origin,
         Err(e) => return context.fail(e) as u32,
     };
+    if operation == ENTER_CALL { return context.enter_call(origin) as u32; }
+    if operation == LEAVE_CALL { return context.leave_call() as u32; }
     if operation == FUEL {
         return context.consume_fuel(count, origin) as u32;
     }

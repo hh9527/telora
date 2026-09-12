@@ -615,6 +615,35 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_call_depth_unwinds_direct_and_indirect_failures() {
+    for source in [
+        "def recur: Fn(Int) -> Int = fn(n) { recur(n + 1) }; export def answer = recur(0);",
+        "def apply: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, n) { f(n) }; def recur: Fn(Int) -> Int = fn(n) { apply(recur, n + 1) }; export def answer = recur(0);",
+    ] {
+        let (mir, root) = graph(source);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap()).with_call_depth_limit(8);
+        assert!(compiled.call(&mut context, &[]).is_err());
+        assert_eq!(context.call_depth(), 0);
+        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.diagnostics()[0].message, "native call depth limit exceeded");
+        assert_ne!(context.diagnostics()[0].origin, Origin::default());
+    }
+    for source in ["export def answer = 42;", "export def answer: Int = fail!(\"failure\");"] {
+        let (mir, root) = graph(source);
+        let compiled = compile(&mir.seal().unwrap(), root).unwrap();
+        let mut context = CallContext::default().with_call_depth_limit(1);
+        let _ = compiled.call(&mut context, &[]);
+        assert_eq!(context.call_depth(), 0);
+        let mut denied = CallContext::default().with_call_depth_limit(0);
+        assert!(compiled.call(&mut denied, &[]).is_err());
+        assert_eq!(denied.call_depth(), 0);
+        assert_eq!(denied.diagnostics().len(), 1);
+    }
+}
+
+#[test]
 fn native_fuel_is_shared_across_calls_and_stops_recursion_once() {
     let (mir, root) = graph("export def answer = 42;");
     let sealed = mir.seal().unwrap();
