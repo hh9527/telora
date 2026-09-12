@@ -1,6 +1,50 @@
 use super::*;
 
 impl Runtime {
+    pub(crate) fn dict_pairs(&mut self, ty: TypeId, loc: Location, dict: &Value) -> Result<Value> {
+        let pair_type = self.expect(ty, Kind::Array)?.arguments[0];
+        let mut pairs = Vec::with_capacity(self.dict_len(dict)?);
+        for index in 0..self.dict_len(dict)? {
+            let (key, value) = self.dict_entry(dict, index)?;
+            let fields = [key.to_owned(), value.to_owned()];
+            pairs.push(self.aggregate(pair_type, loc, &fields)?);
+        }
+        self.array(ty, loc, &pairs)
+    }
+    pub(crate) fn dict_from_pairs(&mut self, ty: TypeId, loc: Location, array: &Value) -> Result<Value> {
+        let mut pairs = Vec::with_capacity(self.array_len(array)?);
+        for index in 0..self.array_len(array)? {
+            let pair = self.array_get(array, index)?.to_owned();
+            pairs.push((self.field(&pair, 0)?.to_owned(), self.field(&pair, 1)?.to_owned()));
+        }
+        let mut keys = pairs.iter().map(|(key, _)| self.text(key.as_ref())).collect::<Result<Vec<_>>>()?;
+        keys.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        if let Some(pair) = keys.windows(2).find(|p| p[0].as_str() == p[1].as_str()) {
+            return Err(format!("std/dict.from_pairs contains duplicate field {:?}", pair[0].as_str()));
+        }
+        self.dict(ty, loc, &pairs)
+    }
+    pub(crate) fn dict_merge(&mut self, ty: TypeId, loc: Location, left: &Value, right: &Value) -> Result<Value> {
+        self.validate(left.as_ref(), ty)?;
+        self.validate(right.as_ref(), ty)?;
+        let (left_len, right_len) = (self.dict_len(left)?, self.dict_len(right)?);
+        let (mut a, mut b) = (0, 0);
+        let mut pairs = Vec::new();
+        while a < left_len || b < right_len {
+            let use_left = if b == right_len { true } else if a == left_len { false } else {
+                let (left_key, _) = self.dict_entry(left, a)?;
+                let (right_key, _) = self.dict_entry(right, b)?;
+                match self.text(left_key)?.as_str().cmp(self.text(right_key)?.as_str()) {
+                    std::cmp::Ordering::Less => true,
+                    std::cmp::Ordering::Equal => { a += 1; false },
+                    std::cmp::Ordering::Greater => false,
+                }
+            };
+            let (key, value) = if use_left { let pair = self.dict_entry(left, a)?; a += 1; pair } else { let pair = self.dict_entry(right, b)?; b += 1; pair };
+            pairs.push((key.to_owned(), value.to_owned()));
+        }
+        self.dict(ty, loc, &pairs)
+    }
     /// A column projection only creates an Array descriptor. Canonical keys and
     /// value storage remain shared, including across publication.
     pub(crate) fn dict_column(&self, ty: TypeId, loc: Location, dict: &Value, keys: bool) -> Result<Value> {

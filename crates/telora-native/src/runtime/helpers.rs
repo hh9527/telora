@@ -129,6 +129,13 @@ pub(crate) unsafe extern "C" fn object(
                         let key = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(width), 4) }.into() };
                         let value = rt.dict_get(&dict, &key)?.map(ValueRef::to_owned);
                         rt.named_variant(ty, loc, if value.is_some() { "Some" } else { "None" }, value.as_ref())?
+                    } else if count == 3 {
+                        rt.dict_pairs(ty, loc, &dict)?
+                    } else if count == 4 {
+                        rt.dict_from_pairs(ty, loc, &dict)?
+                    } else if count == 5 {
+                        let right = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(width), width) }.into() };
+                        rt.dict_merge(ty, loc, &dict, &right)?
                     } else {
                         rt.dict_column(ty, loc, &dict, count == 1)?
                     }

@@ -615,6 +615,44 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_dictionary_pair_roundtrip_and_merge_keep_right_hand_values() {
+    let (mir, root) = graph_with(
+        "import \"std/dict\" as dict; export def answer = do { let left = dict.from_pairs([(\"z\", 1), (\"a\", 2)]); let right = dict.from_pairs([(\"z\", 3), (\"b\", 4)]); let merged = dict.merge(left, right); (right, merged, dict.from_pairs(dict.pairs(merged))) };",
+        static_sources::BUILTINS,
+    );
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    let result = compiled.export(&mut context, mir.exports[module.index()][0]).unwrap();
+    let rt = context.runtime().unwrap();
+    let right = rt.field(&result, 0).unwrap().to_owned();
+    let merged = rt.field(&result, 1).unwrap().to_owned();
+    let roundtrip = rt.field(&result, 2).unwrap().to_owned();
+    assert_eq!(rt.dict_len(&merged).unwrap(), 3);
+    for (index, (name, bits)) in [("a", 2), ("b", 4), ("z", 3)].into_iter().enumerate() {
+        let (key, value) = rt.dict_entry(&merged, index).unwrap();
+        assert_eq!(rt.text(key).unwrap().as_str(), name);
+        assert_eq!(rt.scalar_bits(value).unwrap(), bits);
+        assert_eq!(rt.dict_entry(&roundtrip, index).unwrap().1.words(), value.words());
+    }
+    let (key, value) = rt.dict_entry(&merged, 2).unwrap();
+    let (original_key, original_value) = rt.dict_entry(&right, 1).unwrap();
+    assert_eq!(key.words(), original_key.words());
+    assert_eq!(value.words(), original_value.words());
+
+    let (mir, root) = graph_with("import \"std/dict\" { from_pairs }; export def answer = from_pairs([(\"a\", 1), (\"a\", 2)]);", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "std/dict.from_pairs contains duplicate field \"a\"");
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
 fn native_array_predicates_short_circuit_and_keep_selected_origins() {
     let (mir, root) = graph_with(include_str!("../../tests/fixtures/array-predicates.telora"), static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();

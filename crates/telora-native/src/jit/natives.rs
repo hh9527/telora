@@ -344,16 +344,27 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::FORMAT, self.return_type, data, count)?;
             return self.write_return(&result);
         }
-        if module.id == 6 && let Some(operation) = ["get", "keys", "values"].iter().position(|name| *name == declaration.name) {
-            if arguments.len() != if operation == 0 { 2 } else { 1 } {
+        if module.id == 6 && let Some(operation) = ["get", "keys", "values", "pairs", "from_pairs", "merge"].iter().position(|name| *name == declaration.name) {
+            if arguments.len() != if operation == 0 || operation == 5 { 2 } else { 1 } {
                 return Err("native dictionary read arity mismatch".into());
             }
             let input = &self.mir.types[arguments[0].index()];
             let output = &self.mir.types[self.return_type.index()];
-            let valid = input.constructor == TypeConstructor::Dict && match operation {
+            let pair_matches = |array: &telora_core::mir::ResolvedType, dict: &telora_core::mir::ResolvedType| {
+                array.constructor == TypeConstructor::Array && dict.constructor == TypeConstructor::Dict && array.arguments.len() == 1 && {
+                    let pair = &self.mir.types[array.arguments[0].index()];
+                    pair.constructor == TypeConstructor::Tuple && pair.arguments.len() == 2 && self.mir.types[pair.arguments[0].index()].constructor == TypeConstructor::String && pair.arguments[1..] == dict.arguments
+                }
+            };
+            let valid = match operation {
+                3 => pair_matches(output, input),
+                4 => pair_matches(input, output),
+                5 => input.constructor == TypeConstructor::Dict && arguments[0] == arguments[1] && arguments[0] == self.return_type,
+                _ => input.constructor == TypeConstructor::Dict && match operation {
                 0 => output.constructor == TypeConstructor::Option && output.arguments == input.arguments && self.mir.types[arguments[1].index()].constructor == TypeConstructor::String,
                 1 => output.constructor == TypeConstructor::Array && output.arguments.len() == 1 && self.mir.types[output.arguments[0].index()].constructor == TypeConstructor::String,
                 _ => output.constructor == TypeConstructor::Array && output.arguments == input.arguments,
+                },
             };
             if !valid { return Err("native dictionary read signature mismatch".into()); }
             let count = self.builder.ins().iconst(types::I64, operation as i64);
