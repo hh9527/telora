@@ -67,6 +67,12 @@ codec 解码也通过普通分派器调用这些 checker。codegen 沿封闭目�
 
 string.parse_with 按封闭 TypeId 解析 Int/Float/String/Option，结构类型按 ParseBy 的命名捕获范围递归构造，复用原字符串的完整值或仅分配实际捕获文本。DecodeByParse 复用该解析器，EncodeByDisplay 通过封闭签名分派 property 内的 Fn(Dyn) -> Fmt，直接遍历原生格式对象生成 String。属性必须成对声明，缺失能力与回调失败明确反馈；codec 中检查拒绝是 Err(BlameError)，普通 string.parse 的检查拒绝保持执行失败语义。已覆盖嵌套文本属性、可选捕获、非有限浮点拒绝、checker 与 untagged 组合，以及 Display 回调失败。
 
+### 数据格式解析进展
+
+JSON/YAML/TOML 的 parse_raw 按 native 模块身份链接，消费封闭的 TypeOf(Value) / Result(Value, BlameError) 签名。复用无 VM 依赖的数据解析计划，直接物化到 native tables；字符串解析产生的子值与键保留输入来源，临时解析 SourceId 不进入运行时值。语法错误返回 Err(BlameError)，资源限制超出产生一次执行失败。YAML alias 保持解析计划的展开语义，发布保留 native 图已有的共享关系。
+
+JSON 紧凑 stringify 直接遍历 native Value 图生成文本，不构建 host Value 树。stringify_pretty 和 schema_with 尚待实现，不能据此认为完整 std/json 模块初始化已经可用。YAML/TOML 已纳入真实 CLI eval-with 初始化及 entry 路径验证。
+
 ## 验收条件
 
 高阶 native 回调开始接通：array.map 从封闭签名取得输入/输出元素类型，通过当前代码计划的分派器调用语言闭包；跨回调前结束 Runtime 借用，仅复制值描述符而不复制底层对象。验证包含词法捕获、嵌套 map、Unit/String 不同结果宽度、发布后读取与单次回调失败传播。模块命名空间函数引用和导入别名消费同一个 resolved SymbolId。Property provider 链尚未使用这条调用路径，不能据此视为 property 执行完成。

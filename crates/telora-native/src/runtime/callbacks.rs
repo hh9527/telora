@@ -2,6 +2,52 @@ use super::*;
 
 type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *const u64) -> u32;
 
+pub(super) unsafe fn format_parse(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, format: u64) -> u32 {
+    context.boundary(|context| {
+        let result = (|| -> Result<Status> {
+            use telora_core::data_plan::{self, Format};
+            let limits = context.data_limits();
+            let rt = context.runtime()?;
+            let witness_type = unsafe { TypeId((*data.add(1) >> 32) as u32) };
+            let witness_width = rt.layout(witness_type)?.words;
+            let witness = ValueRef { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, witness_width) } };
+            let target = rt.represented_type(witness)?;
+            let input_data = unsafe { data.add(witness_width) };
+            let input_type = unsafe { TypeId((*input_data.add(1) >> 32) as u32) };
+            let input = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(input_data, rt.layout(input_type)?.words) }.into() };
+            let contract = rt.data_contract.clone().ok_or("semantic Value contract is not loaded")?;
+            if target != contract.value_type() { return Err("data parser target differs from sealed Value identity".into()); }
+            let text = rt.text(input.as_ref())?;
+            let size = text.as_str().len();
+            if size > limits.file_size { return Err("parsed text exceeds file_size limit".into()); }
+            let (format, name) = match format { 0 => (Format::Json, "<json string>"), 1 => (Format::Yaml, "<yaml string>"), 2 => (Format::Toml, "<toml string>"), _ => return Err("unknown native data format".into()) };
+            let mut sources = telora_core::source::SourceDatabase::default();
+            let source = sources.add(name, text.as_str());
+            let plan = data_plan::parse_registered(&sources, source, format);
+            let loc = if input.origin().words()[0] == 0 { origin.words() } else { input.origin().words() };
+            let value = match plan {
+                Ok(plan) => {
+                    data_plan::enforce_limits(&plan, limits, size)?;
+                    let rt = context.runtime_mut()?;
+                    let value = rt.materialize_data_at(&contract, &plan, Some(loc))?;
+                    rt.named_variant(ty, origin.words(), "Ok", Some(&value))?
+                }
+                Err(diagnostics) => {
+                    let message = diagnostics.iter().map(|diagnostic| sources.render(diagnostic)).collect::<Vec<_>>().join("\n");
+                    let rt = context.runtime_mut()?;
+                    let blame_type = rt.layout(ty)?.arguments[1];
+                    let message = rt.owned_string(contract.payload("String")?, origin.words(), message)?;
+                    let blame = rt.blame(blame_type, origin.words(), &message, vec![input.origin()])?;
+                    rt.named_variant(ty, origin.words(), "Err", Some(&blame))?
+                }
+            };
+            unsafe { std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, value.words().len()); }
+            Ok(Status::Success)
+        })();
+        match result { Ok(status) => status, Err(error) => context.fail_at(error, origin) }
+    }) as u32
+}
+
 /// A codec packet borrows initializer and dispatcher addresses from its
 /// generated adapter. No code address is stored in a runtime heap object.
 pub(super) unsafe fn codec(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, count: u64, operation: u32) -> u32 {

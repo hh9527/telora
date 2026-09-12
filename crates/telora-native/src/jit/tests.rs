@@ -1183,6 +1183,68 @@ fn native_codec_decodes_sealed_collections_and_returns_rejections() {
 }
 
 #[test]
+fn native_data_format_parsers_materialize_plans_and_json_reads_native_values() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/data-formats.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.runtime().unwrap().text(value.as_ref()).unwrap().as_str(), "[{\"a\":\"文本\",\"z\":[1,true,null]},{\"a\":[1,2],\"b\":[1,2]},{\"count\":42,\"name\":\"sample\"}]");
+    assert!(context.diagnostics().is_empty());
+}
+
+#[test]
+fn native_data_format_errors_are_blame_values_and_limits_are_execution_failures() {
+    for (module, text) in [("json", "{\"a\":1,\"a\":2}"), ("yaml", "[unterminated"), ("toml", "a = [")] {
+        let source = format!("import \"std/{module}\" as format; export def answer = format.parse({text:?});");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]).unwrap();
+        assert!(context.diagnostics().is_empty());
+        let rt = context.runtime().unwrap();
+        let blame = rt.enum_payload(&result).unwrap().unwrap().to_owned();
+        let (message, subjects) = rt.blame_diagnostic(&blame).unwrap();
+        assert!(message.contains(&format!("<{module} string>")), "{message}");
+        assert_eq!(subjects.len(), 1);
+        assert_eq!(subjects[0].words()[0], mir.hir[root.index()].location.source.get());
+    }
+    let (mir, root) = graph_with("import \"std/json\" as json; export def answer = json.parse(\"[1,2]\");", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    for limits in [telora_core::DataLimits {file_size: 4, ..Default::default()}, telora_core::DataLimits {nodes: 2, ..Default::default()}] {
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap()).with_data_limits(limits);
+        assert!(compiled.call(&mut context, &[]).is_err());
+        assert_eq!(context.diagnostics().len(), 1);
+        assert!(context.diagnostics()[0].message.contains("limit"));
+    }
+}
+
+#[test]
+fn native_parsed_aliases_keep_input_origin_and_sharing_after_publication() {
+    let (mir, root) = graph_with("import \"std/yaml\" as yaml; def input = \"a: &shared [1, 2]\\nb: *shared\\n\"; export def answer = (input, match yaml.parse(input) {Ok(value) => value, Err(error) => raise!(error)});", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime_mut().unwrap();
+    let roots = rt.publish(&[value.clone(), value]).unwrap();
+    let input = rt.field(&roots[0], 0).unwrap().to_owned();
+    let parsed = rt.field(&roots[0], 1).unwrap().to_owned();
+    assert_eq!(parsed.origin(), input.origin());
+    let object = rt.enum_payload(&parsed).unwrap().unwrap().to_owned();
+    let (key, a) = rt.dict_entry(&object, 0).unwrap();
+    let (_, b) = rt.dict_entry(&object, 1).unwrap();
+    assert_eq!(key.to_owned().origin(), input.origin());
+    assert_eq!(a.to_owned().origin(), input.origin());
+    assert_eq!(b.to_owned().origin(), input.origin());
+    // YAML aliases are expanded by the parser. Publication preserves the
+    // sharing actually present in the native graph, without deduplicating it.
+    assert_eq!(roots[0].words(), roots[1].words());
+}
+
+#[test]
 fn native_text_codec_reports_missing_capabilities_and_display_failure() {
     for (extra, expression, expected, fails) in [
         ("", "do { let value: Item = {value: 1}; encode(Value.type, value) }", "text codec requires a DisplayBy property", true),

@@ -6,6 +6,18 @@ import "std/codec" {JsonRenameAll, JsonUntagged, RenameCase};
 import "std/string" as string;
 import "std/regex" as regex;
 import "std/fmt" as fmt;
+import "std/yaml" as yaml;
+import "std/toml" as toml;
+
+export def formats = entry.main(
+    {sources: [], envs: [], args: False},
+    fn(ctx) {
+        Value.Array([
+            match yaml.parse("answer: 42\n") {Ok(value) => value, Err(error) => raise!(error)},
+            match toml.parse("answer = 43\n") {Ok(value) => value, Err(error) => raise!(error)},
+        ])
+    },
+);
 
 @string.decode_by_parse @string.encode_by_display
 @fmt.display_by("{host}:{port}")

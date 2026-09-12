@@ -327,6 +327,7 @@ pub enum Status {
 }
 #[derive(Default)]
 pub struct CallContext {
+    data_limits: telora_core::DataLimits,
     call_depth: u32,
     call_depth_limit: Option<u32>,
     fuel: Option<u64>,
@@ -342,6 +343,11 @@ pub struct NativeDiagnostic {
     pub subjects: Vec<Origin>,
 }
 impl CallContext {
+    pub fn with_data_limits(mut self, limits: telora_core::DataLimits) -> Self {
+        self.data_limits = limits;
+        self
+    }
+    pub(crate) fn data_limits(&self) -> telora_core::DataLimits { self.data_limits }
     pub fn with_call_depth_limit(mut self, limit: u32) -> Self {
         self.call_depth_limit = Some(limit);
         self

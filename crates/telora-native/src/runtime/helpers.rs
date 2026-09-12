@@ -36,6 +36,8 @@ pub(crate) const ENCODE: u32 = 30;
 pub(crate) const DECODE: u32 = 42;
 pub(crate) const CHECK_RESULT: u32 = 43;
 pub(crate) const PARSE: u32 = 44;
+pub(crate) const FORMAT_PARSE: u32 = 45;
+pub(crate) const JSON_STRINGIFY: u32 = 46;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -84,6 +86,9 @@ pub(crate) unsafe extern "C" fn object(
     }
     if operation == DECODE || operation == ENCODE || operation == PARSE {
         return unsafe { callbacks::codec(context, TypeId(ty), data, out, origin, count, operation) };
+    }
+    if operation == FORMAT_PARSE {
+        return unsafe { callbacks::format_parse(context, TypeId(ty), data, out, origin, count) };
     }
     if operation == CHECK_RESULT {
         return context.boundary(|context| {
@@ -233,6 +238,13 @@ pub(crate) unsafe extern "C" fn object(
                     } else {
                         rt.dict_column(ty, loc, &dict, count == 1)?
                     }
+                }
+                JSON_STRINGIFY => {
+                    let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
+                    let value = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, rt.layout(input)?.words) }.into() };
+                    let contract = rt.data_contract.clone().ok_or("semantic Value contract is not loaded")?;
+                    let text = rt.semantic_json(&contract, &value)?;
+                    rt.owned_string(ty, loc, text)?
                 }
                 INTERPOLATE => {
                     let mut cursor = data;

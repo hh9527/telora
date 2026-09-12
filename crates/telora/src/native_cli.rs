@@ -24,6 +24,7 @@ impl Session {
             .collect::<Vec<_>>();
         let compiled = jit::compile_modules(sealed, &modules, &[])?;
         let context = CallContext::with_runtime(Runtime::new(sealed)?)
+            .with_data_limits(crate::execution_config().data_limits)
             .with_fuel(crate::execution_config().session_quota.fuel as u64);
         Ok(Self { compiled, context })
     }

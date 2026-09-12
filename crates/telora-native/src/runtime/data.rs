@@ -104,10 +104,13 @@ impl Runtime {
         contract: &DataContract,
         plan: &ValidatedDataPlan,
     ) -> Result<Value> {
+        self.materialize_data_at(contract, plan, None)
+    }
+    pub(super) fn materialize_data_at(&mut self, contract: &DataContract, plan: &ValidatedDataPlan, location: Option<Location>) -> Result<Value> {
         let root = plan.root_node().ok_or("data plan has no root")?;
         let mut cache = vec![None; plan.nodes().len()];
         let mut visiting = vec![false; plan.nodes().len()];
-        self.data_node(contract, plan, root, &mut cache, &mut visiting, 0)
+        self.data_node(contract, plan, root, &mut cache, &mut visiting, 0, location)
     }
     fn data_node(
         &mut self,
@@ -117,6 +120,7 @@ impl Runtime {
         cache: &mut [Option<Value>],
         visiting: &mut [bool],
         depth: usize,
+        location: Option<Location>,
     ) -> Result<Value> {
         if depth > 512 {
             return Err("native data nesting limit".into());
@@ -129,7 +133,7 @@ impl Runtime {
         }
         visiting[id.index()] = true;
         let node = &plan.nodes()[id.index()];
-        let loc = crate::abi::Origin::from_loc(Some(node.location)).words();
+        let loc = location.unwrap_or_else(|| crate::abi::Origin::from_loc(Some(node.location)).words());
         let (tag, payload) = match &node.kind {
             DataPlanNodeKind::Scalar(scalar) => match scalar {
                 DataScalar::Int(value) => (
@@ -164,6 +168,7 @@ impl Runtime {
                         cache,
                         visiting,
                         depth + 1,
+                        location,
                     )?);
                 }
                 (
@@ -176,11 +181,11 @@ impl Runtime {
                 for (name, field) in fields {
                     let key = self.string(
                         contract.payload("String")?,
-                        crate::abi::Origin::from_loc(Some(field.key_location)).words(),
+                        location.unwrap_or_else(|| crate::abi::Origin::from_loc(Some(field.key_location)).words()),
                         name,
                     )?;
                     let value =
-                        self.data_node(contract, plan, field.value, cache, visiting, depth + 1)?;
+                        self.data_node(contract, plan, field.value, cache, visiting, depth + 1, location)?;
                     values.push((key, value));
                 }
                 (

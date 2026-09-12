@@ -65,6 +65,9 @@ fn native_eval_with_initializes_then_injects_declared_context() {
     fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/eval-with.telora")).unwrap();
     fs::write(cwd.join("src/base.json"), "{\"loaded\":true}").unwrap();
     fs::write(cwd.join("input.json"), "{\"answer\":42}").unwrap();
+    let formats = telora(&cwd).args(["eval-with", "--native", "@src/main:formats"]).output().unwrap();
+    assert!(formats.status.success(), "{}", String::from_utf8_lossy(&formats.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&formats.stdout).unwrap(), serde_json::json!([{ "answer": 42 }, { "answer": 43 }]));
     let output = telora(&cwd).env("TELORA_NATIVE_TEST_ENV", "selected")
         .args(["eval-with", "--native", "@src/main:answer", "--source", "input=input.json", "--", "hello", "中"])
         .output().unwrap();

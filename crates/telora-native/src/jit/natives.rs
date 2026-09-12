@@ -479,6 +479,27 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 17 && declaration.name == "stringify" {
+            if arguments.len() != 1 || self.mir.types[self.return_type.index()].constructor != TypeConstructor::String { return Err("native JSON stringify signature mismatch".into()); }
+            let count = self.builder.ins().iconst(types::I64, 0);
+            let value = self.object(node, helpers::JSON_STRINGIFY, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
+        if matches!(module.id, 17 | 24 | 9) && declaration.name == "parse_raw" {
+            let output = &self.mir.types[self.return_type.index()];
+            if arguments.len() != 2
+                || self.mir.types[arguments[0].index()].constructor != TypeConstructor::TypeOf
+                || self.mir.types[arguments[0].index()].arguments.len() != 1
+                || self.mir.types[arguments[1].index()].constructor != TypeConstructor::String
+                || output.constructor != TypeConstructor::Result || output.arguments.len() != 2
+                || output.arguments[0] != self.mir.types[arguments[0].index()].arguments[0]
+                || !matches!(self.mir.types[output.arguments[1].index()].constructor, TypeConstructor::Native(id) if (id.module, id.slot) == (34, 0))
+            { return Err("native data parser signature mismatch".into()); }
+            let format = match module.id { 17 => 0, 24 => 1, _ => 2 };
+            let count = self.builder.ins().iconst(types::I64, format);
+            let value = self.object(node, helpers::FORMAT_PARSE, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 7 && declaration.name == "parse_with" {
             let output = &self.mir.types[self.return_type.index()];
             if arguments.len() != 3
