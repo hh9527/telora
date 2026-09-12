@@ -1474,14 +1474,8 @@ impl Lower<'_, '_> {
             }
             HirKind::Array | HirKind::Tuple if syntax.children.iter().any(|edge| edge.role == Role::Item && matches!(self.mir.hir[edge.node.index()].kind, HirKind::Spread)) => self.sequence_spread(node, depth),
             HirKind::Array | HirKind::Tuple => {
-                if self
-                    .mir
-                    .construction_checks
-                    .iter()
-                    .any(|c| c.owner == ty && c.concrete)
-                {
-                    return Err("native construction checks are not yet linked".into());
-                }
+                // Construction checks belong to nominal struct/newtype/variant
+                // boundaries, never to the structural Array/Tuple itself.
                 let items = syntax
                     .children
                     .iter()

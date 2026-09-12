@@ -58,9 +58,10 @@
 | CheckedCast | `cast_packet` 与封闭目标/checker | `native_cast_finite_array_does_not_charge_each_element`；保留既有能力，是否移除另行决定 |
 
 原生模块调用由 `jit/natives.rs` 按已 resolve 的模块 ABI 身份和导出键适配，
-未知 ABI 明确拒绝。普通 Array/Tuple 构造仍有“存在 concrete construction check
-则拒绝”的保护分支；当前资产没有证明这个分支能由合法源码触发，因此既不把它
-当作已支持能力，也不无证据删掉。需要构造契约审计后再判断是否为有效缺口。
+未知 ABI 明确拒绝。构造契约审计确认 `attach_check` 只接受 Nominal owner 的
+struct/newtype/payload variant，泛型实例也保留 Nominal owner；普通 Array/Tuple
+不产生自身的 construction check。已删除该路径遗留的全表扫描和“尚未接通”拒绝，
+容器元素的名义构造仍执行各自 checker。
 未识别 HIR 最终返回 unsupported，不回退旧 VM。
 
 ### 首批实现历史
