@@ -2,7 +2,7 @@
 
 > 后续决议：RFC 0289 移除 cast。本文涉及 cast 的段落仅为此前的实施记录。
 
-- 状态：实施中；独立 ABI 数据/帧模块已落地，真实机器码调用验证继续推进
+- 状态：本期已实施并验收；目标为 64-bit little-endian host，不承诺跨 target ABI
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -23,6 +23,19 @@
 - 明确跨 helper 的 panic 隔离、溢出检查和来源三元组映射；禁止 Rust panic 跨生成代码 ABI 展开。
 
 ## 实施计划
+
+### 本期验收结论（2026-09-13）
+
+`abi/tests.rs` 验证混合宽度槽位、TypeId/来源保真、独立递归 activation、
+未初始化结果拒绝、world 引用范围和 helper panic 边界。
+真实机器码测试覆盖直接/间接递归、异宽参数与返回、闭包发布后调用、Never
+失败不读输出、fuel/栈预算退出归还，以及不可捕获 abort 的单次来源诊断。
+相关实现已在 `573a229` 及其前序提交中接入隐藏 CLI；完整 CLI 84 项通过。
+无 jit feature 的 ABI/runtime 25 项与 3 项独立实验通过；开启 jit 为 139 项与
+3 项实验通过。此处完成的是 ABI 子项，不代替整个 native 路线验收。
+
+以下记录中的 regex 内存近似量和 helper 临时分配限制属于 runtime 的资源审计，
+不改变 ABI 状态、参数布局或调用生命周期契约；不将逻辑配额称为物理 RSS 上限。
 
 ### 首批确定的 ABI v1 契约
 

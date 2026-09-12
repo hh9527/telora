@@ -52,6 +52,13 @@ word 缓冲。取消构造 helper 的整批临时 Value 列表，spread 不再�
 连 tuple 元素也不构造；139 项 native 测试及 3 项独立实验通过。
 这只覆盖上述数组路径，其他 helper 的临时分配仍需审计。
 
+字符串 join/join_lines、replace、indent、ensure_trailing_newline、trim_margin
+已按确切输出长度先准入，再构造并移交 StringTable，避免扩张完成后才检查配额。
+split/lines 先统计项数并准入数组 backing，再写共享切片描述符，不保留区间与
+Value 的整批临时列表。Unicode 空分隔符、空 needle、非重叠替换、CRLF 和空 join
+已有语言资产覆盖；已有 JIT 超限用例验证耗尽无法被诊断捕获函数吞掉。
+这仍不代表 regex 引擎临时内存、所有 host scratch 或 RSS 的完整计量。
+
 Regex 使用 regex-automata 的显式编译程序与匹配缓存。编译时按引擎报告的近似 heap 大小计费，缓存初始大小与后续净增长计费，捕获槽临时数组按长度计费；原始 pattern、捕获名及必选捕获名按内容与描述符计费。发布共享不可变编译程序，只计复制的槽、名称和匹配缓存，共享根仍只转发一次。NFA 编译上限取默认 10 MiB 与 session 剩余预算中的较小值，因 session 限额编译失败标记为不可捕获资源耗尽。108 项 native 测试覆盖既有匹配/捕获语义、构造与发布超限、共享根及极小编译预算。该计量仍是近似逻辑量：解析/编译临时峰值、BTreeSet 节点开销、引擎内部管理数据和缓存重分配瞬时峰值未被完整覆盖，不能当作 RSS 上限。
 
 HashState、Blame、Test 独立槽位也已纳入累计分配预算：HashState 计固定上下文大小，Blame 计槽项、消息描述符及来源列表，Test 计槽项、参数槽数组及参数描述符。引用到的 backing 对象由其自身表单独计费；发布只对首次转发的资源计费，构造与发布采用相同规则。测试覆盖构造拒绝、发布中途拒绝及共享根只复制一次。Regex 编译程序/捕获名称、helper 临时缓冲及其他未计量项仍继续推进。

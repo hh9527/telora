@@ -1,6 +1,6 @@
 # RFC 0286：Native 整图初始化、property 与发布
 
-- 状态：实施中；多入口代码计划与运行时需求状态表已建立，整图调度接入中
+- 状态：本期已实施并验收；check/eval/eval-with 初始化与统一发布已接通
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -35,8 +35,23 @@ eval/eval-with 按导出入口裁剪普通值依赖，property/check 仍为 sess
 模板函数族仅存在于静态阶段，不作为多态运行时值物化；执行计划中的函数实例
 均由 MIR 确定。`compile_modules` 现为测试辅助入口。
 Never 需求允许登记和执行，但不能成为 Ready 或成功发布的值。
-当前测试与真实负载证据见 RFC 0282、0287；共享泛型参数的名义身份规则仍待确认，
-不据此声明整体完成。
+共享泛型参数的身份规则已由 RFC 0289 确认并实施，不再是待决项。
+
+本期验收复核（`573a229` 及前序提交）：
+
+- `data_modules_are_injected_before_initialization_without_old_values` 验证数据先注入、
+  重复注入拒绝、漏注入失败且不发布；CLI 数据模块与 eval-with 来源输入测试通过。
+- `property_queries_execute_provider_chains_and_cache_results`、
+  `property_and_global_cycles_fail_once_and_unused_properties_initialize` 验证链式归约、
+  顶层值/property 依赖、缓存、真实环和未使用 property 失败禁止发布。
+- `generated_global_reads_initialize_once_and_propagate_cycles` 及 runtime 需求表测试
+  验证单次计算、失败传播；发布测试覆盖共享、真实闭包环、来源和中途失败原子性。
+- `static_cli.rs` 在 only-types 分支结束前不会调用 native Session；
+  Session 仅接受 seal 后的静态图，先编译，再创建 CallContext，静态求解模块不依赖它。
+- 139 项 native 测试、3 项独立实验和 84 项 CLI 测试通过；真实 world-model
+  eval-with 的结果与默认路径逐字节一致（RFC 0282、0289）。
+
+此结论只关闭初始化子项，runtime 资源审计和伞路线总装验收继续推进。
 
 ### 实施过程记录
 

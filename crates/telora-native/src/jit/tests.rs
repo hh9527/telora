@@ -2476,6 +2476,10 @@ fn native_string_operations_keep_unicode_newlines_and_shared_slices() {
         (7, "  a\r\n\n  b"),
         (8, "\n"),
         (9, "a\r\nb\n  c"),
+        (11, "|你|好|"),
+        (12, "bb"),
+        (13, "x"),
+        (14, ""),
     ] {
         assert_eq!(
             runtime

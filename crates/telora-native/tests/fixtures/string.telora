@@ -13,4 +13,8 @@ export def answer = (
     string.ensure_trailing_newline(""),
     string.trim_margin("  |a\r\n\t|b\n  c", "|"),
     lines,
+    string.replace("你好", "", "|"),
+    string.replace("aaaa", "aa", "b"),
+    string.replace("", "", "x"),
+    string.join([], "unused long separator"),
 );
