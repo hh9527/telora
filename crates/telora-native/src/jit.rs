@@ -1405,6 +1405,9 @@ impl Lower<'_, '_> {
                 };
                 self.object(node, operation, key, data, count)
             }
+            HirKind::FieldProjection => self.field_projection(node, depth),
+            HirKind::Dict if syntax.children.iter().filter(|edge| edge.role == Role::Field)
+                .any(|edge| !self.mir.hir[edge.node.index()].children.iter().any(|child| child.role == Role::Name)) => self.record_spread(node, depth),
             HirKind::Dict => {
                 let dictionary = self.mir.types[ty.index()].constructor == TypeConstructor::Dict;
                 let skeleton = if self.mir.types[ty.index()].constructor == TypeConstructor::Unchecked {

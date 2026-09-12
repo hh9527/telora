@@ -1,0 +1,44 @@
+import "std/codec" {encode, Value};
+import "std/entry" as entry;
+import "std/dict" as dict;
+
+type Source = struct {x: Int, y: String, extra: Array(Int)};
+@check(fn(value) { if value.x > 0 { Ok(()) } else { Err(blame!("positive projection required", value.x)) } })
+type Target = struct {x: Int, Y: String};
+type Pair = struct {first: Int, second: Int};
+type Empty = struct {};
+type Count = struct {x: Int};
+type WrongCount = struct {x: String};
+type Box(T) = struct {value: T};
+type Named(T) = struct {item: T};
+def rename: for(T) Fn(Box(T)) -> Named(T) = fn(value) { value.{value as item} };
+def source: Source = {x: 1, y: "source", extra: [1, 2]};
+def count: Count = {x: 2};
+def wrong: WrongCount = {x: "overwritten"};
+def before: Dict(Int) = {a: 1, b: 2};
+def after: Dict(Int) = {b: 3, c: 4};
+def checks: Fn() -> Value = fn() {
+    let selected: Target = source.{x, y as Y};
+    let pair: Pair = source.{x as first, x as second};
+    let empty: Empty = source.{};
+    let copied: Source = {...source, x: 3};
+    let first = source <~ {x: "discarded", ...count};
+    let second = source <~ {...wrong, x: 4};
+    let third = source <~ {...count, ...count};
+    let projected_update = selected <~ source.{y as Y};
+    let named: Box(String) = {value: "generic"};
+    let renamed = rename(named);
+    let merged: Dict(Int) = {a: 0, ...before, ...after, c: 5};
+    let spread_only: Dict(Int) = {...before};
+    encode(Value.type, [
+        selected.x == 1, selected.Y == "source",
+        pair.first == 1, pair.second == 1, empty == {},
+        copied.x == 3, copied.y == "source", copied.extra == source.extra,
+        source.x == 1, first.x == 2, second.x == 4, third.x == 2,
+        projected_update == selected, renamed.item == "generic",
+        merged == {a: 1, b: 3, c: 5}, dict.keys(merged) == ["a", "b", "c"],
+        spread_only == before, before == {a: 1, b: 2},
+    ])
+};
+export def answer = checks();
+export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });

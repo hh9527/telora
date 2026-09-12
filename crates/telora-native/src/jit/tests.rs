@@ -51,6 +51,26 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_record_spreads_keep_effect_order_origins_and_shared_backing() {
+    let (mir, root) = graph(include_str!("../../tests/fixtures/record-effects.telora"));
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap();
+    assert_eq!(context.diagnostics().iter().map(|diagnostic| diagnostic.message.as_str()).collect::<Vec<_>>(), ["projection receiver", "overwritten field", "winning spread"]);
+    let value = context.runtime_mut().unwrap().publish(&[value]).unwrap().remove(0);
+    let runtime = context.runtime().unwrap();
+    let source = runtime.field(&value, 0).unwrap().to_owned();
+    let selected = runtime.field(&value, 1).unwrap().to_owned();
+    let updated = runtime.field(&value, 2).unwrap().to_owned();
+    let original = runtime.field(&source, 0).unwrap(); // canonical order: items, x
+    assert_eq!(original.words(), runtime.field(&selected, 0).unwrap().words());
+    assert_eq!(original.words(), runtime.field(&updated, 0).unwrap().words());
+    assert_eq!(runtime.field(&source, 1).unwrap().words()[2], 1);
+    assert_eq!(runtime.field(&updated, 1).unwrap().words()[2], 2);
+}
+
+#[test]
 fn native_propagation_preserves_failure_and_payload_origins() {
     let source = "export def answer: Fn() -> Result(String, String) = fn() { let value: Result(Int, String) = Err(\"from here\"); let ignored = value?; Ok(\"unreachable\") };";
     let (mir, root) = graph(source);
@@ -1077,6 +1097,8 @@ fn native_checkers_initialize_once_and_publish_closed_generic_instances() {
 fn native_construction_invokes_sealed_checker_and_propagates_failure_once() {
     for (argument, succeeds) in [(42, true), (0, false)] {
         for source in [
+            format!("type Raw = struct {{number: Int}}; @check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let raw: Raw = {{number: {argument}}}; let checked: Item = raw.{{number}}; checked.number }};"),
+            format!("type Raw = struct {{number: Int}}; @check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let raw: Raw = {{number: {argument}}}; let checked: Item = {{...raw}}; checked.number }};"),
             format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{label: String, number: Int}}; export def answer = do {{ let candidate: Unchecked(Item) = {{label: \"candidate\", number: {argument}}}; let checked: Item = candidate; checked.number }};"),
             format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let base: Item = {{number: 1}}; (base <~ {{number: {argument}}}).number }};"),
             format!("def minimum = 1; type Item = enum {{ @check(fn(value) {{ if value >= minimum {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value)) }} }}) Full(Int), Empty }}; export def answer = match Item.Full({argument}) {{ Item.Full(value) => value, _ => -1 }};"),

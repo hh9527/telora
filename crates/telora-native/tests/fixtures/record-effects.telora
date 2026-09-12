@@ -1,0 +1,16 @@
+type Source = struct {x: Int, items: Array(Int)};
+type Selected = struct {items: Array(Int)};
+type Empty = struct {};
+type Count = struct {x: Int};
+def mark: for(T) Fn(String, T) -> T = fn(message, value) {
+    let ignored: Option(T) = warn!(message);
+    value
+};
+def source: Source = {x: 1, items: [42]};
+def count: Count = {x: 2};
+export def answer = do {
+    let empty: Empty = mark("projection receiver", source).{};
+    let selected: Selected = source.{items};
+    let updated = source <~ {x: mark("overwritten field", "wrong type"), ...mark("winning spread", count)};
+    (source, selected, updated)
+};

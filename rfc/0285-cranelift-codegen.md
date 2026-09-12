@@ -77,6 +77,8 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+字段投影（含重命名、空投影、重复源字段）和 named record/dict spread 已接入。投影/record spread 按封闭字段索引读取，record 的覆盖选择在编译期完成；所有源表达式仍按源码顺序求值，只有胜出的字段适配最终类型。Dict spread 复用有序列的合并 helper，后值覆盖同名键。输出 record 运行已有构造检查，字段来源和引用 backing 保留；语言对比覆盖泛型投影、异类型字段被覆盖、空投影、Dict 键序及原值不变。额外验证空投影仍执行 receiver、被覆盖字段仍产生副作用、发布后的来源和 backing 一致以及检查失败。
+
 Array、Tuple 与直接 enum payload 构造逐项消费封闭目标类型；TypeOf(T) 到 Type 的擦除仅修改静态标记，保留被表示的 TypeId 和来源。真实 ontology 测试模块及 spider-model 的 `Array(Type)` 初始化暴露了这项遗漏；语言对比已覆盖这三类容器边界。
 
 Native 已消费 MIR 的 value_adjustments（含泛型实例调整），在局部表达式和函数正常/显式返回边界执行构造检查后更新 TypeId stamp；不修改已有候选的来源或 backing。Unchecked struct 字面量从其封闭 owner 骨架读取字段，避免将包装类型的一个参数误作字段列表。类型收尾阶段也把带返回转换的闭包完整签名写入调整表，再物化泛型实例；seal 验证参数不变、返回 Unchecked(T) 对应 T，且返回边界的转换记录存在。Codegen 直接读取这个函数 TypeId，不自行拼接或推断签名。语言对比覆盖多字段候选、泛型正常/提前返回、检查失败及转换后的动态类型身份。
