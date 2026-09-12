@@ -111,6 +111,8 @@ Native 声明现在生成同一调用 ABI 的适配函数，使用已登记 nati
 
 ### Checked cast 阶段进展
 
+Bytes 字面量现已直接 lowering 为只读字节常量与 native Bytes 表构造，复用运行时预算和来源记录。CLI 资产验证空字节串、转义、Unicode、内容相等、hash 消费及初始化发布后 entry 读取，与默认后端对照。Debug 表达式的事件输出通道与 Interpreter 的封闭适配器计划仍需接通，不能把现有表达式覆盖视为完整。
+
 `.cast!` 已消费封闭目标类型与 checker 实例生成调用包；运行时先验证整个输入的表示，再转换并执行声明检查，不调用 encode/decode，也不重新推导类型。支持 Record/Dict、Array、Tuple/Newtype、Option/Result 和 Unchecked 到 owner；拒绝不同 nominal 身份以及数值隐式转换。未改变的子对象保留 backing 与来源。结构不匹配返回 Err(String)，checker 失败只产生一次执行诊断。
 
 CLI 语言资产覆盖 eval/eval-with 的 19 项类型身份与转换检查，并将解包后的容器数据与默认后端比较。默认后端对 cast 容器写入类型标记、对普通容器不总是写入相同标记，其相等比较会受此影响；因此不以该差异规定 native 的相等语义。默认运行时代码保持不变。

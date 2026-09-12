@@ -1152,16 +1152,19 @@ impl Lower<'_, '_> {
             .collect())
     }
     fn literal_bytes(&mut self, text: &str) -> EmitResult<(ir::Value, ir::Value)> {
+        self.literal_data(text.as_bytes())
+    }
+    fn literal_data(&mut self, text: &[u8]) -> EmitResult<(ir::Value, ir::Value)> {
         let id = self
             .module
             .declare_anonymous_data(false, false)
             .map_err(|e| e.to_string())?;
         let mut data = cranelift_module::DataDescription::new();
-        // Empty strings still get a valid non-null address.
+        // Empty literals still get a valid non-null address.
         data.define(if text.is_empty() {
             vec![0].into_boxed_slice()
         } else {
-            text.as_bytes().into()
+            text.into()
         });
         self.module
             .define_data(id, &data)
@@ -1356,6 +1359,10 @@ impl Lower<'_, '_> {
             HirKind::Binary(operation) => self.binary(node, operation, depth),
             HirKind::Unary(operation) => self.unary(node, operation, depth),
             HirKind::String(ref text) => self.string(node, key, text),
+            HirKind::Bytes(ref bytes) => {
+                let (pointer, length) = self.literal_data(bytes)?;
+                self.object(node, helpers::BYTES_LITERAL, key, pointer, length)
+            }
             HirKind::InterpolatedString => {
                 let mut words = Vec::new();
                 let mut count = 0;

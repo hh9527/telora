@@ -75,6 +75,7 @@ fn native_structural_equality_matches_default_across_worlds() {
         include_str!("../../../telora-native/tests/fixtures/equality.telora"),
         include_str!("../../../telora-native/tests/fixtures/record-spread.telora"),
         include_str!("../../../telora-native/tests/fixtures/sequence-spread.telora"),
+        include_str!("../../../telora-native/tests/fixtures/bytes-literal.telora"),
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
         for (command, export) in [("eval", "answer"), ("eval-with", "main")] {

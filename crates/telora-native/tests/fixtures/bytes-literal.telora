@@ -1,0 +1,17 @@
+import "std/codec" {encode, Value};
+import "std/entry" as entry;
+import "std/hash" as hash;
+def empty = b"";
+def shared = b"long byte literal retained across initialization and entry";
+def checks: Fn() -> Value = fn() {
+    encode(Value.type, [
+        empty == b"",
+        b"a\nb" == b"a\nb",
+        b"文本" == b"文本",
+        b"a" != b"b",
+        shared == b"long byte literal retained across initialization and entry",
+        hash.finish(hash.update_bytes(hash.new(), shared)) == hash.finish(hash.update_bytes(hash.new(), b"long byte literal retained across initialization and entry")),
+    ])
+};
+export def answer = checks();
+export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });

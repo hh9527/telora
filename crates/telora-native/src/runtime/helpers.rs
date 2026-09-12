@@ -49,6 +49,7 @@ pub(crate) const FLOAT_REMAINDER: u32 = 54;
 pub(crate) const MAKE_TEST: u32 = 55;
 pub(crate) const ARRAY_CONCAT: u32 = 56;
 pub(crate) const CHECKED_CAST: u32 = 57;
+pub(crate) const BYTES_LITERAL: u32 = 58;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -581,6 +582,10 @@ pub(crate) unsafe extern "C" fn object(
                         None => None,
                     };
                     rt.enum_value(ty, loc, index, payload.as_ref())?
+                }
+                BYTES_LITERAL => {
+                    let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), count as usize) };
+                    rt.bytes(ty, loc, bytes)?
                 }
                 STRING => {
                     // SAFETY: codegen stores exactly count bytes in its JIT data object.
