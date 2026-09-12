@@ -23,6 +23,16 @@ impl Runtime {
                 Kind::Metadata => { if self.represented_type(left.as_ref())? != self.represented_type(right.as_ref())? { return Ok(false); } }
                 Kind::String => { if self.text(left.as_ref())?.as_str() != self.text(right.as_ref())?.as_str() { return Ok(false); } }
                 Kind::Bytes => { if self.bytes_data(&left)? != self.bytes_data(&right)? { return Ok(false); } }
+                Kind::Regex => { if !self.regex_equal(&left, &right)? { return Ok(false); } }
+                Kind::Format => {
+                    if !visited.insert((ty, left.words()[2..].to_vec(), right.words()[2..].to_vec())) { continue; }
+                    let (a, av) = self.format_parts(&left)?;
+                    let (b, bv) = self.format_parts(&right)?;
+                    if a != b { return Ok(false); }
+                    if a == 3 {
+                        if self.scalar_bits(av[0].as_ref())? != self.scalar_bits(bv[0].as_ref())? { return Ok(false); }
+                    } else { pending.extend(av.into_iter().zip(bv)); }
+                }
                 Kind::Dyn => {
                     self.dynamic_value(&left)?;
                     self.dynamic_value(&right)?;

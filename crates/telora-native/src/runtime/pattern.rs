@@ -34,6 +34,9 @@ fn required(hir: &regex_syntax::hir::Hir) -> BTreeSet<String> {
 }
 
 impl Runtime {
+    pub(super) fn regex_equal(&self, left: &Value, right: &Value) -> Result<bool> {
+        Ok(self.regex_object(left)?.regex.as_str() == self.regex_object(right)?.regex.as_str())
+    }
     pub(super) fn regex_object(&self, value: &Value) -> Result<&CompiledRegex> {
         self.validate(value.as_ref(), value.type_id())?;
         self.expect(value.type_id(), Kind::Regex)?;

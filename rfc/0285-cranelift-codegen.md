@@ -77,6 +77,8 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+Regex 的相等按原始 pattern 字符串判断，不按匹配语言是否等价判断。Fmt 按节点操作和子节点结构比较，不先渲染；Float 格式节点保持 bit 相等语义，区别于普通 Float 数值相等。两者读取原生表并共享已验证的节点读取逻辑。语言资产覆盖独立构造、发布后读取、等价但不同 pattern、相同输出的不同格式树及格式正负零。HashState 等其余 opaque 相等契约仍未据此宣称完成。
+
 结构化相等比较已接入 std/eq.equal 与聚合 ==/!=。运行时沿封闭布局遍历原生对象，工作列表只持有描述符，忽略来源位置；覆盖标量、String/Bytes、元数据、Array、Tuple/Record、newtype、Dict、enum。Float 使用数值相等，保留正负零相等语义。Dyn 按已分配对象身份比较，重复 pack 不视为同一对象。函数按代码身份和环境槽身份比较，重复创建的无捕获/有捕获闭包互不相等，全局及 native 函数重复引用保持相等。真实 CLI eval/eval-with 对比默认后端并覆盖 main/work 读取。opaque resource 的独立相等契约仍待补齐，当前明确报未接通，不以内容比较兜底。
 
 std/_rt.call_with_diagnostics 使用封闭的 callback 参数/返回类型、Result/Tuple/Array 边与 TypeOf 见证生成调用包，运行时不重做推导。codec 的 enum 编码已覆盖内置 Result 等封闭 enum，支持输出捕获结果。

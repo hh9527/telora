@@ -89,28 +89,7 @@ impl Runtime {
             if depth >= 128 {
                 return Err("std/fmt value exceeds the recursive rendering limit".into());
             }
-            rt.validate(value.as_ref(), value.type_id())?;
-            rt.expect(value.type_id(), Kind::Format)?;
-            let words = rt.object_words(
-                Table::Formats,
-                u32::try_from(value.words[2]).map_err(|_| "invalid Fmt HeapId")?,
-            )?;
-            let operation = *words.first().ok_or("empty Fmt node")?;
-            let mut rest = &words[1..];
-            let mut arguments = Vec::new();
-            while !rest.is_empty() {
-                let header = *rest.get(1).ok_or("truncated Fmt input")?;
-                let ty = TypeId((header >> 32) as u32);
-                let count = rt.layout(ty)?.words;
-                let words = rest.get(..count).ok_or("truncated Fmt input")?;
-                let value = ValueRef {
-                    arena: rt.identity,
-                    words,
-                };
-                rt.validate(value, ty)?;
-                arguments.push(value.to_owned());
-                rest = &rest[count..];
-            }
+            let (operation, arguments) = rt.format_parts(value)?;
             let first = arguments.first().ok_or("Fmt input missing")?;
             match operation {
                 1 => output.push_str(rt.text(first.as_ref())?.as_str()),
@@ -140,5 +119,26 @@ impl Runtime {
         let mut output = String::new();
         render(self, value, &mut output, 0)?;
         Ok(output)
+    }
+
+    pub(super) fn format_parts(&self, value: &Value) -> Result<(u64, Vec<Value>)> {
+        self.validate(value.as_ref(), value.type_id())?;
+        self.expect(value.type_id(), Kind::Format)?;
+        let words = self.object_words(Table::Formats, u32::try_from(value.words[2]).map_err(|_| "invalid Fmt HeapId")?)?;
+        let operation = *words.first().ok_or("empty Fmt node")?;
+        let mut rest = &words[1..];
+        let mut values = vec![];
+        while !rest.is_empty() {
+            let header = *rest.get(1).ok_or("truncated Fmt input")?;
+            let ty = TypeId((header >> 32) as u32);
+            let width = self.layout(ty)?.words;
+            let words = rest.get(..width).ok_or("truncated Fmt input")?;
+            let value = ValueRef { arena: self.identity, words };
+            self.validate(value, ty)?;
+            values.push(value.to_owned());
+            rest = &rest[width..];
+        }
+        if !(1..=4).contains(&operation) || values.len() != if operation == 4 { 2 } else { 1 } { return Err("invalid Fmt node shape".into()); }
+        Ok((operation, values))
     }
 }
