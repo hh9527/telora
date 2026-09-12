@@ -38,6 +38,7 @@ pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
 pub(crate) const LEAVE_CALL: u32 = 34;
 pub(crate) const DICT_READ: u32 = 35;
+pub(crate) const FOLD: u32 = 36;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -72,6 +73,9 @@ pub(crate) unsafe extern "C" fn object(
     }
     if operation == ARRAY_MAP {
         return unsafe { callbacks::array_map(context, TypeId(ty), data, out, origin, count) };
+    }
+    if operation == FOLD {
+        return unsafe { callbacks::fold(context, TypeId(ty), data, out, origin, count == 1) };
     }
     if operation == FAIL_VALUES {
         return context.boundary(|context| {

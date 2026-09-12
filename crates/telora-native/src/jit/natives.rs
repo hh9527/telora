@@ -508,6 +508,29 @@ impl Lower<'_, '_> {
                 site,
             );
         }
+        if matches!((module.id, declaration.name.as_str()), (5 | 6, "fold")) {
+            if arguments.len() != 3 || arguments[1] != self.return_type { return Err("native fold signature mismatch".into()); }
+            let dictionary = module.id == 6;
+            let container = &self.mir.types[arguments[0].index()];
+            let callback = &self.mir.types[arguments[2].index()];
+            let expected = if dictionary { TypeConstructor::Dict } else { TypeConstructor::Array };
+            if container.constructor != expected || container.arguments.len() != 1 || callback.constructor != TypeConstructor::Function || callback.arguments.len() != if dictionary { 4 } else { 3 }
+                || callback.arguments[0].index() != arguments[1].index()
+                || callback.arguments.last().unwrap().index() != self.return_type.index()
+                || callback.arguments[if dictionary { 2 } else { 1 }] != container.arguments[0]
+                || (dictionary && self.mir.types[callback.arguments[1].index()].constructor != TypeConstructor::String)
+            { return Err("native fold callback does not match its sealed signature".into()); }
+            let dispatcher = self.functions.dispatcher(arguments[2], self.module)?;
+            let dispatcher = self.module.declare_func_in_func(dispatcher, self.builder.func);
+            let address = self.builder.ins().func_addr(self.module.target_config().pointer_type(), dispatcher);
+            let mut packet = vec![address];
+            let width = arguments.iter().map(|&ty| self.layouts.words(ty)).collect::<Result<Vec<_>>>()?.into_iter().sum::<usize>();
+            for i in 0..width { packet.push(self.builder.ins().load(types::I64, MemFlagsData::new(), data, (i * 8) as i32)); }
+            let data = self.stack_words(&packet)?;
+            let count = self.builder.ins().iconst(types::I64, i64::from(dictionary));
+            let result = self.object(node, helpers::FOLD, self.return_type, data, count)?;
+            return self.write_return(&result);
+        }
         if matches!((module.id, declaration.name.as_str()), (5, "map" | "find" | "filter" | "any" | "all") | (6, "map_values")) {
             let dictionary = module.id == 6;
             let find = declaration.name == "find";

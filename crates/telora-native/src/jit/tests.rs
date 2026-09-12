@@ -615,6 +615,37 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_folds_use_sealed_accumulators_and_sorted_dictionary_order() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/fold.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    assert_eq!(rt.scalar_bits(rt.field(&result, 0).unwrap()).unwrap(), 234);
+    assert_eq!(rt.scalar_bits(rt.field(&result, 1).unwrap()).unwrap(), 923);
+    assert_eq!(rt.field(&result, 2).unwrap().words(), rt.field(&result, 3).unwrap().words());
+    let initial = rt.field(&result, 2).unwrap().to_owned();
+    let folded = rt.field(&result, 4).unwrap().to_owned();
+    assert_eq!(rt.scalar_bits(rt.field(&folded, 0).unwrap()).unwrap(), 45);
+    assert_eq!(rt.field(&initial, 1).unwrap().words(), rt.field(&folded, 1).unwrap().words());
+    assert_eq!(context.call_depth(), 0);
+    for source in [
+        "import \"std/array\" { fold }; export def answer = fold([1], 0, fn(state, value) -> Int { fail!(\"fold failed\") });",
+        "import \"std/dict\" { fold }; export def answer = fold({ a: 1 }, 0, fn(state, key, value) -> Int { fail!(\"fold failed\") });",
+    ] {
+        let (mir, root) = graph_with(source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        assert!(compiled.call(&mut context, &[]).is_err());
+        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.diagnostics()[0].message, "fold failed");
+        assert_eq!(context.call_depth(), 0);
+    }
+}
+
+#[test]
 fn native_dictionary_pair_roundtrip_and_merge_keep_right_hand_values() {
     let (mir, root) = graph_with(
         "import \"std/dict\" as dict; export def answer = do { let left = dict.from_pairs([(\"z\", 1), (\"a\", 2)]); let right = dict.from_pairs([(\"z\", 3), (\"b\", 4)]); let merged = dict.merge(left, right); (right, merged, dict.from_pairs(dict.pairs(merged))) };",

@@ -2,6 +2,43 @@ use super::*;
 
 type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *const u64) -> u32;
 
+/// The packet contains a generated dispatcher, container, accumulator and
+/// closure. Only descriptor words cross callbacks; heap objects stay in place.
+pub(super) unsafe fn fold(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, dictionary: bool) -> u32 {
+    context.boundary(|context| {
+        let result = (|| {
+            let rt = context.runtime()?;
+            let width = rt.layout(ty)?.words;
+            let address = unsafe { *data };
+            let container = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(1), 4) }.into() };
+            let mut accumulator = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(5), width) }.into() };
+            let closure = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(5 + width), 3) }.into() };
+            rt.validate(accumulator.as_ref(), ty)?;
+            rt.function_id(&closure)?;
+            let count = if dictionary { rt.dict_len(&container)? } else { rt.array_len(&container)? };
+            let callback = unsafe { std::mem::transmute::<usize, Callback>(address as usize) };
+            for index in 0..count {
+                let rt = context.runtime()?;
+                let mut arguments = accumulator.words().to_vec();
+                if dictionary {
+                    let (key, value) = rt.dict_entry(&container, index)?;
+                    arguments.extend_from_slice(key.words());
+                    arguments.extend_from_slice(value.words());
+                } else { arguments.extend_from_slice(rt.array_get(&container, index)?.words()); }
+                let mut words = vec![0; width].into_boxed_slice();
+                let status = unsafe { callback(context, arguments.as_ptr(), words.as_mut_ptr(), closure.words().as_ptr()) };
+                if status == 1 { return Ok(Status::Failed); }
+                if status != 0 { return Err("native callback returned invalid status".into()); }
+                accumulator = Value { arena: context.runtime()?.identity, words };
+                context.runtime()?.validate(accumulator.as_ref(), ty)?;
+            }
+            unsafe { std::ptr::copy_nonoverlapping(accumulator.words().as_ptr(), out, width); }
+            Ok::<Status, String>(Status::Success)
+        })();
+        match result { Ok(status) => status, Err(error) => context.fail_at(error, origin) }
+    }) as u32
+}
+
 /// All addresses and descriptor buffers are borrowed from the current native
 /// call. Runtime borrows end before calling generated code recursively.
 pub(super) unsafe fn array_map(

@@ -1,0 +1,16 @@
+import "std/array" as array;
+import "std/dict" as dict;
+
+export def answer = do {
+    let offset = 1;
+    let values: Dict(Int) = { z: 3, a: 1, b: 2 };
+    let empty: Array(Int) = [];
+    let initial = (42, "initial long heap-backed accumulator");
+    (
+        array.fold([1, 2, 3], 0, fn(state, value) { state * 10 + value + offset }),
+        dict.fold(values, 0, fn(state, key, value) { state * 10 + if key == "a" { 9 } else { value } }),
+        initial,
+        array.fold(empty, initial, fn(state, value) { fail!("empty fold called its callback") }),
+        array.fold([1, 2], initial, fn(state, value) { (state.0 + value, state.1) }),
+    )
+};
