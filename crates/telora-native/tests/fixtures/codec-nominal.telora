@@ -1,0 +1,26 @@
+import "std/codec" {decode, encode, Value};
+
+type Wrapped(T) = struct(T);
+type Rec = struct {a: Int, note: Option(String)};
+type Node = struct {children: Array(Node), value: Int};
+type Choice = enum {Empty, Payload(Wrapped(Int))};
+type Temporal = enum {LocalDate(String)};
+
+def read: for(T) Fn(TypeOf(T), Value) -> T = fn(target, input) {
+    match decode(target, input) {
+        Ok(value) => value,
+        Err(error) => raise!(error),
+    }
+};
+
+export def answer = encode(Value.type, (
+    read(Wrapped(Int).type, Value.Int(42)),
+    read(Rec.type, Value.Object({a: Value.Int(1)})),
+    read(Choice.type, Value.String("Empty")),
+    read(Choice.type, Value.Object({Payload: Value.Int(2)})),
+    read(Node.type, Value.Object({
+        value: Value.Int(3),
+        children: Value.Array([Value.Object({value: Value.Int(4), children: Value.Array([])})]),
+    })),
+    read(Temporal.type, Value.LocalDate("2026-09-12")),
+));

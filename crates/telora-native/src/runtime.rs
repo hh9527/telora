@@ -17,6 +17,7 @@ enum Kind {
     Bytes,
     Array,
     Tuple,
+    Newtype,
     Record,
     Dict,
     Enum,
@@ -34,6 +35,7 @@ struct Variant {
 }
 struct Layout {
     kind: Kind,
+    construction_checks: bool,
     optional: bool,
     dynamic_kind: Option<&'static str>,
     field_names: Vec<String>,
@@ -154,6 +156,7 @@ struct Tables {
     strings: RawByteTable,
     bytes: RawByteTable,
     records: WordTable,
+    newtypes: WordTable,
     arrays: WordTable,
     values: WordTable,
     environments: WordTable,
@@ -164,6 +167,7 @@ struct Tables {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Table {
     Records,
+    Newtypes,
     Arrays,
     Values,
     Environments,
@@ -246,6 +250,7 @@ impl Runtime {
         let tables = self.tables(reference);
         match table {
             Table::Records => tables.records.get(reference.slot()),
+            Table::Newtypes => tables.newtypes.get(reference.slot()),
             Table::Arrays => tables.arrays.get(reference.slot()),
             Table::Values => tables.values.get(reference.slot()),
             Table::Environments => tables.environments.get(reference.slot()),
@@ -255,6 +260,7 @@ impl Runtime {
     fn push_words(&mut self, table: Table, words: Vec<u64>) -> Result<u32> {
         let slot = match table {
             Table::Records => self.work.records.push(words)?,
+            Table::Newtypes => self.work.newtypes.push(words)?,
             Table::Arrays => self.work.arrays.push(words)?,
             Table::Values => self.work.values.push(words)?,
             Table::Environments => self.work.environments.push(words)?,
@@ -286,6 +292,7 @@ impl Runtime {
                 T::Native(native) if (native.module, native.slot) == (34, 0) => Kind::Blame,
                 _ if !entry.variants.is_empty() => Kind::Enum,
                 _ if shape.table == Some("RecordTable") => Kind::Record,
+                _ if shape.table == Some("NewtypeTable") => Kind::Newtype,
                 _ => Kind::Other,
             };
             let fields = entry
@@ -310,6 +317,7 @@ impl Runtime {
                 .unwrap_or_default();
             layouts.push(Some(Layout {
                 kind,
+                construction_checks: sealed.mir().construction_checks.iter().any(|check| check.concrete && check.owner.index() == entry.type_id),
                 optional: ty.constructor == T::Option,
                 field_names: entry
                     .object
@@ -497,7 +505,7 @@ impl Runtime {
     /// Tuple and Record share all fixed-field storage and access logic.
     pub fn aggregate(&mut self, ty: TypeId, loc: Location, values: &[Value]) -> Result<Value> {
         let layout = self.layout(ty)?;
-        if !matches!(layout.kind, Kind::Tuple | Kind::Record) {
+        if !matches!(layout.kind, Kind::Tuple | Kind::Record | Kind::Newtype) {
             return Err("not a fixed-field aggregate".into());
         }
         if values.len() != layout.fields.len() {
@@ -515,7 +523,7 @@ impl Runtime {
         if kind == Kind::Tuple && values.is_empty() {
             return self.pack(ty, loc, &[]);
         }
-        let id = self.push_words(Table::Records, words)?;
+        let id = self.push_words(if kind == Kind::Newtype { Table::Newtypes } else { Table::Records }, words)?;
         self.pack(ty, loc, &[u64::from(id)])
     }
     pub fn field<'a>(&'a self, value: &Value, index: usize) -> Result<ValueRef<'a>> {
@@ -529,6 +537,7 @@ impl Runtime {
             Kind::Tuple | Kind::Record => {
                 self.object_words(Table::Records, value.words[2] as u32)?
             }
+            Kind::Newtype => self.object_words(Table::Newtypes, value.words[2] as u32)?,
             _ => return Err("not an aggregate".into()),
         };
         let result = ValueRef {

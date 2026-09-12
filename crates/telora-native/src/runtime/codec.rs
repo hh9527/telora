@@ -9,10 +9,13 @@ impl From<String> for DecodeFailure {
 }
 
 impl Runtime {
-    pub(crate) fn decode(&mut self, result: TypeId, target: TypeId, input: &Value, loc: Location) -> Result<Value> {
+    pub(crate) fn decode(&mut self, result: TypeId, target: TypeId, properties: &Value, input: &Value, loc: Location) -> Result<Value> {
         let contract = self.data_contract.clone().ok_or("semantic Value contract is not loaded")?;
         self.validate(input.as_ref(), contract.value_type())?;
-        match self.decode_value(&contract, target, input, "$", 0) {
+        let properties = (0..self.layout(properties.type_id())?.fields.len())
+            .map(|i| self.represented_type(self.field(properties, i)?))
+            .collect::<Result<Vec<_>>>()?;
+        match self.decode_value(&contract, &properties, target, input, "$", 0) {
             Ok(value) => self.named_variant(result, loc, "Ok", Some(&value)),
             Err(DecodeFailure::Runtime(error)) => Err(error),
             Err(DecodeFailure::Rejected(message, subject)) => {
@@ -25,13 +28,16 @@ impl Runtime {
         }
     }
 
-    fn decode_value(&mut self, contract: &DataContract, target: TypeId, input: &Value, path: &str, depth: usize) -> std::result::Result<Value, DecodeFailure> {
+    fn decode_value(&mut self, contract: &DataContract, properties: &[TypeId], target: TypeId, input: &Value, path: &str, depth: usize) -> std::result::Result<Value, DecodeFailure> {
         if depth > 512 { return Err(DecodeFailure::Runtime("native codec nesting limit".into())); }
         if target == contract.value_type() { return Ok(input.clone()); }
         let info = self.type_info[target.index()].kind;
-        // Nominal decoding also requires property callbacks and construction checks.
-        // Until these are linked, it must not produce an unchecked nominal value.
-        if info == Some("Ref") { return Err(DecodeFailure::Runtime("native nominal codec decoding is not yet linked".into())); }
+        if self.layout(target)?.construction_checks {
+            return Err(DecodeFailure::Runtime("native codec construction checks are not yet linked".into()));
+        }
+        if info == Some("Ref") && properties.iter().any(|property| self.property_presence.contains(&(target, *property))) {
+            return Err(DecodeFailure::Runtime("native codec property execution is not yet linked".into()));
+        }
         let tag = self.layout(input.type_id())?.variants[self.enum_tag(input)? as usize].name.clone();
         let payload = self.enum_payload(input)?.map(ValueRef::to_owned);
         let loc = input.origin().words();
@@ -43,6 +49,37 @@ impl Runtime {
             return Ok(value);
         }
         let layout = self.layout(target)?;
+        if info == Some("Ref") && layout.dynamic_kind == Some("Tuple") {
+            let child = layout.fields[0].0;
+            let value = self.decode_value(contract, properties, child, input, path, depth + 1)?;
+            return Ok(self.aggregate(target, loc, &[value])?);
+        }
+        if info == Some("Ref") && layout.kind == Kind::Enum {
+            let (name, value) = match (tag.as_str(), payload) {
+                ("String", Some(text)) => (self.text(text.as_ref())?.as_str().to_owned(), None),
+                ("Object", Some(object)) if self.dict_len(&object)? == 1 => {
+                    let (key, value) = self.dict_entry(&object, 0)?;
+                    (self.text(key)?.as_str().to_owned(), Some(value.to_owned()))
+                }
+                ("LocalDate" | "LocalTime" | "LocalDateTime" | "OffsetDateTime", Some(text)) => {
+                    let value = self.named_variant(contract.value_type(), loc, "String", Some(&text))?;
+                    (tag, Some(value))
+                }
+                _ => return Err(reject("a declared enum variant")),
+            };
+            let layout = self.layout(target)?;
+            let Some(index) = layout.variants.iter().position(|variant| variant.name == name) else {
+                return Err(reject("a declared enum variant"));
+            };
+            return match (layout.variants[index].payload, value) {
+                (Some(child), Some(value)) => {
+                    let value = self.decode_value(contract, properties, child, &value, path, depth + 1)?;
+                    Ok(self.enum_value(target, loc, index as u32, Some(&value))?)
+                }
+                (None, None) => Ok(self.enum_value(target, loc, index as u32, None)?),
+                _ => Err(reject("a declared enum variant")),
+            };
+        }
         if info == Some("Enum") && layout.kind == Kind::Scalar {
             return match tag.as_str() {
                 "True" => Ok(self.scalar(target, loc, 1)?),
@@ -53,7 +90,7 @@ impl Runtime {
         if layout.optional {
             if tag == "None" { return Ok(self.named_variant(target, loc, "None", None)?); }
             let child = layout.arguments[0];
-            let value = self.decode_value(contract, child, input, path, depth + 1)?;
+            let value = self.decode_value(contract, properties, child, input, path, depth + 1)?;
             return Ok(self.named_variant(target, loc, "Some", Some(&value))?);
         }
         if matches!(layout.kind, Kind::Array | Kind::Tuple) {
@@ -66,7 +103,7 @@ impl Runtime {
             let mut values = Vec::with_capacity(count);
             for i in 0..count {
                 let value = self.array_get(&payload, i)?.to_owned();
-                values.push(self.decode_value(contract, children[if array { 0 } else { i }], &value, &format!("{path}[{i}]"), depth + 1)?);
+                values.push(self.decode_value(contract, properties, children[if array { 0 } else { i }], &value, &format!("{path}[{i}]"), depth + 1)?);
             }
             return Ok(if array { self.array(target, loc, &values)? } else { self.aggregate(target, loc, &values)? });
         }
@@ -86,7 +123,7 @@ impl Runtime {
             let mut values = Vec::with_capacity(fields.len());
             for (name, ty) in fields {
                 if let Some(value) = inputs.remove(&name) {
-                    values.push(self.decode_value(contract, ty, &value, &format!("{path}.{name}"), depth + 1)?);
+                    values.push(self.decode_value(contract, properties, ty, &value, &format!("{path}.{name}"), depth + 1)?);
                 } else if self.layout(ty)?.optional {
                     values.push(self.named_variant(ty, loc, "None", None)?);
                 } else {
@@ -104,7 +141,7 @@ impl Runtime {
                 let (key, value) = self.dict_entry(&payload, i)?;
                 let (key, value) = (key.to_owned(), value.to_owned());
                 let name = self.text(key.as_ref())?.as_str().to_owned();
-                let value = self.decode_value(contract, child, &value, &format!("{path}.{name}"), depth + 1)?;
+                let value = self.decode_value(contract, properties, child, &value, &format!("{path}.{name}"), depth + 1)?;
                 pairs.push((key, value));
             }
             return Ok(self.dict(target, loc, &pairs)?);

@@ -126,9 +126,9 @@ impl Runtime {
                     words[2] = (words[2] & 0xffff_ffff) | (u64::from(id) << 32);
                 }
             }
-            Kind::Tuple | Kind::Record => {
+            Kind::Tuple | Kind::Record | Kind::Newtype => {
                 let id = self.copy_object(
-                    Table::Records,
+                    if layout.kind == Kind::Newtype { Table::Newtypes } else { Table::Records },
                     words[2] as u32,
                     Some(ty),
                     target,
@@ -290,6 +290,7 @@ impl Runtime {
         let mut words = self.object_words(table, old)?.to_vec();
         let slot = match table {
             Table::Records => target.records.push(vec![])?,
+            Table::Newtypes => target.newtypes.push(vec![])?,
             Table::Arrays => target.arrays.push(vec![])?,
             Table::Values => target.values.push(vec![])?,
             Table::Environments => target.environments.push(vec![])?,
@@ -326,7 +327,7 @@ impl Runtime {
                 )?;
                 self.copy_value(&mut words, target, copies, depth)?;
             }
-            Table::Records => {
+            Table::Records | Table::Newtypes => {
                 let layout = self.layout(ty.ok_or("record copy needs type")?)?;
                 let mut end = 0;
                 for &(field, offset) in &layout.fields {
@@ -369,6 +370,7 @@ impl Runtime {
         }
         match table {
             Table::Records => target.records.entries[slot as usize].words = words,
+            Table::Newtypes => target.newtypes.entries[slot as usize].words = words,
             Table::Arrays => target.arrays.entries[slot as usize].words = words,
             Table::Values => target.values.entries[slot as usize].words = words,
             Table::Environments => target.environments.entries[slot as usize].words = words,

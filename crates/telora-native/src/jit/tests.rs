@@ -983,6 +983,53 @@ fn native_interpolation_consumes_sealed_display_calls() {
 }
 
 #[test]
+fn native_newtype_publication_preserves_shared_payloads_and_distinct_tables() {
+    let (mir, root) = graph_with("import \"std/codec\" {decode, Value}; type Wrapped = struct(String); def text = \"long shared newtype payload\"; def wrapped = match decode(Wrapped.type, Value.String(text)) { Ok(value) => value, Err(error) => raise!(error) }; export def answer = ({value: text}, wrapped, wrapped, text);", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime_mut().unwrap();
+    let roots = rt.publish(&[value]).unwrap();
+    let record = rt.field(&roots[0], 0).unwrap().to_owned();
+    let wrapped = rt.field(&roots[0], 1).unwrap().to_owned();
+    assert_eq!(wrapped.words(), rt.field(&roots[0], 2).unwrap().words());
+    let text = rt.field(&roots[0], 3).unwrap();
+    assert_eq!(rt.field(&wrapped, 0).unwrap().words(), text.words());
+    assert_eq!(rt.field(&record, 0).unwrap().words(), text.words());
+    assert_eq!(rt.text(text).unwrap().as_str(), "long shared newtype payload");
+}
+
+#[test]
+fn native_codec_decodes_nominal_skeletons_and_recursive_instances() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/codec-nominal.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.runtime().unwrap().semantic_json(&contract, &value).unwrap(), "[42,{\"a\":1,\"note\":null},\"Empty\",{\"Payload\":2},{\"children\":[{\"children\":[],\"value\":4}],\"value\":3},{\"LocalDate\":\"2026-09-12\"}]");
+}
+
+#[test]
+fn native_codec_rejects_unlinked_checks_and_properties() {
+    for (declaration, expected) in [
+        ("@check(fn(value) { Ok(()) }) type Item = struct(Int);", "native codec construction checks are not yet linked"),
+        ("type Item = enum { @check(fn(value) { Ok(()) }) Payload(Int) };", "native codec construction checks are not yet linked"),
+        ("import \"std/_codec\" { rename_all, RenameCase }; @rename_all(RenameCase.CamelCase) type Item = struct { a: Int };", "native codec property execution is not yet linked"),
+    ] {
+        let source = format!("import \"std/codec\" {{decode, Value}}; {declaration} export def answer = decode(Item.type, Value.Int(1));");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        assert!(compiled.call(&mut context, &[]).is_err());
+        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.diagnostics()[0].message, expected);
+    }
+}
+
+#[test]
 fn native_codec_decodes_inferred_structural_records() {
     let (mir, root) = graph_with("import \"std/codec\" { encode, decode, Value }; def roundtrip: for(T) Fn(T) -> T = fn(value) { match decode(T.type, encode(Value.type, value)) { Ok(result) => result, Err(error) => raise!(error) } }; export def answer = encode(Value.type, roundtrip({a: 42, text: \"shared record string\"}));", static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();

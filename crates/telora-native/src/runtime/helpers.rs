@@ -229,7 +229,7 @@ pub(crate) unsafe extern "C" fn object(
                     }
                     let target = rt.represented_type(inputs[1].as_ref())?;
                     if operation == DECODE {
-                        rt.decode(ty, target, &inputs[2], loc)?
+                        rt.decode(ty, target, &inputs[0], &inputs[2], loc)?
                     } else {
                         if target != ty { return Err("codec target witness mismatch".into()); }
                         rt.encode(ty, &inputs[0], &inputs[2])?
