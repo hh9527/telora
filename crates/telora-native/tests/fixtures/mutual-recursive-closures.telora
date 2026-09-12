@@ -9,7 +9,9 @@ def functions = do {
     def odd: Fn(Int) -> Int = fn(n) {
         if n == 0 { 0 } else { even(n - 1) }
     };
-    (even, odd)
+    def alias: Fn(Int) -> Int = even;
+    let same = alias == even;
+    (fn(n) {if same {alias(n)} else {0}}, odd)
 };
 export def answer = codec.encode(value.Value.type, functions.0(4));
 export def main = entry.main(

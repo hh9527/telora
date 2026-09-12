@@ -145,6 +145,8 @@ Host 入口和生成代码的间接分派都处理这种槽。函数自身已捕
 
 源码间接调用在参数求值后、进入公共 dispatcher 前解析词法槽，解析失败使用调用 HIR 的位置。修复前 `later(42)` 的 Pending 错误标在外层 block，现精确覆盖调用范围。`function-before-initialization.telora` 由 JIT 和真实 `check --native --lib` 验证，失败只报告一次、调用深度归零、命令失败退出；参数自身 fail 的变体仍优先报告参数错误。公共 dispatcher 保留解析检查以覆盖原生回调，回调场景的定位需另行核对，不能用直接源码调用的证据代替。
 
+函数别名按既有语义进一步校正：填充槽时，来源若是 Pending 函数槽则在定义处失败；捕获 Pending 槽仍合法，两者不可混同。真实对照发现修复前默认后端拒绝前向别名，native 却返回结果，现 `function-alias-before-initialization.telora` 验证 native 在第 2 行单次失败。函数相等比较沿槽读取最终函数身份并计费，因此已初始化函数及其别名相等；槽本身的稳定身份用于捕获连接，不是相等比较的最终依据。互递归发布资产增加已初始化别名比较，默认/native eval 和 eval-with 均返回 42。126 项 native 单测及三个 regex 实验通过，CLI 定向覆盖失败位置与发布后别名调用。
+
 `.cast!` 已消费封闭目标类型与 checker 实例生成调用包；运行时先验证整个输入的表示，再转换并执行声明检查，不调用 encode/decode，也不重新推导类型。支持 Record/Dict、Array、Tuple/Newtype、Option/Result 和 Unchecked 到 owner；拒绝不同 nominal 身份以及数值隐式转换。未改变的子对象保留 backing 与来源。结构不匹配返回 Err(String)，checker 失败只产生一次执行诊断。
 
 CLI 语言资产覆盖 eval/eval-with 的 19 项类型身份与转换检查，并将解包后的容器数据与默认后端比较。默认后端对 cast 容器写入类型标记、对普通容器不总是写入相同标记，其相等比较会受此影响；因此不以该差异规定 native 的相等语义。默认运行时代码保持不变。

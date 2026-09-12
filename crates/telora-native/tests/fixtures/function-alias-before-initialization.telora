@@ -1,0 +1,5 @@
+export def answer = do {
+    def alias: Fn(Int) -> Int = later;
+    def later: Fn(Int) -> Int = fn(value) {value};
+    alias(42)
+};

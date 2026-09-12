@@ -495,9 +495,12 @@ fn lexical_function_slots_preserve_cycles_and_identity_across_publication() {
     assert!(!rt.published && rt.main.environments.entries.is_empty());
     let a = rt.reserve_function(ty, [0; 3]).unwrap();
     let b = rt.reserve_function(ty, [0; 3]).unwrap();
+    assert!(rt.fill_function(&a, &b).unwrap_err().contains("uninitialized"));
+    assert!(rt.fill_function(&a, &a).unwrap_err().contains("itself"));
+    let body = rt.closure(ty, [0; 3], 7, &[]).unwrap();
+    rt.fill_function(&b, &body).unwrap();
     rt.fill_function(&a, &b).unwrap();
-    rt.fill_function(&b, &a).unwrap();
-    assert!(rt.resolve_function(&a).unwrap_err().contains("alias cycle"));
+    assert_eq!(rt.function_id(&rt.resolve_function(&a).unwrap()).unwrap(), 7);
 }
 
 #[test]

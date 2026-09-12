@@ -29,6 +29,16 @@ impl Runtime {
         if target.words[2] == source.words[2] {
             return Err("function slot cannot refer directly to itself".into());
         }
+        // Capturing a pending slot is valid, but defining an alias requires
+        // an installed source. Single assignment makes this local check
+        // sufficient: an already filled source can never become pending.
+        if self.function_id(source)? == FUNCTION_SLOT {
+            let source_raw = ((source.words[2] >> 32) as u32).checked_sub(1)
+                .ok_or("function source has no identity")?;
+            if self.object_words(Table::Environments, source_raw)?.is_empty() {
+                return Err("function definition refers to an uninitialized function".into());
+            }
+        }
         self.charge_allocation(source.words().len(), 8, 0)?;
         self.work.environments.entries[reference.slot() as usize].words = source.words().to_vec();
         Ok(())
