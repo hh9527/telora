@@ -56,6 +56,7 @@ pub(super) fn emit(
     let context = builder.block_params(entry)[0];
     let out = builder.block_params(entry)[2];
     let mut lower = Lower {
+        local_instances: BTreeMap::new(),
         guarded: false, frame_charge: None,
         mir: graph,
         layouts,
@@ -69,7 +70,7 @@ pub(super) fn emit(
             node,
             instance: record.instance,
             initializer: false,
-            configured_native: false,
+            configured_factory: false,
         },
         return_pointer: out,
         return_type: TypeKey::try_from(record.property)?,
@@ -298,7 +299,7 @@ impl Lower<'_, '_> {
             .map(|&word| self.builder.ins().iconst(types::I64, word as i64))
             .collect())
     }
-    fn invoke_provider(
+    pub(super) fn invoke_provider(
         &mut self,
         signature: TypeKey,
         closure: &[ir::Value],
@@ -316,7 +317,8 @@ impl Lower<'_, '_> {
             }
         }
         let output = TypeKey::try_from(*function.arguments.last().unwrap())?;
-        let width = self.layouts.words(output)?;
+        let never = self.layouts.is_never(output)?;
+        let width = if never { 0 } else { self.layouts.words(output)? };
         let dispatcher = self.functions.dispatcher(signature, self.module)?;
         let dispatcher = self
             .module
@@ -338,6 +340,10 @@ impl Lower<'_, '_> {
         self.return_status(status);
         self.builder.switch_to_block(ready);
         self.builder.seal_block(ready);
+        if never {
+            self.report_failure(self.function_key.node, "native Never callback returned unexpectedly")?;
+            return Err(EmitError::Diverged);
+        }
         Ok((0..width)
             .map(|i| {
                 self.builder

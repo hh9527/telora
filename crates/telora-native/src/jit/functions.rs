@@ -34,7 +34,7 @@ pub(super) fn constructor(graph: &Mir, node: HirId) -> Option<MemberSelection> {
 
 pub(super) fn is_callable(graph: &Mir, key: Key) -> bool {
     !key.initializer
-        && (matches!(graph.hir[key.node.index()].kind, HirKind::Closure)
+        && (matches!(graph.hir[key.node.index()].kind, HirKind::Closure | HirKind::Interpreter)
             || is_native(&graph.hir[key.node.index()].kind)
             || constructor(graph, key.node).is_some())
 }
@@ -44,7 +44,7 @@ pub(super) struct Key {
     pub node: HirId,
     pub instance: Option<GenericInstanceId>,
     pub initializer: bool,
-    pub configured_native: bool,
+    pub configured_factory: bool,
 }
 impl Key {
     pub fn ty(self, mir: &Mir, node: HirId) -> Result<telora_core::mir::TypeId> {
@@ -59,8 +59,8 @@ impl Key {
                 },
             };
         }
-        if self.configured_native && node == self.node {
-            let factory = known(mir, node)?;
+        if self.configured_factory && node == self.node {
+            let factory = Self { configured_factory: false, ..self }.ty(mir, node)?;
             return mir.types[factory.index()]
                 .arguments
                 .last()
@@ -85,7 +85,7 @@ impl From<HirId> for Key {
             node,
             instance: None,
             initializer: false,
-            configured_native: false,
+            configured_factory: false,
         }
     }
 }
@@ -94,6 +94,7 @@ pub(super) struct Functions {
     pub registered: BTreeMap<Key, FuncId>,
     pub pending: Vec<Key>,
     pub captures: BTreeMap<Key, Vec<(SymbolId, TypeKey)>>,
+    pub instance_captures: BTreeMap<Key, Vec<(GenericInstanceId, TypeKey)>>,
     pub globals: BTreeMap<SymbolId, (u32, Key, TypeKey)>,
     pub instances: BTreeMap<GenericInstanceId, (u32, Key, TypeKey)>,
     pub properties: BTreeMap<usize, (u32, FuncId)>,
@@ -107,6 +108,7 @@ impl Functions {
             registered: BTreeMap::new(),
             pending: vec![],
             captures: BTreeMap::new(),
+            instance_captures: BTreeMap::new(),
             globals: BTreeMap::new(),
             instances: BTreeMap::new(),
             properties: BTreeMap::new(),
@@ -174,7 +176,7 @@ impl Functions {
             node,
             instance: Some(instance),
             initializer: true,
-            configured_native: false,
+            configured_factory: false,
         };
         let ty = TypeKey::try_from(key.ty(graph, node)?)?;
         let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len() + self.checks.len())
@@ -195,7 +197,7 @@ impl Functions {
         if let Some(&(slot, key, ty)) = self.checks.get(&index) { return Ok((slot, self.registered[&key], ty)); }
         let check = &graph.construction_checks[index];
         if !check.concrete { return Err("construction check is not concrete".into()); }
-        let key = Key { node: check.checker, instance: check.instance, initializer: true, configured_native: false };
+        let key = Key { node: check.checker, instance: check.instance, initializer: true, configured_factory: false };
         let ty = TypeKey::try_from(check.signature)?;
         if key.ty(graph, key.node)? != check.signature { return Err("checker signature contradicts sealed instance".into()); }
         let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len() + self.checks.len()).map_err(|_| "native check slot overflow")?;
@@ -238,7 +240,7 @@ impl Functions {
                     "telora_fn_{}_{:?}_{}",
                     node.index(),
                     key.instance.map(|i| i.index()),
-                    key.configured_native,
+                    key.configured_factory,
                 ),
                 Linkage::Local,
                 &self.signature,
@@ -305,6 +307,7 @@ pub(super) fn emit_dispatchers(
             builder.seal_block(no);
         }
         let mut lower = Lower {
+            local_instances: BTreeMap::new(),
             guarded: false, frame_charge: None,
             mir: graph,
             layouts,
@@ -344,12 +347,13 @@ pub(super) fn shape(
         .get(root.index())
         .ok_or("native HIR outside graph")?;
     let native = is_native(&root_node.kind) && !key.initializer;
+    let interpreter = matches!(root_node.kind, HirKind::Interpreter) && !key.initializer;
     let constructor = constructor(graph, root).is_some() && !key.initializer;
     if native && graph.types[key.ty(graph, root)?.index()].constructor != TypeConstructor::Function
     {
         return Err("native ABI requires a closed function instance".into());
     }
-    let is_function = (matches!(root_node.kind, HirKind::Closure) && !key.initializer) || native || constructor;
+    let is_function = (matches!(root_node.kind, HirKind::Closure) && !key.initializer) || native || constructor || interpreter;
     let parameters = if is_function {
         root_node
             .children
@@ -360,7 +364,7 @@ pub(super) fn shape(
     } else {
         vec![]
     };
-    let body = if is_function && !native && !constructor {
+    let body = if is_function && !native && !constructor && !interpreter {
         child(graph, root, Role::Body)?
     } else {
         root
@@ -373,7 +377,7 @@ pub(super) fn shape(
     } else {
         key.ty(graph, body)?
     })?;
-    let arguments = if native || constructor {
+    let arguments = if native || constructor || interpreter {
         let signature = &graph.types[key.ty(graph, root)?.index()];
         signature.arguments[..signature.arguments.len() - 1]
             .iter()
@@ -441,6 +445,7 @@ pub(super) fn emit(
             locals.insert(symbol, values);
         }
         let mut lower = Lower {
+            local_instances: BTreeMap::new(),
             guarded: false, frame_charge: None,
             mir: graph,
             layouts: &layouts,
@@ -470,6 +475,7 @@ pub(super) fn emit(
                 .map_err(|e| format!("native capture load: {e:?}"))?;
             lower.locals.insert(symbol, value);
         }
+        lower.load_instance_captures(key, environment).map_err(|e| format!("native instance capture: {e:?}"))?;
         let outcome = if let Some(constructor) = constructor(graph, key.node).filter(|_| !key.initializer)
         {
             (|| {
@@ -500,6 +506,8 @@ pub(super) fn emit(
                 };
                 lower.write_return(&result)
             })()
+        } else if matches!(graph.hir[key.node.index()].kind, HirKind::Interpreter) && !key.initializer {
+            lower.interpreter_adapter(&arguments, args, environment)
         } else if is_native(&graph.hir[key.node.index()].kind) && !key.initializer {
             lower.native_adapter(key.node, &arguments, args, environment)
         } else {

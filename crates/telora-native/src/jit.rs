@@ -525,6 +525,7 @@ fn compile_plan(
             .captures
             .get(&root.into())
             .is_some_and(|captures| !captures.is_empty())
+            || functions.instance_captures.get(&root.into()).is_some_and(|captures| !captures.is_empty())
         {
             return Err("capturing closure cannot be called as a bare native root".into());
         }
@@ -663,6 +664,7 @@ struct Lower<'a, 'b> {
     object_helper: ir::FuncRef,
     functions: &'a mut functions::Functions,
     function_key: functions::Key,
+    local_instances: BTreeMap<telora_core::mir::GenericInstanceId, Vec<ir::Value>>,
     return_pointer: ir::Value,
     return_type: TypeKey,
 }
@@ -953,7 +955,7 @@ impl Lower<'_, '_> {
             (function, closure, output, expected)
         } else {
             let callee = functions::Key {
-                configured_native: false,
+                configured_factory: false,
                 initializer: false,
                 node: self.callable(callee_node, 0)?,
                 instance: self.instance_reference(callee_node),
@@ -1046,7 +1048,12 @@ impl Lower<'_, '_> {
             pending.extend(self.mir.hir[node.index()].children.iter().map(|e| e.node));
         }
         pending.push(key.node);
+        let mut instances = BTreeMap::new();
         while let Some(node) = pending.pop() {
+            if let Some(instance) = self.instance_reference(node)
+                && self.local_instances.contains_key(&instance) {
+                instances.insert(instance, TypeKey::try_from(self.ty(node)?)?);
+            }
             let syntax = &self.mir.hir[node.index()];
             if let Some(slot) = syntax.resolution
                 && let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()]
@@ -1069,6 +1076,10 @@ impl Lower<'_, '_> {
             self.functions.captures.insert(key, captures.clone());
         }
         let ty = TypeKey::try_from(key.ty(self.mir, key.node)?)?;
+        let instances = instances.into_iter().collect::<Vec<_>>();
+        if let Some(previous) = self.functions.instance_captures.get(&key) {
+            if previous != &instances { return Err("native generic capture plan mismatch".into()); }
+        } else { self.functions.instance_captures.insert(key, instances.clone()); }
         let mut words = vec![
             self.builder
                 .ins()
@@ -1076,6 +1087,9 @@ impl Lower<'_, '_> {
         ];
         for (symbol, _) in captures {
             words.extend(self.locals[&symbol].iter().copied());
+        }
+        for (instance, _) in instances {
+            words.extend(self.local_instances[&instance].iter().copied());
         }
         let count = self.builder.ins().iconst(types::I64, words.len() as i64);
         let data = self.stack_words(&words)?;
@@ -1216,6 +1230,10 @@ impl Lower<'_, '_> {
         let ty = self.ty(node)?;
         let key = TypeKey::try_from(ty)?;
         let syntax = &self.mir.hir[node.index()];
+        if let Some(instance) = self.instance_reference(node)
+            && let Some(value) = self.local_instances.get(&instance) {
+            return Ok(value.clone());
+        }
         if let Some(MemberSelection::TraitMember { implementation, .. }) = self.mir.member_selections[node.index()] {
             let instance = self.function_key.instance.and_then(|id| self.mir.generic_instances[id.index()].implementation(node))
                 .or(self.mir.implementation_instances[node.index()]);
@@ -1251,7 +1269,7 @@ impl Lower<'_, '_> {
                     node,
                     instance: self.function_key.instance,
                     initializer: false,
-                    configured_native: false,
+                    configured_factory: false,
                 },
             );
         }
@@ -1629,7 +1647,7 @@ impl Lower<'_, '_> {
                 self.function_value(
                     node,
                     functions::Key {
-                        configured_native: false,
+                        configured_factory: false,
                         initializer: false,
                         node: function,
                         instance: self.instance_reference(node),
@@ -1651,7 +1669,7 @@ impl Lower<'_, '_> {
                     return self.function_value(
                         node,
                         functions::Key {
-                            configured_native: false,
+                            configured_factory: false,
                             node,
                             instance: self.function_key.instance,
                             initializer: false,
@@ -1667,18 +1685,23 @@ impl Lower<'_, '_> {
             HirKind::Closure => self.function_value(
                 node,
                 functions::Key {
-                    configured_native: false,
+                    configured_factory: false,
                     initializer: false,
                     node,
                     instance: self.function_key.instance,
                 },
             ),
+            HirKind::Interpreter => self.function_value(node, functions::Key {
+                node, instance: self.function_key.instance, initializer: false, configured_factory: false,
+            }),
             HirKind::Call => self.direct_call(node, depth),
             HirKind::Block => {
                 for edge in &syntax.children {
                     match edge.role {
                         Role::Binding => {
-                            self.expression(edge.node, depth + 1)?;
+                            if !self.local_template(edge.node)? {
+                                self.expression(edge.node, depth + 1)?;
+                            }
                         }
                         Role::Result => {}
                         _ => return Err("native unsupported block child".into()),
@@ -1771,5 +1794,6 @@ mod scalars;
 mod records;
 #[path = "jit/sequences.rs"]
 mod sequences;
+mod interpreters;
 #[cfg(test)]
 mod tests;

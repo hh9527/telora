@@ -51,6 +51,51 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_interpreter_propagates_operand_failure_once() {
+    let (mir, root) = graph("def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(fn(value) {fail!(\"interpreter failed\")}); export def answer = factory(Int.type)(42);");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "interpreter failed");
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
+fn native_interpreter_consumes_sealed_pairings_and_keeps_operand_lazy() {
+    for source in [
+        r#"import "std/dyn" as dyn;
+        def erased: Fn(Int, Dyn, Bool, Dyn, Dyn) -> Int = fn(offset, text, enabled, number, again) {
+            if enabled && dyn.check_string(text) == Some("a") && dyn.check_string(again) == Some("b") {
+                match dyn.check_int(number) { Some(value) => offset + value, None => 0 }
+            } else {0}
+        };
+        def factory: for(A, B) Fn(TypeOf(B), TypeOf(A)) -> Fn(Int, A, Bool, B, A) -> Int = interpreter!(erased);
+        export def answer = factory(Int.type, String.type)(2, "a", True, 40, "b");"#,
+        r#"def erased: Fn(Dyn) -> Int = fn(value) {42};
+        def first: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(erased);
+        def second: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(erased);
+        export def answer = do {let a = first(Int.type); let b = first(Int.type); let c = second(Int.type);
+            if a == b && a != c {a(0)} else {0}};"#,
+        r#"def operand: Fn(Dyn) -> Int = fn(value) {fail!("operand must stay lazy")};
+        def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(operand);
+        export def answer = do {let adapter = factory(Int.type); 42};"#,
+        r#"def run: Fn(Int) -> Int = fn(offset) {
+            def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(fn(value) {offset});
+            factory(String.type)("ignored")}; export def answer = run(42);"#,
+    ] {
+        let (mir, root) = graph_with(source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap_or_else(|e| panic!("{e}\n{source}"));
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}\n{source}", context.diagnostics()));
+        assert_eq!(context.runtime().unwrap().scalar_bits(result.as_ref()).unwrap(), 42, "{source}");
+        assert_eq!(context.call_depth(), 0);
+    }
+}
+
+#[test]
 fn native_debug_is_bounded_and_preserves_shared_descriptors() {
     let source = format!("def text = \"{}\"; export def answer = (text, dbg!(text));", "文本".repeat(1500));
     let (mir, root) = graph(&source);

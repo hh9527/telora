@@ -115,9 +115,9 @@ Bytes 字面量现已直接 lowering 为只读字节常量与 native Bytes 表�
 
 `dbg!` 已接通独立 native 调试事件通道，CLI 将事件写入现有 stderr JSON 格式。生成代码保留输入描述符、来源和执行顺序；formatter 直接读取 native 表，限制 8 层、32 项和 4096 字节，不调用 Display/property 或 codec。默认无 sink 时跳过格式化。CLI 对照初始化与 entry 事件的内容、位置、顺序与结果；native 测试验证长 Unicode 输出截断和 backing/来源不变。函数和 opaque 的展示采用 native 表示，不承诺复制旧 VM 的内部函数名称或 Rust Debug 输出。
 
-Interpreter 的封闭适配器计划仍需接通，不能把现有表达式覆盖视为完整。
+Interpreter 已接通 factory/adapter codegen：从 MIR 的 witness/参数配对计划生成 Dyn 包装，未标记参数直接传递；factory 不执行 operand，adapter 调用时才按普通调用顺序求值 operand。普通 lexical captures 与局部泛型实例分别按 SymbolId/GenericInstanceId 捕获；局部模板只生成当前 MIR 已选定的具体实例，不对模板本体分配值槽或进行运行时推导。Never operand 和失败直接传播，不读取无效结果缓冲。
 
-Interpreter 的运行时身份缓存已独立实现：按 factory 的函数/环境身份及 represented TypeId 序列缓存 adapter，忽略调用来源；adapter 捕获 factory 描述符与见证，不执行 operand。发布时与导出项共用同一对象重定位表，并用重定位后的 factory 重建缓存键，保证 entry 重复调用继续命中初始化实例。缓存命中不增加堆分配，新条目先检查预算；测试覆盖来源变化、不同 factory、错误签名、发布后复用和预算拒绝。该模块尚未接入 interpreter codegen，不能据此宣称 CLI 支持 interpreter!。
+Interpreter 的运行时身份缓存按 factory 的函数/环境身份及 represented TypeId 序列缓存 adapter，忽略调用来源；adapter 捕获 factory 描述符与见证。发布时与导出项共用同一对象重定位表，并用重定位后的 factory 重建缓存键，保证 entry 重复调用继续命中初始化实例。缓存命中不增加堆分配，新条目先检查预算；测试覆盖来源变化、不同 factory、错误签名、发布后复用和预算拒绝。CLI eval/eval-with 覆盖初始化 adapter 复用、嵌套捕获、未使用的模板参数及 operand 执行次数。默认后端没有保留发布前 memo 表，跨初始化的 adapter 相等比较不同；计算结果另行对照，不复制这一旧后端差异。
 
 `.cast!` 已消费封闭目标类型与 checker 实例生成调用包；运行时先验证整个输入的表示，再转换并执行声明检查，不调用 encode/decode，也不重新推导类型。支持 Record/Dict、Array、Tuple/Newtype、Option/Result 和 Unchecked 到 owner；拒绝不同 nominal 身份以及数值隐式转换。未改变的子对象保留 backing 与来源。结构不匹配返回 Err(String)，checker 失败只产生一次执行诊断。
 

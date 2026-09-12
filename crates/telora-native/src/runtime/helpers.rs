@@ -51,6 +51,7 @@ pub(crate) const ARRAY_CONCAT: u32 = 56;
 pub(crate) const CHECKED_CAST: u32 = 57;
 pub(crate) const BYTES_LITERAL: u32 = 58;
 pub(crate) const DEBUG: u32 = 59;
+pub(crate) const INTERPRETER_ADAPTER: u32 = 60;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -545,7 +546,7 @@ pub(crate) unsafe extern "C" fn object(
                     let bits = rt.scalar(bit_type, loc, bits)?;
                     rt.aggregate(ty, loc, &[bits])?
                 }
-                CLOSURE => {
+                CLOSURE | INTERPRETER_ADAPTER => {
                     let words = unsafe { std::slice::from_raw_parts(data, count) };
                     let function = u32::try_from(*words.first().ok_or("closure function missing")?)
                         .map_err(|_| "function ID overflow")?;
@@ -561,7 +562,10 @@ pub(crate) unsafe extern "C" fn object(
                         });
                         remaining = &remaining[size..];
                     }
-                    rt.closure(ty, loc, function, &captures)?
+                    if operation == INTERPRETER_ADAPTER {
+                        let (factory, witnesses) = captures.split_first().ok_or("interpreter factory missing")?;
+                        rt.interpreter_adapter(factory, witnesses, ty, function, loc)?
+                    } else { rt.closure(ty, loc, function, &captures)? }
                 }
                 ENUM => {
                     let index = u32::try_from(count).map_err(|_| "enum tag overflow")?;

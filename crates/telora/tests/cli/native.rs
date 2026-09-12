@@ -116,6 +116,31 @@ fn native_structural_equality_matches_default_across_worlds() {
 }
 
 #[test]
+fn native_interpreter_preserves_adapter_identity_across_initialization_and_entry() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/interpreter.telora")).unwrap();
+    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
+        let selector = format!("@src/main:{export}");
+        let native = telora(&cwd).args([command, "--native", &selector]).output().unwrap();
+        let default = telora(&cwd).args([command, &selector]).output().unwrap();
+        for output in [&native, &default] {
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        }
+        let events = String::from_utf8_lossy(&native.stderr).lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+        assert_eq!(events.len(), if command == "eval" { 1 } else { 2 });
+        assert!(events.iter().all(|event| event["message"] == "operand"));
+        let native = serde_json::from_slice::<Value>(&native.stdout).unwrap();
+        let default = serde_json::from_slice::<Value>(&default.stdout).unwrap();
+        assert_eq!(native, serde_json::json!(vec![true; 8]));
+        // Legacy publication does not retain the interpreter memo table. Native
+        // explicitly retains identity across this boundary (item zero).
+        assert_eq!(&native.as_array().unwrap()[1..], &default.as_array().unwrap()[1..]);
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_checked_cast_preserves_payloads_and_sealed_identity() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/checked-cast.telora")).unwrap();

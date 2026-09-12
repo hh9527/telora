@@ -17,7 +17,7 @@ impl Lower<'_, '_> {
         if self.mir.types[target.index()].constructor != TypeConstructor::PropertyTarget {
             return Err("property factory target ABI mismatch".into());
         }
-        if !self.function_key.configured_native {
+        if !self.function_key.configured_factory {
             if arguments != [target] || self.return_type != provider {
                 return Err("property factory ABI mismatch".into());
             }
@@ -27,7 +27,7 @@ impl Lower<'_, '_> {
                     node,
                     instance: None,
                     initializer: false,
-                    configured_native: true,
+                    configured_factory: true,
                 },
                 self.module,
             )?;
@@ -581,10 +581,10 @@ impl Lower<'_, '_> {
                 || self.mir.types[signature.arguments[1].index()].constructor != TypeConstructor::String
             { return Err("JSON pretty signature mismatch".into()); }
             let zero = self.builder.ins().iconst(types::I64, 0);
-            if !self.function_key.configured_native {
+            if !self.function_key.configured_factory {
                 if arguments != [int] || self.return_type != configured { return Err("JSON pretty factory arguments mismatch".into()); }
                 let captured = self.object(node, helpers::JSON_INDENT, int, data, zero)?;
-                let function = self.functions.declare(self.mir, functions::Key { configured_native: true, ..self.function_key }, self.module)?;
+                let function = self.functions.declare(self.mir, functions::Key { configured_factory: true, ..self.function_key }, self.module)?;
                 let mut words = vec![self.builder.ins().iconst(types::I64, i64::from(function.as_u32()))];
                 words.extend(captured);
                 let count = self.builder.ins().iconst(types::I64, words.len() as i64);
