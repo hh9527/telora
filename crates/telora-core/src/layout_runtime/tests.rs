@@ -227,3 +227,29 @@ fn cross_arena_values_are_rejected_before_any_table_write() {
     );
     assert!(b.arrays.entries.is_empty());
 }
+
+#[test]
+fn slot_table_growth_preserves_object_buffers_and_heap_ids() {
+    let mut words = WordTable::default();
+    let payload = vec![11, 22, 33];
+    let original_buffer = payload.as_ptr();
+    let id = words.push(payload).unwrap();
+    assert_eq!(words.get(id).unwrap().as_ptr(), original_buffer);
+    let mut strings = RawStringTable::default();
+    let string_id = strings.push(b"retained object content").unwrap();
+    let string_buffer = strings.get(string_id).unwrap().as_ptr();
+    let old_words_capacity = words.entries.capacity();
+    let old_strings_capacity = strings.entries.capacity();
+    for i in 0..old_words_capacity.max(old_strings_capacity) + 16 {
+        words.push(vec![i as u64; 4]).unwrap();
+        strings
+            .push(b"another separately allocated object")
+            .unwrap();
+    }
+    assert!(words.entries.capacity() > old_words_capacity);
+    assert!(strings.entries.capacity() > old_strings_capacity);
+    assert_eq!(words.get(id).unwrap(), [11, 22, 33]);
+    assert_eq!(words.get(id).unwrap().as_ptr(), original_buffer);
+    assert_eq!(strings.get(string_id).unwrap(), b"retained object content");
+    assert_eq!(strings.get(string_id).unwrap().as_ptr(), string_buffer);
+}

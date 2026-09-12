@@ -72,62 +72,50 @@ impl<'a> ValueRef<'a> {
         }
     }
 }
-struct Span {
-    start: usize,
-    len: usize,
+/// Fixed-width slot metadata owns this object's allocation. HeapId identifies
+/// the slot, independently of the buffer's address or the table's capacity.
+struct WordItem {
+    words: Vec<u64>,
 }
 #[derive(Default)]
 struct WordTable {
-    entries: Vec<Span>,
-    words: Vec<u64>,
+    entries: Vec<WordItem>,
 }
 impl WordTable {
-    fn push(&mut self, words: &[u64]) -> Result<u32> {
+    fn push(&mut self, words: Vec<u64>) -> Result<u32> {
         let id = u32::try_from(self.entries.len()).map_err(|_| "HeapId overflow")?;
-        self.words
-            .len()
-            .checked_add(words.len())
-            .ok_or("arena size overflow")?;
-        self.entries.push(Span {
-            start: self.words.len(),
-            len: words.len(),
-        });
-        self.words.extend_from_slice(words);
+        self.entries.push(WordItem { words });
         Ok(id)
     }
     fn get(&self, id: u32) -> Result<&[u64]> {
-        let span = self
+        let item = self
             .entries
             .get(id as usize)
             .ok_or("invalid table HeapId")?;
-        Ok(&self.words[span.start..span.start + span.len])
+        Ok(&item.words)
     }
 }
-#[derive(Default)]
-struct ByteTable {
-    entries: Vec<Span>,
+struct RawStringItem {
     bytes: Vec<u8>,
 }
-impl ByteTable {
+#[derive(Default)]
+struct RawStringTable {
+    entries: Vec<RawStringItem>,
+}
+impl RawStringTable {
     fn push(&mut self, bytes: &[u8]) -> Result<u32> {
         let id = u32::try_from(self.entries.len()).map_err(|_| "HeapId overflow")?;
-        self.bytes
-            .len()
-            .checked_add(bytes.len())
-            .ok_or("arena size overflow")?;
-        self.entries.push(Span {
-            start: self.bytes.len(),
-            len: bytes.len(),
+        self.entries.push(RawStringItem {
+            bytes: bytes.to_vec(),
         });
-        self.bytes.extend_from_slice(bytes);
         Ok(id)
     }
     fn get(&self, id: u32) -> Result<&[u8]> {
-        let span = self
+        let item = self
             .entries
             .get(id as usize)
             .ok_or("invalid StringTable HeapId")?;
-        Ok(&self.bytes[span.start..span.start + span.len])
+        Ok(&item.bytes)
     }
 }
 pub enum Text<'a> {
@@ -150,7 +138,7 @@ impl Text<'_> {
 pub struct Arena {
     identity: u64,
     layouts: Vec<Option<Layout>>,
-    strings: ByteTable,
+    strings: RawStringTable,
     tuples: WordTable,
     records: WordTable,
     arrays: WordTable,
@@ -209,7 +197,7 @@ impl Arena {
         Ok(Self {
             identity,
             layouts,
-            strings: ByteTable::default(),
+            strings: RawStringTable::default(),
             tuples: WordTable::default(),
             records: WordTable::default(),
             arrays: WordTable::default(),
@@ -338,9 +326,9 @@ impl Arena {
             return self.pack(ty, loc, &[]);
         }
         let id = if kind == Kind::Tuple {
-            self.tuples.push(&words)?
+            self.tuples.push(words)?
         } else {
-            self.records.push(&words)?
+            self.records.push(words)?
         };
         self.pack(ty, loc, &[u64::from(id)])
     }
@@ -390,7 +378,7 @@ impl Arena {
             self.validate(value.as_ref(), element)?;
             words.extend_from_slice(&value.words);
         }
-        let id = self.arrays.push(&words)?;
+        let id = self.arrays.push(words)?;
         self.pack(ty, loc, &[u64::from(id), u64::from(len)])
     }
     fn array_range(&self, value: &Value) -> Result<(u32, u32, u32, TypeId)> {

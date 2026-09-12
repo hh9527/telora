@@ -356,8 +356,10 @@ DictTable 对象头占 16 字节：len/capacity/buckets/reserved 各 u32。entri
 - Tuple/Record 共用固定字段的构造、读取和更新实现，仍使用不同分类表。空 Tuple/Unit 仅有 16 字节头部，无堆对象。
 - Array 按完整元素步长连续存储，slice 只改变 HeapId/start/end 描述；索引返回借用的 ValueRef。更新生成新容器，保留旧容器和元素来源。
 - Dict 按头部、entries、buckets 布局构造；支持内容查找、碰撞、覆盖、删除和稳定插入顺序。实验采用 FNV-1a 的 u32 hash，桶内仍以 String 内容确认相等。
-- String 作为字段和 Dict 键的配套类型支持 inline/heaped；普通标量保存原始 u64 位模式。表采用扁平 word/byte arena，HeapId 是表内索引。
+- String 作为字段和 Dict 键的配套类型支持 inline/heaped；普通标量保存原始 u64 位模式。分类表采用 `Vec<Item>` 槽位，HeapId 直接索引 Item；每个 Item 独立拥有自己的变长缓冲区。
 - Owned Value 只拥有值描述，克隆不递归复制引用对象；读取字段、数组元素和字典结果借用 arena 数据。持久更新目前重建容器的浅层描述，不是运行时性能优化实现。
+
+存储策略修订：分类表管理固定宽度的 Item 槽位，不再通过 Span 管理共享大缓冲区。Tuple/Record/Array/Dict 的 Item 持有自己的 `Vec<u64>`，RawStringTable 的 Item 持有自己的 `Vec<u8>`；创建 word 对象时直接移入已构建的 Vec，避免再复制一次。表扩容只移动 Item 描述，不搬迁已有对象内容，HeapId 保持不变。槽位回收、复用及旧引用失效规则留待后续确定，本轮仍为追加槽位。
 
 验证仅为新模块单元测试：
 

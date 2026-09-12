@@ -76,7 +76,7 @@ impl Arena {
         }
         words[0] = u64::from(length) | (u64::from(capacity) << 32);
         words[1] = u64::from(buckets);
-        let id = self.dicts.push(&words)?;
+        let id = self.dicts.push(words)?;
         self.pack(ty, loc, &[u64::from(id)])
     }
     fn dict_parts<'a>(&'a self, value: &Value) -> Result<(&'a [u64], usize, usize, usize, TypeId)> {
