@@ -44,7 +44,7 @@ fn arena() -> Arena {
     Arena::new(&mir.seal().expect("closed test type graph")).unwrap()
 }
 #[test]
-fn tuple_and_record_share_layout_but_keep_table_identity_and_sources() {
+fn tuple_and_record_share_table_but_keep_types_and_sources() {
     let mut a = arena();
     let number = a.scalar(INT, [1, 20, 21], 42).unwrap();
     let label = a
@@ -55,9 +55,13 @@ fn tuple_and_record_share_layout_but_keep_table_identity_and_sources() {
     let record = a.aggregate(RECORD, [4, 0, 60], &fields).unwrap();
     assert_eq!(tuple.words.len(), 3);
     assert_eq!(record.words.len(), 3);
-    assert_eq!(tuple.words[2], record.words[2]); // id 0 in distinct tables
-    assert_eq!(a.tuples.get(0).unwrap(), a.records.get(0).unwrap());
-    assert_eq!(a.tuples.get(0).unwrap().len() * 8, 56);
+    assert_eq!(tuple.words[2], 0);
+    assert_eq!(record.words[2], 1);
+    assert_eq!(tuple.type_id(), TUPLE);
+    assert_eq!(record.type_id(), RECORD);
+    assert_eq!(a.records.entries.len(), 2);
+    assert_eq!(a.records.get(0).unwrap(), a.records.get(1).unwrap());
+    assert_eq!(a.records.get(0).unwrap().len() * 8, 56);
     assert_eq!(a.field(&tuple, 0).unwrap().location(), [1, 20, 21]);
     assert_eq!(
         a.text(a.field(&record, 1).unwrap()).unwrap().as_str(),
@@ -78,11 +82,11 @@ fn tuple_and_record_share_layout_but_keep_table_identity_and_sources() {
     assert_eq!(a.strings.entries.len(), 1); // only descriptors copied
     assert!(a.aggregate(TUPLE, [0; 3], &[label, number]).is_err());
     assert!(a.field(&record, 2).is_err());
-    let before = a.tuples.entries.len();
+    let before = a.records.entries.len();
     let unit = a.aggregate(UNIT, [9, 10, 11], &[]).unwrap();
     assert_eq!(unit.as_ref().words().len(), 2);
     assert_eq!(unit.location(), [9, 10, 11]);
-    assert_eq!(a.tuples.entries.len(), before);
+    assert_eq!(a.records.entries.len(), before);
 }
 #[test]
 fn slices_share_backing_and_updates_preserve_original_values() {
@@ -142,7 +146,7 @@ fn strings_and_nested_aggregates_use_fixed_element_stride_without_deep_copy() {
         a.array_get(&nested, 0).unwrap().words(),
         tuple.as_ref().words()
     );
-    assert_eq!(a.tuples.entries.len(), 1);
+    assert_eq!(a.records.entries.len(), 1);
     assert_eq!(a.strings.entries.len(), 1);
     assert!(a.array(ARRAY, [0; 3], &[short]).is_err());
 }

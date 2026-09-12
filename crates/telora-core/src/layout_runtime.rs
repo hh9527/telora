@@ -139,7 +139,6 @@ pub struct Arena {
     identity: u64,
     layouts: Vec<Option<Layout>>,
     strings: RawStringTable,
-    tuples: WordTable,
     records: WordTable,
     arrays: WordTable,
     dicts: WordTable,
@@ -198,7 +197,6 @@ impl Arena {
             identity,
             layouts,
             strings: RawStringTable::default(),
-            tuples: WordTable::default(),
             records: WordTable::default(),
             arrays: WordTable::default(),
             dicts: WordTable::default(),
@@ -325,11 +323,7 @@ impl Arena {
         if kind == Kind::Tuple && values.is_empty() {
             return self.pack(ty, loc, &[]);
         }
-        let id = if kind == Kind::Tuple {
-            self.tuples.push(words)?
-        } else {
-            self.records.push(words)?
-        };
+        let id = self.records.push(words)?;
         self.pack(ty, loc, &[u64::from(id)])
     }
     pub fn field<'a>(&'a self, value: &Value, index: usize) -> Result<ValueRef<'a>> {
@@ -340,8 +334,7 @@ impl Arena {
             .get(index)
             .ok_or("field index out of bounds")?;
         let words = match layout.kind {
-            Kind::Tuple => self.tuples.get(value.words[2] as u32)?,
-            Kind::Record => self.records.get(value.words[2] as u32)?,
+            Kind::Tuple | Kind::Record => self.records.get(value.words[2] as u32)?,
             _ => return Err("not an aggregate".into()),
         };
         let result = ValueRef {

@@ -483,7 +483,7 @@ impl<'a> Builder<'a> {
                 T::Dict => shape(4, 4, Some("DictTable"), "heap:u32")?,
                 T::Record(_) => shape(4, 4, Some("RecordTable"), "heap:u32")?,
                 T::Tuple if ty.arguments.is_empty() => shape(0, 1, None, "unit")?,
-                T::Tuple => shape(4, 4, Some("TupleTable"), "heap:u32")?,
+                T::Tuple => shape(4, 4, Some("RecordTable"), "heap:u32")?,
                 T::Newtype => shape(4, 4, Some("NewtypeTable"), "heap:u32")?,
                 T::Unchecked => self.value(ty.arguments[0])?,
                 T::Function | T::Quantified(_) => shape(
@@ -519,7 +519,7 @@ impl<'a> Builder<'a> {
                     match self.image.definition(*s).unwrap().operation {
                         TypeOperation::Unit => shape(0, 1, None, "unit")?,
                         TypeOperation::Struct => shape(4, 4, Some("RecordTable"), "heap:u32")?,
-                        TypeOperation::Tuple => shape(4, 4, Some("TupleTable"), "heap:u32")?,
+                        TypeOperation::Tuple => shape(4, 4, Some("RecordTable"), "heap:u32")?,
                         TypeOperation::Newtype => shape(4, 4, Some("NewtypeTable"), "heap:u32")?,
                         _ => unreachable!(),
                     }
@@ -617,7 +617,7 @@ impl<'a> Builder<'a> {
                     )
                 };
             }
-            "RecordTable" | "TupleTable" | "NewtypeTable" => {
+            "RecordTable" | "NewtypeTable" => {
                 let mut offset = 0;
                 for (name, t) in &self.fields[owner.index()] {
                     o.members.push(Member {

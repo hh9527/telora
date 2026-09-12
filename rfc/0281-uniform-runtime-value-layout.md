@@ -275,7 +275,7 @@ Record 字段访问按已确定的 RecordTable 选择和字段偏移执行；Arr
 
 #### 聚合与包装
 
-Record、非空 Tuple、newtype 的 data 都是 HeapId:u32，完整值 24 字节，分别指向 RecordTable、TupleTable、NewtypeTable。所有具体 Record 共用 RecordTable，由 TypeId 解释字段；其余两表同理。
+Record、非空 Tuple、newtype 的 data 都是 HeapId:u32，完整值 24 字节。Record 和非空 Tuple 共用同一个 RecordTable 及槽位编号空间，由 TypeId 解释字段布局；newtype 指向 NewtypeTable。
 
 对象成员是连续完整值，每个成员有独立来源和 TypeId。字段按 MIR 的规范顺序，Tuple 按元素序号，newtype 保存其被包装的完整值。对象字节数为各完整成员大小之和，字段偏移为前缀和。空 Tuple/Unit 无 data，完整值为 16 字节。Unchecked 仅改变保证，复用其具体 owner 的 data 与对象布局。
 
@@ -310,6 +310,8 @@ Dyn data 固定 24 字节：concrete_type:u32、storage:u32、payload:[u8;16]，
 ValueTable 的每个对象从偏移 0 保存一个完整具体值，大小由其头部 TypeId 对应的已知布局确定。递归 enum 和超宽 Dyn 共用这一表。未来 trait object 不在语言范围内，不能借本 RFC 声称其语义已实现；若引入，需要另定实现表身份契约。
 
 #### Dict
+
+后续设计决议：Dict 改为有序 keys 与对应 values 两个数组引用，复用 ArrayTable，按键二分查找。keys 严格递增且唯一，两列长度相同、下标对应；遍历按键顺序，与构建顺序无关。String 键采用与 locale 无关的 UTF-8 字节字典序。插入和删除同步更新两列。目标 data 为两个 word；数组引用的具体编码尚待落实，不能直接把两个现有三 u32 slice 描述当作两个 word。以下哈希布局是当前实验实现记录，将由该方案替代；布局计算器和实验 Dict 尚未迁移。
 
 DictTable 对象头占 16 字节：len/capacity/buckets/reserved 各 u32。entries 从偏移 16 开始，capacity 个槽，每槽为 String 完整键（32 字节）加完整值；只遍历前 len 个已初始化槽。桶区从 align8(16+capacity*entry_stride) 开始，buckets 个 8 字节桶（hash:u32、entry_plus_one:u32，0 表示空桶）。
 
@@ -353,7 +355,7 @@ DictTable 对象头占 16 字节：len/capacity/buckets/reserved 各 u32。entri
 实验实现的范围：
 
 - 每个值按 loc[3]+TypeId+data 编码为 word 描述；arena 身份是访问上下文，不进入 ABI 字节。跨 arena 引用显式拒绝，尚无 world 发布或复制机制。
-- Tuple/Record 共用固定字段的构造、读取和更新实现，仍使用不同分类表。空 Tuple/Unit 仅有 16 字节头部，无堆对象。
+- Tuple/Record 共用固定字段的构造、读取和更新实现，以及同一个 RecordTable；不同对象占用不同槽位，TypeId 保留各自类型身份。空 Tuple/Unit 仅有 16 字节头部，无堆对象。
 - Array 按完整元素步长连续存储，slice 只改变 HeapId/start/end 描述；索引返回借用的 ValueRef。更新生成新容器，保留旧容器和元素来源。
 - Dict 按头部、entries、buckets 布局构造；支持内容查找、碰撞、覆盖、删除和稳定插入顺序。实验采用 FNV-1a 的 u32 hash，桶内仍以 String 内容确认相等。
 - String 作为字段和 Dict 键的配套类型支持 inline/heaped；普通标量保存原始 u64 位模式。分类表采用 `Vec<Item>` 槽位，HeapId 直接索引 Item；每个 Item 独立拥有自己的变长缓冲区。
@@ -368,4 +370,4 @@ cargo test -p telora-core --features experimental-layout-runtime layout_runtime
 cargo check -p telora-core --no-default-features
 ```
 
-覆盖 Tuple/Record 字段偏移及表内同号 ID、空 Tuple、来源保留、嵌套 slice 与越界、持久更新、Dict 碰撞与重复键、长字符串和嵌套数组的浅层共享、跨 arena 拒绝。没有接入 codegen、初始化、CLI 或现有 VM，也未进行性能评价。本实验不实现语言级 @check、arena 发布/回收或全部候选类型。
+覆盖 Tuple/Record 字段偏移及共享表的独立槽位 ID、空 Tuple、来源保留、嵌套 slice 与越界、持久更新、Dict 碰撞与重复键、长字符串和嵌套数组的浅层共享、跨 arena 拒绝。没有接入 codegen、初始化、CLI 或现有 VM，也未进行性能评价。本实验不实现语言级 @check、arena 发布/回收或全部候选类型。
