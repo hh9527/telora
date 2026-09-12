@@ -281,6 +281,69 @@ impl Lower<'_, '_> {
             let value = self.object(node, helpers::DYN_MEMBER, self.return_type, data, count)?;
             return self.write_return(&value);
         }
+        if module.id == 20
+            && matches!(
+                declaration.name.as_str(),
+                "prepare" | "from_string" | "from_int" | "from_float" | "concat" | "render"
+            )
+        {
+            let is_fmt = |ty: TypeKey| {
+                matches!(self.mir.types[ty.index()].constructor,
+                TypeConstructor::Native(native) if (native.module, native.slot) == (20, 1))
+            };
+            let kind = |ty: TypeKey| &self.mir.types[ty.index()].constructor;
+            let array = |ty: TypeKey, fmt: bool| {
+                let ty = &self.mir.types[ty.index()];
+                ty.constructor == TypeConstructor::Array
+                    && ty.arguments.len() == 1
+                    && if fmt {
+                        matches!(self.mir.types[ty.arguments[0].index()].constructor,
+                        TypeConstructor::Native(native) if (native.module, native.slot) == (20, 1))
+                    } else {
+                        self.mir.types[ty.arguments[0].index()].constructor
+                            == TypeConstructor::String
+                    }
+            };
+            let operation = match declaration.name.as_str() {
+                "prepare" => 0,
+                "from_string" => 1,
+                "from_int" => 2,
+                "from_float" => 3,
+                "concat" => 4,
+                _ => 5,
+            };
+            let output = &self.mir.types[self.return_type.index()];
+            let valid = if operation == 4 {
+                arguments.len() == 2
+                    && array(arguments[0], false)
+                    && array(arguments[1], true)
+                    && is_fmt(self.return_type)
+            } else if arguments.len() != 1 {
+                false
+            } else {
+                match operation {
+                    0 => {
+                        kind(arguments[0]) == &TypeConstructor::String
+                            && output.constructor == TypeConstructor::Tuple
+                            && output.arguments.len() == 2
+                            && output
+                                .arguments
+                                .iter()
+                                .all(|&ty| TypeKey::try_from(ty).is_ok_and(|ty| array(ty, false)))
+                    }
+                    1 => kind(arguments[0]) == &TypeConstructor::String && is_fmt(self.return_type),
+                    2 => kind(arguments[0]) == &TypeConstructor::Int && is_fmt(self.return_type),
+                    3 => kind(arguments[0]) == &TypeConstructor::Float && is_fmt(self.return_type),
+                    _ => is_fmt(arguments[0]) && output.constructor == TypeConstructor::String,
+                }
+            };
+            if !valid {
+                return Err("native Fmt ABI signature mismatch".into());
+            }
+            let count = self.builder.ins().iconst(types::I64, operation);
+            let result = self.object(node, helpers::FORMAT, self.return_type, data, count)?;
+            return self.write_return(&result);
+        }
         if module.id == 25
             && matches!(
                 declaration.name.as_str(),

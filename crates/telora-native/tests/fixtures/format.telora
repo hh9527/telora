@@ -1,0 +1,4 @@
+import "std/fmt" as fmt;
+def integer = fmt.from_int(42);
+def nested = fmt.concat(["[", ", ", ", ", "]"], [integer, fmt.from_float(1.25), fmt.from_string("text")]);
+export def answer = (nested, fmt.render(nested), fmt.prepare("{{{name}}}:{other}{name}"));

@@ -22,6 +22,7 @@ enum Kind {
     Enum,
     Function,
     Dyn,
+    Format,
     Other,
 }
 struct Variant {
@@ -153,6 +154,7 @@ struct Tables {
     arrays: WordTable,
     values: WordTable,
     environments: WordTable,
+    formats: WordTable,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Table {
@@ -160,6 +162,7 @@ enum Table {
     Arrays,
     Values,
     Environments,
+    Formats,
 }
 
 pub struct Runtime {
@@ -238,6 +241,7 @@ impl Runtime {
             Table::Arrays => tables.arrays.get(reference.slot()),
             Table::Values => tables.values.get(reference.slot()),
             Table::Environments => tables.environments.get(reference.slot()),
+            Table::Formats => tables.formats.get(reference.slot()),
         }
     }
     fn push_words(&mut self, table: Table, words: Vec<u64>) -> Result<u32> {
@@ -246,6 +250,7 @@ impl Runtime {
             Table::Arrays => self.work.arrays.push(words)?,
             Table::Values => self.work.values.push(words)?,
             Table::Environments => self.work.environments.push(words)?,
+            Table::Formats => self.work.formats.push(words)?,
         };
         Ok(HeapRef::new(World::Work, slot)?.raw())
     }
@@ -268,6 +273,7 @@ impl Runtime {
                 T::Tuple => Kind::Tuple,
                 T::Function => Kind::Function,
                 T::Dyn => Kind::Dyn,
+                T::Native(native) if (native.module, native.slot) == (20, 1) => Kind::Format,
                 _ if !entry.variants.is_empty() => Kind::Enum,
                 _ if shape.table == Some("RecordTable") => Kind::Record,
                 _ => Kind::Other,
@@ -630,6 +636,8 @@ mod data;
 mod demands;
 #[path = "runtime/dynamic.rs"]
 mod dynamic;
+#[path = "runtime/format.rs"]
+mod format;
 pub use dynamic::DynamicQuery;
 #[path = "runtime/metadata.rs"]
 mod metadata;

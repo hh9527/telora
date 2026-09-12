@@ -221,6 +221,16 @@ impl Runtime {
                     depth + 1,
                 )?);
             }
+            Kind::Format => {
+                words[2] = u64::from(self.copy_object(
+                    Table::Formats,
+                    words[2] as u32,
+                    Some(ty),
+                    target,
+                    copies,
+                    depth + 1,
+                )?);
+            }
             Kind::Other => {
                 return Err(format!(
                     "native publication unsupported TypeId {}",
@@ -248,12 +258,17 @@ impl Runtime {
             Table::Arrays => target.arrays.push(vec![])?,
             Table::Values => target.values.push(vec![])?,
             Table::Environments => target.environments.push(vec![])?,
+            Table::Formats => target.formats.push(vec![])?,
         };
         let id = HeapRef::new(World::Main, slot)?.raw();
         copies.objects.insert((table, old), id); // register before traversing cycles
         match table {
-            Table::Environments => {
-                let mut remaining = words.as_mut_slice();
+            Table::Environments | Table::Formats => {
+                let mut remaining = if matches!(table, Table::Formats) {
+                    words.get_mut(1..).ok_or("truncated format node")?
+                } else {
+                    words.as_mut_slice()
+                };
                 while !remaining.is_empty() {
                     let header = remaining.get(1).ok_or("truncated capture header")?;
                     let width = self.layout(TypeId((header >> 32) as u32))?.words;
@@ -322,6 +337,7 @@ impl Runtime {
             Table::Arrays => target.arrays.entries[slot as usize].words = words,
             Table::Values => target.values.entries[slot as usize].words = words,
             Table::Environments => target.environments.entries[slot as usize].words = words,
+            Table::Formats => target.formats.entries[slot as usize].words = words,
         }
         Ok(id)
     }

@@ -27,6 +27,7 @@ pub(crate) const DYN_KIND: u32 = 21;
 pub(crate) const DYN_FIELD: u32 = 22;
 pub(crate) const DYN_QUERY: u32 = 23;
 pub(crate) const DYN_MEMBER: u32 = 24;
+pub(crate) const FORMAT: u32 = 25;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -70,6 +71,28 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                FORMAT => {
+                    let mut inputs = Vec::new();
+                    let mut cursor = data;
+                    for _ in 0..if count == 4 { 2 } else { 1 } {
+                        let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+                        let width = rt.layout(input)?.words;
+                        inputs.push(Value {
+                            arena: rt.identity,
+                            words: unsafe { std::slice::from_raw_parts(cursor, width) }.into(),
+                        });
+                        cursor = unsafe { cursor.add(width) };
+                    }
+                    match count {
+                        0 => rt.format_prepare(ty, loc, &inputs[0])?,
+                        1..=4 => rt.format_node(ty, loc, count as u64, &inputs)?,
+                        5 => {
+                            let text = rt.format_render(&inputs[0])?;
+                            rt.string(ty, loc, &text)?
+                        }
+                        _ => return Err("unknown format operation".into()),
+                    }
+                }
                 DYN_PACK | DYN_DESC | DYN_PROJECT | DYN_CHECK | DYN_KIND | DYN_FIELD
                 | DYN_QUERY | DYN_MEMBER => {
                     let read = |pointer: *const u64| -> Result<Value> {

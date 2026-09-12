@@ -63,6 +63,8 @@ Dyn 集合与枚举查询已接入：fields、array_items、tuple_items、tag、
 
 完整 `std/entry` 图现已通过这些 Dyn 适配器的生成，下一项缺少 module 20 / prepare（std/fmt）适配器；eval-with 仍未完成。
 
+std/fmt 的 prepare/from_string/from_int/from_float/concat/render 已接入独立 FormatTable。节点存放输入描述符，拼接引用 String/Fmt 数组，不创建 Arc 树；发布通过统一别名表搬运可达节点。模板解析保留转义大括号、字段校验、重复字段和字符串间隔；渲染遵守原有 128 层限制。正常与非法模板/拼接的 .telora 用例验证通过，native JIT 46 passed。完整 std/entry 下一处缺口为 fail! 的 subject 参数和动态消息，仍继续推进。
+
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。
 
 ## 延后与备选方案

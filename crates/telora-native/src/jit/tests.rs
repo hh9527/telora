@@ -815,6 +815,72 @@ fn dynamic_values_preserve_sealed_identity_and_shared_payloads() {
 }
 
 #[test]
+fn native_format_nodes_publish_and_render_shared_inputs() {
+    // Expose the module's private native primitive only in this test inventory.
+    let fmt_source = format!(
+        "{}\nexport {{prepare}};",
+        include_str!("../../../telora-core/modules/std/fmt.telora")
+    );
+    let dependencies = static_sources::BUILTINS
+        .iter()
+        .map(|&(name, source)| {
+            (
+                name,
+                if name == "std/fmt" {
+                    fmt_source.as_str()
+                } else {
+                    source
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let (mir, root) = graph_with(
+        include_str!("../../tests/fixtures/format.telora"),
+        &dependencies,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[mir.hir[root.index()].module], &[root]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let runtime = context.runtime().unwrap();
+    assert_eq!(
+        runtime
+            .text(runtime.field(&value, 1).unwrap())
+            .unwrap()
+            .as_str(),
+        "[42, 1.25, text]"
+    );
+    let template = runtime.field(&value, 2).unwrap().to_owned();
+    for (column, expected) in [
+        (0, vec!["{", "}:", "", ""]),
+        (1, vec!["name", "other", "name"]),
+    ] {
+        let values = runtime.field(&template, column).unwrap().to_owned();
+        let texts = (0..runtime.array_len(&values).unwrap())
+            .map(|index| {
+                runtime
+                    .text(runtime.array_get(&values, index).unwrap())
+                    .unwrap()
+                    .as_str()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(texts, expected);
+    }
+    let (mir, root) = graph_with(
+        include_str!("../../tests/fixtures/format-invalid.telora"),
+        &dependencies,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[mir.hir[root.index()].module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.initialize(&mut context).is_err());
+    assert_eq!(context.diagnostics().len(), 3);
+    assert!(!context.runtime().unwrap().is_published());
+}
+
+#[test]
 fn invalid_dynamic_indices_fail_once_and_block_publication() {
     let (mir, root) = graph_with(
         include_str!("../../tests/fixtures/dynamic-invalid.telora"),

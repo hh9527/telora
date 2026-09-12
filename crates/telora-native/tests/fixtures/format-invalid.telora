@@ -1,0 +1,4 @@
+import "std/fmt" as fmt;
+export def answer = fmt.prepare("{name");
+def invalid = fmt.prepare("{1name}");
+def concat = fmt.concat([], []);
