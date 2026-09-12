@@ -7,6 +7,34 @@ use telora_native::{
     runtime::Runtime,
 };
 
+// Internal measurement only; never changes the command's JSON result stream.
+// A record measures elapsed wall time, including time until an error returns.
+struct PhaseTimer {
+    name: &'static str,
+    start: Option<std::time::Instant>,
+}
+
+impl PhaseTimer {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            start: (std::env::var_os("TELORA_NATIVE_TIMINGS").as_deref() == Some(std::ffi::OsStr::new("1")))
+                .then(std::time::Instant::now),
+        }
+    }
+}
+
+impl Drop for PhaseTimer {
+    fn drop(&mut self) {
+        if let Some(start) = self.start {
+            eprintln!("{}", serde_json::json!({
+                "native_phase": self.name,
+                "elapsed_ns": start.elapsed().as_nanos(),
+            }));
+        }
+    }
+}
+
 pub(crate) struct Session {
     pub compiled: Compiled,
     pub context: CallContext,
@@ -22,7 +50,11 @@ impl Session {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let compiled = jit::compile_modules(sealed, &modules, &[])?;
+        let compiled = {
+            let _timer = PhaseTimer::new("codegen");
+            jit::compile_modules(sealed, &modules, &[])?
+        };
+        let _timer = PhaseTimer::new("runtime_setup");
         let context = CallContext::with_runtime(Runtime::new(sealed)?.with_allocation_limit(crate::execution_config().session_quota.allocation_bytes))
             .with_debug_sink(|event| telora_core::DebugSink::emit(&crate::StderrDebugSink, telora_core::DebugEvent {
                 name: event.name, repr: event.repr, module: event.module, line: event.line, message: event.message,
@@ -38,6 +70,7 @@ impl Session {
         inventory: &Inventory,
         sources: &mut SourceDatabase,
     ) -> Vec<Diagnostic> {
+        let _timer = PhaseTimer::new("initialize");
         let data_result = (|| -> Result<(), Vec<Diagnostic>> {
             for module in self.compiled.data_modules() {
                 let (format, text) = inventory
@@ -124,6 +157,7 @@ pub(crate) fn error(message: impl Into<String>) -> Diagnostic {
 pub(crate) fn eval(context: std::path::PathBuf, module: &str, export: &str) -> Result<i32, String> {
     use telora_core::mir::{ModuleTarget, ResolveState, TypeState};
     use telora_native::{abi::TypeKey, runtime::DataContract};
+    let frontend_timer = PhaseTimer::new("frontend");
     let mut inventory = Inventory::new(&context, module.starts_with("std/"))?;
     let root = inventory.select(module)?;
     let mut mir = inventory.solve(&root);
@@ -151,6 +185,7 @@ pub(crate) fn eval(context: std::path::PathBuf, module: &str, export: &str) -> R
     {
         return Err("eval export must have the authoritative std/value.Value type".into());
     }
+    drop(frontend_timer);
     let mut session = Session::compile(&sealed)?;
     let diagnostics = session.initialize(&inventory, &mut mir.sources);
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
@@ -161,7 +196,11 @@ pub(crate) fn eval(context: std::path::PathBuf, module: &str, export: &str) -> R
             .join("\n"));
     }
     for diagnostic in &diagnostics { eprintln!("{}", mir.sources.render(diagnostic)); }
-    let value = session.compiled.export(&mut session.context, symbol)?;
+    let value = {
+        let _timer = PhaseTimer::new("export");
+        session.compiled.export(&mut session.context, symbol)?
+    };
+    let _timer = PhaseTimer::new("output");
     let text = session
         .context
         .runtime()?
@@ -180,6 +219,7 @@ pub(crate) fn eval_with(
     use std::collections::BTreeMap;
     use telora_core::mir::{ModuleTarget, ResolveState, TypeConstructor as T, TypeState};
     use telora_native::{abi::TypeKey, runtime::DataContract};
+    let frontend_timer = PhaseTimer::new("frontend");
     let mut inventory = Inventory::new(&directory, module_name.starts_with("std/"))?;
     let root = inventory.select(module_name)?;
     let mut mir = inventory.solve(&root);
@@ -269,6 +309,7 @@ pub(crate) fn eval_with(
         TypeKey::try_from(sources_type)?,
         TypeKey::try_from(string_type)?,
     );
+    drop(frontend_timer);
     let mut session = Session::compile(&sealed)?;
     let diagnostics = session.initialize(&inventory, &mut mir.sources);
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
@@ -280,6 +321,7 @@ pub(crate) fn eval_with(
     }
     for diagnostic in &diagnostics { eprintln!("{}", mir.sources.render(diagnostic)); }
     let initial_diagnostic_count = session.context.diagnostics().len();
+    let input_timer = PhaseTimer::new("entry_input");
     let entry = session.compiled.export(&mut session.context, symbol)?;
     let rt = session.context.runtime()?;
     let config = rt.field(&entry, config_index)?.to_owned();
@@ -369,6 +411,8 @@ pub(crate) fn eval_with(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let argument = rt.aggregate(context_type, [0; 3], &fields)?;
+    drop(input_timer);
+    let execute_timer = PhaseTimer::new("execute");
     let value = session
         .compiled
         .call_closure(&mut session.context, &evaluate, &[argument])
@@ -385,7 +429,9 @@ pub(crate) fn eval_with(
                     .join("\n")
             }
         })?;
+    drop(execute_timer);
     for diagnostic in session.diagnostics(&mir.sources).iter().skip(initial_diagnostic_count) { eprintln!("{}", mir.sources.render(diagnostic)); }
+    let _timer = PhaseTimer::new("output");
     println!(
         "{}",
         session

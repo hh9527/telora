@@ -238,9 +238,14 @@ fn native_eval_with_initializes_then_injects_declared_context() {
         {"args":["hello","中"], "env":{"TELORA_NATIVE_TEST_ENV":"selected"}, "sources":{"input":{"answer":42}}},
         {"loaded":true}
     ]));
-    let selected = telora(&cwd).args(["eval-with", "--native", "@src/main:selected", "--source", "input=input.json"]).output().unwrap();
+    let selected = telora(&cwd).env("TELORA_NATIVE_TIMINGS", "1").args(["eval-with", "--native", "@src/main:selected", "--source", "input=input.json"]).output().unwrap();
     assert!(selected.status.success(), "{}", String::from_utf8_lossy(&selected.stderr));
     assert_eq!(serde_json::from_slice::<Value>(&selected.stdout).unwrap(), serde_json::json!({"answer":42}));
+    let phases = String::from_utf8_lossy(&selected.stderr).lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+    assert_eq!(phases.iter().map(|phase| phase["native_phase"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["frontend", "codegen", "runtime_setup", "initialize", "entry_input", "execute", "output"]);
+    assert!(phases.iter().all(|phase| phase["elapsed_ns"].as_u64().is_some()));
     let decoded = telora(&cwd).args(["eval-with", "--native", "@src/main:decoded", "--source", "input=input.json"]).output().unwrap();
     assert!(decoded.status.success(), "{}", String::from_utf8_lossy(&decoded.stderr));
     assert_eq!(serde_json::from_slice::<Value>(&decoded.stdout).unwrap(), serde_json::json!({"answer":42}));

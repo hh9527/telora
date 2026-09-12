@@ -47,6 +47,39 @@ JSON/YAML/TOML 字符串解析直接物化到 native tables，保留输入来源
 
 仍未完成完整语法/native API 覆盖及配额语义，因此不据此宣称整体路线落地。
 
+### 分阶段测量入口与真实负载观察（2026-09-12）
+
+内部环境变量 `TELORA_NATIVE_TIMINGS=1` 显式开启阶段计时，逐行输出 JSON 到 stderr，不进入普通帮助/用户文档，也不改变 stdout 的结果。记录是墙钟时间，失败退出也可产生已进入阶段的记录，不代表该阶段成功。eval/eval-with 分开记录 frontend（清单、求解、seal 和入口契约检查）、codegen、runtime_setup、initialize（数据模块注入、全图顶层/property 求值及发布）、entry_input、execute 和 output；eval 无 entry 调用，记录 export 而非 execute。check 经过共享 Session 可记录 codegen/runtime_setup/initialize，但没有 frontend 记录。
+
+阶段记录不包含全部进程开销，例如 CLI 参数处理、部分编译准备和退出释放；不能把阶段之和当成完整耗时。峰值内存仍用 `/usr/bin/time` 记录整进程 RSS，未将其错误归属于某个阶段。
+
+观测构建：`28f097d` 加本次计时改动，`cargo build --release -p telora`；Rust 1.98.1，x86_64 Linux，Intel Xeon Gold 6266C。lab-ontology 版本 `4d8915c25d809a9f687c1dfad554454ecc65166f`。输入是查询 country_name、country_continent 等于 Asia、空 measures/ordering、null limit/offset 的 JSON 请求：
+
+```sh
+TELORA_NATIVE_TIMINGS=1 /usr/bin/time -f 'elapsed_s=%e peak_rss_kib=%M' \
+  target/release/telora -C ../lab-ws/lab-ontology/world-model \
+  eval-with --native @src/bin/make-query:main \
+  --source input=/tmp/native-world-input.json
+```
+
+输入完整内容：
+
+```json
+{"op":"list","measures":[],"dimensions":["country_name"],"filters":[{"dimension":"country_continent","op":"eq","kind":"text","value":"Asia"}],"ordering":[],"limit":null,"offset":null,"output_order":[]}
+```
+
+| 阶段 | 本次墙钟毫秒 |
+|---|---:|
+| frontend | 456.103 |
+| codegen | 3571.159 |
+| runtime_setup | 3.436 |
+| initialize | 4.130 |
+| entry_input | 0.112 |
+| execute | 0.635 |
+| output | 0.029 |
+
+native 整进程 4.05 秒、峰值 70,400 KiB；同一 release 二进制默认后端（去掉环境变量和 `--native`）0.41 秒、45,900 KiB。两者 stdout 经 `cmp` 完全一致。这是各一次观测，不是统计基准，不据此宣布性能改进或完成 M3。计时集成回归复用现有 eval-with 用例，验证阶段顺序、数值字段及 stdout JSON 保持正确。
+
 验证默认路径不变、隐藏帮助、显式 unsupported、only-types 零执行、各命令停止阶段正确。先少量冒烟，再补完整 corner cases；完成总装后才测编译/初始化/执行耗时和峰值内存，不承诺性能收益。
 
 ## 延后与备选方案
