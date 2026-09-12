@@ -475,8 +475,6 @@ fn generic_references_distinguish_exported_schemes_and_call_instances() {
         }).expect("call selects its concrete instance");
     let GenericReference::Instance(id) = instance else { unreachable!() };
     assert!(mir.generic_instances[id.index()].concrete);
-    assert!(!mir.generic_references.iter().any(|reference|
-        matches!(reference, Some(GenericReference::Quantified { .. }))));
     mir.generic_references[scheme_node] = None;
     assert!(mir.seal().is_err(), "generic references must carry the type pass outcome");
     mir.generic_references[scheme_node] = Some(instance);

@@ -17,11 +17,6 @@ impl Mir {
                         && self.ty_slots.get(index) == self.symbol_types.get(symbol.index())
                             .and_then(|slot| self.ty_slots.get(slot.index()))
                 }
-                GenericReference::Quantified { symbol, scheme } => {
-                    symbol == target
-                        && self.symbol_schemes.get(symbol.index()) == Some(&Some(*scheme))
-                        && self.quantified_reference_matches(HirId(index as u32), *symbol, *scheme)
-                }
                 GenericReference::Instance(id) => {
                     self.generic_instances.get(id.index()).is_some_and(|instance| {
                         instance.symbol == *target
@@ -34,81 +29,6 @@ impl Mir {
                 }
             }
         })
-    }
-
-    fn quantified_reference_matches(&self, node: HirId, symbol: SymbolId, scheme: TypeSchemeId) -> bool {
-        let Some(scheme) = self.type_schemes.get(scheme.index()) else { return false; };
-        let Some(TypeState::Known(ty)) = self.ty_slots.get(node.index()) else { return false; };
-        let Some(ty) = self.types.get(ty.index()) else { return false; };
-        let TypeConstructor::Quantified(count) = ty.constructor else { return false; };
-        if count == 0 || ty.arguments.is_empty() { return false; }
-        let slots = &self.type_instances[node.index()];
-        if slots.len() != scheme.parameter_count as usize || slots.len() != self.symbol_generics[symbol.index()].len() { return false; }
-        let mut arguments = vec![];
-        for ((parameter, slot), expected) in slots.iter().zip(&self.symbol_generics[symbol.index()]) {
-            if parameter != expected { return false; }
-            let Some(TypeState::Known(argument)) = self.ty_slots.get(slot.index()) else { return false; };
-            arguments.push(*argument);
-        }
-        // Retained substitutions may contain ordinal binders, but none may
-        // escape the reference's own quantified contract.
-        let mut pending = arguments.iter().map(|&ty| (ty, count)).collect::<Vec<_>>();
-        let mut seen = std::collections::BTreeSet::new();
-        while let Some((id, count)) = pending.pop() {
-            if !seen.insert((id, count)) { continue; }
-            let Some(ty) = self.types.get(id.index()) else { return false; };
-            let count = match ty.constructor {
-                TypeConstructor::Bound(index) => {
-                    if index >= count || !ty.arguments.is_empty() { return false; }
-                    continue;
-                }
-                TypeConstructor::Quantified(inner) => inner,
-                _ => count,
-            };
-            pending.extend(ty.arguments.iter().map(|&child| (child, count)));
-        }
-        if !self.quantified_node_matches(ty.arguments[0], scheme.body, &arguments) { return false; }
-        let mut constraints = vec![];
-        for &constraint in &ty.arguments[1..] {
-            let Some(pair) = self.types.get(constraint.index()) else { return false; };
-            if pair.constructor != TypeConstructor::Tuple || pair.arguments.len() != 2 { return false; }
-            let Some(subject) = self.types.get(pair.arguments[0].index()) else { return false; };
-            let TypeConstructor::Bound(parameter) = subject.constructor else { return false; };
-            if parameter >= count || !subject.arguments.is_empty() { return false; }
-            let pair = (pair.arguments[0], pair.arguments[1]);
-            if constraints.contains(&pair) { return false; }
-            constraints.push(pair);
-        }
-        if constraints.iter().any(|&(subject, bound)| !scheme.bounds.iter().any(|&(parameter, expected)|
-            arguments.get(parameter as usize) == Some(&subject)
-                && self.quantified_node_matches(bound, expected, &arguments))) { return false; }
-        for &(parameter, expected) in &scheme.bounds {
-            let Some(&subject) = arguments.get(parameter as usize) else { return false; };
-            if constraints.iter().any(|&(p, bound)| p == subject
-                && self.quantified_node_matches(bound, expected, &arguments)) { continue; }
-            if !self.bound_requirements.iter().any(|requirement| requirement.reference == node
-                && requirement.state.is_proven()
-                && self.ty_slots.get(requirement.subject.index()) == Some(&TypeState::Known(subject))
-                && matches!(self.ty_slots.get(requirement.bound.index()), Some(TypeState::Known(bound))
-                    if self.quantified_node_matches(*bound, expected, &arguments))) { return false; }
-        }
-        true
-    }
-
-    fn quantified_node_matches(&self, ty: TypeId, node: SchemeNodeId, substitutions: &[TypeId]) -> bool {
-        let mut pending = vec![(ty, node)];
-        while let Some((ty, node)) = pending.pop() {
-            let Some(ty_data) = self.types.get(ty.index()) else { return false; };
-            match self.scheme_nodes.get(node.index()) {
-                Some(SchemeNode::Bound(index)) if substitutions.get(*index as usize) == Some(&ty) => {}
-                Some(SchemeNode::Known(known)) if *known == ty => {}
-                Some(SchemeNode::Apply { constructor, arguments }) if ty_data.constructor == *constructor && ty_data.arguments.len() == arguments.len() => {
-                    pending.extend(ty_data.arguments.iter().copied().zip(arguments.iter().copied()));
-                }
-                _ => return false,
-            }
-        }
-        true
     }
 
     fn scheme_bounds(&self, parameters: &[SymbolId]) -> Option<Vec<(u32, TypeId)>> {

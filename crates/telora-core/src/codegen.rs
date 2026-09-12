@@ -603,7 +603,7 @@ impl<'a> Emitter<'a> {
                     self.emit(node, O::Demand { dst, node: node_id });
                     return Ok(dst);
                 }
-                if matches!(self.mir.generic_references[node.index()], Some(GenericReference::Scheme { .. } | GenericReference::Quantified { .. })) {
+                if matches!(self.mir.generic_references[node.index()], Some(GenericReference::Scheme { .. })) {
                     return Err(self.error(node, "static function template has no runtime value"));
                 }
                 if matches!(self.mir.generic_references[node.index()], Some(GenericReference::Instance(_))) {

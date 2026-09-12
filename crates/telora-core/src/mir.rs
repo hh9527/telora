@@ -59,10 +59,9 @@ id!(PropertyId);
 /// or from missing instance IDs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GenericReference {
+    /// A static export of a declaration contract; never an executable value.
     Scheme { symbol: SymbolId, scheme: TypeSchemeId },
-    /// A value contract with substitutions retained in type_instances: some
-    /// arguments may be concrete and others are bound by its Quantified type.
-    Quantified { symbol: SymbolId, scheme: TypeSchemeId },
+    /// The type pass has selected this use's instance before publication.
     Instance(GenericInstanceId),
 }
 
@@ -70,7 +69,7 @@ impl GenericReference {
     pub fn instance(self) -> Option<GenericInstanceId> {
         match self {
             Self::Instance(instance) => Some(instance),
-            Self::Scheme { .. } | Self::Quantified { .. } => None,
+            Self::Scheme { .. } => None,
         }
     }
 }
