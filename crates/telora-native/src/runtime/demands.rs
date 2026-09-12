@@ -30,11 +30,20 @@ pub enum Demand {
 }
 
 impl Runtime {
+    pub(super) fn demand_width(&self, ty: TypeId) -> Result<usize> {
+        if self.type_info.get(ty.index()).is_some_and(|info| info.kind == Some("Never")) {
+            Ok(0)
+        } else {
+            Ok(self.layout(ty)?.words)
+        }
+    }
     pub fn register_demand(&mut self, key: DemandKey, ty: TypeId) -> Result<()> {
         if self.published {
             return Err("main world is already sealed".into());
         }
-        self.layout(ty)?;
+        // Never has no value layout, but its initializer can be demanded and
+        // fail. It can never transition to Ready or be published.
+        self.demand_width(ty)?;
         if self.demands.contains_key(&key) {
             return Err("native demand already registered".into());
         }

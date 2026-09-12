@@ -31,9 +31,9 @@
 
 命令局部隐藏参数 `check --native`、`eval --native`、`eval-with --native` 已接入：静态求解仍使用共同 MIR，只有 seal 成功且需要执行时才创建独立 native session。check 支持选择模块及 --lib/--tests，--only-types 和布局导出不创建 native session。未声明 --native 时仍使用原执行路径；其余命令暂不接受该选项。
 
-Native session 编译已加载的完整模块集合，通过与 linker 无关的 catalog 读数据接口解析、注入所有数据模块，再完成初始化和发布。eval 在执行前验证导出的权威 std/value.Value 身份，成功后直接从 native 对象输出 JSON。初始化失败保留位置且不重复附加通用失败诊断；数据解析保留原结构化诊断。隐藏开关不进入普通帮助或用户文档。
+Native session 消费 `SealedExecutable`：check 以选定模块集合为根，eval/eval-with 以选定导出为根裁剪无关普通值；property/check 元数据仍保留 session 初始化范围。通过与 linker 无关的 catalog 读数据接口解析、注入数据模块，再完成初始化和发布。eval 在执行前验证导出的权威 std/value.Value 身份，成功后直接从 native 对象输出 JSON。初始化失败保留位置且不重复附加通用失败诊断；数据解析保留原结构化诊断。隐藏开关不进入普通帮助或用户文档。
 
-已验证真实 CLI 的泛型闭包初始化、--only-types 零执行、未使用顶层 fail 阻止初始化、单次来源诊断，以及数据模块 check 和 eval JSON 输出。完整 std/value 依赖图包含的 nullary enum 比较按封闭布局翻译为 tag 比较。
+已验证真实 CLI 的泛型闭包初始化、--only-types 零执行、模块 check 的顶层 fail 阻止初始化、单次来源诊断，以及数据模块 check 和 eval JSON 输出。eval 的无关顶层值不执行。完整 std/value 依赖图包含的 nullary enum 比较按封闭布局翻译为 tag 比较。
 
 eval-with 在执行前验证权威 std/entry.Eval 身份，并从封闭骨架读取 config/evaluate/Context 的字段与类型。全图初始化发布成功后，校验唯一非空来源/环境变量名称、准确匹配来源清单以及 args 许可，再将声明的输入直接构造为 native Context，调用发布后的 evaluate 闭包。集成测试覆盖 JSON 数据模块、外部 JSON 来源、环境变量、Unicode 参数、配置拒绝和执行失败来源诊断；真实 `check --native std/entry` 已通过。
 

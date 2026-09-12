@@ -285,10 +285,17 @@ pub(crate) unsafe extern "C" fn object(
                     let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
                     let width = rt.layout(input)?.words;
                     let dict = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) }.into() };
-                    if count == 0 {
+                    if count == 0 || count == 6 {
                         let key = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(width), 4) }.into() };
                         let value = rt.dict_get(&dict, &key)?.map(ValueRef::to_owned);
-                        rt.named_variant(ty, loc, if value.is_some() { "Some" } else { "None" }, value.as_ref())?
+                        if count == 6 {
+                            match value {
+                                Some(value) => value,
+                                None => return Err(format!("value has no field {:?}", rt.text(key.as_ref())?.as_str())),
+                            }
+                        } else {
+                            rt.named_variant(ty, loc, if value.is_some() { "Some" } else { "None" }, value.as_ref())?
+                        }
                     } else if count == 3 {
                         rt.dict_pairs(ty, loc, &dict)?
                     } else if count == 4 {
@@ -785,7 +792,8 @@ pub(crate) unsafe fn demand(
             if rt.demands.get(&key).ok_or("native demand missing")?.ty != ty {
                 return Err("native demand type mismatch".into());
             }
-            let width = rt.layout(ty)?.words;
+            let never = rt.type_info[ty.index()].kind == Some("Never");
+            let width = rt.demand_width(ty)?;
             let value = match rt.begin_demand(key)? {
                 Demand::Failed => return Ok(Status::Failed),
                 Demand::Ready(value) => value,
@@ -818,6 +826,10 @@ pub(crate) unsafe fn demand(
                         return Ok(Status::Failed);
                     }
                     let rt = context.runtime_mut()?;
+                    if never {
+                        rt.fail_demand(key)?;
+                        return Err("native Never initializer returned successfully".into());
+                    }
                     let value = Value {
                         arena: rt.identity,
                         words,

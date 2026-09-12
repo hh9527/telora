@@ -527,6 +527,38 @@ fn unused_bindings_still_execute_and_propagate_failure_once() {
 }
 
 #[test]
+fn never_global_reference_propagates_initializer_failure() {
+    let (mir, root) = graph("def bad = fail!(\"initialization failure\"); export def answer: Fn() -> Never = fn() { bad };");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let error = compiled.call(&mut context, &[]).unwrap_err();
+    assert_eq!(context.diagnostics().len(), 1, "{error}");
+    assert!(context.diagnostics()[0].message.contains("initialization failure"));
+}
+
+#[test]
+fn dictionary_field_access_preserves_value_and_reports_missing_key() {
+    for (field, succeeds) in [("answer", true), ("missing", false)] {
+        let (mir, root) = graph(&format!("def values: Dict(Int) = {{answer: 42}}; export def answer: Fn() -> Int = fn() {{ values.{field} }};"));
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]);
+        if succeeds {
+            assert_eq!(result.unwrap().words()[2], 42);
+            assert!(context.diagnostics().is_empty());
+        } else {
+            assert!(result.is_err());
+            assert_eq!(context.diagnostics().len(), 1);
+            assert_eq!(context.diagnostics()[0].message, "value has no field \"missing\"");
+            let access = mir.hir.iter().find(|node| matches!(node.kind, HirKind::Field)).unwrap();
+            assert_eq!(context.diagnostics()[0].origin, Origin::from_loc(Some(access.location)));
+        }
+    }
+}
+
+#[test]
 fn failed_call_never_decodes_the_result_and_invalid_success_is_rejected() {
     // The wrapper is also the boundary used for generated calls to failing
     // helpers. A Failed status must not inspect the zeroed/unwritten result.

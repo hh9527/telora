@@ -1183,7 +1183,8 @@ impl Lower<'_, '_> {
         data: ir::Value,
         count: ir::Value,
     ) -> EmitResult<Vec<ir::Value>> {
-        let width = self.layouts.words(ty).map_err(|error| format!("{error}; helper {operation} at {:?} in {:?}: {:?}; reference {:?}", self.mir.hir[node.index()].location, self.function_key, self.mir.types[ty.index()], self.mir.generic_references[node.index()]))?;
+        let never = self.layouts.is_never(ty)?;
+        let width = if never { 0 } else { self.layouts.words(ty)? };
         let zero = self.builder.ins().iconst(types::I64, 0);
         let out = self.stack_words(&vec![zero; width])?;
         let origin = Origin::from_loc(Some(self.mir.hir[node.index()].location)).words();
@@ -1207,6 +1208,10 @@ impl Lower<'_, '_> {
         self.return_status(status);
         self.builder.switch_to_block(success);
         self.builder.seal_block(success);
+        if never {
+            self.report_failure(node, "native helper returned successfully for Never")?;
+            return Err(EmitError::Diverged);
+        }
         Ok((0..width)
             .map(|i| {
                 self.builder
@@ -1609,6 +1614,17 @@ impl Lower<'_, '_> {
                 let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
                     return Err("native field name missing".into());
                 };
+                if self.mir.types[skeleton.index()].constructor == TypeConstructor::Dict {
+                    let actual = TypeKey::try_from(self.mir.types[skeleton.index()].arguments[0])?;
+                    let string = self.mir.types.iter().position(|ty| ty.constructor == TypeConstructor::String)
+                        .ok_or("sealed String type missing")?;
+                    let mut words = self.expression(receiver_node, depth + 1)?;
+                    words.extend(self.string(node, self.layouts.type_at(string)?, name)?);
+                    let data = self.stack_words(&words)?;
+                    let operation = self.builder.ins().iconst(types::I64, 6);
+                    let value = self.object(node, helpers::DICT_READ, actual, data, operation)?;
+                    return self.adapt_metadata(actual, key, value);
+                }
                 let index = self.layouts.field_names[receiver_ty.index()]
                     .iter()
                     .position(|n| n == name)

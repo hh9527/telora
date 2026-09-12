@@ -215,7 +215,7 @@ impl Runtime {
             Some(_) => Ok(()),
             None => {
                 for &(key, ty) in demands {
-                    self.layout(ty)?;
+                    self.demand_width(ty)?;
                     if self.demands.contains_key(&key) {
                         return Err("native code plan demand already registered".into());
                     }
