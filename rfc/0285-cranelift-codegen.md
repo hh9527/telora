@@ -57,6 +57,8 @@
 
 ## 验收条件
 
+Native 声明现在生成同一调用 ABI 的适配函数，使用已登记 native 模块 ID 与声明 ABI 导出键链接，并检查封闭签名；导入别名和一等泛型实例不改变身份。首批为 array.length / string.length，测试包含真实标准库声明、Unicode 字符数、间接泛型参数和拒绝用户模块同名 native 声明。函数值初始化与适配器调用使用不同编译键，初始化仅生成描述符，不能以空参数调用 native 本体。其余 native 操作和 property 查询仍待补齐。
+
 类型元数据使用封闭 TypeId 作为单 word 数据，`TypeOf(T)` 的见证在构造/发布时核对；比较直接比较 represented TypeId。函数参数和返回边界的 `TypeOf(T) -> Type` 适配只更新外层类型标记，保留 represented TypeId 与来源，不在运行时求解类型。该能力已在普通参数、隐式返回、显式 return 和发布路径验证，property 执行仍需单独接入。
 
 以独立入口运行小型已 seal MIR/源码用例，检查标量、分支、函数、递归、聚合访问及错误路径。建立表达式支持清单；后续以 .telora 用例补齐规则。首个原型无需完整标准库可运行。

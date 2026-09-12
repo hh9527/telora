@@ -2,10 +2,21 @@ use super::*;
 use cranelift_module::FuncId;
 use telora_core::mir::GenericInstanceId;
 
+pub(super) fn is_native(kind: &HirKind) -> bool {
+    matches!(
+        kind,
+        HirKind::Binding {
+            kind: telora_core::ast::BindingKind::Native,
+            ..
+        }
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct Key {
     pub node: HirId,
     pub instance: Option<GenericInstanceId>,
+    pub initializer: bool,
 }
 impl Key {
     pub fn ty(self, mir: &Mir, node: HirId) -> Result<telora_core::mir::TypeId> {
@@ -26,6 +37,7 @@ impl From<HirId> for Key {
         Self {
             node,
             instance: None,
+            initializer: false,
         }
     }
 }
@@ -65,7 +77,8 @@ impl Functions {
             .find(|&node| matches!(graph.hir[node.index()].kind, HirKind::Binding { .. }))
             .ok_or("native global has no value declaration")?;
         let ty = TypeKey::try_from(known(graph, declaration)?)?;
-        let key = Key::from(declaration);
+        let mut key = Key::from(declaration);
+        key.initializer = is_native(&graph.hir[declaration.index()].kind);
         let slot = u32::try_from(self.globals.len()).map_err(|_| "native global slot overflow")?;
         let function = if let Some(&function) = self.registered.get(&key) {
             function
@@ -103,7 +116,8 @@ impl Functions {
             return Ok(function);
         }
         let node = key.node;
-        if !matches!(mir.hir[node.index()].kind, HirKind::Closure)
+        if !(matches!(mir.hir[node.index()].kind, HirKind::Closure)
+            || is_native(&mir.hir[node.index()].kind))
             || mir.types[key.ty(mir, node)?.index()].constructor != TypeConstructor::Function
         {
             return Err("native direct call requires a monomorphic closure".into());
@@ -138,7 +152,10 @@ pub(super) fn emit_dispatchers(
             .registered
             .iter()
             .filter_map(|(key, &id)| {
-                if !matches!(graph.hir[key.node.index()].kind, HirKind::Closure) {
+                if key.initializer
+                    || !(matches!(graph.hir[key.node.index()].kind, HirKind::Closure)
+                        || is_native(&graph.hir[key.node.index()].kind))
+                {
                     return None;
                 }
                 Some(key.ty(graph, key.node).map(|actual| (actual, id)))
@@ -216,7 +233,12 @@ pub(super) fn shape(
         .hir
         .get(root.index())
         .ok_or("native HIR outside graph")?;
-    let is_function = matches!(root_node.kind, HirKind::Closure);
+    let native = is_native(&root_node.kind) && !key.initializer;
+    if native && graph.types[key.ty(graph, root)?.index()].constructor != TypeConstructor::Function
+    {
+        return Err("native ABI requires a closed function instance".into());
+    }
+    let is_function = matches!(root_node.kind, HirKind::Closure) || native;
     let parameters = if is_function {
         root_node
             .children
@@ -227,7 +249,7 @@ pub(super) fn shape(
     } else {
         vec![]
     };
-    let body = if is_function {
+    let body = if is_function && !native {
         child(graph, root, Role::Body)?
     } else {
         root
@@ -240,10 +262,19 @@ pub(super) fn shape(
     } else {
         key.ty(graph, body)?
     })?;
-    let arguments = parameters
-        .iter()
-        .map(|&p| TypeKey::try_from(key.ty(graph, p)?))
-        .collect::<Result<Vec<_>>>()?;
+    let arguments = if native {
+        let signature = &graph.types[key.ty(graph, root)?.index()];
+        signature.arguments[..signature.arguments.len() - 1]
+            .iter()
+            .copied()
+            .map(TypeKey::try_from)
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        parameters
+            .iter()
+            .map(|&p| TypeKey::try_from(key.ty(graph, p)?))
+            .collect::<Result<Vec<_>>>()?
+    };
 
     if !layouts.is_never(output)? {
         layouts.words(output)?;
@@ -326,9 +357,13 @@ pub(super) fn emit(
                 .map_err(|e| format!("native capture load: {e:?}"))?;
             lower.locals.insert(symbol, value);
         }
-        let outcome = match lower.expression(body, 0) {
-            Ok(result) => lower.return_value(body, &result),
-            Err(error) => Err(error),
+        let outcome = if is_native(&graph.hir[key.node.index()].kind) && !key.initializer {
+            lower.native_adapter(key.node, &arguments, args)
+        } else {
+            match lower.expression(body, 0) {
+                Ok(result) => lower.return_value(body, &result),
+                Err(error) => Err(error),
+            }
         };
         match outcome {
             Ok(()) | Err(EmitError::Diverged) => {}

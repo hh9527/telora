@@ -454,6 +454,9 @@ struct Lower<'a, 'b> {
 impl Lower<'_, '_> {
     fn return_value(&mut self, node: HirId, result: &[ir::Value]) -> EmitResult<()> {
         let result = self.fit_metadata(node, self.return_type, result.to_vec())?;
+        self.write_return(&result)
+    }
+    fn write_return(&mut self, result: &[ir::Value]) -> EmitResult<()> {
         if self.layouts.is_never(self.return_type)? {
             return Err("native Never body produced a value".into());
         }
@@ -593,6 +596,7 @@ impl Lower<'_, '_> {
         }
         match self.mir.hir[node.index()].kind {
             HirKind::Closure => Ok(node),
+            ref kind if functions::is_native(kind) => Ok(node),
             HirKind::TypeApply => self.callable(child(self.mir, node, Role::Callee)?, depth + 1),
             HirKind::TypeAscription => {
                 self.callable(child(self.mir, node, Role::Value)?, depth + 1)
@@ -608,6 +612,9 @@ impl Lower<'_, '_> {
                     .declarations
                     .iter()
                     .find_map(|&decl| {
+                        if functions::is_native(&self.mir.hir[decl.index()].kind) {
+                            return Some(decl);
+                        }
                         self.mir.hir[decl.index()]
                             .children
                             .iter()
@@ -675,6 +682,7 @@ impl Lower<'_, '_> {
                 (function, closure, output, expected)
             } else {
                 let callee = functions::Key {
+                    initializer: false,
                     node: self.callable(callee_node, 0)?,
                     instance: self.instance_reference(callee_node),
                 };
@@ -1137,6 +1145,7 @@ impl Lower<'_, '_> {
                     return self.function_value(
                         node,
                         functions::Key {
+                            initializer: false,
                             node: function,
                             instance: self.instance_reference(node),
                         },
@@ -1176,12 +1185,23 @@ impl Lower<'_, '_> {
                 self.function_value(
                     node,
                     functions::Key {
+                        initializer: false,
                         node: function,
                         instance: self.instance_reference(node),
                     },
                 )
             }
             HirKind::Binding { .. } => {
+                if functions::is_native(&syntax.kind) {
+                    return self.function_value(
+                        node,
+                        functions::Key {
+                            node,
+                            instance: self.function_key.instance,
+                            initializer: false,
+                        },
+                    );
+                }
                 let value = self.expression(child(self.mir, node, Role::Value)?, depth + 1)?;
                 let symbol = self.mir.hir_symbols[node.index()]
                     .ok_or("native binding pattern is not yet supported")?;
@@ -1191,6 +1211,7 @@ impl Lower<'_, '_> {
             HirKind::Closure => self.function_value(
                 node,
                 functions::Key {
+                    initializer: false,
                     node,
                     instance: self.function_key.instance,
                 },
@@ -1279,6 +1300,8 @@ impl Lower<'_, '_> {
 }
 #[path = "jit/functions.rs"]
 mod functions;
+#[path = "jit/natives.rs"]
+mod natives;
 #[path = "jit/patterns.rs"]
 mod patterns;
 #[path = "jit/scalars.rs"]

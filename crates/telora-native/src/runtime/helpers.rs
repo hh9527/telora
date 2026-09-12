@@ -15,6 +15,8 @@ pub(crate) const TEXT_EQUAL: u32 = 9;
 pub(crate) const CLOSURE: u32 = 10;
 pub(crate) const CAPTURE: u32 = 11;
 pub(crate) const DEMAND: u32 = 12;
+pub(crate) const ARRAY_LENGTH: u32 = 13;
+pub(crate) const STRING_LENGTH: u32 = 14;
 
 /// Safety: ctx is an exclusive live context; data points at the full values
 /// specified by the generated operation; out has space for the solved result.
@@ -157,7 +159,7 @@ pub(crate) unsafe extern "C" fn object(
                         _ => unreachable!(),
                     }
                 }
-                FIELD | INDEX | PAYLOAD | TEXT_EQUAL | CAPTURE => {
+                FIELD | INDEX | PAYLOAD | TEXT_EQUAL | CAPTURE | ARRAY_LENGTH | STRING_LENGTH => {
                     let receiver_ty = unsafe { TypeId((*data.add(1) >> 32) as u32) };
                     let size = rt.layout(receiver_ty)?.words;
                     let words = unsafe { std::slice::from_raw_parts(data, size) };
@@ -165,7 +167,18 @@ pub(crate) unsafe extern "C" fn object(
                         arena: rt.identity,
                         words: words.to_vec().into_boxed_slice(),
                     };
-                    if operation == CAPTURE {
+                    if operation == ARRAY_LENGTH || operation == STRING_LENGTH {
+                        let length = if operation == ARRAY_LENGTH {
+                            rt.array_len(&receiver)?
+                        } else {
+                            rt.text(receiver.as_ref())?.as_str().chars().count()
+                        };
+                        rt.scalar(
+                            ty,
+                            loc,
+                            i64::try_from(length).map_err(|_| "native length overflow")? as u64,
+                        )?
+                    } else if operation == CAPTURE {
                         rt.capture(&receiver, count)?.to_owned()
                     } else if operation == PAYLOAD {
                         rt.enum_payload(&receiver)?

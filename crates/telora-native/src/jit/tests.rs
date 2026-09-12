@@ -6,13 +6,21 @@ use telora_core::{
 };
 
 fn graph(source: &str) -> (Mir, HirId) {
-    let inputs = [
+    graph_with(source, &[])
+}
+fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
+    let mut inputs = vec![
         ("@src/main", source),
         (
             "std/prelude",
             include_str!("../../../telora-core/modules/std/prelude.telora"),
         ),
     ];
+    for &(name, source) in dependencies {
+        if !inputs.iter().any(|(existing, _)| *existing == name) {
+            inputs.push((name, source));
+        }
+    }
     let inventory = inputs
         .iter()
         .map(|(name, _)| ModuleSpec {
@@ -320,6 +328,62 @@ fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
     );
     assert!(rt.enum_payload(&end).unwrap().is_none());
 }
+#[test]
+fn native_abi_links_resolved_aliases_and_generic_function_values() {
+    let dependencies = [(
+        "std/array",
+        include_str!("../../../telora-core/modules/std/array.telora"),
+    )];
+    for source in [
+        "import \"std/array\" { length as count }; export def answer = count([40, 2]);",
+        "import \"std/array\" { length }; def apply: Fn(Fn(Array(Int)) -> Int, Array(Int)) -> Int = fn(f, a) { f(a) }; export def answer = apply(length@[Int], [40, 2]);",
+    ] {
+        let (mir, root) = graph_with(source, &dependencies);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 2);
+    }
+    let (mir, root) =
+        graph("native length: Fn(Array(Int)) -> Int; export def answer = length([1]);");
+    assert!(
+        compile(&mir.seal().unwrap(), root)
+            .err()
+            .unwrap()
+            .contains("admitted ABI module")
+    );
+    let (mir, root) = graph_with(
+        "import \"std/string\" { length as count }; export def answer = count(\"中é🙂\");",
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 3);
+
+    let (mir, root) = graph_with(
+        "import \"std/array\" { length }; export def answer = length([1, 2]);",
+        &[(
+            "std/array",
+            "native length: Fn(Array(Int)) -> Int; export { length };",
+        )],
+    );
+    let symbol = *mir
+        .exports
+        .iter()
+        .flatten()
+        .find(|s| mir.symbols[s.index()].name == "length")
+        .unwrap();
+    let module = mir.symbols[symbol.index()].module.unwrap();
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[root]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    let function = compiled.export(&mut context, symbol).unwrap();
+    context.runtime().unwrap().function_id(&function).unwrap();
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 2);
+}
+
 #[test]
 fn metadata_uses_sealed_type_ids_and_survives_publication() {
     let (mir, root) = graph("export def answer = (Int.type, Array(String).type, Unit.type);");
