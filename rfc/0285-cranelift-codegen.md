@@ -77,6 +77,12 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+泛型 newtype 构造引用优先消费封闭构造信息，不再进入全局泛型值初始化路径，
+避免为 `Meta` 分配运行时槽。`construction-boundaries` 语言资产 native check
+已通过，执行回归包含 `Wrapped(42)` 与保存 `Wrapped@[String]` 后调用。运行时槽
+诊断补充 TypeId、helper 和源码位置，后续 `stdlib-collections` 的槽问题另行定位，
+不将所有槽错误归为同一根因。
+
 显式泛型构造函数引用现在穿过 HIR `TypeApply` 读取既有 member selection，覆盖
 `Message.Data@[String](...)` 及 `let make = Message.Data@[Int]`，不在 codegen
 重新推导类型。现有 `enum-constructors` 语言资产 native check 从 callable 未绑定

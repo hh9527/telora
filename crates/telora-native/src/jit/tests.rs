@@ -52,10 +52,13 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 
 #[test]
 fn native_explicit_generic_enum_constructor_preserves_sealed_selection() {
-    let (mir, root) = graph(r#"type Message(T) = enum {Data(T), Empty}; export def answer = do {
+    let (mir, root) = graph(r#"type Message(T) = enum {Data(T), Empty}; type Wrapped(T) = struct(T); export def answer = do {
         let direct = Message.Data@[String]("ok");
         let make: Fn(Int) -> Message(Int) = Message.Data@[Int];
-        match direct {Message.Data(text) => text == "ok", Message.Empty => False}
+        let wrapped = Wrapped(42);
+        let wrap = Wrapped@[String];
+        wrapped.0 == 42 && wrap("ok").0 == "ok"
+            && match direct {Message.Data(text) => text == "ok", Message.Empty => False}
             && match make(42) {Message.Data(value) => value == 42, Message.Empty => False}
     };"#);
     let sealed = mir.seal().unwrap();

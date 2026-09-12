@@ -174,7 +174,7 @@ impl Layouts {
         {
             Layout::Value(words) => Ok(*words),
             Layout::Never => Err("uninhabited type has no runtime slot".into()),
-            Layout::Static => Err("static or template type has no runtime slot".into()),
+            Layout::Static => Err(format!("static or template type has no runtime slot: {ty:?}")),
         }
     }
     pub fn is_never(&self, ty: TypeKey) -> Result<bool> {

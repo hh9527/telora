@@ -444,10 +444,10 @@ pub(super) fn shape(
     };
 
     if !layouts.is_never(output)? {
-        layouts.words(output)?;
+        layouts.words(output).map_err(|error| format!("{error}; output of {key:?} at {:?}: {:?}", graph.hir[key.node.index()].location, graph.types[output.index()]))?;
     }
     for &argument in &arguments {
-        layouts.words(argument)?;
+        layouts.words(argument).map_err(|error| format!("{error}; parameter of {key:?} at {:?}: {:?}", graph.hir[key.node.index()].location, graph.types[argument.index()]))?;
     }
     Ok((parameters, body, output, arguments))
 }
