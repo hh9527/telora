@@ -205,7 +205,8 @@ impl Compiled {
         if !runtime.is_published() {
             return Err("native entry call requires successful initialization".into());
         }
-        let id = runtime.function_id(closure)?;
+        let closure = runtime.resolve_function(closure)?;
+        let id = runtime.function_id(&closure)?;
         let (ty, entry) = self
             .callables
             .get(&id)
@@ -219,7 +220,7 @@ impl Compiled {
             entry.entry,
             &entry.arguments,
             entry.output,
-            Some(closure),
+            Some(&closure),
         )
     }
     pub fn call_root(
@@ -1679,9 +1680,23 @@ impl Lower<'_, '_> {
                         },
                     );
                 }
-                let value = self.expression(child(self.mir, node, Role::Value)?, depth + 1)?;
                 let symbol = self.mir.hir_symbols[node.index()]
                     .ok_or("native binding pattern is not yet supported")?;
+                let reserved = if matches!(syntax.kind, HirKind::Binding { kind: telora_core::ast::BindingKind::Def | telora_core::ast::BindingKind::Decl, .. })
+                    && self.mir.types[ty.index()].constructor == TypeConstructor::Function
+                    && self.mir.symbol_generics[symbol.index()].is_empty() {
+                    self.locals.get(&symbol).cloned()
+                } else { None };
+                if matches!(syntax.kind, HirKind::Binding { kind: telora_core::ast::BindingKind::Decl, .. }) {
+                    return reserved.ok_or_else(|| "local declaration has no reserved function slot".into());
+                }
+                let value = self.expression(child(self.mir, node, Role::Value)?, depth + 1)?;
+                if let Some(mut target) = reserved {
+                    target.extend(value);
+                    let data = self.stack_words(&target)?;
+                    let zero = self.builder.ins().iconst(types::I64, 0);
+                    return self.object(node, helpers::FILL_FUNCTION, key, data, zero);
+                }
                 self.locals.insert(symbol, value.clone());
                 Ok(value)
             }
@@ -1699,6 +1714,18 @@ impl Lower<'_, '_> {
             }),
             HirKind::Call => self.direct_call(node, depth),
             HirKind::Block => {
+                for edge in &syntax.children {
+                    if edge.role != Role::Binding { continue; }
+                    let binding = &self.mir.hir[edge.node.index()];
+                    if !matches!(binding.kind, HirKind::Binding { kind: telora_core::ast::BindingKind::Def | telora_core::ast::BindingKind::Decl, .. }) { continue; }
+                    let Some(symbol) = self.mir.hir_symbols[edge.node.index()] else { continue; };
+                    if !self.mir.symbol_generics[symbol.index()].is_empty() || self.locals.contains_key(&symbol) { continue; }
+                    let ty = self.ty(edge.node)?;
+                    if self.mir.types[ty.index()].constructor != TypeConstructor::Function { continue; }
+                    let zero = self.builder.ins().iconst(types::I64, 0);
+                    let value = self.object(edge.node, helpers::RESERVE_FUNCTION, TypeKey::try_from(ty)?, zero, zero)?;
+                    self.locals.insert(symbol, value);
+                }
                 for edge in &syntax.children {
                     match edge.role {
                         Role::Binding => {

@@ -105,6 +105,17 @@ fn native_codec_fuel_exhaustion_is_not_a_recoverable_decode_error() {
 }
 
 #[test]
+fn native_local_mutual_recursion_uses_stable_function_slots() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/mutual-recursive-closures.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.runtime().unwrap().semantic_json(&contract, &result).unwrap(), "42");
+}
+
+#[test]
 fn native_local_recursive_closures_keep_lexical_environment() {
     for source in [
         include_str!("../../tests/fixtures/wrapped-recursive-closure.telora"),
@@ -2426,7 +2437,7 @@ fn host_calls_published_closures_with_closed_signatures() {
     let forged = context
         .runtime_mut()
         .unwrap()
-        .closure(closure_ty, [0, 0, 0], u32::MAX, &[])
+        .closure(closure_ty, [0, 0, 0], u32::MAX - 1, &[])
         .unwrap();
     assert!(compiled.call_closure(&mut context, &forged, &[]).is_err());
 }
@@ -2676,7 +2687,7 @@ fn indirect_unknown_function_reports_one_failure_without_reading_result() {
     let compiled = compile(&sealed, root).unwrap();
     let mut runtime = crate::runtime::Runtime::new(&sealed).unwrap();
     let invalid = runtime
-        .closure(compiled.arguments()[0], [1, 0, 1], u32::MAX, &[])
+        .closure(compiled.arguments()[0], [1, 0, 1], u32::MAX - 1, &[])
         .unwrap();
     let mut context = CallContext::with_runtime(runtime);
     assert!(compiled.call(&mut context, &[invalid]).is_err());

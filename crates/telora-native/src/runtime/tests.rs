@@ -429,6 +429,46 @@ fn initialization_demands_cache_publish_and_report_cycles_once() {
 }
 
 #[test]
+fn lexical_function_slots_preserve_cycles_and_identity_across_publication() {
+    let mir = graph(SOURCE);
+    let sealed = mir.seal().unwrap();
+    let mut rt = Runtime::new(&sealed).unwrap();
+    let ty = value_type(&mir, "function");
+    let even = rt.reserve_function(ty, [1, 2, 3]).unwrap();
+    let odd = rt.reserve_function(ty, [1, 4, 5]).unwrap();
+    assert!(rt.resolve_function(&even).unwrap_err().contains("before its declaration"));
+    let even_body = rt.closure(ty, [1, 6, 7], 17, &[odd.clone()]).unwrap();
+    let odd_body = rt.closure(ty, [1, 8, 9], 23, &[even.clone()]).unwrap();
+    let identity = even.words().to_vec();
+    rt.fill_function(&even, &even_body).unwrap();
+    rt.fill_function(&odd, &odd_body).unwrap();
+    assert_eq!(even.words(), identity);
+    assert!(rt.fill_function(&even, &even_body).unwrap_err().contains("already filled"));
+    let roots = rt.publish(&[even.clone(), odd, even]).unwrap();
+    assert_eq!(roots[0].words(), roots[2].words());
+    assert_eq!(rt.main.environments.entries.len(), 4);
+    let body = rt.resolve_function(&roots[0]).unwrap();
+    assert_eq!(rt.function_id(&body).unwrap(), 17);
+    let sibling = rt.capture(&body, 0).unwrap().to_owned();
+    assert_eq!(sibling.words(), roots[1].words());
+    let body = rt.resolve_function(&sibling).unwrap();
+    assert_eq!(rt.function_id(&body).unwrap(), 23);
+    assert_eq!(rt.capture(&body, 0).unwrap().words(), roots[0].words());
+    assert_eq!(roots[0].location(), [1, 2, 3]);
+    assert!(rt.fill_function(&roots[0], &roots[1]).unwrap_err().contains("published"));
+
+    let mut rt = Runtime::new(&sealed).unwrap();
+    let pending = rt.reserve_function(ty, [0; 3]).unwrap();
+    assert!(rt.publish(&[pending]).unwrap_err().contains("uninitialized"));
+    assert!(!rt.published && rt.main.environments.entries.is_empty());
+    let a = rt.reserve_function(ty, [0; 3]).unwrap();
+    let b = rt.reserve_function(ty, [0; 3]).unwrap();
+    rt.fill_function(&a, &b).unwrap();
+    rt.fill_function(&b, &a).unwrap();
+    assert!(rt.resolve_function(&a).unwrap_err().contains("alias cycle"));
+}
+
+#[test]
 fn closure_environments_publish_nested_captures_and_shared_objects() {
     let mir = graph(SOURCE);
     let mut rt = Runtime::new(&mir.seal().unwrap()).unwrap();

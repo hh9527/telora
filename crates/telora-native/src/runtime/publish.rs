@@ -106,6 +106,10 @@ impl Runtime {
                 let environment = (words[2] >> 32) as u32;
                 {
                     let raw = environment.checked_sub(1).ok_or("function value has no identity")?;
+                    if words[2] as u32 == closures::FUNCTION_SLOT
+                        && self.object_words(Table::Environments, raw)?.is_empty() {
+                        return Err("cannot publish an uninitialized function slot".into());
+                    }
                     let id = self.copy_object(
                         Table::Environments,
                         raw,

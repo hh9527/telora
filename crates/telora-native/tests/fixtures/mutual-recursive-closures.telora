@@ -1,8 +1,7 @@
-// Acceptance reproducer: default eval returns 42. Native currently rejects
-// compilation with "native closure capture plan mismatch" (RFC0285).
 import "std/value" as value;
 import "std/codec" as codec;
-export def answer = codec.encode(value.Value.type, do {
+import "std/entry" as entry;
+def functions = do {
     let offset = 42;
     def even: Fn(Int) -> Int = fn(n) {
         if n == 0 { offset } else { odd(n - 1) }
@@ -10,5 +9,10 @@ export def answer = codec.encode(value.Value.type, do {
     def odd: Fn(Int) -> Int = fn(n) {
         if n == 0 { 0 } else { even(n - 1) }
     };
-    even(4)
-});
+    (even, odd)
+};
+export def answer = codec.encode(value.Value.type, functions.0(4));
+export def main = entry.main(
+    {sources: [], envs: [], args: False},
+    fn(ctx) {codec.encode(value.Value.type, functions.0(4))},
+);

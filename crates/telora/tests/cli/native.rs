@@ -407,3 +407,19 @@ fn native_check_injects_data_before_initialization() {
     );
     fs::remove_dir_all(cwd).unwrap();
 }
+#[test]
+fn native_mutual_recursive_closures_survive_initialization_and_entry() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/mutual-recursive-closures.telora")).unwrap();
+    for (command, selector) in [("eval", "@src/main:answer"), ("eval-with", "@src/main:main")] {
+        for native in [false, true] {
+            let mut process = telora(&cwd);
+            process.arg(command);
+            if native { process.arg("--native"); }
+            let result = process.arg(selector).output().unwrap();
+            assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+            assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap(), serde_json::json!(42));
+        }
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}

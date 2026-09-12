@@ -316,7 +316,20 @@ pub(super) fn emit_dispatchers(
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         builder.seal_block(entry);
-        let args = builder.block_params(entry).to_vec();
+        let mut args = builder.block_params(entry).to_vec();
+        // Resolve a stable lexical slot to its installed body at invocation.
+        // Captured values and equality continue to use the original identity.
+        let mut resolver = Lower {
+            local_instances: BTreeMap::new(), guarded: false, frame_charge: None,
+            mir: graph, layouts, builder, locals: BTreeMap::new(), module,
+            context: args[0], object_helper, functions, function_key: root.into(),
+            return_pointer: args[2], return_type: ty,
+        };
+        let zero = resolver.builder.ins().iconst(types::I64, 0);
+        let resolved = resolver.object(root, helpers::RESOLVE_FUNCTION, ty, args[3], zero)
+            .map_err(|e| format!("native function slot resolution: {e:?}"))?;
+        args[3] = resolver.stack_words(&resolved).map_err(|e| format!("native resolved closure: {e:?}"))?;
+        let mut builder = resolver.builder;
         let packed = builder
             .ins()
             .load(types::I64, MemFlagsData::new(), args[3], 16);
@@ -512,7 +525,8 @@ pub(super) fn emit(
             lower.locals.insert(symbol, value);
         }
         lower.load_instance_captures(key, environment).map_err(|e| format!("native instance capture: {e:?}"))?;
-        if !key.initializer && let Some(&symbol) = lower.functions.self_bindings.get(&key.node) {
+        if !key.initializer && let Some(&symbol) = lower.functions.self_bindings.get(&key.node)
+            && !lower.locals.contains_key(&symbol) {
             let ty = TypeKey::try_from(key.ty(graph, key.node)?)?;
             let id = lower.builder.ins().iconst(types::I64, i64::from(function.as_u32()));
             let value = lower.object(key.node, helpers::SELF_CLOSURE, ty, environment, id)

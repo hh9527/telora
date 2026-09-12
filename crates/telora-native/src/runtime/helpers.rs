@@ -53,6 +53,9 @@ pub(crate) const BYTES_LITERAL: u32 = 58;
 pub(crate) const DEBUG: u32 = 59;
 pub(crate) const INTERPRETER_ADAPTER: u32 = 60;
 pub(crate) const SELF_CLOSURE: u32 = 61;
+pub(crate) const RESERVE_FUNCTION: u32 = 62;
+pub(crate) const FILL_FUNCTION: u32 = 63;
+pub(crate) const RESOLVE_FUNCTION: u32 = 64;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -584,6 +587,17 @@ pub(crate) unsafe extern "C" fn object(
                         .0;
                     let bits = rt.scalar(bit_type, loc, bits)?;
                     rt.aggregate(ty, loc, &[bits])?
+                }
+                RESERVE_FUNCTION => rt.reserve_function(ty, loc)?,
+                FILL_FUNCTION | RESOLVE_FUNCTION => {
+                    let width = rt.layout(ty)?.words;
+                    let target = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) }.into() };
+                    if operation == RESOLVE_FUNCTION { rt.resolve_function(&target)? }
+                    else {
+                        let source = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(width), width) }.into() };
+                        rt.fill_function(&target, &source)?;
+                        target
+                    }
                 }
                 SELF_CLOSURE => {
                     if data.is_null() {

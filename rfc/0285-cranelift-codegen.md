@@ -125,13 +125,17 @@ Interpreter 的运行时身份缓存按 factory 的函数/环境身份及 repres
 
 补充闭包创建点的透明包装处理：声明值经 `do` 的结果或 `ty!` 类型标注返回闭包时，自引用计划沿这些既有 HIR 边找到实际闭包。此前只识别声明的直接 Closure 子节点，导致合法局部递归报 `native closure capture plan mismatch`。语言资产 `wrapped-recursive-closure.telora` 覆盖嵌套 block、类型标注、外层与 block 内层捕获、自比较及递归调用；不执行额外名字解析或类型推导。
 
-### 已确认未闭合：局部互递归函数槽
+### 局部互递归函数槽
 
-验收资产 `mutual-recursive-closures.telora` 在真实默认 CLI eval 返回 `42`，native eval 报 `native closure capture plan mismatch`。该资产目前是缺口复现，不是已通过的回归；122 项 native 单测和 84 项 CLI 测试通过不能证明这项能力已完成。
+验收资产 `mutual-recursive-closures.telora` 最初在真实默认 CLI eval 返回 `42`，native eval 报 `native closure capture plan mismatch`，现已作为执行回归接入。资产同时导出 eval-with 入口，初始化返回的互递归闭包必须在发布后继续可调用。
 
 原因：`function_value` 仅捕获当时出现在 `locals` 中的符号，首个函数创建时后续函数尚无描述符。之后的引用重新进入函数物化，得到不同捕获集合。SealedMir 已完成这些引用和类型的闭合，因此修复属于运行时词法绑定物化，不应改动 resolve 或重新推导。
 
-默认实现的语义是 block 入口按稳定符号预留函数槽，声明处填入函数体；闭包捕获槽的稳定身份，因此支持互递归。native 也需要显式的预留/填充/调用状态，而不是按调用重新构造兄弟闭包。下一步以此完成 native 独立函数槽：保持身份，未填充调用失败，填充只允许一次，发布保持循环与共享；同时覆盖泛型实例槽、函数别名、提前调用和发布后执行。不得将默认 VM 的 AllocFunc/SealFunc 接入 native 作为实现依赖。
+默认实现的语义是 block 入口按稳定符号预留函数槽，声明处填入函数体；闭包捕获槽的稳定身份，因此支持互递归。native 已独立实现普通局部 def/decl 的预留、单次填充和调用解析：用保留的 `u32::MAX` code-id 标识词法槽，其 environment 为空时为 Pending，填充后保存一个完整函数描述符。只有调用时沿槽读取最终代码和环境；值比较、捕获和引用仍保留槽身份，不深复制用户对象。
+
+Host 入口和生成代码的间接分派都处理这种槽。函数自身已捕获稳定槽时，不再用当前函数体描述符覆盖该绑定。Pending 调用、重复填充、main 槽修改以及纯 alias 环被拒绝；Pending 根不得发布。运行时测试验证互相捕获的闭包发布后保留四个 environment（两个槽、两个函数体）和原始来源/别名。初次完整回归 124 项 native 单测及三个 regex 实验通过；原有 84 项 CLI 回归通过，扩展资产另外验证发布后的 eval-with。
+
+泛型实例仍沿用原有实例物化，尚未全部接入 block 入口预留槽；下一步继续覆盖泛型互递归、函数别名和提前调用诊断。不依赖默认 VM 的 AllocFunc/SealFunc，也不以普通互递归通过宣称泛型互递归已完成。槽链解析的 helper 工作量仍须纳入资源预算审计。
 
 `.cast!` 已消费封闭目标类型与 checker 实例生成调用包；运行时先验证整个输入的表示，再转换并执行声明检查，不调用 encode/decode，也不重新推导类型。支持 Record/Dict、Array、Tuple/Newtype、Option/Result 和 Unchecked 到 owner；拒绝不同 nominal 身份以及数值隐式转换。未改变的子对象保留 backing 与来源。结构不匹配返回 Err(String)，checker 失败只产生一次执行诊断。
 
