@@ -107,6 +107,7 @@ fn native_codec_fuel_exhaustion_is_not_a_recoverable_decode_error() {
 #[test]
 fn native_local_recursive_closures_keep_lexical_environment() {
     for source in [
+        include_str!("../../tests/fixtures/wrapped-recursive-closure.telora"),
         "export def answer = do { let offset = 2; def sum: Fn(Int) -> Int = fn(n) {if n == 0 {offset} else {n + sum(n - 1)}}; sum(8) };",
         "export def answer = do {let offset = 2; def add: for(T) Fn(T) -> Int = fn(value) {offset}; let nested = fn() {add(0) + 40}; nested() };",
         "export def answer = do {let offset = 42; def run: Fn(Int) -> Int = fn(n) {if n == 0 {if run == run {offset} else {0}} else {run(n - 1)}}; run(2) };",

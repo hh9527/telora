@@ -111,9 +111,20 @@ impl Functions {
             for edge in &node.children { parents[edge.node.index()] = Some(index); }
             if let Some(symbol) = graph.hir_symbols[index]
                 && matches!(node.kind, HirKind::Binding { .. })
-                && let Some(value) = node.children.iter().find(|edge| edge.role == Role::Value).map(|edge| edge.node)
-                && matches!(graph.hir[value.index()].kind, HirKind::Closure) {
-                closures.insert(symbol, value);
+                && let Some(mut value) = node.children.iter().find(|edge| edge.role == Role::Value).map(|edge| edge.node) {
+                // A block result or type ascription preserves the closure's
+                // identity. Its lexical captures still come from the actual
+                // closure creation site, including bindings inside the block.
+                loop {
+                    let role = match graph.hir[value.index()].kind {
+                        HirKind::Closure => { closures.insert(symbol, value); break; }
+                        HirKind::Block => Role::Result,
+                        HirKind::TypeAscription => Role::Value,
+                        _ => break,
+                    };
+                    let Ok(next) = child(graph, value, role) else { break; };
+                    value = next;
+                }
             }
         }
         let mut self_bindings = BTreeMap::new();

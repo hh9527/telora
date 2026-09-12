@@ -123,6 +123,8 @@ Interpreter 的运行时身份缓存按 factory 的函数/环境身份及 repres
 
 递归函数的自引用由编译计划预先依据 HIR 父关系和已解析 SymbolId 建表，函数入口绑定当前闭包描述符，作为值读取与递归调用共享同一环境，不重新加载局部声明。裸根调用没有闭包描述符时才创建无捕获入口身份。局部泛型模板跳过抽象实例，只物化 MIR 中 concrete 的实例；测试包含捕获外部值的自比较和泛型递归。
 
+补充闭包创建点的透明包装处理：声明值经 `do` 的结果或 `ty!` 类型标注返回闭包时，自引用计划沿这些既有 HIR 边找到实际闭包。此前只识别声明的直接 Closure 子节点，导致合法局部递归报 `native closure capture plan mismatch`。语言资产 `wrapped-recursive-closure.telora` 覆盖嵌套 block、类型标注、外层与 block 内层捕获、自比较及递归调用；不执行额外名字解析或类型推导。
+
 `.cast!` 已消费封闭目标类型与 checker 实例生成调用包；运行时先验证整个输入的表示，再转换并执行声明检查，不调用 encode/decode，也不重新推导类型。支持 Record/Dict、Array、Tuple/Newtype、Option/Result 和 Unchecked 到 owner；拒绝不同 nominal 身份以及数值隐式转换。未改变的子对象保留 backing 与来源。结构不匹配返回 Err(String)，checker 失败只产生一次执行诊断。
 
 CLI 语言资产覆盖 eval/eval-with 的 19 项类型身份与转换检查，并将解包后的容器数据与默认后端比较。默认后端对 cast 容器写入类型标记、对普通容器不总是写入相同标记，其相等比较会受此影响；因此不以该差异规定 native 的相等语义。默认运行时代码保持不变。

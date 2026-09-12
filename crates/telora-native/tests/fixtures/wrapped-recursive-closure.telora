@@ -1,0 +1,16 @@
+export def answer = do {
+    let outer = 40;
+    def run: Fn(Int) -> Int = ty!(do {
+        let inner = 2;
+        do {
+            fn(n) {
+                if n == 0 {
+                    if run == run { outer + inner } else { 0 }
+                } else {
+                    run(n - 1)
+                }
+            }
+        }
+    }, Fn(Int) -> Int);
+    run(3)
+};
