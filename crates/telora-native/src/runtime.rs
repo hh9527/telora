@@ -661,6 +661,7 @@ mod pattern;
 #[path = "runtime/text_ops.rs"]
 mod text_ops;
 mod reflection;
+mod array_ops;
 pub use dynamic::DynamicQuery;
 #[path = "runtime/metadata.rs"]
 mod metadata;

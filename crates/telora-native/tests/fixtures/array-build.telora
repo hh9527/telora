@@ -1,0 +1,15 @@
+import "std/array" as array;
+
+export def answer = do {
+    let input = ["long heap-backed array source"];
+    let empty: Array(String) = [];
+    (
+        input,
+        array.push(input, "tail"),
+        array.enumerate(input),
+        array.concat([empty, input, empty, input]),
+        array.zip(input, [42]),
+        array.zip(input, empty),
+        array.zip(empty, empty),
+    )
+};

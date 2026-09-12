@@ -40,6 +40,7 @@ pub(crate) const LEAVE_CALL: u32 = 34;
 pub(crate) const DICT_READ: u32 = 35;
 pub(crate) const FOLD: u32 = 36;
 pub(crate) const ARRAY_GET: u32 = 37;
+pub(crate) const ARRAY_BUILD: u32 = 38;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -126,6 +127,17 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                ARRAY_BUILD => {
+                    let mut inputs = Vec::new();
+                    let mut cursor = data;
+                    for _ in 0..if count == 1 || count == 3 { 2 } else { 1 } {
+                        let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+                        let width = rt.layout(input)?.words;
+                        inputs.push(Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(cursor, width) }.into() });
+                        cursor = unsafe { cursor.add(width) };
+                    }
+                    rt.array_operation(ty, loc, count, &inputs)?
+                }
                 ARRAY_GET => {
                     let array = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, 4) }.into() };
                     let index = ValueRef { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(4), 3) } };

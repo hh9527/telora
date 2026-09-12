@@ -344,6 +344,31 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::FORMAT, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 5 && let Some(operation) = ["enumerate", "push", "concat", "zip"].iter().position(|name| *name == declaration.name) {
+            if arguments.len() != if operation == 1 || operation == 3 { 2 } else { 1 } { return Err("native array construction arity mismatch".into()); }
+            let input = &self.mir.types[arguments[0].index()];
+            let output = &self.mir.types[self.return_type.index()];
+            let valid = input.constructor == TypeConstructor::Array && input.arguments.len() == 1 && match operation {
+                0 => output.constructor == TypeConstructor::Array && output.arguments.len() == 1 && {
+                    let pair = &self.mir.types[output.arguments[0].index()];
+                    pair.constructor == TypeConstructor::Tuple && pair.arguments.len() == 2 && self.mir.types[pair.arguments[0].index()].constructor == TypeConstructor::Int && pair.arguments[1] == input.arguments[0]
+                },
+                1 => arguments[0] == self.return_type && input.arguments[0].index() == arguments[1].index(),
+                2 => input.arguments[0].index() == self.return_type.index() && output.constructor == TypeConstructor::Array,
+                _ => output.constructor == TypeConstructor::Option && output.arguments.len() == 1 && {
+                    let array = &self.mir.types[output.arguments[0].index()];
+                    let right = &self.mir.types[arguments[1].index()];
+                    array.constructor == TypeConstructor::Array && array.arguments.len() == 1 && right.constructor == TypeConstructor::Array && right.arguments.len() == 1 && {
+                        let pair = &self.mir.types[array.arguments[0].index()];
+                        pair.constructor == TypeConstructor::Tuple && pair.arguments == [input.arguments[0], right.arguments[0]]
+                    }
+                },
+            };
+            if !valid { return Err("native array construction signature mismatch".into()); }
+            let count = self.builder.ins().iconst(types::I64, operation as i64);
+            let value = self.object(node, helpers::ARRAY_BUILD, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
         if (module.id, declaration.name.as_str()) == (5, "get") {
             if arguments.len() != 2 { return Err("native Array.get arity mismatch".into()); }
             let input = &self.mir.types[arguments[0].index()];

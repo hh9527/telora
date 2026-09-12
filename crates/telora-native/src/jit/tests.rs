@@ -615,6 +615,41 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_array_construction_keeps_shared_elements_and_zip_contract() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/array-build.telora"), static_sources::BUILTINS);
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    let result = compiled.export(&mut context, mir.exports[module.index()][0]).unwrap();
+    let rt = context.runtime().unwrap();
+    let input = rt.field(&result, 0).unwrap().to_owned();
+    let source = rt.array_get(&input, 0).unwrap();
+    let pushed = rt.field(&result, 1).unwrap().to_owned();
+    assert_eq!(rt.array_len(&pushed).unwrap(), 2);
+    assert_eq!(rt.array_get(&pushed, 0).unwrap().words(), source.words());
+    assert_eq!(rt.text(rt.array_get(&pushed, 1).unwrap()).unwrap().as_str(), "tail");
+    let enumerated = rt.field(&result, 2).unwrap().to_owned();
+    let pair = rt.array_get(&enumerated, 0).unwrap().to_owned();
+    assert_eq!(rt.scalar_bits(rt.field(&pair, 0).unwrap()).unwrap(), 0);
+    assert_eq!(rt.field(&pair, 1).unwrap().words(), source.words());
+    let joined = rt.field(&result, 3).unwrap().to_owned();
+    assert_eq!(rt.array_len(&joined).unwrap(), 2);
+    for i in 0..2 { assert_eq!(rt.array_get(&joined, i).unwrap().words(), source.words()); }
+    let zipped = rt.field(&result, 4).unwrap().to_owned();
+    let zipped = rt.enum_payload(&zipped).unwrap().unwrap().to_owned();
+    let pair = rt.array_get(&zipped, 0).unwrap().to_owned();
+    assert_eq!(rt.field(&pair, 0).unwrap().words(), source.words());
+    assert_eq!(rt.scalar_bits(rt.field(&pair, 1).unwrap()).unwrap(), 42);
+    let mismatch = rt.field(&result, 5).unwrap().to_owned();
+    assert!(rt.enum_payload(&mismatch).unwrap().is_none());
+    let empty = rt.field(&result, 6).unwrap().to_owned();
+    let empty = rt.enum_payload(&empty).unwrap().unwrap().to_owned();
+    assert_eq!(rt.array_len(&empty).unwrap(), 0);
+}
+
+#[test]
 fn native_array_get_handles_bounds_and_retains_element_descriptor() {
     let (mir, root) = graph_with("import \"std/array\" { get }; export def answer = do { let values = [\"heap-backed array element text\"]; let empty: Array(String) = []; (values, get(values, 0), get(values, -1), get(values, 1), get(values, 9223372036854775807), get(empty, 0)) };", static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();
