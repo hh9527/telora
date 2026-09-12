@@ -1597,56 +1597,6 @@ impl Vm {
                                 })?;
                                 write_register(&mut registers, *dst, payload, function, pc)?;
                             }
-                            Opcode::MakeFunctionFamily { dst, identity, variants } => {
-                                let Some(types) = background.solved_types.as_ref() else {
-                                    return Err(error(RuntimeErrorKind::InvalidBytecode, "function family requires a sealed type image", function, pc));
-                                };
-                                let mut entries = Vec::with_capacity(variants.len());
-                                let mut previous: Option<&[crate::mir::TypeId]> = None;
-                                for (arguments, register) in variants {
-                                    if arguments.iter().any(|ty| ty.index() >= types.types.len())
-                                        || previous.is_some_and(|previous| previous >= arguments.as_slice()) {
-                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "function family has invalid or duplicate static instance keys", function, pc));
-                                    }
-                                    let value = *read_register(&registers, *register, function, pc)?;
-                                    let DecodedValue::Func(handle) = value.value() else {
-                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "function family instance is not a function", function, pc));
-                                    };
-                                    view.closure(handle).map_err(|e| error(RuntimeErrorKind::InvalidBytecode, e.to_string(), function, pc))?;
-                                    let bytes = logical_value_bytes(arguments.len() + 1).map_err(|e| allocation_error(e.message, function, pc))?;
-                                    charge_allocation(account, bytes, function, pc)?;
-                                    entries.push((arguments.clone().into_boxed_slice(), value));
-                                    previous = Some(arguments);
-                                }
-                                let identity = if let Some(source) = identity {
-                                    let value = *read_register(&registers, *source, function, pc)?;
-                                    let DecodedValue::Func(handle) = value.value() else {
-                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "function identity source is not a function", function, pc));
-                                    };
-                                    let Object::FunctionFamily { identity, .. } = view.object(handle)
-                                        .map_err(|e| error(RuntimeErrorKind::InvalidBytecode, e.to_string(), function, pc))? else {
-                                        return Err(error(RuntimeErrorKind::InvalidBytecode, "restricted function requires a family identity", function, pc));
-                                    };
-                                    Arc::clone(identity)
-                                } else { Arc::new(()) };
-                                let family = Val::new(DecodedValue::Func(current.allocate(Object::FunctionFamily {
-                                    identity, variants: entries.into(),
-                                })), instruction_location(function, pc));
-                                write_register(&mut registers, *dst, family, function, pc)?;
-                            }
-                            Opcode::SpecializeFunction { dst, family, arguments } => {
-                                let family = *read_register(&registers, *family, function, pc)?;
-                                let DecodedValue::Func(handle) = family.value() else {
-                                    return Err(error(RuntimeErrorKind::InvalidBytecode, "specialization requires a function family", function, pc));
-                                };
-                                let Object::FunctionFamily { variants, .. } = view.object(handle)
-                                    .map_err(|e| error(RuntimeErrorKind::InvalidBytecode, e.to_string(), function, pc))? else {
-                                    return Err(error(RuntimeErrorKind::InvalidBytecode, "specialization requires a quantified function value", function, pc));
-                                };
-                                let index = variants.binary_search_by(|(key, _)| key.as_ref().cmp(arguments))
-                                    .map_err(|_| error(RuntimeErrorKind::InvalidBytecode, "function family has no statically compiled instance for these arguments", function, pc))?;
-                                write_register(&mut registers, *dst, variants[index].1, function, pc)?;
-                            }
                             Opcode::MakeClosure {
                                 dst,
                                 prototype,

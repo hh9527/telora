@@ -198,16 +198,6 @@ pub enum Operation {
         dst: RegisterId,
         value: RegisterId,
     },
-    MakeFunctionFamily {
-        dst: RegisterId,
-        identity: Option<RegisterId>,
-        variants: Vec<(Vec<crate::mir::TypeId>, RegisterId)>,
-    },
-    SpecializeFunction {
-        dst: RegisterId,
-        family: RegisterId,
-        arguments: Vec<crate::mir::TypeId>,
-    },
     MakeClosure {
         dst: RegisterId,
         function: Box<Function>,
@@ -565,14 +555,6 @@ fn lower_operation(
         Operation::GetTaggedPayload { dst, value } => Instruction::GetTaggedPayload {
             dst: register(dst)?,
             value: register(value)?,
-        },
-        Operation::MakeFunctionFamily { dst, identity, variants } => Instruction::MakeFunctionFamily {
-            dst: register(dst)?,
-            identity: identity.map(register).transpose()?,
-            variants: variants.into_iter().map(|(arguments, value)| Ok((arguments, register(value)?))).collect::<Result<_, AssembleError>>()?,
-        },
-        Operation::SpecializeFunction { dst, family, arguments } => Instruction::SpecializeFunction {
-            dst: register(dst)?, family: register(family)?, arguments,
         },
         Operation::MakeClosure {
             dst,

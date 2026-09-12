@@ -202,14 +202,6 @@ impl PendingCopy {
                 prototype: self.copy_prototype(target, source, prototype)?,
                 upvalues: copy_values(self, upvalues)?,
             },
-            Object::FunctionFamily { identity, variants } => {
-                let mut copied = Vec::with_capacity(variants.len());
-                for (arguments, value) in variants {
-                    for &ty in arguments { self.validate_session_type(source, ty)?; }
-                    copied.push((arguments.clone(), self.copy_value(target, source, *value)?));
-                }
-                Object::FunctionFamily { identity: Arc::clone(identity), variants: copied.into() }
-            }
             Object::Dyn {
                 identity,
                 descriptor,
@@ -434,7 +426,6 @@ fn object_contains_disallowed(
             foreign(shape.storage) || values.iter().any(|value| value_foreign(*value))
         }
         Object::Closure { upvalues, .. } => upvalues.iter().any(|value| value_foreign(*value)),
-        Object::FunctionFamily { variants, .. } => variants.iter().any(|(_, value)| value_foreign(*value)),
         Object::Dyn {
             descriptor, value, ..
         } => value_foreign(*descriptor) || value_foreign(*value),

@@ -270,7 +270,6 @@ pub fn resolve(mir: &mut Mir) {
     solver.validate_patterns();
     solver.mir.build_property_admissions();
     solver.mir.build_type_schemes();
-    solver.mir.build_function_families();
     for (index, &publishes_scheme) in solver.scheme_references.iter().enumerate() {
         if !publishes_scheme { continue; }
         let Some(slot) = solver.mir.hir[index].resolution else { continue; };

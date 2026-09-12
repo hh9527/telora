@@ -89,7 +89,7 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn function_identity(&self, handle: Handle) -> Result<usize, HeapError> {
-        let (Object::Closure { identity, .. } | Object::FunctionFamily { identity, .. }) = self.object(handle)? else {
+        let Object::Closure { identity, .. } = self.object(handle)? else {
             return Err(HeapError("handle is not a function"));
         };
         Ok(Arc::as_ptr(identity) as usize)
@@ -280,7 +280,6 @@ impl<'a> HeapView<'a> {
                 Object::Bytes(_)
                 | Object::Opaque(_)
                 | Object::Closure { .. }
-                | Object::FunctionFamily { .. }
                 | Object::ByteCodeProto { .. }
                 | Object::OpenFunc
                 | Object::Reserved => {}

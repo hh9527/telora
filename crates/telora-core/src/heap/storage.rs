@@ -114,7 +114,7 @@ impl Heap {
         }
         let source_heap: &Heap = if source.storage == Storage::Main { main } else { self };
         let closure = match source_heap.object(source)? {
-            closure @ (Object::Closure { .. } | Object::FunctionFamily { .. }) => closure.clone(),
+            closure @ Object::Closure { .. } => closure.clone(),
             _ => return Err(HeapError("function ref source is not a sealed function")),
         };
         let slot = self.object_mut(target)?;

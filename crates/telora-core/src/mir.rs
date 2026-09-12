@@ -66,16 +66,6 @@ pub enum GenericReference {
     Instance(GenericInstanceId),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FunctionFamily {
-    Alias(SymbolId),
-    Variants {
-        /// A restricted alias keeps the source identity with its own key table.
-        identity: Option<SymbolId>,
-        instances: Vec<(Vec<TypeId>, GenericInstanceId)>,
-    },
-}
-
 impl GenericReference {
     pub fn instance(self) -> Option<GenericInstanceId> {
         match self {
@@ -656,7 +646,6 @@ pub struct Mir {
     pub type_instances: Vec<Vec<(SymbolId, TypeSlotId)>>,
     pub generic_instances: Vec<GenericInstance>,
     pub generic_references: Vec<Option<GenericReference>>,
-    pub function_families: Vec<Option<FunctionFamily>>,
     pub implementation_instances: Vec<Option<GenericInstanceId>>,
     pub type_terms: Vec<TypeTerm>,
     pub types: Vec<ResolvedType>,

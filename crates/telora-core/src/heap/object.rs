@@ -25,10 +25,6 @@ pub(crate) enum Object {
         prototype: RuntimePrototype,
         upvalues: Box<[Val]>,
     },
-    FunctionFamily {
-        identity: Arc<()>,
-        variants: Box<[(Box<[crate::mir::TypeId]>, Val)]>,
-    },
     Dyn {
         identity: Arc<()>,
         descriptor: Val,
