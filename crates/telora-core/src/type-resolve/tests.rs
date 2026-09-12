@@ -1293,6 +1293,13 @@ fn generic_templates_are_static_and_value_uses_require_concrete_instances() {
     let unused = mir.symbols.iter().position(|symbol| symbol.name == "unused"
         && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap();
     assert!(!mir.generic_instances.iter().any(|instance| instance.symbol.index() == unused && instance.concrete));
+    let sealed = mir.seal().unwrap();
+    let template = ExecutionRoot { node: *mir.symbols[unused].declarations.last().unwrap(), instance: None };
+    assert!(sealed.validate_execution_roots(&[template]).is_err(), "a static template cannot be an execution root");
+    let answer = mir.symbols.iter().find(|symbol| symbol.name == "answer"
+        && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap();
+    let root = ExecutionRoot { node: *answer.declarations.last().unwrap(), instance: None };
+    sealed.validate_execution_roots(&[root]).unwrap();
 }
 
 #[test]

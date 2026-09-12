@@ -10,11 +10,14 @@ use std::fmt::Write;
 pub(crate) mod lower;
 #[path = "mir/seal.rs"]
 mod seal;
+#[path = "mir/executable.rs"]
+mod executable;
 #[path = "mir/type-schemes.rs"]
 mod type_schemes;
 #[path = "mir/properties.rs"]
 mod properties;
 pub use seal::SealedMir;
+pub use executable::ExecutionRoot;
 
 macro_rules! id {
     ($($name:ident),*) => {$(

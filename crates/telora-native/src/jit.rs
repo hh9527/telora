@@ -408,6 +408,32 @@ fn compile_plan(
     let root = *roots
         .first()
         .ok_or("native code plan needs at least one root")?;
+    let graph = mir.mir();
+    let mut execution_roots = roots.iter().map(|&node| telora_core::mir::ExecutionRoot { node, instance: None }).collect::<Vec<_>>();
+    let global_symbols = globals.iter().copied().collect::<std::collections::BTreeSet<_>>();
+    for &symbol in globals {
+        if graph.symbol_generics[symbol.index()].is_empty() {
+            execution_roots.extend(graph.symbols[symbol.index()].declarations.iter().map(|&node|
+                telora_core::mir::ExecutionRoot { node, instance: None }));
+        }
+    }
+    for (id, instance) in graph.generic_instances() {
+        if instance.concrete && global_symbols.contains(&instance.symbol) {
+            execution_roots.extend(graph.symbols[instance.symbol.index()].declarations.iter().map(|&node|
+                telora_core::mir::ExecutionRoot { node, instance: Some(id) }));
+        }
+    }
+    for &index in properties {
+        let property = &graph.properties[index];
+        execution_roots.extend(property.providers.iter().map(|&node|
+            telora_core::mir::ExecutionRoot { node, instance: property.instance }));
+    }
+    for &index in checks {
+        let check = &graph.construction_checks[index];
+        execution_roots.push(telora_core::mir::ExecutionRoot { node: check.checker, instance: check.instance });
+    }
+    mir.validate_execution_roots(&execution_roots).map_err(|diagnostics|
+        diagnostics.iter().map(|diagnostic| graph.sources.render(diagnostic)).collect::<Vec<_>>().join("\n"))?;
     let roots = roots
         .iter()
         .copied()
@@ -459,10 +485,6 @@ fn compile_plan(
             functions.global(graph, symbol, &mut module)?;
         }
     }
-    let global_symbols = globals
-        .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
     for (id, instance) in graph.generic_instances() {
         if instance.concrete && global_symbols.contains(&instance.symbol) {
             functions.instance(graph, id, &mut module)?;
