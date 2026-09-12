@@ -1,0 +1,16 @@
+import "std/array" as array;
+
+export def answer = do {
+    let minimum = 2;
+    let original = [1, 2, 3, 4];
+    let selected = array.filter(original, fn(value) { value > minimum });
+    let empty: Array(Int) = [];
+    (
+        original,
+        selected,
+        array.any([1, 2], fn(value) { if value == 1 { True } else { fail!("any did not stop") } }),
+        array.all([1, 2], fn(value) { if value == 1 { False } else { fail!("all did not stop") } }),
+        array.any(empty, fn(value) { fail!("empty any called its predicate") }),
+        array.all(empty, fn(value) { fail!("empty all called its predicate") }),
+    )
+};

@@ -615,6 +615,38 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_array_predicates_short_circuit_and_keep_selected_origins() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/array-predicates.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    let original = rt.field(&result, 0).unwrap().to_owned();
+    let selected = rt.field(&result, 1).unwrap().to_owned();
+    assert_eq!(rt.array_len(&selected).unwrap(), 2);
+    for i in 0..2 { assert_eq!(rt.array_get(&selected, i).unwrap().words(), rt.array_get(&original, i + 2).unwrap().words()); }
+    for (i, expected) in [1, 0, 0, 1].into_iter().enumerate() { assert_eq!(rt.scalar_bits(rt.field(&result, i + 2).unwrap()).unwrap(), expected); }
+    assert_eq!(context.call_depth(), 0);
+    assert!(context.diagnostics().is_empty());
+}
+
+#[test]
+fn native_array_predicate_failure_propagates_once() {
+    for operation in ["filter", "any", "all"] {
+        let source = format!("import \"std/array\" as array; export def answer = array.{operation}([1, 2], fn(value) -> Bool {{ fail!(\"predicate failed\") }});");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        assert!(compiled.call(&mut context, &[]).is_err());
+        assert_eq!(context.call_depth(), 0);
+        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.diagnostics()[0].message, "predicate failed");
+    }
+}
+
+#[test]
 fn native_dictionary_reads_preserve_sorted_columns_and_aliases_after_publication() {
     let (mir, root) = graph_with(
         "import \"std/dict\" as dict; export def answer = do { let d: Dict(String) = { z: \"last long heap-backed value\", a: \"first long heap-backed value\" }; (d, dict.keys(d), dict.values(d), dict.get(d, \"a\"), dict.get(d, \"missing\")) };",

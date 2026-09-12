@@ -17,6 +17,9 @@ pub(super) unsafe fn array_map(
             let rt = context.runtime()?;
             let dictionary = operation == 1;
             let find = operation == 2;
+            let filter = operation == 3;
+            let boolean = operation == 4 || operation == 5;
+            let mut answer = operation == 5;
             // SAFETY: codegen constructs this packet after checking the exact
             // array/function layouts and callback parameter/result types.
             let address = unsafe { *data };
@@ -33,7 +36,7 @@ pub(super) unsafe fn array_map(
             let output_width = rt.layout(element)?.words;
             let count = if dictionary { rt.dict_len(&array)? } else { rt.array_len(&array)? };
             let callback = unsafe { std::mem::transmute::<usize, Callback>(address as usize) };
-            let mut mapped = Vec::with_capacity(if find { 1 } else { count });
+            let mut mapped = Vec::with_capacity(if boolean { 0 } else if find { 1 } else { count });
             for index in 0..count {
                 let rt = context.runtime()?;
                 let argument = if dictionary { rt.dict_entry(&array, index)?.1 } else { rt.array_get(&array, index)? }.to_owned();
@@ -58,17 +61,22 @@ pub(super) unsafe fn array_map(
                     words,
                 };
                 rt.validate(value.as_ref(), element)?;
-                if find {
-                    if rt.scalar_bits(value.as_ref())? != 0 {
+                if find || filter || boolean {
+                    let selected = rt.scalar_bits(value.as_ref())? != 0;
+                    if boolean {
+                        if selected != answer { answer = selected; break; }
+                    } else if selected {
                         mapped.push(argument);
-                        break;
+                        if find { break; }
                     }
                     continue;
                 }
                 mapped.push(value);
             }
             let rt = context.runtime_mut()?;
-            let value = if find {
+            let value = if boolean {
+                rt.scalar(ty, origin.words(), u64::from(answer))?
+            } else if find {
                 rt.named_variant(ty, origin.words(), if mapped.is_empty() { "None" } else { "Some" }, mapped.first())?
             } else if dictionary {
                 // Keys are already canonical and immutable. Reuse their column;
