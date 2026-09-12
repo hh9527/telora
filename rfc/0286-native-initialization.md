@@ -65,6 +65,8 @@ Dyn 集合与枚举查询已接入：fields、array_items、tuple_items、tag、
 
 std/fmt 的 prepare/from_string/from_int/from_float/concat/render 已接入独立 FormatTable。节点存放输入描述符，拼接引用 String/Fmt 数组，不创建 Arc 树；发布通过统一别名表搬运可达节点。模板解析保留转义大括号、字段校验、重复字段和字符串间隔；渲染遵守原有 128 层限制。正常与非法模板/拼接的 .telora 用例验证通过，native JIT 46 passed。完整 std/entry 下一处缺口为 fail! 的 subject 参数和动态消息，仍继续推进。
 
+fail! 与 panic 的动态 String 消息已连接生成代码；fail! 按求值顺序消费 subject，只收集其已有来源位置，不复制 subject 对象图。规则位置为 primary，subject 来源去重后作为 secondary；首次失败报告后需求表只传播 Failed。已验证动态顶层消息、重复 subject、初始化不发布及 CLI 三处位置输出，native JIT 47 passed，native CLI 用例通过。完整 std/entry 图下一处缺口为 module 19 / compile（std/regex）。raise!/warn!/BlameError 构造的完整诊断语义仍未完成。
+
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。
 
 ## 延后与备选方案

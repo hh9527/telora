@@ -60,7 +60,7 @@ impl Session {
             .iter()
             .map(|diagnostic| {
                 let [source, start, end] = diagnostic.origin.words();
-                match sources.files().find(|file| file.id().get() == source) {
+                let mut result = match sources.files().find(|file| file.id().get() == source) {
                     Some(file) => Diagnostic::error(
                         &diagnostic.message,
                         telora_core::Loc {
@@ -70,7 +70,24 @@ impl Session {
                         },
                     ),
                     None => error(&diagnostic.message),
+                };
+                for (index, subject) in diagnostic.subjects.iter().enumerate() {
+                    if *subject == diagnostic.origin {
+                        continue;
+                    }
+                    let [source, start, end] = subject.words();
+                    if let Some(file) = sources.files().find(|file| file.id().get() == source) {
+                        result = result.with_secondary(
+                            format!("subject {} originated here", index + 1),
+                            telora_core::Loc {
+                                source: file.id(),
+                                start,
+                                end,
+                            },
+                        );
+                    }
                 }
+                result
             })
             .collect::<Vec<_>>();
         if let Err(message) = result {

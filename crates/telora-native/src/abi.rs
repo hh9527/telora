@@ -334,6 +334,7 @@ pub struct CallContext {
 pub struct NativeDiagnostic {
     pub message: String,
     pub origin: Origin,
+    pub subjects: Vec<Origin>,
 }
 impl CallContext {
     pub fn with_runtime(runtime: crate::runtime::Runtime) -> Self {
@@ -359,9 +360,18 @@ impl CallContext {
         self.fail_at(message, Origin::default())
     }
     pub fn fail_at(&mut self, message: impl Into<String>, origin: Origin) -> Status {
+        self.fail_with_subjects(message, origin, vec![])
+    }
+    pub fn fail_with_subjects(
+        &mut self,
+        message: impl Into<String>,
+        origin: Origin,
+        subjects: Vec<Origin>,
+    ) -> Status {
         self.diagnostics.push(NativeDiagnostic {
             message: message.into(),
             origin,
+            subjects,
         });
         Status::Failed
     }

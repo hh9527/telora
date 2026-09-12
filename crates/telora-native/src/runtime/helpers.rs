@@ -28,6 +28,7 @@ pub(crate) const DYN_FIELD: u32 = 22;
 pub(crate) const DYN_QUERY: u32 = 23;
 pub(crate) const DYN_MEMBER: u32 = 24;
 pub(crate) const FORMAT: u32 = 25;
+pub(crate) const FAIL_VALUES: u32 = 26;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -57,6 +58,41 @@ pub(crate) unsafe extern "C" fn object(
     }
     if operation == ARRAY_MAP {
         return unsafe { callbacks::array_map(context, TypeId(ty), data, out, origin) };
+    }
+    if operation == FAIL_VALUES {
+        return context.boundary(|context| {
+            let result = (|| -> Result<(String, Vec<Origin>)> {
+                let rt = context.runtime()?;
+                let count = usize::try_from(count).map_err(|_| "diagnostic packet overflow")?;
+                let mut words = unsafe { std::slice::from_raw_parts(data, count) };
+                let mut message = None;
+                let mut subjects = Vec::new();
+                while !words.is_empty() {
+                    let ty =
+                        TypeId((words.get(1).ok_or("truncated diagnostic value")? >> 32) as u32);
+                    let width = rt.layout(ty)?.words;
+                    let value = ValueRef {
+                        arena: rt.identity,
+                        words: words.get(..width).ok_or("truncated diagnostic value")?,
+                    };
+                    rt.validate(value, ty)?;
+                    if message.is_none() {
+                        message = Some(rt.text(value)?.as_str().to_owned());
+                    } else {
+                        let origin = Origin::from_words(value.location())?;
+                        if origin.words()[0] != 0 && !subjects.contains(&origin) {
+                            subjects.push(origin);
+                        }
+                    }
+                    words = &words[width..];
+                }
+                Ok((message.ok_or("diagnostic message missing")?, subjects))
+            })();
+            match result {
+                Ok((message, subjects)) => context.fail_with_subjects(message, origin, subjects),
+                Err(message) => context.fail_at(message, origin),
+            }
+        }) as u32;
     }
     context.boundary(|context| {
         let result = (|| {

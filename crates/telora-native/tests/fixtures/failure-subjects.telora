@@ -1,0 +1,4 @@
+def message = "computed message";
+def first = 42;
+def second = "subject";
+export def answer: Int = fail!(message, first, second, first);

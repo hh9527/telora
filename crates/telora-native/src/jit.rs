@@ -715,7 +715,16 @@ impl Lower<'_, '_> {
     }
     fn report_failure(&mut self, node: HirId, message: &str) -> EmitResult<()> {
         let (data, count) = self.literal_bytes(message)?;
-        let operation = self.builder.ins().iconst(types::I32, helpers::FAIL as i64);
+        self.emit_failure(node, helpers::FAIL, data, count)
+    }
+    fn emit_failure(
+        &mut self,
+        node: HirId,
+        operation: u32,
+        data: ir::Value,
+        count: ir::Value,
+    ) -> EmitResult<()> {
+        let operation = self.builder.ins().iconst(types::I32, operation as i64);
         let ty = self.builder.ins().iconst(types::I32, 0);
         let origin = Origin::from_loc(Some(self.mir.hir[node.index()].location)).words();
         let loc0 = self.builder.ins().iconst(
@@ -1271,14 +1280,27 @@ impl Lower<'_, '_> {
                 Err(EmitError::Diverged)
             }
             HirKind::Panic | HirKind::Raise(telora_core::ast::BlameAction::Fail) => {
-                if syntax.children.iter().any(|e| e.role == Role::Subject) {
-                    return Err("native fail subjects are not yet linked".into());
-                }
                 let message = child(self.mir, node, Role::Value)?;
-                let HirKind::String(message) = &self.mir.hir[message.index()].kind else {
-                    return Err("native dynamic fail message is not yet linked".into());
-                };
-                self.report_failure(node, message)?;
+                if let HirKind::String(text) = &self.mir.hir[message.index()].kind
+                    && !syntax.children.iter().any(|e| e.role == Role::Subject)
+                {
+                    self.report_failure(node, text)?;
+                } else {
+                    if self.mir.types[self.ty(message)?.index()].constructor
+                        != TypeConstructor::String
+                    {
+                        return Err("native fail requires a solved String message".into());
+                    }
+                    let mut values = self.expression(message, depth + 1)?;
+                    for edge in &syntax.children {
+                        if edge.role == Role::Subject {
+                            values.extend(self.expression(edge.node, depth + 1)?);
+                        }
+                    }
+                    let data = self.stack_words(&values)?;
+                    let count = self.builder.ins().iconst(types::I64, values.len() as i64);
+                    self.emit_failure(node, helpers::FAIL_VALUES, data, count)?;
+                }
                 Err(EmitError::Diverged)
             }
             HirKind::Binary(operation) => self.binary(node, operation, depth),

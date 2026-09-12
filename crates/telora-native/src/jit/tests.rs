@@ -815,6 +815,34 @@ fn dynamic_values_preserve_sealed_identity_and_shared_payloads() {
 }
 
 #[test]
+fn dynamic_failure_messages_keep_subject_origins_and_fail_once() {
+    let source = include_str!("../../tests/fixtures/failure-subjects.telora");
+    let (mir, root) = graph(source);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[mir.hir[root.index()].module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.initialize(&mut context).is_err());
+    let diagnostic = &context.diagnostics()[0];
+    assert_eq!(diagnostic.message, "computed message");
+    assert_eq!(
+        diagnostic.origin.words()[1] as usize,
+        source.find("fail!").unwrap()
+    );
+    assert_eq!(diagnostic.subjects.len(), 2);
+    assert_eq!(
+        diagnostic.subjects[0].words()[1] as usize,
+        source.find("42").unwrap()
+    );
+    assert_eq!(
+        diagnostic.subjects[1].words()[1] as usize,
+        source.find("\"subject\"").unwrap()
+    );
+    assert!(compiled.initialize(&mut context).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(!context.runtime().unwrap().is_published());
+}
+
+#[test]
 fn native_format_nodes_publish_and_render_shared_inputs() {
     // Expose the module's private native primitive only in this test inventory.
     let fmt_source = format!(

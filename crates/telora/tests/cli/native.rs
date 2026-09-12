@@ -42,6 +42,29 @@ fn native_check_obeys_phase_boundaries_and_preserves_failure_location() {
         .collect::<Vec<_>>();
     assert_eq!(failures.len(), 1, "{records:?}");
     assert_eq!(failures[0]["labels"][0]["location"]["line"], 1);
+    fs::write(
+        cwd.join("src/main.telora"),
+        include_str!("../../../telora-native/tests/fixtures/failure-subjects.telora"),
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args(["check", "--native", "--lib"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let records = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let diagnostic = records
+        .iter()
+        .find(|r| r["message"] == "computed message")
+        .unwrap();
+    assert_eq!(diagnostic["labels"].as_array().unwrap().len(), 3);
+    assert_eq!(diagnostic["labels"][0]["location"]["line"], 4);
+    assert_eq!(diagnostic["labels"][1]["location"]["line"], 2);
+    assert_eq!(diagnostic["labels"][2]["location"]["line"], 3);
     let help = telora(&cwd).args(["check", "--help"]).output().unwrap();
     assert!(!String::from_utf8(help.stdout).unwrap().contains("--native"));
     let help = telora(&cwd).args(["eval", "--help"]).output().unwrap();
