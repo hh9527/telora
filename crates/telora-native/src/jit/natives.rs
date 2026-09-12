@@ -382,6 +382,65 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 7
+            && let Some(operation) = [
+                "join",
+                "join_lines",
+                "split",
+                "lines",
+                "starts_with",
+                "ends_with",
+                "contains",
+                "replace",
+                "indent",
+                "ensure_trailing_newline",
+                "trim_margin",
+            ]
+            .iter()
+            .position(|&name| name == declaration.name)
+        {
+            let arity = match operation {
+                1 | 3 | 9 => 1,
+                7 => 3,
+                _ => 2,
+            };
+            let array_string = |ty: TypeKey| {
+                let shape = &self.mir.types[ty.index()];
+                shape.constructor == TypeConstructor::Array
+                    && shape.arguments.len() == 1
+                    && self.mir.types[shape.arguments[0].index()].constructor
+                        == TypeConstructor::String
+            };
+            let inputs_valid = arguments.len() == arity
+                && arguments.iter().enumerate().all(|(index, &ty)| {
+                    if operation <= 1 && index == 0 {
+                        array_string(ty)
+                    } else {
+                        self.mir.types[ty.index()].constructor
+                            == if operation == 8 && index == 1 {
+                                TypeConstructor::Int
+                            } else {
+                                TypeConstructor::String
+                            }
+                    }
+                });
+            let output_valid = if operation == 2 || operation == 3 {
+                array_string(self.return_type)
+            } else {
+                self.mir.types[self.return_type.index()].constructor
+                    == if (4..=6).contains(&operation) {
+                        TypeConstructor::Bool
+                    } else {
+                        TypeConstructor::String
+                    }
+            };
+            if !inputs_valid || !output_valid {
+                return Err("native String ABI signature mismatch".into());
+            }
+            let count = self.builder.ins().iconst(types::I64, operation as i64);
+            let value = self.object(node, helpers::TEXT_OP, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 25
             && matches!(
                 declaration.name.as_str(),

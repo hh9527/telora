@@ -69,6 +69,8 @@ fail! 与 panic 的动态 String 消息已连接生成代码；fail! 按求值�
 
 std/regex compile/is_match/prepare 已接入独立 RegexTable。编译验证命名捕获，prepare 对照封闭字段表、Option 标记和静态 property 存在集合检查匹配及可选性，不查询或执行嵌套 property 值。Regex 描述符在统一发布中按旧 HeapId 去重，prepare 返回原描述符；匹配借用原输入字符串。已验证有/无匹配、可选捕获、匿名捕获错误、字段与捕获不符、必选性错误及发布后的资源别名，native JIT 48 passed。完整 std/entry 图下一处缺口为 std/string.join，仍继续补齐后续标准库适配器。
 
+std/string 的 join/join_lines/split/lines/starts_with/ends_with/contains/replace/indent/ensure_trailing_newline/trim_margin 已接入。split/lines 对 heap String 返回共享 backing 的 UTF-8 切片，保留原先的末尾空项与 CRLF 语义；新构造文本将拥有的缓冲区移入 StringTable。已验证 Unicode、空分隔符、换行、负缩进/空 margin 失败和发布后的切片共享，native JIT 49 passed。泛型 parse_with 尚未接入；完整 std/entry 图下一处缺口为 module 3 / kind（std/type-desc）。
+
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。
 
 ## 延后与备选方案

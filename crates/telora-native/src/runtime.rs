@@ -653,6 +653,8 @@ mod dynamic;
 mod format;
 #[path = "runtime/pattern.rs"]
 mod pattern;
+#[path = "runtime/text_ops.rs"]
+mod text_ops;
 pub use dynamic::DynamicQuery;
 #[path = "runtime/metadata.rs"]
 mod metadata;

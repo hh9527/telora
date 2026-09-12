@@ -30,6 +30,7 @@ pub(crate) const DYN_MEMBER: u32 = 24;
 pub(crate) const FORMAT: u32 = 25;
 pub(crate) const FAIL_VALUES: u32 = 26;
 pub(crate) const REGEX: u32 = 27;
+pub(crate) const TEXT_OP: u32 = 28;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -108,6 +109,25 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                TEXT_OP => {
+                    let arity = match count {
+                        1 | 3 | 9 => 1,
+                        7 => 3,
+                        _ => 2,
+                    };
+                    let mut inputs = Vec::new();
+                    let mut cursor = data;
+                    for _ in 0..arity {
+                        let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+                        let width = rt.layout(input)?.words;
+                        inputs.push(Value {
+                            arena: rt.identity,
+                            words: unsafe { std::slice::from_raw_parts(cursor, width) }.into(),
+                        });
+                        cursor = unsafe { cursor.add(width) };
+                    }
+                    rt.text_operation(ty, loc, count, &inputs)?
+                }
                 REGEX => {
                     let arity = match count {
                         0 => 1,

@@ -815,6 +815,75 @@ fn dynamic_values_preserve_sealed_identity_and_shared_payloads() {
 }
 
 #[test]
+fn native_string_operations_keep_unicode_newlines_and_shared_slices() {
+    let (mir, root) = graph_with(
+        include_str!("../../tests/fixtures/string.telora"),
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[mir.hir[root.index()].module], &[root]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let runtime = context.runtime().unwrap();
+    for (index, expected) in [
+        (0, "first long line|第二行|"),
+        (1, "a\nb"),
+        (6, "值-b-值"),
+        (7, "  a\r\n\n  b"),
+        (8, "\n"),
+        (9, "a\r\nb\n  c"),
+    ] {
+        assert_eq!(
+            runtime
+                .text(runtime.field(&value, index).unwrap())
+                .unwrap()
+                .as_str(),
+            expected
+        );
+    }
+    for index in [3, 4, 5] {
+        assert_eq!(runtime.field(&value, index).unwrap().words()[2], 1);
+    }
+    for (index, expected) in [
+        (2, vec!["", "你", "好", ""]),
+        (10, vec!["first long line", "第二行", ""]),
+    ] {
+        let array = runtime.field(&value, index).unwrap().to_owned();
+        let texts = (0..runtime.array_len(&array).unwrap())
+            .map(|i| {
+                runtime
+                    .text(runtime.array_get(&array, i).unwrap())
+                    .unwrap()
+                    .as_str()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(texts, expected);
+    }
+    let array = runtime.field(&value, 10).unwrap().to_owned();
+    let first = runtime.array_get(&array, 0).unwrap();
+    let second = runtime.array_get(&array, 1).unwrap();
+    assert_eq!(first.words()[2] >> 32, second.words()[2] >> 32);
+    assert!(
+        runtime
+            .string_slice(&second.to_owned(), 1, 2, [0, 0, 0])
+            .is_err()
+    );
+
+    let (mir, root) = graph_with(
+        include_str!("../../tests/fixtures/string-invalid.telora"),
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[mir.hir[root.index()].module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.initialize(&mut context).is_err());
+    assert_eq!(context.diagnostics().len(), 2);
+    assert!(!context.runtime().unwrap().is_published());
+}
+
+#[test]
 fn native_regex_resources_validate_capture_contracts_and_publish_aliases() {
     let (mir, root) = graph_with(
         include_str!("../../tests/fixtures/regex.telora"),

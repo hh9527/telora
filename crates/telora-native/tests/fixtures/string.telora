@@ -1,0 +1,16 @@
+import "std/string" as string;
+def source = "first long line\n第二行\n";
+def lines = string.lines(source);
+export def answer = (
+    string.join(lines, "|"),
+    string.join_lines(["a", "b"]),
+    string.split("你好", ""),
+    string.starts_with(source, "first"),
+    string.ends_with(source, "\n"),
+    string.contains(source, "第二"),
+    string.replace("a-b-a", "a", "值"),
+    string.indent("a\r\n\nb", 2),
+    string.ensure_trailing_newline(""),
+    string.trim_margin("  |a\r\n\t|b\n  c", "|"),
+    lines,
+);

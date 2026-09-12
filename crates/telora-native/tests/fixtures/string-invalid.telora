@@ -1,0 +1,3 @@
+import "std/string" as string;
+export def answer = string.indent("text", -1);
+def margin = string.trim_margin("text", "");
