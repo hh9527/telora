@@ -1306,6 +1306,20 @@ impl Lower<'_, '_> {
                 .collect());
         }
         match syntax.kind {
+            HirKind::Debug { ref message, ref expression } => {
+                let input = self.expression(child(self.mir, node, Role::Value)?, depth + 1)?;
+                let value = self.stack_words(&input)?;
+                let source = self.mir.sources.get(syntax.location.source);
+                let line = source.position(syntax.location.start).line;
+                let (module, module_len) = self.literal_bytes(&source.name)?;
+                let (name, name_len) = self.literal_bytes(expression)?;
+                let (message_data, message_len) = self.literal_bytes(message.as_deref().unwrap_or(""))?;
+                let line = self.builder.ins().iconst(types::I64, line as i64);
+                let present = self.builder.ins().iconst(types::I64, i64::from(message.is_some()));
+                let data = self.stack_words(&[value, module, module_len, line, name, name_len, message_data, message_len, present])?;
+                let count = self.builder.ins().iconst(types::I64, 9);
+                self.object(node, helpers::DEBUG, key, data, count)
+            }
             HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node, depth),
             HirKind::Propagate => self.propagate(node, depth),
             HirKind::Return => {

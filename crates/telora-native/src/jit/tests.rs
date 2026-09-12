@@ -51,6 +51,26 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_debug_is_bounded_and_preserves_shared_descriptors() {
+    let source = format!("def text = \"{}\"; export def answer = (text, dbg!(text));", "文本".repeat(1500));
+    let (mir, root) = graph(&source);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = events.clone();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap())
+        .with_debug_sink(move |event| captured.lock().unwrap().push(event));
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    assert_eq!(rt.field(&value, 0).unwrap().words(), rt.field(&value, 1).unwrap().words());
+    let events = events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(events[0].repr.len() <= 4096);
+    assert!(events[0].repr.ends_with("..."));
+    assert!(context.diagnostics().is_empty());
+}
+
+#[test]
 fn native_spread_failures_are_not_hidden_by_later_contributions() {
     let (mir, root) = graph(include_str!("../../tests/fixtures/spread-failures.telora"));
     let sealed = mir.seal().unwrap();

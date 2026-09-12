@@ -327,6 +327,7 @@ pub enum Status {
 }
 #[derive(Default)]
 pub struct CallContext {
+    debug_sink: Option<std::sync::Arc<dyn Fn(DebugEvent) + Send + Sync>>,
     data_limits: telora_core::DataLimits,
     call_depth: u32,
     stack_limit: Option<u64>,
@@ -338,6 +339,14 @@ pub struct CallContext {
     diagnostics: Vec<NativeDiagnostic>,
     runtime: Option<crate::runtime::Runtime>,
 }
+/// Observational output, independent from execution diagnostics and VM values.
+pub struct DebugEvent {
+    pub name: String,
+    pub repr: String,
+    pub module: String,
+    pub line: u32,
+    pub message: Option<String>,
+}
 #[derive(Debug)]
 pub struct NativeDiagnostic {
     pub severity: telora_core::source::Severity,
@@ -346,6 +355,14 @@ pub struct NativeDiagnostic {
     pub subjects: Vec<Origin>,
 }
 impl CallContext {
+    pub fn with_debug_sink(mut self, sink: impl Fn(DebugEvent) + Send + Sync + 'static) -> Self {
+        self.debug_sink = Some(std::sync::Arc::new(sink));
+        self
+    }
+    pub(crate) fn debug_enabled(&self) -> bool { self.debug_sink.is_some() }
+    pub(crate) fn emit_debug(&self, event: DebugEvent) {
+        if let Some(sink) = &self.debug_sink { sink(event); }
+    }
     pub fn with_data_limits(mut self, limits: telora_core::DataLimits) -> Self {
         self.data_limits = limits;
         self

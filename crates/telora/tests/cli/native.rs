@@ -1,4 +1,27 @@
 #[test]
+fn native_debug_events_preserve_order_location_and_result() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/debug.telora")).unwrap();
+    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
+        let selector = format!("@src/main:{export}");
+        let native = telora(&cwd).args([command, "--native", &selector]).output().unwrap();
+        let default = telora(&cwd).args([command, &selector]).output().unwrap();
+        for output in [&native, &default] {
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        }
+        assert_eq!(native.stdout, default.stdout);
+        let events = |output: &[u8]| String::from_utf8_lossy(output).lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+        let actual = events(&native.stderr);
+        assert_eq!(actual, events(&default.stderr));
+        assert_eq!(actual.len(), if command == "eval" { 1 } else { 3 });
+        assert_eq!(actual[0]["message"], "initialize");
+        assert_eq!(actual[0]["line"], 4);
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_warnings_do_not_block_publication_or_entry_output() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/warnings.telora")).unwrap();

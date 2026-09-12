@@ -109,9 +109,13 @@ Native 声明现在生成同一调用 ABI 的适配函数，使用已登记 nati
 
 以独立入口运行小型已 seal MIR/源码用例，检查标量、分支、函数、递归、聚合访问及错误路径。建立表达式支持清单；后续以 .telora 用例补齐规则。首个原型无需完整标准库可运行。
 
-### Checked cast 阶段进展
+### 表达式覆盖阶段进展
 
-Bytes 字面量现已直接 lowering 为只读字节常量与 native Bytes 表构造，复用运行时预算和来源记录。CLI 资产验证空字节串、转义、Unicode、内容相等、hash 消费及初始化发布后 entry 读取，与默认后端对照。Debug 表达式的事件输出通道与 Interpreter 的封闭适配器计划仍需接通，不能把现有表达式覆盖视为完整。
+Bytes 字面量现已直接 lowering 为只读字节常量与 native Bytes 表构造，复用运行时预算和来源记录。CLI 资产验证空字节串、转义、Unicode、内容相等、hash 消费及初始化发布后 entry 读取，与默认后端对照。
+
+`dbg!` 已接通独立 native 调试事件通道，CLI 将事件写入现有 stderr JSON 格式。生成代码保留输入描述符、来源和执行顺序；formatter 直接读取 native 表，限制 8 层、32 项和 4096 字节，不调用 Display/property 或 codec。默认无 sink 时跳过格式化。CLI 对照初始化与 entry 事件的内容、位置、顺序与结果；native 测试验证长 Unicode 输出截断和 backing/来源不变。函数和 opaque 的展示采用 native 表示，不承诺复制旧 VM 的内部函数名称或 Rust Debug 输出。
+
+Interpreter 的封闭适配器计划仍需接通，不能把现有表达式覆盖视为完整。
 
 `.cast!` 已消费封闭目标类型与 checker 实例生成调用包；运行时先验证整个输入的表示，再转换并执行声明检查，不调用 encode/decode，也不重新推导类型。支持 Record/Dict、Array、Tuple/Newtype、Option/Result 和 Unchecked 到 owner；拒绝不同 nominal 身份以及数值隐式转换。未改变的子对象保留 backing 与来源。结构不匹配返回 Err(String)，checker 失败只产生一次执行诊断。
 

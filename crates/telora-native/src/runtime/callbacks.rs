@@ -2,6 +2,30 @@ use super::*;
 
 type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *const u64) -> u32;
 
+pub(super) unsafe fn debug(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin) -> u32 {
+    context.boundary(|context| {
+        let result = (|| -> Result<()> {
+            let packet = unsafe { std::slice::from_raw_parts(data, 9) };
+            let rt = context.runtime()?;
+            let words = unsafe { std::slice::from_raw_parts(packet[0] as *const u64, rt.layout(ty)?.words) };
+            if context.debug_enabled() {
+                let value = Value { arena: rt.identity, words: words.into() };
+                let text = |pointer: u64, length: u64| -> Result<String> {
+                    let bytes = unsafe { std::slice::from_raw_parts(pointer as *const u8, length as usize) };
+                    std::str::from_utf8(bytes).map(str::to_owned).map_err(|e| e.to_string())
+                };
+                context.emit_debug(crate::abi::DebugEvent {
+                    repr: rt.debug_repr(&value)?, module: text(packet[1], packet[2])?, line: packet[3] as u32,
+                    name: text(packet[4], packet[5])?, message: if packet[8] != 0 { Some(text(packet[6], packet[7])?) } else { None },
+                });
+            }
+            unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), out, words.len()); }
+            Ok(())
+        })();
+        match result { Ok(()) => Status::Success, Err(message) => context.fail_at(message, origin) }
+    }) as u32
+}
+
 pub(super) unsafe fn checked_cast(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, count: u64) -> u32 {
     context.boundary(|context| {
         let result = (|| -> Result<Status> {

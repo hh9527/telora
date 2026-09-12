@@ -9,6 +9,7 @@ use telora_core::{
 
 pub type Location = [u32; 3];
 type Result<T> = std::result::Result<T, String>;
+mod debug;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Scalar,
