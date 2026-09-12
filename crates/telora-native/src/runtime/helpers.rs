@@ -45,6 +45,7 @@ pub(crate) const HASH: u32 = 50;
 pub(crate) const BYTES_EQUAL: u32 = 51;
 pub(crate) const DIAGNOSTIC_SCOPE: u32 = 52;
 pub(crate) const EQUAL: u32 = 53;
+pub(crate) const FLOAT_REMAINDER: u32 = 54;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -246,6 +247,12 @@ pub(crate) unsafe extern "C" fn object(
                     } else {
                         rt.dict_column(ty, loc, &dict, count == 1)?
                     }
+                }
+                FLOAT_REMAINDER => {
+                    let values = unsafe { std::slice::from_raw_parts(data, 6) };
+                    let result = f64::from_bits(values[2]) % f64::from_bits(values[5]);
+                    if !result.is_finite() { return Err("floating-point arithmetic produced a non-finite result".into()); }
+                    rt.scalar(ty, loc, result.to_bits())?
                 }
                 EQUAL => {
                     let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };

@@ -20,6 +20,7 @@ def captured = captured_factory(1);
 def pattern = regex.compile("a+");
 def formatted = fmt.concat(["before", "after"], [fmt.from_int(42)]);
 def state = hash.update_string(hash.new(), "prefix");
+def error = blame!("same message");
 def checks: Fn() -> Value = fn() {
     encode(Value.type, [
         eq.equal(first, second), first == second,
@@ -47,6 +48,7 @@ def checks: Fn() -> Value = fn() {
         !eq.equal(state, hash.update_string(hash.new(), "different")),
         eq.equal(hash.update_int(state, -42), hash.update_int(state, -42)),
         !eq.equal(hash.update_int(state, -42), hash.update_int(state, 42)),
+        eq.equal(error, error), !eq.equal(error, blame!("same message")),
     ])
 };
 export def answer = checks();

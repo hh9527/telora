@@ -25,6 +25,11 @@ impl Runtime {
                 Kind::Bytes => { if self.bytes_data(&left)? != self.bytes_data(&right)? { return Ok(false); } }
                 Kind::Regex => { if !self.regex_equal(&left, &right)? { return Ok(false); } }
                 Kind::Hash => { if self.hash_state(&left)? != self.hash_state(&right)? { return Ok(false); } }
+                Kind::Blame => {
+                    self.blame_object(&left)?;
+                    self.blame_object(&right)?;
+                    if left.words()[2] != right.words()[2] { return Ok(false); }
+                }
                 Kind::Format => {
                     if !visited.insert((ty, left.words()[2..].to_vec(), right.words()[2..].to_vec())) { continue; }
                     let (a, av) = self.format_parts(&left)?;

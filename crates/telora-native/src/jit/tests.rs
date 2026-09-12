@@ -258,6 +258,25 @@ fn direct_functions_have_independent_frames_and_support_recursion() {
         assert_eq!(result.words()[2], 42);
     }
 }
+
+#[test]
+fn native_float_remainder_preserves_sign_and_reports_zero_divisor() {
+    for (expression, expected) in [("5.5 % 2.0", 1.5_f64), ("-5.5 % 2.0", -1.5), ("5.5 % -2.0", 1.5), ("-4.0 % 2.0", -0.0)] {
+        let (mir, root) = graph(&format!("export def answer = {expression};"));
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], expected.to_bits());
+    }
+    let (mir, root) = graph("export def answer = 1.0 % 0.0;");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(context.diagnostics()[0].message.contains("non-finite"));
+    assert_ne!(context.diagnostics()[0].origin, Origin::default());
+}
 #[test]
 fn scalar_machine_code_handles_recursion_and_checked_arithmetic() {
     let (mir, root) = graph(include_str!("../../tests/fixtures/factorial.telora"));

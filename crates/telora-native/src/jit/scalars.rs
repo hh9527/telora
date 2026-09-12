@@ -159,6 +159,13 @@ impl Lower<'_, '_> {
             return Err("native binary operands require the solved same type".into());
         }
         let kind = &self.mir.types[left_ty.index()].constructor;
+        if *kind == TypeConstructor::Float && op == B::Remainder {
+            let mut words = self.expression(left_node, depth + 1)?;
+            words.extend(self.expression(right_node, depth + 1)?);
+            let data = self.stack_words(&words)?;
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            return self.object(node, helpers::FLOAT_REMAINDER, TypeKey::try_from(self.ty(node)?)?, data, zero);
+        }
         if matches!(kind, TypeConstructor::String | TypeConstructor::Bytes) && matches!(op, B::Equal | B::NotEqual) {
             let operation = if *kind == TypeConstructor::Bytes { helpers::BYTES_EQUAL } else { helpers::TEXT_EQUAL };
             let mut words = self.expression(left_node, depth + 1)?;
