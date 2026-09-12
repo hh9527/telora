@@ -278,6 +278,7 @@ impl Runtime {
                 words[2] = u64::from(if let Some(&id) = copies.regexes.get(&old) {
                     id
                 } else {
+                    self.charge_regex_copy(regex)?;
                     let id = HeapRef::new(
                         World::Main,
                         u32::try_from(target.regexes.len()).map_err(|_| "Regex table overflow")?,

@@ -4,6 +4,41 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
+fn regex_budget_counts_compiled_state_cache_and_shared_publication() {
+    let mir = crate::test_support::graph_with("import \"std/regex\" as regex; export def pattern = regex.compile(\"(?P<word>[a-z]+)\"); export def text = \"abc\";", telora_core::static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let build = |rt: &mut Runtime| -> Result<Value> {
+        let pattern = rt.string(value_type(&mir, "text"), [1, 0, 1], "(?P<word>[a-z]+)")?;
+        rt.regex_compile(value_type(&mir, "pattern"), [1, 0, 1], &pattern)
+    };
+    let mut rt = Runtime::new(&sealed).unwrap();
+    let value = build(&mut rt).unwrap();
+    let construction = rt.requested_allocation_bytes();
+    assert!(construction > 0);
+    let roots = rt.publish(&[value.clone(), value]).unwrap();
+    let total = rt.requested_allocation_bytes();
+    assert!(total > construction);
+    assert_eq!(roots[0].words(), roots[1].words());
+    let mut single = Runtime::new(&sealed).unwrap();
+    let value = build(&mut single).unwrap();
+    single.publish(&[value]).unwrap();
+    assert_eq!(single.requested_allocation_bytes(), total);
+    let mut limited = Runtime::new(&sealed).unwrap().with_allocation_limit(construction - 1);
+    assert!(build(&mut limited).is_err());
+    assert!(limited.allocation_exhausted());
+    let mut limited = Runtime::new(&sealed).unwrap().with_allocation_limit(total - 1);
+    let value = build(&mut limited).unwrap();
+    assert!(limited.publish(&[value]).is_err());
+    assert!(!limited.published && limited.main.regexes.is_empty());
+    let mut tiny = Runtime::new(&sealed).unwrap().with_allocation_limit(1);
+    let pattern = tiny.string(value_type(&mir, "text"), [1, 0, 1], "a").unwrap();
+    assert!(tiny.regex_compile(value_type(&mir, "pattern"), [1, 0, 1], &pattern).is_err());
+    assert!(tiny.allocation_exhausted());
+    let input = rt.string(value_type(&mir, "text"), [1, 0, 1], "abc") .unwrap();
+    assert!(rt.regex_matches(&roots[0], &input).unwrap());
+}
+
+#[test]
 fn resource_budgets_cover_construction_and_shared_publication() {
     let mir = crate::test_support::graph_with("import \"std/hash\" as hash; import \"std/test\" as test; export def state = hash.new(); export def error = blame!(\"x\"); export def callback = fn() {42}; export def test_case = test.should_ok(callback); export def text = \"x\";", telora_core::static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();
