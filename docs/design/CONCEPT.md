@@ -400,6 +400,10 @@ interface 和 semantic fact 所需的闭合计算。它按依赖范围执行，�
 stack、call depth 与 allocation。它们使 Host 获得有限终止边界，而不要求每个程序
 都是 total function。
 
+Fuel 的定位是对抗执行能否收敛的不确定性，防止递归和重复控制流失控，不是精确
+计费。它不衡量 CPU 时间、指令条数、复制字节数或 native 实现内部的操作次数。
+内存与输入规模等风险由独立配额约束，不能用 fuel 代替。
+
 ### Persistent World 与 Temporary World
 
 **Temporary world（临时世界）**保存推测性或调用局部工作；**persistent world
