@@ -4,6 +4,40 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
+fn array_spread_fuel_charges_slice_words_before_result_allocation() {
+    use crate::abi::{CallContext, Status};
+    let mir = graph(SOURCE);
+    let sealed = mir.seal().unwrap();
+    let mut rt = Runtime::new(&sealed).unwrap();
+    let int = value_type(&mir, "integer");
+    let array = value_type(&mir, "ints");
+    let item = rt.scalar(int, [1, 1, 2], 42).unwrap();
+    let source = rt.array(array, [1, 0, 3], &vec![item; 100]).unwrap();
+    let source = rt.publish(&[source]).unwrap().remove(0);
+    let slice = rt.slice(&source, 20, 30, [1, 4, 5]).unwrap();
+    let packet = [slice.words(), slice.words()].concat();
+    // Two descriptors plus twenty 3-word Int values, regardless of backing size.
+    let mut context = CallContext::with_runtime(rt).with_fuel(62);
+    let mut output = [u64::MAX; 4];
+    let invoke = |context: &mut CallContext, output: &mut [u64; 4]| unsafe {
+        helpers::object(context, helpers::ARRAY_CONCAT, array.raw(), 1 | (6u64 << 32), 7, packet.as_ptr(), 2, output.as_mut_ptr())
+    };
+    assert_eq!(invoke(&mut context, &mut output), Status::Success as u32);
+    assert_eq!(context.remaining_fuel(), Some(0));
+    context = context.with_fuel(61);
+    let allocated = context.runtime().unwrap().requested_allocation_bytes();
+    let count = context.runtime().unwrap().work.arrays.entries.len();
+    output.fill(u64::MAX);
+    assert_eq!(invoke(&mut context, &mut output), Status::Failed as u32);
+    assert_eq!(output, [u64::MAX; 4]);
+    assert_eq!(context.runtime().unwrap().work.arrays.entries.len(), count);
+    assert_eq!(context.runtime().unwrap().requested_allocation_bytes(), allocated);
+    assert_eq!(invoke(&mut context, &mut output), Status::Failed as u32);
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].origin.words(), [1, 6, 7]);
+}
+
+#[test]
 fn interpreter_adapter_identity_survives_publication() {
     let mir = graph("export def integer = 1; export def witness = Int.type; export def adapter: Fn(Int) -> Int = fn(value) {value}; export def factory: Fn(TypeOf(Int)) -> Fn(Int) -> Int = fn(witness) {fn(value) {value}};");
     let sealed = mir.seal().unwrap();

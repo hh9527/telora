@@ -398,7 +398,8 @@ impl CallContext {
         Status::Success
     }
     /// One budget spans initialization, demand callbacks and entry execution.
-    /// Native fuel counts executed HIR expressions, not machine instructions.
+    /// Native fuel counts executed HIR expressions and metered helper work,
+    /// not machine instructions.
     pub fn with_fuel(mut self, fuel: u64) -> Self {
         self.fuel = Some(fuel);
         self

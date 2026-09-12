@@ -198,6 +198,25 @@ pub(crate) unsafe extern "C" fn object(
                     unsafe { std::slice::from_raw_parts(data.cast::<u8>(), count as usize) };
                 return Err(String::from_utf8_lossy(message).into_owned());
             }
+            if operation == ARRAY_CONCAT {
+                // Charge packet traversal before inspecting descriptors, then
+                // charge actual slice words before allocating/copying output.
+                if context.consume_fuel(count, origin) != Status::Success { return Ok(Status::Failed); }
+                let rt = context.runtime()?;
+                let count = usize::try_from(count).map_err(|_| "array spread packet overflow")?;
+                let words = unsafe { std::slice::from_raw_parts(data, count.checked_mul(4).ok_or("array spread packet overflow")?) };
+                let mut work = 0u64;
+                for words in words.chunks_exact(4) {
+                    let array = Value { arena: rt.identity, words: words.into() };
+                    rt.validate(array.as_ref(), TypeId(ty))?;
+                    let (_, start, end, element) = rt.array_range(&array)?;
+                    let length = u64::from(end - start);
+                    let stride = if length == 0 { 0 } else { rt.layout(element)?.words as u64 };
+                    work = length.checked_mul(stride).and_then(|amount| work.checked_add(amount))
+                        .ok_or("array spread work count overflow")?;
+                }
+                if context.consume_fuel(work, origin) != Status::Success { return Ok(Status::Failed); }
+            }
             let rt = context.runtime_mut()?;
             let ty = TypeId(ty);
             let loc = origin.words();
@@ -720,10 +739,10 @@ pub(crate) unsafe extern "C" fn object(
             unsafe {
                 std::ptr::copy_nonoverlapping(result.words.as_ptr(), out, result.words.len());
             }
-            Ok::<(), String>(())
+            Ok::<Status, String>(Status::Success)
         })();
         match result {
-            Ok(()) => Status::Success,
+            Ok(status) => status,
             Err(error) => context.fail_at(error, origin),
         }
     }) as u32
