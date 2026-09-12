@@ -692,6 +692,79 @@ fn metadata_uses_sealed_type_ids_and_survives_publication() {
 }
 
 #[test]
+fn enum_constructors_are_first_class_closed_functions() {
+    let (mir, root) = graph("export def answer: Fn(Int) -> Option(Int) = Some;");
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    let closure = compiled
+        .export(&mut context, mir.exports[module.index()][0])
+        .unwrap();
+    let argument_ty = mir.types[closure.type_key().index()].arguments[0];
+    let argument = compiled
+        .layouts()
+        .value(
+            TypeKey::try_from(argument_ty).unwrap(),
+            Origin::default(),
+            &[42],
+        )
+        .unwrap();
+    let value = compiled
+        .call_closure(&mut context, &closure, &[argument])
+        .unwrap();
+    assert_eq!(
+        context
+            .runtime()
+            .unwrap()
+            .enum_payload(&value)
+            .unwrap()
+            .unwrap()
+            .words()[2],
+        42
+    );
+}
+
+#[test]
+fn host_calls_published_closures_with_closed_signatures() {
+    let (mir, root) = graph(
+        "decl answer: Fn(Int) -> Int; export def answer = do { let captured = 40; fn(value) { captured + value } };",
+    );
+    let module = mir.hir[root.index()].module;
+    let declaration = mir.exports[module.index()][0];
+    let TypeState::Known(ty) = mir.ty_slots[mir.symbol_types[declaration.index()].index()] else {
+        panic!("closed function signature")
+    };
+    let closure_ty = TypeKey::try_from(ty).unwrap();
+    let argument_ty = mir.types[closure_ty.index()].arguments[0];
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    let closure = compiled.export(&mut context, declaration).unwrap();
+    let argument = compiled
+        .layouts()
+        .value(
+            TypeKey::try_from(argument_ty).unwrap(),
+            Origin::default(),
+            &[2],
+        )
+        .unwrap();
+    let result = compiled
+        .call_closure(&mut context, &closure, &[argument])
+        .unwrap();
+    assert_eq!(result.words()[2], 42);
+    assert!(compiled.call_closure(&mut context, &closure, &[]).is_err());
+    let forged = context
+        .runtime_mut()
+        .unwrap()
+        .closure(closure_ty, [0, 0, 0], u32::MAX, &[])
+        .unwrap();
+    assert!(compiled.call_closure(&mut context, &forged, &[]).is_err());
+}
+
+#[test]
 fn whole_graph_initializes_prelude_and_application() {
     let (mir, root) = graph("export def answer = 42;");
     let modules = mir

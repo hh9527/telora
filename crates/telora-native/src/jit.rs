@@ -39,6 +39,7 @@ pub struct Compiled {
     arguments: Vec<TypeKey>,
     output: TypeKey,
     entries: BTreeMap<HirId, CompiledEntry>,
+    callables: BTreeMap<u32, (TypeKey, CompiledEntry)>,
     demands: Vec<(crate::runtime::DemandKey, TypeKey)>,
     initializers: Vec<(*const u64, Origin)>,
     export_slots: BTreeMap<SymbolId, usize>,
@@ -183,7 +184,43 @@ impl Compiled {
         &self.layouts
     }
     pub fn call(&self, context: &mut CallContext, values: &[Value]) -> Result<Value> {
-        self.invoke(context, values, self.entry, &self.arguments, self.output)
+        self.invoke(
+            context,
+            values,
+            self.entry,
+            &self.arguments,
+            self.output,
+            None,
+        )
+    }
+    /// Invoke a published closure using its sealed signature and code-plan ID.
+    pub fn call_closure(
+        &self,
+        context: &mut CallContext,
+        closure: &Value,
+        values: &[Value],
+    ) -> Result<Value> {
+        let runtime = context.runtime_mut()?;
+        runtime.bind_code_plan(self.identity, &self.demands)?;
+        if !runtime.is_published() {
+            return Err("native entry call requires successful initialization".into());
+        }
+        let id = runtime.function_id(closure)?;
+        let (ty, entry) = self
+            .callables
+            .get(&id)
+            .ok_or("native closure function is not in code plan")?;
+        if closure.type_key() != *ty {
+            return Err("native closure signature does not match function ID".into());
+        }
+        self.invoke(
+            context,
+            values,
+            entry.entry,
+            &entry.arguments,
+            entry.output,
+            Some(closure),
+        )
     }
     pub fn call_root(
         &self,
@@ -195,7 +232,14 @@ impl Compiled {
             .entries
             .get(&root)
             .ok_or("native root not in code plan")?;
-        self.invoke(context, values, entry.entry, &entry.arguments, entry.output)
+        self.invoke(
+            context,
+            values,
+            entry.entry,
+            &entry.arguments,
+            entry.output,
+            None,
+        )
     }
     pub fn root_signature(&self, root: HirId) -> Result<(&[TypeKey], TypeKey)> {
         let entry = self
@@ -211,6 +255,7 @@ impl Compiled {
         entry: Entry,
         arguments: &[TypeKey],
         output: TypeKey,
+        closure: Option<&Value>,
     ) -> Result<Value> {
         if let Ok(runtime) = context.runtime_mut() {
             runtime.bind_code_plan(self.identity, &self.demands)?;
@@ -245,7 +290,7 @@ impl Compiled {
                 context,
                 args.as_ptr(),
                 result.as_mut_ptr(),
-                std::ptr::null(),
+                closure.map_or(std::ptr::null(), |value| value.words().as_ptr()),
             )
         };
         match status {
@@ -325,7 +370,7 @@ pub fn compile_modules(
     let fallback = globals
         .iter()
         .find(|s| graph.symbol_generics[s.index()].is_empty())
-        .and_then(|s| graph.symbols[s.index()].declarations.first())
+        .and_then(|s| graph.symbols[s.index()].declarations.last())
         .copied();
     let roots = if roots.is_empty() {
         fallback.into_iter().collect::<Vec<_>>()
@@ -441,6 +486,28 @@ fn compile_plan(
     }
     functions::emit_dispatchers(graph, &layouts, root, helper, &mut module, &mut functions)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
+    let mut callables = BTreeMap::new();
+    for (&key, &function) in &functions.registered {
+        if !functions::is_callable(graph, key) {
+            continue;
+        }
+        let ty = TypeKey::try_from(key.ty(graph, key.node)?)?;
+        let (_, _, output, arguments) = functions::shape(graph, &layouts, key)?;
+        let address = module.get_finalized_function(function);
+        // SAFETY: all registered callable bodies use the four-pointer C ABI.
+        let entry = unsafe { std::mem::transmute::<*const u8, Entry>(address) };
+        callables.insert(
+            function.as_u32(),
+            (
+                ty,
+                CompiledEntry {
+                    entry,
+                    arguments,
+                    output,
+                },
+            ),
+        );
+    }
     let mut entries = BTreeMap::new();
     for root in roots {
         let address = module.get_finalized_function(functions.registered[&root.into()]);
@@ -519,6 +586,7 @@ fn compile_plan(
         arguments,
         output,
         entries,
+        callables,
         data_modules,
         data_contract,
         initializers: initializers
@@ -762,6 +830,7 @@ impl Lower<'_, '_> {
                 let declaration = self.mir.symbols[symbol.index()]
                     .declarations
                     .iter()
+                    .rev()
                     .find_map(|&decl| {
                         if functions::is_native(&self.mir.hir[decl.index()].kind) {
                             return Some(decl);
@@ -1111,6 +1180,19 @@ impl Lower<'_, '_> {
                 self.functions.instance(self.mir, instance, self.module)?;
             let value = self.demand(node, slot, initializer, actual)?;
             return self.adapt_metadata(actual, key, value);
+        }
+        if self.mir.types[ty.index()].constructor == TypeConstructor::Function
+            && functions::constructor(self.mir, node).is_some()
+        {
+            return self.function_value(
+                node,
+                functions::Key {
+                    node,
+                    instance: self.function_key.instance,
+                    initializer: false,
+                    marker_provider: false,
+                },
+            );
         }
         if matches!(syntax.kind, HirKind::Field)
             && self.selected_member(node).is_none()
@@ -1539,8 +1621,10 @@ impl Lower<'_, '_> {
                 Ok(self.builder.block_params(merge).to_vec())
             }
             _ => Err(format!(
-                "native unsupported {:?} at {:?}",
-                syntax.kind, syntax.location
+                "native unsupported {:?} in {} at {:?}",
+                syntax.kind,
+                self.mir.modules[syntax.module.index()].name,
+                syntax.location
             )
             .into()),
         }

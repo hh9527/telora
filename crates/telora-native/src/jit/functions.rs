@@ -12,6 +12,33 @@ pub(super) fn is_native(kind: &HirKind) -> bool {
     )
 }
 
+pub(super) fn constructor(graph: &Mir, node: HirId) -> Option<u32> {
+    if let Some(MemberSelection::EnumVariant { index }) = graph.member_selections[node.index()] {
+        return Some(index);
+    }
+    let slot = graph.hir[node.index()].resolution?;
+    let ResolveState::Bound(symbol) = graph.resolve_slots[slot.index()] else {
+        return None;
+    };
+    graph.symbols[symbol.index()]
+        .declarations
+        .iter()
+        .find_map(|&declaration| {
+            let value = child(graph, declaration, Role::Value).ok()?;
+            match graph.member_selections[value.index()] {
+                Some(MemberSelection::EnumVariant { index }) => Some(index),
+                _ => None,
+            }
+        })
+}
+
+pub(super) fn is_callable(graph: &Mir, key: Key) -> bool {
+    !key.initializer
+        && (matches!(graph.hir[key.node.index()].kind, HirKind::Closure)
+            || is_native(&graph.hir[key.node.index()].kind)
+            || constructor(graph, key.node).is_some())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct Key {
     pub node: HirId,
@@ -87,6 +114,7 @@ impl Functions {
         let declaration = graph.symbols[symbol.index()]
             .declarations
             .iter()
+            .rev()
             .copied()
             .find(|&node| matches!(graph.hir[node.index()].kind, HirKind::Binding { .. }))
             .ok_or("native global has no value declaration")?;
@@ -169,8 +197,7 @@ impl Functions {
             return Ok(function);
         }
         let node = key.node;
-        if !(matches!(mir.hir[node.index()].kind, HirKind::Closure)
-            || is_native(&mir.hir[node.index()].kind))
+        if !is_callable(mir, key)
             || mir.types[key.ty(mir, node)?.index()].constructor != TypeConstructor::Function
         {
             return Err("native direct call requires a monomorphic closure".into());
@@ -206,10 +233,7 @@ pub(super) fn emit_dispatchers(
             .registered
             .iter()
             .filter_map(|(key, &id)| {
-                if key.initializer
-                    || !(matches!(graph.hir[key.node.index()].kind, HirKind::Closure)
-                        || is_native(&graph.hir[key.node.index()].kind))
-                {
+                if !is_callable(graph, *key) {
                     return None;
                 }
                 Some(key.ty(graph, key.node).map(|actual| (actual, id)))
@@ -288,11 +312,12 @@ pub(super) fn shape(
         .get(root.index())
         .ok_or("native HIR outside graph")?;
     let native = is_native(&root_node.kind) && !key.initializer;
+    let constructor = constructor(graph, root).is_some() && !key.initializer;
     if native && graph.types[key.ty(graph, root)?.index()].constructor != TypeConstructor::Function
     {
         return Err("native ABI requires a closed function instance".into());
     }
-    let is_function = matches!(root_node.kind, HirKind::Closure) || native;
+    let is_function = matches!(root_node.kind, HirKind::Closure) || native || constructor;
     let parameters = if is_function {
         root_node
             .children
@@ -303,7 +328,7 @@ pub(super) fn shape(
     } else {
         vec![]
     };
-    let body = if is_function && !native {
+    let body = if is_function && !native && !constructor {
         child(graph, root, Role::Body)?
     } else {
         root
@@ -316,7 +341,7 @@ pub(super) fn shape(
     } else {
         key.ty(graph, body)?
     })?;
-    let arguments = if native {
+    let arguments = if native || constructor {
         let signature = &graph.types[key.ty(graph, root)?.index()];
         signature.arguments[..signature.arguments.len() - 1]
             .iter()
@@ -411,7 +436,28 @@ pub(super) fn emit(
                 .map_err(|e| format!("native capture load: {e:?}"))?;
             lower.locals.insert(symbol, value);
         }
-        let outcome = if is_native(&graph.hir[key.node.index()].kind) && !key.initializer {
+        let outcome = if let Some(index) = constructor(graph, key.node).filter(|_| !key.initializer)
+        {
+            (|| {
+                if arguments.len() != 1 {
+                    return Err("native constructor signature needs one payload".into());
+                }
+                let mut payload = Vec::new();
+                for index in 0..layouts.words(arguments[0])? {
+                    payload.push(
+                        lower.builder.ins().load(
+                            types::I64,
+                            MemFlagsData::new(),
+                            args,
+                            i32::try_from(index * 8)
+                                .map_err(|_| "native constructor argument overflow")?,
+                        ),
+                    );
+                }
+                let result = lower.enum_constructor(key.node, output, index, &payload)?;
+                lower.write_return(&result)
+            })()
+        } else if is_native(&graph.hir[key.node.index()].kind) && !key.initializer {
             lower.native_adapter(key.node, &arguments, args, environment)
         } else {
             match lower.expression(body, 0) {
