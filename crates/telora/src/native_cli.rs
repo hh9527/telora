@@ -41,11 +41,7 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    pub fn compile(sealed: &SealedMir<'_>) -> Result<Self, String> {
-        Self::compile_selected(sealed, None)
-    }
-
-    fn compile_selected(sealed: &SealedMir<'_>, executable: Option<&telora_core::mir::SealedExecutable<'_>>) -> Result<Self, String> {
+    pub fn compile(sealed: SealedMir<'_>) -> Result<Self, String> {
         let graph = sealed.mir();
         let modules = graph
             .hir
@@ -54,10 +50,16 @@ impl Session {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
+        let executable = sealed.seal_modules(&modules).map_err(|diagnostics|
+            diagnostics.iter().map(|diagnostic| graph.sources.render(diagnostic)).collect::<Vec<_>>().join("\n"))?;
+        Self::compile_executable(&executable)
+    }
+
+    fn compile_executable(executable: &telora_core::mir::SealedExecutable<'_>) -> Result<Self, String> {
+        let sealed = executable.sealed_mir();
         let compiled = {
             let _timer = PhaseTimer::new("codegen");
-            if let Some(executable) = executable { jit::compile_executable(executable)? }
-            else { jit::compile_modules(sealed, &modules, &[])? }
+            jit::compile_executable(executable)?
         };
         let _timer = PhaseTimer::new("runtime_setup");
         let context = CallContext::with_runtime(Runtime::new(sealed)?.with_allocation_limit(crate::execution_config().session_quota.allocation_bytes))
@@ -193,7 +195,7 @@ pub(crate) fn eval(context: std::path::PathBuf, module: &str, export: &str) -> R
     let executable = sealed.seal_export(symbol).map_err(|diagnostics|
         diagnostics.iter().map(|diagnostic| mir.sources.render(diagnostic)).collect::<Vec<_>>().join("\n"))?;
     drop(frontend_timer);
-    let mut session = Session::compile_selected(executable.sealed_mir(), Some(&executable))?;
+    let mut session = Session::compile_executable(&executable)?;
     let diagnostics = session.initialize(&inventory, &mut mir.sources);
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(diagnostics
@@ -319,7 +321,7 @@ pub(crate) fn eval_with(
     let executable = sealed.seal_export(symbol).map_err(|diagnostics|
         diagnostics.iter().map(|diagnostic| mir.sources.render(diagnostic)).collect::<Vec<_>>().join("\n"))?;
     drop(frontend_timer);
-    let mut session = Session::compile_selected(executable.sealed_mir(), Some(&executable))?;
+    let mut session = Session::compile_executable(&executable)?;
     let diagnostics = session.initialize(&inventory, &mut mir.sources);
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(diagnostics

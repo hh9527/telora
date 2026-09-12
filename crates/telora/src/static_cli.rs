@@ -116,7 +116,7 @@ pub fn check(
     let mut execution_diagnostics = vec![];
     if let Some(sealed) = sealed.filter(|_| !types_only && !roots.is_empty()) {
         if args.native {
-            match crate::native_cli::Session::compile(&sealed) {
+            match crate::native_cli::Session::compile(sealed) {
                 Ok(mut session) => execution_diagnostics = session.initialize(&inventory, &mut mir.sources),
                 Err(message) => execution_diagnostics.push(crate::native_cli::error(message)),
             }

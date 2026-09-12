@@ -65,6 +65,52 @@ impl<'a> SealedMir<'a> {
             roots.push(ExecutionRoot { node: check.checker, instance: check.instance });
             index
         }).collect();
+        self.publish_execution(node, roots, properties, checks)
+    }
+
+    /// Module checking initializes every concrete declaration in its module set.
+    pub fn seal_modules(self, modules: &[ModuleId]) -> Result<SealedExecutable<'a>, Vec<Diagnostic>> {
+        let mir = self.mir();
+        let modules = modules.iter().copied().collect::<BTreeSet<_>>();
+        let mut globals = BTreeSet::new();
+        for (index, symbol) in mir.symbols.iter().enumerate() {
+            if matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Let | BindingKind::Def | BindingKind::Decl | BindingKind::Native))
+                && symbol.module.is_some_and(|module| modules.contains(&module)
+                    && symbol.scope.is_some() && symbol.scope == mir.module_scopes[module.index()]) {
+                globals.insert(SymbolId(index as u32));
+            }
+        }
+        let mut roots = vec![];
+        for &symbol in &globals {
+            if mir.symbol_generics[symbol.index()].is_empty() {
+                roots.extend(mir.symbols[symbol.index()].declarations.iter().map(|&node| ExecutionRoot { node, instance: None }));
+            }
+        }
+        let Some(node) = roots.first().map(|root| root.node) else {
+            return Err(vec![Diagnostic { severity: crate::source::Severity::Error,
+                message: "module execution plan has no concrete root".into(), labels: vec![], notes: vec![] }]);
+        };
+        for (id, instance) in mir.generic_instances() {
+            if instance.concrete && globals.contains(&instance.symbol) {
+                roots.extend(mir.symbols[instance.symbol.index()].declarations.iter().map(|&node|
+                    ExecutionRoot { node, instance: Some(id) }));
+            }
+        }
+        let properties = mir.properties.iter().enumerate().filter(|(_, property)| property.concrete
+            && property.providers.iter().any(|node| modules.contains(&mir.hir[node.index()].module))).map(|(index, property)| {
+            roots.extend(property.providers.iter().map(|&node| ExecutionRoot { node, instance: property.instance }));
+            index
+        }).collect();
+        let checks = mir.construction_checks.iter().enumerate().filter(|(_, check)| check.concrete
+            && modules.contains(&mir.hir[check.checker.index()].module)).map(|(index, check)| {
+            roots.push(ExecutionRoot { node: check.checker, instance: check.instance });
+            index
+        }).collect();
+        self.publish_execution(node, roots, properties, checks)
+    }
+
+    fn publish_execution(self, node: HirId, roots: Vec<ExecutionRoot>, properties: Vec<usize>, checks: Vec<usize>) -> Result<SealedExecutable<'a>, Vec<Diagnostic>> {
+        let mir = self.mir();
         let closure = self.execution_closure(&roots)?;
         let mut globals = BTreeSet::new();
         let mut instances = BTreeSet::new();

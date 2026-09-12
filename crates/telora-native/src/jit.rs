@@ -342,7 +342,8 @@ pub fn compile_roots(mir: &SealedMir<'_>, roots: &[HirId]) -> Result<Compiled> {
 
 /// Register every value binding in the selected modules, including private
 /// bindings unused by entry. Unsupported initializers are compile errors.
-pub fn compile_modules(
+#[cfg(test)]
+fn compile_modules(
     mir: &SealedMir<'_>,
     modules: &[telora_core::mir::ModuleId],
     roots: &[HirId],

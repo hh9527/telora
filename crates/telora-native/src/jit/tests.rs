@@ -1091,7 +1091,8 @@ fn selected_export_prunes_unreferenced_values_but_module_check_initializes_them(
     selected.initialize(&mut context).unwrap();
     assert_eq!(selected.export(&mut context, symbol).unwrap().words()[2], 42);
     assert!(context.diagnostics().is_empty());
-    let all = compile_modules(&sealed, &[module], &[]).unwrap();
+    let all_plan = mir.seal().unwrap().seal_modules(&[module]).unwrap();
+    let all = compile_executable(&all_plan).unwrap();
     let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
     assert!(all.initialize(&mut context).is_err());
     assert_eq!(context.diagnostics()[0].message, "unreferenced export");
