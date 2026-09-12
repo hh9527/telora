@@ -39,6 +39,7 @@ pub struct Compiled {
     arguments: Vec<TypeKey>,
     output: TypeKey,
     entries: BTreeMap<HirId, CompiledEntry>,
+    demands: Vec<(crate::runtime::DemandKey, TypeKey)>,
 }
 struct CompiledEntry {
     entry: Entry,
@@ -109,7 +110,7 @@ impl Compiled {
         output: TypeKey,
     ) -> Result<Value> {
         if let Ok(runtime) = context.runtime_mut() {
-            runtime.bind_code_plan(self.identity)?;
+            runtime.bind_code_plan(self.identity, &self.demands)?;
         }
         if values.len() != arguments.len() {
             return Err("native argument count mismatch".into());
@@ -280,6 +281,17 @@ pub fn compile_roots(mir: &SealedMir<'_>, roots: &[HirId]) -> Result<Compiled> {
         arguments,
         output,
         entries,
+        demands: {
+            let mut globals = functions
+                .globals
+                .iter()
+                .map(|(&symbol, &(slot, _, ty))| {
+                    (slot, crate::runtime::DemandKey::Export(symbol), ty)
+                })
+                .collect::<Vec<_>>();
+            globals.sort_by_key(|g| g.0);
+            globals.into_iter().map(|(_, key, ty)| (key, ty)).collect()
+        },
     })
 }
 
@@ -945,7 +957,19 @@ impl Lower<'_, '_> {
                         return self.expression(value, depth + 1);
                     }
                 }
-                Err(format!("native unsupported capture/export at {:?}", syntax.location).into())
+                let (slot, function, ty) = self.functions.global(self.mir, symbol, self.module)?;
+                if ty != key {
+                    return Err("native global reference type mismatch".into());
+                }
+                let function = self
+                    .module
+                    .declare_func_in_func(function, self.builder.func);
+                let address = self
+                    .builder
+                    .ins()
+                    .func_addr(self.module.target_config().pointer_type(), function);
+                let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
+                self.object(node, helpers::DEMAND, ty, address, slot)
             }
             HirKind::TypeAscription => {
                 self.expression(child(self.mir, node, Role::Value)?, depth + 1)

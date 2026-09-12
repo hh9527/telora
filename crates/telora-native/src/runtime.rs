@@ -158,6 +158,7 @@ enum Table {
 
 pub struct Runtime {
     demands: std::collections::BTreeMap<DemandKey, demands::DemandSlot>,
+    demand_keys: Vec<DemandKey>,
     code_plan: Option<u64>,
     identity: u64,
     layouts: Vec<Option<Layout>>,
@@ -167,12 +168,27 @@ pub struct Runtime {
 }
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
 impl Runtime {
-    pub(crate) fn bind_code_plan(&mut self, identity: u64) -> Result<()> {
+    pub(crate) fn bind_code_plan(
+        &mut self,
+        identity: u64,
+        demands: &[(DemandKey, TypeId)],
+    ) -> Result<()> {
         match self.code_plan {
             Some(previous) if previous != identity => {
                 Err("native runtime belongs to another code plan".into())
             }
-            _ => {
+            Some(_) => Ok(()),
+            None => {
+                for &(key, ty) in demands {
+                    self.layout(ty)?;
+                    if self.demands.contains_key(&key) {
+                        return Err("native code plan demand already registered".into());
+                    }
+                }
+                for &(key, ty) in demands {
+                    self.register_demand(key, ty)?;
+                }
+                self.demand_keys = demands.iter().map(|&(key, _)| key).collect();
                 self.code_plan = Some(identity);
                 Ok(())
             }
@@ -299,6 +315,7 @@ impl Runtime {
             .map_err(|_| "arena identity overflow")?;
         Ok(Self {
             demands: std::collections::BTreeMap::new(),
+            demand_keys: vec![],
             code_plan: None,
             identity,
             layouts,

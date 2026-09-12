@@ -14,6 +14,7 @@ pub(crate) const PAYLOAD: u32 = 8;
 pub(crate) const TEXT_EQUAL: u32 = 9;
 pub(crate) const CLOSURE: u32 = 10;
 pub(crate) const CAPTURE: u32 = 11;
+pub(crate) const DEMAND: u32 = 12;
 
 /// Safety: ctx is an exclusive live context; data points at the full values
 /// specified by the generated operation; out has space for the solved result.
@@ -34,6 +35,11 @@ pub(crate) unsafe extern "C" fn object(
         Ok(origin) => origin,
         Err(e) => return context.fail(e) as u32,
     };
+    if operation == DEMAND {
+        // The data argument is a code address for this operation only. It is
+        // emitted by func_addr and never stored in a language value or runtime.
+        return unsafe { demand(context, TypeId(ty), count, data, out, origin) };
+    }
     context.boundary(|context| {
         let result = (|| {
             if operation == FAIL {
@@ -192,6 +198,81 @@ pub(crate) unsafe extern "C" fn object(
         })();
         match result {
             Ok(()) => Status::Success,
+            Err(error) => context.fail_at(error, origin),
+        }
+    }) as u32
+}
+
+unsafe fn demand(
+    context: &mut CallContext,
+    ty: TypeId,
+    slot: u64,
+    address: *const u64,
+    out: *mut u64,
+    origin: Origin,
+) -> u32 {
+    context.boundary(|context| {
+        let result = (|| {
+            let rt = context.runtime_mut()?;
+            let key = *rt
+                .demand_keys
+                .get(usize::try_from(slot).map_err(|_| "native demand index overflow")?)
+                .ok_or("native demand slot outside plan")?;
+            if rt.demands.get(&key).ok_or("native demand missing")?.ty != ty {
+                return Err("native demand type mismatch".into());
+            }
+            let width = rt.layout(ty)?.words;
+            let value = match rt.begin_demand(key)? {
+                Demand::Failed => return Ok(Status::Failed),
+                Demand::Ready(value) => value,
+                Demand::Evaluate => {
+                    let mut words = vec![0; width].into_boxed_slice();
+                    type Initializer = unsafe extern "C" fn(
+                        *mut CallContext,
+                        *const u64,
+                        *mut u64,
+                        *const u64,
+                    ) -> u32;
+                    // SAFETY: codegen passes a no-argument initializer of the
+                    // checked result type, alive for this whole borrowed call.
+                    // No Runtime borrow remains live across reentry.
+                    let initializer =
+                        unsafe { std::mem::transmute::<*const u64, Initializer>(address) };
+                    let status = unsafe {
+                        initializer(
+                            context,
+                            std::ptr::null(),
+                            words.as_mut_ptr(),
+                            std::ptr::null(),
+                        )
+                    };
+                    if status != 0 {
+                        context.runtime_mut()?.fail_demand(key)?;
+                        if status != 1 {
+                            return Err("native initializer returned invalid status".into());
+                        }
+                        return Ok(Status::Failed);
+                    }
+                    let rt = context.runtime_mut()?;
+                    let value = Value {
+                        arena: rt.identity,
+                        words,
+                    };
+                    if let Err(error) = rt.complete_demand(key, value.clone()) {
+                        rt.fail_demand(key)?;
+                        return Err(error);
+                    }
+                    value
+                }
+            };
+            // SAFETY: the generated output buffer has the validated full width.
+            unsafe {
+                std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, width);
+            }
+            Ok::<Status, String>(Status::Success)
+        })();
+        match result {
+            Ok(status) => status,
             Err(error) => context.fail_at(error, origin),
         }
     }) as u32

@@ -321,6 +321,55 @@ fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
     assert!(rt.enum_payload(&end).unwrap().is_none());
 }
 #[test]
+fn generated_global_reads_initialize_once_and_propagate_cycles() {
+    let (mir, root) = graph(
+        "def items = [40, 2]; def total = items[0] + items[1]; export def answer = (items, items, total);",
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime_mut().unwrap();
+    assert_eq!(
+        rt.field(&result, 0).unwrap().words(),
+        rt.field(&result, 1).unwrap().words()
+    );
+    assert_eq!(rt.field(&result, 2).unwrap().words()[2], 42);
+    let roots = rt.publish(&[result]).unwrap();
+    let again = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    assert_eq!(
+        rt.field(&roots[0], 0).unwrap().words(),
+        rt.field(&again, 0).unwrap().words()
+    );
+
+    let (mir, root) = graph("def a: Int = b; def b: Int = a; export def answer = a;");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(
+        context.diagnostics()[0]
+            .message
+            .contains("dependency cycle")
+    );
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(context.runtime_mut().unwrap().publish(&[]).is_err());
+
+    let (mir, root) = graph(
+        "def make: Fn(Int) -> Fn(Int) -> Int = fn(base) { fn(x) { base + x } }; def add = make(40); export def answer = add(2);",
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+    context.runtime_mut().unwrap().publish(&[]).unwrap();
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+}
+
+#[test]
 fn one_code_plan_runs_initialization_then_calls_published_closures() {
     let (mir, consumer) = graph(
         "def make: Fn(Int) -> Fn(Int) -> Int = fn(base) { fn(x) { base + x } }; export def answer: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, x) { f(x) };",

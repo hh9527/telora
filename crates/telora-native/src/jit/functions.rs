@@ -34,6 +34,7 @@ pub(super) struct Functions {
     pub registered: BTreeMap<Key, FuncId>,
     pub pending: Vec<Key>,
     pub captures: BTreeMap<Key, Vec<(SymbolId, TypeKey)>>,
+    pub globals: BTreeMap<SymbolId, (u32, Key, TypeKey)>,
     dispatchers: BTreeMap<TypeKey, FuncId>,
     signature: ir::Signature,
 }
@@ -43,9 +44,45 @@ impl Functions {
             registered: BTreeMap::new(),
             pending: vec![],
             captures: BTreeMap::new(),
+            globals: BTreeMap::new(),
             dispatchers: BTreeMap::new(),
             signature,
         }
+    }
+    pub fn global(
+        &mut self,
+        graph: &Mir,
+        symbol: SymbolId,
+        module: &mut JITModule,
+    ) -> Result<(u32, FuncId, TypeKey)> {
+        if let Some(&(slot, key, ty)) = self.globals.get(&symbol) {
+            return Ok((slot, self.registered[&key], ty));
+        }
+        let declaration = graph.symbols[symbol.index()]
+            .declarations
+            .iter()
+            .copied()
+            .find(|&node| matches!(graph.hir[node.index()].kind, HirKind::Binding { .. }))
+            .ok_or("native global has no value declaration")?;
+        let ty = TypeKey::try_from(known(graph, declaration)?)?;
+        let key = Key::from(declaration);
+        let slot = u32::try_from(self.globals.len()).map_err(|_| "native global slot overflow")?;
+        let function = if let Some(&function) = self.registered.get(&key) {
+            function
+        } else {
+            let function = module
+                .declare_function(
+                    &format!("telora_global_{}", symbol.index()),
+                    Linkage::Local,
+                    &self.signature,
+                )
+                .map_err(|e| e.to_string())?;
+            self.registered.insert(key, function);
+            self.pending.push(key);
+            function
+        };
+        self.globals.insert(symbol, (slot, key, ty));
+        Ok((slot, function, ty))
     }
     pub fn dispatcher(&mut self, ty: TypeKey, module: &mut JITModule) -> Result<FuncId> {
         if let Some(&id) = self.dispatchers.get(&ty) {

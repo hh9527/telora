@@ -17,7 +17,7 @@ enum State {
     Failed,
 }
 pub(super) struct DemandSlot {
-    ty: TypeId,
+    pub(super) ty: TypeId,
     state: State,
 }
 #[derive(Debug)]
