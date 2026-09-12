@@ -51,6 +51,9 @@ fn native_eval_with_initializes_then_injects_declared_context() {
         {"args":["hello","中"], "env":{"TELORA_NATIVE_TEST_ENV":"selected"}, "sources":{"input":{"answer":42}}},
         {"loaded":true}
     ]));
+    let selected = telora(&cwd).args(["eval-with", "--native", "@src/main:selected", "--source", "input=input.json"]).output().unwrap();
+    assert!(selected.status.success(), "{}", String::from_utf8_lossy(&selected.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&selected.stdout).unwrap(), serde_json::json!({"answer":42}));
     let output = telora(&cwd).args(["eval-with", "--native", "@src/main:answer"]).output().unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("eval sources do not match"));

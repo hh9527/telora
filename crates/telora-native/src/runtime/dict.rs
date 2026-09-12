@@ -1,6 +1,16 @@
 use super::*;
 
 impl Runtime {
+    /// A column projection only creates an Array descriptor. Canonical keys and
+    /// value storage remain shared, including across publication.
+    pub(crate) fn dict_column(&self, ty: TypeId, loc: Location, dict: &Value, keys: bool) -> Result<Value> {
+        let (_, _, len, _, element) = self.dict_parts(dict)?;
+        let output = self.expect(ty, Kind::Array)?.arguments[0];
+        if keys { self.expect(output, Kind::String)?; }
+        else if output != element { return Err("dictionary column type mismatch".into()); }
+        let id = if keys { dict.words[2] as u32 } else { dict.words[3] as u32 };
+        self.pack(ty, loc, &[u64::from(id), len as u64])
+    }
     pub fn dict(&mut self, ty: TypeId, loc: Location, pairs: &[(Value, Value)]) -> Result<Value> {
         let element = self.expect(ty, Kind::Dict)?.arguments[0];
         let mut sorted = Vec::with_capacity(pairs.len());

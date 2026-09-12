@@ -37,6 +37,7 @@ pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
 pub(crate) const LEAVE_CALL: u32 = 34;
+pub(crate) const DICT_READ: u32 = 35;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -120,6 +121,18 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                DICT_READ => {
+                    let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
+                    let width = rt.layout(input)?.words;
+                    let dict = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) }.into() };
+                    if count == 0 {
+                        let key = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(width), 4) }.into() };
+                        let value = rt.dict_get(&dict, &key)?.map(ValueRef::to_owned);
+                        rt.named_variant(ty, loc, if value.is_some() { "Some" } else { "None" }, value.as_ref())?
+                    } else {
+                        rt.dict_column(ty, loc, &dict, count == 1)?
+                    }
+                }
                 INTERPOLATE => {
                     let mut cursor = data;
                     let mut text = String::new();

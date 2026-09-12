@@ -1,8 +1,19 @@
 import "std/entry" as entry;
 import "std/codec" {encode, Value};
+import "std/dict" as dict;
 import "./base.json" as base;
 
 export def answer = entry.main(
     { sources: ["input"], envs: ["TELORA_NATIVE_TEST_ENV"], args: True },
     fn(ctx) { encode(Value.type, (ctx, base.data)) },
+);
+
+export def selected = entry.main(
+    { sources: ["input"], envs: [], args: False },
+    fn(ctx) {
+        match dict.get(ctx.sources, "input") {
+            Some(value) => value,
+            None => fail!("declared input is absent"),
+        }
+    },
 );

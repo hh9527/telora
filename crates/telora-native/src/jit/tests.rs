@@ -615,6 +615,32 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_dictionary_reads_preserve_sorted_columns_and_aliases_after_publication() {
+    let (mir, root) = graph_with(
+        "import \"std/dict\" as dict; export def answer = do { let d: Dict(String) = { z: \"last long heap-backed value\", a: \"first long heap-backed value\" }; (d, dict.keys(d), dict.values(d), dict.get(d, \"a\"), dict.get(d, \"missing\")) };",
+        static_sources::BUILTINS,
+    );
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    let result = compiled.export(&mut context, mir.exports[module.index()][0]).unwrap();
+    let rt = context.runtime().unwrap();
+    let dict = rt.field(&result, 0).unwrap().to_owned();
+    let keys = rt.field(&result, 1).unwrap().to_owned();
+    let values = rt.field(&result, 2).unwrap().to_owned();
+    let found = rt.field(&result, 3).unwrap().to_owned();
+    let missing = rt.field(&result, 4).unwrap().to_owned();
+    assert_eq!(keys.words()[2] as u32, dict.words()[2] as u32);
+    assert_eq!(values.words()[2] as u32, dict.words()[3] as u32);
+    assert_eq!(rt.text(rt.array_get(&keys, 0).unwrap()).unwrap().as_str(), "a");
+    assert_eq!(rt.text(rt.array_get(&keys, 1).unwrap()).unwrap().as_str(), "z");
+    assert_eq!(rt.enum_payload(&found).unwrap().unwrap().words(), rt.array_get(&values, 0).unwrap().words());
+    assert!(rt.enum_payload(&missing).unwrap().is_none());
+}
+
+#[test]
 fn native_call_depth_unwinds_direct_and_indirect_failures() {
     for source in [
         "def recur: Fn(Int) -> Int = fn(n) { recur(n + 1) }; export def answer = recur(0);",

@@ -344,6 +344,22 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::FORMAT, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 6 && let Some(operation) = ["get", "keys", "values"].iter().position(|name| *name == declaration.name) {
+            if arguments.len() != if operation == 0 { 2 } else { 1 } {
+                return Err("native dictionary read arity mismatch".into());
+            }
+            let input = &self.mir.types[arguments[0].index()];
+            let output = &self.mir.types[self.return_type.index()];
+            let valid = input.constructor == TypeConstructor::Dict && match operation {
+                0 => output.constructor == TypeConstructor::Option && output.arguments == input.arguments && self.mir.types[arguments[1].index()].constructor == TypeConstructor::String,
+                1 => output.constructor == TypeConstructor::Array && output.arguments.len() == 1 && self.mir.types[output.arguments[0].index()].constructor == TypeConstructor::String,
+                _ => output.constructor == TypeConstructor::Array && output.arguments == input.arguments,
+            };
+            if !valid { return Err("native dictionary read signature mismatch".into()); }
+            let count = self.builder.ins().iconst(types::I64, operation as i64);
+            let result = self.object(node, helpers::DICT_READ, self.return_type, data, count)?;
+            return self.write_return(&result);
+        }
         if (module.id, declaration.name.as_str()) == (13, "encode_with") {
             if arguments.len() != 3
                 || self.mir.types[arguments[1].index()].constructor != TypeConstructor::TypeOf
