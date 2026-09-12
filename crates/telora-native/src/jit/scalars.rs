@@ -3,7 +3,7 @@ use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use telora_core::ast::{BinaryOperator as B, UnaryOperator as U};
 
 impl Lower<'_, '_> {
-    fn scalar_result(&mut self, node: HirId, bits: ir::Value) -> Result<Vec<ir::Value>> {
+    fn scalar_result(&mut self, node: HirId, bits: ir::Value) -> EmitResult<Vec<ir::Value>> {
         let ty = TypeKey::try_from(self.ty(node)?)?;
         let header = self.layouts.value(
             ty,
@@ -18,7 +18,7 @@ impl Lower<'_, '_> {
         values[2] = bits;
         Ok(values)
     }
-    fn fail_if(&mut self, node: HirId, condition: ir::Value, message: &str) -> Result<()> {
+    fn fail_if(&mut self, node: HirId, condition: ir::Value, message: &str) -> EmitResult<()> {
         let failed = self.builder.create_block();
         let next = self.builder.create_block();
         self.builder.ins().brif(condition, failed, &[], next, &[]);
@@ -45,7 +45,7 @@ impl Lower<'_, '_> {
         self.builder.seal_block(next);
         Ok(())
     }
-    pub(super) fn unary(&mut self, node: HirId, op: U, depth: usize) -> Result<Vec<ir::Value>> {
+    pub(super) fn unary(&mut self, node: HirId, op: U, depth: usize) -> EmitResult<Vec<ir::Value>> {
         let operand = child(self.mir, node, Role::Operand)?;
         let ty = self.ty(operand)?;
         let value = self.expression(operand, depth + 1)?[2];
@@ -65,12 +65,23 @@ impl Lower<'_, '_> {
         };
         self.scalar_result(node, result)
     }
-    pub(super) fn binary(&mut self, node: HirId, op: B, depth: usize) -> Result<Vec<ir::Value>> {
+    pub(super) fn binary(
+        &mut self,
+        node: HirId,
+        op: B,
+        depth: usize,
+    ) -> EmitResult<Vec<ir::Value>> {
         let left_node = child(self.mir, node, Role::Left)?;
         let right_node = child(self.mir, node, Role::Right)?;
         let left_ty = self.ty(left_node)?;
         let right_ty = self.ty(right_node)?;
-        if left_ty != right_ty {
+        let left_never = self.layouts.is_never(TypeKey::try_from(left_ty)?)?;
+        let right_never = self.layouts.is_never(TypeKey::try_from(right_ty)?)?;
+        if left_never {
+            self.expression(left_node, depth + 1)?;
+            return Err("native Never operand produced a value".into());
+        }
+        if left_ty != right_ty && !right_never {
             return Err("native binary operands require the solved same type".into());
         }
         let kind = &self.mir.types[left_ty.index()].constructor;
@@ -90,8 +101,15 @@ impl Lower<'_, '_> {
             }
             self.builder.switch_to_block(rhs);
             self.builder.seal_block(rhs);
-            let right = self.expression(right_node, depth + 1)?[2];
-            self.builder.ins().jump(join, &[ir::BlockArg::from(right)]);
+            match self.expression(right_node, depth + 1) {
+                Ok(value) => {
+                    self.builder
+                        .ins()
+                        .jump(join, &[ir::BlockArg::from(value[2])]);
+                }
+                Err(EmitError::Diverged) => {}
+                Err(error) => return Err(error),
+            }
             self.builder.switch_to_block(join);
             self.builder.seal_block(join);
             return self.scalar_result(node, self.builder.block_params(join)[0]);

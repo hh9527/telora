@@ -805,7 +805,7 @@ impl Solver<'_> {
                 let right = self.child(node, Role::Right).unwrap();
                 if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
                     self.tasks.push(Task::ValueEqual { node, left: left.ty(), right: right.ty() });
-                } else {
+                } else if !matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
                     self.equal(left.ty(), right.ty(), Some(self.mir.hir[node.index()].location));
                 }
                 match operator {
@@ -829,7 +829,11 @@ impl Solver<'_> {
                     }
                     BinaryOperator::Equal | BinaryOperator::NotEqual => self.assign(node, TypeConstructor::Bool, vec![]),
                     BinaryOperator::And | BinaryOperator::Or => {
-                        self.assign(left, TypeConstructor::Bool, vec![]);
+                        // Short-circuit operands independently satisfy Bool;
+                        // a diverging RHS must not unify the LHS with Never.
+                        let boolean = self.structure(TypeConstructor::Bool, vec![]);
+                        self.fit(left, boolean, left.ty());
+                        self.fit(right, boolean, right.ty());
                         self.assign(node, TypeConstructor::Bool, vec![]);
                     }
                     BinaryOperator::BitAnd | BinaryOperator::BitOr | BinaryOperator::BitXor => {

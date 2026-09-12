@@ -95,13 +95,22 @@ pub(super) fn shape(
     } else {
         root
     };
-    let output = TypeKey::try_from(key.ty(graph, body)?)?;
+    let output = TypeKey::try_from(if is_function {
+        *graph.types[key.ty(graph, root)?.index()]
+            .arguments
+            .last()
+            .ok_or("native function has no solved return type")?
+    } else {
+        key.ty(graph, body)?
+    })?;
     let arguments = parameters
         .iter()
         .map(|&p| TypeKey::try_from(key.ty(graph, p)?))
         .collect::<Result<Vec<_>>>()?;
 
-    layouts.words(output)?;
+    if !layouts.is_never(output)? {
+        layouts.words(output)?;
+    }
     for &argument in &arguments {
         layouts.words(argument)?;
     }
@@ -116,7 +125,7 @@ pub(super) fn emit(
     functions: &mut Functions,
 ) -> Result<()> {
     let (parameters, body, output, arguments) = shape(graph, layouts, key)?;
-    let output_words = layouts.words(output)?;
+
     let function = functions.registered[&key];
     let mut ctx = module.make_context();
     ctx.func.signature = functions.signature.clone();
@@ -161,22 +170,17 @@ pub(super) fn emit(
             object_helper,
             functions,
             function_key: key,
+            return_pointer: out,
+            return_type: output,
         };
-        let result = lower.expression(body, 0)?;
-        if result.len() != output_words {
-            return Err("native result shape mismatch".into());
+        let outcome = match lower.expression(body, 0) {
+            Ok(result) => lower.return_value(&result),
+            Err(error) => Err(error),
+        };
+        match outcome {
+            Ok(()) | Err(EmitError::Diverged) => {}
+            Err(EmitError::Message(message)) => return Err(message),
         }
-        for (i, value) in result.into_iter().enumerate() {
-            lower.builder.ins().store(
-                MemFlagsData::new(),
-                value,
-                out,
-                i32::try_from(i.checked_mul(8).ok_or("native result overflow")?)
-                    .map_err(|_| "native result overflow")?,
-            );
-        }
-        let success = lower.builder.ins().iconst(types::I32, 0);
-        lower.builder.ins().return_(&[success]);
         let config = lower.module.target_config();
         lower.builder.finalize(config);
     }

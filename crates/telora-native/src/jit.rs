@@ -13,6 +13,23 @@ use telora_core::mir::{
 
 type Entry = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64) -> u32;
 
+#[derive(Debug)]
+enum EmitError {
+    Message(String),
+    Diverged,
+}
+impl From<String> for EmitError {
+    fn from(value: String) -> Self {
+        Self::Message(value)
+    }
+}
+impl From<&str> for EmitError {
+    fn from(value: &str) -> Self {
+        Self::Message(value.into())
+    }
+}
+type EmitResult<T> = std::result::Result<T, EmitError>;
+
 /// Owns executable memory. No raw entry address escapes this owner.
 pub struct Compiled {
     _memory: CodeMemory,
@@ -70,7 +87,12 @@ impl Compiled {
             }
             args.extend_from_slice(value.words());
         }
-        let words = self.layouts.words(self.output)?;
+        let never = self.layouts.is_never(self.output)?;
+        let words = if never {
+            0
+        } else {
+            self.layouts.words(self.output)?
+        };
         let mut result = vec![0; words].into_boxed_slice();
         // SAFETY: only our verified signature is transmuted; buffers have checked
         // widths, stay alive and do not move during execution. Generated code may
@@ -78,6 +100,9 @@ impl Compiled {
         let status = unsafe { (self.entry)(context, args.as_ptr(), result.as_mut_ptr()) };
         match status {
             0 => {
+                if never {
+                    return Err("native Never function returned successfully".into());
+                }
                 let mut value = Value::from_result(result, self.output, words)?;
                 value.arena = context.runtime().map_or(0, |r| r.identity());
                 Ok(value)
@@ -173,8 +198,50 @@ struct Lower<'a, 'b> {
     object_helper: ir::FuncRef,
     functions: &'a mut functions::Functions,
     function_key: functions::Key,
+    return_pointer: ir::Value,
+    return_type: TypeKey,
 }
 impl Lower<'_, '_> {
+    fn return_value(&mut self, result: &[ir::Value]) -> EmitResult<()> {
+        if self.layouts.is_never(self.return_type)? {
+            return Err("native Never body produced a value".into());
+        }
+        if result.len() != self.layouts.words(self.return_type)? {
+            return Err("native return width mismatch".into());
+        }
+        for (i, &value) in result.iter().enumerate() {
+            self.builder.ins().store(
+                MemFlagsData::new(),
+                value,
+                self.return_pointer,
+                i32::try_from(i.checked_mul(8).ok_or("native return overflow")?)
+                    .map_err(|_| "native return overflow")?,
+            );
+        }
+        let status = self.builder.ins().iconst(types::I32, 0);
+        self.builder.ins().return_(&[status]);
+        Ok(())
+    }
+    fn report_failure(&mut self, node: HirId, message: &str) -> EmitResult<()> {
+        let (data, count) = self.literal_bytes(message)?;
+        let operation = self.builder.ins().iconst(types::I32, helpers::FAIL as i64);
+        let ty = self.builder.ins().iconst(types::I32, 0);
+        let origin = Origin::from_loc(Some(self.mir.hir[node.index()].location)).words();
+        let loc0 = self.builder.ins().iconst(
+            types::I64,
+            (u64::from(origin[0]) | (u64::from(origin[1]) << 32)) as i64,
+        );
+        let end = self.builder.ins().iconst(types::I32, origin[2] as i64);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let out = self.stack_words(&[zero])?;
+        let call = self.builder.ins().call(
+            self.object_helper,
+            &[self.context, operation, ty, loc0, end, data, count, out],
+        );
+        let status = self.builder.inst_results(call)[0];
+        self.builder.ins().return_(&[status]);
+        Ok(())
+    }
     fn selected_member(&self, node: HirId) -> Option<MemberSelection> {
         if let Some(selected) = self.mir.member_selections[node.index()] {
             return Some(selected);
@@ -197,7 +264,7 @@ impl Lower<'_, '_> {
         ty: TypeKey,
         index: u32,
         payload: &[ir::Value],
-    ) -> Result<Vec<ir::Value>> {
+    ) -> EmitResult<Vec<ir::Value>> {
         let expected = self.layouts.variant_payloads[ty.index()]
             .get(index as usize)
             .ok_or("native enum has no solved variant")?;
@@ -220,8 +287,8 @@ impl Lower<'_, '_> {
         let tag = self.builder.ins().iconst(types::I64, index as i64);
         self.object(node, helpers::ENUM, ty, data, tag)
     }
-    fn ty(&self, node: HirId) -> Result<telora_core::mir::TypeId> {
-        self.function_key.ty(self.mir, node)
+    fn ty(&self, node: HirId) -> EmitResult<telora_core::mir::TypeId> {
+        self.function_key.ty(self.mir, node).map_err(Into::into)
     }
     fn instance_reference(&self, mut node: HirId) -> Option<telora_core::mir::GenericInstanceId> {
         loop {
@@ -241,7 +308,7 @@ impl Lower<'_, '_> {
             };
         }
     }
-    fn callable(&self, node: HirId, depth: usize) -> Result<HirId> {
+    fn callable(&self, node: HirId, depth: usize) -> EmitResult<HirId> {
         if depth > 512 {
             return Err("native callable alias cycle".into());
         }
@@ -274,7 +341,7 @@ impl Lower<'_, '_> {
             _ => Err("native indirect callable is not yet linked".into()),
         }
     }
-    fn direct_call(&mut self, node: HirId, depth: usize) -> Result<Vec<ir::Value>> {
+    fn direct_call(&mut self, node: HirId, depth: usize) -> EmitResult<Vec<ir::Value>> {
         let callee_node = child(self.mir, node, Role::Callee)?;
         if let Some(MemberSelection::EnumVariant { index }) = self.selected_member(callee_node) {
             let arguments = self.mir.hir[node.index()]
@@ -321,7 +388,12 @@ impl Lower<'_, '_> {
             words.extend(self.expression(arg, depth + 1)?);
         }
         let data = self.stack_words(&words)?;
-        let width = self.layouts.words(output)?;
+        let never = self.layouts.is_never(output)?;
+        let width = if never {
+            0
+        } else {
+            self.layouts.words(output)?
+        };
         let zero = self.builder.ins().iconst(types::I64, 0);
         let out = self.stack_words(&vec![zero; width])?;
         let callee = self
@@ -337,6 +409,10 @@ impl Lower<'_, '_> {
         self.builder.ins().return_(&[status]);
         self.builder.switch_to_block(success);
         self.builder.seal_block(success);
+        if never {
+            self.report_failure(node, "native Never function returned unexpectedly")?;
+            return Err(EmitError::Diverged);
+        }
         Ok((0..width)
             .map(|i| {
                 self.builder
@@ -345,7 +421,7 @@ impl Lower<'_, '_> {
             })
             .collect())
     }
-    fn stack_words(&mut self, values: &[ir::Value]) -> Result<ir::Value> {
+    fn stack_words(&mut self, values: &[ir::Value]) -> EmitResult<ir::Value> {
         let bytes = u32::try_from(
             values
                 .len()
@@ -382,7 +458,7 @@ impl Lower<'_, '_> {
         ty: TypeKey,
         data: ir::Value,
         count: ir::Value,
-    ) -> Result<Vec<ir::Value>> {
+    ) -> EmitResult<Vec<ir::Value>> {
         let width = self.layouts.words(ty)?;
         let zero = self.builder.ins().iconst(types::I64, 0);
         let out = self.stack_words(&vec![zero; width])?;
@@ -415,7 +491,7 @@ impl Lower<'_, '_> {
             })
             .collect())
     }
-    fn literal_bytes(&mut self, text: &str) -> Result<(ir::Value, ir::Value)> {
+    fn literal_bytes(&mut self, text: &str) -> EmitResult<(ir::Value, ir::Value)> {
         let id = self
             .module
             .declare_anonymous_data(false, false)
@@ -438,11 +514,11 @@ impl Lower<'_, '_> {
         let length = self.builder.ins().iconst(types::I64, text.len() as i64);
         Ok((pointer, length))
     }
-    fn string(&mut self, node: HirId, ty: TypeKey, text: &str) -> Result<Vec<ir::Value>> {
+    fn string(&mut self, node: HirId, ty: TypeKey, text: &str) -> EmitResult<Vec<ir::Value>> {
         let (pointer, length) = self.literal_bytes(text)?;
         self.object(node, helpers::STRING, ty, pointer, length)
     }
-    fn expression(&mut self, node: HirId, depth: usize) -> Result<Vec<ir::Value>> {
+    fn expression(&mut self, node: HirId, depth: usize) -> EmitResult<Vec<ir::Value>> {
         if depth > 512 {
             return Err("native expression nesting limit".into());
         }
@@ -483,6 +559,23 @@ impl Lower<'_, '_> {
                 .collect());
         }
         match syntax.kind {
+            HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node, depth),
+            HirKind::Return => {
+                let value = self.expression(child(self.mir, node, Role::Value)?, depth + 1)?;
+                self.return_value(&value)?;
+                Err(EmitError::Diverged)
+            }
+            HirKind::Panic | HirKind::Raise(telora_core::ast::BlameAction::Fail) => {
+                if syntax.children.iter().any(|e| e.role == Role::Subject) {
+                    return Err("native fail subjects are not yet linked".into());
+                }
+                let message = child(self.mir, node, Role::Value)?;
+                let HirKind::String(message) = &self.mir.hir[message.index()].kind else {
+                    return Err("native dynamic fail message is not yet linked".into());
+                };
+                self.report_failure(node, message)?;
+                Err(EmitError::Diverged)
+            }
             HirKind::Binary(operation) => self.binary(node, operation, depth),
             HirKind::Unary(operation) => self.unary(node, operation, depth),
             HirKind::String(ref text) => self.string(node, key, text),
@@ -647,10 +740,7 @@ impl Lower<'_, '_> {
                         return self.expression(value, depth + 1);
                     }
                 }
-                Err(format!(
-                    "native unsupported capture/export at {:?}",
-                    syntax.location
-                ))
+                Err(format!("native unsupported capture/export at {:?}", syntax.location).into())
             }
             HirKind::TypeAscription => {
                 self.expression(child(self.mir, node, Role::Value)?, depth + 1)
@@ -705,20 +795,53 @@ impl Lower<'_, '_> {
                 let yes = self.builder.create_block();
                 let no = self.builder.create_block();
                 let merge = self.builder.create_block();
-                for _ in 0..self.layouts.words(key)? {
+                let width = if self.layouts.is_never(key)? {
+                    0
+                } else {
+                    self.layouts.words(key)?
+                };
+                for _ in 0..width {
                     self.builder.append_block_param(merge, types::I64);
                 }
                 self.builder.ins().brif(condition[2], yes, &[], no, &[]);
                 self.builder.switch_to_block(yes);
                 self.builder.seal_block(yes);
-                let a = self.expression(child(self.mir, node, Role::Then)?, depth + 1)?;
-                let a = a.into_iter().map(ir::BlockArg::from).collect::<Vec<_>>();
-                self.builder.ins().jump(merge, &a);
+                let mut live = 0;
+                match self.expression(child(self.mir, node, Role::Then)?, depth + 1) {
+                    Ok(values) => {
+                        if values.len() != width {
+                            return Err("native branch width mismatch".into());
+                        }
+                        let values = values
+                            .into_iter()
+                            .map(ir::BlockArg::from)
+                            .collect::<Vec<_>>();
+                        self.builder.ins().jump(merge, &values);
+                        live += 1;
+                    }
+                    Err(EmitError::Diverged) => {}
+                    Err(error) => return Err(error),
+                }
                 self.builder.switch_to_block(no);
                 self.builder.seal_block(no);
-                let b = self.expression(child(self.mir, node, Role::Else)?, depth + 1)?;
-                let b = b.into_iter().map(ir::BlockArg::from).collect::<Vec<_>>();
-                self.builder.ins().jump(merge, &b);
+                match self.expression(child(self.mir, node, Role::Else)?, depth + 1) {
+                    Ok(values) => {
+                        if values.len() != width {
+                            return Err("native branch width mismatch".into());
+                        }
+                        let values = values
+                            .into_iter()
+                            .map(ir::BlockArg::from)
+                            .collect::<Vec<_>>();
+                        self.builder.ins().jump(merge, &values);
+                        live += 1;
+                    }
+                    Err(EmitError::Diverged) => {}
+                    Err(error) => return Err(error),
+                }
+                if live == 0 {
+                    return Err(EmitError::Diverged);
+                }
                 self.builder.switch_to_block(merge);
                 self.builder.seal_block(merge);
                 Ok(self.builder.block_params(merge).to_vec())
@@ -726,12 +849,15 @@ impl Lower<'_, '_> {
             _ => Err(format!(
                 "native unsupported {:?} at {:?}",
                 syntax.kind, syntax.location
-            )),
+            )
+            .into()),
         }
     }
 }
 #[path = "jit/functions.rs"]
 mod functions;
+#[path = "jit/patterns.rs"]
+mod patterns;
 #[path = "jit/scalars.rs"]
 mod scalars;
 #[cfg(test)]

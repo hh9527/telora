@@ -310,3 +310,68 @@ fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
     );
     assert!(rt.enum_payload(&end).unwrap().is_none());
 }
+#[test]
+fn patterns_select_payloads_and_preserve_diverging_paths() {
+    for source in [
+        "export def answer = match 2 { 1 => 0, 2 => 42, _ => 7 };",
+        "export def answer = match Some(42) { Some(x) => x, None => 0 };",
+        "export def answer = match (2, 40) { (a, b) => a + b };",
+        "export def answer = if let Some(x) = Some(42) { x } else { 0 };",
+        "export def answer = match \"yes\" { \"no\" => 0, \"yes\" => 42, _ => 7 };",
+        "export def answer = match 2 { 1 => fail!(\"wrong\"), _ => 42 };",
+    ] {
+        let (mir, root) = graph(source);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        assert_eq!(
+            compiled.call(&mut context, &[]).unwrap().words()[2],
+            42,
+            "{source}"
+        );
+        assert!(context.diagnostics().is_empty());
+    }
+}
+
+#[test]
+fn never_paths_do_not_allocate_values_or_force_a_join_result() {
+    for source in [
+        "export def answer: Fn(Bool) -> Int = fn(flag) { if flag { return 42; } else { 7 } };",
+        "export def answer: Fn(Bool) -> Int = fn(flag) { if flag { return 42; } else { return 7; } };",
+    ] {
+        let (mir, root) = graph(source);
+        let compiled = compile(&mir.seal().unwrap(), root).unwrap();
+        for (flag, expected) in [(1, 42), (0, 7)] {
+            let flag = compiled
+                .layouts()
+                .value(compiled.arguments()[0], Origin::default(), &[flag])
+                .unwrap();
+            assert_eq!(
+                compiled
+                    .call(&mut CallContext::default(), &[flag])
+                    .unwrap()
+                    .words()[2],
+                expected
+            );
+        }
+    }
+    let (mir, root) = graph(
+        "def explode: Fn() -> Never = fn() { fail!(\"boom\") }; export def answer = explode();",
+    );
+    let compiled = compile(&mir.seal().unwrap(), root).unwrap();
+    assert!(compiled.layouts().is_never(compiled.output()).unwrap());
+    let mut context = CallContext::default();
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "boom");
+    for source in [
+        "export def answer = True || fail!(\"unreachable\");",
+        "export def answer = False && fail!(\"unreachable\");",
+    ] {
+        let (mir, root) = graph(source);
+        let compiled = compile(&mir.seal().unwrap(), root).unwrap();
+        let mut context = CallContext::default();
+        compiled.call(&mut context, &[]).unwrap();
+        assert!(context.diagnostics().is_empty());
+    }
+}

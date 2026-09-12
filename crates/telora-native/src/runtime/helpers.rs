@@ -10,6 +10,8 @@ pub(crate) const INDEX: u32 = 4;
 pub(crate) const DICT: u32 = 5;
 pub(crate) const FAIL: u32 = 6;
 pub(crate) const ENUM: u32 = 7;
+pub(crate) const PAYLOAD: u32 = 8;
+pub(crate) const TEXT_EQUAL: u32 = 9;
 
 /// Safety: ctx is an exclusive live context; data points at the full values
 /// specified by the generated operation; out has space for the solved result.
@@ -129,7 +131,7 @@ pub(crate) unsafe extern "C" fn object(
                         _ => unreachable!(),
                     }
                 }
-                FIELD | INDEX => {
+                FIELD | INDEX | PAYLOAD | TEXT_EQUAL => {
                     let receiver_ty = unsafe { TypeId((*data.add(1) >> 32) as u32) };
                     let size = rt.layout(receiver_ty)?.words;
                     let words = unsafe { std::slice::from_raw_parts(data, size) };
@@ -137,7 +139,21 @@ pub(crate) unsafe extern "C" fn object(
                         arena: rt.identity,
                         words: words.to_vec().into_boxed_slice(),
                     };
-                    if operation == FIELD {
+                    if operation == PAYLOAD {
+                        rt.enum_payload(&receiver)?
+                            .ok_or("enum has no payload")?
+                            .to_owned()
+                    } else if operation == TEXT_EQUAL {
+                        rt.expect(receiver_ty, Kind::String)?;
+                        let other = unsafe { std::slice::from_raw_parts(data.add(size), 4) };
+                        let other = ValueRef {
+                            arena: rt.identity,
+                            words: other,
+                        };
+                        let equal =
+                            rt.text(receiver.as_ref())?.as_str() == rt.text(other)?.as_str();
+                        rt.scalar(ty, loc, u64::from(equal))?
+                    } else if operation == FIELD {
                         rt.field(&receiver, count)?.to_owned()
                     } else {
                         rt.array_get(&receiver, count)?.to_owned()
