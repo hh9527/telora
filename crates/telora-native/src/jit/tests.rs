@@ -51,6 +51,38 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_codec_fuel_exhaustion_is_not_a_recoverable_decode_error() {
+    let (mir, encode) = graph_with(r#"import "std/codec" as codec;
+        import "std/_codec" {untagged};
+        @untagged type Choice = enum {Numbers(Array(Int)), Strings(Array(String))};
+        export def answer: Fn(Array(Int)) -> codec.Value = fn(values) {codec.encode(codec.Value.type, values)};
+        export def read: Fn(codec.Value) -> Bool = fn(value) {
+            match codec.decode(Choice.type, value) {Ok(_) => True, Err(_) => False}
+        };"#, static_sources::BUILTINS);
+    let declaration = mir.symbols.iter().find(|symbol| symbol.name == "read").unwrap().declarations[0];
+    let decode = child(&mir, declaration, Role::Value).unwrap();
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_roots(&sealed, &[encode, decode]).unwrap();
+    let array = compiled.arguments[0];
+    let integer = TypeKey::try_from(mir.types[array.index()].arguments[0]).unwrap();
+    for decoding in [false, true] {
+        let mut rt = crate::runtime::Runtime::new(&sealed).unwrap();
+        let scalar = rt.scalar(integer, [1, 0, 1], 42).unwrap();
+        let small = rt.array(array, [1, 0, 1], &[scalar.clone()]).unwrap();
+        let large = rt.array(array, [1, 0, 1], &vec![scalar; 10_000]).unwrap();
+        let mut context = CallContext::with_runtime(rt);
+        let input = compiled.call_root(encode, &mut context, &[if decoding {large.clone()} else {small.clone()}]).unwrap();
+        context = context.with_fuel(1000);
+        let (root, argument) = if decoding { (decode, input) } else { (encode, large) };
+        assert!(compiled.call_root(root, &mut context, &[argument]).is_err());
+        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.diagnostics()[0].message, "native execution fuel exhausted");
+        assert_eq!(context.call_depth(), 0);
+        assert_eq!(context.remaining_fuel(), Some(0));
+    }
+}
+
+#[test]
 fn native_local_recursive_closures_keep_lexical_environment() {
     for source in [
         "export def answer = do { let offset = 2; def sum: Fn(Int) -> Int = fn(n) {if n == 0 {offset} else {n + sum(n - 1)}}; sum(8) };",

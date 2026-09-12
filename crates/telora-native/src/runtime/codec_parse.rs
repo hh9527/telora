@@ -48,6 +48,7 @@ impl Codec<'_> {
     }
 
     pub(super) fn parse_value(&mut self, target: TypeId, property: TypeId, input: &Value, range: Option<Range<usize>>, path: &str, depth: usize) -> std::result::Result<Value, DecodeFailure> {
+        self.charge(1, input)?;
         if depth > 512 { return Err("native string parse nesting limit".into()); }
         let loc = input.origin().words();
         let layout = self.runtime()?.layout(target)?;
