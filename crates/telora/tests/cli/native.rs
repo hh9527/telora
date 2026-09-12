@@ -1,4 +1,48 @@
 #[test]
+fn native_eval_with_rejects_invalid_config_and_preserves_execution_diagnostics() {
+    let cwd = fixture();
+    for (source, extra, message) in [
+        ("import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer = entry.main({sources: [], envs: [], args: False}, fn(ctx) { Value.Int(42) });", vec!["--", "unexpected"], "does not accept command-line arguments"),
+        ("import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer = entry.main({sources: [\"dup\", \"dup\"], envs: [], args: False}, fn(ctx) { Value.Int(42) });", vec![], "unique non-empty names"),
+        ("import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer = entry.main({sources: [], envs: [\"TELORA_NATIVE_MISSING_ENV\"], args: False}, fn(ctx) { Value.Int(42) });", vec![], "cannot read declared environment variable"),
+        ("import \"std/entry\" as entry; export def answer = entry.main({sources: [], envs: [], args: False}, fn(ctx) {\n fail!(\"native entry failed\");\n});", vec![], "native entry failed"),
+        ("export def answer = 42;", vec![], "expected Eval"),
+    ] {
+        fs::write(cwd.join("src/main.telora"), source).unwrap();
+        let output = telora(&cwd).env_remove("TELORA_NATIVE_MISSING_ENV").args(["eval-with", "--native", "@src/main:answer"]).args(extra).output().unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{stderr}");
+        if message == "native entry failed" { assert!(stderr.contains("main:2:") || stderr.contains("main.telora:2:"), "{stderr}"); }
+        assert!(output.stdout.is_empty());
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
+fn native_eval_with_initializes_then_injects_declared_context() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/eval-with.telora")).unwrap();
+    fs::write(cwd.join("src/base.json"), "{\"loaded\":true}").unwrap();
+    fs::write(cwd.join("input.json"), "{\"answer\":42}").unwrap();
+    let output = telora(&cwd).env("TELORA_NATIVE_TEST_ENV", "selected")
+        .args(["eval-with", "--native", "@src/main:answer", "--source", "input=input.json", "--", "hello", "中"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), serde_json::json!([
+        {"args":["hello","中"], "env":{"TELORA_NATIVE_TEST_ENV":"selected"}, "sources":{"input":{"answer":42}}},
+        {"loaded":true}
+    ]));
+    let output = telora(&cwd).args(["eval-with", "--native", "@src/main:answer"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("eval sources do not match"));
+    assert!(output.stdout.is_empty());
+    let help = telora(&cwd).args(["eval-with", "--help"]).output().unwrap();
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("--native"));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_check_obeys_phase_boundaries_and_preserves_failure_location() {
     let cwd = fixture();
     fs::write(

@@ -1,6 +1,6 @@
 # RFC 0287：隐藏 --native 接入与执行语义对齐
 
-- 状态：实施中；check/eval 已接入实验后端，eval-with 尚未接入
+- 状态：实施中；check/eval/eval-with 已接入实验后端，完整语义覆盖和配额验证待完成
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -29,13 +29,15 @@
 
 ### 当前实施证据
 
-命令局部隐藏参数 `check --native`、`eval --native` 已接入：静态求解仍使用共同 MIR，只有 seal 成功且需要执行时才创建独立 native session。check 支持选择模块及 --lib/--tests，--only-types 和布局导出不创建 native session。未声明 --native 时仍使用原执行路径；其余命令暂不接受该选项。
+命令局部隐藏参数 `check --native`、`eval --native`、`eval-with --native` 已接入：静态求解仍使用共同 MIR，只有 seal 成功且需要执行时才创建独立 native session。check 支持选择模块及 --lib/--tests，--only-types 和布局导出不创建 native session。未声明 --native 时仍使用原执行路径；其余命令暂不接受该选项。
 
 Native session 编译已加载的完整模块集合，通过与 linker 无关的 catalog 读数据接口解析、注入所有数据模块，再完成初始化和发布。eval 在执行前验证导出的权威 std/value.Value 身份，成功后直接从 native 对象输出 JSON。初始化失败保留位置且不重复附加通用失败诊断；数据解析保留原结构化诊断。隐藏开关不进入普通帮助或用户文档。
 
 已验证真实 CLI 的泛型闭包初始化、--only-types 零执行、未使用顶层 fail 阻止初始化、单次来源诊断，以及数据模块 check 和 eval JSON 输出。完整 std/value 依赖图包含的 nullary enum 比较按封闭布局翻译为 tag 比较。
 
-仍未完成 eval-with、完整语法/native API 覆盖及配额语义，因此不据此宣称整体路线落地。
+eval-with 在执行前验证权威 std/entry.Eval 身份，并从封闭骨架读取 config/evaluate/Context 的字段与类型。全图初始化发布成功后，校验唯一非空来源/环境变量名称、准确匹配来源清单以及 args 许可，再将声明的输入直接构造为 native Context，调用发布后的 evaluate 闭包。集成测试覆盖 JSON 数据模块、外部 JSON 来源、环境变量、Unicode 参数、配置拒绝和执行失败来源诊断；真实 `check --native std/entry` 已通过。
+
+仍未完成完整语法/native API 覆盖（包括 codec 属性编码和 decode）及配额语义，因此不据此宣称整体路线落地。
 
 验证默认路径不变、隐藏帮助、显式 unsupported、only-types 零执行、各命令停止阶段正确。先少量冒烟，再补完整 corner cases；完成总装后才测编译/初始化/执行耗时和峰值内存，不承诺性能收益。
 

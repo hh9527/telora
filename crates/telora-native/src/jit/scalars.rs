@@ -117,7 +117,7 @@ impl Lower<'_, '_> {
             let data = self.stack_words(&words)?;
             let zero = self.builder.ins().iconst(types::I64, 0);
             let mut result = self.object(node, helpers::TEXT_EQUAL, TypeKey::try_from(self.ty(node)?)?, data, zero)?;
-            if op == B::NotEqual { result[2] = self.builder.ins().bxor_imm(result[2], 1); }
+            if op == B::NotEqual { result[2] = self.builder.ins().bxor_imm_u(result[2], 1); }
             return Ok(result);
         }
         if matches!(op, B::And | B::Or) {

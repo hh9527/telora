@@ -1,0 +1,8 @@
+import "std/entry" as entry;
+import "std/codec" {encode, Value};
+import "./base.json" as base;
+
+export def answer = entry.main(
+    { sources: ["input"], envs: ["TELORA_NATIVE_TEST_ENV"], args: True },
+    fn(ctx) { encode(Value.type, (ctx, base.data)) },
+);
