@@ -154,6 +154,43 @@ impl Lower<'_, '_> {
             let value = self.object(node, helpers::DYN_CHECK, self.return_type, data, count)?;
             return self.write_return(&value);
         }
+        if module.id == 2 && declaration.name == "kind" {
+            let expected = [
+                "Array", "Atom", "Bytes", "Dict", "Dyn", "Float", "Func", "Int", "Opaque",
+                "String", "Tagged", "Tuple", "Type",
+            ];
+            if arguments.len() != 1
+                || self.mir.types[arguments[0].index()].constructor != TypeConstructor::Dyn
+                || !matches!(self.mir.types[self.return_type.index()].constructor, TypeConstructor::Nominal(symbol)
+                    if self.mir.type_definitions.iter().find(|d| d.symbol == symbol).is_some_and(|d|
+                        d.members.iter().map(|m| m.name.as_str()).eq(expected)))
+                || self.layouts.variant_payloads[self.return_type.index()]
+                    .iter()
+                    .any(Option::is_some)
+            {
+                return Err("native Dyn kind ABI signature mismatch".into());
+            }
+            let count = self.builder.ins().iconst(types::I64, 0);
+            let value = self.object(node, helpers::DYN_KIND, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
+        if module.id == 2 && declaration.name == "field_raw" {
+            let output = &self.mir.types[self.return_type.index()];
+            if arguments.len() != 2
+                || self.mir.types[arguments[0].index()].constructor != TypeConstructor::Dyn
+                || self.mir.types[arguments[1].index()].constructor != TypeConstructor::String
+                || output.constructor != TypeConstructor::Result
+                || output.arguments.len() != 2
+                || self.mir.types[output.arguments[0].index()].constructor != TypeConstructor::Dyn
+                || self.mir.types[output.arguments[1].index()].constructor
+                    != TypeConstructor::String
+            {
+                return Err("native Dyn field ABI signature mismatch".into());
+            }
+            let count = self.builder.ins().iconst(types::I64, 0);
+            let value = self.object(node, helpers::DYN_FIELD, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 25
             && matches!(
                 declaration.name.as_str(),

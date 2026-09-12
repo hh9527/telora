@@ -31,6 +31,8 @@ struct Variant {
 }
 struct Layout {
     kind: Kind,
+    dynamic_kind: Option<&'static str>,
+    field_names: Vec<String>,
     words: usize,
     arguments: Vec<TypeId>,
     fields: Vec<(TypeId, usize)>,
@@ -292,6 +294,33 @@ impl Runtime {
                 .unwrap_or_default();
             layouts.push(Some(Layout {
                 kind,
+                field_names: entry
+                    .object
+                    .as_ref()
+                    .map(|o| o.members.iter().map(|m| m.name.clone()).collect())
+                    .unwrap_or_default(),
+                dynamic_kind: match &ty.constructor {
+                    T::Int => Some("Int"),
+                    T::Float => Some("Float"),
+                    T::String => Some("String"),
+                    T::Bytes => Some("Bytes"),
+                    T::Type | T::TypeOf => Some("Type"),
+                    T::Native(_) => Some("Opaque"),
+                    T::Record(_) | T::Dict => Some("Dict"),
+                    T::Array => Some("Array"),
+                    T::Tuple => Some("Tuple"),
+                    T::Function => Some("Func"),
+                    T::Dyn => Some("Dyn"),
+                    T::Bool | T::PropertyTarget => Some("Atom"),
+                    T::Nominal(symbol) => {
+                        match sealed.types().definition(*symbol).map(|d| d.operation) {
+                            Some(telora_core::mir::TypeOperation::Struct) => Some("Dict"),
+                            Some(telora_core::mir::TypeOperation::Newtype) => Some("Tuple"),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                },
                 words: usize::try_from(shape.value_bytes / 8).map_err(|_| "value size overflow")?,
                 arguments: ty
                     .arguments

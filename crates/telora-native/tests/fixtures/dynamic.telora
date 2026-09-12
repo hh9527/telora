@@ -1,6 +1,9 @@
 import "std/dyn" as dyn;
 def items = [42];
 def boxed = dyn.pack(Array(Int).type, items);
+type Rec = struct { a: Int };
+def record: Rec = { a: 42 };
+def dict: Dict(Int) = { a: 42 };
 export def answer = (
     boxed,
     dyn.desc(boxed),
@@ -8,4 +11,11 @@ export def answer = (
     dyn.project_with(String.type, boxed),
     dyn.check_int(dyn.pack(Int.type, 42)),
     dyn.check_string(boxed),
+    dyn.kind(boxed),
+    dyn.kind(dyn.pack(Option(Int).type, Some(42))),
+    dyn.kind(dyn.pack(Option(Int).type, None)),
+    dyn.field(dyn.pack(Rec.type, record), "a"),
+    dyn.field(dyn.pack(Dict(Int).type, dict), "a"),
+    dyn.field(dyn.pack(Rec.type, record), "missing"),
+    dyn.field(dyn.pack(Int.type, 42), "a"),
 );

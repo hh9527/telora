@@ -1,6 +1,39 @@
 use super::*;
 
 impl Runtime {
+    pub fn dynamic_field(&self, value: &Value, name: &Value) -> Result<ValueRef<'_>> {
+        let payload = self.dynamic_value(value)?.to_owned();
+        let layout = self.layout(payload.type_id())?;
+        let text = self.text(name.as_ref())?;
+        let found = if layout.kind == Kind::Dict {
+            self.dict_get(&payload, name)?
+        } else if layout.kind == Kind::Record && layout.dynamic_kind == Some("Dict") {
+            layout
+                .field_names
+                .iter()
+                .position(|n| n == text.as_str())
+                .map(|index| self.field(&payload, index))
+                .transpose()?
+        } else {
+            return Err("Dyn field access expects Struct".into());
+        };
+        found.ok_or_else(|| format!("Dyn record has no field {:?}", text.as_str()))
+    }
+    pub fn dynamic_kind(&self, value: &Value) -> Result<&'static str> {
+        let payload = self.dynamic_value(value)?;
+        let layout = self.layout(payload.type_id())?;
+        if let Some(kind) = layout.dynamic_kind {
+            return Ok(kind);
+        }
+        if layout.kind == Kind::Enum {
+            return Ok(if self.enum_payload_ref(payload)?.is_some() {
+                "Tagged"
+            } else {
+                "Atom"
+            });
+        }
+        Err("Dyn witness is not an executable value type".into())
+    }
     /// Box only the fixed-width descriptor. Its referenced objects stay shared.
     pub fn dynamic(&mut self, ty: TypeId, loc: Location, value: &Value) -> Result<Value> {
         self.expect(ty, Kind::Dyn)?;

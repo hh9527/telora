@@ -728,6 +728,35 @@ fn dynamic_values_preserve_sealed_identity_and_shared_payloads() {
     );
     let mismatch = runtime.field(&value, 5).unwrap().to_owned();
     assert!(runtime.enum_payload(&mismatch).unwrap().is_none());
+    for (index, expected) in [(6, "Array"), (7, "Tagged"), (8, "Atom")] {
+        let kind = runtime.field(&value, index).unwrap().to_owned();
+        assert_eq!(
+            runtime
+                .variant_name(kind.type_id(), runtime.enum_tag(&kind).unwrap())
+                .unwrap(),
+            expected
+        );
+    }
+    for index in [9, 10] {
+        let result = runtime.field(&value, index).unwrap().to_owned();
+        assert_eq!(
+            runtime
+                .variant_name(result.type_id(), runtime.enum_tag(&result).unwrap())
+                .unwrap(),
+            "Ok"
+        );
+        let dynamic = runtime.enum_payload(&result).unwrap().unwrap().to_owned();
+        assert_eq!(runtime.dynamic_value(&dynamic).unwrap().words()[2], 42);
+    }
+    for index in [11, 12] {
+        let result = runtime.field(&value, index).unwrap().to_owned();
+        assert_eq!(
+            runtime
+                .variant_name(result.type_id(), runtime.enum_tag(&result).unwrap())
+                .unwrap(),
+            "Err"
+        );
+    }
     let array = payload.to_owned();
     assert_eq!(runtime.array_get(&array, 0).unwrap().words()[2], 42);
 }

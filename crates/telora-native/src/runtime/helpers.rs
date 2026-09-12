@@ -23,6 +23,8 @@ pub(crate) const DYN_PACK: u32 = 17;
 pub(crate) const DYN_DESC: u32 = 18;
 pub(crate) const DYN_PROJECT: u32 = 19;
 pub(crate) const DYN_CHECK: u32 = 20;
+pub(crate) const DYN_KIND: u32 = 21;
+pub(crate) const DYN_FIELD: u32 = 22;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -66,7 +68,7 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
-                DYN_PACK | DYN_DESC | DYN_PROJECT | DYN_CHECK => {
+                DYN_PACK | DYN_DESC | DYN_PROJECT | DYN_CHECK | DYN_KIND | DYN_FIELD => {
                     let read = |pointer: *const u64| -> Result<Value> {
                         let input = unsafe { TypeId((*pointer.add(1) >> 32) as u32) };
                         Ok(Value {
@@ -78,7 +80,34 @@ pub(crate) unsafe extern "C" fn object(
                         })
                     };
                     let first = read(data)?;
-                    if operation == DYN_PACK {
+                    if operation == DYN_FIELD {
+                        let name = read(unsafe { data.add(first.words.len()) })?;
+                        rt.dynamic_value(&first)?;
+                        let outcome = rt.dynamic_field(&first, &name).map(ValueRef::to_owned);
+                        let arguments = rt.layout(ty)?.arguments.clone();
+                        let (tag, value) = match outcome {
+                            Ok(value) => {
+                                ("Ok", rt.dynamic(arguments[0], value.location(), &value)?)
+                            }
+                            Err(message) => ("Err", rt.string(arguments[1], loc, &message)?),
+                        };
+                        let index = rt
+                            .layout(ty)?
+                            .variants
+                            .iter()
+                            .position(|v| v.name == tag)
+                            .ok_or("Dyn field Result variant missing")?;
+                        rt.enum_value(ty, loc, index as u32, Some(&value))?
+                    } else if operation == DYN_KIND {
+                        let name = rt.dynamic_kind(&first)?;
+                        let tag = rt
+                            .layout(ty)?
+                            .variants
+                            .iter()
+                            .position(|v| v.name == name && v.payload.is_none())
+                            .ok_or("Dyn kind result ABI mismatch")?;
+                        rt.enum_value(ty, loc, tag as u32, None)?
+                    } else if operation == DYN_PACK {
                         let value = read(unsafe { data.add(first.words.len()) })?;
                         if rt.represented_type(first.as_ref())? != value.type_id() {
                             return Err("Dyn packing witness mismatch".into());
