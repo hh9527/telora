@@ -168,6 +168,9 @@ pub struct Runtime {
 }
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
 impl Runtime {
+    pub fn is_published(&self) -> bool {
+        self.published
+    }
     pub(crate) fn bind_code_plan(
         &mut self,
         identity: u64,

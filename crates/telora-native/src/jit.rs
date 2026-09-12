@@ -40,6 +40,8 @@ pub struct Compiled {
     output: TypeKey,
     entries: BTreeMap<HirId, CompiledEntry>,
     demands: Vec<(crate::runtime::DemandKey, TypeKey)>,
+    initializers: Vec<(*const u64, Origin)>,
+    export_slots: BTreeMap<SymbolId, usize>,
 }
 struct CompiledEntry {
     entry: Entry,
@@ -70,6 +72,64 @@ impl Drop for CodeMemory {
     }
 }
 impl Compiled {
+    /// Drive every registered initializer, then publish the complete root set.
+    /// Internal reads still use the same demand table and may run ahead.
+    pub fn initialize(&self, context: &mut CallContext) -> Result<()> {
+        context
+            .runtime_mut()?
+            .bind_code_plan(self.identity, &self.demands)?;
+        if context.runtime()?.is_published() {
+            return Ok(());
+        }
+        let mut failed = false;
+        for slot in 0..self.demands.len() {
+            if self.read_demand(context, slot).is_err() {
+                failed = true;
+            }
+        }
+        if failed {
+            return Err("native initialization failed".into());
+        }
+        context.runtime_mut()?.publish(&[])?;
+        Ok(())
+    }
+    pub fn export(&self, context: &mut CallContext, symbol: SymbolId) -> Result<Value> {
+        if !context.runtime()?.is_published() {
+            return Err("native exports require successful initialization".into());
+        }
+        let slot = *self
+            .export_slots
+            .get(&symbol)
+            .ok_or("native export not in code plan")?;
+        self.read_demand(context, slot)
+    }
+    fn read_demand(&self, context: &mut CallContext, slot: usize) -> Result<Value> {
+        context
+            .runtime_mut()?
+            .bind_code_plan(self.identity, &self.demands)?;
+        let ty = self.demands[slot].1;
+        let width = self.layouts.words(ty)?;
+        let mut words = vec![0; width].into_boxed_slice();
+        let (address, origin) = self.initializers[slot];
+        // SAFETY: these addresses belong to this borrowed owner, each is a
+        // zero-argument initializer with this exact closed result width.
+        let status = unsafe {
+            helpers::demand(
+                context,
+                ty,
+                slot as u64,
+                address,
+                words.as_mut_ptr(),
+                origin,
+            )
+        };
+        if status != 0 {
+            return Err("native initialization failed".into());
+        }
+        let mut value = Value::from_result(words, ty, width)?;
+        value.arena = context.runtime()?.identity();
+        Ok(value)
+    }
     pub fn arguments(&self) -> &[TypeKey] {
         &self.arguments
     }
@@ -187,6 +247,51 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
 /// Compile all roots into one executable owner and FunctionId namespace.
 /// Root registration is deterministic regardless of request order.
 pub fn compile_roots(mir: &SealedMir<'_>, roots: &[HirId]) -> Result<Compiled> {
+    compile_plan(mir, roots, &[])
+}
+
+/// Register every value binding in the selected modules, including private
+/// bindings unused by entry. Unsupported initializers are compile errors.
+pub fn compile_modules(
+    mir: &SealedMir<'_>,
+    modules: &[telora_core::mir::ModuleId],
+    roots: &[HirId],
+) -> Result<Compiled> {
+    use telora_core::ast::BindingKind;
+    use telora_core::mir::SymbolKind;
+    let graph = mir.mir();
+    let mut globals = std::collections::BTreeSet::new();
+    for module in modules {
+        let scope = graph
+            .module_scopes
+            .get(module.index())
+            .and_then(|s| *s)
+            .ok_or("native module has no resolved scope")?;
+        for binding in &graph.scopes[scope.index()].bindings {
+            if matches!(
+                graph.symbols[binding.symbol.index()].kind,
+                SymbolKind::Declaration(
+                    BindingKind::Let | BindingKind::Def | BindingKind::Decl | BindingKind::Native
+                )
+            ) {
+                globals.insert(binding.symbol);
+            }
+        }
+    }
+    let globals = globals.into_iter().collect::<Vec<_>>();
+    let fallback = globals
+        .first()
+        .and_then(|s| graph.symbols[s.index()].declarations.first())
+        .copied();
+    let roots = if roots.is_empty() {
+        fallback.into_iter().collect::<Vec<_>>()
+    } else {
+        roots.to_vec()
+    };
+    compile_plan(mir, &roots, &globals)
+}
+
+fn compile_plan(mir: &SealedMir<'_>, roots: &[HirId], globals: &[SymbolId]) -> Result<Compiled> {
     let root = *roots
         .first()
         .ok_or("native code plan needs at least one root")?;
@@ -236,6 +341,9 @@ pub fn compile_roots(mir: &SealedMir<'_>, roots: &[HirId]) -> Result<Compiled> {
         functions.registered.insert(root.into(), function);
         functions.pending.push(root.into());
     }
+    for &symbol in globals {
+        functions.global(graph, symbol, &mut module)?;
+    }
     let mut next = 0;
     while next < functions.pending.len() {
         let node = functions.pending[next];
@@ -267,6 +375,20 @@ pub fn compile_roots(mir: &SealedMir<'_>, roots: &[HirId]) -> Result<Compiled> {
         );
     }
     let entry = entries[&root].entry;
+    let mut initializers = functions
+        .globals
+        .values()
+        .map(|&(slot, key, _)| {
+            (
+                slot,
+                module
+                    .get_finalized_function(functions.registered[&key])
+                    .cast::<u64>(),
+                Origin::from_loc(Some(graph.hir[key.node.index()].location)),
+            )
+        })
+        .collect::<Vec<_>>();
+    initializers.sort_by_key(|i| i.0);
     Ok(Compiled {
         identity: NEXT_CODE_PLAN
             .fetch_update(
@@ -281,6 +403,25 @@ pub fn compile_roots(mir: &SealedMir<'_>, roots: &[HirId]) -> Result<Compiled> {
         arguments,
         output,
         entries,
+        initializers: initializers
+            .into_iter()
+            .map(|(_, address, origin)| (address, origin))
+            .collect(),
+        export_slots: {
+            let mut exports = functions
+                .globals
+                .iter()
+                .map(|(&symbol, &(slot, _, _))| (symbol, slot as usize))
+                .collect::<BTreeMap<_, _>>();
+            for &symbol in graph.exports.iter().flatten() {
+                if let ResolveState::Bound(target) = graph.symbols[symbol.index()].resolution
+                    && let Some(&(slot, _, _)) = functions.globals.get(&target)
+                {
+                    exports.insert(symbol, slot as usize);
+                }
+            }
+            exports
+        },
         demands: {
             let mut globals = functions
                 .globals

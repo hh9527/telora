@@ -321,6 +321,39 @@ fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
     assert!(rt.enum_payload(&end).unwrap().is_none());
 }
 #[test]
+fn module_initialization_includes_unused_values_and_publishes_once() {
+    let (mir, root) = graph("def unused = [1, 2]; def base = 40; export def answer = base + 2;");
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    assert!(context.runtime().unwrap().is_published());
+    let symbol = *mir.exports[module.index()]
+        .iter()
+        .find(|s| mir.symbols[s.index()].name == "answer")
+        .unwrap();
+    assert_eq!(
+        compiled.export(&mut context, symbol).unwrap().words()[2],
+        42
+    );
+    assert_eq!(compiled.demands.len(), 3);
+    compiled.initialize(&mut context).unwrap();
+
+    let (mir, root) = graph("def unused: Int = fail!(\"unused failed\"); export def answer = 42;");
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.initialize(&mut context).is_err());
+    assert!(!context.runtime().unwrap().is_published());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "unused failed");
+    assert!(compiled.initialize(&mut context).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+}
+
+#[test]
 fn generated_global_reads_initialize_once_and_propagate_cycles() {
     let (mir, root) = graph(
         "def items = [40, 2]; def total = items[0] + items[1]; export def answer = (items, items, total);",

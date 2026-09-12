@@ -203,7 +203,7 @@ pub(crate) unsafe extern "C" fn object(
     }) as u32
 }
 
-unsafe fn demand(
+pub(crate) unsafe fn demand(
     context: &mut CallContext,
     ty: TypeId,
     slot: u64,
