@@ -534,9 +534,17 @@ impl Lower<'_, '_> {
         &mut self,
         node: HirId,
         expected: TypeKey,
-        mut value: Vec<ir::Value>,
+        value: Vec<ir::Value>,
     ) -> EmitResult<Vec<ir::Value>> {
         let actual = TypeKey::try_from(self.ty(node)?)?;
+        self.adapt_metadata(actual, expected, value)
+    }
+    fn adapt_metadata(
+        &mut self,
+        actual: TypeKey,
+        expected: TypeKey,
+        mut value: Vec<ir::Value>,
+    ) -> EmitResult<Vec<ir::Value>> {
         if actual == expected {
             return Ok(value);
         }
@@ -1162,11 +1170,19 @@ impl Lower<'_, '_> {
                 )
             }
             HirKind::TupleProjection(index) => {
+                let owner = self.ty(child(self.mir, node, Role::Receiver)?)?;
+                let actual = TypeKey::try_from(
+                    *self.mir.types[owner.index()]
+                        .arguments
+                        .get(index)
+                        .ok_or("tuple projection missing closed element")?,
+                )?;
                 let receiver =
                     self.expression(child(self.mir, node, Role::Receiver)?, depth + 1)?;
                 let data = self.stack_words(&receiver)?;
                 let index = self.builder.ins().iconst(types::I64, index as i64);
-                self.object(node, helpers::FIELD, key, data, index)
+                let value = self.object(node, helpers::FIELD, actual, data, index)?;
+                self.adapt_metadata(actual, key, value)
             }
             HirKind::Field => {
                 let receiver_node = child(self.mir, node, Role::Receiver)?;
@@ -1181,8 +1197,23 @@ impl Lower<'_, '_> {
                     .ok_or_else(|| format!("native unsupported field access {name}"))?;
                 let receiver = self.expression(receiver_node, depth + 1)?;
                 let data = self.stack_words(&receiver)?;
+                let actual = self.mir.type_layouts[receiver_ty.index()]
+                    .as_ref()
+                    .and_then(|layout| layout.members.get(index))
+                    .copied()
+                    .flatten()
+                    .or_else(|| match self.mir.types[receiver_ty.index()].constructor {
+                        TypeConstructor::Record(_) => self.mir.types[receiver_ty.index()]
+                            .arguments
+                            .get(index)
+                            .copied(),
+                        _ => None,
+                    })
+                    .ok_or("field has no closed skeleton type")?;
+                let actual = TypeKey::try_from(actual)?;
                 let index = self.builder.ins().iconst(types::I64, index as i64);
-                self.object(node, helpers::FIELD, key, data, index)
+                let value = self.object(node, helpers::FIELD, actual, data, index)?;
+                self.adapt_metadata(actual, key, value)
             }
             HirKind::Index => {
                 let receiver_node = child(self.mir, node, Role::Receiver)?;
@@ -1199,7 +1230,11 @@ impl Lower<'_, '_> {
                 }
                 let index = self.expression(index_node, depth + 1)?;
                 let data = self.stack_words(&receiver)?;
-                self.object(node, helpers::INDEX, key, data, index[2])
+                let actual = TypeKey::try_from(
+                    self.mir.types[self.ty(receiver_node)?.index()].arguments[0],
+                )?;
+                let value = self.object(node, helpers::INDEX, actual, data, index[2])?;
+                self.adapt_metadata(actual, key, value)
             }
             HirKind::Variable(_) => {
                 let slot = syntax

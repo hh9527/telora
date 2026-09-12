@@ -348,6 +348,66 @@ fn property_queries_execute_provider_chains_and_cache_results() {
 }
 
 #[test]
+fn member_property_contexts_use_sealed_names_indices_and_payload_types() {
+    for (source, expected, name) in [
+        (
+            "import \"std/type-property\" { FieldPropertyCtx, get_field_prop }; @property(PropertyTarget.Field) type Mark = struct { value: Int, label: String }; def mark: Fn(FieldPropertyCtx, Option(Mark)) -> Mark = fn(ctx, previous) { { value: if ctx.ty == Int.type { 42 + ctx.index } else { 0 }, label: ctx.name } }; type Owner = struct { @mark a: Int }; export def answer = match get_field_prop(Owner.type, 0, Mark.type) { Some(p) => (p.value, p.label), None => (0, \"missing\") };",
+            42,
+            "a",
+        ),
+        (
+            "import \"std/type-property\" { VariantPropertyCtx, get_variant_prop }; @property(PropertyTarget.Variant) type Mark = struct { value: Int, label: String }; def mark: Fn(VariantPropertyCtx, Option(Mark)) -> Mark = fn(ctx, previous) { { value: match ctx.payload { Some(t) => if t == Int.type { 41 + ctx.index } else { 0 }, None => 24 }, label: ctx.name } }; type Owner = enum { @mark Empty, @mark Value(Int) }; export def answer = match get_variant_prop(Owner.type, 1, Mark.type) { Some(p) => (p.value, p.label), None => (0, \"missing\") };",
+            42,
+            "Value",
+        ),
+    ] {
+        let (mir, root) = graph_with(source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]).unwrap();
+        let rt = context.runtime().unwrap();
+        assert_eq!(rt.field(&result, 0).unwrap().words()[2], expected);
+        assert_eq!(
+            rt.text(rt.field(&result, 1).unwrap()).unwrap().as_str(),
+            name
+        );
+        compiled.initialize(&mut context).unwrap();
+        assert!(context.runtime().unwrap().is_published());
+        if name == "Value" {
+            let source = source.replace("Owner.type, 1, Mark.type", "Owner.type, 0, Mark.type");
+            let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+            let sealed = mir.seal().unwrap();
+            let compiled = compile(&sealed, root).unwrap();
+            let mut context =
+                CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+            let result = compiled.call(&mut context, &[]).unwrap();
+            let rt = context.runtime().unwrap();
+            assert_eq!(rt.field(&result, 0).unwrap().words()[2], 24);
+            assert_eq!(
+                rt.text(rt.field(&result, 1).unwrap()).unwrap().as_str(),
+                "Empty"
+            );
+        }
+    }
+}
+
+#[test]
+fn generic_property_chains_consume_separate_closed_witnesses() {
+    let source = "import \"std/type-property\" { get_type_prop }; @property(PropertyTarget.Type) type Mark(T) = struct { witness: TypeOf(T), count: Int }; def mark: for(T) Fn(TypeOf(T)) -> Fn(Type, Option(Mark(T))) -> Mark(T) = fn(witness) { fn(owner, previous) { { witness: witness, count: 1 + match previous { Some(p) => p.count, None => 0 } } } }; @mark(T.type) @mark(T.type) type Box(T) = struct { value: T }; export def answer = do { let a = match get_type_prop(Box(Int).type, Mark(Int).type) { Some(p) => p, None => fail!(\"missing Int\") }; let b = match get_type_prop(Box(String).type, Mark(String).type) { Some(p) => p, None => fail!(\"missing String\") }; if a.witness == Int.type && b.witness == String.type { a.count + b.count } else { 0 } };";
+    let (mir, root) = graph_with(source, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled
+        .call(&mut context, &[])
+        .unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(result.words()[2], 4);
+    compiled.initialize(&mut context).unwrap();
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 4);
+}
+
+#[test]
 fn property_evidence_and_capability_rejection_follow_the_sealed_plan() {
     let source = "import \"std/type-property\" { evidence }; @property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { { value: 42 } }; @mark type Item = struct { x: Int }; export def answer = evidence(Item.type, Mark.type).value;";
     let (mir, root) = graph_with(source, static_sources::BUILTINS);

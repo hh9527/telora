@@ -85,6 +85,112 @@ pub(super) fn emit(
 }
 
 impl Lower<'_, '_> {
+    fn property_context(
+        &mut self,
+        node: HirId,
+        record: &telora_core::mir::PropertyRecord,
+        context: TypeKey,
+    ) -> EmitResult<Vec<ir::Value>> {
+        if record.site == PropertySite::Type {
+            return self.fixed_value(
+                node,
+                context,
+                &[u64::from(TypeKey::try_from(record.owner)?.raw())],
+            );
+        }
+        let index = match record.site {
+            PropertySite::Field(i) | PropertySite::Variant(i) => i as usize,
+            _ => unreachable!(),
+        };
+        let TypeConstructor::Nominal(symbol) = self.mir.types[record.owner.index()].constructor
+        else {
+            return Err("member property owner has no nominal skeleton".into());
+        };
+        let name = self
+            .mir
+            .type_definitions
+            .iter()
+            .find(|d| d.symbol == symbol)
+            .and_then(|d| d.members.get(index))
+            .ok_or("property member missing from skeleton")?
+            .name
+            .clone();
+        let payload = *self.mir.type_layouts[record.owner.index()]
+            .as_ref()
+            .and_then(|layout| layout.members.get(index))
+            .ok_or("property member type missing from skeleton")?;
+        let names = self.layouts.field_names[context.index()].clone();
+        let fields = self.mir.type_layouts[context.index()]
+            .as_ref()
+            .ok_or("member property context has no layout")?
+            .members
+            .clone();
+        if names.len() != 4 || fields.len() != 4 {
+            return Err("member property context ABI field count mismatch".into());
+        }
+        let mut values = Vec::new();
+        for (name_key, field) in names.iter().zip(fields) {
+            let ty = TypeKey::try_from(field.ok_or("context field has no closed type")?)?;
+            let value = match name_key.as_str() {
+                "owner" | "ty" => {
+                    if self.mir.types[ty.index()].constructor != TypeConstructor::Type {
+                        return Err("context metadata ABI mismatch".into());
+                    }
+                    let represented = if name_key == "owner" {
+                        record.owner
+                    } else {
+                        if !matches!(record.site, PropertySite::Field(_)) {
+                            return Err("variant context cannot have a field type".into());
+                        }
+                        payload.ok_or("field property has no field type")?
+                    };
+                    self.fixed_value(
+                        node,
+                        ty,
+                        &[u64::from(TypeKey::try_from(represented)?.raw())],
+                    )?
+                }
+                "index" => {
+                    if self.mir.types[ty.index()].constructor != TypeConstructor::Int {
+                        return Err("context index ABI mismatch".into());
+                    }
+                    self.fixed_value(node, ty, &[index as u64])?
+                }
+                "name" => {
+                    if self.mir.types[ty.index()].constructor != TypeConstructor::String {
+                        return Err("context name ABI mismatch".into());
+                    }
+                    self.string(node, ty, &name)?
+                }
+                "payload" => {
+                    if !matches!(record.site, PropertySite::Variant(_))
+                        || self.mir.types[ty.index()].constructor != TypeConstructor::Option
+                    {
+                        return Err("context payload ABI mismatch".into());
+                    }
+                    let metadata = TypeKey::try_from(self.mir.types[ty.index()].arguments[0])?;
+                    if self.mir.types[metadata.index()].constructor != TypeConstructor::Type {
+                        return Err("variant payload metadata ABI mismatch".into());
+                    }
+                    if let Some(payload) = payload {
+                        let value = self.fixed_value(
+                            node,
+                            metadata,
+                            &[u64::from(TypeKey::try_from(payload)?.raw())],
+                        )?;
+                        self.enum_constructor(node, ty, 1, &value)?
+                    } else {
+                        self.enum_constructor(node, ty, 0, &[])?
+                    }
+                }
+                _ => return Err("unknown member property context ABI field".into()),
+            };
+            values.extend(value);
+        }
+        let data = self.stack_words(&values)?;
+        let count = self.builder.ins().iconst(types::I64, 4);
+        self.object(node, helpers::AGGREGATE, context, data, count)
+    }
     fn fixed_value(
         &mut self,
         node: HirId,
@@ -166,9 +272,6 @@ impl Lower<'_, '_> {
     fn property_chain(&mut self, index: usize) -> EmitResult<()> {
         let record = self.mir.properties[index].clone();
         let node = record.providers[0];
-        if record.site != PropertySite::Type {
-            return Err("native member property context is not yet linked".into());
-        }
         if let Some(PropertyAdmission::Require {
             capability,
             targets,
@@ -243,10 +346,12 @@ impl Lower<'_, '_> {
             }
             let owner_ty = TypeKey::try_from(shape.arguments[0])?;
             let optional = TypeKey::try_from(shape.arguments[1])?;
-            if !matches!(
-                self.mir.types[owner_ty.index()].constructor,
-                TypeConstructor::Type | TypeConstructor::TypeOf
-            ) {
+            if record.site == PropertySite::Type
+                && !matches!(
+                    self.mir.types[owner_ty.index()].constructor,
+                    TypeConstructor::Type | TypeConstructor::TypeOf
+                )
+            {
                 return Err("native property owner context requires metadata".into());
             }
             if self.mir.types[owner_ty.index()].constructor == TypeConstructor::TypeOf
@@ -259,11 +364,7 @@ impl Lower<'_, '_> {
             {
                 return Err("property previous value signature mismatch".into());
             }
-            let owner = self.fixed_value(
-                provider,
-                owner_ty,
-                &[u64::from(TypeKey::try_from(record.owner)?.raw())],
-            )?;
+            let owner = self.property_context(provider, &record, owner_ty)?;
             let previous_value = match &previous {
                 Some(value) => self.enum_constructor(provider, optional, 1, value)?,
                 None => self.enum_constructor(provider, optional, 0, &[])?,
@@ -278,19 +379,25 @@ impl Lower<'_, '_> {
         arguments: &[TypeKey],
         data: ir::Value,
         evidence: bool,
+        site: PropertySite,
     ) -> EmitResult<()> {
-        if arguments.len() != 2
+        let member_query = site != PropertySite::Type;
+        let property_argument = if member_query { 2 } else { 1 };
+        if arguments.len() != property_argument + 1
             || self.mir.types[arguments[0].index()].constructor
                 != if evidence {
                     TypeConstructor::TypeOf
                 } else {
                     TypeConstructor::Type
                 }
-            || self.mir.types[arguments[1].index()].constructor != TypeConstructor::TypeOf
+            || self.mir.types[arguments[property_argument].index()].constructor
+                != TypeConstructor::TypeOf
+            || (member_query
+                && self.mir.types[arguments[1].index()].constructor != TypeConstructor::Int)
         {
             return Err("native property query ABI mismatch".into());
         }
-        let property = self.mir.types[arguments[1].index()].arguments[0];
+        let property = self.mir.types[arguments[property_argument].index()].arguments[0];
         if if evidence {
             self.return_type != TypeKey::try_from(property)?
         } else {
@@ -308,15 +415,41 @@ impl Lower<'_, '_> {
             .properties
             .iter()
             .enumerate()
-            .filter(|(_, r)| r.concrete && r.site == PropertySite::Type && r.property == property)
-            .map(|(i, r)| (i, r.owner))
+            .filter(|(_, r)| {
+                r.concrete
+                    && std::mem::discriminant(&r.site) == std::mem::discriminant(&site)
+                    && r.property == property
+            })
+            .map(|(i, r)| (i, r.owner, r.site))
             .collect::<Vec<_>>();
-        for (index, ty) in candidates {
-            let matched = self.builder.ins().icmp_imm_s(
+        let member = if member_query {
+            Some(self.builder.ins().load(
+                types::I64,
+                MemFlagsData::new(),
+                data,
+                ((self.layouts.words(arguments[0])? + 2) * 8) as i32,
+            ))
+        } else {
+            None
+        };
+        for (index, ty, record_site) in candidates {
+            let mut matched = self.builder.ins().icmp_imm_s(
                 cranelift_codegen::ir::condcodes::IntCC::Equal,
                 owner,
                 ty.index() as i64,
             );
+            if let Some(member) = member {
+                let position = match record_site {
+                    PropertySite::Field(i) | PropertySite::Variant(i) => i,
+                    PropertySite::Type => unreachable!(),
+                };
+                let same = self.builder.ins().icmp_imm_s(
+                    cranelift_codegen::ir::condcodes::IntCC::Equal,
+                    member,
+                    i64::from(position),
+                );
+                matched = self.builder.ins().band(matched, same);
+            }
             let yes = self.builder.create_block();
             let no = self.builder.create_block();
             self.builder.ins().brif(matched, yes, &[], no, &[]);

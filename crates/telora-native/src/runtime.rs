@@ -347,7 +347,13 @@ impl Runtime {
             return Err("value belongs to a different arena".into());
         }
         if value.type_id() != ty || value.words.len() != self.layout(ty)?.words {
-            return Err("value/type layout mismatch".into());
+            return Err(format!(
+                "value/type layout mismatch: actual type {} ({} words), expected type {} ({} words)",
+                value.type_id().raw(),
+                value.words.len(),
+                ty.raw(),
+                self.layout(ty)?.words
+            ));
         }
         Ok(())
     }

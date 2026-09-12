@@ -92,8 +92,24 @@ impl Lower<'_, '_> {
         if (module.id, declaration.name.as_str()) == (18, "property") {
             return self.property_factory(node, arguments, data, environment);
         }
-        if module.id == 25 && matches!(declaration.name.as_str(), "get_type_prop" | "evidence") {
-            return self.property_query(node, arguments, data, declaration.name == "evidence");
+        if module.id == 25
+            && matches!(
+                declaration.name.as_str(),
+                "get_type_prop" | "evidence" | "get_field_prop" | "get_variant_prop"
+            )
+        {
+            let site = match declaration.name.as_str() {
+                "get_field_prop" => telora_core::mir::PropertySite::Field(0),
+                "get_variant_prop" => telora_core::mir::PropertySite::Variant(0),
+                _ => telora_core::mir::PropertySite::Type,
+            };
+            return self.property_query(
+                node,
+                arguments,
+                data,
+                declaration.name == "evidence",
+                site,
+            );
         }
         if (module.id, declaration.name.as_str()) == (5, "map") {
             if arguments.len() != 2 {

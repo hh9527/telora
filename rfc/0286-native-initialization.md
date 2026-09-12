@@ -41,7 +41,9 @@ Native `property` 工厂已生成真实可调用的 provider 闭包，捕获 Pro
 
 类型级 property 清单现已生成需求初始化函数，按 MIR provider 顺序执行 configured factory 和 provider，传入 owner 元数据及 previous，执行 capability admission。`get_type_prop`/`evidence` native 适配器按封闭 TypeId 查询：可选缺失为 None，必有属性缺失为 Failed，provider 失败直接传播。所选模块中的未使用 property 也纳入主动初始化。已验证双 provider 合并、配置闭包、发布后缓存、property/顶层值互相依赖的单次环诊断、能力拒绝、未使用 property 失败阻止发布。
 
-field/variant property 上下文、更丰富的 owner 上下文、数据注入、泛型函数族/所需 native 操作及 CLI 初始化入口尚未完成，因此暂未覆盖包含整个标准库的全图，不据此宣称 CLI 初始化已可用。
+FieldPropertyCtx / VariantPropertyCtx 与对应查询已接入，字段名、索引、owner/字段/payload 类型均来自封闭骨架；无 payload 的 variant 使用 None，需求键保留成员 site。已验证 field、带 payload/无 payload 的 variant 及统一初始化发布。泛型 property 的不同闭合实例也验证了独立见证与顺序合并；字段读取先使用骨架的物理类型，再按 MIR 表达式类型做 TypeOf→Type 标记适配。
+
+更丰富的 owner 上下文、数据注入、泛型函数族/所需 native 操作及 CLI 初始化入口尚未完成，因此暂未覆盖包含整个标准库的全图，不据此宣称 CLI 初始化已可用。
 
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。
 
