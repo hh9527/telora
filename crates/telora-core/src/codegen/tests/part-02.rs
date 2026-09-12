@@ -1057,7 +1057,9 @@ fn solved_codec_text_encode_calls_prepared_display_for_nested_values() {
         type Service = struct { name: String, endpoint: Endpoint };
         def endpoint: Endpoint = {host: "localhost", port: 8080};
         def service: Service = {name: "api", endpoint};
-        export def answer = json.stringify(codec.encode(codec.Value.type, { endpoints: [endpoint, endpoint], service }));
+        type Payload = struct { endpoints: Array(Endpoint), service: Service };
+        def payload: Payload = { endpoints: [endpoint, endpoint], service };
+        export def answer = json.stringify(codec.encode(codec.Value.type, payload));
     "#, "");
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
@@ -1090,10 +1092,12 @@ fn solved_codec_encode_consumes_layouts_and_lazy_untagged_properties() {
         import "std/value" {ScalarValue};
         type Box(T) = struct { value: T };
         def boxed: Box(Int) = { value: 42 };
-        export def answer = json.stringify(codec.encode(codec.Value.type, {
+        type Payload = struct { boxed: Box(Int), bindings: Array(ScalarValue), sql: String, flags: Array(Bool) };
+        def payload: Payload = {
             boxed, bindings: [ScalarValue.Int(42), ScalarValue.String("ok"), ScalarValue.None],
             sql: "SELECT 1", flags: [True, False],
-        }));
+        };
+        export def answer = json.stringify(codec.encode(codec.Value.type, payload));
     "#, "");
     let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
     drop(mir);
@@ -1208,7 +1212,7 @@ fn native_link_requires_an_admitted_binding_with_the_declared_arity() {
 #[test]
 fn records_and_nominal_configs_use_existing_vm_storage_and_field_operations() {
     for main in [
-        "def config = { evaluate: fn(x) { if True { x + 1 } else { 0 } }, seed: 41 }; export def answer = config.evaluate(config.seed);",
+        "type Config = struct {evaluate: Fn(Int) -> Int, seed: Int}; def config: Config = { evaluate: fn(x) { if True { x + 1 } else { 0 } }, seed: 41 }; export def answer = config.evaluate(config.seed);",
         "import \"./math\" { Config }; def config: Config = { evaluate: fn(x) { x + 1 }, seed: 41 }; export def answer = config.evaluate(config.seed);",
     ] {
         let mir = graph(

@@ -5,12 +5,16 @@ import "std/string" as string;
 import "std/type-desc" as type_desc;
 
 type State = enum {Ok, Err};
+type Operations = struct {increment: Fn(Int) -> Int};
+type Address = struct {city: String};
+type User = struct {name: String, address: Address};
+type Package = struct {name: String, version: Int};
 
 decl explicit_identity: for(A) Fn(A) -> A;
 def explicit_identity = fn(value) { value };
 
 export def record_precedence = test.should_ok(fn() {
-    expect({b: 2 + 3 * 4, a: 1}.b == 14)
+    expect({b: 2 + 3 * 4, a: 1}.ty!(Dict(Int)).b == 14)
 });
 
 export def enum_tuples = test.should_ok(fn() {
@@ -126,7 +130,7 @@ export def indexing = test.should_ok(fn() {
 export def pipelines = test.should_ok(fn() {
     expect({
             let add = fn(a) { fn(b) { a + b } };
-            let ops = {increment: fn(value) { value + 1 }};
+            let ops: Operations = {increment: fn(value) { value + 1 }};
             (40 |> add(2)) == 42 && (40 |> ops.increment |> fn(value) { value + 1 }) == 42
     })
 });
@@ -192,7 +196,7 @@ export def variant_patterns = test.should_ok(fn() {
 
 export def structural_patterns = test.should_ok(fn() {
     expect({
-        let user = {name: "Ada", address: {city: "London"}};
+        let user: User = {name: "Ada", address: {city: "London"}};
         let selected = match user { {name, address: {city}} => (name, city) };
         let select: Fn(Option(String)) -> String = fn(value) {
             match value { Some(name) => name, _ => "fallback" }
@@ -204,7 +208,7 @@ export def structural_patterns = test.should_ok(fn() {
 
 export def destructuring_let = test.should_ok(fn() {
     expect({
-        let (left, user) = (1, {name: "Ada", address: {city: "London"}});
+        let (left, user) = (1, {name: "Ada", address: {city: "London"}}).ty!((Int, User));
         let {name, address: {city}} = user;
         (left, name, city) == (1, "Ada", "London")
     })
@@ -358,7 +362,7 @@ export def record_shorthand = test.should_ok(fn() {
     expect({
         let name = "telora";
         let version = 1;
-        {name, version} == {name: "telora", version: 1}
+        {name, version}.ty!(Package) == {name: "telora", version: 1}
     })
 });
 

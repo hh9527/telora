@@ -7,6 +7,7 @@ import "@src/test/nominal-equality/provider" {Item};
 
 def item: Item = {value: 42};
 type Wrapped = enum {Some(Array(Item)), None};
+type Fields = struct {entry: Array(Item)};
 def choose: for(T) Fn(T, T) -> T = fn(left, right) { left };
 def choose_array: for(T) Fn(Array(T), T) -> Array(T) = fn(left, right) { left };
 def choose_independent: for(A, B) Fn(A, B) -> A = fn(left, right) { left };
@@ -41,8 +42,8 @@ export def bidirectional = test.should_ok(fn() {
         && ({value: 42}, item) == (item, {value: 42}))
 });
 export def fields = test.should_ok(fn() {
-    expect({entry: [item]} == {entry: [{value: 42}]}
-        && {entry: [{value: 42}]} == {entry: [item]})
+    expect({entry: [item]}.ty!(Fields) == {entry: [{value: 42}]}
+        && {entry: [{value: 42}]} == {entry: [item]}.ty!(Fields))
 });
 export def dictionaries = test.should_ok(fn() {
     let values: Dict(Item) = {entry: item};

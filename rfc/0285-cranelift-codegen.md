@@ -33,7 +33,8 @@
 和 `compile_roots` 仍用于局部验证。Never 顶层引用、Dict 字段访问已补齐。
 当前 native 测试为 139 项单元测试和 3 项集成测试，CLI 验收为 85 项；
 语言模块 check 不执行所有测试闭包，不能据此称完整语言运行覆盖已经通过。
-共享泛型参数的名义身份规则仍待确认。
+共享泛型参数的身份规则已由 RFC 0289 确认：同一个 T 必须具有相同 TypeId，
+记录构造由整图上下文决定最终身份，不允许匿名 Record 成为最终用户值。
 
 下面的首批实现及各阶段进展保留历史上下文，旧测试数量和当时未接通项
 不代表当前支持范围。完整落地仍按伞 RFC 的验收条件判断。
@@ -46,7 +47,7 @@
 | 类别 | 当前路径 | 代表证据与边界 |
 | --- | --- | --- |
 | Int/Float/Bool/Unit、String/Bytes、类型元数据 | 固定布局常量及文字对象 helper | `machine_code_returns_materialized_scalar_and_unit`；Never 不物化 |
-| 算术、比较、短路 | `jit/scalars.rs`，结构相等经 helper | `scalar_machine_code_handles_recursion_and_checked_arithmetic`；共享 T 的名义身份问题仍待确认 |
+| 算术、比较、短路 | `jit/scalars.rs`，结构相等经 helper | `scalar_machine_code_handles_recursion_and_checked_arithmetic`；共享 T 必须统一为同一个 TypeId（RFC 0289） |
 | let/def、引用、导入、泛型实例 | SymbolId/GenericInstanceId 对应局部槽或需求槽 | `generic_calls_consume_closed_instances_without_substituting_types_at_runtime`；无运行时函数族 |
 | 函数、捕获、递归、间接调用 | `jit/functions.rs` 与封闭签名分派 | `direct_functions_have_independent_frames_and_support_recursion`、`native_local_mutual_recursion_uses_stable_function_slots` |
 | block、if、return | 顺序求值及 SSA 合流，Diverged 不读取值 | `machine_code_branches_on_argument_and_preserves_selected_value_origin` |

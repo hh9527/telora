@@ -1,0 +1,6 @@
+type Left = struct {value: Int};
+type Right = struct {value: Int};
+def choose: for(T) Fn(T, T) -> T = fn(left, right) {left};
+def left: Left = {value: 42};
+def right: Right = {value: 42};
+export def value = choose(left, right);

@@ -596,7 +596,7 @@ fn machine_code_constructs_native_objects_without_old_vm() {
         ),
         ("export def answer = [7, 8];", "array"),
         (
-            "export def answer = {label: \"long shared record text\", count: 7};",
+            "type Item = struct {label: String, count: Int}; export def answer: Item = {label: \"long shared record text\", count: 7};",
             "record",
         ),
         ("export def answer: Dict(Int) = {z: 8, a: 7};", "dict"),
@@ -1599,7 +1599,7 @@ fn native_construction_invokes_sealed_checker_and_propagates_failure_once() {
 
 #[test]
 fn native_newtype_publication_preserves_shared_payloads_and_distinct_tables() {
-    let (mir, root) = graph_with("import \"std/codec\" {decode, Value}; type Wrapped = struct(String); def text = \"long shared newtype payload\"; def wrapped = match decode(Wrapped.type, Value.String(text)) { Ok(value) => value, Err(error) => raise!(error) }; export def answer = ({value: text}, wrapped, wrapped, text);", static_sources::BUILTINS);
+    let (mir, root) = graph_with("import \"std/codec\" {decode, Value}; type Wrapped = struct(String); type Holder = struct {value: String}; def text = \"long shared newtype payload\"; def wrapped = match decode(Wrapped.type, Value.String(text)) { Ok(value) => value, Err(error) => raise!(error) }; export def answer = ({value: text}.ty!(Holder), wrapped, wrapped, text);", static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();
     let compiled = compile(&sealed, root).unwrap();
     let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
@@ -1685,8 +1685,8 @@ fn native_codec_checker_rejection_precedes_later_sibling_decode_and_failure_abor
 }
 
 #[test]
-fn native_codec_decodes_inferred_structural_records() {
-    let (mir, root) = graph_with("import \"std/codec\" { encode, decode, Value }; def roundtrip: for(T) Fn(T) -> T = fn(value) { match decode(T.type, encode(Value.type, value)) { Ok(result) => result, Err(error) => raise!(error) } }; export def answer = encode(Value.type, roundtrip({a: 42, text: \"shared record string\"}));", static_sources::BUILTINS);
+fn native_codec_decodes_named_record_contracts() {
+    let (mir, root) = graph_with("import \"std/codec\" { encode, decode, Value }; def roundtrip: for(T) Fn(T) -> T = fn(value) { match decode(T.type, encode(Value.type, value)) { Ok(result) => result, Err(error) => raise!(error) } }; type Item = struct {a: Int, text: String}; export def answer = encode(Value.type, roundtrip({a: 42, text: \"shared record string\"}.ty!(Item)));", static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();
     let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
     let compiled = compile(&sealed, root).unwrap();
@@ -1698,7 +1698,7 @@ fn native_codec_decodes_inferred_structural_records() {
         ("{a: 0}", "Value.Object({a: Value.Int(1), z: Value.Int(2)})", "$.z: unknown field"),
         ("{a: 0}", "Value.Object({a: Value.String(\"bad\")})", "$.a: expected Int"),
     ] {
-        let source = format!("import \"std/codec\" {{decode, Value, BlameError}}; def convert: for(T) Fn(T, Value) -> Result(T, BlameError) = fn(example, input) {{ decode(T.type, input) }}; export def answer = convert({exemplar}, {wire});");
+        let source = format!("import \"std/codec\" {{decode, Value, BlameError}}; def convert: for(T) Fn(T, Value) -> Result(T, BlameError) = fn(example, input) {{ decode(T.type, input) }}; type Item = struct {{a: Int}}; export def answer = convert({exemplar}.ty!(Item), {wire});");
         let (mir, root) = graph_with(&source, static_sources::BUILTINS);
         let sealed = mir.seal().unwrap();
         let compiled = compile(&sealed, root).unwrap();

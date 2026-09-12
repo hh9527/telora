@@ -1,0 +1,1 @@
+export def value = {answer: 42};

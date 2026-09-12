@@ -1,6 +1,52 @@
 use super::*;
 
 impl Lower<'_, '_> {
+    fn record_inputs(&mut self, node: HirId, depth: usize) -> EmitResult<BTreeMap<String, (TypeKey, Vec<ir::Value>)>> {
+        if depth > 512 { return Err("native record construction nesting limit".into()); }
+        let owner = TypeKey::try_from(self.ty(node)?)?;
+        let mut fields = BTreeMap::new();
+        if matches!(self.mir.types[owner.index()].constructor, TypeConstructor::Record(_)) {
+            match self.mir.hir[node.index()].kind {
+                HirKind::Dict => {
+                    let contributions = self.mir.hir[node.index()].children.iter().filter(|edge| edge.role == Role::Field).map(|edge| edge.node).collect::<Vec<_>>();
+                    for field in contributions {
+                        let value = child(self.mir, field, Role::Value)?;
+                        if let Ok(name) = child(self.mir, field, Role::Name) {
+                            let HirKind::Name(name) = &self.mir.hir[name.index()].kind else { return Err("construction field name missing".into()); };
+                            let name = name.clone();
+                            let words = self.expression(value, depth + 1)?;
+                            let actual = self.adjustment_type(value)?.unwrap_or(TypeKey::try_from(self.ty(value)?)?);
+                            fields.insert(name, (actual, words));
+                        } else {
+                            fields.extend(self.record_inputs(child(self.mir, value, Role::Operand)?, depth + 1)?);
+                        }
+                    }
+                    return Ok(fields);
+                }
+                HirKind::FieldProjection => {
+                    let receiver = child(self.mir, node, Role::Receiver)?;
+                    let mut source = self.record_inputs(receiver, depth + 1)?;
+                    let sources = self.mir.hir[node.index()].children.iter().filter(|edge| edge.role == Role::Name).map(|edge| edge.node).collect::<Vec<_>>();
+                    let targets = self.mir.hir[node.index()].children.iter().filter(|edge| edge.role == Role::Target).map(|edge| edge.node).collect::<Vec<_>>();
+                    for (source_node, target) in sources.into_iter().zip(targets) {
+                        let (HirKind::Name(name), HirKind::Name(target)) = (&self.mir.hir[source_node.index()].kind, &self.mir.hir[target.index()].kind) else { return Err("projection names missing".into()); };
+                        fields.insert(target.clone(), source.get_mut(name).ok_or("projection source missing")?.clone());
+                    }
+                    return Ok(fields);
+                }
+                _ => return Err("record construction evidence is not a value".into()),
+            }
+        }
+        let value = self.expression(node, depth + 1)?;
+        let data = self.stack_words(&value)?;
+        for (index, name) in self.layouts.field_names[owner.index()].clone().into_iter().enumerate() {
+            let actual = self.record_field_type(owner, index)?;
+            let index = self.builder.ins().iconst(types::I64, index as i64);
+            let words = self.object(node, helpers::FIELD, actual, data, index)?;
+            fields.insert(name, (actual, words));
+        }
+        Ok(fields)
+    }
     fn record_field_type(&self, owner: TypeKey, index: usize) -> Result<TypeKey> {
         let owner = if self.mir.types[owner.index()].constructor == TypeConstructor::Unchecked {
             TypeKey::try_from(self.mir.types[owner.index()].arguments[0])?
@@ -143,34 +189,9 @@ impl Lower<'_, '_> {
         let right_node = child(self.mir, node, Role::Right)?;
         let owner = TypeKey::try_from(self.ty(node)?)?;
         let left_ty = TypeKey::try_from(self.ty(left_node)?)?;
-        let right_ty = TypeKey::try_from(self.ty(right_node)?)?;
         if owner != left_ty { return Err("struct update lost its sealed owner identity".into()); }
-        // Evaluate both authored operands once and in source order. Field
-        // selection below is a compile-time layout operation, not a VM lookup.
-        let left = self.expression(left_node, depth + 1)?;
-        let right = self.expression(right_node, depth + 1)?;
-        let left = self.stack_words(&left)?;
-        let right = self.stack_words(&right)?;
-        let names = self.layouts.field_names[owner.index()].clone();
-        let patch_names = self.layouts.field_names[right_ty.index()].clone();
-        if patch_names.iter().any(|name| !names.contains(name)) {
-            return Err("sealed struct update contains an unknown patch field".into());
-        }
-        let mut words = Vec::new();
-        for (index, name) in names.iter().enumerate() {
-            let expected = self.record_field_type(owner, index)?;
-            let (source, data, actual, field) = match patch_names.iter().position(|field| field == name) {
-                Some(field) => (right_node, right, self.record_field_type(right_ty, field)?, field),
-                None => (left_node, left, expected, index),
-            };
-            let field = self.builder.ins().iconst(types::I64, field as i64);
-            let value = self.object(source, helpers::FIELD, actual, data, field)?;
-            words.extend(self.adapt_metadata(actual, expected, value)?);
-        }
-        let data = self.stack_words(&words)?;
-        let count = self.builder.ins().iconst(types::I64, names.len() as i64);
-        let result = self.object(node, helpers::AGGREGATE, owner, data, count)?;
-        self.construction_check(node, owner, telora_core::mir::PropertySite::Type, &result)?;
-        Ok(result)
+        let mut fields = self.record_inputs(left_node, depth + 1)?;
+        fields.extend(self.record_inputs(right_node, depth + 1)?);
+        self.finish_record(node, owner, fields)
     }
 }

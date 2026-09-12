@@ -1,6 +1,6 @@
 # RFC 0287：隐藏 --native 接入与执行语义对齐
 
-> 后续决议：RFC 0289 移除 cast，相关历史测试已删除；匿名 Record 契约清理继续推进。
+> 后续决议：RFC 0289 已移除 cast，并禁止最终匿名 Record 用户值；下文审计保留历史观察，不再存在共享 T 规则待确认的阻塞。
 
 - 状态：实施中；check/eval/eval-with 已接入实验后端，完整语义覆盖和配额验证待完成
 - 日期：2026-09-12
@@ -60,8 +60,8 @@ JSON/YAML/TOML 字符串解析直接物化到 native tables，保留输入来源
   `initialization` 为源码显式顶层 fail，报告 `test export initialization failure`。
 - `nominal-equality` 和 `enum-constructor-context` 仍失败：同一个泛型参数
   接收已物化的匿名 Record 与名义 Item（含 Array/Option 嵌套），MIR 的边界类型
-  与实际值身份不一致。共享参数是否要求相同 TypeId 的规则待确认，未以运行时
-  重新标记身份掩盖问题。
+  与实际值身份不一致。当时共享参数身份规则待确认；后续 RFC 0289 已明确要求
+  相同 TypeId，取消记录证据的提前冻结，并拒绝缺少最终类型上下文的构造。
 
 这批 check 会编译测试闭包，但不运行测试调度器和闭包内容，不能等同于 71 个
 模块的全部运行测试通过。另实际执行了 eval/interpolation 的 native eval，

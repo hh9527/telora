@@ -448,6 +448,51 @@ struct Emitter<'a> {
 }
 
 impl<'a> Emitter<'a> {
+    fn record_inputs(&mut self, node: HirId) -> Result<std::collections::BTreeMap<String, R>, Diagnostic> {
+        let ty = self.ty(node)?;
+        let mut fields = std::collections::BTreeMap::new();
+        if matches!(self.mir.types[ty.index()].constructor, TypeConstructor::Record(_)) {
+            match self.mir.hir[node.index()].kind {
+                HirKind::Dict => {
+                    for field in self.children(node, Role::Field) {
+                        let value = self.child(field, Role::Value);
+                        if let Some(name) = self.children(field, Role::Name).first().copied() {
+                            let HirKind::Name(name) = &self.mir.hir[name.index()].kind else { unreachable!() };
+                            let name = name.clone();
+                            fields.insert(name, self.expression(value)?);
+                        } else {
+                            fields.extend(self.record_inputs(self.child(value, Role::Operand))?);
+                        }
+                    }
+                    return Ok(fields);
+                }
+                HirKind::FieldProjection => {
+                    let dict = self.expression(self.child(node, Role::Receiver))?;
+                    for (source, target) in self.children(node, Role::Name).into_iter().zip(self.children(node, Role::Target)) {
+                        let HirKind::Name(field) = &self.mir.hir[source.index()].kind else { unreachable!() };
+                        let HirKind::Name(name) = &self.mir.hir[target.index()].kind else { unreachable!() };
+                        let (field, name) = (field.clone(), name.clone());
+                        let dst = self.register();
+                        self.emit(source, O::GetField { dst, dict, field });
+                        fields.insert(name, dst);
+                    }
+                    return Ok(fields);
+                }
+                _ => return Err(self.error(node, "record construction evidence is not a value")),
+            }
+        }
+        let dict = self.expression(node)?;
+        let body = self.mir.type_layouts[ty.index()].as_ref().ok_or_else(|| self.error(node, "record source has no named layout"))?.body;
+        let TypeConstructor::Record(names) = &self.mir.types[body.index()].constructor else {
+            return Err(self.error(node, "record source has no fields"));
+        };
+        for field in names.clone() {
+            let dst = self.register();
+            self.emit(node, O::GetField { dst, dict, field: field.clone() });
+            fields.insert(field, dst);
+        }
+        Ok(fields)
+    }
     fn new(mir: &'a Mir, graph: &'a ExecutionGraph, name: String) -> Self {
         Self {
             mir,
@@ -1084,10 +1129,10 @@ impl<'a> Emitter<'a> {
             }
             HirKind::Binary(B::StructUpdate) => {
                 let ty = self.ty(node)?;
-                let left = self.expression(self.child(node, Role::Left))?;
-                let right = self.expression(self.child(node, Role::Right))?;
+                let mut fields = self.record_inputs(self.child(node, Role::Left))?;
+                fields.extend(self.record_inputs(self.child(node, Role::Right))?);
                 let dst = self.register();
-                self.emit(node, O::StructUpdate { dst, left, right });
+                self.emit(node, O::MakeDict { dst, fields: fields.into_iter().collect() });
                 self.construction_check(node, ty, PropertySite::Type, dst);
                 self.emit(node, O::StampType { dst, src: dst, ty });
                 dst

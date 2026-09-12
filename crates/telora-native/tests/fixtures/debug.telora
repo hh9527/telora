@@ -3,7 +3,7 @@ import "std/entry" as entry;
 def original = "shared debug payload";
 def shared = dbg!(original, "initialize");
 def checks: Fn() -> Value = fn() {
-    let data = dbg!((True, 1, 1.5, "text", b"ab", [1, 2], {x: 3}, Some(4)), "entry");
+    let data = dbg!((True, 1, 1.5, "text", b"ab", [1, 2], {x: 3}.ty!(Dict(Int)), Some(4)), "entry");
     encode(Value.type, [dbg!(shared) == original, data.1 == 1])
 };
 export def answer = encode(Value.type, shared);

@@ -161,7 +161,7 @@ let second: Int = ids[1];
 `Array(Result(String, Int))`。不同类型族或冲突的具体参数会报错；缺少证据的参数
 可用 `.ty!(Ty)`、`func@[Ty](...)` 或类型注解补全。
 显式 `Array(T)` expected type 会向每个普通元素和 spread operand 下传 `T`。因此当
-`T` 是 concrete family 实例时，多个匿名记录元素中的 variant 构造、闭包、
+`T` 是 concrete family 实例时，多个记录构造元素中的 variant 构造、闭包、
 Option variant 和空集合都按完整的共同契约检查。
 该检查与元素顺序无关；真正不兼容的字段在对应元素位置报告类型冲突。
 在 `if`、`if let` 或 `match` 的结构化分支结果中，同一 Array 或 Dict 元素位置的具体
@@ -206,17 +206,18 @@ Tuple spread 所需的固定长度证据。
 操作数从左到右各求值一次，空 spread 仍求值；元素 Val 的来源和名义身份
 被复制保留，新容器采用整个 Tuple 构造表达式的位置。
 
-Record 字面量与 `Dict(T)` 在运行时都使用 String key 的 Dict 表示，但静态意义不同：
+记录字面量必须由全图上下文确定为具名 Struct 或 `Dict(T)`：
 
 ```telora
-let user = {name: "Ada", active: True};
+type User = struct {name: String, active: Bool};
+let user: User = {name: "Ada", active: True};
 let labels: Dict(String) = {region: "east", tier: "gold"};
 ```
 
-Record 的字段集合属于静态结构；`Dict(T)` 的 key 集合可以动态变化，所有 value 具有
+Struct 的字段集合属于静态结构；`Dict(T)` 的 key 集合可以动态变化，所有 value 具有
 同一静态类型。Dict 的无领域顺序观察和序列化采用规范顺序。
 
-字段投影保留静态证据：已知 Record/Struct 必须声明该字段，`Dict(T)` 的字段结果是
+字段投影保留静态证据：已知 Struct 必须声明该字段，`Dict(T)` 的字段结果是
 T。非记录值和 `Dyn` 会产生静态诊断。
 暂未确定的 receiver 可以在同一个单态推断边界内积累字段 obligation，后续
 具体证据必须满足全部字段；这种 obligation 不会泛化或发布为开放 row constraint。
@@ -526,7 +527,10 @@ Type, TypeOf(A), Dyn, opaque native type
 Never
 ```
 
-匿名 Record 按字段结构检查。直接 `struct` / `enum` 类型声明具有声明拥有的名义身份；
+不存在可独立求值的匿名 Record 类型。记录字面量提供字段构造证据，若整图求解
+仍无法确定为具名 Struct 或 `Dict(T)`，静态检查失败。`<~` 右侧的更新字面量和
+投影直接向结果 Struct 提供字段，不形成独立的匿名值。
+直接 `struct` / `enum` 类型声明具有声明拥有的名义身份；
 相同结构的两个声明互不兼容。type alias 不创建新的身份，只保留被引用类型的身份。
 Native opaque type 具有由注册模块和 slot 决定的名义身份，普通用户代码不能伪造其值。
 
@@ -577,7 +581,7 @@ pair@[Int, _](1, "text")
 类型参数从完整调用收集证据；variant 构造的名称确定类型族，同次调用中的其他
 实参可以补全该类型族的参数和 payload 的类型上下文。调用按具名 enum 检查
 variant 及 payload；不相关 enum 或 enum 之外的 variant 是类型错误。
-匿名 Struct 实参同样在完整调用上下文中检查。若 generic callback 的结果确定了共享
+记录构造实参同样在完整调用上下文中检查。若 generic callback 的结果确定了共享
 Struct 类型，较早书写的 seed 中的 variant 构造字段和空 collection 字段按该结果
 检查；例如 fold callback 返回 Bool 时，seed 的 `{flag: False, items: []}` 可
 参与 `{flag: Bool, items: Array(A)}`。若 callback 分支没有共同契约，必须显式提供
@@ -1886,12 +1890,12 @@ payload 精化均属于当前语义。但推断不保证为任意一组分别构
 公共的高层 family 实例。
 
 特别是，当同一个 Array 没有显式 item expected type，而元素同时包含不同
-variant 构造、不同 closure 或匿名 Struct 时，仅凭元素字面量可能
+variant 构造、不同 closure 或记录构造时，仅凭元素字面量可能
 无法主动找到预期的封闭 enum、函数契约或参数化 family。严格模式会报告冲突或未
 解决约束，并要求各元素满足共同类型。使用 `.ty!(Ty)` 或 `@[Ty]` 可以提供完整
 上下文；领域中的多种数据形态通过显式 enum 定义。
 
-在最小公共边界给 Array 提供具体契约即可把同一个 family 实例下传到匿名元素：
+在最小公共边界给 Array 提供具体契约即可把同一个 family 实例下传到记录元素：
 
 ```telora
 type Entry(Id, Value) = struct {
@@ -1926,7 +1930,7 @@ type ColumnRef = struct {alias: String, column: String};
 type Expr = enum {Column(ColumnRef)};
 ```
 
-该限制只属于类型声明。构造 tagged value 时，payload 的匿名记录仍会按具名 Struct
+该限制只属于类型声明。构造 tagged value 时，payload 的记录字面量仍会按具名 Struct
 契约检查，因此下式合法：
 
 ```telora

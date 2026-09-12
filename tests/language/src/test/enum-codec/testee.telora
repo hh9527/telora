@@ -67,7 +67,7 @@ export def verified_case = test.should_ok(fn() {
         ).unwrap!();
         let joined = codec.decode(
             (FixtureEvent).type,
-            codec.encode((codec.Value).type, {userJoined: {name: "Ada"}}),
+            codec.encode((codec.Value).type, {userJoined: {name: "Ada"}}.ty!(Dict(Dict(String)))),
         ).unwrap!();
         let text = codec.decode(
             (FixtureScalar).type,

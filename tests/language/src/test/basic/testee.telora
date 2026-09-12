@@ -9,4 +9,5 @@ export def e_opaque = test.should_ok(fn() { test.should_fail(fn() { 1 }) });
 export def helper: Fn() -> Int = fn() { fail!("must remain uncalled") };
 export def ignored = [test.should_fail(fn() { 1 })];
 export def erased = dyn.pack((test.Test).type, test.should_fail(fn() { 1 }));
-export def lookalike = { kind: "should_ok", thunk: fn() { fail!("not a Test") } };
+type Lookalike = struct {kind: String, thunk: Fn() -> Never};
+export def lookalike: Lookalike = { kind: "should_ok", thunk: fn() { fail!("not a Test") } };

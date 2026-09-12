@@ -12,6 +12,40 @@ pub struct SealedMir<'a> {
 }
 
 impl Mir {
+    pub(crate) fn record_construction_inputs(&self) -> Vec<bool> {
+        let mut inputs = vec![false; self.hir.len()];
+        let mut pending = Vec::new();
+        for node in &self.hir {
+            if matches!(node.kind, HirKind::Binary(crate::ast::BinaryOperator::StructUpdate)) {
+                pending.extend(node.children.iter().filter(|edge| edge.role == Role::Right).map(|edge| edge.node));
+            }
+        }
+        while let Some(node) = pending.pop() {
+            if inputs[node.index()] { continue; }
+            match self.hir[node.index()].kind {
+                HirKind::Dict => {
+                    inputs[node.index()] = true;
+                    for field in self.hir[node.index()].children.iter().filter(|edge| edge.role == Role::Field) {
+                        for value in self.hir[field.node.index()].children.iter().filter(|edge| edge.role == Role::Value) {
+                            if matches!(self.hir[value.node.index()].kind, HirKind::Spread) {
+                                pending.extend(self.hir[value.node.index()].children.iter().filter(|edge| edge.role == Role::Operand).map(|edge| edge.node));
+                            }
+                        }
+                    }
+                }
+                HirKind::FieldProjection => inputs[node.index()] = true,
+                _ => {}
+            }
+        }
+        for module in &self.modules {
+            if let ModuleState::Source { body, .. } | ModuleState::Data { body } = module.state {
+                for edge in self.hir[body.index()].children.iter().filter(|edge| edge.role == Role::Result) {
+                    inputs[edge.node.index()] = true;
+                }
+            }
+        }
+        inputs
+    }
     fn valid_value_adjustment(&self, node: HirId, source: TypeId, target: TypeId, instance: Option<&GenericInstance>) -> bool {
         let source = &self.types[source.index()];
         if source.constructor == TypeConstructor::Unchecked { return source.arguments == [target]; }
@@ -33,18 +67,21 @@ impl Mir {
     }
     /// These source forms have a fixed runtime representation. Check their
     /// solved skeleton before publishing MIR, including specialized bodies.
-    pub(crate) fn value_shape_error(&self, node: HirId, ty: TypeId) -> Option<&'static str> {
+    pub(crate) fn value_shape_error(&self, node: HirId, ty: TypeId, construction_inputs: &[bool]) -> Option<&'static str> {
         let shape = &self.types[ty.index()];
         match self.hir[node.index()].kind {
             HirKind::Binding { kind: crate::ast::BindingKind::Native, .. }
                 if shape.constructor != TypeConstructor::Function =>
                 Some("native declaration requires a function signature"),
-            HirKind::Dict => {
+            HirKind::Dict | HirKind::FieldProjection => {
+                if matches!(shape.constructor, TypeConstructor::Record(_)) && construction_inputs[node.index()] {
+                    return None;
+                }
                 let shape = if shape.constructor == TypeConstructor::Unchecked {
                     &self.types[shape.arguments[0].index()]
                 } else { shape };
                 let supported = match shape.constructor {
-                    TypeConstructor::Dict | TypeConstructor::Record(_) => true,
+                    TypeConstructor::Dict => true,
                     TypeConstructor::Nominal(symbol) => self.type_definitions.iter()
                         .any(|definition| definition.symbol == symbol && definition.operation == TypeOperation::Struct),
                     _ => false,
@@ -194,6 +231,7 @@ impl Mir {
     }
 
     pub fn seal(&self) -> Result<SealedMir<'_>, Vec<Diagnostic>> {
+        let construction_inputs = self.record_construction_inputs();
         if !self.symbols_closed
             || !self.types_solved
             || !self.type_unknowns.is_empty()
@@ -209,9 +247,9 @@ impl Mir {
             || !self.valid_check_coverage()
             || !self.valid_property_admissions()
             || self.hir.iter().enumerate().any(|(node, _)| matches!(self.ty_slots.get(node), Some(TypeState::Known(ty))
-                if self.value_shape_error(HirId(node as u32), *ty).is_some()))
+                if self.value_shape_error(HirId(node as u32), *ty, &construction_inputs).is_some()))
             || self.generic_instances.iter().any(|instance| instance.types.iter()
-                .any(|(node, ty)| self.value_shape_error(*node, *ty).is_some()))
+                .any(|(node, ty)| self.value_shape_error(*node, *ty, &construction_inputs).is_some()))
             || self.hir.iter().any(|node| matches!(node.kind, HirKind::LetElse)
                 && node.children.iter().find(|edge| edge.role == Role::Else).is_none_or(|edge|
                     !matches!(self.ty_slots.get(edge.node.index()), Some(TypeState::Known(ty))
