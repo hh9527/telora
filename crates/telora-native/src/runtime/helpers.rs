@@ -60,7 +60,7 @@ pub(crate) unsafe extern "C" fn object(
         return unsafe { demand(context, TypeId(ty), count, data, out, origin) };
     }
     if operation == ARRAY_MAP {
-        return unsafe { callbacks::array_map(context, TypeId(ty), data, out, origin) };
+        return unsafe { callbacks::array_map(context, TypeId(ty), data, out, origin, count == 1) };
     }
     if operation == FAIL_VALUES {
         return context.boundary(|context| {

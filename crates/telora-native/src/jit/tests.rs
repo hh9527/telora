@@ -615,6 +615,37 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_dict_map_keeps_sorted_shared_keys_and_propagates_callback_failure() {
+    let (mir, root) = graph_with(
+        "import \"std/dict\" { map_values }; export def answer = do { let d: Dict(Int) = { z: 2, a: 40 }; let offset = 1; (d, map_values(d, fn(x) { x + offset })) };",
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    let original = rt.field(&result, 0).unwrap().to_owned();
+    let mapped = rt.field(&result, 1).unwrap().to_owned();
+    assert_eq!(original.words()[2], mapped.words()[2]);
+    for (index, (key, expected)) in [("a", 41), ("z", 3)].into_iter().enumerate() {
+        let (name, value) = rt.dict_entry(&mapped, index).unwrap();
+        assert_eq!(rt.text(name).unwrap().as_str(), key);
+        assert_eq!(rt.scalar_bits(value).unwrap(), expected);
+    }
+    let (mir, root) = graph_with(
+        "import \"std/dict\" { map_values }; export def answer = do { let d: Dict(Int) = { a: 1 }; map_values(d, fn(x) -> Int { fail!(\"map failed\") }) };",
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "map failed");
+}
+
+#[test]
 fn native_abi_links_resolved_aliases_and_generic_function_values() {
     let dependencies = [(
         "std/array",
