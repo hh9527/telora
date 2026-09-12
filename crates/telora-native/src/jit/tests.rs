@@ -275,3 +275,38 @@ fn generic_calls_consume_closed_instances_without_substituting_types_at_runtime(
     let array = rt.field(&result, 2).unwrap().to_owned();
     assert_eq!(rt.scalar_bits(rt.array_get(&array, 0).unwrap()).unwrap(), 7);
 }
+#[test]
+fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
+    let (mir, root) = graph(include_str!("../../tests/fixtures/enums.telora"));
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled
+        .call(&mut context, &[])
+        .unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    let roots = context.runtime_mut().unwrap().publish(&[value]).unwrap();
+    let rt = context.runtime().unwrap();
+    let tree = rt.field(&roots[0], 0).unwrap().to_owned();
+    assert_eq!(
+        rt.variant_name(tree.type_key(), rt.enum_tag(&tree).unwrap())
+            .unwrap(),
+        "Children"
+    );
+    let array = rt.enum_payload(&tree).unwrap().unwrap().to_owned();
+    let leaf = rt.array_get(&array, 0).unwrap().to_owned();
+    assert_eq!(
+        rt.scalar_bits(rt.enum_payload(&leaf).unwrap().unwrap())
+            .unwrap(),
+        42
+    );
+    let empty = rt.array_get(&array, 1).unwrap().to_owned();
+    assert!(rt.enum_payload(&empty).unwrap().is_none());
+    let link = rt.field(&roots[0], 1).unwrap().to_owned();
+    let end = rt.enum_payload(&link).unwrap().unwrap().to_owned();
+    assert_eq!(
+        rt.variant_name(end.type_key(), rt.enum_tag(&end).unwrap())
+            .unwrap(),
+        "End"
+    );
+    assert!(rt.enum_payload(&end).unwrap().is_none());
+}

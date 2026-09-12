@@ -175,6 +175,51 @@ struct Lower<'a, 'b> {
     function_key: functions::Key,
 }
 impl Lower<'_, '_> {
+    fn selected_member(&self, node: HirId) -> Option<MemberSelection> {
+        if let Some(selected) = self.mir.member_selections[node.index()] {
+            return Some(selected);
+        }
+        let slot = self.mir.hir[node.index()].resolution?;
+        let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] else {
+            return None;
+        };
+        self.mir.symbols[symbol.index()]
+            .declarations
+            .iter()
+            .find_map(|&declaration| {
+                let value = child(self.mir, declaration, Role::Value).ok()?;
+                self.mir.member_selections[value.index()]
+            })
+    }
+    fn enum_constructor(
+        &mut self,
+        node: HirId,
+        ty: TypeKey,
+        index: u32,
+        payload: &[ir::Value],
+    ) -> Result<Vec<ir::Value>> {
+        let expected = self.layouts.variant_payloads[ty.index()]
+            .get(index as usize)
+            .ok_or("native enum has no solved variant")?;
+        let width = expected
+            .map(|t| self.layouts.words(t))
+            .transpose()?
+            .unwrap_or(0);
+        if payload.len() != width {
+            return Err("native enum payload width does not match solved variant".into());
+        }
+        if self
+            .mir
+            .construction_checks
+            .iter()
+            .any(|c| c.owner.index() == ty.index() && c.concrete)
+        {
+            return Err("native enum construction checks are not yet linked".into());
+        }
+        let data = self.stack_words(payload)?;
+        let tag = self.builder.ins().iconst(types::I64, index as i64);
+        self.object(node, helpers::ENUM, ty, data, tag)
+    }
     fn ty(&self, node: HirId) -> Result<telora_core::mir::TypeId> {
         self.function_key.ty(self.mir, node)
     }
@@ -231,6 +276,24 @@ impl Lower<'_, '_> {
     }
     fn direct_call(&mut self, node: HirId, depth: usize) -> Result<Vec<ir::Value>> {
         let callee_node = child(self.mir, node, Role::Callee)?;
+        if let Some(MemberSelection::EnumVariant { index }) = self.selected_member(callee_node) {
+            let arguments = self.mir.hir[node.index()]
+                .children
+                .iter()
+                .filter(|e| e.role == Role::Argument)
+                .map(|e| e.node)
+                .collect::<Vec<_>>();
+            if arguments.len() != 1 {
+                return Err("native enum constructor requires one payload".into());
+            }
+            let payload = self.expression(arguments[0], depth + 1)?;
+            return self.enum_constructor(
+                node,
+                TypeKey::try_from(self.ty(node)?)?,
+                index,
+                &payload,
+            );
+        }
         let callee = functions::Key {
             node: self.callable(callee_node, 0)?,
             instance: self.instance_reference(callee_node),
@@ -386,6 +449,11 @@ impl Lower<'_, '_> {
         let ty = self.ty(node)?;
         let key = TypeKey::try_from(ty)?;
         let syntax = &self.mir.hir[node.index()];
+        if let Some(MemberSelection::EnumVariant { index }) = self.selected_member(node)
+            && self.mir.types[ty.index()].constructor != TypeConstructor::Function
+        {
+            return self.enum_constructor(node, key, index, &[]);
+        }
         let data = match &syntax.kind {
             HirKind::Int(bits) => Some(vec![*bits as u64]),
             HirKind::Float(bits) => Some(vec![bits.to_bits()]),

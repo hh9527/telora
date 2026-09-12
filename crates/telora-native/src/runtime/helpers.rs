@@ -9,6 +9,7 @@ pub(crate) const FIELD: u32 = 3;
 pub(crate) const INDEX: u32 = 4;
 pub(crate) const DICT: u32 = 5;
 pub(crate) const FAIL: u32 = 6;
+pub(crate) const ENUM: u32 = 7;
 
 /// Safety: ctx is an exclusive live context; data points at the full values
 /// specified by the generated operation; out has space for the solved result.
@@ -42,6 +43,28 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                ENUM => {
+                    let index = u32::try_from(count).map_err(|_| "enum tag overflow")?;
+                    let payload_ty = rt
+                        .expect(ty, Kind::Enum)?
+                        .variants
+                        .get(count)
+                        .ok_or("enum tag out of bounds")?
+                        .payload;
+                    let payload = match payload_ty {
+                        Some(payload_ty) => {
+                            let words = unsafe {
+                                std::slice::from_raw_parts(data, rt.layout(payload_ty)?.words)
+                            };
+                            Some(Value {
+                                arena: rt.identity,
+                                words: words.to_vec().into_boxed_slice(),
+                            })
+                        }
+                        None => None,
+                    };
+                    rt.enum_value(ty, loc, index, payload.as_ref())?
+                }
                 STRING => {
                     // SAFETY: codegen stores exactly count bytes in its JIT data object.
                     let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), count) };

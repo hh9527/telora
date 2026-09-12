@@ -30,6 +30,8 @@
 
 验证：`cargo test -p telora-native --features jit` 通过 9 项测试，其中 3 项 runtime 测试覆盖分类表共享、持久更新、Dict/Array 嵌套别名发布、来源保留、初始化句柄失效和失败原子性。测试源码放在 `tests/fixtures/runtime.telora`。enum/闭包/dyn/native resource、真实环以及机器码 helper 尚待覆盖；不据此关闭 #181。
 
+后续已支持 enum 的 nullary/full_value/ValueTable 间接 payload 及发布遍历。以已 seal 的 variant 表校验 tag、payload TypeId 和宽度，JIT 按已选择的 variant 构造，不按名字猜测类型。递归类型的有限嵌套及间接 payload 发布已有 .telora 资产验证，当前 native 总计 15 项测试；真实对象环、闭包和 dyn 等仍未据此宣称完成。
+
 先落实本模块契约并保证可独立编译，再用简单单测或少量语言用例验证，然后进入后继模块。允许 native 路线阶段性缺失能力，不要求每次提交完成整个语言。实现前将本草案中的待定项补成明确决议，不引入兼容兜底。
 
 ## 验收条件

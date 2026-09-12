@@ -17,13 +17,20 @@ enum Kind {
     Tuple,
     Record,
     Dict,
+    Enum,
     Other,
+}
+struct Variant {
+    name: String,
+    payload: Option<TypeId>,
+    storage: &'static str,
 }
 struct Layout {
     kind: Kind,
     words: usize,
     arguments: Vec<TypeId>,
     fields: Vec<(TypeId, usize)>,
+    variants: Vec<Variant>,
 }
 
 #[derive(Clone, Copy)]
@@ -137,11 +144,13 @@ struct Tables {
     strings: RawStringTable,
     records: WordTable,
     arrays: WordTable,
+    values: WordTable,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Table {
     Records,
     Arrays,
+    Values,
 }
 
 pub struct Runtime {
@@ -186,12 +195,14 @@ impl Runtime {
         match table {
             Table::Records => tables.records.get(reference.slot()),
             Table::Arrays => tables.arrays.get(reference.slot()),
+            Table::Values => tables.values.get(reference.slot()),
         }
     }
     fn push_words(&mut self, table: Table, words: Vec<u64>) -> Result<u32> {
         let slot = match table {
             Table::Records => self.work.records.push(words)?,
             Table::Arrays => self.work.arrays.push(words)?,
+            Table::Values => self.work.values.push(words)?,
         };
         Ok(HeapRef::new(World::Work, slot)?.raw())
     }
@@ -210,6 +221,7 @@ impl Runtime {
                 T::Array => Kind::Array,
                 T::Dict => Kind::Dict,
                 T::Tuple => Kind::Tuple,
+                _ if !entry.variants.is_empty() => Kind::Enum,
                 _ if shape.table == Some("RecordTable") => Kind::Record,
                 _ => Kind::Other,
             };
@@ -243,6 +255,24 @@ impl Runtime {
                     .map(TypeId::try_from)
                     .collect::<Result<Vec<_>>>()?,
                 fields,
+                variants: entry
+                    .variants
+                    .into_iter()
+                    .map(|v| {
+                        Ok(Variant {
+                            name: v.name,
+                            payload: v
+                                .type_id
+                                .map(|i| {
+                                    u32::try_from(i)
+                                        .map(TypeId)
+                                        .map_err(|_| "variant TypeId overflow")
+                                })
+                                .transpose()?,
+                            storage: v.storage,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
             }));
         }
         let identity = NEXT_ARENA
@@ -509,6 +539,8 @@ impl Runtime {
 
 #[path = "runtime/dict.rs"]
 mod dict;
+#[path = "runtime/enums.rs"]
+mod enums;
 #[cfg(feature = "jit")]
 #[path = "runtime/helpers.rs"]
 pub(crate) mod helpers;

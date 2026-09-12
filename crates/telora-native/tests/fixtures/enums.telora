@@ -1,0 +1,3 @@
+export type Tree = enum { Leaf(Int), Children(Array(Tree)), Empty };
+export type Link = enum { End, Next(Link) };
+export def answer = (Tree.Children([Tree.Leaf(42), Tree.Empty]), Link.Next(Link.End));

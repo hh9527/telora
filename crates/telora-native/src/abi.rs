@@ -100,6 +100,7 @@ enum Layout {
 pub struct Layouts {
     entries: Vec<Layout>,
     pub(crate) field_names: Vec<Vec<String>>,
+    pub(crate) variant_payloads: Vec<Vec<Option<TypeKey>>>,
 }
 impl Layouts {
     pub fn from_mir(mir: &SealedMir<'_>) -> Result<Self> {
@@ -107,9 +108,25 @@ impl Layouts {
             return Err("native ABI v1 requires a 64-bit little-endian host".into());
         }
         let mut field_names = Vec::new();
+        let mut variant_payloads = Vec::new();
         let entries = candidate_layout::calculate(mir)?
             .into_iter()
             .map(|entry| {
+                variant_payloads.push(
+                    entry
+                        .variants
+                        .iter()
+                        .map(|v| {
+                            v.type_id
+                                .map(|i| {
+                                    u32::try_from(i)
+                                        .map(TypeKey)
+                                        .map_err(|_| "variant TypeId overflow".to_owned())
+                                })
+                                .transpose()
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                );
                 field_names.push(
                     entry
                         .object
@@ -138,6 +155,7 @@ impl Layouts {
         Ok(Self {
             entries,
             field_names,
+            variant_payloads,
         })
     }
     pub fn type_at(&self, index: usize) -> Result<TypeKey> {

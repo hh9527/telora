@@ -133,6 +133,36 @@ impl Runtime {
                 words[2] = (words[2] & 0xffff_ffff_0000_0000) | u64::from(keys);
                 words[3] = u64::from(values);
             }
+            Kind::Enum => {
+                let value = Value {
+                    arena: self.identity,
+                    words: words.to_vec().into_boxed_slice(),
+                };
+                let tag = self.enum_tag(&value)?;
+                self.enum_payload(&value)?;
+                let variant = &layout.variants[tag as usize];
+                if let Some(payload) = variant.payload {
+                    match variant.storage {
+                        "full_value" => self.copy_value(
+                            &mut words[3..3 + self.layout(payload)?.words],
+                            target,
+                            copies,
+                            depth + 1,
+                        )?,
+                        "heap_id" => {
+                            words[3] = u64::from(self.copy_object(
+                                Table::Values,
+                                words[3] as u32,
+                                Some(payload),
+                                target,
+                                copies,
+                                depth + 1,
+                            )?);
+                        }
+                        _ => return Err("enum payload is not materializable".into()),
+                    }
+                }
+            }
             Kind::Other => {
                 return Err(format!(
                     "native publication unsupported TypeId {}",
@@ -158,10 +188,22 @@ impl Runtime {
         let slot = match table {
             Table::Records => target.records.push(vec![])?,
             Table::Arrays => target.arrays.push(vec![])?,
+            Table::Values => target.values.push(vec![])?,
         };
         let id = HeapRef::new(World::Main, slot)?.raw();
         copies.objects.insert((table, old), id); // register before traversing cycles
         match table {
+            Table::Values => {
+                let ty = ty.ok_or("boxed value requires its solved type")?;
+                self.validate(
+                    ValueRef {
+                        arena: self.identity,
+                        words: &words,
+                    },
+                    ty,
+                )?;
+                self.copy_value(&mut words, target, copies, depth)?;
+            }
             Table::Records => {
                 let layout = self.layout(ty.ok_or("record copy needs type")?)?;
                 let mut end = 0;
@@ -206,6 +248,7 @@ impl Runtime {
         match table {
             Table::Records => target.records.entries[slot as usize].words = words,
             Table::Arrays => target.arrays.entries[slot as usize].words = words,
+            Table::Values => target.values.entries[slot as usize].words = words,
         }
         Ok(id)
     }
