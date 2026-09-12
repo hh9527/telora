@@ -531,7 +531,7 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::FOLD, self.return_type, data, count)?;
             return self.write_return(&result);
         }
-        if matches!((module.id, declaration.name.as_str()), (5, "map" | "find" | "filter" | "any" | "all") | (6, "map_values")) {
+        if matches!((module.id, declaration.name.as_str()), (5, "map" | "find" | "filter" | "any" | "all") | (6, "map_values" | "filter")) {
             let dictionary = module.id == 6;
             let find = declaration.name == "find";
             let filter = declaration.name == "filter";
@@ -574,7 +574,7 @@ impl Lower<'_, '_> {
                 ));
             }
             let packet = self.stack_words(&packet)?;
-            let operation = match declaration.name.as_str() { "find" => 2, "filter" => 3, "any" => 4, "all" => 5, _ => i64::from(dictionary) };
+            let operation = match declaration.name.as_str() { "find" => 2, "filter" if dictionary => 6, "filter" => 3, "any" => 4, "all" => 5, _ => i64::from(dictionary) };
             let count = self.builder.ins().iconst(types::I64, operation);
             let value = self.object(node, helpers::ARRAY_MAP, self.return_type, packet, count)?;
             return self.write_return(&value);

@@ -615,6 +615,38 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_dictionary_filter_retains_descriptors_and_handles_empty_results() {
+    let (mir, root) = graph_with(
+        "import \"std/dict\" as dict; export def answer = do { let input: Dict(Int) = { z: 3, a: 1, b: 2 }; let threshold = 1; let empty: Dict(Int) = {}; (input, dict.filter(input, fn(value) { value > threshold }), dict.filter(input, fn(value) { False }), dict.filter(empty, fn(value) { fail!(\"empty predicate\") })) };",
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    let input = rt.field(&result, 0).unwrap().to_owned();
+    let filtered = rt.field(&result, 1).unwrap().to_owned();
+    assert_eq!(rt.dict_len(&filtered).unwrap(), 2);
+    for index in 0..2 {
+        let (key, value) = rt.dict_entry(&filtered, index).unwrap();
+        let (original_key, original_value) = rt.dict_entry(&input, index + 1).unwrap();
+        assert_eq!(key.words(), original_key.words());
+        assert_eq!(value.words(), original_value.words());
+    }
+    for index in [2, 3] { assert_eq!(rt.dict_len(&rt.field(&result, index).unwrap().to_owned()).unwrap(), 0); }
+    assert!(context.diagnostics().is_empty());
+    let (mir, root) = graph_with("import \"std/dict\" as dict; export def answer = dict.filter({ a: 1 }, fn(value) -> Bool { fail!(\"filter failed\") });", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "filter failed");
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
 fn native_folds_use_sealed_accumulators_and_sorted_dictionary_order() {
     let (mir, root) = graph_with(include_str!("../../tests/fixtures/fold.telora"), static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();

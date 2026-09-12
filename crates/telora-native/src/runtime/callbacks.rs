@@ -52,9 +52,9 @@ pub(super) unsafe fn array_map(
     context.boundary(|context| {
         let result = (|| {
             let rt = context.runtime()?;
-            let dictionary = operation == 1;
+            let dictionary = operation == 1 || operation == 6;
             let find = operation == 2;
-            let filter = operation == 3;
+            let filter = operation == 3 || operation == 6;
             let boolean = operation == 4 || operation == 5;
             let mut answer = operation == 5;
             // SAFETY: codegen constructs this packet after checking the exact
@@ -74,6 +74,7 @@ pub(super) unsafe fn array_map(
             let count = if dictionary { rt.dict_len(&array)? } else { rt.array_len(&array)? };
             let callback = unsafe { std::mem::transmute::<usize, Callback>(address as usize) };
             let mut mapped = Vec::with_capacity(if boolean { 0 } else if find { 1 } else { count });
+            let mut selected_keys = Vec::new();
             for index in 0..count {
                 let rt = context.runtime()?;
                 let argument = if dictionary { rt.dict_entry(&array, index)?.1 } else { rt.array_get(&array, index)? }.to_owned();
@@ -103,6 +104,7 @@ pub(super) unsafe fn array_map(
                     if boolean {
                         if selected != answer { answer = selected; break; }
                     } else if selected {
+                        if dictionary { selected_keys.push(rt.dict_entry(&array, index)?.0.to_owned()); }
                         mapped.push(argument);
                         if find { break; }
                     }
@@ -115,6 +117,9 @@ pub(super) unsafe fn array_map(
                 rt.scalar(ty, origin.words(), u64::from(answer))?
             } else if find {
                 rt.named_variant(ty, origin.words(), if mapped.is_empty() { "None" } else { "Some" }, mapped.first())?
+            } else if dictionary && filter {
+                let pairs = selected_keys.into_iter().zip(mapped).collect::<Vec<_>>();
+                rt.dict(ty, origin.words(), &pairs)?
             } else if dictionary {
                 // Keys are already canonical and immutable. Reuse their column;
                 // only callback result descriptors need new storage.
