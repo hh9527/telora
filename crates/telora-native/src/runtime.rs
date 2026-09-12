@@ -746,7 +746,6 @@ pub use demands::{Demand, DemandKey};
 mod dict;
 #[path = "runtime/enums.rs"]
 mod enums;
-#[cfg(feature = "jit")]
 #[path = "runtime/helpers.rs"]
 pub(crate) mod helpers;
 #[path = "runtime/publish.rs"]

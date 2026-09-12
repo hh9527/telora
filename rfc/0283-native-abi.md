@@ -65,6 +65,18 @@ codec 编码/解码及文本解析的递归节点已扣减同一 fuel，容器�
 
 在实验有证据前保留现有引擎，不切换运行语义、不设置未经验证的复杂度乘数、不关闭正则执行预算验收项。当前文本扫描计费与正则引擎内部计费是两项独立证据。
 
+独立实验已加入 `crates/telora-native/tests/regex-engine.rs`，运行 `cargo test -p telora-native --test regex-engine -- --nocapture`。14 个 pattern × 19 个输入 × 4 个搜索范围共 1,064 组对照通过，覆盖 ParseBy 形式、可选/嵌套捕获、Unicode、词边界、非贪婪、空输入/空范围和 UTF-8 内部边界；比较完整 match 与所有捕获槽，earliest 模式只比较是否命中。
+
+缓存观察（字节；初始化/短输入/65,536 字节输入）：
+
+| Pattern | NFA 状态 | 捕获槽 | Cache |
+|---|---:|---:|---|
+| `(?P<word>\w+)` | 325 | 4 | 26064 / 26064 / 26064 |
+| `(?:a?){32}a{32}` | 101 | 2 | 4880 / 4880 / 4880 |
+| `(?P<a>a*)(?P<b>b*)` | 13 | 6 | 1552 / 1552 / 1552 |
+
+这些样本支持继续研究基于 NFA 状态与捕获槽的准入，不构成通用内存/工作量上界证明；尤其不能用表面 pattern 长度代替 Unicode 展开后的程序规模。生产仍使用 meta 引擎。实验还修复了独立构建缺口：runtime helper 不依赖 Cranelift，因此不再被 `jit` feature 隐藏；不开启该 feature 时 codec 也能正常编译。无 jit 的 22 项 runtime/ABI 测试及两项实验通过。
+
 用简单 Rust ABI 单测验证混合宽度参数/返回、递归帧互不覆盖、错误不读取未初始化结果、来源完整保留。记录首个支持的 target 和 word/endian 约束；不宣称 ABI 跨 target 稳定。
 
 ## 延后与备选方案
