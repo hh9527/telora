@@ -18,6 +18,7 @@ enum Kind {
     Record,
     Dict,
     Enum,
+    Function,
     Other,
 }
 struct Variant {
@@ -145,12 +146,14 @@ struct Tables {
     records: WordTable,
     arrays: WordTable,
     values: WordTable,
+    environments: WordTable,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Table {
     Records,
     Arrays,
     Values,
+    Environments,
 }
 
 pub struct Runtime {
@@ -196,6 +199,7 @@ impl Runtime {
             Table::Records => tables.records.get(reference.slot()),
             Table::Arrays => tables.arrays.get(reference.slot()),
             Table::Values => tables.values.get(reference.slot()),
+            Table::Environments => tables.environments.get(reference.slot()),
         }
     }
     fn push_words(&mut self, table: Table, words: Vec<u64>) -> Result<u32> {
@@ -203,6 +207,7 @@ impl Runtime {
             Table::Records => self.work.records.push(words)?,
             Table::Arrays => self.work.arrays.push(words)?,
             Table::Values => self.work.values.push(words)?,
+            Table::Environments => self.work.environments.push(words)?,
         };
         Ok(HeapRef::new(World::Work, slot)?.raw())
     }
@@ -221,6 +226,7 @@ impl Runtime {
                 T::Array => Kind::Array,
                 T::Dict => Kind::Dict,
                 T::Tuple => Kind::Tuple,
+                T::Function => Kind::Function,
                 _ if !entry.variants.is_empty() => Kind::Enum,
                 _ if shape.table == Some("RecordTable") => Kind::Record,
                 _ => Kind::Other,
@@ -537,6 +543,8 @@ impl Runtime {
     }
 }
 
+#[path = "runtime/closures.rs"]
+mod closures;
 #[path = "runtime/dict.rs"]
 mod dict;
 #[path = "runtime/enums.rs"]

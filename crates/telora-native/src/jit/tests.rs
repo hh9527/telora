@@ -112,10 +112,20 @@ fn unused_bindings_still_execute_and_propagate_failure_once() {
 fn failed_call_never_decodes_the_result_and_invalid_success_is_rejected() {
     // The wrapper is also the boundary used for generated calls to failing
     // helpers. A Failed status must not inspect the zeroed/unwritten result.
-    unsafe extern "C" fn failed(_: *mut CallContext, _: *const u64, _: *mut u64) -> u32 {
+    unsafe extern "C" fn failed(
+        _: *mut CallContext,
+        _: *const u64,
+        _: *mut u64,
+        _: *const u64,
+    ) -> u32 {
         1
     }
-    unsafe extern "C" fn unwritten(_: *mut CallContext, _: *const u64, _: *mut u64) -> u32 {
+    unsafe extern "C" fn unwritten(
+        _: *mut CallContext,
+        _: *const u64,
+        _: *mut u64,
+        _: *const u64,
+    ) -> u32 {
         0
     }
     let (mir, root) = graph("export def answer = 42;");
@@ -310,6 +320,17 @@ fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
     );
     assert!(rt.enum_payload(&end).unwrap().is_none());
 }
+#[test]
+fn machine_code_reads_lexical_closure_environments() {
+    let (mir, root) = graph(
+        "export def answer = do { let base = 40; let add: Fn(Int) -> Int = fn(x) { base + x }; add(2) };",
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+}
+
 #[test]
 fn patterns_select_payloads_and_preserve_diverging_paths() {
     for source in [

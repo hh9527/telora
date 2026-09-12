@@ -12,6 +12,8 @@ pub(crate) const FAIL: u32 = 6;
 pub(crate) const ENUM: u32 = 7;
 pub(crate) const PAYLOAD: u32 = 8;
 pub(crate) const TEXT_EQUAL: u32 = 9;
+pub(crate) const CLOSURE: u32 = 10;
+pub(crate) const CAPTURE: u32 = 11;
 
 /// Safety: ctx is an exclusive live context; data points at the full values
 /// specified by the generated operation; out has space for the solved result.
@@ -45,6 +47,24 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                CLOSURE => {
+                    let words = unsafe { std::slice::from_raw_parts(data, count) };
+                    let function = u32::try_from(*words.first().ok_or("closure function missing")?)
+                        .map_err(|_| "function ID overflow")?;
+                    let mut remaining = &words[1..];
+                    let mut captures = Vec::new();
+                    while !remaining.is_empty() {
+                        let header = remaining.get(1).ok_or("truncated capture header")?;
+                        let size = rt.layout(TypeId((header >> 32) as u32))?.words;
+                        let words = remaining.get(..size).ok_or("truncated capture value")?;
+                        captures.push(Value {
+                            arena: rt.identity,
+                            words: words.to_vec().into_boxed_slice(),
+                        });
+                        remaining = &remaining[size..];
+                    }
+                    rt.closure(ty, loc, function, &captures)?
+                }
                 ENUM => {
                     let index = u32::try_from(count).map_err(|_| "enum tag overflow")?;
                     let payload_ty = rt
@@ -131,7 +151,7 @@ pub(crate) unsafe extern "C" fn object(
                         _ => unreachable!(),
                     }
                 }
-                FIELD | INDEX | PAYLOAD | TEXT_EQUAL => {
+                FIELD | INDEX | PAYLOAD | TEXT_EQUAL | CAPTURE => {
                     let receiver_ty = unsafe { TypeId((*data.add(1) >> 32) as u32) };
                     let size = rt.layout(receiver_ty)?.words;
                     let words = unsafe { std::slice::from_raw_parts(data, size) };
@@ -139,7 +159,9 @@ pub(crate) unsafe extern "C" fn object(
                         arena: rt.identity,
                         words: words.to_vec().into_boxed_slice(),
                     };
-                    if operation == PAYLOAD {
+                    if operation == CAPTURE {
+                        rt.capture(&receiver, count)?.to_owned()
+                    } else if operation == PAYLOAD {
                         rt.enum_payload(&receiver)?
                             .ok_or("enum has no payload")?
                             .to_owned()

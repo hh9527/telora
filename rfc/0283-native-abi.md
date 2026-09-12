@@ -16,7 +16,7 @@
 
 - 物化值保持 loc:[u32;3] + TypeId:u32 的 16 字节头部，data 宽度按 RFC 0281；Unit 16 字节、Never 无运行时值，不能分配伪值；不假定所有类型最多 4 word。
 - 定义参数、返回值和临时值的布局与对齐。首版每个临时值独占固定槽位，不做活跃区间复用；标量中间运算可采用 SSA，但物化与报错时不能丢失来源。
-- 候选内部 ABI 为 function(context, args_ptr, result_ptr) -> status；明确调用约定、指针长度/生命周期、重入、递归、间接调用、错误状态及无结果路径。
+- 候选内部 ABI 为 function(context, args_ptr, result_ptr, closure_ptr) -> status；第四个指针借用调用期闭包描述符，无捕获的 host 根调用可以为空。明确调用约定、指针长度/生命周期、重入、递归、间接调用、错误状态及无结果路径。
 - TypeId 直接使用 SealedMir 身份，HeapId 区分 main/work 并结合对象类别解释。具体 world 编码须在本子 RFC 实现前定案，不预设最高位方案。
 - 明确跨 helper 的 panic 隔离、溢出检查和来源三元组映射；禁止 Rust panic 跨生成代码 ABI 展开。
 

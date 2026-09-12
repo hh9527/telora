@@ -33,6 +33,7 @@ impl From<HirId> for Key {
 pub(super) struct Functions {
     pub registered: BTreeMap<Key, FuncId>,
     pub pending: Vec<Key>,
+    pub captures: BTreeMap<Key, Vec<(SymbolId, TypeKey)>>,
     signature: ir::Signature,
 }
 impl Functions {
@@ -40,6 +41,7 @@ impl Functions {
         Self {
             registered: BTreeMap::new(),
             pending: vec![],
+            captures: BTreeMap::new(),
             signature,
         }
     }
@@ -140,6 +142,7 @@ pub(super) fn emit(
         let args = builder.block_params(entry)[1];
         let context = builder.block_params(entry)[0];
         let out = builder.block_params(entry)[2];
+        let environment = builder.block_params(entry)[3];
         let mut locals = BTreeMap::new();
         let mut offset: usize = 0;
         for (&parameter, &ty) in parameters.iter().zip(&arguments) {
@@ -173,6 +176,21 @@ pub(super) fn emit(
             return_pointer: out,
             return_type: output,
         };
+        for (index, (symbol, ty)) in lower
+            .functions
+            .captures
+            .get(&key)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+        {
+            let index = lower.builder.ins().iconst(types::I64, index as i64);
+            let value = lower
+                .object(key.node, helpers::CAPTURE, ty, environment, index)
+                .map_err(|e| format!("native capture load: {e:?}"))?;
+            lower.locals.insert(symbol, value);
+        }
         let outcome = match lower.expression(body, 0) {
             Ok(result) => lower.return_value(&result),
             Err(error) => Err(error),

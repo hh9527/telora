@@ -4,6 +4,43 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
+fn closure_environments_publish_nested_captures_and_shared_objects() {
+    let mir = graph(SOURCE);
+    let mut rt = Runtime::new(&mir.seal().unwrap()).unwrap();
+    let ty = value_type(&mir, "function");
+    let text = rt
+        .string(
+            value_type(&mir, "text"),
+            [1, 2, 3],
+            "shared captured string longer than inline",
+        )
+        .unwrap();
+    let empty = rt.closure(ty, [1, 3, 4], 0, &[]).unwrap();
+    assert!(rt.capture(&empty, 0).is_err());
+    let inner = rt.closure(ty, [1, 4, 5], 17, &[text.clone()]).unwrap();
+    let outer = rt
+        .closure(ty, [1, 5, 6], 23, &[inner.clone(), text.clone(), empty])
+        .unwrap();
+    let published = rt.publish(&[outer, inner.clone(), text]).unwrap();
+    assert_eq!(rt.main.environments.entries.len(), 2);
+    assert_eq!(rt.main.strings.entries.len(), 1);
+    assert!(rt.work.environments.entries.is_empty());
+    assert!(rt.capture(&inner, 0).is_err());
+    let nested = rt.capture(&published[0], 0).unwrap().to_owned();
+    assert_eq!(nested.words(), published[1].words());
+    assert_eq!(rt.function_id(&nested).unwrap(), 17);
+    let captured = rt.capture(&nested, 0).unwrap();
+    assert_eq!(captured.words(), published[2].words());
+    assert_eq!(captured.location(), [1, 2, 3]);
+    assert_eq!(
+        rt.function_id(&rt.capture(&published[0], 2).unwrap().to_owned())
+            .unwrap(),
+        0
+    );
+    assert!(rt.capture(&published[0], 3).is_err());
+}
+
+#[test]
 fn native_tables_publish_aliases_once_and_reject_stale_work_values() {
     let mir = graph(SOURCE);
     let mut rt = Runtime::new(&mir.seal().unwrap()).unwrap();

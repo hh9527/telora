@@ -61,6 +61,21 @@ impl Runtime {
         )?;
         match layout.kind {
             Kind::Scalar => {}
+            Kind::Function => {
+                let environment = (words[2] >> 32) as u32;
+                if let Some(raw) = environment.checked_sub(1) {
+                    let id = self.copy_object(
+                        Table::Environments,
+                        raw,
+                        None,
+                        target,
+                        copies,
+                        depth + 1,
+                    )?;
+                    let encoded = id.checked_add(1).ok_or("environment ID overflow")?;
+                    words[2] = (words[2] & 0xffff_ffff) | (u64::from(encoded) << 32);
+                }
+            }
             Kind::Tuple if layout.fields.is_empty() => {}
             Kind::String => {
                 // Validate both inline and heap string encodings before copying.
@@ -189,10 +204,24 @@ impl Runtime {
             Table::Records => target.records.push(vec![])?,
             Table::Arrays => target.arrays.push(vec![])?,
             Table::Values => target.values.push(vec![])?,
+            Table::Environments => target.environments.push(vec![])?,
         };
         let id = HeapRef::new(World::Main, slot)?.raw();
         copies.objects.insert((table, old), id); // register before traversing cycles
         match table {
+            Table::Environments => {
+                let mut remaining = words.as_mut_slice();
+                while !remaining.is_empty() {
+                    let header = remaining.get(1).ok_or("truncated capture header")?;
+                    let width = self.layout(TypeId((header >> 32) as u32))?.words;
+                    if width > remaining.len() {
+                        return Err("truncated capture value".into());
+                    }
+                    let (value, rest) = remaining.split_at_mut(width);
+                    self.copy_value(value, target, copies, depth)?;
+                    remaining = rest;
+                }
+            }
             Table::Values => {
                 let ty = ty.ok_or("boxed value requires its solved type")?;
                 self.validate(
@@ -249,6 +278,7 @@ impl Runtime {
             Table::Records => target.records.entries[slot as usize].words = words,
             Table::Arrays => target.arrays.entries[slot as usize].words = words,
             Table::Values => target.values.entries[slot as usize].words = words,
+            Table::Environments => target.environments.entries[slot as usize].words = words,
         }
         Ok(id)
     }

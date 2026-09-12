@@ -11,7 +11,7 @@ use telora_core::mir::{
     TypeState,
 };
 
-type Entry = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64) -> u32;
+type Entry = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *const u64) -> u32;
 
 #[derive(Debug)]
 enum EmitError {
@@ -97,7 +97,14 @@ impl Compiled {
         // SAFETY: only our verified signature is transmuted; buffers have checked
         // widths, stay alive and do not move during execution. Generated code may
         // neither retain pointers nor unwind across this ABI.
-        let status = unsafe { (self.entry)(context, args.as_ptr(), result.as_mut_ptr()) };
+        let status = unsafe {
+            (self.entry)(
+                context,
+                args.as_ptr(),
+                result.as_mut_ptr(),
+                std::ptr::null(),
+            )
+        };
         match status {
             0 => {
                 if never {
@@ -143,7 +150,7 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
     let mut module = CodeMemory(Some(JITModule::new(builder)));
     let mut ctx = module.make_context();
     let pointer = module.target_config().pointer_type();
-    ctx.func.signature.params = vec![AbiParam::new(pointer); 3];
+    ctx.func.signature.params = vec![AbiParam::new(pointer); 4];
     ctx.func.signature.returns.push(AbiParam::new(types::I32));
     let function = module
         .declare_function("telora_entry", Linkage::Export, &ctx.func.signature)
@@ -177,7 +184,7 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
     }
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let address = module.get_finalized_function(function);
-    // SAFETY: target default C ABI, exactly three pointers and a u32 status.
+    // SAFETY: target default C ABI, exactly four pointers and a u32 status.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(address) };
     Ok(Compiled {
         _memory: module,
@@ -366,6 +373,15 @@ impl Lower<'_, '_> {
             instance: self.instance_reference(callee_node),
         };
         let function = self.functions.declare(self.mir, callee, self.module)?;
+        let closure = if let Some(slot) = self.mir.hir[callee_node.index()].resolution
+            && let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()]
+            && let Some(value) = self.locals.get(&symbol)
+        {
+            value.clone()
+        } else {
+            self.function_value(callee_node, callee)?
+        };
+        let environment = self.stack_words(&closure)?;
         let (parameters, _, output, expected) = functions::shape(self.mir, self.layouts, callee)
             .map_err(|e| format!("{e}; callee {callee:?} from HIR {}, parent {:?}, reference {:?}, callee syntax {:?}", node.index(), self.function_key, self.mir.generic_references[callee_node.index()], self.mir.hir[callee_node.index()].kind))?;
         let arguments = self.mir.hir[node.index()]
@@ -399,7 +415,10 @@ impl Lower<'_, '_> {
         let callee = self
             .module
             .declare_func_in_func(function, self.builder.func);
-        let call = self.builder.ins().call(callee, &[self.context, data, out]);
+        let call = self
+            .builder
+            .ins()
+            .call(callee, &[self.context, data, out, environment]);
         let status = self.builder.inst_results(call)[0];
         let failed = self.builder.create_block();
         let success = self.builder.create_block();
@@ -420,6 +439,63 @@ impl Lower<'_, '_> {
                     .load(types::I64, MemFlagsData::new(), out, (i * 8) as i32)
             })
             .collect())
+    }
+    fn function_value(&mut self, origin: HirId, key: functions::Key) -> EmitResult<Vec<ir::Value>> {
+        let function = self.functions.declare(self.mir, key, self.module)?;
+        let mut captures = BTreeMap::new();
+        let mut pending = vec![key.node];
+        let mut owned = std::collections::BTreeSet::new();
+        while let Some(node) = pending.pop() {
+            owned.insert(node);
+            pending.extend(self.mir.hir[node.index()].children.iter().map(|e| e.node));
+        }
+        pending.push(key.node);
+        while let Some(node) = pending.pop() {
+            let syntax = &self.mir.hir[node.index()];
+            if let Some(slot) = syntax.resolution
+                && let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()]
+                && self.locals.contains_key(&symbol)
+                && !self.mir.symbols[symbol.index()]
+                    .declarations
+                    .iter()
+                    .any(|d| owned.contains(d))
+            {
+                captures.insert(symbol, TypeKey::try_from(self.ty(node)?)?);
+            }
+            pending.extend(syntax.children.iter().map(|e| e.node));
+        }
+        let captures = captures.into_iter().collect::<Vec<_>>();
+        if let Some(previous) = self.functions.captures.get(&key) {
+            if previous != &captures {
+                return Err("native closure capture plan mismatch".into());
+            }
+        } else {
+            self.functions.captures.insert(key, captures.clone());
+        }
+        let ty = TypeKey::try_from(key.ty(self.mir, key.node)?)?;
+        if captures.is_empty() {
+            let value = self.layouts.value(
+                ty,
+                Origin::from_loc(Some(self.mir.hir[origin.index()].location)),
+                &[u64::from(function.as_u32())],
+            )?;
+            return Ok(value
+                .words()
+                .iter()
+                .map(|&w| self.builder.ins().iconst(types::I64, w as i64))
+                .collect());
+        }
+        let mut words = vec![
+            self.builder
+                .ins()
+                .iconst(types::I64, i64::from(function.as_u32())),
+        ];
+        for (symbol, _) in captures {
+            words.extend(self.locals[&symbol].iter().copied());
+        }
+        let count = self.builder.ins().iconst(types::I64, words.len() as i64);
+        let data = self.stack_words(&words)?;
+        self.object(origin, helpers::CLOSURE, ty, data, count)
     }
     fn stack_words(&mut self, values: &[ir::Value]) -> EmitResult<ir::Value> {
         let bytes = u32::try_from(
@@ -752,26 +828,13 @@ impl Lower<'_, '_> {
                 self.locals.insert(symbol, value.clone());
                 Ok(value)
             }
-            HirKind::Closure => {
-                let function = self.functions.declare(
-                    self.mir,
-                    functions::Key {
-                        node,
-                        instance: self.function_key.instance,
-                    },
-                    self.module,
-                )?;
-                let value = self.layouts.value(
-                    key,
-                    Origin::from_loc(Some(syntax.location)),
-                    &[function.as_u32() as u64],
-                )?;
-                Ok(value
-                    .words()
-                    .iter()
-                    .map(|&w| self.builder.ins().iconst(types::I64, w as i64))
-                    .collect())
-            }
+            HirKind::Closure => self.function_value(
+                node,
+                functions::Key {
+                    node,
+                    instance: self.function_key.instance,
+                },
+            ),
             HirKind::Call => self.direct_call(node, depth),
             HirKind::Block => {
                 for edge in &syntax.children {

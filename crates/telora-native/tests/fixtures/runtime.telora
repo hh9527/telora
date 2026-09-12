@@ -6,3 +6,4 @@ export def repeated = (ints, ints);
 export type Rec = struct {count: Int, label: String};
 export def record: Rec = {count: 1, label: "text"};
 export def pair = (1, "text");
+export def function: Fn(Int) -> Int = fn(value) { value };
