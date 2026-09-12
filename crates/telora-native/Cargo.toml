@@ -1,0 +1,7 @@
+[package]
+name = "telora-native"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+telora-core = { path = "../telora-core" }
