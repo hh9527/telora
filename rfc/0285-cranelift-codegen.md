@@ -77,6 +77,8 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+结构化相等比较已接入 std/eq.equal 与聚合 ==/!=。运行时沿封闭布局遍历原生对象，工作列表只持有描述符，忽略来源位置；覆盖标量、String/Bytes、元数据、Array、Tuple/Record、newtype、Dict、enum。Float 使用数值相等，保留正负零相等语义。Dyn 按已分配对象身份比较，重复 pack 不视为同一对象。真实 CLI eval/eval-with 对比默认后端并覆盖 main/work 读取。函数与 opaque resource 的独立身份/相等契约仍待补齐，当前明确报未接通，不以逐 word 或内容比较兜底。
+
 std/_rt.call_with_diagnostics 使用封闭的 callback 参数/返回类型、Result/Tuple/Array 边与 TypeOf 见证生成调用包，运行时不重做推导。codec 的 enum 编码已覆盖内置 Result 等封闭 enum，支持输出捕获结果。
 
 std/hash 的 sha256/new/update_bytes/update_string/update_int/finish 已消费封闭签名接入独立 HashState 表。Bytes 的相等/不等比较直接借用 native 字节切片，不按 HeapId 比较内容。旧运行时的 hash 实现不变。

@@ -44,6 +44,7 @@ pub(crate) const PATH: u32 = 49;
 pub(crate) const HASH: u32 = 50;
 pub(crate) const BYTES_EQUAL: u32 = 51;
 pub(crate) const DIAGNOSTIC_SCOPE: u32 = 52;
+pub(crate) const EQUAL: u32 = 53;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -245,6 +246,14 @@ pub(crate) unsafe extern "C" fn object(
                     } else {
                         rt.dict_column(ty, loc, &dict, count == 1)?
                     }
+                }
+                EQUAL => {
+                    let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
+                    let width = rt.layout(input)?.words;
+                    let left = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) }.into() };
+                    let right = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(width), width) }.into() };
+                    let equal = rt.equal(&left, &right)?;
+                    rt.scalar(ty, loc, u64::from(equal))?
                 }
                 HASH => {
                     let mut inputs = Vec::new();

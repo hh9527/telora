@@ -479,6 +479,12 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 1 && declaration.name == "equal" {
+            if arguments.len() != 2 || arguments[0] != arguments[1] || self.mir.types[self.return_type.index()].constructor != TypeConstructor::Bool { return Err("native equality signature mismatch".into()); }
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            let value = self.object(node, helpers::EQUAL, self.return_type, data, zero)?;
+            return self.write_return(&value);
+        }
         if module.id == 26 && declaration.name == "call_with_diagnostics" {
             if arguments.len() != 6 { return Err("diagnostic scope arity mismatch".into()); }
             let callback = &self.mir.types[arguments[0].index()];

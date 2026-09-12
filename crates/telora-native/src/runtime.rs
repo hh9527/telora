@@ -685,6 +685,7 @@ mod schema;
 mod path;
 mod hash;
 mod diagnostics;
+mod equality;
 mod array_ops;
 mod blame;
 pub use dynamic::DynamicQuery;

@@ -1,0 +1,30 @@
+import "std/eq" as eq;
+import "std/codec" {encode, Value};
+import "std/entry" as entry;
+import "std/dyn" as dynamic;
+type Node = struct {value: Int, children: Array(Node)};
+type Count = struct(Int);
+type Choice = enum {Empty, Item(Node)};
+def first: Node = {value: 1, children: [{value: 2, children: []}]};
+def second: Node = {value: 1, children: [{value: 2, children: []}]};
+def dictionary: Dict(Int) = {a: 1, b: 2};
+def reversed: Dict(Int) = {b: 2, a: 1};
+def packed = dynamic.pack(Int.type, 1);
+def checks: Fn() -> Value = fn() {
+    encode(Value.type, [
+        eq.equal(first, second), first == second,
+        first != {value: 1, children: []},
+        dictionary == reversed,
+        dictionary != {a: 1, b: 3},
+        eq.equal((), ()), eq.equal((1, "text"), (1, "text")),
+        Choice.Item(first) == Choice.Item(second),
+        Choice.Item(first) != Choice.Empty,
+        Count(1) == Count(1), Count(1) != Count(2),
+        eq.equal(Int.type, Int.type),
+        eq.equal(0.0, -0.0),
+        eq.equal([1, 2], [1, 2]), [1, 2] != [1, 3],
+        eq.equal(packed, packed), !eq.equal(packed, dynamic.pack(Int.type, 1)),
+    ])
+};
+export def answer = checks();
+export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });

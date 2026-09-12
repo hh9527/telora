@@ -202,6 +202,15 @@ impl Lower<'_, '_> {
             kind,
             TypeConstructor::Int | TypeConstructor::Float | TypeConstructor::Bool
         ) {
+            if matches!(op, B::Equal | B::NotEqual) {
+                let mut words = self.expression(left_node, depth + 1)?;
+                words.extend(self.expression(right_node, depth + 1)?);
+                let data = self.stack_words(&words)?;
+                let zero = self.builder.ins().iconst(types::I64, 0);
+                let mut result = self.object(node, helpers::EQUAL, TypeKey::try_from(self.ty(node)?)?, data, zero)?;
+                if op == B::NotEqual { result[2] = self.builder.ins().bxor_imm_u(result[2], 1); }
+                return Ok(result);
+            }
             return Err("native non-scalar operator is not yet linked".into());
         }
         let left = self.expression(left_node, depth + 1)?[2];

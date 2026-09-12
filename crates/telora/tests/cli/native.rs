@@ -69,6 +69,23 @@ fn native_hash_states_are_persistent_across_initialization_and_entry() {
 }
 
 #[test]
+fn native_structural_equality_matches_default_across_worlds() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/equality.telora")).unwrap();
+    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
+        let selector = format!("@src/main:{export}");
+        let native = telora(&cwd).args([command, "--native", &selector]).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        let default = telora(&cwd).args([command, &selector]).output().unwrap();
+        assert!(default.status.success(), "{}", String::from_utf8_lossy(&default.stderr));
+        let value = serde_json::from_slice::<Value>(&native.stdout).unwrap();
+        assert_eq!(value, serde_json::from_slice::<Value>(&default.stdout).unwrap());
+        assert!(value.as_array().unwrap().iter().all(|value| value == true));
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_data_depth_limit_applies_before_materialization() {
     let cwd = fixture();
     let input = format!("{}0{}", "[".repeat(256), "]".repeat(256));
