@@ -81,6 +81,27 @@ impl Lower<'_, '_> {
             self.expression(left_node, depth + 1)?;
             return Err("native Never operand produced a value".into());
         }
+        let metadata = |ty: telora_core::mir::TypeId| {
+            matches!(
+                self.mir.types[ty.index()].constructor,
+                TypeConstructor::Type | TypeConstructor::TypeOf
+            )
+        };
+        if matches!(op, B::Equal | B::NotEqual) && metadata(left_ty) && metadata(right_ty) {
+            let left = self.expression(left_node, depth + 1)?;
+            let right = self.expression(right_node, depth + 1)?;
+            let condition = self.builder.ins().icmp(
+                if op == B::Equal {
+                    IntCC::Equal
+                } else {
+                    IntCC::NotEqual
+                },
+                left[2],
+                right[2],
+            );
+            let result = self.builder.ins().uextend(types::I64, condition);
+            return self.scalar_result(node, result);
+        }
         if left_ty != right_ty && !right_never {
             return Err("native binary operands require the solved same type".into());
         }

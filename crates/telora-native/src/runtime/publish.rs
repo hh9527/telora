@@ -64,6 +64,12 @@ impl Runtime {
         )?;
         match layout.kind {
             Kind::Scalar => {}
+            Kind::Metadata => {
+                self.represented_type(ValueRef {
+                    arena: self.identity,
+                    words,
+                })?;
+            }
             Kind::Function => {
                 let environment = (words[2] >> 32) as u32;
                 if let Some(raw) = environment.checked_sub(1) {

@@ -452,7 +452,8 @@ struct Lower<'a, 'b> {
     return_type: TypeKey,
 }
 impl Lower<'_, '_> {
-    fn return_value(&mut self, result: &[ir::Value]) -> EmitResult<()> {
+    fn return_value(&mut self, node: HirId, result: &[ir::Value]) -> EmitResult<()> {
+        let result = self.fit_metadata(node, self.return_type, result.to_vec())?;
         if self.layouts.is_never(self.return_type)? {
             return Err("native Never body produced a value".into());
         }
@@ -471,6 +472,34 @@ impl Lower<'_, '_> {
         let status = self.builder.ins().iconst(types::I32, 0);
         self.builder.ins().return_(&[status]);
         Ok(())
+    }
+    fn fit_metadata(
+        &mut self,
+        node: HirId,
+        expected: TypeKey,
+        mut value: Vec<ir::Value>,
+    ) -> EmitResult<Vec<ir::Value>> {
+        let actual = TypeKey::try_from(self.ty(node)?)?;
+        if actual == expected {
+            return Ok(value);
+        }
+        if self.mir.types[actual.index()].constructor == TypeConstructor::TypeOf
+            && self.mir.types[expected.index()].constructor == TypeConstructor::Type
+        {
+            // TypeOf(T) -> Type only erases the static witness. The represented
+            // TypeId and source stay intact; no type computation occurs here.
+            if value.len() != 3 {
+                return Err("native metadata width mismatch".into());
+            }
+            let origin = self.builder.ins().band_imm_s(value[1], 0xffff_ffff);
+            let stamp = self
+                .builder
+                .ins()
+                .iconst(types::I64, (u64::from(expected.raw()) << 32) as i64);
+            value[1] = self.builder.ins().bor(origin, stamp);
+            return Ok(value);
+        }
+        Err("native value does not match the closed boundary type".into())
     }
     fn report_failure(&mut self, node: HirId, message: &str) -> EmitResult<()> {
         let (data, count) = self.literal_bytes(message)?;
@@ -669,10 +698,8 @@ impl Lower<'_, '_> {
         }
         let mut words = Vec::new();
         for (&arg, ty) in arguments.iter().zip(expected) {
-            if TypeKey::try_from(self.ty(arg)?)? != ty {
-                return Err("native direct argument type mismatch".into());
-            }
-            words.extend(self.expression(arg, depth + 1)?);
+            let value = self.expression(arg, depth + 1)?;
+            words.extend(self.fit_metadata(arg, ty, value)?);
         }
         let data = self.stack_words(&words)?;
         let never = self.layouts.is_never(output)?;
@@ -878,6 +905,16 @@ impl Lower<'_, '_> {
             return self.enum_constructor(node, key, index, &[]);
         }
         let data = match &syntax.kind {
+            HirKind::TypeMetadata => {
+                let metadata = &self.mir.types[ty.index()];
+                if metadata.constructor != TypeConstructor::TypeOf || metadata.arguments.len() != 1
+                {
+                    return Err("native metadata has no closed represented type".into());
+                }
+                Some(vec![u64::from(
+                    TypeKey::try_from(metadata.arguments[0])?.raw(),
+                )])
+            }
             HirKind::Int(bits) => Some(vec![*bits as u64]),
             HirKind::Float(bits) => Some(vec![bits.to_bits()]),
             HirKind::Tuple if syntax.children.is_empty() => Some(vec![]),
@@ -908,8 +945,9 @@ impl Lower<'_, '_> {
         match syntax.kind {
             HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node, depth),
             HirKind::Return => {
-                let value = self.expression(child(self.mir, node, Role::Value)?, depth + 1)?;
-                self.return_value(&value)?;
+                let expression = child(self.mir, node, Role::Value)?;
+                let value = self.expression(expression, depth + 1)?;
+                self.return_value(expression, &value)?;
                 Err(EmitError::Diverged)
             }
             HirKind::Panic | HirKind::Raise(telora_core::ast::BlameAction::Fail) => {

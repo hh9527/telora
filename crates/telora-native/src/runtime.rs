@@ -12,6 +12,7 @@ type Result<T> = std::result::Result<T, String>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Scalar,
+    Metadata,
     String,
     Array,
     Tuple,
@@ -254,6 +255,7 @@ impl Runtime {
             let ty = &sealed.types().types[entry.type_id];
             let kind = match &ty.constructor {
                 T::Int | T::Float | T::Bool => Kind::Scalar,
+                T::Type | T::TypeOf => Kind::Metadata,
                 T::String => Kind::String,
                 T::Array => Kind::Array,
                 T::Dict => Kind::Dict,
@@ -582,6 +584,8 @@ impl Runtime {
 mod closures;
 #[path = "runtime/demands.rs"]
 mod demands;
+#[path = "runtime/metadata.rs"]
+mod metadata;
 pub use demands::{Demand, DemandKey};
 #[path = "runtime/dict.rs"]
 mod dict;

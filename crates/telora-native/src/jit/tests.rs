@@ -321,6 +321,50 @@ fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
     assert!(rt.enum_payload(&end).unwrap().is_none());
 }
 #[test]
+fn metadata_uses_sealed_type_ids_and_survives_publication() {
+    let (mir, root) = graph("export def answer = (Int.type, Array(String).type, Unit.type);");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime_mut().unwrap();
+    let before = (0..3)
+        .map(|i| rt.represented_type(rt.field(&value, i).unwrap()).unwrap())
+        .collect::<Vec<_>>();
+    let roots = rt.publish(&[value]).unwrap();
+    for (index, expected) in before.into_iter().enumerate() {
+        assert_eq!(
+            rt.represented_type(rt.field(&roots[0], index).unwrap())
+                .unwrap(),
+            expected
+        );
+    }
+    let field = rt.field(&roots[0], 0).unwrap().to_owned();
+    let wrong = rt
+        .represented_type(rt.field(&roots[0], 1).unwrap())
+        .unwrap();
+    assert!(rt.metadata(field.type_key(), [1, 0, 1], wrong).is_err());
+
+    for source in [
+        "export def answer = Int.type != String.type;",
+        "type Alias = Int; export def answer = Int.type == Alias.type;",
+        "def pass: Fn(Type) -> Type = fn(x) { x }; export def answer = pass(Int.type) == Int.type;",
+        "def get: Fn() -> Type = fn() { Int.type }; export def answer = get() == Int.type;",
+        "def get: Fn() -> Type = fn() { return Int.type; }; export def answer = get() == Int.type;",
+    ] {
+        let (mir, root) = graph(source);
+        let compiled = compile(&mir.seal().unwrap(), root).unwrap();
+        assert_eq!(
+            compiled
+                .call(&mut CallContext::default(), &[])
+                .unwrap()
+                .words()[2],
+            1
+        );
+    }
+}
+
+#[test]
 fn module_initialization_includes_unused_values_and_publishes_once() {
     let (mir, root) = graph("def unused = [1, 2]; def base = 40; export def answer = base + 2;");
     let module = mir.hir[root.index()].module;

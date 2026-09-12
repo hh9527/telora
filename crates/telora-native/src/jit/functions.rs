@@ -327,7 +327,7 @@ pub(super) fn emit(
             lower.locals.insert(symbol, value);
         }
         let outcome = match lower.expression(body, 0) {
-            Ok(result) => lower.return_value(&result),
+            Ok(result) => lower.return_value(body, &result),
             Err(error) => Err(error),
         };
         match outcome {
