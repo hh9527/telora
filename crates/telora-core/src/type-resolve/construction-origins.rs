@@ -75,10 +75,38 @@ impl Solver<'_> {
                     if matches!(self.mir.hir[node.index()].kind, HirKind::Dict | HirKind::FieldProjection) {
                         self.materialized_records[node.index()] = true;
                     }
+                    // A concrete newtype declaration already supplies its
+                    // payload contract. The outer unannotated binding must not
+                    // freeze fresh payload literals before that contract applies.
+                    if matches!(self.mir.hir[node.index()].kind, HirKind::Call)
+                        && self.fixed_newtype_constructor(self.child(node, Role::Callee).unwrap()) {
+                        continue;
+                    }
                     pending.extend(self.construction_children(node));
                 }
             }
         }
+    }
+
+    fn fixed_newtype_constructor(&self, mut node: HirId) -> bool {
+        let mut seen = BTreeSet::new();
+        while seen.insert(node) {
+            if matches!(self.mir.hir[node.index()].kind, HirKind::TypeApply) {
+                let Some(callee) = self.child(node, Role::Callee) else { return false; };
+                node = callee;
+                continue;
+            }
+            let Some(slot) = self.mir.hir[node.index()].resolution else { return false; };
+            let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] else { return false; };
+            if let Some(index) = self.nominal_index[symbol.index()] {
+                return self.mir.type_definitions[index].operation == TypeOperation::Newtype
+                    && self.mir.symbol_generics[symbol.index()].is_empty();
+            }
+            let Some(&declaration) = self.mir.symbols[symbol.index()].declarations.first() else { return false; };
+            let Some(value) = self.child(declaration, Role::Value) else { return false; };
+            node = value;
+        }
+        false
     }
 
     /// Only result-producing construction syntax propagates an expected owner.

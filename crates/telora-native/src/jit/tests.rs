@@ -1140,6 +1140,26 @@ fn executable_plans_do_not_initialize_generic_type_declarations() {
 }
 
 #[test]
+fn fixed_newtype_payload_context_reaches_fresh_record_literals() {
+    let (mir, root) = graph(r#"
+        type Item = struct {value: Int};
+        type Wrapped = struct(Item);
+        type Nested = struct(Option(Item));
+        def make = Wrapped;
+        export def answer = {
+            let direct = Wrapped({value: 19});
+            let aliased = make({value: 20});
+            let nested = Nested(Some({value: 3}));
+            direct.0.value + aliased.0.value + match nested.0 {Some(item) => item.value, None => 0}
+        };
+    "#);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+}
+
+#[test]
 fn native_fold_control_breaks_early_and_keeps_distinct_state_result_types() {
     let (mir, root) = graph_with(include_str!("../../tests/fixtures/fold-control.telora"), static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();
