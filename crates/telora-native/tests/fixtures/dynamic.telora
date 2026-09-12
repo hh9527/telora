@@ -3,7 +3,7 @@ def items = [42];
 def boxed = dyn.pack(Array(Int).type, items);
 type Rec = struct { a: Int };
 def record: Rec = { a: 42 };
-def dict: Dict(Int) = { a: 42 };
+def dict: Dict(Int) = { b: 0, a: 42 };
 export def answer = (
     boxed,
     dyn.desc(boxed),
@@ -18,4 +18,16 @@ export def answer = (
     dyn.field(dyn.pack(Dict(Int).type, dict), "a"),
     dyn.field(dyn.pack(Rec.type, record), "missing"),
     dyn.field(dyn.pack(Int.type, 42), "a"),
+    dyn.fields(dyn.pack(Dict(Int).type, dict)),
+    dyn.array_items(boxed),
+    dyn.tuple_items(dyn.pack((Int, String).type, (42, "second"))),
+    dyn.tag(dyn.pack(Option(Int).type, Some(42))),
+    dyn.payload(dyn.pack(Option(Int).type, Some(42))),
+    dyn.payload(dyn.pack(Option(Int).type, None)),
+    dyn.array_items(dyn.pack(Int.type, 42)),
+    dyn.tag(dyn.pack(Bool.type, True)),
+    dyn.get_field_value(dyn.pack(Rec.type, record), 0),
+    dyn.get_variant_index(dyn.pack(Option(Int).type, Some(42))),
+    dyn.get_variant_payload(dyn.pack(Option(Int).type, Some(42)), 1),
+    dyn.get_variant_payload(dyn.pack(Option(Int).type, None), 0),
 );

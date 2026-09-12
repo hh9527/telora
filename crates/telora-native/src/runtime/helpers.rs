@@ -25,6 +25,8 @@ pub(crate) const DYN_PROJECT: u32 = 19;
 pub(crate) const DYN_CHECK: u32 = 20;
 pub(crate) const DYN_KIND: u32 = 21;
 pub(crate) const DYN_FIELD: u32 = 22;
+pub(crate) const DYN_QUERY: u32 = 23;
+pub(crate) const DYN_MEMBER: u32 = 24;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -68,7 +70,8 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
-                DYN_PACK | DYN_DESC | DYN_PROJECT | DYN_CHECK | DYN_KIND | DYN_FIELD => {
+                DYN_PACK | DYN_DESC | DYN_PROJECT | DYN_CHECK | DYN_KIND | DYN_FIELD
+                | DYN_QUERY | DYN_MEMBER => {
                     let read = |pointer: *const u64| -> Result<Value> {
                         let input = unsafe { TypeId((*pointer.add(1) >> 32) as u32) };
                         Ok(Value {
@@ -80,7 +83,28 @@ pub(crate) unsafe extern "C" fn object(
                         })
                     };
                     let first = read(data)?;
-                    if operation == DYN_FIELD {
+                    if operation == DYN_MEMBER {
+                        let index = if count == 1 {
+                            None
+                        } else {
+                            let index = read(unsafe { data.add(first.words.len()) })?;
+                            Some(
+                                u32::try_from(rt.scalar_bits(index.as_ref())?)
+                                    .map_err(|_| "Dyn member index must be a non-negative u32")?,
+                            )
+                        };
+                        rt.dynamic_member(ty, loc, &first, count, index)?
+                    } else if operation == DYN_QUERY {
+                        let query = match count {
+                            0 => DynamicQuery::Fields,
+                            1 => DynamicQuery::ArrayItems,
+                            2 => DynamicQuery::TupleItems,
+                            3 => DynamicQuery::Tag,
+                            4 => DynamicQuery::Payload,
+                            _ => return Err("unknown Dyn query".into()),
+                        };
+                        rt.dynamic_query(ty, loc, &first, query)?
+                    } else if operation == DYN_FIELD {
                         let name = read(unsafe { data.add(first.words.len()) })?;
                         rt.dynamic_value(&first)?;
                         let outcome = rt.dynamic_field(&first, &name).map(ValueRef::to_owned);

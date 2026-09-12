@@ -59,6 +59,10 @@ Native 语义 Value 已支持直接输出紧凑 JSON：迭代遍历原有表，�
 
 Dyn kind 与命名字段访问已接入：类别来自封闭类型骨架，Enum 依据当前 variant 的 payload 区分 Atom/Tagged；Struct 使用骨架字段表，Dict 使用有序键查找。字段缺失和错误对象类别作为 Result 错误值进入语言层，成功结果只装箱子值描述符。已在同一 .telora 用例验证发布后 Array/Atom/Tagged 分类、Struct/Dict 字段读取和两类失败，native JIT 44 passed。fields/array_items/tuple_items/tag/payload 等剩余接口仍继续推进。
 
+Dyn 集合与枚举查询已接入：fields、array_items、tuple_items、tag、payload 构造所请求的结果集合，子对象图仍共享；Bool 与无 payload 枚举保留正确 tag/None 语义。get_field_value/get_variant_index/get_variant_payload 消费骨架索引，不匹配索引直接 Failed，不伪装为 None。已验证有序键、异构元组、成功/缺失 payload 和非法访问；独立的 .telora 失败用例产生三条诊断，重复初始化不重报且不发布。native JIT 45 passed。
+
+完整 `std/entry` 图现已通过这些 Dyn 适配器的生成，下一项缺少 module 20 / prepare（std/fmt）适配器；eval-with 仍未完成。
+
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。
 
 ## 延后与备选方案

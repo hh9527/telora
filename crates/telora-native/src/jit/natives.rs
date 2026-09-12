@@ -191,6 +191,96 @@ impl Lower<'_, '_> {
             let value = self.object(node, helpers::DYN_FIELD, self.return_type, data, count)?;
             return self.write_return(&value);
         }
+        if module.id == 2
+            && matches!(
+                declaration.name.as_str(),
+                "fields_raw" | "array_items_raw" | "tuple_items_raw" | "tag_raw" | "payload_raw"
+            )
+        {
+            let query = match declaration.name.as_str() {
+                "fields_raw" => 0,
+                "array_items_raw" => 1,
+                "tuple_items_raw" => 2,
+                "tag_raw" => 3,
+                _ => 4,
+            };
+            let result = &self.mir.types[self.return_type.index()];
+            if arguments.len() != 1
+                || self.mir.types[arguments[0].index()].constructor != TypeConstructor::Dyn
+                || result.constructor != TypeConstructor::Result
+                || result.arguments.len() != 2
+                || self.mir.types[result.arguments[1].index()].constructor
+                    != TypeConstructor::String
+            {
+                return Err("native Dyn query Result signature mismatch".into());
+            }
+            let output = &self.mir.types[result.arguments[0].index()];
+            let valid = match query {
+                3 => output.constructor == TypeConstructor::String,
+                4 => {
+                    output.constructor == TypeConstructor::Option
+                        && output.arguments.len() == 1
+                        && self.mir.types[output.arguments[0].index()].constructor
+                            == TypeConstructor::Dyn
+                }
+                _ if output.constructor == TypeConstructor::Array
+                    && output.arguments.len() == 1 =>
+                {
+                    let element = &self.mir.types[output.arguments[0].index()];
+                    if query == 0 {
+                        element.constructor == TypeConstructor::Tuple
+                            && element.arguments.len() == 2
+                            && self.mir.types[element.arguments[0].index()].constructor
+                                == TypeConstructor::String
+                            && self.mir.types[element.arguments[1].index()].constructor
+                                == TypeConstructor::Dyn
+                    } else {
+                        element.constructor == TypeConstructor::Dyn
+                    }
+                }
+                _ => false,
+            };
+            if !valid {
+                return Err("native Dyn query payload signature mismatch".into());
+            }
+            let count = self.builder.ins().iconst(types::I64, query);
+            let value = self.object(node, helpers::DYN_QUERY, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
+        if module.id == 2
+            && matches!(
+                declaration.name.as_str(),
+                "get_field_value" | "get_variant_index" | "get_variant_payload"
+            )
+        {
+            let operation = match declaration.name.as_str() {
+                "get_field_value" => 0,
+                "get_variant_index" => 1,
+                _ => 2,
+            };
+            let output = &self.mir.types[self.return_type.index()];
+            let valid = match operation {
+                0 => output.constructor == TypeConstructor::Dyn,
+                1 => output.constructor == TypeConstructor::Int,
+                _ => {
+                    output.constructor == TypeConstructor::Option
+                        && output.arguments.len() == 1
+                        && self.mir.types[output.arguments[0].index()].constructor
+                            == TypeConstructor::Dyn
+                }
+            };
+            if arguments.len() != if operation == 1 { 1 } else { 2 }
+                || self.mir.types[arguments[0].index()].constructor != TypeConstructor::Dyn
+                || (operation != 1
+                    && self.mir.types[arguments[1].index()].constructor != TypeConstructor::Int)
+                || !valid
+            {
+                return Err("native Dyn indexed access ABI mismatch".into());
+            }
+            let count = self.builder.ins().iconst(types::I64, operation);
+            let value = self.object(node, helpers::DYN_MEMBER, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 25
             && matches!(
                 declaration.name.as_str(),

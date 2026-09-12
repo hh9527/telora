@@ -757,8 +757,77 @@ fn dynamic_values_preserve_sealed_identity_and_shared_payloads() {
             "Err"
         );
     }
+    let success = |index| {
+        let result = runtime.field(&value, index).unwrap().to_owned();
+        assert_eq!(
+            runtime
+                .variant_name(result.type_id(), runtime.enum_tag(&result).unwrap())
+                .unwrap(),
+            "Ok"
+        );
+        runtime.enum_payload(&result).unwrap().unwrap().to_owned()
+    };
+    let fields = success(13);
+    assert_eq!(runtime.array_len(&fields).unwrap(), 2);
+    for (index, name) in [(0, "a"), (1, "b")] {
+        let pair = runtime.array_get(&fields, index).unwrap().to_owned();
+        assert_eq!(
+            runtime
+                .text(runtime.field(&pair, 0).unwrap())
+                .unwrap()
+                .as_str(),
+            name
+        );
+    }
+    for (index, count) in [(14, 1), (15, 2)] {
+        let items = success(index);
+        assert_eq!(runtime.array_len(&items).unwrap(), count);
+        let first = runtime.array_get(&items, 0).unwrap().to_owned();
+        assert_eq!(runtime.dynamic_value(&first).unwrap().words()[2], 42);
+    }
+    assert_eq!(runtime.text(success(16).as_ref()).unwrap().as_str(), "Some");
+    let some = success(17);
+    let boxed = runtime.enum_payload(&some).unwrap().unwrap().to_owned();
+    assert_eq!(runtime.dynamic_value(&boxed).unwrap().words()[2], 42);
+    assert!(runtime.enum_payload(&success(18)).unwrap().is_none());
+    let failed = runtime.field(&value, 19).unwrap().to_owned();
+    assert_eq!(
+        runtime
+            .variant_name(failed.type_id(), runtime.enum_tag(&failed).unwrap())
+            .unwrap(),
+        "Err"
+    );
+    assert_eq!(runtime.text(success(20).as_ref()).unwrap().as_str(), "True");
+    let field = runtime.field(&value, 21).unwrap().to_owned();
+    assert_eq!(runtime.dynamic_value(&field).unwrap().words()[2], 42);
+    assert_eq!(runtime.field(&value, 22).unwrap().words()[2], 1);
+    let some = runtime.field(&value, 23).unwrap().to_owned();
+    let child = runtime.enum_payload(&some).unwrap().unwrap().to_owned();
+    assert_eq!(runtime.dynamic_value(&child).unwrap().words()[2], 42);
+    assert!(
+        runtime
+            .enum_payload(&runtime.field(&value, 24).unwrap().to_owned())
+            .unwrap()
+            .is_none()
+    );
     let array = payload.to_owned();
     assert_eq!(runtime.array_get(&array, 0).unwrap().words()[2], 42);
+}
+
+#[test]
+fn invalid_dynamic_indices_fail_once_and_block_publication() {
+    let (mir, root) = graph_with(
+        include_str!("../../tests/fixtures/dynamic-invalid.telora"),
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[mir.hir[root.index()].module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.initialize(&mut context).is_err());
+    assert_eq!(context.diagnostics().len(), 3);
+    assert!(!context.runtime().unwrap().is_published());
+    assert!(compiled.initialize(&mut context).is_err());
+    assert_eq!(context.diagnostics().len(), 3);
 }
 
 #[test]

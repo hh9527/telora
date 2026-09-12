@@ -630,6 +630,7 @@ mod data;
 mod demands;
 #[path = "runtime/dynamic.rs"]
 mod dynamic;
+pub use dynamic::DynamicQuery;
 #[path = "runtime/metadata.rs"]
 mod metadata;
 pub use data::DataContract;

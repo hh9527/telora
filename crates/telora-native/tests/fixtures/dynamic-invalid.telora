@@ -1,0 +1,4 @@
+import "std/dyn" as dyn;
+export def answer = dyn.get_variant_payload(dyn.pack(Option(Int).type, Some(42)), 0);
+def invalid = dyn.get_field_value(dyn.pack(Int.type, 42), 0);
+def negative = dyn.get_variant_payload(dyn.pack(Option(Int).type, Some(42)), -1);
