@@ -1121,6 +1121,25 @@ fn container_comparisons_preserve_existing_record_identity() {
 }
 
 #[test]
+fn executable_plans_do_not_initialize_generic_type_declarations() {
+    let (mir, root) = graph(r#"
+        export type Box(T) = struct(T);
+        export def answer = Box(42).0;
+    "#);
+    let module = mir.hir[root.index()].module;
+    let box_export = *mir.exports[module.index()].iter().find(|symbol| mir.symbols[symbol.index()].name == "Box").unwrap();
+    let answer = *mir.exports[module.index()].iter().find(|symbol| mir.symbols[symbol.index()].name == "answer").unwrap();
+    assert!(mir.seal_export(box_export).is_err());
+    let executable = mir.seal().unwrap().seal_modules(&[module]).unwrap();
+    assert!(executable.globals().iter().all(|symbol| mir.symbols[symbol.index()].name != "Box"));
+    assert!(executable.instances().iter().all(|id| mir.symbols[mir.generic_instances[id.index()].symbol.index()].name != "Box"));
+    let compiled = compile_executable(&executable).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(executable.sealed_mir()).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    assert_eq!(compiled.export(&mut context, answer).unwrap().words()[2], 42);
+}
+
+#[test]
 fn native_fold_control_breaks_early_and_keeps_distinct_state_result_types() {
     let (mir, root) = graph_with(include_str!("../../tests/fixtures/fold-control.telora"), static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();

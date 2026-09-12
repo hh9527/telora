@@ -53,6 +53,10 @@ impl<'a> SealedMir<'a> {
             message: message.into(), labels: vec![], notes: vec![] }];
         let symbol = mir.symbols.get(export.index()).ok_or_else(|| failure("execution export has no symbol"))?;
         let ResolveState::Bound(target) = symbol.resolution else { return Err(failure("execution export is not resolved")); };
+        if !matches!(mir.symbols[target.index()].kind, SymbolKind::Declaration(BindingKind::Let | BindingKind::Def
+            | BindingKind::Native | BindingKind::Decl | BindingKind::Impl)) {
+            return Err(failure("execution export must name a value declaration"));
+        }
         let node = *mir.symbols[target.index()].declarations.last().ok_or_else(|| failure("execution export has no declaration"))?;
         let mut roots = vec![ExecutionRoot { node, instance: None }];
         // Metadata initialization retains the session-wide semantics. Only
@@ -115,10 +119,15 @@ impl<'a> SealedMir<'a> {
         let mut globals = BTreeSet::new();
         let mut instances = BTreeSet::new();
         for root in closure.nodes() {
-            if let Some(instance) = root.instance { instances.insert(instance); }
+            if let Some(instance) = root.instance
+                && matches!(mir.symbols[mir.generic_instances[instance.index()].symbol.index()].kind,
+                    SymbolKind::Declaration(BindingKind::Let | BindingKind::Def | BindingKind::Native | BindingKind::Decl | BindingKind::Impl)) {
+                instances.insert(instance);
+            }
             let Some(symbol) = mir.hir_symbols[root.node.index()] else { continue; };
             let definition = &mir.symbols[symbol.index()];
-            if matches!(mir.hir[root.node.index()].kind, HirKind::Binding { .. })
+            if matches!(mir.hir[root.node.index()].kind, HirKind::Binding { kind: BindingKind::Let | BindingKind::Def
+                | BindingKind::Native | BindingKind::Decl | BindingKind::Impl, .. })
                 && definition.module.is_some_and(|module| definition.scope.is_some() && definition.scope == mir.module_scopes[module.index()]) {
                 globals.insert(symbol);
             }
