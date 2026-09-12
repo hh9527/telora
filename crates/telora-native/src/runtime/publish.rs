@@ -14,9 +14,10 @@ impl Runtime {
             return Err("main world is already sealed".into());
         }
         let mut target = Tables::default();
+        let demand_roots = self.demand_roots()?;
         let mut copies = Copies::default();
         let mut result = Vec::with_capacity(roots.len());
-        for root in roots {
+        for root in roots.iter().chain(&demand_roots) {
             self.validate(root.as_ref(), root.type_id())?;
             let mut words = root.words.to_vec();
             self.copy_value(&mut words, &mut target, &mut copies, 0)?;
@@ -35,6 +36,8 @@ impl Runtime {
         self.work = Tables::default();
         self.identity = identity; // all escaped initialize descriptors become stale
         self.published = true;
+        let demands = result.split_off(roots.len());
+        self.publish_demands(demands);
         Ok(result)
     }
     fn copy_value(

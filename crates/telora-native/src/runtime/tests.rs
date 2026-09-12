@@ -4,6 +4,52 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
+fn initialization_demands_cache_publish_and_report_cycles_once() {
+    let mir = graph(SOURCE);
+    let key = DemandKey::Export(
+        *mir.exports
+            .iter()
+            .flatten()
+            .find(|id| mir.symbols[id.index()].name == "text")
+            .unwrap(),
+    );
+    let ty = value_type(&mir, "text");
+    let mut rt = Runtime::new(&mir.seal().unwrap()).unwrap();
+    rt.register_demand(key, ty).unwrap();
+    assert!(rt.publish(&[]).is_err());
+    assert!(matches!(rt.begin_demand(key).unwrap(), Demand::Evaluate));
+    let text = rt
+        .string(ty, [1, 2, 3], "initialization shared long string")
+        .unwrap();
+    rt.complete_demand(key, text.clone()).unwrap();
+    assert!(matches!(rt.begin_demand(key).unwrap(), Demand::Ready(_)));
+    let roots = rt.publish(&[text]).unwrap();
+    let Demand::Ready(cached) = rt.begin_demand(key).unwrap() else {
+        panic!("demand lost at publication")
+    };
+    assert_eq!(cached.words(), roots[0].words());
+    assert_eq!(rt.main.strings.entries.len(), 1);
+    assert_eq!(
+        rt.text(cached.as_ref()).unwrap().as_str(),
+        "initialization shared long string"
+    );
+    assert!(rt.register_demand(key, ty).is_err());
+
+    let mut rt = Runtime::new(&mir.seal().unwrap()).unwrap();
+    rt.register_demand(key, ty).unwrap();
+    assert!(matches!(rt.begin_demand(key).unwrap(), Demand::Evaluate));
+    assert!(
+        rt.begin_demand(key)
+            .unwrap_err()
+            .contains("dependency cycle")
+    );
+    assert!(matches!(rt.begin_demand(key).unwrap(), Demand::Failed));
+    rt.fail_demand(key).unwrap();
+    assert!(rt.publish(&[]).is_err());
+    assert!(!rt.published);
+}
+
+#[test]
 fn closure_environments_publish_nested_captures_and_shared_objects() {
     let mir = graph(SOURCE);
     let mut rt = Runtime::new(&mir.seal().unwrap()).unwrap();

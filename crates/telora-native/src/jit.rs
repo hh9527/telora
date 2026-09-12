@@ -38,6 +38,12 @@ pub struct Compiled {
     layouts: Layouts,
     arguments: Vec<TypeKey>,
     output: TypeKey,
+    entries: BTreeMap<HirId, CompiledEntry>,
+}
+struct CompiledEntry {
+    entry: Entry,
+    arguments: Vec<TypeKey>,
+    output: TypeKey,
 }
 /// Also frees allocations if compilation exits early with an error.
 struct CodeMemory(Option<JITModule>);
@@ -73,14 +79,43 @@ impl Compiled {
         &self.layouts
     }
     pub fn call(&self, context: &mut CallContext, values: &[Value]) -> Result<Value> {
+        self.invoke(context, values, self.entry, &self.arguments, self.output)
+    }
+    pub fn call_root(
+        &self,
+        root: HirId,
+        context: &mut CallContext,
+        values: &[Value],
+    ) -> Result<Value> {
+        let entry = self
+            .entries
+            .get(&root)
+            .ok_or("native root not in code plan")?;
+        self.invoke(context, values, entry.entry, &entry.arguments, entry.output)
+    }
+    pub fn root_signature(&self, root: HirId) -> Result<(&[TypeKey], TypeKey)> {
+        let entry = self
+            .entries
+            .get(&root)
+            .ok_or("native root not in code plan")?;
+        Ok((&entry.arguments, entry.output))
+    }
+    fn invoke(
+        &self,
+        context: &mut CallContext,
+        values: &[Value],
+        entry: Entry,
+        arguments: &[TypeKey],
+        output: TypeKey,
+    ) -> Result<Value> {
         if let Ok(runtime) = context.runtime_mut() {
             runtime.bind_code_plan(self.identity)?;
         }
-        if values.len() != self.arguments.len() {
+        if values.len() != arguments.len() {
             return Err("native argument count mismatch".into());
         }
         let mut args = Vec::new();
-        for (value, &ty) in values.iter().zip(&self.arguments) {
+        for (value, &ty) in values.iter().zip(arguments) {
             if value.type_key() != ty || value.words().len() != self.layouts.words(ty)? {
                 return Err("native argument type/width mismatch".into());
             }
@@ -91,18 +126,18 @@ impl Compiled {
             }
             args.extend_from_slice(value.words());
         }
-        let never = self.layouts.is_never(self.output)?;
+        let never = self.layouts.is_never(output)?;
         let words = if never {
             0
         } else {
-            self.layouts.words(self.output)?
+            self.layouts.words(output)?
         };
         let mut result = vec![0; words].into_boxed_slice();
         // SAFETY: only our verified signature is transmuted; buffers have checked
         // widths, stay alive and do not move during execution. Generated code may
         // neither retain pointers nor unwind across this ABI.
         let status = unsafe {
-            (self.entry)(
+            (entry)(
                 context,
                 args.as_ptr(),
                 result.as_mut_ptr(),
@@ -114,7 +149,7 @@ impl Compiled {
                 if never {
                     return Err("native Never function returned successfully".into());
                 }
-                let mut value = Value::from_result(result, self.output, words)?;
+                let mut value = Value::from_result(result, output, words)?;
                 value.arena = context.runtime().map_or(0, |r| r.identity());
                 Ok(value)
             }
@@ -145,6 +180,19 @@ fn child(mir: &Mir, node: HirId, role: Role) -> Result<HirId> {
 /// Compile one closed expression or a non-capturing monomorphic function.
 /// This does not initialize a module or silently skip its top-level effects.
 pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
+    compile_roots(mir, &[root])
+}
+
+/// Compile all roots into one executable owner and FunctionId namespace.
+/// Root registration is deterministic regardless of request order.
+pub fn compile_roots(mir: &SealedMir<'_>, roots: &[HirId]) -> Result<Compiled> {
+    let root = *roots
+        .first()
+        .ok_or("native code plan needs at least one root")?;
+    let roots = roots
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
     let layouts = Layouts::from_mir(mir)?;
     let graph = mir.mir();
     let (_, _, output, arguments) = functions::shape(graph, &layouts, root.into())?;
@@ -156,9 +204,6 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
     let pointer = module.target_config().pointer_type();
     ctx.func.signature.params = vec![AbiParam::new(pointer); 4];
     ctx.func.signature.returns.push(AbiParam::new(types::I32));
-    let function = module
-        .declare_function("telora_entry", Linkage::Export, &ctx.func.signature)
-        .map_err(|e| e.to_string())?;
     let mut helper_signature = module.make_signature();
     helper_signature.params = [
         pointer,
@@ -178,8 +223,18 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
         .declare_function("telora_native_object", Linkage::Import, &helper_signature)
         .map_err(|e| e.to_string())?;
     let mut functions = functions::Functions::new(ctx.func.signature.clone());
-    functions.registered.insert(root.into(), function);
-    functions.pending.push(root.into());
+    for &root in &roots {
+        functions::shape(graph, &layouts, root.into())?;
+        let function = module
+            .declare_function(
+                &format!("telora_entry_{}", root.index()),
+                Linkage::Export,
+                &ctx.func.signature,
+            )
+            .map_err(|e| e.to_string())?;
+        functions.registered.insert(root.into(), function);
+        functions.pending.push(root.into());
+    }
     let mut next = 0;
     while next < functions.pending.len() {
         let node = functions.pending[next];
@@ -188,9 +243,29 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
     }
     functions::emit_dispatchers(graph, &layouts, root, helper, &mut module, &mut functions)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
-    let address = module.get_finalized_function(function);
-    // SAFETY: target default C ABI, exactly four pointers and a u32 status.
-    let entry = unsafe { std::mem::transmute::<*const u8, Entry>(address) };
+    let mut entries = BTreeMap::new();
+    for root in roots {
+        let address = module.get_finalized_function(functions.registered[&root.into()]);
+        // SAFETY: target default C ABI, exactly four pointers and a u32 status.
+        let entry = unsafe { std::mem::transmute::<*const u8, Entry>(address) };
+        let (_, _, output, arguments) = functions::shape(graph, &layouts, root.into())?;
+        if functions
+            .captures
+            .get(&root.into())
+            .is_some_and(|captures| !captures.is_empty())
+        {
+            return Err("capturing closure cannot be called as a bare native root".into());
+        }
+        entries.insert(
+            root,
+            CompiledEntry {
+                entry,
+                arguments,
+                output,
+            },
+        );
+    }
+    let entry = entries[&root].entry;
     Ok(Compiled {
         identity: NEXT_CODE_PLAN
             .fetch_update(
@@ -204,6 +279,7 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
         layouts,
         arguments,
         output,
+        entries,
     })
 }
 

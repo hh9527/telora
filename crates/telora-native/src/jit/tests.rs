@@ -321,6 +321,43 @@ fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
     assert!(rt.enum_payload(&end).unwrap().is_none());
 }
 #[test]
+fn one_code_plan_runs_initialization_then_calls_published_closures() {
+    let (mir, consumer) = graph(
+        "def make: Fn(Int) -> Fn(Int) -> Int = fn(base) { fn(x) { base + x } }; export def answer: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, x) { f(x) };",
+    );
+    let make = crate::test_support::value_node(&mir, "make");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_roots(&sealed, &[consumer, make, make]).unwrap();
+    assert_eq!(compiled.entries.len(), 2);
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let int = compiled.root_signature(make).unwrap().0[0];
+    let base = compiled
+        .layouts()
+        .value(int, Origin::default(), &[40])
+        .unwrap();
+    let closure = compiled.call_root(make, &mut context, &[base]).unwrap();
+    let published = context
+        .runtime_mut()
+        .unwrap()
+        .publish(&[closure.clone()])
+        .unwrap();
+    let two = compiled
+        .layouts()
+        .value(int, Origin::default(), &[2])
+        .unwrap();
+    assert!(
+        compiled
+            .call_root(consumer, &mut context, &[closure, two.clone()])
+            .is_err()
+    );
+    let result = compiled
+        .call_root(consumer, &mut context, &[published[0].clone(), two])
+        .unwrap();
+    assert_eq!(result.words()[2], 42);
+    assert!(context.diagnostics().is_empty());
+}
+
+#[test]
 fn machine_code_reads_lexical_closure_environments() {
     let (mir, root) = graph(
         "export def answer = do { let base = 40; let add: Fn(Int) -> Int = fn(x) { base + x }; add(2) };",

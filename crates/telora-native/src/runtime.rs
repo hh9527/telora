@@ -157,6 +157,7 @@ enum Table {
 }
 
 pub struct Runtime {
+    demands: std::collections::BTreeMap<DemandKey, demands::DemandSlot>,
     code_plan: Option<u64>,
     identity: u64,
     layouts: Vec<Option<Layout>>,
@@ -297,6 +298,7 @@ impl Runtime {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| "arena identity overflow")?;
         Ok(Self {
+            demands: std::collections::BTreeMap::new(),
             code_plan: None,
             identity,
             layouts,
@@ -558,6 +560,9 @@ impl Runtime {
 
 #[path = "runtime/closures.rs"]
 mod closures;
+#[path = "runtime/demands.rs"]
+mod demands;
+pub use demands::{Demand, DemandKey};
 #[path = "runtime/dict.rs"]
 mod dict;
 #[path = "runtime/enums.rs"]
