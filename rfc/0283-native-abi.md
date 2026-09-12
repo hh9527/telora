@@ -60,7 +60,12 @@ String/Bytes 字面量创建、直接相等和 String.length 已移除按输入�
 零剩余 fuel 下完成内部扫描且不分配，以及字面量在内存配额不足时不创建 backing、
 不写结果。实际语言函数调用仍通过生成代码检查，内部有限扫描不再按字节收费。
 
-深层结构相等已接入 session fuel：按遍历任务扣费，String/Bytes 叶子、Dict 键和 Regex pattern 在内容比较前按字节扣费。Array/Record/Tuple/Dict 逐项展开，工作列表不再一次加入整层子项，保留遇到首个差异立即结束的行为。已访问的对象对仍用于共享/环终止；没有对用户对象做深复制。万项数组测试验证小预算下的首项短路，以及相同输入继续遍历时耗尽、未写结果、来源和单次诊断。host helper 使用 CallContext 的分字段借用共享原 fuel，不新增一套预算或临时取走 Runtime。codec 与其余原生 API 的计费仍待覆盖。
+深层结构相等已移除逐任务和逐字节 fuel，String/Bytes、Dict 键和 Regex pattern
+直接比较已有内容。Array/Record/Tuple/Dict 逐项展开，保留首个差异立即返回；
+已访问的对象对保证共享/环遍历终止，不深复制用户对象。万项数组测试验证零剩余
+fuel 下可比较相等与不等输入，已中止的 session 仍拒绝比较且不写结果。
+CallContext 的只读 runtime 工作入口不再暴露成本扣减回调，只保留中止检查与
+借用访问。这里没有宣称遍历临时集合已经完整纳入逻辑内存配额。
 
 codec 编码/解码及文本解析的递归节点已扣减同一 fuel，容器展开在预留条目列表前扣费，untagged 的每次候选尝试也扣费。耗尽返回 DecodeFailure::Failed，不能被当作 Rejected/Blame 收集后继续候选尝试或包装成语言 Err。真实 JIT 万项数组测试验证编码耗尽与 untagged 解码耗尽均只报告一次，即使源码捕获解码 Err 也不能恢复，调用深度归零。该阶段覆盖图遍历，不代表 regex 引擎、字段名处理及所有文本扫描已完成工作量计费。
 

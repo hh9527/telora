@@ -8,15 +8,10 @@ enum Task {
 impl Runtime {
     /// Compare the sealed value graph. Only descriptors enter the work list;
     /// objects and byte buffers remain borrowed from their original world.
-    #[cfg(test)]
     pub(super) fn equal(&self, left: &Value, right: &Value) -> Result<bool> {
-        self.equal_metered(left, right, &mut |_| Ok(()))
-    }
-    pub(super) fn equal_metered(&self, left: &Value, right: &Value, charge: &mut dyn FnMut(u64) -> Result<()>) -> Result<bool> {
         let mut pending = vec![Task::Compare(left.clone(), right.clone())];
         let mut visited = BTreeSet::new();
         while let Some(task) = pending.pop() {
-            charge(1)?;
             let (left, right) = match task {
                 Task::Compare(left, right) => (left, right),
                 Task::Children { left, right, kind, index, length } => {
@@ -26,7 +21,6 @@ impl Runtime {
                         Kind::Dict => {
                             let (ak, av) = self.dict_entry(&left, index)?;
                             let (bk, bv) = self.dict_entry(&right, index)?;
-                            charge((self.byte_span_len(ak)? as u64).checked_add(self.byte_span_len(bk)? as u64).ok_or("equality byte count overflow")?)?;
                             if self.text(ak)?.as_str() != self.text(bk)?.as_str() { return Ok(false); }
                             (av, bv)
                         }
@@ -52,12 +46,11 @@ impl Runtime {
                 }
                 Kind::Metadata => { if self.represented_type(left.as_ref())? != self.represented_type(right.as_ref())? { return Ok(false); } }
                 Kind::String | Kind::Bytes => {
-                    charge((self.byte_span_len(left.as_ref())? as u64).checked_add(self.byte_span_len(right.as_ref())? as u64).ok_or("equality byte count overflow")?)?;
                     let equal = if layout.kind == Kind::String { self.text(left.as_ref())?.as_str() == self.text(right.as_ref())?.as_str() }
                         else { self.bytes_data(&left)? == self.bytes_data(&right)? };
                     if !equal { return Ok(false); }
                 }
-                Kind::Regex => { if !self.regex_equal(&left, &right, charge)? { return Ok(false); } }
+                Kind::Regex => { if !self.regex_equal(&left, &right)? { return Ok(false); } }
                 Kind::Hash => { if self.hash_state(&left)? != self.hash_state(&right)? { return Ok(false); } }
                 Kind::Blame => {
                     self.blame_object(&left)?;

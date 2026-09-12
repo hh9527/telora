@@ -202,7 +202,7 @@ pub(crate) unsafe extern "C" fn object(
                 return Err(String::from_utf8_lossy(message).into_owned());
             }
             if operation == RESOLVE_FUNCTION {
-                let resolved = context.runtime_work(origin, |rt, _| {
+                let resolved = context.runtime_work(|rt| {
                     let width = rt.layout(TypeId(ty))?.words;
                     let value = ValueRef { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) } };
                     rt.resolve_function_ref(value)
@@ -212,12 +212,12 @@ pub(crate) unsafe extern "C" fn object(
                 return Ok(Status::Success);
             }
             if operation == EQUAL {
-                let equal = context.runtime_work(origin, |rt, charge| {
+                let equal = context.runtime_work(|rt| {
                     let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
                     let width = rt.layout(input)?.words;
                     let left = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) }.into() };
                     let right = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(width), width) }.into() };
-                    rt.equal_metered(&left, &right, charge)
+                    rt.equal(&left, &right)
                 })?;
                 let Some(equal) = equal else { return Ok(Status::Failed); };
                 let result = context.runtime()?.scalar(TypeId(ty), origin.words(), u64::from(equal))?;

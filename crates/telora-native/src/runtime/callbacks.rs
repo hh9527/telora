@@ -4,7 +4,7 @@ type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *co
 
 fn prepare_callback(context: &mut CallContext, closure: &Value) -> Option<Value> {
     let origin = closure.origin();
-    match context.runtime_work(origin, |rt, _| rt.resolve_function_ref(closure.as_ref())) {
+    match context.runtime_work(|rt| rt.resolve_function_ref(closure.as_ref())) {
         Ok(value) => value,
         Err(error) => { context.fail_at(error, origin); None }
     }

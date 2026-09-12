@@ -38,10 +38,9 @@ fn required(hir: &regex_syntax::hir::Hir) -> BTreeSet<String> {
 }
 
 impl Runtime {
-    pub(super) fn regex_equal(&self, left: &Value, right: &Value, charge: &mut dyn FnMut(u64) -> Result<()>) -> Result<bool> {
+    pub(super) fn regex_equal(&self, left: &Value, right: &Value) -> Result<bool> {
         let left = &self.regex_object(left)?.pattern;
         let right = &self.regex_object(right)?.pattern;
-        charge((left.len() as u64).checked_add(right.len() as u64).ok_or("regex comparison work overflow")?)?;
         Ok(left == right)
     }
     pub(super) fn charge_regex_copy(&self, compiled: &CompiledRegex) -> Result<()> {

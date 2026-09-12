@@ -205,7 +205,7 @@ impl Compiled {
         if !runtime.is_published() {
             return Err("native entry call requires successful initialization".into());
         }
-        let closure = context.runtime_work(closure.origin(), |runtime, _| runtime.resolve_function_ref(closure.as_ref()))?
+        let closure = context.runtime_work(|runtime| runtime.resolve_function_ref(closure.as_ref()))?
             .ok_or("native execution failed")?;
         let id = context.runtime()?.function_id(&closure)?;
         let (ty, entry) = self

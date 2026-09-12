@@ -4,7 +4,7 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
-fn deep_equality_short_circuits_and_exhausts_without_writing_a_result() {
+fn deep_equality_compares_finite_graphs_without_per_node_fuel() {
     use crate::abi::{CallContext, Status};
     let mir = graph(&format!("{SOURCE}\nexport def truth = True;"));
     let sealed = mir.seal().unwrap();
@@ -18,7 +18,7 @@ fn deep_equality_short_circuits_and_exhausts_without_writing_a_result() {
     items[0] = rt.scalar(int, [0; 3], 0).unwrap();
     let right = rt.array(array, [0; 3], &items).unwrap();
     let roots = rt.publish(&[left, right]).unwrap();
-    let mut context = CallContext::with_runtime(rt).with_fuel(3);
+    let mut context = CallContext::with_runtime(rt).with_fuel(0);
     let invoke = |context: &mut CallContext, right: &Value, output: &mut [u64; 3]| {
         let packet = [roots[0].words(), right.words()].concat();
         unsafe { helpers::object(context, helpers::EQUAL, boolean.raw(), 1 | (2u64 << 32), 3, packet.as_ptr(), 0, output.as_mut_ptr()) }
@@ -27,13 +27,15 @@ fn deep_equality_short_circuits_and_exhausts_without_writing_a_result() {
     assert_eq!(invoke(&mut context, &roots[1], &mut output), Status::Success as u32);
     assert_eq!(output[2], 0);
     assert_eq!(context.remaining_fuel(), Some(0));
-    context = context.with_fuel(3);
     output.fill(u64::MAX);
     let allocated = context.runtime().unwrap().requested_allocation_bytes();
+    assert_eq!(invoke(&mut context, &roots[0], &mut output), Status::Success as u32);
+    assert_eq!(output[2], 1);
+    assert_eq!(context.runtime().unwrap().requested_allocation_bytes(), allocated);
+    context.abort_at("stopped", crate::abi::Origin::from_words([1, 2, 3]).unwrap());
+    output.fill(u64::MAX);
     assert_eq!(invoke(&mut context, &roots[0], &mut output), Status::Failed as u32);
     assert_eq!(output, [u64::MAX; 3]);
-    assert_eq!(context.runtime().unwrap().requested_allocation_bytes(), allocated);
-    assert_eq!(invoke(&mut context, &roots[0], &mut output), Status::Failed as u32);
     assert_eq!(context.diagnostics().len(), 1);
     assert_eq!(context.diagnostics()[0].origin.words(), [1, 2, 3]);
 }
