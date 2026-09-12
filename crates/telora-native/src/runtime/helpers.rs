@@ -198,6 +198,19 @@ pub(crate) unsafe extern "C" fn object(
                     unsafe { std::slice::from_raw_parts(data.cast::<u8>(), count as usize) };
                 return Err(String::from_utf8_lossy(message).into_owned());
             }
+            if operation == EQUAL {
+                let equal = context.runtime_work(origin, |rt, charge| {
+                    let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
+                    let width = rt.layout(input)?.words;
+                    let left = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) }.into() };
+                    let right = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(width), width) }.into() };
+                    rt.equal_metered(&left, &right, charge)
+                })?;
+                let Some(equal) = equal else { return Ok(Status::Failed); };
+                let result = context.runtime()?.scalar(TypeId(ty), origin.words(), u64::from(equal))?;
+                unsafe { std::ptr::copy_nonoverlapping(result.words().as_ptr(), out, result.words().len()); }
+                return Ok(Status::Success);
+            }
             if operation == ARRAY_CONCAT {
                 // Charge packet traversal before inspecting descriptors, then
                 // charge actual slice words before allocating/copying output.
@@ -311,14 +324,6 @@ pub(crate) unsafe extern "C" fn object(
                     let result = f64::from_bits(values[2]) % f64::from_bits(values[5]);
                     if !result.is_finite() { return Err("floating-point arithmetic produced a non-finite result".into()); }
                     rt.scalar(ty, loc, result.to_bits())?
-                }
-                EQUAL => {
-                    let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
-                    let width = rt.layout(input)?.words;
-                    let left = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) }.into() };
-                    let right = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(width), width) }.into() };
-                    let equal = rt.equal(&left, &right)?;
-                    rt.scalar(ty, loc, u64::from(equal))?
                 }
                 HASH => {
                     let mut inputs = Vec::new();

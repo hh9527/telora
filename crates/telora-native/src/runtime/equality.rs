@@ -1,13 +1,43 @@
 use super::*;
 use std::collections::BTreeSet;
+enum Task {
+    Compare(Value, Value),
+    Children { left: Value, right: Value, kind: Kind, index: usize, length: usize },
+}
 
 impl Runtime {
     /// Compare the sealed value graph. Only descriptors enter the work list;
     /// objects and byte buffers remain borrowed from their original world.
+    #[cfg(test)]
     pub(super) fn equal(&self, left: &Value, right: &Value) -> Result<bool> {
-        let mut pending = vec![(left.clone(), right.clone())];
+        self.equal_metered(left, right, &mut |_| Ok(()))
+    }
+    pub(super) fn equal_metered(&self, left: &Value, right: &Value, charge: &mut dyn FnMut(u64) -> Result<()>) -> Result<bool> {
+        let mut pending = vec![Task::Compare(left.clone(), right.clone())];
         let mut visited = BTreeSet::new();
-        while let Some((left, right)) = pending.pop() {
+        while let Some(task) = pending.pop() {
+            charge(1)?;
+            let (left, right) = match task {
+                Task::Compare(left, right) => (left, right),
+                Task::Children { left, right, kind, index, length } => {
+                    if index == length { continue; }
+                    let (a, b) = match kind {
+                        Kind::Array => (self.array_get(&left, index)?, self.array_get(&right, index)?),
+                        Kind::Dict => {
+                            let (ak, av) = self.dict_entry(&left, index)?;
+                            let (bk, bv) = self.dict_entry(&right, index)?;
+                            charge((self.byte_span_len(ak)? as u64).checked_add(self.byte_span_len(bk)? as u64).ok_or("equality byte count overflow")?)?;
+                            if self.text(ak)?.as_str() != self.text(bk)?.as_str() { return Ok(false); }
+                            (av, bv)
+                        }
+                        _ => (self.field(&left, index)?, self.field(&right, index)?),
+                    };
+                    let next = Task::Compare(a.to_owned(), b.to_owned());
+                    pending.push(Task::Children { left, right, kind, index: index + 1, length });
+                    pending.push(next);
+                    continue;
+                }
+            };
             self.validate(left.as_ref(), left.type_id())?;
             self.validate(right.as_ref(), right.type_id())?;
             if left.type_id() != right.type_id() { return Ok(false); }
@@ -21,9 +51,13 @@ impl Runtime {
                     if !equal { return Ok(false); }
                 }
                 Kind::Metadata => { if self.represented_type(left.as_ref())? != self.represented_type(right.as_ref())? { return Ok(false); } }
-                Kind::String => { if self.text(left.as_ref())?.as_str() != self.text(right.as_ref())?.as_str() { return Ok(false); } }
-                Kind::Bytes => { if self.bytes_data(&left)? != self.bytes_data(&right)? { return Ok(false); } }
-                Kind::Regex => { if !self.regex_equal(&left, &right)? { return Ok(false); } }
+                Kind::String | Kind::Bytes => {
+                    charge((self.byte_span_len(left.as_ref())? as u64).checked_add(self.byte_span_len(right.as_ref())? as u64).ok_or("equality byte count overflow")?)?;
+                    let equal = if layout.kind == Kind::String { self.text(left.as_ref())?.as_str() == self.text(right.as_ref())?.as_str() }
+                        else { self.bytes_data(&left)? == self.bytes_data(&right)? };
+                    if !equal { return Ok(false); }
+                }
+                Kind::Regex => { if !self.regex_equal(&left, &right, charge)? { return Ok(false); } }
                 Kind::Hash => { if self.hash_state(&left)? != self.hash_state(&right)? { return Ok(false); } }
                 Kind::Blame => {
                     self.blame_object(&left)?;
@@ -42,7 +76,7 @@ impl Runtime {
                     if a != b { return Ok(false); }
                     if a == 3 {
                         if self.scalar_bits(av[0].as_ref())? != self.scalar_bits(bv[0].as_ref())? { return Ok(false); }
-                    } else { pending.extend(av.into_iter().zip(bv)); }
+                    } else { pending.extend(av.into_iter().zip(bv).map(|(a, b)| Task::Compare(a, b))); }
                 }
                 Kind::Dyn => {
                     self.dynamic_value(&left)?;
@@ -65,27 +99,22 @@ impl Runtime {
                         Kind::Array => {
                             let len = self.array_len(&left)?;
                             if len != self.array_len(&right)? { return Ok(false); }
-                            for index in (0..len).rev() { pending.push((self.array_get(&left, index)?.to_owned(), self.array_get(&right, index)?.to_owned())); }
+                            pending.push(Task::Children { left, right, kind: Kind::Array, index: 0, length: len });
                         }
                         Kind::Dict => {
                             let len = self.dict_len(&left)?;
                             if len != self.dict_len(&right)? { return Ok(false); }
-                            for index in (0..len).rev() {
-                                let (a, av) = self.dict_entry(&left, index)?;
-                                let (b, bv) = self.dict_entry(&right, index)?;
-                                if self.text(a)?.as_str() != self.text(b)?.as_str() { return Ok(false); }
-                                pending.push((av.to_owned(), bv.to_owned()));
-                            }
+                            pending.push(Task::Children { left, right, kind: Kind::Dict, index: 0, length: len });
                         }
                         Kind::Enum => {
                             if self.enum_tag(&left)? != self.enum_tag(&right)? { return Ok(false); }
                             match (self.enum_payload(&left)?, self.enum_payload(&right)?) {
-                                (Some(a), Some(b)) => pending.push((a.to_owned(), b.to_owned())),
+                                (Some(a), Some(b)) => pending.push(Task::Compare(a.to_owned(), b.to_owned())),
                                 (None, None) => {},
                                 _ => return Err("sealed enum payload mismatch".into()),
                             }
                         }
-                        _ => for index in (0..layout.fields.len()).rev() { pending.push((self.field(&left, index)?.to_owned(), self.field(&right, index)?.to_owned())); },
+                        _ => pending.push(Task::Children { left, right, kind: layout.kind, index: 0, length: layout.fields.len() }),
                     }
                 }
                 // These require their explicit identity/resource contracts.

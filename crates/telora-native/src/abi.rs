@@ -407,6 +407,26 @@ impl CallContext {
     pub fn remaining_fuel(&self) -> Option<u64> {
         self.fuel
     }
+    pub(crate) fn runtime_work<T>(&mut self, origin: Origin, work: impl FnOnce(&crate::runtime::Runtime, &mut dyn FnMut(u64) -> Result<()>) -> Result<T>) -> Result<Option<T>> {
+        if self.aborted { return Ok(None); }
+        let runtime = self.runtime.as_ref().ok_or("native call requires a runtime")?;
+        let mut exhausted = false;
+        let fuel = &mut self.fuel;
+        let result = work(runtime, &mut |amount| {
+            if exhausted { return Err("native execution fuel exhausted".into()); }
+            if let Some(remaining) = fuel {
+                match remaining.checked_sub(amount) {
+                    Some(next) => *remaining = next,
+                    None => { *remaining = 0; exhausted = true; return Err("native execution fuel exhausted".into()); }
+                }
+            }
+            Ok(())
+        });
+        if exhausted {
+            self.abort_at("native execution fuel exhausted", origin);
+            Ok(None)
+        } else { result.map(Some) }
+    }
     pub(crate) fn consume_fuel(&mut self, amount: u64, origin: Origin) -> Status {
         if self.aborted { return Status::Failed; }
         let Some(remaining) = self.fuel else { return Status::Success; };
