@@ -615,6 +615,29 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_flat_map_preserves_order_aliases_and_failure_propagation() {
+    let (mir, root) = graph_with("import \"std/array\" { flat_map }; export def answer = do { let text = \"long shared flat-map payload\"; let empty: Array(Int) = []; (text, flat_map([1, 2, 3], fn(value) { if value == 2 { [] } else { [text, text] } }), flat_map(empty, fn(value) -> Array(String) { fail!(\"empty flat-map called\") })) };", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    let source = rt.field(&result, 0).unwrap();
+    let flattened = rt.field(&result, 1).unwrap().to_owned();
+    assert_eq!(rt.array_len(&flattened).unwrap(), 4);
+    for i in 0..4 { assert_eq!(rt.array_get(&flattened, i).unwrap().words(), source.words()); }
+    assert_eq!(rt.array_len(&rt.field(&result, 2).unwrap().to_owned()).unwrap(), 0);
+    let (mir, root) = graph_with("import \"std/array\" { flat_map }; export def answer = flat_map([1, 2], fn(value) -> Array(Int) { if value == 1 { [value] } else { fail!(\"flat-map failed\") } });", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "flat-map failed");
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
 fn native_array_construction_keeps_shared_elements_and_zip_contract() {
     let (mir, root) = graph_with(include_str!("../../tests/fixtures/array-build.telora"), static_sources::BUILTINS);
     let module = mir.hir[root.index()].module;

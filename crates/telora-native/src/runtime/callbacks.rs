@@ -99,6 +99,10 @@ pub(super) unsafe fn array_map(
                     words,
                 };
                 rt.validate(value.as_ref(), element)?;
+                if operation == 7 {
+                    for index in 0..rt.array_len(&value)? { mapped.push(rt.array_get(&value, index)?.to_owned()); }
+                    continue;
+                }
                 if find || filter || boolean {
                     let selected = rt.scalar_bits(value.as_ref())? != 0;
                     if boolean {
