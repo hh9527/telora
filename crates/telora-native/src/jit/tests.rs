@@ -105,6 +105,33 @@ fn native_codec_fuel_exhaustion_is_not_a_recoverable_decode_error() {
 }
 
 #[test]
+fn native_pending_callbacks_fail_at_their_source_only_when_invoked() {
+    for source in [include_str!("../../tests/fixtures/pending-map-callback.telora"), include_str!("../../tests/fixtures/pending-fold-callback.telora")] {
+        for populated in [false, true] {
+            let source = if populated { source.replace("[]", "[42]") } else { source.to_owned() };
+            let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+            let symbol = mir.symbols.iter().find(|symbol| symbol.name == "callback").unwrap();
+            let origin = Origin::from_loc(Some(mir.hir[symbol.declarations[0].index()].location));
+            let sealed = mir.seal().unwrap();
+            let compiled = compile(&sealed, root).unwrap();
+            let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+            let result = compiled.call(&mut context, &[]);
+            if populated {
+                assert!(result.is_err());
+                assert_eq!(context.diagnostics().len(), 1);
+                assert!(context.diagnostics()[0].message.contains("before its declaration"));
+                assert_eq!(context.diagnostics()[0].origin, origin);
+            } else {
+                let value = result.unwrap();
+                assert_eq!(context.runtime().unwrap().scalar_bits(value.as_ref()).unwrap(), 0);
+                assert!(context.diagnostics().is_empty());
+            }
+            assert_eq!(context.call_depth(), 0);
+        }
+    }
+}
+
+#[test]
 fn native_pending_function_failure_points_to_the_call() {
     let source = include_str!("../../tests/fixtures/function-before-initialization.telora");
     let (mir, root) = graph(source);

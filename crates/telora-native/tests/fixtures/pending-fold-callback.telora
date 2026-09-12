@@ -1,0 +1,7 @@
+import "std/array" as array;
+export def answer = do {
+    decl callback: Fn(Int, Int) -> Int;
+    let result = array.fold([], 0, callback);
+    def callback = fn(acc, value) {acc + value};
+    result
+};

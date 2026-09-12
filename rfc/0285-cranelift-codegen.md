@@ -147,6 +147,8 @@ Host 入口和生成代码的间接分派都处理这种槽。函数自身已捕
 
 函数别名按既有语义进一步校正：填充槽时，来源若是 Pending 函数槽则在定义处失败；捕获 Pending 槽仍合法，两者不可混同。真实对照发现修复前默认后端拒绝前向别名，native 却返回结果，现 `function-alias-before-initialization.telora` 验证 native 在第 2 行单次失败。函数相等比较沿槽读取最终函数身份并计费，因此已初始化函数及其别名相等；槽本身的稳定身份用于捕获连接，不是相等比较的最终依据。互递归发布资产增加已初始化别名比较，默认/native eval 和 eval-with 均返回 42。126 项 native 单测及三个 regex 实验通过，CLI 定向覆盖失败位置与发布后别名调用。
 
+map/fold 家族的原生回调在非空输入上准备函数槽，沿槽解析和 fuel 耗尽使用回调描述符的来源（通常是用户源码中的声明），不再由公共 dispatcher 的编译根定位。准备后的函数体复用于该次遍历，不逐元素重复沿别名链查找；每次实际 dispatcher 调用仍执行验证和计费。空输入不准备、不调用回调，因此允许尚未填充的槽。`pending-map-callback.telora` 和 `pending-fold-callback.telora` 分别验证空输入返回 0、非空变体单次失败且来源对应声明、调用深度归零。这是声明来源定位，不宣称获得完整用户调用栈；其他原生回调入口仍需分别核对。
+
 `.cast!` 已消费封闭目标类型与 checker 实例生成调用包；运行时先验证整个输入的表示，再转换并执行声明检查，不调用 encode/decode，也不重新推导类型。支持 Record/Dict、Array、Tuple/Newtype、Option/Result 和 Unchecked 到 owner；拒绝不同 nominal 身份以及数值隐式转换。未改变的子对象保留 backing 与来源。结构不匹配返回 Err(String)，checker 失败只产生一次执行诊断。
 
 CLI 语言资产覆盖 eval/eval-with 的 19 项类型身份与转换检查，并将解包后的容器数据与默认后端比较。默认后端对 cast 容器写入类型标记、对普通容器不总是写入相同标记，其相等比较会受此影响；因此不以该差异规定 native 的相等语义。默认运行时代码保持不变。

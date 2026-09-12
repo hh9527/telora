@@ -2,6 +2,14 @@ use super::*;
 
 type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *const u64) -> u32;
 
+fn prepare_callback(context: &mut CallContext, closure: &Value) -> Option<Value> {
+    let origin = closure.origin();
+    match context.runtime_work(origin, |rt, charge| rt.resolve_function_metered(closure.as_ref(), charge)) {
+        Ok(value) => value,
+        Err(error) => { context.fail_at(error, origin); None }
+    }
+}
+
 pub(super) unsafe fn debug(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin) -> u32 {
     context.boundary(|context| {
         let result = (|| -> Result<()> {
@@ -208,6 +216,10 @@ pub(super) unsafe fn fold(context: &mut CallContext, ty: TypeId, data: *const u6
             rt.validate(accumulator.as_ref(), state_type)?;
             rt.function_id(&closure)?;
             let count = if dictionary { rt.dict_len(&container)? } else { rt.array_len(&container)? };
+            let closure = if count == 0 { closure } else {
+                let Some(closure) = prepare_callback(context, &closure) else { return Ok(Status::Failed); };
+                closure
+            };
             let callback = unsafe { std::mem::transmute::<usize, Callback>(address as usize) };
             for index in 0..count {
                 let rt = context.runtime()?;
@@ -275,6 +287,10 @@ pub(super) unsafe fn array_map(
             let element = *rt.layout(closure.type_id())?.arguments.last().ok_or("missing callback result")?;
             let output_width = rt.layout(element)?.words;
             let count = if dictionary { rt.dict_len(&array)? } else { rt.array_len(&array)? };
+            let closure = if count == 0 { closure } else {
+                let Some(closure) = prepare_callback(context, &closure) else { return Ok(Status::Failed); };
+                closure
+            };
             let callback = unsafe { std::mem::transmute::<usize, Callback>(address as usize) };
             let mut mapped = Vec::with_capacity(if boolean { 0 } else if find { 1 } else { count });
             let mut selected_keys = Vec::new();
