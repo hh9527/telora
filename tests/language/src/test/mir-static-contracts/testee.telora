@@ -36,20 +36,20 @@ export def phantom_specialization = test.should_ok(fn() {
 });
 
 export def bounded_function_value = test.should_ok(fn() {
-    expect(eq.equal(bounded_identity, bounded_identity)
-        && eq.equal(property_identity, property_identity))
+    expect(eq.equal(bounded_identity@[Int], bounded_identity@[Int])
+        && eq.equal(property_identity@[Marked], property_identity@[Marked]))
 });
 
 export def partially_applied_function = test.should_ok(fn() {
     let choose_int = choose_left@[Int, _];
     expect(choose_int(42, "text") == 42 && choose_int(43, True) == 43
-        && eq.equal(choose_int, choose_int)
-        && eq.equal(choose_int, choose_left@[Int, _])
-        && eq.equal(choose_int_global, choose_left@[Int, _])
+        && eq.equal(choose_int@[String], choose_int@[String])
+        && eq.equal(choose_int@[String], choose_left@[Int, String])
+        && eq.equal(choose_int_global@[String], choose_left@[Int, String])
         && choose_int_global(42, "global") == 42
         && choose_int_global(43, True) == 43
-        && eq.equal(choose_left@[Int, _], choose_left@[Int, _])
-        && eq.equal(choose_bounded@[Int, _], choose_bounded@[Int, _])
+        && eq.equal(choose_left@[Int, String], choose_left@[Int, String])
+        && eq.equal(choose_bounded@[Int, Marked], choose_bounded@[Int, Marked])
         && choose_bounded(42, Marked(1)) == 42)
 });
 
@@ -71,8 +71,8 @@ export def local_alias_instances = test.should_ok(fn() {
 export def generic_value_identity_and_calls = test.should_ok(fn() {
     let identity = fn(value) { value };
     let alias = identity;
-    expect(eq.equal(identity, alias)
-        && !eq.equal(identity, fn(value) { value })
+    expect(eq.equal(identity@[Int], alias@[Int])
+        && !eq.equal(identity@[Int], fn(value: Int) { value })
         && identity(42) == 42
         && alias("text") == "text")
 });
@@ -80,7 +80,7 @@ export def generic_value_identity_and_calls = test.should_ok(fn() {
 export def captured_generic_value = test.should_ok(fn() {
     let identity = fn(value) { value };
     let alias = identity;
-    let inspect = fn() { eq.equal(identity, alias) };
+    let inspect = fn() { eq.equal(identity@[Int], alias@[Int]) };
     let use = fn() { identity(42) == 42 && alias("text") == "text" };
     expect(inspect() && use())
 });

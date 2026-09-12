@@ -9,6 +9,25 @@ type Canonical = BTreeMap<(TypeConstructor, Vec<TypeId>), TypeId>;
 
 impl Solver<'_> {
     pub(super) fn materialize_instances(&mut self) {
+        // Only lexical enclosing binders belong to a local instance's context.
+        // A caller/alias's own binders must not create duplicate target instances.
+        let mut parents = vec![None; self.mir.hir.len()];
+        for (index, node) in self.mir.hir.iter().enumerate() {
+            for edge in &node.children { parents[edge.node.index()] = Some(HirId(index as u32)); }
+        }
+        let enclosing_parameters = self.mir.symbols.iter().map(|symbol| {
+            let mut parameters = vec![];
+            let mut parent = symbol.declarations.last().and_then(|node| parents[node.index()]);
+            while let Some(node) = parent {
+                if let Some(owner) = self.mir.hir_symbols[node.index()] {
+                    for &parameter in &self.mir.symbol_generics[owner.index()] {
+                        if !parameters.contains(&parameter) { parameters.push(parameter); }
+                    }
+                }
+                parent = parents[node.index()];
+            }
+            parameters
+        }).collect::<Vec<_>>();
         self.mir
             .generic_references
             .resize(self.mir.hir.len(), None);
@@ -52,7 +71,7 @@ impl Solver<'_> {
         }
         for index in 0..self.mir.hir.len() {
             if let Some(key) =
-                self.instance_key(HirId(index as u32), &BTreeMap::new(), &mut canonical)
+                self.instance_key(HirId(index as u32), &BTreeMap::new(), &enclosing_parameters, &mut canonical)
             {
                 self.mir.generic_references[index] =
                     self.admit_instance(key, &mut indices, &mut canonical).map(GenericReference::Instance);
@@ -199,7 +218,7 @@ impl Solver<'_> {
                         });
                         types.push((node, ty));
                     }
-                    if let Some(key) = self.instance_key(node, &substitutions, &mut canonical)
+                    if let Some(key) = self.instance_key(node, &substitutions, &enclosing_parameters, &mut canonical)
                         && let Some(instance) =
                             self.admit_instance(key, &mut indices, &mut canonical)
                     {
@@ -219,6 +238,7 @@ impl Solver<'_> {
         &mut self,
         node: HirId,
         substitutions: &BTreeMap<SymbolId, TypeId>,
+        enclosing_parameters: &[Vec<SymbolId>],
         canonical: &mut Canonical,
     ) -> Option<Key> {
         if self.scheme_references[node.index()] || self.mir.type_instances[node.index()].is_empty() {
@@ -257,7 +277,8 @@ impl Solver<'_> {
             // Local instances also close captured enclosing binders. Preserve
             // these substitutions in the static instance key, never in codegen.
             for (&parameter, &ty) in substitutions {
-                if !arguments.iter().any(|(existing, _)| *existing == parameter) {
+                if enclosing_parameters[symbol.index()].contains(&parameter)
+                    && !arguments.iter().any(|(existing, _)| *existing == parameter) {
                     arguments.push((parameter, ty));
                 }
             }

@@ -1075,6 +1075,28 @@ fn native_blame_survives_publication_and_raise_adds_the_rule_location() {
 }
 
 #[test]
+fn selected_export_prunes_unreferenced_values_but_module_check_initializes_them() {
+    let (mir, root) = graph(r#"
+        export def unused: Int = fail!("unreferenced export");
+        def identity: for(T) Fn(T) -> T = fn(value) { value };
+        def number = 42;
+        export def answer = identity(number);
+    "#);
+    let module = mir.hir[root.index()].module;
+    let symbol = *mir.exports[module.index()].iter().find(|symbol| mir.symbols[symbol.index()].name == "answer").unwrap();
+    let sealed = mir.seal().unwrap();
+    let selected = compile_export(&sealed, symbol).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    selected.initialize(&mut context).unwrap();
+    assert_eq!(selected.export(&mut context, symbol).unwrap().words()[2], 42);
+    assert!(context.diagnostics().is_empty());
+    let all = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(all.initialize(&mut context).is_err());
+    assert_eq!(context.diagnostics()[0].message, "unreferenced export");
+}
+
+#[test]
 fn native_fold_control_breaks_early_and_keeps_distinct_state_result_types() {
     let (mir, root) = graph_with(include_str!("../../tests/fixtures/fold-control.telora"), static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();

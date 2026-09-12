@@ -337,7 +337,7 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
 /// Compile all roots into one executable owner and FunctionId namespace.
 /// Root registration is deterministic regardless of request order.
 pub fn compile_roots(mir: &SealedMir<'_>, roots: &[HirId]) -> Result<Compiled> {
-    compile_plan(mir, roots, &[], &[], &[])
+    compile_plan(mir, roots, &[], &[], &[], None)
 }
 
 /// Register every value binding in the selected modules, including private
@@ -395,7 +395,40 @@ pub fn compile_modules(
     let checks = graph.construction_checks.iter().enumerate()
         .filter(|(_, check)| check.concrete && modules.contains(&graph.hir[check.checker.index()].module))
         .map(|(index, _)| index).collect::<Vec<_>>();
-    compile_plan(mir, &roots, &globals, &properties, &checks)
+    compile_plan(mir, &roots, &globals, &properties, &checks, None)
+}
+
+/// Compile a selected export and its static value dependencies. Metadata remains
+/// an explicit session initialization root, as in module checking.
+pub fn compile_export(mir: &SealedMir<'_>, export: SymbolId) -> Result<Compiled> {
+    use telora_core::mir::ExecutionRoot;
+    let graph = mir.mir();
+    let symbol = graph.symbols.get(export.index()).ok_or("native export has no symbol")?;
+    let ResolveState::Bound(target) = symbol.resolution else { return Err("native export is not resolved".into()); };
+    let node = *graph.symbols[target.index()].declarations.last().ok_or("native export has no declaration")?;
+    let mut roots = vec![ExecutionRoot { node, instance: None }];
+    let properties = graph.properties.iter().enumerate().filter(|(_, property)| property.concrete).map(|(index, property)| {
+        roots.extend(property.providers.iter().map(|&node| ExecutionRoot { node, instance: property.instance }));
+        index
+    }).collect::<Vec<_>>();
+    let checks = graph.construction_checks.iter().enumerate().filter(|(_, check)| check.concrete).map(|(index, check)| {
+        roots.push(ExecutionRoot { node: check.checker, instance: check.instance });
+        index
+    }).collect::<Vec<_>>();
+    let closure = mir.execution_closure(&roots).map_err(|diagnostics|
+        diagnostics.iter().map(|diagnostic| graph.sources.render(diagnostic)).collect::<Vec<_>>().join("\n"))?;
+    let mut globals = std::collections::BTreeSet::new();
+    let mut instances = std::collections::BTreeSet::new();
+    for root in closure.nodes() {
+        if let Some(instance) = root.instance { instances.insert(instance); }
+        let Some(symbol) = graph.hir_symbols[root.node.index()] else { continue; };
+        let definition = &graph.symbols[symbol.index()];
+        if matches!(graph.hir[root.node.index()].kind, HirKind::Binding { .. })
+            && definition.module.is_some_and(|module| definition.scope.is_some() && definition.scope == graph.module_scopes[module.index()]) {
+            globals.insert(symbol);
+        }
+    }
+    compile_plan(mir, &[node], &globals.into_iter().collect::<Vec<_>>(), &properties, &checks, Some(&instances))
 }
 
 fn compile_plan(
@@ -404,6 +437,7 @@ fn compile_plan(
     globals: &[SymbolId],
     properties: &[usize],
     checks: &[usize],
+    admitted_instances: Option<&std::collections::BTreeSet<telora_core::mir::GenericInstanceId>>,
 ) -> Result<Compiled> {
     let root = *roots
         .first()
@@ -418,7 +452,8 @@ fn compile_plan(
         }
     }
     for (id, instance) in graph.generic_instances() {
-        if instance.concrete && global_symbols.contains(&instance.symbol) {
+        if instance.concrete && global_symbols.contains(&instance.symbol)
+            && admitted_instances.is_none_or(|instances| instances.contains(&id)) {
             execution_roots.extend(graph.symbols[instance.symbol.index()].declarations.iter().map(|&node|
                 telora_core::mir::ExecutionRoot { node, instance: Some(id) }));
         }
@@ -486,7 +521,8 @@ fn compile_plan(
         }
     }
     for (id, instance) in graph.generic_instances() {
-        if instance.concrete && global_symbols.contains(&instance.symbol) {
+        if instance.concrete && global_symbols.contains(&instance.symbol)
+            && admitted_instances.is_none_or(|instances| instances.contains(&id)) {
             functions.instance(graph, id, &mut module)?;
         }
     }

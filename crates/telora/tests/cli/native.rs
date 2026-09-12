@@ -37,7 +37,7 @@ fn native_warnings_do_not_block_publication_or_entry_output() {
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), serde_json::json!(expected));
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("initialization warning"), "{stderr}");
+        assert_eq!(stderr.contains("initialization warning"), command == "eval", "{stderr}");
         if command == "eval-with" { assert!(stderr.contains("entry warning"), "{stderr}"); }
     }
     fs::remove_dir_all(cwd).unwrap();
@@ -129,7 +129,8 @@ fn native_interpreter_preserves_adapter_identity_across_initialization_and_entry
         }
         let events = String::from_utf8_lossy(&native.stderr).lines()
             .map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
-        assert_eq!(events.len(), if command == "eval" { 1 } else { 2 });
+        // Only the selected export is evaluated; eval-with does not evaluate answer.
+        assert_eq!(events.len(), 1);
         assert!(events.iter().all(|event| event["message"] == "operand"));
         let native = serde_json::from_slice::<Value>(&native.stdout).unwrap();
         let default = serde_json::from_slice::<Value>(&default.stdout).unwrap();

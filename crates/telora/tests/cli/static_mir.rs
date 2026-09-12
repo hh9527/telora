@@ -944,7 +944,7 @@ fn concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types() {
         export def factory = fn(x: Int) { fn(y: Int) { x + y } };
         export def poly: for(T) Fn(T) -> T = fn(x) { x };
         export def inferred_identity = fn(x) { x };
-        export def same_poly = poly == poly;
+        export def same_poly = poly@[Int] == poly@[Int];
         export def unchecked: Fn(Unchecked(Rec)) -> Int = fn(x) { x.item };
         export def empty: Array(Never) = [];
         export def dictionary: Dict(Int) = {x: 1};
@@ -972,7 +972,7 @@ fn concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types() {
     assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Dyn" && r["entry"]["layout"]["shape"]["value_bytes"] == 40));
     assert!(entries.iter().any(|r| r["type_name"] == "Array(Dyn)" && r["entry"]["object"]["element_stride"] == 40));
     assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Record" && r["entry"]["layout"]["status"] == "compile_time" && r["entry"]["layout"]["reason"].as_str().is_some_and(|s| s.contains("module body"))));
-    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Quantified" && r["entry"]["layout"]["status"] == "known"));
+    assert!(!entries.iter().any(|r| r["entry"]["constructor"] == "Quantified"));
     assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Function" && r["entry"]["layout"]["shape"]["table"] == "ClosureEnvTable"));
     assert!(entries.iter().any(|r| r["type_name"] == "Array(Never)" && r["entry"]["object"]["element_stride"] == 0));
     assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Native" && r["entry"]["object"]["bytes"] == 8));

@@ -8,10 +8,23 @@ pub struct ExecutionRoot {
     pub instance: Option<GenericInstanceId>,
 }
 
+/// Deterministic dependency closure; all admitted nodes have concrete value types.
+pub struct ExecutionClosure {
+    nodes: Vec<ExecutionRoot>,
+}
+
+impl ExecutionClosure {
+    pub fn nodes(&self) -> &[ExecutionRoot] { &self.nodes }
+}
+
 impl SealedMir<'_> {
     /// Check executable roots without evaluating code or selecting new instances.
     /// Callers include their initialization/property roots as well as the entry.
     pub fn validate_execution_roots(&self, roots: &[ExecutionRoot]) -> Result<(), Vec<Diagnostic>> {
+        self.execution_closure(roots).map(|_| ())
+    }
+
+    pub fn execution_closure(&self, roots: &[ExecutionRoot]) -> Result<ExecutionClosure, Vec<Diagnostic>> {
         let mir = self.mir();
         let mut pending = roots.to_vec();
         let mut seen = BTreeSet::new();
@@ -103,6 +116,6 @@ impl SealedMir<'_> {
                 pending.push(ExecutionRoot { node: edge.node, instance: root.instance });
             }
         }
-        if diagnostics.is_empty() { Ok(()) } else { Err(diagnostics) }
+        if diagnostics.is_empty() { Ok(ExecutionClosure { nodes: seen.into_iter().collect() }) } else { Err(diagnostics) }
     }
 }

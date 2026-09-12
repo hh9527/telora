@@ -42,6 +42,10 @@ pub(crate) struct Session {
 
 impl Session {
     pub fn compile(sealed: &SealedMir<'_>) -> Result<Self, String> {
+        Self::compile_selected(sealed, None)
+    }
+
+    fn compile_selected(sealed: &SealedMir<'_>, export: Option<telora_core::mir::SymbolId>) -> Result<Self, String> {
         let graph = sealed.mir();
         let modules = graph
             .hir
@@ -52,7 +56,8 @@ impl Session {
             .collect::<Vec<_>>();
         let compiled = {
             let _timer = PhaseTimer::new("codegen");
-            jit::compile_modules(sealed, &modules, &[])?
+            if let Some(export) = export { jit::compile_export(sealed, export)? }
+            else { jit::compile_modules(sealed, &modules, &[])? }
         };
         let _timer = PhaseTimer::new("runtime_setup");
         let context = CallContext::with_runtime(Runtime::new(sealed)?.with_allocation_limit(crate::execution_config().session_quota.allocation_bytes))
@@ -186,7 +191,7 @@ pub(crate) fn eval(context: std::path::PathBuf, module: &str, export: &str) -> R
         return Err("eval export must have the authoritative std/value.Value type".into());
     }
     drop(frontend_timer);
-    let mut session = Session::compile(&sealed)?;
+    let mut session = Session::compile_selected(&sealed, Some(symbol))?;
     let diagnostics = session.initialize(&inventory, &mut mir.sources);
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(diagnostics
@@ -310,7 +315,7 @@ pub(crate) fn eval_with(
         TypeKey::try_from(string_type)?,
     );
     drop(frontend_timer);
-    let mut session = Session::compile(&sealed)?;
+    let mut session = Session::compile_selected(&sealed, Some(symbol))?;
     let diagnostics = session.initialize(&inventory, &mut mir.sources);
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(diagnostics

@@ -135,7 +135,7 @@ export def namespace_member_schemes = test.should_ok(fn() {
 export def reexport_identity = test.should_ok(fn() {
     expect(
         answer == 7
-            && direct == relayed
+            && direct@[Int] == relayed@[Int]
             && relayed(1) == 1
             && relayed("x") == "x"
     )
