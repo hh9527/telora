@@ -51,6 +51,23 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_metadata_branches_use_the_sealed_join_type() {
+    for source in [
+        "export def answer = if True {Int.type} else {String.type};",
+        "export def answer = match Some(Int.type) {Some(value) => value, None => String.type};",
+        "export def answer = if let Some(value) = Some(Int.type) {value} else {String.type};",
+    ] {
+        let (mir, root) = graph(source);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let value = compiled.call(&mut context, &[]).unwrap();
+        let represented = context.runtime().unwrap().represented_type(value.as_ref()).unwrap();
+        assert_eq!(mir.types[represented.index()].constructor, TypeConstructor::Int);
+    }
+}
+
+#[test]
 fn native_never_payload_branches_do_not_require_runtime_values() {
     let (mir, root) = graph_with(r#"import "std/result" as result;
         export def answer = do {

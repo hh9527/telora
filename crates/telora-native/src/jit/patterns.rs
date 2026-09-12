@@ -263,7 +263,7 @@ impl Lower<'_, '_> {
                         let guard = self.expression(guard, depth + 1)?;
                         self.require_pattern(guard[2], mismatch);
                     }
-                    self.expression(child(self.mir, arm, Role::Value)?, depth + 1)
+                    self.branch_expression(child(self.mir, arm, Role::Value)?, ty, depth + 1)
                 });
                 live |= self.join_branch(outcome, join, width)?;
                 self.builder.switch_to_block(mismatch);
@@ -283,11 +283,11 @@ impl Lower<'_, '_> {
             } else {
                 Role::Then
             };
-            let outcome = matched.and_then(|()| self.expression(child(self.mir, node, then)?, depth + 1));
+            let outcome = matched.and_then(|()| self.branch_expression(child(self.mir, node, then)?, ty, depth + 1));
             live |= self.join_branch(outcome, join, width)?;
             self.builder.switch_to_block(mismatch);
             self.builder.seal_block(mismatch);
-            let outcome = self.expression(child(self.mir, node, Role::Else)?, depth + 1);
+            let outcome = self.branch_expression(child(self.mir, node, Role::Else)?, ty, depth + 1);
             live |= self.join_branch(outcome, join, width)?;
         }
         if !live {

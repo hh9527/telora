@@ -1239,6 +1239,10 @@ impl Lower<'_, '_> {
         let value = self.expression_unadjusted(node, depth)?;
         self.adjust_value(node, value)
     }
+    fn branch_expression(&mut self, node: HirId, target: TypeKey, depth: usize) -> EmitResult<Vec<ir::Value>> {
+        let value = self.expression(node, depth)?;
+        self.fit_metadata(node, target, value)
+    }
     fn expression_unadjusted(&mut self, node: HirId, depth: usize) -> EmitResult<Vec<ir::Value>> {
         if depth > 512 {
             return Err("native expression nesting limit".into());
@@ -1778,7 +1782,7 @@ impl Lower<'_, '_> {
                 self.builder.switch_to_block(yes);
                 self.builder.seal_block(yes);
                 let mut live = 0;
-                match self.expression(child(self.mir, node, Role::Then)?, depth + 1) {
+                match self.branch_expression(child(self.mir, node, Role::Then)?, key, depth + 1) {
                     Ok(values) => {
                         if values.len() != width {
                             return Err("native branch width mismatch".into());
@@ -1795,7 +1799,7 @@ impl Lower<'_, '_> {
                 }
                 self.builder.switch_to_block(no);
                 self.builder.seal_block(no);
-                match self.expression(child(self.mir, node, Role::Else)?, depth + 1) {
+                match self.branch_expression(child(self.mir, node, Role::Else)?, key, depth + 1) {
                     Ok(values) => {
                         if values.len() != width {
                             return Err("native branch width mismatch".into());

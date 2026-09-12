@@ -77,6 +77,11 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+分支合流现消费封闭结果类型：if、match、if-let 的活跃分支在跳转前执行已有
+边界适配，正确将 `TypeOf(T)` 转成 `Type`，保留所代表的 TypeId 与来源。
+`prelude-constructors` 初始化中 `Some(Int.type)` 的 match 不再产生值头部类型
+不匹配，native check 通过；执行回归覆盖三种分支形式。
+
 `stdlib-semantics` 暴露的 Never 槽缺口已修复：匹配到无居民 payload 的路径结束
 生成，不读取 payload 或继续生成该分支体；含无居民参数的函数保留可比较/传递
 的函数值，调用体仅报告不可达调用，不读取参数缓冲、不物化 Never。
