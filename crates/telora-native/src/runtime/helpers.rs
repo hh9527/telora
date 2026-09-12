@@ -41,6 +41,8 @@ pub(crate) const JSON_STRINGIFY: u32 = 46;
 pub(crate) const JSON_INDENT: u32 = 47;
 pub(crate) const JSON_SCHEMA: u32 = 48;
 pub(crate) const PATH: u32 = 49;
+pub(crate) const HASH: u32 = 50;
+pub(crate) const BYTES_EQUAL: u32 = 51;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -241,6 +243,17 @@ pub(crate) unsafe extern "C" fn object(
                     } else {
                         rt.dict_column(ty, loc, &dict, count == 1)?
                     }
+                }
+                HASH => {
+                    let mut inputs = Vec::new();
+                    let mut cursor = data;
+                    for _ in 0..match count { 1 => 0, 2..=4 => 2, _ => 1 } {
+                        let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+                        let width = rt.layout(input)?.words;
+                        inputs.push(Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(cursor, width) }.into() });
+                        cursor = unsafe { cursor.add(width) };
+                    }
+                    rt.hash(ty, &inputs, loc, count)?
                 }
                 PATH => {
                     let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
@@ -595,7 +608,7 @@ pub(crate) unsafe extern "C" fn object(
                         _ => unreachable!(),
                     }
                 }
-                FIELD | INDEX | PAYLOAD | TEXT_EQUAL | CAPTURE | ARRAY_LENGTH | STRING_LENGTH => {
+                FIELD | INDEX | PAYLOAD | TEXT_EQUAL | BYTES_EQUAL | CAPTURE | ARRAY_LENGTH | STRING_LENGTH => {
                     let receiver_ty = unsafe { TypeId((*data.add(1) >> 32) as u32) };
                     let size = rt.layout(receiver_ty)?.words;
                     let words = unsafe { std::slice::from_raw_parts(data, size) };
@@ -620,6 +633,10 @@ pub(crate) unsafe extern "C" fn object(
                         rt.enum_payload(&receiver)?
                             .ok_or("enum has no payload")?
                             .to_owned()
+                    } else if operation == BYTES_EQUAL {
+                        let other = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(size), size) }.into() };
+                        let equal = rt.bytes_data(&receiver)? == rt.bytes_data(&other)?;
+                        rt.scalar(ty, loc, u64::from(equal))?
                     } else if operation == TEXT_EQUAL {
                         rt.expect(receiver_ty, Kind::String)?;
                         let other = unsafe { std::slice::from_raw_parts(data.add(size), 4) };

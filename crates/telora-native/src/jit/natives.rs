@@ -479,6 +479,21 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 16 && let Some(operation) = ["sha256", "new", "update_bytes", "update_string", "update_int", "finish"].iter().position(|name| *name == declaration.name) {
+            let hash = |ty: TypeKey| matches!(self.mir.types[ty.index()].constructor, TypeConstructor::Native(id) if (id.module, id.slot) == (16, 3));
+            let kind = |ty: TypeKey| &self.mir.types[ty.index()].constructor;
+            let valid = match operation {
+                0 => arguments.len() == 1 && kind(arguments[0]) == &TypeConstructor::String && kind(self.return_type) == &TypeConstructor::String,
+                1 => arguments.is_empty() && hash(self.return_type),
+                2..=4 => arguments.len() == 2 && hash(arguments[0]) && hash(self.return_type)
+                    && kind(arguments[1]) == &[TypeConstructor::Bytes, TypeConstructor::String, TypeConstructor::Int][operation - 2],
+                _ => arguments.len() == 1 && hash(arguments[0]) && kind(self.return_type) == &TypeConstructor::Bytes,
+            };
+            if !valid { return Err("native hash signature mismatch".into()); }
+            let count = self.builder.ins().iconst(types::I64, operation as i64);
+            let value = self.object(node, helpers::HASH, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 8 && let Some(operation) = ["join", "normalize", "parent", "file_name"].iter().position(|name| *name == declaration.name) {
             if arguments.len() != 1 { return Err("native path arity mismatch".into()); }
             let input = &self.mir.types[arguments[0].index()];

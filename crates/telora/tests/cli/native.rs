@@ -50,6 +50,25 @@ fn native_path_operations_match_default_and_survive_publication() {
 }
 
 #[test]
+fn native_hash_states_are_persistent_across_initialization_and_entry() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/hash.telora")).unwrap();
+    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
+        let selector = format!("@src/main:{export}");
+        let native = telora(&cwd).args([command, "--native", &selector]).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        let default = telora(&cwd).args([command, &selector]).output().unwrap();
+        assert!(default.status.success(), "{}", String::from_utf8_lossy(&default.stderr));
+        let value = serde_json::from_slice::<Value>(&native.stdout).unwrap();
+        assert_eq!(value, serde_json::from_slice::<Value>(&default.stdout).unwrap());
+        assert_eq!(value[0], "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(value[1], "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert!(value.as_array().unwrap()[3..].iter().all(|value| value == true));
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_data_depth_limit_applies_before_materialization() {
     let cwd = fixture();
     let input = format!("{}0{}", "[".repeat(256), "]".repeat(256));

@@ -1285,6 +1285,21 @@ fn native_json_schema_closes_recursive_definitions() {
 }
 
 #[test]
+fn native_hash_protocol_matches_fixed_vector_and_publication_preserves_aliases() {
+    let (mir, root) = graph_with("import \"std/hash\" as hash; def state = hash.update_int(hash.new(), -42); export def answer = (state, state, hash.finish(state));", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime_mut().unwrap();
+    let roots = rt.publish(&[value]).unwrap();
+    assert_eq!(rt.field(&roots[0], 0).unwrap().words(), rt.field(&roots[0], 1).unwrap().words());
+    let bytes = rt.field(&roots[0], 2).unwrap().to_owned();
+    let hex = rt.bytes_data(&bytes).unwrap().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    assert_eq!(hex, "e8d28cacc6bd4bc9bd7d57c98f9eaf6a235cec07a9238642ff4f45bc2d82d6d9");
+}
+
+#[test]
 fn native_json_schema_propagates_invalid_shapes_and_property_failures_once() {
     for (declarations, target, message) in [
         ("", "Bytes.type", "no JSON Schema mapping"),

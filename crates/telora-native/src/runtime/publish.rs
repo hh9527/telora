@@ -7,6 +7,7 @@ struct Copies {
     strings: BTreeMap<u32, u32>,
     bytes: BTreeMap<u32, u32>,
     regexes: BTreeMap<u32, u32>,
+    hashes: BTreeMap<u32, u32>,
     blames: BTreeMap<u32, u32>,
 }
 impl Runtime {
@@ -233,6 +234,17 @@ impl Runtime {
                     let id = HeapRef::new(World::Main, u32::try_from(target.blames.len()).map_err(|_| "Blame table overflow")?)?.raw();
                     target.blames.push(blame);
                     copies.blames.insert(old, id);
+                    id
+                });
+            }
+            Kind::Hash => {
+                let value = Value { arena: self.identity, words: words.to_vec().into_boxed_slice() };
+                let state = self.hash_state(&value)?;
+                let old = words[2] as u32;
+                words[2] = u64::from(if let Some(&id) = copies.hashes.get(&old) { id } else {
+                    let id = HeapRef::new(World::Main, u32::try_from(target.hashes.len()).map_err(|_| "HashState table overflow")?)?.raw();
+                    target.hashes.push(state.clone());
+                    copies.hashes.insert(old, id);
                     id
                 });
             }

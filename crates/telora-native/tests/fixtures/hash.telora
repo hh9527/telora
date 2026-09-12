@@ -1,0 +1,21 @@
+import "std/hash" as hash;
+import "std/codec" {encode, Value};
+import "std/entry" as entry;
+
+def initial = hash.new();
+def base = hash.update_string(initial, "shared prefix");
+def left = hash.update_int(base, -42);
+def right = hash.update_int(base, 42);
+def checks: Fn() -> Value = fn() {
+    encode(Value.type, (
+        hash.sha256(""), hash.sha256("abc"), hash.sha256("文本"),
+        hash.finish(base) == hash.finish(hash.update_string(initial, "shared prefix")),
+        hash.finish(left) == hash.finish(hash.update_int(base, -42)),
+        hash.finish(left) != hash.finish(right),
+        hash.finish(hash.update_string(hash.update_string(initial, "a"), "b")) != hash.finish(hash.update_string(initial, "ab")),
+        hash.finish(hash.update_bytes(base, hash.finish(left))) == hash.finish(hash.update_bytes(base, hash.finish(left))),
+        hash.finish(initial) != hash.finish(base),
+    ))
+};
+export def answer = checks();
+export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });
