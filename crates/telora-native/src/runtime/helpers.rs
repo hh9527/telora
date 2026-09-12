@@ -32,6 +32,7 @@ pub(crate) const FAIL_VALUES: u32 = 26;
 pub(crate) const REGEX: u32 = 27;
 pub(crate) const TEXT_OP: u32 = 28;
 pub(crate) const REFLECT: u32 = 29;
+pub(crate) const ENCODE: u32 = 30;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -110,6 +111,18 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                ENCODE => {
+                    let mut inputs = Vec::with_capacity(3);
+                    let mut cursor = data;
+                    for _ in 0..3 {
+                        let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+                        let width = rt.layout(input)?.words;
+                        inputs.push(Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(cursor, width) }.into() });
+                        cursor = unsafe { cursor.add(width) };
+                    }
+                    if rt.represented_type(inputs[1].as_ref())? != ty { return Err("codec target witness mismatch".into()); }
+                    rt.encode(ty, &inputs[0], &inputs[2])?
+                }
                 REFLECT => {
                     let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
                     let width = rt.layout(input)?.words;

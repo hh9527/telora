@@ -7,6 +7,7 @@ use telora_core::{
 
 /// The semantic data contract is selected from the admitted std/value export,
 /// not from a type's spelling or the runtime shape of an incoming document.
+#[derive(Clone)]
 pub struct DataContract {
     value: TypeId,
     variants: BTreeMap<String, (u32, Option<TypeId>)>,
@@ -89,7 +90,7 @@ impl DataContract {
     pub fn value_type(&self) -> TypeId {
         self.value
     }
-    fn payload(&self, name: &str) -> Result<TypeId> {
+    pub(super) fn payload(&self, name: &str) -> Result<TypeId> {
         self.variants
             .get(name)
             .and_then(|v| v.1)

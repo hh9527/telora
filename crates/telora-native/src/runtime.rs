@@ -169,6 +169,7 @@ enum Table {
 }
 
 pub struct Runtime {
+    data_contract: Option<DataContract>,
     type_info: Vec<reflection::TypeInfo>,
     property_presence: std::collections::BTreeSet<(TypeId, TypeId)>,
     demands: std::collections::BTreeMap<DemandKey, demands::DemandSlot>,
@@ -366,6 +367,7 @@ impl Runtime {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| "arena identity overflow")?;
         Ok(Self {
+            data_contract: if sealed.mir().modules.iter().any(|m| m.native.as_ref().is_some_and(|n| n.id == 23) && matches!(m.state, telora_core::mir::ModuleState::Source { .. })) { Some(DataContract::from_mir(sealed)?) } else { None },
             type_info: reflection::build(sealed.types())?,
             property_presence: sealed
                 .mir()
@@ -647,6 +649,7 @@ mod bytes;
 mod closures;
 #[path = "runtime/data.rs"]
 mod data;
+mod codec;
 #[path = "runtime/demands.rs"]
 mod demands;
 #[path = "runtime/dynamic.rs"]

@@ -615,6 +615,62 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_codec_does_not_silently_ignore_property_driven_encoding() {
+    let (mir, root) = graph_with(
+        "import \"std/codec\" { encode, Value }; import \"std/_codec\" { rename_all, RenameCase }; @rename_all(RenameCase.CamelCase) type Rec = struct { some_field: Int }; export def answer = do { let value: Rec = { some_field: 42 }; encode(Value.type, value) };",
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "native codec property execution is not yet linked");
+}
+
+#[test]
+fn native_codec_encodes_enum_payloads_and_empty_collections() {
+    for (expression, expected) in [
+        ("Choice.Payload(42)", "{\"Payload\":42}"),
+        ("Choice.Empty", "\"Empty\""),
+        ("()", "[]"),
+        ("do { let d: Dict(Int) = { z: 2, a: 1 }; d }", "{\"a\":1,\"z\":2}"),
+        ("do { let xs: Array(Int) = []; xs }", "[]"),
+    ] {
+        let source = format!("import \"std/codec\" {{ encode, Value }}; type Choice = enum {{ Empty, Payload(Int) }}; export def answer = encode(Value.type, {expression});");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{expression}: {e}: {:?}", context.diagnostics()));
+        assert_eq!(context.runtime().unwrap().semantic_json(&contract, &value).unwrap(), expected);
+    }
+}
+
+#[test]
+fn native_codec_encodes_solved_aggregates_and_reuses_string_storage() {
+    let (mir, root) = graph_with(
+        "import \"std/codec\" { encode, Value }; type Rec = struct { a: Int, text: String }; export def answer = do { let text = \"long heap-backed codec input string\"; let rec: Rec = { a: 42, text }; (text, encode(Value.type, (rec, [True, False], Some(3), None))) };",
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap_or_else(|error| panic!("{error}: {:?}", context.diagnostics()));
+    let rt = context.runtime().unwrap();
+    let encoded = rt.field(&result, 1).unwrap().to_owned();
+    assert_eq!(rt.semantic_json(&contract, &encoded).unwrap(), "[{\"a\":42,\"text\":\"long heap-backed codec input string\"},[true,false],3,null]");
+    let outer = rt.enum_payload(&encoded).unwrap().unwrap().to_owned();
+    let record = rt.array_get(&outer, 0).unwrap().to_owned();
+    let object = rt.enum_payload(&record).unwrap().unwrap().to_owned();
+    let (_, text) = rt.dict_entry(&object, 1).unwrap();
+    let text = text.to_owned();
+    assert_eq!(rt.enum_payload(&text).unwrap().unwrap().words(), rt.field(&result, 0).unwrap().words());
+}
+
+#[test]
 fn native_array_find_short_circuits_and_preserves_selected_descriptor() {
     let (mir, root) = graph_with(
         "import \"std/array\" { find }; export def answer = do { let xs = [\"long heap-backed selected string\", \"unreachable\"]; (xs, find(xs, fn(x) { match x { \"unreachable\" => fail!(\"visited too far\"), _ => True } })) };",

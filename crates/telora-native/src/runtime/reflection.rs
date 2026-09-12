@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) struct TypeInfo {
-    kind: Option<&'static str>,
+    pub(super) kind: Option<&'static str>,
     children: Vec<TypeId>,
     body: Option<TypeId>,
     opaque_name: Option<String>,

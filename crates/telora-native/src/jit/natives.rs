@@ -344,6 +344,16 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::FORMAT, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if (module.id, declaration.name.as_str()) == (13, "encode_with") {
+            if arguments.len() != 3
+                || self.mir.types[arguments[1].index()].constructor != TypeConstructor::TypeOf
+                || self.mir.types[arguments[1].index()].arguments.len() != 1
+                || self.mir.types[arguments[1].index()].arguments[0].index() != self.return_type.index()
+            { return Err("native codec encode signature mismatch".into()); }
+            let count = self.builder.ins().iconst(types::I64, 0);
+            let result = self.object(node, helpers::ENCODE, self.return_type, data, count)?;
+            return self.write_return(&result);
+        }
         if module.id == 3
             && let Some(operation) = ["kind", "children", "opaque_name", "resolve_raw", "fields", "variants"]
                 .iter().position(|name| *name == declaration.name)

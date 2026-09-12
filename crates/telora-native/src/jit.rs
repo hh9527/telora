@@ -1361,7 +1361,17 @@ impl Lower<'_, '_> {
                     let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
                         return Err("native field name missing".into());
                     };
-                    let value = self.expression(child(self.mir, field, Role::Value)?, depth + 1)?;
+                    let value_node = child(self.mir, field, Role::Value)?;
+                    let value = self.expression(value_node, depth + 1)?;
+                    let expected = if dictionary {
+                        self.mir.types[ty.index()].arguments[0]
+                    } else {
+                        let index = self.layouts.field_names[key.index()].iter().position(|n| n == name).ok_or("sealed field missing")?;
+                        if let Some(layout) = &self.mir.type_layouts[ty.index()] {
+                            layout.members[index].ok_or("sealed field type missing")?
+                        } else { self.mir.types[ty.index()].arguments[index] }
+                    };
+                    let value = self.fit_metadata(value_node, TypeKey::try_from(expected)?, value)?;
                     fields.push((field, name.clone(), value));
                 }
                 let count = fields.len();
