@@ -52,6 +52,19 @@ codec 编码/解码及文本解析的递归节点已扣减同一 fuel，容器�
 
 ## 验收条件
 
+### 正则预算接口调查（2026-09-12）
+
+已核对当前锁定依赖 `regex-automata 0.4.16` 的 `meta/regex.rs`：
+
+- `Regex::search_with`、`search_captures_with`、`search_slots_with` 不接收工作量回调或取消标记。`search_captures_with` 返回 `()`，内部直接调用 `search_slots_with`。现有 helper 不能在一次搜索中途扣减 session fuel。
+- `Regex::memory_usage` 是近似堆用量，文档明确没有限制此总量的高层配置。NFA、one-pass DFA、完整 DFA、hybrid cache 各有独立限制，不能把单独的 NFA 上限描述为整个 regex 编译/执行峰值上限。
+- 当前 native 的 `regex_matches` 和 `regex_captures` 在搜索后核对 cache 增量；这能统计逻辑分配，但不能保证增长先经过配额准入。
+- `nfa::thompson::PikeVM::get_nfa` 可以访问 NFA，`NFA::states` 和 `group_info` 提供状态/捕获信息。它提供进一步研究保守工作量准入或插入计数点的基础，但当前仍未接入 native。
+
+下一步先做独立 PikeVM 适配实验：对现有 regex/ParseBy 语言资产验证命中范围、Unicode、捕获和缺省/必需字段语义，量化状态数、捕获槽数与输入大小的关系，再决定能否建立明确的保守准入模型。若需要精确的执行中断，则需给引擎增加计数/取消接口，不能以输入字节数或编译后内存乘积冒充实际状态转换次数。
+
+在实验有证据前保留现有引擎，不切换运行语义、不设置未经验证的复杂度乘数、不关闭正则执行预算验收项。当前文本扫描计费与正则引擎内部计费是两项独立证据。
+
 用简单 Rust ABI 单测验证混合宽度参数/返回、递归帧互不覆盖、错误不读取未初始化结果、来源完整保留。记录首个支持的 target 和 word/endian 约束；不宣称 ABI 跨 target 稳定。
 
 ## 延后与备选方案
