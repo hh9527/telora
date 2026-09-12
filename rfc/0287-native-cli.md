@@ -2,7 +2,7 @@
 
 > 后续决议：RFC 0289 已移除 cast，并禁止最终匿名 Record 用户值；下文审计保留历史观察，不再存在共享 T 规则待确认的阻塞。
 
-- 状态：实施中；check/eval/eval-with 已接入实验后端，完整语义覆盖和配额验证待完成
+- 状态：本期已实施并验收；隐藏 check/eval/eval-with 接入，默认路线保持
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -31,6 +31,10 @@
 
 ### 当前实施证据
 
+最终验收基于 `a6e6b22`：84 项 CLI 测试和 workspace 测试通过；release 补验
+批量 lib/tests、静态错误零执行、隐藏帮助和未支持命令显式拒绝。
+真实负载分段时间、内存及逐项证据见[伞 RFC 验收记录](0282-native-acceptance.md)。
+
 命令局部隐藏参数 `check --native`、`eval --native`、`eval-with --native` 已接入：静态求解仍使用共同 MIR，只有 seal 成功且需要执行时才创建独立 native session。check 支持选择模块及 --lib/--tests，--only-types 和布局导出不创建 native session。未声明 --native 时仍使用原执行路径；其余命令暂不接受该选项。
 
 Native session 消费 `SealedExecutable`：check 以选定模块集合为根，eval/eval-with 以选定导出为根裁剪无关普通值；property/check 元数据仍保留 session 初始化范围。通过与 linker 无关的 catalog 读数据接口解析、注入数据模块，再完成初始化和发布。eval 在执行前验证导出的权威 std/value.Value 身份，成功后直接从 native 对象输出 JSON。初始化失败保留位置且不重复附加通用失败诊断；数据解析保留原结构化诊断。隐藏开关不进入普通帮助或用户文档。
@@ -47,7 +51,8 @@ codec 的 rename_all/untagged 已读取真实 property 值并参与编码/解码
 
 JSON/YAML/TOML 字符串解析直接物化到 native tables，保留输入来源并执行数据限制。JSON 紧凑/pretty 输出读取 native 图，schema_with 消费封闭类型骨架及真实 property 值。完整 std/json 模块已接入初始化，CLI 验证包含 schema 的默认/native 输出对比及发布后文本桥接类型的 schema 查询。
 
-仍未完成完整语法/native API 覆盖及配额语义，因此不据此宣称整体路线落地。
+上述接入过程记录之后，语言闭包及资源边界验收已完成；当前支持范围以伞 RFC
+验收记录为准，不包含 native test/run/serve。
 
 ### 全量语言模块初始化复查（2026-09-13）
 

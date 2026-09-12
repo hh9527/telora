@@ -2,7 +2,7 @@
 
 > 后续决议：RFC 0289 移除 cast 并禁止最终匿名 Record 类型，相关历史记录不再构成兼容契约。
 
-- 状态：实施中；已接入整图初始化与隐藏 CLI，继续补齐语言/native 覆盖
+- 状态：本期已实施并验收；机械 codegen、尾调用及 check/eval/eval-with 语言覆盖通过
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -26,6 +26,11 @@
 ## 实施计划
 
 ### 当前入口与验收状态
+
+最终验收基于 `a6e6b22`：141 项 native 单测、402/402 实际语言闭包审计及
+84 项 CLI 测试通过，release world-model 输出与默认路线一致。
+完整范围、依赖边界和限制见[伞 RFC 验收记录](0282-native-acceptance.md)。
+以下 `4bf46dd` 的数量保留为阶段记录。
 
 截至 `4bf46dd`，隐藏 CLI 已通过 `jit::compile_executable` 消费
 `SealedExecutable`，使用既有 TypeId、实例及执行闭包生成机器码。

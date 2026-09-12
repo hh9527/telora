@@ -1,6 +1,6 @@
 # RFC 0282：Cranelift Native 路线图（伞 RFC）
 
-- 状态：实施中；check/eval/eval-with 已纵向接通，语义与资源预算验收继续推进
+- 状态：本期已实施并验收；隐藏 check/eval/eval-with 落地，默认后端保持
 - 日期：2026-09-12
 - 跟踪：[#179](https://github.com/hh9527/telora/issues/179)
 - 开发分支：`feat/native-cranelift`
@@ -92,6 +92,9 @@ debug 或失败不会因执行另一个入口而发生。`SealedExecutable` 拥�
 隐藏 `--native` 不进入普通帮助、README 或 guide。默认命令仍走旧路线；native 尚未支持的命令或表达式明确拒绝。具体参数放置与冲突行为在 RFC 0287 落实。query/only-types 保持纯静态；普通 check 到初始化，其他命令遵守已有语言与 CLI 语义，不通过改语义掩盖能力缺口。
 
 ## 可执行验收与伞 issue 关闭条件
+
+最终逐项证据、依赖审计、测试范围及 release 观察见
+[本期落地验收记录](0282-native-acceptance.md)（实现 `a6e6b22`）。
 
 资源验收遵循 [LANGUAGE §10.2](../docs/design/LANGUAGE.md#102-fuel-和配额)
 及 RFC 0010 的既有定位：fuel 约束失控执行，不作精确成本计费。验证递归、重复

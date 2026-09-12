@@ -1,6 +1,6 @@
 # RFC 0284：Native 分类对象表与 world runtime
 
-- 状态：实施中；分类表、循环闭包与全图发布已接通，资源计费完整性仍待验收
+- 状态：本期已实施并验收；独立对象表、发布、来源及逻辑资源边界已验证
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -32,7 +32,17 @@
 
 enum 的 nullary/full_value/ValueTable 间接 payload 以已 seal 的 variant 表校验 tag、payload TypeId 和宽度，JIT 按已选择的 variant 构造。递归类型的有限嵌套、间接 payload、泛型互递归闭包及发布后的动态调用已有语言资产；具体 codegen 与函数槽证据见 RFC0285。
 
-### 当前验证记录（基于 e4dda0a）
+### 本期验收（a6e6b22）
+
+独立无 JIT 测试 25 项及 3 项实验通过；workspace all-features 的 141 项 native
+单测和 84 项 CLI 测试通过，语言闭包审计 402/402 一致。按本 RFC 的构造/访问/
+更新、空/异宽/递归容器、Dict 有序列、共享、来源及 world 约束逐项核对，证据见
+[伞 RFC 验收记录](0282-native-acceptance.md)。逻辑预算不承诺物理 RSS/机器栈上限，
+regex 临时峰值和部分 host scratch 的计量限制保留，不再将精确成本计费作为条件。
+
+### 历史验证记录（基于 e4dda0a）
+
+以下历史数量及“继续推进”描述属于相应提交时点；当前结论以上方验收为准。
 
 - `cargo test -p telora-native`：24 项 runtime/ABI 单测及 3 项独立 regex 实验通过。不启用 jit 仍可独立编译运行，helper 不依赖 Cranelift。
 - `cargo test -p telora-native --features jit`：最近完整运行 128 项单测及 3 项 regex 实验通过，覆盖真实机器码调用和运行时对象操作。
