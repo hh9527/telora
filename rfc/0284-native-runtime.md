@@ -1,6 +1,6 @@
 # RFC 0284：Native 分类对象表与 world runtime
 
-- 状态：实施中；基础分类表和初始化发布已实现，剩余对象类别及 JIT helper 继续推进
+- 状态：实施中；分类表、循环闭包与全图发布已接通，资源计费完整性仍待验收
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -26,11 +26,20 @@
 
 独立 `telora-native::runtime` 复用 RFC 0281 实验的存储设计，不导入旧 VM/Val/Heap。与 native ABI 共用完整 Value 描述，描述外携带 session 身份以拒绝跨 session 和过期初始化引用。分配发生在 work，读取根据 HeapRef 的 world 位选择 main/work。
 
-已支持 String（inline/heaped）、Tuple/Record 共表、Array/slice、有序双列 Dict。`publish` 对整个根集合使用一次转发表复制，保留共享和来源；临时 main 全部构建成功后才替换状态，清空初始化 work 并更新 session 身份。发布失败不改变旧 world，重复发布拒绝。新 work 可引用已发布 main 对象，但不能写入 main 表。
+当前 Tables 包含独立 String/Bytes 表、Tuple/Record 共表、Newtype 表、Array 表、Value 表、Environment 表、Format 表，以及 Regex/Hash/Blame/Test 槽位。Dict 使用有序双列 Array，enum 按布局使用内联或 Value 表 payload，Dyn 使用 Value 表保存擦除后的值。Environment 同时承载闭包捕获及稳定词法函数槽；这些结构均不依赖旧对象运行时。
 
-验证：`cargo test -p telora-native --features jit` 通过 9 项测试，其中 3 项 runtime 测试覆盖分类表共享、持久更新、Dict/Array 嵌套别名发布、来源保留、初始化句柄失效和失败原子性。测试源码放在 `tests/fixtures/runtime.telora`。enum/闭包/dyn/native resource、真实环以及机器码 helper 尚待覆盖；不据此关闭 #181。
+`publish` 对整个根集合使用一次转发表复制，保留共享和来源；临时 main 全部构建成功后才替换状态，清空初始化 work 并更新 session 身份。发布失败不改变旧 world，重复发布拒绝。新 work 可引用已发布 main 对象，但不能写入 main 表。词法槽和函数体互相捕获形成的真实环已经由运行时测试及 eval-with 语言资产验证，发布后仍保留别名和可调用性；Pending 函数槽不能发布。
 
-后续已支持 enum 的 nullary/full_value/ValueTable 间接 payload 及发布遍历。以已 seal 的 variant 表校验 tag、payload TypeId 和宽度，JIT 按已选择的 variant 构造，不按名字猜测类型。递归类型的有限嵌套及间接 payload 发布已有 .telora 资产验证，当前 native 总计 15 项测试；真实对象环、闭包和 dyn 等仍未据此宣称完成。
+enum 的 nullary/full_value/ValueTable 间接 payload 以已 seal 的 variant 表校验 tag、payload TypeId 和宽度，JIT 按已选择的 variant 构造。递归类型的有限嵌套、间接 payload、泛型互递归闭包及发布后的动态调用已有语言资产；具体 codegen 与函数槽证据见 RFC0285。
+
+### 当前验证记录（基于 e4dda0a）
+
+- `cargo test -p telora-native`：24 项 runtime/ABI 单测及 3 项独立 regex 实验通过。不启用 jit 仍可独立编译运行，helper 不依赖 Cranelift。
+- `cargo test -p telora-native --features jit`：最近完整运行 128 项单测及 3 项 regex 实验通过，覆盖真实机器码调用和运行时对象操作。
+- `runtime/tests.rs` 包含来源、main/work 共享、失效句柄、失败原子性、函数槽真实环、实例适配器身份、数据物化和分配/fuel 边界测试。语言资产包含普通/泛型互递归及 eval-with 发布后的调用；这些是具体验证范围，不是对所有输入的证明。
+- 生产 native 源码的旧 Vm/Val/Heap、resolve/type-resolve/codegen 调用依赖检索未发现旧后端接入；测试构造 MIR 的依赖另列，不作为生产执行路径。检索不能代替全接口依赖审计。
+
+剩余限制主要是正则执行中预算、引擎编译/缓存临时内存、尚未逐项计费的 helper scratch/扫描，以及物理机器栈与 RSS 和逻辑配额的区别。下方条目说明已实施的计费范围；#181 仍未据此关闭。
 
 先落实本模块契约并保证可独立编译，再用简单单测或少量语言用例验证，然后进入后继模块。允许 native 路线阶段性缺失能力，不要求每次提交完成整个语言。实现前将本草案中的待定项补成明确决议，不引入兼容兜底。
 

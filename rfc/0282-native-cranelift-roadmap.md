@@ -1,6 +1,6 @@
 # RFC 0282：Cranelift Native 路线图（伞 RFC）
 
-- 状态：路线已选定；子 RFC 为待实施草案，本次仅建立规划
+- 状态：实施中；check/eval/eval-with 已纵向接通，语义与资源预算验收继续推进
 - 日期：2026-09-12
 - 跟踪：[#179](https://github.com/hh9527/telora/issues/179)
 - 开发分支：`feat/native-cranelift`
