@@ -23,6 +23,19 @@
 
 ## 实施计划
 
+### 当前入口与验收状态
+
+截至 `4bf46dd`，隐藏 CLI 已通过 `jit::compile_executable` 消费
+`SealedExecutable`，使用既有 TypeId、实例及执行闭包生成机器码。
+实际 check/eval/eval-with、初始化发布和发布后的调用已接通；低层 `compile`
+和 `compile_roots` 仍用于局部验证。Never 顶层引用、Dict 字段访问已补齐。
+当前 native 测试为 139 项单元测试和 3 项集成测试，CLI 验收为 85 项；
+语言模块 check 不执行所有测试闭包，不能据此称完整语言运行覆盖已经通过。
+共享泛型参数的名义身份规则仍待确认。
+
+下面的首批实现及各阶段进展保留历史上下文，旧测试数量和当时未接通项
+不代表当前支持范围。完整落地仍按伞 RFC 的验收条件判断。
+
 ### 首批实现与边界
 
 `telora-native` 的可选 `jit` feature 使用稳定版 Cranelift 0.135.0。当前验证平台为 x86_64 Linux（64-bit little-endian）。默认 CLI 未依赖该 crate，也未增加隐藏开关；不存在选择 native 后跳过初始化的临时捷径。

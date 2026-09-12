@@ -29,6 +29,20 @@
 
 ### 当前实施证据
 
+截至 `4bf46dd`：CLI check/eval/eval-with 已接通整图初始化与发布。
+生产 codegen 消费 `SealedExecutable`；模块 check 初始化所选模块的具体值，
+eval/eval-with 按导出入口裁剪普通值依赖，property/check 仍为 session 初始化根。
+模板函数族仅存在于静态阶段，不作为多态运行时值物化；执行计划中的函数实例
+均由 MIR 确定。`compile_modules` 现为测试辅助入口。
+Never 需求允许登记和执行，但不能成为 Ready 或成功发布的值。
+当前测试与真实负载证据见 RFC 0282、0287；共享泛型参数的名义身份规则仍待确认，
+不据此声明整体完成。
+
+### 实施过程记录
+
+以下段落按推进顺序保留。当时的测试数量和“下一处缺口”仅代表该阶段，
+不能作为当前未完成项；其中函数族运行时值的早期设想已由上面的静态模板边界取代。
+
 `compile_roots` 在一个代码内存 owner 中注册多个 HIR 入口，按 HIR ID 排序去重，共享函数及间接调用分派。已验证同一计划执行工厂函数生成闭包，将闭包及捕获发布至 main world，再由另一入口调用；初始化旧句柄被拒绝。
 
 Runtime 需求键使用已 resolve 的导出 SymbolId，或 `(TypeId, PropertySite, PropertyTypeId)`；field/variant property 必须保留 site，不能与类型本身的 property 混淆。状态为 Pending / Evaluating / Ready / Failed。首次递归请求将状态置为 Failed 并返回环错误，后续请求只传播 Failed。发布前所有已注册需求必须 Ready，需求值与显式根共用一轮别名复制，发布后状态表持有新的 main-world 描述符。

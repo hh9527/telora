@@ -47,6 +47,25 @@ JSON/YAML/TOML 字符串解析直接物化到 native tables，保留输入来源
 
 仍未完成完整语法/native API 覆盖及配额语义，因此不据此宣称整体路线落地。
 
+### 全量语言模块初始化复查（2026-09-13）
+
+实现版本 `4bf46dd`，debug CLI；使用默认语言测试脚本生成的
+`target/language-tests/workspace`，逐一执行
+`check --native @src/test/<name>/testee`。源码中的 76 个 testee 全部完成检查：
+
+- 71 个成功完成编译和初始化。
+- `syntax` 为预期语法错误；`empty-expectation` 为预期的空测试错误文本拒绝；
+  `initialization` 为源码显式顶层 fail，报告 `test export initialization failure`。
+- `nominal-equality` 和 `enum-constructor-context` 仍失败：同一个泛型参数
+  接收已物化的匿名 Record 与名义 Item（含 Array/Option 嵌套），MIR 的边界类型
+  与实际值身份不一致。共享参数是否要求相同 TypeId 的规则待确认，未以运行时
+  重新标记身份掩盖问题。
+
+这批 check 会编译测试闭包，但不运行测试调度器和闭包内容，不能等同于 71 个
+模块的全部运行测试通过。另实际执行了 eval/interpolation 的 native eval，
+嵌套插值、整数/浮点及自定义 Display 输出符合现有资产预期。
+默认完整语言运行测试由上一提交的 85 项 CLI 验收覆盖。
+
 ### 分阶段测量入口与真实负载观察（2026-09-12）
 
 内部环境变量 `TELORA_NATIVE_TIMINGS=1` 显式开启阶段计时，逐行输出 JSON 到 stderr，不进入普通帮助/用户文档，也不改变 stdout 的结果。记录是墙钟时间，失败退出也可产生已进入阶段的记录，不代表该阶段成功。eval/eval-with 分开记录 frontend（清单、求解、seal 和入口契约检查）、codegen、runtime_setup、initialize（数据模块注入、全图顶层/property 求值及发布）、entry_input、execute 和 output；eval 无 entry 调用，记录 export 而非 execute。check 经过共享 Session 可记录 codegen/runtime_setup/initialize，但没有 frontend 记录。

@@ -39,7 +39,13 @@ status 使用 u32：0=Success，1=Failed；只有 Success 允许读取结果缓�
 仅首次记录来源诊断，不读取输出缓冲区，并退出已进入的帧。CLI 采用会话配置的
 fuel 上限。下述 helper 的细粒度计数已经移除，不据此承诺与旧路线的预算数字完全相同。
 
-调用深度现由同一 CallContext 维护：默认上限为 128 个生成函数／property 初始化器的活动帧，可在 host 构造 context 时设置。分发器不额外计数；拒绝进入的帧不增加计数，所有已进入帧在成功、显式失败、fuel 耗尽和子调用失败出口统一减回。直接和间接递归测试验证失败后深度归零。该上限仅限制递归深度，尚不等于精确栈槽预算；大帧尺寸及完整 stack_slots 配额仍需后续实现和验收。
+调用深度现由同一 CallContext 维护：默认上限为 128 个生成函数／property 初始化器的活动帧，可在 host 构造 context 时设置。分发器不额外计数；拒绝进入的帧不增加计数，所有已进入帧在成功、显式失败、fuel 耗尽和子调用失败出口统一减回。直接和间接递归测试验证失败后深度归零。
+
+生成代码的显式栈槽现按 word 累加到活动帧预算，CLI 接入 session 的
+`stack_slots` 配额。`seal_frame_charge` 统计已生成的固定 stack slots，
+入口准入、退出归还；`native_generated_stack_budget_counts_frames_and_unwinds_on_failure`
+验证成功和预算失败后计数归零。这是显式槽位的逻辑预算，不包含机器码 prologue、
+寄存器 spill、host helper 栈或操作系统完整栈占用，不能宣称它是精确物理栈上限。
 
 Array spread 已移除按输入描述符和 slice word 数扣减 fuel 的预扫描。有限的数据
 复制不构成额外语言调用；描述符验证、长度溢出检查及 backing 分配准入仍由
