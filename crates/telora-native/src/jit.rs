@@ -111,7 +111,7 @@ fn child(mir: &Mir, node: HirId, role: Role) -> Result<HirId> {
 pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
     let layouts = Layouts::from_mir(mir)?;
     let graph = mir.mir();
-    let (_, _, output, arguments) = functions::shape(graph, &layouts, root)?;
+    let (_, _, output, arguments) = functions::shape(graph, &layouts, root.into())?;
     let mut builder =
         JITBuilder::new(cranelift_module::default_libcall_names()).map_err(|e| e.to_string())?;
     builder.symbol("telora_native_object", helpers::object as *const u8);
@@ -142,8 +142,8 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
         .declare_function("telora_native_object", Linkage::Import, &helper_signature)
         .map_err(|e| e.to_string())?;
     let mut functions = functions::Functions::new(ctx.func.signature.clone());
-    functions.registered.insert(root, function);
-    functions.pending.push(root);
+    functions.registered.insert(root.into(), function);
+    functions.pending.push(root.into());
     let mut next = 0;
     while next < functions.pending.len() {
         let node = functions.pending[next];
@@ -172,14 +172,37 @@ struct Lower<'a, 'b> {
     context: ir::Value,
     object_helper: ir::FuncRef,
     functions: &'a mut functions::Functions,
+    function_key: functions::Key,
 }
 impl Lower<'_, '_> {
+    fn ty(&self, node: HirId) -> Result<telora_core::mir::TypeId> {
+        self.function_key.ty(self.mir, node)
+    }
+    fn instance_reference(&self, mut node: HirId) -> Option<telora_core::mir::GenericInstanceId> {
+        loop {
+            let selected = match self.function_key.instance {
+                Some(id) => self.mir.generic_instances[id.index()].reference(node),
+                None => self.mir.generic_references[node.index()].and_then(|r| r.instance()),
+            };
+            if selected.is_some() {
+                return selected;
+            }
+            // Explicit type application wraps the resolved callee reference.
+            // Consume that reference's existing instance; do not substitute here.
+            node = match self.mir.hir[node.index()].kind {
+                HirKind::TypeApply => child(self.mir, node, Role::Callee).ok()?,
+                HirKind::TypeAscription => child(self.mir, node, Role::Value).ok()?,
+                _ => return None,
+            };
+        }
+    }
     fn callable(&self, node: HirId, depth: usize) -> Result<HirId> {
         if depth > 512 {
             return Err("native callable alias cycle".into());
         }
         match self.mir.hir[node.index()].kind {
             HirKind::Closure => Ok(node),
+            HirKind::TypeApply => self.callable(child(self.mir, node, Role::Callee)?, depth + 1),
             HirKind::TypeAscription => {
                 self.callable(child(self.mir, node, Role::Value)?, depth + 1)
             }
@@ -207,9 +230,14 @@ impl Lower<'_, '_> {
         }
     }
     fn direct_call(&mut self, node: HirId, depth: usize) -> Result<Vec<ir::Value>> {
-        let callee = self.callable(child(self.mir, node, Role::Callee)?, 0)?;
+        let callee_node = child(self.mir, node, Role::Callee)?;
+        let callee = functions::Key {
+            node: self.callable(callee_node, 0)?,
+            instance: self.instance_reference(callee_node),
+        };
         let function = self.functions.declare(self.mir, callee, self.module)?;
-        let (parameters, _, output, expected) = functions::shape(self.mir, self.layouts, callee)?;
+        let (parameters, _, output, expected) = functions::shape(self.mir, self.layouts, callee)
+            .map_err(|e| format!("{e}; callee {callee:?} from HIR {}, parent {:?}, reference {:?}, callee syntax {:?}", node.index(), self.function_key, self.mir.generic_references[callee_node.index()], self.mir.hir[callee_node.index()].kind))?;
         let arguments = self.mir.hir[node.index()]
             .children
             .iter()
@@ -219,12 +247,12 @@ impl Lower<'_, '_> {
         if parameters.len() != arguments.len() {
             return Err("native direct argument count mismatch".into());
         }
-        if output != TypeKey::try_from(known(self.mir, node)?)? {
+        if output != TypeKey::try_from(self.ty(node)?)? {
             return Err("native direct result type mismatch".into());
         }
         let mut words = Vec::new();
         for (&arg, ty) in arguments.iter().zip(expected) {
-            if TypeKey::try_from(known(self.mir, arg)?)? != ty {
+            if TypeKey::try_from(self.ty(arg)?)? != ty {
                 return Err("native direct argument type mismatch".into());
             }
             words.extend(self.expression(arg, depth + 1)?);
@@ -355,7 +383,7 @@ impl Lower<'_, '_> {
         if depth > 512 {
             return Err("native expression nesting limit".into());
         }
-        let ty = known(self.mir, node)?;
+        let ty = self.ty(node)?;
         let key = TypeKey::try_from(ty)?;
         let syntax = &self.mir.hir[node.index()];
         let data = match &syntax.kind {
@@ -498,7 +526,7 @@ impl Lower<'_, '_> {
             }
             HirKind::Field => {
                 let receiver_node = child(self.mir, node, Role::Receiver)?;
-                let receiver_ty = TypeKey::try_from(known(self.mir, receiver_node)?)?;
+                let receiver_ty = TypeKey::try_from(self.ty(receiver_node)?)?;
                 let name = child(self.mir, node, Role::Name)?;
                 let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
                     return Err("native field name missing".into());
@@ -514,15 +542,14 @@ impl Lower<'_, '_> {
             }
             HirKind::Index => {
                 let receiver_node = child(self.mir, node, Role::Receiver)?;
-                if self.mir.types[known(self.mir, receiver_node)?.index()].constructor
+                if self.mir.types[self.ty(receiver_node)?.index()].constructor
                     != TypeConstructor::Array
                 {
                     return Err("native index currently requires solved Array".into());
                 }
                 let receiver = self.expression(receiver_node, depth + 1)?;
                 let index_node = child(self.mir, node, Role::Index)?;
-                if self.mir.types[known(self.mir, index_node)?.index()].constructor
-                    != TypeConstructor::Int
+                if self.mir.types[self.ty(index_node)?.index()].constructor != TypeConstructor::Int
                 {
                     return Err("native index currently requires solved Int".into());
                 }
@@ -568,7 +595,14 @@ impl Lower<'_, '_> {
                 Ok(value)
             }
             HirKind::Closure => {
-                let function = self.functions.declare(self.mir, node, self.module)?;
+                let function = self.functions.declare(
+                    self.mir,
+                    functions::Key {
+                        node,
+                        instance: self.function_key.instance,
+                    },
+                    self.module,
+                )?;
                 let value = self.layouts.value(
                     key,
                     Origin::from_loc(Some(syntax.location)),
@@ -595,7 +629,7 @@ impl Lower<'_, '_> {
             }
             HirKind::If => {
                 let condition_node = child(self.mir, node, Role::Condition)?;
-                let condition_ty = known(self.mir, condition_node)?;
+                let condition_ty = self.ty(condition_node)?;
                 if self.mir.types[condition_ty.index()].constructor != TypeConstructor::Bool {
                     return Err("native if condition is not solved Bool".into());
                 }

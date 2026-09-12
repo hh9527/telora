@@ -4,7 +4,7 @@ use telora_core::ast::{BinaryOperator as B, UnaryOperator as U};
 
 impl Lower<'_, '_> {
     fn scalar_result(&mut self, node: HirId, bits: ir::Value) -> Result<Vec<ir::Value>> {
-        let ty = TypeKey::try_from(known(self.mir, node)?)?;
+        let ty = TypeKey::try_from(self.ty(node)?)?;
         let header = self.layouts.value(
             ty,
             Origin::from_loc(Some(self.mir.hir[node.index()].location)),
@@ -47,7 +47,7 @@ impl Lower<'_, '_> {
     }
     pub(super) fn unary(&mut self, node: HirId, op: U, depth: usize) -> Result<Vec<ir::Value>> {
         let operand = child(self.mir, node, Role::Operand)?;
-        let ty = known(self.mir, operand)?;
+        let ty = self.ty(operand)?;
         let value = self.expression(operand, depth + 1)?[2];
         let result = match (&self.mir.types[ty.index()].constructor, op) {
             (TypeConstructor::Int, U::Negate) => {
@@ -68,8 +68,8 @@ impl Lower<'_, '_> {
     pub(super) fn binary(&mut self, node: HirId, op: B, depth: usize) -> Result<Vec<ir::Value>> {
         let left_node = child(self.mir, node, Role::Left)?;
         let right_node = child(self.mir, node, Role::Right)?;
-        let left_ty = known(self.mir, left_node)?;
-        let right_ty = known(self.mir, right_node)?;
+        let left_ty = self.ty(left_node)?;
+        let right_ty = self.ty(right_node)?;
         if left_ty != right_ty {
             return Err("native binary operands require the solved same type".into());
         }
@@ -145,7 +145,10 @@ impl Lower<'_, '_> {
                     .builder
                     .ins()
                     .bitcast(types::I64, MemFlagsData::new(), result);
-                let exponent = self.builder.ins().band_imm_s(bits, 0x7ff0_0000_0000_0000i64);
+                let exponent = self
+                    .builder
+                    .ins()
+                    .band_imm_s(bits, 0x7ff0_0000_0000_0000i64);
                 let nonfinite =
                     self.builder
                         .ins()

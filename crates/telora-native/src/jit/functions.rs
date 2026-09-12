@@ -1,9 +1,38 @@
 use super::*;
 use cranelift_module::FuncId;
+use telora_core::mir::GenericInstanceId;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct Key {
+    pub node: HirId,
+    pub instance: Option<GenericInstanceId>,
+}
+impl Key {
+    pub fn ty(self, mir: &Mir, node: HirId) -> Result<telora_core::mir::TypeId> {
+        match self.instance {
+            Some(id) => mir.generic_instances[id.index()].ty(node).ok_or_else(|| {
+                format!(
+                    "native instance {} has no solved type for HIR {}",
+                    id.index(),
+                    node.index()
+                )
+            }),
+            None => known(mir, node),
+        }
+    }
+}
+impl From<HirId> for Key {
+    fn from(node: HirId) -> Self {
+        Self {
+            node,
+            instance: None,
+        }
+    }
+}
 
 pub(super) struct Functions {
-    pub registered: BTreeMap<HirId, FuncId>,
-    pub pending: Vec<HirId>,
+    pub registered: BTreeMap<Key, FuncId>,
+    pub pending: Vec<Key>,
     signature: ir::Signature,
 }
 impl Functions {
@@ -14,32 +43,38 @@ impl Functions {
             signature,
         }
     }
-    pub fn declare(&mut self, mir: &Mir, node: HirId, module: &mut JITModule) -> Result<FuncId> {
-        if let Some(&function) = self.registered.get(&node) {
+    pub fn declare(&mut self, mir: &Mir, key: Key, module: &mut JITModule) -> Result<FuncId> {
+        if let Some(&function) = self.registered.get(&key) {
             return Ok(function);
         }
+        let node = key.node;
         if !matches!(mir.hir[node.index()].kind, HirKind::Closure)
-            || mir.types[known(mir, node)?.index()].constructor != TypeConstructor::Function
+            || mir.types[key.ty(mir, node)?.index()].constructor != TypeConstructor::Function
         {
             return Err("native direct call requires a monomorphic closure".into());
         }
         let function = module
             .declare_function(
-                &format!("telora_fn_{}", node.index()),
+                &format!(
+                    "telora_fn_{}_{:?}",
+                    node.index(),
+                    key.instance.map(|i| i.index())
+                ),
                 Linkage::Local,
                 &self.signature,
             )
             .map_err(|e| e.to_string())?;
-        self.registered.insert(node, function);
-        self.pending.push(node);
+        self.registered.insert(key, function);
+        self.pending.push(key);
         Ok(function)
     }
 }
 pub(super) fn shape(
     graph: &Mir,
     layouts: &Layouts,
-    root: HirId,
+    key: Key,
 ) -> Result<(Vec<HirId>, HirId, TypeKey, Vec<TypeKey>)> {
+    let root = key.node;
     let root_node = graph
         .hir
         .get(root.index())
@@ -60,10 +95,10 @@ pub(super) fn shape(
     } else {
         root
     };
-    let output = TypeKey::try_from(known(graph, body)?)?;
+    let output = TypeKey::try_from(key.ty(graph, body)?)?;
     let arguments = parameters
         .iter()
-        .map(|&p| TypeKey::try_from(known(graph, p)?))
+        .map(|&p| TypeKey::try_from(key.ty(graph, p)?))
         .collect::<Result<Vec<_>>>()?;
 
     layouts.words(output)?;
@@ -75,14 +110,14 @@ pub(super) fn shape(
 pub(super) fn emit(
     graph: &Mir,
     layouts: &Layouts,
-    root: HirId,
+    key: Key,
     helper: FuncId,
     module: &mut JITModule,
     functions: &mut Functions,
 ) -> Result<()> {
-    let (parameters, body, output, arguments) = shape(graph, layouts, root)?;
+    let (parameters, body, output, arguments) = shape(graph, layouts, key)?;
     let output_words = layouts.words(output)?;
-    let function = functions.registered[&root];
+    let function = functions.registered[&key];
     let mut ctx = module.make_context();
     ctx.func.signature = functions.signature.clone();
     let object_helper = module.declare_func_in_func(helper, &mut ctx.func);
@@ -125,6 +160,7 @@ pub(super) fn emit(
             context,
             object_helper,
             functions,
+            function_key: key,
         };
         let result = lower.expression(body, 0)?;
         if result.len() != output_words {

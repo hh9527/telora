@@ -259,3 +259,19 @@ fn scalar_machine_code_handles_recursion_and_checked_arithmetic() {
         assert!(ctx.diagnostics().is_empty());
     }
 }
+#[test]
+fn generic_calls_consume_closed_instances_without_substituting_types_at_runtime() {
+    let (mir, root) = graph(include_str!("../../tests/fixtures/generics.telora"));
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    assert_eq!(rt.scalar_bits(rt.field(&result, 0).unwrap()).unwrap(), 42);
+    assert_eq!(
+        rt.text(rt.field(&result, 1).unwrap()).unwrap().as_str(),
+        "native generic text"
+    );
+    let array = rt.field(&result, 2).unwrap().to_owned();
+    assert_eq!(rt.scalar_bits(rt.array_get(&array, 0).unwrap()).unwrap(), 7);
+}
