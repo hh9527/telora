@@ -18,6 +18,7 @@ pub(crate) const DEMAND: u32 = 12;
 pub(crate) const ARRAY_LENGTH: u32 = 13;
 pub(crate) const STRING_LENGTH: u32 = 14;
 pub(crate) const ARRAY_MAP: u32 = 15;
+pub(crate) const PROPERTY_MARK: u32 = 16;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -61,6 +62,37 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                PROPERTY_MARK => {
+                    let target = Value {
+                        arena: rt.identity,
+                        words: unsafe { std::slice::from_raw_parts(data, 3) }.into(),
+                    };
+                    let masks = [4u64, 16, 8, 2, 1, 32];
+                    let mut bits = *masks
+                        .get(rt.enum_tag(&target)? as usize)
+                        .ok_or("invalid PropertyTarget tag")?;
+                    let previous_ty = unsafe { TypeId((*data.add(4) >> 32) as u32) };
+                    let previous = Value {
+                        arena: rt.identity,
+                        words: unsafe {
+                            std::slice::from_raw_parts(data.add(3), rt.layout(previous_ty)?.words)
+                        }
+                        .into(),
+                    };
+                    if let Some(previous) = rt.enum_payload(&previous)? {
+                        let previous = previous.to_owned();
+                        rt.validate(previous.as_ref(), ty)?;
+                        bits |= rt.scalar_bits(rt.field(&previous, 0)?)?;
+                    }
+                    let bit_type = rt
+                        .layout(ty)?
+                        .fields
+                        .first()
+                        .ok_or("property attribute missing bits")?
+                        .0;
+                    let bits = rt.scalar(bit_type, loc, bits)?;
+                    rt.aggregate(ty, loc, &[bits])?
+                }
                 CLOSURE => {
                     let words = unsafe { std::slice::from_raw_parts(data, count) };
                     let function = u32::try_from(*words.first().ok_or("closure function missing")?)

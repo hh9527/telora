@@ -1,11 +1,86 @@
 use super::*;
 
 impl Lower<'_, '_> {
+    fn property_factory(
+        &mut self,
+        node: HirId,
+        arguments: &[TypeKey],
+        data: ir::Value,
+        environment: ir::Value,
+    ) -> EmitResult<()> {
+        let factory = &self.mir.types[known(self.mir, node)?.index()];
+        if factory.constructor != TypeConstructor::Function || factory.arguments.len() != 2 {
+            return Err("property factory ABI signature mismatch".into());
+        }
+        let target = TypeKey::try_from(factory.arguments[0])?;
+        let provider = TypeKey::try_from(factory.arguments[1])?;
+        if self.mir.types[target.index()].constructor != TypeConstructor::PropertyTarget {
+            return Err("property factory target ABI mismatch".into());
+        }
+        if !self.function_key.marker_provider {
+            if arguments != [target] || self.return_type != provider {
+                return Err("property factory ABI mismatch".into());
+            }
+            let function = self.functions.declare(
+                self.mir,
+                functions::Key {
+                    node,
+                    instance: None,
+                    initializer: false,
+                    marker_provider: true,
+                },
+                self.module,
+            )?;
+            let mut words = vec![
+                self.builder
+                    .ins()
+                    .iconst(types::I64, i64::from(function.as_u32())),
+            ];
+            for i in 0..self.layouts.words(target)? {
+                words.push(self.builder.ins().load(
+                    types::I64,
+                    MemFlagsData::new(),
+                    data,
+                    (i * 8) as i32,
+                ));
+            }
+            let count = self.builder.ins().iconst(types::I64, words.len() as i64);
+            let data = self.stack_words(&words)?;
+            let result = self.object(node, helpers::CLOSURE, provider, data, count)?;
+            return self.write_return(&result);
+        }
+        if arguments.len() != 2
+            || self.mir.types[arguments[0].index()].constructor != TypeConstructor::Type
+            || self.mir.types[arguments[1].index()].constructor != TypeConstructor::Option
+            || self.mir.types[arguments[1].index()].arguments
+                != [self
+                    .ty(node)
+                    .map(|ty| self.mir.types[ty.index()].arguments[2])?]
+            || self.layouts.field_names[self.return_type.index()] != ["bits"]
+        {
+            return Err("property provider ABI signature mismatch".into());
+        }
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let mut packet = self.object(node, helpers::CAPTURE, target, environment, zero)?;
+        let start = self.layouts.words(arguments[0])?;
+        for i in 0..self.layouts.words(arguments[1])? {
+            packet.push(self.builder.ins().load(
+                types::I64,
+                MemFlagsData::new(),
+                data,
+                ((start + i) * 8) as i32,
+            ));
+        }
+        let data = self.stack_words(&packet)?;
+        let result = self.object(node, helpers::PROPERTY_MARK, self.return_type, data, zero)?;
+        self.write_return(&result)
+    }
     pub(super) fn native_adapter(
         &mut self,
         node: HirId,
         arguments: &[TypeKey],
         data: ir::Value,
+        environment: ir::Value,
     ) -> EmitResult<()> {
         let symbol =
             self.mir.hir_symbols[node.index()].ok_or("native declaration has no stable symbol")?;
@@ -14,6 +89,9 @@ impl Lower<'_, '_> {
             .module
             .and_then(|id| self.mir.modules[id.index()].native.as_ref())
             .ok_or("native declaration is not in an admitted ABI module")?;
+        if (module.id, declaration.name.as_str()) == (18, "property") {
+            return self.property_factory(node, arguments, data, environment);
+        }
         if (module.id, declaration.name.as_str()) == (5, "map") {
             if arguments.len() != 2 {
                 return Err("native map arity mismatch".into());

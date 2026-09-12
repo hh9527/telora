@@ -329,6 +329,34 @@ fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
     assert!(rt.enum_payload(&end).unwrap().is_none());
 }
 #[test]
+fn property_marker_factory_returns_a_reducing_native_provider() {
+    for (source, expected) in [
+        (
+            "def mark = property(PropertyTarget.Type); export def answer = mark(Int.type, None).bits;",
+            1,
+        ),
+        (
+            "def mark = property(PropertyTarget.Type); def previous = property(PropertyTarget.Field)(Int.type, None); export def answer = mark(Int.type, Some(previous)).bits;",
+            17,
+        ),
+    ] {
+        let (mir, root) = graph(source);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        assert_eq!(
+            compiled.call(&mut context, &[]).unwrap().words()[2],
+            expected
+        );
+        context.runtime_mut().unwrap().publish(&[]).unwrap();
+        assert_eq!(
+            compiled.call(&mut context, &[]).unwrap().words()[2],
+            expected
+        );
+    }
+}
+
+#[test]
 fn native_map_calls_captured_and_nested_language_callbacks() {
     let dependencies = [(
         "std/array",

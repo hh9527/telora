@@ -37,6 +37,8 @@ Runtime 需求键使用已 resolve 的导出 SymbolId，或 `(TypeId, PropertySi
 
 `compile_modules` 已支持从所选模块的封闭 scope 注册全部顶层值绑定，包含未使用的私有值；不支持的初始化代码会明确编译失败。`initialize` 主动遍历需求，内部仍按需处理依赖，全部成功后统一发布；export API 只在成功发布后开放，并消费 MIR 已确定的导出别名绑定。已验证未使用的顶层 `fail!` 阻止整个初始化发布，重复初始化不重复诊断。
 
+Native `property` 工厂已生成真实可调用的 provider 闭包，捕获 PropertyTarget；provider 将该目标的 ABI capability bits 与 previous 属性按位合并，并产生 PropertyAttr。工厂与 provider 使用不同编译键和各自封闭签名。已验证无 previous、合并 Type/Field 两种目标及发布后继续调用。此处是 native 工厂能力，不代表装饰器清单已完成调度。
+
 property 清单/provider 链执行、数据注入、泛型函数族/所需 native 操作及 CLI 初始化入口尚未完成，因此暂未覆盖包含整个标准库的全图，不据此宣称 CLI 初始化已可用。
 
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。

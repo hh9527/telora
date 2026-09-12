@@ -17,9 +17,18 @@ pub(super) struct Key {
     pub node: HirId,
     pub instance: Option<GenericInstanceId>,
     pub initializer: bool,
+    pub marker_provider: bool,
 }
 impl Key {
     pub fn ty(self, mir: &Mir, node: HirId) -> Result<telora_core::mir::TypeId> {
+        if self.marker_provider && node == self.node {
+            let factory = known(mir, node)?;
+            return mir.types[factory.index()]
+                .arguments
+                .last()
+                .copied()
+                .ok_or_else(|| "property factory has no provider type".into());
+        }
         match self.instance {
             Some(id) => mir.generic_instances[id.index()].ty(node).ok_or_else(|| {
                 format!(
@@ -38,6 +47,7 @@ impl From<HirId> for Key {
             node,
             instance: None,
             initializer: false,
+            marker_provider: false,
         }
     }
 }
@@ -125,9 +135,10 @@ impl Functions {
         let function = module
             .declare_function(
                 &format!(
-                    "telora_fn_{}_{:?}",
+                    "telora_fn_{}_{:?}_{}",
                     node.index(),
-                    key.instance.map(|i| i.index())
+                    key.instance.map(|i| i.index()),
+                    key.marker_provider,
                 ),
                 Linkage::Local,
                 &self.signature,
@@ -358,7 +369,7 @@ pub(super) fn emit(
             lower.locals.insert(symbol, value);
         }
         let outcome = if is_native(&graph.hir[key.node.index()].kind) && !key.initializer {
-            lower.native_adapter(key.node, &arguments, args)
+            lower.native_adapter(key.node, &arguments, args, environment)
         } else {
             match lower.expression(body, 0) {
                 Ok(result) => lower.return_value(body, &result),
