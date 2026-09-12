@@ -36,6 +36,8 @@
 
 ## 验收条件
 
+诊断捕获的上下文边界已区分普通 Failed 与不可恢复 abort。fuel 耗尽、调用深度超限、helper panic 设置 session 中止标记；后续调用/helper 不再执行，但栈退出 guard 仍能清理。普通范围可移出其新增报告，嵌套范围不吞掉外层报告；abort 保留全部报告给 session 最终输出。这只是 call_with_diagnostics 的上下文基础，语言接口和原生 Diagnostic 对象构造尚未据此宣称接通。
+
 HashState 按权威 native type (16, 3) 存入独立 Vec<Sha256> 槽位，描述符保存 HeapRef。更新读取原状态并复制固定大小摘要上下文，直接借用 native String/Bytes；不修改旧状态，不复制输入对象树。发布按原 HeapId 转发，保留重复引用；main 状态可在新 work 中分叉更新。增量协议保留版本前缀、输入类型标记、变长输入的大端长度及 Int 大端编码。固定摘要向量、标准 SHA-256 向量和真实 CLI 初始化/entry 分叉更新已有验证。
 
 单测构造/访问/更新、空容器、异宽与递归对象、浅层共享、Dict 排序与重复键、错误来源、跨 world 引用约束。每个新增类别用少量有意义的单测验收，不接入旧 VM。

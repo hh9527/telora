@@ -331,7 +331,7 @@ pub struct CallContext {
     call_depth: u32,
     call_depth_limit: Option<u32>,
     fuel: Option<u64>,
-    fuel_exhausted: bool,
+    aborted: bool,
     diagnostics: Vec<NativeDiagnostic>,
     runtime: Option<crate::runtime::Runtime>,
 }
@@ -354,14 +354,15 @@ impl CallContext {
     }
     pub fn call_depth(&self) -> u32 { self.call_depth }
     pub(crate) fn enter_call(&mut self, origin: Origin) -> Status {
+        if self.aborted { return Status::Failed; }
         if self.call_depth >= self.call_depth_limit.unwrap_or(128) {
-            return self.fail_at("native call depth limit exceeded", origin);
+            return self.abort_at("native call depth limit exceeded", origin);
         }
         self.call_depth += 1;
         Status::Success
     }
     pub(crate) fn leave_call(&mut self) -> Status {
-        if self.call_depth == 0 { return self.fail("native call depth underflow"); }
+        if self.call_depth == 0 { return self.abort_at("native call depth underflow", Origin::default()); }
         self.call_depth -= 1;
         Status::Success
     }
@@ -375,15 +376,14 @@ impl CallContext {
         self.fuel
     }
     pub(crate) fn consume_fuel(&mut self, amount: u64, origin: Origin) -> Status {
-        if self.fuel_exhausted { return Status::Failed; }
+        if self.aborted { return Status::Failed; }
         let Some(remaining) = self.fuel else { return Status::Success; };
         if let Some(remaining) = remaining.checked_sub(amount) {
             self.fuel = Some(remaining);
             Status::Success
         } else {
             self.fuel = Some(0);
-            self.fuel_exhausted = true;
-            self.fail_at("native execution fuel exhausted", origin)
+            self.abort_at("native execution fuel exhausted", origin)
         }
     }
     pub fn with_runtime(runtime: crate::runtime::Runtime) -> Self {
@@ -404,6 +404,20 @@ impl CallContext {
     }
     pub fn diagnostics(&self) -> &[NativeDiagnostic] {
         &self.diagnostics
+    }
+    /// Execution limits and host failures cannot be turned into language values.
+    pub fn is_aborted(&self) -> bool { self.aborted }
+    pub(crate) fn abort_at(&mut self, message: impl Into<String>, origin: Origin) -> Status {
+        if self.aborted { return Status::Failed; }
+        self.aborted = true;
+        self.fail_at(message, origin)
+    }
+    /// Only diagnostics created inside this scope move into its Result value.
+    /// On abort, leave every report available to the session's final output.
+    pub(crate) fn take_scoped_diagnostics(&mut self, start: usize) -> Result<Option<Vec<NativeDiagnostic>>> {
+        if start > self.diagnostics.len() { return Err("invalid native diagnostic scope".into()); }
+        if self.aborted { return Ok(None); }
+        Ok(Some(self.diagnostics.split_off(start)))
     }
     pub fn fail(&mut self, message: impl Into<String>) -> Status {
         self.fail_at(message, Origin::default())
@@ -430,9 +444,11 @@ impl CallContext {
     }
     /// Host helper panic boundary. Propagated Failed need not add a diagnostic.
     pub fn boundary(&mut self, call: impl FnOnce(&mut Self) -> Status) -> Status {
+        if self.aborted { return Status::Failed; }
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call(self))) {
+            Ok(_) if self.aborted => Status::Failed,
             Ok(status) => status,
-            Err(_) => self.fail("native runtime helper panicked"),
+            Err(_) => self.abort_at("native runtime helper panicked", Origin::default()),
         }
     }
 }
