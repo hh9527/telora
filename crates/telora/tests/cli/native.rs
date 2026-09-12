@@ -92,6 +92,25 @@ fn native_structural_equality_matches_default_across_worlds() {
 }
 
 #[test]
+fn native_checked_cast_preserves_payloads_and_sealed_identity() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/checked-cast.telora")).unwrap();
+    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
+        let output = telora(&cwd).args([command, "--native", &format!("@src/main:{export}")]).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let value = serde_json::from_slice::<Value>(&output.stdout).unwrap();
+        assert_eq!(value, serde_json::json!(vec![true; 19]));
+    }
+    let native = telora(&cwd).args(["eval", "--native", "@src/main:cast_data"]).output().unwrap();
+    let default = telora(&cwd).args(["eval", "@src/main:cast_data"]).output().unwrap();
+    for output in [&native, &default] {
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+    assert_eq!(serde_json::from_slice::<Value>(&native.stdout).unwrap(), serde_json::from_slice::<Value>(&default.stdout).unwrap());
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_test_descriptions_initialize_without_running_tests_or_fixtures() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/test-description.telora")).unwrap();

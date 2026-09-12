@@ -37,6 +37,9 @@ struct Variant {
 }
 struct Layout {
     kind: Kind,
+    nominal: bool,
+    unchecked: Option<TypeId>,
+    result: bool,
     construction_checks: Vec<u64>,
     optional: bool,
     dynamic_kind: Option<&'static str>,
@@ -330,6 +333,9 @@ impl Runtime {
                 .unwrap_or_default();
             layouts.push(Some(Layout {
                 kind,
+                nominal: matches!(ty.constructor, T::Nominal(_)),
+                unchecked: if ty.constructor == T::Unchecked { Some(TypeId::try_from(ty.arguments[0])?) } else { None },
+                result: ty.constructor == T::Result,
                 construction_checks: sealed.mir().construction_checks.iter()
                     .filter(|check| check.concrete && check.owner.index() == entry.type_id)
                     .map(|check| match check.site { telora_core::mir::PropertySite::Type => 0, telora_core::mir::PropertySite::Variant(index) => u64::from(index) + 1, _ => unreachable!("sealed checker site") }).collect(),
@@ -680,6 +686,7 @@ mod closures;
 #[path = "runtime/data.rs"]
 mod data;
 mod codec;
+mod cast;
 mod codec_parse;
 #[path = "runtime/demands.rs"]
 mod demands;

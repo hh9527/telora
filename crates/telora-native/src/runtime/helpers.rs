@@ -48,6 +48,7 @@ pub(crate) const EQUAL: u32 = 53;
 pub(crate) const FLOAT_REMAINDER: u32 = 54;
 pub(crate) const MAKE_TEST: u32 = 55;
 pub(crate) const ARRAY_CONCAT: u32 = 56;
+pub(crate) const CHECKED_CAST: u32 = 57;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -83,6 +84,7 @@ pub(crate) unsafe extern "C" fn object(
     };
     if operation == ENTER_CALL { return context.enter_frame(count, origin) as u32; }
     if operation == DIAGNOSTIC_SCOPE { return unsafe { callbacks::diagnostic_scope(context, TypeId(ty), data, out, origin) }; }
+    if operation == CHECKED_CAST { return unsafe { callbacks::checked_cast(context, TypeId(ty), data, out, origin, count) }; }
     if operation == LEAVE_CALL { return context.leave_call() as u32; }
     if operation == FUEL {
         return context.consume_fuel(count, origin) as u32;

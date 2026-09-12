@@ -1,0 +1,48 @@
+import "std/codec" {encode, Value};
+import "std/entry" as entry;
+@check(fn(value) { if value.x > 0 { Ok(()) } else { Err(blame!("positive x required", value.x)) } })
+type Point = struct {x: Int};
+type Other = struct {x: Int};
+type Container = struct {point: Point};
+type Zip = struct {zip: Int};
+type Address = struct {address: Zip};
+type Preflight = struct {first: Point, second: Int};
+@check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive count required", value)) } })
+type Count = struct(Int);
+def point: Point = {x: 1};
+def fields: Dict(Int) = {x: 2};
+def checks: Fn() -> Value = fn() {
+    let candidate: Unchecked(Point) = {x: 2};
+    let absent: Option(Int) = None;
+    let rejected: Result(Int, String) = Err("unchanged error");
+    encode(Value.type, [
+        1.cast!(Int) == Ok(1),
+        "1".cast!(Int) == Err("value must be Int, got String"),
+        1.cast!(Float) == Err("value must be Float, got Int"),
+        1.cast!(Never) == Err("value: representation does not match cast target"),
+        point.cast!(Point) == Ok(point),
+        point.cast!(Other) == Err("value has a different declared type identity"),
+        {x: 1}.cast!(Point) == Ok(point),
+        {x: 1, extra: 2}.cast!(Point) == Err("value: representation does not match cast target"),
+        {address: {zip: "bad"}}.cast!(Address) == Err("value.address.zip must be Int, got String"),
+        fields.cast!(Point) == Ok({x: 2}),
+        {x: 2}.cast!(Dict(Int)) == Ok(fields),
+        candidate.cast!(Point) == Ok({x: 2}),
+        [{x: 1}, {x: 2}].cast!(Array(Point)) == Ok([point, {x: 2}]),
+        ({x: 1}, "text").cast!((Point, String)) == Ok((point, "text")),
+        (3,).cast!(Count) == Ok(Count(3)),
+        Some({x: 1}).cast!(Option(Point)) == Ok(Some(point)),
+        absent.cast!(Option(String)) == Ok(None),
+        rejected.cast!(Result(Bool, String)) == Ok(Err("unchanged error")),
+        {first: {x: 0}, second: "wrong"}.cast!(Preflight) == Err("value.second must be Int, got String"),
+    ])
+};
+export def answer = checks();
+export def cast_data = encode(Value.type, (
+    match [{x: 1}, {x: 2}].cast!(Array(Point)) { Ok(value) => value, Err(error) => fail!(error) },
+    match ({x: 1}, "text").cast!((Point, String)) { Ok(value) => value, Err(error) => fail!(error) },
+    match Some({x: 1}).cast!(Option(Point)) { Ok(value) => value, Err(error) => fail!(error) },
+    match None.ty!(Option(Int)).cast!(Option(String)) { Ok(value) => value, Err(error) => fail!(error) },
+    match Err("unchanged error").ty!(Result(Int, String)).cast!(Result(Bool, String)) { Ok(Err(value)) => value, _ => fail!("unexpected cast result") },
+));
+export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });

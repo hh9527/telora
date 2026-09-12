@@ -2,6 +2,29 @@ use super::*;
 
 type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *const u64) -> u32;
 
+pub(super) unsafe fn checked_cast(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, count: u64) -> u32 {
+    context.boundary(|context| {
+        let result = (|| -> Result<Status> {
+            if count >> 32 != 0 { return Err("cast packet must not contain property providers".into()); }
+            let rt = context.runtime()?;
+            let cursor = unsafe { *data } as *const u64;
+            let input_type = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+            let input = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(cursor, rt.layout(input_type)?.words) }.into() };
+            let mut checks = vec![];
+            for index in 0..count as usize {
+                let words = unsafe { std::slice::from_raw_parts(data.add(1 + index * 6), 6) };
+                checks.push(codec::CheckPlan { owner: TypeId(words[0] as u32), site: words[1], slot: words[2], signature: TypeId(words[3] as u32), initializer: words[4] as usize, dispatcher: words[5] as usize });
+            }
+            let mut codec = codec::Codec { context, checks: &checks, properties: &[] };
+            let Some(value) = codec.checked_cast(ty, &input, origin)? else { return Ok(Status::Failed); };
+            context.runtime()?.validate(value.as_ref(), ty)?;
+            unsafe { std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, value.words().len()); }
+            Ok(Status::Success)
+        })();
+        match result { Ok(status) => status, Err(message) => context.fail_at(message, origin) }
+    }) as u32
+}
+
 pub(super) unsafe fn diagnostic_scope(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin) -> u32 {
     context.boundary(|context| {
         let result = (|| -> Result<Status> {

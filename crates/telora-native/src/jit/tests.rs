@@ -1112,6 +1112,10 @@ fn native_checkers_initialize_once_and_publish_closed_generic_instances() {
 fn native_construction_invokes_sealed_checker_and_propagates_failure_once() {
     for (argument, succeeds) in [(42, true), (0, false)] {
         for source in [
+            format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = {{number: {argument}}}.cast!(Item);"),
+            format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = [{{number: {argument}}}].cast!(Array(Item));"),
+            format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let candidate: Unchecked(Item) = {{number: {argument}}}; candidate.cast!(Item) }};"),
+            format!("@check(fn(value) {{ if value > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value)) }} }}) type Item = struct(Int); export def answer = ({argument},).cast!(Item);"),
             format!("type Raw = struct {{number: Int}}; @check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let raw: Raw = {{number: {argument}}}; let checked: Item = raw.{{number}}; checked.number }};"),
             format!("type Raw = struct {{number: Int}}; @check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let raw: Raw = {{number: {argument}}}; let checked: Item = {{...raw}}; checked.number }};"),
             format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{label: String, number: Int}}; export def answer = do {{ let candidate: Unchecked(Item) = {{label: \"candidate\", number: {argument}}}; let checked: Item = candidate; checked.number }};"),
@@ -1129,7 +1133,11 @@ fn native_construction_invokes_sealed_checker_and_propagates_failure_once() {
         let result = compiled.call(&mut context, &[]);
         if succeeds {
             let result = result.unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
-            assert_eq!(context.runtime().unwrap().scalar_bits(result.as_ref()).unwrap(), 42);
+            if source.contains(".cast!") {
+                assert_eq!(context.runtime().unwrap().enum_tag(&result).unwrap(), 1);
+            } else {
+                assert_eq!(context.runtime().unwrap().scalar_bits(result.as_ref()).unwrap(), 42);
+            }
         } else {
             assert!(result.is_err());
             assert_eq!(context.diagnostics().len(), 1);
