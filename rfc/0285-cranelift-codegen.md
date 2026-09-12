@@ -77,6 +77,12 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+整体验收发现并修复 String 排序运算缺口：`<`、`<=`、`>`、`>=` 现在按字符串
+内容的字典序比较，支持 inline、heap-backed 和 Unicode 文本。现有语言资产
+`tests/language/src/test/compiler-semantics/testee.telora` 的 native check 从
+`native non-scalar operator is not yet linked` 变为成功；JIT 回归实际执行排序表达式。
+该 check 证明整图生成与初始化，不等于执行资产中的全部测试闭包。
+
 Tuple/Array spread 已接入。Tuple 根据 sealed 元素列表直接展开固定字段，Array 用独立 concat helper 按 slice 范围合并；原有元素描述符及其来源保持不变，引用的对象不深复制。Array 合并先检查总长度并计费结果缓冲区，再分配和写入对象表。语言对比覆盖空/嵌套 spread、泛型、nominal 上下文和元数据擦除；单测覆盖切片范围、main 来源、分配拒绝不新增槽位及失败源不会被后续贡献隐藏。此阶段 112 项 native 库测试通过，eval/eval-with 的默认/native 对比通过。
 
 字段投影（含重命名、空投影、重复源字段）和 named record/dict spread 已接入。投影/record spread 按封闭字段索引读取，record 的覆盖选择在编译期完成；所有源表达式仍按源码顺序求值，只有胜出的字段适配最终类型。Dict spread 复用有序列的合并 helper，后值覆盖同名键。输出 record 运行已有构造检查，字段来源和引用 backing 保留；语言对比覆盖泛型投影、异类型字段被覆盖、空投影、Dict 键序及原值不变。额外验证空投影仍执行 receiver、被覆盖字段仍产生副作用、发布后的来源和 backing 一致以及检查失败。

@@ -56,6 +56,7 @@ pub(crate) const SELF_CLOSURE: u32 = 61;
 pub(crate) const RESERVE_FUNCTION: u32 = 62;
 pub(crate) const FILL_FUNCTION: u32 = 63;
 pub(crate) const RESOLVE_FUNCTION: u32 = 64;
+pub(crate) const TEXT_ORDER: u32 = 65;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -229,6 +230,17 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                TEXT_ORDER => {
+                    let left = ValueRef { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, 4) } };
+                    let right = ValueRef { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(4), 4) } };
+                    let order = rt.text(left)?.as_str().cmp(rt.text(right)?.as_str());
+                    let value = match count {
+                        0 => order.is_lt(), 1 => order.is_le(),
+                        2 => order.is_gt(), 3 => order.is_ge(),
+                        _ => return Err("invalid string ordering operation".into()),
+                    };
+                    rt.scalar(ty, loc, u64::from(value))?
+                }
                 BLAME => {
                     let mut words = unsafe { std::slice::from_raw_parts(data, count) };
                     let mut message = None;

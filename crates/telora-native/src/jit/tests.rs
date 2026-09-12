@@ -51,6 +51,15 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_string_ordering_is_lexical_for_inline_heap_and_unicode() {
+    let (mir, root) = graph(r#"export def answer = "app" < "apple" && "10" < "2" && "Z" < "a" && "é" < "中" && "same" <= "same" && "z" > "a" && "z" >= "z" && "a deliberately heap-backed string" > "a" && !("same" < "same") && !("z" <= "a") && !("a" >= "z");"#);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 1);
+}
+
+#[test]
 fn native_cast_finite_array_does_not_charge_each_element() {
     let (mir, root) = graph("type Item = struct(Int); export def answer = fn(values: Array((Int,))) {values.cast!(Array(Item))};");
     let sealed = mir.seal().unwrap();
