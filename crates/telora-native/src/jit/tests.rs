@@ -51,6 +51,29 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_reflection_reads_sealed_types_without_materializing_them() {
+    for expression in [
+        "match td.kind(Never.type) { td.TypeDescKind.Never => True, _ => False }",
+        "match td.kind(Int.type) { td.TypeDescKind.Int => True, _ => False }",
+        "td.fields(Rec.type)[0].index == 0",
+        "match td.fields(Rec.type)[0].name { \"a\" => True, _ => False }",
+        "td.variants(Option(Int).type)[1].index == 1",
+        "match td.variants(Option(Int).type)[1].payload { Some(t) => match td.kind(t) { td.TypeDescKind.Int => True, _ => False }, _ => False }",
+        "match td.kind(td.children(Array(Int).type)[0]) { td.TypeDescKind.Int => True, _ => False }",
+        "match td.opaque_name(Int.type) { None => True, _ => False }",
+        "match td.resolve(Rec.type) { Ok(t) => match td.kind(t) { td.TypeDescKind.Struct => True, _ => False }, _ => False }",
+    ] {
+        let source = format!("import \"std/type-desc\" as td; type Rec = struct {{ a: Int }}; export def answer = {expression};");
+        let (mir, root) = graph_with(&source, &[("std/type-desc", include_str!("../../../telora-core/modules/std/type-desc.telora"))]);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap_or_else(|error| panic!("{expression}: {error}"));
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let value = compiled.call(&mut context, &[]).unwrap();
+        assert_eq!(value.words()[2], 1, "{expression}");
+    }
+}
+
+#[test]
 fn machine_code_returns_materialized_scalar_and_unit() {
     for (source, data) in [
         ("export def answer = 42;", Some(42)),

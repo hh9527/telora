@@ -344,6 +344,17 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::FORMAT, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 3
+            && let Some(operation) = ["kind", "children", "opaque_name", "resolve_raw", "fields", "variants"]
+                .iter().position(|name| *name == declaration.name)
+        {
+            if arguments.len() != 1 || self.mir.types[arguments[0].index()].constructor != TypeConstructor::Type {
+                return Err("native type reflection ABI signature mismatch".into());
+            }
+            let count = self.builder.ins().iconst(types::I64, operation as i64);
+            let result = self.object(node, helpers::REFLECT, self.return_type, data, count)?;
+            return self.write_return(&result);
+        }
         if module.id == 19
             && matches!(
                 declaration.name.as_str(),

@@ -169,6 +169,7 @@ enum Table {
 }
 
 pub struct Runtime {
+    type_info: Vec<reflection::TypeInfo>,
     property_presence: std::collections::BTreeSet<(TypeId, TypeId)>,
     demands: std::collections::BTreeMap<DemandKey, demands::DemandSlot>,
     demand_keys: Vec<DemandKey>,
@@ -365,6 +366,7 @@ impl Runtime {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| "arena identity overflow")?;
         Ok(Self {
+            type_info: reflection::build(sealed.types())?,
             property_presence: sealed
                 .mir()
                 .properties
@@ -655,6 +657,7 @@ mod format;
 mod pattern;
 #[path = "runtime/text_ops.rs"]
 mod text_ops;
+mod reflection;
 pub use dynamic::DynamicQuery;
 #[path = "runtime/metadata.rs"]
 mod metadata;

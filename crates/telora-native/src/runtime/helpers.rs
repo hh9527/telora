@@ -31,6 +31,7 @@ pub(crate) const FORMAT: u32 = 25;
 pub(crate) const FAIL_VALUES: u32 = 26;
 pub(crate) const REGEX: u32 = 27;
 pub(crate) const TEXT_OP: u32 = 28;
+pub(crate) const REFLECT: u32 = 29;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -109,6 +110,15 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                REFLECT => {
+                    let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
+                    let width = rt.layout(input)?.words;
+                    let value = Value {
+                        arena: rt.identity,
+                        words: unsafe { std::slice::from_raw_parts(data, width) }.into(),
+                    };
+                    rt.reflect(ty, count, &value)?
+                }
                 TEXT_OP => {
                     let arity = match count {
                         1 | 3 | 9 => 1,

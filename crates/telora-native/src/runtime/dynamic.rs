@@ -53,7 +53,7 @@ impl Runtime {
             None => self.named_variant(output, loc, "None", None),
         }
     }
-    fn named_variant(
+    pub(super) fn named_variant(
         &mut self,
         ty: TypeId,
         loc: Location,

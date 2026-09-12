@@ -72,6 +72,10 @@ pub struct TypeMember {
 }
 
 impl TypeImage {
+    /// Authoritative native ABI name retained by the sealed type image.
+    pub fn native_name(&self, id: crate::mir::NativeTypeId) -> Option<&str> {
+        self.native_definitions.iter().find(|(key, _)| *key == id).map(|(_, name)| name.as_str())
+    }
     /// Native Value producers use the same dictionary witness as a source
     /// Object constructor. This is a lookup in the closed applied layout.
     pub(crate) fn semantic_object_payload(&self, owner: TypeId) -> Option<TypeId> {
