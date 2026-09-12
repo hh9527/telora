@@ -56,7 +56,7 @@ pub(super) fn emit(
     let context = builder.block_params(entry)[0];
     let out = builder.block_params(entry)[2];
     let mut lower = Lower {
-        guarded: false,
+        guarded: false, frame_charge: None,
         mir: graph,
         layouts,
         builder,
@@ -80,7 +80,8 @@ pub(super) fn emit(
         Err(EmitError::Message(message)) => return Err(message),
     }
     let config = lower.module.target_config();
-    lower.builder.finalize(config);
+    lower.seal_frame_charge();
+        lower.builder.finalize(config);
     module
         .define_function(function, &mut ctx)
         .map_err(|e| e.to_string())

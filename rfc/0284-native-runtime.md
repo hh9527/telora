@@ -36,6 +36,8 @@
 
 ## 验收条件
 
+Native 栈预算开始消费 CLI session_quota.stack_slots，以显式临时槽的 u64 word 为单位。函数生成结束后把全部显式槽宽度写入入口 admission 常量，进入时累加、所有返回/失败路径归还；超限为不可捕获 abort。预算不按运行时类型猜测。递归正常/超限/零预算用例验证余额和调用深度均归零。当前是逻辑显式槽预算，不包含 Cranelift spill、机器帧开销或 Rust helper 临时空间，不能宣称完整物理栈防护；allocation_bytes 及 helper 工作量计费继续推进。
+
 std/test 的 Test 描述按 native type (33, 0) 存入独立 Vec 槽位，保存操作种类及闭包/期望/fixture 清单的原生描述符，不复制字符串或捕获对象。构造只验证参数（包含非空错误期望和 fixture 的权威 Value 回调签名），不执行测试或加载 fixture。发布遍历这些参数并保持 Test 身份共享；Test 相等采用对象身份。此处支撑 check/eval/eval-with 对含测试定义模块的初始化，不增加 native test 调度命令。
 
 诊断捕获的上下文边界已区分普通 Failed 与不可恢复 abort。fuel 耗尽、调用深度超限、helper panic 和字符串解析资源限制设置 session 中止标记；后续调用/helper 不再执行，但栈退出 guard 仍能清理。普通范围可移出其新增报告，嵌套范围不吞掉外层报告；abort 保留全部报告给 session 最终输出。

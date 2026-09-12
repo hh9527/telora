@@ -329,6 +329,9 @@ pub enum Status {
 pub struct CallContext {
     data_limits: telora_core::DataLimits,
     call_depth: u32,
+    stack_limit: Option<u64>,
+    stack_words: u64,
+    frames: Vec<u64>,
     call_depth_limit: Option<u32>,
     fuel: Option<u64>,
     aborted: bool,
@@ -353,17 +356,28 @@ impl CallContext {
         self
     }
     pub fn call_depth(&self) -> u32 { self.call_depth }
+    pub fn with_stack_limit(mut self, words: u64) -> Self { self.stack_limit = Some(words); self }
+    pub fn stack_words(&self) -> u64 { self.stack_words }
+    #[cfg(test)]
     pub(crate) fn enter_call(&mut self, origin: Origin) -> Status {
+        self.enter_frame(0, origin)
+    }
+    pub(crate) fn enter_frame(&mut self, words: u64, origin: Origin) -> Status {
         if self.aborted { return Status::Failed; }
         if self.call_depth >= self.call_depth_limit.unwrap_or(128) {
             return self.abort_at("native call depth limit exceeded", origin);
         }
+        let Some(total) = self.stack_words.checked_add(words) else { return self.abort_at("native stack budget overflow", origin); };
+        if total > self.stack_limit.unwrap_or(u64::MAX) { return self.abort_at("native stack word limit exceeded", origin); }
+        self.stack_words = total;
+        self.frames.push(words);
         self.call_depth += 1;
         Status::Success
     }
     pub(crate) fn leave_call(&mut self) -> Status {
         if self.call_depth == 0 { return self.abort_at("native call depth underflow", Origin::default()); }
         self.call_depth -= 1;
+        self.stack_words -= self.frames.pop().expect("admitted native frame");
         Status::Success
     }
     /// One budget spans initialization, demand callbacks and entry execution.

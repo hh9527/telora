@@ -80,7 +80,7 @@ pub(crate) unsafe extern "C" fn object(
         Ok(origin) => origin,
         Err(e) => return context.fail(e) as u32,
     };
-    if operation == ENTER_CALL { return context.enter_call(origin) as u32; }
+    if operation == ENTER_CALL { return context.enter_frame(count, origin) as u32; }
     if operation == DIAGNOSTIC_SCOPE { return unsafe { callbacks::diagnostic_scope(context, TypeId(ty), data, out, origin) }; }
     if operation == LEAVE_CALL { return context.leave_call() as u32; }
     if operation == FUEL {

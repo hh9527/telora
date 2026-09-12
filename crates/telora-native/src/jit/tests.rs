@@ -260,6 +260,25 @@ fn direct_functions_have_independent_frames_and_support_recursion() {
 }
 
 #[test]
+fn native_generated_stack_budget_counts_frames_and_unwinds_on_failure() {
+    let (mir, root) = graph("def recurse: Fn(Int) -> Int = fn(n) { if n == 0 { 42 } else { recurse(n - 1) } }; export def answer = recurse(12);");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    for (limit, succeeds) in [(0, false), (32, false), (10000, true)] {
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap()).with_stack_limit(limit);
+        let result = compiled.call(&mut context, &[]);
+        assert_eq!(result.is_ok(), succeeds, "limit={limit}: {:?}", context.diagnostics());
+        assert_eq!(context.stack_words(), 0);
+        assert_eq!(context.call_depth(), 0);
+        if !succeeds {
+            assert!(context.is_aborted());
+            assert_eq!(context.diagnostics().len(), 1);
+            assert!(context.diagnostics()[0].message.contains("stack word limit"));
+        }
+    }
+}
+
+#[test]
 fn native_float_remainder_preserves_sign_and_reports_zero_divisor() {
     for (expression, expected) in [("5.5 % 2.0", 1.5_f64), ("-5.5 % 2.0", -1.5), ("5.5 % -2.0", 1.5), ("-4.0 % 2.0", -0.0)] {
         let (mir, root) = graph(&format!("export def answer = {expression};"));

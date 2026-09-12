@@ -653,6 +653,7 @@ static NEXT_CODE_PLAN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 
 struct Lower<'a, 'b> {
     guarded: bool,
+    frame_charge: Option<ir::Inst>,
     mir: &'a Mir,
     layouts: &'a Layouts,
     builder: FunctionBuilder<'b>,

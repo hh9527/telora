@@ -294,7 +294,7 @@ pub(super) fn emit_dispatchers(
             builder.seal_block(no);
         }
         let mut lower = Lower {
-            guarded: false,
+            guarded: false, frame_charge: None,
             mir: graph,
             layouts,
             builder,
@@ -314,6 +314,7 @@ pub(super) fn emit_dispatchers(
             )
             .map_err(|e| format!("native dispatcher: {e:?}"))?;
         let config = lower.module.target_config();
+        lower.seal_frame_charge();
         lower.builder.finalize(config);
         module
             .define_function(dispatcher, &mut ctx)
@@ -429,7 +430,7 @@ pub(super) fn emit(
             locals.insert(symbol, values);
         }
         let mut lower = Lower {
-            guarded: false,
+            guarded: false, frame_charge: None,
             mir: graph,
             layouts: &layouts,
             builder,
@@ -501,6 +502,7 @@ pub(super) fn emit(
             Err(EmitError::Message(message)) => return Err(message),
         }
         let config = lower.module.target_config();
+        lower.seal_frame_charge();
         lower.builder.finalize(config);
     }
     module

@@ -4,6 +4,7 @@ use telora_core::ast::{BinaryOperator as B, UnaryOperator as U};
 
 impl Lower<'_, '_> {
     fn call_guard_helper(&mut self, node: HirId, operation: u32) -> ir::Value {
+        let admission = operation == helpers::ENTER_CALL;
         let operation = self.builder.ins().iconst(types::I32, operation as i64);
         let ty = self.builder.ins().iconst(types::I32, 0);
         let origin = Origin::from_loc(Some(self.mir.hir[node.index()].location)).words();
@@ -11,6 +12,7 @@ impl Lower<'_, '_> {
         let end = self.builder.ins().iconst(types::I32, origin[2] as i64);
         let null = self.builder.ins().iconst(self.module.target_config().pointer_type(), 0);
         let count = self.builder.ins().iconst(types::I64, 0);
+        if admission { self.frame_charge = Some(self.builder.func.dfg.value_def(count).unwrap_inst()); }
         let call = self.builder.ins().call(self.object_helper, &[self.context, operation, ty, loc0, end, null, count, null]);
         self.builder.inst_results(call)[0]
     }
@@ -26,6 +28,13 @@ impl Lower<'_, '_> {
         self.builder.switch_to_block(ready);
         self.builder.seal_block(ready);
         self.guarded = true;
+    }
+    pub(super) fn seal_frame_charge(&mut self) {
+        if let Some(inst) = self.frame_charge {
+            let words = self.builder.func.sized_stack_slots.values().map(|slot| u64::from(slot.size).div_ceil(8)).sum::<u64>();
+            let ir::InstructionData::UnaryImm { imm, .. } = &mut self.builder.func.dfg.insts[inst] else { unreachable!("frame charge constant") };
+            *imm = (words as i64).into();
+        }
     }
     pub(super) fn return_status(&mut self, status: ir::Value) {
         if self.guarded { self.call_guard_helper(self.function_key.node, helpers::LEAVE_CALL); }
