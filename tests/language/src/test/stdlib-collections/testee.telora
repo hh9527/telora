@@ -117,7 +117,7 @@ unchanged", "|") == "a\nb\nunchanged"
 export def equality_ok = test.should_ok(fn() {
     let scalar_left: Scalar = Scalar.Integer(1);
     let scalar_right: Scalar = Scalar.Text("1");
-    let identity = fn(value) { value };
+    let identity: Fn(Int) -> Int = fn(value) { value };
     let equality_ok = eq.equal(1, 1)
         && eq.equal([{a: 1}], [{a: 1}])
         && eq.equal(identity, identity)

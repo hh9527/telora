@@ -1150,7 +1150,7 @@ impl Lower<'_, '_> {
         data: ir::Value,
         count: ir::Value,
     ) -> EmitResult<Vec<ir::Value>> {
-        let width = self.layouts.words(ty).map_err(|error| format!("{error}; helper {operation} at {:?} in {:?}: {:?}", self.mir.hir[node.index()].location, self.function_key, self.mir.types[ty.index()]))?;
+        let width = self.layouts.words(ty).map_err(|error| format!("{error}; helper {operation} at {:?} in {:?}: {:?}; reference {:?}", self.mir.hir[node.index()].location, self.function_key, self.mir.types[ty.index()], self.mir.generic_references[node.index()]))?;
         let zero = self.builder.ins().iconst(types::I64, 0);
         let out = self.stack_words(&vec![zero; width])?;
         let origin = Origin::from_loc(Some(self.mir.hir[node.index()].location)).words();
