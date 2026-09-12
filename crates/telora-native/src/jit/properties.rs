@@ -1,0 +1,344 @@
+use super::*;
+use cranelift_module::FuncId;
+use telora_core::mir::{PropertyAdmission, PropertySite};
+
+impl functions::Functions {
+    pub(super) fn property(
+        &mut self,
+        graph: &Mir,
+        index: usize,
+        module: &mut JITModule,
+    ) -> Result<(u32, FuncId)> {
+        if let Some(&entry) = self.properties.get(&index) {
+            return Ok(entry);
+        }
+        let record = graph
+            .properties
+            .get(index)
+            .ok_or("property outside sealed graph")?;
+        if !record.concrete || record.providers.is_empty() {
+            return Err("property has no concrete provider chain".into());
+        }
+        let slot = u32::try_from(self.globals.len() + self.properties.len())
+            .map_err(|_| "native demand index overflow")?;
+        let function = module
+            .declare_function(
+                &format!("telora_property_{index}"),
+                Linkage::Local,
+                &self.signature,
+            )
+            .map_err(|e| e.to_string())?;
+        self.properties.insert(index, (slot, function));
+        Ok((slot, function))
+    }
+}
+
+pub(super) fn emit(
+    graph: &Mir,
+    layouts: &Layouts,
+    index: usize,
+    helper: FuncId,
+    module: &mut JITModule,
+    functions: &mut functions::Functions,
+) -> Result<()> {
+    let record = &graph.properties[index];
+    let node = record.providers[0];
+    let function = functions.properties[&index].1;
+    let mut ctx = module.make_context();
+    ctx.func.signature = functions.signature.clone();
+    let object_helper = module.declare_func_in_func(helper, &mut ctx.func);
+    let mut fbctx = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fbctx);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let context = builder.block_params(entry)[0];
+    let out = builder.block_params(entry)[2];
+    let mut lower = Lower {
+        mir: graph,
+        layouts,
+        builder,
+        locals: BTreeMap::new(),
+        module,
+        context,
+        object_helper,
+        functions,
+        function_key: functions::Key {
+            node,
+            instance: record.instance,
+            initializer: false,
+            marker_provider: false,
+        },
+        return_pointer: out,
+        return_type: TypeKey::try_from(record.property)?,
+    };
+    match lower.property_chain(index) {
+        Ok(()) | Err(EmitError::Diverged) => {}
+        Err(EmitError::Message(message)) => return Err(message),
+    }
+    let config = lower.module.target_config();
+    lower.builder.finalize(config);
+    module
+        .define_function(function, &mut ctx)
+        .map_err(|e| e.to_string())
+}
+
+impl Lower<'_, '_> {
+    fn fixed_value(
+        &mut self,
+        node: HirId,
+        ty: TypeKey,
+        data: &[u64],
+    ) -> EmitResult<Vec<ir::Value>> {
+        let value = self.layouts.value(
+            ty,
+            Origin::from_loc(Some(self.mir.hir[node.index()].location)),
+            data,
+        )?;
+        Ok(value
+            .words()
+            .iter()
+            .map(|&word| self.builder.ins().iconst(types::I64, word as i64))
+            .collect())
+    }
+    fn invoke_provider(
+        &mut self,
+        signature: TypeKey,
+        closure: &[ir::Value],
+        values: &[Vec<ir::Value>],
+    ) -> EmitResult<Vec<ir::Value>> {
+        let function = &self.mir.types[signature.index()];
+        if function.constructor != TypeConstructor::Function
+            || function.arguments.len() != values.len() + 1
+        {
+            return Err("provider has no closed call signature".into());
+        }
+        for (value, &ty) in values.iter().zip(&function.arguments) {
+            if value.len() != self.layouts.words(TypeKey::try_from(ty)?)? {
+                return Err("provider argument width mismatch".into());
+            }
+        }
+        let output = TypeKey::try_from(*function.arguments.last().unwrap())?;
+        let width = self.layouts.words(output)?;
+        let dispatcher = self.functions.dispatcher(signature, self.module)?;
+        let dispatcher = self
+            .module
+            .declare_func_in_func(dispatcher, self.builder.func);
+        let data = self.stack_words(&values.iter().flatten().copied().collect::<Vec<_>>())?;
+        let environment = self.stack_words(closure)?;
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let out = self.stack_words(&vec![zero; width])?;
+        let call = self
+            .builder
+            .ins()
+            .call(dispatcher, &[self.context, data, out, environment]);
+        let status = self.builder.inst_results(call)[0];
+        let fail = self.builder.create_block();
+        let ready = self.builder.create_block();
+        self.builder.ins().brif(status, fail, &[], ready, &[]);
+        self.builder.switch_to_block(fail);
+        self.builder.seal_block(fail);
+        self.builder.ins().return_(&[status]);
+        self.builder.switch_to_block(ready);
+        self.builder.seal_block(ready);
+        Ok((0..width)
+            .map(|i| {
+                self.builder
+                    .ins()
+                    .load(types::I64, MemFlagsData::new(), out, (i * 8) as i32)
+            })
+            .collect())
+    }
+    fn property_demand(&mut self, node: HirId, index: usize) -> EmitResult<Vec<ir::Value>> {
+        let ty = TypeKey::try_from(self.mir.properties[index].property)?;
+        let (slot, function) = self.functions.property(self.mir, index, self.module)?;
+        let function = self
+            .module
+            .declare_func_in_func(function, self.builder.func);
+        let address = self
+            .builder
+            .ins()
+            .func_addr(self.module.target_config().pointer_type(), function);
+        let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
+        self.object(node, helpers::DEMAND, ty, address, slot)
+    }
+    fn property_chain(&mut self, index: usize) -> EmitResult<()> {
+        let record = self.mir.properties[index].clone();
+        let node = record.providers[0];
+        if record.site != PropertySite::Type {
+            return Err("native member property context is not yet linked".into());
+        }
+        if let Some(PropertyAdmission::Require {
+            capability,
+            targets,
+        }) = record.admission
+        {
+            let capability_ty =
+                TypeKey::try_from(self.mir.properties[capability.index()].property)?;
+            let capability = self.property_demand(node, capability.index())?;
+            let data = self.stack_words(&capability)?;
+            let bits_index = self.layouts.field_names[capability_ty.index()]
+                .iter()
+                .position(|name| name == "bits")
+                .ok_or("capability bits field missing")?;
+            let bits_ty = self.mir.type_layouts[capability_ty.index()]
+                .as_ref()
+                .and_then(|l| l.members.get(bits_index))
+                .copied()
+                .flatten()
+                .ok_or("capability bits type missing")?;
+            if self.mir.types[bits_ty.index()].constructor != TypeConstructor::Int {
+                return Err("capability bits ABI mismatch".into());
+            }
+            let field = self.builder.ins().iconst(types::I64, bits_index as i64);
+            let bits = self.object(
+                node,
+                helpers::FIELD,
+                TypeKey::try_from(bits_ty)?,
+                data,
+                field,
+            )?;
+            let accepted = self.builder.ins().band_imm_s(bits[2], targets);
+            let ready = self.builder.create_block();
+            let fail = self.builder.create_block();
+            self.builder.ins().brif(accepted, ready, &[], fail, &[]);
+            self.builder.switch_to_block(fail);
+            self.builder.seal_block(fail);
+            self.report_failure(node, "property type does not support this decorator target")?;
+            self.builder.switch_to_block(ready);
+            self.builder.seal_block(ready);
+        }
+        let mut previous: Option<Vec<ir::Value>> = None;
+        for &provider in &record.providers {
+            let callee = child(self.mir, provider, Role::Callee)?;
+            let mut signature = TypeKey::try_from(self.ty(callee)?)?;
+            let mut closure = self.expression(callee, 0)?;
+            if matches!(
+                self.mir.hir[provider.index()].kind,
+                HirKind::Decorator { configured: true }
+            ) {
+                let arguments = self.mir.hir[provider.index()]
+                    .children
+                    .iter()
+                    .filter(|e| e.role == Role::Argument)
+                    .map(|e| e.node)
+                    .collect::<Vec<_>>();
+                let expected = self.mir.types[signature.index()].arguments.clone();
+                let mut values = Vec::new();
+                for (&arg, &ty) in arguments.iter().zip(&expected) {
+                    let value = self.expression(arg, 0)?;
+                    values.push(self.fit_metadata(arg, TypeKey::try_from(ty)?, value)?);
+                }
+                closure = self.invoke_provider(signature, &closure, &values)?;
+                signature =
+                    TypeKey::try_from(*expected.last().ok_or("provider factory result missing")?)?;
+            }
+            let shape = &self.mir.types[signature.index()];
+            if shape.constructor != TypeConstructor::Function
+                || shape.arguments.len() != 3
+                || shape.arguments[2] != record.property
+            {
+                return Err("property provider signature mismatch".into());
+            }
+            let owner_ty = TypeKey::try_from(shape.arguments[0])?;
+            let optional = TypeKey::try_from(shape.arguments[1])?;
+            if !matches!(
+                self.mir.types[owner_ty.index()].constructor,
+                TypeConstructor::Type | TypeConstructor::TypeOf
+            ) {
+                return Err("native property owner context requires metadata".into());
+            }
+            if self.mir.types[owner_ty.index()].constructor == TypeConstructor::TypeOf
+                && self.mir.types[owner_ty.index()].arguments != [record.owner]
+            {
+                return Err("property owner contradicts closed witness".into());
+            }
+            if self.mir.types[optional.index()].constructor != TypeConstructor::Option
+                || self.mir.types[optional.index()].arguments != [record.property]
+            {
+                return Err("property previous value signature mismatch".into());
+            }
+            let owner = self.fixed_value(
+                provider,
+                owner_ty,
+                &[u64::from(TypeKey::try_from(record.owner)?.raw())],
+            )?;
+            let previous_value = match &previous {
+                Some(value) => self.enum_constructor(provider, optional, 1, value)?,
+                None => self.enum_constructor(provider, optional, 0, &[])?,
+            };
+            previous = Some(self.invoke_provider(signature, &closure, &[owner, previous_value])?);
+        }
+        self.write_return(&previous.ok_or("property chain is empty")?)
+    }
+    pub(super) fn property_query(
+        &mut self,
+        node: HirId,
+        arguments: &[TypeKey],
+        data: ir::Value,
+        evidence: bool,
+    ) -> EmitResult<()> {
+        if arguments.len() != 2
+            || self.mir.types[arguments[0].index()].constructor
+                != if evidence {
+                    TypeConstructor::TypeOf
+                } else {
+                    TypeConstructor::Type
+                }
+            || self.mir.types[arguments[1].index()].constructor != TypeConstructor::TypeOf
+        {
+            return Err("native property query ABI mismatch".into());
+        }
+        let property = self.mir.types[arguments[1].index()].arguments[0];
+        if if evidence {
+            self.return_type != TypeKey::try_from(property)?
+        } else {
+            self.mir.types[self.return_type.index()].constructor != TypeConstructor::Option
+                || self.mir.types[self.return_type.index()].arguments != [property]
+        } {
+            return Err("native property query result mismatch".into());
+        }
+        let owner = self
+            .builder
+            .ins()
+            .load(types::I64, MemFlagsData::new(), data, 16);
+        let candidates = self
+            .mir
+            .properties
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.concrete && r.site == PropertySite::Type && r.property == property)
+            .map(|(i, r)| (i, r.owner))
+            .collect::<Vec<_>>();
+        for (index, ty) in candidates {
+            let matched = self.builder.ins().icmp_imm_s(
+                cranelift_codegen::ir::condcodes::IntCC::Equal,
+                owner,
+                ty.index() as i64,
+            );
+            let yes = self.builder.create_block();
+            let no = self.builder.create_block();
+            self.builder.ins().brif(matched, yes, &[], no, &[]);
+            self.builder.switch_to_block(yes);
+            self.builder.seal_block(yes);
+            let value = self.property_demand(node, index)?;
+            let result = if evidence {
+                value
+            } else {
+                self.enum_constructor(node, self.return_type, 1, &value)?
+            };
+            self.write_return(&result)?;
+            self.builder.switch_to_block(no);
+            self.builder.seal_block(no);
+        }
+        if evidence {
+            return self.report_failure(
+                node,
+                "sealed property evidence is missing from the native plan",
+            );
+        }
+        let result = self.enum_constructor(node, self.return_type, 0, &[])?;
+        self.write_return(&result)
+    }
+}

@@ -57,8 +57,9 @@ pub(super) struct Functions {
     pub pending: Vec<Key>,
     pub captures: BTreeMap<Key, Vec<(SymbolId, TypeKey)>>,
     pub globals: BTreeMap<SymbolId, (u32, Key, TypeKey)>,
+    pub properties: BTreeMap<usize, (u32, FuncId)>,
     dispatchers: BTreeMap<TypeKey, FuncId>,
-    signature: ir::Signature,
+    pub(super) signature: ir::Signature,
 }
 impl Functions {
     pub fn new(signature: ir::Signature) -> Self {
@@ -67,6 +68,7 @@ impl Functions {
             pending: vec![],
             captures: BTreeMap::new(),
             globals: BTreeMap::new(),
+            properties: BTreeMap::new(),
             dispatchers: BTreeMap::new(),
             signature,
         }
@@ -89,7 +91,8 @@ impl Functions {
         let ty = TypeKey::try_from(known(graph, declaration)?)?;
         let mut key = Key::from(declaration);
         key.initializer = is_native(&graph.hir[declaration.index()].kind);
-        let slot = u32::try_from(self.globals.len()).map_err(|_| "native global slot overflow")?;
+        let slot = u32::try_from(self.globals.len() + self.properties.len())
+            .map_err(|_| "native global slot overflow")?;
         let function = if let Some(&function) = self.registered.get(&key) {
             function
         } else {

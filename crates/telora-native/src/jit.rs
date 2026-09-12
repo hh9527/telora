@@ -247,7 +247,7 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
 /// Compile all roots into one executable owner and FunctionId namespace.
 /// Root registration is deterministic regardless of request order.
 pub fn compile_roots(mir: &SealedMir<'_>, roots: &[HirId]) -> Result<Compiled> {
-    compile_plan(mir, roots, &[])
+    compile_plan(mir, roots, &[], &[])
 }
 
 /// Register every value binding in the selected modules, including private
@@ -288,10 +288,28 @@ pub fn compile_modules(
     } else {
         roots.to_vec()
     };
-    compile_plan(mir, &roots, &globals)
+    let properties = graph
+        .properties
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| {
+            record.concrete
+                && record
+                    .providers
+                    .iter()
+                    .any(|node| modules.contains(&graph.hir[node.index()].module))
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    compile_plan(mir, &roots, &globals, &properties)
 }
 
-fn compile_plan(mir: &SealedMir<'_>, roots: &[HirId], globals: &[SymbolId]) -> Result<Compiled> {
+fn compile_plan(
+    mir: &SealedMir<'_>,
+    roots: &[HirId],
+    globals: &[SymbolId],
+    properties: &[usize],
+) -> Result<Compiled> {
     let root = *roots
         .first()
         .ok_or("native code plan needs at least one root")?;
@@ -344,11 +362,27 @@ fn compile_plan(mir: &SealedMir<'_>, roots: &[HirId], globals: &[SymbolId]) -> R
     for &symbol in globals {
         functions.global(graph, symbol, &mut module)?;
     }
+    for &index in properties {
+        functions.property(graph, index, &mut module)?;
+    }
     let mut next = 0;
-    while next < functions.pending.len() {
-        let node = functions.pending[next];
-        next += 1;
-        functions::emit(graph, &layouts, node, helper, &mut module, &mut functions)?;
+    let mut emitted_properties = std::collections::BTreeSet::new();
+    loop {
+        if next < functions.pending.len() {
+            let node = functions.pending[next];
+            next += 1;
+            functions::emit(graph, &layouts, node, helper, &mut module, &mut functions)?;
+        } else if let Some(index) = functions
+            .properties
+            .keys()
+            .copied()
+            .find(|i| !emitted_properties.contains(i))
+        {
+            emitted_properties.insert(index);
+            properties::emit(graph, &layouts, index, helper, &mut module, &mut functions)?;
+        } else {
+            break;
+        }
     }
     functions::emit_dispatchers(graph, &layouts, root, helper, &mut module, &mut functions)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
@@ -388,6 +422,14 @@ fn compile_plan(mir: &SealedMir<'_>, roots: &[HirId], globals: &[SymbolId]) -> R
             )
         })
         .collect::<Vec<_>>();
+    for (&index, &(slot, function)) in &functions.properties {
+        let node = graph.properties[index].providers[0];
+        initializers.push((
+            slot,
+            module.get_finalized_function(function).cast::<u64>(),
+            Origin::from_loc(Some(graph.hir[node.index()].location)),
+        ));
+    }
     initializers.sort_by_key(|i| i.0);
     Ok(Compiled {
         identity: NEXT_CODE_PLAN
@@ -430,6 +472,18 @@ fn compile_plan(mir: &SealedMir<'_>, roots: &[HirId], globals: &[SymbolId]) -> R
                     (slot, crate::runtime::DemandKey::Export(symbol), ty)
                 })
                 .collect::<Vec<_>>();
+            for (&index, &(slot, _)) in &functions.properties {
+                let record = &graph.properties[index];
+                globals.push((
+                    slot,
+                    crate::runtime::DemandKey::Property {
+                        owner: TypeKey::try_from(record.owner)?,
+                        site: record.site,
+                        property: TypeKey::try_from(record.property)?,
+                    },
+                    TypeKey::try_from(record.property)?,
+                ));
+            }
             globals.sort_by_key(|g| g.0);
             globals.into_iter().map(|(_, key, ty)| (key, ty)).collect()
         },
@@ -1326,6 +1380,8 @@ mod functions;
 mod natives;
 #[path = "jit/patterns.rs"]
 mod patterns;
+#[path = "jit/properties.rs"]
+mod properties;
 #[path = "jit/scalars.rs"]
 mod scalars;
 #[cfg(test)]

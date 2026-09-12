@@ -329,6 +329,88 @@ fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
     assert!(rt.enum_payload(&end).unwrap().is_none());
 }
 #[test]
+fn property_queries_execute_provider_chains_and_cache_results() {
+    let source = "import \"std/type-property\" { get_type_prop }; @property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { { value: 21 + match previous { Some(p) => p.value, None => 0 } } }; @mark @mark type Item = struct { x: Int }; export def answer = match get_type_prop(Item.type, Mark.type) { Some(p) => p.value, None => 0 };";
+    let (mir, root) = graph_with(source, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+    context.runtime_mut().unwrap().publish(&[]).unwrap();
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+    assert!(context.diagnostics().is_empty());
+    let configured = "import \"std/type-property\" { get_type_prop }; @property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Int) -> Fn(Type, Option(Mark)) -> Mark = fn(base) { fn(owner, previous) { { value: base + match previous { Some(p) => p.value, None => 0 } } } }; @mark(20) @mark(22) type Item = struct { x: Int }; export def answer = match get_type_prop(Item.type, Mark.type) { Some(p) => p.value, None => 0 };";
+    let (mir, root) = graph_with(configured, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+}
+
+#[test]
+fn property_evidence_and_capability_rejection_follow_the_sealed_plan() {
+    let source = "import \"std/type-property\" { evidence }; @property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { { value: 42 } }; @mark type Item = struct { x: Int }; export def answer = evidence(Item.type, Mark.type).value;";
+    let (mir, root) = graph_with(source, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+
+    let rejected = source.replace("PropertyTarget.Type", "PropertyTarget.Field");
+    let (mir, root) = graph_with(&rejected, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(
+        context.diagnostics()[0]
+            .message
+            .contains("does not support this decorator target")
+    );
+
+    let (mir, root) = graph_with(
+        "import \"std/type-property\" { get_type_prop }; @property(PropertyTarget.Type) type Mark = struct {}; export def answer = match get_type_prop(Int.type, Mark.type) { None => 42, Some(_) => 0 };",
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+    assert!(context.diagnostics().is_empty());
+}
+
+#[test]
+fn property_and_global_cycles_fail_once_and_unused_properties_initialize() {
+    let source = "import \"std/type-property\" { get_type_prop }; @property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { { value: number } }; @mark type Item = struct { x: Int }; def number: Int = match get_type_prop(Item.type, Mark.type) { Some(p) => p.value, None => 0 }; export def answer = number;";
+    let (mir, root) = graph_with(source, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    for _ in 0..2 {
+        assert!(compiled.call(&mut context, &[]).is_err());
+    }
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(
+        context.diagnostics()[0]
+            .message
+            .contains("dependency cycle")
+    );
+    assert!(context.runtime_mut().unwrap().publish(&[]).is_err());
+
+    let source = "@property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!(\"unused property failed\") }; @mark type Item = struct { x: Int }; export def answer = 42;";
+    let (mir, root) = graph(source);
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.initialize(&mut context).is_err());
+    assert!(!context.runtime().unwrap().is_published());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "unused property failed");
+}
+
+#[test]
 fn property_marker_factory_returns_a_reducing_native_provider() {
     for (source, expected) in [
         (

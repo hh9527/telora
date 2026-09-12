@@ -37,9 +37,11 @@ Runtime 需求键使用已 resolve 的导出 SymbolId，或 `(TypeId, PropertySi
 
 `compile_modules` 已支持从所选模块的封闭 scope 注册全部顶层值绑定，包含未使用的私有值；不支持的初始化代码会明确编译失败。`initialize` 主动遍历需求，内部仍按需处理依赖，全部成功后统一发布；export API 只在成功发布后开放，并消费 MIR 已确定的导出别名绑定。已验证未使用的顶层 `fail!` 阻止整个初始化发布，重复初始化不重复诊断。
 
-Native `property` 工厂已生成真实可调用的 provider 闭包，捕获 PropertyTarget；provider 将该目标的 ABI capability bits 与 previous 属性按位合并，并产生 PropertyAttr。工厂与 provider 使用不同编译键和各自封闭签名。已验证无 previous、合并 Type/Field 两种目标及发布后继续调用。此处是 native 工厂能力，不代表装饰器清单已完成调度。
+Native `property` 工厂已生成真实可调用的 provider 闭包，捕获 PropertyTarget；provider 将该目标的 ABI capability bits 与 previous 属性按位合并，并产生 PropertyAttr。工厂与 provider 使用不同编译键和各自封闭签名。已验证无 previous、合并 Type/Field 两种目标及发布后继续调用。
 
-property 清单/provider 链执行、数据注入、泛型函数族/所需 native 操作及 CLI 初始化入口尚未完成，因此暂未覆盖包含整个标准库的全图，不据此宣称 CLI 初始化已可用。
+类型级 property 清单现已生成需求初始化函数，按 MIR provider 顺序执行 configured factory 和 provider，传入 owner 元数据及 previous，执行 capability admission。`get_type_prop`/`evidence` native 适配器按封闭 TypeId 查询：可选缺失为 None，必有属性缺失为 Failed，provider 失败直接传播。所选模块中的未使用 property 也纳入主动初始化。已验证双 provider 合并、配置闭包、发布后缓存、property/顶层值互相依赖的单次环诊断、能力拒绝、未使用 property 失败阻止发布。
+
+field/variant property 上下文、更丰富的 owner 上下文、数据注入、泛型函数族/所需 native 操作及 CLI 初始化入口尚未完成，因此暂未覆盖包含整个标准库的全图，不据此宣称 CLI 初始化已可用。
 
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。
 
