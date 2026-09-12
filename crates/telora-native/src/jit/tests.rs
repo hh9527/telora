@@ -1077,6 +1077,7 @@ fn native_checkers_initialize_once_and_publish_closed_generic_instances() {
 fn native_construction_invokes_sealed_checker_and_propagates_failure_once() {
     for (argument, succeeds) in [(42, true), (0, false)] {
         for source in [
+            format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{label: String, number: Int}}; export def answer = do {{ let candidate: Unchecked(Item) = {{label: \"candidate\", number: {argument}}}; let checked: Item = candidate; checked.number }};"),
             format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let base: Item = {{number: 1}}; (base <~ {{number: {argument}}}).number }};"),
             format!("def minimum = 1; type Item = enum {{ @check(fn(value) {{ if value >= minimum {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value)) }} }}) Full(Int), Empty }}; export def answer = match Item.Full({argument}) {{ Item.Full(value) => value, _ => -1 }};"),
             format!("def minimum = 1; @check(fn(value) {{ if value.number >= minimum {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let value: Item = {{number: {argument}}}; value.number }};"),

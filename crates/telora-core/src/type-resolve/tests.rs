@@ -1034,6 +1034,25 @@ fn branch_completion_does_not_unify_candidate_and_checked_identity() {
 }
 
 #[test]
+fn checked_return_closes_the_callable_signature_before_instantiation() {
+    let mut mir = graph(&[("@src/main", "type Box(T) = struct {value: T}; def finish: for(T) Fn(Unchecked(Box(T))) -> Box(T) = fn(value) { value }; def candidate: Unchecked(Box(Int)) = {value: 42}; export def answer = finish(candidate);")]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    mir.seal().unwrap();
+    let closure = HirId(mir.hir.iter().position(|node| matches!(node.kind, HirKind::Closure)).unwrap() as u32);
+    let boundary = mir.hir[closure.index()].children.iter().find(|edge| edge.role == Role::ReturnType).unwrap().node;
+    assert!(mir.value_adjustments[closure.index()].is_some());
+    let instance = mir.generic_instances.iter().find(|instance| mir.symbols[instance.symbol.index()].name == "finish" && instance.concrete).unwrap();
+    let callable = instance.adjustment(closure).unwrap();
+    assert_eq!(callable, instance.signature);
+    let signature = &mir.types[callable.index()];
+    assert_eq!(signature.constructor, TypeConstructor::Function);
+    assert_eq!(signature.arguments.last().copied(), instance.adjustment(boundary));
+    mir.value_adjustments[boundary.index()] = None;
+    assert!(mir.seal().is_err(), "a checked signature without its return check must not seal");
+}
+
+#[test]
 fn unchecked_identity_and_conversion_evidence_are_separate() {
     let mut mir = graph(&[("@src/main", r#"
         type Point = struct {x: Int};

@@ -8,9 +8,12 @@ import "std/fmt" as fmt;
 type Node = struct {value: Int, children: Array(Node)};
 type Count = struct(Int);
 type Choice = enum {Empty, Item(Node)};
+@check(fn(value) { if value.label != "" { Ok(()) } else { Err(blame!("label required", value.label)) } })
 type Box(T) = struct {value: T, label: String};
 type LabelPatch = struct {label: String};
 def replace: for(T) Fn(Box(T), T) -> Box(T) = fn(base, value) { base <~ {value: value} };
+def finish: for(T) Fn(Unchecked(Box(T))) -> Box(T) = fn(value) { value };
+def finish_early: for(T) Fn(Unchecked(Box(T))) -> Box(T) = fn(value) { return value; };
 @check(fn(value) { if value.number > 0 { Ok(()) } else { Err(blame!("positive required", value.number)) } })
 type Positive = struct {number: Int};
 def first: Node = {value: 1, children: [{value: 2, children: []}]};
@@ -40,11 +43,18 @@ def checks: Fn() -> Value = fn() {
     let patch: LabelPatch = {label: "after"};
     let updated = replace(base, 42) <~ patch <~ {};
     let positive: Positive = {number: 1};
+    let candidate: Unchecked(Box(Int)) = {value: 7, label: "unchecked"};
+    let checked: Box(Int) = candidate;
+    let finished = finish(candidate);
+    let early = finish_early(candidate);
     encode(Value.type, [
         option_text(Some(1)) == Some("success"), option_text(None) == None,
         result_text(Ok(1)) == Ok("success"), result_text(Err("failure")) == Err("failure"),
         nested(None) == Some(42),
         always_ok(Ok(41)) == Ok(42), always_none(None) == None,
+        checked.value == 7, checked.label == "unchecked",
+        finished == checked, early == checked,
+        dynamic.project_with(Box(Int).type, dynamic.pack(Box(Int).type, checked)) == Some(checked),
         updated.value == 42, updated.label == "after", base.value == 1, base.label == "before",
         (positive <~ {number: 2}).number == 2,
         (first <~ {children: []}).children == [],

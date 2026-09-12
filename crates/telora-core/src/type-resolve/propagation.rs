@@ -1,6 +1,38 @@
 use super::*;
 
 impl Solver<'_> {
+    /// A checked return boundary changes the callable's exposed signature,
+    /// while the body's intrinsic slots must keep their unchecked provenance.
+    /// Record the complete signature before instance materialization so every
+    /// backend can consume an existing TypeId, including generic instances.
+    pub(super) fn finalize_callable_adjustments(&mut self) {
+        let mut canonical = self.mir.types.iter().enumerate().map(|(index, ty)|
+            ((ty.constructor.clone(), ty.arguments.clone()), TypeId(index as u32)))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for index in 0..self.mir.hir.len() {
+            if !matches!(self.mir.hir[index].kind, HirKind::Closure) { continue; }
+            let Some(boundary) = self.child(HirId(index as u32), Role::ReturnType) else { continue; };
+            let Some(slot) = self.mir.value_adjustments[boundary.index()] else { continue; };
+            let (TypeState::Known(target), TypeState::Known(source)) =
+                (self.mir.ty_slots[slot.index()], self.mir.ty_slots[index]) else { continue; };
+            let signature = &self.mir.types[source.index()];
+            if signature.constructor != TypeConstructor::Function { continue; }
+            let mut arguments = signature.arguments.clone();
+            let Some(result) = arguments.last_mut() else { continue; };
+            *result = target;
+            let key = (TypeConstructor::Function, arguments);
+            let signature = *canonical.entry(key.clone()).or_insert_with(|| {
+                let ty = TypeId(self.mir.types.len() as u32);
+                self.mir.types.push(ResolvedType { constructor: key.0, arguments: key.1 });
+                self.mir.type_layouts.push(None);
+                ty
+            });
+            let slot = self.fresh();
+            self.mir.ty_slots[slot.index()] = TypeState::Known(signature);
+            self.mir.value_adjustments[index] = Some(slot);
+        }
+    }
+
     pub(super) fn propagate(&mut self, node: HirId) -> Option<Task> {
         let operand = self.child(node, Role::Operand).unwrap();
         let boundary = self.mir.propagation_boundaries[node.index()].expect("lexical propagation boundary");

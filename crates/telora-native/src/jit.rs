@@ -668,6 +668,14 @@ struct Lower<'a, 'b> {
 }
 impl Lower<'_, '_> {
     fn return_value(&mut self, node: HirId, result: &[ir::Value]) -> EmitResult<()> {
+        if matches!(self.mir.hir[self.function_key.node.index()].kind, HirKind::Closure) {
+            let boundary = child(self.mir, self.function_key.node, Role::ReturnType)?;
+            if let Some(target) = self.adjustment_type(boundary)? {
+                let result = self.adjust_value(boundary, result.to_vec())?;
+                let result = self.adapt_metadata(target, self.return_type, result)?;
+                return self.write_return(&result);
+            }
+        }
         let result = self.fit_metadata(node, self.return_type, result.to_vec())?;
         self.write_return(&result)
     }
@@ -697,8 +705,29 @@ impl Lower<'_, '_> {
         expected: TypeKey,
         value: Vec<ir::Value>,
     ) -> EmitResult<Vec<ir::Value>> {
-        let actual = TypeKey::try_from(self.ty(node)?)?;
+        let actual = self.adjustment_type(node)?.unwrap_or(TypeKey::try_from(self.ty(node)?)?);
         self.adapt_metadata(actual, expected, value)
+    }
+    fn adjustment_type(&self, node: HirId) -> EmitResult<Option<TypeKey>> {
+        let Some(slot) = self.mir.value_adjustments[node.index()] else { return Ok(None); };
+        let target = match self.function_key.instance {
+            Some(id) => self.mir.generic_instances[id.index()].adjustment(node)
+                .ok_or("native instance has no sealed construction adjustment")?,
+            None => match self.mir.ty_slots[slot.index()] {
+                TypeState::Known(ty) => ty,
+                _ => return Err("native construction adjustment is not closed".into()),
+            },
+        };
+        Ok(Some(TypeKey::try_from(target)?))
+    }
+    fn adjust_value(&mut self, node: HirId, mut value: Vec<ir::Value>) -> EmitResult<Vec<ir::Value>> {
+        let Some(target) = self.adjustment_type(node)? else { return Ok(value); };
+        if value.len() != self.layouts.words(target)? { return Err("native construction adjustment width mismatch".into()); }
+        self.construction_check(node, target, telora_core::mir::PropertySite::Type, &value)?;
+        let origin = self.builder.ins().band_imm_s(value[1], 0xffff_ffff);
+        let stamp = self.builder.ins().iconst(types::I64, i64::from(target.raw()) << 32);
+        value[1] = self.builder.ins().bor(origin, stamp);
+        Ok(value)
     }
     fn adapt_metadata(
         &mut self,
@@ -725,7 +754,7 @@ impl Lower<'_, '_> {
             value[1] = self.builder.ins().bor(origin, stamp);
             return Ok(value);
         }
-        Err("native value does not match the closed boundary type".into())
+        Err(format!("native value does not match the closed boundary type at {:?} in {:?}: {:?} -> {:?}", self.mir.hir[self.function_key.node.index()].location, self.function_key, self.mir.types[actual.index()], self.mir.types[expected.index()]).into())
     }
     fn report_failure(&mut self, node: HirId, message: &str) -> EmitResult<()> {
         let (data, count) = self.literal_bytes(message)?;
@@ -1169,6 +1198,10 @@ impl Lower<'_, '_> {
         self.object(node, helpers::DEMAND, ty, address, slot)
     }
     fn expression(&mut self, node: HirId, depth: usize) -> EmitResult<Vec<ir::Value>> {
+        let value = self.expression_unadjusted(node, depth)?;
+        self.adjust_value(node, value)
+    }
+    fn expression_unadjusted(&mut self, node: HirId, depth: usize) -> EmitResult<Vec<ir::Value>> {
         if depth > 512 {
             return Err("native expression nesting limit".into());
         }
@@ -1366,6 +1399,9 @@ impl Lower<'_, '_> {
             }
             HirKind::Dict => {
                 let dictionary = self.mir.types[ty.index()].constructor == TypeConstructor::Dict;
+                let skeleton = if self.mir.types[ty.index()].constructor == TypeConstructor::Unchecked {
+                    self.mir.types[ty.index()].arguments[0]
+                } else { ty };
                 let mut fields = Vec::new();
                 for edge in &syntax.children {
                     if edge.role != Role::Field {
@@ -1389,9 +1425,12 @@ impl Lower<'_, '_> {
                         self.mir.types[ty.index()].arguments[0]
                     } else {
                         let index = self.layouts.field_names[key.index()].iter().position(|n| n == name).ok_or("sealed field missing")?;
-                        if let Some(layout) = &self.mir.type_layouts[ty.index()] {
-                            layout.members[index].ok_or("sealed field type missing")?
-                        } else { self.mir.types[ty.index()].arguments[index] }
+                        if let Some(layout) = &self.mir.type_layouts[skeleton.index()] {
+                            layout.members.get(index).copied().flatten().ok_or("sealed field type missing")?
+                        } else {
+                            *self.mir.types[skeleton.index()].arguments.get(index)
+                                .ok_or_else(|| format!("sealed record field type missing at {:?}: {:?}", syntax.location, self.mir.types[skeleton.index()]))?
+                        }
                     };
                     let value = self.fit_metadata(value_node, TypeKey::try_from(expected)?, value)?;
                     fields.push((field, name.clone(), value));

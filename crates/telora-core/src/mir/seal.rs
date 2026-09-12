@@ -12,6 +12,25 @@ pub struct SealedMir<'a> {
 }
 
 impl Mir {
+    fn valid_value_adjustment(&self, node: HirId, source: TypeId, target: TypeId, instance: Option<&GenericInstance>) -> bool {
+        let source = &self.types[source.index()];
+        if source.constructor == TypeConstructor::Unchecked { return source.arguments == [target]; }
+        let target = &self.types[target.index()];
+        if !matches!(self.hir[node.index()].kind, HirKind::Closure)
+            || source.constructor != TypeConstructor::Function || target.constructor != TypeConstructor::Function
+            || source.arguments.is_empty() || source.arguments.len() != target.arguments.len() { return false; }
+        let last = source.arguments.len() - 1;
+        if source.arguments[..last] != target.arguments[..last] { return false; }
+        let result = &self.types[source.arguments[last].index()];
+        if result.constructor != TypeConstructor::Unchecked || result.arguments != [target.arguments[last]] { return false; }
+        let Some(boundary) = self.hir[node.index()].children.iter().find(|edge| edge.role == Role::ReturnType).map(|edge| edge.node) else { return false; };
+        let adjusted = if let Some(instance) = instance { instance.adjustment(boundary) } else {
+            self.value_adjustments[boundary.index()].and_then(|slot| match self.ty_slots[slot.index()] {
+                TypeState::Known(ty) => Some(ty), _ => None,
+            })
+        };
+        adjusted == Some(target.arguments[last])
+    }
     /// These source forms have a fixed runtime representation. Check their
     /// solved skeleton before publishing MIR, including specialized bodies.
     pub(crate) fn value_shape_error(&self, node: HirId, ty: TypeId) -> Option<&'static str> {
@@ -217,12 +236,12 @@ impl Mir {
             || self.generic_instances.iter().any(|instance| instance.types.iter().any(|(node, source)| {
                 if self.value_adjustments.get(node.index()).is_none_or(Option::is_none) { return false; }
                 let Some(target) = instance.adjustment(*node) else { return true; };
-                self.types[source.index()].constructor != TypeConstructor::Unchecked || self.types[source.index()].arguments != [target]
+                !self.valid_value_adjustment(*node, *source, target, Some(instance))
             }))
             || self.value_adjustments.iter().enumerate().any(|(node, slot)| {
                 let Some(slot) = slot else { return false; };
                 let (Some(TypeState::Known(source)), Some(TypeState::Known(target))) = (self.ty_slots.get(node), self.ty_slots.get(slot.index())) else { return true; };
-                self.types[source.index()].constructor != TypeConstructor::Unchecked || self.types[source.index()].arguments != [*target]
+                !self.valid_value_adjustment(HirId(node as u32), *source, *target, None)
             })
             || self.construction_checks.iter().any(|check| {
                 let signature = if let Some(instance) = check.instance {

@@ -48,6 +48,17 @@ pub(super) struct Key {
 }
 impl Key {
     pub fn ty(self, mir: &Mir, node: HirId) -> Result<telora_core::mir::TypeId> {
+        if matches!(mir.hir[node.index()].kind, HirKind::Closure)
+            && let Some(slot) = mir.value_adjustments[node.index()] {
+            return match self.instance {
+                Some(id) => mir.generic_instances[id.index()].adjustment(node)
+                    .ok_or_else(|| "native instance has no sealed callable adjustment".into()),
+                None => match mir.ty_slots[slot.index()] {
+                    TypeState::Known(ty) => Ok(ty),
+                    _ => Err("native callable adjustment is not closed".into()),
+                },
+            };
+        }
         if self.configured_native && node == self.node {
             let factory = known(mir, node)?;
             return mir.types[factory.index()]

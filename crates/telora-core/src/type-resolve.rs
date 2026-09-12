@@ -249,6 +249,7 @@ pub fn resolve(mir: &mut Mir) {
     solver.finalize_properties();
     solver.finalize_checks();
     solver.prove_bounds();
+    solver.finalize_callable_adjustments();
     solver.materialize_instances();
     for index in 0..solver.mir.hir.len() {
         let node = HirId(index as u32);
