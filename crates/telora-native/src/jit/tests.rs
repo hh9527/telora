@@ -51,6 +51,21 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_never_payload_branches_do_not_require_runtime_values() {
+    let (mir, root) = graph_with(r#"import "std/result" as result;
+        export def answer = do {
+            let value: Result(Int, Never) = Ok(42);
+            let mapped = result.map_err(value, fn(error) {error});
+            match mapped {Ok(number) => number, Err(error) => error}
+        };"#, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+    assert!(context.diagnostics().is_empty());
+}
+
+#[test]
 fn native_explicit_generic_enum_constructor_preserves_sealed_selection() {
     let (mir, root) = graph(r#"type Message(T) = enum {Data(T), Empty}; type Wrapped(T) = struct(T); export def answer = do {
         let direct = Message.Data@[String]("ok");

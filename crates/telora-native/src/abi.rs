@@ -173,7 +173,7 @@ impl Layouts {
             .ok_or("TypeId outside sealed image")?
         {
             Layout::Value(words) => Ok(*words),
-            Layout::Never => Err("uninhabited type has no runtime slot".into()),
+            Layout::Never => Err(format!("uninhabited type has no runtime slot: {ty:?}")),
             Layout::Static => Err(format!("static or template type has no runtime slot: {ty:?}")),
         }
     }

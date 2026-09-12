@@ -447,6 +447,7 @@ pub(super) fn shape(
         layouts.words(output).map_err(|error| format!("{error}; output of {key:?} at {:?}: {:?}", graph.hir[key.node.index()].location, graph.types[output.index()]))?;
     }
     for &argument in &arguments {
+        if layouts.is_never(argument)? { continue; }
         layouts.words(argument).map_err(|error| format!("{error}; parameter of {key:?} at {:?}: {:?}", graph.hir[key.node.index()].location, graph.types[argument.index()]))?;
     }
     Ok((parameters, body, output, arguments))
@@ -460,6 +461,7 @@ pub(super) fn emit(
     functions: &mut Functions,
 ) -> Result<()> {
     let (parameters, body, output, arguments) = shape(graph, layouts, key)?;
+    let uncallable = arguments.iter().try_fold(false, |found, &ty| layouts.is_never(ty).map(|never| found || never))?;
 
     let function = functions.registered[&key];
     let mut ctx = module.make_context();
@@ -479,6 +481,7 @@ pub(super) fn emit(
         let mut locals = BTreeMap::new();
         let mut offset: usize = 0;
         for (&parameter, &ty) in parameters.iter().zip(&arguments) {
+            if uncallable { break; }
             let symbol = graph.hir_symbols[parameter.index()]
                 .ok_or("native parameter missing resolved identity")?;
             let words = layouts.words(ty)?;
@@ -544,7 +547,10 @@ pub(super) fn emit(
                 lower.local_instances.insert(instance, value);
             }
         }
-        let outcome = if let Some(constructor) = constructor(graph, key.node).filter(|_| !key.initializer)
+        let outcome = if uncallable {
+            lower.report_failure(key.node, "function with uninhabited parameter was called")
+                .and_then(|()| Err(EmitError::Diverged))
+        } else if let Some(constructor) = constructor(graph, key.node).filter(|_| !key.initializer)
         {
             (|| {
                 if arguments.len() != 1 {

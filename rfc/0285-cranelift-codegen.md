@@ -77,6 +77,12 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+`stdlib-semantics` 暴露的 Never 槽缺口已修复：匹配到无居民 payload 的路径结束
+生成，不读取 payload 或继续生成该分支体；含无居民参数的函数保留可比较/传递
+的函数值，调用体仅报告不可达调用，不读取参数缓冲、不物化 Never。
+现有资产 native check 通过；执行回归验证 `Result(Int, Never)` 经 `map_err`
+后仍返回正常 Ok 内容，没有执行不存在的 Err 回调。泛型函数族身份问题独立保留。
+
 泛型 newtype 构造引用优先消费封闭构造信息，不再进入全局泛型值初始化路径，
 避免为 `Meta` 分配运行时槽。`construction-boundaries` 语言资产 native check
 已通过，执行回归包含 `Wrapped(42)` 与保存 `Wrapped@[String]` 后调用。运行时槽

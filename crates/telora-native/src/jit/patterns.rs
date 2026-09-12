@@ -108,6 +108,10 @@ impl Lower<'_, '_> {
                     .icmp_imm_s(IntCC::Equal, value[2], tag as i64);
                 self.require_pattern(matched, mismatch);
                 if let Ok(payload) = child(self.mir, node, Role::Pattern) {
+                    if self.layouts.is_never(TypeKey::try_from(self.ty(payload)?)?)? {
+                        self.report_failure(node, "uninhabited pattern payload was reached")?;
+                        return Err(EmitError::Diverged);
+                    }
                     let data = self.stack_words(value)?;
                     let zero = self.builder.ins().iconst(types::I64, 0);
                     let contents = self.object(
@@ -248,19 +252,19 @@ impl Lower<'_, '_> {
                 .collect::<Vec<_>>();
             for arm in arms {
                 let mismatch = self.builder.create_block();
-                self.pattern(
+                let matched = self.pattern(
                     child(self.mir, arm, Role::Pattern)?,
                     &value,
                     mismatch,
                     depth + 1,
-                )?;
-                let outcome = (|| {
+                );
+                let outcome = matched.and_then(|()| {
                     if let Ok(guard) = child(self.mir, arm, Role::Guard) {
                         let guard = self.expression(guard, depth + 1)?;
                         self.require_pattern(guard[2], mismatch);
                     }
                     self.expression(child(self.mir, arm, Role::Value)?, depth + 1)
-                })();
+                });
                 live |= self.join_branch(outcome, join, width)?;
                 self.builder.switch_to_block(mismatch);
                 self.builder.seal_block(mismatch);
@@ -268,18 +272,18 @@ impl Lower<'_, '_> {
             self.report_failure(node, "no match arm accepted the value")?;
         } else {
             let mismatch = self.builder.create_block();
-            self.pattern(
+            let matched = self.pattern(
                 child(self.mir, node, Role::Pattern)?,
                 &value,
                 mismatch,
                 depth + 1,
-            )?;
+            );
             let then = if matches!(self.mir.hir[node.index()].kind, HirKind::LetElse) {
                 Role::Body
             } else {
                 Role::Then
             };
-            let outcome = self.expression(child(self.mir, node, then)?, depth + 1);
+            let outcome = matched.and_then(|()| self.expression(child(self.mir, node, then)?, depth + 1));
             live |= self.join_branch(outcome, join, width)?;
             self.builder.switch_to_block(mismatch);
             self.builder.seal_block(mismatch);
