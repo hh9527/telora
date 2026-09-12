@@ -1,6 +1,6 @@
 # RFC 0285：SealedMir 到 Cranelift 的机械 codegen
 
-- 状态：草案；由伞 RFC 跟踪，尚未实现
+- 状态：实施中；已打通闭合表达式/无捕获函数的首批机器码执行，尚未整图总装
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -22,6 +22,16 @@
 - 缺失 codegen 规则在执行前明确报 unsupported，并附带位置/类型；不能回退旧 VM。
 
 ## 实施计划
+
+### 首批实现与边界
+
+`telora-native` 的可选 `jit` feature 使用稳定版 Cranelift 0.135.0。当前验证平台为 x86_64 Linux（64-bit little-endian）。默认 CLI 未依赖该 crate，也未增加隐藏开关；不存在选择 native 后跳过初始化的临时捷径。
+
+`jit::compile` 消费 SealedMir 中指定的表达式或无捕获、单态 Closure：支持 Int/Float/Unit 常量、参数引用、Bool 条件分支和纯结果 block。读取已闭合 TypeId/符号身份，不使用名字推断；其他表达式、局部绑定和捕获/导出引用明确返回带位置的 unsupported。此接口不等同于模块求值，不跳过顶层副作用声称完成 eval。
+
+真实入口为 C ABI `(context, args_ptr, result_ptr) -> u32`。调用前核对参数数量/类型/宽度；仅 Success 解码结果并检查 stamp；Failed 不读结果。返回分支按 word 生成 SSA 合流，保留被选值的来源。所有代码地址留在 Compiled 内，借用期间调用，编译失败或 owner 析构时释放 JIT 内存，地址不对外发布。
+
+验证：`cargo test -p telora-native --features jit` 通过 6 项测试，包含真实机器码的常量/Unit/浮点和三参数条件选择、错误参数拒绝、unsupported 不丢语句，以及失败返回不读取未写结果。当前没有 runtime helper 对象访问、程序内部函数调用、整图初始化或 CLI；后续按本 RFC 继续补齐，不关闭 #182。
 
 先落实本模块契约并保证可独立编译，再用简单单测或少量语言用例验证，然后进入后继模块。允许 native 路线阶段性缺失能力，不要求每次提交完成整个语言。实现前将本草案中的待定项补成明确决议，不引入兼容兜底。
 

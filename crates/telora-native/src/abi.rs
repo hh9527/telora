@@ -164,6 +164,21 @@ pub struct Value {
     words: Box<[u64]>,
 }
 impl Value {
+    #[cfg(feature = "jit")]
+    pub(crate) fn from_result(words: Box<[u64]>, expected: TypeKey, size: usize) -> Result<Self> {
+        if words.len() != size || size < HEADER_WORDS {
+            return Err("native result width mismatch".into());
+        }
+        let value = Self { words };
+        if value.type_key() != expected {
+            return Err("native result TypeId mismatch".into());
+        }
+        let [source, start, end] = value.origin().words();
+        if start > end || (source == 0 && (start != 0 || end != 0)) {
+            return Err("native result source range invalid".into());
+        }
+        Ok(value)
+    }
     pub fn words(&self) -> &[u64] {
         &self.words
     }

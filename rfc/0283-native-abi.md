@@ -32,7 +32,7 @@ HeapRef 的高位选择 work（1）或 main（0），低 31 位为分类表槽�
 
 status 使用 u32：0=Success，1=Failed；只有 Success 允许读取结果缓冲区。原始 ABI 指针的长度由已闭合函数签名决定，不得缓存调用期参数/结果指针。host helper 的 Rust panic 在边界捕获并转为 Failed（abort 型 panic 不可恢复）；原始失败记录一次，传播 Failed 不重复诊断。完整 FFI 调用验证由首个 JIT 模块继续落实，不以数据结构单测代替。
 
-首批验证：`cargo test -p telora-native`，2 项单测通过，覆盖 3/4/2-word 混合槽位、递归独立存储、来源、Never 拒绝、HeapRef 范围和 helper panic/失败传播。
+首批验证：`cargo test -p telora-native`，2 项单测通过，覆盖 3/4/2-word 混合槽位、递归独立存储、来源、Never 拒绝、HeapRef 范围和 helper panic/失败传播。随后 `--features jit` 的 6 项测试验证了三指针 C ABI 的真实机器码参数/返回、来源保真和 Failed 不解码结果；尚需程序内部调用、间接调用和对象 helper 的整合证据，#180 暂不关闭。
 
 先落实本模块契约并保证可独立编译，再用简单单测或少量语言用例验证，然后进入后继模块。允许 native 路线阶段性缺失能力，不要求每次提交完成整个语言。实现前将本草案中的待定项补成明确决议，不引入兼容兜底。
 
