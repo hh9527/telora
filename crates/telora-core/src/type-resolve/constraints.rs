@@ -79,8 +79,29 @@ impl Solver<'_> {
             // comparison is not evidence that those TypeIds are identical.
             return None;
         }
-        self.equal(left, right, Some(self.mir.hir[node.index()].location));
+        self.comparison_evidence(left, right, Some(self.mir.hir[node.index()].location));
         None
+    }
+
+    fn comparison_evidence(&mut self, left: TypeSlotId, right: TypeSlotId, location: Option<Location>) {
+        let mut pending = vec![(left, right)];
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some((left, right)) = pending.pop() {
+            let pair = (self.root(left), self.root(right));
+            if pair.0 == pair.1 || !seen.insert(pair) { continue; }
+            if let (Some(a), Some(b)) = (self.term(left), self.term(right)) {
+                let tuple = |constructor: &TypeConstructor| matches!(constructor, TypeConstructor::Tuple | TypeConstructor::TupleLiteral);
+                if ((a.constructor == b.constructor && a.constructor != TypeConstructor::ArrayLiteral)
+                    || (tuple(&a.constructor) && tuple(&b.constructor))) && a.arguments.len() == b.arguments.len()
+                    && !a.arguments.is_empty() {
+                    // Comparison supplies child evidence, not equality of the
+                    // parent identities. Canonicalization merges only equal types.
+                    pending.extend(a.arguments.iter().copied().zip(b.arguments.iter().copied()));
+                    continue;
+                }
+            }
+            self.equal(left, right, location);
+        }
     }
 
     pub(super) fn finish_bottoms(&mut self) -> bool {
@@ -791,15 +812,21 @@ impl Solver<'_> {
         if a.constructor == TypeConstructor::ArrayLiteral
             && b.constructor == TypeConstructor::ArrayLiteral
         {
-            let element = self.fresh();
-            for item in a.arguments.into_iter().chain(b.arguments) {
-                if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Never) {
-                    self.bottom_candidates.push(element);
-                } else { self.equal(element, item, location); }
+            let mut elements = vec![];
+            for items in [a.arguments, b.arguments] {
+                let element = self.fresh();
+                for item in items {
+                    if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Never) {
+                        self.bottom_candidates.push(element);
+                    } else { self.equal(element, item, location); }
+                }
+                elements.push(element);
             }
-            let array = self.structure(TypeConstructor::Array, vec![element]);
-            self.mir.ty_slots[left.index()] = TypeState::ProxyTo(array);
-            self.mir.ty_slots[right.index()] = TypeState::ProxyTo(array);
+            self.equal(elements[0], elements[1], location);
+            let left_array = self.structure(TypeConstructor::Array, vec![elements[0]]);
+            let right_array = self.structure(TypeConstructor::Array, vec![elements[1]]);
+            self.mir.ty_slots[left.index()] = TypeState::ProxyTo(left_array);
+            self.mir.ty_slots[right.index()] = TypeState::ProxyTo(right_array);
             self.revision += 1;
             return true;
         }
@@ -808,17 +835,34 @@ impl Solver<'_> {
             || (b.constructor == TypeConstructor::Array
                 && a.constructor == TypeConstructor::ArrayLiteral)
         {
-            let (expected, actual, element, items) = if a.constructor == TypeConstructor::Array {
-                (left, right, a.arguments[0], b.arguments)
+            let (actual, element, items) = if a.constructor == TypeConstructor::Array {
+                (right, a.arguments[0], b.arguments)
             } else {
-                (right, left, b.arguments[0], a.arguments)
+                (left, b.arguments[0], a.arguments)
             };
-            for item in items {
+            for &item in &items {
                 if item.index() < self.mir.hir.len() {
                     self.fit(HirId(item.0), element, item);
                 } else { self.equal(element, item, location); }
             }
-            self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
+            let own_element = self.fresh();
+            for item in items {
+                // Fit may still be queued. An explicit checked boundary owns
+                // the resulting element type; the fit task installs its check.
+                let item = if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::TypeOf)
+                    && self.term(element).is_some_and(|term| term.constructor == TypeConstructor::Type) {
+                    element
+                } else if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
+                    && self.term(element).is_some_and(|term| term.constructor != TypeConstructor::Unchecked) {
+                    element
+                } else { self.mir.value_adjustments.get(item.index()).copied().flatten().unwrap_or(item) };
+                if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Never) {
+                    self.bottom_candidates.push(own_element);
+                } else { self.equal(own_element, item, location); }
+            }
+            self.equal(own_element, element, location);
+            let array = self.structure(TypeConstructor::Array, vec![own_element]);
+            self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(array);
             self.revision += 1;
             return true;
         }

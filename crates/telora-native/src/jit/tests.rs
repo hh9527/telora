@@ -1099,6 +1099,28 @@ fn selected_export_prunes_unreferenced_values_but_module_check_initializes_them(
 }
 
 #[test]
+fn container_comparisons_preserve_existing_record_identity() {
+    let (mir, root) = graph(r#"
+        type Item = struct { value: Int };
+        def item: Item = {value: 42};
+        export def answer = {
+            let raw = {value: 42};
+            let raw_array = [raw];
+            if [item] != [raw] && [raw] != [item]
+                && (item, 1) != (raw, 1) && (raw, 1) != (item, 1)
+                && [item] != [...raw_array] && [...raw_array] != [item]
+                && [item] == [{value: 42}] && [{value: 42}] == [item] {
+                42
+            } else { 0 }
+        };
+    "#);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+}
+
+#[test]
 fn native_fold_control_breaks_early_and_keeps_distinct_state_result_types() {
     let (mir, root) = graph_with(include_str!("../../tests/fixtures/fold-control.telora"), static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();
