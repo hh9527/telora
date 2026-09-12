@@ -39,6 +39,7 @@ pub(crate) const ENTER_CALL: u32 = 33;
 pub(crate) const LEAVE_CALL: u32 = 34;
 pub(crate) const DICT_READ: u32 = 35;
 pub(crate) const FOLD: u32 = 36;
+pub(crate) const ARRAY_GET: u32 = 37;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -125,6 +126,15 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                ARRAY_GET => {
+                    let array = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, 4) }.into() };
+                    let index = ValueRef { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(4), 3) } };
+                    let index = rt.scalar_bits(index)? as i64;
+                    let value = if index >= 0 && (index as u64) < rt.array_len(&array)? as u64 {
+                        Some(rt.array_get(&array, index as usize)?.to_owned())
+                    } else { None };
+                    rt.named_variant(ty, loc, if value.is_some() { "Some" } else { "None" }, value.as_ref())?
+                }
                 DICT_READ => {
                     let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
                     let width = rt.layout(input)?.words;

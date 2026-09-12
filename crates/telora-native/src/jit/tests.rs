@@ -615,6 +615,23 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_array_get_handles_bounds_and_retains_element_descriptor() {
+    let (mir, root) = graph_with("import \"std/array\" { get }; export def answer = do { let values = [\"heap-backed array element text\"]; let empty: Array(String) = []; (values, get(values, 0), get(values, -1), get(values, 1), get(values, 9223372036854775807), get(empty, 0)) };", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    let array = rt.field(&result, 0).unwrap().to_owned();
+    let found = rt.field(&result, 1).unwrap().to_owned();
+    assert_eq!(rt.enum_payload(&found).unwrap().unwrap().words(), rt.array_get(&array, 0).unwrap().words());
+    for index in 2..6 {
+        let value = rt.field(&result, index).unwrap().to_owned();
+        assert!(rt.enum_payload(&value).unwrap().is_none());
+    }
+}
+
+#[test]
 fn native_dictionary_filter_retains_descriptors_and_handles_empty_results() {
     let (mir, root) = graph_with(
         "import \"std/dict\" as dict; export def answer = do { let input: Dict(Int) = { z: 3, a: 1, b: 2 }; let threshold = 1; let empty: Dict(Int) = {}; (input, dict.filter(input, fn(value) { value > threshold }), dict.filter(input, fn(value) { False }), dict.filter(empty, fn(value) { fail!(\"empty predicate\") })) };",

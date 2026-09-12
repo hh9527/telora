@@ -344,6 +344,17 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::FORMAT, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if (module.id, declaration.name.as_str()) == (5, "get") {
+            if arguments.len() != 2 { return Err("native Array.get arity mismatch".into()); }
+            let input = &self.mir.types[arguments[0].index()];
+            let output = &self.mir.types[self.return_type.index()];
+            if input.constructor != TypeConstructor::Array || self.mir.types[arguments[1].index()].constructor != TypeConstructor::Int || output.constructor != TypeConstructor::Option || output.arguments != input.arguments {
+                return Err("native Array.get signature mismatch".into());
+            }
+            let count = self.builder.ins().iconst(types::I64, 0);
+            let value = self.object(node, helpers::ARRAY_GET, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 6 && let Some(operation) = ["get", "keys", "values", "pairs", "from_pairs", "merge"].iter().position(|name| *name == declaration.name) {
             if arguments.len() != if operation == 0 || operation == 5 { 2 } else { 1 } {
                 return Err("native dictionary read arity mismatch".into());
