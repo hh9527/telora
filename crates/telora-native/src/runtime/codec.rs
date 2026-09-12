@@ -182,7 +182,7 @@ impl Codec<'_> {
         if bridged {
             if tag != "String" { return Err(reject("String text representation")); }
             let text = payload.ok_or("missing semantic String payload")?;
-            let length = self.runtime()?.text(text.as_ref())?.as_str().len();
+            let length = self.runtime()?.byte_span_len(text.as_ref())?;
             let property = properties.iter().find(|(name, _)| name == "parse_by").map(|(_, ty)| *ty).ok_or("codec property contract lacks parse_by")?;
             return self.parse_value(target, property, &text, Some(0..length), path, depth + 1)
                 .map_err(|error| match error { DecodeFailure::Rejected(message, _) => DecodeFailure::Rejected(message, vec![input.origin()]), error => error });

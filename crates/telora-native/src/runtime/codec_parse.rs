@@ -29,7 +29,7 @@ impl Codec<'_> {
 
     pub(super) fn parse(&mut self, result: TypeId, target: TypeId, property: &Value, input: &Value, loc: Location) -> Result<Option<Value>> {
         let property = self.runtime()?.represented_type(property.as_ref())?;
-        let length = self.runtime()?.text(input.as_ref())?.as_str().len();
+        let length = self.runtime()?.byte_span_len(input.as_ref())?;
         match self.parse_value(target, property, input, Some(0..length), "$", 0) {
             Ok(value) => self.runtime_mut()?.named_variant(result, loc, "Ok", Some(&value)).map(Some),
             Err(DecodeFailure::Rejected(message, _)) => {
@@ -60,6 +60,8 @@ impl Codec<'_> {
         }
         let reject = |message: &str| DecodeFailure::Rejected(format!("{path}: {message}"), vec![input.origin()]);
         let range = range.ok_or_else(|| reject("required capture is absent"))?;
+        let bytes = self.runtime()?.byte_span_len(input.as_ref())?;
+        self.charge(bytes as u64, input)?;
         let rt = self.runtime()?;
         let source = rt.text(input.as_ref())?;
         let text = source.as_str().get(range.clone()).ok_or("invalid regex capture range")?;
@@ -80,6 +82,7 @@ impl Codec<'_> {
             _ => {}
         }
         let capability = self.property(target, property, input.origin())?.ok_or_else(|| reject("type has no std/string.parse capability"))?;
+        self.charge(bytes as u64, input)?;
         let rt = self.runtime()?;
         let index = rt.layout(capability.type_id())?.field_names.iter().position(|name| name == "regex").ok_or("ParseBy has no regex")?;
         let regex = rt.field(&capability, index)?.to_owned();

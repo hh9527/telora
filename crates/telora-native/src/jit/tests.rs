@@ -51,6 +51,28 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_text_parse_admits_bytes_before_returning_a_parse_error() {
+    let (mir, root) = graph_with(r#"import "std/string" as string;
+        export def answer: Fn(String) -> Bool = fn(input) {
+            match string.parse(Int.type, input) {Ok(_) => True, Err(_) => False}
+        };"#, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut rt = crate::runtime::Runtime::new(&sealed).unwrap();
+    let small = rt.string(compiled.arguments[0], [1, 0, 2], "42").unwrap();
+    let large = rt.string(compiled.arguments[0], [1, 0, 2], &"x".repeat(10_000)).unwrap();
+    let mut context = CallContext::with_runtime(rt).with_fuel(1000);
+    let value = compiled.call(&mut context, &[small]).unwrap();
+    assert_eq!(context.runtime().unwrap().scalar_bits(value.as_ref()).unwrap(), 1);
+    context = context.with_fuel(1000);
+    assert!(compiled.call(&mut context, &[large]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "native execution fuel exhausted");
+    assert_eq!(context.diagnostics()[0].origin.words(), [1, 0, 2]);
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
 fn native_codec_fuel_exhaustion_is_not_a_recoverable_decode_error() {
     let (mir, encode) = graph_with(r#"import "std/codec" as codec;
         import "std/_codec" {untagged};
