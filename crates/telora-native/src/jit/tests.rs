@@ -615,6 +615,23 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_interpolation_consumes_sealed_display_calls() {
+    for (source, expected) in [
+        (r#"export def answer = if "中" == "中" && "long heap-backed comparison" != "different heap-backed string" { "ok" } else { "bad" };"#, "ok"),
+        (r#"export def answer = `n=\{42}, text=\{"中"}`;"#, "n=42, text=中"),
+        (r#"import "std/fmt" as fmt; type Item = struct {value: Int}; impl fmt.Display for Item { display: fn(value) { fmt.from_string("item") } }; def value: Item = {value: 1}; export def answer = `\{value}`;"#, "item"),
+        (r#"import "std/fmt" as fmt; def render: for(T: fmt.Display) Fn(T) -> String = fn(value) { `\{value}` }; export def answer = render(42);"#, "42"),
+    ] {
+        let (mir, root) = graph_with(source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{source}: {e}: {:?}", context.diagnostics()));
+        assert_eq!(context.runtime().unwrap().text(value.as_ref()).unwrap().as_str(), expected);
+    }
+}
+
+#[test]
 fn native_codec_does_not_silently_ignore_property_driven_encoding() {
     let (mir, root) = graph_with(
         "import \"std/codec\" { encode, Value }; import \"std/_codec\" { rename_all, RenameCase }; @rename_all(RenameCase.CamelCase) type Rec = struct { some_field: Int }; export def answer = do { let value: Rec = { some_field: 42 }; encode(Value.type, value) };",

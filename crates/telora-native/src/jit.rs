@@ -1180,6 +1180,22 @@ impl Lower<'_, '_> {
         let ty = self.ty(node)?;
         let key = TypeKey::try_from(ty)?;
         let syntax = &self.mir.hir[node.index()];
+        if let Some(MemberSelection::TraitMember { implementation, .. }) = self.mir.member_selections[node.index()] {
+            let instance = self.function_key.instance.and_then(|id| self.mir.generic_instances[id.index()].implementation(node))
+                .or(self.mir.implementation_instances[node.index()]);
+            let (slot, initializer, owner) = if let Some(instance) = instance {
+                self.functions.instance(self.mir, instance, self.module)?
+            } else if let Some(symbol) = implementation {
+                self.functions.global(self.mir, symbol, self.module)?
+            } else { return Err("trait member has no sealed implementation".into()); };
+            let record = self.demand(node, slot, initializer, owner)?;
+            let name = child(self.mir, node, Role::Name)?;
+            let HirKind::Name(name) = &self.mir.hir[name.index()].kind else { return Err("trait member name missing".into()); };
+            let index = self.layouts.field_names[owner.index()].iter().position(|field| field == name).ok_or("sealed implementation field missing")?;
+            let data = self.stack_words(&record)?;
+            let index = self.builder.ins().iconst(types::I64, index as i64);
+            return self.object(node, helpers::FIELD, key, data, index);
+        }
         if matches!(
             syntax.kind,
             HirKind::Variable(_) | HirKind::Field | HirKind::TypeApply
@@ -1306,6 +1322,23 @@ impl Lower<'_, '_> {
             HirKind::Binary(operation) => self.binary(node, operation, depth),
             HirKind::Unary(operation) => self.unary(node, operation, depth),
             HirKind::String(ref text) => self.string(node, key, text),
+            HirKind::InterpolatedString => {
+                let mut words = Vec::new();
+                let mut count = 0;
+                for edge in &syntax.children {
+                    if edge.role != Role::Part { return Err("invalid sealed interpolation edge".into()); }
+                    match self.mir.types[self.ty(edge.node)?.index()].constructor {
+                        TypeConstructor::String => {},
+                        TypeConstructor::Native(id) if (id.module, id.slot) == (20, 1) => {},
+                        _ => return Err("interpolation part has no sealed String/Fmt conversion".into()),
+                    }
+                    words.extend(self.expression(edge.node, depth + 1)?);
+                    count += 1;
+                }
+                let data = self.stack_words(&words)?;
+                let count = self.builder.ins().iconst(types::I64, count);
+                self.object(node, helpers::INTERPOLATE, key, data, count)
+            }
             HirKind::Array | HirKind::Tuple => {
                 if self
                     .mir

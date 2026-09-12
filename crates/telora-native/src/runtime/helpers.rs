@@ -33,6 +33,7 @@ pub(crate) const REGEX: u32 = 27;
 pub(crate) const TEXT_OP: u32 = 28;
 pub(crate) const REFLECT: u32 = 29;
 pub(crate) const ENCODE: u32 = 30;
+pub(crate) const INTERPOLATE: u32 = 31;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -111,6 +112,22 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                INTERPOLATE => {
+                    let mut cursor = data;
+                    let mut text = String::new();
+                    for _ in 0..count {
+                        let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+                        let width = rt.layout(input)?.words;
+                        let value = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(cursor, width) }.into() };
+                        match rt.layout(input)?.kind {
+                            Kind::String => text.push_str(rt.text(value.as_ref())?.as_str()),
+                            Kind::Format => text.push_str(&rt.format_render(&value)?),
+                            _ => return Err("invalid sealed interpolation part".into()),
+                        }
+                        cursor = unsafe { cursor.add(width) };
+                    }
+                    rt.owned_string(ty, loc, text)?
+                }
                 ENCODE => {
                     let mut inputs = Vec::with_capacity(3);
                     let mut cursor = data;

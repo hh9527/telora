@@ -111,6 +111,15 @@ impl Lower<'_, '_> {
             return Err("native binary operands require the solved same type".into());
         }
         let kind = &self.mir.types[left_ty.index()].constructor;
+        if *kind == TypeConstructor::String && matches!(op, B::Equal | B::NotEqual) {
+            let mut words = self.expression(left_node, depth + 1)?;
+            words.extend(self.expression(right_node, depth + 1)?);
+            let data = self.stack_words(&words)?;
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            let mut result = self.object(node, helpers::TEXT_EQUAL, TypeKey::try_from(self.ty(node)?)?, data, zero)?;
+            if op == B::NotEqual { result[2] = self.builder.ins().bxor_imm(result[2], 1); }
+            return Ok(result);
+        }
         if matches!(op, B::And | B::Or) {
             if *kind != TypeConstructor::Bool {
                 return Err("native logical operation requires Bool".into());
