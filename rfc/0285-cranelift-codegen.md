@@ -36,7 +36,34 @@
 下面的首批实现及各阶段进展保留历史上下文，旧测试数量和当时未接通项
 不代表当前支持范围。完整落地仍按伞 RFC 的验收条件判断。
 
-### 首批实现与边界
+### 表达式支持清单（35e9cad）
+
+本表描述已封闭 MIR 的 lowering 路径，不代表所有组合的 corner case 已穷尽。
+证据名称为 `crates/telora-native/src/jit/tests.rs` 中的测试或现有语言资产。
+
+| 类别 | 当前路径 | 代表证据与边界 |
+| --- | --- | --- |
+| Int/Float/Bool/Unit、String/Bytes、类型元数据 | 固定布局常量及文字对象 helper | `machine_code_returns_materialized_scalar_and_unit`；Never 不物化 |
+| 算术、比较、短路 | `jit/scalars.rs`，结构相等经 helper | `scalar_machine_code_handles_recursion_and_checked_arithmetic`；共享 T 的名义身份问题仍待确认 |
+| let/def、引用、导入、泛型实例 | SymbolId/GenericInstanceId 对应局部槽或需求槽 | `generic_calls_consume_closed_instances_without_substituting_types_at_runtime`；无运行时函数族 |
+| 函数、捕获、递归、间接调用 | `jit/functions.rs` 与封闭签名分派 | `direct_functions_have_independent_frames_and_support_recursion`、`native_local_mutual_recursion_uses_stable_function_slots` |
+| block、if、return | 顺序求值及 SSA 合流，Diverged 不读取值 | `machine_code_branches_on_argument_and_preserves_selected_value_origin` |
+| match、if-let、let-else、? | `jit/patterns.rs` | `native_never_payload_branches_do_not_require_runtime_values`、`native_propagation_preserves_failure_and_payload_origins` |
+| Array/Tuple/Record/Dict、spread、投影与索引 | `jit.rs`、`jit/sequences.rs`、`jit/records.rs` | `machine_code_constructs_native_objects_without_old_vm`、`native_record_spreads_keep_effect_order_origins_and_shared_backing` |
+| Dict 命名字段读取 | 封闭元素类型及有序键查找 | `dictionary_field_access_preserves_value_and_reports_missing_key` |
+| enum/newtype、构造检查、结构更新 | 封闭构造选择及普通 checker 调用 | `generated_enums_preserve_inline_and_boxed_payloads_through_publication`；construction-boundaries、newtype-constructors 资产 |
+| TypeApply/类型标注/TypeMetadata | 消费既有实例和类型身份 | `native_explicit_generic_enum_constructor_preserves_sealed_selection`；模板不进入值域 |
+| interpreter、插值 | 封闭配对计划和 Display 结果 | `native_interpreter_consumes_sealed_pairings_and_keeps_operand_lazy`；eval/interpolation 实际执行 |
+| fail/panic/raise/warn/blame/debug | 状态与来源 helper | `native_debug_is_bounded_and_preserves_shared_descriptors`；failure-subjects 资产 |
+| CheckedCast | `cast_packet` 与封闭目标/checker | `native_cast_finite_array_does_not_charge_each_element`；保留既有能力，是否移除另行决定 |
+
+原生模块调用由 `jit/natives.rs` 按已 resolve 的模块 ABI 身份和导出键适配，
+未知 ABI 明确拒绝。普通 Array/Tuple 构造仍有“存在 concrete construction check
+则拒绝”的保护分支；当前资产没有证明这个分支能由合法源码触发，因此既不把它
+当作已支持能力，也不无证据删掉。需要构造契约审计后再判断是否为有效缺口。
+未识别 HIR 最终返回 unsupported，不回退旧 VM。
+
+### 首批实现历史
 
 `telora-native` 的可选 `jit` feature 使用稳定版 Cranelift 0.135.0。当前验证平台为 x86_64 Linux（64-bit little-endian）。默认 CLI 未依赖该 crate，也未增加隐藏开关；不存在选择 native 后跳过初始化的临时捷径。
 
