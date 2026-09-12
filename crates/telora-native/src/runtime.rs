@@ -24,6 +24,7 @@ enum Kind {
     Dyn,
     Format,
     Regex,
+    Blame,
     Other,
 }
 struct Variant {
@@ -158,6 +159,7 @@ struct Tables {
     environments: WordTable,
     formats: WordTable,
     regexes: Vec<pattern::CompiledRegex>,
+    blames: Vec<blame::Blame>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Table {
@@ -281,6 +283,7 @@ impl Runtime {
                 T::Dyn => Kind::Dyn,
                 T::Native(native) if (native.module, native.slot) == (20, 1) => Kind::Format,
                 T::Native(native) if (native.module, native.slot) == (19, 0) => Kind::Regex,
+                T::Native(native) if (native.module, native.slot) == (34, 0) => Kind::Blame,
                 _ if !entry.variants.is_empty() => Kind::Enum,
                 _ if shape.table == Some("RecordTable") => Kind::Record,
                 _ => Kind::Other,
@@ -662,6 +665,7 @@ mod pattern;
 mod text_ops;
 mod reflection;
 mod array_ops;
+mod blame;
 pub use dynamic::DynamicQuery;
 #[path = "runtime/metadata.rs"]
 mod metadata;

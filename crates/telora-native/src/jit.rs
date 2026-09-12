@@ -1297,6 +1297,21 @@ impl Lower<'_, '_> {
                 self.return_value(expression, &value)?;
                 Err(EmitError::Diverged)
             }
+            HirKind::Raise(action @ (telora_core::ast::BlameAction::Build | telora_core::ast::BlameAction::Raise)) => {
+                let message = child(self.mir, node, Role::Value)?;
+                let mut values = self.expression(message, depth + 1)?;
+                for edge in &syntax.children {
+                    if edge.role == Role::Subject { values.extend(self.expression(edge.node, depth + 1)?); }
+                }
+                let count = self.builder.ins().iconst(types::I64, values.len() as i64);
+                let data = self.stack_words(&values)?;
+                if action == telora_core::ast::BlameAction::Build {
+                    self.object(node, helpers::BLAME, key, data, count)
+                } else {
+                    self.emit_failure(node, helpers::RAISE, data, count)?;
+                    Err(EmitError::Diverged)
+                }
+            }
             HirKind::Panic | HirKind::Raise(telora_core::ast::BlameAction::Fail) => {
                 let message = child(self.mir, node, Role::Value)?;
                 if let HirKind::String(text) = &self.mir.hir[message.index()].kind

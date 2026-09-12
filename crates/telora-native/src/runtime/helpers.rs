@@ -41,6 +41,8 @@ pub(crate) const DICT_READ: u32 = 35;
 pub(crate) const FOLD: u32 = 36;
 pub(crate) const ARRAY_GET: u32 = 37;
 pub(crate) const ARRAY_BUILD: u32 = 38;
+pub(crate) const BLAME: u32 = 39;
+pub(crate) const RAISE: u32 = 40;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -79,7 +81,7 @@ pub(crate) unsafe extern "C" fn object(
     if operation == FOLD {
         return unsafe { callbacks::fold(context, TypeId(ty), data, out, origin, count) };
     }
-    if operation == FAIL_VALUES {
+    if operation == FAIL_VALUES || operation == RAISE {
         return context.boundary(|context| {
             let result = (|| -> Result<(String, Vec<Origin>)> {
                 let rt = context.runtime()?;
@@ -87,6 +89,7 @@ pub(crate) unsafe extern "C" fn object(
                 let mut words = unsafe { std::slice::from_raw_parts(data, count) };
                 let mut message = None;
                 let mut subjects = Vec::new();
+                let mut from_blame = false;
                 while !words.is_empty() {
                     let ty =
                         TypeId((words.get(1).ok_or("truncated diagnostic value")? >> 32) as u32);
@@ -97,8 +100,13 @@ pub(crate) unsafe extern "C" fn object(
                     };
                     rt.validate(value, ty)?;
                     if message.is_none() {
-                        message = Some(rt.text(value)?.as_str().to_owned());
-                    } else {
+                        if operation == RAISE && rt.layout(ty)?.kind == Kind::Blame {
+                            let (text, stored) = rt.blame_diagnostic(&value.to_owned())?;
+                            message = Some(text);
+                            subjects = stored;
+                            from_blame = true;
+                        } else { message = Some(rt.text(value)?.as_str().to_owned()); }
+                    } else if !from_blame {
                         let origin = Origin::from_words(value.location())?;
                         if origin.words()[0] != 0 && !subjects.contains(&origin) {
                             subjects.push(origin);
@@ -127,6 +135,21 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                BLAME => {
+                    let mut words = unsafe { std::slice::from_raw_parts(data, count) };
+                    let mut message = None;
+                    let mut subjects = Vec::new();
+                    while !words.is_empty() {
+                        let input = TypeId((words.get(1).ok_or("truncated blame packet")? >> 32) as u32);
+                        let width = rt.layout(input)?.words;
+                        let value = ValueRef { arena: rt.identity, words: words.get(..width).ok_or("truncated blame value")? };
+                        rt.validate(value, input)?;
+                        if message.is_none() { message = Some(value.to_owned()); }
+                        else { subjects.push(Origin::from_words(value.location())?); }
+                        words = &words[width..];
+                    }
+                    rt.blame(ty, loc, &message.ok_or("blame message missing")?, subjects)?
+                }
                 ARRAY_BUILD => {
                     let mut inputs = Vec::new();
                     let mut cursor = data;

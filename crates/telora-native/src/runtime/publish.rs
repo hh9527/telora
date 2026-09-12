@@ -7,6 +7,7 @@ struct Copies {
     strings: BTreeMap<u32, u32>,
     bytes: BTreeMap<u32, u32>,
     regexes: BTreeMap<u32, u32>,
+    blames: BTreeMap<u32, u32>,
 }
 impl Runtime {
     /// Publish initialization atomically, preserving aliases in the whole root
@@ -221,6 +222,19 @@ impl Runtime {
                     copies,
                     depth + 1,
                 )?);
+            }
+            Kind::Blame => {
+                let value = Value { arena: self.identity, words: words.to_vec().into_boxed_slice() };
+                let old = words[2] as u32;
+                let blame = self.blame_object(&value)?;
+                words[2] = u64::from(if let Some(&id) = copies.blames.get(&old) { id } else {
+                    let mut blame = blame.clone();
+                    self.copy_value(&mut blame.message, target, copies, depth + 1)?;
+                    let id = HeapRef::new(World::Main, u32::try_from(target.blames.len()).map_err(|_| "Blame table overflow")?)?.raw();
+                    target.blames.push(blame);
+                    copies.blames.insert(old, id);
+                    id
+                });
             }
             Kind::Regex => {
                 let value = Value {

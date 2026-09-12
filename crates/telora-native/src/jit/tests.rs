@@ -615,6 +615,27 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_blame_survives_publication_and_raise_adds_the_rule_location() {
+    let (mir, root) = graph_with("import \"std/blame\" {BlameError}; def subject = 42; def issue = blame!(\"long shared error message from initialization\", subject); export def answer: Fn() -> Never = fn() { raise!(issue) };", static_sources::BUILTINS);
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    assert!(context.diagnostics().is_empty());
+    let closure = compiled.export(&mut context, mir.exports[module.index()][0]).unwrap();
+    assert!(compiled.call_closure(&mut context, &closure, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    let diagnostic = &context.diagnostics()[0];
+    assert_eq!(diagnostic.message, "long shared error message from initialization");
+    assert_eq!(diagnostic.subjects.len(), 1);
+    assert_ne!(diagnostic.subjects[0], diagnostic.origin);
+    let rule = mir.hir.iter().find(|node| matches!(node.kind, HirKind::Raise(telora_core::ast::BlameAction::Raise))).unwrap();
+    assert_eq!(diagnostic.origin, Origin::from_loc(Some(rule.location)));
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
 fn native_fold_control_breaks_early_and_keeps_distinct_state_result_types() {
     let (mir, root) = graph_with(include_str!("../../tests/fixtures/fold-control.telora"), static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();
