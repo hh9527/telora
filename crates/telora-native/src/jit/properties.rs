@@ -123,6 +123,15 @@ impl Lower<'_, '_> {
             }
             let reference = self.module.declare_func_in_func(initializer, self.builder.func);
             packet.push(self.builder.ins().func_addr(self.module.target_config().pointer_type(), reference));
+            let display = self.layouts.field_names[property.index()].iter().position(|name| name == "display")
+                .and_then(|index| self.mir.type_layouts[property.index()].as_ref()?.members.get(index).copied().flatten())
+                .filter(|signature| self.mir.types[signature.index()].constructor == TypeConstructor::Function);
+            let address = if let Some(signature) = display {
+                let dispatcher = self.functions.dispatcher(TypeKey::try_from(signature)?, self.module)?;
+                let reference = self.module.declare_func_in_func(dispatcher, self.builder.func);
+                self.builder.ins().func_addr(self.module.target_config().pointer_type(), reference)
+            } else { self.builder.ins().iconst(types::I64, 0) };
+            packet.push(address);
         }
         let counts = u64::from(u32::try_from(checks.len()).map_err(|_| "codec check count overflow")?)
             | (u64::from(u32::try_from(properties.len()).map_err(|_| "codec property count overflow")?) << 32);

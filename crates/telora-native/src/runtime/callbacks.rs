@@ -4,7 +4,7 @@ type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *co
 
 /// A codec packet borrows initializer and dispatcher addresses from its
 /// generated adapter. No code address is stored in a runtime heap object.
-pub(super) unsafe fn codec(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, count: u64, decode: bool) -> u32 {
+pub(super) unsafe fn codec(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, count: u64, operation: u32) -> u32 {
     context.boundary(|context| {
         let result = (|| -> Result<Status> {
             let rt = context.runtime()?;
@@ -26,11 +26,12 @@ pub(super) unsafe fn codec(context: &mut CallContext, ty: TypeId, data: *const u
             }
             let mut properties = Vec::with_capacity(property_count);
             for index in 0..property_count {
-                let words = unsafe { std::slice::from_raw_parts(data.add(1 + check_count * 6 + index * 4), 4) };
-                properties.push(codec::PropertyPlan { owner: TypeId(words[0] as u32), property: TypeId(words[1] as u32), slot: words[2], initializer: words[3] as usize });
+                let words = unsafe { std::slice::from_raw_parts(data.add(1 + check_count * 6 + index * 5), 5) };
+                properties.push(codec::PropertyPlan { owner: TypeId(words[0] as u32), property: TypeId(words[1] as u32), slot: words[2], initializer: words[3] as usize, display_dispatcher: words[4] as usize });
             }
             let mut codec = codec::Codec { context, checks: &checks, properties: &properties };
-            let value = if decode { codec.decode(ty, target, &inputs[0], &inputs[2], origin.words())? }
+            let value = if operation == helpers::PARSE { codec.parse(ty, target, &inputs[0], &inputs[2], origin.words())? }
+                else if operation == helpers::DECODE { codec.decode(ty, target, &inputs[0], &inputs[2], origin.words())? }
                 else {
                     if ty != target { return Err("codec target witness mismatch".into()); }
                     codec.encode(target, &inputs[0], &inputs[2])?

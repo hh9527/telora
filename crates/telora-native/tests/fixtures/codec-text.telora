@@ -1,0 +1,33 @@
+import "std/codec" {decode, encode, Value};
+import "std/string" as string;
+import "std/regex" as regex;
+import "std/fmt" as fmt;
+import "std/_codec" {untagged};
+
+@string.decode_by_parse @string.encode_by_display
+@fmt.display_by("{host}:{port}")
+@regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
+@check(fn(value) {
+    if value.port > 0 { Ok(()) } else { Err(blame!("positive port required", value.port)) }
+})
+type Endpoint = struct {host: String, port: Int};
+
+@string.decode_by_parse @string.encode_by_display
+@fmt.display_by("{name}@{endpoint}")
+@regex.parse_by(regex.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
+type Service = struct {name: String, endpoint: Endpoint};
+
+@untagged
+type Choice = enum {Parsed(Endpoint), Text(String)};
+
+def read: for(T) Fn(TypeOf(T), Value) -> T = fn(target, input) {
+    match decode(target, input) { Ok(value) => value, Err(error) => raise!(error) }
+};
+
+export def answer = encode(Value.type, (
+    read(Service.type, Value.String("api@local:42")),
+    read(Choice.type, Value.String("unstructured")),
+    match decode(Choice.type, Value.String("local:42")) { Err(_) => True, Ok(_) => False },
+    match decode(Endpoint.type, Value.String("local:0")) { Err(_) => True, Ok(_) => False },
+    match decode(Endpoint.type, Value.Int(42)) { Err(_) => True, Ok(_) => False },
+));

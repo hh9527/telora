@@ -93,6 +93,10 @@ impl Runtime {
         let compiled = self.regex_object(pattern)?;
         let property = self.represented_type(property.as_ref())?;
         let owner = self.represented_type(owner.as_ref())?;
+        self.regex_contract(compiled, property, owner)?;
+        Ok(pattern.clone())
+    }
+    fn regex_contract(&self, compiled: &CompiledRegex, property: TypeId, owner: TypeId) -> Result<()> {
         let layout = self.layout(owner)?;
         if layout.kind != Kind::Record || layout.dynamic_kind != Some("Dict") {
             return Err("std/regex.parse_by requires a struct type".into());
@@ -124,6 +128,15 @@ impl Runtime {
                 ));
             }
         }
-        Ok(pattern.clone())
+        Ok(())
+    }
+    pub(super) fn regex_captures(&self, pattern: &Value, input: &str, owner: TypeId, property: TypeId) -> Result<Vec<(String, TypeId, Option<std::ops::Range<usize>>)>> {
+        let compiled = self.regex_object(pattern)?;
+        self.regex_contract(compiled, property, owner)?;
+        let captures = compiled.regex.captures(input).ok_or("input does not match regular expression")?;
+        let layout = self.layout(owner)?;
+        Ok(layout.field_names.iter().zip(&layout.fields).map(|(name, &(ty, _))| {
+            (name.clone(), ty, captures.name(name).map(|capture| capture.range()))
+        }).collect())
     }
 }

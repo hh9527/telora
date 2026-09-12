@@ -664,6 +664,7 @@ mod closures;
 #[path = "runtime/data.rs"]
 mod data;
 mod codec;
+mod codec_parse;
 #[path = "runtime/demands.rs"]
 mod demands;
 #[path = "runtime/dynamic.rs"]

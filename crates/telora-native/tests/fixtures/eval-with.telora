@@ -3,6 +3,28 @@ import "std/codec" {encode, decode, Value};
 import "std/dict" as dict;
 import "./base.json" as base;
 import "std/codec" {JsonRenameAll, JsonUntagged, RenameCase};
+import "std/string" as string;
+import "std/regex" as regex;
+import "std/fmt" as fmt;
+
+@string.decode_by_parse @string.encode_by_display
+@fmt.display_by("{host}:{port}")
+@regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
+type Endpoint = struct {host: String, port: Int};
+
+export def text_decoded = entry.main(
+    {sources: ["input"], envs: [], args: False},
+    fn(ctx) {
+        let input = match dict.get(ctx.sources, "input") {
+            Some(value) => value,
+            None => fail!("declared input is absent"),
+        };
+        match decode(Endpoint.type, input) {
+            Ok(value) => encode(Value.type, value),
+            Err(error) => raise!(error),
+        }
+    },
+);
 
 def camel_case: Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(owner, previous) {
     {case: RenameCase.CamelCase}

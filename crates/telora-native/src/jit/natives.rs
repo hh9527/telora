@@ -479,6 +479,21 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 7 && declaration.name == "parse_with" {
+            let output = &self.mir.types[self.return_type.index()];
+            if arguments.len() != 3
+                || self.mir.types[arguments[0].index()].constructor != TypeConstructor::Type
+                || self.mir.types[arguments[1].index()].constructor != TypeConstructor::TypeOf
+                || self.mir.types[arguments[1].index()].arguments.len() != 1
+                || self.mir.types[arguments[2].index()].constructor != TypeConstructor::String
+                || output.constructor != TypeConstructor::Result || output.arguments.len() != 2
+                || output.arguments[0] != self.mir.types[arguments[1].index()].arguments[0]
+                || self.mir.types[output.arguments[1].index()].constructor != TypeConstructor::String
+            { return Err("native string parse signature mismatch".into()); }
+            let (packet, count) = self.codec_packet(data, TypeKey::try_from(output.arguments[0])?, true)?;
+            let value = self.object(node, helpers::PARSE, self.return_type, packet, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 7
             && let Some(operation) = [
                 "join",

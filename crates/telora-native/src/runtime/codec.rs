@@ -1,6 +1,6 @@
 use super::*;
 
-enum DecodeFailure {
+pub(super) enum DecodeFailure {
     Rejected(String, Vec<crate::abi::Origin>),
     Blame(Value),
     Failed,
@@ -19,6 +19,7 @@ pub(super) struct PropertyPlan {
     pub property: TypeId,
     pub slot: u64,
     pub initializer: usize,
+    pub display_dispatcher: usize,
 }
 
 fn lower_camel_case(name: &str) -> String {
@@ -56,8 +57,8 @@ pub(super) struct Codec<'a> {
 }
 
 impl Codec<'_> {
-    fn runtime(&self) -> Result<&Runtime> { self.context.runtime() }
-    fn runtime_mut(&mut self) -> Result<&mut Runtime> { self.context.runtime_mut() }
+    pub(super) fn runtime(&self) -> Result<&Runtime> { self.context.runtime() }
+    pub(super) fn runtime_mut(&mut self) -> Result<&mut Runtime> { self.context.runtime_mut() }
 
     fn property_types(&self, properties: &Value) -> Result<Vec<(String, TypeId)>> {
         let rt = self.runtime()?;
@@ -66,7 +67,7 @@ impl Codec<'_> {
             .collect()
     }
 
-    fn property(&mut self, owner: TypeId, property: TypeId, origin: crate::abi::Origin) -> std::result::Result<Option<Value>, DecodeFailure> {
+    pub(super) fn property(&mut self, owner: TypeId, property: TypeId, origin: crate::abi::Origin) -> std::result::Result<Option<Value>, DecodeFailure> {
         if !self.runtime()?.property_presence.contains(&(owner, property)) { return Ok(None); }
         let plan = self.properties.iter().find(|plan| plan.owner == owner && plan.property == property)
             .copied().ok_or("sealed codec property is missing from the native plan")?;
@@ -77,13 +78,17 @@ impl Codec<'_> {
         Ok(Some(Value { arena: self.runtime()?.identity, words }))
     }
 
-    fn options(&mut self, owner: TypeId, properties: &[(String, TypeId)], origin: crate::abi::Origin) -> std::result::Result<(bool, bool), DecodeFailure> {
+    fn options(&mut self, owner: TypeId, properties: &[(String, TypeId)], origin: crate::abi::Origin) -> std::result::Result<(bool, bool, bool), DecodeFailure> {
         let property_type = |name: &str| properties.iter().find(|(key, _)| key == name).map(|(_, ty)| *ty).ok_or_else(|| format!("codec property contract lacks {name}"));
         let rt = self.runtime()?;
         let decode = rt.property_presence.contains(&(owner, property_type("decode_by_parse")?));
         let encode = rt.property_presence.contains(&(owner, property_type("encode_by_display")?));
         if decode != encode { return Err("std/string.decode_by_parse and std/string.encode_by_display must be used together".into()); }
-        if decode { return Err("native codec text property execution is not yet linked".into()); }
+        if decode {
+            self.property(owner, property_type("decode_by_parse")?, origin)?;
+            self.property(owner, property_type("encode_by_display")?, origin)?;
+            return Ok((false, false, true));
+        }
         let mut rename = false;
         if let Some(value) = self.property(owner, property_type("json_rename_all")?, origin)? {
             let rt = self.runtime()?;
@@ -96,7 +101,7 @@ impl Codec<'_> {
         if rename && untagged && self.runtime()?.layout(owner)?.kind == Kind::Enum {
             return Err("rename_all is not meaningful on an untagged Enum".into());
         }
-        Ok((rename, untagged))
+        Ok((rename, untagged, false))
     }
 
     pub(super) fn decode(&mut self, result: TypeId, target: TypeId, properties: &Value, input: &Value, loc: Location) -> Result<Option<Value>> {
@@ -118,7 +123,7 @@ impl Codec<'_> {
         }
     }
 
-    fn check(&mut self, owner: TypeId, site: u64, value: &Value) -> std::result::Result<(), DecodeFailure> {
+    pub(super) fn check(&mut self, owner: TypeId, site: u64, value: &Value) -> std::result::Result<(), DecodeFailure> {
         let Some(plan) = self.checks.iter().find(|plan| plan.owner == owner && plan.site == site).copied() else {
             return if self.runtime()?.layout(owner)?.construction_checks.contains(&site) {
                 Err(DecodeFailure::Runtime("sealed codec checker is missing from the native plan".into()))
@@ -162,11 +167,19 @@ impl Codec<'_> {
         if depth > 512 { return Err(DecodeFailure::Runtime("native codec nesting limit".into())); }
         if target == contract.value_type() { return Ok(input.clone()); }
         let info = self.runtime()?.type_info[target.index()].kind;
-        let (rename, untagged) = if info == Some("Ref") { self.options(target, properties, input.origin())? } else { (false, false) };
+        let (rename, untagged, bridged) = if info == Some("Ref") { self.options(target, properties, input.origin())? } else { (false, false, false) };
         let tag = self.runtime()?.layout(input.type_id())?.variants[self.runtime()?.enum_tag(input)? as usize].name.clone();
         let payload = self.runtime()?.enum_payload(input)?.map(ValueRef::to_owned);
         let loc = input.origin().words();
         let reject = |expected: &str| DecodeFailure::Rejected(format!("{path}: expected {expected}"), vec![input.origin()]);
+        if bridged {
+            if tag != "String" { return Err(reject("String text representation")); }
+            let text = payload.ok_or("missing semantic String payload")?;
+            let length = self.runtime()?.text(text.as_ref())?.as_str().len();
+            let property = properties.iter().find(|(name, _)| name == "parse_by").map(|(_, ty)| *ty).ok_or("codec property contract lacks parse_by")?;
+            return self.parse_value(target, property, &text, Some(0..length), path, depth + 1)
+                .map_err(|error| match error { DecodeFailure::Rejected(message, _) => DecodeFailure::Rejected(message, vec![input.origin()]), error => error });
+        }
         if let Some(name @ ("Int" | "Float" | "String" | "Bytes")) = info {
             if tag != name { return Err(reject(name)); }
             let value = payload.ok_or_else(|| DecodeFailure::Runtime("missing semantic scalar payload".into()))?;
@@ -350,7 +363,13 @@ impl Codec<'_> {
         }
         let loc = input.origin().words();
         let kind = self.runtime()?.type_info[input.type_id().index()].kind;
-        let (rename, untagged) = if kind == Some("Ref") { self.options(input.type_id(), properties, input.origin())? } else { (false, false) };
+        let (rename, untagged, bridged) = if kind == Some("Ref") { self.options(input.type_id(), properties, input.origin())? } else { (false, false, false) };
+        if bridged {
+            let property = properties.iter().find(|(name, _)| name == "display_by").map(|(_, ty)| *ty).ok_or("codec property contract lacks display_by")?;
+            let text = self.display(input, property)?;
+            let text = self.runtime_mut()?.owned_string(contract.payload("String")?, loc, text)?;
+            return Ok(self.runtime_mut()?.named_variant(target, loc, "String", Some(&text))?);
+        }
         if let Some(tag @ ("Int" | "Float" | "String" | "Bytes")) = kind {
             return Ok(self.runtime_mut()?.named_variant(target, loc, tag, Some(input))?);
         }

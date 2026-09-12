@@ -1,0 +1,28 @@
+import "std/string" as string;
+import "std/regex" as regex;
+import "std/codec" {encode, Value};
+
+@regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>-?\d+)(?:#(?P<label>.*))?$"))
+@check(fn(value) {
+    if value.port > 0 { Ok(()) } else { Err(blame!("positive port required", value.port)) }
+})
+type Endpoint = struct {host: String, port: Int, label: Option(String)};
+
+@regex.parse_by(regex.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
+type Service = struct {name: String, endpoint: Endpoint};
+
+def read: for(T) Fn(TypeOf(T), String) -> T = fn(target, input) {
+    match string.parse(target, input) {
+        Ok(value) => value,
+        Err(error) => fail!(error.message, error.value),
+    }
+};
+
+export def answer = encode(Value.type, (
+    read(Int.type, "42"),
+    read(Float.type, "-1.5"),
+    read(Option(Int).type, "7"),
+    read(Service.type, "api@localhost:80"),
+    read(Endpoint.type, "节点:81#标签"),
+    match string.parse(Float.type, "NaN") { Err(_) => True, Ok(_) => False },
+));

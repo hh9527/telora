@@ -35,6 +35,7 @@ pub(crate) const REFLECT: u32 = 29;
 pub(crate) const ENCODE: u32 = 30;
 pub(crate) const DECODE: u32 = 42;
 pub(crate) const CHECK_RESULT: u32 = 43;
+pub(crate) const PARSE: u32 = 44;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -81,8 +82,8 @@ pub(crate) unsafe extern "C" fn object(
     if operation == ARRAY_MAP {
         return unsafe { callbacks::array_map(context, TypeId(ty), data, out, origin, count) };
     }
-    if operation == DECODE || operation == ENCODE {
-        return unsafe { callbacks::codec(context, TypeId(ty), data, out, origin, count, operation == DECODE) };
+    if operation == DECODE || operation == ENCODE || operation == PARSE {
+        return unsafe { callbacks::codec(context, TypeId(ty), data, out, origin, count, operation) };
     }
     if operation == CHECK_RESULT {
         return context.boundary(|context| {

@@ -1060,9 +1060,9 @@ fn native_codec_decodes_nominal_skeletons_and_recursive_instances() {
 }
 
 #[test]
-fn native_codec_rejects_unlinked_properties() {
+fn native_codec_rejects_unpaired_text_properties() {
     for (declaration, expected) in [
-        ("import \"std/string\" { decode_by_parse, encode_by_display }; @decode_by_parse @encode_by_display type Item = struct(Int);", "native codec text property execution is not yet linked"),
+        ("import \"std/string\" { decode_by_parse }; @decode_by_parse type Item = struct(Int);", "std/string.decode_by_parse and std/string.encode_by_display must be used together"),
     ] {
         let source = format!("import \"std/codec\" {{decode, Value}}; {declaration} export def answer = decode(Item.type, Value.Int(1));");
         let (mir, root) = graph_with(&source, static_sources::BUILTINS);
@@ -1180,6 +1180,94 @@ fn native_codec_decodes_sealed_collections_and_returns_rejections() {
     assert_eq!(message, "$[0]: expected Int");
     assert_eq!(subjects.len(), 1);
     assert_ne!(subjects[0].words(), [0; 3]);
+}
+
+#[test]
+fn native_text_codec_reports_missing_capabilities_and_display_failure() {
+    for (extra, expression, expected, fails) in [
+        ("", "do { let value: Item = {value: 1}; encode(Value.type, value) }", "text codec requires a DisplayBy property", true),
+        ("", "decode(Item.type, Value.String(\"1\"))", "type has no std/string.parse capability", false),
+        ("@broken_display", "do { let value: Item = {value: 1}; encode(Value.type, value) }", "display execution failed", true),
+    ] {
+        let source = format!("import \"std/codec\" {{decode, encode, Value}}; import \"std/string\" as string; import \"std/fmt\" {{DisplayBy}}; def broken_display: Fn(Type, Option(DisplayBy)) -> DisplayBy = fn(owner, previous) {{ {{template: {{strings: [\"\"], fields: []}}, display: fn(value) {{ fail!(\"display execution failed\") }} }} }}; @string.decode_by_parse @string.encode_by_display {extra} type Item = struct {{value: Int}}; export def answer = {expression};");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]);
+        if fails {
+            assert!(result.is_err());
+            assert_eq!(context.diagnostics().len(), 1);
+            assert_eq!(context.diagnostics()[0].message, expected);
+        } else {
+            let value = result.unwrap();
+            let rt = context.runtime().unwrap();
+            let blame = rt.enum_payload(&value).unwrap().unwrap().to_owned();
+            assert!(rt.blame_diagnostic(&blame).unwrap().0.contains(expected));
+            assert!(context.diagnostics().is_empty());
+        }
+        assert_eq!(context.call_depth(), 0);
+    }
+}
+
+#[test]
+fn native_text_codec_invokes_parse_and_display_properties_with_nested_checks() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/codec-text.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.runtime().unwrap().semantic_json(&contract, &value).unwrap(), "[\"api@local:42\",\"unstructured\",true,true,true]");
+    assert!(context.diagnostics().is_empty());
+    assert_eq!(context.call_depth(), 0);
+}
+
+#[test]
+fn native_string_parse_consumes_named_capture_ranges_and_closed_checks() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/string-parse.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.runtime().unwrap().semantic_json(&contract, &value).unwrap(), "[42,-1.5,7,{\"endpoint\":{\"host\":\"localhost\",\"label\":null,\"port\":80},\"name\":\"api\"},{\"host\":\"节点\",\"label\":\"标签\",\"port\":81},true]");
+    assert!(context.diagnostics().is_empty());
+}
+
+#[test]
+fn native_string_parse_reuses_whole_strings_and_returns_scalar_rejection() {
+    let (mir, root) = graph_with("import \"std/string\" as string; def input = \"long unchanged string input\"; export def answer = (input, match string.parse(String.type, input) { Ok(value) => value, Err(error) => fail!(error.message) });", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    assert_eq!(rt.field(&value, 0).unwrap().words(), rt.field(&value, 1).unwrap().words());
+    for (ty, input, expected) in [("Int", "9223372036854775808", "valid Int"), ("Float", "inf", "finite Float"), ("Bool", "True", "parse capability")] {
+        let source = format!("import \"std/string\" as string; export def answer = match string.parse({ty}.type, \"{input}\") {{ Err(error) => error.message, Ok(_) => \"unexpected success\" }};");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let value = compiled.call(&mut context, &[]).unwrap();
+        assert!(context.runtime().unwrap().text(value.as_ref()).unwrap().as_str().contains(expected));
+        assert!(context.diagnostics().is_empty());
+    }
+}
+
+#[test]
+fn native_string_parse_checker_rejection_is_execution_failure() {
+    let source = "import \"std/string\" as string; import \"std/regex\" as regex; @regex.parse_by(regex.compile(r\"^(?P<value>\\d+)$\")) @check(fn(value) { Err(blame!(\"parsed value rejected\", value.value)) }) type Item = struct {value: Int}; export def answer = string.parse(Item.type, \"42\");";
+    let (mir, root) = graph_with(source, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "parsed value rejected");
+    assert_eq!(context.diagnostics()[0].subjects.len(), 1);
+    assert_eq!(context.call_depth(), 0);
 }
 
 #[test]

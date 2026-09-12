@@ -63,7 +63,9 @@ struct checker 的 Unchecked(T) 参数使用同一静态骨架，只变更描述
 
 codec 解码也通过普通分派器调用这些 checker。codegen 沿封闭目标类型的成员/参数边，收集可达检查，生成包含 owner/site、初始化槽及临时代码地址的调用包；这些地址仅借用于当前调用，不进入 heap。解码器在构造边界释放 Runtime 借用再调用 checker：子值检查先于父值与后续兄弟字段；检查拒绝保留为原生 Err(BlameError)，执行失败直接传播。缺失的封闭检查记录报内部错误，不补猜或跳过。
 
-编码/解码共用的 codec 调用包也包含可达类型的 property 初始化身份，经现有 demand 机制取得并复用原生 property 值。rename_all 读取实际 case 值，变换字段/variant 的外部名字并拒绝重名；untagged 编码省略标签，解码遍历全部候选（包含构造检查），唯一成功才接受。无匹配合并拒绝信息并保留首个具体拒绝的来源，多匹配返回歧义 BlameError；执行失败中止遍历。文本转换 property（parse/display）仍待接入，明确报未支持。
+编码/解码共用的 codec 调用包也包含可达类型的 property 初始化身份，经现有 demand 机制取得并复用原生 property 值。rename_all 读取实际 case 值，变换字段/variant 的外部名字并拒绝重名；untagged 编码省略标签，解码遍历全部候选（包含构造检查），唯一成功才接受。无匹配合并拒绝信息并保留首个具体拒绝的来源，多匹配返回歧义 BlameError；执行失败中止遍历。
+
+string.parse_with 按封闭 TypeId 解析 Int/Float/String/Option，结构类型按 ParseBy 的命名捕获范围递归构造，复用原字符串的完整值或仅分配实际捕获文本。DecodeByParse 复用该解析器，EncodeByDisplay 通过封闭签名分派 property 内的 Fn(Dyn) -> Fmt，直接遍历原生格式对象生成 String。属性必须成对声明，缺失能力与回调失败明确反馈；codec 中检查拒绝是 Err(BlameError)，普通 string.parse 的检查拒绝保持执行失败语义。已覆盖嵌套文本属性、可选捕获、非有限浮点拒绝、checker 与 untagged 组合，以及 Display 回调失败。
 
 ## 验收条件
 
