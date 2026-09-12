@@ -69,7 +69,7 @@ pub(super) fn emit(
             node,
             instance: record.instance,
             initializer: false,
-            marker_provider: false,
+            configured_native: false,
         },
         return_pointer: out,
         return_type: TypeKey::try_from(record.property)?,

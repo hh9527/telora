@@ -1245,6 +1245,29 @@ fn native_parsed_aliases_keep_input_origin_and_sharing_after_publication() {
 }
 
 #[test]
+fn native_json_pretty_closures_validate_indent_and_format_nested_values() {
+    for indent in [0, 2, 16, -1, 17] {
+        let source = format!(r#"import "std/json" as json; import "std/value" {{Value}};
+            def printer = json.stringify_pretty({indent});
+            export def answer = printer(Value.Array([Value.Array([]), Value.Int(42)]));"#);
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]);
+        if !(0..=16).contains(&indent) {
+            assert!(result.is_err());
+            assert_eq!(context.diagnostics().len(), 1);
+            assert!(context.diagnostics()[0].message.contains("between 0 and 16"));
+        } else {
+            let value = result.unwrap();
+            let padding = " ".repeat(indent as usize);
+            assert_eq!(context.runtime().unwrap().text(value.as_ref()).unwrap().as_str(), format!("[\n{padding}[],\n{padding}42\n]"));
+        }
+    }
+}
+
+#[test]
 fn native_text_codec_reports_missing_capabilities_and_display_failure() {
     for (extra, expression, expected, fails) in [
         ("", "do { let value: Item = {value: 1}; encode(Value.type, value) }", "text codec requires a DisplayBy property", true),

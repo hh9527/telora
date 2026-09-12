@@ -919,7 +919,7 @@ impl Lower<'_, '_> {
             (function, closure, output, expected)
         } else {
             let callee = functions::Key {
-                marker_provider: false,
+                configured_native: false,
                 initializer: false,
                 node: self.callable(callee_node, 0)?,
                 instance: self.instance_reference(callee_node),
@@ -1222,7 +1222,7 @@ impl Lower<'_, '_> {
                     node,
                     instance: self.function_key.instance,
                     initializer: false,
-                    marker_provider: false,
+                    configured_native: false,
                 },
             );
         }
@@ -1244,7 +1244,7 @@ impl Lower<'_, '_> {
             return self.function_value(
                 node,
                 functions::Key {
-                    marker_provider: false,
+                    configured_native: false,
                     node: function,
                     instance: self.instance_reference(node),
                     initializer: false,
@@ -1553,7 +1553,7 @@ impl Lower<'_, '_> {
                     return self.function_value(
                         node,
                         functions::Key {
-                            marker_provider: false,
+                            configured_native: false,
                             initializer: false,
                             node: function,
                             instance: self.instance_reference(node),
@@ -1589,7 +1589,7 @@ impl Lower<'_, '_> {
                 self.function_value(
                     node,
                     functions::Key {
-                        marker_provider: false,
+                        configured_native: false,
                         initializer: false,
                         node: function,
                         instance: self.instance_reference(node),
@@ -1611,7 +1611,7 @@ impl Lower<'_, '_> {
                     return self.function_value(
                         node,
                         functions::Key {
-                            marker_provider: false,
+                            configured_native: false,
                             node,
                             instance: self.function_key.instance,
                             initializer: false,
@@ -1627,7 +1627,7 @@ impl Lower<'_, '_> {
             HirKind::Closure => self.function_value(
                 node,
                 functions::Key {
-                    marker_provider: false,
+                    configured_native: false,
                     initializer: false,
                     node,
                     instance: self.function_key.instance,

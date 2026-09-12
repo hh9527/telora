@@ -44,17 +44,17 @@ pub(super) struct Key {
     pub node: HirId,
     pub instance: Option<GenericInstanceId>,
     pub initializer: bool,
-    pub marker_provider: bool,
+    pub configured_native: bool,
 }
 impl Key {
     pub fn ty(self, mir: &Mir, node: HirId) -> Result<telora_core::mir::TypeId> {
-        if self.marker_provider && node == self.node {
+        if self.configured_native && node == self.node {
             let factory = known(mir, node)?;
             return mir.types[factory.index()]
                 .arguments
                 .last()
                 .copied()
-                .ok_or_else(|| "property factory has no provider type".into());
+                .ok_or_else(|| "native factory has no configured function type".into());
         }
         match self.instance {
             Some(id) => mir.generic_instances[id.index()].ty(node).ok_or_else(|| {
@@ -74,7 +74,7 @@ impl From<HirId> for Key {
             node,
             instance: None,
             initializer: false,
-            marker_provider: false,
+            configured_native: false,
         }
     }
 }
@@ -163,7 +163,7 @@ impl Functions {
             node,
             instance: Some(instance),
             initializer: true,
-            marker_provider: false,
+            configured_native: false,
         };
         let ty = TypeKey::try_from(key.ty(graph, node)?)?;
         let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len() + self.checks.len())
@@ -184,7 +184,7 @@ impl Functions {
         if let Some(&(slot, key, ty)) = self.checks.get(&index) { return Ok((slot, self.registered[&key], ty)); }
         let check = &graph.construction_checks[index];
         if !check.concrete { return Err("construction check is not concrete".into()); }
-        let key = Key { node: check.checker, instance: check.instance, initializer: true, marker_provider: false };
+        let key = Key { node: check.checker, instance: check.instance, initializer: true, configured_native: false };
         let ty = TypeKey::try_from(check.signature)?;
         if key.ty(graph, key.node)? != check.signature { return Err("checker signature contradicts sealed instance".into()); }
         let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len() + self.checks.len()).map_err(|_| "native check slot overflow")?;
@@ -227,7 +227,7 @@ impl Functions {
                     "telora_fn_{}_{:?}_{}",
                     node.index(),
                     key.instance.map(|i| i.index()),
-                    key.marker_provider,
+                    key.configured_native,
                 ),
                 Linkage::Local,
                 &self.signature,

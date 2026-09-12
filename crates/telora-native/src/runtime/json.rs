@@ -5,18 +5,33 @@ impl Runtime {
     /// Read the original native object graph and build only the output text
     /// and traversal stack. No host Value tree or replacement heap is built.
     pub fn semantic_json(&self, contract: &DataContract, root: &Value) -> Result<String> {
+        self.semantic_json_indented(contract, root, None)
+    }
+
+    pub fn semantic_json_indented(&self, contract: &DataContract, root: &Value, indent: Option<usize>) -> Result<String> {
+        if indent.is_some_and(|width| width > 16) {
+            return Err("std/json.stringify_pretty indent must be between 0 and 16".into());
+        }
         type Identity = (u8, u32, u64);
         enum Task<'a> {
-            Value(ValueRef<'a>),
+            Value(ValueRef<'a>, usize),
             Key(ValueRef<'a>),
             Character(char),
+            Newline(usize),
             Leave(Identity),
         }
-        let mut pending = vec![Task::Value(root.as_ref())];
+        let mut pending = vec![Task::Value(root.as_ref(), 0)];
         let mut active = BTreeSet::new();
         let mut output = String::new();
         while let Some(task) = pending.pop() {
-            let value = match task {
+            let (value, depth) = match task {
+                Task::Newline(depth) => {
+                    if let Some(width) = indent {
+                        output.push('\n');
+                        output.extend(std::iter::repeat_n(' ', width * depth));
+                    }
+                    continue;
+                }
                 Task::Character(c) => {
                     output.push(c);
                     continue;
@@ -32,7 +47,7 @@ impl Runtime {
                     );
                     continue;
                 }
-                Task::Value(value) => value,
+                Task::Value(value, depth) => (value, depth),
             };
             self.validate(value, contract.value_type())?;
             let tag = self.variant_name(value.type_id(), self.enum_tag_ref(value)?)?;
@@ -74,8 +89,11 @@ impl Runtime {
                     }
                     pending.push(Task::Leave(id));
                     pending.push(Task::Character(']'));
-                    for index in (0..self.array_len(&array)?).rev() {
-                        pending.push(Task::Value(self.array_get(&array, index)?));
+                    let len = self.array_len(&array)?;
+                    if len > 0 { pending.push(Task::Newline(depth)); }
+                    for index in (0..len).rev() {
+                        pending.push(Task::Value(self.array_get(&array, index)?, depth + 1));
+                        pending.push(Task::Newline(depth + 1));
                         if index != 0 {
                             pending.push(Task::Character(','));
                         }
@@ -90,11 +108,15 @@ impl Runtime {
                     }
                     pending.push(Task::Leave(id));
                     pending.push(Task::Character('}'));
-                    for index in (0..self.dict_len(&dict)?).rev() {
+                    let len = self.dict_len(&dict)?;
+                    if len > 0 { pending.push(Task::Newline(depth)); }
+                    for index in (0..len).rev() {
                         let (key, value) = self.dict_entry(&dict, index)?;
-                        pending.push(Task::Value(value));
+                        pending.push(Task::Value(value, depth + 1));
+                        if indent.is_some() { pending.push(Task::Character(' ')); }
                         pending.push(Task::Character(':'));
                         pending.push(Task::Key(key));
+                        pending.push(Task::Newline(depth + 1));
                         if index != 0 {
                             pending.push(Task::Character(','));
                         }

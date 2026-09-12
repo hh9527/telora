@@ -71,7 +71,7 @@ string.parse_with 按封闭 TypeId 解析 Int/Float/String/Option，结构类型
 
 JSON/YAML/TOML 的 parse_raw 按 native 模块身份链接，消费封闭的 TypeOf(Value) / Result(Value, BlameError) 签名。复用无 VM 依赖的数据解析计划，直接物化到 native tables；字符串解析产生的子值与键保留输入来源，临时解析 SourceId 不进入运行时值。语法错误返回 Err(BlameError)，资源限制超出产生一次执行失败。YAML alias 保持解析计划的展开语义，发布保留 native 图已有的共享关系。
 
-JSON 紧凑 stringify 直接遍历 native Value 图生成文本，不构建 host Value 树。stringify_pretty 和 schema_with 尚待实现，不能据此认为完整 std/json 模块初始化已经可用。YAML/TOML 已纳入真实 CLI eval-with 初始化及 entry 路径验证。
+JSON 紧凑 stringify 与 stringify_pretty 直接遍历 native Value 图生成文本，不构建 host Value 树。pretty 工厂在创建闭包时验证 0..16 缩进，将 Int 描述符放入普通 native 闭包环境；配置后函数的签名读取封闭工厂返回类型。缩进 0 仍输出换行，空容器保持单行。schema_with 尚待实现，不能据此认为完整 std/json 模块初始化已经可用。YAML/TOML 已纳入真实 CLI eval-with 初始化及 entry 路径验证。
 
 ## 验收条件
 

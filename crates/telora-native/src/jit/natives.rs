@@ -17,7 +17,7 @@ impl Lower<'_, '_> {
         if self.mir.types[target.index()].constructor != TypeConstructor::PropertyTarget {
             return Err("property factory target ABI mismatch".into());
         }
-        if !self.function_key.marker_provider {
+        if !self.function_key.configured_native {
             if arguments != [target] || self.return_type != provider {
                 return Err("property factory ABI mismatch".into());
             }
@@ -27,7 +27,7 @@ impl Lower<'_, '_> {
                     node,
                     instance: None,
                     initializer: false,
-                    marker_provider: true,
+                    configured_native: true,
                 },
                 self.module,
             )?;
@@ -477,6 +477,34 @@ impl Lower<'_, '_> {
             }
             let count = self.builder.ins().iconst(types::I64, operation);
             let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
+            return self.write_return(&result);
+        }
+        if module.id == 17 && declaration.name == "stringify_pretty" {
+            let factory = &self.mir.types[known(self.mir, node)?.index()];
+            if factory.arguments.len() != 2 { return Err("JSON pretty factory ABI mismatch".into()); }
+            let int = TypeKey::try_from(factory.arguments[0])?;
+            let configured = TypeKey::try_from(factory.arguments[1])?;
+            let signature = &self.mir.types[configured.index()];
+            if self.mir.types[int.index()].constructor != TypeConstructor::Int
+                || signature.constructor != TypeConstructor::Function || signature.arguments.len() != 2
+                || self.mir.types[signature.arguments[1].index()].constructor != TypeConstructor::String
+            { return Err("JSON pretty signature mismatch".into()); }
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            if !self.function_key.configured_native {
+                if arguments != [int] || self.return_type != configured { return Err("JSON pretty factory arguments mismatch".into()); }
+                let captured = self.object(node, helpers::JSON_INDENT, int, data, zero)?;
+                let function = self.functions.declare(self.mir, functions::Key { configured_native: true, ..self.function_key }, self.module)?;
+                let mut words = vec![self.builder.ins().iconst(types::I64, i64::from(function.as_u32()))];
+                words.extend(captured);
+                let count = self.builder.ins().iconst(types::I64, words.len() as i64);
+                let packet = self.stack_words(&words)?;
+                let result = self.object(node, helpers::CLOSURE, configured, packet, count)?;
+                return self.write_return(&result);
+            }
+            let captured = self.object(node, helpers::CAPTURE, int, environment, zero)?;
+            let one = self.builder.ins().iconst(types::I64, 1);
+            let count = self.builder.ins().iadd(captured[2], one);
+            let result = self.object(node, helpers::JSON_STRINGIFY, self.return_type, data, count)?;
             return self.write_return(&result);
         }
         if module.id == 17 && declaration.name == "stringify" {

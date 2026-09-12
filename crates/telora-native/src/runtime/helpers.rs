@@ -38,6 +38,7 @@ pub(crate) const CHECK_RESULT: u32 = 43;
 pub(crate) const PARSE: u32 = 44;
 pub(crate) const FORMAT_PARSE: u32 = 45;
 pub(crate) const JSON_STRINGIFY: u32 = 46;
+pub(crate) const JSON_INDENT: u32 = 47;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -239,11 +240,18 @@ pub(crate) unsafe extern "C" fn object(
                         rt.dict_column(ty, loc, &dict, count == 1)?
                     }
                 }
+                JSON_INDENT => {
+                    let value = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, 3) }.into() };
+                    let indent = rt.scalar_bits(value.as_ref())? as i64;
+                    if !(0..=16).contains(&indent) { return Err("std/json.stringify_pretty indent must be between 0 and 16".into()); }
+                    value
+                }
                 JSON_STRINGIFY => {
                     let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
                     let value = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, rt.layout(input)?.words) }.into() };
                     let contract = rt.data_contract.clone().ok_or("semantic Value contract is not loaded")?;
-                    let text = rt.semantic_json(&contract, &value)?;
+                    let indent = if count == 0 { None } else { Some((count - 1) as usize) };
+                    let text = rt.semantic_json_indented(&contract, &value, indent)?;
                     rt.owned_string(ty, loc, text)?
                 }
                 INTERPOLATE => {

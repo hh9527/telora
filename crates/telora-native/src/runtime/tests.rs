@@ -23,6 +23,8 @@ fn semantic_json_reads_native_graph_before_and_after_publication() {
     assert_eq!(rt.semantic_json(&contract, &data).unwrap(), expected);
     let roots = rt.publish(&[data]).unwrap();
     assert_eq!(rt.semantic_json(&contract, &roots[0]).unwrap(), expected);
+    let expected_pretty = "{\n  \"a\": \"line\\n\\\"quoted\\\"\",\n  \"z\": [\n    null,\n    true,\n    false,\n    -42,\n    1.25\n  ]\n}";
+    assert_eq!(rt.semantic_json_indented(&contract, &roots[0], Some(2)).unwrap(), expected_pretty);
 }
 
 #[test]
