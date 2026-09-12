@@ -115,25 +115,32 @@ pub fn check(
     let execution_started = Instant::now();
     let mut execution_diagnostics = vec![];
     if let Some(sealed) = sealed.filter(|_| !types_only && !roots.is_empty()) {
-        let artifact = telora_core::codegen::compile_check(sealed);
-        let linked = artifact.and_then(|artifact| {
-            telora_core::execution_link::link_entry_with_data(artifact, |link| {
-                inventory.read_data(link, crate::execution_config().data_limits.file_size)
-            })
-        });
-        match linked {
-            Ok(linked) => {
-                let config = crate::execution_config();
-                execution_diagnostics = telora_core::Vm::new()
-                    .with_debug_sink(std::sync::Arc::new(crate::StderrDebugSink))
-                    .check_linked(
-                        linked,
-                        config.session_quota,
-                        config.data_limits,
-                        &mut mir.sources,
-                    );
+        if args.native {
+            match crate::native_cli::Session::compile(&sealed) {
+                Ok(mut session) => execution_diagnostics = session.initialize(&inventory, &mut mir.sources),
+                Err(message) => execution_diagnostics.push(crate::native_cli::error(message)),
             }
-            Err(diagnostics) => execution_diagnostics = diagnostics,
+        } else {
+            let artifact = telora_core::codegen::compile_check(sealed);
+            let linked = artifact.and_then(|artifact| {
+                telora_core::execution_link::link_entry_with_data(artifact, |link| {
+                    inventory.read_data(link, crate::execution_config().data_limits.file_size)
+                })
+            });
+            match linked {
+                Ok(linked) => {
+                    let config = crate::execution_config();
+                    execution_diagnostics = telora_core::Vm::new()
+                        .with_debug_sink(std::sync::Arc::new(crate::StderrDebugSink))
+                        .check_linked(
+                            linked,
+                            config.session_quota,
+                            config.data_limits,
+                            &mut mir.sources,
+                        );
+                }
+                Err(diagnostics) => execution_diagnostics = diagnostics,
+            }
         }
     }
     let execution_seconds = if types_only || static_failed || roots.is_empty() {

@@ -692,6 +692,23 @@ fn metadata_uses_sealed_type_ids_and_survives_publication() {
 }
 
 #[test]
+fn whole_graph_initializes_prelude_and_application() {
+    let (mir, root) = graph("export def answer = 42;");
+    let modules = mir
+        .hir
+        .iter()
+        .map(|node| node.module)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &modules, &[root]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+}
+
+#[test]
 fn module_initialization_consumes_closed_generic_instances() {
     for (source, expected) in [
         (

@@ -87,7 +87,12 @@ impl Lower<'_, '_> {
                 TypeConstructor::Type | TypeConstructor::TypeOf
             )
         };
-        if matches!(op, B::Equal | B::NotEqual) && metadata(left_ty) && metadata(right_ty) {
+        let variants = &self.layouts.variant_payloads[left_ty.index()];
+        let nullary_enum =
+            left_ty == right_ty && !variants.is_empty() && variants.iter().all(Option::is_none);
+        if matches!(op, B::Equal | B::NotEqual)
+            && ((metadata(left_ty) && metadata(right_ty)) || nullary_enum)
+        {
             let left = self.expression(left_node, depth + 1)?;
             let right = self.expression(right_node, depth + 1)?;
             let condition = self.builder.ins().icmp(

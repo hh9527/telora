@@ -1904,6 +1904,7 @@ dependencies = [
  "tar",
  "telora-core",
  "telora-ees",
+ "telora-native",
  "tempfile",
  "tokio",
  "tokio-util",

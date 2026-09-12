@@ -144,17 +144,30 @@ impl Inventory {
         link: &telora_core::codegen::DataLink,
         max_bytes: usize,
     ) -> Result<telora_core::EvalSource, String> {
+        let (format, text) = self.read_data_text(&link.name, max_bytes)?;
+        Ok(telora_core::EvalSource {
+            source_name: link.name.clone(),
+            format: match format {
+                telora_core::data_plan::Format::Json => telora_core::SystemDataFormat::Json,
+                telora_core::data_plan::Format::Yaml => telora_core::SystemDataFormat::Yaml,
+                telora_core::data_plan::Format::Toml => telora_core::SystemDataFormat::Toml,
+            },
+            text,
+        })
+    }
+    /// Read a catalog data module without depending on an execution linker.
+    pub fn read_data_text(&self, name: &str, max_bytes: usize) -> Result<(telora_core::data_plan::Format, String), String> {
         let entry = self
             .entries
-            .get(&link.name)
+            .get(name)
             .ok_or("unknown data module identity")?;
         let Source::File(path) = &entry.source else {
             return Err("data module has no file source".into());
         };
         let format = match entry.format {
-            ModuleFormat::Json => telora_core::SystemDataFormat::Json,
-            ModuleFormat::Yaml => telora_core::SystemDataFormat::Yaml,
-            ModuleFormat::Toml => telora_core::SystemDataFormat::Toml,
+            ModuleFormat::Json => telora_core::data_plan::Format::Json,
+            ModuleFormat::Yaml => telora_core::data_plan::Format::Yaml,
+            ModuleFormat::Toml => telora_core::data_plan::Format::Toml,
             ModuleFormat::Telora => {
                 return Err("source module cannot fill a data relocation".into());
             }
@@ -162,11 +175,7 @@ impl Inventory {
         let file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let bytes = read_limited(file, max_bytes, &path.display().to_string())?;
         let text = String::from_utf8(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok(telora_core::EvalSource {
-            source_name: link.name.clone(),
-            format,
-            text,
-        })
+        Ok((format, text))
     }
     pub fn new(context: &Path, builtin_only: bool) -> Result<Self, String> {
         let workspace = if builtin_only {

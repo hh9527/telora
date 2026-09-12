@@ -11,6 +11,8 @@ struct EvalSelector {
 
 #[derive(Args)]
 pub(crate) struct EvalArgs {
+    #[arg(long, hide = true)]
+    native: bool,
     #[arg(value_name = "MODULE:NAME", value_parser = parse_eval_selector)]
     selector: EvalSelector,
 }
@@ -142,6 +144,9 @@ fn prepare_solved(
 }
 
 pub(crate) fn run(context: PathBuf, arguments: EvalArgs) -> Result<i32, String> {
+    if arguments.native {
+        return crate::native_cli::eval(context, &arguments.selector.module_id, &arguments.selector.export);
+    }
     let (linked, value_type, mut sources) = prepare_solved(context, &arguments.selector, false)?;
     let mut vm =
         telora_core::Vm::new().with_debug_sink(std::sync::Arc::new(crate::StderrDebugSink));

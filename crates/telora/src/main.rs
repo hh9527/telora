@@ -19,6 +19,7 @@ use tokio::task::JoinSet;
 mod ees_arg;
 mod ees_cli;
 mod eval_cli;
+mod native_cli;
 mod source_arg;
 mod static_cli;
 use telora::static_input;
@@ -604,6 +605,8 @@ struct ApplicationSelector {
     after_help = "Examples:\n  telora check @src/lib\n  telora -C examples/app check --lib\n  telora check --tests --only-types\n  telora check --lib --tests"
 )]
 struct CheckArgs {
+    #[arg(long, hide = true)]
+    native: bool,
     /// Solve types without executing tool, property, or runtime code.
     #[arg(long = "only-types")]
     types_only: bool,
