@@ -10,6 +10,14 @@ fn prepare_callback(context: &mut CallContext, closure: &Value) -> Option<Value>
     }
 }
 
+fn reserve_callback_values(rt: &Runtime, values: &mut Vec<Value>, additional: usize) -> Result<()> {
+    let required = values.len().checked_add(additional).ok_or("callback result capacity overflow")?;
+    if required <= values.capacity() { return Ok(()); }
+    let capacity = required.max(values.capacity().saturating_mul(2));
+    rt.charge_allocation(capacity - values.capacity(), std::mem::size_of::<Value>(), 0)?;
+    values.try_reserve_exact(capacity - values.len()).map_err(|error| format!("callback result allocation failed: {error}"))
+}
+
 pub(super) unsafe fn debug(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin) -> u32 {
     context.boundary(|context| {
         let result = (|| -> Result<()> {
@@ -292,7 +300,8 @@ pub(super) unsafe fn array_map(
                 closure
             };
             let callback = unsafe { std::mem::transmute::<usize, Callback>(address as usize) };
-            let mut mapped = Vec::with_capacity(if boolean { 0 } else if find { 1 } else { count });
+            let mut mapped = Vec::new();
+            reserve_callback_values(context.runtime()?, &mut mapped, if boolean { 0 } else if find { 1 } else { count })?;
             let mut selected_keys = Vec::new();
             for index in 0..count {
                 let rt = context.runtime()?;
@@ -319,7 +328,15 @@ pub(super) unsafe fn array_map(
                 };
                 rt.validate(value.as_ref(), element)?;
                 if operation == 7 {
-                    for index in 0..rt.array_len(&value)? { mapped.push(rt.array_get(&value, index)?.to_owned()); }
+                    let count = rt.array_len(&value)?;
+                    let child = rt.layout(value.type_id())?.arguments[0];
+                    let width = rt.layout(child)?.words;
+                    let work = (count as u64).checked_mul(width as u64).ok_or("flat_map output work overflow")?;
+                    if context.consume_fuel(work, origin) != Status::Success { return Ok(Status::Failed); }
+                    let rt = context.runtime()?;
+                    reserve_callback_values(rt, &mut mapped, count)?;
+                    rt.charge_allocation(count, width.checked_mul(8).ok_or("flat_map value width overflow")?, 0)?;
+                    for index in 0..count { mapped.push(rt.array_get(&value, index)?.to_owned()); }
                     continue;
                 }
                 if find || filter || boolean {

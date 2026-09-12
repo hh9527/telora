@@ -105,6 +105,31 @@ fn native_codec_fuel_exhaustion_is_not_a_recoverable_decode_error() {
 }
 
 #[test]
+fn native_flat_map_admits_expansion_before_copying_output_values() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/flat-map-budget.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut rt = crate::runtime::Runtime::new(&sealed).unwrap();
+    let array = compiled.arguments[0];
+    let integer = TypeKey::try_from(mir.types[array.index()].arguments[0]).unwrap();
+    let item = rt.scalar(integer, [1, 0, 1], 42).unwrap();
+    let small = rt.array(array, [1, 0, 1], &[item.clone()]).unwrap();
+    let large = rt.array(array, [1, 0, 1], &vec![item; 10_000]).unwrap();
+    let mut context = CallContext::with_runtime(rt).with_fuel(1000);
+    let result = compiled.call(&mut context, &[small]).unwrap();
+    assert_eq!(context.runtime().unwrap().array_len(&result).unwrap(), 1);
+    context = context.with_fuel(1000);
+    let before = context.runtime().unwrap().requested_allocation_bytes();
+    assert!(compiled.call(&mut context, &[large]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "native execution fuel exhausted");
+    assert_eq!(context.call_depth(), 0);
+    // Setup may allocate small descriptors, but the 10,000-element result
+    // must not be admitted or copied before fuel admission succeeds.
+    assert!(context.runtime().unwrap().requested_allocation_bytes() - before < 10_000);
+}
+
+#[test]
 fn native_pending_callbacks_fail_at_their_source_only_when_invoked() {
     for source in [include_str!("../../tests/fixtures/pending-map-callback.telora"), include_str!("../../tests/fixtures/pending-fold-callback.telora")] {
         for populated in [false, true] {

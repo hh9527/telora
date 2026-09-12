@@ -38,6 +38,8 @@ status 使用 u32：0=Success，1=Failed；只有 Success 允许读取结果缓�
 
 Array spread 的 helper 工作量已接入同一 fuel：先按输入描述符数扣费，再按实际 slice 的元素数 × 元素 word 宽度扣费，全部通过后才分配并复制结果 backing。计费不包含未选择的 backing 区间。边界测试验证精确预算成功、少一单位拒绝、结果缓冲不写入、不新增数组槽、单次来源诊断及 sticky abort。该项不代表所有 helper 都已计费；深层相等、codec、字符串/正则等工作量仍须分别核对。
 
+集合回调的临时结果 Vec 已在初始预留和 flat_map 扩容前检查分配预算；扩容按至少所需容量及几何增长请求，并使用 try_reserve_exact 传播分配失败。flat_map 的每个回调结果展开前按元素数量 × 封闭元素 word 宽度扣除 fuel，再准入临时描述符存储，最后复制描述符。语言资产 `flat-map-budget.telora` 让一次回调返回已有的万项数组，JIT 验证小结果成功、大结果在复制前耗尽且不报告重复诊断、调用深度归零。这里只统计请求的临时容量和描述符字节，不代表 allocator 实际容量、所有回调参数/返回缓冲或峰值 RSS 已完整计费。
+
 String/Bytes 字面量创建、直接 String/Bytes 相等和 String.length 已预扣输入字节数的 fuel。字符串描述符的范围长度在 UTF-8 扫描前取得；比较按两侧输入字节总数保守计费，字符计数仍返回 Unicode 字符数量。测试覆盖已发布的大字符串、字符数与字节数不同、精确预算成功、少一单位失败、未写结果缓冲和字面量拒绝时不创建 backing。聚合深层相等及其他字符串 API 的计费仍需继续覆盖，不据此宣称全部字符串工作量已受限。
 
 深层结构相等已接入 session fuel：按遍历任务扣费，String/Bytes 叶子、Dict 键和 Regex pattern 在内容比较前按字节扣费。Array/Record/Tuple/Dict 逐项展开，工作列表不再一次加入整层子项，保留遇到首个差异立即结束的行为。已访问的对象对仍用于共享/环终止；没有对用户对象做深复制。万项数组测试验证小预算下的首项短路，以及相同输入继续遍历时耗尽、未写结果、来源和单次诊断。host helper 使用 CallContext 的分字段借用共享原 fuel，不新增一套预算或临时取走 Runtime。codec 与其余原生 API 的计费仍待覆盖。

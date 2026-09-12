@@ -1,0 +1,4 @@
+import "std/array" as array;
+export def answer: Fn(Array(Int)) -> Array(Int) = fn(values) {
+    array.flat_map([0], fn(ignored) {values})
+};
