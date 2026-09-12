@@ -44,6 +44,8 @@ impl Session {
                     .try_add(module.name.clone(), &text)
                     .map_err(|e| vec![error(e.to_string())])?;
                 let plan = telora_core::data_plan::parse_registered(sources, source, format)?;
+                telora_core::data_plan::enforce_limits(&plan, crate::execution_config().data_limits, text.len())
+                    .map_err(|message| vec![Diagnostic::error(message, telora_core::Loc { source, start: 0, end: 0 })])?;
                 self.compiled
                     .inject_data(&mut self.context, module.symbol, &plan)
                     .map_err(|e| vec![error(e)])?;
@@ -326,6 +328,8 @@ pub(crate) fn eval_with(
                     .collect::<Vec<_>>()
                     .join("\n")
             })?;
+        telora_core::data_plan::enforce_limits(&plan, crate::execution_config().data_limits, source.text.len())
+            .map_err(|message| mir.sources.render(&Diagnostic::error(message, telora_core::Loc { source: id, start: 0, end: 0 })))?;
         let value = rt.materialize_data(&contract, &plan)?;
         source_values.push((rt.string(string_type, [0; 3], &name)?, value));
     }

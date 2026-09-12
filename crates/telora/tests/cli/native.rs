@@ -1,4 +1,22 @@
 #[test]
+fn native_data_depth_limit_applies_before_materialization() {
+    let cwd = fixture();
+    let input = format!("{}0{}", "[".repeat(256), "]".repeat(256));
+    fs::write(cwd.join("src/deep.json"), &input).unwrap();
+    fs::write(cwd.join("src/main.telora"), "import \"./deep.json\" as data; export def answer = data.data;").unwrap();
+    let output = telora(&cwd).args(["check", "--native", "@src/main"]).output().unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("depth"), "{stdout}");
+    fs::write(cwd.join("src/main.telora"), "import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer = entry.main({sources: [\"input\"], envs: [], args: False}, fn(ctx) { Value.Int(42) });").unwrap();
+    let output = telora(&cwd).args(["eval-with", "--native", "@src/main:answer", "--source", "input=src/deep.json"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("depth"));
+    assert!(output.stdout.is_empty());
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_eval_with_rejects_invalid_config_and_preserves_execution_diagnostics() {
     let cwd = fixture();
     for (source, extra, message) in [
