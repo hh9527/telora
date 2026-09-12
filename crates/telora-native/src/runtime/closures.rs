@@ -2,7 +2,8 @@ use super::*;
 
 impl Runtime {
     /// FunctionId is a code-plan identity, never a machine address. Environment
-    /// zero means no captures; other IDs encode HeapRef + 1 in this table only.
+    /// IDs encode HeapRef + 1. Even an empty environment owns a fresh closure
+    /// identity; FunctionId alone identifies code, not a runtime function value.
     pub fn closure(
         &mut self,
         ty: TypeId,
@@ -11,18 +12,13 @@ impl Runtime {
         captures: &[Value],
     ) -> Result<Value> {
         self.expect(ty, Kind::Function)?;
-        let environment = if captures.is_empty() {
-            0
-        } else {
-            let mut words = Vec::new();
-            for capture in captures {
-                self.validate(capture.as_ref(), capture.type_id())?;
-                words.extend_from_slice(capture.words());
-            }
-            self.push_words(Table::Environments, words)?
-                .checked_add(1)
-                .ok_or("environment ID overflow")?
-        };
+        let mut words = Vec::new();
+        for capture in captures {
+            self.validate(capture.as_ref(), capture.type_id())?;
+            words.extend_from_slice(capture.words());
+        }
+        let environment = self.push_words(Table::Environments, words)?
+            .checked_add(1).ok_or("environment ID overflow")?;
         self.pack(
             ty,
             loc,

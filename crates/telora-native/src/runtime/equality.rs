@@ -28,6 +28,15 @@ impl Runtime {
                     self.dynamic_value(&right)?;
                     if left.words()[3] != right.words()[3] { return Ok(false); }
                 }
+                Kind::Function => {
+                    self.function_id(&left)?;
+                    self.function_id(&right)?;
+                    for value in [&left, &right] {
+                        let environment = (value.words()[2] >> 32) as u32;
+                        self.object_words(Table::Environments, environment.checked_sub(1).ok_or("function value has no identity")?)?;
+                    }
+                    if left.words()[2] != right.words()[2] { return Ok(false); }
+                }
                 Kind::Array | Kind::Tuple | Kind::Record | Kind::Newtype | Kind::Dict | Kind::Enum => {
                     let identity = (ty, left.words()[2..].to_vec(), right.words()[2..].to_vec());
                     if !visited.insert(identity) { continue; }

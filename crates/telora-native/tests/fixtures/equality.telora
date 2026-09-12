@@ -2,6 +2,7 @@ import "std/eq" as eq;
 import "std/codec" {encode, Value};
 import "std/entry" as entry;
 import "std/dyn" as dynamic;
+import "std/hash" as hash;
 type Node = struct {value: Int, children: Array(Node)};
 type Count = struct(Int);
 type Choice = enum {Empty, Item(Node)};
@@ -10,6 +11,10 @@ def second: Node = {value: 1, children: [{value: 2, children: []}]};
 def dictionary: Dict(Int) = {a: 1, b: 2};
 def reversed: Dict(Int) = {b: 2, a: 1};
 def packed = dynamic.pack(Int.type, 1);
+def empty_factory = fn() { fn(n: Int) { n + 1 } };
+def captured_factory = fn(base: Int) { fn(n: Int) { n + base } };
+def empty = empty_factory();
+def captured = captured_factory(1);
 def checks: Fn() -> Value = fn() {
     encode(Value.type, [
         eq.equal(first, second), first == second,
@@ -24,6 +29,10 @@ def checks: Fn() -> Value = fn() {
         eq.equal(0.0, -0.0),
         eq.equal([1, 2], [1, 2]), [1, 2] != [1, 3],
         eq.equal(packed, packed), !eq.equal(packed, dynamic.pack(Int.type, 1)),
+        eq.equal(empty, empty), !eq.equal(empty, empty_factory()),
+        eq.equal(captured, captured), !eq.equal(captured, captured_factory(1)),
+        eq.equal(empty_factory, empty_factory),
+        eq.equal(hash.sha256, hash.sha256),
     ])
 };
 export def answer = checks();

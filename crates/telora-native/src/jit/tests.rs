@@ -254,7 +254,7 @@ fn direct_functions_have_independent_frames_and_support_recursion() {
     ] {
         let (mir, root) = graph(source);
         let compiled = compile(&mir.seal().unwrap(), root).unwrap();
-        let result = compiled.call(&mut CallContext::default(), &[]).unwrap();
+        let result = compiled.call(&mut CallContext::with_runtime(crate::runtime::Runtime::new(&mir.seal().unwrap()).unwrap()), &[]).unwrap();
         assert_eq!(result.words()[2], 42);
     }
 }
@@ -264,7 +264,7 @@ fn scalar_machine_code_handles_recursion_and_checked_arithmetic() {
     let compiled = compile(&mir.seal().unwrap(), root).unwrap();
     assert_eq!(
         compiled
-            .call(&mut CallContext::default(), &[])
+            .call(&mut CallContext::with_runtime(crate::runtime::Runtime::new(&mir.seal().unwrap()).unwrap()), &[])
             .unwrap()
             .words()[2],
         120
@@ -279,7 +279,7 @@ fn scalar_machine_code_handles_recursion_and_checked_arithmetic() {
     ] {
         let (mir, root) = graph(source);
         let compiled = compile(&mir.seal().unwrap(), root).unwrap();
-        let mut ctx = CallContext::default();
+        let mut ctx = CallContext::with_runtime(crate::runtime::Runtime::new(&mir.seal().unwrap()).unwrap());
         assert!(compiled.call(&mut ctx, &[]).is_err());
         assert_eq!(ctx.diagnostics().len(), 1);
         assert!(
@@ -295,7 +295,7 @@ fn scalar_machine_code_handles_recursion_and_checked_arithmetic() {
     ] {
         let (mir, root) = graph(source);
         let compiled = compile(&mir.seal().unwrap(), root).unwrap();
-        let mut ctx = CallContext::default();
+        let mut ctx = CallContext::with_runtime(crate::runtime::Runtime::new(&mir.seal().unwrap()).unwrap());
         compiled.call(&mut ctx, &[]).unwrap(); // RHS requires a runtime and would fail if executed.
         assert!(ctx.diagnostics().is_empty());
     }
@@ -1759,7 +1759,7 @@ fn metadata_uses_sealed_type_ids_and_survives_publication() {
         let compiled = compile(&mir.seal().unwrap(), root).unwrap();
         assert_eq!(
             compiled
-                .call(&mut CallContext::default(), &[])
+                .call(&mut CallContext::with_runtime(crate::runtime::Runtime::new(&mir.seal().unwrap()).unwrap()), &[])
                 .unwrap()
                 .words()[2],
             1
@@ -2469,7 +2469,7 @@ fn never_paths_do_not_allocate_values_or_force_a_join_result() {
                 .unwrap();
             assert_eq!(
                 compiled
-                    .call(&mut CallContext::default(), &[flag])
+                    .call(&mut CallContext::with_runtime(crate::runtime::Runtime::new(&mir.seal().unwrap()).unwrap()), &[flag])
                     .unwrap()
                     .words()[2],
                 expected
@@ -2481,7 +2481,7 @@ fn never_paths_do_not_allocate_values_or_force_a_join_result() {
     );
     let compiled = compile(&mir.seal().unwrap(), root).unwrap();
     assert!(compiled.layouts().is_never(compiled.output()).unwrap());
-    let mut context = CallContext::default();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&mir.seal().unwrap()).unwrap());
     assert!(compiled.call(&mut context, &[]).is_err());
     assert_eq!(context.diagnostics().len(), 1);
     assert_eq!(context.diagnostics()[0].message, "boom");
@@ -2491,7 +2491,7 @@ fn never_paths_do_not_allocate_values_or_force_a_join_result() {
     ] {
         let (mir, root) = graph(source);
         let compiled = compile(&mir.seal().unwrap(), root).unwrap();
-        let mut context = CallContext::default();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&mir.seal().unwrap()).unwrap());
         compiled.call(&mut context, &[]).unwrap();
         assert!(context.diagnostics().is_empty());
     }

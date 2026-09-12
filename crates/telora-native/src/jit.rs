@@ -1035,18 +1035,6 @@ impl Lower<'_, '_> {
             self.functions.captures.insert(key, captures.clone());
         }
         let ty = TypeKey::try_from(key.ty(self.mir, key.node)?)?;
-        if captures.is_empty() {
-            let value = self.layouts.value(
-                ty,
-                Origin::from_loc(Some(self.mir.hir[origin.index()].location)),
-                &[u64::from(function.as_u32())],
-            )?;
-            return Ok(value
-                .words()
-                .iter()
-                .map(|&w| self.builder.ins().iconst(types::I64, w as i64))
-                .collect());
-        }
         let mut words = vec![
             self.builder
                 .ins()
@@ -1228,28 +1216,10 @@ impl Lower<'_, '_> {
         }
         if matches!(syntax.kind, HirKind::Field)
             && self.selected_member(node).is_none()
-            && self.mir.types[ty.index()].constructor != TypeConstructor::Function
             && let Some(slot) = syntax.resolution
             && let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()]
         {
             return self.global_value(node, symbol);
-        }
-        if matches!(syntax.kind, HirKind::Field)
-            && syntax.resolution.is_some_and(|slot| {
-                matches!(self.mir.resolve_slots[slot.index()], ResolveState::Bound(_))
-            })
-            && self.mir.types[ty.index()].constructor == TypeConstructor::Function
-        {
-            let function = self.callable(node, 0)?;
-            return self.function_value(
-                node,
-                functions::Key {
-                    configured_native: false,
-                    node: function,
-                    instance: self.instance_reference(node),
-                    initializer: false,
-                },
-            );
         }
         if let Some(MemberSelection::EnumVariant { index }) = self.selected_member(node)
             && self.mir.types[ty.index()].constructor != TypeConstructor::Function
@@ -1546,19 +1516,6 @@ impl Lower<'_, '_> {
                 };
                 if let Some(value) = self.locals.get(&symbol) {
                     return Ok(value.clone());
-                }
-                if self.mir.types[self.ty(node)?.index()].constructor == TypeConstructor::Function
-                    && let Ok(function) = self.callable(node, 0)
-                {
-                    return self.function_value(
-                        node,
-                        functions::Key {
-                            configured_native: false,
-                            initializer: false,
-                            node: function,
-                            instance: self.instance_reference(node),
-                        },
-                    );
                 }
                 // Resolved exports of a statically selected Boolean member are
                 // constants. Never recognize prelude names or execute a provider.

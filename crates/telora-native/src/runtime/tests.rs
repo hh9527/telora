@@ -174,7 +174,7 @@ fn closure_environments_publish_nested_captures_and_shared_objects() {
         .closure(ty, [1, 5, 6], 23, &[inner.clone(), text.clone(), empty])
         .unwrap();
     let published = rt.publish(&[outer, inner.clone(), text]).unwrap();
-    assert_eq!(rt.main.environments.entries.len(), 2);
+    assert_eq!(rt.main.environments.entries.len(), 3);
     assert_eq!(rt.main.strings.entries.len(), 1);
     assert!(rt.work.environments.entries.is_empty());
     assert!(rt.capture(&inner, 0).is_err());

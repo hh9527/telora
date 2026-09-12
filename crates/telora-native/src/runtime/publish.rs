@@ -94,7 +94,8 @@ impl Runtime {
             }
             Kind::Function => {
                 let environment = (words[2] >> 32) as u32;
-                if let Some(raw) = environment.checked_sub(1) {
+                {
+                    let raw = environment.checked_sub(1).ok_or("function value has no identity")?;
                     let id = self.copy_object(
                         Table::Environments,
                         raw,
