@@ -97,8 +97,9 @@ debug 或失败不会因执行另一个入口而发生。`SealedExecutable` 拥�
 及 RFC 0010 的既有定位：fuel 约束失控执行，不作精确成本计费。验证递归、重复
 控制流和 callback 重入的预算边界、耗尽传播与来源；不以逐字节、逐元素或正则
 状态转换计数作为落地前提。内存、输入规模及 native 操作自身的终止性独立验收。
-当前 native 的表达式与 helper 细粒度扣费是实施现状，不是新的语言契约；需要按
-这一定位审计并收敛，不能通过扩展正式语言语义来合理化已有实现。
+native 已移除表达式与有限数据遍历的细粒度扣费，保留函数调用等失控执行边界
+的预算检查；分配配额独立检查。相关测试覆盖递归耗尽、初始化到 entry 的预算
+延续，以及字符串、数组和 codec 不按字节或元素扣费。这不构成精确计费契约。
 
 - RFC 0283–0287 五个本期子项均给出实现提交、相应测试证据、剩余限制；不以仅提交草案视为子项完成。
 - 新运行时依赖审计证明没有旧 VM 求值、类型推断或 Val 深复制桥。
@@ -106,6 +107,33 @@ debug 或失败不会因执行另一个入口而发生。`SealedExecutable` 拥�
 - 初始化发布保留共享、main 引用和来源，单次执行资源正确释放；失败不发布成功结果。服务边界复制回收不在本期验收范围。
 - 记录基准版本、命令、机器/target、编译/初始化/执行分段时间和内存；先观察，不预设胜出结论。
 - 如能力推迟，显式调整伞范围及 issue，不用 silent fallback 宣称全部完成。
+
+## 阶段性真实负载观察（2026-09-13）
+
+实现版本 `8557ae8`，`cargo build --release -p telora`；Linux x86_64，
+Intel Xeon Gold 6266C，rustc 1.98.1。以下为单次观察，不是统计基准。
+
+在 `../lab-ws/lab-ontology/world-model` 执行
+`eval-with @src/bin/make-query:main --source input=/tmp/native-world-input.json`，
+native 路线额外传 `--native`。输入为 country_name 查询、country_continent
+等于 Asia、空 measures/ordering/output_order、null limit/offset；两条路线均输出
+`{"bindings":["Asia"],"sql":"SELECT c.Name FROM country AS c WHERE c.Continent = ?"}`。
+分段通过 `TELORA_NATIVE_TIMINGS=1` / `TELORA_DEFAULT_TIMINGS=1` 记录，
+峰值 RSS 使用 `/usr/bin/time -v`。
+
+| 观察项 | 默认 bytecode | native |
+| --- | ---: | ---: |
+| frontend | 435.23 ms | 436.85 ms |
+| codegen | 17.93 ms | 2182.40 ms |
+| initialize | 12.36 ms | 3.85 ms |
+| entry execute | 1.12 ms | 0.64 ms |
+| 总墙钟 | 0.48 s | 2.64 s |
+| 峰值 RSS | 46060 KiB | 61412 KiB |
+
+native 另有 runtime setup 3.35 ms。阶段计时不包含全部 CLI 开销。
+同版本 `check --native --lib` 成功，Unknown/Conflicted 均为零，
+总墙钟 2.91 s，峰值 RSS 59684 KiB。当前单次查询的 JIT 编译成本明显高于
+初始化和执行节省，不能宣称端到端性能收益；本轮仅记录，不据此扩大优化范围。
 
 ## 延后的方案和风险
 
