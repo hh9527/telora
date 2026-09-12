@@ -344,6 +344,44 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::FORMAT, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 19
+            && matches!(
+                declaration.name.as_str(),
+                "compile" | "is_match" | "prepare"
+            )
+        {
+            let regex = |ty: TypeKey| matches!(self.mir.types[ty.index()].constructor, TypeConstructor::Native(native) if (native.module, native.slot) == (19, 0));
+            let kind = |ty: TypeKey| &self.mir.types[ty.index()].constructor;
+            let (operation, valid) = match declaration.name.as_str() {
+                "compile" => (
+                    0,
+                    arguments.len() == 1
+                        && kind(arguments[0]) == &TypeConstructor::String
+                        && regex(self.return_type),
+                ),
+                "is_match" => (
+                    1,
+                    arguments.len() == 2
+                        && regex(arguments[0])
+                        && kind(arguments[1]) == &TypeConstructor::String
+                        && kind(self.return_type) == &TypeConstructor::Bool,
+                ),
+                _ => (
+                    2,
+                    arguments.len() == 3
+                        && regex(arguments[0])
+                        && kind(arguments[1]) == &TypeConstructor::Type
+                        && kind(arguments[2]) == &TypeConstructor::Type
+                        && regex(self.return_type),
+                ),
+            };
+            if !valid {
+                return Err("native Regex ABI signature mismatch".into());
+            }
+            let count = self.builder.ins().iconst(types::I64, operation);
+            let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
+            return self.write_return(&result);
+        }
         if module.id == 25
             && matches!(
                 declaration.name.as_str(),

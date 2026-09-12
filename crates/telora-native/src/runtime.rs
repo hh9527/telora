@@ -23,6 +23,7 @@ enum Kind {
     Function,
     Dyn,
     Format,
+    Regex,
     Other,
 }
 struct Variant {
@@ -32,6 +33,7 @@ struct Variant {
 }
 struct Layout {
     kind: Kind,
+    optional: bool,
     dynamic_kind: Option<&'static str>,
     field_names: Vec<String>,
     words: usize,
@@ -155,6 +157,7 @@ struct Tables {
     values: WordTable,
     environments: WordTable,
     formats: WordTable,
+    regexes: Vec<pattern::CompiledRegex>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Table {
@@ -166,6 +169,7 @@ enum Table {
 }
 
 pub struct Runtime {
+    property_presence: std::collections::BTreeSet<(TypeId, TypeId)>,
     demands: std::collections::BTreeMap<DemandKey, demands::DemandSlot>,
     demand_keys: Vec<DemandKey>,
     code_plan: Option<u64>,
@@ -274,6 +278,7 @@ impl Runtime {
                 T::Function => Kind::Function,
                 T::Dyn => Kind::Dyn,
                 T::Native(native) if (native.module, native.slot) == (20, 1) => Kind::Format,
+                T::Native(native) if (native.module, native.slot) == (19, 0) => Kind::Regex,
                 _ if !entry.variants.is_empty() => Kind::Enum,
                 _ if shape.table == Some("RecordTable") => Kind::Record,
                 _ => Kind::Other,
@@ -300,6 +305,7 @@ impl Runtime {
                 .unwrap_or_default();
             layouts.push(Some(Layout {
                 kind,
+                optional: ty.constructor == T::Option,
                 field_names: entry
                     .object
                     .as_ref()
@@ -359,6 +365,13 @@ impl Runtime {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| "arena identity overflow")?;
         Ok(Self {
+            property_presence: sealed
+                .mir()
+                .properties
+                .iter()
+                .filter(|p| p.concrete && p.site == telora_core::mir::PropertySite::Type)
+                .map(|p| Ok((TypeId::try_from(p.owner)?, TypeId::try_from(p.property)?)))
+                .collect::<Result<_>>()?,
             demands: std::collections::BTreeMap::new(),
             demand_keys: vec![],
             code_plan: None,
@@ -638,6 +651,8 @@ mod demands;
 mod dynamic;
 #[path = "runtime/format.rs"]
 mod format;
+#[path = "runtime/pattern.rs"]
+mod pattern;
 pub use dynamic::DynamicQuery;
 #[path = "runtime/metadata.rs"]
 mod metadata;

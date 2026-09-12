@@ -1,0 +1,6 @@
+import "std/regex" as regex;
+import "std/type-property" as properties;
+def pattern = regex.compile("^(?P<a>[0-9]+)(?:-(?P<b>[a-z]+))?$");
+@regex.parse_by(pattern)
+type Item = struct { a: Int, b: Option(String) };
+export def answer = (pattern, regex.is_match(pattern, "42"), regex.is_match(pattern, "wrong"), properties.evidence(Item.type, regex.ParseBy.type));

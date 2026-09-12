@@ -67,6 +67,8 @@ std/fmt 的 prepare/from_string/from_int/from_float/concat/render 已接入独�
 
 fail! 与 panic 的动态 String 消息已连接生成代码；fail! 按求值顺序消费 subject，只收集其已有来源位置，不复制 subject 对象图。规则位置为 primary，subject 来源去重后作为 secondary；首次失败报告后需求表只传播 Failed。已验证动态顶层消息、重复 subject、初始化不发布及 CLI 三处位置输出，native JIT 47 passed，native CLI 用例通过。完整 std/entry 图下一处缺口为 module 19 / compile（std/regex）。raise!/warn!/BlameError 构造的完整诊断语义仍未完成。
 
+std/regex compile/is_match/prepare 已接入独立 RegexTable。编译验证命名捕获，prepare 对照封闭字段表、Option 标记和静态 property 存在集合检查匹配及可选性，不查询或执行嵌套 property 值。Regex 描述符在统一发布中按旧 HeapId 去重，prepare 返回原描述符；匹配借用原输入字符串。已验证有/无匹配、可选捕获、匿名捕获错误、字段与捕获不符、必选性错误及发布后的资源别名，native JIT 48 passed。完整 std/entry 图下一处缺口为 std/string.join，仍继续补齐后续标准库适配器。
+
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。
 
 ## 延后与备选方案

@@ -6,6 +6,7 @@ struct Copies {
     objects: BTreeMap<(Table, u32), u32>,
     strings: BTreeMap<u32, u32>,
     bytes: BTreeMap<u32, u32>,
+    regexes: BTreeMap<u32, u32>,
 }
 impl Runtime {
     /// Publish initialization atomically, preserving aliases in the whole root
@@ -220,6 +221,26 @@ impl Runtime {
                     copies,
                     depth + 1,
                 )?);
+            }
+            Kind::Regex => {
+                let value = Value {
+                    arena: self.identity,
+                    words: words.to_vec().into_boxed_slice(),
+                };
+                let regex = self.regex_object(&value)?;
+                let old = words[2] as u32;
+                words[2] = u64::from(if let Some(&id) = copies.regexes.get(&old) {
+                    id
+                } else {
+                    let id = HeapRef::new(
+                        World::Main,
+                        u32::try_from(target.regexes.len()).map_err(|_| "Regex table overflow")?,
+                    )?
+                    .raw();
+                    target.regexes.push(regex.clone());
+                    copies.regexes.insert(old, id);
+                    id
+                });
             }
             Kind::Format => {
                 words[2] = u64::from(self.copy_object(

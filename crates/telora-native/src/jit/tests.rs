@@ -815,6 +815,38 @@ fn dynamic_values_preserve_sealed_identity_and_shared_payloads() {
 }
 
 #[test]
+fn native_regex_resources_validate_capture_contracts_and_publish_aliases() {
+    let (mir, root) = graph_with(
+        include_str!("../../tests/fixtures/regex.telora"),
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[mir.hir[root.index()].module], &[root]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let runtime = context.runtime().unwrap();
+    assert_eq!(runtime.field(&value, 1).unwrap().words()[2], 1);
+    assert_eq!(runtime.field(&value, 2).unwrap().words()[2], 0);
+    let property = runtime.field(&value, 3).unwrap().to_owned();
+    assert_eq!(
+        runtime.field(&value, 0).unwrap().words(),
+        runtime.field(&property, 0).unwrap().words()
+    );
+
+    let (mir, root) = graph_with(
+        include_str!("../../tests/fixtures/regex-invalid.telora"),
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[mir.hir[root.index()].module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.initialize(&mut context).is_err());
+    assert_eq!(context.diagnostics().len(), 3);
+    assert!(!context.runtime().unwrap().is_published());
+}
+
+#[test]
 fn dynamic_failure_messages_keep_subject_origins_and_fail_once() {
     let source = include_str!("../../tests/fixtures/failure-subjects.telora");
     let (mir, root) = graph(source);

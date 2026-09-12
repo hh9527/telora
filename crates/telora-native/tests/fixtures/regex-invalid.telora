@@ -1,0 +1,7 @@
+import "std/regex" as regex;
+def unnamed = regex.compile("(a)");
+@regex.parse_by(regex.compile("(?P<a>[0-9]+)?"))
+type Required = struct { a: Int };
+@regex.parse_by(regex.compile("(?P<extra>[0-9]+)"))
+type Missing = struct { a: Int };
+export def answer = 42;

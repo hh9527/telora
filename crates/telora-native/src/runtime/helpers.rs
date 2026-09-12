@@ -29,6 +29,7 @@ pub(crate) const DYN_QUERY: u32 = 23;
 pub(crate) const DYN_MEMBER: u32 = 24;
 pub(crate) const FORMAT: u32 = 25;
 pub(crate) const FAIL_VALUES: u32 = 26;
+pub(crate) const REGEX: u32 = 27;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -107,6 +108,34 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                REGEX => {
+                    let arity = match count {
+                        0 => 1,
+                        1 => 2,
+                        2 => 3,
+                        _ => return Err("unknown Regex operation".into()),
+                    };
+                    let mut inputs = Vec::new();
+                    let mut cursor = data;
+                    for _ in 0..arity {
+                        let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+                        let width = rt.layout(input)?.words;
+                        inputs.push(Value {
+                            arena: rt.identity,
+                            words: unsafe { std::slice::from_raw_parts(cursor, width) }.into(),
+                        });
+                        cursor = unsafe { cursor.add(width) };
+                    }
+                    match count {
+                        0 => rt.regex_compile(ty, loc, &inputs[0])?,
+                        1 => rt.scalar(
+                            ty,
+                            loc,
+                            u64::from(rt.regex_matches(&inputs[0], &inputs[1])?),
+                        )?,
+                        _ => rt.regex_prepare(&inputs[0], &inputs[1], &inputs[2])?,
+                    }
+                }
                 FORMAT => {
                     let mut inputs = Vec::new();
                     let mut cursor = data;
