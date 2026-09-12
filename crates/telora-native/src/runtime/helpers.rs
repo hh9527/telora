@@ -224,39 +224,6 @@ pub(crate) unsafe extern "C" fn object(
                 unsafe { std::ptr::copy_nonoverlapping(result.words().as_ptr(), out, result.words().len()); }
                 return Ok(Status::Success);
             }
-            if operation == ARRAY_CONCAT {
-                // Charge packet traversal before inspecting descriptors, then
-                // charge actual slice words before allocating/copying output.
-                if context.consume_fuel(count, origin) != Status::Success { return Ok(Status::Failed); }
-                let rt = context.runtime()?;
-                let count = usize::try_from(count).map_err(|_| "array spread packet overflow")?;
-                let words = unsafe { std::slice::from_raw_parts(data, count.checked_mul(4).ok_or("array spread packet overflow")?) };
-                let mut work = 0u64;
-                for words in words.chunks_exact(4) {
-                    let array = Value { arena: rt.identity, words: words.into() };
-                    rt.validate(array.as_ref(), TypeId(ty))?;
-                    let (_, start, end, element) = rt.array_range(&array)?;
-                    let length = u64::from(end - start);
-                    let stride = if length == 0 { 0 } else { rt.layout(element)?.words as u64 };
-                    work = length.checked_mul(stride).and_then(|amount| work.checked_add(amount))
-                        .ok_or("array spread work count overflow")?;
-                }
-                if context.consume_fuel(work, origin) != Status::Success { return Ok(Status::Failed); }
-            }
-            if matches!(operation, STRING | BYTES_LITERAL | STRING_LENGTH | TEXT_EQUAL | BYTES_EQUAL) {
-                let work = if matches!(operation, STRING | BYTES_LITERAL) { count } else {
-                    let rt = context.runtime()?;
-                    let arity = if operation == STRING_LENGTH { 1 } else { 2 };
-                    let mut total = 0u64;
-                    for index in 0..arity {
-                        let words = unsafe { std::slice::from_raw_parts(data.add(index * 4), 4) };
-                        total = total.checked_add(rt.byte_span_len(ValueRef { arena: rt.identity, words })? as u64)
-                            .ok_or("byte work count overflow")?;
-                    }
-                    total
-                };
-                if context.consume_fuel(work, origin) != Status::Success { return Ok(Status::Failed); }
-            }
             let rt = context.runtime_mut()?;
             let ty = TypeId(ty);
             let loc = origin.words();

@@ -39,12 +39,12 @@ fn deep_equality_short_circuits_and_exhausts_without_writing_a_result() {
 }
 
 #[test]
-fn byte_helpers_meter_input_before_scanning_and_preserve_failed_output() {
+fn byte_helpers_use_allocation_quota_without_per_byte_fuel() {
     use crate::abi::{CallContext, Status};
     let mir = graph("export def text = \"文本x\"; export def bytes = b\"abcdefgh\"; export def truth = True; export def integer = 0;");
     let sealed = mir.seal().unwrap();
     for (operation, name) in [(helpers::STRING, "text"), (helpers::BYTES_LITERAL, "bytes")] {
-        let mut context = CallContext::with_runtime(Runtime::new(&sealed).unwrap()).with_fuel(63);
+        let mut context = CallContext::with_runtime(Runtime::new(&sealed).unwrap().with_allocation_limit(0)).with_fuel(0);
         let mut output = [u64::MAX; 4];
         let input = [b'x'; 64];
         let status = unsafe {
@@ -55,8 +55,9 @@ fn byte_helpers_meter_input_before_scanning_and_preserve_failed_output() {
         assert_eq!(output, [u64::MAX; 4]);
         assert!(context.runtime().unwrap().work.strings.entries.is_empty());
         assert!(context.runtime().unwrap().work.bytes.entries.is_empty());
+        assert!(context.runtime().unwrap().allocation_exhausted());
     }
-    for (operation, cost, expected) in [(helpers::STRING_LENGTH, 700, 300), (helpers::TEXT_EQUAL, 1400, 1), (helpers::BYTES_EQUAL, 16, 1)] {
+    for (operation, expected) in [(helpers::STRING_LENGTH, 300), (helpers::TEXT_EQUAL, 1), (helpers::BYTES_EQUAL, 1)] {
         let mut rt = Runtime::new(&sealed).unwrap();
         let source = if operation == helpers::BYTES_EQUAL {
             rt.bytes(value_type(&mir, "bytes"), [1, 0, 8], b"abcdefgh").unwrap()
@@ -64,7 +65,7 @@ fn byte_helpers_meter_input_before_scanning_and_preserve_failed_output() {
         let source = rt.publish(&[source]).unwrap().remove(0);
         let packet = [source.words(), source.words()].concat();
         let output_ty = value_type(&mir, if operation == helpers::STRING_LENGTH { "integer" } else { "truth" });
-        let mut context = CallContext::with_runtime(rt).with_fuel(cost);
+        let mut context = CallContext::with_runtime(rt).with_fuel(0);
         let mut output = [u64::MAX; 3];
         let invoke = |context: &mut CallContext, output: &mut [u64; 3]| unsafe {
             helpers::object(context, operation, output_ty.raw(), 1 | (10u64 << 32), 11, packet.as_ptr(), 0, output.as_mut_ptr())
@@ -72,20 +73,17 @@ fn byte_helpers_meter_input_before_scanning_and_preserve_failed_output() {
         assert_eq!(invoke(&mut context, &mut output), Status::Success as u32);
         assert_eq!(output[2], expected);
         assert_eq!(context.remaining_fuel(), Some(0));
-        context = context.with_fuel(cost - 1);
         let allocated = context.runtime().unwrap().requested_allocation_bytes();
         output.fill(u64::MAX);
-        assert_eq!(invoke(&mut context, &mut output), Status::Failed as u32);
-        assert_eq!(output, [u64::MAX; 3]);
+        assert_eq!(invoke(&mut context, &mut output), Status::Success as u32);
+        assert_eq!(output[2], expected);
         assert_eq!(context.runtime().unwrap().requested_allocation_bytes(), allocated);
-        assert_eq!(invoke(&mut context, &mut output), Status::Failed as u32);
-        assert_eq!(context.diagnostics().len(), 1);
-        assert_eq!(context.diagnostics()[0].origin.words(), [1, 10, 11]);
+        assert!(context.diagnostics().is_empty());
     }
 }
 
 #[test]
-fn array_spread_fuel_charges_slice_words_before_result_allocation() {
+fn array_spread_uses_allocation_quota_without_per_word_fuel() {
     use crate::abi::{CallContext, Status};
     let mir = graph(SOURCE);
     let sealed = mir.seal().unwrap();
@@ -97,22 +95,23 @@ fn array_spread_fuel_charges_slice_words_before_result_allocation() {
     let source = rt.publish(&[source]).unwrap().remove(0);
     let slice = rt.slice(&source, 20, 30, [1, 4, 5]).unwrap();
     let packet = [slice.words(), slice.words()].concat();
-    // Two descriptors plus twenty 3-word Int values, regardless of backing size.
-    let mut context = CallContext::with_runtime(rt).with_fuel(62);
+    let one_result = 20 * 3 * 8 + std::mem::size_of::<WordItem>() as u64;
+    let limit = rt.requested_allocation_bytes() + one_result;
+    let rt = rt.with_allocation_limit(limit);
+    // Internal finite copying is not a new language call or control-flow back edge.
+    let mut context = CallContext::with_runtime(rt).with_fuel(0);
     let mut output = [u64::MAX; 4];
     let invoke = |context: &mut CallContext, output: &mut [u64; 4]| unsafe {
         helpers::object(context, helpers::ARRAY_CONCAT, array.raw(), 1 | (6u64 << 32), 7, packet.as_ptr(), 2, output.as_mut_ptr())
     };
     assert_eq!(invoke(&mut context, &mut output), Status::Success as u32);
     assert_eq!(context.remaining_fuel(), Some(0));
-    context = context.with_fuel(61);
-    let allocated = context.runtime().unwrap().requested_allocation_bytes();
     let count = context.runtime().unwrap().work.arrays.entries.len();
     output.fill(u64::MAX);
     assert_eq!(invoke(&mut context, &mut output), Status::Failed as u32);
     assert_eq!(output, [u64::MAX; 4]);
     assert_eq!(context.runtime().unwrap().work.arrays.entries.len(), count);
-    assert_eq!(context.runtime().unwrap().requested_allocation_bytes(), allocated);
+    assert!(context.runtime().unwrap().allocation_exhausted());
     assert_eq!(invoke(&mut context, &mut output), Status::Failed as u32);
     assert_eq!(context.diagnostics().len(), 1);
     assert_eq!(context.diagnostics()[0].origin.words(), [1, 6, 7]);
