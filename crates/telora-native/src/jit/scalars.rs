@@ -165,7 +165,7 @@ impl Lower<'_, '_> {
             return self.scalar_result(node, result);
         }
         if left_ty != right_ty && !right_never {
-            return Err("native binary operands require the solved same type".into());
+            return Err(format!("native binary operands require the solved same type: {op:?} at {:?}, left {:?}, right {:?}", self.mir.hir[node.index()].location, self.mir.types[left_ty.index()], self.mir.types[right_ty.index()]).into());
         }
         let kind = &self.mir.types[left_ty.index()].constructor;
         if *kind == TypeConstructor::Float && op == B::Remainder {

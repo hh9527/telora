@@ -51,6 +51,26 @@ fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> (Mir, HirId) {
 }
 
 #[test]
+fn native_propagation_preserves_failure_and_payload_origins() {
+    let source = "export def answer: Fn() -> Result(String, String) = fn() { let value: Result(Int, String) = Err(\"from here\"); let ignored = value?; Ok(\"unreachable\") };";
+    let (mir, root) = graph(source);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    assert!(context.diagnostics().is_empty());
+    assert_eq!(context.call_depth(), 0);
+    let runtime = context.runtime().unwrap();
+    assert_eq!(runtime.variant_name(result.type_id(), runtime.enum_tag(&result).unwrap()).unwrap(), "Err");
+    let start = source.find("Err(").unwrap() as u32;
+    assert_eq!(&result.location()[1..], &[start, start + "Err(\"from here\")".len() as u32]);
+    let payload = runtime.enum_payload(&result).unwrap().unwrap();
+    assert_eq!(runtime.text(payload).unwrap().as_str(), "from here");
+    let start = source.find("\"from here\"").unwrap() as u32;
+    assert_eq!(&payload.location()[1..], &[start, start + "\"from here\"".len() as u32]);
+}
+
+#[test]
 fn native_reflection_reads_sealed_types_without_materializing_them() {
     for expression in [
         "match td.kind(Never.type) { td.TypeDescKind.Never => True, _ => False }",
@@ -1057,6 +1077,7 @@ fn native_checkers_initialize_once_and_publish_closed_generic_instances() {
 fn native_construction_invokes_sealed_checker_and_propagates_failure_once() {
     for (argument, succeeds) in [(42, true), (0, false)] {
         for source in [
+            format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let base: Item = {{number: 1}}; (base <~ {{number: {argument}}}).number }};"),
             format!("def minimum = 1; type Item = enum {{ @check(fn(value) {{ if value >= minimum {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value)) }} }}) Full(Int), Empty }}; export def answer = match Item.Full({argument}) {{ Item.Full(value) => value, _ => -1 }};"),
             format!("def minimum = 1; @check(fn(value) {{ if value.number >= minimum {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let value: Item = {{number: {argument}}}; value.number }};"),
             format!("def minimum = 1; @check(fn(value) {{ if value >= minimum {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value)) }} }}) type Item = struct(Int); export def answer = Item({argument}).0;"),

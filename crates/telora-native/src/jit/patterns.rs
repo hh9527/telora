@@ -2,6 +2,61 @@ use super::*;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 
 impl Lower<'_, '_> {
+    pub(super) fn propagate(&mut self, node: HirId, depth: usize) -> EmitResult<Vec<ir::Value>> {
+        let operand = child(self.mir, node, Role::Operand)?;
+        let input = TypeKey::try_from(self.ty(operand)?)?;
+        let output = self.return_type;
+        let family = &self.mir.types[input.index()].constructor;
+        if !matches!(family, TypeConstructor::Option | TypeConstructor::Result)
+            || family != &self.mir.types[output.index()].constructor {
+            return Err("propagation has no sealed matching return family".into());
+        }
+        let success = (0..2).find(|&index| telora_core::type_image::builtin_variant_argument(family, index) == Some(0))
+            .ok_or("propagation family has no success variant")?;
+        let failure = 1 - success;
+        let value = self.expression(operand, depth + 1)?;
+        let data = self.stack_words(&value)?;
+        let yes = self.builder.create_block();
+        let no = self.builder.create_block();
+        let condition = self.builder.ins().icmp_imm_s(IntCC::Equal, value[2], success as i64);
+        self.builder.ins().brif(condition, yes, &[], no, &[]);
+        self.builder.switch_to_block(no);
+        self.builder.seal_block(no);
+        let payload = match (self.layouts.variant_payloads[input.index()][failure as usize], self.layouts.variant_payloads[output.index()][failure as usize]) {
+            (None, None) => Some(vec![]),
+            (Some(actual), Some(_)) if self.layouts.is_never(actual)? => {
+                self.report_failure(node, "uninhabited propagation failure branch was reached")?;
+                None
+            }
+            (Some(actual), Some(expected)) => {
+                let zero = self.builder.ins().iconst(types::I64, 0);
+                let payload = self.object(operand, helpers::PAYLOAD, actual, data, zero)?;
+                Some(self.adapt_metadata(actual, expected, payload)?)
+            }
+            _ => return Err("propagation failure payload differs from its sealed boundary".into()),
+        };
+        if let Some(payload) = payload {
+            let mut returned = self.enum_constructor(node, output, failure, &payload)?;
+            // The boundary's success type may differ. Repack the failure while
+            // retaining the original value's source, rather than stamping `?`.
+            returned[0] = value[0];
+            let end = self.builder.ins().band_imm_s(value[1], 0xffff_ffff);
+            let stamp = self.builder.ins().iconst(types::I64, i64::from(output.raw()) << 32);
+            returned[1] = self.builder.ins().bor(end, stamp);
+            self.write_return(&returned)?;
+        }
+        self.builder.switch_to_block(yes);
+        self.builder.seal_block(yes);
+        let actual = self.layouts.variant_payloads[input.index()][success as usize].ok_or("propagation success payload missing")?;
+        if self.layouts.is_never(actual)? {
+            self.report_failure(node, "uninhabited propagation success branch was reached")?;
+            return Err(EmitError::Diverged);
+        }
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let result = self.object(operand, helpers::PAYLOAD, actual, data, zero)?;
+        self.adapt_metadata(actual, TypeKey::try_from(self.ty(node)?)?, result)
+    }
+
     fn require_pattern(&mut self, condition: ir::Value, mismatch: ir::Block) {
         let matched = self.builder.create_block();
         self.builder

@@ -8,6 +8,11 @@ import "std/fmt" as fmt;
 type Node = struct {value: Int, children: Array(Node)};
 type Count = struct(Int);
 type Choice = enum {Empty, Item(Node)};
+type Box(T) = struct {value: T, label: String};
+type LabelPatch = struct {label: String};
+def replace: for(T) Fn(Box(T), T) -> Box(T) = fn(base, value) { base <~ {value: value} };
+@check(fn(value) { if value.number > 0 { Ok(()) } else { Err(blame!("positive required", value.number)) } })
+type Positive = struct {number: Int};
 def first: Node = {value: 1, children: [{value: 2, children: []}]};
 def second: Node = {value: 1, children: [{value: 2, children: []}]};
 def dictionary: Dict(Int) = {a: 1, b: 2};
@@ -21,8 +26,28 @@ def pattern = regex.compile("a+");
 def formatted = fmt.concat(["before", "after"], [fmt.from_int(42)]);
 def state = hash.update_string(hash.new(), "prefix");
 def error = blame!("same message");
+def option_text: Fn(Option(Int)) -> Option(String) = fn(value) { let number = value?; Some("success") };
+def result_text: Fn(Result(Int, String)) -> Result(String, String) = fn(value) { let number = value?; Ok("success") };
+def nested: Fn(Option(Int)) -> Option(Int) = fn(value) {
+    let inside: Fn() -> Option(Int) = fn() { let number = value?; Some(number + 1) };
+    let ignored = inside();
+    Some(42)
+};
+def always_ok: Fn(Result(Int, Never)) -> Result(Int, Never) = fn(value) { let number = value?; Ok(number + 1) };
+def always_none: Fn(Option(Never)) -> Option(String) = fn(value) { let impossible = value?; Some("unreachable") };
 def checks: Fn() -> Value = fn() {
+    let base: Box(Int) = {value: 1, label: "before"};
+    let patch: LabelPatch = {label: "after"};
+    let updated = replace(base, 42) <~ patch <~ {};
+    let positive: Positive = {number: 1};
     encode(Value.type, [
+        option_text(Some(1)) == Some("success"), option_text(None) == None,
+        result_text(Ok(1)) == Ok("success"), result_text(Err("failure")) == Err("failure"),
+        nested(None) == Some(42),
+        always_ok(Ok(41)) == Ok(42), always_none(None) == None,
+        updated.value == 42, updated.label == "after", base.value == 1, base.label == "before",
+        (positive <~ {number: 2}).number == 2,
+        (first <~ {children: []}).children == [],
         eq.equal(first, second), first == second,
         first != {value: 1, children: []},
         dictionary == reversed,

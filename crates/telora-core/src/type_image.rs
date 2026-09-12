@@ -32,7 +32,9 @@ pub(crate) fn builtin_variant(
     })
 }
 
-pub(crate) fn builtin_variant_argument(constructor: &TypeConstructor, index: u32) -> Option<usize> {
+/// Payload type-argument index for a canonical built-in variant. Backends use
+/// this sealed representation mapping without resolving names or types again.
+pub fn builtin_variant_argument(constructor: &TypeConstructor, index: u32) -> Option<usize> {
     use TypeConstructor as T;
     match (constructor, index) {
         (T::Option, 1) => Some(0),

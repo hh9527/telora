@@ -77,6 +77,8 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+真实 ontology `check --native --lib` 暴露出的 `<~` 和 `?` lowering 缺口已补齐。struct update 在编译期按 sealed 字段布局选择左值或 patch 字段，两个操作数按源码顺序各求值一次，保留 nominal 身份、字段来源与引用共享，并对新对象运行已有构造检查。`?` 按封闭的 Option/Result 家族分支；成功读取 payload，失败按返回边界的类型重新封装，保留原值来源并正常退出当前函数帧，不把语言 Err/None 当 VM 执行失败。泛型更新、空 patch、更新检查失败、跨成功类型传播和嵌套闭包边界已有验证；eval/eval-with 语言资产与默认后端对比通过。真实全模块验收仍继续，不因这两项修复宣称全部语言覆盖完成。
+
 std/test.should_ok/should_fail/should_fail_with/with_fixtures 已按 native 模块身份及封闭签名接通测试描述构造。CLI 验证包含会失败但不能在初始化执行的测试体、缺失但不能在初始化加载的 fixture、发布后的身份比较，以及空错误期望拒绝。
 
 BlameError 采用对象身份相等，重复引用相等、独立 blame 构造不相等，即使消息和来源相同也不按内容合并；发布转发表保留该身份关系。Float remainder 已通过独立原生 helper 接通 Rust 浮点 remainder 语义，拒绝非有限结果并保留运算来源，测试覆盖负数与负零。该项补齐早期进展记录中的 Float remainder 缺口。

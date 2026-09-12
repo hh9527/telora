@@ -1267,6 +1267,7 @@ impl Lower<'_, '_> {
         }
         match syntax.kind {
             HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node, depth),
+            HirKind::Propagate => self.propagate(node, depth),
             HirKind::Return => {
                 let expression = child(self.mir, node, Role::Value)?;
                 let value = self.expression(expression, depth + 1)?;
@@ -1314,6 +1315,7 @@ impl Lower<'_, '_> {
                 }
                 Err(EmitError::Diverged)
             }
+            HirKind::Binary(telora_core::ast::BinaryOperator::StructUpdate) => self.struct_update(node, depth),
             HirKind::Binary(operation) => self.binary(node, operation, depth),
             HirKind::Unary(operation) => self.unary(node, operation, depth),
             HirKind::String(ref text) => self.string(node, key, text),
@@ -1685,5 +1687,7 @@ mod patterns;
 mod properties;
 #[path = "jit/scalars.rs"]
 mod scalars;
+#[path = "jit/records.rs"]
+mod records;
 #[cfg(test)]
 mod tests;
