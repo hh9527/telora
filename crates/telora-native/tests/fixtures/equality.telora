@@ -47,6 +47,9 @@ def checks: Fn() -> Value = fn() {
     let checked: Box(Int) = candidate;
     let finished = finish(candidate);
     let early = finish_early(candidate);
+    let metadata: Array(Type) = [Int.type, String.type];
+    let tuple_metadata: (Type, Int) = (Int.type, 42);
+    let option_metadata: Option(Type) = Some(Int.type);
     encode(Value.type, [
         option_text(Some(1)) == Some("success"), option_text(None) == None,
         result_text(Ok(1)) == Ok("success"), result_text(Err("failure")) == Err("failure"),
@@ -54,6 +57,8 @@ def checks: Fn() -> Value = fn() {
         always_ok(Ok(41)) == Ok(42), always_none(None) == None,
         checked.value == 7, checked.label == "unchecked",
         finished == checked, early == checked,
+        metadata[0] == Int.type, metadata[1] == String.type,
+        tuple_metadata.0 == Int.type, option_metadata == Some(Int.type),
         dynamic.project_with(Box(Int).type, dynamic.pack(Box(Int).type, checked)) == Some(checked),
         updated.value == 42, updated.label == "after", base.value == 1, base.label == "before",
         (positive <~ {number: 2}).number == 2,

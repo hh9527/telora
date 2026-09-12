@@ -77,6 +77,8 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+Array、Tuple 与直接 enum payload 构造逐项消费封闭目标类型；TypeOf(T) 到 Type 的擦除仅修改静态标记，保留被表示的 TypeId 和来源。真实 ontology 测试模块及 spider-model 的 `Array(Type)` 初始化暴露了这项遗漏；语言对比已覆盖这三类容器边界。
+
 Native 已消费 MIR 的 value_adjustments（含泛型实例调整），在局部表达式和函数正常/显式返回边界执行构造检查后更新 TypeId stamp；不修改已有候选的来源或 backing。Unchecked struct 字面量从其封闭 owner 骨架读取字段，避免将包装类型的一个参数误作字段列表。类型收尾阶段也把带返回转换的闭包完整签名写入调整表，再物化泛型实例；seal 验证参数不变、返回 Unchecked(T) 对应 T，且返回边界的转换记录存在。Codegen 直接读取这个函数 TypeId，不自行拼接或推断签名。语言对比覆盖多字段候选、泛型正常/提前返回、检查失败及转换后的动态类型身份。
 
 真实 ontology `check --native --lib` 暴露出的 `<~` 和 `?` lowering 缺口已补齐。struct update 在编译期按 sealed 字段布局选择左值或 patch 字段，两个操作数按源码顺序各求值一次，保留 nominal 身份、字段来源与引用共享，并对新对象运行已有构造检查。`?` 按封闭的 Option/Result 家族分支；成功读取 payload，失败按返回边界的类型重新封装，保留原值来源并正常退出当前函数帧，不把语言 Err/None 当 VM 执行失败。泛型更新、空 patch、更新检查失败、跨成功类型传播和嵌套闭包边界已有验证；eval/eval-with 语言资产与默认后端对比通过。真实全模块验收仍继续，不因这两项修复宣称全部语言覆盖完成。

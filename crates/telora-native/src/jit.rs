@@ -905,9 +905,13 @@ impl Lower<'_, '_> {
                 return Err("native enum constructor requires one payload".into());
             }
             let payload = self.expression(arguments[0], depth + 1)?;
+            let owner = TypeKey::try_from(self.ty(node)?)?;
+            let expected = self.layouts.variant_payloads[owner.index()][index as usize]
+                .ok_or("sealed variant has no payload type")?;
+            let payload = self.fit_metadata(arguments[0], expected, payload)?;
             return self.enum_constructor(
                 node,
-                TypeKey::try_from(self.ty(node)?)?,
+                owner,
                 index,
                 &payload,
             );
@@ -1385,8 +1389,12 @@ impl Lower<'_, '_> {
                     .map(|e| e.node)
                     .collect::<Vec<_>>();
                 let mut values = Vec::new();
-                for &item in &items {
-                    values.extend(self.expression(item, depth + 1)?);
+                for (index, &item) in items.iter().enumerate() {
+                    let argument = if matches!(syntax.kind, HirKind::Array) { 0 } else { index };
+                    let expected = *self.mir.types[ty.index()].arguments.get(argument)
+                        .ok_or("aggregate item has no sealed target type")?;
+                    let value = self.expression(item, depth + 1)?;
+                    values.extend(self.fit_metadata(item, TypeKey::try_from(expected)?, value)?);
                 }
                 let data = self.stack_words(&values)?;
                 let count = self.builder.ins().iconst(types::I64, items.len() as i64);
