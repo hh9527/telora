@@ -4,6 +4,7 @@ use telora_core::mir::{PropertySite, SymbolId};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DemandKey {
     Export(SymbolId),
+    Instance(telora_core::mir::GenericInstanceId),
     Property {
         owner: TypeId,
         site: PropertySite,

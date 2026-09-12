@@ -19,7 +19,7 @@ impl functions::Functions {
         if !record.concrete || record.providers.is_empty() {
             return Err("property has no concrete provider chain".into());
         }
-        let slot = u32::try_from(self.globals.len() + self.properties.len())
+        let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len())
             .map_err(|_| "native demand index overflow")?;
         let function = module
             .declare_function(

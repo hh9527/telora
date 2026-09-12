@@ -692,6 +692,58 @@ fn metadata_uses_sealed_type_ids_and_survives_publication() {
 }
 
 #[test]
+fn module_initialization_consumes_closed_generic_instances() {
+    for (source, expected) in [
+        (
+            include_str!("../../tests/fixtures/generics.telora"),
+            "native generic text",
+        ),
+        (
+            include_str!("../../tests/fixtures/generic-initialization.telora"),
+            "selected",
+        ),
+    ] {
+        let (mir, root) = graph(source);
+        let module = mir.hir[root.index()].module;
+        let sealed = mir.seal().unwrap();
+        let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        compiled.initialize(&mut context).unwrap();
+        let symbol = *mir.exports[module.index()]
+            .iter()
+            .find(|s| mir.symbols[s.index()].name == "answer")
+            .unwrap();
+        let value = compiled.export(&mut context, symbol).unwrap();
+        let runtime = context.runtime().unwrap();
+        assert_eq!(runtime.field(&value, 0).unwrap().words()[2], 42);
+        assert_eq!(
+            runtime
+                .text(runtime.field(&value, 1).unwrap())
+                .unwrap()
+                .as_str(),
+            expected
+        );
+        assert!(
+            compiled
+                .demands
+                .iter()
+                .any(|(key, _)| matches!(key, crate::runtime::DemandKey::Instance(_)))
+        );
+        compiled.initialize(&mut context).unwrap();
+        let again = compiled.call(&mut context, &[]).unwrap();
+        let runtime = context.runtime().unwrap();
+        assert_eq!(runtime.field(&again, 0).unwrap().words()[2], 42);
+        assert_eq!(
+            runtime
+                .text(runtime.field(&again, 1).unwrap())
+                .unwrap()
+                .as_str(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn module_initialization_includes_unused_values_and_publishes_once() {
     let (mir, root) = graph("def unused = [1, 2]; def base = 40; export def answer = base + 2;");
     let module = mir.hir[root.index()].module;

@@ -100,6 +100,14 @@ pub struct GenericInstance {
     pub adjustments: Vec<(HirId, TypeId)>,
 }
 
+impl Mir {
+    /// Stable instance identities paired with their solved records.
+    pub fn generic_instances(&self) -> impl Iterator<Item = (GenericInstanceId, &GenericInstance)> {
+        self.generic_instances.iter().enumerate().map(|(index, instance)|
+            (GenericInstanceId(index as u32), instance))
+    }
+}
+
 impl GenericInstance {
     pub fn implementation(&self, node: HirId) -> Option<GenericInstanceId> {
         self.implementations.binary_search_by_key(&node, |(node, _)| *node).ok().map(|index| self.implementations[index].1)

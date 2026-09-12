@@ -1,0 +1,5 @@
+def choose: for(T) Fn(T, T) -> T = do {
+    let select_first = True;
+    fn(first, second) { if select_first { first } else { second } }
+};
+export def answer = (choose(42, 0), choose("selected", "other"));

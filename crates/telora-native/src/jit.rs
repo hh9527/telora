@@ -323,7 +323,8 @@ pub fn compile_modules(
     }
     let globals = globals.into_iter().collect::<Vec<_>>();
     let fallback = globals
-        .first()
+        .iter()
+        .find(|s| graph.symbol_generics[s.index()].is_empty())
         .and_then(|s| graph.symbols[s.index()].declarations.first())
         .copied();
     let roots = if roots.is_empty() {
@@ -403,7 +404,18 @@ fn compile_plan(
         functions.pending.push(root.into());
     }
     for &symbol in globals {
-        functions.global(graph, symbol, &mut module)?;
+        if graph.symbol_generics[symbol.index()].is_empty() {
+            functions.global(graph, symbol, &mut module)?;
+        }
+    }
+    let global_symbols = globals
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    for (id, instance) in graph.generic_instances() {
+        if instance.concrete && global_symbols.contains(&instance.symbol) {
+            functions.instance(graph, id, &mut module)?;
+        }
     }
     for &index in properties {
         functions.property(graph, index, &mut module)?;
@@ -455,6 +467,7 @@ fn compile_plan(
     let mut initializers = functions
         .globals
         .values()
+        .chain(functions.instances.values())
         .map(|&(slot, key, _)| {
             (
                 slot,
@@ -535,6 +548,9 @@ fn compile_plan(
                     (slot, crate::runtime::DemandKey::Export(symbol), ty)
                 })
                 .collect::<Vec<_>>();
+            for (&instance, &(slot, _, ty)) in &functions.instances {
+                globals.push((slot, crate::runtime::DemandKey::Instance(instance), ty));
+            }
             for (&index, &(slot, _)) in &functions.properties {
                 let record = &graph.properties[index];
                 globals.push((
@@ -715,6 +731,16 @@ impl Lower<'_, '_> {
             };
         }
     }
+    fn global_instance(&self, node: HirId) -> Option<telora_core::mir::GenericInstanceId> {
+        let id = self.instance_reference(node)?;
+        let instance = &self.mir.generic_instances[id.index()];
+        let symbol = &self.mir.symbols[instance.symbol.index()];
+        let module = symbol.module?;
+        (instance.concrete
+            && symbol.scope.is_some()
+            && symbol.scope == self.mir.module_scopes[module.index()])
+        .then_some(id)
+    }
     fn callable(&self, node: HirId, depth: usize) -> EmitResult<HirId> {
         if depth > 512 {
             return Err("native callable alias cycle".into());
@@ -780,43 +806,45 @@ impl Lower<'_, '_> {
         } else {
             None
         };
-        let (function, closure, output, expected) =
-            if local.is_some() || self.callable(callee_node, 0).is_err() {
-                let ty = self.ty(callee_node)?;
-                let signature = &self.mir.types[ty.index()];
-                if signature.constructor != TypeConstructor::Function {
-                    return Err("native indirect callee must have closed function type".into());
-                }
-                let (&output, parameters) = signature
-                    .arguments
-                    .split_last()
-                    .ok_or("native function signature missing result")?;
-                let output = TypeKey::try_from(output)?;
-                let expected = parameters
-                    .iter()
-                    .copied()
-                    .map(TypeKey::try_from)
-                    .collect::<Result<Vec<_>>>()?;
-                let closure = match local {
-                    Some(value) => value,
-                    None => self.expression(callee_node, depth + 1)?,
-                };
-                let function = self
-                    .functions
-                    .dispatcher(TypeKey::try_from(ty)?, self.module)?;
-                (function, closure, output, expected)
-            } else {
-                let callee = functions::Key {
-                    marker_provider: false,
-                    initializer: false,
-                    node: self.callable(callee_node, 0)?,
-                    instance: self.instance_reference(callee_node),
-                };
-                let function = self.functions.declare(self.mir, callee, self.module)?;
-                let closure = self.function_value(callee_node, callee)?;
-                let (_, _, output, expected) = functions::shape(self.mir, self.layouts, callee)?;
-                (function, closure, output, expected)
+        let (function, closure, output, expected) = if local.is_some()
+            || self.global_instance(callee_node).is_some()
+            || self.callable(callee_node, 0).is_err()
+        {
+            let ty = self.ty(callee_node)?;
+            let signature = &self.mir.types[ty.index()];
+            if signature.constructor != TypeConstructor::Function {
+                return Err("native indirect callee must have closed function type".into());
+            }
+            let (&output, parameters) = signature
+                .arguments
+                .split_last()
+                .ok_or("native function signature missing result")?;
+            let output = TypeKey::try_from(output)?;
+            let expected = parameters
+                .iter()
+                .copied()
+                .map(TypeKey::try_from)
+                .collect::<Result<Vec<_>>>()?;
+            let closure = match local {
+                Some(value) => value,
+                None => self.expression(callee_node, depth + 1)?,
             };
+            let function = self
+                .functions
+                .dispatcher(TypeKey::try_from(ty)?, self.module)?;
+            (function, closure, output, expected)
+        } else {
+            let callee = functions::Key {
+                marker_provider: false,
+                initializer: false,
+                node: self.callable(callee_node, 0)?,
+                instance: self.instance_reference(callee_node),
+            };
+            let function = self.functions.declare(self.mir, callee, self.module)?;
+            let closure = self.function_value(callee_node, callee)?;
+            let (_, _, output, expected) = functions::shape(self.mir, self.layouts, callee)?;
+            (function, closure, output, expected)
+        };
         let environment = self.stack_words(&closure)?;
         let arguments = self.mir.hir[node.index()]
             .children
@@ -1047,6 +1075,16 @@ impl Lower<'_, '_> {
     fn global_value(&mut self, node: HirId, symbol: SymbolId) -> EmitResult<Vec<ir::Value>> {
         let expected = TypeKey::try_from(self.ty(node)?)?;
         let (slot, function, actual) = self.functions.global(self.mir, symbol, self.module)?;
+        let value = self.demand(node, slot, function, actual)?;
+        self.adapt_metadata(actual, expected, value)
+    }
+    fn demand(
+        &mut self,
+        node: HirId,
+        slot: u32,
+        function: cranelift_module::FuncId,
+        ty: TypeKey,
+    ) -> EmitResult<Vec<ir::Value>> {
         let function = self
             .module
             .declare_func_in_func(function, self.builder.func);
@@ -1055,8 +1093,7 @@ impl Lower<'_, '_> {
             .ins()
             .func_addr(self.module.target_config().pointer_type(), function);
         let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
-        let value = self.object(node, helpers::DEMAND, actual, address, slot)?;
-        self.adapt_metadata(actual, expected, value)
+        self.object(node, helpers::DEMAND, ty, address, slot)
     }
     fn expression(&mut self, node: HirId, depth: usize) -> EmitResult<Vec<ir::Value>> {
         if depth > 512 {
@@ -1065,6 +1102,16 @@ impl Lower<'_, '_> {
         let ty = self.ty(node)?;
         let key = TypeKey::try_from(ty)?;
         let syntax = &self.mir.hir[node.index()];
+        if matches!(
+            syntax.kind,
+            HirKind::Variable(_) | HirKind::Field | HirKind::TypeApply
+        ) && let Some(instance) = self.global_instance(node)
+        {
+            let (slot, initializer, actual) =
+                self.functions.instance(self.mir, instance, self.module)?;
+            let value = self.demand(node, slot, initializer, actual)?;
+            return self.adapt_metadata(actual, key, value);
+        }
         if matches!(syntax.kind, HirKind::Field)
             && self.selected_member(node).is_none()
             && self.mir.types[ty.index()].constructor != TypeConstructor::Function
@@ -1348,12 +1395,19 @@ impl Lower<'_, '_> {
                 // constants. Never recognize prelude names or execute a provider.
                 for &declaration in &self.mir.symbols[symbol.index()].declarations {
                     if let Ok(value) = child(self.mir, declaration, Role::Value)
-                        && matches!(
-                            self.mir.member_selections[value.index()],
-                            Some(MemberSelection::Boolean(_))
-                        )
+                        && let Some(MemberSelection::Boolean(boolean)) =
+                            self.mir.member_selections[value.index()]
                     {
-                        return self.expression(value, depth + 1);
+                        let value = self.layouts.value(
+                            key,
+                            Origin::from_loc(Some(self.mir.hir[value.index()].location)),
+                            &[u64::from(boolean)],
+                        )?;
+                        return Ok(value
+                            .words()
+                            .iter()
+                            .map(|&word| self.builder.ins().iconst(types::I64, word as i64))
+                            .collect());
                     }
                 }
                 self.global_value(node, symbol)

@@ -57,6 +57,7 @@ pub(super) struct Functions {
     pub pending: Vec<Key>,
     pub captures: BTreeMap<Key, Vec<(SymbolId, TypeKey)>>,
     pub globals: BTreeMap<SymbolId, (u32, Key, TypeKey)>,
+    pub instances: BTreeMap<GenericInstanceId, (u32, Key, TypeKey)>,
     pub properties: BTreeMap<usize, (u32, FuncId)>,
     dispatchers: BTreeMap<TypeKey, FuncId>,
     pub(super) signature: ir::Signature,
@@ -68,6 +69,7 @@ impl Functions {
             pending: vec![],
             captures: BTreeMap::new(),
             globals: BTreeMap::new(),
+            instances: BTreeMap::new(),
             properties: BTreeMap::new(),
             dispatchers: BTreeMap::new(),
             signature,
@@ -91,7 +93,7 @@ impl Functions {
         let ty = TypeKey::try_from(known(graph, declaration)?)?;
         let mut key = Key::from(declaration);
         key.initializer = is_native(&graph.hir[declaration.index()].kind);
-        let slot = u32::try_from(self.globals.len() + self.properties.len())
+        let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len())
             .map_err(|_| "native global slot overflow")?;
         let function = if let Some(&function) = self.registered.get(&key) {
             function
@@ -108,6 +110,44 @@ impl Functions {
             function
         };
         self.globals.insert(symbol, (slot, key, ty));
+        Ok((slot, function, ty))
+    }
+    pub fn instance(
+        &mut self,
+        graph: &Mir,
+        instance: GenericInstanceId,
+        module: &mut JITModule,
+    ) -> Result<(u32, FuncId, TypeKey)> {
+        if let Some(&(slot, key, ty)) = self.instances.get(&instance) {
+            return Ok((slot, self.registered[&key], ty));
+        }
+        let selected = &graph.generic_instances[instance.index()];
+        if !selected.concrete {
+            return Err("native initialization needs a concrete generic instance".into());
+        }
+        let node = *graph.symbols[selected.symbol.index()]
+            .declarations
+            .last()
+            .ok_or("native instance has no declaration")?;
+        let key = Key {
+            node,
+            instance: Some(instance),
+            initializer: true,
+            marker_provider: false,
+        };
+        let ty = TypeKey::try_from(key.ty(graph, node)?)?;
+        let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len())
+            .map_err(|_| "native instance slot overflow")?;
+        let function = module
+            .declare_function(
+                &format!("telora_instance_init_{}", instance.index()),
+                Linkage::Local,
+                &self.signature,
+            )
+            .map_err(|e| e.to_string())?;
+        self.registered.insert(key, function);
+        self.pending.push(key);
+        self.instances.insert(instance, (slot, key, ty));
         Ok((slot, function, ty))
     }
     pub fn dispatcher(&mut self, ty: TypeKey, module: &mut JITModule) -> Result<FuncId> {
