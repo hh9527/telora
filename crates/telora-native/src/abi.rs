@@ -398,8 +398,8 @@ impl CallContext {
         Status::Success
     }
     /// One budget spans initialization, demand callbacks and entry execution.
-    /// Native fuel counts executed HIR expressions and metered helper work,
-    /// not machine instructions.
+    /// Generated functions charge at invocation, not at each HIR expression.
+    /// Some runtime helpers still carry finer-grained legacy work charges.
     pub fn with_fuel(mut self, fuel: u64) -> Self {
         self.fuel = Some(fuel);
         self

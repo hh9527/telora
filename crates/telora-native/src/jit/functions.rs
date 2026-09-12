@@ -509,6 +509,9 @@ pub(super) fn emit(
             return_type: output,
         };
         lower.enter_call(key.node);
+        // Charge once per generated function/initializer invocation. Straight-line
+        // expression lowering must not turn fuel into an instruction cost model.
+        lower.charge_fuel(key.node);
         for (index, (symbol, ty)) in lower
             .functions
             .captures

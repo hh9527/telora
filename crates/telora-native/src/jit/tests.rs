@@ -1255,6 +1255,15 @@ fn native_call_depth_unwinds_direct_and_indirect_failures() {
 
 #[test]
 fn native_fuel_is_shared_across_calls_and_stops_recursion_once() {
+    // Finite scalar expressions and untaken branches do not add fuel charges.
+    // The host invocation itself consumes one unit, regardless of HIR size.
+    let (linear, linear_root) = graph("export def answer = do { let a = 6 * 7; let b = a - 2; if b == 40 { b + 2 } else { 1 / 0 } };");
+    let compiled_linear = compile(&linear.seal().unwrap(), linear_root).unwrap();
+    let mut linear_context = CallContext::default().with_fuel(1);
+    assert_eq!(compiled_linear.call(&mut linear_context, &[]).unwrap().words()[2], 42);
+    assert_eq!(linear_context.remaining_fuel(), Some(0));
+    assert_eq!(linear_context.call_depth(), 0);
+
     let (mir, root) = graph("export def answer = 42;");
     let sealed = mir.seal().unwrap();
     let compiled = compile(&sealed, root).unwrap();

@@ -40,7 +40,7 @@ impl Lower<'_, '_> {
         if self.guarded { self.call_guard_helper(self.function_key.node, helpers::LEAVE_CALL); }
         self.builder.ins().return_(&[status]);
     }
-    pub(super) fn charge_fuel(&mut self, node: HirId) -> EmitResult<()> {
+    pub(super) fn charge_fuel(&mut self, node: HirId) {
         let operation = self.builder.ins().iconst(types::I32, helpers::FUEL as i64);
         let ty = self.builder.ins().iconst(types::I32, 0);
         let origin = Origin::from_loc(Some(self.mir.hir[node.index()].location)).words();
@@ -58,7 +58,6 @@ impl Lower<'_, '_> {
         self.return_status(status);
         self.builder.switch_to_block(next);
         self.builder.seal_block(next);
-        Ok(())
     }
     fn scalar_result(&mut self, node: HirId, bits: ir::Value) -> EmitResult<Vec<ir::Value>> {
         let ty = TypeKey::try_from(self.ty(node)?)?;
