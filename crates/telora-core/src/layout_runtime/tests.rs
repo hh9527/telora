@@ -151,9 +151,8 @@ fn strings_and_nested_aggregates_use_fixed_element_stride_without_deep_copy() {
     assert!(a.array(ARRAY, [0; 3], &[short]).is_err());
 }
 #[test]
-fn dictionary_handles_collisions_updates_and_content_equal_keys() {
+fn dictionary_sorts_columns_and_preserves_sources_on_updates() {
     let mut a = arena();
-    // These differ by 16 in low bits and collide for a two-entry table.
     let key = a.string(STRING, [1, 0, 1], "a").unwrap();
     let collision = a.string(STRING, [2, 0, 1], "q").unwrap();
     let one = a.scalar(INT, [3, 0, 1], 1).unwrap();
@@ -162,11 +161,17 @@ fn dictionary_handles_collisions_updates_and_content_equal_keys() {
         .dict(
             DICT,
             [5, 0, 2],
-            &[(key.clone(), one.clone()), (collision.clone(), two.clone())],
+            &[(collision.clone(), two.clone()), (key.clone(), one.clone())],
         )
         .unwrap();
     assert_eq!(a.dict_len(&dict).unwrap(), 2);
-    assert_eq!(a.dicts.get(0).unwrap().len() * 8, 160); // 16 + 2*56 + 4*8
+    assert_eq!(dict.words.len(), 4);
+    assert_eq!(a.arrays.get(dict.words[2] as u32).unwrap().len() * 8, 64);
+    assert_eq!(a.arrays.get(dict.words[3] as u32).unwrap().len() * 8, 48);
+    assert_eq!(
+        a.text(a.dict_entry(&dict, 0).unwrap().0).unwrap().as_str(),
+        "a"
+    );
     assert_eq!(
         a.scalar_bits(a.dict_get(&dict, &collision).unwrap().unwrap())
             .unwrap(),
@@ -199,6 +204,53 @@ fn dictionary_handles_collisions_updates_and_content_equal_keys() {
     assert!(a.dict(DICT, [0; 3], &[(key, same_key)]).is_err());
 }
 #[test]
+fn dictionary_order_is_independent_of_construction_and_search_handles_boundaries() {
+    let mut a = arena();
+    let mut pairs = Vec::new();
+    for (i, text) in ["", "a", "aa", "z", "é", "中"].iter().enumerate() {
+        pairs.push((
+            a.string(STRING, [0; 3], text).unwrap(),
+            a.scalar(INT, [0; 3], i as u64).unwrap(),
+        ));
+    }
+    let forward = a.dict(DICT, [0; 3], &pairs).unwrap();
+    pairs.reverse();
+    let reverse = a.dict(DICT, [0; 3], &pairs).unwrap();
+    for i in 0..pairs.len() {
+        let (key, value) = a.dict_entry(&forward, i).unwrap();
+        let (other_key, other_value) = a.dict_entry(&reverse, i).unwrap();
+        assert_eq!(key.words(), other_key.words());
+        assert_eq!(value.words(), other_value.words());
+        assert_eq!(
+            a.dict_get(&reverse, &key.to_owned())
+                .unwrap()
+                .unwrap()
+                .words(),
+            value.words()
+        );
+    }
+    for text in ["ab", "zz", "末尾"] {
+        let key = a.string(STRING, [0; 3], text).unwrap();
+        assert!(a.dict_get(&forward, &key).unwrap().is_none());
+    }
+    let key = a.string(STRING, [0; 3], "b").unwrap();
+    let value = a.scalar(INT, [0; 3], 99).unwrap();
+    let inserted = a.dict_insert(&forward, &key, &value, [0; 3]).unwrap();
+    assert_eq!(
+        a.text(a.dict_entry(&inserted, 3).unwrap().0)
+            .unwrap()
+            .as_str(),
+        "b"
+    );
+    assert_eq!(a.dict_len(&forward).unwrap(), 6);
+    let empty = a.dict(EMPTY_DICT, [0; 3], &[]).unwrap();
+    assert!(a.dict_get(&empty, &key).unwrap().is_none());
+    assert!(a.dict_entry(&empty, 0).is_err());
+    let before = a.arrays.entries.len();
+    assert!(a.dict(EMPTY_DICT, [0; 3], &[(key, value)]).is_err());
+    assert_eq!(a.arrays.entries.len(), before);
+}
+#[test]
 fn dictionary_references_arrays_and_heap_strings_without_copying_their_contents() {
     let mut a = arena();
     let k1 = a
@@ -216,7 +268,7 @@ fn dictionary_references_arrays_and_heap_strings_without_copying_their_contents(
     assert_eq!(found.words(), array.as_ref().words());
     let cloned = found.to_owned();
     assert_eq!(a.scalar_bits(a.array_get(&cloned, 0).unwrap()).unwrap(), 1);
-    assert_eq!(a.arrays.entries.len(), 1);
+    assert_eq!(a.arrays.entries.len(), 3); // original array plus two dictionary columns
     assert_eq!(a.strings.entries.len(), 2);
 }
 #[test]

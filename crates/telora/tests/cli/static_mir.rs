@@ -976,7 +976,10 @@ fn concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types() {
     assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Function" && r["entry"]["layout"]["shape"]["table"] == "ClosureEnvTable"));
     assert!(entries.iter().any(|r| r["type_name"] == "Array(Never)" && r["entry"]["object"]["element_stride"] == 0));
     assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Native" && r["entry"]["object"]["bytes"] == 8));
-    assert!(entries.iter().any(|r| r["type_name"] == "Dict(Int)" && r["entry"]["object"]["element_stride"] == 56));
+    let dict = entries.iter().find(|r| r["type_name"] == "Dict(Int)").unwrap();
+    assert_eq!(dict["entry"]["object"]["element_stride"], 24);
+    assert_eq!(dict["entry"]["layout"]["shape"]["value_bytes"], 32);
+    assert_eq!(dict["entry"]["layout"]["shape"]["table"], "ArrayTable");
     for row in entries {
         if matches!(row["entry"]["constructor"].as_str(), Some("Meta" | "Namespace" | "TypeList" | "PropertyBound" | "TypeFunction" | "Bound")) {
             assert_eq!(row["entry"]["layout"]["status"], "compile_time");

@@ -74,7 +74,7 @@ TypeId 沿用 SealedMir 的最终身份，不建立运行时重新推断得到�
 | String | inline 或 HeapId 与范围、标志 | 2 words | 4 words |
 | Array | HeapId、start、end 各 u32 | 2 words | 4 words |
 | Record | HeapId | 1 word | 3 words |
-| Dict | HeapId | 1 word | 3 words |
+| Dict | keys HeapId + length + values HeapId + reserved | 2 words | 4 words |
 | 无 payload enum | tag | 1 word | 3 words |
 
 Array 的描述实际占 12 字节、对齐 4 字节，独立 data 区向 word 取整后占 16 字节。不得将“Array 两 word”误读为包含来源和类型头的总大小。
@@ -129,7 +129,6 @@ dyn/未来 trait object 也不因增加 TypeId 头部就自动解决不等宽 pa
 Heap {
     strings: StringTable,
     records: RecordTable,
-    dicts:   DictTable,
     arrays:  ArrayTable,
 }
 ```
@@ -150,7 +149,7 @@ TypeId → 具体布局 → 解释对象
 | --- | --- | --- |
 | StringTable | 条目定位连续字节存储 | 选择 String 操作和表示规则 |
 | RecordTable | 条目定位按字段排列的完整值存储 | 确定字段类型与偏移 |
-| DictTable | 专门的哈希索引与键值存储 | 确定键值表示和操作 |
+| Dict 两列 | 复用 ArrayTable 的两个完整数组槽位 | keys 有序唯一，values 同下标对应 |
 | ArrayTable | 条目定位连续元素存储 | 确定元素布局和步长 |
 
 分类表不要求每个对象独立分配，也不要求所有表使用相同条目结构。表内可以保存必要的存储位置、长度等管理信息；不为了通用对象分派重复保存 kind 标签或统一 LayoutId。通用遍历接收带类型的值或相应类型上下文。
@@ -311,13 +310,13 @@ ValueTable 的每个对象从偏移 0 保存一个完整具体值，大小由其
 
 #### Dict
 
-后续设计决议：Dict 改为有序 keys 与对应 values 两个数组引用，复用 ArrayTable，按键二分查找。keys 严格递增且唯一，两列长度相同、下标对应；遍历按键顺序，与构建顺序无关。String 键采用与 locale 无关的 UTF-8 字节字典序。插入和删除同步更新两列。目标 data 为两个 word；数组引用的具体编码尚待落实，不能直接把两个现有三 u32 slice 描述当作两个 word。以下哈希布局是当前实验实现记录，将由该方案替代；布局计算器和实验 Dict 尚未迁移。
+Dict 的 data 固定 16 字节：keys_heap:u32、length:u32、values_heap:u32、reserved:u32（必须为 0）；加上值头部共 32 字节。两个 HeapId 引用 ArrayTable 中的完整数组槽位，不携带 slice 起止偏移，不再建立 DictTable。
 
-DictTable 对象头占 16 字节：len/capacity/buckets/reserved 各 u32。entries 从偏移 16 开始，capacity 个槽，每槽为 String 完整键（32 字节）加完整值；只遍历前 len 个已初始化槽。桶区从 align8(16+capacity*entry_stride) 开始，buckets 个 8 字节桶（hash:u32、entry_plus_one:u32，0 表示空桶）。
+本次迁移验证：`cargo test -p telora-core --features experimental-layout-runtime --lib layout` 通过 21 项测试（其中实验存储 8 项）；CLI 的 `concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types` 通过，确认 JSON 报告采用 32 字节完整 Dict 值及 ArrayTable 两列布局。
 
-采用插入顺序 entries 和线性探测桶，buckets 是不小于 2*capacity 的二次幂；空表可取 capacity=0、buckets=1。桶只保存索引，不复制键值。哈希比较最终依靠 String 内容相等；具体 hash 算法不改变布局，不承诺当前 VM 已采用该结构。
+keys 严格递增且唯一，String 键采用与 locale 无关的 UTF-8 字节字典序；values 与 keys 等长且下标对应。遍历按键顺序，与构建顺序无关。查找使用二分搜索 O(log n)。批量构建稳定排序，重复键保留首次 key 的来源，最后一次 value 覆盖此前值；插入、删除同步更新两列，当前实验重建两列，复制完整值描述但不深复制引用对象。
 
-对象大小公式为 align8(16+capacity*entry_stride)+8*buckets。长度不得超过容量。Dict(Never) 只能为空，不能实际存储无值类型。扩容、删除时桶重建等运行策略留给未来实现，不改变上述稳定存储形状。
+keys 槽位占 length*32 字节，values 槽位占 length*value_stride 字节；Dictionary 的 allocation_bytes 返回两列总和，不含 Rust Vec 元数据和分配器开销。Dict(Never) 只能为空。布局计算器和隔离实验实现均已采用本规则，现有 VM 未接入。
 
 #### Native 不透明资源
 
@@ -327,9 +326,9 @@ DictTable 对象头占 16 字节：len/capacity/buckets/reserved 各 u32。entri
 
 #### 可计算的对象描述与引用遍历
 
-报告的 storage 字段是带标签的 Fixed/Sequence/Dictionary/Captures/FullValue 描述；`Storage::allocation_bytes` 根据具体长度、容量、捕获值大小或完整值大小计算对象字节数并验证约束。storage_rule 提供对应文字说明，不以说明文本代替实际计算规则。
+报告的 storage 字段是带标签的 Fixed/Sequence/Dictionary/Captures/FullValue 描述；`Storage::allocation_bytes` 根据具体长度、捕获值大小或完整值大小计算对象字节数并验证约束。storage_rule 提供对应文字说明，不以说明文本代替实际计算规则。
 
-固定对象通过成员 TypeId 与偏移遍历，序列按元素类型和步长遍历，Dict 只遍历 live entries，闭包通过 offsets 和捕获值头遍历，ValueTable 通过值头遍历；native 通过注册 host trace。所有分类表的 HeapId 都需要所属 world 上下文，实际发布/复制仍不在本轮实施范围内。
+固定对象通过成员 TypeId 与偏移遍历，序列按元素类型和步长遍历，Dict 分别遍历 keys 和 values 两列，闭包通过 offsets 和捕获值头遍历，ValueTable 通过值头遍历；native 通过注册 host trace。所有分类表的 HeapId 都需要所属 world 上下文，实际发布/复制仍不在本轮实施范围内。
 
 ### #178 验收记录
 
@@ -357,11 +356,11 @@ DictTable 对象头占 16 字节：len/capacity/buckets/reserved 各 u32。entri
 - 每个值按 loc[3]+TypeId+data 编码为 word 描述；arena 身份是访问上下文，不进入 ABI 字节。跨 arena 引用显式拒绝，尚无 world 发布或复制机制。
 - Tuple/Record 共用固定字段的构造、读取和更新实现，以及同一个 RecordTable；不同对象占用不同槽位，TypeId 保留各自类型身份。空 Tuple/Unit 仅有 16 字节头部，无堆对象。
 - Array 按完整元素步长连续存储，slice 只改变 HeapId/start/end 描述；索引返回借用的 ValueRef。更新生成新容器，保留旧容器和元素来源。
-- Dict 按头部、entries、buckets 布局构造；支持内容查找、碰撞、覆盖、删除和稳定插入顺序。实验采用 FNV-1a 的 u32 hash，桶内仍以 String 内容确认相等。
+- Dict 复用 ArrayTable 两列槽位，支持有序遍历、二分查找、覆盖和删除；不保留哈希桶或独立 DictTable。
 - String 作为字段和 Dict 键的配套类型支持 inline/heaped；普通标量保存原始 u64 位模式。分类表采用 `Vec<Item>` 槽位，HeapId 直接索引 Item；每个 Item 独立拥有自己的变长缓冲区。
 - Owned Value 只拥有值描述，克隆不递归复制引用对象；读取字段、数组元素和字典结果借用 arena 数据。持久更新目前重建容器的浅层描述，不是运行时性能优化实现。
 
-存储策略修订：分类表管理固定宽度的 Item 槽位，不再通过 Span 管理共享大缓冲区。Tuple/Record/Array/Dict 的 Item 持有自己的 `Vec<u64>`，RawStringTable 的 Item 持有自己的 `Vec<u8>`；创建 word 对象时直接移入已构建的 Vec，避免再复制一次。表扩容只移动 Item 描述，不搬迁已有对象内容，HeapId 保持不变。槽位回收、复用及旧引用失效规则留待后续确定，本轮仍为追加槽位。
+存储策略修订：分类表管理固定宽度的 Item 槽位，不再通过 Span 管理共享大缓冲区。Tuple/Record/Array（含 Dict 两列）的 Item 持有自己的 `Vec<u64>`，RawStringTable 的 Item 持有自己的 `Vec<u8>`；创建 word 对象时直接移入已构建的 Vec，避免再复制一次。表扩容只移动 Item 描述，不搬迁已有对象内容，HeapId 保持不变。槽位回收、复用及旧引用失效规则留待后续确定，本轮仍为追加槽位。
 
 验证仅为新模块单元测试：
 
@@ -370,4 +369,4 @@ cargo test -p telora-core --features experimental-layout-runtime layout_runtime
 cargo check -p telora-core --no-default-features
 ```
 
-覆盖 Tuple/Record 字段偏移及共享表的独立槽位 ID、空 Tuple、来源保留、嵌套 slice 与越界、持久更新、Dict 碰撞与重复键、长字符串和嵌套数组的浅层共享、跨 arena 拒绝。没有接入 codegen、初始化、CLI 或现有 VM，也未进行性能评价。本实验不实现语言级 @check、arena 发布/回收或全部候选类型。
+覆盖 Tuple/Record 字段偏移及共享表的独立槽位 ID、空 Tuple、来源保留、嵌套 slice 与越界、持久更新、Dict 构建顺序无关、二分查找边界与重复键、长字符串和嵌套数组的浅层共享、跨 arena 拒绝。没有接入 codegen、初始化、CLI 或现有 VM，也未进行性能评价。本实验不实现语言级 @check、arena 发布/回收或全部候选类型。

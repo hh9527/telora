@@ -46,20 +46,14 @@ pub struct Object {
 pub enum Storage {
     Fixed { bytes: u64 },
     Sequence { stride: u64, empty_only: bool },
-    Dictionary { entry_stride: u64, empty_only: bool },
+    Dictionary { value_stride: u64, empty_only: bool },
     Captures,
     FullValue,
 }
 pub enum Extent<'a> {
     Fixed,
-    Sequence {
-        length: u32,
-    },
-    Dictionary {
-        length: u32,
-        capacity: u32,
-        buckets: u32,
-    },
+    Sequence { length: u32 },
+    Dictionary { length: u32 },
     Captures(&'a [u64]),
     FullValue(u64),
 }
@@ -79,26 +73,15 @@ impl Storage {
             }
             (
                 Self::Dictionary {
-                    entry_stride,
+                    value_stride,
                     empty_only,
                 },
-                Extent::Dictionary {
-                    length,
-                    capacity,
-                    buckets,
-                },
+                Extent::Dictionary { length },
             ) => {
-                if length > capacity
-                    || (*empty_only && length != 0)
-                    || !buckets.is_power_of_two()
-                    || u64::from(buckets) < 2 * u64::from(capacity)
-                {
+                if *empty_only && length != 0 {
                     return Err("invalid dictionary extent".into());
                 }
-                add(
-                    align(add(16, mul(*entry_stride, capacity.into())?)?, 8)?,
-                    mul(8, buckets.into())?,
-                )
+                mul(add(32, *value_stride)?, length.into())
             }
             (Self::Captures, Extent::Captures(sizes)) => {
                 let count = u32::try_from(sizes.len()).map_err(|_| "capture count overflow")?;
@@ -480,7 +463,12 @@ impl<'a> Builder<'a> {
                 )?,
                 T::Bytes => shape(12, 4, Some("BytesTable"), "heap:u32,start:u32,end:u32")?,
                 T::Array => shape(12, 4, Some("ArrayTable"), "heap:u32,start:u32,end:u32")?,
-                T::Dict => shape(4, 4, Some("DictTable"), "heap:u32")?,
+                T::Dict => shape(
+                    16,
+                    4,
+                    Some("ArrayTable"),
+                    "keys_heap:u32,length:u32,values_heap:u32,reserved:u32=0",
+                )?,
                 T::Record(_) => shape(4, 4, Some("RecordTable"), "heap:u32")?,
                 T::Tuple if ty.arguments.is_empty() => shape(0, 1, None, "unit")?,
                 T::Tuple => shape(4, 4, Some("RecordTable"), "heap:u32")?,
@@ -600,7 +588,7 @@ impl<'a> Builder<'a> {
                 };
                 o.storage_rule="byte_length bytes; table entry stores byte_length:u32; slice bounds checked against byte_length".into();
             }
-            "ArrayTable" => {
+            "ArrayTable" if ty.constructor != T::Dict => {
                 let t = ty.arguments[0];
                 let stride = self.stride(t)?;
                 o.element_type = Some(t.index());
@@ -633,24 +621,17 @@ impl<'a> Builder<'a> {
                 o.storage = Storage::Fixed { bytes: offset };
                 o.storage_rule="fixed fields in declaration/canonical MIR order, each with its own full header".into();
             }
-            "DictTable" => {
+            "ArrayTable" => {
                 let t = ty.arguments[0];
                 let stride = self.stride(t)?;
                 o.element_type = Some(t.index());
-                o.element_stride = Some(add(32, stride)?);
+                o.element_stride = Some(stride);
                 o.storage = Storage::Dictionary {
-                    entry_stride: add(32, stride)?,
+                    value_stride: stride,
                     empty_only: stride == 0,
                 };
                 o.storage_rule = format!(
-                    "header 16 bytes: len:u32,capacity:u32,buckets:u32,reserved:u32; entries at 16: capacity * {} bytes (String key full value 32 bytes + full value); bucket array at align8(16+capacity*{}): buckets * 8 bytes (hash:u32,entry_plus_one:u32; 0=empty); linear probing, buckets power of two and >=2*capacity, insertion order entries; only len entries live{}",
-                    32 + stride,
-                    32 + stride,
-                    if stride == 0 {
-                        "; len must be 0 for uninhabited values"
-                    } else {
-                        ""
-                    }
+                    "two whole ArrayTable slots; keys: length * 32 bytes (full String values), strictly increasing UTF-8 byte order; values: length * {stride} bytes; equal column lengths; binary search; no slice offsets; reserved=0; uninhabited values require length=0"
                 );
             }
             "ClosureEnvTable" => {
@@ -829,24 +810,20 @@ mod tests {
     #[test]
     fn storage_extents_are_checked() {
         let dict = Storage::Dictionary {
-            entry_stride: 56,
+            value_stride: 24,
             empty_only: false,
         };
         assert_eq!(
-            dict.allocation_bytes(Extent::Dictionary {
-                length: 2,
-                capacity: 4,
-                buckets: 8
-            })
-            .unwrap(),
-            304
+            dict.allocation_bytes(Extent::Dictionary { length: 2 })
+                .unwrap(),
+            112
         );
         assert!(
-            dict.allocation_bytes(Extent::Dictionary {
-                length: 2,
-                capacity: 1,
-                buckets: 8
-            })
+            Storage::Dictionary {
+                value_stride: 0,
+                empty_only: true
+            }
+            .allocation_bytes(Extent::Dictionary { length: 1 })
             .is_err()
         );
         assert_eq!(

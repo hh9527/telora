@@ -1,7 +1,7 @@
 //! Isolated storage experiment for RFC 0281. Never used by the existing VM.
 //! All words encode the candidate little-endian ABI; no pointer casts/unsafe.
 use crate::{
-    candidate_layout::{self, Extent, State, Storage},
+    candidate_layout::{self, State},
     mir::{SealedMir, TypeConstructor as T, TypeId},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -141,7 +141,6 @@ pub struct Arena {
     strings: RawStringTable,
     records: WordTable,
     arrays: WordTable,
-    dicts: WordTable,
 }
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
 impl Arena {
@@ -199,7 +198,6 @@ impl Arena {
             strings: RawStringTable::default(),
             records: WordTable::default(),
             arrays: WordTable::default(),
-            dicts: WordTable::default(),
         })
     }
     fn layout(&self, ty: TypeId) -> Result<&Layout> {
