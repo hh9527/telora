@@ -3,6 +3,26 @@ use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use telora_core::ast::{BinaryOperator as B, UnaryOperator as U};
 
 impl Lower<'_, '_> {
+    pub(super) fn charge_fuel(&mut self, node: HirId) -> EmitResult<()> {
+        let operation = self.builder.ins().iconst(types::I32, helpers::FUEL as i64);
+        let ty = self.builder.ins().iconst(types::I32, 0);
+        let origin = Origin::from_loc(Some(self.mir.hir[node.index()].location)).words();
+        let loc0 = self.builder.ins().iconst(types::I64, (u64::from(origin[0]) | (u64::from(origin[1]) << 32)) as i64);
+        let end = self.builder.ins().iconst(types::I32, origin[2] as i64);
+        let null = self.builder.ins().iconst(self.module.target_config().pointer_type(), 0);
+        let count = self.builder.ins().iconst(types::I64, 1);
+        let call = self.builder.ins().call(self.object_helper, &[self.context, operation, ty, loc0, end, null, count, null]);
+        let status = self.builder.inst_results(call)[0];
+        let failed = self.builder.create_block();
+        let next = self.builder.create_block();
+        self.builder.ins().brif(status, failed, &[], next, &[]);
+        self.builder.switch_to_block(failed);
+        self.builder.seal_block(failed);
+        self.builder.ins().return_(&[status]);
+        self.builder.switch_to_block(next);
+        self.builder.seal_block(next);
+        Ok(())
+    }
     fn scalar_result(&mut self, node: HirId, bits: ir::Value) -> EmitResult<Vec<ir::Value>> {
         let ty = TypeKey::try_from(self.ty(node)?)?;
         let header = self.layouts.value(

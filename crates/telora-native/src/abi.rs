@@ -327,6 +327,8 @@ pub enum Status {
 }
 #[derive(Default)]
 pub struct CallContext {
+    fuel: Option<u64>,
+    fuel_exhausted: bool,
     diagnostics: Vec<NativeDiagnostic>,
     runtime: Option<crate::runtime::Runtime>,
 }
@@ -337,6 +339,27 @@ pub struct NativeDiagnostic {
     pub subjects: Vec<Origin>,
 }
 impl CallContext {
+    /// One budget spans initialization, demand callbacks and entry execution.
+    /// Native fuel counts executed HIR expressions, not machine instructions.
+    pub fn with_fuel(mut self, fuel: u64) -> Self {
+        self.fuel = Some(fuel);
+        self
+    }
+    pub fn remaining_fuel(&self) -> Option<u64> {
+        self.fuel
+    }
+    pub(crate) fn consume_fuel(&mut self, amount: u64, origin: Origin) -> Status {
+        if self.fuel_exhausted { return Status::Failed; }
+        let Some(remaining) = self.fuel else { return Status::Success; };
+        if let Some(remaining) = remaining.checked_sub(amount) {
+            self.fuel = Some(remaining);
+            Status::Success
+        } else {
+            self.fuel = Some(0);
+            self.fuel_exhausted = true;
+            self.fail_at("native execution fuel exhausted", origin)
+        }
+    }
     pub fn with_runtime(runtime: crate::runtime::Runtime) -> Self {
         Self {
             runtime: Some(runtime),

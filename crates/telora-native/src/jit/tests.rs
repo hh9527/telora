@@ -615,6 +615,53 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_fuel_is_shared_across_calls_and_stops_recursion_once() {
+    let (mir, root) = graph("export def answer = 42;");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::default().with_fuel(2);
+    assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 42);
+    assert_eq!(context.remaining_fuel(), Some(1));
+    compiled.call(&mut context, &[]).unwrap();
+    assert_eq!(context.remaining_fuel(), Some(0));
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].origin, Origin::from_loc(Some(mir.hir[root.index()].location)));
+
+    let (mir, root) = graph("def recur: Fn(Int) -> Int = fn(n) { if n == 0 { 0 } else { recur(n - 1) } }; export def answer = recur(10000);");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap()).with_fuel(50);
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "native execution fuel exhausted");
+    assert_eq!(context.remaining_fuel(), Some(0));
+}
+
+#[test]
+fn native_fuel_survives_initialization_publication_and_entry_calls() {
+    let (mir, root) = graph("def base = 40 + 2; export def answer: Fn() -> Int = fn() { base };");
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap()).with_fuel(100);
+    compiled.initialize(&mut context).unwrap();
+    assert!(context.runtime().unwrap().is_published());
+    let initialized = context.remaining_fuel().unwrap();
+    assert!(initialized < 100);
+    let closure = compiled.export(&mut context, mir.exports[module.index()][0]).unwrap();
+    assert_eq!(context.remaining_fuel(), Some(initialized));
+    let result = compiled.call_closure(&mut context, &closure, &[]).unwrap();
+    assert_eq!(result.words()[2], 42);
+    assert!(context.remaining_fuel().unwrap() < initialized);
+    let mut exhausted = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap()).with_fuel(0);
+    assert!(compiled.initialize(&mut exhausted).is_err());
+    assert!(!exhausted.runtime().unwrap().is_published());
+    assert_eq!(exhausted.diagnostics().len(), 1);
+}
+
+#[test]
 fn native_interpolation_consumes_sealed_display_calls() {
     for (source, expected) in [
         (r#"export def answer = if "中" == "中" && "long heap-backed comparison" != "different heap-backed string" { "ok" } else { "bad" };"#, "ok"),

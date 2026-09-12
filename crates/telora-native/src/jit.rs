@@ -1177,6 +1177,7 @@ impl Lower<'_, '_> {
         if depth > 512 {
             return Err("native expression nesting limit".into());
         }
+        self.charge_fuel(node)?;
         let ty = self.ty(node)?;
         let key = TypeKey::try_from(ty)?;
         let syntax = &self.mir.hir[node.index()];

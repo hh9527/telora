@@ -34,6 +34,7 @@ pub(crate) const TEXT_OP: u32 = 28;
 pub(crate) const REFLECT: u32 = 29;
 pub(crate) const ENCODE: u32 = 30;
 pub(crate) const INTERPOLATE: u32 = 31;
+pub(crate) const FUEL: u32 = 32;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -56,6 +57,9 @@ pub(crate) unsafe extern "C" fn object(
         Ok(origin) => origin,
         Err(e) => return context.fail(e) as u32,
     };
+    if operation == FUEL {
+        return context.consume_fuel(count, origin) as u32;
+    }
     if operation == DEMAND {
         // The data argument is a code address for this operation only. It is
         // emitted by func_addr and never stored in a language value or runtime.
