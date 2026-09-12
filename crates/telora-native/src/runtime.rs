@@ -529,6 +529,29 @@ impl Runtime {
             _ => Err("invalid string tag".into()),
         }
     }
+    /// Inspect byte ranges without scanning UTF-8; helper fuel is admitted
+    /// before text validation, character counting or byte comparisons.
+    fn byte_span_len(&self, value: ValueRef<'_>) -> Result<usize> {
+        self.validate(value, value.type_id())?;
+        match self.layout(value.type_id())?.kind {
+            Kind::String => match value.words[2] as u8 {
+                0 => {
+                    let len = ((value.words[2] >> 8) & 255) as usize;
+                    if len > 14 { return Err("invalid inline string length".into()); }
+                    Ok(len)
+                }
+                1 => {
+                    let start = value.words[3] as u32 as usize;
+                    let end = (value.words[3] >> 32) as usize;
+                    self.string_bytes((value.words[2] >> 32) as u32)?.get(start..end)
+                        .map(<[u8]>::len).ok_or_else(|| "invalid string slice".into())
+                }
+                _ => Err("invalid string tag".into()),
+            },
+            Kind::Bytes => self.bytes_data(&value.to_owned()).map(<[u8]>::len),
+            _ => Err("byte work requires String or Bytes".into()),
+        }
+    }
     /// Tuple and Record share all fixed-field storage and access logic.
     pub fn aggregate(&mut self, ty: TypeId, loc: Location, values: &[Value]) -> Result<Value> {
         let layout = self.layout(ty)?;

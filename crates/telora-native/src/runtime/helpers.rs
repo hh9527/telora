@@ -217,6 +217,20 @@ pub(crate) unsafe extern "C" fn object(
                 }
                 if context.consume_fuel(work, origin) != Status::Success { return Ok(Status::Failed); }
             }
+            if matches!(operation, STRING | BYTES_LITERAL | STRING_LENGTH | TEXT_EQUAL | BYTES_EQUAL) {
+                let work = if matches!(operation, STRING | BYTES_LITERAL) { count } else {
+                    let rt = context.runtime()?;
+                    let arity = if operation == STRING_LENGTH { 1 } else { 2 };
+                    let mut total = 0u64;
+                    for index in 0..arity {
+                        let words = unsafe { std::slice::from_raw_parts(data.add(index * 4), 4) };
+                        total = total.checked_add(rt.byte_span_len(ValueRef { arena: rt.identity, words })? as u64)
+                            .ok_or("byte work count overflow")?;
+                    }
+                    total
+                };
+                if context.consume_fuel(work, origin) != Status::Success { return Ok(Status::Failed); }
+            }
             let rt = context.runtime_mut()?;
             let ty = TypeId(ty);
             let loc = origin.words();
