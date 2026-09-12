@@ -57,6 +57,8 @@
 
 ## 验收条件
 
+高阶 native 回调开始接通：array.map 从封闭签名取得输入/输出元素类型，通过当前代码计划的分派器调用语言闭包；跨回调前结束 Runtime 借用，仅复制值描述符而不复制底层对象。验证包含词法捕获、嵌套 map、Unit/String 不同结果宽度、发布后读取与单次回调失败传播。模块命名空间函数引用和导入别名消费同一个 resolved SymbolId。Property provider 链尚未使用这条调用路径，不能据此视为 property 执行完成。
+
 Native 声明现在生成同一调用 ABI 的适配函数，使用已登记 native 模块 ID 与声明 ABI 导出键链接，并检查封闭签名；导入别名和一等泛型实例不改变身份。首批为 array.length / string.length，测试包含真实标准库声明、Unicode 字符数、间接泛型参数和拒绝用户模块同名 native 声明。函数值初始化与适配器调用使用不同编译键，初始化仅生成描述符，不能以空参数调用 native 本体。其余 native 操作和 property 查询仍待补齐。
 
 类型元数据使用封闭 TypeId 作为单 word 数据，`TypeOf(T)` 的见证在构造/发布时核对；比较直接比较 represented TypeId。函数参数和返回边界的 `TypeOf(T) -> Type` 适配只更新外层类型标记，保留 represented TypeId 与来源，不在运行时求解类型。该能力已在普通参数、隐式返回、显式 return 和发布路径验证，property 执行仍需单独接入。

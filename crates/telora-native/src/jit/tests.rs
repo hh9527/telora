@@ -329,6 +329,66 @@ fn generated_enums_preserve_inline_and_boxed_payloads_through_publication() {
     assert!(rt.enum_payload(&end).unwrap().is_none());
 }
 #[test]
+fn native_map_calls_captured_and_nested_language_callbacks() {
+    let dependencies = [(
+        "std/array",
+        include_str!("../../../telora-core/modules/std/array.telora"),
+    )];
+    for source in [
+        "import \"std/array\" { map }; export def answer = do { let base = 40; map([1, 2], fn(x) { base + x }) };",
+        "import \"std/array\" as array; export def answer = array.map([1, 2], fn(x) { x + 40 });",
+        "import \"std/array\" { map }; export def answer = map([1, 2], fn(x) { map([40], fn(y) { x + y })[0] });",
+    ] {
+        let (mir, root) = graph_with(source, &dependencies);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]).unwrap();
+        let rt = context.runtime_mut().unwrap();
+        assert_eq!(rt.array_get(&result, 0).unwrap().words()[2], 41);
+        assert_eq!(rt.array_get(&result, 1).unwrap().words()[2], 42);
+        let roots = rt.publish(&[result]).unwrap();
+        assert_eq!(rt.array_get(&roots[0], 1).unwrap().words()[2], 42);
+    }
+    let (mir, root) = graph_with(
+        "import \"std/array\" { map }; def callback: Fn(Int) -> Int = fn(x) { if x == 2 { fail!(\"callback failed\") } else { x } }; export def answer = map([1, 2, 3], callback);",
+        &dependencies,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "callback failed");
+    for (source, expected_width) in [
+        (
+            "import \"std/array\" { map }; export def answer = map([1, 2], fn(x) { () });",
+            2,
+        ),
+        (
+            "import \"std/array\" { map }; export def answer = map([1, 2], fn(x) { \"long callback text that lives in heap\" });",
+            4,
+        ),
+    ] {
+        let (mir, root) = graph_with(source, &dependencies);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]).unwrap();
+        let rt = context.runtime_mut().unwrap();
+        let roots = rt.publish(&[result]).unwrap();
+        let value = rt.array_get(&roots[0], 1).unwrap();
+        assert_eq!(value.words().len(), expected_width);
+        if expected_width == 4 {
+            assert_eq!(
+                rt.text(value).unwrap().as_str(),
+                "long callback text that lives in heap"
+            );
+        }
+    }
+}
+
+#[test]
 fn native_abi_links_resolved_aliases_and_generic_function_values() {
     let dependencies = [(
         "std/array",

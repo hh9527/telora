@@ -17,6 +17,9 @@ pub(crate) const CAPTURE: u32 = 11;
 pub(crate) const DEMAND: u32 = 12;
 pub(crate) const ARRAY_LENGTH: u32 = 13;
 pub(crate) const STRING_LENGTH: u32 = 14;
+pub(crate) const ARRAY_MAP: u32 = 15;
+#[path = "callbacks.rs"]
+mod callbacks;
 
 /// Safety: ctx is an exclusive live context; data points at the full values
 /// specified by the generated operation; out has space for the solved result.
@@ -41,6 +44,9 @@ pub(crate) unsafe extern "C" fn object(
         // The data argument is a code address for this operation only. It is
         // emitted by func_addr and never stored in a language value or runtime.
         return unsafe { demand(context, TypeId(ty), count, data, out, origin) };
+    }
+    if operation == ARRAY_MAP {
+        return unsafe { callbacks::array_map(context, TypeId(ty), data, out, origin) };
     }
     context.boundary(|context| {
         let result = (|| {

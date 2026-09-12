@@ -601,7 +601,7 @@ impl Lower<'_, '_> {
             HirKind::TypeAscription => {
                 self.callable(child(self.mir, node, Role::Value)?, depth + 1)
             }
-            HirKind::Variable(_) => {
+            HirKind::Variable(_) | HirKind::Field => {
                 let slot = self.mir.hir[node.index()]
                     .resolution
                     .ok_or("native callable missing resolve slot")?;
@@ -925,6 +925,22 @@ impl Lower<'_, '_> {
         let ty = self.ty(node)?;
         let key = TypeKey::try_from(ty)?;
         let syntax = &self.mir.hir[node.index()];
+        if matches!(syntax.kind, HirKind::Field)
+            && syntax.resolution.is_some_and(|slot| {
+                matches!(self.mir.resolve_slots[slot.index()], ResolveState::Bound(_))
+            })
+            && self.mir.types[ty.index()].constructor == TypeConstructor::Function
+        {
+            let function = self.callable(node, 0)?;
+            return self.function_value(
+                node,
+                functions::Key {
+                    node: function,
+                    instance: self.instance_reference(node),
+                    initializer: false,
+                },
+            );
+        }
         if let Some(MemberSelection::EnumVariant { index }) = self.selected_member(node)
             && self.mir.types[ty.index()].constructor != TypeConstructor::Function
         {
