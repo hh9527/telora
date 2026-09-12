@@ -72,6 +72,12 @@ pub struct Origin {
     end: u32,
 }
 impl Origin {
+    pub(crate) fn from_words([source, start, end]: [u32; 3]) -> Result<Self> {
+        if start > end || (source == 0 && (start != 0 || end != 0)) {
+            return Err("invalid native source range".into());
+        }
+        Ok(Self { source, start, end })
+    }
     pub fn from_loc(loc: Option<Loc>) -> Self {
         loc.map(|l| Self {
             source: l.source.get(),
@@ -93,15 +99,24 @@ enum Layout {
 }
 pub struct Layouts {
     entries: Vec<Layout>,
+    pub(crate) field_names: Vec<Vec<String>>,
 }
 impl Layouts {
     pub fn from_mir(mir: &SealedMir<'_>) -> Result<Self> {
         if !cfg!(all(target_pointer_width = "64", target_endian = "little")) {
             return Err("native ABI v1 requires a 64-bit little-endian host".into());
         }
+        let mut field_names = Vec::new();
         let entries = candidate_layout::calculate(mir)?
             .into_iter()
             .map(|entry| {
+                field_names.push(
+                    entry
+                        .object
+                        .as_ref()
+                        .map(|o| o.members.iter().map(|m| m.name.clone()).collect())
+                        .unwrap_or_default(),
+                );
                 Ok(match entry.layout {
                     State::Known { shape } => {
                         if shape.value_bytes < 16
@@ -120,7 +135,10 @@ impl Layouts {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        Ok(Self { entries })
+        Ok(Self {
+            entries,
+            field_names,
+        })
     }
     pub fn type_at(&self, index: usize) -> Result<TypeKey> {
         self.entries
@@ -291,14 +309,42 @@ pub enum Status {
 }
 #[derive(Default)]
 pub struct CallContext {
-    diagnostics: Vec<String>,
+    diagnostics: Vec<NativeDiagnostic>,
+    runtime: Option<crate::runtime::Runtime>,
+}
+#[derive(Debug)]
+pub struct NativeDiagnostic {
+    pub message: String,
+    pub origin: Origin,
 }
 impl CallContext {
-    pub fn diagnostics(&self) -> &[String] {
+    pub fn with_runtime(runtime: crate::runtime::Runtime) -> Self {
+        Self {
+            runtime: Some(runtime),
+            ..Self::default()
+        }
+    }
+    pub fn runtime(&self) -> Result<&crate::runtime::Runtime> {
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| "native call requires a runtime".into())
+    }
+    pub fn runtime_mut(&mut self) -> Result<&mut crate::runtime::Runtime> {
+        self.runtime
+            .as_mut()
+            .ok_or_else(|| "native call requires a runtime".into())
+    }
+    pub fn diagnostics(&self) -> &[NativeDiagnostic] {
         &self.diagnostics
     }
     pub fn fail(&mut self, message: impl Into<String>) -> Status {
-        self.diagnostics.push(message.into());
+        self.fail_at(message, Origin::default())
+    }
+    pub fn fail_at(&mut self, message: impl Into<String>, origin: Origin) -> Status {
+        self.diagnostics.push(NativeDiagnostic {
+            message: message.into(),
+            origin,
+        });
         Status::Failed
     }
     /// Host helper panic boundary. Propagated Failed need not add a diagnostic.

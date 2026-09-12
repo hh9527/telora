@@ -35,6 +35,12 @@
 
 先落实本模块契约并保证可独立编译，再用简单单测或少量语言用例验证，然后进入后继模块。允许 native 路线阶段性缺失能力，不要求每次提交完成整个语言。实现前将本草案中的待定项补成明确决议，不引入兼容兜底。
 
+### 对象 helper 接入
+
+后续已接入独立 runtime 的对象 helper：机器码可以构造 String、Array、Tuple/Record、有序 Dict，并按已求解布局读取字段/数组元素。对象描述经固定栈缓冲区传递，引用对象不经过旧 Val 或深复制桥。CallContext 持有 native Runtime，参数验证所属 session，结果继承该 session 身份；helper 的失败携带来源并返回 Failed，生成代码直接传播，不能读取失败结果。
+
+`cargo test -p telora-native --features jit` 当前通过 11 项测试，包括真实机器码构造四类对象、读取已发布 main 数组及有来源的越界失败。尚未实现的 construction check/字段 property、捕获/导出引用和普通语句仍明确拒绝；程序内部函数调用、整图初始化和 CLI 后续推进。
+
 ## 验收条件
 
 以独立入口运行小型已 seal MIR/源码用例，检查标量、分支、函数、递归、聚合访问及错误路径。建立表达式支持清单；后续以 .telora 用例补齐规则。首个原型无需完整标准库可运行。

@@ -127,3 +127,77 @@ fn failed_call_never_decodes_the_result_and_invalid_success_is_rejected() {
     // Zeroed data has no valid stamp for this graph's concrete Int type.
     assert!(compiled.call(&mut CallContext::default(), &[]).is_err());
 }
+#[test]
+fn machine_code_constructs_native_objects_without_old_vm() {
+    for (source, kind) in [
+        (
+            "export def answer = \"a long string from generated machine code\";",
+            "string",
+        ),
+        ("export def answer = [7, 8];", "array"),
+        (
+            "export def answer = {label: \"long shared record text\", count: 7};",
+            "record",
+        ),
+        ("export def answer: Dict(Int) = {z: 8, a: 7};", "dict"),
+    ] {
+        let (mir, root) = graph(source);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut ctx = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let value = compiled
+            .call(&mut ctx, &[])
+            .unwrap_or_else(|e| panic!("{e}: {:?}", ctx.diagnostics()));
+        let rt = ctx.runtime().unwrap();
+        match kind {
+            "string" => assert_eq!(
+                rt.text(value.as_ref()).unwrap().as_str(),
+                "a long string from generated machine code"
+            ),
+            "array" => assert_eq!(rt.scalar_bits(rt.array_get(&value, 0).unwrap()).unwrap(), 7),
+            "record" => assert_eq!(rt.scalar_bits(rt.field(&value, 0).unwrap()).unwrap(), 7),
+            "dict" => {
+                let (key, found) = rt.dict_entry(&value, 0).unwrap();
+                assert_eq!(rt.text(key).unwrap().as_str(), "a");
+                assert_eq!(rt.scalar_bits(found).unwrap(), 7);
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn generated_index_reads_published_main_and_reports_work_bounds_errors() {
+    let (mir, root) = graph(
+        "export def answer: Fn(Array(Int), Int) -> Int = fn(values, index) { values[index] };",
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let array_ty = compiled.arguments()[0];
+    let int = compiled.arguments()[1];
+    let origin = Origin::from_loc(Some(mir.hir[root.index()].location));
+    let mut rt = crate::runtime::Runtime::new(&sealed).unwrap();
+    let item = rt.scalar(int, origin.words(), 42).unwrap();
+    let array = rt.array(array_ty, origin.words(), &[item]).unwrap();
+    let roots = rt.publish(&[array]).unwrap();
+    let mut ctx = CallContext::with_runtime(rt);
+    let zero = compiled
+        .layouts()
+        .value(int, Origin::default(), &[0])
+        .unwrap();
+    let value = compiled.call(&mut ctx, &[roots[0].clone(), zero]).unwrap();
+    assert_eq!(value.words()[2], 42);
+    assert_eq!(value.origin(), origin);
+    let bad_index = compiled
+        .layouts()
+        .value(int, Origin::default(), &[1])
+        .unwrap();
+    assert!(
+        compiled
+            .call(&mut ctx, &[roots[0].clone(), bad_index])
+            .is_err()
+    );
+    assert_eq!(ctx.diagnostics().len(), 1);
+    assert!(ctx.diagnostics()[0].message.contains("out of bounds"));
+    assert_ne!(ctx.diagnostics()[0].origin, Origin::default());
+}

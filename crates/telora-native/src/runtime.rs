@@ -153,6 +153,20 @@ pub struct Runtime {
 }
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
 impl Runtime {
+    pub(crate) fn check_argument(&self, value: &Value) -> Result<()> {
+        if value.arena == 0 {
+            // Host-created scalar and Unit values carry no heap references.
+            let layout = self.layout(value.type_key())?;
+            if layout.kind == Kind::Scalar
+                || (layout.kind == Kind::Tuple && layout.fields.is_empty())
+            {
+                if value.words.len() == layout.words {
+                    return Ok(());
+                }
+            }
+        }
+        self.validate(value.as_ref(), value.type_key())
+    }
     pub fn identity(&self) -> u64 {
         self.identity
     }
@@ -495,6 +509,9 @@ impl Runtime {
 
 #[path = "runtime/dict.rs"]
 mod dict;
+#[cfg(feature = "jit")]
+#[path = "runtime/helpers.rs"]
+pub(crate) mod helpers;
 #[path = "runtime/publish.rs"]
 mod publish;
 #[cfg(test)]

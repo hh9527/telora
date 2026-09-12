@@ -1,5 +1,6 @@
 //! First mechanical SealedMir JIT slice. Unsupported nodes fail during lowering.
 use crate::abi::{CallContext, Layouts, Origin, Result, TypeKey, Value};
+use crate::runtime::helpers;
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -62,6 +63,11 @@ impl Compiled {
             if value.type_key() != ty || value.words().len() != self.layouts.words(ty)? {
                 return Err("native argument type/width mismatch".into());
             }
+            if let Ok(runtime) = context.runtime() {
+                runtime.check_argument(value)?;
+            } else if value.arena != 0 {
+                return Err("native heap argument requires its runtime".into());
+            }
             args.extend_from_slice(value.words());
         }
         let words = self.layouts.words(self.output)?;
@@ -71,7 +77,11 @@ impl Compiled {
         // neither retain pointers nor unwind across this ABI.
         let status = unsafe { (self.entry)(context, args.as_ptr(), result.as_mut_ptr()) };
         match status {
-            0 => Value::from_result(result, self.output, words),
+            0 => {
+                let mut value = Value::from_result(result, self.output, words)?;
+                value.arena = context.runtime().map_or(0, |r| r.identity());
+                Ok(value)
+            }
             1 => Err("native execution failed".into()),
             _ => Err("invalid native return status".into()),
         }
@@ -127,8 +137,9 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
         .iter()
         .map(|&p| TypeKey::try_from(known(graph, p)?))
         .collect::<Result<Vec<_>>>()?;
-    let builder =
+    let mut builder =
         JITBuilder::new(cranelift_module::default_libcall_names()).map_err(|e| e.to_string())?;
+    builder.symbol("telora_native_object", helpers::object as *const u8);
     let mut module = CodeMemory(Some(JITModule::new(builder)));
     let mut ctx = module.make_context();
     let pointer = module.target_config().pointer_type();
@@ -137,6 +148,25 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
     let function = module
         .declare_function("telora_entry", Linkage::Export, &ctx.func.signature)
         .map_err(|e| e.to_string())?;
+    let mut helper_signature = module.make_signature();
+    helper_signature.params = [
+        pointer,
+        types::I32,
+        types::I32,
+        types::I64,
+        types::I32,
+        pointer,
+        types::I64,
+        pointer,
+    ]
+    .into_iter()
+    .map(AbiParam::new)
+    .collect();
+    helper_signature.returns.push(AbiParam::new(types::I32));
+    let helper = module
+        .declare_function("telora_native_object", Linkage::Import, &helper_signature)
+        .map_err(|e| e.to_string())?;
+    let object_helper = module.declare_func_in_func(helper, &mut ctx.func);
     let mut fbctx = FunctionBuilderContext::new();
     {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fbctx);
@@ -145,6 +175,7 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
         builder.switch_to_block(entry);
         builder.seal_block(entry);
         let args = builder.block_params(entry)[1];
+        let context = builder.block_params(entry)[0];
         let out = builder.block_params(entry)[2];
         let mut locals = BTreeMap::new();
         let mut offset: usize = 0;
@@ -171,6 +202,9 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
             layouts: &layouts,
             builder,
             locals,
+            module: &mut module,
+            context,
+            object_helper,
         };
         let result = lower.expression(body, 0)?;
         if result.len() != output_words {
@@ -187,7 +221,8 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
         }
         let success = lower.builder.ins().iconst(types::I32, 0);
         lower.builder.ins().return_(&[success]);
-        lower.builder.finalize(module.target_config());
+        let config = lower.module.target_config();
+        lower.builder.finalize(config);
     }
     module
         .define_function(function, &mut ctx)
@@ -211,8 +246,104 @@ struct Lower<'a, 'b> {
     layouts: &'a Layouts,
     builder: FunctionBuilder<'b>,
     locals: BTreeMap<SymbolId, Vec<ir::Value>>,
+    module: &'a mut JITModule,
+    context: ir::Value,
+    object_helper: ir::FuncRef,
 }
 impl Lower<'_, '_> {
+    fn stack_words(&mut self, values: &[ir::Value]) -> Result<ir::Value> {
+        let bytes = u32::try_from(
+            values
+                .len()
+                .checked_mul(8)
+                .ok_or("native stack size overflow")?
+                .max(8),
+        )
+        .map_err(|_| "native stack size overflow")?;
+        if bytes > i32::MAX as u32 {
+            return Err("native stack offset overflow".into());
+        }
+        let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot,
+            bytes,
+            3,
+        ));
+        for (i, &value) in values.iter().enumerate() {
+            self.builder.ins().stack_store(
+                self.module.target_config().pointer_type(),
+                value,
+                slot,
+                (i * 8) as i32,
+            );
+        }
+        Ok(self
+            .builder
+            .ins()
+            .stack_addr(self.module.target_config().pointer_type(), slot, 0))
+    }
+    fn object(
+        &mut self,
+        node: HirId,
+        operation: u32,
+        ty: TypeKey,
+        data: ir::Value,
+        count: ir::Value,
+    ) -> Result<Vec<ir::Value>> {
+        let width = self.layouts.words(ty)?;
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let out = self.stack_words(&vec![zero; width])?;
+        let origin = Origin::from_loc(Some(self.mir.hir[node.index()].location)).words();
+        let operation = self.builder.ins().iconst(types::I32, operation as i64);
+        let ty = self.builder.ins().iconst(types::I32, ty.raw() as i64);
+        let loc0 = self.builder.ins().iconst(
+            types::I64,
+            (u64::from(origin[0]) | (u64::from(origin[1]) << 32)) as i64,
+        );
+        let end = self.builder.ins().iconst(types::I32, origin[2] as i64);
+        let call = self.builder.ins().call(
+            self.object_helper,
+            &[self.context, operation, ty, loc0, end, data, count, out],
+        );
+        let status = self.builder.inst_results(call)[0];
+        let failed = self.builder.create_block();
+        let success = self.builder.create_block();
+        self.builder.ins().brif(status, failed, &[], success, &[]);
+        self.builder.switch_to_block(failed);
+        self.builder.seal_block(failed);
+        self.builder.ins().return_(&[status]);
+        self.builder.switch_to_block(success);
+        self.builder.seal_block(success);
+        Ok((0..width)
+            .map(|i| {
+                self.builder
+                    .ins()
+                    .load(types::I64, MemFlagsData::new(), out, (i * 8) as i32)
+            })
+            .collect())
+    }
+    fn string(&mut self, node: HirId, ty: TypeKey, text: &str) -> Result<Vec<ir::Value>> {
+        let id = self
+            .module
+            .declare_anonymous_data(false, false)
+            .map_err(|e| e.to_string())?;
+        let mut data = cranelift_module::DataDescription::new();
+        // Empty strings still get a valid non-null address.
+        data.define(if text.is_empty() {
+            vec![0].into_boxed_slice()
+        } else {
+            text.as_bytes().into()
+        });
+        self.module
+            .define_data(id, &data)
+            .map_err(|e| e.to_string())?;
+        let global = self.module.declare_data_in_func(id, self.builder.func);
+        let pointer = self
+            .builder
+            .ins()
+            .symbol_value(self.module.target_config().pointer_type(), global);
+        let length = self.builder.ins().iconst(types::I64, text.len() as i64);
+        self.object(node, helpers::STRING, ty, pointer, length)
+    }
     fn expression(&mut self, node: HirId, depth: usize) -> Result<Vec<ir::Value>> {
         if depth > 512 {
             return Err("native expression nesting limit".into());
@@ -249,6 +380,147 @@ impl Lower<'_, '_> {
                 .collect());
         }
         match syntax.kind {
+            HirKind::String(ref text) => self.string(node, key, text),
+            HirKind::Array | HirKind::Tuple => {
+                if self
+                    .mir
+                    .construction_checks
+                    .iter()
+                    .any(|c| c.owner == ty && c.concrete)
+                {
+                    return Err("native construction checks are not yet linked".into());
+                }
+                let items = syntax
+                    .children
+                    .iter()
+                    .filter(|e| e.role == Role::Item)
+                    .map(|e| e.node)
+                    .collect::<Vec<_>>();
+                let mut values = Vec::new();
+                for &item in &items {
+                    values.extend(self.expression(item, depth + 1)?);
+                }
+                let data = self.stack_words(&values)?;
+                let count = self.builder.ins().iconst(types::I64, items.len() as i64);
+                let operation = if matches!(syntax.kind, HirKind::Array) {
+                    helpers::ARRAY
+                } else {
+                    helpers::AGGREGATE
+                };
+                self.object(node, operation, key, data, count)
+            }
+            HirKind::Dict => {
+                if self
+                    .mir
+                    .construction_checks
+                    .iter()
+                    .any(|c| c.owner == ty && c.concrete)
+                {
+                    return Err("native construction checks are not yet linked".into());
+                }
+                let dictionary = self.mir.types[ty.index()].constructor == TypeConstructor::Dict;
+                let mut fields = Vec::new();
+                for edge in &syntax.children {
+                    if edge.role != Role::Field {
+                        return Err("native unsupported record child".into());
+                    }
+                    let field = edge.node;
+                    if self.mir.hir[field.index()]
+                        .children
+                        .iter()
+                        .any(|e| e.role == Role::Decorator)
+                    {
+                        return Err("native field property construction is not yet linked".into());
+                    }
+                    let name = child(self.mir, field, Role::Name)?;
+                    let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
+                        return Err("native field name missing".into());
+                    };
+                    let value = self.expression(child(self.mir, field, Role::Value)?, depth + 1)?;
+                    fields.push((field, name.clone(), value));
+                }
+                let count = fields.len();
+                let mut words = Vec::new();
+                if dictionary {
+                    let string = self
+                        .mir
+                        .types
+                        .iter()
+                        .position(|t| t.constructor == TypeConstructor::String)
+                        .ok_or("sealed image has no String")?;
+                    let string = self.layouts.type_at(string)?;
+                    for (field, name, value) in fields {
+                        words.extend(self.string(field, string, &name)?);
+                        words.extend(value);
+                    }
+                } else {
+                    let names = self.layouts.field_names[key.index()].clone();
+                    if names.len() != fields.len() {
+                        return Err("native record skeleton mismatch".into());
+                    }
+                    for name in names {
+                        let index = fields
+                            .iter()
+                            .position(|(_, n, _)| *n == name)
+                            .ok_or("native record field missing")?;
+                        words.extend(std::mem::take(&mut fields[index].2));
+                    }
+                }
+                let data = self.stack_words(&words)?;
+                let count = self.builder.ins().iconst(types::I64, count as i64);
+                self.object(
+                    node,
+                    if dictionary {
+                        helpers::DICT
+                    } else {
+                        helpers::AGGREGATE
+                    },
+                    key,
+                    data,
+                    count,
+                )
+            }
+            HirKind::TupleProjection(index) => {
+                let receiver =
+                    self.expression(child(self.mir, node, Role::Receiver)?, depth + 1)?;
+                let data = self.stack_words(&receiver)?;
+                let index = self.builder.ins().iconst(types::I64, index as i64);
+                self.object(node, helpers::FIELD, key, data, index)
+            }
+            HirKind::Field => {
+                let receiver_node = child(self.mir, node, Role::Receiver)?;
+                let receiver_ty = TypeKey::try_from(known(self.mir, receiver_node)?)?;
+                let name = child(self.mir, node, Role::Name)?;
+                let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
+                    return Err("native field name missing".into());
+                };
+                let index = self.layouts.field_names[receiver_ty.index()]
+                    .iter()
+                    .position(|n| n == name)
+                    .ok_or_else(|| format!("native unsupported field access {name}"))?;
+                let receiver = self.expression(receiver_node, depth + 1)?;
+                let data = self.stack_words(&receiver)?;
+                let index = self.builder.ins().iconst(types::I64, index as i64);
+                self.object(node, helpers::FIELD, key, data, index)
+            }
+            HirKind::Index => {
+                let receiver_node = child(self.mir, node, Role::Receiver)?;
+                if self.mir.types[known(self.mir, receiver_node)?.index()].constructor
+                    != TypeConstructor::Array
+                {
+                    return Err("native index currently requires solved Array".into());
+                }
+                let receiver = self.expression(receiver_node, depth + 1)?;
+                let index_node = child(self.mir, node, Role::Index)?;
+                if self.mir.types[known(self.mir, index_node)?.index()].constructor
+                    != TypeConstructor::Int
+                {
+                    return Err("native index currently requires solved Int".into());
+                }
+                let index = self.expression(index_node, depth + 1)?;
+                let data = self.stack_words(&receiver)?;
+                self.object(node, helpers::INDEX, key, data, index[2])
+            }
             HirKind::Variable(_) => {
                 let slot = syntax
                     .resolution

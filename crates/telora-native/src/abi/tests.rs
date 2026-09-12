@@ -70,7 +70,8 @@ fn world_handles_and_helper_failures_are_explicit() {
     let mut context = CallContext::default();
     assert_eq!(context.boundary(|ctx| ctx.fail("original")), Status::Failed);
     assert_eq!(context.boundary(|_| Status::Failed), Status::Failed);
-    assert_eq!(context.diagnostics(), ["original"]);
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "original");
     assert_eq!(context.boundary(|_| panic!("test panic")), Status::Failed);
     assert_eq!(context.diagnostics().len(), 2);
 }
