@@ -983,6 +983,71 @@ fn native_interpolation_consumes_sealed_display_calls() {
 }
 
 #[test]
+fn native_codec_decodes_inferred_structural_records() {
+    let (mir, root) = graph_with("import \"std/codec\" { encode, decode, Value }; def roundtrip: for(T) Fn(T) -> T = fn(value) { match decode(T.type, encode(Value.type, value)) { Ok(result) => result, Err(error) => raise!(error) } }; export def answer = encode(Value.type, roundtrip({a: 42, text: \"shared record string\"}));", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.runtime().unwrap().semantic_json(&contract, &value).unwrap(), "{\"a\":42,\"text\":\"shared record string\"}");
+    for (exemplar, wire, expected) in [
+        ("{a: 0}", "Value.Object({})", "$.a: missing required field"),
+        ("{a: 0}", "Value.Object({a: Value.Int(1), z: Value.Int(2)})", "$.z: unknown field"),
+        ("{a: 0}", "Value.Object({a: Value.String(\"bad\")})", "$.a: expected Int"),
+    ] {
+        let source = format!("import \"std/codec\" {{decode, Value, BlameError}}; def convert: for(T) Fn(T, Value) -> Result(T, BlameError) = fn(example, input) {{ decode(T.type, input) }}; export def answer = convert({exemplar}, {wire});");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]).unwrap();
+        assert!(context.diagnostics().is_empty());
+        let rt = context.runtime().unwrap();
+        let blame = rt.enum_payload(&result).unwrap().unwrap().to_owned();
+        assert_eq!(rt.blame_diagnostic(&blame).unwrap().0, expected);
+    }
+}
+
+#[test]
+fn native_codec_decodes_sealed_collections_and_returns_rejections() {
+    for (target, expression, expected) in [
+        ("Int", "42", "42"),
+        ("Bool", "True", "true"),
+        ("Float", "1.5", "1.5"),
+        ("String", "\"long heap-backed decoded string\"", "\"long heap-backed decoded string\""),
+        ("Option(Int)", "None", "null"),
+        ("Option(Int)", "42", "42"),
+        ("Array(Int)", "[1, 2]", "[1,2]"),
+        ("(Int, String)", "(42, \"text\")", "[42,\"text\"]"),
+        ("()", "()", "[]"),
+        ("Dict(Int)", "do { let d: Dict(Int) = { b: 2, a: 1 }; d }", "{\"a\":1,\"b\":2}"),
+    ] {
+        let source = format!("import \"std/codec\" {{ encode, decode, Value }}; export def answer = match decode(({target}).type, encode(Value.type, {expression})) {{ Ok(value) => encode(Value.type, value), Err(error) => raise!(error) }};");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{source}: {e}: {:?}", context.diagnostics()));
+        assert!(context.diagnostics().is_empty());
+        assert_eq!(context.runtime().unwrap().semantic_json(&contract, &value).unwrap(), expected);
+    }
+    let (mir, root) = graph_with("import \"std/codec\" { encode, decode, Value }; export def answer = decode(Array(Int).type, encode(Value.type, [\"wrong\"]));", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap();
+    assert!(context.diagnostics().is_empty());
+    let rt = context.runtime().unwrap();
+    let error = rt.enum_payload(&value).unwrap().unwrap().to_owned();
+    let (message, subjects) = rt.blame_diagnostic(&error).unwrap();
+    assert_eq!(message, "$[0]: expected Int");
+    assert_eq!(subjects.len(), 1);
+    assert_ne!(subjects[0].words(), [0; 3]);
+}
+
+#[test]
 fn native_codec_does_not_silently_ignore_property_driven_encoding() {
     let (mir, root) = graph_with(
         "import \"std/codec\" { encode, Value }; import \"std/_codec\" { rename_all, RenameCase }; @rename_all(RenameCase.CamelCase) type Rec = struct { some_field: Int }; export def answer = do { let value: Rec = { some_field: 42 }; encode(Value.type, value) };",

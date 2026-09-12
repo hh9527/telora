@@ -1,5 +1,5 @@
 import "std/entry" as entry;
-import "std/codec" {encode, Value};
+import "std/codec" {encode, decode, Value};
 import "std/dict" as dict;
 import "./base.json" as base;
 
@@ -14,6 +14,20 @@ export def selected = entry.main(
         match dict.get(ctx.sources, "input") {
             Some(value) => value,
             None => fail!("declared input is absent"),
+        }
+    },
+);
+
+export def decoded = entry.main(
+    { sources: ["input"], envs: [], args: False },
+    fn(ctx) {
+        let input = match dict.get(ctx.sources, "input") {
+            Some(value) => value,
+            None => fail!("declared input is absent"),
+        };
+        match decode(Dict(Int).type, input) {
+            Ok(value) => encode(Value.type, value),
+            Err(error) => raise!(error),
         }
     },
 );

@@ -407,6 +407,19 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::DICT_READ, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if (module.id, declaration.name.as_str()) == (13, "decode_with") {
+            let output = &self.mir.types[self.return_type.index()];
+            if arguments.len() != 3
+                || self.mir.types[arguments[1].index()].constructor != TypeConstructor::TypeOf
+                || self.mir.types[arguments[1].index()].arguments.len() != 1
+                || output.constructor != TypeConstructor::Result
+                || output.arguments.len() != 2
+                || output.arguments[0] != self.mir.types[arguments[1].index()].arguments[0]
+            { return Err("native codec decode signature mismatch".into()); }
+            let count = self.builder.ins().iconst(types::I64, 0);
+            let result = self.object(node, helpers::DECODE, self.return_type, data, count)?;
+            return self.write_return(&result);
+        }
         if (module.id, declaration.name.as_str()) == (13, "encode_with") {
             if arguments.len() != 3
                 || self.mir.types[arguments[1].index()].constructor != TypeConstructor::TypeOf

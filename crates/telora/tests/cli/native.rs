@@ -76,6 +76,17 @@ fn native_eval_with_initializes_then_injects_declared_context() {
     let selected = telora(&cwd).args(["eval-with", "--native", "@src/main:selected", "--source", "input=input.json"]).output().unwrap();
     assert!(selected.status.success(), "{}", String::from_utf8_lossy(&selected.stderr));
     assert_eq!(serde_json::from_slice::<Value>(&selected.stdout).unwrap(), serde_json::json!({"answer":42}));
+    let decoded = telora(&cwd).args(["eval-with", "--native", "@src/main:decoded", "--source", "input=input.json"]).output().unwrap();
+    assert!(decoded.status.success(), "{}", String::from_utf8_lossy(&decoded.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&decoded.stdout).unwrap(), serde_json::json!({"answer":42}));
+    fs::write(cwd.join("invalid.json"), "{\"answer\":\"wrong\"}").unwrap();
+    let rejected = telora(&cwd).args(["eval-with", "--native", "@src/main:decoded", "--source", "input=invalid.json"]).output().unwrap();
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    let diagnostic = String::from_utf8_lossy(&rejected.stderr);
+    assert!(diagnostic.contains("expected Int"), "{diagnostic}");
+    assert!(diagnostic.contains("@eval-ctx/input:1:11"), "{diagnostic}");
+    assert!(diagnostic.contains("fixture/main:"), "{diagnostic}");
     let output = telora(&cwd).args(["eval-with", "--native", "@src/main:answer"]).output().unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("eval sources do not match"));
