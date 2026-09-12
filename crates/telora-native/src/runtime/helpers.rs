@@ -201,6 +201,16 @@ pub(crate) unsafe extern "C" fn object(
                     unsafe { std::slice::from_raw_parts(data.cast::<u8>(), count as usize) };
                 return Err(String::from_utf8_lossy(message).into_owned());
             }
+            if operation == RESOLVE_FUNCTION {
+                let resolved = context.runtime_work(origin, |rt, charge| {
+                    let width = rt.layout(TypeId(ty))?.words;
+                    let value = ValueRef { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) } };
+                    rt.resolve_function_metered(value, charge)
+                })?;
+                let Some(value) = resolved else { return Ok(Status::Failed); };
+                unsafe { std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, value.words().len()); }
+                return Ok(Status::Success);
+            }
             if operation == EQUAL {
                 let equal = context.runtime_work(origin, |rt, charge| {
                     let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
@@ -589,15 +599,12 @@ pub(crate) unsafe extern "C" fn object(
                     rt.aggregate(ty, loc, &[bits])?
                 }
                 RESERVE_FUNCTION => rt.reserve_function(ty, loc)?,
-                FILL_FUNCTION | RESOLVE_FUNCTION => {
+                FILL_FUNCTION => {
                     let width = rt.layout(ty)?.words;
                     let target = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) }.into() };
-                    if operation == RESOLVE_FUNCTION { rt.resolve_function(&target)? }
-                    else {
                         let source = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data.add(width), width) }.into() };
                         rt.fill_function(&target, &source)?;
                         target
-                    }
                 }
                 SELF_CLOSURE => {
                     if data.is_null() {

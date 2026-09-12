@@ -36,19 +36,24 @@ impl Runtime {
 
     /// Follow lexical slots only at invocation. Equality and captured aliases
     /// retain the slot descriptor, so installing a body never changes identity.
+    #[cfg(test)]
     pub(crate) fn resolve_function(&self, value: &Value) -> Result<Value> {
-        let mut current = value.clone();
+        self.resolve_function_metered(value.as_ref(), &mut |_| Ok(()))
+    }
+    pub(crate) fn resolve_function_metered(&self, value: ValueRef<'_>, charge: &mut dyn FnMut(u64) -> Result<()>) -> Result<Value> {
+        let mut current = value;
         let limit = self.main.environments.entries.len()
             .saturating_add(self.work.environments.entries.len());
         for _ in 0..=limit {
-            if self.function_id(&current)? != FUNCTION_SLOT { return Ok(current); }
+            charge(1)?;
+            self.validate(current, value.type_id())?;
+            self.expect(current.type_id(), Kind::Function)?;
+            if current.words[2] as u32 != FUNCTION_SLOT { return Ok(current.to_owned()); }
             let raw = ((current.words[2] >> 32) as u32).checked_sub(1)
                 .ok_or("function slot has no identity")?;
             let words = self.object_words(Table::Environments, raw)?;
             if words.is_empty() { return Err("function called before its declaration was initialized".into()); }
-            let next = Value { arena: self.identity, words: words.into() };
-            self.validate(next.as_ref(), value.type_id())?;
-            current = next;
+            current = ValueRef { arena: self.identity, words };
         }
         Err("function slot alias cycle".into())
     }

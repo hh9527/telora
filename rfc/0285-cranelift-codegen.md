@@ -139,7 +139,9 @@ Host 入口和生成代码的间接分派都处理这种槽。函数自身已捕
 
 语言资产 `generic-mutual-closures.telora` 覆盖显式声明、两组 String/Int 实例、隐式递归调用和显式类型应用，并由 CLI 验证发布后 eval-with 返回 42。该新资产在默认后端报 `function family has invalid or duplicate static instance keys`，因此泛型部分只断言 native 的确定结果，不宣称双后端对照通过；普通互递归仍保留双后端对照。泛型调整后的完整 native 测试 124 项通过；CLI 完整运行原有 84 项通过，新泛型发布用例因上述默认后端限制失败后，单独核对 native 路径。
 
-调整对照范围后，普通/泛型互递归的 CLI eval 与 eval-with 定向回归通过。后续继续覆盖函数别名和提前调用诊断。不依赖默认 VM 的 AllocFunc/SealFunc；槽链解析的 helper 工作量仍须纳入资源预算审计。
+调整对照范围后，普通/泛型互递归的 CLI eval 与 eval-with 定向回归通过。后续继续覆盖函数别名和提前调用诊断。不依赖默认 VM 的 AllocFunc/SealFunc。
+
+槽链解析已纳入同一 session fuel：每读取一个槽或最终函数描述符前扣一个单位，host 入口和生成代码 dispatcher 共用这条路径。遍历时借用 arena 内描述符，仅最终返回复制一次描述符，不按链长反复分配临时 Value。八层槽加最终函数的边界测试验证 9 单位成功、8 单位耗尽、不写输出缓冲、保留 helper 提供的来源和 sticky abort；这不等于验证所有调用场景的诊断定位，也不表示其他 native helper 的预算已全部闭合。
 
 `.cast!` 已消费封闭目标类型与 checker 实例生成调用包；运行时先验证整个输入的表示，再转换并执行声明检查，不调用 encode/decode，也不重新推导类型。支持 Record/Dict、Array、Tuple/Newtype、Option/Result 和 Unchecked 到 owner；拒绝不同 nominal 身份以及数值隐式转换。未改变的子对象保留 backing 与来源。结构不匹配返回 Err(String)，checker 失败只产生一次执行诊断。
 
