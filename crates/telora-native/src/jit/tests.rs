@@ -2090,8 +2090,8 @@ fn native_codec_rename_properties_compose_with_checks_and_cache_provider_values(
 #[test]
 fn native_codec_rename_rejects_collisions_and_propagates_property_failure() {
     for (definition, expression, expected) in [
-        ("@rename_all(RenameCase.CamelCase) type Item = struct {a_b: Int, aB: Int};", "do { let value: Item = {a_b: 1, aB: 2}; encode(Value.type, value) }", "duplicate external member name"),
-        ("@rename_all(RenameCase.CamelCase) type Item = struct {a_b: Int, aB: Int};", "decode(Item.type, Value.Object({aB: Value.Int(1)}))", "duplicate external member name"),
+        ("@rename_all(RenameCase.CamelCase) type Item = struct {a_b: Int, aB: Int};", "do { let value: Item = {a_b: 1, aB: 2}; encode(Value.type, value) }", "duplicate external field name"),
+        ("@rename_all(RenameCase.CamelCase) type Item = struct {a_b: Int, aB: Int};", "decode(Item.type, Value.Object({aB: Value.Int(1)}))", "duplicate external field name"),
         ("@rename_all(RenameCase.CamelCase) type Item = enum {Some_value, SomeValue};", "encode(Value.type, Item.SomeValue)", "duplicate external variant name"),
         ("@rename_all(RenameCase.CamelCase) type Item = enum {Some_value, SomeValue};", "decode(Item.type, Value.String(\"someValue\"))", "duplicate external variant name"),
         ("@untagged @rename_all(RenameCase.CamelCase) type Item = enum {SomeValue(Int)};", "encode(Value.type, Item.SomeValue(1))", "rename_all is not meaningful on an untagged Enum"),

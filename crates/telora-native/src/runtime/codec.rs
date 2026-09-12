@@ -285,7 +285,7 @@ impl Codec<'_> {
         }
         if layout.kind == Kind::Record {
             if tag != "Object" { return Err(reject("Object")); }
-            let names = external_names(layout.field_names.iter().cloned(), rename, "duplicate external member name")?;
+            let names = external_names(layout.field_names.iter().cloned(), rename, "duplicate external field name")?;
             let fields = names.into_iter().zip(layout.fields.iter().map(|(ty, _)| *ty)).collect::<Vec<_>>();
             let names = fields.iter().map(|(name, _)| name.clone()).collect::<std::collections::BTreeSet<_>>();
             let payload = payload.ok_or_else(|| DecodeFailure::Runtime("missing semantic Object payload".into()))?;
@@ -430,7 +430,7 @@ impl Codec<'_> {
         }
         if matches!(layout.kind, Kind::Dict | Kind::Record) {
             let dictionary = layout.kind == Kind::Dict;
-            let names = external_names(layout.field_names.iter().cloned(), rename, "duplicate external member name")?;
+            let names = external_names(layout.field_names.iter().cloned(), rename, "duplicate external field name")?;
             let count = if dictionary {
                 self.runtime()?.dict_len(input)?
             } else {
@@ -475,6 +475,10 @@ impl Codec<'_> {
             }
             return Ok(self.runtime_mut()?.named_variant(target, loc, "String", Some(&key))?);
         }
-        Err("native codec cannot encode this sealed type".into())
+        Err(match layout.kind {
+            Kind::Function => "Function has no JSON codec".into(),
+            Kind::Metadata => "cannot encode Type".into(),
+            _ => format!("native codec cannot encode sealed type {:?}", kind).into(),
+        })
     }
 }

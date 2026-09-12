@@ -665,7 +665,7 @@ impl Runtime {
     pub fn array_get<'a>(&'a self, value: &Value, index: usize) -> Result<ValueRef<'a>> {
         let (id, start, end, element) = self.array_range(value)?;
         if index >= (end - start) as usize {
-            return Err("array index out of bounds".into());
+            return Err("OutOfRange: array index out of bounds".into());
         }
         let stride = self.layout(element)?.words;
         let offset = (start as usize + index)
@@ -691,7 +691,7 @@ impl Runtime {
     ) -> Result<Value> {
         let len = self.array_len(value)?;
         if index >= len {
-            return Err("array index out of bounds".into());
+            return Err("OutOfRange: array index out of bounds".into());
         }
         let mut values = (0..len)
             .map(|i| self.array_get(value, i).map(ValueRef::to_owned))

@@ -3,6 +3,10 @@ use crate::test_support::{graph, value_type};
 
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
+#[cfg(feature = "jit")]
+#[path = "tests/language.rs"]
+mod language;
+
 #[test]
 fn deep_equality_compares_finite_graphs_without_per_node_fuel() {
     use crate::abi::{CallContext, Status};

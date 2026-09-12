@@ -39,6 +39,28 @@
 下面的首批实现及各阶段进展保留历史上下文，旧测试数量和当时未接通项
 不代表当前支持范围。完整落地仍按伞 RFC 的验收条件判断。
 
+### 实际语言闭包执行审计（2026-09-13）
+
+新增仅用于测试的 `runtime/tests/language.rs`：读取默认语言验收记录，复用既有
+`.telora` 源码，通过 SealedExecutable 初始化后调用已发布的 Test 闭包，对照结果。
+它不实现 native test CLI，也不调度 fixture；当前覆盖 402 个非 fixture 闭包，
+另外 21 个 fixture case 不在此 harness 范围。大型模块编译使用与当前 CLI 相同的
+8 MiB 线程栈；运行预算取 CLI 的 fuel/显式栈槽/分配上限。
+
+最初发现 7 个差异。5 个诊断已对齐：字段重命名碰撞、Function/Type 不可编码、
+数组越界、非有限浮点。`Countdown(100)` 递归 checker 则因直接 newtype 构造
+经过了额外合成函数而提前触及调用深度限制；现在和 enum 构造一样，直接根据
+封闭选择生成 payload 检查及构造，仍保留作为一等函数传递的构造器路径。
+
+修复后 401 个闭包结果一致，剩余 `compiler-semantics/tail_calls`：1500 次尾递归
+仍因 native 调用深度上限而失败。这是下一项明确的 codegen 缺口；不通过提高
+深度上限、改低测试次数或排除该用例来宣称验收通过。必须保留参数求值顺序、
+失败传播、来源，以及调用后仍有类型适配/构造检查时的完成边界。
+
+复跑：先 `bash scripts/test-language.sh`，再
+`cargo test -p telora-native --features jit published_language_test_closures -- --ignored --nocapture`。
+该手动审计当前明确失败于尾调用；常规 native 单测仍单独运行。
+
 ### 表达式支持清单（35e9cad）
 
 本表描述已封闭 MIR 的 lowering 路径，不代表所有组合的 corner case 已穷尽。

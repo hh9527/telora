@@ -935,7 +935,7 @@ impl Lower<'_, '_> {
     }
     fn direct_call(&mut self, node: HirId, depth: usize) -> EmitResult<Vec<ir::Value>> {
         let callee_node = child(self.mir, node, Role::Callee)?;
-        if let Some(MemberSelection::EnumVariant { index }) = self.selected_member(callee_node) {
+        if let Some(selection @ (MemberSelection::EnumVariant { .. } | MemberSelection::NewtypeConstructor)) = self.selected_member(callee_node) {
             let arguments = self.mir.hir[node.index()]
                 .children
                 .iter()
@@ -943,19 +943,27 @@ impl Lower<'_, '_> {
                 .map(|e| e.node)
                 .collect::<Vec<_>>();
             if arguments.len() != 1 {
-                return Err("native enum constructor requires one payload".into());
+                return Err("native constructor requires one payload".into());
             }
             let payload = self.expression(arguments[0], depth + 1)?;
             let owner = TypeKey::try_from(self.ty(node)?)?;
-            let expected = self.layouts.variant_payloads[owner.index()][index as usize]
-                .ok_or("sealed variant has no payload type")?;
+            let expected = match selection {
+                MemberSelection::EnumVariant { index } => self.layouts.variant_payloads[owner.index()][index as usize]
+                    .ok_or("sealed variant has no payload type")?,
+                MemberSelection::NewtypeConstructor => self.record_field_type(owner, 0)?,
+                _ => unreachable!(),
+            };
             let payload = self.fit_metadata(arguments[0], expected, payload)?;
-            return self.enum_constructor(
-                node,
-                owner,
-                index,
-                &payload,
-            );
+            return match selection {
+                MemberSelection::EnumVariant { index } => self.enum_constructor(node, owner, index, &payload),
+                MemberSelection::NewtypeConstructor => {
+                    self.construction_check(node, owner, telora_core::mir::PropertySite::Type, &payload)?;
+                    let data = self.stack_words(&payload)?;
+                    let count = self.builder.ins().iconst(types::I64, 1);
+                    self.object(node, helpers::AGGREGATE, owner, data, count)
+                }
+                _ => unreachable!(),
+            };
         }
         let local = if let Some(instance) = self.instance_reference(callee_node)
             && let Some(value) = self.local_instances.get(&instance) {

@@ -57,6 +57,11 @@ nominal-equality 和 enum-constructor-context 均已通过。检查命令为
 `check --native @src/test/<name>/testee`，工作区由完整语言验收脚本生成；
 这仍然只证明编译/初始化，不等同于运行每个测试闭包。
 
+进一步通过测试专用 harness 实际调用已发布闭包（详见 RFC 0285）：402 个非 fixture
+闭包中，修复诊断和直接 newtype 构造后有 401 个结果与默认语言验收一致；
+剩余尾调用深度问题继续推进。21 个 fixture case 不由此 harness 调度，不能算作
+native 执行覆盖；不增加 native test/run/serve 命令。
+
 实现版本 `4bf46dd`，debug CLI；使用默认语言测试脚本生成的
 `target/language-tests/workspace`，逐一执行
 `check --native @src/test/<name>/testee`。源码中的 76 个 testee 全部完成检查：

@@ -47,7 +47,7 @@ impl Lower<'_, '_> {
         }
         Ok(fields)
     }
-    fn record_field_type(&self, owner: TypeKey, index: usize) -> Result<TypeKey> {
+    pub(super) fn record_field_type(&self, owner: TypeKey, index: usize) -> Result<TypeKey> {
         let owner = if self.mir.types[owner.index()].constructor == TypeConstructor::Unchecked {
             TypeKey::try_from(self.mir.types[owner.index()].arguments[0])?
         } else { owner };

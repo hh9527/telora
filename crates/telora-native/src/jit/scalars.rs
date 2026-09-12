@@ -290,7 +290,7 @@ impl Lower<'_, '_> {
                 self.fail_if(
                     node,
                     nonfinite,
-                    "floating-point arithmetic produced a non-finite value",
+                    "NonFiniteFloat: floating-point arithmetic produced a non-finite value",
                 )?;
                 bits
             }
