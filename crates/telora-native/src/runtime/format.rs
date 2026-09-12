@@ -85,16 +85,16 @@ impl Runtime {
         self.pack(output, loc, &[u64::from(heap)])
     }
     pub(crate) fn format_render(&self, value: &Value) -> Result<String> {
-        fn render(rt: &Runtime, value: &Value, output: &mut String, depth: usize) -> Result<()> {
+        fn render(rt: &Runtime, value: &Value, output: &mut output::Output<'_>, depth: usize) -> Result<()> {
             if depth >= 128 {
                 return Err("std/fmt value exceeds the recursive rendering limit".into());
             }
             let (operation, arguments) = rt.format_parts(value)?;
             let first = arguments.first().ok_or("Fmt input missing")?;
             match operation {
-                1 => output.push_str(rt.text(first.as_ref())?.as_str()),
-                2 => output.push_str(&(rt.scalar_bits(first.as_ref())? as i64).to_string()),
-                3 => output.push_str(&f64::from_bits(rt.scalar_bits(first.as_ref())?).to_string()),
+                1 => output.push_str(rt.text(first.as_ref())?.as_str())?,
+                2 => output.push_str(&(rt.scalar_bits(first.as_ref())? as i64).to_string())?,
+                3 => output.push_str(&f64::from_bits(rt.scalar_bits(first.as_ref())?).to_string())?,
                 4 => {
                     let items = arguments.get(1).ok_or("Fmt concat items missing")?;
                     let count = rt.array_len(items)?;
@@ -102,7 +102,7 @@ impl Runtime {
                         return Err("invalid Fmt concat lengths".into());
                     }
                     for index in 0..count {
-                        output.push_str(rt.text(rt.array_get(first, index)?)?.as_str());
+                        output.push_str(rt.text(rt.array_get(first, index)?)?.as_str())?;
                         render(
                             rt,
                             &rt.array_get(items, index)?.to_owned(),
@@ -110,15 +110,15 @@ impl Runtime {
                             depth + 1,
                         )?;
                     }
-                    output.push_str(rt.text(rt.array_get(first, count)?)?.as_str());
+                    output.push_str(rt.text(rt.array_get(first, count)?)?.as_str())?;
                 }
                 _ => return Err("invalid Fmt operation".into()),
             }
             Ok(())
         }
-        let mut output = String::new();
+        let mut output = output::Output::new(self);
         render(self, value, &mut output, 0)?;
-        Ok(output)
+        output.finish()
     }
 
     pub(super) fn format_parts(&self, value: &Value) -> Result<(u64, Vec<Value>)> {

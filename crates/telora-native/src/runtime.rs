@@ -728,6 +728,7 @@ mod diagnostics;
 mod equality;
 mod test_description;
 mod allocation;
+mod output;
 mod array_ops;
 mod blame;
 pub use dynamic::DynamicQuery;

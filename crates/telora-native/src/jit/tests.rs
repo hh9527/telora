@@ -696,6 +696,31 @@ fn native_generated_stack_budget_counts_frames_and_unwinds_on_failure() {
 }
 
 #[test]
+fn native_shared_graph_output_is_bounded_and_cannot_be_caught() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/output-budget.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    for formatting in [false, true] {
+        let runtime = crate::runtime::Runtime::new(&sealed).unwrap().with_allocation_limit(32 * 1024);
+        let argument = runtime.scalar(compiled.arguments()[0], [0; 3], u64::from(formatting)).unwrap();
+        let mut context = CallContext::with_runtime(runtime);
+        assert!(compiled.call(&mut context, &[argument]).is_err());
+        assert!(context.is_aborted());
+        assert_eq!(context.diagnostics().len(), 1);
+        assert!(context.diagnostics()[0].message.contains("allocation byte limit"));
+        // Native helper failures retain the admitted native declaration's
+        // source; they do not invent a call-site traceback.
+        let (module, name) = if formatting { ("std/fmt", "render") } else { ("std/json", "stringify") };
+        let symbol = mir.symbols.iter().find(|symbol| symbol.name == name
+            && symbol.module.is_some_and(|id| mir.modules[id.index()].name == module)).unwrap();
+        assert_eq!(context.diagnostics()[0].origin,
+            Origin::from_loc(Some(mir.hir[symbol.declarations[0].index()].location)));
+        assert_eq!(context.stack_words(), 0);
+        assert_eq!(context.call_depth(), 0);
+    }
+}
+
+#[test]
 fn native_allocation_limit_is_not_caught_as_a_language_failure() {
     let (mir, root) = graph_with("import \"std/_rt\" as rt; import \"std/string\" as string; export def answer = rt.with_diagnostics(fn(n: Int) { string.indent(\"x\", n) })(10000);", static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();

@@ -15,36 +15,52 @@ impl Runtime {
         type Identity = (u8, u32, u64);
         enum Task<'a> {
             Value(ValueRef<'a>, usize),
-            Key(ValueRef<'a>),
+            Array(Value, usize, usize, usize),
+            Object(Value, usize, usize, usize),
             Character(char),
             Newline(usize),
             Leave(Identity),
         }
         let mut pending = vec![Task::Value(root.as_ref(), 0)];
         let mut active = BTreeSet::new();
-        let mut output = String::new();
+        let mut output = output::Output::new(self);
         while let Some(task) = pending.pop() {
             let (value, depth) = match task {
                 Task::Newline(depth) => {
                     if let Some(width) = indent {
-                        output.push('\n');
-                        output.extend(std::iter::repeat_n(' ', width * depth));
+                        output.push('\n')?;
+                        for _ in 0..width * depth { output.push(' ')?; }
                     }
                     continue;
                 }
                 Task::Character(c) => {
-                    output.push(c);
+                    output.push(c)?;
                     continue;
                 }
                 Task::Leave(id) => {
                     active.remove(&id);
                     continue;
                 }
-                Task::Key(key) => {
-                    output.push_str(
-                        &serde_json::to_string(self.text(key)?.as_str())
-                            .map_err(|e| e.to_string())?,
-                    );
+                Task::Array(array, index, len, depth) => {
+                    if index != 0 { output.push(',')?; }
+                    let value = self.array_get(&array, index)?;
+                    if index + 1 < len { pending.push(Task::Array(array, index + 1, len, depth)); }
+                    pending.push(Task::Value(value, depth + 1));
+                    pending.push(Task::Newline(depth + 1));
+                    continue;
+                }
+                Task::Object(dict, index, len, depth) => {
+                    if index != 0 { output.push(',')?; }
+                    if let Some(width) = indent {
+                        output.push('\n')?;
+                        for _ in 0..width * (depth + 1) { output.push(' ')?; }
+                    }
+                    let (key, value) = self.dict_entry(&dict, index)?;
+                    serde_json::to_writer(&mut output, self.text(key)?.as_str()).map_err(|e| e.to_string())?;
+                    output.push(':')?;
+                    if indent.is_some() { output.push(' ')?; }
+                    if index + 1 < len { pending.push(Task::Object(dict, index + 1, len, depth)); }
+                    pending.push(Task::Value(value, depth + 1));
                     continue;
                 }
                 Task::Value(value, depth) => (value, depth),
@@ -57,25 +73,22 @@ impl Runtime {
                 "False" => Some("false"),
                 _ => None,
             } {
-                output.push_str(text);
+                output.push_str(text)?;
                 continue;
             }
             let payload = self
                 .enum_payload_ref(value)?
                 .ok_or("semantic Value payload missing")?;
             match tag {
-                "Int" => output.push_str(&(self.scalar_bits(payload)? as i64).to_string()),
+                "Int" => output.push_str(&(self.scalar_bits(payload)? as i64).to_string())?,
                 "Float" => {
                     let number = f64::from_bits(self.scalar_bits(payload)?);
                     if !number.is_finite() {
                         return Err("JSON cannot encode a non-finite Float".into());
                     }
-                    output.push_str(&number.to_string());
+                    output.push_str(&number.to_string())?;
                 }
-                "String" => output.push_str(
-                    &serde_json::to_string(self.text(payload)?.as_str())
-                        .map_err(|e| e.to_string())?,
-                ),
+                "String" => serde_json::to_writer(&mut output, self.text(payload)?.as_str()).map_err(|e| e.to_string())?,
                 "Bytes" => return Err("JSON cannot encode Bytes".into()),
                 "LocalDate" | "LocalTime" | "LocalDateTime" | "OffsetDateTime" => {
                     return Err("JSON cannot encode temporal values; use a codec first".into());
@@ -90,15 +103,11 @@ impl Runtime {
                     pending.push(Task::Leave(id));
                     pending.push(Task::Character(']'));
                     let len = self.array_len(&array)?;
-                    if len > 0 { pending.push(Task::Newline(depth)); }
-                    for index in (0..len).rev() {
-                        pending.push(Task::Value(self.array_get(&array, index)?, depth + 1));
-                        pending.push(Task::Newline(depth + 1));
-                        if index != 0 {
-                            pending.push(Task::Character(','));
-                        }
+                    if len > 0 {
+                        pending.push(Task::Newline(depth));
+                        pending.push(Task::Array(array, 0, len, depth));
                     }
-                    output.push('[');
+                    output.push('[')?;
                 }
                 "Object" => {
                     let dict = payload.to_owned(); // columns remain borrowed
@@ -109,23 +118,15 @@ impl Runtime {
                     pending.push(Task::Leave(id));
                     pending.push(Task::Character('}'));
                     let len = self.dict_len(&dict)?;
-                    if len > 0 { pending.push(Task::Newline(depth)); }
-                    for index in (0..len).rev() {
-                        let (key, value) = self.dict_entry(&dict, index)?;
-                        pending.push(Task::Value(value, depth + 1));
-                        if indent.is_some() { pending.push(Task::Character(' ')); }
-                        pending.push(Task::Character(':'));
-                        pending.push(Task::Key(key));
-                        pending.push(Task::Newline(depth + 1));
-                        if index != 0 {
-                            pending.push(Task::Character(','));
-                        }
+                    if len > 0 {
+                        pending.push(Task::Newline(depth));
+                        pending.push(Task::Object(dict, 0, len, depth));
                     }
-                    output.push('{');
+                    output.push('{')?;
                 }
                 _ => return Err("invalid semantic Value variant".into()),
             }
         }
-        Ok(output)
+        output.finish()
     }
 }

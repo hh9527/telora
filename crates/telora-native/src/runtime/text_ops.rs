@@ -18,7 +18,7 @@ impl Runtime {
         Ok(text)
     }
 
-    fn precharged_string(&mut self, ty: TypeId, loc: Location, text: String) -> Result<Value> {
+    pub(super) fn precharged_string(&mut self, ty: TypeId, loc: Location, text: String) -> Result<Value> {
         self.expect(ty, Kind::String)?;
         if text.len() <= 14 {
             return self.string(ty, loc, &text);

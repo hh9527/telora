@@ -1,0 +1,25 @@
+import "std/_rt" as rt;
+import "std/fmt" as fmt;
+import "std/json" as json;
+import "std/value" {Value};
+
+def value_tree: Fn(Int) -> Value = fn(depth) {
+    if depth == 0 { Value.String("\n") } else {
+        let child = value_tree(depth - 1);
+        Value.Array([child, child])
+    }
+};
+
+def format_tree: Fn(Int) -> fmt.Fmt = fn(depth) {
+    if depth == 0 { fmt.from_string("x") } else {
+        let child = format_tree(depth - 1);
+        fmt.concat(["", "", ""], [child, child])
+    }
+};
+
+export def answer = fn(formatting: Bool) {
+    rt.with_diagnostics(fn(depth: Int) {
+        if formatting { fmt.render(format_tree(depth)) }
+        else { json.stringify(value_tree(depth)) }
+    })(16)
+};

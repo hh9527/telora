@@ -350,23 +350,24 @@ pub(crate) unsafe extern "C" fn object(
                     let contract = rt.data_contract.clone().ok_or("semantic Value contract is not loaded")?;
                     let indent = if count == 0 { None } else { Some((count - 1) as usize) };
                     let text = rt.semantic_json_indented(&contract, &value, indent)?;
-                    rt.owned_string(ty, loc, text)?
+                    rt.output_string(ty, loc, text)?
                 }
                 INTERPOLATE => {
                     let mut cursor = data;
-                    let mut text = String::new();
+                    let mut text = output::Output::new(rt);
                     for _ in 0..count {
                         let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
                         let width = rt.layout(input)?.words;
                         let value = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(cursor, width) }.into() };
                         match rt.layout(input)?.kind {
-                            Kind::String => text.push_str(rt.text(value.as_ref())?.as_str()),
-                            Kind::Format => text.push_str(&rt.format_render(&value)?),
+                            Kind::String => text.push_str(rt.text(value.as_ref())?.as_str())?,
+                            Kind::Format => text.push_str(&rt.format_render(&value)?)?,
                             _ => return Err("invalid sealed interpolation part".into()),
                         }
                         cursor = unsafe { cursor.add(width) };
                     }
-                    rt.owned_string(ty, loc, text)?
+                    let text = text.finish()?;
+                    rt.output_string(ty, loc, text)?
                 }
                 REFLECT => {
                     let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
@@ -441,7 +442,7 @@ pub(crate) unsafe extern "C" fn object(
                         1..=4 => rt.format_node(ty, loc, count as u64, &inputs)?,
                         5 => {
                             let text = rt.format_render(&inputs[0])?;
-                            rt.string(ty, loc, &text)?
+                            rt.output_string(ty, loc, text)?
                         }
                         _ => return Err("unknown format operation".into()),
                     }
