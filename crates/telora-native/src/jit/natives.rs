@@ -471,8 +471,9 @@ impl Lower<'_, '_> {
                 site,
             );
         }
-        if matches!((module.id, declaration.name.as_str()), (5, "map") | (6, "map_values")) {
+        if matches!((module.id, declaration.name.as_str()), (5, "map" | "find") | (6, "map_values")) {
             let dictionary = module.id == 6;
+            let find = declaration.name == "find";
             let constructor = if dictionary { TypeConstructor::Dict } else { TypeConstructor::Array };
             if arguments.len() != 2 {
                 return Err("native map arity mismatch".into());
@@ -481,11 +482,13 @@ impl Lower<'_, '_> {
             let callback = &self.mir.types[arguments[1].index()];
             let output = &self.mir.types[self.return_type.index()];
             if array.constructor != constructor
-                || output.constructor != constructor
+                || output.constructor != if find { TypeConstructor::Option } else { constructor }
                 || callback.constructor != TypeConstructor::Function
                 || callback.arguments.len() != 2
                 || array.arguments != callback.arguments[..1]
-                || output.arguments != callback.arguments[1..]
+                || if find {
+                    output.arguments != array.arguments || self.mir.types[callback.arguments[1].index()].constructor != TypeConstructor::Bool
+                } else { output.arguments != callback.arguments[1..] }
             {
                 return Err("native map does not match its closed callback signature".into());
             }
@@ -508,7 +511,7 @@ impl Lower<'_, '_> {
                 ));
             }
             let packet = self.stack_words(&packet)?;
-            let count = self.builder.ins().iconst(types::I64, i64::from(dictionary));
+            let count = self.builder.ins().iconst(types::I64, if find { 2 } else { i64::from(dictionary) });
             let value = self.object(node, helpers::ARRAY_MAP, self.return_type, packet, count)?;
             return self.write_return(&value);
         }

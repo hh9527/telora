@@ -10,13 +10,13 @@ pub(super) unsafe fn array_map(
     data: *const u64,
     out: *mut u64,
     origin: Origin,
-    dictionary: bool,
+    operation: u64,
 ) -> u32 {
     context.boundary(|context| {
         let result = (|| {
             let rt = context.runtime()?;
-            let element = rt.expect(ty, if dictionary { Kind::Dict } else { Kind::Array })?.arguments[0];
-            let output_width = rt.layout(element)?.words;
+            let dictionary = operation == 1;
+            let find = operation == 2;
             // SAFETY: codegen constructs this packet after checking the exact
             // array/function layouts and callback parameter/result types.
             let address = unsafe { *data };
@@ -29,9 +29,11 @@ pub(super) unsafe fn array_map(
                 words: unsafe { std::slice::from_raw_parts(data.add(5), 3) }.into(),
             };
             rt.function_id(&closure)?;
+            let element = *rt.layout(closure.type_id())?.arguments.last().ok_or("missing callback result")?;
+            let output_width = rt.layout(element)?.words;
             let count = if dictionary { rt.dict_len(&array)? } else { rt.array_len(&array)? };
             let callback = unsafe { std::mem::transmute::<usize, Callback>(address as usize) };
-            let mut mapped = Vec::with_capacity(count);
+            let mut mapped = Vec::with_capacity(if find { 1 } else { count });
             for index in 0..count {
                 let rt = context.runtime()?;
                 let argument = if dictionary { rt.dict_entry(&array, index)?.1 } else { rt.array_get(&array, index)? }.to_owned();
@@ -56,10 +58,19 @@ pub(super) unsafe fn array_map(
                     words,
                 };
                 rt.validate(value.as_ref(), element)?;
+                if find {
+                    if rt.scalar_bits(value.as_ref())? != 0 {
+                        mapped.push(argument);
+                        break;
+                    }
+                    continue;
+                }
                 mapped.push(value);
             }
             let rt = context.runtime_mut()?;
-            let value = if dictionary {
+            let value = if find {
+                rt.named_variant(ty, origin.words(), if mapped.is_empty() { "None" } else { "Some" }, mapped.first())?
+            } else if dictionary {
                 // Keys are already canonical and immutable. Reuse their column;
                 // only callback result descriptors need new storage.
                 let words = mapped.iter().flat_map(|value| value.words().iter().copied()).collect();

@@ -615,6 +615,35 @@ fn native_map_calls_captured_and_nested_language_callbacks() {
 }
 
 #[test]
+fn native_array_find_short_circuits_and_preserves_selected_descriptor() {
+    let (mir, root) = graph_with(
+        "import \"std/array\" { find }; export def answer = do { let xs = [\"long heap-backed selected string\", \"unreachable\"]; (xs, find(xs, fn(x) { match x { \"unreachable\" => fail!(\"visited too far\"), _ => True } })) };",
+        static_sources::BUILTINS,
+    );
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let result = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    let array = rt.field(&result, 0).unwrap().to_owned();
+    let option = rt.field(&result, 1).unwrap().to_owned();
+    assert_eq!(rt.enum_payload(&option).unwrap().unwrap().words(), rt.array_get(&array, 0).unwrap().words());
+    assert!(context.diagnostics().is_empty());
+    for source in [
+        "import \"std/array\" { find }; export def answer = find([1, 2], fn(x) { False });",
+        "import \"std/array\" { find }; export def answer = do { let xs: Array(Int) = []; find(xs, fn(x) { fail!(\"empty callback\") }) };",
+    ] {
+        let (mir, root) = graph_with(source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let value = compiled.call(&mut context, &[]).unwrap();
+        assert!(context.runtime().unwrap().enum_payload(&value).unwrap().is_none());
+        assert!(context.diagnostics().is_empty());
+    }
+}
+
+#[test]
 fn native_dict_map_keeps_sorted_shared_keys_and_propagates_callback_failure() {
     let (mir, root) = graph_with(
         "import \"std/dict\" { map_values }; export def answer = do { let d: Dict(Int) = { z: 2, a: 40 }; let offset = 1; (d, map_values(d, fn(x) { x + offset })) };",
