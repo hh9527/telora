@@ -1,0 +1,11 @@
+import "std/dyn" as dyn;
+def items = [42];
+def boxed = dyn.pack(Array(Int).type, items);
+export def answer = (
+    boxed,
+    dyn.desc(boxed),
+    dyn.project_with(Array(Int).type, boxed),
+    dyn.project_with(String.type, boxed),
+    dyn.check_int(dyn.pack(Int.type, 42)),
+    dyn.check_string(boxed),
+);

@@ -19,6 +19,10 @@ pub(crate) const ARRAY_LENGTH: u32 = 13;
 pub(crate) const STRING_LENGTH: u32 = 14;
 pub(crate) const ARRAY_MAP: u32 = 15;
 pub(crate) const PROPERTY_MARK: u32 = 16;
+pub(crate) const DYN_PACK: u32 = 17;
+pub(crate) const DYN_DESC: u32 = 18;
+pub(crate) const DYN_PROJECT: u32 = 19;
+pub(crate) const DYN_CHECK: u32 = 20;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -62,6 +66,62 @@ pub(crate) unsafe extern "C" fn object(
             let loc = origin.words();
             let count = usize::try_from(count).map_err(|_| "native count overflow")?;
             let result = match operation {
+                DYN_PACK | DYN_DESC | DYN_PROJECT | DYN_CHECK => {
+                    let read = |pointer: *const u64| -> Result<Value> {
+                        let input = unsafe { TypeId((*pointer.add(1) >> 32) as u32) };
+                        Ok(Value {
+                            arena: rt.identity,
+                            words: unsafe {
+                                std::slice::from_raw_parts(pointer, rt.layout(input)?.words)
+                            }
+                            .into(),
+                        })
+                    };
+                    let first = read(data)?;
+                    if operation == DYN_PACK {
+                        let value = read(unsafe { data.add(first.words.len()) })?;
+                        if rt.represented_type(first.as_ref())? != value.type_id() {
+                            return Err("Dyn packing witness mismatch".into());
+                        }
+                        rt.dynamic(ty, loc, &value)?
+                    } else {
+                        let dynamic = if operation == DYN_PROJECT {
+                            read(unsafe { data.add(first.words.len()) })?
+                        } else {
+                            first.clone()
+                        };
+                        let value = rt.dynamic_value(&dynamic)?.to_owned();
+                        if operation == DYN_DESC {
+                            rt.metadata(ty, loc, value.type_id())?
+                        } else {
+                            let expected = if operation == DYN_CHECK {
+                                *rt.layout(ty)?
+                                    .arguments
+                                    .first()
+                                    .ok_or("Dyn check Option type missing")?
+                            } else {
+                                rt.represented_type(first.as_ref())?
+                            };
+                            let some = rt
+                                .layout(ty)?
+                                .variants
+                                .iter()
+                                .position(|v| v.name == "Some" && v.payload == Some(expected))
+                                .ok_or("Dyn projection Option signature mismatch")?;
+                            if value.type_id() == expected {
+                                rt.enum_value(ty, loc, some as u32, Some(&value))?
+                            } else {
+                                let none = rt
+                                    .layout(ty)?
+                                    .variants
+                                    .iter()
+                                    .position(|v| v.name == "None" && v.payload.is_none())
+                                    .ok_or("Dyn projection None missing")?;
+                                rt.enum_value(ty, loc, none as u32, None)?
+                            }
+                        }
+                    }
+                }
                 PROPERTY_MARK => {
                     let target = Value {
                         arena: rt.identity,

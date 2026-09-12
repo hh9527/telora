@@ -92,6 +92,68 @@ impl Lower<'_, '_> {
         if (module.id, declaration.name.as_str()) == (18, "property") {
             return self.property_factory(node, arguments, data, environment);
         }
+        if module.id == 2 && matches!(declaration.name.as_str(), "pack" | "desc" | "project_with") {
+            let kind = |ty: TypeKey| &self.mir.types[ty.index()].constructor;
+            let operation = match declaration.name.as_str() {
+                "desc"
+                    if arguments.len() == 1
+                        && kind(arguments[0]) == &TypeConstructor::Dyn
+                        && kind(self.return_type) == &TypeConstructor::Type =>
+                {
+                    helpers::DYN_DESC
+                }
+                "pack"
+                    if arguments.len() == 2
+                        && kind(arguments[0]) == &TypeConstructor::TypeOf
+                        && self.mir.types[arguments[0].index()]
+                            .arguments
+                            .first()
+                            .is_some_and(|ty| ty.index() == arguments[1].index())
+                        && kind(self.return_type) == &TypeConstructor::Dyn =>
+                {
+                    helpers::DYN_PACK
+                }
+                "project_with"
+                    if arguments.len() == 2
+                        && kind(arguments[0]) == &TypeConstructor::TypeOf
+                        && kind(arguments[1]) == &TypeConstructor::Dyn
+                        && kind(self.return_type) == &TypeConstructor::Option
+                        && self.mir.types[arguments[0].index()].arguments
+                            == self.mir.types[self.return_type.index()].arguments =>
+                {
+                    helpers::DYN_PROJECT
+                }
+                _ => return Err("native Dyn ABI signature mismatch".into()),
+            };
+            let count = self.builder.ins().iconst(types::I64, 0);
+            let value = self.object(node, operation, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
+        if module.id == 2
+            && matches!(
+                declaration.name.as_str(),
+                "check_int" | "check_float" | "check_string" | "check_bytes"
+            )
+        {
+            let expected = match declaration.name.as_str() {
+                "check_int" => TypeConstructor::Int,
+                "check_float" => TypeConstructor::Float,
+                "check_string" => TypeConstructor::String,
+                _ => TypeConstructor::Bytes,
+            };
+            let output = &self.mir.types[self.return_type.index()];
+            if arguments.len() != 1
+                || self.mir.types[arguments[0].index()].constructor != TypeConstructor::Dyn
+                || output.constructor != TypeConstructor::Option
+                || output.arguments.len() != 1
+                || self.mir.types[output.arguments[0].index()].constructor != expected
+            {
+                return Err("native Dyn scalar check signature mismatch".into());
+            }
+            let count = self.builder.ins().iconst(types::I64, 0);
+            let value = self.object(node, helpers::DYN_CHECK, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 25
             && matches!(
                 declaration.name.as_str(),

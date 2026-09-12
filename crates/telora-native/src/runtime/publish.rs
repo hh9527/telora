@@ -206,6 +206,21 @@ impl Runtime {
                     }
                 }
             }
+            Kind::Dyn => {
+                let value = Value {
+                    arena: self.identity,
+                    words: words.to_vec().into_boxed_slice(),
+                };
+                let payload = self.dynamic_value(&value)?.type_id();
+                words[3] = u64::from(self.copy_object(
+                    Table::Values,
+                    words[3] as u32,
+                    Some(payload),
+                    target,
+                    copies,
+                    depth + 1,
+                )?);
+            }
             Kind::Other => {
                 return Err(format!(
                     "native publication unsupported TypeId {}",

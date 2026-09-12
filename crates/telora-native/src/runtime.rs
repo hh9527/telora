@@ -21,6 +21,7 @@ enum Kind {
     Dict,
     Enum,
     Function,
+    Dyn,
     Other,
 }
 struct Variant {
@@ -264,6 +265,7 @@ impl Runtime {
                 T::Dict => Kind::Dict,
                 T::Tuple => Kind::Tuple,
                 T::Function => Kind::Function,
+                T::Dyn => Kind::Dyn,
                 _ if !entry.variants.is_empty() => Kind::Enum,
                 _ if shape.table == Some("RecordTable") => Kind::Record,
                 _ => Kind::Other,
@@ -597,6 +599,8 @@ mod closures;
 mod data;
 #[path = "runtime/demands.rs"]
 mod demands;
+#[path = "runtime/dynamic.rs"]
+mod dynamic;
 #[path = "runtime/metadata.rs"]
 mod metadata;
 pub use data::DataContract;

@@ -692,6 +692,47 @@ fn metadata_uses_sealed_type_ids_and_survives_publication() {
 }
 
 #[test]
+fn dynamic_values_preserve_sealed_identity_and_shared_payloads() {
+    let (mir, root) = graph_with(
+        include_str!("../../tests/fixtures/dynamic.telora"),
+        static_sources::BUILTINS,
+    );
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap();
+    let value = compiled
+        .export(&mut context, mir.exports[module.index()][0])
+        .unwrap();
+    let runtime = context.runtime().unwrap();
+    let boxed = runtime.field(&value, 0).unwrap().to_owned();
+    let payload = runtime.dynamic_value(&boxed).unwrap();
+    assert_eq!(
+        runtime
+            .represented_type(runtime.field(&value, 1).unwrap())
+            .unwrap(),
+        payload.type_id()
+    );
+    let some = runtime.field(&value, 2).unwrap().to_owned();
+    assert_eq!(
+        runtime.enum_payload(&some).unwrap().unwrap().words(),
+        payload.words()
+    );
+    let none = runtime.field(&value, 3).unwrap().to_owned();
+    assert!(runtime.enum_payload(&none).unwrap().is_none());
+    let checked = runtime.field(&value, 4).unwrap().to_owned();
+    assert_eq!(
+        runtime.enum_payload(&checked).unwrap().unwrap().words()[2],
+        42
+    );
+    let mismatch = runtime.field(&value, 5).unwrap().to_owned();
+    assert!(runtime.enum_payload(&mismatch).unwrap().is_none());
+    let array = payload.to_owned();
+    assert_eq!(runtime.array_get(&array, 0).unwrap().words()[2], 42);
+}
+
+#[test]
 fn enum_constructors_are_first_class_closed_functions() {
     let (mir, root) = graph("export def answer: Fn(Int) -> Option(Int) = Some;");
     let module = mir.hir[root.index()].module;

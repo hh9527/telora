@@ -53,7 +53,9 @@ Native 语义 Value 已支持直接输出紧凑 JSON：迭代遍历原有表，�
 
 已增加发布后闭包调用接口：host 以 native 描述符传入闭包，编译计划按内部函数 ID 验证其封闭签名及所属代码计划，传递原捕获描述符调用机器码，不复制捕获对象图。无初始化发布、错误参数宽度和未知函数 ID 会明确拒绝。前向 decl 连接到实际 def；Some 等带 payload 枚举构造器可按封闭签名生成为普通可调用函数值。相关验证后 native JIT 测试为 43 passed。
 
-完整 `std/entry` 图目前推进至缺少 module 2 / desc 的 native 适配器；还需类型反射及后续依赖能力才能完成 eval-with 路径，不绕过加载图中的初始化任务。
+完整 `std/entry` 图此前暴露的 module 2 / desc 属于 `std/dyn`。现已补充 Dyn boxed 存储、pack/desc/project_with 及标量 check 适配器。装箱仅复制固定宽描述符，其底层对象继续共享；发布沿用 ValueTable 的统一别名复制，保留 payload 来源和已有 TypeId。投影比较已存身份，不执行类型推导。已验证匹配/不匹配投影、标量检查及发布后的数组共享，native JIT 44 passed。Dyn 暂统一使用 ABI 已允许的 boxed 表达，inline 优化后置。
+
+完整 eval-with 仍需补齐 std/dyn 其余访问接口及其后续依赖能力，不绕过加载图中的初始化任务。
 
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。
 
