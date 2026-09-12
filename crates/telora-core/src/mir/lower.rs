@@ -412,11 +412,6 @@ impl Lower<'_> {
                 self.expression_edge(&mut edges, Role::Target, *target);
                 HirKind::TypeAscription
             }
-            E::CheckedCast { value, target } => {
-                self.expression_edge(&mut edges, Role::Value, *value);
-                self.expression_edge(&mut edges, Role::Target, *target);
-                HirKind::CheckedCast
-            }
             E::Binary {
                 operator,
                 left,

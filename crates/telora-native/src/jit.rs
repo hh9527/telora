@@ -1696,14 +1696,6 @@ impl Lower<'_, '_> {
                 }
                 self.global_value(node, symbol)
             }
-            HirKind::CheckedCast => {
-                let input = child(self.mir, node, Role::Value)?;
-                let target = TypeKey::try_from(self.mir.types[ty.index()].arguments[0])?;
-                let value = self.expression(input, depth + 1)?;
-                let data = self.stack_words(&value)?;
-                let (packet, count) = self.cast_packet(data, target)?;
-                self.object(node, helpers::CHECKED_CAST, key, packet, count)
-            }
             HirKind::TypeAscription => {
                 self.expression(child(self.mir, node, Role::Value)?, depth + 1)
             }

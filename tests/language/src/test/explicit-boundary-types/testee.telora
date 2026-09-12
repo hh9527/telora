@@ -29,13 +29,9 @@ export def explicit_partial_result = test.should_ok(fn() {
     expect(mapped == explicit)
 });
 
-export def cast_and_pack = test.should_ok(fn() {
-    let checked: Result(Int, String) = 42.cast!(Int);
-    let rejected: Result(Int, String) = "text".cast!(Int);
+export def pack_function = test.should_ok(fn() {
     let packed = dyn.pack((IntFunction).type, fn(value) { value });
-    expect(checked == Ok(42)
-        && !result.is_ok(rejected)
-        && match dyn.project_with((IntFunction).type, packed) {
+    expect(match dyn.project_with((IntFunction).type, packed) {
             Some(function) => function(7) == 7,
             None => False,
         })

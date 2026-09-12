@@ -4,11 +4,6 @@ import "std/dict" as dict;
 import "std/string" as string;
 import "std/type-desc" as type_desc;
 
-type CastUser = struct {id: Int, name: String};
-type CastA = struct {value: Int};
-type CastB = struct {value: Int};
-type CastAddress = struct {zip: Int};
-type CastNestedUser = struct {address: CastAddress};
 type State = enum {Ok, Err};
 
 decl explicit_identity: for(A) Fn(A) -> A;
@@ -315,25 +310,6 @@ export def string_literals = test.should_ok(fn() {
     })
 });
 
-export def checked_casts = test.should_ok(fn() {
-    expect({
-        let a: CastA = {value: 1};
-        let nested = {address: {zip: "bad"}}.cast!(CastNestedUser);
-        cast!(1, Int) == Ok(1)
-            && 1.cast!(Int) == Ok(1)
-            && "1".cast!(Int) == Err("value must be Int, got String")
-            && 1.cast!(Float) == Err("value must be Float, got Int")
-            && match {id: 1, name: "Ada"}.cast!(CastUser) {
-                Ok(user) => user.id == 1 && user.name == "Ada",
-                Err(_) => False,
-            }
-            && a.cast!(CastB) == Err("value has a different declared type identity")
-            && match nested {
-                Err(message) => string.contains(message, "value.address.zip"),
-                Ok(_) => False,
-            }
-    })
-});
 
 export def remainders = test.should_ok(fn() {
     expect(

@@ -1,7 +1,13 @@
+import "std/codec" as codec;
+import "std/entry" as entry;
+import "std/value" { Value };
+
 type Request = struct {
     action: String,
     count: Int,
 };
 
-def result = input.cast!(Request);
-export { result as output };
+export def main = entry.main({sources: ["input"], envs: [], args: False}, fn(ctx) {
+    let request = codec.decode(Request.type, ctx.sources.input).unwrap!();
+    codec.encode(Value.type, request)
+});

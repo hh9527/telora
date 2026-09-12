@@ -1269,15 +1269,6 @@ impl<'a> Emitter<'a> {
                 );
                 base
             }
-            HirKind::CheckedCast => {
-                let value = self.child(node, Role::Value);
-                let source = self.ty(value)?;
-                let target = self.mir.types[self.ty(node)?.index()].arguments[0];
-                let src = self.expression(value)?;
-                let dst = self.register();
-                self.emit(node, O::CheckedCast { dst, src, source, target });
-                dst
-            }
             HirKind::TypeAscription => self.expression_mode(self.child(node, Role::Value), tail)?,
             HirKind::TypeApply => self.expression(self.child(node, Role::Callee))?,
             HirKind::Propagate => {

@@ -108,26 +108,6 @@ fn native_string_ordering_is_lexical_for_inline_heap_and_unicode() {
     assert_eq!(compiled.call(&mut context, &[]).unwrap().words()[2], 1);
 }
 
-#[test]
-fn native_cast_finite_array_does_not_charge_each_element() {
-    let (mir, root) = graph("type Item = struct(Int); export def answer = fn(values: Array((Int,))) {values.cast!(Array(Item))};");
-    let sealed = mir.seal().unwrap();
-    let compiled = compile(&sealed, root).unwrap();
-    let mut rt = crate::runtime::Runtime::new(&sealed).unwrap();
-    let array = compiled.arguments[0];
-    let record = TypeKey::try_from(mir.types[array.index()].arguments[0]).unwrap();
-    let integer = TypeKey::try_from(mir.types[record.index()].arguments[0]).unwrap();
-    let number = rt.scalar(integer, [1, 0, 1], 42).unwrap();
-    let item = rt.aggregate(record, [1, 0, 1], &[number]).unwrap();
-    let input = rt.array(array, [1, 0, 1], &vec![item; 10_000]).unwrap();
-    let mut context = CallContext::with_runtime(rt).with_fuel(1000);
-    let result = compiled.call(&mut context, &[input]).unwrap();
-    let rt = context.runtime().unwrap();
-    let output = rt.enum_payload(&result).unwrap().unwrap().to_owned();
-    assert_eq!(rt.array_len(&output).unwrap(), 10_000);
-    assert!(context.remaining_fuel().unwrap() > 0);
-    assert_eq!(context.call_depth(), 0);
-}
 
 #[test]
 fn native_text_parse_returns_parse_errors_without_per_byte_fuel() {
@@ -1588,10 +1568,6 @@ fn native_checkers_initialize_once_and_publish_closed_generic_instances() {
 fn native_construction_invokes_sealed_checker_and_propagates_failure_once() {
     for (argument, succeeds) in [(42, true), (0, false)] {
         for source in [
-            format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = {{number: {argument}}}.cast!(Item);"),
-            format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = [{{number: {argument}}}].cast!(Array(Item));"),
-            format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let candidate: Unchecked(Item) = {{number: {argument}}}; candidate.cast!(Item) }};"),
-            format!("@check(fn(value) {{ if value > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value)) }} }}) type Item = struct(Int); export def answer = ({argument},).cast!(Item);"),
             format!("type Raw = struct {{number: Int}}; @check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let raw: Raw = {{number: {argument}}}; let checked: Item = raw.{{number}}; checked.number }};"),
             format!("type Raw = struct {{number: Int}}; @check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let raw: Raw = {{number: {argument}}}; let checked: Item = {{...raw}}; checked.number }};"),
             format!("@check(fn(value) {{ if value.number > 0 {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{label: String, number: Int}}; export def answer = do {{ let candidate: Unchecked(Item) = {{label: \"candidate\", number: {argument}}}; let checked: Item = candidate; checked.number }};"),
@@ -1609,11 +1585,7 @@ fn native_construction_invokes_sealed_checker_and_propagates_failure_once() {
         let result = compiled.call(&mut context, &[]);
         if succeeds {
             let result = result.unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
-            if source.contains(".cast!") {
-                assert_eq!(context.runtime().unwrap().enum_tag(&result).unwrap(), 1);
-            } else {
-                assert_eq!(context.runtime().unwrap().scalar_bits(result.as_ref()).unwrap(), 42);
-            }
+            assert_eq!(context.runtime().unwrap().scalar_bits(result.as_ref()).unwrap(), 42);
         } else {
             assert!(result.is_err());
             assert_eq!(context.diagnostics().len(), 1);

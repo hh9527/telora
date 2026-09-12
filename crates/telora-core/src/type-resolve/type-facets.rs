@@ -68,7 +68,7 @@ impl Solver<'_> {
                     || matches!((&hir.kind, edge.role),
                         (HirKind::TypeMetadata | HirKind::TypeSyntax, Role::Operand)
                         | (HirKind::TypeApply | HirKind::TypeOperation(_), Role::Argument)
-                        | (HirKind::TypeAscription | HirKind::CheckedCast, Role::Target)
+                        | (HirKind::TypeAscription, Role::Target)
                         | (HirKind::Binding { kind: BindingKind::Type, .. }, Role::Value)) {
                     pending.push(edge.node);
                 }

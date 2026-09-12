@@ -1,4 +1,5 @@
-import "./user.json" as raw_user;
+import "./user.json" { data };
+import "std/codec" as codec;
 
 type User = struct {
     name: String,
@@ -6,6 +7,5 @@ type User = struct {
     nickname: Option(String),
 };
 
-def user: User = raw_user;
-def result = user.cast!(User);
+def result = codec.decode(User.type, data);
 export { result as output };

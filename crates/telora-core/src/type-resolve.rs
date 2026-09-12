@@ -846,13 +846,6 @@ impl Solver<'_> {
                     .collect();
                 self.tasks.push(Task::Join { node, values });
             }
-            HirKind::CheckedCast => {
-                let target = self.child(node, Role::Target).unwrap();
-                let ty = self.fresh();
-                self.assign(target, TypeConstructor::Meta, vec![ty]);
-                let message = self.structure(TypeConstructor::String, vec![]);
-                self.assign(node, TypeConstructor::Result, vec![ty, message]);
-            }
             HirKind::TypeAscription => {
                 let value = self.child(node, Role::Value).unwrap();
                 let target = self.child(node, Role::Target).unwrap();

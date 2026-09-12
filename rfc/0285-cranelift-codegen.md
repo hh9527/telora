@@ -1,5 +1,7 @@
 # RFC 0285：SealedMir 到 Cranelift 的机械 codegen
 
+> 后续决议：RFC 0289 移除 cast 并禁止最终匿名 Record 类型，相关历史记录不再构成兼容契约。
+
 - 状态：实施中；已接入整图初始化与隐藏 CLI，继续补齐语言/native 覆盖
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
@@ -55,7 +57,7 @@
 | TypeApply/类型标注/TypeMetadata | 消费既有实例和类型身份 | `native_explicit_generic_enum_constructor_preserves_sealed_selection`；模板不进入值域 |
 | interpreter、插值 | 封闭配对计划和 Display 结果 | `native_interpreter_consumes_sealed_pairings_and_keeps_operand_lazy`；eval/interpolation 实际执行 |
 | fail/panic/raise/warn/blame/debug | 状态与来源 helper | `native_debug_is_bounded_and_preserves_shared_descriptors`；failure-subjects 资产 |
-| CheckedCast | `cast_packet` 与封闭目标/checker | `native_cast_finite_array_does_not_charge_each_element`；保留既有能力，是否移除另行决定 |
+| CheckedCast | 已按 RFC 0289 移除 | 不再是语言能力，无兼容 lowering |
 
 原生模块调用由 `jit/natives.rs` 按已 resolve 的模块 ABI 身份和导出键适配，
 未知 ABI 明确拒绝。构造契约审计确认 `attach_check` 只接受 Nominal owner 的

@@ -58,18 +58,6 @@ export def verified_case = test.should_ok(fn() {
             },
         }
         && int_expr_type == same_int_expr_type
-        && int_expr_type != string_expr_type
-        && match {age: 36, name: "Ada"}.cast!(User) {
-            Ok(_) => True,
-            Err(_) => False,
-        }
-        && match {age: "old", name: "Ada"}.cast!(User) {
-            Ok(_) => False,
-            Err(_) => True,
-        }
-        && match {value: 42}.cast!(Box(Int)) {
-            Ok(_) => True,
-            Err(_) => False,
-        };
+        && int_expr_type != string_expr_type;
     expect(verified)
 });

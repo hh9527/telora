@@ -128,10 +128,6 @@ pub enum ExprKind {
         value: Box<Expr>,
         target: Box<Expr>,
     },
-    CheckedCast {
-        value: Box<Expr>,
-        target: Box<Expr>,
-    },
     Binary {
         operator: Located<BinaryOperator>,
         left: Box<Expr>,

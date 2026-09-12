@@ -28,7 +28,6 @@ include!("vm/solved-codec-decode.rs");
 include!("vm/solved-type-desc.rs");
 include!("vm/solved-string-parse.rs");
 include!("vm/solved-construction.rs");
-include!("vm/solved-cast.rs");
 include!("vm/array.rs");
 include!("vm/string.rs");
 include!("vm/path.rs");

@@ -854,7 +854,6 @@ fn unchecked_values_complete_at_explicit_mir_boundaries() {
         r#"type Container = struct {point: Point}; export def answer = do { let candidate: Unchecked(Point) = {x: 42}; let value: Container = {point: candidate}; value.point.x };"#,
         r#"export def answer = match rt.with_diagnostics(fn(x: Int) { let candidate: Unchecked(Point) = {x: x}; let values: Array(Point) = [candidate]; values })(0) { Err(errors) => if errors[0].message == "positive x" { 42 } else { 0 }, _ => 0 };"#,
         r#"export def answer = do { let candidate: Unchecked(Unchecked(Point)) = {x: 42}; if Unchecked(Unchecked(Point)).type == Unchecked(Point).type { candidate.x } else { 0 } };"#,
-        r#"export def answer = do { let candidate: Unchecked(Point) = {x: 42}; match candidate.cast!(Point) { Ok(value) => value.x, _ => 0 } };"#,
         r#"export def answer = do { let candidate: Unchecked(Point) = {x: 42}; let packed = dyn.pack(Unchecked(Point).type, candidate); match dyn.project_with(Point.type, packed) { None => 42, _ => 0 } };"#,
         r#"def finish: for(T) Fn(Unchecked(Box(T))) -> Box(T) = fn(candidate) { candidate }; export def answer = do { let candidate: Unchecked(Box(Int)) = {value: 42}; finish(candidate).value };"#,
         r#"def finish: Fn(Unchecked(Point)) -> Point = fn(candidate) { candidate };
@@ -873,43 +872,6 @@ fn unchecked_values_complete_at_explicit_mir_boundaries() {
     }
 }
 
-#[test]
-fn checked_casts_use_closed_ids_and_validate_before_construction() {
-    let definitions = r#"
-        import "std/_rt" as rt;
-        @check(fn(value) { if value.x > 0 { Ok(()) } else { Err(blame!("positive x required", value.x)) } }) type Point = struct {x: Int};
-        type Container = struct {point: Point};
-        type Other = struct {x: Int};
-    "#;
-    for body in [
-        r#"export def answer = match {x: 42}.cast!(Point) { Ok(point) => point.x, _ => 0 };"#,
-        r#"export def answer = match {point: {x: 42}}.cast!(Container) { Ok(value) => value.point.x, _ => 0 };"#,
-        r#"export def answer = match [{x: 42}].cast!(Array(Point)) { Ok(value) => value[0].x, _ => 0 };"#,
-        r#"export def answer = match Some({x: 42}).cast!(Option(Point)) { Ok(Some(value)) => value.x, _ => 0 };"#,
-        r#"def raw: Result(Int, String) = Ok(42); export def answer = match raw.cast!(Result(Int, Bool)) { Ok(Ok(value)) => value, _ => 0 };"#,
-        r#"@check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive payload", value)) } }) type Count = struct(Int);
-            export def answer = match (42,).cast!(Count) { Ok(Count(value)) => value, _ => 0 };"#,
-        r#"@check(fn(value) { fail!("checker execution failure") }) type Broken = struct {x: Int};
-            export def answer = match rt.with_diagnostics(fn(x: Int) { {x: x}.cast!(Broken) })(0) { Err(errors) => if errors[0].message == "checker execution failure" { 42 } else { 0 }, _ => 0 };"#,
-        r#"export def answer = match {x: "wrong"}.cast!(Point) { Err(message) => if message == "value.x must be Int, got String" { 42 } else { 0 }, _ => 0 };"#,
-        r#"export def answer = match "42".cast!(Int) { Err(_) => 42, _ => 0 };"#,
-        r#"export def answer = match 42.cast!(Float) { Err(_) => 42, _ => 0 };"#,
-        r#"export def answer = do { let value: Other = {x: 42}; match value.cast!(Point) { Err(_) => 42, _ => 0 } };"#,
-        r#"export def answer = match rt.with_diagnostics(fn(x: Int) { {point: {x: x}}.cast!(Container) })(0) { Err(errors) => if errors[0].message == "positive x required" { 42 } else { 0 }, _ => 0 };"#,
-        r#"@check(fn(value) { fail!("must not check mismatching graph") }) type Deferred = struct {x: Int};
-            type Pair = struct {a: Deferred, b: Int};
-            export def answer = match {a: {x: 1}, b: "bad"}.cast!(Pair) { Err(_) => 42, _ => 0 };"#,
-        r#"def cast: for(T) Fn(T) -> Result(Point, String) = fn(value) { value.cast!(Point) };
-            export def answer = match cast({x: 42}) { Ok(value) => value.x, _ => 0 };"#,
-    ] {
-        let mir = graph(&format!("{definitions}{body}"), "");
-        assert!(mir.diagnostics.is_empty(), "{body}\n{:?}", mir.diagnostics);
-        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
-        drop(mir);
-        let result = execute(artifact).unwrap_or_else(|e| panic!("{body}\n{e}"));
-        assert_eq!(result.value().as_int(), Some(42), "{body}");
-    }
-}
 
 #[test]
 fn generic_construction_checks_consume_static_body_instances() {

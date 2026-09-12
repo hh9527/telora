@@ -598,7 +598,6 @@ impl<'a> Lowerer<'a> {
             "panic"
                 | "dbg"
                 | "ty"
-                | "cast"
                 | "ok_or_warn"
                 | "unwrap"
                 | "fail"
@@ -643,26 +642,6 @@ impl<'a> Lowerer<'a> {
             let target = self.normalize_type_expression(arguments.next().expect("two arguments"))?;
             Ok(located(
                 ExprKind::TypeAscription {
-                    value: Box::new(value),
-                    target: Box::new(target),
-                },
-                self.location(invocation),
-            ))
-        } else if name == "cast" {
-            if arguments.len() != 2 {
-                return Err(self.error(
-                    invocation,
-                    format!(
-                        "cast! expects a value and a Type, found {} arguments",
-                        arguments.len()
-                    ),
-                ));
-            }
-            let mut arguments = arguments.into_iter();
-            let value = arguments.next().expect("two arguments");
-            let target = self.normalize_type_expression(arguments.next().expect("two arguments"))?;
-            Ok(located(
-                ExprKind::CheckedCast {
                     value: Box::new(value),
                     target: Box::new(target),
                 },

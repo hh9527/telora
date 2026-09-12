@@ -188,7 +188,7 @@ let alias: Unit = value;
 ```
 
 该类型记法适用于 annotation 根、type initializer 根、声明的 member 类型、显式
-类型实参、`ty!` / `cast!` 目标和受限契约（含嵌套参数）。`Array(())` 表示
+类型实参、`ty!` 目标和受限契约（含嵌套参数）。`Array(())` 表示
 空 Tuple 的 Array 类型，`Array(()).type` 才是其元数据。普通函数的实参仍是数据。
 `(Int, String).type` 是 Tuple 类型的元数据，`(Int.type, String.type)` 是元数据
 组成的 Tuple 数据。混合类型和数据的 `(Int, 1)` 非法。类型 Tuple 的 spread 暂不支持。
@@ -935,15 +935,13 @@ memoization 只缓存 lifting 所构造的 wrapper；它不会提前执行 inner
 metadata、解析 eDSL 并产生领域 closure 的准备逻辑仍由普通 tool-stage/property 代码
 显式定义，如 `DisplayBy.display`。
 
-### 7.5 静态约束、checked cast 与 Dyn 投影
+### 7.5 静态约束与 Dyn 投影
 
 以下边界具有不同语义，不能互相替代：
 
 ```telora
 let empty = [].ty!(Array(Int));
 let truth = ty!(True, Bool);
-
-let checked = raw.cast!(User);             // Result(User, String)
 
 import "std/dyn" as dyn;
 let exact = dyn.project_with(User.type, package); // Option(User)
@@ -954,12 +952,6 @@ let exact_sugar = dyn.project@[User](package);
 向 `expr` 内部传递；无法证明时前端报错。它不改变 payload、名义 witness 或来源，
 Dyn 中的值需要显式投影为具体类型。
 
-`cast!(expr, T)` 与 `expr.cast!(T)` 做表示不变的 checked refinement，并返回
-`Result(T, String)`。匿名 Dict 的完整表示符合目标 struct T 时可以安装 T 的 canonical witness；
-已经带有另一个名义 `TypeId` 的值即使结构相同也失败。cast 不解析 String、不做数值
-转换、不解包公共数据 sum、不应用 rename/default/flatten，也不重建业务数据图；这些
-行为属于 codec/translation。失败只返回 `Err(String)`，只有显式 `unwrap!`/`raise!`
-才产生诊断；Fail 输入按统一规则传播。
 
 `Dyn` 精确投影比较打包 descriptor 与目标的 canonical type identity，不走结构比较或
 assignability。`project@[T]` 只对解析到 `std/dyn` namespace 的 `project` 生效，并等价于
@@ -1181,8 +1173,7 @@ let model = codec.decode(Model.type, request).unwrap!();
 let value = codec.encode(Value.type, model);
 ```
 
-`cast!` 只做表示不变的 checked refinement，不移除 Value variant、不解析 String，也
-不应用 rename/default/flatten。`Dyn` 是带 canonical witness 的存在类型，公共数据交换
+`Dyn` 是带 canonical witness 的存在类型，公共数据交换
 使用 `Value`。JSON stringify 只接受 Value，但 JSON
 没有 Bytes 或 temporal scalar，因此含这些 variant 的 Value 必须先由显式领域 codec
 转换为 JSON 可表达的模型。
@@ -1256,7 +1247,7 @@ rule 指向实际 authored intrinsic 调用位置，即使该调用在嵌套函�
 
 所有 contextual intrinsic 都支持统一后置糖：
 `receiver.ident!(arguments...)` 等价于 `ident!(receiver, arguments...)`。
-这不是 method lookup，也不开放用户定义宏。`dbg!`、`ty!` 与 `cast!` 保持各自
+这不是 method lookup，也不开放用户定义宏。`dbg!` 与 `ty!` 保持各自
 既有语义。函数、参数和待处理表达式按普通求值顺序执行一次。
 
 解码使用不可观察的 native `codec.BlameError`，保存消息和失败值的来源。

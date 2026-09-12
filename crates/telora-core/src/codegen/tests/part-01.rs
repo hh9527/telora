@@ -440,19 +440,6 @@ fn tail_positions_use_existing_frame_replacement_without_skipping_followup_work(
     }
 }
 
-#[test]
-fn checked_cast_errors_distinguish_scalar_identity_and_nested_path() {
-    for source in [
-        "export def answer = if \"1\".cast!(Int) == Err(\"value must be Int, got String\") && 1.cast!(Float) == Err(\"value must be Float, got Int\") { 42 } else { 0 };",
-        "type A = struct {value: Int}; type B = struct {value: Int}; def a: A = {value: 1}; export def answer = if a.cast!(B) == Err(\"value has a different declared type identity\") { 42 } else { 0 };",
-        "type Address = struct {zip: Int}; type User = struct {address: Address}; export def answer = if {address: {zip: \"bad\"}}.cast!(User) == Err(\"value.address.zip must be Int, got String\") { 42 } else { 0 };",
-        "type User = struct {id: Int, name: String}; export def answer = match {id: 42, name: \"Ada\"}.cast!(User) { Ok(user) => user.id, Err(_) => 0 };",
-    ] {
-        let mir = graph(source, "");
-        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
-        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{source}");
-    }
-}
 
 #[test]
 fn metadata_joins_execute_the_selected_original_witness() {

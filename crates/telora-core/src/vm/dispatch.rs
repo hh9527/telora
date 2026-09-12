@@ -2,7 +2,6 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
     match instruction {
         Opcode::LoadConst { dst, .. }
         | Opcode::StampType { dst, .. }
-        | Opcode::CheckedCast { dst, .. }
         | Opcode::MakeNewtype { dst, .. }
         | Opcode::Demand { dst, .. }
         | Opcode::GetTypeProp { dst, .. }

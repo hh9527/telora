@@ -92,13 +92,7 @@ impl Lower<'_, '_> {
     pub(super) fn codec_packet(&mut self, data: ir::Value, root: TypeKey, decode: bool) -> EmitResult<(ir::Value, ir::Value)> {
         self.codec_packet_roots(data, vec![root.index()], decode)
     }
-    pub(super) fn codec_packet_roots(&mut self, data: ir::Value, pending: Vec<usize>, decode: bool) -> EmitResult<(ir::Value, ir::Value)> {
-        self.codec_packet_impl(data, pending, decode, true)
-    }
-    pub(super) fn cast_packet(&mut self, data: ir::Value, target: TypeKey) -> EmitResult<(ir::Value, ir::Value)> {
-        self.codec_packet_impl(data, vec![target.index()], true, false)
-    }
-    fn codec_packet_impl(&mut self, data: ir::Value, mut pending: Vec<usize>, decode: bool, include_properties: bool) -> EmitResult<(ir::Value, ir::Value)> {
+    pub(super) fn codec_packet_roots(&mut self, data: ir::Value, mut pending: Vec<usize>, decode: bool) -> EmitResult<(ir::Value, ir::Value)> {
         let mut reachable = std::collections::BTreeSet::new();
         while let Some(ty) = pending.pop() {
             if !reachable.insert(ty) { continue; }
@@ -111,7 +105,7 @@ impl Lower<'_, '_> {
             .filter(|(_, check)| decode && check.concrete && reachable.contains(&check.owner.index()))
             .map(|(index, check)| (index, check.owner, check.site)).collect::<Vec<_>>();
         let properties = self.mir.properties.iter().enumerate()
-            .filter(|(_, property)| include_properties && property.concrete && property.site == PropertySite::Type && reachable.contains(&property.owner.index()))
+            .filter(|(_, property)| property.concrete && property.site == PropertySite::Type && reachable.contains(&property.owner.index()))
             .map(|(index, property)| (index, property.owner, property.property)).collect::<Vec<_>>();
         let mut packet = vec![data];
         for &(index, owner, site) in &checks {

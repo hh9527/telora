@@ -679,35 +679,6 @@ fn solved_test_session_reports_bootstrap_and_fixture_allocation_failure() {
     }
 }
 
-#[test]
-fn solved_cast_preserves_data_handles_and_nominal_identity() {
-    let mir = crate::codegen::tests::graph(r#"
-        type Item = struct {text: String};
-        def raw = {text: "original"};
-        def typed: Item = {text: "checked"};
-        export def answer = (raw, raw.cast!(Item), typed, typed.cast!(Item), [raw].cast!(Array(Item)));
-    "#, "");
-    let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
-    let expected = artifact.types.types[artifact.result_type.index()].arguments[2];
-    let linked = crate::execution_link::link_entry(artifact).unwrap();
-    let result = Vm::new().execute_linked(linked, Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
-    let raw = result.value().sequence_get(0).unwrap();
-    let cast = result.value().sequence_get(1).unwrap().tagged_parts().unwrap().1;
-    let typed = result.value().sequence_get(2).unwrap();
-    let same = result.value().sequence_get(3).unwrap().tagged_parts().unwrap().1;
-    let nested = result.value().sequence_get(4).unwrap().tagged_parts().unwrap().1.sequence_get(0).unwrap();
-    assert_eq!(raw.value.value(), cast.value.value());
-    assert_eq!(typed.value.value(), same.value.value());
-    assert_eq!(raw.value.value(), nested.value.value());
-    assert_eq!(cast.solved_type_id(), Some(expected));
-    assert_eq!(nested.solved_type_id(), Some(expected));
-    let raw_text = raw.dict_get("text").unwrap();
-    for value in [cast, nested] {
-        let text = value.dict_get("text").unwrap();
-        assert_eq!(text.value.value(), raw_text.value.value());
-        assert_eq!(text.value.loc(), raw_text.value.loc());
-    }
-}
 
 #[test]
 fn solved_codec_construction_rejection_retains_the_original_blame_handle() {

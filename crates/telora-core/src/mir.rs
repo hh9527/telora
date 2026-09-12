@@ -584,7 +584,6 @@ pub enum HirKind {
         expression: String,
     },
     TypeAscription,
-    CheckedCast,
     Binary(BinaryOperator),
     Field,
     FieldProjection,

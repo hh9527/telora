@@ -74,10 +74,6 @@ export def verified_case = test.should_ok(fn() {
             codec.encode((codec.Value).type, "hello"),
         ).unwrap!();
         let checks = [
-            expect(!results.is_ok(WrongUnit.Other.cast!(Choice))),
-            expect(!results.is_ok(WrongUnit.Number.cast!(Choice))),
-            expect(!results.is_ok(WrongPayload.None(1).cast!(Choice))),
-            expect(!results.is_ok(WrongPayload.Number("one").cast!(Choice))),
             expect(!results.is_ok(no_match)),
             expect(!results.is_ok(ambiguous)),
             expect(string.contains(schema_text, "userId")),

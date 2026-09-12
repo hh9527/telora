@@ -1,5 +1,7 @@
 # RFC 0287：隐藏 --native 接入与执行语义对齐
 
+> 后续决议：RFC 0289 移除 cast，相关历史测试已删除；匿名 Record 契约清理继续推进。
+
 - 状态：实施中；check/eval/eval-with 已接入实验后端，完整语义覆盖和配额验证待完成
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
