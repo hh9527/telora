@@ -1085,7 +1085,8 @@ fn selected_export_prunes_unreferenced_values_but_module_check_initializes_them(
     let module = mir.hir[root.index()].module;
     let symbol = *mir.exports[module.index()].iter().find(|symbol| mir.symbols[symbol.index()].name == "answer").unwrap();
     let sealed = mir.seal().unwrap();
-    let selected = compile_export(&sealed, symbol).unwrap();
+    let executable = mir.seal_export(symbol).unwrap();
+    let selected = compile_executable(&executable).unwrap();
     let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
     selected.initialize(&mut context).unwrap();
     assert_eq!(selected.export(&mut context, symbol).unwrap().words()[2], 42);

@@ -397,38 +397,10 @@ pub fn compile_modules(
         .map(|(index, _)| index).collect::<Vec<_>>();
     compile_plan(mir, &roots, &globals, &properties, &checks, None)
 }
-
-/// Compile a selected export and its static value dependencies. Metadata remains
-/// an explicit session initialization root, as in module checking.
-pub fn compile_export(mir: &SealedMir<'_>, export: SymbolId) -> Result<Compiled> {
-    use telora_core::mir::ExecutionRoot;
-    let graph = mir.mir();
-    let symbol = graph.symbols.get(export.index()).ok_or("native export has no symbol")?;
-    let ResolveState::Bound(target) = symbol.resolution else { return Err("native export is not resolved".into()); };
-    let node = *graph.symbols[target.index()].declarations.last().ok_or("native export has no declaration")?;
-    let mut roots = vec![ExecutionRoot { node, instance: None }];
-    let properties = graph.properties.iter().enumerate().filter(|(_, property)| property.concrete).map(|(index, property)| {
-        roots.extend(property.providers.iter().map(|&node| ExecutionRoot { node, instance: property.instance }));
-        index
-    }).collect::<Vec<_>>();
-    let checks = graph.construction_checks.iter().enumerate().filter(|(_, check)| check.concrete).map(|(index, check)| {
-        roots.push(ExecutionRoot { node: check.checker, instance: check.instance });
-        index
-    }).collect::<Vec<_>>();
-    let closure = mir.execution_closure(&roots).map_err(|diagnostics|
-        diagnostics.iter().map(|diagnostic| graph.sources.render(diagnostic)).collect::<Vec<_>>().join("\n"))?;
-    let mut globals = std::collections::BTreeSet::new();
-    let mut instances = std::collections::BTreeSet::new();
-    for root in closure.nodes() {
-        if let Some(instance) = root.instance { instances.insert(instance); }
-        let Some(symbol) = graph.hir_symbols[root.node.index()] else { continue; };
-        let definition = &graph.symbols[symbol.index()];
-        if matches!(graph.hir[root.node.index()].kind, HirKind::Binding { .. })
-            && definition.module.is_some_and(|module| definition.scope.is_some() && definition.scope == graph.module_scopes[module.index()]) {
-            globals.insert(symbol);
-        }
-    }
-    compile_plan(mir, &[node], &globals.into_iter().collect::<Vec<_>>(), &properties, &checks, Some(&instances))
+/// Mechanically consume the core's closed executable publication.
+pub fn compile_executable(executable: &telora_core::mir::SealedExecutable<'_>) -> Result<Compiled> {
+    compile_plan(executable.sealed_mir(), &[executable.root()], executable.globals(),
+        executable.properties(), executable.checks(), Some(executable.instances()))
 }
 
 fn compile_plan(
@@ -443,32 +415,34 @@ fn compile_plan(
         .first()
         .ok_or("native code plan needs at least one root")?;
     let graph = mir.mir();
-    let mut execution_roots = roots.iter().map(|&node| telora_core::mir::ExecutionRoot { node, instance: None }).collect::<Vec<_>>();
     let global_symbols = globals.iter().copied().collect::<std::collections::BTreeSet<_>>();
-    for &symbol in globals {
-        if graph.symbol_generics[symbol.index()].is_empty() {
-            execution_roots.extend(graph.symbols[symbol.index()].declarations.iter().map(|&node|
-                telora_core::mir::ExecutionRoot { node, instance: None }));
+    if admitted_instances.is_none() {
+        let mut execution_roots = roots.iter().map(|&node| telora_core::mir::ExecutionRoot { node, instance: None }).collect::<Vec<_>>();
+        for &symbol in globals {
+            if graph.symbol_generics[symbol.index()].is_empty() {
+                execution_roots.extend(graph.symbols[symbol.index()].declarations.iter().map(|&node|
+                    telora_core::mir::ExecutionRoot { node, instance: None }));
+            }
         }
-    }
-    for (id, instance) in graph.generic_instances() {
-        if instance.concrete && global_symbols.contains(&instance.symbol)
-            && admitted_instances.is_none_or(|instances| instances.contains(&id)) {
-            execution_roots.extend(graph.symbols[instance.symbol.index()].declarations.iter().map(|&node|
-                telora_core::mir::ExecutionRoot { node, instance: Some(id) }));
+        for (id, instance) in graph.generic_instances() {
+            if instance.concrete && global_symbols.contains(&instance.symbol)
+                && admitted_instances.is_none_or(|instances| instances.contains(&id)) {
+                execution_roots.extend(graph.symbols[instance.symbol.index()].declarations.iter().map(|&node|
+                    telora_core::mir::ExecutionRoot { node, instance: Some(id) }));
+            }
         }
+        for &index in properties {
+            let property = &graph.properties[index];
+            execution_roots.extend(property.providers.iter().map(|&node|
+                telora_core::mir::ExecutionRoot { node, instance: property.instance }));
+        }
+        for &index in checks {
+            let check = &graph.construction_checks[index];
+            execution_roots.push(telora_core::mir::ExecutionRoot { node: check.checker, instance: check.instance });
+        }
+        mir.validate_execution_roots(&execution_roots).map_err(|diagnostics|
+            diagnostics.iter().map(|diagnostic| graph.sources.render(diagnostic)).collect::<Vec<_>>().join("\n"))?;
     }
-    for &index in properties {
-        let property = &graph.properties[index];
-        execution_roots.extend(property.providers.iter().map(|&node|
-            telora_core::mir::ExecutionRoot { node, instance: property.instance }));
-    }
-    for &index in checks {
-        let check = &graph.construction_checks[index];
-        execution_roots.push(telora_core::mir::ExecutionRoot { node: check.checker, instance: check.instance });
-    }
-    mir.validate_execution_roots(&execution_roots).map_err(|diagnostics|
-        diagnostics.iter().map(|diagnostic| graph.sources.render(diagnostic)).collect::<Vec<_>>().join("\n"))?;
     let roots = roots
         .iter()
         .copied()

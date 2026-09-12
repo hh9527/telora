@@ -45,7 +45,7 @@ impl Session {
         Self::compile_selected(sealed, None)
     }
 
-    fn compile_selected(sealed: &SealedMir<'_>, export: Option<telora_core::mir::SymbolId>) -> Result<Self, String> {
+    fn compile_selected(sealed: &SealedMir<'_>, executable: Option<&telora_core::mir::SealedExecutable<'_>>) -> Result<Self, String> {
         let graph = sealed.mir();
         let modules = graph
             .hir
@@ -56,7 +56,7 @@ impl Session {
             .collect::<Vec<_>>();
         let compiled = {
             let _timer = PhaseTimer::new("codegen");
-            if let Some(export) = export { jit::compile_export(sealed, export)? }
+            if let Some(executable) = executable { jit::compile_executable(executable)? }
             else { jit::compile_modules(sealed, &modules, &[])? }
         };
         let _timer = PhaseTimer::new("runtime_setup");
@@ -190,8 +190,10 @@ pub(crate) fn eval(context: std::path::PathBuf, module: &str, export: &str) -> R
     {
         return Err("eval export must have the authoritative std/value.Value type".into());
     }
+    let executable = sealed.seal_export(symbol).map_err(|diagnostics|
+        diagnostics.iter().map(|diagnostic| mir.sources.render(diagnostic)).collect::<Vec<_>>().join("\n"))?;
     drop(frontend_timer);
-    let mut session = Session::compile_selected(&sealed, Some(symbol))?;
+    let mut session = Session::compile_selected(executable.sealed_mir(), Some(&executable))?;
     let diagnostics = session.initialize(&inventory, &mut mir.sources);
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(diagnostics
@@ -314,8 +316,10 @@ pub(crate) fn eval_with(
         TypeKey::try_from(sources_type)?,
         TypeKey::try_from(string_type)?,
     );
+    let executable = sealed.seal_export(symbol).map_err(|diagnostics|
+        diagnostics.iter().map(|diagnostic| mir.sources.render(diagnostic)).collect::<Vec<_>>().join("\n"))?;
     drop(frontend_timer);
-    let mut session = Session::compile_selected(&sealed, Some(symbol))?;
+    let mut session = Session::compile_selected(executable.sealed_mir(), Some(&executable))?;
     let diagnostics = session.initialize(&inventory, &mut mir.sources);
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(diagnostics

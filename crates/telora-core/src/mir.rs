@@ -17,7 +17,7 @@ mod type_schemes;
 #[path = "mir/properties.rs"]
 mod properties;
 pub use seal::SealedMir;
-pub use executable::{ExecutionClosure, ExecutionRoot};
+pub use executable::{ExecutionClosure, ExecutionRoot, SealedExecutable};
 
 macro_rules! id {
     ($($name:ident),*) => {$(

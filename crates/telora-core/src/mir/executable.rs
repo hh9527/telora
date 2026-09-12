@@ -17,6 +17,70 @@ impl ExecutionClosure {
     pub fn nodes(&self) -> &[ExecutionRoot] { &self.nodes }
 }
 
+/// Publication capability for one entry and its closed initialization graph.
+/// This owns the type image and borrows immutable MIR; backends only consume IDs.
+pub struct SealedExecutable<'a> {
+    sealed: SealedMir<'a>,
+    root: HirId,
+    globals: Vec<SymbolId>,
+    instances: BTreeSet<GenericInstanceId>,
+    properties: Vec<usize>,
+    checks: Vec<usize>,
+    closure: ExecutionClosure,
+}
+
+impl<'a> SealedExecutable<'a> {
+    pub fn sealed_mir(&self) -> &SealedMir<'a> { &self.sealed }
+    pub fn root(&self) -> HirId { self.root }
+    pub fn globals(&self) -> &[SymbolId] { &self.globals }
+    pub fn instances(&self) -> &BTreeSet<GenericInstanceId> { &self.instances }
+    pub fn properties(&self) -> &[usize] { &self.properties }
+    pub fn checks(&self) -> &[usize] { &self.checks }
+    pub fn closure(&self) -> &ExecutionClosure { &self.closure }
+}
+
+impl Mir {
+    pub fn seal_export(&self, export: SymbolId) -> Result<SealedExecutable<'_>, Vec<Diagnostic>> {
+        self.seal()?.seal_export(export)
+    }
+}
+
+impl<'a> SealedMir<'a> {
+    /// Final publication after entry selection; no later pass may add instances.
+    pub fn seal_export(self, export: SymbolId) -> Result<SealedExecutable<'a>, Vec<Diagnostic>> {
+        let mir = self.mir();
+        let failure = |message: &str| vec![Diagnostic { severity: crate::source::Severity::Error,
+            message: message.into(), labels: vec![], notes: vec![] }];
+        let symbol = mir.symbols.get(export.index()).ok_or_else(|| failure("execution export has no symbol"))?;
+        let ResolveState::Bound(target) = symbol.resolution else { return Err(failure("execution export is not resolved")); };
+        let node = *mir.symbols[target.index()].declarations.last().ok_or_else(|| failure("execution export has no declaration"))?;
+        let mut roots = vec![ExecutionRoot { node, instance: None }];
+        // Metadata initialization retains the session-wide semantics. Only
+        // ordinary value exports are pruned by the selected entry at present.
+        let properties = mir.properties.iter().enumerate().filter(|(_, property)| property.concrete).map(|(index, property)| {
+            roots.extend(property.providers.iter().map(|&node| ExecutionRoot { node, instance: property.instance }));
+            index
+        }).collect();
+        let checks = mir.construction_checks.iter().enumerate().filter(|(_, check)| check.concrete).map(|(index, check)| {
+            roots.push(ExecutionRoot { node: check.checker, instance: check.instance });
+            index
+        }).collect();
+        let closure = self.execution_closure(&roots)?;
+        let mut globals = BTreeSet::new();
+        let mut instances = BTreeSet::new();
+        for root in closure.nodes() {
+            if let Some(instance) = root.instance { instances.insert(instance); }
+            let Some(symbol) = mir.hir_symbols[root.node.index()] else { continue; };
+            let definition = &mir.symbols[symbol.index()];
+            if matches!(mir.hir[root.node.index()].kind, HirKind::Binding { .. })
+                && definition.module.is_some_and(|module| definition.scope.is_some() && definition.scope == mir.module_scopes[module.index()]) {
+                globals.insert(symbol);
+            }
+        }
+        Ok(SealedExecutable { sealed: self, root: node, globals: globals.into_iter().collect(), instances, properties, checks, closure })
+    }
+}
+
 impl SealedMir<'_> {
     /// Check executable roots without evaluating code or selecting new instances.
     /// Callers include their initialization/property roots as well as the entry.

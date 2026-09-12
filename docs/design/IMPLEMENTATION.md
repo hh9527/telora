@@ -123,6 +123,12 @@ MIR 拥有 HIR、resolve_slots、ty_slots、结构类型项、最终类型表及
 证据是否完整。成功返回只读借用 `SealedMir` 和独立的 TypeImage；seal 不重新编号。
 失败保留原 MIR 和诊断，供 query/LSP 使用。
 
+入口执行另有 `Mir::seal_export` 发布的 `SealedExecutable`：它保留 TypeImage，
+并封闭所选导出的值依赖、具体实例及元数据初始化集合。未实例化模板仅属于静态
+声明图；进入执行集合的类型必须具体化。当前 native 入口消费这一发布能力，
+不在 codegen 中重建入口依赖闭包；默认 bytecode 入口与模块检查仍使用原来的
+`SealedMir` 接口。
+
 相同完整输入应产生确定的 MIR ID、TypeImage、bytecode 和执行图，不受 inventory
 枚举顺序影响。这是完整构建的确定性，不是跨版本或增量编辑的永久 ID 保证。
 

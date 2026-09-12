@@ -1300,6 +1300,13 @@ fn generic_templates_are_static_and_value_uses_require_concrete_instances() {
         && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap();
     let root = ExecutionRoot { node: *answer.declarations.last().unwrap(), instance: None };
     sealed.validate_execution_roots(&[root]).unwrap();
+    let symbol = mir.hir_symbols[root.node.index()].unwrap();
+    let executable = mir.seal_export(symbol).unwrap();
+    assert_eq!(executable.root(), root.node);
+    assert!(!executable.globals().iter().any(|symbol| symbol.index() == unused));
+    assert!(!executable.instances().is_empty());
+    assert!(executable.closure().nodes().windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(executable.closure().nodes(), mir.seal_export(symbol).unwrap().closure().nodes());
 }
 
 #[test]
