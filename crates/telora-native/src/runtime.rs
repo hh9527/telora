@@ -677,6 +677,7 @@ mod pattern;
 mod text_ops;
 mod reflection;
 mod schema;
+mod path;
 mod array_ops;
 mod blame;
 pub use dynamic::DynamicQuery;

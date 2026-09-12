@@ -479,6 +479,22 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 8 && let Some(operation) = ["join", "normalize", "parent", "file_name"].iter().position(|name| *name == declaration.name) {
+            if arguments.len() != 1 { return Err("native path arity mismatch".into()); }
+            let input = &self.mir.types[arguments[0].index()];
+            let output = &self.mir.types[self.return_type.index()];
+            let input_valid = if operation == 0 {
+                input.constructor == TypeConstructor::Array && input.arguments.len() == 1
+                    && self.mir.types[input.arguments[0].index()].constructor == TypeConstructor::String
+            } else { input.constructor == TypeConstructor::String };
+            let output_valid = if operation < 2 { output.constructor == TypeConstructor::String }
+                else { output.constructor == TypeConstructor::Option && output.arguments.len() == 1
+                    && self.mir.types[output.arguments[0].index()].constructor == TypeConstructor::String };
+            if !input_valid || !output_valid { return Err("native path signature mismatch".into()); }
+            let count = self.builder.ins().iconst(types::I64, operation as i64);
+            let value = self.object(node, helpers::PATH, self.return_type, data, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 17 && declaration.name == "schema_with" {
             if arguments.len() != 3
                 || self.mir.types[arguments[1].index()].constructor != TypeConstructor::Type

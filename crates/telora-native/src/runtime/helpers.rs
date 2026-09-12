@@ -40,6 +40,7 @@ pub(crate) const FORMAT_PARSE: u32 = 45;
 pub(crate) const JSON_STRINGIFY: u32 = 46;
 pub(crate) const JSON_INDENT: u32 = 47;
 pub(crate) const JSON_SCHEMA: u32 = 48;
+pub(crate) const PATH: u32 = 49;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -240,6 +241,11 @@ pub(crate) unsafe extern "C" fn object(
                     } else {
                         rt.dict_column(ty, loc, &dict, count == 1)?
                     }
+                }
+                PATH => {
+                    let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };
+                    let value = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, rt.layout(input)?.words) }.into() };
+                    rt.path(ty, &value, loc, count)?
                 }
                 JSON_INDENT => {
                     let value = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, 3) }.into() };

@@ -1,0 +1,11 @@
+import "std/path" as path;
+import "std/array" as array;
+import "std/codec" {encode, Value};
+import "std/entry" as entry;
+
+def inputs = ["", ".", "..", "/", "/../a//b/./../c/", "../../a/../b", "a/../../..", "a/..", "a", "/a", "a\\b", "目录/../文件", "a/../.."];
+export def answer = encode(Value.type, (
+    array.map(inputs, fn(input) { (path.normalize(input), path.parent(input), path.file_name(input)) }),
+    [path.join([]), path.join(["a", "b", "..", "c"]), path.join(["a", "/b", "c"]), path.join(["a", "", ".."]), path.join(["..", "..", "a"])],
+));
+export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { answer });

@@ -77,6 +77,8 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+std/path 的 join/normalize/parent/file_name 已按 native 模块身份和封闭签名接入。操作直接读取 native String/Array，采用跨平台一致的纯词法斜杠规则，不访问文件系统。语言资产覆盖空路径、根目录、连续父路径、绝对路径重置、反斜杠与 Unicode；真实 CLI eval/eval-with 对比默认后端输出并验证发布后读取。
+
 高阶 native 回调开始接通：array.map 从封闭签名取得输入/输出元素类型，通过当前代码计划的分派器调用语言闭包；跨回调前结束 Runtime 借用，仅复制值描述符而不复制底层对象。验证包含词法捕获、嵌套 map、Unit/String 不同结果宽度、发布后读取与单次回调失败传播。模块命名空间函数引用和导入别名消费同一个 resolved SymbolId。Property provider 链尚未使用这条调用路径，不能据此视为 property 执行完成。
 
 Native 声明现在生成同一调用 ABI 的适配函数，使用已登记 native 模块 ID 与声明 ABI 导出键链接，并检查封闭签名；导入别名和一等泛型实例不改变身份。首批为 array.length / string.length，测试包含真实标准库声明、Unicode 字符数、间接泛型参数和拒绝用户模块同名 native 声明。函数值初始化与适配器调用使用不同编译键，初始化仅生成描述符，不能以空参数调用 native 本体。其余 native 操作和 property 查询仍待补齐。
