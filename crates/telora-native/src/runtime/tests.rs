@@ -156,6 +156,25 @@ fn interpreter_adapter_identity_survives_publication() {
 }
 
 #[test]
+fn array_build_admits_backing_before_constructing_tuple_elements() {
+    let mir = graph(&format!("{SOURCE}\nexport def indexed: Array((Int, Int)) = [(0, 1)];"));
+    let sealed = mir.seal().unwrap();
+    let mut rt = Runtime::new(&sealed).unwrap();
+    let int = value_type(&mir, "integer");
+    let item = rt.scalar(int, [1, 2, 3], 42).unwrap();
+    let source = rt.array(value_type(&mir, "ints"), [1, 0, 4], &[item]).unwrap();
+    let source = rt.publish(&[source]).unwrap().remove(0);
+    let arrays = rt.work.arrays.entries.len();
+    let aggregates = rt.work.records.entries.len();
+    let limit = rt.requested_allocation_bytes();
+    let mut rt = rt.with_allocation_limit(limit);
+    assert!(rt.array_operation(value_type(&mir, "indexed"), [1, 5, 6], 0, &[source]).is_err());
+    assert!(rt.allocation_exhausted());
+    assert_eq!(rt.work.arrays.entries.len(), arrays);
+    assert_eq!(rt.work.records.entries.len(), aggregates);
+}
+
+#[test]
 fn array_spread_respects_slices_origins_and_preallocates_within_budget() {
     let mir = graph(SOURCE);
     let sealed = mir.seal().unwrap();

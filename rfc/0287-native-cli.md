@@ -51,6 +51,12 @@ JSON/YAML/TOML 字符串解析直接物化到 native tables，保留输入来源
 
 ### 全量语言模块初始化复查（2026-09-13）
 
+RFC 0289 实施后的 `cfe94dc` 重新检查了当前 75 个 testee：72 个完成 native
+编译和初始化，3 个预期失败仍为 syntax、empty-expectation、initialization。
+nominal-equality 和 enum-constructor-context 均已通过。检查命令为
+`check --native @src/test/<name>/testee`，工作区由完整语言验收脚本生成；
+这仍然只证明编译/初始化，不等同于运行每个测试闭包。
+
 实现版本 `4bf46dd`，debug CLI；使用默认语言测试脚本生成的
 `target/language-tests/workspace`，逐一执行
 `check --native @src/test/<name>/testee`。源码中的 76 个 testee 全部完成检查：

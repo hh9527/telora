@@ -613,12 +613,14 @@ impl Runtime {
     pub fn array(&mut self, ty: TypeId, loc: Location, values: &[Value]) -> Result<Value> {
         let element = self.expect(ty, Kind::Array)?.arguments[0];
         let len = u32::try_from(values.len()).map_err(|_| "array length overflow")?;
-        let mut words = vec![];
         for value in values {
             self.validate(value.as_ref(), element)?;
+        }
+        let mut words = self.array_buffer(element, values.len())?;
+        for value in values {
             words.extend_from_slice(&value.words);
         }
-        let id = self.push_words(Table::Arrays, words)?;
+        let id = self.push_precharged_words(Table::Arrays, words)?;
         self.pack(ty, loc, &[u64::from(id), u64::from(len)])
     }
     fn array_range(&self, value: &Value) -> Result<(u32, u32, u32, TypeId)> {
