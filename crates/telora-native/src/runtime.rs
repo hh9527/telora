@@ -14,6 +14,7 @@ enum Kind {
     Scalar,
     Metadata,
     String,
+    Bytes,
     Array,
     Tuple,
     Record,
@@ -106,10 +107,10 @@ struct RawStringItem {
     bytes: Vec<u8>,
 }
 #[derive(Default)]
-struct RawStringTable {
+struct RawByteTable {
     entries: Vec<RawStringItem>,
 }
-impl RawStringTable {
+impl RawByteTable {
     fn push(&mut self, bytes: &[u8]) -> Result<u32> {
         let id = u32::try_from(self.entries.len()).map_err(|_| "HeapId overflow")?;
         self.entries.push(RawStringItem {
@@ -143,7 +144,8 @@ impl Text<'_> {
 /// One session owns immutable main data and mutable work allocations.
 #[derive(Default)]
 struct Tables {
-    strings: RawStringTable,
+    strings: RawByteTable,
+    bytes: RawByteTable,
     records: WordTable,
     arrays: WordTable,
     values: WordTable,
@@ -257,6 +259,7 @@ impl Runtime {
                 T::Int | T::Float | T::Bool => Kind::Scalar,
                 T::Type | T::TypeOf => Kind::Metadata,
                 T::String => Kind::String,
+                T::Bytes => Kind::Bytes,
                 T::Array => Kind::Array,
                 T::Dict => Kind::Dict,
                 T::Tuple => Kind::Tuple,
@@ -586,12 +589,17 @@ impl Runtime {
     }
 }
 
+#[path = "runtime/bytes.rs"]
+mod bytes;
 #[path = "runtime/closures.rs"]
 mod closures;
+#[path = "runtime/data.rs"]
+mod data;
 #[path = "runtime/demands.rs"]
 mod demands;
 #[path = "runtime/metadata.rs"]
 mod metadata;
+pub use data::DataContract;
 pub use demands::{Demand, DemandKey};
 #[path = "runtime/dict.rs"]
 mod dict;

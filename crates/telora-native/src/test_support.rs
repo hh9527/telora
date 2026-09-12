@@ -4,14 +4,25 @@ use telora_core::{
     static_sources, symbol_resolve, type_resolve,
 };
 pub fn graph(source: &str) -> Mir {
-    let inputs = [
+    graph_with(source, &[])
+}
+pub fn graph_with(source: &str, dependencies: &[(&str, &str)]) -> Mir {
+    graph_with_data(source, dependencies, &[])
+}
+pub fn graph_with_data(source: &str, dependencies: &[(&str, &str)], data_modules: &[&str]) -> Mir {
+    let mut inputs = vec![
         ("@src/main", source),
         (
             "std/prelude",
             include_str!("../../telora-core/modules/std/prelude.telora"),
         ),
     ];
-    let inventory = inputs
+    for &(name, source) in dependencies {
+        if !inputs.iter().any(|(existing, _)| *existing == name) {
+            inputs.push((name, source));
+        }
+    }
+    let mut inventory: Vec<_> = inputs
         .iter()
         .map(|(name, _)| ModuleSpec {
             name: (*name).into(),
@@ -24,6 +35,14 @@ pub fn graph(source: &str) -> Mir {
             },
         })
         .collect();
+    for &name in data_modules {
+        inventory.push(ModuleSpec {
+            name: name.into(),
+            kind: telora_core::mir::ModuleKind::Data,
+            native: None,
+            implicit_imports: vec!["std/prelude".into()],
+        });
+    }
     let mut mir = module_resolve::resolve(inventory, &["@src/main".into()], |_, name| {
         Ok(inputs.iter().find(|(n, _)| *n == name).unwrap().1.into())
     });

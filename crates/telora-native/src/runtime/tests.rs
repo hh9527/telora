@@ -4,6 +4,80 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
+fn data_plans_materialize_json_yaml_toml_with_source_locations() {
+    use telora_core::data_plan::{self, Format};
+    for (format, text) in [
+        (Format::Json, "{\"a\":42,\"items\":[true,false]}"),
+        (Format::Yaml, "a: 42\nitems: [true, false]\n"),
+        (Format::Toml, "a = 42\nitems = [true, false]\n"),
+    ] {
+        let mut mir = crate::test_support::graph_with(
+            "import \"std/value\" { Value }; export def answer = Value.None;",
+            telora_core::static_sources::BUILTINS,
+        );
+        let source = mir.sources.add("data-input", text);
+        let plan = data_plan::parse_registered(&mir.sources, source, format).unwrap();
+        let sealed = mir.seal().unwrap();
+        let contract = DataContract::from_mir(&sealed).unwrap();
+        let mut rt = Runtime::new(&sealed).unwrap();
+        let data = rt.materialize_data(&contract, &plan).unwrap();
+        let roots = rt.publish(&[data]).unwrap();
+        let dict = rt.enum_payload(&roots[0]).unwrap().unwrap().to_owned();
+        let (key, value) = rt.dict_entry(&dict, 0).unwrap();
+        assert_eq!(rt.text(key).unwrap().as_str(), "a");
+        let value = value.to_owned();
+        let number = rt.enum_payload(&value).unwrap().unwrap();
+        assert_eq!(rt.scalar_bits(number).unwrap(), 42);
+        assert_eq!(number.location()[1] as usize, text.find("42").unwrap());
+        assert_eq!(number.location()[0], key.location()[0]);
+        let (_, items) = rt.dict_entry(&dict, 1).unwrap();
+        let items = items.to_owned();
+        let array = rt.enum_payload(&items).unwrap().unwrap().to_owned();
+        assert_eq!(rt.array_len(&array).unwrap(), 2);
+        let first = rt.array_get(&array, 0).unwrap().to_owned();
+        assert_eq!(
+            rt.variant_name(first.type_id(), rt.enum_tag(&first).unwrap())
+                .unwrap(),
+            "True"
+        );
+    }
+}
+
+#[test]
+fn yaml_bytes_share_backing_with_slices_and_toml_keeps_date_tags() {
+    use telora_core::data_plan::{self, Format};
+    let mut mir = crate::test_support::graph_with(
+        "import \"std/value\" { Value }; export def answer = Value.None;",
+        telora_core::static_sources::BUILTINS,
+    );
+    let source = mir.sources.add("binary.yaml", "value: !!binary SGk=\n");
+    let plan = data_plan::parse_registered(&mir.sources, source, Format::Yaml).unwrap();
+    let date = mir.sources.add("date.toml", "value = 2026-09-12\n");
+    let date_plan = data_plan::parse_registered(&mir.sources, date, Format::Toml).unwrap();
+    let sealed = mir.seal().unwrap();
+    let contract = DataContract::from_mir(&sealed).unwrap();
+    let mut rt = Runtime::new(&sealed).unwrap();
+    let data = rt.materialize_data(&contract, &plan).unwrap();
+    let dict = rt.enum_payload(&data).unwrap().unwrap().to_owned();
+    let bytes = rt.dict_entry(&dict, 0).unwrap().1.to_owned();
+    let bytes = rt.enum_payload(&bytes).unwrap().unwrap().to_owned();
+    let slice = rt.bytes_slice(&bytes, 1, 2, bytes.location()).unwrap();
+    assert!(rt.bytes_slice(&bytes, 2, 3, bytes.location()).is_err());
+    let date = rt.materialize_data(&contract, &date_plan).unwrap();
+    let roots = rt.publish(&[data, slice, date]).unwrap();
+    assert_eq!(rt.bytes_data(&roots[1]).unwrap(), b"i");
+    assert_eq!(rt.main.bytes.entries.len(), 1);
+    assert!(rt.bytes_data(&bytes).is_err());
+    let dict = rt.enum_payload(&roots[2]).unwrap().unwrap().to_owned();
+    let date = rt.dict_entry(&dict, 0).unwrap().1.to_owned();
+    assert_eq!(
+        rt.variant_name(date.type_id(), rt.enum_tag(&date).unwrap())
+            .unwrap(),
+        "LocalDate"
+    );
+}
+
+#[test]
 fn initialization_demands_cache_publish_and_report_cycles_once() {
     let mir = graph(SOURCE);
     let key = DemandKey::Export(

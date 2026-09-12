@@ -42,6 +42,13 @@ pub struct Compiled {
     demands: Vec<(crate::runtime::DemandKey, TypeKey)>,
     initializers: Vec<(*const u64, Origin)>,
     export_slots: BTreeMap<SymbolId, usize>,
+    data_modules: Vec<DataModule>,
+    data_contract: Option<crate::runtime::DataContract>,
+}
+pub struct DataModule {
+    pub symbol: SymbolId,
+    pub name: String,
+    pub ty: TypeKey,
 }
 struct CompiledEntry {
     entry: Entry,
@@ -72,6 +79,42 @@ impl Drop for CodeMemory {
     }
 }
 impl Compiled {
+    pub fn data_modules(&self) -> &[DataModule] {
+        &self.data_modules
+    }
+    pub fn inject_data(
+        &self,
+        context: &mut CallContext,
+        symbol: SymbolId,
+        plan: &telora_core::data_plan::ValidatedDataPlan,
+    ) -> Result<()> {
+        let link = self
+            .data_modules
+            .iter()
+            .find(|link| link.symbol == symbol)
+            .ok_or("data symbol not in native plan")?;
+        let contract = self
+            .data_contract
+            .as_ref()
+            .ok_or("native data contract missing")?;
+        if link.ty != contract.value_type() {
+            return Err("data declaration does not match semantic Value contract".into());
+        }
+        let rt = context.runtime_mut()?;
+        rt.bind_code_plan(self.identity, &self.demands)?;
+        let key = crate::runtime::DemandKey::Export(symbol);
+        match rt.begin_demand(key)? {
+            crate::runtime::Demand::Evaluate => {}
+            _ => return Err("data module was already initialized or failed".into()),
+        }
+        match rt.materialize_data(contract, plan) {
+            Ok(value) => rt.complete_demand(key, value),
+            Err(error) => {
+                rt.fail_demand(key)?;
+                Err(error)
+            }
+        }
+    }
     /// Drive every registered initializer, then publish the complete root set.
     /// Internal reads still use the same demand table and may run ahead.
     pub fn initialize(&self, context: &mut CallContext) -> Result<()> {
@@ -431,6 +474,24 @@ fn compile_plan(
         ));
     }
     initializers.sort_by_key(|i| i.0);
+    let data_modules = functions
+        .globals
+        .iter()
+        .filter_map(|(&symbol, &(_, _, ty))| {
+            let module = graph.symbols[symbol.index()].module?;
+            let module = &graph.modules[module.index()];
+            (module.kind == telora_core::mir::ModuleKind::Data).then(|| DataModule {
+                symbol,
+                name: module.name.clone(),
+                ty,
+            })
+        })
+        .collect::<Vec<_>>();
+    let data_contract = if data_modules.is_empty() {
+        None
+    } else {
+        Some(crate::runtime::DataContract::from_mir(mir)?)
+    };
     Ok(Compiled {
         identity: NEXT_CODE_PLAN
             .fetch_update(
@@ -445,6 +506,8 @@ fn compile_plan(
         arguments,
         output,
         entries,
+        data_modules,
+        data_contract,
         initializers: initializers
             .into_iter()
             .map(|(_, address, origin)| (address, origin))
@@ -981,6 +1044,20 @@ impl Lower<'_, '_> {
         let (pointer, length) = self.literal_bytes(text)?;
         self.object(node, helpers::STRING, ty, pointer, length)
     }
+    fn global_value(&mut self, node: HirId, symbol: SymbolId) -> EmitResult<Vec<ir::Value>> {
+        let expected = TypeKey::try_from(self.ty(node)?)?;
+        let (slot, function, actual) = self.functions.global(self.mir, symbol, self.module)?;
+        let function = self
+            .module
+            .declare_func_in_func(function, self.builder.func);
+        let address = self
+            .builder
+            .ins()
+            .func_addr(self.module.target_config().pointer_type(), function);
+        let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
+        let value = self.object(node, helpers::DEMAND, actual, address, slot)?;
+        self.adapt_metadata(actual, expected, value)
+    }
     fn expression(&mut self, node: HirId, depth: usize) -> EmitResult<Vec<ir::Value>> {
         if depth > 512 {
             return Err("native expression nesting limit".into());
@@ -988,6 +1065,14 @@ impl Lower<'_, '_> {
         let ty = self.ty(node)?;
         let key = TypeKey::try_from(ty)?;
         let syntax = &self.mir.hir[node.index()];
+        if matches!(syntax.kind, HirKind::Field)
+            && self.selected_member(node).is_none()
+            && self.mir.types[ty.index()].constructor != TypeConstructor::Function
+            && let Some(slot) = syntax.resolution
+            && let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()]
+        {
+            return self.global_value(node, symbol);
+        }
         if matches!(syntax.kind, HirKind::Field)
             && syntax.resolution.is_some_and(|slot| {
                 matches!(self.mir.resolve_slots[slot.index()], ResolveState::Bound(_))
@@ -1271,19 +1356,7 @@ impl Lower<'_, '_> {
                         return self.expression(value, depth + 1);
                     }
                 }
-                let (slot, function, ty) = self.functions.global(self.mir, symbol, self.module)?;
-                if ty != key {
-                    return Err("native global reference type mismatch".into());
-                }
-                let function = self
-                    .module
-                    .declare_func_in_func(function, self.builder.func);
-                let address = self
-                    .builder
-                    .ins()
-                    .func_addr(self.module.target_config().pointer_type(), function);
-                let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
-                self.object(node, helpers::DEMAND, ty, address, slot)
+                self.global_value(node, symbol)
             }
             HirKind::TypeAscription => {
                 self.expression(child(self.mir, node, Role::Value)?, depth + 1)
@@ -1301,6 +1374,16 @@ impl Lower<'_, '_> {
                 )
             }
             HirKind::Binding { .. } => {
+                if matches!(
+                    self.mir.modules[syntax.module.index()].state,
+                    telora_core::mir::ModuleState::Data { .. }
+                ) {
+                    self.report_failure(
+                        node,
+                        "data module has not been injected before initialization",
+                    )?;
+                    return Err(EmitError::Diverged);
+                }
                 if functions::is_native(&syntax.kind) {
                     return self.function_value(
                         node,

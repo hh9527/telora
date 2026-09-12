@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 struct Copies {
     objects: BTreeMap<(Table, u32), u32>,
     strings: BTreeMap<u32, u32>,
+    bytes: BTreeMap<u32, u32>,
 }
 impl Runtime {
     /// Publish initialization atomically, preserving aliases in the whole root
@@ -64,6 +65,24 @@ impl Runtime {
         )?;
         match layout.kind {
             Kind::Scalar => {}
+            Kind::Bytes => {
+                let value = Value {
+                    arena: self.identity,
+                    words: words.to_vec().into_boxed_slice(),
+                };
+                self.bytes_data(&value)?;
+                let old = words[2] as u32;
+                let id = if let Some(&id) = copies.bytes.get(&old) {
+                    id
+                } else {
+                    let reference = HeapRef::from_raw(old);
+                    let bytes = self.tables(reference).bytes.get(reference.slot())?;
+                    let id = HeapRef::new(World::Main, target.bytes.push(bytes)?)?.raw();
+                    copies.bytes.insert(old, id);
+                    id
+                };
+                words[2] = (words[2] & 0xffff_ffff_0000_0000) | u64::from(id);
+            }
             Kind::Metadata => {
                 self.represented_type(ValueRef {
                     arena: self.identity,

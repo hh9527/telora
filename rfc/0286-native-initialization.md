@@ -43,7 +43,9 @@ Native `property` 工厂已生成真实可调用的 provider 闭包，捕获 Pro
 
 FieldPropertyCtx / VariantPropertyCtx 与对应查询已接入，字段名、索引、owner/字段/payload 类型均来自封闭骨架；无 payload 的 variant 使用 None，需求键保留成员 site。已验证 field、带 payload/无 payload 的 variant 及统一初始化发布。泛型 property 的不同闭合实例也验证了独立见证与顺序合并；字段读取先使用骨架的物理类型，再按 MIR 表达式类型做 TypeOf→Type 标记适配。
 
-更丰富的 owner 上下文、数据注入、泛型函数族/所需 native 操作及 CLI 初始化入口尚未完成，因此暂未覆盖包含整个标准库的全图，不据此宣称 CLI 初始化已可用。
+数据注入已接入：core 暴露只读 `data_plan` 解析接口，复用 JSON/YAML/TOML 的扁平验证计划，不创建 Heap/VM。Native 根据已登记 std/value.Value 导出及封闭 payload 类型直接物化，保留值/键来源、YAML Bytes 和 TOML 时间标签。数据模块使用稳定 SymbolId 的需求槽，必须在初始化前注入；重复注入被拒绝，漏注入明确失败并禁止发布。已验证命名空间读取、初始化发布，以及 Bytes 切片的 backing 共享。
+
+更丰富的 owner 上下文、泛型函数族/所需 native 操作及 CLI 初始化入口尚未完成，因此暂未覆盖包含整个标准库的全图，不据此宣称 CLI 初始化已可用。
 
 用 .telora 用例覆盖数据依赖、跨模块导出、顶层值/property 双向依赖、真正求值环、单次计算/失败传播、发布后值一致性。静态阶段证明不持有 native VM/context。
 

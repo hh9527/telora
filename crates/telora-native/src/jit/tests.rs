@@ -348,6 +348,39 @@ fn property_queries_execute_provider_chains_and_cache_results() {
 }
 
 #[test]
+fn data_modules_are_injected_before_initialization_without_old_values() {
+    let mut mir = crate::test_support::graph_with_data(
+        "import \"@src/data\" as input; export def answer = input.data;",
+        static_sources::BUILTINS,
+        &["@src/data"],
+    );
+    let root = crate::test_support::value_node(&mir, "answer");
+    let source = mir.sources.add("data.json", "{\"answer\":42}");
+    let plan = telora_core::data_plan::parse_registered(
+        &mir.sources,
+        source,
+        telora_core::data_plan::Format::Json,
+    )
+    .unwrap();
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let symbol = compiled.data_modules()[0].symbol;
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.inject_data(&mut context, symbol, &plan).unwrap();
+    assert!(compiled.inject_data(&mut context, symbol, &plan).is_err());
+    compiled.initialize(&mut context).unwrap();
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    let dict = rt.enum_payload(&value).unwrap().unwrap().to_owned();
+    let value = rt.dict_entry(&dict, 0).unwrap().1.to_owned();
+    assert_eq!(rt.enum_payload(&value).unwrap().unwrap().words()[2], 42);
+    let mut missing = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.initialize(&mut missing).is_err());
+    assert_eq!(missing.diagnostics().len(), 1);
+    assert!(!missing.runtime().unwrap().is_published());
+}
+
+#[test]
 fn member_property_contexts_use_sealed_names_indices_and_payload_types() {
     for (source, expected, name) in [
         (

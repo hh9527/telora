@@ -66,7 +66,7 @@ pub enum ValuePathSegment {
 pub type ValuePath = Vec<ValuePathSegment>;
 
 #[derive(Clone, Debug)]
-pub(crate) enum DataScalar {
+pub enum DataScalar {
     Int(i64),
     Float(f64),
     String(String),
@@ -139,36 +139,39 @@ impl DataScalar {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct DataNodeId(usize);
+pub struct DataNodeId(usize);
+impl DataNodeId { pub fn index(self) -> usize { self.0 } }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DataField {
-    pub(crate) key_location: Location,
-    pub(crate) value: DataNodeId,
+pub struct DataField {
+    pub key_location: Location,
+    pub value: DataNodeId,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum DataPlanNodeKind {
+pub enum DataPlanNodeKind {
     Scalar(DataScalar),
     Array(Vec<DataNodeId>),
     Object(BTreeMap<String, DataField>),
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DataPlanNode {
-    pub(crate) kind: DataPlanNodeKind,
-    pub(crate) location: Location,
+pub struct DataPlanNode {
+    pub kind: DataPlanNodeKind,
+    pub location: Location,
 }
 
 /// A validated, flat arena over source-backed nodes. Edges are node ids, so
 /// parsers never construct a second recursive data tree before Heap allocation.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ValidatedDataPlan {
+pub struct ValidatedDataPlan {
     nodes: Vec<DataPlanNode>,
     root: Option<DataNodeId>,
 }
 
 impl ValidatedDataPlan {
+    pub fn root_node(&self) -> Option<DataNodeId> { self.root }
+    pub fn nodes(&self) -> &[DataPlanNode] { &self.nodes }
     /// Runtime string parsing attributes values to the input expression, not
     /// to temporary parser SourceIds which are outside the session database.
     pub(crate) fn set_location(&mut self, location: Location) {

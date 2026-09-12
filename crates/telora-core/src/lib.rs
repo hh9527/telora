@@ -23,6 +23,7 @@ pub mod document;
 mod fmt;
 mod heap;
 pub mod json;
+pub mod data_plan;
 pub mod lexer;
 pub mod lir;
 pub mod mir;
