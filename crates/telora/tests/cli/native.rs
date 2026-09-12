@@ -79,6 +79,10 @@ fn native_eval_with_initializes_then_injects_declared_context() {
     let decoded = telora(&cwd).args(["eval-with", "--native", "@src/main:decoded", "--source", "input=input.json"]).output().unwrap();
     assert!(decoded.status.success(), "{}", String::from_utf8_lossy(&decoded.stderr));
     assert_eq!(serde_json::from_slice::<Value>(&decoded.stdout).unwrap(), serde_json::json!({"answer":42}));
+    fs::write(cwd.join("renamed.json"), "{\"answerValue\":42}").unwrap();
+    let renamed = telora(&cwd).args(["eval-with", "--native", "@src/main:property_decoded", "--source", "input=renamed.json"]).output().unwrap();
+    assert!(renamed.status.success(), "{}", String::from_utf8_lossy(&renamed.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&renamed.stdout).unwrap(), serde_json::json!({"answerValue":42}));
     fs::write(cwd.join("invalid.json"), "{\"answer\":\"wrong\"}").unwrap();
     let rejected = telora(&cwd).args(["eval-with", "--native", "@src/main:decoded", "--source", "input=invalid.json"]).output().unwrap();
     assert!(!rejected.status.success());

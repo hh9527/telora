@@ -87,6 +87,49 @@ pub(super) fn emit(
 }
 
 impl Lower<'_, '_> {
+    pub(super) fn codec_packet(&mut self, data: ir::Value, root: TypeKey, decode: bool) -> EmitResult<(ir::Value, ir::Value)> {
+        let mut pending = vec![root.index()];
+        let mut reachable = std::collections::BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            if !reachable.insert(ty) { continue; }
+            pending.extend(self.mir.types[ty].arguments.iter().map(|ty| ty.index()));
+            if let Some(layout) = &self.mir.type_layouts[ty] {
+                pending.extend(layout.members.iter().flatten().map(|ty| ty.index()));
+            }
+        }
+        let checks = self.mir.construction_checks.iter().enumerate()
+            .filter(|(_, check)| decode && check.concrete && reachable.contains(&check.owner.index()))
+            .map(|(index, check)| (index, check.owner, check.site)).collect::<Vec<_>>();
+        let properties = self.mir.properties.iter().enumerate()
+            .filter(|(_, property)| property.concrete && property.site == PropertySite::Type && reachable.contains(&property.owner.index()))
+            .map(|(index, property)| (index, property.owner, property.property)).collect::<Vec<_>>();
+        let mut packet = vec![data];
+        for &(index, owner, site) in &checks {
+            let (slot, initializer, signature) = self.functions.check(self.mir, index, self.module)?;
+            let dispatcher = self.functions.dispatcher(signature, self.module)?;
+            let site = match site { PropertySite::Type => 0, PropertySite::Variant(index) => u64::from(index) + 1, _ => return Err("unsupported checker site".into()) };
+            for word in [owner.index() as u64, site, u64::from(slot), u64::from(signature.raw())] {
+                packet.push(self.builder.ins().iconst(types::I64, word as i64));
+            }
+            for function in [initializer, dispatcher] {
+                let reference = self.module.declare_func_in_func(function, self.builder.func);
+                packet.push(self.builder.ins().func_addr(self.module.target_config().pointer_type(), reference));
+            }
+        }
+        for &(index, owner, property) in &properties {
+            let (slot, initializer) = self.functions.property(self.mir, index, self.module)?;
+            for word in [owner.index() as u64, property.index() as u64, u64::from(slot)] {
+                packet.push(self.builder.ins().iconst(types::I64, word as i64));
+            }
+            let reference = self.module.declare_func_in_func(initializer, self.builder.func);
+            packet.push(self.builder.ins().func_addr(self.module.target_config().pointer_type(), reference));
+        }
+        let counts = u64::from(u32::try_from(checks.len()).map_err(|_| "codec check count overflow")?)
+            | (u64::from(u32::try_from(properties.len()).map_err(|_| "codec property count overflow")?) << 32);
+        let packet = self.stack_words(&packet)?;
+        let count = self.builder.ins().iconst(types::I64, counts as i64);
+        Ok((packet, count))
+    }
     pub(super) fn construction_check(&mut self, node: HirId, owner: TypeKey, site: PropertySite, value: &[ir::Value]) -> EmitResult<()> {
         let checks = self.mir.construction_checks.iter().enumerate()
             .filter(|(_, check)| check.concrete && check.owner.index() == owner.index() && check.site == site)

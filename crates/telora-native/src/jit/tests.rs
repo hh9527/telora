@@ -1062,7 +1062,7 @@ fn native_codec_decodes_nominal_skeletons_and_recursive_instances() {
 #[test]
 fn native_codec_rejects_unlinked_properties() {
     for (declaration, expected) in [
-        ("import \"std/_codec\" { rename_all, RenameCase }; @rename_all(RenameCase.CamelCase) type Item = struct { a: Int };", "native codec property execution is not yet linked"),
+        ("import \"std/string\" { decode_by_parse, encode_by_display }; @decode_by_parse @encode_by_display type Item = struct(Int);", "native codec text property execution is not yet linked"),
     ] {
         let source = format!("import \"std/codec\" {{decode, Value}}; {declaration} export def answer = decode(Item.type, Value.Int(1));");
         let (mir, root) = graph_with(&source, static_sources::BUILTINS);
@@ -1183,17 +1183,101 @@ fn native_codec_decodes_sealed_collections_and_returns_rejections() {
 }
 
 #[test]
-fn native_codec_does_not_silently_ignore_property_driven_encoding() {
+fn native_codec_encodes_property_renamed_fields() {
     let (mir, root) = graph_with(
         "import \"std/codec\" { encode, Value }; import \"std/_codec\" { rename_all, RenameCase }; @rename_all(RenameCase.CamelCase) type Rec = struct { some_field: Int }; export def answer = do { let value: Rec = { some_field: 42 }; encode(Value.type, value) };",
         static_sources::BUILTINS,
     );
     let sealed = mir.seal().unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
     let compiled = compile(&sealed, root).unwrap();
     let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
-    assert!(compiled.call(&mut context, &[]).is_err());
+    let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.runtime().unwrap().semantic_json(&contract, &value).unwrap(), "{\"someField\":42}");
+    assert!(context.diagnostics().is_empty());
+}
+
+#[test]
+fn native_codec_rename_properties_compose_with_checks_and_cache_provider_values() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/codec-rename.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.runtime().unwrap().semantic_json(&contract, &value).unwrap(), "[{\"someField\":42},{\"withValue\":{\"someField\":7}},\"emptyValue\"]");
     assert_eq!(context.diagnostics().len(), 1);
-    assert_eq!(context.diagnostics()[0].message, "native codec property execution is not yet linked");
+    assert_eq!(context.diagnostics()[0].message, "rename property evaluated");
+}
+
+#[test]
+fn native_codec_rename_rejects_collisions_and_propagates_property_failure() {
+    for (definition, expression, expected) in [
+        ("@rename_all(RenameCase.CamelCase) type Item = struct {a_b: Int, aB: Int};", "do { let value: Item = {a_b: 1, aB: 2}; encode(Value.type, value) }", "duplicate external member name"),
+        ("@rename_all(RenameCase.CamelCase) type Item = struct {a_b: Int, aB: Int};", "decode(Item.type, Value.Object({aB: Value.Int(1)}))", "duplicate external member name"),
+        ("@rename_all(RenameCase.CamelCase) type Item = enum {Some_value, SomeValue};", "encode(Value.type, Item.SomeValue)", "duplicate external variant name"),
+        ("@rename_all(RenameCase.CamelCase) type Item = enum {Some_value, SomeValue};", "decode(Item.type, Value.String(\"someValue\"))", "duplicate external variant name"),
+        ("@untagged @rename_all(RenameCase.CamelCase) type Item = enum {SomeValue(Int)};", "encode(Value.type, Item.SomeValue(1))", "rename_all is not meaningful on an untagged Enum"),
+        ("@untagged type Item = enum {A, B};", "encode(Value.type, Item.A)", "untagged Enum may contain at most one unit variant"),
+        ("def broken: Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(owner, previous) { fail!(\"property failed\") }; @broken type Item = struct {number: Int};", "decode(Item.type, Value.Object({number: Value.Int(1)}))", "property failed"),
+        ("def broken: Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(owner, previous) { fail!(\"property failed\") }; @broken type Item = struct {number: Int};", "do { let value: Item = {number: 1}; encode(Value.type, value) }", "property failed"),
+    ] {
+        let source = format!("import \"std/codec\" {{decode, encode, Value}}; import \"std/_codec\" {{rename_all, RenameCase, JsonRenameAll, untagged}}; {definition} export def answer = {expression};");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        assert!(compiled.call(&mut context, &[]).is_err());
+        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.diagnostics()[0].message, expected);
+    }
+}
+
+#[test]
+fn native_codec_untagged_trials_include_construction_checks_and_nested_values() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/codec-untagged.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.runtime().unwrap().semantic_json(&contract, &value).unwrap(), "[2,-3,null,{\"items\":[2,-3]},4,true]");
+    assert!(context.diagnostics().is_empty());
+}
+
+#[test]
+fn native_codec_untagged_reports_ambiguity_rejections_and_aborts_execution_failure() {
+    for (definitions, input, message, fails) in [
+        ("type Item = enum {A(Int), B(Int)};", "Value.Int(1)", "ambiguously matches multiple", false),
+        ("type Item = enum {A(Int), B(String)};", "Value.True", "matches no untagged Enum variant", false),
+        ("type Item = enum {A, B};", "Value.None", "ambiguously matches multiple", false),
+        ("@check(fn(value) { Err(blame!(\"specific child rejection\", value)) }) type Child = struct(Int); type Item = enum {A(Child)};", "Value.Int(0)", "specific child rejection", false),
+        ("@check(fn(value) { fail!(\"trial execution failed\", value) }) type Child = struct(Int); type Item = enum {A(Child), B(Int)};", "Value.Int(0)", "trial execution failed", true),
+        ("@check(fn(value) { fail!(\"late trial failed\", value) }) type Child = struct(Int); type Item = enum {A(Int), B(Int), Z(Child)};", "Value.Int(0)", "late trial failed", true),
+    ] {
+        // Put the decorator directly on Item without decorating preceding types.
+        let definitions = definitions.replace("type Item", "@untagged type Item");
+        let source = format!("import \"std/codec\" {{decode, Value}}; import \"std/_codec\" {{untagged}}; {definitions} export def answer = decode(Item.type, {input});");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]);
+        if fails {
+            assert!(result.is_err());
+            assert_eq!(context.diagnostics().len(), 1);
+            assert_eq!(context.diagnostics()[0].message, message);
+        } else {
+            let result = result.unwrap();
+            let rt = context.runtime().unwrap();
+            let blame = rt.enum_payload(&result).unwrap().unwrap().to_owned();
+            let (actual, subjects) = rt.blame_diagnostic(&blame).unwrap();
+            assert!(actual.contains(message), "{actual}");
+            assert_eq!(subjects.len(), 1);
+            assert!(context.diagnostics().is_empty());
+        }
+        assert_eq!(context.call_depth(), 0);
+    }
 }
 
 #[test]

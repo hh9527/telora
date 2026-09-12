@@ -2,9 +2,9 @@ use super::*;
 
 type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *const u64) -> u32;
 
-/// A decode packet borrows initializer and dispatcher addresses from its
+/// A codec packet borrows initializer and dispatcher addresses from its
 /// generated adapter. No code address is stored in a runtime heap object.
-pub(super) unsafe fn decode(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, count: u64) -> u32 {
+pub(super) unsafe fn codec(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, count: u64, decode: bool) -> u32 {
     context.boundary(|context| {
         let result = (|| -> Result<Status> {
             let rt = context.runtime()?;
@@ -17,14 +17,25 @@ pub(super) unsafe fn decode(context: &mut CallContext, ty: TypeId, data: *const 
                 cursor = unsafe { cursor.add(width) };
             }
             let target = rt.represented_type(inputs[1].as_ref())?;
-            let count = usize::try_from(count).map_err(|_| "decode check count overflow")?;
-            let mut checks = Vec::with_capacity(count);
-            for index in 0..count {
+            let check_count = (count as u32) as usize;
+            let property_count = (count >> 32) as usize;
+            let mut checks = Vec::with_capacity(check_count);
+            for index in 0..check_count {
                 let words = unsafe { std::slice::from_raw_parts(data.add(1 + index * 6), 6) };
                 checks.push(codec::CheckPlan { owner: TypeId(words[0] as u32), site: words[1], slot: words[2], signature: TypeId(words[3] as u32), initializer: words[4] as usize, dispatcher: words[5] as usize });
             }
-            let mut decoder = codec::Decoder { context, checks: &checks };
-            let Some(value) = decoder.decode(ty, target, &inputs[0], &inputs[2], origin.words())? else { return Ok(Status::Failed); };
+            let mut properties = Vec::with_capacity(property_count);
+            for index in 0..property_count {
+                let words = unsafe { std::slice::from_raw_parts(data.add(1 + check_count * 6 + index * 4), 4) };
+                properties.push(codec::PropertyPlan { owner: TypeId(words[0] as u32), property: TypeId(words[1] as u32), slot: words[2], initializer: words[3] as usize });
+            }
+            let mut codec = codec::Codec { context, checks: &checks, properties: &properties };
+            let value = if decode { codec.decode(ty, target, &inputs[0], &inputs[2], origin.words())? }
+                else {
+                    if ty != target { return Err("codec target witness mismatch".into()); }
+                    codec.encode(target, &inputs[0], &inputs[2])?
+                };
+            let Some(value) = value else { return Ok(Status::Failed); };
             let rt = context.runtime()?;
             rt.validate(value.as_ref(), ty)?;
             unsafe { std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, value.words().len()); }

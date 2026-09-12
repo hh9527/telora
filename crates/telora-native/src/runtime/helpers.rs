@@ -81,8 +81,8 @@ pub(crate) unsafe extern "C" fn object(
     if operation == ARRAY_MAP {
         return unsafe { callbacks::array_map(context, TypeId(ty), data, out, origin, count) };
     }
-    if operation == DECODE {
-        return unsafe { callbacks::decode(context, TypeId(ty), data, out, origin, count) };
+    if operation == DECODE || operation == ENCODE {
+        return unsafe { callbacks::codec(context, TypeId(ty), data, out, origin, count, operation == DECODE) };
     }
     if operation == CHECK_RESULT {
         return context.boundary(|context| {
@@ -248,19 +248,6 @@ pub(crate) unsafe extern "C" fn object(
                         cursor = unsafe { cursor.add(width) };
                     }
                     rt.owned_string(ty, loc, text)?
-                }
-                ENCODE => {
-                    let mut inputs = Vec::with_capacity(3);
-                    let mut cursor = data;
-                    for _ in 0..3 {
-                        let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
-                        let width = rt.layout(input)?.words;
-                        inputs.push(Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(cursor, width) }.into() });
-                        cursor = unsafe { cursor.add(width) };
-                    }
-                    let target = rt.represented_type(inputs[1].as_ref())?;
-                    if target != ty { return Err("codec target witness mismatch".into()); }
-                    rt.encode(ty, &inputs[0], &inputs[2])?
                 }
                 REFLECT => {
                     let input = unsafe { TypeId((*data.add(1) >> 32) as u32) };

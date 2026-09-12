@@ -1,0 +1,31 @@
+import "std/codec" {decode, encode, Value};
+import "std/_codec" {untagged};
+
+@check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive required", value)) } })
+type Positive = struct(Int);
+@check(fn(value) { if value < 0 { Ok(()) } else { Err(blame!("negative required", value)) } })
+type Negative = struct(Int);
+@untagged
+type Signed = enum {Positive(Positive), Negative(Negative)};
+@untagged
+type Nullable = enum {Empty, Number(Int)};
+@untagged
+type VariantChecked = enum {
+    @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive variant", value)) } })
+    Positive(Int),
+    @check(fn(value) { if value < 0 { Ok(()) } else { Err(blame!("negative variant", value)) } })
+    Negative(Int),
+};
+type Container = struct {items: Array(Signed)};
+def read: for(T) Fn(TypeOf(T), Value) -> T = fn(target, input) {
+    match decode(target, input) { Ok(value) => value, Err(error) => raise!(error) }
+};
+
+export def answer = encode(Value.type, (
+    read(Signed.type, Value.Int(2)),
+    read(Signed.type, Value.Int(-3)),
+    read(Nullable.type, Value.None),
+    read(Container.type, Value.Object({items: Value.Array([Value.Int(2), Value.Int(-3)])})),
+    read(VariantChecked.type, Value.Int(4)),
+    match decode(VariantChecked.type, Value.Int(0)) { Err(_) => True, Ok(_) => False },
+));

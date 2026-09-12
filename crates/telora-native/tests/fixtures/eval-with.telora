@@ -2,11 +2,36 @@ import "std/entry" as entry;
 import "std/codec" {encode, decode, Value};
 import "std/dict" as dict;
 import "./base.json" as base;
+import "std/codec" {JsonRenameAll, JsonUntagged, RenameCase};
+
+def camel_case: Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(owner, previous) {
+    {case: RenameCase.CamelCase}
+};
+def without_tag: Fn(Type, Option(JsonUntagged)) -> JsonUntagged = fn(owner, previous) { {} };
 
 @check(fn(value) {
     if value > 0 { Ok(()) } else { Err(blame!("positive input required", value)) }
 })
 type Count = struct(Int);
+
+@camel_case
+type External = struct {answer_value: Count};
+@without_tag
+type ExternalChoice = enum {Data(External)};
+
+export def property_decoded = entry.main(
+    {sources: ["input"], envs: [], args: False},
+    fn(ctx) {
+        let input = match dict.get(ctx.sources, "input") {
+            Some(value) => value,
+            None => fail!("declared input is absent"),
+        };
+        match decode(ExternalChoice.type, input) {
+            Ok(value) => encode(Value.type, value),
+            Err(error) => raise!(error),
+        }
+    },
+);
 
 export def answer = entry.main(
     { sources: ["input"], envs: ["TELORA_NATIVE_TEST_ENV"], args: True },

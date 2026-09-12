@@ -1,13 +1,42 @@
 use super::*;
 
 enum DecodeFailure {
-    Rejected(String, crate::abi::Origin),
+    Rejected(String, Vec<crate::abi::Origin>),
     Blame(Value),
     Failed,
     Runtime(String),
 }
 impl From<String> for DecodeFailure {
     fn from(error: String) -> Self { Self::Runtime(error) }
+}
+impl From<&str> for DecodeFailure {
+    fn from(error: &str) -> Self { Self::Runtime(error.into()) }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PropertyPlan {
+    pub owner: TypeId,
+    pub property: TypeId,
+    pub slot: u64,
+    pub initializer: usize,
+}
+
+fn lower_camel_case(name: &str) -> String {
+    let mut output = String::with_capacity(name.len());
+    let mut uppercase = false;
+    for (index, character) in name.chars().enumerate() {
+        if character == '_' { uppercase = true; }
+        else if uppercase { output.extend(character.to_uppercase()); uppercase = false; }
+        else if index == 0 { output.extend(character.to_lowercase()); }
+        else { output.push(character); }
+    }
+    output
+}
+
+fn external_names(names: impl Iterator<Item = String>, rename: bool, message: &str) -> std::result::Result<Vec<String>, DecodeFailure> {
+    let names = names.map(|name| if rename { lower_camel_case(&name) } else { name }).collect::<Vec<_>>();
+    if names.iter().collect::<std::collections::BTreeSet<_>>().len() != names.len() { return Err(message.into()); }
+    Ok(names)
 }
 
 #[derive(Clone, Copy)]
@@ -20,31 +49,70 @@ pub(super) struct CheckPlan {
     pub dispatcher: usize,
 }
 
-pub(super) struct Decoder<'a> {
+pub(super) struct Codec<'a> {
     pub context: &'a mut crate::abi::CallContext,
     pub checks: &'a [CheckPlan],
+    pub properties: &'a [PropertyPlan],
 }
 
-impl Decoder<'_> {
+impl Codec<'_> {
     fn runtime(&self) -> Result<&Runtime> { self.context.runtime() }
     fn runtime_mut(&mut self) -> Result<&mut Runtime> { self.context.runtime_mut() }
+
+    fn property_types(&self, properties: &Value) -> Result<Vec<(String, TypeId)>> {
+        let rt = self.runtime()?;
+        rt.layout(properties.type_id())?.field_names.iter().enumerate()
+            .map(|(index, name)| Ok((name.clone(), rt.represented_type(rt.field(properties, index)?)?)))
+            .collect()
+    }
+
+    fn property(&mut self, owner: TypeId, property: TypeId, origin: crate::abi::Origin) -> std::result::Result<Option<Value>, DecodeFailure> {
+        if !self.runtime()?.property_presence.contains(&(owner, property)) { return Ok(None); }
+        let plan = self.properties.iter().find(|plan| plan.owner == owner && plan.property == property)
+            .copied().ok_or("sealed codec property is missing from the native plan")?;
+        let mut words = vec![0; self.runtime()?.layout(property)?.words].into_boxed_slice();
+        let status = unsafe { helpers::demand(self.context, property, plan.slot, plan.initializer as *const u64, words.as_mut_ptr(), origin) };
+        if status == 1 { return Err(DecodeFailure::Failed); }
+        if status != 0 { return Err("invalid codec property initializer status".into()); }
+        Ok(Some(Value { arena: self.runtime()?.identity, words }))
+    }
+
+    fn options(&mut self, owner: TypeId, properties: &[(String, TypeId)], origin: crate::abi::Origin) -> std::result::Result<(bool, bool), DecodeFailure> {
+        let property_type = |name: &str| properties.iter().find(|(key, _)| key == name).map(|(_, ty)| *ty).ok_or_else(|| format!("codec property contract lacks {name}"));
+        let rt = self.runtime()?;
+        let decode = rt.property_presence.contains(&(owner, property_type("decode_by_parse")?));
+        let encode = rt.property_presence.contains(&(owner, property_type("encode_by_display")?));
+        if decode != encode { return Err("std/string.decode_by_parse and std/string.encode_by_display must be used together".into()); }
+        if decode { return Err("native codec text property execution is not yet linked".into()); }
+        let mut rename = false;
+        if let Some(value) = self.property(owner, property_type("json_rename_all")?, origin)? {
+            let rt = self.runtime()?;
+            let index = rt.layout(value.type_id())?.field_names.iter().position(|name| name == "case").ok_or("rename_all property has no case")?;
+            let case = rt.field(&value, index)?.to_owned();
+            if rt.layout(case.type_id())?.variants[rt.enum_tag(&case)? as usize].name != "CamelCase" { return Err("rename_all requires CamelCase".into()); }
+            rename = true;
+        }
+        let untagged = self.property(owner, property_type("json_untagged")?, origin)?.is_some();
+        if rename && untagged && self.runtime()?.layout(owner)?.kind == Kind::Enum {
+            return Err("rename_all is not meaningful on an untagged Enum".into());
+        }
+        Ok((rename, untagged))
+    }
 
     pub(super) fn decode(&mut self, result: TypeId, target: TypeId, properties: &Value, input: &Value, loc: Location) -> Result<Option<Value>> {
         let contract = self.runtime()?.data_contract.clone().ok_or("semantic Value contract is not loaded")?;
         self.runtime()?.validate(input.as_ref(), contract.value_type())?;
-        let properties = (0..self.runtime()?.layout(properties.type_id())?.fields.len())
-            .map(|i| self.runtime()?.represented_type(self.runtime()?.field(properties, i)?))
-            .collect::<Result<Vec<_>>>()?;
+        let properties = self.property_types(properties)?;
         match self.decode_value(&contract, &properties, target, input, "$", 0) {
             Ok(value) => self.runtime_mut()?.named_variant(result, loc, "Ok", Some(&value)).map(Some),
             Err(DecodeFailure::Failed) => Ok(None),
             Err(DecodeFailure::Blame(blame)) => self.runtime_mut()?.named_variant(result, loc, "Err", Some(&blame)).map(Some),
             Err(DecodeFailure::Runtime(error)) => Err(error),
-            Err(DecodeFailure::Rejected(message, subject)) => {
+            Err(DecodeFailure::Rejected(message, subjects)) => {
                 let blame_type = self.runtime()?.layout(result)?.variants.iter().find(|v| v.name == "Err")
                     .and_then(|v| v.payload).ok_or("codec result has no error payload")?;
                 let message = self.runtime_mut()?.owned_string(contract.payload("String")?, loc, message)?;
-                let blame = self.runtime_mut()?.blame(blame_type, loc, &message, vec![subject])?;
+                let blame = self.runtime_mut()?.blame(blame_type, loc, &message, subjects)?;
                 self.runtime_mut()?.named_variant(result, loc, "Err", Some(&blame)).map(Some)
             }
         }
@@ -90,18 +158,15 @@ impl Decoder<'_> {
         }
     }
 
-    fn decode_value(&mut self, contract: &DataContract, properties: &[TypeId], target: TypeId, input: &Value, path: &str, depth: usize) -> std::result::Result<Value, DecodeFailure> {
+    fn decode_value(&mut self, contract: &DataContract, properties: &[(String, TypeId)], target: TypeId, input: &Value, path: &str, depth: usize) -> std::result::Result<Value, DecodeFailure> {
         if depth > 512 { return Err(DecodeFailure::Runtime("native codec nesting limit".into())); }
         if target == contract.value_type() { return Ok(input.clone()); }
-        let rt = self.runtime()?;
-        let info = rt.type_info[target.index()].kind;
-        if info == Some("Ref") && properties.iter().any(|property| rt.property_presence.contains(&(target, *property))) {
-            return Err(DecodeFailure::Runtime("native codec property execution is not yet linked".into()));
-        }
+        let info = self.runtime()?.type_info[target.index()].kind;
+        let (rename, untagged) = if info == Some("Ref") { self.options(target, properties, input.origin())? } else { (false, false) };
         let tag = self.runtime()?.layout(input.type_id())?.variants[self.runtime()?.enum_tag(input)? as usize].name.clone();
         let payload = self.runtime()?.enum_payload(input)?.map(ValueRef::to_owned);
         let loc = input.origin().words();
-        let reject = |expected: &str| DecodeFailure::Rejected(format!("{path}: expected {expected}"), input.origin());
+        let reject = |expected: &str| DecodeFailure::Rejected(format!("{path}: expected {expected}"), vec![input.origin()]);
         if let Some(name @ ("Int" | "Float" | "String" | "Bytes")) = info {
             if tag != name { return Err(reject(name)); }
             let value = payload.ok_or_else(|| DecodeFailure::Runtime("missing semantic scalar payload".into()))?;
@@ -116,6 +181,34 @@ impl Decoder<'_> {
             return Ok(self.runtime_mut()?.aggregate(target, loc, &[value])?);
         }
         if info == Some("Ref") && layout.kind == Kind::Enum {
+            if untagged {
+                let variants = layout.variants.iter().map(|variant| variant.payload).collect::<Vec<_>>();
+                let mut matches = Vec::new();
+                let mut failures = Vec::new();
+                for (index, child) in variants.into_iter().enumerate() {
+                    let candidate = if let Some(child) = child {
+                        (|| {
+                            let value = self.decode_value(contract, properties, child, input, path, depth + 1)?;
+                            self.check(target, index as u64 + 1, &value)?;
+                            Ok(self.runtime_mut()?.enum_value(target, loc, index as u32, Some(&value))?)
+                        })()
+                    } else if tag == "None" {
+                        Ok(self.runtime_mut()?.enum_value(target, loc, index as u32, None)?)
+                    } else { continue; };
+                    match candidate {
+                        Ok(value) => matches.push(value),
+                        Err(DecodeFailure::Rejected(message, subjects)) => failures.push((message, subjects)),
+                        Err(DecodeFailure::Blame(blame)) => failures.push(self.runtime()?.blame_diagnostic(&blame)?),
+                        Err(error) => return Err(error),
+                    }
+                }
+                if matches.len() == 1 { return Ok(matches.pop().unwrap()); }
+                let (message, subjects) = if matches.is_empty() {
+                    let message = format!("{path}: value matches no untagged Enum variant ({})", failures.iter().map(|(message, _)| message.as_str()).collect::<Vec<_>>().join("; "));
+                    (message, failures.into_iter().next().map(|(_, subjects)| subjects).unwrap_or_else(|| vec![input.origin()]))
+                } else { (format!("{path}: value ambiguously matches multiple untagged Enum variants"), vec![input.origin()]) };
+                return Err(DecodeFailure::Rejected(message, subjects));
+            }
             let (name, value) = match (tag.as_str(), payload) {
                 ("String", Some(text)) => (self.runtime()?.text(text.as_ref())?.as_str().to_owned(), None),
                 ("Object", Some(object)) if self.runtime()?.dict_len(&object)? == 1 => {
@@ -129,7 +222,8 @@ impl Decoder<'_> {
                 _ => return Err(reject("a declared enum variant")),
             };
             let layout = self.runtime()?.layout(target)?;
-            let Some(index) = layout.variants.iter().position(|variant| variant.name == name) else {
+            let names = external_names(layout.variants.iter().map(|variant| variant.name.clone()), rename, "duplicate external variant name")?;
+            let Some(index) = names.iter().position(|variant| *variant == name) else {
                 return Err(reject("a declared enum variant"));
             };
             return match (layout.variants[index].payload, value) {
@@ -171,14 +265,16 @@ impl Decoder<'_> {
         }
         if layout.kind == Kind::Record {
             if tag != "Object" { return Err(reject("Object")); }
-            let fields = layout.field_names.iter().cloned().zip(layout.fields.iter().map(|(ty, _)| *ty)).collect::<Vec<_>>();
+            let names = external_names(layout.field_names.iter().cloned(), rename, "duplicate external member name")?;
+            let fields = names.into_iter().zip(layout.fields.iter().map(|(ty, _)| *ty)).collect::<Vec<_>>();
+            let names = fields.iter().map(|(name, _)| name.clone()).collect::<std::collections::BTreeSet<_>>();
             let payload = payload.ok_or_else(|| DecodeFailure::Runtime("missing semantic Object payload".into()))?;
             let mut inputs = std::collections::BTreeMap::new();
             for i in 0..self.runtime()?.dict_len(&payload)? {
                 let (key, value) = self.runtime()?.dict_entry(&payload, i)?;
                 let name = self.runtime()?.text(key)?.as_str().to_owned();
-                if fields.binary_search_by(|(field, _)| field.cmp(&name)).is_err() {
-                    return Err(DecodeFailure::Rejected(format!("{path}.{name}: unknown field"), value.to_owned().origin()));
+                if !names.contains(&name) {
+                    return Err(DecodeFailure::Rejected(format!("{path}.{name}: unknown field"), vec![value.to_owned().origin()]));
                 }
                 inputs.insert(name, value.to_owned());
             }
@@ -189,7 +285,7 @@ impl Decoder<'_> {
                 } else if self.runtime()?.layout(ty)?.optional {
                     values.push(self.runtime_mut()?.named_variant(ty, loc, "None", None)?);
                 } else {
-                    return Err(DecodeFailure::Rejected(format!("{path}.{name}: missing required field"), input.origin()));
+                    return Err(DecodeFailure::Rejected(format!("{path}.{name}: missing required field"), vec![input.origin()]));
                 }
             }
             let value = self.runtime_mut()?.aggregate(target, loc, &values)?;
@@ -214,115 +310,113 @@ impl Decoder<'_> {
     }
 }
 
-impl Runtime {
-    pub(crate) fn encode(
+impl Codec<'_> {
+    pub(super) fn encode(
         &mut self,
         target: TypeId,
         properties: &Value,
         input: &Value,
-    ) -> Result<Value> {
-        let contract = self
+    ) -> Result<Option<Value>> {
+        let contract = self.runtime()?
             .data_contract
             .clone()
             .ok_or("semantic Value contract is not loaded")?;
         if contract.value_type() != target {
             return Err("codec target differs from admitted Value identity".into());
         }
-        let property_types = (0..self.layout(properties.type_id())?.fields.len())
-            .map(|i| self.represented_type(self.field(properties, i)?))
-            .collect::<Result<Vec<_>>>()?;
-        self.encode_value(&contract, &property_types, input, 0)
+        let properties = self.property_types(properties)?;
+        match self.encode_value(&contract, &properties, input, 0) {
+            Ok(value) => Ok(Some(value)),
+            Err(DecodeFailure::Failed) => Ok(None),
+            Err(DecodeFailure::Runtime(error)) => Err(error),
+            _ => Err("unexpected codec encoding rejection".into()),
+        }
     }
 
     fn encode_value(
         &mut self,
         contract: &DataContract,
-        properties: &[TypeId],
+        properties: &[(String, TypeId)],
         input: &Value,
         depth: usize,
-    ) -> Result<Value> {
+    ) -> std::result::Result<Value, DecodeFailure> {
         if depth > 512 {
             return Err("native codec nesting limit".into());
         }
-        self.validate(input.as_ref(), input.type_id())?;
+        self.runtime()?.validate(input.as_ref(), input.type_id())?;
         let target = contract.value_type();
         if input.type_id() == target {
             return Ok(input.clone());
         }
         let loc = input.origin().words();
-        let kind = self.type_info[input.type_id().index()].kind;
-        if kind == Some("Ref")
-            && properties
-                .iter()
-                .any(|p| self.property_presence.contains(&(input.type_id(), *p)))
-        {
-            return Err("native codec property execution is not yet linked".into());
-        }
+        let kind = self.runtime()?.type_info[input.type_id().index()].kind;
+        let (rename, untagged) = if kind == Some("Ref") { self.options(input.type_id(), properties, input.origin())? } else { (false, false) };
         if let Some(tag @ ("Int" | "Float" | "String" | "Bytes")) = kind {
-            return self.named_variant(target, loc, tag, Some(input));
+            return Ok(self.runtime_mut()?.named_variant(target, loc, tag, Some(input))?);
         }
-        let layout = self.layout(input.type_id())?;
+        let layout = self.runtime()?.layout(input.type_id())?;
         // Bool is scalar in the materialized ABI and Enum in reflection.
         if kind == Some("Enum") && layout.kind == Kind::Scalar {
-            return self.named_variant(
+            let is_false = self.runtime()?.scalar_bits(input.as_ref())? == 0;
+            return Ok(self.runtime_mut()?.named_variant(
                 target,
                 loc,
-                if self.scalar_bits(input.as_ref())? == 0 {
+                if is_false {
                     "False"
                 } else {
                     "True"
                 },
                 None,
-            );
+            )?);
         }
         if layout.optional {
-            return if let Some(value) = self.enum_payload(input)?.map(ValueRef::to_owned) {
+            return if let Some(value) = self.runtime()?.enum_payload(input)?.map(ValueRef::to_owned) {
                 self.encode_value(contract, properties, &value, depth + 1)
             } else {
-                self.named_variant(target, loc, "None", None)
+                Ok(self.runtime_mut()?.named_variant(target, loc, "None", None)?)
             };
         }
         if kind == Some("Ref") && layout.dynamic_kind == Some("Tuple") {
-            let value = self.field(input, 0)?.to_owned();
+            let value = self.runtime()?.field(input, 0)?.to_owned();
             return self.encode_value(contract, properties, &value, depth + 1);
         }
         if matches!(layout.kind, Kind::Array | Kind::Tuple) {
             let array = layout.kind == Kind::Array;
             let count = if array {
-                self.array_len(input)?
+                self.runtime()?.array_len(input)?
             } else {
                 layout.fields.len()
             };
             let mut values = Vec::with_capacity(count);
             for i in 0..count {
                 let value = if array {
-                    self.array_get(input, i)?
+                    self.runtime()?.array_get(input, i)?
                 } else {
-                    self.field(input, i)?
+                    self.runtime()?.field(input, i)?
                 }
                 .to_owned();
                 values.push(self.encode_value(contract, properties, &value, depth + 1)?);
             }
-            let payload = self.array(contract.payload("Array")?, loc, &values)?;
-            return self.named_variant(target, loc, "Array", Some(&payload));
+            let payload = self.runtime_mut()?.array(contract.payload("Array")?, loc, &values)?;
+            return Ok(self.runtime_mut()?.named_variant(target, loc, "Array", Some(&payload))?);
         }
         if matches!(layout.kind, Kind::Dict | Kind::Record) {
             let dictionary = layout.kind == Kind::Dict;
-            let names = layout.field_names.clone();
+            let names = external_names(layout.field_names.iter().cloned(), rename, "duplicate external member name")?;
             let count = if dictionary {
-                self.dict_len(input)?
+                self.runtime()?.dict_len(input)?
             } else {
                 names.len()
             };
             let mut pairs = Vec::with_capacity(count);
             for i in 0..count {
                 let (key, value) = if dictionary {
-                    let (key, value) = self.dict_entry(input, i)?;
+                    let (key, value) = self.runtime()?.dict_entry(input, i)?;
                     (key.to_owned(), value.to_owned())
                 } else {
-                    let value = self.field(input, i)?.to_owned();
+                    let value = self.runtime()?.field(input, i)?.to_owned();
                     (
-                        self.string(contract.payload("String")?, loc, &names[i])?,
+                        self.runtime_mut()?.string(contract.payload("String")?, loc, &names[i])?,
                         value,
                     )
                 };
@@ -331,18 +425,27 @@ impl Runtime {
                     self.encode_value(contract, properties, &value, depth + 1)?,
                 ));
             }
-            let payload = self.dict(contract.payload("Object")?, loc, &pairs)?;
-            return self.named_variant(target, loc, "Object", Some(&payload));
+            let payload = self.runtime_mut()?.dict(contract.payload("Object")?, loc, &pairs)?;
+            return Ok(self.runtime_mut()?.named_variant(target, loc, "Object", Some(&payload))?);
         }
         if kind == Some("Ref") && layout.kind == Kind::Enum {
-            let name = layout.variants[self.enum_tag(input)? as usize].name.clone();
-            let key = self.string(contract.payload("String")?, loc, &name)?;
-            if let Some(value) = self.enum_payload(input)?.map(ValueRef::to_owned) {
-                let value = self.encode_value(contract, properties, &value, depth + 1)?;
-                let payload = self.dict(contract.payload("Object")?, loc, &[(key, value)])?;
-                return self.named_variant(target, loc, "Object", Some(&payload));
+            if untagged {
+                if layout.variants.iter().filter(|variant| variant.payload.is_none()).count() > 1 {
+                    return Err("untagged Enum may contain at most one unit variant".into());
+                }
+                return if let Some(value) = self.runtime()?.enum_payload(input)?.map(ValueRef::to_owned) {
+                    self.encode_value(contract, properties, &value, depth + 1)
+                } else { Ok(self.runtime_mut()?.named_variant(target, loc, "None", None)?) };
             }
-            return self.named_variant(target, loc, "String", Some(&key));
+            let names = external_names(layout.variants.iter().map(|variant| variant.name.clone()), rename, "duplicate external variant name")?;
+            let name = &names[self.runtime()?.enum_tag(input)? as usize];
+            let key = self.runtime_mut()?.string(contract.payload("String")?, loc, name)?;
+            if let Some(value) = self.runtime()?.enum_payload(input)?.map(ValueRef::to_owned) {
+                let value = self.encode_value(contract, properties, &value, depth + 1)?;
+                let payload = self.runtime_mut()?.dict(contract.payload("Object")?, loc, &[(key, value)])?;
+                return Ok(self.runtime_mut()?.named_variant(target, loc, "Object", Some(&payload))?);
+            }
+            return Ok(self.runtime_mut()?.named_variant(target, loc, "String", Some(&key))?);
         }
         Err("native codec cannot encode this sealed type".into())
     }

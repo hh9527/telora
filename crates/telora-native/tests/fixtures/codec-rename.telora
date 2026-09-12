@@ -1,0 +1,26 @@
+import "std/codec" {decode, encode, Value};
+import "std/_codec" {rename_all, RenameCase, JsonRenameAll};
+
+def rename: Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(owner, previous) {
+    let warning: Option(Int) = warn!("rename property evaluated");
+    {case: RenameCase.CamelCase}
+};
+
+@rename
+@check(fn(value) {
+    if value.some_field > 0 { Ok(()) } else { Err(blame!("positive field required", value.some_field)) }
+})
+type Item = struct {some_field: Int};
+
+@rename_all(RenameCase.CamelCase)
+type Choice = enum {EmptyValue, WithValue(Item)};
+
+def read: for(T) Fn(TypeOf(T), Value) -> T = fn(target, value) {
+    match decode(target, value) { Ok(value) => value, Err(error) => raise!(error) }
+};
+
+export def answer = encode(Value.type, (
+    read(Item.type, Value.Object({someField: Value.Int(42)})),
+    read(Choice.type, Value.Object({withValue: Value.Object({someField: Value.Int(7)})})),
+    read(Choice.type, Value.String("emptyValue")),
+));
