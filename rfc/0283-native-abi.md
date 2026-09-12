@@ -67,7 +67,7 @@ codec 编码/解码及文本解析的递归节点已扣减同一 fuel，容器�
 
 独立实验已加入 `crates/telora-native/tests/regex-engine.rs`，运行 `cargo test -p telora-native --test regex-engine -- --nocapture`。14 个 pattern × 19 个输入 × 4 个搜索范围共 1,064 组对照通过，覆盖 ParseBy 形式、可选/嵌套捕获、Unicode、词边界、非贪婪、空输入/空范围和 UTF-8 内部边界；比较完整 match 与所有捕获槽，earliest 模式只比较是否命中。
 
-缓存观察（字节；初始化/短输入/65,536 字节输入）：
+缓存 API 报告值（字节；初始化/短输入/65,536 字节输入；不等于保留容量）：
 
 | Pattern | NFA 状态 | 捕获槽 | Cache |
 |---|---:|---:|---|
@@ -75,7 +75,19 @@ codec 编码/解码及文本解析的递归节点已扣减同一 fuel，容器�
 | `(?:a?){32}a{32}` | 101 | 2 | 4880 / 4880 / 4880 |
 | `(?P<a>a*)(?P<b>b*)` | 13 | 6 | 1552 / 1552 / 1552 |
 
-这些样本支持继续研究基于 NFA 状态与捕获槽的准入，不构成通用内存/工作量上界证明；尤其不能用表面 pattern 长度代替 Unicode 展开后的程序规模。生产仍使用 meta 引擎。实验还修复了独立构建缺口：runtime helper 不依赖 Cranelift，因此不再被 `jit` feature 隐藏；不开启该 feature 时 codec 也能正常编译。无 jit 的 22 项 runtime/ABI 测试及两项实验通过。
+源码复核发现 `PikeVM::Cache::memory_usage()` 使用 epsilon 栈的 `len()`，而非 `capacity()`。搜索结束后栈清空，因此上表数值不变不能证明搜索期间没有分配，也不能作为缓存完整计费的依据。
+
+独立进程实验 `cargo test -p telora-native --test regex-allocations -- --nocapture` 用包装 System 的 allocator 观测请求字节数。pattern、捕获结果存储和 65,536 字节输入在观测窗口外构建；窗口包含 cache 构建、搜索和销毁：
+
+| Pattern | 初始请求字节 | 搜索后保留 | 请求存活量高水位 | API 报告 | 销毁后 |
+|---|---:|---:|---:|---:|---:|
+| `(?P<word>\w+)` | 26064 | 26128 | 26128 | 26064 | 0 |
+| `(?:a?){32}a{32}` | 4880 | 4944 | 4944 | 4880 | 0 |
+| `(?P<a>a*)(?P<b>b*)` | 1552 | 1680 | 1680 | 1552 | 0 |
+
+这里的高水位只记录请求存活量，realloc 按净增量更新，不包含分配器开销、复制时的瞬时双份内存或 RSS。三个样本分别暴露了 API 未计入的 64/64/128 字节保留容量；这些样本不构成通用内存/工作量上界证明。继续研究准入必须覆盖 epsilon 栈容量，不能只按该 API 报告值计费；也不能用表面 pattern 长度代替 Unicode 展开后的程序规模。生产仍使用 meta 引擎。
+
+实验还修复了独立构建缺口：runtime helper 不依赖 Cranelift，因此不再被 `jit` feature 隐藏；不开启该 feature 时 codec 也能正常编译。无 jit 的 22 项 runtime/ABI 测试及两项引擎对照/缓存观察实验通过。
 
 用简单 Rust ABI 单测验证混合宽度参数/返回、递归帧互不覆盖、错误不读取未初始化结果、来源完整保留。记录首个支持的 target 和 word/endian 约束；不宣称 ABI 跨 target 稳定。
 
