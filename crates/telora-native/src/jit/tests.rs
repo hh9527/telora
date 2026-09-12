@@ -983,6 +983,54 @@ fn native_interpolation_consumes_sealed_display_calls() {
 }
 
 #[test]
+fn native_checkers_initialize_once_and_publish_closed_generic_instances() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/construction-checks.telora"), static_sources::BUILTINS);
+    let module = mir.hir[root.index()].module;
+    let sealed = mir.seal().unwrap();
+    let compiled = compile_modules(&sealed, &[module], &[]).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    compiled.initialize(&mut context).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+    assert_eq!(context.diagnostics().len(), 1);
+    assert_eq!(context.diagnostics()[0].message, "checker initialized");
+    let closure = compiled.export(&mut context, mir.exports[module.index()][0]).unwrap();
+    for _ in 0..2 {
+        let value = compiled.call_closure(&mut context, &closure, &[]).unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+        assert_eq!(context.runtime().unwrap().scalar_bits(value.as_ref()).unwrap(), 42);
+        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.call_depth(), 0);
+    }
+}
+
+#[test]
+fn native_construction_invokes_sealed_checker_and_propagates_failure_once() {
+    for (argument, succeeds) in [(42, true), (0, false)] {
+        for source in [
+            format!("def minimum = 1; type Item = enum {{ @check(fn(value) {{ if value >= minimum {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value)) }} }}) Full(Int), Empty }}; export def answer = match Item.Full({argument}) {{ Item.Full(value) => value, _ => -1 }};"),
+            format!("def minimum = 1; @check(fn(value) {{ if value.number >= minimum {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value.number)) }} }}) type Item = struct {{number: Int}}; export def answer = do {{ let value: Item = {{number: {argument}}}; value.number }};"),
+            format!("def minimum = 1; @check(fn(value) {{ if value >= minimum {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value)) }} }}) type Item = struct(Int); export def answer = Item({argument}).0;"),
+            format!("def minimum = 1; @check(fn(value) {{ if value >= minimum {{ Ok(()) }} else {{ Err(blame!(\"minimum required\", value)) }} }}) type Item = struct(Int); export def answer = match Item({argument}) {{ Item(value) => value }};"),
+            format!("@check(fn(value) {{ if value > 0 {{ Ok(()) }} else {{ fail!(\"minimum required\", value) }} }}) type Item = struct(Int); export def answer = Item({argument}).0;"),
+        ] {
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let result = compiled.call(&mut context, &[]);
+        if succeeds {
+            let result = result.unwrap_or_else(|e| panic!("{e}: {:?}", context.diagnostics()));
+            assert_eq!(context.runtime().unwrap().scalar_bits(result.as_ref()).unwrap(), 42);
+        } else {
+            assert!(result.is_err());
+            assert_eq!(context.diagnostics().len(), 1);
+            assert_eq!(context.diagnostics()[0].message, "minimum required");
+            assert_eq!(context.diagnostics()[0].subjects.len(), 1);
+        }
+        assert_eq!(context.call_depth(), 0);
+        }
+    }
+}
+
+#[test]
 fn native_newtype_publication_preserves_shared_payloads_and_distinct_tables() {
     let (mir, root) = graph_with("import \"std/codec\" {decode, Value}; type Wrapped = struct(String); def text = \"long shared newtype payload\"; def wrapped = match decode(Wrapped.type, Value.String(text)) { Ok(value) => value, Err(error) => raise!(error) }; export def answer = ({value: text}, wrapped, wrapped, text);", static_sources::BUILTINS);
     let sealed = mir.seal().unwrap();

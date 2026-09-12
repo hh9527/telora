@@ -34,6 +34,7 @@ pub(crate) const TEXT_OP: u32 = 28;
 pub(crate) const REFLECT: u32 = 29;
 pub(crate) const ENCODE: u32 = 30;
 pub(crate) const DECODE: u32 = 42;
+pub(crate) const CHECK_RESULT: u32 = 43;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -79,6 +80,33 @@ pub(crate) unsafe extern "C" fn object(
     }
     if operation == ARRAY_MAP {
         return unsafe { callbacks::array_map(context, TypeId(ty), data, out, origin, count) };
+    }
+    if operation == CHECK_RESULT {
+        return context.boundary(|context| {
+            let outcome = (|| -> Result<Option<(String, Vec<Origin>)>> {
+                let rt = context.runtime()?;
+                let ty = TypeId(ty);
+                let width = rt.layout(ty)?.words;
+                let value = Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(data, width) }.into() };
+                let tag = rt.enum_tag(&value)? as usize;
+                match rt.layout(ty)?.variants[tag].name.as_str() {
+                    "Ok" => {
+                        unsafe { std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, width); }
+                        Ok(None)
+                    }
+                    "Err" => {
+                        let blame = rt.enum_payload(&value)?.ok_or("checker error has no blame")?.to_owned();
+                        Ok(Some(rt.blame_diagnostic(&blame)?))
+                    }
+                    _ => Err("checker result is not Result".into()),
+                }
+            })();
+            match outcome {
+                Ok(None) => Status::Success,
+                Ok(Some((message, subjects))) => context.fail_with_subjects(message, origin, subjects),
+                Err(error) => context.fail_at(error, origin),
+            }
+        }) as u32;
     }
     if operation == FOLD {
         return unsafe { callbacks::fold(context, TypeId(ty), data, out, origin, count) };

@@ -5,6 +5,7 @@ use telora_core::mir::{PropertySite, SymbolId};
 pub enum DemandKey {
     Export(SymbolId),
     Instance(telora_core::mir::GenericInstanceId),
+    ConstructionCheck { owner: TypeId, site: PropertySite },
     Property {
         owner: TypeId,
         site: PropertySite,

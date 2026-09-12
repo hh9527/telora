@@ -33,6 +33,14 @@ impl Lower<'_, '_> {
             }
         }
         if let Some(selection) = self.selected_member(node) {
+            if matches!(selection, MemberSelection::NewtypePattern) {
+                let payload = child(self.mir, node, Role::Pattern)?;
+                let data = self.stack_words(value)?;
+                let zero = self.builder.ins().iconst(types::I64, 0);
+                let contents = self.object(node, helpers::FIELD, TypeKey::try_from(self.ty(payload)?)?, data, zero)?;
+                self.pattern(payload, &contents, mismatch, depth + 1)?;
+                return Ok(());
+            }
             let tag = match selection {
                 MemberSelection::Boolean(b) => Some(u32::from(b)),
                 MemberSelection::EnumVariant { index } => Some(index),

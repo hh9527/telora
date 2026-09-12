@@ -335,7 +335,7 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
 /// Compile all roots into one executable owner and FunctionId namespace.
 /// Root registration is deterministic regardless of request order.
 pub fn compile_roots(mir: &SealedMir<'_>, roots: &[HirId]) -> Result<Compiled> {
-    compile_plan(mir, roots, &[], &[])
+    compile_plan(mir, roots, &[], &[], &[])
 }
 
 /// Register every value binding in the selected modules, including private
@@ -390,7 +390,10 @@ pub fn compile_modules(
         })
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
-    compile_plan(mir, &roots, &globals, &properties)
+    let checks = graph.construction_checks.iter().enumerate()
+        .filter(|(_, check)| check.concrete && modules.contains(&graph.hir[check.checker.index()].module))
+        .map(|(index, _)| index).collect::<Vec<_>>();
+    compile_plan(mir, &roots, &globals, &properties, &checks)
 }
 
 fn compile_plan(
@@ -398,6 +401,7 @@ fn compile_plan(
     roots: &[HirId],
     globals: &[SymbolId],
     properties: &[usize],
+    checks: &[usize],
 ) -> Result<Compiled> {
     let root = *roots
         .first()
@@ -464,6 +468,9 @@ fn compile_plan(
     }
     for &index in properties {
         functions.property(graph, index, &mut module)?;
+    }
+    for &index in checks {
+        functions.check(graph, index, &mut module)?;
     }
     let mut next = 0;
     let mut emitted_properties = std::collections::BTreeSet::new();
@@ -535,6 +542,7 @@ fn compile_plan(
         .globals
         .values()
         .chain(functions.instances.values())
+        .chain(functions.checks.values())
         .map(|&(slot, key, _)| {
             (
                 slot,
@@ -618,6 +626,10 @@ fn compile_plan(
                 .collect::<Vec<_>>();
             for (&instance, &(slot, _, ty)) in &functions.instances {
                 globals.push((slot, crate::runtime::DemandKey::Instance(instance), ty));
+            }
+            for (&index, &(slot, _, ty)) in &functions.checks {
+                let check = &graph.construction_checks[index];
+                globals.push((slot, crate::runtime::DemandKey::ConstructionCheck { owner: TypeKey::try_from(check.owner)?, site: check.site }, ty));
             }
             for (&index, &(slot, _)) in &functions.properties {
                 let record = &graph.properties[index];
@@ -776,14 +788,7 @@ impl Lower<'_, '_> {
         if payload.len() != width {
             return Err("native enum payload width does not match solved variant".into());
         }
-        if self
-            .mir
-            .construction_checks
-            .iter()
-            .any(|c| c.owner.index() == ty.index() && c.concrete)
-        {
-            return Err("native enum construction checks are not yet linked".into());
-        }
+        self.construction_check(node, ty, telora_core::mir::PropertySite::Variant(index), payload)?;
         let data = self.stack_words(payload)?;
         let tag = self.builder.ins().iconst(types::I64, index as i64);
         self.object(node, helpers::ENUM, ty, data, tag)
@@ -1387,14 +1392,6 @@ impl Lower<'_, '_> {
                 self.object(node, operation, key, data, count)
             }
             HirKind::Dict => {
-                if self
-                    .mir
-                    .construction_checks
-                    .iter()
-                    .any(|c| c.owner == ty && c.concrete)
-                {
-                    return Err("native construction checks are not yet linked".into());
-                }
                 let dictionary = self.mir.types[ty.index()].constructor == TypeConstructor::Dict;
                 let mut fields = Vec::new();
                 for edge in &syntax.children {
@@ -1455,7 +1452,7 @@ impl Lower<'_, '_> {
                 }
                 let data = self.stack_words(&words)?;
                 let count = self.builder.ins().iconst(types::I64, count as i64);
-                self.object(
+                let result = self.object(
                     node,
                     if dictionary {
                         helpers::DICT
@@ -1465,14 +1462,17 @@ impl Lower<'_, '_> {
                     key,
                     data,
                     count,
-                )
+                )?;
+                self.construction_check(node, key, telora_core::mir::PropertySite::Type, &result)?;
+                Ok(result)
             }
             HirKind::TupleProjection(index) => {
                 let owner = self.ty(child(self.mir, node, Role::Receiver)?)?;
                 let actual = TypeKey::try_from(
-                    *self.mir.types[owner.index()]
-                        .arguments
-                        .get(index)
+                    self.mir.type_layouts[owner.index()].as_ref()
+                        .and_then(|layout| layout.members.get(index)).copied().flatten()
+                        .or_else(|| (self.mir.types[owner.index()].constructor == TypeConstructor::Tuple)
+                            .then(|| self.mir.types[owner.index()].arguments.get(index).copied()).flatten())
                         .ok_or("tuple projection missing closed element")?,
                 )?;
                 let receiver =
@@ -1485,6 +1485,9 @@ impl Lower<'_, '_> {
             HirKind::Field => {
                 let receiver_node = child(self.mir, node, Role::Receiver)?;
                 let receiver_ty = TypeKey::try_from(self.ty(receiver_node)?)?;
+                let skeleton = if self.mir.types[receiver_ty.index()].constructor == TypeConstructor::Unchecked {
+                    TypeKey::try_from(self.mir.types[receiver_ty.index()].arguments[0])?
+                } else { receiver_ty };
                 let name = child(self.mir, node, Role::Name)?;
                 let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
                     return Err("native field name missing".into());
@@ -1495,13 +1498,13 @@ impl Lower<'_, '_> {
                     .ok_or_else(|| format!("native unsupported field access {name}"))?;
                 let receiver = self.expression(receiver_node, depth + 1)?;
                 let data = self.stack_words(&receiver)?;
-                let actual = self.mir.type_layouts[receiver_ty.index()]
+                let actual = self.mir.type_layouts[skeleton.index()]
                     .as_ref()
                     .and_then(|layout| layout.members.get(index))
                     .copied()
                     .flatten()
-                    .or_else(|| match self.mir.types[receiver_ty.index()].constructor {
-                        TypeConstructor::Record(_) => self.mir.types[receiver_ty.index()]
+                    .or_else(|| match self.mir.types[skeleton.index()].constructor {
+                        TypeConstructor::Record(_) => self.mir.types[skeleton.index()]
                             .arguments
                             .get(index)
                             .copied(),

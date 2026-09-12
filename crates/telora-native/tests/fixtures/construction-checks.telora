@@ -1,0 +1,28 @@
+def identity: for(T) Fn(T) -> T = fn(value) { value };
+
+@check(do {
+    let warning: Option(Int) = warn!("checker initialized");
+    fn(value) {
+        if value.number > 0 { Ok(()) }
+        else { Err(blame!("positive required", value.number)) }
+    }
+})
+type Item = struct {number: Int};
+
+@check(fn(value) { let copied = identity(value); Ok(()) })
+type Wrapped(T) = struct(T);
+type IntWrapped = Wrapped(Int);
+
+@check(fn(value) {
+    let copied = identity(value.item);
+    if value.valid { Ok(()) } else { Err(blame!("invalid item", copied)) }
+})
+type Box(T) = struct {item: T, valid: Bool};
+
+export def answer: Fn() -> Int = fn() {
+    let a: Box(Int) = {item: 40, valid: True};
+    let b: Box(String) = {item: "ok", valid: True};
+    let c: Item = {number: a.item};
+    let wrapped = IntWrapped(c.number + 2);
+    match wrapped { IntWrapped(value) => value }
+};

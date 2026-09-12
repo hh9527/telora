@@ -1,6 +1,6 @@
 # RFC 0285：SealedMir 到 Cranelift 的机械 codegen
 
-- 状态：实施中；已打通闭合表达式/无捕获函数的首批机器码执行，尚未整图总装
+- 状态：实施中；已接入整图初始化与隐藏 CLI，继续补齐语言/native 覆盖
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -54,6 +54,12 @@
 ### 闭合泛型实例进展
 
 函数注册键扩展为 `(HirId, GenericInstanceId?)`，类型直接读取对应实例的归一化节点表；表项缺失即报错，不退回模板类型或执行替换求解。实例内调用直接读取 MIR 的 reference 边，显式 TypeApply 沿 callee 边消费已存在的实例记录，不重新匹配签名。隐式、显式和嵌套泛型调用资产已通过，当前总计 14 项测试。运行时没有模板参数推导。
+
+### 构造检查与 newtype
+
+直接构造的 struct、newtype、payload variant 已执行 MIR 中对应 owner/site 的封闭 checker。checker 表达式作为独立初始化项求值一次，生成普通闭包；缓存以 owner/site 为身份，随全图初始化发布到 main world。构造时通过封闭函数签名和现有 FunctionId 分派器调用，不重新推导泛型参数。返回 Err(BlameError) 在构造位置报告一次诊断；checker 自身失败直接传播，不读取结果槽或重复报告。
+
+struct checker 的 Unchecked(T) 参数使用同一静态骨架，只变更描述符的类型标记；字段读取沿封闭 owner 骨架取类型。newtype 构造器作为普通一等函数注册，构造前检查 payload；投影和模式解构直接读取封闭成员类型。泛型 checker、工厂只初始化一次、发布后重复构造、拒绝与执行失败已有覆盖。codec 解码的检查回调尚未接入，仍显式拒绝，不能把直接构造的完成当作 codec 检查完成。
 
 ## 验收条件
 

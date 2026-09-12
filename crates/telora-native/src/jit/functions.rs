@@ -12,9 +12,9 @@ pub(super) fn is_native(kind: &HirKind) -> bool {
     )
 }
 
-pub(super) fn constructor(graph: &Mir, node: HirId) -> Option<u32> {
-    if let Some(MemberSelection::EnumVariant { index }) = graph.member_selections[node.index()] {
-        return Some(index);
+pub(super) fn constructor(graph: &Mir, node: HirId) -> Option<MemberSelection> {
+    if let Some(selection @ (MemberSelection::EnumVariant { .. } | MemberSelection::NewtypeConstructor)) = graph.member_selections[node.index()] {
+        return Some(selection);
     }
     let slot = graph.hir[node.index()].resolution?;
     let ResolveState::Bound(symbol) = graph.resolve_slots[slot.index()] else {
@@ -26,7 +26,7 @@ pub(super) fn constructor(graph: &Mir, node: HirId) -> Option<u32> {
         .find_map(|&declaration| {
             let value = child(graph, declaration, Role::Value).ok()?;
             match graph.member_selections[value.index()] {
-                Some(MemberSelection::EnumVariant { index }) => Some(index),
+                Some(selection @ (MemberSelection::EnumVariant { .. } | MemberSelection::NewtypeConstructor)) => Some(selection),
                 _ => None,
             }
         })
@@ -86,6 +86,7 @@ pub(super) struct Functions {
     pub globals: BTreeMap<SymbolId, (u32, Key, TypeKey)>,
     pub instances: BTreeMap<GenericInstanceId, (u32, Key, TypeKey)>,
     pub properties: BTreeMap<usize, (u32, FuncId)>,
+    pub checks: BTreeMap<usize, (u32, Key, TypeKey)>,
     dispatchers: BTreeMap<TypeKey, FuncId>,
     pub(super) signature: ir::Signature,
 }
@@ -98,6 +99,7 @@ impl Functions {
             globals: BTreeMap::new(),
             instances: BTreeMap::new(),
             properties: BTreeMap::new(),
+            checks: BTreeMap::new(),
             dispatchers: BTreeMap::new(),
             signature,
         }
@@ -121,7 +123,7 @@ impl Functions {
         let ty = TypeKey::try_from(known(graph, declaration)?)?;
         let mut key = Key::from(declaration);
         key.initializer = is_native(&graph.hir[declaration.index()].kind);
-        let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len())
+        let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len() + self.checks.len())
             .map_err(|_| "native global slot overflow")?;
         let function = if let Some(&function) = self.registered.get(&key) {
             function
@@ -164,7 +166,7 @@ impl Functions {
             marker_provider: false,
         };
         let ty = TypeKey::try_from(key.ty(graph, node)?)?;
-        let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len())
+        let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len() + self.checks.len())
             .map_err(|_| "native instance slot overflow")?;
         let function = module
             .declare_function(
@@ -176,6 +178,23 @@ impl Functions {
         self.registered.insert(key, function);
         self.pending.push(key);
         self.instances.insert(instance, (slot, key, ty));
+        Ok((slot, function, ty))
+    }
+    pub fn check(&mut self, graph: &Mir, index: usize, module: &mut JITModule) -> Result<(u32, FuncId, TypeKey)> {
+        if let Some(&(slot, key, ty)) = self.checks.get(&index) { return Ok((slot, self.registered[&key], ty)); }
+        let check = &graph.construction_checks[index];
+        if !check.concrete { return Err("construction check is not concrete".into()); }
+        let key = Key { node: check.checker, instance: check.instance, initializer: true, marker_provider: false };
+        let ty = TypeKey::try_from(check.signature)?;
+        if key.ty(graph, key.node)? != check.signature { return Err("checker signature contradicts sealed instance".into()); }
+        let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len() + self.checks.len()).map_err(|_| "native check slot overflow")?;
+        let function = if let Some(&function) = self.registered.get(&key) { function } else {
+            let function = module.declare_function(&format!("telora_check_init_{index}"), Linkage::Local, &self.signature).map_err(|e| e.to_string())?;
+            self.registered.insert(key, function);
+            self.pending.push(key);
+            function
+        };
+        self.checks.insert(index, (slot, key, ty));
         Ok((slot, function, ty))
     }
     pub fn dispatcher(&mut self, ty: TypeKey, module: &mut JITModule) -> Result<FuncId> {
@@ -318,7 +337,7 @@ pub(super) fn shape(
     {
         return Err("native ABI requires a closed function instance".into());
     }
-    let is_function = matches!(root_node.kind, HirKind::Closure) || native || constructor;
+    let is_function = (matches!(root_node.kind, HirKind::Closure) && !key.initializer) || native || constructor;
     let parameters = if is_function {
         root_node
             .children
@@ -439,7 +458,7 @@ pub(super) fn emit(
                 .map_err(|e| format!("native capture load: {e:?}"))?;
             lower.locals.insert(symbol, value);
         }
-        let outcome = if let Some(index) = constructor(graph, key.node).filter(|_| !key.initializer)
+        let outcome = if let Some(constructor) = constructor(graph, key.node).filter(|_| !key.initializer)
         {
             (|| {
                 if arguments.len() != 1 {
@@ -457,7 +476,16 @@ pub(super) fn emit(
                         ),
                     );
                 }
-                let result = lower.enum_constructor(key.node, output, index, &payload)?;
+                let result = match constructor {
+                    MemberSelection::EnumVariant { index } => lower.enum_constructor(key.node, output, index, &payload)?,
+                    MemberSelection::NewtypeConstructor => {
+                        lower.construction_check(key.node, output, telora_core::mir::PropertySite::Type, &payload)?;
+                        let data = lower.stack_words(&payload)?;
+                        let count = lower.builder.ins().iconst(types::I64, 1);
+                        lower.object(key.node, helpers::AGGREGATE, output, data, count)?
+                    }
+                    _ => unreachable!(),
+                };
                 lower.write_return(&result)
             })()
         } else if is_native(&graph.hir[key.node.index()].kind) && !key.initializer {

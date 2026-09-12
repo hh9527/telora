@@ -19,7 +19,7 @@ impl functions::Functions {
         if !record.concrete || record.providers.is_empty() {
             return Err("property has no concrete provider chain".into());
         }
-        let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len())
+        let slot = u32::try_from(self.globals.len() + self.instances.len() + self.properties.len() + self.checks.len())
             .map_err(|_| "native demand index overflow")?;
         let function = module
             .declare_function(
@@ -87,6 +87,33 @@ pub(super) fn emit(
 }
 
 impl Lower<'_, '_> {
+    pub(super) fn construction_check(&mut self, node: HirId, owner: TypeKey, site: PropertySite, value: &[ir::Value]) -> EmitResult<()> {
+        let checks = self.mir.construction_checks.iter().enumerate()
+            .filter(|(_, check)| check.concrete && check.owner.index() == owner.index() && check.site == site)
+            .map(|(index, _)| index).collect::<Vec<_>>();
+        for index in checks {
+            let (slot, initializer, signature) = self.functions.check(self.mir, index, self.module)?;
+            let closure = self.demand(node, slot, initializer, signature)?;
+            let shape = &self.mir.types[signature.index()];
+            if shape.constructor != TypeConstructor::Function || shape.arguments.len() != 2 { return Err("checker has no sealed unary signature".into()); }
+            let argument = TypeKey::try_from(shape.arguments[0])?;
+            let output = TypeKey::try_from(shape.arguments[1])?;
+            let mut value = value.to_vec();
+            if self.mir.types[argument.index()].constructor == TypeConstructor::Unchecked {
+                if self.mir.types[argument.index()].arguments != [self.mir.construction_checks[index].owner] || value.len() != self.layouts.words(argument)? {
+                    return Err("checker unchecked view differs from sealed owner".into());
+                }
+                let origin = self.builder.ins().band_imm_s(value[1], 0xffff_ffff);
+                let tag = self.builder.ins().iconst(types::I64, i64::from(argument.raw()) << 32);
+                value[1] = self.builder.ins().bor(origin, tag);
+            }
+            let result = self.invoke_provider(signature, &closure, &[value])?;
+            let data = self.stack_words(&result)?;
+            let count = self.builder.ins().iconst(types::I64, 0);
+            self.object(node, helpers::CHECK_RESULT, output, data, count)?;
+        }
+        Ok(())
+    }
     fn property_context(
         &mut self,
         node: HirId,

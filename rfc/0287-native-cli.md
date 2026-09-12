@@ -39,7 +39,9 @@ eval-with 在执行前验证权威 std/entry.Eval 身份，并从封闭骨架读
 
 基础 codec 解码已接入封闭目标类型，支持标量、Option、Array、Tuple/Unit、结构记录、Dict，以及普通名义 record/newtype/enum（含递归类型和泛型实例）；字段缺失/多余或值不匹配返回携带来源的 `Err(BlameError)`，仅在用户调用 `raise!` 时转成执行诊断。字符串等叶子复用原对象描述符，不经过旧 VM 或 host Value 树。NewtypeTable 使用独立槽位表，发布时保留对象与其 payload 的共享关系。带适用 codec property 或构造检查的解码仍明确拒绝，不生成未经检查的值。
 
-仍未完成完整语法/native API 覆盖（包括 codec 属性编码/解码、构造检查）及配额语义，因此不据此宣称整体路线落地。
+直接构造 struct/newtype/payload variant 的封闭 checker 已接入普通函数调用；checker 闭包工厂作为初始化项求值一次并发布，泛型 checker 消费 MIR 实例。codec 解码内的检查回调仍待接入。
+
+仍未完成完整语法/native API 覆盖（包括 codec 属性编码/解码、解码构造检查）及配额语义，因此不据此宣称整体路线落地。
 
 验证默认路径不变、隐藏帮助、显式 unsupported、only-types 零执行、各命令停止阶段正确。先少量冒烟，再补完整 corner cases；完成总装后才测编译/初始化/执行耗时和峰值内存，不承诺性能收益。
 
