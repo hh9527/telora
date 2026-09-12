@@ -1300,6 +1300,66 @@ fn native_hash_protocol_matches_fixed_vector_and_publication_preserves_aliases()
 }
 
 #[test]
+fn native_diagnostic_scopes_capture_reports_and_resume_after_nested_failure() {
+    let (mir, root) = graph_with(include_str!("../../tests/fixtures/diagnostics.telora"), static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap_or_else(|error| panic!("{error}: {:?}", context.diagnostics()));
+    assert!(context.diagnostics().is_empty());
+    assert_eq!(context.call_depth(), 0);
+    let rt = context.runtime_mut().unwrap();
+    let roots = rt.publish(&[value]).unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let json = rt.semantic_json(&contract, &roots[0]).unwrap();
+    assert_eq!(json, r#"[[2,["inside warning"]],[-1,["inside warning","inside failure"]],[3,["inside warning"]],{"Ok":[[-1,["inside warning","inside failure"]],[]]}]"#);
+}
+
+#[test]
+fn native_diagnostic_scope_preserves_source_ranges_and_cannot_catch_limits() {
+    let source = "import \"std/_rt\" as rt; import \"std/codec\" {encode, Value}; export def answer = encode(Value.type, rt.with_diagnostics(fn(n: Int) { if n == 0 { fail!(\"captured failure\") } else { n } })(0));";
+    let (mir, root) = graph_with(source, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap();
+    assert!(context.diagnostics().is_empty());
+    let rt = context.runtime().unwrap();
+    let contract = crate::runtime::DataContract::from_mir(&sealed).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&rt.semantic_json(&contract, &value).unwrap()).unwrap();
+    assert_eq!(json["Err"][0]["message"], "captured failure");
+    assert_eq!(json["Err"][0]["severity"], "Error");
+    assert_eq!(json["Err"][0]["labels"][0]["primary"], true);
+    assert_eq!(json["Err"][0]["labels"][0]["location"]["source"], mir.sources.get(mir.hir[root.index()].location.source).name.as_ref());
+    assert_eq!(json["Err"][0]["labels"][0]["location"]["start"], source.find("fail!(").unwrap());
+
+    let (mir, root) = graph_with("import \"std/_rt\" as rt; def recurse: Fn(Int) -> Int = fn(n) { recurse(n + 1) }; export def answer = rt.with_diagnostics(recurse)(0);", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    for fuel in [false, true] {
+        let context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        let mut context = if fuel { context.with_fuel(100) } else { context.with_call_depth_limit(12) };
+        assert!(compiled.call(&mut context, &[]).is_err());
+        assert!(context.is_aborted());
+        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.call_depth(), 0);
+    }
+}
+
+#[test]
+fn native_diagnostic_scope_never_callback_does_not_read_a_result_slot() {
+    let (mir, root) = graph_with("import \"std/_rt\" as rt; export def answer = rt.with_diagnostics(fn(n: Int) { fail!(\"never callback\") })(0);", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let rt = context.runtime().unwrap();
+    let reports = rt.enum_payload(&value).unwrap().unwrap().to_owned();
+    assert_eq!(rt.array_len(&reports).unwrap(), 1);
+    assert!(context.diagnostics().is_empty());
+}
+
+#[test]
 fn native_json_schema_propagates_invalid_shapes_and_property_failures_once() {
     for (declarations, target, message) in [
         ("", "Bytes.type", "no JSON Schema mapping"),

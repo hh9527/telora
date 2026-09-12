@@ -447,7 +447,7 @@ impl Codec<'_> {
             let payload = self.runtime_mut()?.dict(contract.payload("Object")?, loc, &pairs)?;
             return Ok(self.runtime_mut()?.named_variant(target, loc, "Object", Some(&payload))?);
         }
-        if kind == Some("Ref") && layout.kind == Kind::Enum {
+        if layout.kind == Kind::Enum {
             if untagged {
                 if layout.variants.iter().filter(|variant| variant.payload.is_none()).count() > 1 {
                     return Err("untagged Enum may contain at most one unit variant".into());

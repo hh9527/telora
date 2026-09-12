@@ -77,6 +77,8 @@ schema_with 遍历封闭类型布局，直接构造 native Value 对象，递归
 
 ## 验收条件
 
+std/_rt.call_with_diagnostics 使用封闭的 callback 参数/返回类型、Result/Tuple/Array 边与 TypeOf 见证生成调用包，运行时不重做推导。codec 的 enum 编码已覆盖内置 Result 等封闭 enum，支持输出捕获结果。
+
 std/hash 的 sha256/new/update_bytes/update_string/update_int/finish 已消费封闭签名接入独立 HashState 表。Bytes 的相等/不等比较直接借用 native 字节切片，不按 HeapId 比较内容。旧运行时的 hash 实现不变。
 
 std/path 的 join/normalize/parent/file_name 已按 native 模块身份和封闭签名接入。操作直接读取 native String/Array，采用跨平台一致的纯词法斜杠规则，不访问文件系统。语言资产覆盖空路径、根目录、连续父路径、绝对路径重置、反斜杠与 Unicode；真实 CLI eval/eval-with 对比默认后端输出并验证发布后读取。

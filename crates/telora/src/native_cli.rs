@@ -57,6 +57,7 @@ impl Session {
         if let Err(diagnostics) = data_result {
             return diagnostics;
         }
+        if let Ok(runtime) = self.context.runtime_mut() { runtime.register_source_names(sources); }
         let result = self.compiled.initialize(&mut self.context);
         let mut diagnostics = self.diagnostics(sources);
         if let Err(message) = result {
@@ -336,6 +337,7 @@ pub(crate) fn eval_with(
             })?;
         telora_core::data_plan::enforce_limits(&plan, crate::execution_config().data_limits, source.text.len())
             .map_err(|message| mir.sources.render(&Diagnostic::error(message, telora_core::Loc { source: id, start: 0, end: 0 })))?;
+        rt.register_source_names(&mir.sources);
         let value = rt.materialize_data(&contract, &plan)?;
         source_values.push((rt.string(string_type, [0; 3], &name)?, value));
     }

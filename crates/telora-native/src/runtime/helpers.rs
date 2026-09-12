@@ -43,6 +43,7 @@ pub(crate) const JSON_SCHEMA: u32 = 48;
 pub(crate) const PATH: u32 = 49;
 pub(crate) const HASH: u32 = 50;
 pub(crate) const BYTES_EQUAL: u32 = 51;
+pub(crate) const DIAGNOSTIC_SCOPE: u32 = 52;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -77,6 +78,7 @@ pub(crate) unsafe extern "C" fn object(
         Err(e) => return context.fail(e) as u32,
     };
     if operation == ENTER_CALL { return context.enter_call(origin) as u32; }
+    if operation == DIAGNOSTIC_SCOPE { return unsafe { callbacks::diagnostic_scope(context, TypeId(ty), data, out, origin) }; }
     if operation == LEAVE_CALL { return context.leave_call() as u32; }
     if operation == FUEL {
         return context.consume_fuel(count, origin) as u32;

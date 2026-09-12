@@ -479,6 +479,32 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 26 && declaration.name == "call_with_diagnostics" {
+            if arguments.len() != 6 { return Err("diagnostic scope arity mismatch".into()); }
+            let callback = &self.mir.types[arguments[0].index()];
+            let result = &self.mir.types[self.return_type.index()];
+            if callback.constructor != TypeConstructor::Function || callback.arguments.len() != 2
+                || callback.arguments[0].index() != arguments[1].index()
+                || result.constructor != TypeConstructor::Result || result.arguments.len() != 2
+            { return Err("diagnostic scope signature mismatch".into()); }
+            let success = &self.mir.types[result.arguments[0].index()];
+            let reports = &self.mir.types[result.arguments[1].index()];
+            if success.constructor != TypeConstructor::Tuple || success.arguments != [callback.arguments[1], result.arguments[1]]
+                || reports.constructor != TypeConstructor::Array || reports.arguments.len() != 1
+                || arguments[2..].iter().any(|ty| self.mir.types[ty.index()].constructor != TypeConstructor::TypeOf)
+                || self.mir.types[arguments[2].index()].arguments != reports.arguments
+            { return Err("diagnostic scope result mismatch".into()); }
+            let dispatcher = self.functions.dispatcher(arguments[0], self.module)?;
+            let dispatcher = self.module.declare_func_in_func(dispatcher, self.builder.func);
+            let address = self.builder.ins().func_addr(self.module.target_config().pointer_type(), dispatcher);
+            let mut packet = vec![address];
+            let width = arguments.iter().map(|&ty| self.layouts.words(ty)).collect::<Result<Vec<_>>>()?.into_iter().sum::<usize>();
+            for index in 0..width { packet.push(self.builder.ins().load(types::I64, MemFlagsData::new(), data, (index * 8) as i32)); }
+            let packet = self.stack_words(&packet)?;
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            let value = self.object(node, helpers::DIAGNOSTIC_SCOPE, self.return_type, packet, zero)?;
+            return self.write_return(&value);
+        }
         if module.id == 16 && let Some(operation) = ["sha256", "new", "update_bytes", "update_string", "update_int", "finish"].iter().position(|name| *name == declaration.name) {
             let hash = |ty: TypeKey| matches!(self.mir.types[ty.index()].constructor, TypeConstructor::Native(id) if (id.module, id.slot) == (16, 3));
             let kind = |ty: TypeKey| &self.mir.types[ty.index()].constructor;

@@ -2,6 +2,55 @@ use super::*;
 
 type Callback = unsafe extern "C" fn(*mut CallContext, *const u64, *mut u64, *const u64) -> u32;
 
+pub(super) unsafe fn diagnostic_scope(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin) -> u32 {
+    context.boundary(|context| {
+        let result = (|| -> Result<Status> {
+            let rt = context.runtime()?;
+            let address = unsafe { *data };
+            let mut cursor = unsafe { data.add(1) };
+            let mut inputs = vec![];
+            for _ in 0..6 {
+                let input = unsafe { TypeId((*cursor.add(1) >> 32) as u32) };
+                let width = rt.layout(input)?.words;
+                inputs.push(Value { arena: rt.identity, words: unsafe { std::slice::from_raw_parts(cursor, width) }.into() });
+                cursor = unsafe { cursor.add(width) };
+            }
+            let returned = *rt.layout(inputs[0].type_id())?.arguments.last().ok_or("diagnostic callback lacks output")?;
+            let never = rt.type_info[returned.index()].kind == Some("Never");
+            let mut output = vec![0; if never { 0 } else { rt.layout(returned)?.words }];
+            let reports_ty = rt.layout(ty)?.arguments[1];
+            let diagnostic_ty = rt.layout(reports_ty)?.arguments[0];
+            if rt.represented_type(inputs[2].as_ref())? != diagnostic_ty { return Err("diagnostic witness mismatch".into()); }
+            let severity = rt.diagnostic_field_type(diagnostic_ty, "severity")?;
+            let labels = rt.diagnostic_field_type(diagnostic_ty, "labels")?;
+            let label = rt.layout(labels)?.arguments[0];
+            let range = rt.diagnostic_field_type(label, "location")?;
+            for (input, expected) in inputs[3..].iter().zip([severity, label, range]) {
+                if rt.represented_type(input.as_ref())? != expected { return Err("diagnostic member witness mismatch".into()); }
+            }
+            let start = context.diagnostics().len();
+            let callback: Callback = unsafe { std::mem::transmute(address as usize) };
+            let status = unsafe { callback(context, inputs[1].words().as_ptr(), output.as_mut_ptr(), inputs[0].words().as_ptr()) };
+            if status > 1 { return Err("invalid diagnostic callback status".into()); }
+            let Some(reports) = context.take_scoped_diagnostics(start)? else { return Ok(Status::Failed); };
+            let rt = context.runtime_mut()?;
+            let reports = reports.iter().map(|report| rt.diagnostic_snapshot(diagnostic_ty, report)).collect::<Result<Vec<_>>>()?;
+            let reports = rt.array(reports_ty, [0; 3], &reports)?;
+            let value = if status == 0 {
+                if never { return Err("Never callback returned successfully".into()); }
+                let value = Value { arena: rt.identity, words: output.into() };
+                rt.validate(value.as_ref(), returned)?;
+                let tuple = rt.layout(ty)?.arguments[0];
+                let payload = rt.aggregate(tuple, [0; 3], &[value, reports])?;
+                rt.named_variant(ty, origin.words(), "Ok", Some(&payload))?
+            } else { rt.named_variant(ty, origin.words(), "Err", Some(&reports))? };
+            unsafe { std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, value.words().len()); }
+            Ok(Status::Success)
+        })();
+        match result { Ok(status) => status, Err(error) => context.abort_at(error, origin) }
+    }) as u32
+}
+
 pub(super) unsafe fn format_parse(context: &mut CallContext, ty: TypeId, data: *const u64, out: *mut u64, origin: Origin, format: u64) -> u32 {
     context.boundary(|context| {
         let result = (|| -> Result<Status> {
@@ -19,7 +68,7 @@ pub(super) unsafe fn format_parse(context: &mut CallContext, ty: TypeId, data: *
             if target != contract.value_type() { return Err("data parser target differs from sealed Value identity".into()); }
             let text = rt.text(input.as_ref())?;
             let size = text.as_str().len();
-            if size > limits.file_size { return Err("parsed text exceeds file_size limit".into()); }
+            if size > limits.file_size { return Ok(context.abort_at("parsed text exceeds file_size limit", origin)); }
             let (format, name) = match format { 0 => (Format::Json, "<json string>"), 1 => (Format::Yaml, "<yaml string>"), 2 => (Format::Toml, "<toml string>"), _ => return Err("unknown native data format".into()) };
             let mut sources = telora_core::source::SourceDatabase::default();
             let source = sources.add(name, text.as_str());
@@ -27,7 +76,7 @@ pub(super) unsafe fn format_parse(context: &mut CallContext, ty: TypeId, data: *
             let loc = if input.origin().words()[0] == 0 { origin.words() } else { input.origin().words() };
             let value = match plan {
                 Ok(plan) => {
-                    data_plan::enforce_limits(&plan, limits, size)?;
+                    if let Err(error) = data_plan::enforce_limits(&plan, limits, size) { return Ok(context.abort_at(error, origin)); }
                     let rt = context.runtime_mut()?;
                     let value = rt.materialize_data_at(&contract, &plan, Some(loc))?;
                     rt.named_variant(ty, origin.words(), "Ok", Some(&value))?

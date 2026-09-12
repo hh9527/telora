@@ -177,6 +177,7 @@ enum Table {
 }
 
 pub struct Runtime {
+    source_names: std::collections::BTreeMap<u32, String>,
     data_contract: Option<DataContract>,
     type_info: Vec<reflection::TypeInfo>,
     property_presence: std::collections::BTreeSet<(TypeId, TypeId)>,
@@ -383,6 +384,7 @@ impl Runtime {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| "arena identity overflow")?;
         Ok(Self {
+            source_names: sealed.mir().sources.files().map(|file| (file.id().get(), file.name.to_string())).collect(),
             data_contract: if sealed.mir().modules.iter().any(|m| m.native.as_ref().is_some_and(|n| n.id == 23) && matches!(m.state, telora_core::mir::ModuleState::Source { .. })) { Some(DataContract::from_mir(sealed)?) } else { None },
             type_info: reflection::build(sealed.types())?,
             property_presence: sealed
@@ -682,6 +684,7 @@ mod reflection;
 mod schema;
 mod path;
 mod hash;
+mod diagnostics;
 mod array_ops;
 mod blame;
 pub use dynamic::DynamicQuery;

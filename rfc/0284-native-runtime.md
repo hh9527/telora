@@ -36,7 +36,9 @@
 
 ## 验收条件
 
-诊断捕获的上下文边界已区分普通 Failed 与不可恢复 abort。fuel 耗尽、调用深度超限、helper panic 设置 session 中止标记；后续调用/helper 不再执行，但栈退出 guard 仍能清理。普通范围可移出其新增报告，嵌套范围不吞掉外层报告；abort 保留全部报告给 session 最终输出。这只是 call_with_diagnostics 的上下文基础，语言接口和原生 Diagnostic 对象构造尚未据此宣称接通。
+诊断捕获的上下文边界已区分普通 Failed 与不可恢复 abort。fuel 耗尽、调用深度超限、helper panic 和字符串解析资源限制设置 session 中止标记；后续调用/helper 不再执行，但栈退出 guard 仍能清理。普通范围可移出其新增报告，嵌套范围不吞掉外层报告；abort 保留全部报告给 session 最终输出。
+
+call_with_diagnostics 已通过封闭回调签名分派，按实参中的权威 TypeOf 见证核对 Diagnostic/Severity/Label/SourceRange。报告直接构造到 native tables，来源名称来自静态源码清单及后续登记的数据来源；只复制诊断文本与位置，不复制 subject 对象。成功返回 Ok((value, reports))，普通失败返回 Err(reports)，Never 失败路径不读取结果槽。已覆盖嵌套范围、失败后继续执行、发布后的诊断数据读取、来源范围以及不能捕获 fuel/调用深度限制。
 
 HashState 按权威 native type (16, 3) 存入独立 Vec<Sha256> 槽位，描述符保存 HeapRef。更新读取原状态并复制固定大小摘要上下文，直接借用 native String/Bytes；不修改旧状态，不复制输入对象树。发布按原 HeapId 转发，保留重复引用；main 状态可在新 work 中分叉更新。增量协议保留版本前缀、输入类型标记、变长输入的大端长度及 Int 大端编码。固定摘要向量、标准 SHA-256 向量和真实 CLI 初始化/entry 分叉更新已有验证。
 

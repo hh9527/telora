@@ -1,0 +1,20 @@
+import "std/_rt" as rt;
+import "std/codec" {encode, Value};
+import "std/array" as array;
+
+def attempt = rt.with_diagnostics(fn(n: Int) {
+    let warning: Option(Int) = warn!("inside warning");
+    if n < 0 { fail!("inside failure") } else { n + 1 }
+});
+def summary = fn(result: Result((Int, Array(rt.Diagnostic)), Array(rt.Diagnostic))) {
+    match result {
+        Ok((value, reports)) => (value, array.map(reports, fn(report) { report.message })),
+        Err(reports) => (-1, array.map(reports, fn(report) { report.message })),
+    }
+};
+export def answer = encode(Value.type, (
+    summary(attempt(1)),
+    summary(attempt(-1)),
+    summary(attempt(2)),
+    rt.with_diagnostics(fn(n: Int) { summary(attempt(n)) })(-1),
+));
