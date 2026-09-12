@@ -1,0 +1,4 @@
+def factorial: Fn(Int) -> Int = fn(n) {
+    if n <= 1 { 1 } else { n * factorial(n - 1) }
+};
+export def answer = factorial(5);

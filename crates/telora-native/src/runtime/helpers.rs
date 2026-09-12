@@ -8,6 +8,7 @@ pub(crate) const ARRAY: u32 = 2;
 pub(crate) const FIELD: u32 = 3;
 pub(crate) const INDEX: u32 = 4;
 pub(crate) const DICT: u32 = 5;
+pub(crate) const FAIL: u32 = 6;
 
 /// Safety: ctx is an exclusive live context; data points at the full values
 /// specified by the generated operation; out has space for the solved result.
@@ -30,6 +31,12 @@ pub(crate) unsafe extern "C" fn object(
     };
     context.boundary(|context| {
         let result = (|| {
+            if operation == FAIL {
+                // Static diagnostic bytes owned by the JIT module.
+                let message =
+                    unsafe { std::slice::from_raw_parts(data.cast::<u8>(), count as usize) };
+                return Err(String::from_utf8_lossy(message).into_owned());
+            }
             let rt = context.runtime_mut()?;
             let ty = TypeId(ty);
             let loc = origin.words();

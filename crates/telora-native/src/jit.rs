@@ -111,32 +111,7 @@ fn child(mir: &Mir, node: HirId, role: Role) -> Result<HirId> {
 pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
     let layouts = Layouts::from_mir(mir)?;
     let graph = mir.mir();
-    let root_node = graph
-        .hir
-        .get(root.index())
-        .ok_or("native HIR outside graph")?;
-    let is_function = matches!(root_node.kind, HirKind::Closure);
-    let parameters = if is_function {
-        root_node
-            .children
-            .iter()
-            .filter(|e| e.role == Role::Parameter)
-            .map(|e| e.node)
-            .collect::<Vec<_>>()
-    } else {
-        vec![]
-    };
-    let body = if is_function {
-        child(graph, root, Role::Body)?
-    } else {
-        root
-    };
-    let output = TypeKey::try_from(known(graph, body)?)?;
-    let output_words = layouts.words(output)?;
-    let arguments = parameters
-        .iter()
-        .map(|&p| TypeKey::try_from(known(graph, p)?))
-        .collect::<Result<Vec<_>>>()?;
+    let (_, _, output, arguments) = functions::shape(graph, &layouts, root)?;
     let mut builder =
         JITBuilder::new(cranelift_module::default_libcall_names()).map_err(|e| e.to_string())?;
     builder.symbol("telora_native_object", helpers::object as *const u8);
@@ -166,68 +141,15 @@ pub fn compile(mir: &SealedMir<'_>, root: HirId) -> Result<Compiled> {
     let helper = module
         .declare_function("telora_native_object", Linkage::Import, &helper_signature)
         .map_err(|e| e.to_string())?;
-    let object_helper = module.declare_func_in_func(helper, &mut ctx.func);
-    let mut fbctx = FunctionBuilderContext::new();
-    {
-        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fbctx);
-        let entry = builder.create_block();
-        builder.append_block_params_for_function_params(entry);
-        builder.switch_to_block(entry);
-        builder.seal_block(entry);
-        let args = builder.block_params(entry)[1];
-        let context = builder.block_params(entry)[0];
-        let out = builder.block_params(entry)[2];
-        let mut locals = BTreeMap::new();
-        let mut offset: usize = 0;
-        for (&parameter, &ty) in parameters.iter().zip(&arguments) {
-            let symbol = graph.hir_symbols[parameter.index()]
-                .ok_or("native parameter missing resolved identity")?;
-            let words = layouts.words(ty)?;
-            let mut values = Vec::with_capacity(words);
-            for _ in 0..words {
-                values.push(builder.ins().load(
-                    types::I64,
-                    MemFlagsData::new(),
-                    args,
-                    i32::try_from(offset).map_err(|_| "native argument offset overflow")?,
-                ));
-                offset = offset
-                    .checked_add(8)
-                    .ok_or("native argument offset overflow")?;
-            }
-            locals.insert(symbol, values);
-        }
-        let mut lower = Lower {
-            mir: graph,
-            layouts: &layouts,
-            builder,
-            locals,
-            module: &mut module,
-            context,
-            object_helper,
-        };
-        let result = lower.expression(body, 0)?;
-        if result.len() != output_words {
-            return Err("native result shape mismatch".into());
-        }
-        for (i, value) in result.into_iter().enumerate() {
-            lower.builder.ins().store(
-                MemFlagsData::new(),
-                value,
-                out,
-                i32::try_from(i.checked_mul(8).ok_or("native result overflow")?)
-                    .map_err(|_| "native result overflow")?,
-            );
-        }
-        let success = lower.builder.ins().iconst(types::I32, 0);
-        lower.builder.ins().return_(&[success]);
-        let config = lower.module.target_config();
-        lower.builder.finalize(config);
+    let mut functions = functions::Functions::new(ctx.func.signature.clone());
+    functions.registered.insert(root, function);
+    functions.pending.push(root);
+    let mut next = 0;
+    while next < functions.pending.len() {
+        let node = functions.pending[next];
+        next += 1;
+        functions::emit(graph, &layouts, node, helper, &mut module, &mut functions)?;
     }
-    module
-        .define_function(function, &mut ctx)
-        .map_err(|e| e.to_string())?;
-    module.clear_context(&mut ctx);
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let address = module.get_finalized_function(function);
     // SAFETY: target default C ABI, exactly three pointers and a u32 status.
@@ -249,8 +171,89 @@ struct Lower<'a, 'b> {
     module: &'a mut JITModule,
     context: ir::Value,
     object_helper: ir::FuncRef,
+    functions: &'a mut functions::Functions,
 }
 impl Lower<'_, '_> {
+    fn callable(&self, node: HirId, depth: usize) -> Result<HirId> {
+        if depth > 512 {
+            return Err("native callable alias cycle".into());
+        }
+        match self.mir.hir[node.index()].kind {
+            HirKind::Closure => Ok(node),
+            HirKind::TypeAscription => {
+                self.callable(child(self.mir, node, Role::Value)?, depth + 1)
+            }
+            HirKind::Variable(_) => {
+                let slot = self.mir.hir[node.index()]
+                    .resolution
+                    .ok_or("native callable missing resolve slot")?;
+                let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] else {
+                    return Err("native callable not bound".into());
+                };
+                let declaration = self.mir.symbols[symbol.index()]
+                    .declarations
+                    .iter()
+                    .find_map(|&decl| {
+                        self.mir.hir[decl.index()]
+                            .children
+                            .iter()
+                            .find(|e| e.role == Role::Value)
+                            .map(|e| e.node)
+                    })
+                    .ok_or("native indirect/native callable is not yet linked")?;
+                self.callable(declaration, depth + 1)
+            }
+            _ => Err("native indirect callable is not yet linked".into()),
+        }
+    }
+    fn direct_call(&mut self, node: HirId, depth: usize) -> Result<Vec<ir::Value>> {
+        let callee = self.callable(child(self.mir, node, Role::Callee)?, 0)?;
+        let function = self.functions.declare(self.mir, callee, self.module)?;
+        let (parameters, _, output, expected) = functions::shape(self.mir, self.layouts, callee)?;
+        let arguments = self.mir.hir[node.index()]
+            .children
+            .iter()
+            .filter(|e| e.role == Role::Argument)
+            .map(|e| e.node)
+            .collect::<Vec<_>>();
+        if parameters.len() != arguments.len() {
+            return Err("native direct argument count mismatch".into());
+        }
+        if output != TypeKey::try_from(known(self.mir, node)?)? {
+            return Err("native direct result type mismatch".into());
+        }
+        let mut words = Vec::new();
+        for (&arg, ty) in arguments.iter().zip(expected) {
+            if TypeKey::try_from(known(self.mir, arg)?)? != ty {
+                return Err("native direct argument type mismatch".into());
+            }
+            words.extend(self.expression(arg, depth + 1)?);
+        }
+        let data = self.stack_words(&words)?;
+        let width = self.layouts.words(output)?;
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let out = self.stack_words(&vec![zero; width])?;
+        let callee = self
+            .module
+            .declare_func_in_func(function, self.builder.func);
+        let call = self.builder.ins().call(callee, &[self.context, data, out]);
+        let status = self.builder.inst_results(call)[0];
+        let failed = self.builder.create_block();
+        let success = self.builder.create_block();
+        self.builder.ins().brif(status, failed, &[], success, &[]);
+        self.builder.switch_to_block(failed);
+        self.builder.seal_block(failed);
+        self.builder.ins().return_(&[status]);
+        self.builder.switch_to_block(success);
+        self.builder.seal_block(success);
+        Ok((0..width)
+            .map(|i| {
+                self.builder
+                    .ins()
+                    .load(types::I64, MemFlagsData::new(), out, (i * 8) as i32)
+            })
+            .collect())
+    }
     fn stack_words(&mut self, values: &[ir::Value]) -> Result<ir::Value> {
         let bytes = u32::try_from(
             values
@@ -321,7 +324,7 @@ impl Lower<'_, '_> {
             })
             .collect())
     }
-    fn string(&mut self, node: HirId, ty: TypeKey, text: &str) -> Result<Vec<ir::Value>> {
+    fn literal_bytes(&mut self, text: &str) -> Result<(ir::Value, ir::Value)> {
         let id = self
             .module
             .declare_anonymous_data(false, false)
@@ -342,6 +345,10 @@ impl Lower<'_, '_> {
             .ins()
             .symbol_value(self.module.target_config().pointer_type(), global);
         let length = self.builder.ins().iconst(types::I64, text.len() as i64);
+        Ok((pointer, length))
+    }
+    fn string(&mut self, node: HirId, ty: TypeKey, text: &str) -> Result<Vec<ir::Value>> {
+        let (pointer, length) = self.literal_bytes(text)?;
         self.object(node, helpers::STRING, ty, pointer, length)
     }
     fn expression(&mut self, node: HirId, depth: usize) -> Result<Vec<ir::Value>> {
@@ -380,6 +387,8 @@ impl Lower<'_, '_> {
                 .collect());
         }
         match syntax.kind {
+            HirKind::Binary(operation) => self.binary(node, operation, depth),
+            HirKind::Unary(operation) => self.unary(node, operation, depth),
             HirKind::String(ref text) => self.string(node, key, text),
             HirKind::Array | HirKind::Tuple => {
                 if self
@@ -528,20 +537,59 @@ impl Lower<'_, '_> {
                 let ResolveState::Bound(symbol) = self.mir.resolve_slots[slot.index()] else {
                     return Err("native reference is not bound".into());
                 };
-                self.locals.get(&symbol).cloned().ok_or_else(|| {
-                    format!("native unsupported capture/export at {:?}", syntax.location)
-                })
+                if let Some(value) = self.locals.get(&symbol) {
+                    return Ok(value.clone());
+                }
+                // Resolved exports of a statically selected Boolean member are
+                // constants. Never recognize prelude names or execute a provider.
+                for &declaration in &self.mir.symbols[symbol.index()].declarations {
+                    if let Ok(value) = child(self.mir, declaration, Role::Value)
+                        && matches!(
+                            self.mir.member_selections[value.index()],
+                            Some(MemberSelection::Boolean(_))
+                        )
+                    {
+                        return self.expression(value, depth + 1);
+                    }
+                }
+                Err(format!(
+                    "native unsupported capture/export at {:?}",
+                    syntax.location
+                ))
             }
             HirKind::TypeAscription => {
                 self.expression(child(self.mir, node, Role::Value)?, depth + 1)
             }
+            HirKind::Binding { .. } => {
+                let value = self.expression(child(self.mir, node, Role::Value)?, depth + 1)?;
+                let symbol = self.mir.hir_symbols[node.index()]
+                    .ok_or("native binding pattern is not yet supported")?;
+                self.locals.insert(symbol, value.clone());
+                Ok(value)
+            }
+            HirKind::Closure => {
+                let function = self.functions.declare(self.mir, node, self.module)?;
+                let value = self.layouts.value(
+                    key,
+                    Origin::from_loc(Some(syntax.location)),
+                    &[function.as_u32() as u64],
+                )?;
+                Ok(value
+                    .words()
+                    .iter()
+                    .map(|&w| self.builder.ins().iconst(types::I64, w as i64))
+                    .collect())
+            }
+            HirKind::Call => self.direct_call(node, depth),
             HirKind::Block => {
-                // Do not discard bindings or effects to get a successful result.
-                if syntax.children.iter().any(|e| e.role != Role::Result) {
-                    return Err(format!(
-                        "native unsupported block statements at {:?}",
-                        syntax.location
-                    ));
+                for edge in &syntax.children {
+                    match edge.role {
+                        Role::Binding => {
+                            self.expression(edge.node, depth + 1)?;
+                        }
+                        Role::Result => {}
+                        _ => return Err("native unsupported block child".into()),
+                    }
                 }
                 self.expression(child(self.mir, node, Role::Result)?, depth + 1)
             }
@@ -580,5 +628,9 @@ impl Lower<'_, '_> {
         }
     }
 }
+#[path = "jit/functions.rs"]
+mod functions;
+#[path = "jit/scalars.rs"]
+mod scalars;
 #[cfg(test)]
 mod tests;

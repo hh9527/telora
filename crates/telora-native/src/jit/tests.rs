@@ -98,14 +98,16 @@ fn machine_code_branches_on_argument_and_preserves_selected_value_origin() {
 }
 
 #[test]
-fn unsupported_body_is_rejected_instead_of_dropping_statements() {
-    let (mir, root) = graph("export def answer: Fn() -> Int = fn() { let unused = 1; 42 };");
-    let error = match compile(&mir.seal().unwrap(), root) {
-        Ok(_) => panic!("unexpected supported body"),
-        Err(e) => e,
-    };
-    assert!(error.contains("unsupported block statements"), "{error}");
+fn unused_bindings_still_execute_and_propagate_failure_once() {
+    let (mir, root) = graph("export def answer: Fn() -> Int = fn() { let unused = [1][2]; 42 };");
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(context.diagnostics()[0].message.contains("out of bounds"));
 }
+
 #[test]
 fn failed_call_never_decodes_the_result_and_invalid_success_is_rejected() {
     // The wrapper is also the boundary used for generated calls to failing
@@ -200,4 +202,60 @@ fn generated_index_reads_published_main_and_reports_work_bounds_errors() {
     assert_eq!(ctx.diagnostics().len(), 1);
     assert!(ctx.diagnostics()[0].message.contains("out of bounds"));
     assert_ne!(ctx.diagnostics()[0].origin, Origin::default());
+}
+
+#[test]
+fn direct_functions_have_independent_frames_and_support_recursion() {
+    for source in [
+        "def choose: Fn(Bool, Int, Int) -> Int = fn(flag, x, y) { if flag {x} else {y} }; export def answer = do { let left = 41; let right = 42; choose(False, left, right) };",
+        "def recur: Fn(Bool) -> Int = fn(flag) { if flag { recur(False) } else { 42 } }; export def answer = recur(True);",
+        "export def answer = do { def local: Fn(Int) -> Int = fn(value) { let saved = value; saved }; local(42) };",
+    ] {
+        let (mir, root) = graph(source);
+        let compiled = compile(&mir.seal().unwrap(), root).unwrap();
+        let result = compiled.call(&mut CallContext::default(), &[]).unwrap();
+        assert_eq!(result.words()[2], 42);
+    }
+}
+#[test]
+fn scalar_machine_code_handles_recursion_and_checked_arithmetic() {
+    let (mir, root) = graph(include_str!("../../tests/fixtures/factorial.telora"));
+    let compiled = compile(&mir.seal().unwrap(), root).unwrap();
+    assert_eq!(
+        compiled
+            .call(&mut CallContext::default(), &[])
+            .unwrap()
+            .words()[2],
+        120
+    );
+    for (source, message) in [
+        ("export def answer = 9223372036854775807 + 1;", "overflowed"),
+        (
+            "def divide: Fn(Int, Int) -> Int = fn(a, b) { a / b }; export def answer = divide(1, 0);",
+            "division by zero",
+        ),
+        ("export def answer = 1.0 / 0.0;", "non-finite"),
+    ] {
+        let (mir, root) = graph(source);
+        let compiled = compile(&mir.seal().unwrap(), root).unwrap();
+        let mut ctx = CallContext::default();
+        assert!(compiled.call(&mut ctx, &[]).is_err());
+        assert_eq!(ctx.diagnostics().len(), 1);
+        assert!(
+            ctx.diagnostics()[0].message.contains(message),
+            "{:?}",
+            ctx.diagnostics()
+        );
+        assert_ne!(ctx.diagnostics()[0].origin, Origin::default());
+    }
+    for source in [
+        "export def answer = False && [True][1];",
+        "export def answer = True || [False][1];",
+    ] {
+        let (mir, root) = graph(source);
+        let compiled = compile(&mir.seal().unwrap(), root).unwrap();
+        let mut ctx = CallContext::default();
+        compiled.call(&mut ctx, &[]).unwrap(); // RHS requires a runtime and would fail if executed.
+        assert!(ctx.diagnostics().is_empty());
+    }
 }
