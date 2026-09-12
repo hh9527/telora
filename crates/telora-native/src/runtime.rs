@@ -676,6 +676,7 @@ mod pattern;
 #[path = "runtime/text_ops.rs"]
 mod text_ops;
 mod reflection;
+mod schema;
 mod array_ops;
 mod blame;
 pub use dynamic::DynamicQuery;

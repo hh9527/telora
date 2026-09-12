@@ -39,6 +39,7 @@ pub(crate) const PARSE: u32 = 44;
 pub(crate) const FORMAT_PARSE: u32 = 45;
 pub(crate) const JSON_STRINGIFY: u32 = 46;
 pub(crate) const JSON_INDENT: u32 = 47;
+pub(crate) const JSON_SCHEMA: u32 = 48;
 pub(crate) const INTERPOLATE: u32 = 31;
 pub(crate) const FUEL: u32 = 32;
 pub(crate) const ENTER_CALL: u32 = 33;
@@ -85,7 +86,7 @@ pub(crate) unsafe extern "C" fn object(
     if operation == ARRAY_MAP {
         return unsafe { callbacks::array_map(context, TypeId(ty), data, out, origin, count) };
     }
-    if operation == DECODE || operation == ENCODE || operation == PARSE {
+    if operation == DECODE || operation == ENCODE || operation == PARSE || operation == JSON_SCHEMA {
         return unsafe { callbacks::codec(context, TypeId(ty), data, out, origin, count, operation) };
     }
     if operation == FORMAT_PARSE {

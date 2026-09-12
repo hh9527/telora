@@ -1,0 +1,22 @@
+import "std/json" as json;
+import "std/value" {Value};
+
+@json.rename_all(json.RenameCase.CamelCase)
+type Named = struct {some_field: Int, optional_field: Option(String)};
+@json.untagged
+type Choice = enum {Empty, Item(Named)};
+type Count = struct(Int);
+type Node = struct {children: Array(Node), value: Count};
+
+export def answer = Value.Array([
+    json.schema(Int.type),
+    json.schema(Float.type),
+    json.schema(Bool.type),
+    json.schema(().type),
+    json.schema((Int, String).type),
+    json.schema(Dict(Option(Int)).type),
+    json.schema(Named.type),
+    json.schema(Choice.type),
+    json.schema(Node.type),
+    json.schema(Result(Int, String).type),
+]);

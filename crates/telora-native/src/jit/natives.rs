@@ -479,6 +479,18 @@ impl Lower<'_, '_> {
             let result = self.object(node, helpers::REGEX, self.return_type, data, count)?;
             return self.write_return(&result);
         }
+        if module.id == 17 && declaration.name == "schema_with" {
+            if arguments.len() != 3
+                || self.mir.types[arguments[1].index()].constructor != TypeConstructor::Type
+                || self.mir.types[arguments[2].index()].constructor != TypeConstructor::TypeOf
+                || self.mir.types[arguments[2].index()].arguments.len() != 1
+                || TypeKey::try_from(self.mir.types[arguments[2].index()].arguments[0])? != self.return_type
+            { return Err("JSON schema signature mismatch".into()); }
+            let roots = (0..self.mir.types.len()).collect();
+            let (packet, count) = self.codec_packet_roots(data, roots, false)?;
+            let value = self.object(node, helpers::JSON_SCHEMA, self.return_type, packet, count)?;
+            return self.write_return(&value);
+        }
         if module.id == 17 && declaration.name == "stringify_pretty" {
             let factory = &self.mir.types[known(self.mir, node)?.index()];
             if factory.arguments.len() != 2 { return Err("JSON pretty factory ABI mismatch".into()); }

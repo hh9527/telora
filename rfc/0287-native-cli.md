@@ -43,7 +43,9 @@ eval-with 在执行前验证权威 std/entry.Eval 身份，并从封闭骨架读
 
 codec 的 rename_all/untagged 已读取真实 property 值并参与编码/解码，支持与构造检查、嵌套集合组合；歧义和无匹配为可捕获的解码拒绝，provider/checker 执行失败直接传播。文本转换也已接入 ParseBy/DisplayBy，string.parse 与 codec 共享基于捕获范围的解析器；编码调用原生 property 内的普通 display 闭包。eval-with 增加了发布后解析/格式化外部文本输入的往返验证。
 
-仍未完成完整语法/native API 覆盖（例如 std/json 等数据格式 API）及配额语义，因此不据此宣称整体路线落地。
+JSON/YAML/TOML 字符串解析直接物化到 native tables，保留输入来源并执行数据限制。JSON 紧凑/pretty 输出读取 native 图，schema_with 消费封闭类型骨架及真实 property 值。完整 std/json 模块已接入初始化，CLI 验证包含 schema 的默认/native 输出对比及发布后文本桥接类型的 schema 查询。
+
+仍未完成完整语法/native API 覆盖及配额语义，因此不据此宣称整体路线落地。
 
 验证默认路径不变、隐藏帮助、显式 unsupported、only-types 零执行、各命令停止阶段正确。先少量冒烟，再补完整 corner cases；完成总装后才测编译/初始化/执行耗时和峰值内存，不承诺性能收益。
 

@@ -8,6 +8,12 @@ import "std/regex" as regex;
 import "std/fmt" as fmt;
 import "std/yaml" as yaml;
 import "std/toml" as toml;
+import "std/json" as json;
+
+export def schema = entry.main(
+    {sources: [], envs: [], args: False},
+    fn(ctx) { json.schema(Endpoint.type) },
+);
 
 export def formats = entry.main(
     {sources: [], envs: [], args: False},
@@ -15,6 +21,7 @@ export def formats = entry.main(
         Value.Array([
             match yaml.parse("answer: 42\n") {Ok(value) => value, Err(error) => raise!(error)},
             match toml.parse("answer = 43\n") {Ok(value) => value, Err(error) => raise!(error)},
+            match json.parse("{\"answer\":44}") {Ok(value) => value, Err(error) => raise!(error)},
         ])
     },
 );

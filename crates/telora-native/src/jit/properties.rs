@@ -88,7 +88,9 @@ pub(super) fn emit(
 
 impl Lower<'_, '_> {
     pub(super) fn codec_packet(&mut self, data: ir::Value, root: TypeKey, decode: bool) -> EmitResult<(ir::Value, ir::Value)> {
-        let mut pending = vec![root.index()];
+        self.codec_packet_roots(data, vec![root.index()], decode)
+    }
+    pub(super) fn codec_packet_roots(&mut self, data: ir::Value, mut pending: Vec<usize>, decode: bool) -> EmitResult<(ir::Value, ir::Value)> {
         let mut reachable = std::collections::BTreeSet::new();
         while let Some(ty) = pending.pop() {
             if !reachable.insert(ty) { continue; }

@@ -34,7 +34,7 @@ fn lower_camel_case(name: &str) -> String {
     output
 }
 
-fn external_names(names: impl Iterator<Item = String>, rename: bool, message: &str) -> std::result::Result<Vec<String>, DecodeFailure> {
+pub(super) fn external_names(names: impl Iterator<Item = String>, rename: bool, message: &str) -> std::result::Result<Vec<String>, DecodeFailure> {
     let names = names.map(|name| if rename { lower_camel_case(&name) } else { name }).collect::<Vec<_>>();
     if names.iter().collect::<std::collections::BTreeSet<_>>().len() != names.len() { return Err(message.into()); }
     Ok(names)
@@ -60,7 +60,7 @@ impl Codec<'_> {
     pub(super) fn runtime(&self) -> Result<&Runtime> { self.context.runtime() }
     pub(super) fn runtime_mut(&mut self) -> Result<&mut Runtime> { self.context.runtime_mut() }
 
-    fn property_types(&self, properties: &Value) -> Result<Vec<(String, TypeId)>> {
+    pub(super) fn property_types(&self, properties: &Value) -> Result<Vec<(String, TypeId)>> {
         let rt = self.runtime()?;
         rt.layout(properties.type_id())?.field_names.iter().enumerate()
             .map(|(index, name)| Ok((name.clone(), rt.represented_type(rt.field(properties, index)?)?)))
@@ -78,7 +78,7 @@ impl Codec<'_> {
         Ok(Some(Value { arena: self.runtime()?.identity, words }))
     }
 
-    fn options(&mut self, owner: TypeId, properties: &[(String, TypeId)], origin: crate::abi::Origin) -> std::result::Result<(bool, bool, bool), DecodeFailure> {
+    pub(super) fn options(&mut self, owner: TypeId, properties: &[(String, TypeId)], origin: crate::abi::Origin) -> std::result::Result<(bool, bool, bool), DecodeFailure> {
         let property_type = |name: &str| properties.iter().find(|(key, _)| key == name).map(|(_, ty)| *ty).ok_or_else(|| format!("codec property contract lacks {name}"));
         let rt = self.runtime()?;
         let decode = rt.property_presence.contains(&(owner, property_type("decode_by_parse")?));

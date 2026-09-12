@@ -1268,6 +1268,43 @@ fn native_json_pretty_closures_validate_indent_and_format_nested_values() {
 }
 
 #[test]
+fn native_json_schema_closes_recursive_definitions() {
+    let (mir, root) = graph_with(r#"import "std/json" as json;
+        type Node = struct {value: Int, children: Array(Node), note: Option(String)};
+        export def answer = json.stringify(json.schema(Node.type));"#, static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+    let value = compiled.call(&mut context, &[]).unwrap();
+    let text = context.runtime().unwrap().text(value.as_ref()).unwrap();
+    let schema: serde_json::Value = serde_json::from_str(text.as_str()).unwrap();
+    assert_eq!(schema["$ref"], "#/$defs/Type0");
+    assert_eq!(schema["$defs"]["Type0"]["properties"]["children"]["items"]["$ref"], "#/$defs/Type0");
+    assert_eq!(schema["$defs"]["Type0"]["properties"]["value"]["type"], "integer");
+    assert_eq!(schema["$defs"]["Type0"]["required"], serde_json::json!(["children", "value"]));
+}
+
+#[test]
+fn native_json_schema_propagates_invalid_shapes_and_property_failures_once() {
+    for (declarations, target, message) in [
+        ("", "Bytes.type", "no JSON Schema mapping"),
+        ("@json.untagged type Item = enum {A, B};", "Item.type", "at most one unit variant"),
+        ("@json.rename_all(json.RenameCase.CamelCase) type Item = struct {some_field: Int, someField: Int};", "Item.type", "duplicate external field name"),
+        ("def broken: Fn(Type, Option(json.Untagged)) -> json.Untagged = fn(owner, previous) { fail!(\"schema property failed\") }; @broken type Item = enum {A};", "Item.type", "schema property failed"),
+    ] {
+        let source = format!("import \"std/json\" as json; {declarations} export def answer = json.schema({target});");
+        let (mir, root) = graph_with(&source, static_sources::BUILTINS);
+        let sealed = mir.seal().unwrap();
+        let compiled = compile(&sealed, root).unwrap();
+        let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap());
+        assert!(compiled.call(&mut context, &[]).is_err());
+        assert_eq!(context.diagnostics().len(), 1);
+        assert!(context.diagnostics()[0].message.contains(message), "{}", context.diagnostics()[0].message);
+        assert_eq!(context.call_depth(), 0);
+    }
+}
+
+#[test]
 fn native_text_codec_reports_missing_capabilities_and_display_failure() {
     for (extra, expression, expected, fails) in [
         ("", "do { let value: Item = {value: 1}; encode(Value.type, value) }", "text codec requires a DisplayBy property", true),

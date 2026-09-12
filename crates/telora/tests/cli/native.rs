@@ -21,6 +21,18 @@ fn native_warnings_do_not_block_publication_or_entry_output() {
 }
 
 #[test]
+fn native_json_schema_matches_default_for_closed_type_graphs() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/schema.telora")).unwrap();
+    let native = telora(&cwd).args(["eval", "--native", "@src/main:answer"]).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    let default = telora(&cwd).args(["eval", "@src/main:answer"]).output().unwrap();
+    assert!(default.status.success(), "{}", String::from_utf8_lossy(&default.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&native.stdout).unwrap(), serde_json::from_slice::<Value>(&default.stdout).unwrap());
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_data_depth_limit_applies_before_materialization() {
     let cwd = fixture();
     let input = format!("{}0{}", "[".repeat(256), "]".repeat(256));
@@ -67,7 +79,10 @@ fn native_eval_with_initializes_then_injects_declared_context() {
     fs::write(cwd.join("input.json"), "{\"answer\":42}").unwrap();
     let formats = telora(&cwd).args(["eval-with", "--native", "@src/main:formats"]).output().unwrap();
     assert!(formats.status.success(), "{}", String::from_utf8_lossy(&formats.stderr));
-    assert_eq!(serde_json::from_slice::<Value>(&formats.stdout).unwrap(), serde_json::json!([{ "answer": 42 }, { "answer": 43 }]));
+    assert_eq!(serde_json::from_slice::<Value>(&formats.stdout).unwrap(), serde_json::json!([{ "answer": 42 }, { "answer": 43 }, { "answer": 44 }]));
+    let schema = telora(&cwd).args(["eval-with", "--native", "@src/main:schema"]).output().unwrap();
+    assert!(schema.status.success(), "{}", String::from_utf8_lossy(&schema.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&schema.stdout).unwrap(), serde_json::json!({"type":"string", "$schema":"https://json-schema.org/draft/2020-12/schema"}));
     let output = telora(&cwd).env("TELORA_NATIVE_TEST_ENV", "selected")
         .args(["eval-with", "--native", "@src/main:answer", "--source", "input=input.json", "--", "hello", "中"])
         .output().unwrap();

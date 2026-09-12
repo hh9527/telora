@@ -63,6 +63,7 @@ pub(super) unsafe fn codec(context: &mut CallContext, ty: TypeId, data: *const u
                 cursor = unsafe { cursor.add(width) };
             }
             let target = rt.represented_type(inputs[1].as_ref())?;
+            if operation == helpers::JSON_SCHEMA && rt.represented_type(inputs[2].as_ref())? != ty { return Err("schema output witness mismatch".into()); }
             let check_count = (count as u32) as usize;
             let property_count = (count >> 32) as usize;
             let mut checks = Vec::with_capacity(check_count);
@@ -77,6 +78,7 @@ pub(super) unsafe fn codec(context: &mut CallContext, ty: TypeId, data: *const u
             }
             let mut codec = codec::Codec { context, checks: &checks, properties: &properties };
             let value = if operation == helpers::PARSE { codec.parse(ty, target, &inputs[0], &inputs[2], origin.words())? }
+                else if operation == helpers::JSON_SCHEMA { codec.schema(target, &inputs[0], origin.words())? }
                 else if operation == helpers::DECODE { codec.decode(ty, target, &inputs[0], &inputs[2], origin.words())? }
                 else {
                     if ty != target { return Err("codec target witness mismatch".into()); }
