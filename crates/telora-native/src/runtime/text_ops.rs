@@ -7,6 +7,7 @@ impl Runtime {
             return self.string(ty, loc, &text);
         }
         let len = u32::try_from(text.len()).map_err(|_| "string length overflow")?;
+        self.charge_allocation(text.len(), 1, std::mem::size_of::<RawStringItem>())?;
         let slot =
             u32::try_from(self.work.strings.entries.len()).map_err(|_| "String table overflow")?;
         let heap = HeapRef::new(World::Work, slot)?.raw();

@@ -445,6 +445,7 @@ impl CallContext {
         origin: Origin,
         subjects: Vec<Origin>,
     ) -> Status {
+        if self.runtime.as_ref().is_some_and(|runtime| runtime.allocation_exhausted()) { self.aborted = true; }
         self.diagnostics.push(NativeDiagnostic {
             severity: telora_core::source::Severity::Error,
             message: message.into(),

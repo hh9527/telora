@@ -279,6 +279,20 @@ fn native_generated_stack_budget_counts_frames_and_unwinds_on_failure() {
 }
 
 #[test]
+fn native_allocation_limit_is_not_caught_as_a_language_failure() {
+    let (mir, root) = graph_with("import \"std/_rt\" as rt; import \"std/string\" as string; export def answer = rt.with_diagnostics(fn(n: Int) { string.indent(\"x\", n) })(10000);", static_sources::BUILTINS);
+    let sealed = mir.seal().unwrap();
+    let compiled = compile(&sealed, root).unwrap();
+    let mut context = CallContext::with_runtime(crate::runtime::Runtime::new(&sealed).unwrap().with_allocation_limit(4096));
+    assert!(compiled.call(&mut context, &[]).is_err());
+    assert!(context.is_aborted());
+    assert_eq!(context.diagnostics().len(), 1);
+    assert!(context.diagnostics()[0].message.contains("allocation byte limit"));
+    assert_eq!(context.call_depth(), 0);
+    assert_eq!(context.stack_words(), 0);
+}
+
+#[test]
 fn native_float_remainder_preserves_sign_and_reports_zero_divisor() {
     for (expression, expected) in [("5.5 % 2.0", 1.5_f64), ("-5.5 % 2.0", -1.5), ("5.5 % -2.0", 1.5), ("-4.0 % 2.0", -0.0)] {
         let (mir, root) = graph(&format!("export def answer = {expression};"));

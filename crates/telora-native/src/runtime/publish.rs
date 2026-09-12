@@ -81,6 +81,7 @@ impl Runtime {
                 } else {
                     let reference = HeapRef::from_raw(old);
                     let bytes = self.tables(reference).bytes.get(reference.slot())?;
+                    self.charge_allocation(bytes.len(), 1, std::mem::size_of::<RawStringItem>())?;
                     let id = HeapRef::new(World::Main, target.bytes.push(bytes)?)?.raw();
                     copies.bytes.insert(old, id);
                     id
@@ -122,6 +123,7 @@ impl Runtime {
                         id
                     } else {
                         let bytes = self.string_bytes(old)?;
+                        self.charge_allocation(bytes.len(), 1, std::mem::size_of::<RawStringItem>())?;
                         let id = HeapRef::new(World::Main, target.strings.push(bytes)?)?.raw();
                         copies.strings.insert(old, id);
                         id
@@ -314,7 +316,9 @@ impl Runtime {
         if let Some(&id) = copies.objects.get(&(table, old)) {
             return Ok(id);
         }
-        let mut words = self.object_words(table, old)?.to_vec();
+        let original = self.object_words(table, old)?;
+        self.charge_allocation(original.len(), 8, std::mem::size_of::<WordItem>())?;
+        let mut words = original.to_vec();
         let slot = match table {
             Table::Records => target.records.push(vec![])?,
             Table::Newtypes => target.newtypes.push(vec![])?,

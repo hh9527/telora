@@ -179,6 +179,7 @@ enum Table {
 }
 
 pub struct Runtime {
+    allocation: allocation::Allocation,
     source_names: std::collections::BTreeMap<u32, String>,
     data_contract: Option<DataContract>,
     type_info: Vec<reflection::TypeInfo>,
@@ -263,6 +264,7 @@ impl Runtime {
         }
     }
     fn push_words(&mut self, table: Table, words: Vec<u64>) -> Result<u32> {
+        self.charge_allocation(words.len(), 8, std::mem::size_of::<WordItem>())?;
         let slot = match table {
             Table::Records => self.work.records.push(words)?,
             Table::Newtypes => self.work.newtypes.push(words)?,
@@ -387,6 +389,7 @@ impl Runtime {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| "arena identity overflow")?;
         Ok(Self {
+            allocation: allocation::Allocation::default(),
             source_names: sealed.mir().sources.files().map(|file| (file.id().get(), file.name.to_string())).collect(),
             data_contract: if sealed.mir().modules.iter().any(|m| m.native.as_ref().is_some_and(|n| n.id == 23) && matches!(m.state, telora_core::mir::ModuleState::Source { .. })) { Some(DataContract::from_mir(sealed)?) } else { None },
             type_info: reflection::build(sealed.types())?,
@@ -467,6 +470,7 @@ impl Runtime {
             bytes[2..2 + text.len()].copy_from_slice(text.as_bytes());
         } else {
             bytes[0] = 1;
+            self.charge_allocation(text.len(), 1, std::mem::size_of::<RawStringItem>())?;
             let id = HeapRef::new(World::Work, self.work.strings.push(text.as_bytes())?)?.raw();
             bytes[4..8].copy_from_slice(&id.to_le_bytes());
             bytes[12..16].copy_from_slice(&len.to_le_bytes());
@@ -691,6 +695,7 @@ mod sha256;
 mod diagnostics;
 mod equality;
 mod test_description;
+mod allocation;
 mod array_ops;
 mod blame;
 pub use dynamic::DynamicQuery;

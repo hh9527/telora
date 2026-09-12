@@ -4,6 +4,33 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
+fn allocation_budget_spans_publication_and_counts_shared_backing_once() {
+    let mir = graph(SOURCE);
+    let sealed = mir.seal().unwrap();
+    let ty = value_type(&mir, "text");
+    let text = "a shared allocation larger than inline storage";
+    let charge = (text.len() + std::mem::size_of::<RawStringItem>()) as u64;
+    let mut rt = Runtime::new(&sealed).unwrap().with_allocation_limit(charge * 2);
+    let value = rt.string(ty, [1, 0, 1], text).unwrap();
+    assert_eq!(rt.requested_allocation_bytes(), charge);
+    let roots = rt.publish(&[value.clone(), value]).unwrap();
+    assert_eq!(rt.requested_allocation_bytes(), charge * 2);
+    assert_eq!(roots[0].words(), roots[1].words());
+    assert!(rt.string(ty, [1, 0, 1], text).is_err());
+    assert!(rt.allocation_exhausted());
+    assert_eq!(rt.text(roots[0].as_ref()).unwrap().as_str(), text);
+
+    let mut rt = Runtime::new(&sealed).unwrap().with_allocation_limit(charge * 2 - 1);
+    let value = rt.string(ty, [1, 0, 1], text).unwrap();
+    let identity = rt.identity();
+    assert!(rt.publish(&[value.clone()]).is_err());
+    assert_eq!(rt.identity(), identity);
+    assert!(!rt.published);
+    assert!(rt.main.strings.entries.is_empty());
+    assert_eq!(rt.text(value.as_ref()).unwrap().as_str(), text);
+}
+
+#[test]
 fn semantic_json_reads_native_graph_before_and_after_publication() {
     use telora_core::data_plan::{self, Format};
     let mut mir = crate::test_support::graph_with(

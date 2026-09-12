@@ -23,7 +23,7 @@ impl Session {
             .into_iter()
             .collect::<Vec<_>>();
         let compiled = jit::compile_modules(sealed, &modules, &[])?;
-        let context = CallContext::with_runtime(Runtime::new(sealed)?)
+        let context = CallContext::with_runtime(Runtime::new(sealed)?.with_allocation_limit(crate::execution_config().session_quota.allocation_bytes))
             .with_data_limits(crate::execution_config().data_limits)
             .with_stack_limit(crate::execution_config().session_quota.stack_slots as u64)
             .with_fuel(crate::execution_config().session_quota.fuel as u64);

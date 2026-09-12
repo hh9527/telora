@@ -4,6 +4,7 @@ impl Runtime {
     pub fn bytes(&mut self, ty: TypeId, loc: Location, bytes: &[u8]) -> Result<Value> {
         self.expect(ty, Kind::Bytes)?;
         let length = u32::try_from(bytes.len()).map_err(|_| "native Bytes length overflow")?;
+        self.charge_allocation(bytes.len(), 1, std::mem::size_of::<RawStringItem>())?;
         let slot = self.work.bytes.push(bytes)?;
         let heap = HeapRef::new(World::Work, slot)?.raw();
         self.pack(ty, loc, &[u64::from(heap), u64::from(length)])
