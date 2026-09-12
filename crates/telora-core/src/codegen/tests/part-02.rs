@@ -1,4 +1,25 @@
 #[test]
+fn static_templates_have_only_concrete_instance_execution_tasks() {
+    let mir = graph(r#"
+        export def unused: for(T) Fn(T) -> T = fn(value) { value };
+        def identity: for(T) Fn(T) -> T = fn(value) { value };
+        export def answer = if identity@[Int] == identity@[Int] { 42 } else { 0 };
+    "#, "");
+    let sealed = mir.seal().unwrap();
+    let execution = crate::execution_graph::ExecutionGraph::from_mir(&sealed);
+    for node in execution.nodes() {
+        if let crate::execution_graph::Task::Global { symbol, .. } = node.task {
+            assert!(mir.symbol_generics[symbol.index()].is_empty());
+        }
+        assert!(!node.label.ends_with("::unused"));
+    }
+    assert!(execution.nodes().iter().any(|node|
+        matches!(node.task, crate::execution_graph::Task::Instance { .. })));
+    let artifact = compile(sealed, entry(&mir)).unwrap();
+    assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+}
+
+#[test]
 fn property_admission_initializes_all_capabilities_and_detects_cycles() {
     for (target, query, cycle) in [
         ("fail!(\"unused capability must stay lazy\")", "get_type_prop(Int.type, Mark.type)", false),

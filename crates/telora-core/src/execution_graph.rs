@@ -83,7 +83,7 @@ impl ExecutionGraph {
                         | BindingKind::Decl
                         | BindingKind::Impl
                 )
-            ) || !symbol.module.is_some_and(|module| {
+            ) || !mir.symbol_generics[index].is_empty() || !symbol.module.is_some_and(|module| {
                 symbol.scope.is_some() && symbol.scope == mir.module_scopes[module.index()]
             }) {
                 continue;
@@ -109,8 +109,7 @@ impl ExecutionGraph {
                 location: mir.hir[declaration.index()].location,
             });
             graph.globals[index] = Some(node);
-            if mir.function_families[index].is_some() || (mir.symbol_generics[index].is_empty()
-                && !matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl))) {
+            if !matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Native | BindingKind::Decl)) {
                 graph.initializers.push(node);
             }
         }
@@ -123,7 +122,8 @@ impl ExecutionGraph {
         }
         for (index, instance) in mir.generic_instances.iter().enumerate() {
             let symbol = &mir.symbols[instance.symbol.index()];
-            if !instance.concrete || graph.global(instance.symbol).is_none()
+            if !instance.concrete || !symbol.module.is_some_and(|module|
+                symbol.scope.is_some() && symbol.scope == mir.module_scopes[module.index()])
                 || !matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Let | BindingKind::Def | BindingKind::Decl | BindingKind::Impl | BindingKind::Native))
             {
                 continue;

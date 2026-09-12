@@ -196,7 +196,7 @@ fn compile_root(
         (None, body, if matches!(root, CompilationRoot::Tests(_)) { "<test bootstrap>" } else { "<session check>" }.into())
     };
     let mut emitter = Emitter::new(mir, &graph, name);
-    if target.is_some_and(|symbol| !mir.symbol_generics[symbol.index()].is_empty() && mir.function_families[symbol.index()].is_none()) {
+    if target.is_some_and(|symbol| !mir.symbol_generics[symbol.index()].is_empty()) {
         return Err(vec![emitter.error(declaration, "runtime entry requires a concrete generic instance")]);
     }
     // Emit the admitted graph in its stable order. Entry selection controls
@@ -227,38 +227,6 @@ fn compile_root(
         emitter.expression(declaration).map_err(|d| vec![d])?;
     }
     for &global in &globals {
-        if let Some(family) = &mir.function_families[global.index()] {
-            let declaration = *mir.symbols[global.index()].declarations.last().expect("family declaration");
-            let mut thunk = Emitter::new(mir, &graph, format!("family:{}", global.index()));
-            let result = thunk.register();
-            match family {
-                FunctionFamily::Alias(target) => {
-                    let node = graph.global(*target).ok_or_else(|| vec![thunk.error(declaration, "family alias has no global execution node")])?;
-                    thunk.emit(declaration, O::Demand { dst: result, node });
-                }
-                FunctionFamily::Variants { identity, instances } => {
-                    let identity = if let Some(source) = identity {
-                        let value = thunk.register();
-                        let node = graph.global(*source).ok_or_else(|| vec![thunk.error(declaration, "restricted family has no identity source")])?;
-                        thunk.emit(declaration, O::Demand { dst: value, node });
-                        Some(value)
-                    } else { None };
-                    let mut variants = vec![];
-                    for (arguments, instance) in instances {
-                        let value = thunk.register();
-                        let node = graph.instance(*instance).ok_or_else(|| vec![thunk.error(declaration, "family instance has no execution node")])?;
-                        thunk.emit(declaration, O::Demand { dst: value, node });
-                        variants.push((arguments.clone(), value));
-                    }
-                    thunk.emit(declaration, O::MakeFunctionFamily { dst: result, identity, variants });
-                }
-            }
-            thunk.emit(declaration, O::Return { src: result });
-            let function = emitter.register();
-            emitter.emit(declaration, O::MakeClosure { dst: function, function: Box::new(thunk.function), captures: vec![] });
-            emitter.emit(declaration, O::InstallTask { node: graph.global(global).expect("family node"), src: function });
-            continue;
-        }
         if matches!(
             mir.hir[mir.symbols[global.index()].declarations.last().expect("global declaration").index()].kind,
             HirKind::Binding { kind: BindingKind::Native | BindingKind::Decl, .. }
@@ -632,24 +600,11 @@ impl<'a> Emitter<'a> {
                     && let Some(node_id) = self.graph.instance(instance)
                 {
                     let dst = self.register();
-                    let selected = &self.mir.generic_instances[instance.index()];
-                    if self.mir.function_families[selected.symbol.index()].is_some() {
-                        let family = self.register();
-                        let arguments = self.mir.symbol_generics[selected.symbol.index()].iter().map(|parameter|
-                            selected.arguments.iter().find(|(p, _)| p == parameter).expect("closed instance parameter").1).collect();
-                        self.emit(node, O::Demand { dst: family, node: self.graph.global(selected.symbol).expect("family execution node") });
-                        self.emit(node, O::SpecializeFunction { dst, family, arguments });
-                    } else {
-                        self.emit(node, O::Demand { dst, node: node_id });
-                    }
+                    self.emit(node, O::Demand { dst, node: node_id });
                     return Ok(dst);
                 }
                 if matches!(self.mir.generic_references[node.index()], Some(GenericReference::Scheme { .. } | GenericReference::Quantified { .. })) {
-                    if let Some(value) = self.lookup(symbol) { return Ok(value); }
-                    let node_id = self.graph.global(symbol).ok_or_else(|| self.error(node, "quantified function has no family execution node"))?;
-                    let dst = self.register();
-                    self.emit(node, O::Demand { dst, node: node_id });
-                    return Ok(dst);
+                    return Err(self.error(node, "static function template has no runtime value"));
                 }
                 if matches!(self.mir.generic_references[node.index()], Some(GenericReference::Instance(_))) {
                     return Err(self.error(node, "generic reference has no executable MIR instance"));
@@ -1014,7 +969,9 @@ impl<'a> Emitter<'a> {
             } => {
                 if let Some(symbol) = self.mir.hir_symbols[node.index()]
                     && !self.mir.symbol_generics[symbol.index()].is_empty()
-                    && self.graph.global(symbol).is_none() {
+                    && !self.mir.symbols[symbol.index()].module.is_some_and(|module|
+                        self.mir.symbols[symbol.index()].scope.is_some()
+                            && self.mir.symbols[symbol.index()].scope == self.mir.module_scopes[module.index()]) {
                     return self.local_instance_binding(node, symbol);
                 }
                 let value = self.expression(self.child(node, Role::Value))?;
@@ -1218,9 +1175,7 @@ impl<'a> Emitter<'a> {
             HirKind::Interpreter => self.interpreter(node)?,
             HirKind::Closure => {
                 if matches!(self.mir.types[self.ty(node)?.index()].constructor, TypeConstructor::Quantified(_)) {
-                    let dst = self.register();
-                    self.emit(node, O::MakeFunctionFamily { dst, identity: None, variants: vec![] });
-                    return Ok(dst);
+                    return Err(self.error(node, "static function template has no runtime value"));
                 }
                 let parameters = self.children(node, Role::Parameter);
                 let mut nested =
