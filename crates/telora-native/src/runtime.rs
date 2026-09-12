@@ -189,6 +189,7 @@ pub struct Runtime {
     type_info: Vec<reflection::TypeInfo>,
     property_presence: std::collections::BTreeSet<(TypeId, TypeId)>,
     demands: std::collections::BTreeMap<DemandKey, demands::DemandSlot>,
+    interpreter_adapters: std::collections::BTreeMap<(u64, Vec<TypeId>), Value>,
     demand_keys: Vec<DemandKey>,
     code_plan: Option<u64>,
     identity: u64,
@@ -412,6 +413,7 @@ impl Runtime {
                 .map(|p| Ok((TypeId::try_from(p.owner)?, TypeId::try_from(p.property)?)))
                 .collect::<Result<_>>()?,
             demands: std::collections::BTreeMap::new(),
+            interpreter_adapters: std::collections::BTreeMap::new(),
             demand_keys: vec![],
             code_plan: None,
             identity,

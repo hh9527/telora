@@ -4,6 +4,42 @@ use crate::test_support::{graph, value_type};
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
 #[test]
+fn interpreter_adapter_identity_survives_publication() {
+    let mir = graph("export def integer = 1; export def witness = Int.type; export def adapter: Fn(Int) -> Int = fn(value) {value}; export def factory: Fn(TypeOf(Int)) -> Fn(Int) -> Int = fn(witness) {fn(value) {value}};");
+    let sealed = mir.seal().unwrap();
+    let mut rt = Runtime::new(&sealed).unwrap();
+    let factory_ty = value_type(&mir, "factory");
+    let adapter_ty = value_type(&mir, "adapter");
+    let witness = rt.metadata(value_type(&mir, "witness"), [1, 1, 2], value_type(&mir, "integer")).unwrap();
+    let first = rt.closure(factory_ty, [1, 3, 4], 10, &[]).unwrap();
+    let second = rt.closure(factory_ty, [1, 3, 4], 10, &[]).unwrap();
+    let adapter = rt.interpreter_adapter(&first, &[witness.clone()], adapter_ty, 11, [1, 5, 6]).unwrap();
+    let before = rt.requested_allocation_bytes();
+    let relocated_witness = rt.metadata(witness.type_id(), [1, 7, 8], value_type(&mir, "integer")).unwrap();
+    let repeated = rt.interpreter_adapter(&first, &[relocated_witness], adapter_ty, 11, [1, 9, 10]).unwrap();
+    assert_eq!(adapter.words(), repeated.words());
+    assert_eq!(rt.requested_allocation_bytes(), before);
+    let distinct = rt.interpreter_adapter(&second, &[witness.clone()], adapter_ty, 11, [1, 5, 6]).unwrap();
+    assert!(!rt.equal(&adapter, &distinct).unwrap());
+    assert!(rt.interpreter_adapter(&first, &[], adapter_ty, 11, [0; 3]).is_err());
+    assert!(rt.interpreter_adapter(&first, &[witness.clone()], adapter_ty, 12, [0; 3]).is_err());
+    let roots = rt.publish(&[first, second, witness, adapter, distinct]).unwrap();
+    let before = rt.requested_allocation_bytes();
+    let repeated = rt.interpreter_adapter(&roots[0], &[roots[2].clone()], adapter_ty, 11, [0; 3]).unwrap();
+    assert_eq!(repeated.words(), roots[3].words());
+    assert_eq!(rt.requested_allocation_bytes(), before);
+    assert_eq!(rt.capture(&repeated, 0).unwrap().words(), roots[0].words());
+    assert!(!rt.equal(&repeated, &roots[4]).unwrap());
+    let fresh = rt.closure(factory_ty, [0; 3], 10, &[]).unwrap();
+    let before = rt.requested_allocation_bytes();
+    let count = rt.work.environments.entries.len();
+    let mut rt = rt.with_allocation_limit(before);
+    assert!(rt.interpreter_adapter(&fresh, &[roots[2].clone()], adapter_ty, 11, [0; 3]).is_err());
+    assert_eq!(rt.work.environments.entries.len(), count);
+    assert_eq!(rt.interpreter_adapters.len(), 2);
+}
+
+#[test]
 fn array_spread_respects_slices_origins_and_preallocates_within_budget() {
     let mir = graph(SOURCE);
     let sealed = mir.seal().unwrap();

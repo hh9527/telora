@@ -22,7 +22,7 @@ impl Runtime {
         let demand_roots = self.demand_roots()?;
         let mut copies = Copies::default();
         let mut result = Vec::with_capacity(roots.len());
-        for root in roots.iter().chain(&demand_roots) {
+        for root in roots.iter().chain(&demand_roots).chain(self.interpreter_adapters.values()) {
             self.validate(root.as_ref(), root.type_id())?;
             let mut words = root.words.to_vec();
             self.copy_value(&mut words, &mut target, &mut copies, 0)?;
@@ -41,6 +41,14 @@ impl Runtime {
         self.work = Tables::default();
         self.identity = identity; // all escaped initialize descriptors become stale
         self.published = true;
+        let adapters = result.split_off(roots.len() + demand_roots.len());
+        let old_adapters = std::mem::take(&mut self.interpreter_adapters);
+        for ((_, witnesses), adapter) in old_adapters.into_keys().zip(adapters) {
+            // Capture zero is the factory, relocated through the same Copies
+            // map as all exported roots and the adapter's other captures.
+            let factory = self.capture(&adapter, 0).expect("validated adapter factory");
+            self.interpreter_adapters.insert((factory.words()[2], witnesses), adapter);
+        }
         let demands = result.split_off(roots.len());
         self.publish_demands(demands);
         Ok(result)

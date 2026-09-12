@@ -117,6 +117,8 @@ Bytes 字面量现已直接 lowering 为只读字节常量与 native Bytes 表�
 
 Interpreter 的封闭适配器计划仍需接通，不能把现有表达式覆盖视为完整。
 
+Interpreter 的运行时身份缓存已独立实现：按 factory 的函数/环境身份及 represented TypeId 序列缓存 adapter，忽略调用来源；adapter 捕获 factory 描述符与见证，不执行 operand。发布时与导出项共用同一对象重定位表，并用重定位后的 factory 重建缓存键，保证 entry 重复调用继续命中初始化实例。缓存命中不增加堆分配，新条目先检查预算；测试覆盖来源变化、不同 factory、错误签名、发布后复用和预算拒绝。该模块尚未接入 interpreter codegen，不能据此宣称 CLI 支持 interpreter!。
+
 `.cast!` 已消费封闭目标类型与 checker 实例生成调用包；运行时先验证整个输入的表示，再转换并执行声明检查，不调用 encode/decode，也不重新推导类型。支持 Record/Dict、Array、Tuple/Newtype、Option/Result 和 Unchecked 到 owner；拒绝不同 nominal 身份以及数值隐式转换。未改变的子对象保留 backing 与来源。结构不匹配返回 Err(String)，checker 失败只产生一次执行诊断。
 
 CLI 语言资产覆盖 eval/eval-with 的 19 项类型身份与转换检查，并将解包后的容器数据与默认后端比较。默认后端对 cast 容器写入类型标记、对普通容器不总是写入相同标记，其相等比较会受此影响；因此不以该差异规定 native 的相等语义。默认运行时代码保持不变。
