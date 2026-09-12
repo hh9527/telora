@@ -1,4 +1,26 @@
 #[test]
+fn native_warnings_do_not_block_publication_or_entry_output() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/warnings.telora")).unwrap();
+    let output = telora(&cwd).args(["check", "--native", "@src/main"]).output().unwrap();
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let records = String::from_utf8(output.stdout).unwrap().lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+    let warnings = records.iter().filter(|record| record["severity"] == "warning").collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1, "{records:?}");
+    assert_eq!(warnings[0]["message"], "initialization warning");
+    assert_eq!(warnings[0]["labels"].as_array().unwrap().len(), 2);
+    for (command, export, expected) in [("eval", "answer", 42), ("eval-with", "main", 43)] {
+        let output = telora(&cwd).args([command, "--native", &format!("@src/main:{export}")]).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), serde_json::json!(expected));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("initialization warning"), "{stderr}");
+        if command == "eval-with" { assert!(stderr.contains("entry warning"), "{stderr}"); }
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_data_depth_limit_applies_before_materialization() {
     let cwd = fixture();
     let input = format!("{}0{}", "[".repeat(256), "]".repeat(256));

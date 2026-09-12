@@ -1297,7 +1297,7 @@ impl Lower<'_, '_> {
                 self.return_value(expression, &value)?;
                 Err(EmitError::Diverged)
             }
-            HirKind::Raise(action @ (telora_core::ast::BlameAction::Build | telora_core::ast::BlameAction::Raise)) => {
+            HirKind::Raise(action @ (telora_core::ast::BlameAction::Build | telora_core::ast::BlameAction::Raise | telora_core::ast::BlameAction::Warn)) => {
                 let message = child(self.mir, node, Role::Value)?;
                 let mut values = self.expression(message, depth + 1)?;
                 for edge in &syntax.children {
@@ -1307,6 +1307,8 @@ impl Lower<'_, '_> {
                 let data = self.stack_words(&values)?;
                 if action == telora_core::ast::BlameAction::Build {
                     self.object(node, helpers::BLAME, key, data, count)
+                } else if action == telora_core::ast::BlameAction::Warn {
+                    self.object(node, helpers::WARN, key, data, count)
                 } else {
                     self.emit_failure(node, helpers::RAISE, data, count)?;
                     Err(EmitError::Diverged)

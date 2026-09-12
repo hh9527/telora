@@ -43,6 +43,7 @@ pub(crate) const ARRAY_GET: u32 = 37;
 pub(crate) const ARRAY_BUILD: u32 = 38;
 pub(crate) const BLAME: u32 = 39;
 pub(crate) const RAISE: u32 = 40;
+pub(crate) const WARN: u32 = 41;
 #[path = "callbacks.rs"]
 mod callbacks;
 
@@ -81,7 +82,7 @@ pub(crate) unsafe extern "C" fn object(
     if operation == FOLD {
         return unsafe { callbacks::fold(context, TypeId(ty), data, out, origin, count) };
     }
-    if operation == FAIL_VALUES || operation == RAISE {
+    if operation == FAIL_VALUES || operation == RAISE || operation == WARN {
         return context.boundary(|context| {
             let result = (|| -> Result<(String, Vec<Origin>)> {
                 let rt = context.runtime()?;
@@ -100,7 +101,7 @@ pub(crate) unsafe extern "C" fn object(
                     };
                     rt.validate(value, ty)?;
                     if message.is_none() {
-                        if operation == RAISE && rt.layout(ty)?.kind == Kind::Blame {
+                        if operation != FAIL_VALUES && rt.layout(ty)?.kind == Kind::Blame {
                             let (text, stored) = rt.blame_diagnostic(&value.to_owned())?;
                             message = Some(text);
                             subjects = stored;
@@ -117,6 +118,17 @@ pub(crate) unsafe extern "C" fn object(
                 Ok((message.ok_or("diagnostic message missing")?, subjects))
             })();
             match result {
+                Ok((message, subjects)) if operation == WARN => {
+                    let result = context.runtime_mut().and_then(|rt| rt.named_variant(TypeId(ty), origin.words(), "None", None));
+                    match result {
+                        Ok(value) => {
+                            unsafe { std::ptr::copy_nonoverlapping(value.words().as_ptr(), out, value.words().len()); }
+                            context.warn(message, origin, subjects);
+                            Status::Success
+                        }
+                        Err(message) => context.fail_at(message, origin),
+                    }
+                }
                 Ok((message, subjects)) => context.fail_with_subjects(message, origin, subjects),
                 Err(message) => context.fail_at(message, origin),
             }

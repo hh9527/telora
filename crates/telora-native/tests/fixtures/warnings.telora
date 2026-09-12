@@ -1,0 +1,14 @@
+import "std/entry" as entry;
+import "std/value" {Value};
+
+def subject = 7;
+def warning: Option(Int) = warn!(blame!("initialization warning", subject));
+def issue = blame!("entry warning", subject);
+export def answer = match warning { None => Value.Int(42), Some(value) => fail!("warn returned Some") };
+export def main = entry.main(
+    { sources: [], envs: [], args: False },
+    fn(ctx) {
+        let warning: Option(Int) = warn!(issue);
+        match warning { None => Value.Int(43), Some(value) => fail!("warn returned Some") }
+    },
+);

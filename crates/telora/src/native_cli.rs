@@ -59,7 +59,7 @@ impl Session {
         let result = self.compiled.initialize(&mut self.context);
         let mut diagnostics = self.diagnostics(sources);
         if let Err(message) = result {
-            if diagnostics.is_empty() {
+            if !diagnostics.iter().any(|d| d.severity == Severity::Error) {
                 diagnostics.push(error(message));
             }
         }
@@ -83,6 +83,7 @@ impl Session {
                     ),
                     None => error(&diagnostic.message),
                 };
+                result.severity = diagnostic.severity;
                 for (index, subject) in diagnostic.subjects.iter().enumerate() {
                     if *subject == diagnostic.origin {
                         continue;
@@ -146,13 +147,14 @@ pub(crate) fn eval(context: std::path::PathBuf, module: &str, export: &str) -> R
     }
     let mut session = Session::compile(&sealed)?;
     let diagnostics = session.initialize(&inventory, &mut mir.sources);
-    if !diagnostics.is_empty() {
+    if diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(diagnostics
             .iter()
             .map(|d| mir.sources.render(d))
             .collect::<Vec<_>>()
             .join("\n"));
     }
+    for diagnostic in &diagnostics { eprintln!("{}", mir.sources.render(diagnostic)); }
     let value = session.compiled.export(&mut session.context, symbol)?;
     let text = session
         .context
@@ -263,13 +265,15 @@ pub(crate) fn eval_with(
     );
     let mut session = Session::compile(&sealed)?;
     let diagnostics = session.initialize(&inventory, &mut mir.sources);
-    if !diagnostics.is_empty() {
+    if diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(diagnostics
             .iter()
             .map(|d| mir.sources.render(d))
             .collect::<Vec<_>>()
             .join("\n"));
     }
+    for diagnostic in &diagnostics { eprintln!("{}", mir.sources.render(diagnostic)); }
+    let initial_diagnostic_count = session.context.diagnostics().len();
     let entry = session.compiled.export(&mut session.context, symbol)?;
     let rt = session.context.runtime()?;
     let config = rt.field(&entry, config_index)?.to_owned();
@@ -362,17 +366,19 @@ pub(crate) fn eval_with(
         .compiled
         .call_closure(&mut session.context, &evaluate, &[argument])
         .map_err(|e| {
-            if session.context.diagnostics().is_empty() {
+            if !session.context.diagnostics().iter().any(|d| d.severity == Severity::Error) {
                 e
             } else {
                 session
                     .diagnostics(&mir.sources)
                     .iter()
+                    .skip(initial_diagnostic_count)
                     .map(|d| mir.sources.render(d))
                     .collect::<Vec<_>>()
                     .join("\n")
             }
         })?;
+    for diagnostic in session.diagnostics(&mir.sources).iter().skip(initial_diagnostic_count) { eprintln!("{}", mir.sources.render(diagnostic)); }
     println!(
         "{}",
         session

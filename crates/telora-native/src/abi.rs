@@ -336,6 +336,7 @@ pub struct CallContext {
 }
 #[derive(Debug)]
 pub struct NativeDiagnostic {
+    pub severity: telora_core::source::Severity,
     pub message: String,
     pub origin: Origin,
     pub subjects: Vec<Origin>,
@@ -411,11 +412,15 @@ impl CallContext {
         subjects: Vec<Origin>,
     ) -> Status {
         self.diagnostics.push(NativeDiagnostic {
+            severity: telora_core::source::Severity::Error,
             message: message.into(),
             origin,
             subjects,
         });
         Status::Failed
+    }
+    pub(crate) fn warn(&mut self, message: String, origin: Origin, subjects: Vec<Origin>) {
+        self.diagnostics.push(NativeDiagnostic { severity: telora_core::source::Severity::Warning, message, origin, subjects });
     }
     /// Host helper panic boundary. Propagated Failed need not add a diagnostic.
     pub fn boundary(&mut self, call: impl FnOnce(&mut Self) -> Status) -> Status {
