@@ -20,6 +20,15 @@ pub(crate) enum Node {
     String(String),
     Array(Vec<u32>),
     Object(Vec<(String, u32)>),
+    Temporal(TemporalKind, String),
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum TemporalKind {
+    LocalDate,
+    LocalTime,
+    LocalDateTime,
+    OffsetDateTime,
 }
 
 #[derive(Debug)]

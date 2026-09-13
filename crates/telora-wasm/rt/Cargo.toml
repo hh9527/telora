@@ -13,6 +13,7 @@ crate-type = ["staticlib"]
 [dependencies]
 serde = { version = "1", default-features = false, features = ["alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc", "raw_value"] }
+toml = { version = "=0.9.12", default-features = false, features = ["parse"] }
 telora-sha256 = { path = "../../telora-sha256" }
 regex-automata = { version = "=0.4.16", default-features = false, features = ["alloc", "syntax", "nfa-pikevm", "unicode"] }
 regex-syntax = { version = "0.8", default-features = false, features = ["unicode"] }

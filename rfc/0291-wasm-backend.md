@@ -961,3 +961,19 @@ Array/Dict、Option、Tuple/Unit、Record/newtype、enum 与 Result 等
 当前分派为生成代码中的 TypeId 分支，定义对象装配尚未专门优化；
 本轮不做性能结论。YAML/TOML、更多边界审计、独立发布、浏览器和
 最终性能验收仍待推进，#186 尚未完成。
+
+## TOML 解析
+
+std/toml.parse_raw 已接入 Rust RT 的 no_std toml 解析器，固定输出
+后序节点表。JSON/TOML 共用 Value 装配模块；节点表新增四种时间
+标签，仍不携带语言 TypeId。时间文本取自解析器保留的原始范围，
+保留超过纳秒的小数精度，统一日期时间分隔符和零时区表示。
+
+Telora 的有限浮点、有效日历日期和完整时分秒约束在适配层验证。
+84 项 Wasm 库测试通过，语言用例覆盖表、表数组、标量、时间、重复键和错误来源；CLI 默认/
+Wasm 对照通过。RT 锁定 toml 0.9.12 的 parse-only 配置，不增加
+host 回调，外部产物 ABI 仍为 6。
+
+这不代表 TOML 全量语法/诊断一致性已验收：依赖解析器支持 TOML
+1.1，仍需与既有解析器逐项审计。YAML 和此前发布、浏览器、性能
+验收任务继续推进。

@@ -1,4 +1,4 @@
-//! Linear materialization of a postorder parse plan into sealed Value layouts.
+//! JSON/TOML postorder plans materialize into sealed Value layouts.
 use crate::{abi::*, emit::Emitter};
 use telora_core::mir::{TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
@@ -40,7 +40,7 @@ impl Emitter<'_> {
         ]);
         id
     }
-    pub fn json_parse_native(&mut self) -> Result<u32, String> {
+    pub fn data_parse_native(&mut self, parser: u32) -> Result<u32, String> {
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
         if args.len() != 3
@@ -48,16 +48,16 @@ impl Emitter<'_> {
             || self.mir.types[args[1].index()].constructor != T::String
             || self.mir.types[args[2].index()].constructor != T::Result
         {
-            return Err("Wasm: JSON parse signature mismatch".into());
+            return Err("Wasm: data parse signature mismatch".into());
         }
         let target = self.mir.types[args[0].index()].arguments[0];
         let results = self.mir.types[args[2].index()].arguments.clone();
         if results[0] != target {
-            return Err("Wasm: JSON parse result mismatch".into());
+            return Err("Wasm: data parse result mismatch".into());
         }
         let input = self.parameter(1);
         let packet = self.local(ValType::I32);
-        self.extend([I::LocalGet(input), I::Call(JSON_PARSE), I::LocalSet(packet)]);
+        self.extend([I::LocalGet(input), I::Call(parser), I::LocalSet(packet)]);
         let error = self.read32(packet, 12);
         self.extend([I::LocalGet(error), I::If(BlockType::Empty)]);
         let message = self.text_span_value(args[1], error)?;
@@ -80,7 +80,18 @@ impl Emitter<'_> {
         let kind = self.read32(row, 0);
         let value = self.local(ValType::I32);
         for (code, name) in [
-            "None", "True", "False", "Int", "Float", "String", "Array", "Object",
+            "None",
+            "True",
+            "False",
+            "Int",
+            "Float",
+            "String",
+            "Array",
+            "Object",
+            "LocalDate",
+            "LocalTime",
+            "LocalDateTime",
+            "OffsetDateTime",
         ]
         .iter()
         .enumerate()
@@ -111,7 +122,7 @@ impl Emitter<'_> {
                         ]);
                         p
                     }
-                    5 => {
+                    5 | 8..=11 => {
                         let span = self.local(ValType::I32);
                         self.extend([
                             I::LocalGet(row),

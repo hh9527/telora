@@ -26,6 +26,7 @@ mod codec_properties;
 mod codec_records;
 mod codegen;
 mod data_input;
+mod data_parse_ops;
 pub mod diagnostic_output;
 mod diagnostics;
 mod dict_build;
@@ -53,7 +54,6 @@ mod input;
 mod input_heap;
 mod input_types;
 mod json_ops;
-mod json_parse_ops;
 mod link;
 mod natives;
 pub mod object;
@@ -94,4 +94,5 @@ mod json_text_tests;
 
 #[cfg(test)]
 #[path = "../rt/json_parse.rs"]
+#[allow(dead_code)] // Temporal nodes are exercised by the Wasm TOML tests.
 mod json_parse_tests;

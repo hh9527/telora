@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn toml_parse_rejection_preserves_original_input_location() {
+    let source = include_str!("../../tests/fixtures/toml-parse.telora");
+    let bytes = compile_export(source, "rejected").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert!(result["message"].as_str().unwrap().contains("duplicate"));
+    assert_eq!(
+        result["labels"][1]["location"]["start"],
+        source.find("\"duplicate=1").unwrap()
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn toml_parse_uses_closed_values_and_preserves_temporal_precision() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/toml-parse.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 9]));
+}
+
+#[test]
 fn schema_rejects_unsupported_types_and_invalid_property_contracts() {
     let bytes = compile(include_str!("../../tests/fixtures/schema-errors.telora")).unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();

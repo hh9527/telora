@@ -9,6 +9,7 @@ mod json_text;
 mod json_writer;
 mod json_parse;
 mod data_parse;
+mod toml_parse;
 
 #[allow(dead_code)]
 mod abi;

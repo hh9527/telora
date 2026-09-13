@@ -3,7 +3,7 @@
 //! Row (16 bytes): {kind:u32, reserved:u32, payload:u64}.
 //! Payload is scalar bits or {pointer:u32,count:u32}. Object entries are
 //! {key_pointer,key_length,child_id}; Array entries are child IDs.
-use crate::json_parse::{Node, Plan};
+use crate::json_parse::{Node, Plan, TemporalKind};
 use alloc::{boxed::Box, string::String};
 
 unsafe fn put(pointer: u32, offset: u32, value: u32) {
@@ -21,12 +21,21 @@ fn string_bytes(value: String) -> (u32, u32) {
 /// supplies all final type identities, headers, and container layouts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_json_parse(input: u32) -> u32 {
+    unsafe { export_plan(Plan::parse(crate::text::text(input))) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_toml_parse(input: u32) -> u32 {
+    unsafe { export_plan(crate::toml_parse::parse(crate::text::text(input))) }
+}
+
+unsafe fn export_plan(parsed: Result<Plan, String>) -> u32 {
     unsafe {
         let result = crate::telora_alloc(16);
         for offset in [0, 4, 8, 12] {
             put(result, offset, 0);
         }
-        let plan = match Plan::parse(crate::text::text(input)) {
+        let plan = match parsed {
             Ok(plan) => plan,
             Err(message) => {
                 let span = crate::format::render_with(|out| out.write_str(&message));
@@ -50,6 +59,16 @@ pub unsafe extern "C" fn telora_json_parse(input: u32) -> u32 {
                 Node::String(value) => {
                     let (pointer, length) = string_bytes(value);
                     (5, u64::from(pointer) | (u64::from(length) << 32))
+                }
+                Node::Temporal(kind, value) => {
+                    let kind = match kind {
+                        TemporalKind::LocalDate => 8,
+                        TemporalKind::LocalTime => 9,
+                        TemporalKind::LocalDateTime => 10,
+                        TemporalKind::OffsetDateTime => 11,
+                    };
+                    let (pointer, length) = string_bytes(value);
+                    (kind, u64::from(pointer) | (u64::from(length) << 32))
                 }
                 Node::Array(children) => {
                     let children = Box::leak(children.into_boxed_slice());

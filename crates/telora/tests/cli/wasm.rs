@@ -33,6 +33,11 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
+            "toml-parse",
+            include_str!("../../../telora-wasm/tests/fixtures/toml-parse.telora"),
+            serde_json::json!(vec![true; 9]),
+        ),
+        (
             "schema-structural",
             include_str!("../../../telora-wasm/tests/fixtures/schema-structural.telora"),
             {

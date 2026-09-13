@@ -1,0 +1,23 @@
+import "std/toml" as toml;
+import "std/value" {Value};
+import "std/array" as array;
+import "std/_rt" as rt;
+export def inspect = fn() {
+    [toml.parse("name = 'Ada'\ncount = 0x2a\nratio = 1.5\nenabled = true\n") == Ok(Value.Object({name:Value.String("Ada"),count:Value.Int(42),ratio:Value.Float(1.5),enabled:Value.True})),
+     toml.parse("[server]\nhost='localhost'\nports=[80,443]\n") == Ok(Value.Object({server:Value.Object({host:Value.String("localhost"),ports:Value.Array([Value.Int(80),Value.Int(443)])})})),
+     toml.parse("[[items]]\nn=1\n[[items]]\nn=2\n") == Ok(Value.Object({items:Value.Array([Value.Object({n:Value.Int(1)}),Value.Object({n:Value.Int(2)})])})),
+     toml.parse("day=2024-02-29\ntime=12:34:56.123456789123000\nlocal=2024-02-29t12:34:56\noffset=2024-02-29 12:34:56+00:00\n") == Ok(Value.Object({day:Value.LocalDate("2024-02-29"),time:Value.LocalTime("12:34:56.123456789123000"),local:Value.LocalDateTime("2024-02-29T12:34:56"),offset:Value.OffsetDateTime("2024-02-29T12:34:56Z")})),
+     toml.parse("") == Ok(Value.Object({})),
+     match toml.parse("a=1\na=2\n") {Err(_) => True,Ok(_) => False},
+     match toml.parse("a=inf\n") {Err(_) => True,Ok(_) => False},
+     match toml.parse("a=2024-02-30\n") {Err(_) => True,Ok(_) => False},
+     match toml.parse("a=12:34\n") {Err(_) => True,Ok(_) => False}]
+};
+export def answer = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));
+export def rejected = fn() {
+    let input = "duplicate=1\nduplicate=2\n";
+    match rt.with_diagnostics(fn(text:String) {unwrap!(toml.parse(text))})(input) {
+        Err(reports) => reports[0],
+        Ok(_) => fail!("expected TOML rejection"),
+    }
+};
