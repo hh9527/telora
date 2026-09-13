@@ -1,0 +1,19 @@
+import "std/codec" as codec;
+import "std/value" {Value};
+import "std/array" as array;
+
+export def inspect = fn() {
+    let success: Result(Int, String) = Ok(42);
+    let failure: Result(Int, String) = Err("no");
+    let continued: FoldControl(Int, String) = FoldControl.Continue(7);
+    let completed: FoldControl(Int, String) = FoldControl.Break("done");
+    [codec.encode(Value.type, success) == Value.Object({Ok: Value.Int(42)}),
+     codec.decode((Result(Int, String)).type, codec.encode(Value.type, success)) == Ok(success),
+     codec.decode((Result(Int, String)).type, codec.encode(Value.type, failure)) == Ok(failure),
+     codec.decode((FoldControl(Int, String)).type, codec.encode(Value.type, continued)) == Ok(continued),
+     codec.decode((FoldControl(Int, String)).type, codec.encode(Value.type, completed)) == Ok(completed),
+     codec.encode(Value.type, PropertyTarget.Type) == Value.String("Type"),
+     codec.decode(PropertyTarget.type, Value.String("Type")) == Ok(PropertyTarget.Type),
+     codec.decode((Array(Result(Int, String))).type, Value.Array([Value.Object({Ok: Value.Int(42)})])) == Ok([success])]
+};
+export def answer = Value.Array(array.map(inspect(), fn(value) {if value {Value.True} else {Value.False}}));

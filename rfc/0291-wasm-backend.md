@@ -1180,3 +1180,11 @@ Wasmi、Node 和真实 Chromium 已验证同一文件的两万次直接、相互
 94 项常规库测试和 15 项 Wasm CLI 回归通过。浏览器测试服务已停止。
 下一步继续标准库类型组合审计、完整发布物验收及分阶段性能/内存观察；
 #186 暂不标记完成。
+
+## 内置枚举 codec 组合补查
+
+补齐 Result、FoldControl 和 PropertyTarget 的解码，以及 PropertyTarget
+编码。它们复用 sealed 布局中的变体及 payload 类型生成专门化 codec，
+不增加 Rust RT 模板接口或运行时类型猜测。Option 保持既有 null 编码。
+新增语言资产验证成功/失败分支、无 payload 变体及嵌套 Array(Result)
+的八项断言；38 项 JSON/codec 相关库测试通过。

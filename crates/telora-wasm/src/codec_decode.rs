@@ -132,6 +132,12 @@ impl Emitter<'_> {
             self.copy(some, 0, input, 12);
             return Ok(some);
         }
+        if matches!(
+            self.mir.types[target.index()].constructor,
+            T::Result | T::FoldControl | T::PropertyTarget
+        ) {
+            return self.codec_decode_enum(source, target, input, false);
+        }
         let expected = match self.mir.types[target.index()].constructor {
             T::Int => "Int",
             T::Float => "Float",

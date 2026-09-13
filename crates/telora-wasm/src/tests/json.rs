@@ -1,6 +1,14 @@
 use super::*;
 
 #[test]
+fn builtin_algebraic_types_use_their_closed_codec_variants() {
+    let bytes = compile(include_str!("../../tests/fixtures/codec-builtins.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.eval().unwrap(), serde_json::json!(vec![true; 8]));
+}
+
+#[test]
 fn yaml_parse_preserves_telora_scalars_aliases_merges_and_binary() {
     let bytes = compile_export(
         include_str!("../../tests/fixtures/yaml-parse.telora"),

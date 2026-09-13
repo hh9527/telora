@@ -147,7 +147,7 @@ impl Emitter<'_> {
             self.extend([I::LocalGet(absent), I::LocalSet(output), I::End]);
             return Ok(output);
         }
-        if matches!(kind, T::Result | T::FoldControl) {
+        if matches!(kind, T::Result | T::FoldControl | T::PropertyTarget) {
             return self.codec_encode_enum(source, target, input);
         }
         // The codec API accepts these closed inputs, but defines a language
