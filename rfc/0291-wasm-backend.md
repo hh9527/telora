@@ -40,6 +40,26 @@ Tuple/Record 共表、Dict 有序 keys/values 双列等已有语义。native 指
 可移植执行，再逐步补齐聚合和 runtime。可复用与目标无关的静态计划，
 不强迫 native runtime 变成 Wasm 的依赖。
 
+### Rust RT 与静态链接
+
+运行时采用 Rust 源码实现并编译为 wasm32 对象文件；Telora codegen 输出
+带符号表与重定位记录的 Wasm 对象，由 wasm-ld 静态链接为单个发布模块。
+不继续把通用容器、编解码等运行时能力扩展为手写 Wasm 指令生成器。
+编译端需要链接器；最终执行端只需要 Wasm 引擎，不需要 Rust 或链接器。
+RT 与程序共享模块的 memory 和函数表，语言运算不经过 host 回调。
+
+2026-09-13：最小对象协议验证通过。examples/link-object.rs 使用
+wasm-encoder 生成 linking/reloc.CODE，调用 Rust 编译的 rt_apply，后者
+再调用生成对象导出的 telora_callback；wasm-ld 成功链接，Node 执行
+返回 42，最终模块没有 imports。Rust 探针位于
+tests/fixtures/rust-rt-probe.rs。此前 Rust RT 与 C 对象的数组回调探针
+也成功，但两项都不等同于 SealedExecutable 的完整链接支持。
+
+后续先把生成器的函数、数据、函数表引用统一改为符号重定位，明确
+Rust 栈、静态数据与分类堆的地址分配，完成闭包间接回调和分配验证，
+再将现有 runtime 逐项迁入 Rust RT。保留语言对照测试作为迁移验收，
+不保留旧手写 runtime 作为最终兼容或回退路径。
+
 ## 产物与来源
 
 落盘产物包含可执行 Wasm、类型及函数索引、必要静态数据、来源位置和
