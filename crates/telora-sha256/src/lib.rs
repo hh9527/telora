@@ -1,6 +1,7 @@
-// Pure SHA-256 state algorithm, mirrored from telora-core/src/sha256.rs.
-// No VM, host-value or old heap dependencies. Full state equality is part of
-// the existing HashState contract, including the buffered block contents.
+#![no_std]
+extern crate alloc;
+use alloc::string::String;
+
 const INITIAL: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
@@ -16,17 +17,16 @@ const ROUND: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-
 #[derive(Clone, Eq, PartialEq)]
-pub(crate) struct Context {
+pub struct Context {
     state: [u32; 8],
     block: [u8; 64],
     block_len: usize,
     byte_len: u64,
 }
 
-impl std::fmt::Debug for Context {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Context {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("HashState")
             .field("bytes", &self.byte_len)
@@ -46,7 +46,7 @@ impl Default for Context {
 }
 
 impl Context {
-    pub(crate) fn update(&mut self, mut input: &[u8]) {
+    pub fn update(&mut self, mut input: &[u8]) {
         self.byte_len = self.byte_len.wrapping_add(input.len() as u64);
         if self.block_len != 0 {
             let count = (64 - self.block_len).min(input.len());
@@ -69,7 +69,7 @@ impl Context {
         }
     }
 
-    pub(crate) fn finish(mut self) -> [u8; 32] {
+    pub fn finish(mut self) -> [u8; 32] {
         let bit_len = self.byte_len.wrapping_mul(8);
         self.block[self.block_len] = 0x80;
         self.block_len += 1;
@@ -90,7 +90,7 @@ impl Context {
     }
 }
 
-pub(crate) fn hex(input: &[u8]) -> String {
+pub fn hex(input: &[u8]) -> String {
     let mut context = Context::default();
     context.update(input);
     let digest = context.finish();
@@ -150,6 +150,7 @@ fn compress(state: &mut [u32; 8], block: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
     use sha2::{Digest, Sha256};
 
     #[test]
@@ -159,7 +160,10 @@ mod tests {
             let expected: [u8; 32] = Sha256::digest(&input).into();
             for chunk in [1, 7, 31, 63, 64, 65, 1000] {
                 let mut state = Context::default();
-                for part in input.chunks(chunk) { state.update(part); state.update(&[]); }
+                for part in input.chunks(chunk) {
+                    state.update(part);
+                    state.update(&[]);
+                }
                 assert_eq!(state, state.clone());
                 assert_eq!(state.finish(), expected, "len={len}, chunk={chunk}");
             }
@@ -180,4 +184,3 @@ mod tests {
         assert_ne!(direct, buffered);
     }
 }
-

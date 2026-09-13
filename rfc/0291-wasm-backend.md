@@ -738,3 +738,21 @@ prepare 和实际解析共用捕获契约生成逻辑，因此手工构造的 Pa
 字段错误路径和无能力类型。独立 Node 重载同一产物，8 项检查通过且
 零 imports。该节点接通结构解析；其余 codec、数据格式、hash 等标准库
 及最终发布/浏览器/性能验收仍待完成。本轮没有重复性能基准。
+
+## HashState 固定操作
+
+std/hash 全部操作及状态相等比较已接通。SHA-256 纯算法从 native 的
+原实现抽为独立 no_std crate telora-sha256，native 与 Wasm 共用，
+不让 Wasm 依赖 native runtime。保留完整状态（包括缓冲块）相等语义，
+不能用最终摘要相等替代；分块/填充边界对照测试随算法迁移。
+
+RT HashTable 保存固定状态，update 复制状态到新槽位，finish 不修改
+原状态。协议保留 telora.hash 前缀、类型标签、长度及整数大端编码。
+生成代码只绑定 String/Bytes/Int/HashState 的固定 ABI。新增表使 ABI
+升到 6，浏览器 transport 同步；旧实验版本明确拒绝。
+
+验证：共享算法 2 项测试、native 27 项库测试、Wasm 41 项库测试、
+完整 CLI 97 项测试通过。12 项 hash 对照覆盖标准摘要、状态分支、
+类型/分段区别、初始化后重复调用及不可变性。独立 Node 重载同一
+产物，12 项检查通过且零 imports；本轮未重做实际浏览器和性能基准。
+codec、数据格式及最终发布/浏览器/性能验收继续推进。

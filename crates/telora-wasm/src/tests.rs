@@ -7,6 +7,7 @@ use telora_core::{
 mod dynamic;
 mod equality;
 mod format;
+mod hash;
 mod records;
 mod reflection;
 mod regex;

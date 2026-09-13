@@ -49,6 +49,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         ("telora_template_prepare", 0),
         ("telora_member_message", 3),
         ("telora_regex", 3),
+        ("telora_hash", 3),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }

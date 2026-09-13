@@ -2,6 +2,7 @@ use std::{env, path::PathBuf, process::Command};
 
 fn main() {
     println!("cargo:rerun-if-changed=rt");
+    println!("cargo:rerun-if-changed=../telora-sha256");
     println!("cargo:rerun-if-env-changed=TELORA_WASM_LD");
     let rustc = env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
     let output_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());

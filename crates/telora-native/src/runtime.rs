@@ -738,7 +738,7 @@ mod reflection;
 mod schema;
 mod path;
 mod hash;
-mod sha256;
+use telora_sha256 as sha256;
 mod diagnostics;
 mod equality;
 mod test_description;
