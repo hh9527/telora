@@ -853,3 +853,8 @@ untagged、Parse/Display 桥接及 decode 等仍未实现，继续推进。
 enum 的 rename_all 已复用同一 property demand 路径。转换只改变
 外部名称，不改变封闭 variant 索引；名称碰撞产生一次可捕获诊断。
 64 项 Wasm 库测试通过。untagged、Parse/Display 和 decode 仍待接通。
+
+untagged 编码已接通，按固定 property 槽位 demand 标记后，直接编码
+payload 或生成 null。多个无 payload 分支、与 rename_all 同时启用
+均产生可捕获诊断。66 项 Wasm 库测试通过。Parse/Display、decode 等
+剩余任务不变，尚未完成 #186。

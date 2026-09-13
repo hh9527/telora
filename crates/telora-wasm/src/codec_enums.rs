@@ -3,6 +3,47 @@ use telora_core::mir::TypeId;
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
+    pub(crate) fn codec_error(&mut self, input: u32, message: &str) -> Result<(), String> {
+        let message = self.text_as(self.key.node, self.string_type()?, message.as_bytes())?;
+        let count = self.local(ValType::I32);
+        self.extend([I::I32Const(1), I::LocalSet(count)]);
+        self.report(self.key.node, message, input, count, false);
+        Ok(())
+    }
+    pub(crate) fn codec_encode_untagged(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        input: u32,
+    ) -> Result<u32, String> {
+        let variants: Vec<_> = self.plan.layouts[source.index()]
+            .variants
+            .iter()
+            .map(|v| v.type_id)
+            .collect();
+        if variants.iter().filter(|v| v.is_none()).count() > 1 {
+            self.codec_error(input, "untagged Enum may contain at most one unit variant")?;
+            return Ok(self.local(ValType::I32));
+        }
+        let output = self.local(ValType::I32);
+        for (index, ty) in variants.iter().enumerate() {
+            self.extend([
+                I::LocalGet(input),
+                I::I32Load(memory(DATA, 2)),
+                I::I32Const(index as i32),
+                I::I32Eq,
+                I::If(BlockType::Empty),
+            ]);
+            let value = if let Some(ty) = ty {
+                let payload = self.enum_payload(source, index as u32, input)?;
+                self.codec_encode_scalar(self.plan.layouts[*ty].id(), target, payload)?
+            } else {
+                self.codec_variant(target, "None", None, input)?
+            };
+            self.extend([I::LocalGet(value), I::LocalSet(output), I::End]);
+        }
+        Ok(output)
+    }
     pub(crate) fn codec_encode_enum(
         &mut self,
         source: TypeId,

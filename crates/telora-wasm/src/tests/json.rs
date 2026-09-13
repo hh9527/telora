@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn codec_untagged_rejects_ambiguous_and_incompatible_declarations() {
+    let bytes = compile(include_str!(
+        "../../tests/fixtures/codec-untagged-errors.telora"
+    ))
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert_eq!(
+        result[0]["message"],
+        "untagged Enum may contain at most one unit variant"
+    );
+    assert_eq!(
+        result[1]["message"],
+        "rename_all is not meaningful on an untagged Enum"
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn codec_untagged_uses_payload_or_null() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-untagged.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!([null, 7, "x"])
+    );
+}
+
+#[test]
 fn codec_enum_rename_collision_is_reported_once() {
     let bytes = compile(include_str!(
         "../../tests/fixtures/codec-enum-collision.telora"

@@ -1,7 +1,7 @@
 //! Fixed metadata slots carried through the generated codec call graph.
 use crate::{abi::*, emit::Emitter};
 use telora_core::mir::{PropertySite, TypeConstructor as T, TypeId};
-use wasm_encoder::{Instruction as I, ValType};
+use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 pub(crate) const PROPERTY_FIELDS: [&str; 6] = [
     "parse_by",
@@ -13,6 +13,29 @@ pub(crate) const PROPERTY_FIELDS: [&str; 6] = [
 ];
 
 impl Emitter<'_> {
+    pub(crate) fn codec_property_value(
+        &mut self,
+        owner: TypeId,
+        slot: usize,
+    ) -> Result<u32, String> {
+        let result = self.local(ValType::I32);
+        for (&index, &key) in &self.plan.properties {
+            let property = &self.mir.properties[index];
+            if property.owner != owner || property.site != PropertySite::Type {
+                continue;
+            }
+            self.extend([
+                I::LocalGet(0),
+                I::I32Load(memory(slot as u64 * 4, 2)),
+                I::I32Const(property.property.index() as i32),
+                I::I32Eq,
+                I::If(BlockType::Empty),
+            ]);
+            let value = self.call_key(key)?;
+            self.extend([I::LocalGet(value), I::LocalSet(result), I::End]);
+        }
+        Ok(result)
+    }
     pub(crate) fn codec_property_present(&mut self, owner: TypeId, slot: usize) -> u32 {
         let result = self.local(ValType::I32);
         for property in &self.mir.properties {

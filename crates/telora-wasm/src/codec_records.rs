@@ -11,7 +11,7 @@ impl Emitter<'_> {
     ) -> Result<u32, String> {
         let is_record = matches!(&self.plan.layouts[source.index()].layout, State::Known { shape } if shape.table == Some("RecordTable"));
         let is_enum = !self.plan.layouts[source.index()].variants.is_empty();
-        for slot in [1, 2, 4, 5] {
+        for slot in [1, 2, 4] {
             if slot == 4 && (is_record || is_enum) {
                 continue;
             }
@@ -26,6 +26,16 @@ impl Emitter<'_> {
             self.extend([I::I32Const(1), I::LocalSet(count)]);
             self.report(self.key.node, message, input, count, false);
             self.emit(I::End);
+        }
+        let untagged = self.codec_property_value(source, 5)?;
+        if is_enum {
+            self.extend([I::LocalGet(untagged), I::If(BlockType::Empty)]);
+            let rename = self.codec_property_present(source, 4);
+            self.extend([I::LocalGet(rename), I::If(BlockType::Empty)]);
+            self.codec_error(input, "rename_all is not meaningful on an untagged Enum")?;
+            self.emit(I::End);
+            let result = self.codec_encode_untagged(source, target, input)?;
+            self.extend([I::LocalGet(result), I::Return, I::End]);
         }
         let layout = &self.plan.layouts[source.index()];
         if matches!(&layout.layout, State::Known { shape } if shape.table == Some("NewtypeTable")) {
