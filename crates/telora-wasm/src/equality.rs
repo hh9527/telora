@@ -90,6 +90,16 @@ impl Emitter<'_> {
             return Ok(());
         }
         match self.mir.types[ty.index()].constructor {
+            T::Dyn => {
+                self.extend([
+                    I::LocalGet(0),
+                    I::I64Load(memory(24, 3)),
+                    I::LocalGet(1),
+                    I::I64Load(memory(24, 3)),
+                    I::I64Eq,
+                ]);
+                return Ok(());
+            }
             T::Int | T::Bool | T::Type | T::TypeOf | T::Function => {
                 self.bits(0);
                 self.bits(1);

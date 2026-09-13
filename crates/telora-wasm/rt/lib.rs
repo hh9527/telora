@@ -9,6 +9,7 @@ mod path;
 mod sort;
 mod sources;
 mod tables;
+mod template;
 mod text;
 mod values;
 

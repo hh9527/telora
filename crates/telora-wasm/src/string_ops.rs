@@ -3,6 +3,45 @@ use telora_core::mir::TypeConstructor as T;
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
+    pub(crate) fn text_span_array(
+        &mut self,
+        ty: telora_core::mir::TypeId,
+        base: u32,
+        count: u32,
+    ) -> Result<u32, String> {
+        let shape = &self.mir.types[ty.index()];
+        if shape.constructor != T::Array
+            || shape.arguments.len() != 1
+            || self.mir.types[shape.arguments[0].index()].constructor != T::String
+        {
+            return Err("Wasm: text span list result is not Array(String)".into());
+        }
+        let string = shape.arguments[0];
+        let data = self.array_storage(count, 32);
+        let index = self.local(ValType::I32);
+        self.extend([
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(index),
+            I::LocalGet(count),
+            I::I32GeU,
+            I::BrIf(1),
+        ]);
+        let span = self.array_item(base, index, 8);
+        let value = self.text_span_value(string, span)?;
+        let destination = self.array_item(data, index, 32);
+        self.copy(destination, 0, value, 32);
+        self.extend([
+            I::LocalGet(index),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(index),
+            I::Br(0),
+            I::End,
+            I::End,
+        ]);
+        self.array_result(ty, data, count, 32)
+    }
     pub fn string_native(&mut self, name: &str) -> Result<u32, String> {
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
@@ -71,30 +110,7 @@ impl Emitter<'_> {
                 I::I32Load(memory(4, 2)),
                 I::LocalSet(count),
             ]);
-            let data = self.array_storage(count, 32);
-            let index = self.local(ValType::I32);
-            self.extend([
-                I::Block(BlockType::Empty),
-                I::Loop(BlockType::Empty),
-                I::LocalGet(index),
-                I::LocalGet(count),
-                I::I32GeU,
-                I::BrIf(1),
-            ]);
-            let span = self.array_item(base, index, 8);
-            let value = self.text_span_value(args[0], span)?;
-            let destination = self.array_item(data, index, 32);
-            self.copy(destination, 0, value, 32);
-            self.extend([
-                I::LocalGet(index),
-                I::I32Const(1),
-                I::I32Add,
-                I::LocalSet(index),
-                I::Br(0),
-                I::End,
-                I::End,
-            ]);
-            return self.array_result(output, data, count, 32);
+            return self.text_span_array(output, base, count);
         }
         let operation = [
             "join",

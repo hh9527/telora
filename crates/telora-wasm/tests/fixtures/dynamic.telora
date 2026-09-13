@@ -1,0 +1,38 @@
+import "std/dyn" as dyn;
+import "std/array" as array;
+import "std/value" { Value };
+
+type First = struct { n: Int };
+type Second = struct { n: Int };
+def first: First = { n: 42 };
+def boxed = dyn.pack(First.type, first);
+
+export def checks = fn() {
+    let integer = dyn.pack(Int.type, 42);
+    let alias = integer;
+    let other = dyn.pack(Int.type, 42);
+    let nested = dyn.pack(Dyn.type, integer);
+    let array = [1, 2, 3];
+    let callback = fn(n: Int) { n + 1 };
+    [dyn.desc(integer) == Int.type,
+     dyn.project(integer) == Some(42),
+     dyn.project_with(Float.type, integer) == None,
+     dyn.check_int(integer) == Some(42),
+     dyn.check_float(dyn.pack(Float.type, -0.0)) == Some(-0.0),
+     dyn.check_string(dyn.pack(String.type, "é🦀 long string contents")) == Some("é🦀 long string contents"),
+     dyn.check_bytes(dyn.pack(Bytes.type, b"é🦀")) == Some(b"é🦀"),
+     dyn.check_string(integer) == None,
+     dyn.project_with(().type, dyn.pack(().type, ())) == Some(()),
+     dyn.project_with(Array(Int).type, dyn.pack(Array(Int).type, array)) == Some(array),
+     dyn.project_with(First.type, boxed) == Some(first),
+     dyn.project_with(Second.type, boxed) == None,
+     dyn.project_with(Never.type, integer) == None,
+     integer == alias, integer != other,
+     dyn.desc(nested) == Dyn.type,
+     dyn.project_with(Dyn.type, nested) == Some(integer),
+     match dyn.project_with((Fn(Int) -> Int).type, dyn.pack((Fn(Int) -> Int).type, callback)) {
+         Some(f) => f(41) == 42, None => False,
+     }]
+};
+
+export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

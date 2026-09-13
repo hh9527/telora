@@ -1,0 +1,95 @@
+//! Explicit existential packing and exact projection; no inferred identities.
+use crate::{abi::*, emit::Emitter};
+use telora_core::mir::{TypeConstructor as T, TypeId};
+use wasm_encoder::{BlockType, Instruction as I, ValType};
+
+impl Emitter<'_> {
+    pub fn dynamic_native(&mut self, name: &str) -> Result<u32, String> {
+        let node = self.key.node;
+        let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
+        let output = *args.last().ok_or("Wasm: Dyn signature missing")?;
+        let kind = |ty: TypeId| &self.mir.types[ty.index()].constructor;
+        if name == "pack" {
+            if args.len() != 3
+                || kind(args[0]) != &T::TypeOf
+                || self.mir.types[args[0].index()].arguments != [args[1]]
+                || kind(output) != &T::Dyn
+            {
+                return Err("Wasm: Dyn pack signature mismatch".into());
+            }
+            let input = self.parameter(1);
+            let width = self.width(args[1])?;
+            if width == 0 {
+                self.emit(I::Unreachable);
+                return Ok(input);
+            }
+            let id = self.table_push(VALUES, input, width);
+            let result = self.value_as(node, output, 40)?;
+            self.store32(result, DATA, args[1].index() as u32);
+            self.store32(result, 20, 1);
+            self.extend([
+                I::LocalGet(result),
+                I::LocalGet(id),
+                I::I64ExtendI32U,
+                I::I64Store(memory(24, 3)),
+            ]);
+            return Ok(result);
+        }
+        if name == "desc" {
+            if args.len() != 2 || kind(args[0]) != &T::Dyn || kind(output) != &T::Type {
+                return Err("Wasm: Dyn desc signature mismatch".into());
+            }
+            let input = self.parameter(0);
+            let result = self.value_as(node, output, SCALAR_BYTES)?;
+            self.extend([
+                I::LocalGet(result),
+                I::LocalGet(input),
+                I::I32Load(memory(DATA, 2)),
+                I::I64ExtendI32U,
+                I::I64Store(memory(DATA, 3)),
+            ]);
+            return Ok(result);
+        }
+        if kind(output) != &T::Option || self.mir.types[output.index()].arguments.len() != 1 {
+            return Err(format!("Wasm: Dyn native not implemented: {name}"));
+        }
+        let expected = self.mir.types[output.index()].arguments[0];
+        let argument = if name == "project_with" {
+            if args.len() != 3
+                || kind(args[0]) != &T::TypeOf
+                || kind(args[1]) != &T::Dyn
+                || self.mir.types[args[0].index()].arguments != [expected]
+            {
+                return Err("Wasm: Dyn projection signature mismatch".into());
+            }
+            1
+        } else {
+            let scalar = match name {
+                "check_int" => T::Int,
+                "check_float" => T::Float,
+                "check_string" => T::String,
+                "check_bytes" => T::Bytes,
+                _ => return Err(format!("Wasm: Dyn native not implemented: {name}")),
+            };
+            if args.len() != 2 || kind(args[0]) != &T::Dyn || *kind(expected) != scalar {
+                return Err("Wasm: Dyn scalar projection signature mismatch".into());
+            }
+            0
+        };
+        let input = self.parameter(argument);
+        let result = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(input),
+            I::I32Load(memory(DATA, 2)),
+            I::I32Const(expected.index() as i32),
+            I::I32Eq,
+            I::If(BlockType::Empty),
+        ]);
+        let value = self.table_data(VALUES, input, 24);
+        let some = self.enum_value(node, output, 1, Some(value))?;
+        self.extend([I::LocalGet(some), I::LocalSet(result), I::Else]);
+        let none = self.enum_value(node, output, 0, None)?;
+        self.extend([I::LocalGet(none), I::LocalSet(result), I::End]);
+        Ok(result)
+    }
+}

@@ -15,6 +15,7 @@ mod dict_build;
 mod dict_literals;
 mod dict_ops;
 mod dictionaries;
+mod dynamic_ops;
 mod emit;
 mod entry;
 mod enums;
@@ -40,6 +41,7 @@ mod scalars;
 mod sequences;
 pub mod session;
 mod string_ops;
+mod template_ops;
 
 pub use codegen::compile_executable;
 

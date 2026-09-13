@@ -516,3 +516,29 @@ SealedExecutable 的根集合，不为对齐默认解释器而额外执行未准
 
 Fmt.prepare、DisplayBy 所需的 Dyn/类型反射、Fmt 结构比较以及其余标准库
 操作仍待实现；当前进展不是完整格式化标准库或完整 eval-with 验收。
+
+## 模板准备与显式 Dyn 投影
+
+2026-09-13：Fmt.prepare 接通固定 Rust ABI 的模板扫描器，输出两份 UTF-8
+span 列表或错误消息。先验证并计数，再分配连续片段存储；字段名引用已有
+输入文本，转义后的字面片段写入一次。生成胶水依据闭合签名构造
+Tuple(Array(String), Array(String))，并与 String.split/lines 复用同一份
+span 列表装配逻辑。错误经普通诊断路径报告，std/fmt 的公开导出不变。
+测试直接选取已解析的私有 native 声明作为 sealed 根，覆盖空文本、Unicode、
+转义花括号、连续／重复字段，以及未闭合、嵌套、孤立右括号和非法字段。
+
+新增 std/dyn 的 pack、project_with、desc、四项标量 check；公开的泛型
+project 仍由标准库函数体实现。Dyn 遵循既有 40-byte 候选布局，采用明确的
+boxed 存储：TypeId、storage=1、ValueTable HeapId。装箱登记已有不可变值的
+指针与确定宽度，不深复制描述符或对象；精确投影仅比较 TypeId 并构造
+Option(A)。Dyn 相等性按装箱身份判断，重新装箱产生不同身份。
+这些操作全部是类型绑定的生成代码，不需要新增 Dyn RT 类型推断或转换。
+
+18 项语言检查涵盖标量、Unit、Never 投影、Array、名义 Record、嵌套 Dyn、
+函数投影后调用与装箱身份；默认／Native／Wasm CLI 三条路径一致。
+25 项 Wasm 库测试、10 项 CLI 测试通过；独立 Node 重载产物，18 项 Dyn
+检查通过且 imports 为空。ABI 仍为 4，本轮未新增物理分类表或外部协议。
+
+DisplayBy 仍需类型描述查询与 Dyn 成员访问；Fmt 结构比较、其余标准库、
+完整浏览器及性能验收也仍未完成。下一步应把已封闭的类型描述作为静态
+数据供 Wasm 查询，而不是在 RT 重建或推导类型。

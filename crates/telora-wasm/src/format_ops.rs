@@ -9,6 +9,9 @@ fn is_format(kind: &T) -> bool {
 
 impl Emitter<'_> {
     pub fn format_native(&mut self, name: &str) -> Result<u32, String> {
+        if name == "prepare" {
+            return self.template_prepare();
+        }
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
         let operation = ["from_string", "from_int", "from_float", "concat", "render"]

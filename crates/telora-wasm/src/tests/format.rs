@@ -1,6 +1,72 @@
 use super::*;
 
 #[test]
+fn private_template_primitive_uses_the_admitted_native_identity() {
+    // Select the private declaration directly as a sealed test root, without
+    // exposing it through std/fmt's public exports or changing module privacy.
+    let mir = graph("import \"std/fmt\" as fmt; export def answer = 0;");
+    let symbol = mir
+        .symbols
+        .iter()
+        .find(|symbol| {
+            symbol.name == "prepare"
+                && symbol
+                    .module
+                    .is_some_and(|id| mir.modules[id.index()].name == "std/fmt")
+                && matches!(
+                    symbol.kind,
+                    telora_core::mir::SymbolKind::Declaration(
+                        telora_core::ast::BindingKind::Native
+                    )
+                )
+        })
+        .unwrap();
+    let symbol = mir.hir_symbols[symbol.declarations.last().unwrap().index()].unwrap();
+    let executable = mir.seal_export(symbol).unwrap();
+    let bytes = crate::compile_executable(&executable).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 5_000_000).unwrap();
+    session.initialize().unwrap();
+    for (source, expected) in [
+        ("", serde_json::json!([[""], []])),
+        ("é🦀", serde_json::json!([["é🦀"], []])),
+        ("{{a}}", serde_json::json!([["{a}"], []])),
+        ("{{{a}}}", serde_json::json!([["{", "}"], ["a"]])),
+        (
+            "é{a}{_b2}🦀{a}",
+            serde_json::json!([["é", "", "🦀", ""], ["a", "_b2", "a"]]),
+        ),
+        ("{{}}{{}}", serde_json::json!([["{}{}"], []])),
+    ] {
+        assert_eq!(
+            session.call(&[serde_json::json!(source)]).unwrap(),
+            expected,
+            "{source}"
+        );
+    }
+    for (source, expected) in [
+        ("{", "unclosed Display template field"),
+        ("{a{b}", "nested '{' in Display template field"),
+        ("}", "unmatched '}' in Display template"),
+        ("{}", "invalid Display template field \"\""),
+        ("{1a}", "invalid Display template field \"1a\""),
+        ("{a b}", "invalid Display template field \"a b\""),
+        ("{é}", "invalid Display template field \"é\""),
+    ] {
+        let mut session = crate::session::Session::load(&bytes, 5_000_000).unwrap();
+        session.initialize().unwrap();
+        assert!(
+            session
+                .call(&[serde_json::json!(source)])
+                .unwrap_err()
+                .contains(expected)
+        );
+        let reports = session.diagnostics().unwrap();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].message, expected);
+    }
+}
+
+#[test]
 fn format_nodes_and_interpolation_use_fixed_rust_rt_operations() {
     let bytes = compile_export(
         include_str!("../../tests/fixtures/format.telora"),

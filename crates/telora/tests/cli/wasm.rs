@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn wasm_dynamic_projection_matches_default_backend() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        include_str!("../../../telora-wasm/tests/fixtures/dynamic.telora"),
+    )
+    .unwrap();
+    for backend in [None, Some("--native"), Some("--wasm")] {
+        let output = telora(&cwd)
+            .args(["eval", "@src/main:answer"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+            serde_json::json!(vec![true; 18])
+        );
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_formatting_and_interpolation_match_default_backend() {
     let cwd = fixture();
     fs::write(
