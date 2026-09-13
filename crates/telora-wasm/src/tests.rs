@@ -323,6 +323,13 @@ fn typed_input_and_post_initialization_calls_keep_main_ids() {
     let before = session.memory.data(&session.store)
         [crate::abi::TABLE_BASE as usize..crate::abi::STATIC_BASE as usize]
         .to_vec();
+    // Cross a memory.grow boundary before invoking existing closures. Rust
+    // stack/static state, table slots and the new heap allocation must not alias.
+    let initial_size = session.memory.data(&session.store).len();
+    let marker = vec![0xa5; initial_size + 65536];
+    let allocation = session.allocate(marker.len()).unwrap() as usize;
+    session.write(allocation, &marker).unwrap();
+    assert!(session.memory.data(&session.store).len() > initial_size);
     for index in 0..32 {
         let input =
             serde_json::json!({"name": "input with a heap allocated string", "values": [index]});
@@ -333,6 +340,7 @@ fn typed_input_and_post_initialization_calls_keep_main_ids() {
         );
     }
     let after = session.memory.data(&session.store);
+    assert_eq!(&after[allocation..allocation + marker.len()], &marker);
     for table in 0..crate::abi::TABLE_COUNT as usize {
         let offset = table * crate::abi::TABLE_BYTES as usize + 12;
         assert_eq!(

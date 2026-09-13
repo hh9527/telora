@@ -49,7 +49,9 @@ impl Emitter<'_> {
             ]);
         }
         let result = self.value_as(node, ty, FUNCTION_BYTES)?;
-        self.store32(result, DATA, function);
+        self.emit(I::LocalGet(result));
+        self.function_pointer(function);
+        self.emit(I::I32Store(memory(DATA, 2)));
         if captures.is_empty() {
             self.store32(result, ENVIRONMENT, 0);
         } else {

@@ -17,17 +17,17 @@ mod functions;
 mod input;
 mod input_heap;
 mod input_types;
+mod link;
 mod natives;
 pub mod object;
 mod output;
 mod patterns;
 mod plan;
 mod properties;
-mod runtime;
+#[path = "../rt/abi.rs"]
+mod runtime_abi;
 mod scalars;
 pub mod session;
-mod strings;
-mod tables;
 
 pub use codegen::compile_executable;
 

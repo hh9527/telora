@@ -10,7 +10,8 @@ pub(crate) struct Emitter<'a> {
     pub mir: &'a Mir,
     pub plan: &'a Plan,
     pub key: Key,
-    pub code: Vec<I<'static>>,
+    code: Vec<I<'static>>,
+    function_pointers: BTreeMap<usize, u32>,
     pub locals: Vec<ValType>,
     pub bindings: BTreeMap<SymbolId, u32>,
 }
@@ -22,6 +23,7 @@ impl<'a> Emitter<'a> {
             plan,
             key,
             code: vec![],
+            function_pointers: BTreeMap::new(),
             locals: vec![],
             bindings: BTreeMap::new(),
         }
@@ -37,10 +39,21 @@ impl<'a> Emitter<'a> {
     pub fn extend(&mut self, code: impl IntoIterator<Item = I<'static>>) {
         self.code.extend(code);
     }
-    pub fn finish(self) -> Function {
-        let mut function = Function::new(self.locals.into_iter().map(|ty| (1, ty)));
-        for instruction in self.code {
-            function.instruction(&instruction);
+    pub fn function_pointer(&mut self, index: u32) {
+        self.function_pointers.insert(self.code.len(), index);
+        self.emit(I::I32Const(0));
+    }
+    pub fn finish(self) -> crate::object::ObjectFunction {
+        let mut function = crate::object::ObjectFunction::new(Function::new(
+            self.locals.into_iter().map(|ty| (1, ty)),
+        ));
+        let count = FIRST_FUNCTION + self.plan.functions.len() as u32 + 3;
+        for (index, instruction) in self.code.into_iter().enumerate() {
+            if let Some(&symbol) = self.function_pointers.get(&index) {
+                function.function_pointer(symbol);
+            } else {
+                function.linked_instruction(&instruction, count);
+            }
         }
         function.instruction(&I::End);
         function
@@ -354,7 +367,11 @@ impl<'a> Emitter<'a> {
     }
 }
 
-pub(crate) fn compile(mir: &Mir, plan: &Plan, key: Key) -> Result<Function, String> {
+pub(crate) fn compile(
+    mir: &Mir,
+    plan: &Plan,
+    key: Key,
+) -> Result<crate::object::ObjectFunction, String> {
     let mut emit = Emitter::new(mir, plan, key);
     if key.callable && crate::natives::identity(mir, key.node).is_some() {
         let value = emit.native()?;

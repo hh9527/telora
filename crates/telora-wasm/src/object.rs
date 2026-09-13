@@ -37,6 +37,91 @@ impl ObjectFunction {
         self.reference(0x41, 1, symbol)
     }
 
+    pub fn linked_instruction(
+        &mut self,
+        instruction: &Instruction<'_>,
+        functions: u32,
+    ) -> &mut Self {
+        match instruction {
+            Instruction::Call(index) => self.call(*index),
+            Instruction::GlobalGet(index) => self.reference(0x23, 7, functions + index),
+            Instruction::GlobalSet(index) => self.reference(0x24, 7, functions + index),
+            Instruction::CallIndirect {
+                type_index,
+                table_index,
+            } => {
+                assert_eq!(*table_index, 0);
+                self.reference(0x11, 6, *type_index);
+                self.relocations.push(Relocation {
+                    kind: 20,
+                    offset: self.function.byte_len() as u32,
+                    symbol: functions + 2,
+                });
+                self.function.raw([0x80, 0x80, 0x80, 0x80, 0]);
+                self
+            }
+            _ => self.instruction(instruction),
+        }
+    }
+
+    pub(crate) fn relocate(function: &Function, functions: u32) -> Result<Self, String> {
+        let mut encoded = Vec::new();
+        function.encode(&mut encoded);
+        let mut size = wasmparser::BinaryReader::new(&encoded, 0);
+        size.read_var_u32().map_err(|e| e.to_string())?;
+        let bytes = &encoded[size.original_position() as usize..];
+        let body = wasmparser::FunctionBody::new(wasmparser::BinaryReader::new(bytes, 0));
+        let mut locals = Vec::new();
+        for local in body.get_locals_reader().map_err(|e| e.to_string())? {
+            let (count, ty) = local.map_err(|e| e.to_string())?;
+            let ty = match ty {
+                wasmparser::ValType::I32 => wasm_encoder::ValType::I32,
+                wasmparser::ValType::I64 => wasm_encoder::ValType::I64,
+                wasmparser::ValType::F64 => wasm_encoder::ValType::F64,
+                _ => return Err("Wasm object: unsupported local type".into()),
+            };
+            locals.push((count, ty));
+        }
+        let mut output = Self::new(Function::new(locals));
+        let mut reader = body.get_operators_reader().map_err(|e| e.to_string())?;
+        while !reader.eof() {
+            let start = reader.original_position();
+            let operator = reader.read().map_err(|e| e.to_string())?;
+            use wasmparser::Operator as O;
+            match operator {
+                O::Call { function_index } => {
+                    output.call(function_index);
+                }
+                O::GlobalGet { global_index } => {
+                    output.reference(0x23, 7, functions + global_index);
+                }
+                O::GlobalSet { global_index } => {
+                    output.reference(0x24, 7, functions + global_index);
+                }
+                O::CallIndirect {
+                    type_index,
+                    table_index,
+                } => {
+                    output.linked_instruction(
+                        &Instruction::CallIndirect {
+                            type_index,
+                            table_index,
+                        },
+                        functions,
+                    );
+                }
+                _ => {
+                    output.function.raw(
+                        bytes[start as usize..reader.original_position() as usize]
+                            .iter()
+                            .copied(),
+                    );
+                }
+            }
+        }
+        Ok(output)
+    }
+
     fn reference(&mut self, opcode: u8, kind: u8, symbol: u32) -> &mut Self {
         let offset = self.function.byte_len() as u32 + 1;
         self.function.raw([opcode, 0x80, 0x80, 0x80, 0x80, 0x00]);

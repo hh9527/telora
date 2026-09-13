@@ -1995,6 +1995,7 @@ dependencies = [
  "serde",
  "serde_json",
  "telora-core",
+ "tempfile",
  "wasm-encoder",
  "wasmi",
  "wasmparser 0.259.0",
