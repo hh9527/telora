@@ -821,3 +821,14 @@ Value.Array，Unit 生成空数组且不读取不存在的对象句柄。Dict �
 测试收敛为 3 个转换（包含 Int）。此测试只验证规划，尚未实现 Link
 本身的 Record 编码。54 项 Wasm 库测试通过；名义类型/property/decode
 仍未完成。
+
+## Record 编码执行
+
+无 property 的 Record 已按字段偏移生成 Value.Object；字段名排序后
+构造有序键列，子字段调用已规划的类型专用转换。递归 Link 的实际
+编码通过，不再仅验证规划。空 Record 和字段原始来源亦有语言用例。
+property 规则未完成前，带 property 的 owner 明确拒绝，不静默忽略。
+
+来源测试同时暴露并补齐 Dict 的下标表达式：使用既有二分查找，
+缺失键进入可捕获诊断。57 项 Wasm 库测试通过。property、decode 等
+剩余范围不变，尚未完成最终验收。

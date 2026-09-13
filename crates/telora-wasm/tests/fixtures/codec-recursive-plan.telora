@@ -2,3 +2,8 @@ import "std/codec" as codec;
 import "std/value" { Value };
 type Link = struct { value: Int, next: Option(Link) };
 export def answer = fn(link: Link) { codec.encode(Value.type, link) };
+export def sample = fn() {
+    let tail: Link = {value: 2, next: None};
+    let head: Link = {value: 1, next: Some(tail)};
+    answer(head)
+};

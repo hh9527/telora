@@ -159,6 +159,15 @@ impl Emitter<'_> {
     pub fn index(&mut self, node: HirId) -> Result<u32, String> {
         let receiver_node = child(self.mir, node, Role::Receiver)?;
         let ty = self.effective_ty(receiver_node)?;
+        if self.mir.types[ty.index()].constructor == T::Dict {
+            let width = self.width(self.mir.types[ty.index()].arguments[0])?;
+            let receiver = self.expression(receiver_node)?;
+            let key = self.expression(child(self.mir, node, Role::Index)?)?;
+            let result = self.dictionary_lookup(receiver, key, width);
+            self.extend([I::LocalGet(result), I::I32Eqz]);
+            self.fail_if(node, ERROR_KEY);
+            return Ok(result);
+        }
         if self.mir.types[ty.index()].constructor != T::Array {
             return Err("Wasm: index receiver is not Array".into());
         }

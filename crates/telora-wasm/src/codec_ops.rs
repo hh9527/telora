@@ -87,6 +87,9 @@ impl Emitter<'_> {
             return Ok(input);
         }
         let kind = &self.mir.types[source.index()].constructor;
+        if matches!(kind, T::Nominal(_) | T::Record(_)) {
+            return self.codec_encode_record(source, target, input);
+        }
         if *kind == T::Never {
             self.emit(I::Unreachable);
             return Ok(self.local(ValType::I32));

@@ -1,6 +1,48 @@
 use super::*;
 
 #[test]
+fn dictionary_index_uses_sorted_lookup_and_reports_missing_keys() {
+    let bytes = compile(include_str!("../../tests/fixtures/dict-index.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert_eq!(result[0], 1);
+    assert_eq!(result[1], 9);
+    assert!(result[2]["message"].as_str().unwrap().contains("key"));
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn codec_record_encoding_preserves_field_origins_and_empty_records() {
+    let source = include_str!("../../tests/fixtures/codec-record-origins.telora");
+    let bytes = compile(source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert_eq!(result[0], serde_json::json!({}));
+    assert_eq!(
+        result[1]["labels"][1]["location"]["start"],
+        source.find("12345").unwrap()
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn recursive_codec_record_encoding_executes_the_function_graph() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-recursive-plan.telora"),
+        "sample",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!({"next":{"next":null,"value":2},"value":1})
+    );
+}
+
+#[test]
 fn recursive_codec_planning_closes_a_finite_function_graph() {
     let mir = graph(include_str!(
         "../../tests/fixtures/codec-recursive-plan.telora"

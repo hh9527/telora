@@ -1,0 +1,15 @@
+import "std/codec" as codec;
+import "std/value" { Value };
+import "std/_rt" as rt;
+type Empty = struct {};
+type Record = struct { field: Int };
+export def answer = fn() {
+    let empty: Empty = {};
+    let record: Record = {field: 12345};
+    let encoded = codec.encode(Value.type, record);
+    let value = match encoded { Value.Object(fields) => fields["field"], _ => fail!("expected object") };
+    let report = match rt.with_diagnostics(fn(value: Value) { fail!("encoded origin", value) })(value) {
+        Err(reports) => reports[0], Ok(_) => fail!("missing diagnostic"),
+    };
+    (codec.encode(Value.type, empty), report)
+};
