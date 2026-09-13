@@ -85,6 +85,7 @@ mod sequences;
 pub mod session;
 mod string_ops;
 mod template_ops;
+mod test_description;
 
 pub use codegen::compile_executable;
 

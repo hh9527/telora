@@ -131,7 +131,11 @@ impl Emitter<'_> {
                 self.emit(I::I64Eq);
                 return Ok(());
             }
-            T::Native(NativeTypeId::BLAME_ERROR) => {
+            T::Native(NativeTypeId::BLAME_ERROR)
+            | T::Native(NativeTypeId {
+                module: 33,
+                slot: 0,
+            }) => {
                 self.bits(0);
                 self.bits(1);
                 self.emit(I::I64Eq);

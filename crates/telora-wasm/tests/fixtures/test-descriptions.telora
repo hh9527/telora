@@ -1,0 +1,19 @@
+import "std/test" as test;
+import "std/value" {Value};
+
+def must_not_run = fn() -> Int { fail!("test callback executed during initialization"); };
+def first = test.should_ok(must_not_run);
+def second = test.should_fail(must_not_run);
+def expected = test.should_fail_with(must_not_run, "expected message");
+def fixtures = test.with_fixtures(["not-loaded-by-check.json"], fn(value) {
+    test.should_ok(fn() { value })
+});
+export def answer = Value.Array([
+    if first == first {Value.True} else {Value.False},
+    if first != test.should_ok(must_not_run) {Value.True} else {Value.False},
+    if first != second {Value.True} else {Value.False},
+    if expected == expected {Value.True} else {Value.False},
+    if fixtures == fixtures {Value.True} else {Value.False},
+]);
+def capture = fn(number: Int) { test.should_ok(fn() {number}) };
+export def captured = capture(42);

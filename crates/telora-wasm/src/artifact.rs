@@ -274,7 +274,11 @@ impl Manifest {
 }
 
 /// Contracts are resolved from the admitted module's exports, never user type names.
-fn exported_type(mir: &telora_core::mir::Mir, module_id: u32, name: &str) -> Option<u32> {
+pub(crate) fn exported_type(
+    mir: &telora_core::mir::Mir,
+    module_id: u32,
+    name: &str,
+) -> Option<u32> {
     let module = mir.modules.iter().position(|module| {
         module
             .native

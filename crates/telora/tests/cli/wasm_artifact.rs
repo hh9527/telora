@@ -1,6 +1,69 @@
 use super::*;
 
 #[test]
+fn wasm_check_constructs_test_descriptions_without_running_callbacks_or_fixtures() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/cases.telora"),
+        include_str!("../../../telora-wasm/tests/fixtures/test-descriptions.telora"),
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/empty.telora"),
+        include_str!("../../../telora-wasm/tests/fixtures/test-description-empty.telora"),
+    )
+    .unwrap();
+    for backend in [None, Some("--wasm")] {
+        let output = telora(&cwd)
+            .args(["check", "@src/cases"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = telora(&cwd)
+            .args(["check", "@src/empty"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .contains("should_fail_with requires a nonempty expectation")
+        );
+    }
+    let output = telora(&cwd)
+        .args([
+            "wasm",
+            "build",
+            "@src/cases:captured",
+            "-o",
+            "captured.wasm",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = telora(&cwd)
+        .args(["wasm", "check", "captured.wasm"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_artifact_runs_without_workspace_source_or_data_files() {
     let cwd = fixture();
     let deployment = cwd.with_extension("deployment");

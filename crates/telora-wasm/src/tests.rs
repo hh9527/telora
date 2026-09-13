@@ -13,6 +13,7 @@ mod json;
 mod records;
 mod reflection;
 mod regex;
+mod test_descriptions;
 
 #[test]
 fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {

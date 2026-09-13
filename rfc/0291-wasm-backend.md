@@ -1066,3 +1066,26 @@ test.should_ok(fn() { 42 });` 在默认 check 成功，Wasm check 报
 `native ABI not implemented: Some((33, "should_ok"))`。描述值构造属于
 初始化语义，不能因没有 Wasm test 命令而排除；下一步补齐该能力，并
 借现有语言资产继续核查完整范围，#186 未完成。
+
+## Test 描述值构造
+
+std/test 的 should_ok、should_fail、should_fail_with、with_fixtures
+已按 native module 33 的稳定身份接入。TestTable 存储操作、参数数目和
+不可变值引用；构造不调用回调、不读取 fixture。空的 should_fail_with
+期望立即产生诊断，保留期望字符串来源；Test 比较遵循描述值身份。
+泛型回调及 fixture 的 Value/Test 签名由封闭类型验证。
+
+新增分类表改变静态区起点，产物 ABI 更新为 7，Rust 和浏览器都拒绝
+旧版本，没有兼容分支。既有 86 项库回归、新增 2 项定向测试、14 项
+Wasm CLI 对照通过；包括初始化后调用保存了局部捕获的回调得到 42。
+原语言资产 check/deferred-lazy 现已通过 Wasm check。
+
+全部浏览器 smoke 资产重新生成为 ABI 7，真实 Chromium 通过 Test
+描述值、代码/数据发布、property/Eval、聚合和诊断场景；Node 的十类
+损坏数据包拒绝也通过。HTTP 测试服务已停止。
+
+更广的 check-success-all 审计尚未通过：已缩小到原有
+check/mir-local-alias/testee，其局部泛型 identity/alias 被分别用于
+Int 和 String 时，在 functions.rs 的闭包捕获表查找发生 panic。
+该问题与 Test 描述值无关，需要修复泛型局部绑定的规划/消费路径；
+不能把当前测试通过视为 #186 全量完成。

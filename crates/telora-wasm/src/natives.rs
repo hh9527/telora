@@ -46,6 +46,7 @@ impl Emitter<'_> {
             Some((17, "schema_with")) => self.schema_native(),
             Some((20, name)) => self.format_native(name),
             Some((26, "call_with_diagnostics")) => self.capture_diagnostics(),
+            Some((33, name)) => self.test_native(name),
             Some((18, "property")) => self.property_factory(),
             Some((
                 25,
