@@ -4,12 +4,18 @@ export async function load(bytes) {
   const sections = WebAssembly.Module.customSections(module, 'telora.manifest');
   if (sections.length !== 1) throw Error('缺少或重复的 Telora manifest');
   const manifest = JSON.parse(new TextDecoder().decode(sections[0]));
-  if (manifest.abi !== 2) throw Error('不支持的产物 ABI');
+  if (manifest.abi !== 3) throw Error('不支持的产物 ABI');
   const { exports: wasm } = await WebAssembly.instantiate(module, {});
   const view = () => new DataView(wasm.memory.buffer);
   const word = address => view().getUint32(address, true);
   const store = (address, value) => view().setUint32(address, value, true);
   const allocate = length => wasm.telora_alloc(length) >>> 0;
+  for (const source of manifest.sources) {
+    const name = new TextEncoder().encode(source.name);
+    const pointer = allocate(name.length);
+    new Uint8Array(wasm.memory.buffer, pointer, name.length).set(name);
+    if (!wasm.telora_register_source(source.id, pointer, name.length)) throw Error('来源身份冲突');
+  }
   const copy = (destination, source, length) => {
     new Uint8Array(wasm.memory.buffer).copyWithin(destination, source, source + length);
   };

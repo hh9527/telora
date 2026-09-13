@@ -355,3 +355,14 @@ strings 模块及旧 bump global。物理布局常量由 codegen 与 RT 共用�
 布局装配语言值。来源名称还需要覆盖运行前注入的数据源，不能只固化源码
 模块名。引擎级 fuel/内存 trap 不应伪装成普通已恢复的语言失败。
 此处尚未实现 call_with_diagnostics 的完整调用契约。
+
+诊断来源名称现有固定 ABI：初始化前登记 SourceId 与 UTF-8 范围，RT
+查询返回范围地址，不构造语言类型，也不推导 TypeId。源码名称来自产物
+manifest，注入数据名称沿用整图 SourceDatabase；同一 ID 对应不同名称
+明确报错，未知名称使用 source:<id>。后续类型胶水消费此范围生成 String
+和 SourceRange。Rust host 与浏览器均已接入初始化前登记。
+
+协议升为 ABI 3，旧实验产物明确拒绝，不添加兼容路径。15 项库测试、
+两项 CLI 对照、实际 Chromium 聚合/闭包/Eval/诊断复验通过；数据来源
+测试补充了名称查询、未知 ID 回退和冲突拒绝。原测试里独立创建数据源
+数据库导致 ID 与源码冲突，已改为沿用整图来源空间。

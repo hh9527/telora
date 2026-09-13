@@ -32,6 +32,8 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32) -> Result<Vec<u8>, String
             "--export=telora_entry",
             "--export=telora_inject_data",
             "--export=telora_error",
+            "--export=telora_register_source",
+            "--export=telora_source_name",
         ])
         .arg(format!("--global-base={base}"))
         .arg(&input)

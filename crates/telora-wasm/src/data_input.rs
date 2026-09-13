@@ -68,8 +68,18 @@ impl Session {
         &mut self,
         sources: &telora_core::SourceDatabase,
         plan: &ValidatedDataPlan,
-    ) {
+    ) -> Result<(), String> {
         for file in sources.files() {
+            if self
+                .manifest
+                .sources
+                .iter()
+                .any(|source| source.id == file.id().get() && source.name != file.name.as_ref())
+            {
+                return Err(
+                    "Wasm: data source identity conflicts with the compiled source database".into(),
+                );
+            }
             if !self
                 .manifest
                 .sources
@@ -102,6 +112,7 @@ impl Session {
                 });
             }
         }
+        Ok(())
     }
     pub fn inject_data(&mut self, symbol: u32, plan: &ValidatedDataPlan) -> Result<(), String> {
         if !self

@@ -68,7 +68,7 @@ pub(crate) fn initialize(
             crate::execution_config().data_limits,
             text.len(),
         )?;
-        session.register_data_sources(sources, &plan);
+        session.register_data_sources(sources, &plan)?;
         session.inject_data(module.symbol, &plan)?;
     }
     session.initialize()
@@ -238,7 +238,7 @@ pub(crate) fn eval_with(
             crate::execution_config().data_limits,
             input.text.len(),
         )?;
-        session.register_data_sources(&mir.sources, &plan);
+        session.register_data_sources(&mir.sources, &plan)?;
         plans.push((name, plan));
     }
     let result = session.eval_with(&args, &env, &plans);

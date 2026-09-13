@@ -6,6 +6,7 @@ pub struct Session {
     pub(crate) store: wasmi::Store<()>,
     pub(crate) instance: wasmi::Instance,
     pub(crate) memory: wasmi::Memory,
+    registered_sources: usize,
 }
 
 impl Session {
@@ -29,9 +30,11 @@ impl Session {
             store,
             instance,
             memory,
+            registered_sources: 0,
         })
     }
     pub fn initialize(&mut self) -> Result<(), String> {
+        self.register_sources()?;
         let initialize = self
             .instance
             .get_typed_func::<(), i32>(&self.store, "telora_initialize")
@@ -41,6 +44,31 @@ impl Session {
             .map_err(|e| e.to_string())?;
         if status == 0 {
             return Err(self.failure());
+        }
+        Ok(())
+    }
+    fn register_sources(&mut self) -> Result<(), String> {
+        while self.registered_sources < self.manifest.sources.len() {
+            let source = &self.manifest.sources[self.registered_sources];
+            let id = source.id;
+            let name = source.name.as_bytes().to_vec();
+            let pointer = self.allocate(name.len())?;
+            self.write(pointer as usize, &name)?;
+            let register = self
+                .instance
+                .get_typed_func::<(i32, i32, i32), i32>(&self.store, "telora_register_source")
+                .map_err(|e| e.to_string())?;
+            if register
+                .call(
+                    &mut self.store,
+                    (id as i32, pointer as i32, name.len() as i32),
+                )
+                .map_err(|e| e.to_string())?
+                == 0
+            {
+                return Err("Wasm: source identity was registered with a different name".into());
+            }
+            self.registered_sources += 1;
         }
         Ok(())
     }

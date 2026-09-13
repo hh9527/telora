@@ -159,7 +159,15 @@ fn semantic_value_contract_survives_artifact_reload() {
 
 #[test]
 fn data_injection_precedes_property_initialization_and_is_single_use() {
-    let bytes = compile(include_str!("../tests/fixtures/entry.telora")).unwrap();
+    let mir = graph(include_str!("../tests/fixtures/entry.telora"));
+    let export = mir
+        .exports
+        .iter()
+        .flatten()
+        .copied()
+        .find(|id| mir.symbols[id.index()].name == "answer")
+        .unwrap();
+    let bytes = crate::compile_executable(&mir.seal_export(export).unwrap()).unwrap();
     let mut missing = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     assert!(
         missing
@@ -167,7 +175,7 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
             .unwrap_err()
             .contains("not been injected")
     );
-    let mut sources = telora_core::SourceDatabase::default();
+    let mut sources = mir.sources;
     let source = sources.add("input.json", "{\"number\":42}");
     let plan = telora_core::data_plan::parse_registered(
         &sources,
@@ -178,9 +186,27 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     let symbol = session.manifest.data_modules[0].symbol;
     assert!(missing.inject_data(symbol, &plan).is_err());
+    let mut conflicting = telora_core::SourceDatabase::default();
+    conflicting.add("different source using the same id", "");
+    assert!(session.register_data_sources(&conflicting, &plan).is_err());
+    session.register_data_sources(&sources, &plan).unwrap();
     session.inject_data(symbol, &plan).unwrap();
     assert!(session.inject_data(symbol, &plan).is_err());
     session.initialize().unwrap();
+    let lookup = session
+        .instance
+        .get_typed_func::<i32, i32>(&session.store, "telora_source_name")
+        .unwrap();
+    for (id, expected) in [
+        (source.get(), "input.json"),
+        (u32::MAX, "source:4294967295"),
+    ] {
+        let span = lookup.call(&mut session.store, id as i32).unwrap() as usize;
+        let memory = session.memory.data(&session.store);
+        let pointer = u32::from_le_bytes(memory[span..span + 4].try_into().unwrap()) as usize;
+        let length = u32::from_le_bytes(memory[span + 4..span + 8].try_into().unwrap()) as usize;
+        assert_eq!(&memory[pointer..pointer + length], expected.as_bytes());
+    }
     assert_eq!(
         session.eval().unwrap(),
         serde_json::json!([{"number":42},42])

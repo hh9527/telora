@@ -31,6 +31,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         ("telora_table_get", CALL_TYPE),
         ("telora_freeze", 2),
         ("telora_string_compare", CALL_TYPE),
+        ("telora_source_name", 0),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }
