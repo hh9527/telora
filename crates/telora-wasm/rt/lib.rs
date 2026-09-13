@@ -5,6 +5,8 @@ mod allocator;
 mod regex;
 mod regex_contract;
 mod hash;
+mod json_text;
+mod json_writer;
 
 #[allow(dead_code)]
 mod abi;

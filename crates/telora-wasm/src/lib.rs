@@ -1,4 +1,6 @@
 //! Independent Wasm backend. No interpreter or native-backend fallback.
+#[cfg(test)]
+extern crate alloc;
 pub mod abi;
 mod aggregates;
 mod array_build;
@@ -35,6 +37,7 @@ mod hash_ops;
 mod input;
 mod input_heap;
 mod input_types;
+mod json_ops;
 mod link;
 mod natives;
 pub mod object;
@@ -64,3 +67,7 @@ pub use codegen::compile_executable;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "../rt/json_text.rs"]
+mod json_text_tests;

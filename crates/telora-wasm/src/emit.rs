@@ -442,6 +442,8 @@ pub(crate) fn compile(
     } else if let Special::Parse(ty) = key.special {
         let value = emit.parse_type(ty)?;
         emit.emit(I::LocalGet(value));
+    } else if let Special::Json(ty) = key.special {
+        emit.json_type(ty)?;
     } else if key.callable && crate::natives::identity(mir, key.node).is_some() {
         let value = emit.native()?;
         emit.emit(I::LocalGet(value));

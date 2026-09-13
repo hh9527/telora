@@ -756,3 +756,22 @@ RT HashTable 保存固定状态，update 复制状态到新槽位，finish 不�
 类型/分段区别、初始化后重复调用及不可变性。独立 Node 重载同一
 产物，12 项检查通过且零 imports；本轮未重做实际浏览器和性能基准。
 codec、数据格式及最终发布/浏览器/性能验收继续推进。
+
+## JSON 文本输出
+
+std/json.stringify 与 stringify_pretty 已接通。每个封闭 Value 类型生成
+专用遍历函数，按既定 enum payload、Array stride、Dict 双列布局读取
+原对象；RT 只保存单次输出缓冲区，处理转义、数字和缩进，不解释
+TypeId，不构造中间 Value 树。pretty 的缩进通过普通闭包环境传递。
+
+输出覆盖 null、Bool、Int、有限 Float、String、嵌套数组和有序对象；
+保留默认后端的 Float Display 语义及 0..16 缩进范围。Bytes、时间值
+和非法缩进产生可捕获诊断，保留错误值来源；捕获后可继续求值。
+RT 新增固定 writer 函数，不改变值布局或外部产物 ABI（仍为 6）。
+
+验证：47 项 Wasm 库测试通过，JSON 转义/缩进与 serde_json 对照；
+CLI 默认/Wasm 对照测试通过；独立 Node 重载产物，零 imports，输出
+符合预期。本轮未重复性能测试。遍历目前使用生成的递归调用，仍受
+引擎栈和 fuel 限制；与其他递归操作一样，最终边界验收需覆盖深层
+输入。尚未增加原生后端的活动对象集合循环检测。JSON parse/schema、
+codec、YAML/TOML 及最终发布/浏览器验收仍未完成。

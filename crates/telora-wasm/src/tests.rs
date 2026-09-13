@@ -8,6 +8,7 @@ mod dynamic;
 mod equality;
 mod format;
 mod hash;
+mod json;
 mod records;
 mod reflection;
 mod regex;

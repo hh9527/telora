@@ -19,6 +19,7 @@ pub(crate) enum Special {
     Property(usize),
     Equal(TypeId),
     Parse(TypeId),
+    Json(TypeId),
 }
 
 impl Key {
@@ -174,7 +175,10 @@ impl Plan {
                     },
                     0,
                 );
-                if crate::natives::identity(mir, root.node) == Some((18, "property")) {
+                if matches!(
+                    crate::natives::identity(mir, root.node),
+                    Some((18, "property") | (17, "stringify_pretty"))
+                ) {
                     plan.functions.insert(
                         Key {
                             special: Special::Configured,
@@ -220,6 +224,32 @@ impl Plan {
         plan.demands.insert(plan.root, 0);
         plan.plan_comparisons(executable)?;
         plan.plan_parsers(executable)?;
+        for root in executable.closure().nodes() {
+            let Some((17, name @ ("stringify" | "stringify_pretty"))) =
+                crate::natives::identity(mir, root.node)
+            else {
+                continue;
+            };
+            let key = Key {
+                node: root.node,
+                instance: root.instance,
+                callable: true,
+                special: if name == "stringify_pretty" {
+                    Special::Configured
+                } else {
+                    Special::Normal
+                },
+            };
+            let ty = mir.types[key.ty(mir, root.node)?.index()].arguments[0];
+            plan.functions.insert(
+                Key {
+                    special: Special::Json(ty),
+                    callable: true,
+                    ..plan.root
+                },
+                0,
+            );
+        }
         if executable.closure().nodes().iter().any(|root| {
             crate::natives::identity(mir, root.node).is_some_and(|(module, name)| {
                 module == 3
@@ -256,7 +286,10 @@ impl Plan {
                 .ok_or("Wasm: demand offset overflow")?;
         }
         for &key in plan.functions.keys().filter(|key| key.callable) {
-            if matches!(key.special, Special::Equal(_) | Special::Parse(_)) {
+            if matches!(
+                key.special,
+                Special::Equal(_) | Special::Parse(_) | Special::Json(_)
+            ) {
                 continue;
             }
             let mut pending = vec![key.node];
