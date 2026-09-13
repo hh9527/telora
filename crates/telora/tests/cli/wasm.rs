@@ -5,6 +5,11 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
+            "string-parse-record",
+            include_str!("../../../telora-wasm/tests/fixtures/string-parse-record.telora"),
+            serde_json::json!(vec![true; 8]),
+        ),
+        (
             "regex-prepare",
             include_str!("../../../telora-wasm/tests/fixtures/regex-prepare.telora"),
             serde_json::json!([true, true, true, true, true]),

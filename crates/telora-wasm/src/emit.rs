@@ -439,6 +439,9 @@ pub(crate) fn compile(
     let mut emit = Emitter::new(mir, plan, key);
     if let Special::Equal(ty) = key.special {
         emit.compare_type(ty)?;
+    } else if let Special::Parse(ty) = key.special {
+        let value = emit.parse_type(ty)?;
+        emit.emit(I::LocalGet(value));
     } else if key.callable && crate::natives::identity(mir, key.node).is_some() {
         let value = emit.native()?;
         emit.emit(I::LocalGet(value));

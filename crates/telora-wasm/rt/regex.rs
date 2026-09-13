@@ -103,6 +103,37 @@ pub unsafe extern "C" fn telora_regex(operation: u32, a: u32, b: u32) -> u32 {
                     Err(message) => crate::format::render(format_args!("{message}")),
                 }
             }
+            4 => {
+                // Packet: input String, field count, then field-name Strings.
+                // Result: matched flag, then {UTF-8 pointer, length, present}.
+                let compiled = &mut *get(a);
+                let input = crate::text::text(word(b, 0));
+                let count = word(b, 4);
+                let mut captures = compiled.engine.create_captures();
+                compiled
+                    .engine
+                    .captures(&mut compiled.cache, input, &mut captures);
+                let output = crate::telora_alloc(4 + count * 12);
+                (output as *mut u32).write(captures.is_match() as u32);
+                for index in 0..count {
+                    let name = crate::text::text(word(b, 8 + u64::from(index) * 4));
+                    let capture = captures.get_group_by_name(name);
+                    let row = (output + 4 + index * 12) as *mut u32;
+                    match capture {
+                        Some(span) => {
+                            row.write(input.as_ptr() as u32 + span.start as u32);
+                            row.add(1).write((span.end - span.start) as u32);
+                            row.add(2).write(1);
+                        }
+                        None => {
+                            row.write(0);
+                            row.add(1).write(0);
+                            row.add(2).write(0);
+                        }
+                    }
+                }
+                output
+            }
             _ => core::arch::wasm32::unreachable(),
         }
     }

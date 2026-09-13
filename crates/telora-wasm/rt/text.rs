@@ -29,7 +29,10 @@ pub unsafe extern "C" fn telora_text_query(operation: u32, a: u32, b: u32) -> u3
                 let bits = if operation == 4 {
                     a.parse::<i64>().ok().map(|value| value as u64)
                 } else {
-                    a.parse::<f64>().ok().filter(|value| value.is_finite()).map(f64::to_bits)
+                    a.parse::<f64>()
+                        .ok()
+                        .filter(|value| value.is_finite())
+                        .map(f64::to_bits)
                 };
                 if let Some(bits) = bits {
                     (b as *mut u64).write_unaligned(bits);
@@ -100,6 +103,12 @@ pub unsafe extern "C" fn telora_text_build(operation: u32, a: u32, b: u32, c: u3
                             .write_str(content[marker..].strip_prefix(margin).unwrap_or(content))?;
                         output.write_str(&line[end..])?;
                     }
+                }
+                6 => {
+                    write!(output, "{}: {}", text(a), text(b))?;
+                }
+                7 => {
+                    write!(output, "{}.{}", text(a), text(b))?;
                 }
                 _ => core::arch::wasm32::unreachable(),
             }

@@ -1,0 +1,22 @@
+import "std/regex" as regex;
+import "std/string" as string;
+import "std/_rt" as rt;
+@regex.parse_by(regex.compile("^(?P<number>.+)$"))
+@check(fn(value) { if value.number > 0 { Ok(()) } else { Err(blame!("positive required", value.number)) } })
+type Positive = struct { number: Int };
+def manual: Fn(Type, Option(regex.ParseBy)) -> regex.ParseBy = fn(target, previous) { {regex: regex.compile("(?P<wrong>a)")} };
+@manual
+type Invalid = struct { number: Int };
+@regex.parse_by(regex.compile("^(?P<label>x)?$"))
+type Maybe = struct { label: Option(String) };
+export def answer = fn() {
+    let rejected = rt.with_diagnostics(fn(input: String) { string.parse(Positive.type, input) })("-7");
+    let success = string.parse(Positive.type, "42");
+    let invalid = string.parse(Invalid.type, "a");
+    let absent = match string.parse(Maybe.type, "") { Ok(value) => value.label, Err(_) => fail!("optional parse") };
+    let origin = rt.with_diagnostics(fn(value: Option(String)) { fail!("optional origin", value) })(absent);
+    (match rejected { Err(reports) => reports, Ok(_) => fail!("checker was not invoked") },
+     match success { Ok(value) => value.number, Err(_) => fail!("valid parse rejected") },
+     match invalid { Err(error) => error.message, Ok(_) => "unexpected" },
+     match origin { Err(reports) => reports[0], Ok(_) => fail!("missing optional origin") })
+};

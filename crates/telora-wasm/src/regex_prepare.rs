@@ -31,57 +31,13 @@ impl Emitter<'_> {
             {
                 continue;
             }
-            let members = &layout
-                .object
-                .as_ref()
-                .ok_or("Wasm: struct contract has no object")?
-                .members;
             self.bits(owner);
             self.extend([
                 I::I64Const(layout.type_id as i64),
                 I::I64Eq,
                 I::If(BlockType::Empty),
             ]);
-            let packet = self.alloc(4 + members.len() as u32 * 12);
-            self.store32(packet, 0, members.len() as u32);
-            for (index, member) in members.iter().enumerate() {
-                let mut ty = self.plan.layouts
-                    [member.type_id.ok_or("Wasm: contract field type missing")?]
-                .id();
-                let optional = self.mir.types[ty.index()].constructor == T::Option;
-                if optional {
-                    ty = self.mir.types[ty.index()].arguments[0];
-                }
-                let offset = 4 + index as u32 * 12;
-                let name = self.text_as(node, self.string_type()?, member.name.as_bytes())?;
-                self.extend([
-                    I::LocalGet(packet),
-                    I::LocalGet(name),
-                    I::I32Store(memory(offset as u64, 2)),
-                ]);
-                self.store32(packet, (offset + 4) as u64, u32::from(optional));
-                self.emit(I::LocalGet(packet));
-                if matches!(
-                    self.mir.types[ty.index()].constructor,
-                    T::Int | T::Float | T::String
-                ) {
-                    self.emit(I::I32Const(1));
-                } else {
-                    self.emit(I::I32Const(0));
-                    for &index in self.plan.properties.keys() {
-                        let record = &self.mir.properties[index];
-                        if record.owner == ty && record.site == PropertySite::Type {
-                            self.bits(property);
-                            self.extend([
-                                I::I64Const(record.property.index() as i64),
-                                I::I64Eq,
-                                I::I32Or,
-                            ]);
-                        }
-                    }
-                }
-                self.emit(I::I32Store(memory((offset + 8) as u64, 2)));
-            }
+            let packet = self.regex_contract_packet(layout.id(), property)?;
             let error = self.local(ValType::I32);
             self.extend([
                 I::I32Const(3),
@@ -100,5 +56,57 @@ impl Emitter<'_> {
         }
         self.reflection_failure(owner, "std/regex.parse_by requires a struct type")?;
         Ok(regex)
+    }
+
+    pub(crate) fn regex_contract_packet(
+        &mut self,
+        owner: telora_core::mir::TypeId,
+        property: u32,
+    ) -> Result<u32, String> {
+        let members = &self.plan.layouts[owner.index()]
+            .object
+            .as_ref()
+            .ok_or("Wasm: struct contract missing")?
+            .members;
+        let packet = self.alloc(4 + members.len() as u32 * 12);
+        self.store32(packet, 0, members.len() as u32);
+        for (index, member) in members.iter().enumerate() {
+            let mut ty =
+                self.plan.layouts[member.type_id.ok_or("Wasm: contract field type missing")?].id();
+            let optional = self.mir.types[ty.index()].constructor == T::Option;
+            if optional {
+                ty = self.mir.types[ty.index()].arguments[0];
+            }
+            let offset = 4 + index as u64 * 12;
+            let name = self.text_as(self.key.node, self.string_type()?, member.name.as_bytes())?;
+            self.extend([
+                I::LocalGet(packet),
+                I::LocalGet(name),
+                I::I32Store(memory(offset, 2)),
+            ]);
+            self.store32(packet, offset + 4, u32::from(optional));
+            self.emit(I::LocalGet(packet));
+            if matches!(
+                self.mir.types[ty.index()].constructor,
+                T::Int | T::Float | T::String
+            ) {
+                self.emit(I::I32Const(1));
+            } else {
+                self.emit(I::I32Const(0));
+                for &index in self.plan.properties.keys() {
+                    let record = &self.mir.properties[index];
+                    if record.owner == ty && record.site == PropertySite::Type {
+                        self.bits(property);
+                        self.extend([
+                            I::I64Const(record.property.index() as i64),
+                            I::I64Eq,
+                            I::I32Or,
+                        ]);
+                    }
+                }
+            }
+            self.emit(I::I32Store(memory(offset + 8, 2)));
+        }
+        Ok(packet)
     }
 }

@@ -18,6 +18,7 @@ pub(crate) enum Special {
     Configured,
     Property(usize),
     Equal(TypeId),
+    Parse(TypeId),
 }
 
 impl Key {
@@ -77,6 +78,7 @@ pub(crate) struct Plan {
     pub properties: BTreeMap<usize, Key>,
     pub checks: BTreeMap<usize, Key>,
     pub comparisons: BTreeMap<TypeId, Key>,
+    pub parsers: BTreeMap<TypeId, Key>,
     pub reflection: Vec<u8>,
 }
 
@@ -100,6 +102,7 @@ impl Plan {
             properties: BTreeMap::new(),
             checks: BTreeMap::new(),
             comparisons: BTreeMap::new(),
+            parsers: BTreeMap::new(),
             reflection: vec![],
         };
         for &symbol in executable.globals() {
@@ -216,6 +219,7 @@ impl Plan {
         plan.functions.insert(plan.root, 0);
         plan.demands.insert(plan.root, 0);
         plan.plan_comparisons(executable)?;
+        plan.plan_parsers(executable)?;
         if executable.closure().nodes().iter().any(|root| {
             crate::natives::identity(mir, root.node).is_some_and(|(module, name)| {
                 module == 3
@@ -252,7 +256,7 @@ impl Plan {
                 .ok_or("Wasm: demand offset overflow")?;
         }
         for &key in plan.functions.keys().filter(|key| key.callable) {
-            if matches!(key.special, Special::Equal(_)) {
+            if matches!(key.special, Special::Equal(_) | Special::Parse(_)) {
                 continue;
             }
             let mut pending = vec![key.node];
