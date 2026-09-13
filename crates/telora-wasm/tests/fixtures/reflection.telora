@@ -1,0 +1,38 @@
+import "std/type-desc" as td;
+import "std/fmt" as fmt;
+import "std/array" as array;
+import "std/value" { Value };
+
+type Pair(T) = struct { a: T, b: String };
+type Chain = enum { End, More((Int, Chain)) };
+type Wrapper = struct(Int);
+
+export def checks = fn() {
+    let integer: Type = Int.type;
+    let string: Type = String.type;
+    let pair_fields = td.fields(Pair(Int).type);
+    let variants = td.variants(Chain.type);
+    let option = td.variants(Option(Int).type);
+    let boolean = td.variants(Bool.type);
+    [td.kind(Int.type) == td.TypeDescKind.Int,
+     td.kind(Pair(Int).type) == td.TypeDescKind.Ref,
+     td.kind(Never.type) == td.TypeDescKind.Never,
+     td.kind(().type) == td.TypeDescKind.Tuple,
+     td.kind(Dyn.type) == td.TypeDescKind.Dyn,
+     td.kind((Fn(Int) -> String).type) == td.TypeDescKind.Func,
+     td.kind(fmt.Fmt.type) == td.TypeDescKind.Opaque,
+     td.children(Array(Int).type) == [integer],
+     td.children((Int, String).type) == [integer, string],
+     td.children((Fn(Int) -> String).type) == [],
+     pair_fields[0].index == 0, pair_fields[0].name == "a", pair_fields[0].ty == integer,
+     pair_fields[1].name == "b", pair_fields[1].ty == string,
+     match td.resolve(Pair(Int).type) { Ok(body) => td.kind(body) == td.TypeDescKind.Struct && td.fields(body) == pair_fields, Err(_) => False },
+     match td.resolve(Int.type) { Err(error) => error.message == "type descriptor is not a recursive reference", Ok(_) => False },
+     variants[0].name == "End", variants[0].payload == None,
+     variants[1].name == "More", variants[1].payload != None,
+     option[0].name == "None", option[1].name == "Some", option[1].payload == Some(integer),
+     boolean[0].name == "False", boolean[1].name == "True", boolean[1].payload == None,
+     td.opaque_name(fmt.Fmt.type) == Some("std/fmt#Fmt"), td.opaque_name(Int.type) == None,
+     match td.resolve(Wrapper.type) { Ok(body) => td.kind(body) == td.TypeDescKind.Newtype && td.children(body) == [integer], Err(_) => False }]
+};
+export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

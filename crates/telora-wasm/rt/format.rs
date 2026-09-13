@@ -75,3 +75,14 @@ pub unsafe extern "C" fn telora_duplicate_key_message(value: u32) -> u32 {
         ))
     }
 }
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_member_message(operation: u32, a: u32, b: u32) -> u32 {
+    unsafe {
+        match operation {
+            0 => render(format_args!("field index {a} is out of range")),
+            1 => render(format_args!("Dyn variant index is {a}, not {b}")),
+            _ => core::arch::wasm32::unreachable(),
+        }
+    }
+}

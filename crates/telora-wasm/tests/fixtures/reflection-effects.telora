@@ -1,0 +1,27 @@
+import "std/type-desc" as td;
+import "std/dyn" as dyn;
+import "std/_rt" as rt;
+
+type Item = struct { value: Int };
+def item: Item = { value: 42 };
+def packed = dyn.pack(Item.type, item);
+
+export def answer = fn() {
+    let fields = rt.with_diagnostics(fn(value: Type) { td.fields(value) })(Int.type);
+    let variants = rt.with_diagnostics(fn(value: Type) { td.variants(value) })(String.type);
+    let invalid = rt.with_diagnostics(fn(value: Dyn) { dyn.get_field_value(value, 0) })(dyn.pack(Int.type, 1));
+    let negative = rt.with_diagnostics(fn(index: Int) { dyn.get_field_value(packed, index) })(-1);
+    let large = rt.with_diagnostics(fn(index: Int) { dyn.get_field_value(packed, index) })(4294967296);
+    let absent = rt.with_diagnostics(fn(index: Int) { dyn.get_field_value(packed, index) })(1);
+    let value = match dyn.project_with(Int.type, dyn.get_field_value(packed, 0)) {
+        Some(value) => value, None => fail!("field projection failed"),
+    };
+    let origin = rt.with_diagnostics(fn(value: Int) { fail!("origin", value) })(value);
+    (match fields { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match variants { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match invalid { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match negative { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match large { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match absent { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match origin { Err(reports) => reports[0], Ok(_) => fail!("missing origin diagnostic") })
+};

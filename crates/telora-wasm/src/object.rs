@@ -37,6 +37,11 @@ impl ObjectFunction {
         self.reference(0x41, 1, symbol)
     }
 
+    /// R_WASM_MEMORY_ADDR_SLEB, with zero addend: the linked static image base.
+    pub fn memory_pointer(&mut self, symbol: u32) -> &mut Self {
+        self.reference(0x41, 4, symbol)
+    }
+
     pub fn linked_instruction(
         &mut self,
         instruction: &Instruction<'_>,
@@ -170,6 +175,9 @@ impl ObjectCode {
             data.push(relocation.kind);
             relocation.offset.encode(&mut data);
             relocation.symbol.encode(&mut data);
+            if relocation.kind == 4 {
+                0i32.encode(&mut data);
+            }
         }
         (
             code,

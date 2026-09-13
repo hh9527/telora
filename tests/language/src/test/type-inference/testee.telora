@@ -1,6 +1,21 @@
 import "std/test" as test;
+import "std/array" as array;
 import "@src/test-support" {expect};
 def generic_identity: for(A) Fn(A) -> A = fn(value) { value };
+type DeferredItems = struct {items: Array(String)};
+type DeferredOwner = struct {inner: DeferredItems};
+def deferred_wrap: for(T) Fn(T) -> Option(T) = fn(value) { Some(value) };
+def deferred_fields = fn(owner: DeferredOwner, enabled: Bool) {
+    match if enabled { deferred_wrap(owner) } else { None } {
+        Some(value) => value.inner.items,
+        None => [],
+    }
+};
+export def empty_arm_waits_for_generic_member_evidence = test.should_ok(fn() {
+    let owner: DeferredOwner = {inner: {items: ["value"]}};
+    expect(array.length(deferred_fields(owner, True)) == 1
+        && array.length(deferred_fields(owner, False)) == 0)
+});
 def generic_apply: for(A, B) Fn(Fn(A) -> B, A) -> B = fn(function, value) {
     function(value)
 };

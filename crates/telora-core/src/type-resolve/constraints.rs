@@ -111,9 +111,13 @@ impl Solver<'_> {
                 // Their evidence must arrive before a bottom-only tail can
                 // default the shared result slot to Never.
                 if self.tasks.iter().any(|task| match task {
-                    Task::Fit { expected, actual, .. } => self.root(*expected) == root
+                    Task::Fit { expected, actual, .. } => self.unknown_leaves(*expected).contains(&root)
                         && !self.term(*actual).is_some_and(|term| term.constructor == TypeConstructor::Never),
-                    Task::Call { node, .. } => self.root(node.ty()) == root,
+                    Task::Call { node, .. } | Task::Member { node, .. }
+                    | Task::Projection { node, .. } | Task::FieldProjection { node, .. }
+                    | Task::Join { node, .. } => self.unknown_leaves(node.ty()).contains(&root),
+                    Task::Instantiate { target, .. } | Task::RefineInstance { target, .. } =>
+                        self.unknown_leaves(*target).contains(&root),
                     _ => false,
                 }) {
                     self.bottom_candidates.push(slot);
@@ -953,7 +957,11 @@ impl Solver<'_> {
                 continue;
             }
             let element = if term.arguments.is_empty() {
-                self.structure(TypeConstructor::Never, vec![])
+                // Empty literals contribute no element evidence. A delayed
+                // member or generic call may still supply the concrete type.
+                let element = self.fresh();
+                self.bottom_candidates.push(element);
+                element
             } else {
                 self.fresh()
             };

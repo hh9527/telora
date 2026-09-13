@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn wasm_reflection_and_display_properties_match_default_backend() {
+    let cwd = fixture();
+    for (name, source, expected) in [
+        (
+            "reflection",
+            include_str!("../../../telora-wasm/tests/fixtures/reflection.telora"),
+            serde_json::json!(vec![true; 30]),
+        ),
+        (
+            "display",
+            include_str!("../../../telora-wasm/tests/fixtures/display-by.telora"),
+            serde_json::json!([
+                "localhost:8080",
+                "localhost:8080",
+                "api@localhost:8080 {ready} -0 api",
+                "endpoint=explicit(localhost:8080)",
+                "absent"
+            ]),
+        ),
+    ] {
+        fs::write(cwd.join(format!("src/{name}.telora")), source).unwrap();
+        for backend in [None, Some("--wasm")] {
+            let output = telora(&cwd)
+                .args(["eval", &format!("@src/{name}:answer")])
+                .args(backend)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{name} {backend:?}: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+                expected
+            );
+        }
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_dynamic_projection_matches_default_backend() {
     let cwd = fixture();
     fs::write(

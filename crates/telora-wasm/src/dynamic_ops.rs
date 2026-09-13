@@ -5,6 +5,9 @@ use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub fn dynamic_native(&mut self, name: &str) -> Result<u32, String> {
+        if name == "get_field_value" {
+            return self.dynamic_field_value();
+        }
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
         let output = *args.last().ok_or("Wasm: Dyn signature missing")?;

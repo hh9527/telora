@@ -15,6 +15,7 @@ mod dict_build;
 mod dict_literals;
 mod dict_ops;
 mod dictionaries;
+mod dynamic_members;
 mod dynamic_ops;
 mod emit;
 mod entry;
@@ -35,6 +36,9 @@ mod patterns;
 mod plan;
 mod properties;
 mod records;
+mod reflection_collections;
+mod reflection_data;
+mod reflection_ops;
 #[path = "../rt/abi.rs"]
 mod runtime_abi;
 mod scalars;

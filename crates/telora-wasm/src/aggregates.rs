@@ -63,6 +63,8 @@ impl Emitter<'_> {
             .and_then(|o| o.members.get(index))
             .ok_or("Wasm: missing sealed projection")?;
         let offset = field.offset.ok_or("Wasm: projection has no offset")?;
+        let actual =
+            self.plan.layouts[field.type_id.ok_or("Wasm: projection has no field type")?].id();
         let receiver = self.expression(receiver_node)?;
         let data = self.table_data(RECORDS, receiver, DATA);
         let result = self.local(ValType::I32);
@@ -72,7 +74,7 @@ impl Emitter<'_> {
             I::I32Add,
             I::LocalSet(result),
         ]);
-        Ok(result)
+        self.adapt(node, actual, self.ty(node)?, result)
     }
     pub fn field(&mut self, node: HirId) -> Result<u32, String> {
         if let Some(telora_core::mir::MemberSelection::TraitMember { implementation, .. }) =

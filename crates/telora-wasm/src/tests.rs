@@ -8,6 +8,7 @@ mod dynamic;
 mod equality;
 mod format;
 mod records;
+mod reflection;
 
 #[test]
 fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {

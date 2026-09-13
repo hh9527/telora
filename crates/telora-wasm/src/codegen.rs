@@ -47,6 +47,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         ("telora_format_message", CALL_TYPE),
         ("telora_format_join", CALL_TYPE),
         ("telora_template_prepare", 0),
+        ("telora_member_message", 3),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }
@@ -172,6 +173,11 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
     )?);
     let (code, relocations) = code.finish(5);
     module.section(&code);
+    if !plan.reflection.is_empty() {
+        let mut data = DataSection::new();
+        data.active(0, &ConstExpr::i32_const(0), plan.reflection.iter().copied());
+        module.section(&data);
+    }
     let mut symbols = SymbolTable::new();
     for index in 0..FIRST_FUNCTION {
         symbols.function(SymbolTable::WASM_SYM_UNDEFINED, index, None);
@@ -189,7 +195,35 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         symbols.global(0, index as u32, Some(name));
     }
     symbols.table(SymbolTable::WASM_SYM_UNDEFINED, 0, None);
-    module.section(LinkingSection::new().symbol_table(&symbols));
+    if !plan.reflection.is_empty() {
+        symbols.data(
+            0,
+            "telora_type_image",
+            Some(DataSymbolDefinition {
+                index: 0,
+                offset: 0,
+                size: plan.reflection.len() as u32,
+            }),
+        );
+        // wasm-encoder does not yet expose the segment-info subsection.
+        let mut linking = vec![];
+        2u32.encode(&mut linking);
+        let mut segment = vec![];
+        1u32.encode(&mut segment);
+        ".rodata.telora.types".encode(&mut segment);
+        3u32.encode(&mut segment);
+        0u32.encode(&mut segment);
+        linking.push(5);
+        (segment.len() as u32).encode(&mut linking);
+        linking.extend(segment);
+        symbols.encode(&mut linking);
+        module.section(&CustomSection {
+            name: "linking".into(),
+            data: linking.into(),
+        });
+    } else {
+        module.section(LinkingSection::new().symbol_table(&symbols));
+    }
     module.section(&relocations);
     module.section(&CustomSection {
         name: Cow::Borrowed("telora.abi"),

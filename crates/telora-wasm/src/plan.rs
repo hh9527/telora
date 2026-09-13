@@ -77,6 +77,7 @@ pub(crate) struct Plan {
     pub properties: BTreeMap<usize, Key>,
     pub checks: BTreeMap<usize, Key>,
     pub comparisons: BTreeMap<TypeId, Key>,
+    pub reflection: Vec<u8>,
 }
 
 impl Plan {
@@ -99,6 +100,7 @@ impl Plan {
             properties: BTreeMap::new(),
             checks: BTreeMap::new(),
             comparisons: BTreeMap::new(),
+            reflection: vec![],
         };
         for &symbol in executable.globals() {
             if !mir.symbol_generics[symbol.index()].is_empty() {
@@ -214,6 +216,14 @@ impl Plan {
         plan.functions.insert(plan.root, 0);
         plan.demands.insert(plan.root, 0);
         plan.plan_comparisons(executable)?;
+        if executable.closure().nodes().iter().any(|root| {
+            crate::natives::identity(mir, root.node).is_some_and(|(module, name)| {
+                module == 3 || (module == 2 && name == "get_field_value")
+            })
+        }) {
+            plan.reflection =
+                crate::reflection_data::build(executable.sealed_mir().types(), &plan.layouts)?;
+        }
         for (index, function) in plan.functions.values_mut().enumerate() {
             *function = u32::try_from(index)
                 .map_err(|_| "Wasm: function index overflow")?

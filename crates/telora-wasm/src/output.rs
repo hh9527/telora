@@ -67,7 +67,10 @@ impl Output<'_> {
             return Err("Wasm: JSON output nesting limit".into());
         }
         if self.word(pointer + TYPE)? != expected {
-            return Err("Wasm: output differs from its sealed type".into());
+            return Err(format!(
+                "Wasm: output at {pointer} has type {}, expected {expected}",
+                self.word(pointer + TYPE)?
+            ));
         }
         let ty = self
             .manifest

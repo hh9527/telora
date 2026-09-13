@@ -542,3 +542,43 @@ Option(A)。Dyn 相等性按装箱身份判断，重新装箱产生不同身份�
 DisplayBy 仍需类型描述查询与 Dyn 成员访问；Fmt 结构比较、其余标准库、
 完整浏览器及性能验收也仍未完成。下一步应把已封闭的类型描述作为静态
 数据供 Wasm 查询，而不是在 RT 重建或推导类型。
+
+## 静态类型描述与 DisplayBy 纵向链路
+
+2026-09-13：将 TypeImage 编码成平坦的只读表，覆盖 kind、children、
+opaque_name、resolve_raw、fields、variants。每个 TypeId 对应定宽表项，
+子类型／成员／名字采用表内相对偏移；名义类型的 body 仍引用已封闭的
+TypeId，不在 RT 展开或重建类型。只有准入图消费这些查询时才生成表。
+Wasm 对象增加 data symbol、segment-info 和 MEMORY_ADDR_SLEB 重定位，
+由 wasm-ld 放置最终表基址。装载直接获得静态数据，不逐条执行代码建表。
+
+查询结果的 enum、Type、Array 与 descriptor Record 由类型绑定胶水装配。
+输入元数据的来源保留到返回值及成员中。Dyn.get_field_value 使用同一张
+表中的确定字段偏移和宽度，登记原字段的引用，保持其来源且不复制堆图。
+非法接收者、索引和字段／变体查询走可捕获的语言诊断。
+
+DisplayBy 已打通：模板准备、顶层 property 初始化、嵌套 property 查找、
+Dyn 字段读取、基本类型投影和 Fmt 渲染均在 Wasm 内执行。覆盖重复字段、
+转义括号、嵌套 Endpoint/Service、负零，以及显式 Display 实现优先。
+
+纵向用例发现并修复一处共享类型求解缺口：泛型 Option 解包后读取嵌套
+Array(String) 字段，与 [] 分支合流时，空数组曾在成员证据到达前被默认
+为 Array(Never)。空数组现在先保留元素空槽，等待尚未完成的成员、调用、
+实例化或合流证据，再做 bottom 默认；不是在 codegen 改猜返回类型。
+Wasm 字段／tuple 投影也核对布局中的真实字段类型与封闭表达式类型。
+新增 .telora 语言回归，成功／空分支都验证，保留严格输出类型检查。
+
+验证：346 项核心 Rust 测试、29 项 Wasm 库测试、97 项完整 CLI 测试通过；
+408 个语言验收入口通过，其中新增 empty_arm_waits_for_generic_member_evidence
+通过。30 项类型描述检查及 DisplayBy 输出与默认后端一致。独立 Node 与
+实际 Chromium 均重载同一个 DisplayBy Wasm 文件，初始化和嵌套渲染通过，
+最终模块零 imports；浏览器不读取 MIR 或 .telora 源码。ABI 保持 4。
+本轮未做性能基准。
+
+额外 Native 对照在 `td.children(Array(Int).type) == [integer]`（integer
+显式标注 Type）处报告值类型标记不符，尚未进一步修复；本轮的一致性
+证据仅包含默认／Wasm，不把 Native 计入这组通过结果。Native 实现未修改。
+
+Dyn 其余观察／变体访问、Fmt 结构比较、regex/parse/codec 等标准库操作，
+以及最终发布和分阶段性能验收仍待完成，不能将 DisplayBy 通过等同于
+完整 eval-with 验收。

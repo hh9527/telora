@@ -2,7 +2,7 @@ use crate::{
     abi::*,
     plan::{Key, Plan, Special, child, symbol},
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use telora_core::mir::{HirId, HirKind, Mir, Role, SymbolId, TypeConstructor, TypeId};
 use wasm_encoder::{BlockType, Function, Instruction as I, ValType};
 
@@ -12,6 +12,7 @@ pub(crate) struct Emitter<'a> {
     pub key: Key,
     code: Vec<I<'static>>,
     function_pointers: BTreeMap<usize, u32>,
+    static_pointers: BTreeSet<usize>,
     pub locals: Vec<ValType>,
     pub bindings: BTreeMap<SymbolId, u32>,
 }
@@ -24,6 +25,7 @@ impl<'a> Emitter<'a> {
             key,
             code: vec![],
             function_pointers: BTreeMap::new(),
+            static_pointers: BTreeSet::new(),
             locals: vec![],
             bindings: BTreeMap::new(),
         }
@@ -42,6 +44,12 @@ impl<'a> Emitter<'a> {
     pub fn function_pointer(&mut self, index: u32) {
         self.function_pointers.insert(self.code.len(), index);
         self.emit(I::I32Const(0));
+    }
+    pub fn static_base(&mut self) -> u32 {
+        let local = self.local(ValType::I32);
+        self.static_pointers.insert(self.code.len());
+        self.extend([I::I32Const(0), I::LocalSet(local)]);
+        local
     }
     pub fn finish(mut self) -> crate::object::ObjectFunction {
         let demand = (!self.key.callable).then(|| self.plan.demands[&self.key]);
@@ -71,6 +79,8 @@ impl<'a> Emitter<'a> {
             }
             if let Some(&symbol) = self.function_pointers.get(&index) {
                 function.function_pointer(symbol);
+            } else if self.static_pointers.contains(&index) {
+                function.memory_pointer(count + 3);
             } else {
                 function.linked_instruction(&instruction, count);
             }
