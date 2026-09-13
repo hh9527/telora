@@ -18,14 +18,17 @@ struct Compiled {
     pattern: String,
     engine: PikeVM,
     cache: Cache,
+    required: alloc::collections::BTreeSet<String>,
 }
 
 fn compile(pattern: &str) -> Result<Compiled, String> {
-    regex_syntax::Parser::new()
+    let hir = regex_syntax::Parser::new()
         .parse(pattern)
         .map_err(|error| format!("invalid regular expression: {error}"))?;
     let engine = PikeVM::builder()
-        .thompson(regex_automata::nfa::thompson::Config::new().nfa_size_limit(Some(10 * 1024 * 1024)))
+        .thompson(
+            regex_automata::nfa::thompson::Config::new().nfa_size_limit(Some(10 * 1024 * 1024)),
+        )
         .build(pattern)
         .map_err(|error| format!("invalid regular expression: {error}"))?;
     for (index, name) in engine
@@ -44,6 +47,7 @@ fn compile(pattern: &str) -> Result<Compiled, String> {
         pattern: pattern.to_string(),
         engine,
         cache,
+        required: crate::regex_contract::required(&hir),
     })
 }
 
@@ -83,6 +87,22 @@ pub unsafe extern "C" fn telora_regex(operation: u32, a: u32, b: u32) -> u32 {
                     .is_match(&mut compiled.cache, crate::text::text(b)) as u32
             }
             2 => ((*get(a)).pattern == (*get(b)).pattern) as u32,
+            3 => {
+                let compiled = &*get(a);
+                let names = compiled
+                    .engine
+                    .get_nfa()
+                    .group_info()
+                    .pattern_names(PatternID::ZERO)
+                    .skip(1)
+                    .flatten()
+                    .map(str::to_string)
+                    .collect();
+                match crate::regex_contract::validate(&names, &compiled.required, b) {
+                    Ok(()) => 0,
+                    Err(message) => crate::format::render(format_args!("{message}")),
+                }
+            }
             _ => core::arch::wasm32::unreachable(),
         }
     }

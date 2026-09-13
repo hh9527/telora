@@ -4,6 +4,9 @@ use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub fn regex_native(&mut self, name: &str) -> Result<u32, String> {
+        if name == "prepare" {
+            return self.regex_prepare();
+        }
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
         let regex = |ty: telora_core::mir::TypeId| matches!(self.mir.types[ty.index()].constructor, T::Native(id) if (id.module,id.slot) == (19,0));

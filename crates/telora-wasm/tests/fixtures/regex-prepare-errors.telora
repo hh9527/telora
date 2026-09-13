@@ -1,0 +1,17 @@
+import "std/regex" as regex;
+import "std/_rt" as rt;
+type Required = struct { x: Int };
+type Optional = struct { x: Option(Int) };
+type Unsupported = struct { x: Bool };
+export def answer = fn() {
+    let missing = rt.with_diagnostics(fn(unused: Int) { regex.parse_by(regex.compile("(?P<y>a)"))(Required.type, None) })(0);
+    let optional = rt.with_diagnostics(fn(unused: Int) { regex.parse_by(regex.compile("(?P<x>a)?"))(Required.type, None) })(0);
+    let required = rt.with_diagnostics(fn(unused: Int) { regex.parse_by(regex.compile("(?P<x>a)"))(Optional.type, None) })(0);
+    let unsupported = rt.with_diagnostics(fn(unused: Int) { regex.parse_by(regex.compile("(?P<x>a)"))(Unsupported.type, None) })(0);
+    let scalar = rt.with_diagnostics(fn(unused: Int) { regex.parse_by(regex.compile("a"))(Int.type, None) })(0);
+    (match missing { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match optional { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match required { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match unsupported { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match scalar { Err(reports) => reports[0].message, Ok(_) => "unexpected" })
+};

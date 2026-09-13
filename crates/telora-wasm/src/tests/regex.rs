@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn regex_prepare_validates_sealed_capture_contracts() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/regex-prepare.telora"),
+        "checks",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!([true, true, true, true, true])
+    );
+    let bytes = compile(include_str!(
+        "../../tests/fixtures/regex-prepare-errors.telora"
+    ))
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!([
+            "regex captures must match struct fields; missing captures [\"x\"], extra captures [\"y\"]",
+            "regex capture \"x\" is optional, but its field is required",
+            "regex capture \"x\" is required, but its field is optional",
+            "regex field \"x\" is not string-parsable",
+            "std/regex.parse_by requires a struct type"
+        ])
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn string_parse_uses_closed_scalar_and_option_targets() {
     let bytes = compile_export(
         include_str!("../../tests/fixtures/string-parse.telora"),

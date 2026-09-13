@@ -704,3 +704,18 @@ std/string 函数。String 保留原引用，数值结果保留输入来源。
 追加诊断来源验证指向原输入字面量。没有增加 ABI 版本或修改配额。
 非标量 ParseBy 目标仍明确拒绝 codegen，尚未完成捕获契约及结构装配；
 后续继续接通该路径及其余 codec 能力。本轮未重复性能基准。
+
+## ParseBy 捕获契约
+
+regex.prepare 已接通。codegen 按封闭 Struct 身份生成字段契约，字段
+名字、Optional 标记和可解析性形成固定 packet；嵌套类型仅检查全图
+property 存在记录，不求值 property。RT 比较捕获名集合和正则语法树
+中的必选捕获集合，不接收或猜测 Telora 类型。验证成功保留原 Regex。
+
+39 项 Wasm 库测试通过，默认/Wasm CLI 初始化对照通过。覆盖嵌套
+ParseBy、空 Struct、可选捕获、alternation 和重复捕获；缺失/多余
+捕获、两方向 Optional 冲突、不可解析字段及非 Struct 目标均产生
+可捕获诊断。追加 alternation/重复用例复验通过。
+
+本阶段仅完成准备契约，String.parse 的结构字段提取和装配仍待接入；
+其余 codec、发布/浏览器及最终性能验收继续推进。未重复性能基准。

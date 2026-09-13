@@ -1,0 +1,22 @@
+import "std/regex" as regex;
+import "std/type-property" as property;
+import "std/array" as array;
+import "std/value" { Value };
+@regex.parse_by(regex.compile("^(?P<value>[0-9]+)$"))
+type Inner = struct { value: Int };
+@regex.parse_by(regex.compile("^(?P<inner>[0-9]+)(?:-(?P<label>[a-z]+))?$"))
+type Outer = struct { inner: Inner, label: Option(String) };
+type Empty = struct {};
+type Maybe = struct { x: Option(String) };
+type Many = struct { x: String };
+export def checks = fn() {
+    let inner = property.get_type_prop(Inner.type, regex.ParseBy.type);
+    let outer = property.get_type_prop(Outer.type, regex.ParseBy.type);
+    let empty = regex.parse_by(regex.compile("^$"))(Empty.type, None);
+    let alternative = regex.parse_by(regex.compile("(?:(?P<x>a)|b)"))(Maybe.type, None);
+    let repeated = regex.parse_by(regex.compile("(?P<x>a)+"))(Many.type, None);
+    [match inner { Some(p) => regex.is_match(p.regex, "123"), None => False },
+     match outer { Some(p) => regex.is_match(p.regex, "123-label") && regex.is_match(p.regex, "123"), None => False },
+     regex.is_match(empty.regex, ""), regex.is_match(alternative.regex, "b"), regex.is_match(repeated.regex, "aaa")]
+};
+export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

@@ -3,6 +3,7 @@
 extern crate alloc;
 mod allocator;
 mod regex;
+mod regex_contract;
 
 #[allow(dead_code)]
 mod abi;
