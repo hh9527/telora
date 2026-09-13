@@ -2,6 +2,19 @@
 use crate::{abi::*, artifact::Kind, session::Session};
 
 impl Session {
+    pub(crate) fn input_text(&mut self, ty: u32, text: &str) -> Result<u32, String> {
+        if self
+            .manifest
+            .types
+            .get(ty as usize)
+            .is_none_or(|t| t.kind != Kind::String)
+        {
+            return Err("Wasm: String input requires String layout".into());
+        }
+        let pointer = self.input_header(ty)?;
+        self.write_input_text(pointer, text)?;
+        Ok(pointer)
+    }
     fn input_header(&mut self, ty: u32) -> Result<u32, String> {
         let bytes = self
             .manifest

@@ -1,5 +1,6 @@
 //! Source-backed data transport. Materialize once, then inject before initialization.
-use crate::data_packet::{DataPacket, Value};
+use crate::data_packet::DataPacket;
+use crate::data_view::{Graph, Value};
 use crate::{
     abi::*,
     artifact::{Kind, Manifest},
@@ -124,9 +125,13 @@ impl Session {
         self.manifest.register_data_sources(sources, plan)
     }
     pub fn inject_data(&mut self, symbol: u32, plan: &ValidatedDataPlan) -> Result<(), String> {
-        self.inject_data_packet(symbol, &DataPacket::from_plan(plan)?)
+        self.inject_graph(symbol, Graph::Parsed(plan))
     }
     pub fn inject_data_packet(&mut self, symbol: u32, plan: &DataPacket) -> Result<(), String> {
+        plan.validate(&self.manifest)?;
+        self.inject_graph(symbol, Graph::Packet(plan))
+    }
+    fn inject_graph(&mut self, symbol: u32, plan: Graph<'_>) -> Result<(), String> {
         if !self
             .manifest
             .data_modules
@@ -135,7 +140,7 @@ impl Session {
         {
             return Err("Wasm: data module is not in the executable".into());
         }
-        let pointer = self.materialize_data_packet(plan)?;
+        let pointer = self.materialize_graph(plan)?;
         let inject = self
             .instance
             .get_typed_func::<(i32, i32), i32>(&self.store, "telora_inject_data")
@@ -152,22 +157,21 @@ impl Session {
         Ok(())
     }
     pub(crate) fn materialize_data(&mut self, plan: &ValidatedDataPlan) -> Result<u32, String> {
-        self.materialize_data_packet(&DataPacket::from_plan(plan)?)
+        self.materialize_graph(Graph::Parsed(plan))
     }
-    fn materialize_data_packet(&mut self, plan: &DataPacket) -> Result<u32, String> {
-        plan.validate(&self.manifest)?;
+    fn materialize_graph(&mut self, plan: Graph<'_>) -> Result<u32, String> {
         self.data_node(
             plan,
-            plan.root,
-            &mut vec![None; plan.nodes.len()],
-            &mut vec![false; plan.nodes.len()],
+            plan.root()?,
+            &mut vec![None; plan.len()],
+            &mut vec![false; plan.len()],
             0,
         )
     }
     fn data_node(
         &mut self,
-        plan: &DataPacket,
-        id: u32,
+        plan: Graph<'_>,
+        id: usize,
         cache: &mut [Option<u32>],
         visiting: &mut [bool],
         depth: usize,
@@ -182,12 +186,12 @@ impl Session {
             return Err("Wasm: cyclic data plan".into());
         }
         visiting[id as usize] = true;
-        let node = &plan.nodes[id as usize];
+        let node = plan.node(id)?;
         let value_ty = self
             .manifest
             .value_type
             .ok_or("Wasm: semantic Value contract missing")?;
-        let desc = self.manifest.types[value_ty as usize].clone();
+        let desc = &self.manifest.types[value_ty as usize];
         let tag = match &node.value {
             Value::Int(_) => "Int",
             Value::Float(_) => "Float",
@@ -207,29 +211,22 @@ impl Session {
             .ok_or("Wasm: data variant is not in semantic Value")?;
         let branch = &desc.variants[index];
         let payload = if let Some(ty) = branch.ty {
-            Some(match &node.value {
-                Value::Int(value) => self.input(
-                    ty,
-                    &value
-                        .parse::<i64>()
-                        .map_err(|_| "Wasm: invalid data Int")?
-                        .into(),
-                    0,
-                )?,
+            Some(match node.value {
+                Value::Int(value) => self.input(ty, &value.into(), 0)?,
                 Value::Float(value) => self.input(
                     ty,
-                    &serde_json::Number::from_f64(*value)
+                    &serde_json::Number::from_f64(value)
                         .ok_or("Wasm: non-finite data Float")?
                         .into(),
                     0,
                 )?,
                 Value::String(value) | Value::Temporal { value, .. } => {
-                    self.input(ty, &value.clone().into(), 0)?
+                    self.input_text(ty, value)?
                 }
                 Value::Bytes(bytes) => self.input_bytes(ty, bytes)?,
                 Value::Array(items) => {
                     let mut values = Vec::with_capacity(items.len());
-                    for &item in items {
+                    for item in items {
                         values.push(self.data_node(plan, item, cache, visiting, depth + 1)?);
                     }
                     self.input_array_values(ty, &values)?
@@ -243,7 +240,7 @@ impl Session {
                         .ok_or("Wasm: missing String")? as u32;
                     let mut values = vec![];
                     for field in fields {
-                        let key = self.input(string, &field.name.clone().into(), 0)?;
+                        let key = self.input_text(string, field.name)?;
                         self.input_location(key, field.origin)?;
                         values.push((
                             key,

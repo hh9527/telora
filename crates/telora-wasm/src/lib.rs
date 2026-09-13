@@ -29,6 +29,7 @@ mod codegen;
 mod data_input;
 pub mod data_packet;
 mod data_parse_ops;
+mod data_view;
 pub mod diagnostic_output;
 mod diagnostics;
 mod dict_build;

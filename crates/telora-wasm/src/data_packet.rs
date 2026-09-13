@@ -39,6 +39,23 @@ fn origin(loc: telora_core::Location) -> [u32; 3] {
     [loc.source.get(), loc.start, loc.end]
 }
 
+impl Value {
+    fn children(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
+        let items = match self {
+            Self::Array(items) => items.as_slice(),
+            _ => &[],
+        };
+        let fields = match self {
+            Self::Object(fields) => fields.as_slice(),
+            _ => &[],
+        };
+        items
+            .iter()
+            .copied()
+            .chain(fields.iter().map(|field| field.value))
+    }
+}
+
 impl DataPacket {
     pub fn from_plan(plan: &ValidatedDataPlan) -> Result<Self, String> {
         let id =
@@ -103,13 +120,11 @@ impl DataPacket {
                 Ok(())
             }
         };
-        let mut edges = Vec::with_capacity(self.nodes.len());
         for node in &self.nodes {
             origin(node.origin)?;
-            let children = match &node.value {
+            match &node.value {
                 Value::Int(text) => {
                     text.parse::<i64>().map_err(|_| "Wasm: invalid data Int")?;
-                    vec![]
                 }
                 Value::Float(value) if !value.is_finite() => {
                     return Err("Wasm: non-finite data Float".into());
@@ -122,7 +137,6 @@ impl DataPacket {
                 {
                     return Err("Wasm: invalid temporal variant".into());
                 }
-                Value::Array(items) => items.clone(),
                 Value::Object(fields) => {
                     if fields.windows(2).any(|pair| pair[0].name >= pair[1].name) {
                         return Err("Wasm: data keys must be unique and sorted".into());
@@ -130,14 +144,16 @@ impl DataPacket {
                     for field in fields {
                         origin(field.origin)?;
                     }
-                    fields.iter().map(|field| field.value).collect()
                 }
-                _ => vec![],
+                _ => {}
             };
-            if children.iter().any(|id| *id as usize >= self.nodes.len()) {
+            if node
+                .value
+                .children()
+                .any(|id| id as usize >= self.nodes.len())
+            {
                 return Err("Wasm: invalid data edge".into());
             }
-            edges.push(children);
         }
         let mut state = vec![0u8; self.nodes.len()];
         for root in 0..self.nodes.len() {
@@ -158,10 +174,11 @@ impl DataPacket {
                 state[id] = 1;
                 stack.push((id, true, depth));
                 stack.extend(
-                    edges[id]
-                        .iter()
+                    self.nodes[id]
+                        .value
+                        .children()
                         .rev()
-                        .map(|child| (*child as usize, false, depth + 1)),
+                        .map(|child| (child as usize, false, depth + 1)),
                 );
             }
         }

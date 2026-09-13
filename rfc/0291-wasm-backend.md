@@ -1048,3 +1048,21 @@ CLI 发布的 YAML/TOML 资产在 CLI、Node、真实 Chromium 中均返回
 99 项完整 CLI 回归通过（含 13 项 Wasm 相关回归和语言验收）。浏览器结果覆盖当前示例资产，尚未
 替代完整标准库与语言边界审计；最终 frontend/codegen/load/initialize/
 entry 分阶段时间与内存观察继续保留，#186 未完成。
+
+## 数据输入借用视图与边界审计
+
+普通数据输入不再转换为 DataPacket。Parsed/Packet 两种借用视图
+共用一套值装配，按原节点 ID 访问字符串、Bytes、字段及子节点；
+仅发布时构建可序列化的拥有型图。字符串与键直接从 &str 写入 Wasm，
+去掉中间 JSON String；逐节点读取 Value 布局改为借用。发布包验证
+直接遍历原边，不再复制完整邻接表。仍保留必需的节点缓存和访问状态，
+不宣称免除跨 host/Wasm 输入边界的复制。
+
+86 项库测试、13 项 Wasm CLI 对照通过，包含普通输入、独立发布重载
+及损坏数据拒绝。此阶段没有重复性能基准，不给出量化收益。
+
+边界审计确认 std/test 描述值尚有缺口：`export def sample =
+test.should_ok(fn() { 42 });` 在默认 check 成功，Wasm check 报
+`native ABI not implemented: Some((33, "should_ok"))`。描述值构造属于
+初始化语义，不能因没有 Wasm test 命令而排除；下一步补齐该能力，并
+借现有语言资产继续核查完整范围，#186 未完成。

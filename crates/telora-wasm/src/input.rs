@@ -3,6 +3,25 @@ use crate::{abi::*, artifact::Kind, session::Session};
 use serde_json::Value;
 
 impl Session {
+    pub(crate) fn write_input_text(&mut self, pointer: u32, text: &str) -> Result<(), String> {
+        let bytes = text.as_bytes();
+        if bytes.len() <= 14 {
+            let mut inline = [0u8; 16];
+            inline[1] = bytes.len() as u8;
+            inline[2..2 + bytes.len()].copy_from_slice(bytes);
+            self.write(pointer as usize + 16, &inline)?;
+        } else {
+            let data = self.allocate(bytes.len())?;
+            self.write(data as usize, bytes)?;
+            let length =
+                u32::try_from(bytes.len()).map_err(|_| "Wasm: string input size overflow")?;
+            let id = self.push_input(STRINGS, data, length)?;
+            self.write(pointer as usize + 16, &1u32.to_le_bytes())?;
+            self.write(pointer as usize + 20, &id.to_le_bytes())?;
+            self.write(pointer as usize + 28, &length.to_le_bytes())?;
+        }
+        Ok(())
+    }
     pub(crate) fn allocate(&mut self, bytes: usize) -> Result<u32, String> {
         let bytes = u32::try_from(bytes).map_err(|_| "Wasm: input size exceeds wasm32")?;
         let allocate = self
@@ -83,27 +102,10 @@ impl Session {
                 pointer as usize + 16,
                 &u64::from(value.as_bool().ok_or("Wasm: expected Bool input")?).to_le_bytes(),
             )?,
-            Kind::String => {
-                let bytes = value
-                    .as_str()
-                    .ok_or("Wasm: expected String input")?
-                    .as_bytes();
-                if bytes.len() <= 14 {
-                    let mut inline = [0u8; 16];
-                    inline[1] = bytes.len() as u8;
-                    inline[2..2 + bytes.len()].copy_from_slice(bytes);
-                    self.write(pointer as usize + 16, &inline)?;
-                } else {
-                    let data = self.allocate(bytes.len())?;
-                    self.write(data as usize, bytes)?;
-                    let length = u32::try_from(bytes.len())
-                        .map_err(|_| "Wasm: string input size overflow")?;
-                    let id = self.push_input(STRINGS, data, length)?;
-                    self.write(pointer as usize + 16, &1u32.to_le_bytes())?;
-                    self.write(pointer as usize + 20, &id.to_le_bytes())?;
-                    self.write(pointer as usize + 28, &length.to_le_bytes())?;
-                }
-            }
+            Kind::String => self.write_input_text(
+                pointer,
+                value.as_str().ok_or("Wasm: expected String input")?,
+            )?,
             Kind::Array => {
                 let items = value.as_array().ok_or("Wasm: expected Array input")?;
                 let element = *descriptor
