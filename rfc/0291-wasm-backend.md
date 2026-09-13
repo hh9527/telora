@@ -869,3 +869,13 @@ payload 或生成 null。多个无 payload 分支、与 rename_all 同时启用
 
 69 项 Wasm 库测试通过。此处只完成编码侧 DisplayBy，解码侧 ParseBy
 以及 decode/schema/YAML/TOML 和最终验收仍待推进。
+
+## 标量 decode
+
+decode_with 已接通 Int/Float/String/Bytes/Bool 与 Value 直接复用。
+按封闭 Value 分支和 payload TypeId 精确匹配，不作 Int/Float 隐式
+转换。类型不符返回 Result.Err(BlameError)，保留输入来源；raise 后
+可捕获，无重复诊断。71 项 Wasm 库测试通过。
+
+集合、名义类型、property 与 ParseBy 的解码仍未实现。下一步需要
+像编码侧一样建立有限的专用函数图，并携带路径与拒绝证据上下文。

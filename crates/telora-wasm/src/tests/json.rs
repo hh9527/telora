@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn codec_decode_mismatch_retains_input_origin() {
+    let source = include_str!("../../tests/fixtures/codec-decode-origins.telora");
+    let bytes = compile(source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert_eq!(result["message"], "$: expected Int");
+    assert_eq!(
+        result["labels"][1]["location"]["start"],
+        source.find("Value.String(").unwrap()
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn codec_decode_scalars_match_exact_value_variants() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-decode-scalars.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 7]));
+}
+
+#[test]
 fn codec_display_failure_propagates_without_duplicate_diagnostics() {
     let bytes = compile(include_str!(
         "../../tests/fixtures/codec-display-errors.telora"
