@@ -1,6 +1,6 @@
 # RFC 0290：Native run/serve 总装
 
-- 状态：实施中
+- 状态：已实施并验收；隐藏 native run/serve 落地，默认后端保持
 - 日期：2026-09-13
 - 分支：feat/native-cranelift
 - 跟踪：[#185](https://github.com/hh9527/telora/issues/185)
@@ -25,6 +25,12 @@ std/_entry/run、std/_entry/serve 与 actor/EES 语义。默认后端保持，�
    EES 请求/回复；补验资源边界及连续请求内存，再记录 release 分段数据。
 
 ## 验收
+
+最终实现 `1e34c81`，基础状态机/回收 `56f0135`，均已推送远端独立分支。
+逐项证据、完整命令和资源边界见[验收记录](0290-native-services-acceptance.md)。
+workspace all-features 通过，包含 86 项 CLI、146 项 native 单测和 3 项独立实验；
+无 JIT 的 runtime 为 29 项单测和 3 项实验通过。真实 ontology run/20 请求 serve
+与默认 stdout 逐字节一致。下面首个切片的未接入说明保留为历史进展。
 
 ### 首个实施切片
 

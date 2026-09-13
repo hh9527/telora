@@ -1,6 +1,6 @@
 # RFC 0288：服务边界 work-world 复制回收
 
-- 状态：实施中；用户于 2026-09-13 授权继续推进 native run/serve
+- 状态：已实施并验收；已接入 native run/serve 的安全事件边界
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
@@ -42,6 +42,14 @@ interpreter adapter 缓存不能把每轮产生的临时闭包永久保活，须
 先落实本模块契约并保证可独立编译，再用简单单测或少量语言用例验证，然后进入后继模块。允许 native 路线阶段性缺失能力，不要求每次提交完成整个语言。实现前将本草案中的待定项补成明确决议，不引入兼容兜底。
 
 ## 验收条件
+
+最终证据见 [RFC 0290 验收记录](0290-native-services-acceptance.md)。200 个连续
+简单请求经过 201 次回收后保持有界存活对象；真实 world-model 的 20 次查询
+经过 21 次回收，回收前最多 650 个 work 对象、回收后最多 8 个，main 不复制。
+回收耗时合计 4.63 ms，逻辑复制 9576 bytes。此处只计 work 图，来源数据库、
+host 待处理消息和按现有协议缓冲的输出不属于 GC 根管理范围，也不承诺 RSS 上限。
+
+以下首批记录中的“总装继续”是历史时点，当前 run/serve 接入与验收均已完成。
 
 首批实施已复用 publish 的类型驱动遍历，按目标 world 复制 work 对象并原样保留
 main 引用。临时目标全部构建成功才切换 generation/world/内部需求根；失败恢复

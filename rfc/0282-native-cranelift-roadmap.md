@@ -7,6 +7,9 @@
 - 基点：`464f5f7`（继承 RFC 0281 的候选布局和隔离对象表实验）
 - 前置：[RFC 0280](0280-demand-driven-inference-materialization.md)、[RFC 0281](0281-uniform-runtime-value-layout.md)
 
+后续授权的 run/serve 与事件边界回收已由 [RFC 0290](0290-native-run-serve.md)
+独立实施并验收（#185）；本 RFC 保留原 eval-with 交付范围和历史记录。
+
 ## 动机与范围
 
 利用 SealedMir 已闭合的符号、类型、泛型参数及布局信息，直接通过 Cranelift 生成本机机器码。继续采用 Rust 分类对象表和 main-world/work-world，避免同时建设新解释器或为 Wasm 重构全部内存边界。
