@@ -858,3 +858,14 @@ untagged 编码已接通，按固定 property 槽位 demand 标记后，直接�
 payload 或生成 null。多个无 payload 分支、与 rename_all 同时启用
 均产生可捕获诊断。66 项 Wasm 库测试通过。Parse/Display、decode 等
 剩余任务不变，尚未完成 #186。
+
+## DisplayBy 编码桥接
+
+成对 DecodeByParse/EncodeByDisplay 标记的编码路径已接通：先验证
+成对存在，再 demand 两个标记和 DisplayBy；按封闭 Fn(Dyn)->Fmt
+签名调用 formatter，渲染为 Value.String。Dyn 登记原值指针，不复制
+对象图。缺失 DisplayBy 和 formatter 内部失败均只产生一份诊断；
+两个标记只出现一个时报告成对约束错误。
+
+69 项 Wasm 库测试通过。此处只完成编码侧 DisplayBy，解码侧 ParseBy
+以及 decode/schema/YAML/TOML 和最终验收仍待推进。

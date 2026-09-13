@@ -1,6 +1,55 @@
 use super::*;
 
 #[test]
+fn codec_display_failure_propagates_without_duplicate_diagnostics() {
+    let bytes = compile(include_str!(
+        "../../tests/fixtures/codec-display-errors.telora"
+    ))
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert_eq!(result[0].as_array().unwrap().len(), 1);
+    assert_eq!(result[1].as_array().unwrap().len(), 1);
+    assert_eq!(
+        result[0][0]["message"],
+        "text codec requires a DisplayBy property"
+    );
+    assert_eq!(result[1][0]["message"], "display execution failed");
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn codec_display_bridge_invokes_the_sealed_formatter() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-display.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), "localhost:8080");
+}
+
+#[test]
+fn codec_parse_display_markers_must_be_paired() {
+    let bytes = compile(include_str!(
+        "../../tests/fixtures/codec-bridge-errors.telora"
+    ))
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    for index in 0..2 {
+        assert_eq!(
+            result[index]["message"],
+            "std/string.decode_by_parse and std/string.encode_by_display must be used together"
+        );
+    }
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn codec_untagged_rejects_ambiguous_and_incompatible_declarations() {
     let bytes = compile(include_str!(
         "../../tests/fixtures/codec-untagged-errors.telora"

@@ -1,0 +1,21 @@
+import "std/codec" as codec;
+import "std/string" as string;
+import "std/fmt" { DisplayBy };
+import "std/value" { Value };
+import "std/_rt" as rt;
+def broken_display: Fn(Type, Option(DisplayBy)) -> DisplayBy = fn(owner, previous) {
+    {template: {strings: [""],fields: []},display: fn(value) {fail!("display execution failed")}}
+};
+@string.decode_by_parse
+@string.encode_by_display
+type Missing = struct { value: Int };
+@string.decode_by_parse
+@string.encode_by_display
+@broken_display
+type Broken = struct { value: Int };
+export def answer = fn() {
+    let missing: Missing = {value: 1};
+    let broken: Broken = {value: 2};
+    (match rt.with_diagnostics(fn(value: Missing) {codec.encode(Value.type,value)})(missing) {Err(reports) => reports,Ok(_) => fail!("expected missing display")},
+     match rt.with_diagnostics(fn(value: Broken) {codec.encode(Value.type,value)})(broken) {Err(reports) => reports,Ok(_) => fail!("expected display failure")})
+};

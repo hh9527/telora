@@ -11,7 +11,25 @@ impl Emitter<'_> {
     ) -> Result<u32, String> {
         let is_record = matches!(&self.plan.layouts[source.index()].layout, State::Known { shape } if shape.table == Some("RecordTable"));
         let is_enum = !self.plan.layouts[source.index()].variants.is_empty();
-        for slot in [1, 2, 4] {
+        let decode = self.codec_property_present(source, 1);
+        let encode = self.codec_property_present(source, 2);
+        self.extend([
+            I::LocalGet(decode),
+            I::LocalGet(encode),
+            I::I32Ne,
+            I::If(BlockType::Empty),
+        ]);
+        self.codec_error(
+            input,
+            "std/string.decode_by_parse and std/string.encode_by_display must be used together",
+        )?;
+        self.emit(I::End);
+        self.extend([I::LocalGet(encode), I::If(BlockType::Empty)]);
+        self.codec_property_value(source, 1)?;
+        self.codec_property_value(source, 2)?;
+        let displayed = self.codec_display(source, target, input)?;
+        self.extend([I::LocalGet(displayed), I::Return, I::End]);
+        for slot in [4] {
             if slot == 4 && (is_record || is_enum) {
                 continue;
             }

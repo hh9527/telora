@@ -1,0 +1,13 @@
+import "std/codec" as codec;
+import "std/string" as string;
+import "std/fmt" as fmt;
+import "std/value" { Value };
+@string.decode_by_parse
+@string.encode_by_display
+@fmt.display_by("{host}:{port}")
+type Endpoint = struct {host: String, port: Int};
+export def inspect = fn() {
+    let endpoint: Endpoint = {host: "localhost",port: 8080};
+    codec.encode(Value.type,endpoint)
+};
+export def answer = inspect();

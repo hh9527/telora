@@ -10,6 +10,7 @@ mod capture;
 mod capture_values;
 mod checks;
 mod codec_arrays;
+mod codec_display;
 mod codec_enums;
 mod codec_names;
 mod codec_ops;
