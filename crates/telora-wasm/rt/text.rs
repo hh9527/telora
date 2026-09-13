@@ -25,6 +25,19 @@ pub unsafe extern "C" fn telora_text_query(operation: u32, a: u32, b: u32) -> u3
             1 => u32::from(a.starts_with(text(b))),
             2 => u32::from(a.ends_with(text(b))),
             3 => u32::from(a.contains(text(b))),
+            4 | 5 => {
+                let bits = if operation == 4 {
+                    a.parse::<i64>().ok().map(|value| value as u64)
+                } else {
+                    a.parse::<f64>().ok().filter(|value| value.is_finite()).map(f64::to_bits)
+                };
+                if let Some(bits) = bits {
+                    (b as *mut u64).write_unaligned(bits);
+                    1
+                } else {
+                    0
+                }
+            }
             _ => core::arch::wasm32::unreachable(),
         }
     }

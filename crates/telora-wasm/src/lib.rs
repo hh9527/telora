@@ -38,6 +38,7 @@ mod link;
 mod natives;
 pub mod object;
 mod output;
+mod parse_ops;
 mod path_ops;
 mod patterns;
 mod plan;

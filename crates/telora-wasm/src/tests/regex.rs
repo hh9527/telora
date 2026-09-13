@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn string_parse_uses_closed_scalar_and_option_targets() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/string-parse.telora"),
+        "checks",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(vec![true; 13])
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+    let source = include_str!("../../tests/fixtures/string-parse-origins.telora");
+    let bytes = compile(source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    let report = session.call(&[]).unwrap();
+    assert_eq!(
+        report["labels"][1]["location"]["start"],
+        source.find("\"12345\"").unwrap()
+    );
+}
+
+#[test]
 fn regex_errors_are_language_diagnostics_and_leave_the_session_usable() {
     let source = include_str!("../../tests/fixtures/regex-errors.telora");
     let bytes = compile(source).unwrap();

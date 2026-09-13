@@ -691,3 +691,16 @@ CLI 预算。现采用固定 100 倍的粗转换，目的仍是约束失控执�
 同一 Wasm，10 项正则检查通过且零 imports。浏览器 ABI 已更新，本轮
 尚未重新做实际浏览器验收。regex.prepare 捕获契约、String.parse 的
 类型绑定及 codec 等能力仍待完成，不将基础匹配视作解析链路完成。
+
+## String.parse 标量路径
+
+parse_with 已按封闭 TypeOf(A) 接通 Int、Float、String 以及这些类型的
+嵌套 Option。RT 的固定文本原语只解析 i64/有限 f64 并写入 bits；目标
+类型、Option/Result 构造均由 codegen 确定，ParseError 包装仍执行
+std/string 函数。String 保留原引用，数值结果保留输入来源。
+
+38 项 Wasm 库测试通过。13 项默认/Wasm CLI 对照覆盖 i64 最小值、
+溢出、正号、空白拒绝、Float 指数和非有限值拒绝、字符串与嵌套 Option；
+追加诊断来源验证指向原输入字面量。没有增加 ABI 版本或修改配额。
+非标量 ParseBy 目标仍明确拒绝 codegen，尚未完成捕获契约及结构装配；
+后续继续接通该路径及其余 codec 能力。本轮未重复性能基准。
