@@ -1,0 +1,6 @@
+max: 9223372036854775807
+bytes: !!binary SGk=
+base: &a [1, 2]
+copy: *a
+é: true
+😀: null

@@ -541,6 +541,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(hide = true)]
+    Wasm(wasm_cli::artifact::ArtifactArgs),
     /// Evaluate one exported Value without an Entry or effect system.
     Eval(EvalArgs),
     /// Invoke one pure context function and write its Value result.
@@ -803,6 +805,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
     }
     let context = command_context(cli.context)?;
     match cli.command {
+        Command::Wasm(arguments) => wasm_cli::artifact::run(context, arguments),
         Command::Eval(arguments) => eval_cli::run(context, arguments),
         Command::EvalWith(arguments) => eval_cli::run_with(context, arguments),
         Command::Run(arguments) => tokio::runtime::Builder::new_current_thread()

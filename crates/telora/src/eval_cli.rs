@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Clone)]
-struct EvalSelector {
-    module_id: String,
-    export: String,
+pub(crate) struct EvalSelector {
+    pub(crate) module_id: String,
+    pub(crate) export: String,
 }
 
 #[derive(Args)]
@@ -34,7 +34,7 @@ pub(crate) struct EvalWithArgs {
     args: Vec<String>,
 }
 
-fn parse_eval_selector(value: &str) -> Result<EvalSelector, String> {
+pub(crate) fn parse_eval_selector(value: &str) -> Result<EvalSelector, String> {
     let (module_id, export) = value
         .rsplit_once(':')
         .ok_or_else(|| "expected MODULE:NAME".to_owned())?;

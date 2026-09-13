@@ -1,7 +1,7 @@
 // Run against a local HTTP server for this directory; Playwright is optional tooling.
 import assert from 'node:assert/strict';
 const { chromium } = await import(process.env.TELORA_PLAYWRIGHT_MODULE ?? 'playwright');
-const [base, aggregateArtifact, inputArtifact, entryArtifact, rejectedArtifact, capturedArtifact] = process.argv.slice(2);
+const [base, aggregateArtifact, inputArtifact, entryArtifact, rejectedArtifact, capturedArtifact, bundledArtifact, bundledEntryArtifact] = process.argv.slice(2);
 if (!base || !aggregateArtifact || !inputArtifact) throw Error('expected base URL and two artifact filenames');
 const browser = await chromium.launch({ headless: true });
 try {
@@ -50,8 +50,23 @@ try {
     assert.equal(reports[1].labels[1].primary, false);
     assert.equal((await page.locator('#diagnostics').textContent()).trim(), '');
   }
+  if (bundledArtifact) {
+    await page.getByLabel('Wasm 文件').setInputFiles(bundledArtifact);
+    await page.getByLabel('参数数组').fill('');
+    await page.locator('#run').click();
+    await page.waitForFunction(() => document.querySelector('pre[role=status]').textContent.startsWith('['));
+    assert.deepEqual(JSON.parse(await page.locator('pre[role=status]').textContent()), [true, true]);
+  }
   assert.deepEqual(errors, []);
-  console.log('Chromium: independent artifact eval, typed call' + (entryArtifact ? ', Eval context' : '') + (rejectedArtifact ? ', check diagnostics' : '') + (capturedArtifact ? ', captured diagnostics' : '') + ' passed');
+  if (bundledEntryArtifact) {
+    await page.getByLabel('Wasm 文件').setInputFiles(bundledEntryArtifact);
+    await page.getByLabel('参数数组').fill(JSON.stringify({args: ['published'], env: {TELORA_WASM_TEST_ENV: 'browser env'}, sources: {input: {number: 7}}}));
+    await page.locator('#run').click();
+    await page.waitForFunction(() => document.querySelector('pre[role=status]').textContent.startsWith('{'));
+    assert.deepEqual(JSON.parse(await page.locator('pre[role=status]').textContent()), {loaded: {number: 42}, input: {number: 7}, arg: 'published', env: 'browser env'});
+  }
+  assert.deepEqual(errors, []);
+  console.log('Chromium: independent artifact eval, typed call' + (entryArtifact ? ', Eval context' : '') + (rejectedArtifact ? ', check diagnostics' : '') + (capturedArtifact ? ', captured diagnostics' : '') + (bundledArtifact ? ', bundled YAML/TOML data' : '') + (bundledEntryArtifact ? ', bundled property/Eval initialization' : '') + ' passed');
 } finally {
   await browser.close();
 }

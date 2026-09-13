@@ -1,0 +1,21 @@
+import "std/value" {Value};
+import "@src/input.yaml" as yaml;
+import "@src/input.toml" as toml;
+
+export def answer = Value.Array([
+    if yaml.data == Value.Object({
+        max: Value.Int(9223372036854775807),
+        bytes: Value.Bytes(b"Hi"),
+        base: Value.Array([Value.Int(1), Value.Int(2)]),
+        copy: Value.Array([Value.Int(1), Value.Int(2)]),
+        "é": Value.True,
+        "😀": Value.None,
+    }) { Value.True } else { Value.False },
+    if toml.data == Value.Object({
+        date: Value.LocalDate("2026-09-13"),
+        time: Value.LocalTime("12:34:56"),
+        local: Value.LocalDateTime("2026-09-13T12:34:56"),
+        offset: Value.OffsetDateTime("2026-09-13T12:34:56Z"),
+        ratio: Value.Float(1.0),
+    }) { Value.True } else { Value.False },
+]);

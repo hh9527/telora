@@ -1023,3 +1023,28 @@ Int 以十进制文本跨 JSON 传输，避免浏览器 Number 丢失 i64 精度
 
 本阶段完成的是单文件封装库接口；隐藏 CLI 发布/执行入口和浏览器的
 数据节读取仍待接入。完整语义审计及最终性能观察继续保留，#186 未完成。
+
+## 隐藏发布入口与浏览器数据包加载
+
+隐藏 wasm 子命令接入 build、eval、eval-with、check。build 从正常
+SealedExecutable 生成单文件代码/数据产物，不创建引擎或求值；执行
+命令直接读取产物，不建立 Inventory、不加载源码、不运行 resolve。
+原命令的 --wasm 仍用于现场编译执行，两种入口共享 Eval 请求装配。
+这些实验命令不进入普通 help、README 或 docs。
+
+发布文件按 manifest 中的 Value/Eval 身份选择执行契约。来源文本
+不恢复，错误与次要来源直接依据持久位置渲染；外部请求数据仍在调用
+时读取。发布回归删除整个临时源工作区后运行 eval、eval-with、check，
+验证数据依赖 property、i64 精度、环境与请求输入、失败不输出结果、
+诊断来源、确定性生成及静态失败不创建产物。
+
+浏览器 host 通过独立 bundle.mjs 校验并装配同一 telora.data 图，
+保持 Bytes、时间分支和整数位值，不展开别名为重复的递归 JSON 树。
+CLI 发布的 YAML/TOML 资产在 CLI、Node、真实 Chromium 中均返回
+[true,true]；独立发布的 Eval 资产在 Chromium 中完成 data module
+驱动的 property 初始化及外部输入调用。Node 另验十类非法数据包在
+分配前拒绝。Wasm 产物无 host imports。
+
+99 项完整 CLI 回归通过（含 13 项 Wasm 相关回归和语言验收）。浏览器结果覆盖当前示例资产，尚未
+替代完整标准库与语言边界审计；最终 frontend/codegen/load/initialize/
+entry 分阶段时间与内存观察继续保留，#186 未完成。

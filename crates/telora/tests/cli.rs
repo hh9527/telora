@@ -7,6 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "cli/wasm.rs"]
 mod wasm;
+#[path = "cli/wasm_artifact.rs"]
+mod wasm_artifact;
 
 fn fixture() -> PathBuf {
     let unique = SystemTime::now()

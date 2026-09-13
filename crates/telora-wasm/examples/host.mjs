@@ -1,4 +1,5 @@
 // External transport only. Language functions, heap allocation and initialization run in Wasm.
+import { injectBundle } from './bundle.mjs';
 export async function load(bytes) {
   const module = await WebAssembly.compile(bytes);
   const sections = WebAssembly.Module.customSections(module, 'telora.manifest');
@@ -117,6 +118,12 @@ export async function load(bytes) {
     const desc = manifest.types[type], pointer = allocate(desc.bytes);
     store(pointer + 12, type);
     switch (desc.kind) {
+      case 'Bytes': {
+        if (!Array.isArray(value) || value.some(n => !Number.isInteger(n) || n < 0 || n > 255)) throw Error('需要 Bytes');
+        const data = allocate(value.length);
+        new Uint8Array(wasm.memory.buffer).set(value, data);
+        store(pointer + 16, push(1, data, value.length)); store(pointer + 24, value.length); break;
+      }
       case 'Unit': if (value !== null) throw Error('需要 Unit'); break;
       case 'Int': {
         if (typeof value !== 'bigint' && !Number.isSafeInteger(value)) throw Error('Int 输入需要安全整数或 BigInt');
@@ -128,7 +135,7 @@ export async function load(bytes) {
         view().setFloat64(pointer + 16, value, true); break;
       case 'Bool': if (typeof value !== 'boolean') throw Error('需要 Bool'); store(pointer + 16, Number(value)); break;
       case 'String': {
-        if (typeof value !== 'string') throw Error('需要 String');
+        if (typeof value !== 'string' || !value.isWellFormed()) throw Error('需要有效 Unicode String');
         const bytes = new TextEncoder().encode(value);
         if (bytes.length <= 14) {
           const memory = new Uint8Array(wasm.memory.buffer);
@@ -256,6 +263,7 @@ export async function load(bytes) {
     if (!result) throw failure();
     return json(result, desc.arguments.at(-1));
   };
+  injectBundle(module, manifest, {allocate, store, copy, push, input, wasm});
   return {
     diagnostics,
     injectData(name, value) {

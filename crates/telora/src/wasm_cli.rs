@@ -1,4 +1,5 @@
 //! Hidden portable backend. The frontend stops at SealedExecutable.
+pub(crate) mod artifact;
 mod diagnostics;
 use crate::static_input::Inventory;
 use std::path::PathBuf;
@@ -175,6 +176,16 @@ pub(crate) fn eval_with(
     }
     let result = initialize(&mut session, &inventory, &mut mir.sources);
     diagnostics::finish(&session, &mir.sources, 0, result)?;
+    execute_with(&mut session, &mut mir.sources, inputs, args, false)
+}
+
+pub(super) fn execute_with(
+    session: &mut telora_wasm::session::Session,
+    sources: &mut telora_core::SourceDatabase,
+    inputs: Vec<crate::source_arg::NamedSource>,
+    args: Vec<String>,
+    portable: bool,
+) -> Result<i32, String> {
     let before = session.diagnostics()?.len();
     let config = session.eval_config()?;
     let names = |field: &str| -> Result<Vec<String>, String> {
@@ -221,8 +232,7 @@ pub(crate) fn eval_with(
     )?;
     let mut plans = vec![];
     for (name, input) in inputs {
-        let source = mir
-            .sources
+        let source = sources
             .try_add(input.source_name, &input.text)
             .map_err(|e| e.to_string())?;
         let format = match input.format {
@@ -230,26 +240,29 @@ pub(crate) fn eval_with(
             telora_core::SystemDataFormat::Yaml => telora_core::data_plan::Format::Yaml,
             telora_core::SystemDataFormat::Toml => telora_core::data_plan::Format::Toml,
         };
-        let plan = telora_core::data_plan::parse_registered(&mir.sources, source, format).map_err(
-            |ds| {
+        let plan =
+            telora_core::data_plan::parse_registered(sources, source, format).map_err(|ds| {
                 ds.iter()
-                    .map(|d| mir.sources.render(d))
+                    .map(|d| sources.render(d))
                     .collect::<Vec<_>>()
                     .join("\n")
-            },
-        )?;
+            })?;
         telora_core::data_plan::enforce_limits(
             &plan,
             crate::execution_config().data_limits,
             input.text.len(),
         )?;
-        session.register_data_sources(&mir.sources, &plan)?;
+        session.register_data_sources(sources, &plan)?;
         plans.push((name, plan));
     }
     let result = session.eval_with(&args, &env, &plans);
     println!(
         "{}",
-        diagnostics::finish(&session, &mir.sources, before, result)?
+        if portable {
+            diagnostics::finish_portable(session, before, result)?
+        } else {
+            diagnostics::finish(session, sources, before, result)?
+        }
     );
     Ok(0)
 }
