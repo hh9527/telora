@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn format_equality_compares_structure_and_float_bits() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/format-equality.telora"),
+        "checks",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 20_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(vec![true; 13])
+    );
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/format-equality.telora"),
+        "deep_checks",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 20_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!([true, true]));
+}
+
+#[test]
 fn private_template_primitive_uses_the_admitted_native_identity() {
     // Select the private declaration directly as a sealed test root, without
     // exposing it through std/fmt's public exports or changing module privacy.

@@ -7,7 +7,7 @@ use telora_core::{
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
-    fn compare_call(&mut self, ty: TypeId, left: u32, right: u32) -> Result<(), String> {
+    pub(crate) fn compare_call(&mut self, ty: TypeId, left: u32, right: u32) -> Result<(), String> {
         let key = self
             .plan
             .comparisons
@@ -20,7 +20,7 @@ impl Emitter<'_> {
         ]);
         Ok(())
     }
-    fn unequal_if(&mut self) {
+    pub(crate) fn unequal_if(&mut self) {
         self.extend([I::If(BlockType::Empty), I::I32Const(0), I::Return, I::End]);
     }
     fn compare_child(&mut self, ty: TypeId, left: u32, right: u32) -> Result<(), String> {
@@ -90,6 +90,9 @@ impl Emitter<'_> {
             return Ok(());
         }
         match self.mir.types[ty.index()].constructor {
+            T::Native(id) if (id.module, id.slot) == (20, 1) => {
+                return self.compare_format(ty);
+            }
             T::Dyn => {
                 self.extend([
                     I::LocalGet(0),

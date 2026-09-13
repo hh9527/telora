@@ -27,6 +27,7 @@ mod emit;
 mod entry;
 mod enums;
 mod equality;
+mod equality_format;
 mod equality_plan;
 mod format_ops;
 mod functions;
