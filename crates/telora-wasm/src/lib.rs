@@ -46,6 +46,7 @@ mod records;
 mod reflection_collections;
 mod reflection_data;
 mod reflection_ops;
+mod regex_ops;
 #[path = "../rt/abi.rs"]
 mod runtime_abi;
 mod scalars;

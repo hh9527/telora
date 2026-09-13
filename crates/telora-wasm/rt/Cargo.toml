@@ -1,0 +1,19 @@
+[package]
+name = "telora-wasm-rt"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+regex-automata = { version = "=0.4.16", default-features = false, features = ["alloc", "syntax", "nfa-pikevm", "unicode"] }
+regex-syntax = { version = "0.8", default-features = false, features = ["unicode"] }
+
+[profile.release]
+opt-level = 2
+panic = "abort"

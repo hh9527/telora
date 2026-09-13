@@ -1,0 +1,16 @@
+import "std/regex" as regex;
+import "std/array" as array;
+import "std/value" { Value };
+export def checks = fn() {
+    let pattern = regex.compile("^(?P<word>[a-z]+)-(?P<number>[0-9]+)$");
+    let empty = regex.compile("");
+    let unicode = regex.compile("^🦀é+$");
+    [regex.is_match(pattern, "item-42"), !regex.is_match(pattern, "item-x"),
+     !regex.is_match(pattern, "prefix item-42"),
+     regex.is_match(empty, "anything"), regex.is_match(empty, ""),
+     regex.is_match(unicode, "🦀éé"), !regex.is_match(unicode, "🦀e"),
+     pattern == regex.compile("^(?P<word>[a-z]+)-(?P<number>[0-9]+)$"),
+     pattern != empty,
+     regex.is_match(pattern, "next-123")]
+};
+export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

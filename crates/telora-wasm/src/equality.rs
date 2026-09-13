@@ -90,6 +90,17 @@ impl Emitter<'_> {
             return Ok(());
         }
         match self.mir.types[ty.index()].constructor {
+            T::Native(id) if (id.module, id.slot) == (19, 0) => {
+                let left = self.read32(0, DATA);
+                let right = self.read32(1, DATA);
+                self.extend([
+                    I::I32Const(2),
+                    I::LocalGet(left),
+                    I::LocalGet(right),
+                    I::Call(REGEX),
+                ]);
+                return Ok(());
+            }
             T::Native(id) if (id.module, id.slot) == (20, 1) => {
                 return self.compare_format(ty);
             }

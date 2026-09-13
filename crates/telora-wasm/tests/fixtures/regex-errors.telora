@@ -1,0 +1,11 @@
+import "std/regex" as regex;
+import "std/_rt" as rt;
+export def answer = fn() {
+    let invalid = rt.with_diagnostics(regex.compile)("[");
+    let unnamed = rt.with_diagnostics(regex.compile)("(a)");
+    let unsupported = rt.with_diagnostics(regex.compile)("(?=a)");
+    (match invalid { Err(reports) => reports[0], Ok(_) => fail!("expected invalid pattern") },
+     match unnamed { Err(reports) => reports[0], Ok(_) => fail!("expected unnamed capture") },
+     match unsupported { Err(reports) => reports[0], Ok(_) => fail!("expected unsupported assertion") },
+     regex.is_match(regex.compile("a"), "a"))
+};

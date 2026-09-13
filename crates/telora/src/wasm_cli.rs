@@ -19,7 +19,12 @@ pub(crate) fn error(message: impl Into<String>) -> Diagnostic {
 
 fn compile(executable: &SealedExecutable<'_>) -> Result<telora_wasm::session::Session, String> {
     let bytes = telora_wasm::compile_executable(executable)?;
-    telora_wasm::session::Session::load(&bytes, crate::execution_config().session_quota.fuel as u64)
+    // Wasmi counts low-level instructions, including linked Rust library work.
+    // This coarse conversion bounds runaway execution, not equivalent billing.
+    telora_wasm::session::Session::load(
+        &bytes,
+        (crate::execution_config().session_quota.fuel as u64).saturating_mul(100),
+    )
 }
 
 pub(crate) fn compile_check(

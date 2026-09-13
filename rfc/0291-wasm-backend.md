@@ -667,3 +667,27 @@ concat 比较字符串列和子节点列。同一节点引用直接相等；来�
 
 regex/parse/codec 等标准库操作及最终发布/浏览器/分阶段性能验收仍待
 完成。本轮未重复性能基准。
+
+## Rust RT 依赖与正则基础操作
+
+RT 改为独立 Cargo staticlib 工程，持有自己的锁文件；build.rs 使用
+OUT_DIR 下的独立 target 目录构建 wasm32 archive，随后仍由 wasm-ld
+静态链接。装载产物不需要 Cargo。no_std Rust 库分配复用实例的追加式
+堆，dealloc 暂不回收；不引入 host 分配器或新的运行时类型求解。
+
+引入锁定版本的 regex-automata（PikeVM）与 regex-syntax，接通
+std/regex.compile/is_match 和模式文本相等比较。RegexTable 持有编译
+对象及匹配缓存；RT ABI 只接收固定指针/句柄，编译错误返回 UTF-8 span，
+生成代码装配有来源的语言诊断。拒绝匿名捕获，支持 Unicode、空模式、
+命名捕获和重复匹配。NFA 大小上限为 10 MiB，不做复杂配额记账。
+新增分类表使产物 ABI 升到 5，浏览器 transport 同步；不兼容旧实验 ABI。
+
+Wasmi fuel 与 Telora fuel 单位不同，原先同数值桥接使正常正则编译耗尽
+CLI 预算。现采用固定 100 倍的粗转换，目的仍是约束失控执行，不承诺
+跨后端等价计费。Session 直接装载接口仍使用调用者指定的引擎 fuel。
+
+验证：37 项 Wasm 测试、97 项完整 CLI 测试（含语言验收）通过；非法
+表达式、匿名捕获、错误后继续调用及原始位置验证通过。独立 Node 重载
+同一 Wasm，10 项正则检查通过且零 imports。浏览器 ABI 已更新，本轮
+尚未重新做实际浏览器验收。regex.prepare 捕获契约、String.parse 的
+类型绑定及 codec 等能力仍待完成，不将基础匹配视作解析链路完成。

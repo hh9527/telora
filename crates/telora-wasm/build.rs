@@ -4,28 +4,31 @@ fn main() {
     println!("cargo:rerun-if-changed=rt");
     println!("cargo:rerun-if-env-changed=TELORA_WASM_LD");
     let rustc = env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
-    let output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("telora-rt.a");
-    let status = Command::new(&rustc)
+    let output_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let target_dir = output_dir.join("rt-target");
+    let status = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
         .args([
-            "--edition=2024",
+            "build",
+            "--manifest-path",
+            "rt/Cargo.toml",
+            "--locked",
+            "--release",
             "--target",
             "wasm32-unknown-unknown",
-            "--crate-type",
-            "staticlib",
-            "-C",
-            "opt-level=2",
-            "-C",
-            "panic=abort",
-            "rt/lib.rs",
-            "-o",
+            "--target-dir",
         ])
-        .arg(output)
+        .arg(&target_dir)
         .status()
-        .expect("launch rustc for Wasm RT");
+        .expect("launch Cargo for Wasm RT");
     assert!(
         status.success(),
         "Wasm RT build failed; install rustup target add wasm32-unknown-unknown"
     );
+    std::fs::copy(
+        target_dir.join("wasm32-unknown-unknown/release/libtelora_wasm_rt.a"),
+        output_dir.join("telora-rt.a"),
+    )
+    .expect("copy linked Wasm RT archive");
     let sysroot = Command::new(&rustc)
         .args(["--print", "sysroot"])
         .output()

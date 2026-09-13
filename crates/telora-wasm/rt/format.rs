@@ -31,7 +31,7 @@ impl Write for Output {
         Ok(())
     }
 }
-unsafe fn render(arguments: fmt::Arguments<'_>) -> u32 {
+pub(crate) unsafe fn render(arguments: fmt::Arguments<'_>) -> u32 {
     unsafe { render_with(|writer| fmt::write(writer, arguments)) }
 }
 

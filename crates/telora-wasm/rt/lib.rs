@@ -1,5 +1,8 @@
 //! Rust implementation of the Wasm runtime, statically linked into artifacts.
 #![no_std]
+extern crate alloc;
+mod allocator;
+mod regex;
 
 #[allow(dead_code)]
 mod abi;
