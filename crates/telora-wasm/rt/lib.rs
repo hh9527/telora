@@ -7,6 +7,7 @@ mod format;
 mod sort;
 mod sources;
 mod tables;
+mod text;
 mod values;
 
 #[panic_handler]

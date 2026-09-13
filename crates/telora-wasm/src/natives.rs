@@ -30,6 +30,7 @@ impl Emitter<'_> {
         match identity(self.mir, self.key.node) {
             Some((5, name)) => self.array_native(name),
             Some((6, name)) => self.dict_native(name),
+            Some((7, name)) => self.string_native(name),
             Some((26, "call_with_diagnostics")) => self.capture_diagnostics(),
             Some((18, "property")) => self.property_factory(),
             Some((

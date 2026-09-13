@@ -22,6 +22,10 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
     types
         .ty()
         .function([ValType::I32, ValType::I32, ValType::I32], [ValType::I32]);
+    types.ty().function(
+        [ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        [ValType::I32],
+    );
     module.section(&types);
     let mut imports = ImportSection::new();
     for (name, ty) in [
@@ -35,6 +39,9 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         ("telora_subject_label", 0),
         ("telora_sort_pairs", CALL_TYPE),
         ("telora_duplicate_key_message", 0),
+        ("telora_text_query", 3),
+        ("telora_text_build", 4),
+        ("telora_text_split", 3),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }

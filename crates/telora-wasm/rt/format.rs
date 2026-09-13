@@ -11,9 +11,15 @@ impl Write for Counter {
 struct Output {
     pointer: *mut u8,
     offset: usize,
+    capacity: usize,
 }
 impl Write for Output {
     fn write_str(&mut self, text: &str) -> fmt::Result {
+        let end = self
+            .offset
+            .checked_add(text.len())
+            .filter(|&end| end <= self.capacity)
+            .ok_or(fmt::Error)?;
         unsafe {
             core::ptr::copy_nonoverlapping(
                 text.as_ptr(),
@@ -21,25 +27,27 @@ impl Write for Output {
                 text.len(),
             );
         }
-        self.offset += text.len();
+        self.offset = end;
         Ok(())
     }
 }
 unsafe fn render(arguments: fmt::Arguments<'_>) -> u32 {
+    unsafe { render_with(|writer| fmt::write(writer, arguments)) }
+}
+
+pub(crate) unsafe fn render_with(mut write: impl FnMut(&mut dyn Write) -> fmt::Result) -> u32 {
     let mut size = Counter(0);
-    fmt::write(&mut size, arguments).unwrap();
+    write(&mut size).unwrap();
     let bytes = u32::try_from(size.0).unwrap();
     unsafe {
         let span = crate::telora_alloc(bytes.checked_add(8).unwrap());
         (span as *mut u32).write(span + 8);
         ((span + 4) as *mut u32).write(bytes);
-        fmt::write(
-            &mut Output {
-                pointer: (span + 8) as *mut u8,
-                offset: 0,
-            },
-            arguments,
-        )
+        write(&mut Output {
+            pointer: (span + 8) as *mut u8,
+            offset: 0,
+            capacity: size.0,
+        })
         .unwrap();
         span
     }

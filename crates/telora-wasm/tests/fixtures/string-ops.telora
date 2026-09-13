@@ -1,0 +1,16 @@
+import "std/string" as string;
+import "std/_rt" as rt;
+
+export def answer = fn() {
+    let negative = rt.with_diagnostics(fn(n: Int) { string.indent("x", n) })(-1);
+    let empty_margin = rt.with_diagnostics(fn(s: String) { string.trim_margin("|x", s) })("");
+    (string.length("aé🦀"), string.starts_with("éclair", "é"), string.ends_with("éclair", "air"),
+     string.contains("aé🦀", "🦀"), string.contains("", ""), string.contains("abc", "z"),
+     string.join(["a", "é", "🦀"], ":"), string.join([], ":"), string.join_lines(["a", ""]),
+     string.split("a::é::", "::"), string.split("é🦀", ""), string.lines("a\r\nb\n"), string.lines(""),
+     string.replace("aaa", "aa", "b"), string.replace("éé", "", ":"),
+     string.indent("a\n\n\r\nb", 2), string.ensure_trailing_newline(""), string.ensure_trailing_newline("x\n"),
+     string.trim_margin("  |a\r\n\t|b\n  plain", "|"),
+     match negative { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match empty_margin { Err(reports) => reports[0].message, Ok(_) => "unexpected" })
+};

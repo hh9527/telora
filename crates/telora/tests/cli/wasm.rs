@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn wasm_string_operations_match_default_backend() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        include_str!("../../../telora-wasm/tests/fixtures/string-value.telora"),
+    )
+    .unwrap();
+    let mut results = vec![];
+    for backend in [None, Some("--wasm")] {
+        let output = telora(&cwd)
+            .args(["eval", "@src/main:answer"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+    }
+    assert_eq!(results[0], results[1]);
+    assert_eq!(results[1]["length"], 3);
+    assert_eq!(results[1]["lines"], serde_json::json!(["a", "b", ""]));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_dict_operations_match_default_backend() {
     let cwd = fixture();
     fs::write(

@@ -1,6 +1,6 @@
 use crate::{abi::*, tables::telora_table_get};
 
-unsafe fn word(pointer: u32, offset: u64) -> u32 {
+pub(crate) unsafe fn word(pointer: u32, offset: u64) -> u32 {
     unsafe { ((pointer + offset as u32) as *const u32).read_unaligned() }
 }
 

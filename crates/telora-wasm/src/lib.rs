@@ -32,6 +32,7 @@ mod properties;
 mod runtime_abi;
 mod scalars;
 pub mod session;
+mod string_ops;
 
 pub use codegen::compile_executable;
 

@@ -405,3 +405,16 @@ from_pairs 先构造独立的键/值指针对，Rust RT 按 UTF-8 键序原地�
 200 项逆序输入验证排序及原输入不变；公开 CLI 的结果与默认后端一致。
 仍需补齐其他标准库/表达式，并在总体验收时覆盖 Never 等边界组合，
 不以本阶段的操作覆盖代替 #186 全部完成。
+
+## String 固定原语与类型胶水
+
+新增 length、starts_with、ends_with、contains、join、join_lines、split、
+lines、replace、indent、ensure_trailing_newline、trim_margin。Rust RT
+通过三个固定 ABI 入口完成 UTF-8 查询、文本生成和切分，返回标量或原始
+UTF-8 范围；codegen 根据封闭签名构造 String、Array(String) 及来源头，
+生成参数诊断。RT 不接收模板参数，也不承担标准库模板实例化。
+
+18 项库测试、4 项 CLI 测试通过，公开 String 操作与默认后端结果一致。
+覆盖 Unicode 字符计数、空分隔符、CRLF、尾部空行、缩进与 margin 错误。
+泛型 parse/parse_with 尚未实现，后续须利用已封闭的解析器身份生成胶水，
+不能在 RT 中按类型名称猜测转换规则。此阶段仍不代表整体后端验收完成。

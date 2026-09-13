@@ -5,6 +5,40 @@ use telora_core::{
 };
 
 #[test]
+fn string_operations_preserve_unicode_and_line_semantics() {
+    let bytes = compile(include_str!("../tests/fixtures/string-ops.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!([
+            3,
+            true,
+            true,
+            true,
+            true,
+            false,
+            "a:é:🦀",
+            "",
+            "a\n",
+            ["a", "é", ""],
+            ["", "é", "🦀", ""],
+            ["a", "b", ""],
+            [""],
+            "ba",
+            ":é:é:",
+            "  a\n\n\r\n  b",
+            "\n",
+            "x\n",
+            "a\r\nb\n  plain",
+            "String indentation width must be non-negative",
+            "String margin marker must not be empty"
+        ])
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn dictionary_operations_use_sorted_columns_and_closed_callbacks() {
     let bytes = compile(include_str!("../tests/fixtures/dict-ops.telora")).unwrap();
     let mut session = crate::session::Session::load(&bytes, 5_000_000).unwrap();
