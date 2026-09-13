@@ -60,6 +60,25 @@ Rust 栈、静态数据与分类堆的地址分配，完成闭包间接回调和
 再将现有 runtime 逐项迁入 Rust RT。保留语言对照测试作为迁移验收，
 不保留旧手写 runtime 作为最终兼容或回退路径。
 
+后续探针已使用独立 object 模块记录直接调用与函数表槽位重定位，
+自动计算 code payload 偏移，不再手填偏移。生成对象将函数指针传给
+Rust RT；RT 从链接器提供的 __heap_base 后分配数组并通过间接调用
+回调生成函数。连续一万次执行得到正确结果，覆盖 memory.grow，第二
+实例验证分配状态隔离，最终产物仍为零 imports。这验证基本 ABI 和
+链接条件，尚未代表完整 Telora 闭包环境、分类堆或 MIR 生成器迁移。
+
+复现（wasm-ld 可使用 Rust sysroot 下的 bin/gcc-ld/wasm-ld）：
+
+```sh
+cargo run -p telora-wasm --example link-object -- /tmp/telora-app.o
+rustc --edition=2024 --target wasm32-unknown-unknown --crate-type staticlib \
+  -C opt-level=2 -C panic=abort \
+  crates/telora-wasm/tests/fixtures/rust-rt-probe.rs -o /tmp/telora-rt.a
+wasm-ld --no-entry --export=answer --export=array_answer \
+  /tmp/telora-app.o /tmp/telora-rt.a -o /tmp/telora-linked.wasm
+node crates/telora-wasm/examples/link-smoke.mjs /tmp/telora-linked.wasm
+```
+
 ## 产物与来源
 
 落盘产物包含可执行 Wasm、类型及函数索引、必要静态数据、来源位置和
@@ -268,3 +287,13 @@ raise!/fail! 记录失败并终止，warn! 记录警告并返回 None；unwrap!/
 后续仍需补齐 std/_rt.with_diagnostics 的显式诊断捕获、标准库操作、
 剩余表达式及完整语言对照；此阶段没有宣称所有诊断/恢复能力已完成。
 最终性能和内存观察仍待完整链路覆盖后进行，#186 保持推进中。
+
+## Array 语义对照资产
+
+Rust RT 链接迁移之前的本地 Array 工作已覆盖 std/array 的 14 个操作，
+包含回调、短路、fold_control、zip 长度不等、concat 和 flat_map。
+flat_map 每个输入只执行一次回调；测试使用 warning 计数确认这一点。
+泛型 namespace 字段引用直接消费 MIR 已封闭的实例引用，修正 array.map
+这类调用遗漏实例证据的问题。telora-wasm 14 项库测试通过。
+这些语言资产继续作为 Rust RT 迁移的对照；手写 Array 指令不是最终 RT
+实现方向，也不表示其他标准库操作已经补齐。

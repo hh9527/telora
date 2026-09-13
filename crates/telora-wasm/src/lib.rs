@@ -1,6 +1,8 @@
 //! Independent Wasm backend. No interpreter or native-backend fallback.
 pub mod abi;
 mod aggregates;
+mod array_build;
+mod array_ops;
 pub mod artifact;
 mod checks;
 mod codegen;
@@ -16,6 +18,7 @@ mod input;
 mod input_heap;
 mod input_types;
 mod natives;
+pub mod object;
 mod output;
 mod patterns;
 mod plan;

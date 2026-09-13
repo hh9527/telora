@@ -193,6 +193,15 @@ impl Emitter<'_> {
         Ok(result)
     }
     pub fn field(&mut self, node: HirId) -> Result<u32, String> {
+        if let Some(instance) = self.key.reference(self.mir, node) {
+            return self.call_key(
+                *self
+                    .plan
+                    .instances
+                    .get(&instance)
+                    .ok_or("Wasm: missing sealed member instance")?,
+            );
+        }
         if let Some(slot) = self.mir.hir[node.index()].resolution
             && let telora_core::mir::ResolveState::Bound(symbol) =
                 self.mir.resolve_slots[slot.index()]

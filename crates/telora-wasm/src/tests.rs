@@ -4,6 +4,25 @@ use telora_core::{
     static_sources, symbol_resolve, type_resolve,
 };
 
+#[test]
+fn array_callbacks_execute_in_wasm_with_closed_element_types() {
+    let bytes = compile(include_str!("../tests/fixtures/array-ops.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.eval().unwrap(),
+        serde_json::json!([[11,12,13,14],[13,14],27,2,null,3,3,true,false,true,
+        [1,2,3,4,5], [[0,"a"],[1,"b"]], [[1,"a"],[2,"b"]], null, [1,2,3], [1,11,2,12], {"Break":"done"}, {"Continue":42}])
+    );
+    let diagnostics = session.diagnostics().unwrap();
+    assert_eq!(diagnostics.len(), 2);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.warning && d.message == "flat_map once")
+    );
+}
+
 fn graph(source: &str) -> Mir {
     let inventory = ["@src/main", "@src/input.json"]
         .into_iter()
