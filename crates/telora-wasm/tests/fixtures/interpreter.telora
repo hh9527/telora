@@ -1,0 +1,29 @@
+import "std/dyn" as dyn;
+import "std/codec" {encode, Value};
+def erased: Fn(Dyn) -> Int = fn(value) { match dyn.check_int(value) { Some(value) => value, None => 0 } };
+def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(do {
+    let warning: Option(Int) = warn!("operand");
+    erased
+});
+def other: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(erased);
+def initialized = factory(Int.type);
+def make: Fn(Int) -> Fn(String) -> Int = fn(offset) {
+    def local: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(fn(value) {offset});
+    local(String.type)
+};
+def captured = make(42);
+def unused: for(T) Fn(TypeOf(T)) -> Fn(Int) -> Int = interpreter!(fn(value) {value});
+def mixed: for(A, B) Fn(TypeOf(A), TypeOf(B)) -> Fn(A, Int, B) -> Int = interpreter!(fn(a, n, b) { n });
+export def answer: Fn() -> Value = fn() {
+    let repeated = factory(Int.type);
+    encode(Value.type, [
+        initialized == repeated,
+        initialized != other(Int.type),
+        repeated(42) == 42 && repeated(7) == 7,
+        captured("unused") == 42,
+        make(1)("unused") == 1,
+        make(1) != make(1),
+        unused(String.type)(42) == 42,
+        mixed(Int.type, String.type)(1, 42, "unused") == 42,
+    ])
+};

@@ -172,6 +172,7 @@ impl Plan {
             if matches!(
                 mir.hir[root.node.index()].kind,
                 HirKind::Closure
+                    | HirKind::Interpreter
                     | HirKind::Binding {
                         kind: telora_core::ast::BindingKind::Native,
                         ..
@@ -187,10 +188,12 @@ impl Plan {
                     },
                     0,
                 );
-                if matches!(
-                    crate::natives::identity(mir, root.node),
-                    Some((18, "property") | (17, "stringify_pretty"))
-                ) {
+                if matches!(mir.hir[root.node.index()].kind, HirKind::Interpreter)
+                    || matches!(
+                        crate::natives::identity(mir, root.node),
+                        Some((18, "property") | (17, "stringify_pretty"))
+                    )
+                {
                     plan.functions.insert(
                         Key {
                             special: Special::Configured,

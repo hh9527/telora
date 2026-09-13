@@ -14,6 +14,7 @@ mod records;
 mod reflection;
 mod regex;
 mod test_descriptions;
+mod interpreters;
 
 #[test]
 fn local_generic_instances_capture_per_activation_and_support_recursion() {

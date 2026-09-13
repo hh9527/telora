@@ -439,7 +439,7 @@ impl<'a> Emitter<'a> {
                 self.extend([I::LocalGet(value), I::Return]);
                 Ok(value)
             }
-            HirKind::Closure => self.closure(node),
+            HirKind::Closure | HirKind::Interpreter => self.closure(node),
             HirKind::Call => self.call(node),
             other => Err(format!(
                 "Wasm: unsupported expression {other:?} at {:?}",
@@ -476,6 +476,9 @@ pub(crate) fn compile(
         emit.emit(I::LocalGet(value));
     } else if key.callable && crate::natives::identity(mir, key.node).is_some() {
         let value = emit.native()?;
+        emit.emit(I::LocalGet(value));
+    } else if key.callable && matches!(mir.hir[key.node.index()].kind, HirKind::Interpreter) {
+        let value = emit.interpreter()?;
         emit.emit(I::LocalGet(value));
     } else if key.callable && !matches!(mir.hir[key.node.index()].kind, HirKind::Closure) {
         let value = emit.constructor()?;

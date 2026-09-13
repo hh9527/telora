@@ -35,6 +35,14 @@ impl Emitter<'_> {
                 format!("Wasm: missing local instance capture {instance:?} for {key:?}")
             })?);
         }
+        if matches!(
+            self.mir.hir[node.index()].kind,
+            telora_core::mir::HirKind::Interpreter
+        ) {
+            let cache = self.local(ValType::I32);
+            self.extend([I::I32Const(0), I::LocalSet(cache)]);
+            values.push(cache);
+        }
         self.function_value(node, key, self.effective_ty(node)?, &values)
     }
     pub fn function_value(

@@ -52,6 +52,7 @@ mod equality_format;
 mod equality_plan;
 mod format_ops;
 mod functions;
+mod interpreters;
 mod hash_ops;
 mod input;
 mod input_heap;
