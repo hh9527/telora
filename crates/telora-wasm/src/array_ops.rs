@@ -1,6 +1,6 @@
 //! Array primitives operate on packed, statically typed elements inside Wasm.
 use crate::{abi::*, emit::Emitter};
-use telora_core::mir::{TypeConstructor as T, TypeId};
+use telora_core::mir::{HirId, TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
@@ -50,6 +50,16 @@ impl Emitter<'_> {
         count: u32,
         width: u32,
     ) -> Result<u32, String> {
+        self.array_result_at(self.key.node, ty, data, count, width)
+    }
+    pub fn array_result_at(
+        &mut self,
+        node: HirId,
+        ty: TypeId,
+        data: u32,
+        count: u32,
+        width: u32,
+    ) -> Result<u32, String> {
         let id = self.local(ValType::I32);
         self.extend([
             I::I32Const(table_address(ARRAYS) as i32),
@@ -60,7 +70,7 @@ impl Emitter<'_> {
             I::Call(TABLE_PUSH),
             I::LocalSet(id),
         ]);
-        let result = self.value_as(self.key.node, ty, self.width(ty)?)?;
+        let result = self.value_as(node, ty, self.width(ty)?)?;
         self.extend([
             I::LocalGet(result),
             I::LocalGet(id),
@@ -69,6 +79,8 @@ impl Emitter<'_> {
             I::LocalGet(count),
             I::I32Store(memory(24, 2)),
         ]);
+        self.store32(result, 20, 0);
+        self.store32(result, 28, 0);
         Ok(result)
     }
     pub fn array_item(&mut self, base: u32, index: u32, width: u32) -> u32 {

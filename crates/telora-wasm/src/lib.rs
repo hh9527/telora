@@ -25,12 +25,14 @@ mod link;
 mod natives;
 pub mod object;
 mod output;
+mod path_ops;
 mod patterns;
 mod plan;
 mod properties;
 #[path = "../rt/abi.rs"]
 mod runtime_abi;
 mod scalars;
+mod sequences;
 pub mod session;
 mod string_ops;
 

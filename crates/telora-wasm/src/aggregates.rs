@@ -65,42 +65,6 @@ impl Emitter<'_> {
             },
         ]);
     }
-    pub fn array(&mut self, node: HirId) -> Result<u32, String> {
-        let ty = self.effective_ty(node)?;
-        if self.mir.types[ty.index()].constructor != T::Array {
-            return Err("Wasm: array needs sealed Array type".into());
-        }
-        let element = self.mir.types[ty.index()].arguments[0];
-        let width = self.width(element)?;
-        let items = self.mir.hir[node.index()]
-            .children
-            .iter()
-            .filter(|e| e.role == Role::Item)
-            .map(|e| e.node)
-            .collect::<Vec<_>>();
-        let bytes = (items.len() as u32)
-            .checked_mul(width)
-            .ok_or("Wasm: array size overflow")?;
-        let data = self.alloc(bytes);
-        for (index, &item) in items.iter().enumerate() {
-            if self.effective_ty(item)? != element {
-                return Err("Wasm: array element requires sealed adaptation".into());
-            }
-            let value = self.expression(item)?;
-            self.copy(data, index as u32 * width, value, width);
-        }
-        let id = self.table_push(ARRAYS, data, bytes);
-        let result = self.value(node, 32)?;
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(id),
-            I::I32Store(memory(DATA, 2)),
-        ]);
-        self.store32(result, 20, 0);
-        self.store32(result, 24, items.len() as u32);
-        self.store32(result, 28, 0);
-        Ok(result)
-    }
     pub fn record(&mut self, node: HirId) -> Result<u32, String> {
         let ty = self.effective_ty(node)?;
         let object = self.plan.layouts[ty.index()]
@@ -116,33 +80,17 @@ impl Emitter<'_> {
             .collect::<Vec<_>>();
         let data = self.alloc(size);
         let mut values = std::collections::BTreeMap::new();
-        if matches!(self.mir.hir[node.index()].kind, HirKind::Tuple) {
-            let items = self.mir.hir[node.index()]
-                .children
-                .iter()
-                .filter(|e| e.role == Role::Item)
-                .map(|e| e.node)
-                .collect::<Vec<_>>();
-            if items.len() != members.len() {
-                return Err("Wasm: tuple arity does not match its sealed layout".into());
+        for edge in &self.mir.hir[node.index()].children {
+            if edge.role != Role::Field {
+                continue;
             }
-            for ((name, _, _), item) in members.iter().zip(items) {
-                let value = self.expression(item)?;
-                values.insert(name.clone(), (value, self.effective_ty(item)?.index()));
-            }
-        } else {
-            for edge in &self.mir.hir[node.index()].children {
-                if edge.role != Role::Field {
-                    continue;
-                }
-                let name_node = child(self.mir, edge.node, Role::Name)?;
-                let HirKind::Name(name) = &self.mir.hir[name_node.index()].kind else {
-                    return Err("Wasm: missing field name".into());
-                };
-                let item = child(self.mir, edge.node, Role::Value)?;
-                let value = self.expression(item)?;
-                values.insert(name.clone(), (value, self.effective_ty(item)?.index()));
-            }
+            let name_node = child(self.mir, edge.node, Role::Name)?;
+            let HirKind::Name(name) = &self.mir.hir[name_node.index()].kind else {
+                return Err("Wasm: missing field name".into());
+            };
+            let item = child(self.mir, edge.node, Role::Value)?;
+            let value = self.expression(item)?;
+            values.insert(name.clone(), (value, self.effective_ty(item)?.index()));
         }
         for (name, member, offset) in &members {
             let (value, actual) = values

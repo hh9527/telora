@@ -5,6 +5,69 @@ use telora_core::{
 };
 
 #[test]
+fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {
+    let bytes = compile(include_str!("../tests/fixtures/sequences.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!([
+            [1,"text",2], null, [[1,2],3], [1,"text",3],
+            [1], [1], [1,2], [[],[1]], [{"value":42},{"value":42},{"value":42}],
+            [{"value":42}], [1,2,3], [1,{"value":2},"hi"], 42, 2
+        ])
+    );
+    let source = include_str!("../tests/fixtures/sequence-origins.telora");
+    let bytes = compile(source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert_eq!(result[0], serde_json::json!([7, 7]));
+    assert_eq!(result[1], serde_json::json!([7, 8, 7]));
+    assert_eq!(result[4], "tuple spread failed");
+    assert_eq!(result[5], "array spread failed");
+    assert_eq!(result[6], "uninhabited tuple");
+    let diagnostics = session.diagnostics().unwrap();
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "middle", "last", "a", "b", "c"]
+    );
+    assert!(diagnostics.iter().all(|d| d.warning));
+    assert_eq!(
+        result[2]["labels"][1]["location"]["start"],
+        source.find("42").unwrap()
+    );
+    assert_eq!(
+        result[3]["labels"][1]["location"]["start"],
+        source.find("(...original, 3)").unwrap()
+    );
+}
+
+#[test]
+fn paths_are_lexical_and_independent_of_the_host_platform() {
+    let bytes = compile_export(include_str!("../tests/fixtures/path.telora"), "inspect").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 5_000_000).unwrap();
+    session.initialize().unwrap();
+    for (input, expected) in [
+        ("", serde_json::json!([".", null, null])),
+        ("/../../a", serde_json::json!(["/a", "/", "a"])),
+        ("a/../../..", serde_json::json!(["../..", "..", ".."])),
+        ("/a/../../..", serde_json::json!(["/", null, null])),
+        (
+            "目录/🦀/../文件",
+            serde_json::json!(["目录/文件", "目录", "文件"]),
+        ),
+        ("a\\b", serde_json::json!(["a\\b", ".", "a\\b"])),
+    ] {
+        assert_eq!(session.call(&[serde_json::json!(input)]).unwrap(), expected);
+    }
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn string_operations_preserve_unicode_and_line_semantics() {
     let bytes = compile(include_str!("../tests/fixtures/string-ops.telora")).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();

@@ -1,6 +1,71 @@
 use super::*;
 
 #[test]
+fn wasm_sequence_spreads_match_default_backend() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        include_str!("../../../telora-wasm/tests/fixtures/sequences.telora"),
+    )
+    .unwrap();
+    let mut results = vec![];
+    for backend in [None, Some("--wasm")] {
+        let output = telora(&cwd)
+            .args(["eval", "@src/main:value"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+    }
+    assert_eq!(results[0], results[1]);
+    assert_eq!(
+        results[1],
+        serde_json::json!({
+            "numbers":[1,2], "items":[42,42,42], "appended":[1,2,3],
+            "nominal":2, "metadata":42, "type_count":2
+        })
+    );
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
+fn wasm_path_operations_match_default_backend() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        include_str!("../../../telora-wasm/tests/fixtures/path.telora"),
+    )
+    .unwrap();
+    let mut results = vec![];
+    for backend in [None, Some("--wasm")] {
+        let output = telora(&cwd)
+            .args(["eval", "@src/main:answer"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+    }
+    assert_eq!(results[0], results[1]);
+    assert_eq!(
+        results[1]["joins"],
+        serde_json::json!([".", ".", "a/b", "b", "/root/b", "/", "../b", "目录/文件"])
+    );
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_string_operations_match_default_backend() {
     let cwd = fixture();
     fs::write(

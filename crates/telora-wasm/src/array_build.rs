@@ -1,9 +1,20 @@
 use crate::{abi::*, emit::Emitter};
-use telora_core::mir::TypeId;
+use telora_core::mir::{HirId, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub(crate) fn packed_tuple(&mut self, ty: TypeId, fields: &[u32]) -> Result<u32, String> {
+        self.packed_tuple_at(self.key.node, ty, fields)
+    }
+    pub(crate) fn packed_tuple_at(
+        &mut self,
+        node: HirId,
+        ty: TypeId,
+        fields: &[u32],
+    ) -> Result<u32, String> {
+        if fields.is_empty() && self.width(ty)? == HEADER_BYTES {
+            return self.value_as(node, ty, HEADER_BYTES);
+        }
         let layout = self.plan.layouts[ty.index()]
             .object
             .as_ref()
@@ -25,7 +36,7 @@ impl Emitter<'_> {
             );
         }
         let id = self.table_push(RECORDS, object, bytes);
-        let result = self.value_as(self.key.node, ty, self.width(ty)?)?;
+        let result = self.value_as(node, ty, self.width(ty)?)?;
         self.extend([
             I::LocalGet(result),
             I::LocalGet(id),

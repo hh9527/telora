@@ -5,7 +5,7 @@ use crate::{
     values::{string_span, word},
 };
 
-unsafe fn text(value: u32) -> &'static str {
+pub(crate) unsafe fn text(value: u32) -> &'static str {
     unsafe {
         let (pointer, length) = string_span(value);
         core::str::from_utf8(core::slice::from_raw_parts(

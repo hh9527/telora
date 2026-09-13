@@ -128,7 +128,7 @@ impl Emitter<'_> {
         self.extend([I::LocalGet(returned), I::I32Eqz, I::If(BlockType::Empty)]);
         let failure = self.enum_value(node, args[6], 0, Some(reports))?;
         self.extend([I::LocalGet(failure), I::LocalSet(result), I::Else]);
-        if self.mir.types[callback.arguments[1].index()].constructor == T::Never {
+        if self.width(callback.arguments[1])? == 0 {
             self.emit(I::Unreachable);
         } else {
             let payload = self.packed_tuple(success, &[returned, reports])?;

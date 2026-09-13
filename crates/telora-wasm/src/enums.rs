@@ -68,6 +68,16 @@ impl Emitter<'_> {
         index: u32,
         payload: Option<u32>,
     ) -> Result<u32, String> {
+        if let Some(payload_ty) = self.plan.layouts[ty.index()]
+            .variants
+            .get(index as usize)
+            .and_then(|branch| branch.type_id)
+            && self.width(self.plan.layouts[payload_ty].id())? == 0
+        {
+            // The payload cannot exist, including products containing Never.
+            self.emit(I::Unreachable);
+            return Ok(self.local(ValType::I32));
+        }
         if let Some(payload) = payload {
             self.construction_check(
                 node,
@@ -115,6 +125,12 @@ impl Emitter<'_> {
             .ok_or("Wasm: missing sealed enum branch")?;
         if branch.type_id.is_none() {
             return Err("Wasm: nullary branch has no payload".into());
+        }
+        if self.width(self.plan.layouts[branch.type_id.unwrap()].id())? == 0 {
+            // Selected only after the variant discriminator matched. Such a
+            // value is impossible under the sealed ABI; never invent a payload.
+            self.emit(I::Unreachable);
+            return Ok(self.local(ValType::I32));
         }
         match branch.storage {
             "full_value" => {

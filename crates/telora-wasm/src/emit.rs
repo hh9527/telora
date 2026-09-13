@@ -267,7 +267,7 @@ impl<'a> Emitter<'a> {
             HirKind::Int(value) => self.scalar(node, *value),
             HirKind::Float(value) => self.scalar(node, value.to_bits() as i64),
             HirKind::String(value) => self.text(node, value.as_bytes()),
-            HirKind::Array => self.array(node),
+            HirKind::Array => self.array_expression(node),
             HirKind::Dict => {
                 if self.mir.types[self.effective_ty(node)?.index()].constructor
                     == TypeConstructor::Dict
@@ -282,10 +282,7 @@ impl<'a> Emitter<'a> {
             HirKind::Index => self.index(node),
             HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node),
             HirKind::Propagate => self.propagate(node),
-            HirKind::Tuple if self.mir.hir[node.index()].children.is_empty() => {
-                self.value(node, HEADER_BYTES)
-            }
-            HirKind::Tuple => self.record(node),
+            HirKind::Tuple => self.tuple_expression(node),
             HirKind::Binding { kind, .. } => {
                 if *kind == telora_core::ast::BindingKind::Decl
                     && self.mir.modules[self.mir.hir[node.index()].module.index()].kind

@@ -4,6 +4,7 @@
 #[allow(dead_code)]
 mod abi;
 mod format;
+mod path;
 mod sort;
 mod sources;
 mod tables;
