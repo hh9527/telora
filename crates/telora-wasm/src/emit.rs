@@ -210,6 +210,13 @@ impl<'a> Emitter<'a> {
             }
             HirKind::Tuple => self.record(node),
             HirKind::Binding { kind, .. } => {
+                if *kind == telora_core::ast::BindingKind::Decl
+                    && self.mir.modules[self.mir.hir[node.index()].module.index()].kind
+                        == telora_core::mir::ModuleKind::Data
+                {
+                    self.failure(node, ERROR_DATA);
+                    return Ok(self.local(ValType::I32));
+                }
                 if !matches!(
                     kind,
                     telora_core::ast::BindingKind::Let | telora_core::ast::BindingKind::Def

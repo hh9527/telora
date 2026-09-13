@@ -47,6 +47,7 @@ pub const ERROR_INDEX: u32 = 4;
 pub const ERROR_KEY: u32 = 5;
 pub const ERROR_PROPERTY: u32 = 6;
 pub const ERROR_MATCH: u32 = 7;
+pub const ERROR_DATA: u32 = 8;
 
 pub fn memory(offset: u64, align: u32) -> wasm_encoder::MemArg {
     wasm_encoder::MemArg {

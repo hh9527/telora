@@ -77,14 +77,23 @@ export async function load(bytes) {
         for (let i = 0; i < length; i++) items.push(JSON.stringify(text(keys + i * 32)) + ':' + json(values + i * stride, type, depth + 1));
         return '{' + items.join(',') + '}';
       }
+      case 'Value':
       case 'Option':
       case 'Enum': {
         const branch = desc.variants[word(pointer + 16)];
         if (!branch) throw Error('无效的 enum tag');
+        if (desc.kind === 'Value' && branch.name === 'Bytes') throw Error('Value.Bytes cannot be emitted as semantic JSON');
         let value = null;
         if (branch.ty !== null) {
           const address = branch.boxed ? payload(4, word(pointer + 24))[0] : pointer + 24;
           value = json(address, branch.ty, depth + 1);
+        }
+        if (desc.kind === 'Value') {
+          if (branch.name === 'None') return 'null';
+          if (branch.name === 'True') return 'true';
+          if (branch.name === 'False') return 'false';
+          if (value === null) throw Error('缺少 Value payload');
+          return value;
         }
         if (desc.kind === 'Option') return value ?? 'null';
         return value === null ? JSON.stringify(branch.name) : '{' + JSON.stringify(branch.name) + ':' + value + '}';
@@ -147,6 +156,51 @@ export async function load(bytes) {
         });
         store(pointer + 16, push(2, data, bytes)); break;
       }
+      case 'Dict': {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('需要 Dict');
+        const string = manifest.types.findIndex(type => type.kind === 'String');
+        const entries = Object.entries(value).sort(([a], [b]) => {
+          const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+          for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] - y[i];
+          return x.length - y.length;
+        });
+        const element = desc.arguments[0], stride = manifest.types[element].bytes;
+        const keys = allocate(entries.length * 32), values = allocate(entries.length * stride);
+        entries.forEach(([key, value], i) => {
+          copy(keys + i * 32, input(string, key, depth + 1), 32);
+          copy(values + i * stride, input(element, value, depth + 1), stride);
+        });
+        store(pointer + 16, push(3, keys, entries.length * 32));
+        store(pointer + 20, entries.length);
+        store(pointer + 24, push(3, values, entries.length * stride)); break;
+      }
+      case 'Value':
+      case 'Option':
+      case 'Enum': {
+        let name, item;
+        if (desc.kind === 'Value') {
+          name = value === null ? 'None' : typeof value === 'boolean' ? (value ? 'True' : 'False')
+            : typeof value === 'bigint' || Number.isInteger(value) ? 'Int' : typeof value === 'number' ? 'Float'
+            : typeof value === 'string' ? 'String' : Array.isArray(value) ? 'Array' : 'Object';
+          item = value;
+        } else if (desc.kind === 'Option') { name = value === null ? 'None' : 'Some'; item = value; }
+        else if (typeof value === 'string') name = value;
+        else if (value && typeof value === 'object' && Object.keys(value).length === 1) [name, item] = Object.entries(value)[0];
+        else throw Error('需要 enum 名字或单项 payload 对象');
+        const index = desc.variants.findIndex(variant => variant.name === name), branch = desc.variants[index];
+        if (!branch || (desc.kind === 'Enum' && (branch.ty !== null) !== (item !== undefined))) throw Error('enum 输入不匹配');
+        store(pointer + 16, index);
+        if (branch.ty !== null) {
+          const payload = input(branch.ty, item, depth + 1), width = manifest.types[branch.ty].bytes;
+          if (branch.boxed) store(pointer + 24, push(4, payload, width));
+          else copy(pointer + 24, payload, width);
+        }
+        break;
+      }
+      case 'Newtype': {
+        const ty = desc.fields[0].ty, payload = input(ty, value, depth + 1);
+        store(pointer + 16, push(6, payload, manifest.types[ty].bytes)); break;
+      }
       default: throw Error('尚不支持此类型的浏览器输入');
     }
     return pointer;
@@ -157,10 +211,31 @@ export async function load(bytes) {
     const source = word(pointer), start = word(pointer + 4), end = word(pointer + 8), code = word(pointer + 12);
     const file = manifest.sources.find(file => file.id === source)?.name ?? '<unknown>';
     const loc = manifest.locations.find(loc => loc.source === source && loc.start === start && loc.end === end);
-    const message = ['执行失败', 'integer arithmetic overflowed', 'integer division by zero', 'initialization dependency cycle', 'array index out of bounds', 'dictionary key is absent', 'property query failed', 'pattern match failed'][code] ?? '执行失败';
+    const message = ['执行失败', 'integer arithmetic overflowed', 'integer division by zero', 'initialization dependency cycle', 'array index out of bounds', 'dictionary key is absent', 'property query failed', 'pattern match failed', 'data module has not been injected before initialization'][code] ?? '执行失败';
     return Error(`${file}:${loc?.line ?? start}:${loc?.column ?? end}: ${message}`);
   };
+  const field = (pointer, ty, name) => {
+    const desc = manifest.types[ty], field = desc.fields.find(field => field.name === name);
+    if (desc.kind !== 'Record' || !field || word(pointer + 12) !== ty) throw Error('入口 record 契约不匹配');
+    const [base, bytes] = payload(2, word(pointer + 16));
+    if (field.offset + manifest.types[field.ty].bytes > bytes) throw Error('入口字段越界');
+    return [base + field.offset, field.ty];
+  };
+  const invoke = (closure, type, arguments_) => {
+    const desc = manifest.types[type];
+    if (desc.kind !== 'Function' || desc.arguments.length !== arguments_.length + 1) throw Error('调用参数与封闭签名不同');
+    const args = allocate(arguments_.length * 4);
+    arguments_.forEach((value, index) => store(args + index * 4, input(desc.arguments[index], value)));
+    const result = wasm.telora_invoke(closure, args) >>> 0;
+    if (!result) throw failure();
+    return json(result, desc.arguments.at(-1));
+  };
   return {
+    injectData(name, value) {
+      const module = manifest.data_modules.find(module => module.name === name);
+      if (!module) throw Error('数据模块不在产物中');
+      if (!wasm.telora_inject_data(module.symbol, input(module.ty, value))) throw Error('数据必须在初始化前恰好注入一次');
+    },
     initialize() { if (!wasm.telora_initialize()) throw failure(); },
     eval() {
       const pointer = wasm.telora_entry() >>> 0;
@@ -170,13 +245,23 @@ export async function load(bytes) {
     call(arguments_) {
       const closure = wasm.telora_entry() >>> 0;
       if (!closure) throw failure();
-      const desc = manifest.types[manifest.entry_type];
-      if (desc.kind !== 'Function' || desc.arguments.length !== arguments_.length + 1) throw Error('调用参数与封闭签名不同');
-      const args = allocate(arguments_.length * 4);
-      arguments_.forEach((value, index) => store(args + index * 4, input(desc.arguments[index], value)));
-      const result = wasm.telora_invoke(closure, args) >>> 0;
-      if (!result) throw failure();
-      return json(result, desc.arguments.at(-1));
+      return invoke(closure, manifest.entry_type, arguments_);
+    },
+    evalWith(context) {
+      if (manifest.entry_type !== manifest.eval_type) throw Error('入口需要 std/entry.Eval');
+      const root = wasm.telora_entry() >>> 0;
+      if (!root) throw failure();
+      const [config, configType] = field(root, manifest.entry_type, 'config');
+      const declared = JSON.parse(json(config, configType));
+      for (const [name, inputName] of [['sources', 'sources'], ['envs', 'env']]) {
+        const names = declared[name].toSorted();
+        if (names.some((value, i) => !value || value === names[i - 1])) throw Error('配置需要不重复的非空名字');
+        if (JSON.stringify(names) !== JSON.stringify(Object.keys(context[inputName]).sort())) throw Error('输入名字与声明不同');
+      }
+      if (!declared.args && context.args.length) throw Error('此入口不接收参数');
+      const [closure, type] = field(root, manifest.entry_type, 'evaluate');
+      if (manifest.types[type].arguments.at(-1) !== manifest.value_type) throw Error('入口结果需要 std/value.Value');
+      return invoke(closure, type, [context]);
     },
   };
 }

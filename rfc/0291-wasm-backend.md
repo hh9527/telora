@@ -187,3 +187,38 @@ enum/newtype 输出支持；新增场景尚待实际浏览器复验。
 这仍不是完整 CLI 验收：construction check、其余标准库操作、数据模块
 注入和隐藏 check/eval/eval-with 桥接尚未完成。Session 的直接函数调用
 不能代替 std/entry.Eval 的配置、环境及数据源语义。未做阶段性能基准。
+
+## CLI、数据注入与 Eval 纵向链路
+
+2026-09-13：隐藏的命令局部 `--wasm` 已接入 check、eval、eval-with，
+与 `--native` 互斥。only-types 不创建 Wasm 引擎；run/serve 不提供此开关。
+这些参数没有加入普通 help、README 或 docs。
+
+产物记录从准入模块导出中解析出的 std/value.Value、std/entry.Eval 身份，
+以及数据模块名称、导出 SymbolId 和封闭类型。eval 要求确切 Value 类型；
+eval-with 要求确切 Eval 类型，按其 config 检查 sources/envs/args，再将
+Context 注入 Wasm 并调用已生成的 evaluate 闭包。没有以任意函数替代 Eval。
+
+数据模块从共享的 ValidatedDataPlan 直接进入 Wasm 分类表，保留数据与
+对象键的来源位置，缓存已物化的数据节点；不经过旧 Val 或递归 JSON 中间树。
+生成的 telora_inject_data 根据稳定 SymbolId 注入需求槽，只允许在初始化
+之前恰好一次。遗漏注入会使初始化失败；property 可以依赖已注入的数据。
+模块注入后，初始化完整求出所选执行闭包里的顶层值及 property，并冻结表前缀。
+
+发现共享数据计划仍有通用 Atom(String)/TaggedString 后，直接删除这些
+表达，改成 Null、Bool 和具有四种明确身份的 TemporalKind。JSON/YAML/TOML
+解析器和现有消费者一起更新，不为新后端保留动态标签兼容入口。
+
+验证：telora-wasm 的 11 项测试通过；CLI 对照测试验证默认后端与 Wasm
+的 eval/eval-with 结果一致，覆盖数据模块、依赖数据的 property、外部 YAML、
+声明的环境与参数，以及隐藏/互斥参数、check 和 only-types。共享数据回归
+分别通过 data（18 项）、toml（9 项）、yaml（6 项）、json（19 项）筛选；
+这些筛选集合有重叠，不作为独立用例总数相加。
+
+实际 Chromium 再次验证聚合产物、普通函数输入和标准 Eval 的 Context
+输入；同一免源码产物返回预期的嵌套 Value。浏览器页面接受参数数组或
+Eval 上下文对象。复验脚本可以追加第四个参数（Eval 产物文件名）。
+
+这是命令纵向链路完成，不是完整语言验收：construction check、诊断宏、
+标准库操作和剩余表达式仍需逐项补齐。不能将已有子集成功视为 #186 完成；
+尚未进行最终性能与内存观察。

@@ -18,7 +18,12 @@ impl Session {
             .write(&mut self.store, address, bytes)
             .map_err(|e| e.to_string())
     }
-    fn push_input(&mut self, table: u32, payload: u32, bytes: u32) -> Result<u32, String> {
+    pub(crate) fn push_input(
+        &mut self,
+        table: u32,
+        payload: u32,
+        bytes: u32,
+    ) -> Result<u32, String> {
         let push = self
             .instance
             .get_typed_func::<(i32, i32, i32), i32>(&self.store, "telora_table_push")
@@ -30,7 +35,7 @@ impl Session {
             )
             .map_err(|e| e.to_string())? as u32)
     }
-    fn copy_input(&mut self, to: u32, from: u32, bytes: usize) -> Result<(), String> {
+    pub(crate) fn copy_input(&mut self, to: u32, from: u32, bytes: usize) -> Result<(), String> {
         let memory = self.memory.data_mut(&mut self.store);
         let source = from as usize..from as usize + bytes;
         if source.end > memory.len() || to as usize + bytes > memory.len() {
@@ -151,6 +156,23 @@ impl Session {
                     self.copy_input(data + field.offset, value, width as usize)?;
                 }
                 let id = self.push_input(RECORDS, data, bytes)?;
+                self.write(pointer as usize + 16, &id.to_le_bytes())?;
+            }
+            Kind::Dict => self.input_dict(pointer, &descriptor, value, depth)?,
+            Kind::Option | Kind::Enum | Kind::Value => {
+                self.input_enum(pointer, &descriptor, value, depth)?
+            }
+            Kind::Newtype => {
+                let field = descriptor
+                    .fields
+                    .first()
+                    .ok_or("Wasm: missing newtype payload")?;
+                let payload = self.input(field.ty, value, depth + 1)?;
+                let id = self.push_input(
+                    NEWTYPES,
+                    payload,
+                    self.manifest.types[field.ty as usize].bytes,
+                )?;
                 self.write(pointer as usize + 16, &id.to_le_bytes())?;
             }
             _ => return Err("Wasm: input encoding is not implemented for this type".into()),

@@ -115,7 +115,12 @@ pub fn check(
     let execution_started = Instant::now();
     let mut execution_diagnostics = vec![];
     if let Some(sealed) = sealed.filter(|_| !types_only && !roots.is_empty()) {
-        if args.native {
+        if args.wasm {
+            let result = crate::wasm_cli::compile_check(sealed).and_then(|mut session| crate::wasm_cli::initialize(&mut session, &inventory, &mut mir.sources));
+            if let Err(message) = result {
+                execution_diagnostics.push(crate::wasm_cli::error(message));
+            }
+        } else if args.native {
             match crate::native_cli::Session::compile(sealed) {
                 Ok(mut session) => execution_diagnostics = session.initialize(&inventory, &mut mir.sources),
                 Err(message) => execution_diagnostics.push(crate::native_cli::error(message)),

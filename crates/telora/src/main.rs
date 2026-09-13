@@ -20,6 +20,7 @@ mod ees_arg;
 mod ees_cli;
 mod eval_cli;
 mod native_cli;
+mod wasm_cli;
 mod source_arg;
 mod static_cli;
 use telora::static_input;
@@ -609,6 +610,8 @@ struct ApplicationSelector {
 struct CheckArgs {
     #[arg(long, hide = true)]
     native: bool,
+    #[arg(long, hide = true, conflicts_with = "native")]
+    wasm: bool,
     /// Solve types without executing tool, property, or runtime code.
     #[arg(long = "only-types")]
     types_only: bool,

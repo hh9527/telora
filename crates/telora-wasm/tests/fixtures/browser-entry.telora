@@ -1,0 +1,7 @@
+import "std/entry" as entry;
+import "std/value" {Value};
+
+export def answer = entry.main(
+    {sources: ["input"], envs: [], args: True},
+    fn(ctx) { Value.Object({input: ctx.sources.input, arg: Value.String(ctx.args[0])}) },
+);

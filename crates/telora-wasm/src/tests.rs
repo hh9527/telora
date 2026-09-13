@@ -5,11 +5,16 @@ use telora_core::{
 };
 
 fn graph(source: &str) -> Mir {
-    let inventory = std::iter::once("@src/main")
+    let inventory = ["@src/main", "@src/input.json"]
+        .into_iter()
         .chain(static_sources::BUILTINS.iter().map(|(name, _)| *name))
         .map(|name| ModuleSpec {
             name: name.into(),
-            kind: telora_core::mir::ModuleKind::Source,
+            kind: if name == "@src/input.json" {
+                telora_core::mir::ModuleKind::Data
+            } else {
+                telora_core::mir::ModuleKind::Source
+            },
             native: static_sources::native_module(name),
             implicit_imports: if name == "std/prelude" {
                 vec![]
@@ -53,6 +58,58 @@ fn properties_reduce_and_query_inside_wasm() {
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(session.eval().unwrap(), serde_json::json!([42, "amount"]));
+}
+
+#[test]
+fn semantic_value_contract_survives_artifact_reload() {
+    let source = include_str!("../tests/fixtures/semantic-value.telora");
+    let bytes = compile(source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    assert_eq!(
+        session.manifest.value_type,
+        Some(session.manifest.entry_type)
+    );
+    session.initialize().unwrap();
+    assert_eq!(
+        session.eval().unwrap(),
+        serde_json::json!({"number": 42, "nested": [null, true, "hello"]})
+    );
+    let bytes = compile_export(source, "identity").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    session.initialize().unwrap();
+    let input = serde_json::json!({"z": [1, 2.5, false, null], "a": "nested input"});
+    assert_eq!(session.call(&[input.clone()]).unwrap(), input);
+}
+
+#[test]
+fn data_injection_precedes_property_initialization_and_is_single_use() {
+    let bytes = compile(include_str!("../tests/fixtures/entry.telora")).unwrap();
+    let mut missing = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    assert!(
+        missing
+            .initialize()
+            .unwrap_err()
+            .contains("not been injected")
+    );
+    let mut sources = telora_core::SourceDatabase::default();
+    let source = sources.add("input.json", "{\"number\":42}");
+    let plan = telora_core::data_plan::parse_registered(
+        &sources,
+        source,
+        telora_core::data_plan::Format::Json,
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    let symbol = session.manifest.data_modules[0].symbol;
+    assert!(missing.inject_data(symbol, &plan).is_err());
+    session.inject_data(symbol, &plan).unwrap();
+    assert!(session.inject_data(symbol, &plan).is_err());
+    session.initialize().unwrap();
+    assert_eq!(
+        session.eval().unwrap(),
+        serde_json::json!([{"number":42},42])
+    );
+    assert!(session.inject_data(symbol, &plan).is_err());
 }
 
 fn compile(source: &str) -> Result<Vec<u8>, String> {

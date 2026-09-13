@@ -166,7 +166,7 @@ impl<'a> YamlLowerer<'a> {
         }
         let node = if self.position == self.lines.len() {
             self.plan
-                .scalar(DataScalar::Atom("None".into()), self.location(0, 0))
+                .scalar(DataScalar::Null, self.location(0, 0))
         } else {
             let indent = self.lines[self.position].indent;
             self.parse_block(indent)?
@@ -291,7 +291,7 @@ impl<'a> YamlLowerer<'a> {
                 self.skip_trivia();
                 if self.position >= self.lines.len() || self.lines[self.position].indent <= indent {
                     self.plan
-                        .scalar(DataScalar::Atom("None".into()), key_location)
+                        .scalar(DataScalar::Null, key_location)
                 } else {
                     self.parse_block(self.lines[self.position].indent)?
                 }
@@ -597,9 +597,9 @@ fn parse_scalar(
         return Err("invalid quoted YAML String");
     }
     let value = match text {
-        "" | "~" | "null" | "Null" | "NULL" => DataScalar::Atom("None".into()),
-        "true" | "True" | "TRUE" => DataScalar::Atom("True".into()),
-        "false" | "False" | "FALSE" => DataScalar::Atom("False".into()),
+        "" | "~" | "null" | "Null" | "NULL" => DataScalar::Null,
+        "true" | "True" | "TRUE" => DataScalar::Bool(true),
+        "false" | "False" | "FALSE" => DataScalar::Bool(false),
         ".inf" | ".Inf" | ".INF" | "-.inf" | "-.Inf" | "-.INF" | ".nan" | ".NaN" | ".NAN" => {
             return Err("YAML Float must be finite");
         }

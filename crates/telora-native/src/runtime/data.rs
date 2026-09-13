@@ -152,10 +152,11 @@ impl Runtime {
                     "Bytes",
                     Some(self.bytes(contract.payload("Bytes")?, loc, value)?),
                 ),
-                DataScalar::Atom(value) => (value.as_str(), None),
-                DataScalar::TaggedString { tag, value } => (
-                    tag.as_str(),
-                    Some(self.string(contract.payload(tag)?, loc, value)?),
+                DataScalar::Null => ("None", None),
+                DataScalar::Bool(value) => (if *value { "True" } else { "False" }, None),
+                DataScalar::Temporal { kind, value } => (
+                    kind.variant(),
+                    Some(self.string(contract.payload(kind.variant())?, loc, value)?),
                 ),
             },
             DataPlanNodeKind::Array(children) => {

@@ -1,0 +1,8 @@
+import "std/value" {Value};
+
+export def answer = Value.Object({
+    number: Value.Int(42),
+    nested: Value.Array([Value.None, Value.True, Value.String("hello")]),
+});
+
+export def identity: Fn(Value) -> Value = fn(value) { value };

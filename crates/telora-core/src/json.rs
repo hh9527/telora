@@ -71,8 +71,21 @@ pub enum DataScalar {
     Float(f64),
     String(String),
     Bytes(Vec<u8>),
-    Atom(String),
-    TaggedString { tag: String, value: String },
+    Null,
+    Bool(bool),
+    Temporal { kind: TemporalKind, value: String },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum TemporalKind { LocalDate, LocalTime, LocalDateTime, OffsetDateTime }
+
+impl TemporalKind {
+    pub fn variant(self) -> &'static str {
+        match self {
+            Self::LocalDate => "LocalDate", Self::LocalTime => "LocalTime",
+            Self::LocalDateTime => "LocalDateTime", Self::OffsetDateTime => "OffsetDateTime",
+        }
+    }
 }
 
 impl DataScalar {
@@ -84,9 +97,10 @@ impl DataScalar {
             Self::Bytes(value) => {
                 DecodedValue::Bytes(heap.allocate(Object::Bytes(value.clone().into_boxed_slice())))
             }
-            Self::Atom(value) => heap.atom(None, value),
-            Self::TaggedString { tag, value } => {
-                let tag = Val::original(heap.atom(None, tag), Some(location));
+            Self::Null => heap.atom(None, "None"),
+            Self::Bool(value) => heap.atom(None, if *value { "True" } else { "False" }),
+            Self::Temporal { kind, value } => {
+                let tag = Val::original(heap.atom(None, kind.variant()), Some(location));
                 let payload = Val::original(heap.string(None, value), Some(location));
                 DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload }))
             }
@@ -128,11 +142,13 @@ impl DataScalar {
                 );
                 semantic_tag(heap, target, "Bytes", payload, location)
             }
-            Self::Atom(value) => Val::original(heap.atom(target.background, value), Some(location))
+            Self::Null => Val::original(heap.atom(target.background, "None"), Some(location))
                 .with_type_id(target.type_id),
-            Self::TaggedString { tag, value } => {
+            Self::Bool(value) => Val::original(heap.atom(target.background, if *value { "True" } else { "False" }), Some(location))
+                .with_type_id(target.type_id),
+            Self::Temporal { kind, value } => {
                 let payload = Val::original(heap.string(target.background, value), Some(location));
-                semantic_tag(heap, target, tag, payload, location)
+                semantic_tag(heap, target, kind.variant(), payload, location)
             }
         }
     }
@@ -298,7 +314,7 @@ impl ValidatedDataPlan {
                         limits.payloads_bytes,
                     )?;
                 }
-                DataPlanNodeKind::Scalar(DataScalar::TaggedString { value, .. }) => {
+                DataPlanNodeKind::Scalar(DataScalar::Temporal { value, .. }) => {
                     stats.string_len = stats.string_len.max(value.len());
                     if value.len() > limits.string_len {
                         return Err(DataLimitError::new(
@@ -678,13 +694,13 @@ impl<'a> JsonLowerer<'a> {
         let location = self.location(node);
         match self.cst.get(node) {
             Node::Token(Token::Null, _) => {
-                Ok(plan.scalar(DataScalar::Atom("None".into()), location))
+                Ok(plan.scalar(DataScalar::Null, location))
             }
             Node::Token(Token::True, _) => {
-                Ok(plan.scalar(DataScalar::Atom("True".into()), location))
+                Ok(plan.scalar(DataScalar::Bool(true), location))
             }
             Node::Token(Token::False, _) => {
-                Ok(plan.scalar(DataScalar::Atom("False".into()), location))
+                Ok(plan.scalar(DataScalar::Bool(false), location))
             }
             Node::Token(Token::Number, _) => {
                 let value = match self.number(node)? {

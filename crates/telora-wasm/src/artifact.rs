@@ -9,6 +9,16 @@ pub struct Manifest {
     pub types: Vec<TypeDesc>,
     pub sources: Vec<Source>,
     pub locations: Vec<Location>,
+    pub value_type: Option<u32>,
+    pub eval_type: Option<u32>,
+    pub data_modules: Vec<DataModule>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DataModule {
+    pub symbol: u32,
+    pub name: String,
+    pub ty: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -42,6 +52,8 @@ pub enum Kind {
     Unit,
     Function,
     String,
+    Bytes,
+    Value,
     Array,
     Tuple,
     Record,
@@ -76,6 +88,8 @@ impl Manifest {
         layouts: &[telora_core::candidate_layout::Entry],
     ) -> Result<Self, String> {
         let mir = executable.sealed_mir().mir();
+        let value_type = exported_type(mir, 23, "Value");
+        let eval_type = exported_type(mir, 32, "Eval");
         let TypeState::Known(entry) = mir.ty_slots[executable.root().index()] else {
             return Err("Wasm: entry has no sealed type".into());
         };
@@ -113,35 +127,40 @@ impl Manifest {
             .iter()
             .enumerate()
             .map(|(index, ty)| TypeDesc {
-                kind: match ty.constructor {
-                    T::Int => Kind::Int,
-                    T::Float => Kind::Float,
-                    T::Bool => Kind::Bool,
-                    T::Tuple if ty.arguments.is_empty() => Kind::Unit,
-                    T::Function => Kind::Function,
-                    T::String => Kind::String,
-                    T::Array => Kind::Array,
-                    T::Dict => Kind::Dict,
-                    T::Option => Kind::Option,
-                    T::Result | T::FoldControl | T::PropertyTarget | T::Enum(_) => Kind::Enum,
-                    T::Newtype => Kind::Newtype,
-                    T::Type | T::TypeOf => Kind::Metadata,
-                    T::Tuple => Kind::Tuple,
-                    T::Record(_) => Kind::Record,
-                    T::Nominal(symbol) => match executable
-                        .sealed_mir()
-                        .types()
-                        .definition(symbol)
-                        .map(|d| d.operation)
-                    {
-                        Some(telora_core::mir::TypeOperation::Struct) => Kind::Record,
-                        Some(telora_core::mir::TypeOperation::Tuple) => Kind::Tuple,
-                        Some(telora_core::mir::TypeOperation::Unit) => Kind::Unit,
-                        Some(telora_core::mir::TypeOperation::Enum) => Kind::Enum,
-                        Some(telora_core::mir::TypeOperation::Newtype) => Kind::Newtype,
+                kind: if value_type == Some(index as u32) {
+                    Kind::Value
+                } else {
+                    match ty.constructor {
+                        T::Int => Kind::Int,
+                        T::Float => Kind::Float,
+                        T::Bool => Kind::Bool,
+                        T::Tuple if ty.arguments.is_empty() => Kind::Unit,
+                        T::Function => Kind::Function,
+                        T::String => Kind::String,
+                        T::Bytes => Kind::Bytes,
+                        T::Array => Kind::Array,
+                        T::Dict => Kind::Dict,
+                        T::Option => Kind::Option,
+                        T::Result | T::FoldControl | T::PropertyTarget | T::Enum(_) => Kind::Enum,
+                        T::Newtype => Kind::Newtype,
+                        T::Type | T::TypeOf => Kind::Metadata,
+                        T::Tuple => Kind::Tuple,
+                        T::Record(_) => Kind::Record,
+                        T::Nominal(symbol) => match executable
+                            .sealed_mir()
+                            .types()
+                            .definition(symbol)
+                            .map(|d| d.operation)
+                        {
+                            Some(telora_core::mir::TypeOperation::Struct) => Kind::Record,
+                            Some(telora_core::mir::TypeOperation::Tuple) => Kind::Tuple,
+                            Some(telora_core::mir::TypeOperation::Unit) => Kind::Unit,
+                            Some(telora_core::mir::TypeOperation::Enum) => Kind::Enum,
+                            Some(telora_core::mir::TypeOperation::Newtype) => Kind::Newtype,
+                            _ => Kind::Unsupported,
+                        },
                         _ => Kind::Unsupported,
-                    },
-                    _ => Kind::Unsupported,
+                    }
                 },
                 arguments: ty.arguments.iter().map(|id| id.index() as u32).collect(),
                 bytes: match &layouts[index].layout {
@@ -179,6 +198,28 @@ impl Manifest {
             types,
             sources,
             locations,
+            value_type,
+            eval_type,
+            data_modules: executable
+                .globals()
+                .iter()
+                .filter_map(|symbol| {
+                    let module = &mir.modules[mir.symbols[symbol.index()].module?.index()];
+                    if module.kind != telora_core::mir::ModuleKind::Data {
+                        return None;
+                    }
+                    let TypeState::Known(ty) =
+                        mir.ty_slots[mir.symbol_types[symbol.index()].index()]
+                    else {
+                        return None;
+                    };
+                    Some(DataModule {
+                        symbol: symbol.index() as u32,
+                        name: module.name.clone(),
+                        ty: ty.index() as u32,
+                    })
+                })
+                .collect(),
         })
     }
 
@@ -201,7 +242,16 @@ impl Manifest {
         if manifest.abi != crate::abi::VERSION {
             return Err("Wasm: unsupported artifact ABI version".into());
         }
-        if manifest.entry_type as usize >= manifest.types.len()
+        if manifest
+            .data_modules
+            .iter()
+            .any(|m| Some(m.ty) != manifest.value_type)
+            || manifest
+                .value_type
+                .into_iter()
+                .chain(manifest.eval_type)
+                .any(|ty| ty as usize >= manifest.types.len())
+            || manifest.entry_type as usize >= manifest.types.len()
             || manifest.types.iter().any(|ty| {
                 ty.arguments
                     .iter()
@@ -221,4 +271,23 @@ impl Manifest {
         }
         Ok(manifest)
     }
+}
+
+/// Contracts are resolved from the admitted module's exports, never user type names.
+fn exported_type(mir: &telora_core::mir::Mir, module_id: u32, name: &str) -> Option<u32> {
+    let module = mir.modules.iter().position(|module| {
+        module
+            .native
+            .as_ref()
+            .is_some_and(|native| native.id == module_id)
+    })?;
+    let symbol = mir.exports[module]
+        .iter()
+        .find(|id| mir.symbols[id.index()].name == name)?;
+    let TypeState::Known(meta) = mir.ty_slots[mir.symbol_types[symbol.index()].index()] else {
+        return None;
+    };
+    let shape = &mir.types[meta.index()];
+    (shape.constructor == T::Meta && shape.arguments.len() == 1)
+        .then(|| shape.arguments[0].index() as u32)
 }

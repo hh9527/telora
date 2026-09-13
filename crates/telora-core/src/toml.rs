@@ -2,7 +2,7 @@ use crate::DataWorld;
 use crate::heap::Heap;
 use crate::json::{
     DataField, DataNodeId, DataPlanNodeKind, DataScalar, SourcedValue, ValidatedDataPlan,
-    materialize_data_plan,
+    materialize_data_plan, TemporalKind,
 };
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::toml::lexer::Token;
@@ -331,13 +331,13 @@ impl<'a> TomlLowerer<'a> {
         let text = self.text(node);
         let location = self.location(node);
         let value = match text.as_ref() {
-            "true" => DataScalar::Atom("True".into()),
-            "false" => DataScalar::Atom("False".into()),
+            "true" => DataScalar::Bool(true),
+            "false" => DataScalar::Bool(false),
             _ => {
                 if let Some(temporal) = parse_temporal(&text) {
-                    let (tag, canonical) = temporal.map_err(|message| self.error(node, message))?;
-                    DataScalar::TaggedString {
-                        tag: tag.into(),
+                    let (kind, canonical) = temporal.map_err(|message| self.error(node, message))?;
+                    DataScalar::Temporal {
+                        kind,
                         value: canonical,
                     }
                 } else {
@@ -757,7 +757,7 @@ fn invalid_leading_zero(value: &str) -> bool {
         && value.as_bytes().get(1).is_some_and(u8::is_ascii_digit)
 }
 
-fn parse_temporal(text: &str) -> Option<Result<(&'static str, String), &'static str>> {
+fn parse_temporal(text: &str) -> Option<Result<(TemporalKind, String), &'static str>> {
     if text.len() >= 10
         && text.as_bytes().get(4) == Some(&b'-')
         && text.as_bytes().get(7) == Some(&b'-')
@@ -768,16 +768,16 @@ fn parse_temporal(text: &str) -> Option<Result<(&'static str, String), &'static 
         && text.as_bytes().get(2) == Some(&b':')
         && text.as_bytes().get(5) == Some(&b':')
     {
-        return Some(parse_time(text).map(|time| ("LocalTime", time)));
+        return Some(parse_time(text).map(|time| (TemporalKind::LocalTime, time)));
     }
     None
 }
 
-fn parse_date_time(text: &str) -> Result<(&'static str, String), &'static str> {
+fn parse_date_time(text: &str) -> Result<(TemporalKind, String), &'static str> {
     let date = &text[..10];
     validate_date(date)?;
     if text.len() == 10 {
-        return Ok(("LocalDate", date.to_owned()));
+        return Ok((TemporalKind::LocalDate, date.to_owned()));
     }
     let separator = text.as_bytes()[10];
     if !matches!(separator, b'T' | b't' | b' ') {
@@ -788,9 +788,9 @@ fn parse_date_time(text: &str) -> Result<(&'static str, String), &'static str> {
     let time = parse_time(time)?;
     if let Some(offset) = offset {
         let offset = canonical_offset(offset)?;
-        Ok(("OffsetDateTime", format!("{date}T{time}{offset}")))
+        Ok((TemporalKind::OffsetDateTime, format!("{date}T{time}{offset}")))
     } else {
-        Ok(("LocalDateTime", format!("{date}T{time}")))
+        Ok((TemporalKind::LocalDateTime, format!("{date}T{time}")))
     }
 }
 

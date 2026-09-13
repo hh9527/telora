@@ -11,6 +11,33 @@ pub(crate) struct Output<'a> {
 }
 
 impl Output<'_> {
+    pub(crate) fn field(&self, pointer: u64, ty: u32, name: &str) -> Result<(u32, u32), String> {
+        if self.word(pointer + TYPE)? != ty {
+            return Err("Wasm: record type differs from sealed contract".into());
+        }
+        let desc = self
+            .manifest
+            .types
+            .get(ty as usize)
+            .ok_or("Wasm: invalid record type")?;
+        if desc.kind != Kind::Record {
+            return Err("Wasm: contract requires record".into());
+        }
+        let field = desc
+            .fields
+            .iter()
+            .find(|f| f.name == name)
+            .ok_or_else(|| format!("Wasm: contract field {name:?} missing"))?;
+        let (base, bytes) = self.payload(RECORDS, self.word(pointer + DATA)?)?;
+        if field.offset as u64 + self.manifest.types[field.ty as usize].bytes as u64 > bytes {
+            return Err("Wasm: contract field exceeds record".into());
+        }
+        Ok((
+            u32::try_from(base + field.offset as u64)
+                .map_err(|_| "Wasm: field address overflow")?,
+            field.ty,
+        ))
+    }
     fn bytes(&self, address: u64, length: u64) -> Result<&[u8], String> {
         let end = address
             .checked_add(length)
@@ -140,7 +167,7 @@ impl Output<'_> {
                 }
                 Value::Object(fields)
             }
-            Kind::Option | Kind::Enum => {
+            Kind::Option | Kind::Enum | Kind::Value => {
                 let index = self.word(pointer + DATA)? as usize;
                 let branch = ty.variants.get(index).ok_or("Wasm: invalid enum tag")?;
                 let payload = match branch.ty {
@@ -154,7 +181,21 @@ impl Output<'_> {
                     }
                     None => None,
                 };
-                if ty.kind == Kind::Option {
+                if ty.kind == Kind::Value {
+                    match branch.name.as_str() {
+                        "None" => Value::Null,
+                        "True" => true.into(),
+                        "False" => false.into(),
+                        "Int" | "Float" | "String" | "Array" | "Object" | "LocalDate"
+                        | "LocalTime" | "LocalDateTime" | "OffsetDateTime" => {
+                            payload.ok_or("Wasm: semantic Value payload missing")?
+                        }
+                        "Bytes" => {
+                            return Err("Value.Bytes cannot be emitted as semantic JSON".into());
+                        }
+                        _ => return Err("Wasm: unknown semantic Value variant".into()),
+                    }
+                } else if ty.kind == Kind::Option {
                     payload.unwrap_or(Value::Null)
                 } else {
                     match payload {

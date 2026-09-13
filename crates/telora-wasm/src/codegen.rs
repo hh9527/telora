@@ -6,6 +6,7 @@ use wasm_encoder::*;
 /// Generate a self-contained Wasm module from already sealed execution evidence.
 pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, String> {
     let plan = Plan::new(executable)?;
+    let manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
     let mut module = Module::new();
     let mut types = TypeSection::new();
     types.ty().function([ValType::I32], [ValType::I32]);
@@ -29,7 +30,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
     }
     let initialize = FIRST_FUNCTION + plan.functions.len() as u32;
     let entry = initialize + 1;
-    functions.function(2).function(2);
+    functions.function(2).function(2).function(CALL_TYPE);
     module.section(&functions);
     let mut tables = TableSection::new();
     tables.table(TableType {
@@ -75,6 +76,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         .export("telora_table_push", ExportKind::Func, TABLE_PUSH)
         .export("telora_initialize", ExportKind::Func, initialize)
         .export("telora_entry", ExportKind::Func, entry)
+        .export("telora_inject_data", ExportKind::Func, entry + 1)
         .export("telora_error", ExportKind::Global, ERROR_GLOBAL);
     module.section(&exports);
     let mut elements = ElementSection::new();
@@ -151,12 +153,12 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         .instruction(&Instruction::Call(plan.functions[&plan.root]))
         .instruction(&Instruction::End);
     code.function(&root);
+    code.function(&crate::data_input::injector(&plan, &manifest));
     module.section(&code);
     module.section(&CustomSection {
         name: Cow::Borrowed("telora.abi"),
         data: Cow::Owned(VERSION.to_le_bytes().to_vec()),
     });
-    let manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
     module.section(&CustomSection {
         name: Cow::Borrowed("telora.manifest"),
         data: Cow::Owned(serde_json::to_vec(&manifest).map_err(|e| e.to_string())?),

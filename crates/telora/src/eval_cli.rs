@@ -13,6 +13,8 @@ struct EvalSelector {
 pub(crate) struct EvalArgs {
     #[arg(long, hide = true)]
     native: bool,
+    #[arg(long, hide = true, conflicts_with = "native")]
+    wasm: bool,
     #[arg(value_name = "MODULE:NAME", value_parser = parse_eval_selector)]
     selector: EvalSelector,
 }
@@ -21,6 +23,8 @@ pub(crate) struct EvalArgs {
 pub(crate) struct EvalWithArgs {
     #[arg(long, hide = true)]
     native: bool,
+    #[arg(long, hide = true, conflicts_with = "native")]
+    wasm: bool,
     #[arg(value_name = "MODULE:NAME", value_parser = parse_eval_selector)]
     selector: EvalSelector,
     /// Provide a named Value source: NAME=PATH or NAME=(file|stdin)+(json|yaml|toml)://PATH.
@@ -153,6 +157,9 @@ fn prepare_solved(
 }
 
 pub(crate) fn run(context: PathBuf, arguments: EvalArgs) -> Result<i32, String> {
+    if arguments.wasm {
+        return crate::wasm_cli::eval(context, &arguments.selector.module_id, &arguments.selector.export);
+    }
     if arguments.native {
         return crate::native_cli::eval(context, &arguments.selector.module_id, &arguments.selector.export);
     }
@@ -173,6 +180,9 @@ pub(crate) fn run(context: PathBuf, arguments: EvalArgs) -> Result<i32, String> 
 }
 
 pub(crate) fn run_with(context: PathBuf, arguments: EvalWithArgs) -> Result<i32, String> {
+    if arguments.wasm {
+        return crate::wasm_cli::eval_with(context, &arguments.selector.module_id, &arguments.selector.export, arguments.sources, arguments.args);
+    }
     if arguments.native {
         return crate::native_cli::eval_with(context, &arguments.selector.module_id, &arguments.selector.export, arguments.sources, arguments.args);
     }

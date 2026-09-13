@@ -13,6 +13,7 @@ clap = { version = "4", features = ["derive"] }
 regex = "1"
 telora-core = { path = "../telora-core" }
 telora-native = { path = "../telora-native", features = ["jit"] }
+telora-wasm = { path = "../telora-wasm" }
 telora-ees = { path = "../telora-ees" }
 futures = "0.3"
 serde = "1"

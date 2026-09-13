@@ -1,7 +1,7 @@
 // Run against a local HTTP server for this directory; Playwright is optional tooling.
 import assert from 'node:assert/strict';
 const { chromium } = await import(process.env.TELORA_PLAYWRIGHT_MODULE ?? 'playwright');
-const [base, aggregateArtifact, inputArtifact] = process.argv.slice(2);
+const [base, aggregateArtifact, inputArtifact, entryArtifact] = process.argv.slice(2);
 if (!base || !aggregateArtifact || !inputArtifact) throw Error('expected base URL and two artifact filenames');
 const browser = await chromium.launch({ headless: true });
 try {
@@ -21,8 +21,15 @@ try {
   await page.locator('#run').click();
   await page.waitForFunction(() => document.querySelector('pre').textContent.startsWith('{'));
   assert.deepEqual(JSON.parse(await page.locator('pre').textContent()), { name: '浏览器输入', total: 42 });
+  if (entryArtifact) {
+    await page.getByLabel('Wasm 文件').setInputFiles(entryArtifact);
+    await page.getByLabel('参数数组').fill(JSON.stringify({args: ['浏览器参数'], env: {}, sources: {input: {number: 42, nested: [true, null]}}}));
+    await page.locator('#run').click();
+    await page.waitForFunction(() => document.querySelector('pre').textContent.startsWith('{'));
+    assert.deepEqual(JSON.parse(await page.locator('pre').textContent()), {arg: '浏览器参数', input: {number: 42, nested: [true, null]}});
+  }
   assert.deepEqual(errors, []);
-  console.log('Chromium: independent artifact eval and typed call passed');
+  console.log('Chromium: independent artifact eval, typed call' + (entryArtifact ? ' and Eval context' : '') + ' passed');
 } finally {
   await browser.close();
 }

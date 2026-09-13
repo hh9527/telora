@@ -103,7 +103,7 @@ impl Session {
         }
         .json(pointer as u64, self.manifest.entry_type, 0)
     }
-    fn failure(&self) -> String {
+    pub(crate) fn failure(&self) -> String {
         let Some(global) = self.instance.get_global(&self.store, "telora_error") else {
             return "Wasm execution failed".into();
         };
@@ -126,6 +126,7 @@ impl Session {
             abi::ERROR_KEY => "dictionary key is absent",
             abi::ERROR_PROPERTY => "property type does not support this decorator target",
             abi::ERROR_MATCH => "no match arm accepted the value",
+            abi::ERROR_DATA => "data module has not been injected before initialization",
             _ => "Wasm execution failed",
         };
         let source = self

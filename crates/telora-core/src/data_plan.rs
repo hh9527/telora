@@ -1,7 +1,7 @@
 //! Pure, source-backed data parsing shared by execution backends. No VM or
 //! heap is created by this interface; callers materialize the validated plan.
 pub use crate::json::{
-    DataField, DataNodeId, DataPlanNode, DataPlanNodeKind, DataScalar, ValidatedDataPlan,
+    DataField, DataNodeId, DataPlanNode, DataPlanNodeKind, DataScalar, TemporalKind, ValidatedDataPlan,
 };
 use crate::source::{Diagnostic, SourceDatabase, SourceId};
 

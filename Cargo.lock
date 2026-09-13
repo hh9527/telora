@@ -1937,6 +1937,7 @@ dependencies = [
  "telora-core",
  "telora-ees",
  "telora-native",
+ "telora-wasm",
  "tempfile",
  "tokio",
  "tokio-util",
