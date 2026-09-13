@@ -5,6 +5,9 @@ use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub fn dynamic_native(&mut self, name: &str) -> Result<u32, String> {
+        if matches!(name, "get_variant_index" | "get_variant_payload") {
+            return self.dynamic_variant(name);
+        }
         if name == "get_field_value" {
             return self.dynamic_field_value();
         }

@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn dyn_variants_use_sealed_payload_layouts() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/dynamic-variants.telora"),
+        "checks",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 7]));
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn late_array_field_evidence_survives_an_empty_match_arm() {
     let bytes = compile(include_str!("../../tests/fixtures/late-array-field.telora")).unwrap();
     let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
@@ -83,6 +96,21 @@ fn reflection_errors_are_captured_and_dyn_fields_keep_their_origins() {
     assert_eq!(
         result[6]["labels"][1]["location"]["start"],
         source.find("42").unwrap()
+    );
+    for (index, expected) in [
+        "Dyn variant index is 1, not 0",
+        "Dyn variant access expects Enum",
+        "Dyn member index must be a non-negative u32",
+        "Dyn member index must be a non-negative u32",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(result[index + 7], *expected);
+    }
+    assert_eq!(
+        result[11]["labels"][1]["location"]["start"],
+        source.find("12345").unwrap()
     );
     assert!(session.diagnostics().unwrap().is_empty());
 }

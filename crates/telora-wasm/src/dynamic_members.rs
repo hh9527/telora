@@ -91,26 +91,6 @@ impl Emitter<'_> {
             I::I32Add,
             I::LocalSet(data),
         ]);
-        let id = self.local(ValType::I32);
-        self.extend([
-            I::I32Const(table_address(VALUES) as i32),
-            I::LocalGet(data),
-            I::LocalGet(width),
-            I::Call(TABLE_PUSH),
-            I::LocalSet(id),
-        ]);
-        let result = self.value_as(node, args[2], 40)?;
-        self.copy(result, 0, data, 12);
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(concrete),
-            I::I32Store(memory(DATA, 2)),
-            I::LocalGet(result),
-            I::LocalGet(id),
-            I::I64ExtendI32U,
-            I::I64Store(memory(24, 3)),
-        ]);
-        self.store32(result, 20, 1);
-        Ok(result)
+        self.box_dynamic_pointer(args[2], data, concrete, width)
     }
 }

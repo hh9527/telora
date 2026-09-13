@@ -5,7 +5,7 @@ pub const KINDS: [&str; 18] = [
     "Never", "Type", "TypeOf", "Int", "Float", "String", "Bytes", "Array", "Dict", "Tuple",
     "Struct", "Newtype", "Enum", "Func", "Opaque", "Bound", "Dyn", "Ref",
 ];
-pub const ROW: u32 = 32;
+pub const ROW: u32 = 40;
 pub const MEMBER: u32 = 20;
 
 fn kind(ty: &T) -> Option<&'static str> {
@@ -57,6 +57,11 @@ pub fn build(image: &TypeImage, layouts: &[Entry]) -> Result<Vec<u8>, String> {
     let mut data = vec![0; bytes];
     for (index, ty) in image.types.iter().enumerate() {
         let row = index * ROW as usize;
+        let width = match &layouts[index].layout {
+            telora_core::candidate_layout::State::Known { shape } => shape.value_bytes as u32,
+            _ => 0,
+        };
+        put(&mut data, row + 32, width);
         let tag = kind(&ty.constructor).and_then(|kind| KINDS.iter().position(|&k| k == kind));
         put(&mut data, row, tag.map_or(u32::MAX, |n| n as u32));
         put(

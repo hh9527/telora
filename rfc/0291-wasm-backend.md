@@ -582,3 +582,16 @@ Wasm 字段／tuple 投影也核对布局中的真实字段类型与封闭表达
 Dyn 其余观察／变体访问、Fmt 结构比较、regex/parse/codec 等标准库操作，
 以及最终发布和分阶段性能验收仍待完成，不能将 DisplayBy 通过等同于
 完整 eval-with 验收。
+
+## Dyn 变体读取
+
+get_variant_index/get_variant_payload 已消费封闭类型表中的变体定义与
+payload 存储方式；类型表增加确定的值宽度，不在执行时计算布局。
+Bool、无 payload 变体、递归 tuple payload、Some(()) 与标量 payload
+均走同一生成路径。字段和变体读取共用引用装箱，保留原值来源，
+不深复制对象图，也没有增加 Rust RT ABI。
+
+负数及超 u32 索引、非 Enum 接收者和预期变体不匹配产生可捕获诊断。
+验证包括 30 项 Wasm 库测试，以及默认／Wasm 的 CLI 变体、类型反射、
+DisplayBy 对照；另验证标量 payload 的诊断来源。未重复性能基准。
+Dyn 其余观察操作和前述标准库、发布验收仍待完成。

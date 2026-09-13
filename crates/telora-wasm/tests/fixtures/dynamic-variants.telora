@@ -1,0 +1,25 @@
+import "std/dyn" as dyn;
+import "std/array" as array;
+import "std/value" { Value };
+
+type Chain = enum { End, More((Int, Chain)) };
+
+export def checks = fn() {
+    let chain = Chain.More((42, Chain.End));
+    let boxed = dyn.pack(Chain.type, chain);
+    let unit: Option(()) = Some(());
+    [dyn.get_variant_index(dyn.pack(Bool.type, False)) == 0,
+     dyn.get_variant_index(dyn.pack(Bool.type, True)) == 1,
+     dyn.get_variant_payload(dyn.pack(Bool.type, True), 1) == None,
+     dyn.get_variant_index(boxed) == 1,
+     dyn.get_variant_payload(dyn.pack(Chain.type, Chain.End), 0) == None,
+     match dyn.get_variant_payload(boxed, 1) {
+         Some(value) => dyn.project_with((Int, Chain).type, value) == Some((42, Chain.End)),
+         None => False,
+     },
+     match dyn.get_variant_payload(dyn.pack(Option(()).type, unit), 1) {
+         Some(value) => dyn.project_with(().type, value) == Some(()),
+         None => False,
+     }]
+};
+export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

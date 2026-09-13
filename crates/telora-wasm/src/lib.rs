@@ -17,6 +17,7 @@ mod dict_ops;
 mod dictionaries;
 mod dynamic_members;
 mod dynamic_ops;
+mod dynamic_variants;
 mod emit;
 mod entry;
 mod enums;

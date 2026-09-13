@@ -17,11 +17,26 @@ export def answer = fn() {
         Some(value) => value, None => fail!("field projection failed"),
     };
     let origin = rt.with_diagnostics(fn(value: Int) { fail!("origin", value) })(value);
+    let wrong_variant = rt.with_diagnostics(fn(value: Dyn) { dyn.get_variant_payload(value, 0) })(dyn.pack(Bool.type, True));
+    let not_enum = rt.with_diagnostics(fn(value: Dyn) { dyn.get_variant_index(value) })(packed);
+    let negative_variant = rt.with_diagnostics(fn(index: Int) { dyn.get_variant_payload(dyn.pack(Bool.type, True), index) })(-1);
+    let large_variant = rt.with_diagnostics(fn(index: Int) { dyn.get_variant_payload(dyn.pack(Bool.type, True), index) })(4294967296);
+    let scalar: Option(Int) = Some(12345);
+    let scalar = match dyn.get_variant_payload(dyn.pack(Option(Int).type, scalar), 1) {
+        Some(value) => match dyn.project_with(Int.type, value) { Some(value) => value, None => fail!("wrong payload type") },
+        None => fail!("missing payload"),
+    };
+    let payload_origin = rt.with_diagnostics(fn(value: Int) { fail!("payload origin", value) })(scalar);
     (match fields { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match variants { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match invalid { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match negative { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match large { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match absent { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
-     match origin { Err(reports) => reports[0], Ok(_) => fail!("missing origin diagnostic") })
+     match origin { Err(reports) => reports[0], Ok(_) => fail!("missing origin diagnostic") },
+     match wrong_variant { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match not_enum { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match negative_variant { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match large_variant { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match payload_origin { Err(reports) => reports[0], Ok(_) => fail!("missing payload diagnostic") })
 };

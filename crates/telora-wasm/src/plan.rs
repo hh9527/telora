@@ -218,7 +218,12 @@ impl Plan {
         plan.plan_comparisons(executable)?;
         if executable.closure().nodes().iter().any(|root| {
             crate::natives::identity(mir, root.node).is_some_and(|(module, name)| {
-                module == 3 || (module == 2 && name == "get_field_value")
+                module == 3
+                    || (module == 2
+                        && matches!(
+                            name,
+                            "get_field_value" | "get_variant_index" | "get_variant_payload"
+                        ))
             })
         }) {
             plan.reflection =
