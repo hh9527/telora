@@ -40,25 +40,41 @@ impl Emitter<'_> {
     pub fn dynamic_variant(&mut self, name: &str) -> Result<u32, String> {
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
-        let payload = name == "get_variant_payload";
-        let arity = if payload { 2 } else { 1 };
+        let checked = matches!(name, "tag_raw" | "payload_raw");
+        let payload = matches!(name, "get_variant_payload" | "payload_raw");
+        let indexed = name == "get_variant_payload";
+        let arity = if indexed { 2 } else { 1 };
         if args.len() != arity + 1
             || self.mir.types[args[0].index()].constructor != T::Dyn
-            || (payload && self.mir.types[args[1].index()].constructor != T::Int)
+            || (indexed && self.mir.types[args[1].index()].constructor != T::Int)
         {
             return Err("Wasm: Dyn variant argument mismatch".into());
         }
-        let output = args[arity];
+        let result_type = args[arity];
+        let output = if checked {
+            let shape = &self.mir.types[result_type.index()];
+            if shape.constructor != T::Result
+                || shape.arguments.len() != 2
+                || self.mir.types[shape.arguments[1].index()].constructor != T::String
+            {
+                return Err("Wasm: Dyn query result mismatch".into());
+            }
+            shape.arguments[0]
+        } else {
+            result_type
+        };
         let shape = &self.mir.types[output.index()];
         if if payload {
             shape.constructor != T::Option || shape.arguments != [args[0]]
+        } else if checked {
+            shape.constructor != T::String
         } else {
             shape.constructor != T::Int
         } {
             return Err("Wasm: Dyn variant result mismatch".into());
         }
         let input = self.parameter(0);
-        let expected = if payload {
+        let expected = if indexed {
             let value = self.parameter(1);
             self.bits(value);
             self.extend([
@@ -93,33 +109,44 @@ impl Emitter<'_> {
             I::I32Ne,
             I::If(BlockType::Empty),
         ]);
-        self.reflection_failure(input, "Dyn variant access expects Enum")?;
+        if checked {
+            let message = self.text_as(
+                node,
+                self.string_type()?,
+                b"Dyn variant access expects Enum",
+            )?;
+            let error = self.enum_value(node, result_type, 0, Some(message))?;
+            self.extend([I::LocalGet(error), I::Return]);
+        } else {
+            self.reflection_failure(input, "Dyn variant access expects Enum")?;
+        }
         self.emit(I::End);
         let value = self.table_data(VALUES, input, 24);
         let tag = self.read32(value, DATA);
-        if !payload {
+        if !payload && !checked {
             return self.reflected_scalar(output, tag, value);
         }
-        let expected = expected.unwrap();
-        self.extend([
-            I::LocalGet(tag),
-            I::LocalGet(expected),
-            I::I32Ne,
-            I::If(BlockType::Empty),
-        ]);
-        let message = self.local(ValType::I32);
-        self.extend([
-            I::I32Const(1),
-            I::LocalGet(tag),
-            I::LocalGet(expected),
-            I::Call(MEMBER_MESSAGE),
-            I::LocalSet(message),
-        ]);
-        let message = self.text_span_value(self.string_type()?, message)?;
-        let one = self.local(ValType::I32);
-        self.extend([I::I32Const(1), I::LocalSet(one)]);
-        self.report(node, message, input, one, false);
-        self.emit(I::End);
+        if let Some(expected) = expected {
+            self.extend([
+                I::LocalGet(tag),
+                I::LocalGet(expected),
+                I::I32Ne,
+                I::If(BlockType::Empty),
+            ]);
+            let message = self.local(ValType::I32);
+            self.extend([
+                I::I32Const(1),
+                I::LocalGet(tag),
+                I::LocalGet(expected),
+                I::Call(MEMBER_MESSAGE),
+                I::LocalSet(message),
+            ]);
+            let message = self.text_span_value(self.string_type()?, message)?;
+            let one = self.local(ValType::I32);
+            self.extend([I::I32Const(1), I::LocalSet(one)]);
+            self.report(node, message, input, one, false);
+            self.emit(I::End);
+        }
         let members = self.read32(row, 16);
         self.extend([
             I::LocalGet(base),
@@ -128,6 +155,10 @@ impl Emitter<'_> {
             I::LocalSet(members),
         ]);
         let member = self.array_item(members, tag, MEMBER);
+        if name == "tag_raw" {
+            let text = self.reflected_text(output, base, member, 0, input)?;
+            return self.enum_value(node, result_type, 1, Some(text));
+        }
         let concrete = self.read32(member, 8);
         let result = self.local(ValType::I32);
         self.extend([
@@ -168,6 +199,10 @@ impl Emitter<'_> {
         let boxed = self.box_dynamic_pointer(args[0], child, concrete, width)?;
         let some = self.enum_value(node, output, 1, Some(boxed))?;
         self.extend([I::LocalGet(some), I::LocalSet(result), I::End]);
-        Ok(result)
+        if checked {
+            self.enum_value(node, result_type, 1, Some(result))
+        } else {
+            Ok(result)
+        }
     }
 }

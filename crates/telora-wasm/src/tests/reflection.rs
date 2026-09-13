@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn dyn_kind_classifies_closed_values() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/dynamic-kind.telora"),
+        "checks",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(vec![true; 16])
+    );
+}
+
+#[test]
 fn dyn_variants_use_sealed_payload_layouts() {
     let bytes = compile_export(
         include_str!("../../tests/fixtures/dynamic-variants.telora"),
@@ -9,7 +24,10 @@ fn dyn_variants_use_sealed_payload_layouts() {
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
-    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 7]));
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(vec![true; 13])
+    );
     assert!(session.diagnostics().unwrap().is_empty());
 }
 

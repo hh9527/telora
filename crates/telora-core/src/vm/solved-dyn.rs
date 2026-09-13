@@ -366,6 +366,18 @@ fn solved_dyn_variant(
 ) -> Result<(usize, String, Option<(crate::mir::TypeId, Val)>), String> {
     use crate::mir::{TypeConstructor as T, TypeOperation};
     let shape = &types.types[ty.index()];
+    // The sealed witness determines whether this operation is meaningful;
+    // storage inspection only validates a value of an already known enum.
+    let is_enum = match &shape.constructor {
+        T::Nominal(symbol) => types
+            .definition(*symbol)
+            .is_some_and(|definition| definition.operation == TypeOperation::Enum),
+        T::Bool | T::PropertyTarget | T::Option | T::Result | T::FoldControl => true,
+        _ => false,
+    };
+    if !is_enum {
+        return Err("Dyn variant access expects Enum".into());
+    }
     let reference = ValueRef { value, view };
     let (tag, payload) = match reference.tagged_parts() {
         Some((tag, payload)) => (tag.as_atom(), Some(payload.value)),

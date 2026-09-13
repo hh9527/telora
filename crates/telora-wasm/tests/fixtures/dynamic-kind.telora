@@ -1,0 +1,30 @@
+import "std/dyn" as dyn;
+import "std/array" as array;
+import "std/fmt" { Fmt, from_string };
+import "std/value" { Value };
+type Record = struct { x: Int };
+type Wrapped = struct(Int);
+type Choice = enum { Empty, Full(()) };
+export def checks = fn() {
+    let record: Record = { x: 1 };
+    let dict: Dict(Int) = { x: 1 };
+    let packed = dyn.pack(Int.type, 1);
+    let callback = fn(value: Int) { value };
+    [dyn.kind(packed) == dyn.ValueKind.Int,
+     dyn.kind(dyn.pack(Float.type, 1.0)) == dyn.ValueKind.Float,
+     dyn.kind(dyn.pack(String.type, "x")) == dyn.ValueKind.String,
+     dyn.kind(dyn.pack(Bytes.type, b"x")) == dyn.ValueKind.Bytes,
+     dyn.kind(dyn.pack(TypeOf(Int).type, Int.type)) == dyn.ValueKind.Type,
+     dyn.kind(dyn.pack(Array(Int).type, [1])) == dyn.ValueKind.Array,
+     dyn.kind(dyn.pack(Dict(Int).type, dict)) == dyn.ValueKind.Dict,
+     dyn.kind(dyn.pack(Record.type, record)) == dyn.ValueKind.Dict,
+     dyn.kind(dyn.pack(().type, ())) == dyn.ValueKind.Tuple,
+     dyn.kind(dyn.pack(Wrapped.type, Wrapped(1))) == dyn.ValueKind.Tuple,
+     dyn.kind(dyn.pack(Bool.type, True)) == dyn.ValueKind.Atom,
+     dyn.kind(dyn.pack(Choice.type, Choice.Empty)) == dyn.ValueKind.Atom,
+     dyn.kind(dyn.pack(Choice.type, Choice.Full(()))) == dyn.ValueKind.Tagged,
+     dyn.kind(dyn.pack(Dyn.type, packed)) == dyn.ValueKind.Dyn,
+     dyn.kind(dyn.pack((Fn(Int) -> Int).type, callback)) == dyn.ValueKind.Func,
+     dyn.kind(dyn.pack(Fmt.type, from_string("x"))) == dyn.ValueKind.Opaque]
+};
+export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

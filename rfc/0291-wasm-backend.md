@@ -595,3 +595,27 @@ Bool、无 payload 变体、递归 tuple payload、Some(()) 与标量 payload
 验证包括 30 项 Wasm 库测试，以及默认／Wasm 的 CLI 变体、类型反射、
 DisplayBy 对照；另验证标量 payload 的诊断来源。未重复性能基准。
 Dyn 其余观察操作和前述标准库、发布验收仍待完成。
+
+## Dyn kind 与 Result 查询
+
+Dyn.kind 已依据静态类型描述分类，名义类型通过封闭 body 获取形状；
+enum 依据当前变体是否定义 payload 返回 ValueKind.Atom/Tagged。
+这里的名称是现有反射枚举的成员，不引入表面 Atom/Tagged 类型或类型猜测。
+覆盖 TypeOf、标量、Array/Dict、名义 Record/Newtype、Unit、Bool、
+带 Unit payload 的 enum、Dyn、函数与 opaque Fmt，共 16 项语言检查。
+
+tag_raw/payload_raw 与显式变体读取共用生成路径。公开 tag/payload 的
+AccessError 装配仍执行 std/dyn 中已经实例化的 .telora 函数；类型不符
+返回 Result.Err，保持原 Dyn 身份，不发布失败诊断。递归 payload 保持
+原引用；没有新增 RT 操作。
+
+对照发现默认解释器先看旧值的 atom/tagged 存储，再检查类型身份，导致
+Int 的变体查询暴露内部存储诊断。现先以封闭类型判断操作是否成立，
+非 Enum 统一返回 Dyn variant access expects Enum，之后才校验存储。
+没有保留旧诊断兼容分支。
+
+验证：346 项核心测试、31 项 Wasm 库测试通过；默认/Wasm CLI 中 16 项
+kind 与 13 项变体/Result 查询对照通过；完整 97 项 CLI 测试（含语言验收）
+通过。独立 Node 重载同一产物，13 项
+检查通过且零 imports。没有重复性能基准。fields/field、array_items、
+tuple_items 及先前列出的其余标准库和最终发布验收仍待完成。

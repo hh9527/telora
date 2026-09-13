@@ -15,6 +15,7 @@ mod dict_build;
 mod dict_literals;
 mod dict_ops;
 mod dictionaries;
+mod dynamic_kind;
 mod dynamic_members;
 mod dynamic_ops;
 mod dynamic_variants;

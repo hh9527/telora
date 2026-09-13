@@ -8,6 +8,7 @@ export def checks = fn() {
     let chain = Chain.More((42, Chain.End));
     let boxed = dyn.pack(Chain.type, chain);
     let unit: Option(()) = Some(());
+    let integer = dyn.pack(Int.type, 7);
     [dyn.get_variant_index(dyn.pack(Bool.type, False)) == 0,
      dyn.get_variant_index(dyn.pack(Bool.type, True)) == 1,
      dyn.get_variant_payload(dyn.pack(Bool.type, True), 1) == None,
@@ -20,6 +21,15 @@ export def checks = fn() {
      match dyn.get_variant_payload(dyn.pack(Option(()).type, unit), 1) {
          Some(value) => dyn.project_with(().type, value) == Some(()),
          None => False,
-     }]
+     },
+     dyn.tag(boxed) == Ok("More"),
+     dyn.tag(dyn.pack(Bool.type, False)) == Ok("False"),
+     dyn.payload(dyn.pack(Chain.type, Chain.End)) == Ok(None),
+     match dyn.payload(boxed) {
+         Ok(Some(value)) => dyn.project_with((Int, Chain).type, value) == Some((42, Chain.End)),
+         _ => False,
+     },
+     match dyn.tag(integer) { Err(error) => error.value == integer && error.message == "Dyn variant access expects Enum", Ok(_) => False },
+     match dyn.payload(integer) { Err(error) => error.value == integer && error.message == "Dyn variant access expects Enum", Ok(_) => False }]
 };
 export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

@@ -5,9 +5,14 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
+            "dynamic-kind",
+            include_str!("../../../telora-wasm/tests/fixtures/dynamic-kind.telora"),
+            serde_json::json!(vec![true; 16]),
+        ),
+        (
             "dynamic-variants",
             include_str!("../../../telora-wasm/tests/fixtures/dynamic-variants.telora"),
-            serde_json::json!(vec![true; 7]),
+            serde_json::json!(vec![true; 13]),
         ),
         (
             "reflection",

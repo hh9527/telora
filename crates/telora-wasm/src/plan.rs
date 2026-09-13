@@ -222,7 +222,12 @@ impl Plan {
                     || (module == 2
                         && matches!(
                             name,
-                            "get_field_value" | "get_variant_index" | "get_variant_payload"
+                            "kind"
+                                | "get_field_value"
+                                | "get_variant_index"
+                                | "get_variant_payload"
+                                | "tag_raw"
+                                | "payload_raw"
                         ))
             })
         }) {
