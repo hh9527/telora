@@ -37,6 +37,7 @@ impl Emitter<'_> {
             Some((8, name)) => self.path_native(name),
             Some((19, name)) => self.regex_native(name),
             Some((16, name)) => self.hash_native(name),
+            Some((13, "encode_with")) => self.codec_encode_native(),
             Some((17, name @ ("stringify" | "stringify_pretty"))) => self.json_native(name),
             Some((17, "parse_raw")) => self.json_parse_native(),
             Some((20, name)) => self.format_native(name),

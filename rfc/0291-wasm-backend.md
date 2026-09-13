@@ -793,3 +793,16 @@ Result.Err(BlameError)，原输入来源保留在错误 subject 和生成值中�
 CST 解析器的完整诊断渲染；RawValue 子树解析会重复扫描嵌套文本，
 深层输入与解析限额需要后续统一验收。当前不据此宣称 JSON 完成。
 codec、schema、YAML/TOML 和最终发布/浏览器/性能验收仍继续推进。
+
+## Codec 编码入口
+
+encode_with 已接通 Int/Float/String/Bytes/Bool、Value 直接复用、
+Option 及 Array。转换由封闭类型驱动生成，不新增 RT 操作。数组
+按输入 start/end 和已知 stride 读取，生成 Array(Value)；嵌套数组
+和 Option 复用同一转换逻辑。Never 分支不可达，因此 Option(Never)
+和空 Array(Never) 可编码，不发明 Never 值。
+
+14 项语言检查覆盖上述路径。此阶段尚不支持 Tuple/Dict/名义类型、
+property 编码规则和 decode；这些不是回退到旧后端，而是明确的
+未实现范围。当前转换在 codegen 展开结构类型，名义递归类型接入时
+需要改为有限的专用函数图，避免递归展开。

@@ -9,6 +9,8 @@ pub mod artifact;
 mod capture;
 mod capture_values;
 mod checks;
+mod codec_arrays;
+mod codec_ops;
 mod codegen;
 mod data_input;
 pub mod diagnostic_output;

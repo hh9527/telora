@@ -1,0 +1,23 @@
+import "std/codec" as codec;
+import "std/value" { Value };
+export def inspect = fn() {
+    let existing = Value.String("same");
+    let absent: Option(Int) = None;
+    let impossible: Option(Never) = None;
+    let nested: Option(Option(String)) = Some(Some("nested"));
+    let empty: Array(Never) = [];
+    [codec.encode(Value.type, 42) == Value.Int(42),
+     codec.encode(Value.type, 1.5) == Value.Float(1.5),
+     codec.encode(Value.type, "中") == Value.String("中"),
+     codec.encode(Value.type, b"bytes") == Value.Bytes(b"bytes"),
+     codec.encode(Value.type, True) == Value.True,
+     codec.encode(Value.type, False) == Value.False,
+     codec.encode(Value.type, existing) == existing,
+     codec.encode(Value.type, absent) == Value.None,
+     codec.encode(Value.type, Some(42)) == Value.Int(42),
+     codec.encode(Value.type, nested) == Value.String("nested"),
+     codec.encode(Value.type, impossible) == Value.None,
+     codec.encode(Value.type, [1,2]) == Value.Array([Value.Int(1),Value.Int(2)]),
+     codec.encode(Value.type, [[1],[]]) == Value.Array([Value.Array([Value.Int(1)]),Value.Array([])]),
+     codec.encode(Value.type, empty) == Value.Array([])]
+};

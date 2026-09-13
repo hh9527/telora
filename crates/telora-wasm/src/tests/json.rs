@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn codec_scalar_encoding_uses_closed_payload_identities() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-scalars.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(vec![true; 14])
+    );
+}
+
+#[test]
 fn json_parse_error_blames_the_original_text() {
     let source = include_str!("../../tests/fixtures/json-parse-origins.telora");
     let bytes = compile(source).unwrap();
