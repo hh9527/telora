@@ -63,9 +63,19 @@ pub unsafe extern "C" fn telora_source_name(id: u32) -> u32 {
                 return item as u32 + 4;
             }
         }
+        number_text(b"source:", id, b"")
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_subject_label(index: u32) -> u32 {
+    unsafe { number_text(b"subject ", index, b" originated here") }
+}
+
+unsafe fn number_text(prefix: &[u8], mut number: u32, suffix: &[u8]) -> u32 {
+    unsafe {
         let mut digits = [0u8; 10];
         let mut at = digits.len();
-        let mut number = id;
         loop {
             at -= 1;
             digits[at] = b'0' + (number % 10) as u8;
@@ -74,15 +84,20 @@ pub unsafe extern "C" fn telora_source_name(id: u32) -> u32 {
                 break;
             }
         }
-        let length = 7 + (digits.len() - at) as u32;
+        let length = (prefix.len() + digits.len() - at + suffix.len()) as u32;
         let result = telora_alloc(8 + length);
         (result as *mut u32).write(result + 8);
         ((result + 4) as *mut u32).write(length);
-        core::ptr::copy_nonoverlapping(b"source:".as_ptr(), (result + 8) as *mut u8, 7);
+        core::ptr::copy_nonoverlapping(prefix.as_ptr(), (result + 8) as *mut u8, prefix.len());
         core::ptr::copy_nonoverlapping(
             digits[at..].as_ptr(),
-            (result + 15) as *mut u8,
+            (result + 8 + prefix.len() as u32) as *mut u8,
             digits.len() - at,
+        );
+        core::ptr::copy_nonoverlapping(
+            suffix.as_ptr(),
+            (result + 8 + prefix.len() as u32 + (digits.len() - at) as u32) as *mut u8,
+            suffix.len(),
         );
         result
     }

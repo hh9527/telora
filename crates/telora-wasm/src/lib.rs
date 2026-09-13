@@ -4,6 +4,8 @@ mod aggregates;
 mod array_build;
 mod array_ops;
 pub mod artifact;
+mod capture;
+mod capture_values;
 mod checks;
 mod codegen;
 mod data_input;

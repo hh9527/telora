@@ -1,0 +1,35 @@
+import "std/_rt" as rt;
+
+def subject = -7;
+export def answer = fn() {
+    let success = rt.with_diagnostics(fn(n: Int) {
+        let warning: Option(Int) = warn!("captured warning");
+        n + 1
+    })(41);
+    let failure = rt.with_diagnostics(fn(n: Int) -> Int {
+        let warning: Option(Int) = warn!("before failure");
+        fail!("captured failure", subject, subject)
+    })(0);
+    let nested = rt.with_diagnostics(fn(n: Int) {
+        let before: Option(Int) = warn!("outer before");
+        let inner = rt.with_diagnostics(fn(x: Int) -> Int { fail!("inner failure") })(0);
+        let value = match inner { Err(_) => n, Ok((value, _)) => value };
+        let warning: Option(Int) = warn!("outer warning");
+        value
+    })(7);
+    let never = rt.with_diagnostics(fn(n: Int) { fail!("never failure") })(0);
+    let arithmetic = rt.with_diagnostics(fn(n: Int) { 10 / n })(0);
+    (success, failure, nested, never, arithmetic, 42)
+};
+
+def spin: Fn(Int) -> Int = fn(n) { 1 + spin(n + 1) };
+export def exhausted = fn() {
+    rt.with_diagnostics(fn(n: Int) {
+        let entered: Option(Int) = warn!("entered exhausted scope");
+        spin(n)
+    })(0)
+};
+export def uncaught = fn() {
+    let ignored = rt.with_diagnostics(fn(n: Int) { fail!("caught first") })(0);
+    fail!("uncaught afterwards")
+};

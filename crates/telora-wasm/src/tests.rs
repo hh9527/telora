@@ -5,6 +5,57 @@ use telora_core::{
 };
 
 #[test]
+fn diagnostic_scopes_capture_reports_and_resume_outer_execution() {
+    let bytes = compile(include_str!("../tests/fixtures/capture.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    let value = session.call(&[]).unwrap();
+    assert_eq!(value[0]["Ok"][0], 42);
+    assert_eq!(value[0]["Ok"][1][0]["message"], "captured warning");
+    assert_eq!(value[0]["Ok"][1][0]["severity"], "Warning");
+    assert_eq!(value[1]["Err"].as_array().unwrap().len(), 2);
+    assert_eq!(value[1]["Err"][1]["message"], "captured failure");
+    assert_eq!(value[1]["Err"][1]["labels"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        value[1]["Err"][1]["labels"][1]["location"]["source"],
+        "@src/main"
+    );
+    assert_eq!(
+        value[1]["Err"][1]["labels"][1]["message"],
+        "subject 1 originated here"
+    );
+    assert_eq!(value[2]["Ok"][0], 7);
+    assert_eq!(value[2]["Ok"][1].as_array().unwrap().len(), 2);
+    assert_eq!(value[2]["Ok"][1][0]["message"], "outer before");
+    assert_eq!(value[2]["Ok"][1][1]["message"], "outer warning");
+    assert_eq!(value[3]["Err"][0]["message"], "never failure");
+    assert_eq!(value[4]["Err"][0]["message"], "integer division by zero");
+    assert_eq!(value[5], 42);
+    assert!(session.diagnostics().unwrap().is_empty());
+    assert_eq!(session.call(&[]).unwrap(), value);
+    let source = include_str!("../tests/fixtures/capture.telora");
+    let bytes = compile_export(source, "uncaught").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
+    session.initialize().unwrap();
+    assert!(
+        session
+            .call(&[])
+            .unwrap_err()
+            .contains("uncaught afterwards")
+    );
+    assert_eq!(session.diagnostics().unwrap().len(), 1);
+    let bytes = compile_export(source, "exhausted").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
+    session.initialize().unwrap();
+    session.store.set_fuel(200_000).unwrap();
+    assert!(session.call(&[]).unwrap_err().contains("fuel"));
+    assert_eq!(
+        session.diagnostics().unwrap()[0].message,
+        "entered exhausted scope"
+    );
+}
+
+#[test]
 fn array_callbacks_execute_in_wasm_with_closed_element_types() {
     let bytes = compile(include_str!("../tests/fixtures/array-ops.telora")).unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();

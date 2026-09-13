@@ -3,7 +3,7 @@ use telora_core::mir::TypeId;
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
-    fn packed_tuple(&mut self, ty: TypeId, fields: &[u32]) -> Result<u32, String> {
+    pub(crate) fn packed_tuple(&mut self, ty: TypeId, fields: &[u32]) -> Result<u32, String> {
         let layout = self.plan.layouts[ty.index()]
             .object
             .as_ref()

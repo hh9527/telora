@@ -1,0 +1,27 @@
+import "std/_rt" as rt;
+import "std/array" as array;
+import "std/value" {Value};
+
+def captured = rt.with_diagnostics(fn(n: Int) -> Int {
+    let warning: Option(Int) = warn!("before failure");
+    fail!("captured failure", n)
+})(42);
+
+export def answer = match captured {
+    Err(reports) => Value.Array(array.map(reports, fn(report) {
+        Value.Object({
+            message: Value.String(report.message),
+            labels: Value.Array(array.map(report.labels, fn(label) {
+                Value.Object({
+                    source: Value.String(label.location.source),
+                    start: Value.Int(label.location.start),
+                    end: Value.Int(label.location.end),
+                    message: Value.String(label.message),
+                    primary: if label.primary { Value.True } else { Value.False },
+                })
+            })),
+            notes: Value.Array(array.map(report.notes, fn(note) { Value.String(note) })),
+        })
+    })),
+    Ok(_) => Value.None,
+};
