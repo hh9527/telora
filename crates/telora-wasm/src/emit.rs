@@ -15,6 +15,7 @@ pub(crate) struct Emitter<'a> {
     static_pointers: BTreeSet<usize>,
     pub locals: Vec<ValType>,
     pub bindings: BTreeMap<SymbolId, u32>,
+    pub local_instances: BTreeMap<telora_core::mir::GenericInstanceId, u32>,
 }
 
 impl<'a> Emitter<'a> {
@@ -28,6 +29,7 @@ impl<'a> Emitter<'a> {
             static_pointers: BTreeSet::new(),
             locals: vec![],
             bindings: BTreeMap::new(),
+            local_instances: BTreeMap::new(),
         }
     }
     pub fn local(&mut self, ty: ValType) -> u32 {
@@ -335,6 +337,15 @@ impl<'a> Emitter<'a> {
             }
             HirKind::Variable(_) | HirKind::TypeApply => {
                 if let Some(instance) = self.key.reference(self.mir, node) {
+                    if let Some(&value) = self.local_instances.get(&instance) {
+                        return Ok(value);
+                    }
+                    if self.plan.local_instances.contains(&instance) {
+                        return Err(format!(
+                            "Wasm: local instance {instance:?} is unavailable in {:?}",
+                            self.key
+                        ));
+                    }
                     return self.call_key(
                         *self
                             .plan
@@ -369,6 +380,7 @@ impl<'a> Emitter<'a> {
                 )
             }
             HirKind::Block => {
+                self.reserve_local_instances(node)?;
                 for edge in &self.mir.hir[node.index()].children {
                     if edge.role == Role::Binding
                         && matches!(
@@ -378,6 +390,9 @@ impl<'a> Emitter<'a> {
                                 ..
                             }
                         )
+                        && self.mir.hir_symbols[edge.node.index()].is_some_and(|symbol| {
+                            self.mir.symbol_generics[symbol.index()].is_empty()
+                        })
                         && self.mir.types[self.ty(edge.node)?.index()].constructor
                             == TypeConstructor::Function
                     {
@@ -389,6 +404,9 @@ impl<'a> Emitter<'a> {
                 }
                 for edge in &self.mir.hir[node.index()].children {
                     if edge.role == Role::Binding {
+                        if self.emit_local_template(edge.node)? {
+                            continue;
+                        }
                         self.expression(edge.node)?;
                     }
                 }
@@ -471,6 +489,15 @@ pub(crate) fn compile(
                 I::LocalSet(local),
             ]);
             emit.bindings.insert(*symbol, local);
+        }
+        for (index, instance) in plan.instance_captures[&key].iter().enumerate() {
+            let local = emit.local(ValType::I32);
+            emit.extend([
+                I::LocalGet(0),
+                I::I32Load(memory((index + plan.captures[&key].len()) as u64 * 4, 2)),
+                I::LocalSet(local),
+            ]);
+            emit.local_instances.insert(*instance, local);
         }
         for (index, edge) in mir.hir[key.node.index()]
             .children

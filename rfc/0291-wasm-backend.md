@@ -1089,3 +1089,22 @@ check/mir-local-alias/testee，其局部泛型 identity/alias 被分别用于
 Int 和 String 时，在 functions.rs 的闭包捕获表查找发生 panic。
 该问题与 Test 描述值无关，需要修复泛型局部绑定的规划/消费路径；
 不能把当前测试通过视为 #186 全量完成。
+
+## 局部泛型实例与捕获
+
+修复未实例化函数族被当作闭包生成的问题。局部实例不再注册为全局
+需求缓存；在词法作用域按 sealed GenericInstanceId 预留值槽，再填写
+具体实例。闭包环境同时携带普通符号捕获和局部实例捕获，支持自递归、
+互递归、局部别名、逃逸闭包和每次调用独立的捕获环境。实例选择只沿
+已封闭引用及实例引用图进行，不新增推导或类型替换。
+
+局部 decl 只预留，不生成函数族值；后续定义填写同一实例槽位。
+原有 mir-local-alias 及 check-success-all 聚合资产均通过 Wasm check。
+89 项库回归通过，CLI 共有能力对照和 Node 独立产物执行通过。局部
+泛型 decl 在默认后端仍报 local declaration has no function slot，
+因此保留独立 Wasm 验证，不将其混入默认/Wasm 一致性声明。
+
+进一步审计原有 test/interpreter/testee，确认下一项尚未实现的合法
+节点是 interpreter!（Wasm 报 unsupported expression Interpreter）。
+后续应消费已有 InterpreterPlan 实现封闭适配器，不能回退到其他
+后端；完整语言/标准库审计与最终性能观察继续推进，#186 尚未完成。

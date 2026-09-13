@@ -78,6 +78,8 @@ pub(crate) struct Plan {
     pub instances: BTreeMap<GenericInstanceId, Key>,
     pub demands: BTreeMap<Key, u32>,
     pub captures: BTreeMap<Key, Vec<SymbolId>>,
+    pub instance_captures: BTreeMap<Key, Vec<GenericInstanceId>>,
+    pub local_instances: BTreeSet<GenericInstanceId>,
     pub layouts: Vec<telora_core::candidate_layout::Entry>,
     pub root: Key,
     pub properties: BTreeMap<usize, Key>,
@@ -102,6 +104,8 @@ impl Plan {
             instances: BTreeMap::new(),
             demands: BTreeMap::new(),
             captures: BTreeMap::new(),
+            instance_captures: BTreeMap::new(),
+            local_instances: BTreeSet::new(),
             layouts: telora_core::candidate_layout::calculate(executable.sealed_mir())?,
             root,
             properties: BTreeMap::new(),
@@ -141,6 +145,10 @@ impl Plan {
                 special: Special::Normal,
             };
             plan.instances.insert(instance, key);
+            if !executable.globals().contains(&symbol) {
+                plan.local_instances.insert(instance);
+                continue;
+            }
             plan.functions.insert(key, 0);
             plan.demands.insert(key, 0);
         }
@@ -308,6 +316,7 @@ impl Plan {
             let mut pending = vec![key.node];
             let mut declared = BTreeSet::new();
             let mut referenced = BTreeSet::new();
+            let mut instances = BTreeSet::new();
             while let Some(node) = pending.pop() {
                 let syntax = &mir.hir[node.index()];
                 if matches!(
@@ -339,12 +348,25 @@ impl Plan {
                             )
                     )
                 {
-                    referenced.insert(symbol);
+                    if let Some(instance) = key.reference(mir, node)
+                        && plan.local_instances.contains(&instance)
+                    {
+                        instances.insert(instance);
+                    } else if mir.symbol_generics[symbol.index()].is_empty() {
+                        referenced.insert(symbol);
+                    }
                 }
                 pending.extend(syntax.children.iter().map(|edge| edge.node));
             }
             plan.captures
                 .insert(key, referenced.difference(&declared).copied().collect());
+            plan.instance_captures.insert(
+                key,
+                instances
+                    .into_iter()
+                    .filter(|id| !declared.contains(&mir.generic_instances[id.index()].symbol))
+                    .collect(),
+            );
         }
         Ok(plan)
     }

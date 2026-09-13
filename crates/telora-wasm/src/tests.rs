@@ -16,6 +16,24 @@ mod regex;
 mod test_descriptions;
 
 #[test]
+fn local_generic_instances_capture_per_activation_and_support_recursion() {
+    let bytes = compile(include_str!("../tests/fixtures/local-generics.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.eval().unwrap(),
+        serde_json::json!([true, true, true, true, true])
+    );
+    let bytes = compile(include_str!(
+        "../tests/fixtures/local-generic-declaration.telora"
+    ))
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.eval().unwrap(), serde_json::json!(true));
+}
+
+#[test]
 fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {
     let bytes = compile(include_str!("../tests/fixtures/sequences.telora")).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();

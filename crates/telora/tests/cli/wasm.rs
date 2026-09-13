@@ -33,6 +33,11 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
+            "local-generics",
+            include_str!("../../../telora-wasm/tests/fixtures/local-generics.telora"),
+            serde_json::json!(vec![true;5]),
+        ),
+        (
             "test-descriptions",
             include_str!("../../../telora-wasm/tests/fixtures/test-descriptions.telora"),
             serde_json::json!(vec![true;5]),

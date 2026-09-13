@@ -1,0 +1,27 @@
+import "std/value" {Value};
+
+def factory = fn(number: Int) {
+    let identity = fn(value) {(number, value)};
+    let alias = identity;
+    fn() {(alias(1), alias("text"))}
+};
+def first = factory(7);
+def second = factory(9);
+def recursive = do {
+    def repeat: for(T) Fn(T, Int) -> T = fn(value, count) {
+        if count == 0 {value} else {repeat(value, count - 1)}
+    };
+    (repeat(42, 3), repeat("done", 2))
+};
+def mutual = do {
+    def left: for(T) Fn(T, Int) -> T = fn(value, count) {if count == 0 {value} else {right(value, count - 1)}};
+    def right: for(T) Fn(T, Int) -> T = fn(value, count) {if count == 0 {value} else {left(value, count - 1)}};
+    (left(42, 3), right("done", 2))
+};
+export def answer = Value.Array([
+    if first() == ((7,1),(7,"text")) {Value.True} else {Value.False},
+    if second() == ((9,1),(9,"text")) {Value.True} else {Value.False},
+    if first() == ((7,1),(7,"text")) {Value.True} else {Value.False},
+    if recursive == (42,"done") {Value.True} else {Value.False},
+    if mutual == (42,"done") {Value.True} else {Value.False},
+]);

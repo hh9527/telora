@@ -58,6 +58,7 @@ mod input_heap;
 mod input_types;
 mod json_ops;
 mod link;
+mod local_instances;
 mod natives;
 pub mod object;
 mod output;

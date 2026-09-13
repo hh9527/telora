@@ -14,7 +14,11 @@ impl Emitter<'_> {
             callable: true,
             special: Special::Normal,
         };
-        let captures = &self.plan.captures[&key];
+        let captures = self
+            .plan
+            .captures
+            .get(&key)
+            .ok_or_else(|| format!("Wasm: closure absent from sealed plan: {key:?}"))?;
         let mut values = vec![];
         for symbol in captures {
             let capture = *self.bindings.get(symbol).ok_or_else(|| {
@@ -25,6 +29,11 @@ impl Emitter<'_> {
                 )
             })?;
             values.push(capture);
+        }
+        for instance in &self.plan.instance_captures[&key] {
+            values.push(*self.local_instances.get(instance).ok_or_else(|| {
+                format!("Wasm: missing local instance capture {instance:?} for {key:?}")
+            })?);
         }
         self.function_value(node, key, self.effective_ty(node)?, &values)
     }
