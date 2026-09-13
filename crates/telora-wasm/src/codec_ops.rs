@@ -49,8 +49,11 @@ impl Emitter<'_> {
             self.emit(I::Unreachable);
             return Ok(self.local(ValType::I32));
         }
-        if *kind == T::Array {
+        if matches!(kind, T::Array | T::Dict) {
             return self.codec_encode_array(source, target, input);
+        }
+        if *kind == T::Tuple {
+            return self.codec_encode_tuple(source, target, input);
         }
         let tag = match kind {
             T::Int => Some("Int"),

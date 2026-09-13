@@ -5,6 +5,11 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
+            "codec-collections",
+            include_str!("../../../telora-wasm/tests/fixtures/codec-scalars.telora"),
+            serde_json::json!(vec![true; 18]),
+        ),
+        (
             "json-parse",
             include_str!("../../../telora-wasm/tests/fixtures/json-parse.telora"),
             serde_json::json!({"ok": true}),

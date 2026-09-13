@@ -11,7 +11,7 @@ fn codec_scalar_encoding_uses_closed_payload_identities() {
     session.initialize().unwrap();
     assert_eq!(
         session.call(&[]).unwrap(),
-        serde_json::json!(vec![true; 14])
+        serde_json::json!(vec![true; 18])
     );
 }
 

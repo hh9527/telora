@@ -19,6 +19,11 @@ impl Emitter<'_> {
         {
             return Err("Wasm: Dict input pair type mismatch".into());
         }
+        if self.width(pair)? == 0 {
+            // An array of uninhabited pairs can only be empty.
+            let zero = self.local(ValType::I32);
+            return self.dict_result(args[1], zero, zero, zero, 0);
+        }
         let layout = self.plan.layouts[pair.index()]
             .object
             .as_ref()

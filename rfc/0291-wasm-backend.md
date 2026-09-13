@@ -806,3 +806,10 @@ Option 及 Array。转换由封闭类型驱动生成，不新增 RT 操作。数
 property 编码规则和 decode；这些不是回退到旧后端，而是明确的
 未实现范围。当前转换在 codegen 展开结构类型，名义递归类型接入时
 需要改为有限的专用函数图，避免递归展开。
+
+后续已补齐 Tuple、Unit 和 Dict 编码。Tuple 按封闭字段偏移生成
+Value.Array，Unit 生成空数组且不读取不存在的对象句柄。Dict 复用
+原有有序键列，只转换值列。并修复 dict.from_pairs 的不可居住 pair
+处理：Array((String,Never)) 必为空，不要求构造不存在的 pair 布局。
+18 项 codec 语言检查与默认后端一致，53 项 Wasm 库测试通过。
+名义类型/property/decode 和专用函数图仍待推进。
