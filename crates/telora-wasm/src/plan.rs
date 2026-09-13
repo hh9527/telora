@@ -17,9 +17,24 @@ pub(crate) enum Special {
     Normal,
     Configured,
     Property(usize),
+    Equal(TypeId),
 }
 
 impl Key {
+    pub fn effective_ty(self, mir: &Mir, node: HirId) -> Result<TypeId, String> {
+        if let Some(slot) = mir.value_adjustments[node.index()] {
+            return match self.instance {
+                Some(id) => mir.generic_instances[id.index()]
+                    .adjustment(node)
+                    .ok_or_else(|| "Wasm: missing sealed adjustment".into()),
+                None => match mir.ty_slots[slot.index()] {
+                    TypeState::Known(ty) => Ok(ty),
+                    _ => Err("Wasm: unsealed adjustment".into()),
+                },
+            };
+        }
+        self.ty(mir, node)
+    }
     pub fn ty(self, mir: &Mir, node: HirId) -> Result<TypeId, String> {
         if self.special == Special::Configured && node == self.node {
             let original = Self {
@@ -61,6 +76,7 @@ pub(crate) struct Plan {
     pub root: Key,
     pub properties: BTreeMap<usize, Key>,
     pub checks: BTreeMap<usize, Key>,
+    pub comparisons: BTreeMap<TypeId, Key>,
 }
 
 impl Plan {
@@ -82,6 +98,7 @@ impl Plan {
             root,
             properties: BTreeMap::new(),
             checks: BTreeMap::new(),
+            comparisons: BTreeMap::new(),
         };
         for &symbol in executable.globals() {
             if !mir.symbol_generics[symbol.index()].is_empty() {
@@ -196,6 +213,7 @@ impl Plan {
         }
         plan.functions.insert(plan.root, 0);
         plan.demands.insert(plan.root, 0);
+        plan.plan_comparisons(executable)?;
         for (index, function) in plan.functions.values_mut().enumerate() {
             *function = u32::try_from(index)
                 .map_err(|_| "Wasm: function index overflow")?
@@ -210,6 +228,9 @@ impl Plan {
                 .ok_or("Wasm: demand offset overflow")?;
         }
         for &key in plan.functions.keys().filter(|key| key.callable) {
+            if matches!(key.special, Special::Equal(_)) {
+                continue;
+            }
             let mut pending = vec![key.node];
             let mut declared = BTreeSet::new();
             let mut referenced = BTreeSet::new();

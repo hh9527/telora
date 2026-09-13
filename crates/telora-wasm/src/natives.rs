@@ -28,6 +28,7 @@ pub(crate) fn identity(mir: &Mir, node: HirId) -> Option<(u32, &str)> {
 impl Emitter<'_> {
     pub fn native(&mut self) -> Result<u32, String> {
         match identity(self.mir, self.key.node) {
+            Some((1, "equal")) => self.equal_native(),
             Some((5, name)) => self.array_native(name),
             Some((6, name)) => self.dict_native(name),
             Some((7, name)) => self.string_native(name),

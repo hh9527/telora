@@ -47,6 +47,9 @@ impl Emitter<'_> {
         Ok(result)
     }
     pub fn binary(&mut self, node: HirId, op: B) -> Result<u32, String> {
+        if matches!(op, B::Equal | B::NotEqual) {
+            return self.equal_expression(node, op == B::NotEqual);
+        }
         let lhs = child(self.mir, node, Role::Left)?;
         let rhs = child(self.mir, node, Role::Right)?;
         let ty = self.ty(lhs)?;
@@ -58,8 +61,6 @@ impl Emitter<'_> {
             let left = self.expression(lhs)?;
             let right = self.expression(rhs)?;
             let comparison = match op {
-                B::Equal => I::I32Eq,
-                B::NotEqual => I::I32Ne,
                 B::LessThan => I::I32LtS,
                 B::LessThanOrEqual => I::I32LeS,
                 B::GreaterThan => I::I32GtS,
@@ -107,7 +108,7 @@ impl Emitter<'_> {
         self.bits(right);
         self.emit(I::LocalSet(b));
         if *kind == T::Float {
-            return self.float_binary(node, op, a, b);
+            return self.float_binary(node, op, a, b, [left, right]);
         }
         if matches!(op, B::Divide | B::Remainder) {
             self.extend([I::LocalGet(b), I::I64Eqz]);
@@ -127,12 +128,7 @@ impl Emitter<'_> {
         }
         let comparison = matches!(
             op,
-            B::Equal
-                | B::NotEqual
-                | B::LessThan
-                | B::LessThanOrEqual
-                | B::GreaterThan
-                | B::GreaterThanOrEqual
+            B::LessThan | B::LessThanOrEqual | B::GreaterThan | B::GreaterThanOrEqual
         );
         let instruction = match op {
             B::Add => I::I64Add,
@@ -143,8 +139,6 @@ impl Emitter<'_> {
             B::BitAnd => I::I64And,
             B::BitOr => I::I64Or,
             B::BitXor => I::I64Xor,
-            B::Equal => I::I64Eq,
-            B::NotEqual => I::I64Ne,
             B::LessThan => I::I64LtS,
             B::LessThanOrEqual => I::I64LeS,
             B::GreaterThan => I::I64GtS,
@@ -196,23 +190,23 @@ impl Emitter<'_> {
         }
         self.scalar_bits(node, result)
     }
-    fn float_binary(&mut self, node: HirId, op: B, a: u32, b: u32) -> Result<u32, String> {
+    fn float_binary(
+        &mut self,
+        node: HirId,
+        op: B,
+        a: u32,
+        b: u32,
+        operands: [u32; 2],
+    ) -> Result<u32, String> {
         let comparison = matches!(
             op,
-            B::Equal
-                | B::NotEqual
-                | B::LessThan
-                | B::LessThanOrEqual
-                | B::GreaterThan
-                | B::GreaterThanOrEqual
+            B::LessThan | B::LessThanOrEqual | B::GreaterThan | B::GreaterThanOrEqual
         );
         let instruction = match op {
             B::Add => I::F64Add,
             B::Subtract => I::F64Sub,
             B::Multiply => I::F64Mul,
             B::Divide => I::F64Div,
-            B::Equal => I::F64Eq,
-            B::NotEqual => I::F64Ne,
             B::LessThan => I::F64Lt,
             B::LessThanOrEqual => I::F64Le,
             B::GreaterThan => I::F64Gt,
@@ -233,6 +227,24 @@ impl Emitter<'_> {
             I::I64ReinterpretF64
         });
         self.emit(I::LocalSet(bits));
+        if !comparison {
+            self.extend([
+                I::LocalGet(bits),
+                I::I64Const(0x7ff0_0000_0000_0000),
+                I::I64And,
+                I::I64Const(0x7ff0_0000_0000_0000),
+                I::I64Eq,
+                I::If(BlockType::Empty),
+            ]);
+            let message = self.text_as(node, self.string_type()?, b"NonFiniteFloat")?;
+            let subjects = self.alloc(24);
+            self.copy(subjects, 0, operands[0], 12);
+            self.copy(subjects, 12, operands[1], 12);
+            let count = self.local(ValType::I32);
+            self.extend([I::I32Const(2), I::LocalSet(count)]);
+            self.report(node, message, subjects, count, false);
+            self.emit(I::End);
+        }
         self.scalar_bits(node, bits)
     }
 }

@@ -52,18 +52,15 @@ impl Emitter<'_> {
         self.emit(I::LocalGet(result));
         self.function_pointer(function);
         self.emit(I::I32Store(memory(DATA, 2)));
-        if captures.is_empty() {
-            self.store32(result, ENVIRONMENT, 0);
-        } else {
-            let id = self.table_push(ENVIRONMENTS, environment, captures.len() as u32 * 4);
-            self.extend([
-                I::LocalGet(result),
-                I::LocalGet(id),
-                I::I32Const(1),
-                I::I32Add,
-                I::I32Store(memory(ENVIRONMENT, 2)),
-            ]);
-        }
+        // Even an empty environment gives each evaluated closure an identity.
+        let id = self.table_push(ENVIRONMENTS, environment, captures.len() as u32 * 4);
+        self.extend([
+            I::LocalGet(result),
+            I::LocalGet(id),
+            I::I32Const(1),
+            I::I32Add,
+            I::I32Store(memory(ENVIRONMENT, 2)),
+        ]);
         Ok(result)
     }
     pub fn call(&mut self, node: HirId) -> Result<u32, String> {

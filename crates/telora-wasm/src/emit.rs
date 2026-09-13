@@ -267,6 +267,7 @@ impl<'a> Emitter<'a> {
             HirKind::Int(value) => self.scalar(node, *value),
             HirKind::Float(value) => self.scalar(node, value.to_bits() as i64),
             HirKind::String(value) => self.text(node, value.as_bytes()),
+            HirKind::Bytes(value) => self.bytes_literal(node, value),
             HirKind::Array => self.array_expression(node),
             HirKind::Dict => {
                 if self.mir.types[self.effective_ty(node)?.index()].constructor
@@ -423,7 +424,9 @@ pub(crate) fn compile(
     key: Key,
 ) -> Result<crate::object::ObjectFunction, String> {
     let mut emit = Emitter::new(mir, plan, key);
-    if key.callable && crate::natives::identity(mir, key.node).is_some() {
+    if let Special::Equal(ty) = key.special {
+        emit.compare_type(ty)?;
+    } else if key.callable && crate::natives::identity(mir, key.node).is_some() {
         let value = emit.native()?;
         emit.emit(I::LocalGet(value));
     } else if key.callable && !matches!(mir.hir[key.node.index()].kind, HirKind::Closure) {

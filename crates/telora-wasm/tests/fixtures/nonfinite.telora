@@ -1,0 +1,2 @@
+import "std/value" {Value};
+export def answer = Value.Float(0.0 / 0.0);

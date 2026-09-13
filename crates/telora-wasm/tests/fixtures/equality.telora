@@ -1,0 +1,52 @@
+import "std/eq" {equal as same};
+import "std/array" as array;
+import "std/value" {Value};
+
+type Item = struct {value: Int, names: Array(String)};
+type Count = struct(Int);
+type Tree = enum {Leaf(Int), Branch(Array(Tree))};
+type Box(T) = struct {value: T};
+def fresh: Fn() -> Fn(Int) -> Int = fn() { fn(x) { x } };
+def capture: Fn(Int) -> Fn(Int) -> Int = fn(x) { fn(y) { x + y } };
+def identity: for(T) Fn(T) -> T = fn(x) { x };
+def same_type: Fn(Type, Type) -> Bool = fn(a, b) { a == b };
+def tree: Fn(Int) -> Tree = fn(n) {
+    if n == 0 { Tree.Leaf(42) } else { Tree.Branch([tree(n - 1)]) }
+};
+
+export def checks = fn() {
+    let item: Item = {value: 42, names: ["a", "very long string retained in the heap"]};
+    let values: Dict(Item) = {a: item};
+    let a = fresh();
+    let b = fresh();
+    let c = capture(1);
+    let d = capture(1);
+    let id: Fn(Int) -> Int = identity;
+    let id_again: Fn(Int) -> Int = identity;
+    let left = Value.Object({numbers: Value.Array([Value.Int(42), Value.String("a")])});
+    let right = Value.Object({numbers: Value.Array([Value.Int(42), Value.String("a")])});
+    [
+        same(42,42), !same(42,43), same("a", "a"), !same("a", "b"),
+        () == (), !(() != ()),
+        item == {value:42, names:["a", "very long string retained in the heap"]},
+        item != {value:41, names:item.names},
+        [item] == [{value:42, names:item.names}],
+        same([item], [{value:42, names:item.names}]),
+        (item, 1) == ({value:42, names:item.names}, 1),
+        values == {a: {value:42, names:item.names}}, values != {b:item},
+        Some(item) == Some({value:42, names:item.names}),
+        Some(item) != None, None.ty!(Option(Int)) == None,
+        Ok(42).ty!(Result(Int, String)) != Err("no"),
+        Count(42) == Count(42), Count(42) != Count(41),
+        tree(20) == tree(20), tree(20) != tree(19), left == right,
+        a == a, a != b, c == c, c != d, same([a], [a]), !same([a], [b]),
+        id == id_again,
+        same_type(Int.type, Int.type), !same_type(Int.type, String.type),
+        Int.type == Int.type, Int.type != String.type,
+        0.0 == -0.0, [0.0] == [-0.0],
+        b"" == b"", b"é" == b"é", b"a" != b"b", b"a" != b"ab", same([b"abc"], [b"abc"]),
+        Box(Int).type == Box(Int).type,
+    ]
+};
+
+export def answer = Value.Array(array.map(checks(), fn(value) { if value {Value.True} else {Value.False} }));

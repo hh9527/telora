@@ -1,6 +1,60 @@
 use super::*;
 
 #[test]
+fn wasm_equality_matches_default_backend() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        include_str!("../../../telora-wasm/tests/fixtures/equality.telora"),
+    )
+    .unwrap();
+    let mut results = vec![];
+    for backend in [None, Some("--wasm")] {
+        let output = telora(&cwd)
+            .args(["eval", "@src/main:answer"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+    }
+    assert_eq!(results[0], results[1]);
+    assert_eq!(results[1], serde_json::json!(vec![true; 41]));
+    for (name, source) in [
+        (
+            "nonfinite",
+            include_str!("../../../telora-wasm/tests/fixtures/nonfinite.telora"),
+        ),
+        (
+            "overflow",
+            include_str!("../../../telora-wasm/tests/fixtures/float-overflow.telora"),
+        ),
+    ] {
+        fs::write(cwd.join(format!("src/{name}.telora")), source).unwrap();
+        for backend in [None, Some("--wasm")] {
+            let output = telora(&cwd)
+                .args(["eval", &format!("@src/{name}:answer")])
+                .args(backend)
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("NonFiniteFloat"),
+                "{} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_record_updates_and_dictionary_spreads_match_default_backend() {
     let cwd = fixture();
     fs::write(

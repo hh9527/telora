@@ -4,6 +4,7 @@ use telora_core::{
     static_sources, symbol_resolve, type_resolve,
 };
 
+mod equality;
 mod records;
 
 #[test]

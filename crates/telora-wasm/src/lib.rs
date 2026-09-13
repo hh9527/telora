@@ -18,6 +18,8 @@ mod dictionaries;
 mod emit;
 mod entry;
 mod enums;
+mod equality;
+mod equality_plan;
 mod functions;
 mod input;
 mod input_heap;

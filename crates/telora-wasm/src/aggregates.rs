@@ -1,24 +1,13 @@
 use crate::{abi::*, emit::Emitter, plan::child};
 use telora_core::{
     candidate_layout::State,
-    mir::{HirId, HirKind, Role, TypeConstructor as T, TypeId, TypeState},
+    mir::{HirId, HirKind, Role, TypeConstructor as T, TypeId},
 };
 use wasm_encoder::{Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub fn effective_ty(&self, node: HirId) -> Result<TypeId, String> {
-        if let Some(slot) = self.mir.value_adjustments[node.index()] {
-            return match self.key.instance {
-                Some(id) => self.mir.generic_instances[id.index()]
-                    .adjustment(node)
-                    .ok_or_else(|| "Wasm: missing sealed adjustment".into()),
-                None => match self.mir.ty_slots[slot.index()] {
-                    TypeState::Known(ty) => Ok(ty),
-                    _ => Err("Wasm: unsealed adjustment".into()),
-                },
-            };
-        }
-        self.ty(node)
+        self.key.effective_ty(self.mir, node)
     }
     pub fn width(&self, ty: TypeId) -> Result<u32, String> {
         match &self.plan.layouts[ty.index()].layout {
@@ -160,6 +149,28 @@ impl Emitter<'_> {
     }
     pub fn text(&mut self, node: HirId, bytes: &[u8]) -> Result<u32, String> {
         self.text_as(node, self.effective_ty(node)?, bytes)
+    }
+    pub fn bytes_literal(&mut self, node: HirId, bytes: &[u8]) -> Result<u32, String> {
+        let length = u32::try_from(bytes.len()).map_err(|_| "Wasm: bytes literal size overflow")?;
+        let data = self.alloc(length);
+        for (offset, byte) in bytes.iter().enumerate() {
+            self.extend([
+                I::LocalGet(data),
+                I::I32Const(*byte as i32),
+                I::I32Store8(memory(offset as u64, 0)),
+            ]);
+        }
+        let id = self.table_push(BYTES, data, length);
+        let result = self.value(node, 32)?;
+        self.extend([
+            I::LocalGet(result),
+            I::LocalGet(id),
+            I::I32Store(memory(DATA, 2)),
+        ]);
+        self.store32(result, 20, 0);
+        self.store32(result, 24, length);
+        self.store32(result, 28, 0);
+        Ok(result)
     }
     pub fn text_as(&mut self, node: HirId, ty: TypeId, bytes: &[u8]) -> Result<u32, String> {
         let result = self.value_as(node, ty, 32)?;
