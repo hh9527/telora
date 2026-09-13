@@ -1,0 +1,6 @@
+import "std/codec" as codec;
+import "std/value" { Value };
+type Count = struct(Int);
+type Counts = struct(Array(Count));
+export def inspect = fn() { codec.encode(Value.type, Counts([Count(1), Count(2)])) };
+export def answer = inspect();

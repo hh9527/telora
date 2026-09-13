@@ -18,6 +18,25 @@ impl Emitter<'_> {
             return Err("Wasm: codec property rules are not yet implemented".into());
         }
         let layout = &self.plan.layouts[source.index()];
+        if !layout.variants.is_empty() {
+            return self.codec_encode_enum(source, target, input);
+        }
+        if matches!(&layout.layout, State::Known { shape } if shape.table == Some("NewtypeTable")) {
+            let members = &layout
+                .object
+                .as_ref()
+                .ok_or("Wasm: codec newtype layout missing")?
+                .members;
+            if members.len() != 1 {
+                return Err("Wasm: codec newtype must have one payload".into());
+            }
+            let ty = self.plan.layouts[members[0]
+                .type_id
+                .ok_or("Wasm: codec newtype payload type missing")?]
+            .id();
+            let payload = self.table_data(NEWTYPES, input, DATA);
+            return self.codec_encode_scalar(ty, target, payload);
+        }
         if !matches!(&layout.layout, State::Known { shape } if shape.table == Some("RecordTable")) {
             return Err("Wasm: codec nominal type is not yet supported".into());
         }

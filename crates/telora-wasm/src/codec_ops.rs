@@ -146,6 +146,9 @@ impl Emitter<'_> {
             self.extend([I::LocalGet(absent), I::LocalSet(output), I::End]);
             return Ok(output);
         }
+        if matches!(kind, T::Result | T::FoldControl) {
+            return self.codec_encode_enum(source, target, input);
+        }
         Err(format!(
             "Wasm: codec encode not yet implemented for sealed type {source:?}"
         ))

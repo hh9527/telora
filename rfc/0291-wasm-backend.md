@@ -832,3 +832,9 @@ property 规则未完成前，带 property 的 owner 明确拒绝，不静默忽
 来源测试同时暴露并补齐 Dict 的下标表达式：使用既有二分查找，
 缺失键进入可捕获诊断。57 项 Wasm 库测试通过。property、decode 等
 剩余范围不变，尚未完成最终验收。
+
+无 property 的 newtype 与 enum 编码也已接通。newtype 编码其 payload；
+enum 无 payload 时生成名称字符串，有 payload 时生成单字段对象。
+递归 enum、不可居住 payload 和 Result 的 Ok/Err 用例通过；59 项
+Wasm 库测试通过。默认解释器尚不支持 Result 编码，因此该项只作
+Wasm 独立验证，不宣称默认后端对照通过。property 规则仍未实现。

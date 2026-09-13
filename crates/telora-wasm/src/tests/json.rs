@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn codec_enums_encode_closed_names_and_recursive_payloads() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-enum.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(["Empty",{"Child":{"Number":42}},"Empty",{"Ok":7},{"Err":"bad"}])
+    );
+}
+
+#[test]
+fn codec_newtypes_encode_their_closed_payloads() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-newtype.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!([1, 2]));
+}
+
+#[test]
 fn dictionary_index_uses_sorted_lookup_and_reports_missing_keys() {
     let bytes = compile(include_str!("../../tests/fixtures/dict-index.telora")).unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();

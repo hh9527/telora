@@ -5,6 +5,16 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
+            "codec-newtype",
+            include_str!("../../../telora-wasm/tests/fixtures/codec-newtype.telora"),
+            serde_json::json!([1,2]),
+        ),
+        (
+            "codec-enum",
+            include_str!("../../../telora-wasm/tests/fixtures/codec-enum.telora"),
+            serde_json::json!(["Empty",{"Child":{"Number":42}},"Empty"]),
+        ),
+        (
             "codec-collections",
             include_str!("../../../telora-wasm/tests/fixtures/codec-scalars.telora"),
             serde_json::json!(vec![true; 18]),

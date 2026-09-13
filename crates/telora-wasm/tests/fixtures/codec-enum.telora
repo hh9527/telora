@@ -1,0 +1,11 @@
+import "std/codec" as codec;
+import "std/value" { Value };
+type Choice = enum { Empty, Number(Int), Child(Choice) };
+type Sparse = enum { Empty, Impossible(Never) };
+export def inspect = fn() {
+    let success: Result(Int, String) = Ok(7);
+    let failure: Result(Int, String) = Err("bad");
+    (codec.encode(Value.type, Choice.Empty), codec.encode(Value.type, Choice.Child(Choice.Number(42))),
+     codec.encode(Value.type, Sparse.Empty), codec.encode(Value.type, success), codec.encode(Value.type, failure))
+};
+export def answer = Value.Array([codec.encode(Value.type, Choice.Empty), codec.encode(Value.type, Choice.Child(Choice.Number(42))), codec.encode(Value.type, Sparse.Empty)]);
