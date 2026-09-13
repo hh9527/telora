@@ -33,6 +33,8 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         ("telora_string_compare", CALL_TYPE),
         ("telora_source_name", 0),
         ("telora_subject_label", 0),
+        ("telora_sort_pairs", CALL_TYPE),
+        ("telora_duplicate_key_message", 0),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }

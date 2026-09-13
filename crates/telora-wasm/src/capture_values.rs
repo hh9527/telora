@@ -33,7 +33,7 @@ impl Emitter<'_> {
             .collect::<Result<Vec<_>, _>>()?;
         self.packed_tuple(ty, &ordered)
     }
-    fn text_span_value(&mut self, ty: TypeId, span: u32) -> Result<u32, String> {
+    pub(crate) fn text_span_value(&mut self, ty: TypeId, span: u32) -> Result<u32, String> {
         if self.mir.types[ty.index()].constructor != T::String {
             return Err("Wasm: diagnostic text field is not String".into());
         }

@@ -3,6 +3,8 @@
 
 #[allow(dead_code)]
 mod abi;
+mod format;
+mod sort;
 mod sources;
 mod tables;
 mod values;

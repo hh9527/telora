@@ -22,7 +22,7 @@ pub unsafe extern "C" fn telora_invoke(value: u32, args: u32) -> u32 {
     }
 }
 
-unsafe fn string_span(value: u32) -> (u32, u32) {
+pub(crate) unsafe fn string_span(value: u32) -> (u32, u32) {
     unsafe {
         if *((value + DATA as u32) as *const u8) == 0 {
             (value + 18, *((value + 17) as *const u8) as u32)

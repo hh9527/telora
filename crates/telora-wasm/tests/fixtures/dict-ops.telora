@@ -1,0 +1,28 @@
+import "std/dict" as dict;
+import "std/array" as array;
+import "std/_rt" as rt;
+
+def pairs = [("z", 3), ("a", 1), ("é", 4), ("m", 2)];
+def input = dict.from_pairs(pairs);
+export def answer = fn() {
+    let mapped = dict.map_values(input, fn(n) { n + 10 });
+    let filtered = dict.filter(mapped, fn(n) { n > 12 });
+    let folded = dict.fold(input, 0, fn(acc, key, n) { acc * 10 + n });
+    let merged = dict.merge(input, dict.from_pairs([("a", 10), ("b", 20)]));
+    let empty: Dict(Int) = {};
+    let duplicate = rt.with_diagnostics(fn(n: Int) { dict.from_pairs([("same", n), ("same", n + 1)]) })(0);
+    let duplicate_message = match duplicate { Err(reports) => reports[0].message, Ok(_) => "unexpected" };
+    let visited = dict.map_values(input, fn(n) {
+        let warning: Option(Int) = warn!("visited");
+        [n, n + 1]
+    });
+    (dict.keys(input), dict.values(input), dict.pairs(input), mapped, filtered, folded,
+     dict.get(input, "a"), dict.get(input, "missing"), merged, dict.merge(empty, input),
+     dict.merge(input, empty), dict.keys(empty), dict.fold(empty, 42, fn(a, k, v) { fail!("empty fold callback") }),
+     duplicate_message, dict.values(visited), array.length(dict.keys(visited)), pairs, dict.get(visited, "m"))
+};
+
+export def sort_input = fn(pairs: Array((String, Int))) {
+    let value = dict.from_pairs(pairs);
+    (dict.keys(value), dict.values(value), pairs)
+};

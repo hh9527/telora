@@ -5,6 +5,55 @@ use telora_core::{
 };
 
 #[test]
+fn dictionary_operations_use_sorted_columns_and_closed_callbacks() {
+    let bytes = compile(include_str!("../tests/fixtures/dict-ops.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 5_000_000).unwrap();
+    session.initialize().unwrap();
+    let value = session.call(&[]).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!([
+            ["a","m","z","é"], [1,2,3,4], [["a",1],["m",2],["z",3],["é",4]],
+            {"a":11,"m":12,"z":13,"é":14}, {"z":13,"é":14}, 1234,
+            1, null, {"a":10,"b":20,"m":2,"z":3,"é":4},
+            {"a":1,"m":2,"z":3,"é":4}, {"a":1,"m":2,"z":3,"é":4}, [], 42,
+            "std/dict.from_pairs contains duplicate field \"same\"", [[1,2],[2,3],[3,4],[4,5]], 4,
+            [["z",3],["a",1],["é",4],["m",2]], [2,3]
+        ])
+    );
+    assert_eq!(session.diagnostics().unwrap().len(), 4);
+    assert!(
+        session
+            .diagnostics()
+            .unwrap()
+            .iter()
+            .all(|d| d.warning && d.message == "visited")
+    );
+    let bytes = compile_export(
+        include_str!("../tests/fixtures/dict-ops.telora"),
+        "sort_input",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    let pairs = (0..200)
+        .rev()
+        .map(|index| serde_json::json!([format!("key-{index:04}"), index]))
+        .collect::<Vec<_>>();
+    let value = session.call(&[serde_json::json!(pairs)]).unwrap();
+    assert_eq!(
+        value[0],
+        serde_json::json!(
+            (0..200)
+                .map(|index| format!("key-{index:04}"))
+                .collect::<Vec<_>>()
+        )
+    );
+    assert_eq!(value[1], serde_json::json!((0..200).collect::<Vec<_>>()));
+    assert_eq!(value[2], serde_json::json!(pairs));
+}
+
+#[test]
 fn diagnostic_scopes_capture_reports_and_resume_outer_execution() {
     let bytes = compile(include_str!("../tests/fixtures/capture.telora")).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();

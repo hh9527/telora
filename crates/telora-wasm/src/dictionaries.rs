@@ -3,7 +3,7 @@ use telora_core::mir::{HirId, HirKind, Role, TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
-    fn string_type(&self) -> Result<TypeId, String> {
+    pub(crate) fn string_type(&self) -> Result<TypeId, String> {
         self.plan
             .layouts
             .iter()
@@ -69,6 +69,12 @@ impl Emitter<'_> {
         let width = self.width(self.mir.types[ty.index()].arguments[0])?;
         let receiver = self.expression(receiver_node)?;
         let key = self.text_as(node, self.string_type()?, name.as_bytes())?;
+        let result = self.dictionary_lookup(receiver, key, width);
+        self.extend([I::LocalGet(result), I::I32Eqz]);
+        self.fail_if(node, ERROR_KEY);
+        Ok(result)
+    }
+    pub(crate) fn dictionary_lookup(&mut self, receiver: u32, key: u32, width: u32) -> u32 {
         let keys = self.table_data(ARRAYS, receiver, DATA);
         let values = self.table_data(ARRAYS, receiver, 24);
         let low = self.local(ValType::I32);
@@ -127,10 +133,7 @@ impl Emitter<'_> {
             I::Br(0),
             I::End,
             I::End,
-            I::LocalGet(result),
-            I::I32Eqz,
         ]);
-        self.fail_if(node, ERROR_KEY);
-        Ok(result)
+        result
     }
 }
