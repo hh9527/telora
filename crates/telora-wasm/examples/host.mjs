@@ -228,7 +228,7 @@ export async function load(bytes) {
     const message = code === 9 ? text(word(pointer + 16)) : errorMessage(code);
     return Error(`${file}:${loc?.line ?? start}:${loc?.column ?? end}: ${message}`);
   };
-  const errorMessage = code => ['执行失败', 'integer arithmetic overflowed', 'integer division by zero', 'initialization dependency cycle', 'array index out of bounds', 'dictionary key is absent', 'property query failed', 'pattern match failed', 'data module has not been injected before initialization'][code] ?? '执行失败';
+  const errorMessage = code => ['执行失败', 'integer arithmetic overflowed', 'integer division by zero', 'initialization dependency cycle', 'OutOfRange: array index out of bounds', 'dictionary key is absent', 'property query failed', 'pattern match failed', 'data module has not been injected before initialization'][code] ?? '执行失败';
   const diagnostics = () => {
     const result = [];
     const count = word(64 + 8 * 16 + 4);

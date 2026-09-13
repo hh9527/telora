@@ -306,6 +306,13 @@ impl<'a> Emitter<'a> {
                     self.failure(node, ERROR_DATA);
                     return Ok(self.local(ValType::I32));
                 }
+                if *kind == telora_core::ast::BindingKind::Decl {
+                    let symbol = self.mir.hir_symbols[node.index()]
+                        .ok_or("Wasm: local declaration has no stable symbol")?;
+                    return self.bindings.get(&symbol).copied().ok_or_else(|| {
+                        format!("Wasm: local declaration {symbol:?} has no reserved function")
+                    });
+                }
                 if !matches!(
                     kind,
                     telora_core::ast::BindingKind::Let
@@ -366,7 +373,10 @@ impl<'a> Emitter<'a> {
                         .plan
                         .globals
                         .get(&symbol)
-                        .ok_or("Wasm: lexical capture is not available")?,
+                        .ok_or_else(|| format!(
+                            "Wasm: lexical capture {} ({symbol:?}) is not available at {node:?} in {:?}",
+                            self.mir.symbols[symbol.index()].name, self.key
+                        ))?,
                 )
             }
             HirKind::TypeAscription => {

@@ -2,6 +2,7 @@
 #![no_std]
 extern crate alloc;
 mod allocator;
+mod math;
 mod regex;
 mod regex_contract;
 mod hash;

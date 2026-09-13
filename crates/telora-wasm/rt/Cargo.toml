@@ -11,6 +11,7 @@ path = "lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]
+libm = "=0.2.16"
 serde = { version = "1", default-features = false, features = ["alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc", "raw_value"] }
 toml = { version = "=0.9.12", default-features = false, features = ["parse"] }

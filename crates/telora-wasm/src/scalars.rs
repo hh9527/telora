@@ -207,6 +207,7 @@ impl Emitter<'_> {
             B::Subtract => I::F64Sub,
             B::Multiply => I::F64Mul,
             B::Divide => I::F64Div,
+            B::Remainder => I::Call(FLOAT_REMAINDER),
             B::LessThan => I::F64Lt,
             B::LessThanOrEqual => I::F64Le,
             B::GreaterThan => I::F64Gt,

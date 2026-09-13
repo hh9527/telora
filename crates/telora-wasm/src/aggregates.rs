@@ -65,8 +65,16 @@ impl Emitter<'_> {
         let offset = field.offset.ok_or("Wasm: projection has no offset")?;
         let actual =
             self.plan.layouts[field.type_id.ok_or("Wasm: projection has no field type")?].id();
+        let table = match &self.plan.layouts[ty.index()].layout {
+            State::Known { shape } => match shape.table {
+                Some("RecordTable") => RECORDS,
+                Some("NewtypeTable") => NEWTYPES,
+                _ => return Err("Wasm: projection requires a sealed product layout".into()),
+            },
+            _ => return Err("Wasm: projection has no concrete product layout".into()),
+        };
         let receiver = self.expression(receiver_node)?;
-        let data = self.table_data(RECORDS, receiver, DATA);
+        let data = self.table_data(table, receiver, DATA);
         let result = self.local(ValType::I32);
         self.extend([
             I::LocalGet(data),

@@ -348,6 +348,7 @@ impl Plan {
                             | telora_core::mir::SymbolKind::Declaration(
                                 telora_core::ast::BindingKind::Let
                                     | telora_core::ast::BindingKind::Def
+                                    | telora_core::ast::BindingKind::Decl
                             )
                     )
                 {

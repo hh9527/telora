@@ -1130,3 +1130,29 @@ CLI 与浏览器 host 在外部输出边界按持久类型描述读取原值，�
 调试输出与即时 Wasm 路径一致；同一 ABI 8 文件经 Node 和真实 Chromium
 验证复合值、函数、Dyn、初始化事件及开关。没有将该结果解释为全量
 语言验收，完整语言/标准库审计与最终性能观察仍待完成。
+
+## 现有语言回调的执行审计
+
+新增独立、仅测试使用的 language 审计器，读取原语言资产及默认后端的
+case 记录。模块初始化采用与 check --wasm 相同的已加载模块集合，包含
+依赖模块声明的 property capability 和 checker；每条 case 使用独立
+Wasm session，读取 Test 描述并调用真实 Wasm 回调，不运行旧 VM。
+该审计器需先生成 target/language-tests/actual，因此默认忽略，显式运行：
+
+```sh
+cargo test -p telora-wasm --lib published_language_callbacks -- --ignored --nocapture
+```
+
+本轮根据执行结果修复：newtype 的 .0 投影错误读取 RecordTable；局部
+decl 未被纳入捕获；Float remainder 缺少生成路径；对 Function/Type
+编码时应延迟到调用产生语言错误，却在 codegen 时拒绝。Float remainder
+使用 Rust RT 的固定 `(f64, f64) -> f64` ABI 和 libm::fmod 实现，既有
+非有限结果检查仍由生成代码完成。解析失败保留 `<json string>` 等输入
+标签，数组越界保留 OutOfRange 错误类别。RT 不因此获得模板或类型推导。
+
+当前记录共 424 条 case：403 条非 fixture case 已执行，其中 402 条结果
+与默认后端一致；唯一未匹配的是 compiler-semantics/tail_calls，1500 次
+尾递归触发 Wasmi StackOverflow。不能以提高栈上限替代尾调用支持。
+另 21 条 fixture case 明确留在本审计器范围外，尚需补充验证。
+常规 93 项库回归已验证（诊断文本期望更新后单独复验相关用例），15 项
+Wasm CLI 回归通过。本轮没有进行性能基准，#186 尚未达到完成条件。

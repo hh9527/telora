@@ -1,0 +1,22 @@
+import "std/codec" {encode, Value};
+import "std/dyn" as dyn;
+import "std/_rt" as rt;
+type Id = struct(Int);
+type Box(T) = struct(T);
+type Row = struct {value: Int};
+type Wrapped = struct(Row);
+def boxed: for(T) Fn(T) -> Box(T) = fn(value) { Box(value) };
+def original = 42;
+export def answer = fn() {
+    let number = Id(original);
+    let nested = boxed(number);
+    let row = Wrapped({value: 19});
+    let factory = dyn.pack((Fn(Int) -> Id).type, Id);
+    let origin = rt.with_diagnostics(fn(ignored: ()) { fail!("projected", number.0) })(());
+    ([number.0 == 42, nested.0.0 == 42, row.0.value == 19,
+      Box("text").0 == "text", encode(Value.type, nested) == Value.Int(42),
+      match dyn.project_with((Fn(Int) -> Id).type, factory) {
+        Some(make) => make(7).0 == 7, None => False,
+      }],
+      match origin { Err(reports) => reports[0].labels[1].location.start, Ok(_) => -1 })
+};

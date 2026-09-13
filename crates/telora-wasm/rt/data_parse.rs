@@ -4,7 +4,7 @@
 //! Payload is scalar bits or {pointer:u32,count:u32}. Object entries are
 //! {key_pointer,key_length,child_id}; Array entries are child IDs.
 use crate::json_parse::{Node, Plan, TemporalKind};
-use alloc::{boxed::Box, string::String};
+use alloc::{boxed::Box, format, string::String};
 
 unsafe fn put(pointer: u32, offset: u32, value: u32) {
     unsafe {
@@ -21,17 +21,32 @@ fn string_bytes(value: String) -> (u32, u32) {
 /// supplies all final type identities, headers, and container layouts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_json_parse(input: u32) -> u32 {
-    unsafe { export_plan(Plan::parse(crate::text::text(input))) }
+    unsafe {
+        export_plan(
+            Plan::parse(crate::text::text(input))
+                .map_err(|error| format!("<json string>: {error}")),
+        )
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_toml_parse(input: u32) -> u32 {
-    unsafe { export_plan(crate::toml_parse::parse(crate::text::text(input))) }
+    unsafe {
+        export_plan(
+            crate::toml_parse::parse(crate::text::text(input))
+                .map_err(|error| format!("<toml string>: {error}")),
+        )
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_yaml_parse(input: u32) -> u32 {
-    unsafe { export_plan(crate::yaml_parse::parse(crate::text::text(input))) }
+    unsafe {
+        export_plan(
+            crate::yaml_parse::parse(crate::text::text(input))
+                .map_err(|error| format!("<yaml string>: {error}")),
+        )
+    }
 }
 
 unsafe fn export_plan(parsed: Result<Plan, String>) -> u32 {

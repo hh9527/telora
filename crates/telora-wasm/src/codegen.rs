@@ -26,6 +26,9 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         [ValType::I32, ValType::I32, ValType::I32, ValType::I32],
         [ValType::I32],
     );
+    types
+        .ty()
+        .function([ValType::F64, ValType::F64], [ValType::F64]);
     module.section(&types);
     let mut imports = ImportSection::new();
     for (name, ty) in [
@@ -54,6 +57,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         ("telora_json_parse", 0),
         ("telora_toml_parse", 0),
         ("telora_yaml_parse", 0),
+        ("telora_float_remainder", 5),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }

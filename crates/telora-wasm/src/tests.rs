@@ -5,17 +5,36 @@ use telora_core::{
 };
 
 mod data;
+mod debug;
 mod dynamic;
 mod equality;
 mod format;
 mod hash;
+mod interpreters;
 mod json;
+mod language;
 mod records;
 mod reflection;
 mod regex;
 mod test_descriptions;
-mod interpreters;
-mod debug;
+
+#[test]
+fn runtime_gap_regressions_keep_closed_calls_and_language_failures() {
+    let bytes = compile(include_str!("../tests/fixtures/runtime-gaps.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!([
+            42,
+            [1.5, -1.5, 1.5, -1.5, 1.0e300_f64 % 3.0],
+            "Function has no JSON codec",
+            "cannot encode Type",
+            "NonFiniteFloat"
+        ])
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
 
 #[test]
 fn local_generic_instances_capture_per_activation_and_support_recursion() {

@@ -150,6 +150,17 @@ impl Emitter<'_> {
         if matches!(kind, T::Result | T::FoldControl) {
             return self.codec_encode_enum(source, target, input);
         }
+        // The codec API accepts these closed inputs, but defines a language
+        // failure when invoked. Keep that failure deferred with its callback.
+        let rejection = match kind {
+            T::Function => Some("Function has no JSON codec"),
+            T::Type | T::TypeOf => Some("cannot encode Type"),
+            _ => None,
+        };
+        if let Some(message) = rejection {
+            self.codec_error(input, message)?;
+            return Ok(self.local(ValType::I32));
+        }
         Err(format!(
             "Wasm: codec encode not yet implemented for sealed type {source:?}"
         ))

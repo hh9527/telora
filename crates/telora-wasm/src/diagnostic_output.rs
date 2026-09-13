@@ -34,7 +34,7 @@ pub(crate) fn error_message(code: u32) -> &'static str {
         ERROR_OVERFLOW => "integer arithmetic overflowed",
         ERROR_DIVISION => "integer division by zero",
         ERROR_CYCLE => "initialization dependency cycle",
-        ERROR_INDEX => "array index out of bounds",
+        ERROR_INDEX => "OutOfRange: array index out of bounds",
         ERROR_KEY => "dictionary key is absent",
         ERROR_PROPERTY => "property type does not support this decorator target",
         ERROR_MATCH => "no match arm accepted the value",
