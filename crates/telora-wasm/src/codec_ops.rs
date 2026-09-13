@@ -1,5 +1,9 @@
 //! Codec adapters consume closed identities; no runtime type inference.
-use crate::{abi::*, emit::Emitter};
+use crate::{
+    abi::*,
+    emit::Emitter,
+    plan::{Key, Special},
+};
 use telora_core::mir::{TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
@@ -32,10 +36,48 @@ impl Emitter<'_> {
             return Err("Wasm: codec encode signature mismatch".into());
         }
         let input = self.parameter(2);
-        self.codec_encode_scalar(args[2], args[3], input)
+        let properties = self.parameter(0);
+        self.codec_encode_call(args[2], args[3], input, properties)
     }
 
     pub(crate) fn codec_encode_scalar(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        input: u32,
+    ) -> Result<u32, String> {
+        self.codec_encode_call(source, target, input, 0)
+    }
+
+    fn codec_encode_call(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        input: u32,
+        properties: u32,
+    ) -> Result<u32, String> {
+        let key = Key {
+            special: Special::Encode(source, target),
+            callable: true,
+            ..self.plan.root
+        };
+        let function = *self
+            .plan
+            .functions
+            .get(&key)
+            .ok_or("Wasm: closed encoder was not planned")?;
+        let result = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(properties),
+            I::LocalGet(input),
+            I::Call(function),
+            I::LocalSet(result),
+        ]);
+        self.checked(result);
+        Ok(result)
+    }
+
+    pub(crate) fn codec_encode_type(
         &mut self,
         source: TypeId,
         target: TypeId,

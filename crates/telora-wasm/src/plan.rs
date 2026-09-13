@@ -20,6 +20,7 @@ pub(crate) enum Special {
     Equal(TypeId),
     Parse(TypeId),
     Json(TypeId),
+    Encode(TypeId, TypeId),
 }
 
 impl Key {
@@ -224,6 +225,7 @@ impl Plan {
         plan.demands.insert(plan.root, 0);
         plan.plan_comparisons(executable)?;
         plan.plan_parsers(executable)?;
+        plan.plan_encoders(executable)?;
         for root in executable.closure().nodes() {
             let Some((17, name @ ("stringify" | "stringify_pretty"))) =
                 crate::natives::identity(mir, root.node)
@@ -288,7 +290,7 @@ impl Plan {
         for &key in plan.functions.keys().filter(|key| key.callable) {
             if matches!(
                 key.special,
-                Special::Equal(_) | Special::Parse(_) | Special::Json(_)
+                Special::Equal(_) | Special::Parse(_) | Special::Json(_) | Special::Encode(_, _)
             ) {
                 continue;
             }

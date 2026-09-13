@@ -11,6 +11,7 @@ mod capture_values;
 mod checks;
 mod codec_arrays;
 mod codec_ops;
+mod codec_plan;
 mod codegen;
 mod data_input;
 pub mod diagnostic_output;

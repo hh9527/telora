@@ -1,0 +1,4 @@
+import "std/codec" as codec;
+import "std/value" { Value };
+type Link = struct { value: Int, next: Option(Link) };
+export def answer = fn(link: Link) { codec.encode(Value.type, link) };

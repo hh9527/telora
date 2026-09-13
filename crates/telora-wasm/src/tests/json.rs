@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn recursive_codec_planning_closes_a_finite_function_graph() {
+    let mir = graph(include_str!(
+        "../../tests/fixtures/codec-recursive-plan.telora"
+    ));
+    let export = mir
+        .exports
+        .iter()
+        .flatten()
+        .copied()
+        .find(|id| mir.symbols[id.index()].name == "answer")
+        .unwrap();
+    let executable = mir.seal_export(export).unwrap();
+    let plan = crate::plan::Plan::new(&executable).unwrap();
+    let encoders: Vec<_> = plan
+        .functions
+        .keys()
+        .filter_map(|key| match key.special {
+            crate::plan::Special::Encode(source, _) => Some(source),
+            _ => None,
+        })
+        .collect();
+    // Link -> Option(Link) -> Link is a cycle, not an expansion tree.
+    assert_eq!(encoders.len(), 3);
+    assert!(
+        encoders
+            .iter()
+            .any(|ty| mir.types[ty.index()].constructor == telora_core::mir::TypeConstructor::Int)
+    );
+    assert!(
+        encoders.iter().any(
+            |ty| mir.types[ty.index()].constructor == telora_core::mir::TypeConstructor::Option
+        )
+    );
+}
+
+#[test]
 fn codec_scalar_encoding_uses_closed_payload_identities() {
     let bytes = compile_export(
         include_str!("../../tests/fixtures/codec-scalars.telora"),

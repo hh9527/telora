@@ -813,3 +813,11 @@ Value.Array，Unit 生成空数组且不读取不存在的对象句柄。Dict �
 处理：Array((String,Never)) 必为空，不要求构造不存在的 pair 布局。
 18 项 codec 语言检查与默认后端一致，53 项 Wasm 库测试通过。
 名义类型/property/decode 和专用函数图仍待推进。
+
+编码规划现已改为有限专用函数图：每个 (source TypeId, Value TypeId)
+只注册一个函数，集合/Option 的子转换通过直接调用连接，properties
+上下文沿调用传递。规划遍历布局的字段和 variant payload，遇到已经
+注册的节点立即停止展开。递归 Link -> Option(Link) -> Link 的规划
+测试收敛为 3 个转换（包含 Int）。此测试只验证规划，尚未实现 Link
+本身的 Record 编码。54 项 Wasm 库测试通过；名义类型/property/decode
+仍未完成。
