@@ -68,6 +68,25 @@ impl Emitter<'_> {
         index: u32,
         payload: Option<u32>,
     ) -> Result<u32, String> {
+        self.enum_value_checked(node, ty, index, payload, true)
+    }
+    pub(crate) fn enum_value_unchecked(
+        &mut self,
+        node: HirId,
+        ty: TypeId,
+        index: u32,
+        payload: Option<u32>,
+    ) -> Result<u32, String> {
+        self.enum_value_checked(node, ty, index, payload, false)
+    }
+    fn enum_value_checked(
+        &mut self,
+        node: HirId,
+        ty: TypeId,
+        index: u32,
+        payload: Option<u32>,
+        check: bool,
+    ) -> Result<u32, String> {
         if let Some(payload_ty) = self.plan.layouts[ty.index()]
             .variants
             .get(index as usize)
@@ -78,7 +97,9 @@ impl Emitter<'_> {
             self.emit(I::Unreachable);
             return Ok(self.local(ValType::I32));
         }
-        if let Some(payload) = payload {
+        if let Some(payload) = payload
+            && check
+        {
             self.construction_check(
                 node,
                 ty,

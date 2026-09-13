@@ -1,6 +1,68 @@
 use super::*;
 
 #[test]
+fn codec_decode_enum_checks_run_once_per_candidate() {
+    let bytes = compile(include_str!(
+        "../../tests/fixtures/codec-decode-enum-effects.telora"
+    ))
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!([true, true]));
+    let diagnostics = session.diagnostics().unwrap();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0].message, "tag visited");
+    assert_eq!(diagnostics[1].message, "untagged visited");
+}
+
+#[test]
+fn codec_decode_untagged_keeps_rejection_evidence_and_propagates_failure() {
+    let source = include_str!("../../tests/fixtures/codec-decode-enum-errors.telora");
+    let bytes = compile(source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    for reports in result.as_array().unwrap() {
+        assert_eq!(reports.as_array().unwrap().len(), 1);
+    }
+    assert_eq!(
+        result[0][0]["message"],
+        "$: value matches no untagged Enum variant ($.number: expected Int; $: expected String)"
+    );
+    assert_eq!(
+        result[0][0]["labels"][1]["location"]["start"],
+        source.find("Value.String(\"bad\")").unwrap()
+    );
+    assert_eq!(
+        result[1][0]["message"],
+        "$: value ambiguously matches multiple untagged Enum variants"
+    );
+    assert_eq!(result[2][0]["message"], "candidate failed");
+    assert_eq!(result[3][0]["message"], "duplicate external member name");
+    assert_eq!(
+        result[4][0]["message"],
+        "rename_all is not meaningful on an untagged Enum"
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn codec_decode_enums_select_and_check_closed_variants() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-decode-enum.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(vec![true; 17])
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn codec_decode_check_blames_are_reported_only_when_raised() {
     let source = include_str!("../../tests/fixtures/codec-decode-check-origins.telora");
     let bytes = compile(source).unwrap();

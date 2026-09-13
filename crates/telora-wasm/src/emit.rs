@@ -450,6 +450,9 @@ pub(crate) fn compile(
     } else if let Special::Decode(source, target) = key.special {
         let value = emit.codec_decode_type(source, target, 1)?;
         emit.emit(I::LocalGet(value));
+    } else if let Special::DecodeVariant(source, target, index) = key.special {
+        let value = emit.codec_decode_variant(source, target, index)?;
+        emit.emit(I::LocalGet(value));
     } else if key.callable && crate::natives::identity(mir, key.node).is_some() {
         let value = emit.native()?;
         emit.emit(I::LocalGet(value));

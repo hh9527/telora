@@ -22,6 +22,7 @@ pub(crate) enum Special {
     Json(TypeId),
     Encode(TypeId, TypeId),
     Decode(TypeId, TypeId),
+    DecodeVariant(TypeId, TypeId, u32),
 }
 
 impl Key {
@@ -297,6 +298,7 @@ impl Plan {
                     | Special::Json(_)
                     | Special::Encode(_, _)
                     | Special::Decode(_, _)
+                    | Special::DecodeVariant(_, _, _)
             ) {
                 continue;
             }

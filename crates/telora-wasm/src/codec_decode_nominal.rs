@@ -33,8 +33,20 @@ impl Emitter<'_> {
         self.extend([I::LocalGet(parsed), I::Return, I::End]);
         // Validate rename metadata even for a newtype, then decode its payload.
         let rename = self.codec_decode_rename(target, input)?;
-        self.codec_property_value(target, 5)?;
+        let untagged = self.codec_property_value(target, 5)?;
         let layout = &self.plan.layouts[target.index()];
+        if !layout.variants.is_empty() {
+            self.extend([I::LocalGet(untagged), I::If(BlockType::Empty)]);
+            self.extend([I::LocalGet(rename), I::If(BlockType::Empty)]);
+            self.codec_error(input, "rename_all is not meaningful on an untagged Enum")?;
+            self.emit(I::End);
+            let value = self.codec_decode_untagged(source, target, input)?;
+            self.extend([I::LocalGet(value), I::Return, I::End]);
+            self.extend([I::LocalGet(rename), I::If(BlockType::Empty)]);
+            let value = self.codec_decode_enum(source, target, input, true)?;
+            self.extend([I::LocalGet(value), I::Return, I::End]);
+            return self.codec_decode_enum(source, target, input, false);
+        }
         if matches!(&layout.layout, State::Known {shape} if shape.table == Some("RecordTable")) {
             self.extend([I::LocalGet(rename), I::If(BlockType::Empty)]);
             let renamed = self.codec_decode_record(source, target, input, true)?;

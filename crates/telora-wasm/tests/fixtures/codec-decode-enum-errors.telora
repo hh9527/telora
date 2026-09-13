@@ -1,0 +1,25 @@
+import "std/codec" as codec;
+import "std/value" {Value};
+import "std/json" as json;
+import "std/_rt" as rt;
+type Record = struct {number: Int};
+@json.untagged
+type Choice = enum {RecordValue(Record), Text(String)};
+@json.untagged
+type Ambiguous = enum {First(Int), Second(Int)};
+@json.untagged
+type Fatal = enum {@check(fn(value) {fail!("candidate failed",value)}) First(Int), Second(Int)};
+@json.rename_all(json.RenameCase.CamelCase)
+type Collision = enum {some_value(Int), someValue(Int)};
+@json.untagged
+@json.rename_all(json.RenameCase.CamelCase)
+type Incompatible = enum {Number(Int)};
+def capture = fn(f: Fn(Value) -> Int, input: Value) {match rt.with_diagnostics(f)(input) {Err(reports) => reports,Ok(_) => fail!("expected failure")}};
+export def answer = fn() {
+    let input = Value.Object({number:Value.String("bad")});
+    (capture(fn(value) {match codec.decode(Choice.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},input),
+     capture(fn(value) {match codec.decode(Ambiguous.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},Value.Int(3)),
+     capture(fn(value) {match codec.decode(Fatal.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},Value.Int(4)),
+     capture(fn(value) {match codec.decode(Collision.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},Value.Int(4)),
+     capture(fn(value) {match codec.decode(Incompatible.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},Value.Int(4)))
+};

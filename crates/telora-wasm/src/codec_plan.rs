@@ -38,6 +38,18 @@ impl Plan {
             if source == target {
                 continue;
             }
+            for (index, variant) in self.layouts[target.index()].variants.iter().enumerate() {
+                if variant.type_id.is_some() {
+                    self.functions.insert(
+                        Key {
+                            special: Special::DecodeVariant(source, target, index as u32),
+                            callable: true,
+                            ..self.root
+                        },
+                        0,
+                    );
+                }
+            }
             if matches!(
                 mir.types[target.index()].constructor,
                 T::Array | T::Dict | T::Tuple | T::Option
