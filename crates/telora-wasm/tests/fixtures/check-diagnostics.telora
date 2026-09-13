@@ -1,0 +1,28 @@
+import "std/blame" {BlameError};
+
+@check(fn(value) {
+    if value.number > 0 { Ok(()) }
+    else { Err(blame!("positive required", value.number)) }
+})
+type Positive = struct {number: Int};
+
+type Choice = enum { @check(fn(value) {
+    if value > 0 { Ok(()) } else { Err(blame!("positive variant", value)) }
+}) Item(Int), Empty };
+
+def subject = -7;
+export def rejected = fn() -> Int { let value: Positive = {number: subject}; value.number };
+export def raised = fn() -> Int { raise!(blame!("raised message", subject)) };
+export def failed = fn() -> Int { fail!("failed message", subject) };
+export def variant = fn() -> Int { let value = Choice.Item(subject); 42 };
+export def unwrapped = fn() -> Int {
+    let result: Result(Int, BlameError) = Err(blame!("unwrap message", subject));
+    unwrap!(result)
+};
+export def warned = fn() -> Int {
+    let first: Option(Int) = warn!("string warning");
+    let second: Option(Int) = warn!(blame!("blame warning", subject));
+    let result: Result(Int, BlameError) = Err(blame!("result warning", subject));
+    let third: Option(Int) = ok_or_warn!(result);
+    42
+};

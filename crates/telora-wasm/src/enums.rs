@@ -68,6 +68,14 @@ impl Emitter<'_> {
         index: u32,
         payload: Option<u32>,
     ) -> Result<u32, String> {
+        if let Some(payload) = payload {
+            self.construction_check(
+                node,
+                ty,
+                telora_core::mir::PropertySite::Variant(index),
+                payload,
+            )?;
+        }
         let branch = self.plan.layouts[ty.index()]
             .variants
             .get(index as usize)
@@ -137,6 +145,12 @@ impl Emitter<'_> {
                 self.enum_value(node, output, index, Some(payload))
             }
             MemberSelection::NewtypeConstructor => {
+                self.construction_check(
+                    node,
+                    output,
+                    telora_core::mir::PropertySite::Type,
+                    payload,
+                )?;
                 let id = self.table_push(NEWTYPES, payload, self.width(arguments[0])?);
                 let result = self.value_as(node, output, self.width(output)?)?;
                 self.extend([

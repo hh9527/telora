@@ -107,11 +107,12 @@ impl<'a> Emitter<'a> {
     }
     pub fn failure(&mut self, node: HirId, code: u32) {
         let location = self.mir.hir[node.index()].location;
-        let pointer = self.alloc(16);
+        let pointer = self.alloc(DIAGNOSTIC_BYTES);
         self.store32(pointer, 0, location.source.get());
         self.store32(pointer, 4, location.start);
         self.store32(pointer, 8, location.end);
         self.store32(pointer, 12, code);
+        self.table_push(DIAGNOSTICS, pointer, DIAGNOSTIC_BYTES);
         self.extend([
             I::LocalGet(pointer),
             I::GlobalSet(ERROR_GLOBAL),
@@ -143,6 +144,18 @@ impl<'a> Emitter<'a> {
         Ok(result)
     }
     pub fn expression(&mut self, node: HirId) -> Result<u32, String> {
+        let value = self.raw_expression(node)?;
+        if self.mir.value_adjustments[node.index()].is_some() {
+            let target = self.effective_ty(node)?;
+            self.construction_check(node, target, telora_core::mir::PropertySite::Type, value)?;
+            let result = self.value_as(node, target, self.width(target)?)?;
+            self.copy(result, 0, value, self.width(target)?);
+            self.store32(result, TYPE, target.index() as u32);
+            return Ok(result);
+        }
+        Ok(value)
+    }
+    fn raw_expression(&mut self, node: HirId) -> Result<u32, String> {
         if let Some(telora_core::mir::MemberSelection::Boolean(value)) =
             self.mir.member_selections[node.index()]
         {
@@ -167,6 +180,8 @@ impl<'a> Emitter<'a> {
             }
         }
         match &self.mir.hir[node.index()].kind {
+            HirKind::Raise(action) => self.raise(node, *action),
+            HirKind::Panic => self.raise(node, telora_core::ast::BlameAction::Fail),
             HirKind::TypeMetadata => {
                 let ty = self.ty(node)?;
                 let shape = &self.mir.types[ty.index()];

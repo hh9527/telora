@@ -1,0 +1,11 @@
+@check(do {
+    let initialized: Option(Int) = warn!("checker initialized");
+    fn(value) {
+        if value.number > 0 { Ok(()) }
+        else { Err(blame!("positive required", value.number)) }
+    }
+})
+type Positive = struct {number: Int};
+
+def number = -7;
+export def answer = do { let value: Positive = {number}; value.number };

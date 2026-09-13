@@ -61,6 +61,63 @@ fn properties_reduce_and_query_inside_wasm() {
 }
 
 #[test]
+fn construction_checks_run_sealed_generic_checkers() {
+    let bytes = compile(include_str!(
+        "../../telora-native/tests/fixtures/construction-checks.telora"
+    ))
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(42));
+    let diagnostics = session.diagnostics().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].warning);
+    assert_eq!(diagnostics[0].message, "checker initialized");
+}
+
+#[test]
+fn checks_and_macros_record_one_failure_with_rule_and_subject_origins() {
+    let source = include_str!("../tests/fixtures/check-diagnostics.telora");
+    for (name, message) in [
+        ("rejected", "positive required"),
+        ("raised", "raised message"),
+        ("failed", "failed message"),
+        ("variant", "positive variant"),
+        ("unwrapped", "unwrap message"),
+    ] {
+        let bytes = compile_export(source, name).unwrap();
+        let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+        session.initialize().unwrap();
+        assert!(session.call(&[]).unwrap_err().contains(message));
+        let ds = session.diagnostics().unwrap();
+        assert_eq!(ds.len(), 1);
+        assert!(!ds[0].warning);
+        assert_eq!(ds[0].message, message);
+        assert_eq!(ds[0].subjects.len(), 1);
+        assert_ne!(ds[0].origin, ds[0].subjects[0]);
+        assert_eq!(
+            &source[ds[0].subjects[0][1] as usize..ds[0].subjects[0][2] as usize],
+            "-7"
+        );
+        assert!(session.call(&[]).is_err());
+        assert_eq!(session.diagnostics().unwrap().len(), 1);
+    }
+    let bytes = compile_export(source, "warned").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(42));
+    let ds = session.diagnostics().unwrap();
+    assert_eq!(
+        ds.iter().map(|d| d.message.as_str()).collect::<Vec<_>>(),
+        ["string warning", "blame warning", "result warning"]
+    );
+    assert!(ds.iter().all(|d| d.warning));
+    assert!(ds[0].subjects.is_empty());
+    assert_eq!(ds[1].subjects.len(), 1);
+    assert_eq!(ds[2].subjects.len(), 1);
+}
+
+#[test]
 fn semantic_value_contract_survives_artifact_reload() {
     let source = include_str!("../tests/fixtures/semantic-value.telora");
     let bytes = compile(source).unwrap();

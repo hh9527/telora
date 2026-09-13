@@ -167,6 +167,9 @@ impl Emitter<'_> {
             I::I64ExtendI32U,
             I::I64Store(memory(DATA, 3)),
         ]);
+        if self.mir.value_adjustments[node.index()].is_none() {
+            self.construction_check(node, ty, telora_core::mir::PropertySite::Type, result)?;
+        }
         Ok(result)
     }
     pub fn projection(&mut self, node: HirId, index: usize) -> Result<u32, String> {

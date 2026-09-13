@@ -104,46 +104,14 @@ impl Session {
         .json(pointer as u64, self.manifest.entry_type, 0)
     }
     pub(crate) fn failure(&self) -> String {
-        let Some(global) = self.instance.get_global(&self.store, "telora_error") else {
-            return "Wasm execution failed".into();
-        };
-        let pointer = global.get(&self.store).i32().unwrap_or(0) as u32 as usize;
-        if pointer == 0 {
-            return "Wasm session is not initialized or has failed".into();
-        }
-        let Some(bytes) = self.memory.data(&self.store).get(pointer..pointer + 16) else {
-            return "Wasm invalid error address".into();
-        };
-        let words = bytes
-            .chunks_exact(4)
-            .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
-            .collect::<Vec<_>>();
-        let message = match words[3] {
-            abi::ERROR_OVERFLOW => "integer arithmetic overflowed",
-            abi::ERROR_DIVISION => "integer division by zero",
-            abi::ERROR_CYCLE => "initialization dependency cycle",
-            abi::ERROR_INDEX => "array index out of bounds",
-            abi::ERROR_KEY => "dictionary key is absent",
-            abi::ERROR_PROPERTY => "property type does not support this decorator target",
-            abi::ERROR_MATCH => "no match arm accepted the value",
-            abi::ERROR_DATA => "data module has not been injected before initialization",
-            _ => "Wasm execution failed",
-        };
-        let source = self
-            .manifest
-            .sources
-            .iter()
-            .find(|s| s.id == words[0])
-            .map(|s| s.name.as_str())
-            .unwrap_or("<unknown>");
-        match self
-            .manifest
-            .locations
-            .iter()
-            .find(|l| l.source == words[0] && l.start == words[1] && l.end == words[2])
-        {
-            Some(loc) => format!("{source}:{}:{}: {message}", loc.line, loc.column),
-            None => format!("{source}:{}..{}: {message}", words[1], words[2]),
+        match self.diagnostics() {
+            Ok(diagnostics) => diagnostics
+                .iter()
+                .rev()
+                .find(|d| !d.warning)
+                .map(|d| d.render(&self.manifest))
+                .unwrap_or_else(|| "Wasm session is not initialized or has failed".into()),
+            Err(message) => message,
         }
     }
 }

@@ -2,8 +2,11 @@
 pub mod abi;
 mod aggregates;
 pub mod artifact;
+mod checks;
 mod codegen;
 mod data_input;
+pub mod diagnostic_output;
+mod diagnostics;
 mod dictionaries;
 mod emit;
 mod entry;

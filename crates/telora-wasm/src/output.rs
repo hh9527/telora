@@ -38,7 +38,7 @@ impl Output<'_> {
             field.ty,
         ))
     }
-    fn bytes(&self, address: u64, length: u64) -> Result<&[u8], String> {
+    pub(crate) fn bytes(&self, address: u64, length: u64) -> Result<&[u8], String> {
         let end = address
             .checked_add(length)
             .ok_or("Wasm: output range overflow")?;
@@ -49,12 +49,12 @@ impl Output<'_> {
             )
             .ok_or_else(|| "Wasm: output exceeds linear memory".into())
     }
-    fn word(&self, address: u64) -> Result<u32, String> {
+    pub(crate) fn word(&self, address: u64) -> Result<u32, String> {
         Ok(u32::from_le_bytes(
             self.bytes(address, 4)?.try_into().unwrap(),
         ))
     }
-    fn payload(&self, table: u32, id: u32) -> Result<(u64, u64), String> {
+    pub(crate) fn payload(&self, table: u32, id: u32) -> Result<(u64, u64), String> {
         let descriptor = table_address(table) as u64;
         if id >= self.word(descriptor + 4)? {
             return Err("Wasm: output has invalid HeapId".into());
@@ -219,7 +219,7 @@ impl Output<'_> {
             _ => return Err("Wasm: result JSON encoding is not implemented for this type".into()),
         })
     }
-    fn text(&self, pointer: u64) -> Result<String, String> {
+    pub(crate) fn text(&self, pointer: u64) -> Result<String, String> {
         let header = self.bytes(pointer + DATA, 16)?;
         let bytes = match header[0] {
             0 => {

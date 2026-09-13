@@ -60,13 +60,11 @@ pub(crate) struct Plan {
     pub layouts: Vec<telora_core::candidate_layout::Entry>,
     pub root: Key,
     pub properties: BTreeMap<usize, Key>,
+    pub checks: BTreeMap<usize, Key>,
 }
 
 impl Plan {
     pub fn new(executable: &SealedExecutable<'_>) -> Result<Self, String> {
-        if !executable.checks().is_empty() {
-            return Err("Wasm: construction checks are not implemented yet".into());
-        }
         let mir = executable.sealed_mir().mir();
         let root = Key {
             node: executable.root(),
@@ -83,6 +81,7 @@ impl Plan {
             layouts: telora_core::candidate_layout::calculate(executable.sealed_mir())?,
             root,
             properties: BTreeMap::new(),
+            checks: BTreeMap::new(),
         };
         for &symbol in executable.globals() {
             if !mir.symbol_generics[symbol.index()].is_empty() {
@@ -177,6 +176,21 @@ impl Plan {
                 special: Special::Property(index),
             };
             plan.properties.insert(index, key);
+            plan.functions.insert(key, 0);
+            plan.demands.insert(key, 0);
+        }
+        for &index in executable.checks() {
+            let check = &mir.construction_checks[index];
+            let key = Key {
+                node: check.checker,
+                instance: check.instance,
+                callable: false,
+                special: Special::Normal,
+            };
+            if !check.concrete || key.ty(mir, key.node)? != check.signature {
+                return Err("Wasm: checker signature is not sealed".into());
+            }
+            plan.checks.insert(index, key);
             plan.functions.insert(key, 0);
             plan.demands.insert(key, 0);
         }

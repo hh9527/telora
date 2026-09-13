@@ -4,7 +4,7 @@ export async function load(bytes) {
   const sections = WebAssembly.Module.customSections(module, 'telora.manifest');
   if (sections.length !== 1) throw Error('缺少或重复的 Telora manifest');
   const manifest = JSON.parse(new TextDecoder().decode(sections[0]));
-  if (manifest.abi !== 1) throw Error('不支持的产物 ABI');
+  if (manifest.abi !== 2) throw Error('不支持的产物 ABI');
   const { exports: wasm } = await WebAssembly.instantiate(module, {});
   const view = () => new DataView(wasm.memory.buffer);
   const word = address => view().getUint32(address, true);
@@ -211,8 +211,28 @@ export async function load(bytes) {
     const source = word(pointer), start = word(pointer + 4), end = word(pointer + 8), code = word(pointer + 12);
     const file = manifest.sources.find(file => file.id === source)?.name ?? '<unknown>';
     const loc = manifest.locations.find(loc => loc.source === source && loc.start === start && loc.end === end);
-    const message = ['执行失败', 'integer arithmetic overflowed', 'integer division by zero', 'initialization dependency cycle', 'array index out of bounds', 'dictionary key is absent', 'property query failed', 'pattern match failed', 'data module has not been injected before initialization'][code] ?? '执行失败';
+    const message = code === 9 ? text(word(pointer + 16)) : errorMessage(code);
     return Error(`${file}:${loc?.line ?? start}:${loc?.column ?? end}: ${message}`);
+  };
+  const errorMessage = code => ['执行失败', 'integer arithmetic overflowed', 'integer division by zero', 'initialization dependency cycle', 'array index out of bounds', 'dictionary key is absent', 'property query failed', 'pattern match failed', 'data module has not been injected before initialization'][code] ?? '执行失败';
+  const diagnostics = () => {
+    const result = [];
+    const count = word(64 + 8 * 16 + 4);
+    for (let i = 0; i < count; i++) {
+      const [pointer, bytes] = payload(8, i);
+      if (bytes !== 32) throw Error('无效诊断记录');
+      const origin = [word(pointer), word(pointer + 4), word(pointer + 8)], code = word(pointer + 12);
+      const message = code === 9 ? text(word(pointer + 16)) : errorMessage(code);
+      const base = word(pointer + 20), length = word(pointer + 24), subjects = [];
+      for (let index = 0; index < length; index++) {
+        const address = base + index * 12, subject = [word(address), word(address + 4), word(address + 8)];
+        if (subject[0] && !subjects.some(prior => prior.every((value, j) => value === subject[j]))) subjects.push(subject);
+      }
+      const source = manifest.sources.find(source => source.id === origin[0])?.name ?? '<unknown>';
+      const position = manifest.locations.find(loc => loc.source === origin[0] && loc.start === origin[1] && loc.end === origin[2]);
+      result.push({severity: word(pointer + 28) ? 'warning' : 'error', message, source, origin, subjects, line: position?.line, column: position?.column});
+    }
+    return result;
   };
   const field = (pointer, ty, name) => {
     const desc = manifest.types[ty], field = desc.fields.find(field => field.name === name);
@@ -231,6 +251,7 @@ export async function load(bytes) {
     return json(result, desc.arguments.at(-1));
   };
   return {
+    diagnostics,
     injectData(name, value) {
       const module = manifest.data_modules.find(module => module.name === name);
       if (!module) throw Error('数据模块不在产物中');

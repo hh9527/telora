@@ -1,4 +1,5 @@
 //! Hidden portable backend. The frontend stops at SealedExecutable.
+mod diagnostics;
 use crate::static_input::Inventory;
 use std::path::PathBuf;
 use telora_core::{
@@ -73,6 +74,23 @@ pub(crate) fn initialize(
     session.initialize()
 }
 
+pub(crate) fn check_diagnostics(
+    session: &telora_wasm::session::Session,
+    sources: &telora_core::SourceDatabase,
+    result: Result<(), String>,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = match diagnostics::collect(session, sources) {
+        Ok(diagnostics) => diagnostics,
+        Err(message) => vec![error(message)],
+    };
+    if let Err(message) = result {
+        if !diagnostics.iter().any(|d| d.severity == Severity::Error) {
+            diagnostics.push(error(message));
+        }
+    }
+    diagnostics
+}
+
 pub(crate) fn eval(context: PathBuf, module: &str, export: &str) -> Result<i32, String> {
     let mut inventory = Inventory::new(&context, module.starts_with("std/"))?;
     let root = inventory.select(module)?;
@@ -103,8 +121,14 @@ pub(crate) fn eval(context: PathBuf, module: &str, export: &str) -> Result<i32, 
     if session.manifest.value_type != Some(session.manifest.entry_type) {
         return Err("eval export must have the authoritative std/value.Value type".into());
     }
-    initialize(&mut session, &inventory, &mut mir.sources)?;
-    println!("{}", session.eval()?);
+    let result = initialize(&mut session, &inventory, &mut mir.sources);
+    diagnostics::finish(&session, &mir.sources, 0, result)?;
+    let before = session.diagnostics()?.len();
+    let result = session.eval();
+    println!(
+        "{}",
+        diagnostics::finish(&session, &mir.sources, before, result)?
+    );
     Ok(0)
 }
 
@@ -144,7 +168,9 @@ pub(crate) fn eval_with(
     if session.manifest.eval_type != Some(session.manifest.entry_type) {
         return Err("eval-with export: expected Eval (std/entry.Eval)".into());
     }
-    initialize(&mut session, &inventory, &mut mir.sources)?;
+    let result = initialize(&mut session, &inventory, &mut mir.sources);
+    diagnostics::finish(&session, &mir.sources, 0, result)?;
+    let before = session.diagnostics()?.len();
     let config = session.eval_config()?;
     let names = |field: &str| -> Result<Vec<String>, String> {
         let mut names = config
@@ -215,6 +241,10 @@ pub(crate) fn eval_with(
         session.register_data_sources(&mir.sources, &plan);
         plans.push((name, plan));
     }
-    println!("{}", session.eval_with(&args, &env, &plans)?);
+    let result = session.eval_with(&args, &env, &plans);
+    println!(
+        "{}",
+        diagnostics::finish(&session, &mir.sources, before, result)?
+    );
     Ok(0)
 }

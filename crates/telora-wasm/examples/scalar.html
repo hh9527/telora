@@ -9,9 +9,11 @@
 <button id="run">执行</button>
 <button id="stop">停止</button>
 <pre role="status"></pre>
+<pre id="diagnostics"></pre>
 <script type="module">
 const input = document.querySelector('input');
 const output = document.querySelector('pre');
+const diagnostics = document.querySelector('#diagnostics');
 let worker;
 document.querySelector('#stop').onclick = () => { worker?.terminate(); worker = null; output.textContent = '已停止'; };
 document.querySelector('#run').onclick = async () => {
@@ -27,12 +29,14 @@ document.querySelector('#run').onclick = async () => {
     active.onmessage = ({ data }) => {
       if (worker !== active) return;
       output.textContent = data.error ?? data.result; active.terminate(); worker = null;
+      diagnostics.textContent = data.diagnostics.map(event => `${event.source}:${event.line ?? event.origin[1]}:${event.column ?? event.origin[2]} ${event.severity}: ${event.message}`).join('\n');
     };
     active.onerror = error => {
       if (worker !== active) return;
       output.textContent = error.message; active.terminate(); worker = null;
     };
     output.textContent = '执行中…';
+    diagnostics.textContent = '';
     const bytes = await file.arrayBuffer();
     if (worker === active) active.postMessage({ bytes, arguments: arguments_ }, [bytes]);
   } catch (error) {

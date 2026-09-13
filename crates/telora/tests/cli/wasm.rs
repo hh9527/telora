@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn wasm_check_preserves_warning_error_and_subject_labels() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        include_str!("../../../telora-wasm/tests/fixtures/check-rejection.telora"),
+    )
+    .unwrap();
+    let mut results = vec![];
+    for backend in [None, Some("--wasm")] {
+        let mut command = telora(&cwd);
+        command.args(["check", "@src/main"]).args(backend);
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        let diagnostics = jsonl(&output.stdout)
+            .into_iter()
+            .filter(|v| v["record"] == "diagnostic")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            diagnostics.len(),
+            2,
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(diagnostics[0]["severity"], "warning");
+        assert_eq!(diagnostics[0]["message"], "checker initialized");
+        assert_eq!(diagnostics[1]["message"], "positive required");
+        assert_eq!(diagnostics[1]["labels"].as_array().unwrap().len(), 2);
+        results.push(diagnostics);
+    }
+    assert_eq!(results[0], results[1]);
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_cli_initializes_data_and_runs_the_authoritative_eval_contract() {
     let cwd = fixture();
     fs::write(

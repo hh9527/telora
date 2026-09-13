@@ -222,3 +222,29 @@ Eval 上下文对象。复验脚本可以追加第四个参数（Eval 产物文�
 这是命令纵向链路完成，不是完整语言验收：construction check、诊断宏、
 标准库操作和剩余表达式仍需逐项补齐。不能将已有子集成功视为 #186 完成；
 尚未进行最终性能与内存观察。
+
+## 构造检查与诊断宏
+
+2026-09-13：新增 checks、diagnostics、diagnostic_output 普通模块。
+执行计划不再拒绝 construction check，而是将每个封闭 checker 注册为
+需求初始化的闭包；构造点按稳定 owner/site 查找并调用。支持泛型 checker、
+具名 record 的 Unchecked 视图、newtype 和 enum variant 检查，以及 MIR
+已记录的构造转换边界。返回契约严格为 Result((), BlameError)。
+
+BlameError 和诊断事件进入 Wasm 分类表。blame! 保存消息及 subject 来源；
+raise!/fail! 记录失败并终止，warn! 记录警告并返回 None；unwrap!/ok_or_warn!
+直接消费既有 MIR 展开。检查返回 Err 时在构造位置报告一次，带上原数据
+来源；已失败调用向上传播零指针，不重复生成诊断。CLI 的 check 输出
+结构化诊断，eval/eval-with 在最终结果发布之前处理诊断。
+
+分类表与诊断记录 ABI 已改为版本 2，旧实验产物明确拒绝加载，不提供
+兼容解码。浏览器使用相同记录，页面单独展示诊断，不混入结果 JSON。
+
+验证：telora-wasm 13 项通过；CLI 两项通过，其中一项逐项比较默认后端
+与 Wasm 的 warning/error/来源标签。语言资产覆盖泛型构造检查、variant
+拒绝、宏失败与警告，验证失败重试不重复报告。实际 Chromium 复验聚合、
+普通函数、标准 Eval、初始化警告及构造拒绝，均通过。
+
+后续仍需补齐 std/_rt.with_diagnostics 的显式诊断捕获、标准库操作、
+剩余表达式及完整语言对照；此阶段没有宣称所有诊断/恢复能力已完成。
+最终性能和内存观察仍待完整链路覆盖后进行，#186 保持推进中。
