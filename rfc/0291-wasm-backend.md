@@ -163,3 +163,27 @@ node crates/telora-wasm/examples/browser-smoke.mjs \
 
 下一阶段仍需完成完整 prelude/property、代数类型与 native 标准库操作，
 再接数据模块、CLI 和完整语言验收；本阶段未新增隐藏参数占位实现。
+
+## 完整 prelude、代数类型与 property
+
+2026-09-13：删除测试专用的精简 prelude，测试与产物示例统一使用真实
+标准库清单及隐式 prelude。新增普通 Rust 模块 enums、patterns、natives、
+properties，没有使用 include! 拼接代码。
+
+Wasm 指令支持 enum/newtype 构造、模式匹配、guard、if-let、let-else、
+Option/Result 的传播。enum payload 根据封闭布局使用内联完整值或
+ValuesTable；newtype 使用独立分类表。模板参数继续来自 sealed 实例。
+
+property provider 作为普通生成函数执行，配置参数通过闭包保存，声明链
+按顺序归约。property 与顶层值共用需求状态表，查询消费封闭的 owner 与
+property 类型身份。标准 property 声明能力及类型/字段/variant 查询原语
+按已准入的 native 模块身份连接，不根据用户符号拼写猜测。
+
+`cargo test -p telora-wasm`：9 项通过。新增语言资产覆盖带 payload 的
+enum、newtype、Option 传播，以及依赖顶层值的两个 property provider
+归约为 42、字段上下文查询返回字段名。浏览器传输层增加相同 schema 的
+enum/newtype 输出支持；新增场景尚待实际浏览器复验。
+
+这仍不是完整 CLI 验收：construction check、其余标准库操作、数据模块
+注入和隐藏 check/eval/eval-with 桥接尚未完成。Session 的直接函数调用
+不能代替 std/entry.Eval 的配置、环境及数据源语义。未做阶段性能基准。

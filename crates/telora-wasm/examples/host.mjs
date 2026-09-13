@@ -77,6 +77,23 @@ export async function load(bytes) {
         for (let i = 0; i < length; i++) items.push(JSON.stringify(text(keys + i * 32)) + ':' + json(values + i * stride, type, depth + 1));
         return '{' + items.join(',') + '}';
       }
+      case 'Option':
+      case 'Enum': {
+        const branch = desc.variants[word(pointer + 16)];
+        if (!branch) throw Error('无效的 enum tag');
+        let value = null;
+        if (branch.ty !== null) {
+          const address = branch.boxed ? payload(4, word(pointer + 24))[0] : pointer + 24;
+          value = json(address, branch.ty, depth + 1);
+        }
+        if (desc.kind === 'Option') return value ?? 'null';
+        return value === null ? JSON.stringify(branch.name) : '{' + JSON.stringify(branch.name) + ':' + value + '}';
+      }
+      case 'Newtype': {
+        const field = desc.fields[0];
+        if (!field) throw Error('缺少 newtype 布局');
+        return json(payload(6, word(pointer + 16))[0], field.ty, depth + 1);
+      }
       default: throw Error('尚不支持此类型的浏览器输出');
     }
   };
@@ -140,7 +157,7 @@ export async function load(bytes) {
     const source = word(pointer), start = word(pointer + 4), end = word(pointer + 8), code = word(pointer + 12);
     const file = manifest.sources.find(file => file.id === source)?.name ?? '<unknown>';
     const loc = manifest.locations.find(loc => loc.source === source && loc.start === start && loc.end === end);
-    const message = ['执行失败', 'integer arithmetic overflowed', 'integer division by zero', 'initialization dependency cycle', 'array index out of bounds', 'dictionary key is absent'][code] ?? '执行失败';
+    const message = ['执行失败', 'integer arithmetic overflowed', 'integer division by zero', 'initialization dependency cycle', 'array index out of bounds', 'dictionary key is absent', 'property query failed', 'pattern match failed'][code] ?? '执行失败';
     return Error(`${file}:${loc?.line ?? start}:${loc?.column ?? end}: ${message}`);
   };
   return {

@@ -124,6 +124,8 @@ impl Session {
             abi::ERROR_CYCLE => "initialization dependency cycle",
             abi::ERROR_INDEX => "array index out of bounds",
             abi::ERROR_KEY => "dictionary key is absent",
+            abi::ERROR_PROPERTY => "property type does not support this decorator target",
+            abi::ERROR_MATCH => "no match arm accepted the value",
             _ => "Wasm execution failed",
         };
         let source = self

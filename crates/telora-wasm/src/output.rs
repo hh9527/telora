@@ -140,6 +140,41 @@ impl Output<'_> {
                 }
                 Value::Object(fields)
             }
+            Kind::Option | Kind::Enum => {
+                let index = self.word(pointer + DATA)? as usize;
+                let branch = ty.variants.get(index).ok_or("Wasm: invalid enum tag")?;
+                let payload = match branch.ty {
+                    Some(payload_ty) => {
+                        let address = if branch.boxed {
+                            self.payload(VALUES, self.word(pointer + 24)?)?.0
+                        } else {
+                            pointer + 24
+                        };
+                        Some(self.json(address, payload_ty, depth + 1)?)
+                    }
+                    None => None,
+                };
+                if ty.kind == Kind::Option {
+                    payload.unwrap_or(Value::Null)
+                } else {
+                    match payload {
+                        Some(value) => {
+                            let mut fields = serde_json::Map::new();
+                            fields.insert(branch.name.clone(), value);
+                            Value::Object(fields)
+                        }
+                        None => branch.name.clone().into(),
+                    }
+                }
+            }
+            Kind::Newtype => {
+                let field = ty
+                    .fields
+                    .first()
+                    .ok_or("Wasm: newtype has no payload layout")?;
+                let (address, _) = self.payload(NEWTYPES, self.word(pointer + DATA)?)?;
+                self.json(address, field.ty, depth + 1)?
+            }
             _ => return Err("Wasm: result JSON encoding is not implemented for this type".into()),
         })
     }

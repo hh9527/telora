@@ -1,0 +1,18 @@
+type Message = enum { Idle, Number(Int), Names(Array(String)) };
+type Count = struct(Int);
+def increment = fn(value: Option(Int)) -> Option(Int) { Some(value? + 1) };
+def extract = fn(value: Message) -> Int {
+    match value {
+        Message.Number(n) if n > 0 => n,
+        Message.Names(names) => if names[0] == "answer" { 42 } else { 0 },
+        _ => 0,
+    }
+};
+export def answer = do {
+    let count = Count(41);
+    let unwrapped = match count { Count(value) => value };
+    let first = if let Some(value) = increment(Some(unwrapped)) { value } else { 0 };
+    let second = extract(Message.Names(["answer"]));
+    let absent: Option(Int) = None;
+    (first + second - 42, increment(absent), Message.Idle, Message.Number(first))
+};

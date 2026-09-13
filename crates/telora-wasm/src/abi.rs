@@ -14,7 +14,7 @@ pub const ENVIRONMENT: u64 = 20;
 pub const NULL: u32 = 0;
 pub const TABLE_BASE: u32 = 64;
 pub const TABLE_BYTES: u32 = 16;
-pub const TABLE_COUNT: u32 = 6;
+pub const TABLE_COUNT: u32 = 7;
 pub const STATIC_BASE: u32 = TABLE_BASE + TABLE_BYTES * TABLE_COUNT;
 pub const STRINGS: u32 = 0;
 pub const BYTES: u32 = 1;
@@ -22,6 +22,7 @@ pub const RECORDS: u32 = 2;
 pub const ARRAYS: u32 = 3;
 pub const VALUES: u32 = 4;
 pub const ENVIRONMENTS: u32 = 5;
+pub const NEWTYPES: u32 = 6;
 pub fn table_address(table: u32) -> u32 {
     TABLE_BASE + table * TABLE_BYTES
 }
@@ -44,6 +45,8 @@ pub const ERROR_DIVISION: u32 = 2;
 pub const ERROR_CYCLE: u32 = 3;
 pub const ERROR_INDEX: u32 = 4;
 pub const ERROR_KEY: u32 = 5;
+pub const ERROR_PROPERTY: u32 = 6;
+pub const ERROR_MATCH: u32 = 7;
 
 pub fn memory(offset: u64, align: u32) -> wasm_encoder::MemArg {
     wasm_encoder::MemArg {

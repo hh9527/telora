@@ -13,8 +13,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(std::fs::read_to_string)
         .transpose()?
         .unwrap_or_else(|| "export def answer = 42;".into());
-    let inventory = ["@src/main", "std/prelude"]
-        .into_iter()
+    let inventory = std::iter::once("@src/main")
+        .chain(static_sources::BUILTINS.iter().map(|(name, _)| *name))
         .map(|name| ModuleSpec {
             name: name.into(),
             kind: telora_core::mir::ModuleKind::Source,
@@ -27,10 +27,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
     let mut mir = module_resolve::resolve(inventory, &["@src/main".into()], |_, name| {
-        Ok(if name == "std/prelude" {
-            include_str!("../tests/fixtures/prelude.telora")
-        } else {
+        Ok(if name == "@src/main" {
             &source
+        } else {
+            static_sources::BUILTINS
+                .iter()
+                .find(|(module, _)| *module == name)
+                .ok_or_else(|| format!("missing builtin module {name}"))?
+                .1
         }
         .into())
     });

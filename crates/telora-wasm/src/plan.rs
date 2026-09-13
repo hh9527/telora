@@ -9,10 +9,30 @@ pub(crate) struct Key {
     pub node: HirId,
     pub instance: Option<GenericInstanceId>,
     pub callable: bool,
+    pub special: Special,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Special {
+    Normal,
+    Configured,
+    Property(usize),
 }
 
 impl Key {
     pub fn ty(self, mir: &Mir, node: HirId) -> Result<TypeId, String> {
+        if self.special == Special::Configured && node == self.node {
+            let original = Self {
+                special: Special::Normal,
+                ..self
+            }
+            .ty(mir, node)?;
+            return mir.types[original.index()]
+                .arguments
+                .last()
+                .copied()
+                .ok_or_else(|| "Wasm: missing configured signature".into());
+        }
         if let Some(instance) = self.instance {
             return mir.generic_instances[instance.index()]
                 .ty(node)
@@ -39,18 +59,20 @@ pub(crate) struct Plan {
     pub captures: BTreeMap<Key, Vec<SymbolId>>,
     pub layouts: Vec<telora_core::candidate_layout::Entry>,
     pub root: Key,
+    pub properties: BTreeMap<usize, Key>,
 }
 
 impl Plan {
     pub fn new(executable: &SealedExecutable<'_>) -> Result<Self, String> {
-        if !executable.properties().is_empty() || !executable.checks().is_empty() {
-            return Err("Wasm: property/check initialization is not implemented yet".into());
+        if !executable.checks().is_empty() {
+            return Err("Wasm: construction checks are not implemented yet".into());
         }
         let mir = executable.sealed_mir().mir();
         let root = Key {
             node: executable.root(),
             instance: None,
             callable: false,
+            special: Special::Normal,
         };
         let mut plan = Self {
             functions: BTreeMap::new(),
@@ -60,6 +82,7 @@ impl Plan {
             captures: BTreeMap::new(),
             layouts: telora_core::candidate_layout::calculate(executable.sealed_mir())?,
             root,
+            properties: BTreeMap::new(),
         };
         for &symbol in executable.globals() {
             if !mir.symbol_generics[symbol.index()].is_empty() {
@@ -73,6 +96,7 @@ impl Plan {
                 node,
                 instance: None,
                 callable: false,
+                special: Special::Normal,
             };
             plan.globals.insert(symbol, key);
             plan.functions.insert(key, 0);
@@ -88,22 +112,73 @@ impl Plan {
                 node,
                 instance: Some(instance),
                 callable: false,
+                special: Special::Normal,
             };
             plan.instances.insert(instance, key);
             plan.functions.insert(key, 0);
             plan.demands.insert(key, 0);
         }
         for root in executable.closure().nodes() {
-            if matches!(mir.hir[root.node.index()].kind, HirKind::Closure) {
+            let key = Key {
+                node: root.node,
+                instance: root.instance,
+                callable: true,
+                special: Special::Normal,
+            };
+            let constructor = crate::enums::selection(mir, root.node).is_some_and(|s| {
+                matches!(
+                    s,
+                    telora_core::mir::MemberSelection::EnumVariant { .. }
+                        | telora_core::mir::MemberSelection::NewtypeConstructor
+                )
+            }) && mir.required_types[root.node.index()]
+                && key.ty(mir, root.node).is_ok_and(|ty| {
+                    mir.types[ty.index()].constructor == telora_core::mir::TypeConstructor::Function
+                });
+            if matches!(
+                mir.hir[root.node.index()].kind,
+                HirKind::Closure
+                    | HirKind::Binding {
+                        kind: telora_core::ast::BindingKind::Native,
+                        ..
+                    }
+            ) || constructor
+            {
                 plan.functions.insert(
                     Key {
                         node: root.node,
                         instance: root.instance,
                         callable: true,
+                        special: Special::Normal,
                     },
                     0,
                 );
+                if crate::natives::identity(mir, root.node) == Some((18, "property")) {
+                    plan.functions.insert(
+                        Key {
+                            special: Special::Configured,
+                            ..key
+                        },
+                        0,
+                    );
+                }
             }
+        }
+        for &index in executable.properties() {
+            let property = &mir.properties[index];
+            let node = *property
+                .providers
+                .first()
+                .ok_or("Wasm: property has no provider")?;
+            let key = Key {
+                node,
+                instance: property.instance,
+                callable: false,
+                special: Special::Property(index),
+            };
+            plan.properties.insert(index, key);
+            plan.functions.insert(key, 0);
+            plan.demands.insert(key, 0);
         }
         plan.functions.insert(plan.root, 0);
         plan.demands.insert(plan.root, 0);
@@ -126,14 +201,25 @@ impl Plan {
             let mut referenced = BTreeSet::new();
             while let Some(node) = pending.pop() {
                 let syntax = &mir.hir[node.index()];
-                if matches!(syntax.kind, HirKind::Binding { .. } | HirKind::Parameter)
-                    && let Some(symbol) = mir.hir_symbols[node.index()]
+                if matches!(
+                    syntax.kind,
+                    HirKind::Binding { .. } | HirKind::Parameter | HirKind::PatternName(_)
+                ) && let Some(symbol) = mir.hir_symbols[node.index()]
                 {
                     declared.insert(symbol);
                 }
                 if let Some(slot) = syntax.resolution
                     && let ResolveState::Bound(symbol) = mir.resolve_slots[slot.index()]
                     && !executable.globals().contains(&symbol)
+                    && !matches!(
+                        crate::enums::selection(mir, node),
+                        Some(
+                            telora_core::mir::MemberSelection::Boolean(_)
+                                | telora_core::mir::MemberSelection::EnumVariant { .. }
+                                | telora_core::mir::MemberSelection::NewtypeConstructor
+                                | telora_core::mir::MemberSelection::NewtypePattern
+                        )
+                    )
                     && matches!(
                         mir.symbols[symbol.index()].kind,
                         telora_core::mir::SymbolKind::Parameter

@@ -1,0 +1,23 @@
+import "std/type-property" { get_type_prop, get_field_prop, FieldPropertyCtx };
+
+@property(PropertyTarget.Type)
+type Score = struct { value: Int };
+def add = fn(seed: Int) {
+    fn(owner: Type, previous: Option(Score)) -> Score {
+        { value: seed + match previous { Some(prior) => prior.value, None => 0 } }
+    }
+};
+def seed = 20;
+@add(seed)
+@add(22)
+type Measured = struct { amount: Int };
+
+@property(PropertyTarget.Field)
+type FieldInfo = struct { name: String };
+def field_name = fn(ctx: FieldPropertyCtx, previous: Option(FieldInfo)) -> FieldInfo { { name: ctx.name } };
+type Named = struct { @field_name amount: Int };
+
+export def answer = (
+    match get_type_prop(Measured.type, Score.type) { Some(score) => score.value, None => 0 },
+    match get_field_prop(Named.type, 0, FieldInfo.type) { Some(info) => info.name, None => "missing" }
+);

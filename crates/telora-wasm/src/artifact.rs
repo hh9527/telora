@@ -17,6 +17,14 @@ pub struct TypeDesc {
     pub arguments: Vec<u32>,
     pub bytes: u32,
     pub fields: Vec<Field>,
+    pub variants: Vec<Variant>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Variant {
+    pub name: String,
+    pub ty: Option<u32>,
+    pub boxed: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -38,6 +46,10 @@ pub enum Kind {
     Tuple,
     Record,
     Dict,
+    Enum,
+    Option,
+    Newtype,
+    Metadata,
     Unsupported,
 }
 
@@ -110,6 +122,10 @@ impl Manifest {
                     T::String => Kind::String,
                     T::Array => Kind::Array,
                     T::Dict => Kind::Dict,
+                    T::Option => Kind::Option,
+                    T::Result | T::FoldControl | T::PropertyTarget | T::Enum(_) => Kind::Enum,
+                    T::Newtype => Kind::Newtype,
+                    T::Type | T::TypeOf => Kind::Metadata,
                     T::Tuple => Kind::Tuple,
                     T::Record(_) => Kind::Record,
                     T::Nominal(symbol) => match executable
@@ -121,6 +137,8 @@ impl Manifest {
                         Some(telora_core::mir::TypeOperation::Struct) => Kind::Record,
                         Some(telora_core::mir::TypeOperation::Tuple) => Kind::Tuple,
                         Some(telora_core::mir::TypeOperation::Unit) => Kind::Unit,
+                        Some(telora_core::mir::TypeOperation::Enum) => Kind::Enum,
+                        Some(telora_core::mir::TypeOperation::Newtype) => Kind::Newtype,
                         _ => Kind::Unsupported,
                     },
                     _ => Kind::Unsupported,
@@ -142,6 +160,15 @@ impl Manifest {
                             ty: member.type_id? as u32,
                             offset: member.offset? as u32,
                         })
+                    })
+                    .collect(),
+                variants: layouts[index]
+                    .variants
+                    .iter()
+                    .map(|v| Variant {
+                        name: v.name.clone(),
+                        ty: v.type_id.map(|t| t as u32),
+                        boxed: v.storage == "heap_id",
                     })
                     .collect(),
             })
@@ -183,6 +210,11 @@ impl Manifest {
                         .fields
                         .iter()
                         .any(|field| field.ty as usize >= manifest.types.len())
+                    || ty.variants.iter().any(|variant| {
+                        variant
+                            .ty
+                            .is_some_and(|ty| ty as usize >= manifest.types.len())
+                    })
             })
         {
             return Err("Wasm: invalid manifest TypeId".into());

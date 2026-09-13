@@ -1,6 +1,6 @@
 use crate::{
     abi::*,
-    plan::{Key, Plan, child, symbol},
+    plan::{Key, Plan, Special, child, symbol},
 };
 use std::collections::BTreeMap;
 use telora_core::mir::{HirId, HirKind, Mir, Role, SymbolId, TypeConstructor, TypeId};
@@ -81,7 +81,10 @@ impl<'a> Emitter<'a> {
         Ok(result)
     }
     pub fn scalar(&mut self, node: HirId, bits: i64) -> Result<u32, String> {
-        let result = self.value(node, SCALAR_BYTES)?;
+        self.scalar_as(node, self.effective_ty(node)?, bits)
+    }
+    pub fn scalar_as(&mut self, node: HirId, ty: TypeId, bits: i64) -> Result<u32, String> {
+        let result = self.value_as(node, ty, SCALAR_BYTES)?;
         self.extend([
             I::LocalGet(result),
             I::I64Const(bits),
@@ -145,7 +148,45 @@ impl<'a> Emitter<'a> {
         {
             return self.scalar(node, i64::from(value));
         }
+        if let Some(
+            selection @ (telora_core::mir::MemberSelection::EnumVariant { .. }
+            | telora_core::mir::MemberSelection::NewtypeConstructor),
+        ) = crate::enums::selection(self.mir, node)
+        {
+            if self.mir.types[self.ty(node)?.index()].constructor == TypeConstructor::Function {
+                let key = Key {
+                    node,
+                    instance: self.key.instance,
+                    callable: true,
+                    special: Special::Normal,
+                };
+                return self.function_value(node, key, self.ty(node)?, &[]);
+            }
+            if let telora_core::mir::MemberSelection::EnumVariant { index } = selection {
+                return self.enum_value(node, self.effective_ty(node)?, index, None);
+            }
+        }
         match &self.mir.hir[node.index()].kind {
+            HirKind::TypeMetadata => {
+                let ty = self.ty(node)?;
+                let shape = &self.mir.types[ty.index()];
+                if shape.constructor != TypeConstructor::TypeOf || shape.arguments.len() != 1 {
+                    return Err("Wasm: metadata witness is not sealed".into());
+                }
+                self.scalar(node, shape.arguments[0].index() as i64)
+            }
+            HirKind::Binding {
+                kind: telora_core::ast::BindingKind::Native,
+                ..
+            } => {
+                let key = Key {
+                    node,
+                    instance: self.key.instance,
+                    callable: true,
+                    special: Special::Normal,
+                };
+                self.function_value(node, key, self.ty(node)?, &[])
+            }
             HirKind::Int(value) => self.scalar(node, *value),
             HirKind::Float(value) => self.scalar(node, value.to_bits() as i64),
             HirKind::String(value) => self.text(node, value.as_bytes()),
@@ -162,6 +203,8 @@ impl<'a> Emitter<'a> {
             HirKind::TupleProjection(index) => self.projection(node, *index),
             HirKind::Field => self.field(node),
             HirKind::Index => self.index(node),
+            HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node),
+            HirKind::Propagate => self.propagate(node),
             HirKind::Tuple if self.mir.hir[node.index()].children.is_empty() => {
                 self.value(node, HEADER_BYTES)
             }
@@ -219,7 +262,16 @@ impl<'a> Emitter<'a> {
                         .ok_or("Wasm: lexical capture is not available")?,
                 )
             }
-            HirKind::TypeAscription => self.expression(child(self.mir, node, Role::Value)?),
+            HirKind::TypeAscription => {
+                let inner = child(self.mir, node, Role::Value)?;
+                let value = self.expression(inner)?;
+                self.adapt(
+                    node,
+                    self.effective_ty(inner)?,
+                    self.effective_ty(node)?,
+                    value,
+                )
+            }
             HirKind::Block => {
                 for edge in &self.mir.hir[node.index()].children {
                     if edge.role == Role::Binding
@@ -282,7 +334,13 @@ impl<'a> Emitter<'a> {
 
 pub(crate) fn compile(mir: &Mir, plan: &Plan, key: Key) -> Result<Function, String> {
     let mut emit = Emitter::new(mir, plan, key);
-    if key.callable {
+    if key.callable && crate::natives::identity(mir, key.node).is_some() {
+        let value = emit.native()?;
+        emit.emit(I::LocalGet(value));
+    } else if key.callable && !matches!(mir.hir[key.node.index()].kind, HirKind::Closure) {
+        let value = emit.constructor()?;
+        emit.emit(I::LocalGet(value));
+    } else if key.callable {
         for (index, symbol) in plan.captures[&key].iter().enumerate() {
             let local = emit.local(ValType::I32);
             emit.extend([
@@ -332,7 +390,10 @@ pub(crate) fn compile(mir: &Mir, plan: &Plan, key: Key) -> Result<Function, Stri
             I::I32Const(1),
             I::I32Store(memory(0, 2)),
         ]);
-        let value = emit.expression(key.node)?;
+        let value = match key.special {
+            Special::Property(index) => emit.property_chain(index)?,
+            _ => emit.expression(key.node)?,
+        };
         emit.extend([
             I::I32Const(offset as i32),
             I::LocalGet(value),

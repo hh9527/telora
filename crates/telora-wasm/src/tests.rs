@@ -5,8 +5,8 @@ use telora_core::{
 };
 
 fn graph(source: &str) -> Mir {
-    let inventory = ["@src/main", "std/prelude"]
-        .into_iter()
+    let inventory = std::iter::once("@src/main")
+        .chain(static_sources::BUILTINS.iter().map(|(name, _)| *name))
         .map(|name| ModuleSpec {
             name: name.into(),
             kind: telora_core::mir::ModuleKind::Source,
@@ -19,16 +19,40 @@ fn graph(source: &str) -> Mir {
         })
         .collect();
     let mut mir = module_resolve::resolve(inventory, &["@src/main".into()], |_, name| {
-        Ok(if name == "std/prelude" {
-            include_str!("../tests/fixtures/prelude.telora").into()
+        Ok(if name == "@src/main" {
+            source
         } else {
-            source.into()
-        })
+            static_sources::BUILTINS
+                .iter()
+                .find(|(module, _)| *module == name)
+                .unwrap()
+                .1
+        }
+        .into())
     });
     symbol_resolve::resolve(&mut mir);
     type_resolve::resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
     mir
+}
+
+#[test]
+fn enums_patterns_and_propagation_use_full_prelude() {
+    let bytes = compile(include_str!("../tests/fixtures/enums.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.eval().unwrap(),
+        serde_json::json!([42, null, "Idle", {"Number":42}])
+    );
+}
+
+#[test]
+fn properties_reduce_and_query_inside_wasm() {
+    let bytes = compile(include_str!("../tests/fixtures/properties.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.eval().unwrap(), serde_json::json!([42, "amount"]));
 }
 
 fn compile(source: &str) -> Result<Vec<u8>, String> {
