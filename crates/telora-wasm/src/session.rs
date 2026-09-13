@@ -13,6 +13,7 @@ impl Session {
     /// Load a persistent artifact without MIR, a source loader, or a type solver.
     pub fn load(bytes: &[u8], fuel: u64) -> Result<Self, String> {
         let manifest = Manifest::read(bytes)?;
+        let bundled_data = crate::bundle::read(bytes, &manifest)?;
         let mut config = wasmi::Config::default();
         config.consume_fuel(true);
         let engine = wasmi::Engine::new(&config);
@@ -25,13 +26,17 @@ impl Session {
         let memory = instance
             .get_memory(&store, "memory")
             .ok_or("Wasm: missing memory export")?;
-        Ok(Self {
+        let mut session = Self {
             manifest,
             store,
             instance,
             memory,
             registered_sources: 0,
-        })
+        };
+        for module in bundled_data {
+            session.inject_data_packet(module.symbol, &module.packet)?;
+        }
+        Ok(session)
     }
     pub fn initialize(&mut self) -> Result<(), String> {
         self.register_sources()?;

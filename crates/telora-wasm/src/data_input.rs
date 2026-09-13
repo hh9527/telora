@@ -1,11 +1,12 @@
 //! Source-backed data transport. Materialize once, then inject before initialization.
+use crate::data_packet::{DataPacket, Value};
 use crate::{
     abi::*,
     artifact::{Kind, Manifest},
     plan::Plan,
     session::Session,
 };
-use telora_core::data_plan::{DataNodeId, DataPlanNodeKind, DataScalar, ValidatedDataPlan};
+use telora_core::data_plan::{DataPlanNodeKind, ValidatedDataPlan};
 use wasm_encoder::{BlockType, Function, Instruction as I};
 
 pub(crate) fn injector(plan: &Plan, manifest: &Manifest) -> Function {
@@ -63,7 +64,7 @@ pub(crate) fn injector(plan: &Plan, manifest: &Manifest) -> Function {
     function
 }
 
-impl Session {
+impl Manifest {
     pub fn register_data_sources(
         &mut self,
         sources: &telora_core::SourceDatabase,
@@ -71,7 +72,6 @@ impl Session {
     ) -> Result<(), String> {
         for file in sources.files() {
             if self
-                .manifest
                 .sources
                 .iter()
                 .any(|source| source.id == file.id().get() && source.name != file.name.as_ref())
@@ -81,12 +81,11 @@ impl Session {
                 );
             }
             if !self
-                .manifest
                 .sources
                 .iter()
                 .any(|source| source.id == file.id().get())
             {
-                self.manifest.sources.push(crate::artifact::Source {
+                self.sources.push(crate::artifact::Source {
                     id: file.id().get(),
                     name: file.name.to_string(),
                 });
@@ -101,7 +100,7 @@ impl Session {
                 let file = sources.get(loc.source);
                 let start = file.position(loc.start);
                 let end = file.position(loc.end);
-                self.manifest.locations.push(crate::artifact::Location {
+                self.locations.push(crate::artifact::Location {
                     source: loc.source.get(),
                     start: loc.start,
                     end: loc.end,
@@ -114,7 +113,20 @@ impl Session {
         }
         Ok(())
     }
+}
+
+impl Session {
+    pub fn register_data_sources(
+        &mut self,
+        sources: &telora_core::SourceDatabase,
+        plan: &ValidatedDataPlan,
+    ) -> Result<(), String> {
+        self.manifest.register_data_sources(sources, plan)
+    }
     pub fn inject_data(&mut self, symbol: u32, plan: &ValidatedDataPlan) -> Result<(), String> {
+        self.inject_data_packet(symbol, &DataPacket::from_plan(plan)?)
+    }
+    pub fn inject_data_packet(&mut self, symbol: u32, plan: &DataPacket) -> Result<(), String> {
         if !self
             .manifest
             .data_modules
@@ -123,7 +135,7 @@ impl Session {
         {
             return Err("Wasm: data module is not in the executable".into());
         }
-        let pointer = self.materialize_data(plan)?;
+        let pointer = self.materialize_data_packet(plan)?;
         let inject = self
             .instance
             .get_typed_func::<(i32, i32), i32>(&self.store, "telora_inject_data")
@@ -140,19 +152,22 @@ impl Session {
         Ok(())
     }
     pub(crate) fn materialize_data(&mut self, plan: &ValidatedDataPlan) -> Result<u32, String> {
-        let root = plan.root_node().ok_or("Wasm: missing data root")?;
+        self.materialize_data_packet(&DataPacket::from_plan(plan)?)
+    }
+    fn materialize_data_packet(&mut self, plan: &DataPacket) -> Result<u32, String> {
+        plan.validate(&self.manifest)?;
         self.data_node(
             plan,
-            root,
-            &mut vec![None; plan.nodes().len()],
-            &mut vec![false; plan.nodes().len()],
+            plan.root,
+            &mut vec![None; plan.nodes.len()],
+            &mut vec![false; plan.nodes.len()],
             0,
         )
     }
     fn data_node(
         &mut self,
-        plan: &ValidatedDataPlan,
-        id: DataNodeId,
+        plan: &DataPacket,
+        id: u32,
         cache: &mut [Option<u32>],
         visiting: &mut [bool],
         depth: usize,
@@ -160,32 +175,30 @@ impl Session {
         if depth > 512 {
             return Err("Wasm: data nesting limit".into());
         }
-        if let Some(value) = cache[id.index()] {
+        if let Some(value) = cache[id as usize] {
             return Ok(value);
         }
-        if visiting[id.index()] {
+        if visiting[id as usize] {
             return Err("Wasm: cyclic data plan".into());
         }
-        visiting[id.index()] = true;
-        let node = &plan.nodes()[id.index()];
+        visiting[id as usize] = true;
+        let node = &plan.nodes[id as usize];
         let value_ty = self
             .manifest
             .value_type
             .ok_or("Wasm: semantic Value contract missing")?;
         let desc = self.manifest.types[value_ty as usize].clone();
-        let tag = match &node.kind {
-            DataPlanNodeKind::Scalar(value) => match value {
-                DataScalar::Int(_) => "Int",
-                DataScalar::Float(_) => "Float",
-                DataScalar::String(_) => "String",
-                DataScalar::Bytes(_) => "Bytes",
-                DataScalar::Null => "None",
-                DataScalar::Bool(true) => "True",
-                DataScalar::Bool(false) => "False",
-                DataScalar::Temporal { kind, .. } => kind.variant(),
-            },
-            DataPlanNodeKind::Array(_) => "Array",
-            DataPlanNodeKind::Object(_) => "Object",
+        let tag = match &node.value {
+            Value::Int(_) => "Int",
+            Value::Float(_) => "Float",
+            Value::String(_) => "String",
+            Value::Bytes(_) => "Bytes",
+            Value::Null => "None",
+            Value::Bool(true) => "True",
+            Value::Bool(false) => "False",
+            Value::Temporal { variant, .. } => variant,
+            Value::Array(_) => "Array",
+            Value::Object(_) => "Object",
         };
         let index = desc
             .variants
@@ -194,30 +207,34 @@ impl Session {
             .ok_or("Wasm: data variant is not in semantic Value")?;
         let branch = &desc.variants[index];
         let payload = if let Some(ty) = branch.ty {
-            Some(match &node.kind {
-                DataPlanNodeKind::Scalar(scalar) => match scalar {
-                    DataScalar::Int(value) => self.input(ty, &(*value).into(), 0)?,
-                    DataScalar::Float(value) => self.input(
-                        ty,
-                        &serde_json::Number::from_f64(*value)
-                            .ok_or("Wasm: non-finite data Float")?
-                            .into(),
-                        0,
-                    )?,
-                    DataScalar::String(value) | DataScalar::Temporal { value, .. } => {
-                        self.input(ty, &value.clone().into(), 0)?
-                    }
-                    DataScalar::Bytes(bytes) => self.input_bytes(ty, bytes)?,
-                    _ => return Err("Wasm: invalid data scalar payload".into()),
-                },
-                DataPlanNodeKind::Array(items) => {
+            Some(match &node.value {
+                Value::Int(value) => self.input(
+                    ty,
+                    &value
+                        .parse::<i64>()
+                        .map_err(|_| "Wasm: invalid data Int")?
+                        .into(),
+                    0,
+                )?,
+                Value::Float(value) => self.input(
+                    ty,
+                    &serde_json::Number::from_f64(*value)
+                        .ok_or("Wasm: non-finite data Float")?
+                        .into(),
+                    0,
+                )?,
+                Value::String(value) | Value::Temporal { value, .. } => {
+                    self.input(ty, &value.clone().into(), 0)?
+                }
+                Value::Bytes(bytes) => self.input_bytes(ty, bytes)?,
+                Value::Array(items) => {
                     let mut values = Vec::with_capacity(items.len());
                     for &item in items {
                         values.push(self.data_node(plan, item, cache, visiting, depth + 1)?);
                     }
                     self.input_array_values(ty, &values)?
                 }
-                DataPlanNodeKind::Object(fields) => {
+                Value::Object(fields) => {
                     let string = self
                         .manifest
                         .types
@@ -225,9 +242,9 @@ impl Session {
                         .position(|t| t.kind == Kind::String)
                         .ok_or("Wasm: missing String")? as u32;
                     let mut values = vec![];
-                    for (name, field) in fields {
-                        let key = self.input(string, &name.clone().into(), 0)?;
-                        self.input_location(key, field.key_location)?;
+                    for field in fields {
+                        let key = self.input(string, &field.name.clone().into(), 0)?;
+                        self.input_location(key, field.origin)?;
                         values.push((
                             key,
                             self.data_node(plan, field.value, cache, visiting, depth + 1)?,
@@ -235,28 +252,22 @@ impl Session {
                     }
                     self.input_dict_values(ty, &values)?
                 }
+                _ => return Err("Wasm: invalid data scalar payload".into()),
             })
         } else {
             None
         };
         if let Some(payload) = payload {
-            self.input_location(payload, node.location)?;
+            self.input_location(payload, node.origin)?;
         }
         let result = self.input_variant(value_ty, index, payload)?;
-        self.input_location(result, node.location)?;
-        visiting[id.index()] = false;
-        cache[id.index()] = Some(result);
+        self.input_location(result, node.origin)?;
+        visiting[id as usize] = false;
+        cache[id as usize] = Some(result);
         Ok(result)
     }
-    fn input_location(
-        &mut self,
-        pointer: u32,
-        location: telora_core::Location,
-    ) -> Result<(), String> {
-        for (offset, value) in [location.source.get(), location.start, location.end]
-            .into_iter()
-            .enumerate()
-        {
+    fn input_location(&mut self, pointer: u32, location: [u32; 3]) -> Result<(), String> {
+        for (offset, value) in location.into_iter().enumerate() {
             self.write(pointer as usize + offset * 4, &value.to_le_bytes())?;
         }
         Ok(())
