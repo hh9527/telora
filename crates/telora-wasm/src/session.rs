@@ -7,6 +7,7 @@ pub struct Session {
     pub(crate) instance: wasmi::Instance,
     pub(crate) memory: wasmi::Memory,
     registered_sources: usize,
+    pub(crate) emitted_debug: std::cell::Cell<u32>,
 }
 
 impl Session {
@@ -32,6 +33,7 @@ impl Session {
             instance,
             memory,
             registered_sources: 0,
+            emitted_debug: std::cell::Cell::new(0),
         };
         for module in bundled_data {
             session.inject_data_packet(module.symbol, &module.packet)?;

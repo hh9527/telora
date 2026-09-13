@@ -54,6 +54,7 @@ pub(crate) fn initialize(
     inventory: &Inventory,
     sources: &mut telora_core::SourceDatabase,
 ) -> Result<(), String> {
+    session.set_debug_enabled(true)?;
     for module in session.manifest.data_modules.clone() {
         let (format, text) = inventory.read_data_text(
             &module.name,

@@ -12,6 +12,16 @@ pub struct Manifest {
     pub value_type: Option<u32>,
     pub eval_type: Option<u32>,
     pub data_modules: Vec<DataModule>,
+    pub debug_sites: Vec<DebugSite>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DebugSite {
+    pub node: u32,
+    pub module: String,
+    pub line: u32,
+    pub name: String,
+    pub message: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -62,6 +72,7 @@ pub enum Kind {
     Option,
     Newtype,
     Metadata,
+    Dyn,
     Unsupported,
 }
 
@@ -88,6 +99,12 @@ impl Manifest {
         layouts: &[telora_core::candidate_layout::Entry],
     ) -> Result<Self, String> {
         let mir = executable.sealed_mir().mir();
+        let executable_nodes = executable
+            .closure()
+            .nodes()
+            .iter()
+            .map(|node| node.node.index())
+            .collect::<std::collections::BTreeSet<_>>();
         let value_type = exported_type(mir, 23, "Value");
         let eval_type = exported_type(mir, 32, "Eval");
         let TypeState::Known(entry) = mir.ty_slots[executable.root().index()] else {
@@ -144,6 +161,7 @@ impl Manifest {
                         T::Result | T::FoldControl | T::PropertyTarget | T::Enum(_) => Kind::Enum,
                         T::Newtype => Kind::Newtype,
                         T::Type | T::TypeOf => Kind::Metadata,
+                        T::Dyn => Kind::Dyn,
                         T::Tuple => Kind::Tuple,
                         T::Record(_) => Kind::Record,
                         T::Nominal(symbol) => match executable
@@ -200,6 +218,31 @@ impl Manifest {
             locations,
             value_type,
             eval_type,
+            debug_sites: mir
+                .hir
+                .iter()
+                .enumerate()
+                .filter_map(|(index, node)| {
+                    if !executable_nodes.contains(&index) {
+                        return None;
+                    }
+                    let telora_core::mir::HirKind::Debug {
+                        message,
+                        expression,
+                    } = &node.kind
+                    else {
+                        return None;
+                    };
+                    let source = mir.sources.get(node.location.source);
+                    Some(DebugSite {
+                        node: index as u32,
+                        module: source.name.to_string(),
+                        line: source.position(node.location.start).line as u32,
+                        name: expression.clone(),
+                        message: message.clone(),
+                    })
+                })
+                .collect(),
             data_modules: executable
                 .globals()
                 .iter()

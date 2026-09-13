@@ -66,6 +66,7 @@ pub(crate) fn run(context: PathBuf, arguments: ArtifactArgs) -> Result<i32, Stri
         }
         _ => {}
     }
+    session.set_debug_enabled(true)?;
     let initialized = session.initialize();
     super::diagnostics::finish_portable(&session, 0, initialized)?;
     match command {

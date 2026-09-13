@@ -223,6 +223,9 @@ impl Output<'_> {
         })
     }
     pub(crate) fn text(&self, pointer: u64) -> Result<String, String> {
+        self.text_str(pointer).map(str::to_owned)
+    }
+    pub(crate) fn text_str(&self, pointer: u64) -> Result<&str, String> {
         let header = self.bytes(pointer + DATA, 16)?;
         let bytes = match header[0] {
             0 => {
@@ -243,6 +246,6 @@ impl Output<'_> {
             }
             _ => return Err("Wasm: invalid string representation".into()),
         };
-        String::from_utf8(bytes.to_vec()).map_err(|_| "Wasm: invalid UTF-8 output".into())
+        std::str::from_utf8(bytes).map_err(|_| "Wasm: invalid UTF-8 output".into())
     }
 }

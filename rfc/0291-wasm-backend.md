@@ -1104,7 +1104,29 @@ Int 和 String 时，在 functions.rs 的闭包捕获表查找发生 panic。
 泛型 decl 在默认后端仍报 local declaration has no function slot，
 因此保留独立 Wasm 验证，不将其混入默认/Wasm 一致性声明。
 
-进一步审计原有 test/interpreter/testee，确认下一项尚未实现的合法
-节点是 interpreter!（Wasm 报 unsupported expression Interpreter）。
-后续应消费已有 InterpreterPlan 实现封闭适配器，不能回退到其他
-后端；完整语言/标准库审计与最终性能观察继续推进，#186 尚未完成。
+## Interpreter 适配与观察性调试
+
+interpreter! 已消费 InterpreterPlan 生成专门化工厂与适配器。已封闭
+签名决定全部 witness 身份，每个词法工厂环境用一个缓存槽保持适配器
+身份，不需要运行时 TypeId 映射表。返回函数每次调用才求值 operand，
+保留普通和局部实例捕获；被解释的参数包装为 Dyn，其余参数原样传递。
+Dyn 包装保留原值引用，不深复制。原有 test/interpreter/testee 的
+Wasm check 通过，工厂身份、捕获、多 witness 和延迟求值均有语言回归。
+
+ABI 8 新增独立 DebugEventsTable，记录 `{ debug_site_id, value_offset }`，
+并保留地址 16 的 u32 开关（默认关闭）。dbg! 原样返回操作数的引用，
+不改来源，不调用 Display、property 或其他用户代码。关闭时不分配事件；
+操作数失败时不记录。调试事件与诊断分表，with_diagnostics 不会捕获它。
+这只扩展观察协议，不增加 RT 的类型判断或语言求值能力。
+
+Manifest 携带执行闭包中 dbg! 的表达式标签、可选消息及模块/行号，
+不携带完整源码；表达式标签本身属于显式调试输出，会保留在发布物中。
+CLI 与浏览器 host 在外部输出边界按持久类型描述读取原值，输出受深度 8、
+每容器 32 项和 UTF-8 4096 字节上限约束。无需 JSON 编码、序列化用户值
+或 world-host 深复制；只有最终调试文本离开 Wasm。CLI 在执行边界输出
+新增事件，浏览器示例提供独立调试区域。ABI 7 等旧版本明确拒绝。
+
+91 项 Wasm 库测试和 15 项 Wasm CLI 回归通过。删除源码后的独立产物
+调试输出与即时 Wasm 路径一致；同一 ABI 8 文件经 Node 和真实 Chromium
+验证复合值、函数、Dyn、初始化事件及开关。没有将该结果解释为全量
+语言验收，完整语言/标准库审计与最终性能观察仍待完成。

@@ -1,11 +1,22 @@
 use telora_core::{Diagnostic, SourceDatabase, source::Severity};
 use telora_wasm::session::Session;
 
+fn debug(session: &Session) -> Result<(), String> {
+    for event in session.take_debug_events()? {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&event).map_err(|e| e.to_string())?
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn finish_portable<T>(
     session: &Session,
     before: usize,
     result: Result<T, String>,
 ) -> Result<T, String> {
+    debug(session)?;
     let mut errors = vec![];
     for event in session.diagnostics()?.iter().skip(before) {
         let mut rendered = event.render(&session.manifest);
@@ -39,6 +50,7 @@ pub(super) fn collect(
     session: &Session,
     sources: &SourceDatabase,
 ) -> Result<Vec<Diagnostic>, String> {
+    debug(session)?;
     let location = |words: [u32; 3]| {
         sources
             .files()

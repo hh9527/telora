@@ -439,6 +439,7 @@ impl<'a> Emitter<'a> {
                 self.extend([I::LocalGet(value), I::Return]);
                 Ok(value)
             }
+            HirKind::Debug { .. } => self.debug(node),
             HirKind::Closure | HirKind::Interpreter => self.closure(node),
             HirKind::Call => self.call(node),
             other => Err(format!(

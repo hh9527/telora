@@ -1,6 +1,73 @@
 use super::*;
 
 #[test]
+fn wasm_debug_events_survive_publication_without_sources() {
+    let cwd = fixture();
+    let source = cwd.join("src/debug.telora");
+    fs::write(
+        &source,
+        include_str!("../../../telora-wasm/tests/fixtures/debug-publish.telora"),
+    )
+    .unwrap();
+    let mut observed = Vec::new();
+    for backend in [None, Some("--wasm")] {
+        let output = telora(&cwd)
+            .args(["eval", "@src/debug:evaluated"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+            serde_json::json!(vec![true; 3])
+        );
+        let events = String::from_utf8(output.stderr)
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 5);
+        observed.push(events);
+    }
+    // Both routes preserve expression labels, source identity and line numbers.
+    for (old, wasm) in observed[0].iter().zip(&observed[1]) {
+        for key in ["name", "module", "line", "message"] {
+            assert_eq!(old[key], wasm[key], "{key}");
+        }
+    }
+    let output = telora(&cwd)
+        .args(["wasm", "build", "@src/debug:evaluated", "-o", "debug.wasm"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_file(source).unwrap();
+    let output = telora(&cwd)
+        .args(["wasm", "eval", "debug.wasm"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events = String::from_utf8(output.stderr)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(events, observed[1]);
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_check_constructs_test_descriptions_without_running_callbacks_or_fixtures() {
     let cwd = fixture();
     fs::write(

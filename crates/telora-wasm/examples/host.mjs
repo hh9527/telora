@@ -1,11 +1,12 @@
 // External transport only. Language functions, heap allocation and initialization run in Wasm.
 import { injectBundle } from './bundle.mjs';
+import { debugReader } from './debug.mjs';
 export async function load(bytes) {
   const module = await WebAssembly.compile(bytes);
   const sections = WebAssembly.Module.customSections(module, 'telora.manifest');
   if (sections.length !== 1) throw Error('缺少或重复的 Telora manifest');
   const manifest = JSON.parse(new TextDecoder().decode(sections[0]));
-  if (manifest.abi !== 7) throw Error('不支持的产物 ABI');
+  if (manifest.abi !== 8) throw Error('不支持的产物 ABI');
   const { exports: wasm } = await WebAssembly.instantiate(module, {});
   const view = () => new DataView(wasm.memory.buffer);
   const word = address => view().getUint32(address, true);
@@ -264,8 +265,11 @@ export async function load(bytes) {
     return json(result, desc.arguments.at(-1));
   };
   injectBundle(module, manifest, {allocate, store, copy, push, input, wasm});
+  const debugEvents = debugReader({manifest, word, payload, text, view});
   return {
     diagnostics,
+    debugEvents,
+    setDebugEnabled(enabled) { store(16, enabled ? 1 : 0); },
     injectData(name, value) {
       const module = manifest.data_modules.find(module => module.name === name);
       if (!module) throw Error('数据模块不在产物中');

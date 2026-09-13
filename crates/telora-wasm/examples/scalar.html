@@ -10,6 +10,7 @@
 <button id="stop">停止</button>
 <pre role="status"></pre>
 <pre id="diagnostics"></pre>
+<pre id="debug"></pre>
 <script type="module">
 const input = document.querySelector('input');
 const output = document.querySelector('pre');
@@ -29,6 +30,7 @@ document.querySelector('#run').onclick = async () => {
     active.onmessage = ({ data }) => {
       if (worker !== active) return;
       output.textContent = data.error ?? data.result; active.terminate(); worker = null;
+      document.querySelector('#debug').textContent = (data.debug ?? []).map(event => JSON.stringify(event)).join('\n');
       diagnostics.textContent = data.diagnostics.map(event => `${event.source}:${event.line ?? event.origin[1]}:${event.column ?? event.origin[2]} ${event.severity}: ${event.message}`).join('\n');
     };
     active.onerror = error => {
@@ -37,6 +39,7 @@ document.querySelector('#run').onclick = async () => {
     };
     output.textContent = '执行中…';
     diagnostics.textContent = '';
+    document.querySelector('#debug').textContent = '';
     const bytes = await file.arrayBuffer();
     if (worker === active) active.postMessage({ bytes, arguments: arguments_ }, [bytes]);
   } catch (error) {

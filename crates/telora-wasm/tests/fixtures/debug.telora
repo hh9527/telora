@@ -1,0 +1,23 @@
+import "std/codec" {encode, Value};
+import "std/dyn" as dyn;
+import "std/_rt" as rt;
+
+def seed = dbg!(41, "initialize");
+type Row = struct {name: String, value: Int};
+def original: Row = {name: "é🦀", value: 42};
+def callback: Fn(Int) -> Int = fn(n) { n + 1 };
+export def answer: Fn() -> Value = fn() {
+    let number = dbg!(seed + 1);
+    let record = dbg!(original);
+    let function = dbg!(callback);
+    let dict: Dict(Int) = {b: 2, a: 1};
+    let other = dbg!((True, (), b"ab", [1, 2], dict, Some(3), -0.0, dyn.pack(Int.type, number)));
+    let observed = rt.with_diagnostics(fn(ignored: ()) { dbg!(number) })(());
+    let origin = rt.with_diagnostics(fn(ignored: ()) { fail!("origin", dbg!(original)) })(());
+    encode(Value.type, [number == 42, record == original, function == callback,
+        match observed { Ok((value, reports)) => value == 42 && reports == [], Err(_) => False },
+        match origin { Err(reports) => reports[0].message == "origin", Ok(_) => False }])
+};
+export def evaluated = answer();
+export def stopped: Fn() -> Int = fn() { dbg!(fail!("stopped")) };
+export def long: Fn(String) -> Int = fn(text) { let ignored = dbg!(text); 42 };
