@@ -995,3 +995,10 @@ Unicode span 偏移混用，因此使用字符迭代器输入并显式转换 UTF
 
 这些用例不替代完整解析器语义审计。独立发布/重载、当前 ABI 的
 浏览器复验、完整边界审计和最终性能观察仍待完成，#186 保持推进中。
+
+当前 ABI 6 浏览器复验：重新编译 aggregates、call-input、browser-entry、
+check-rejection、capture-value 五个产物，Chromium 153 实际执行
+browser-smoke.mjs 全部通过。覆盖聚合值、外部类型化调用、Eval 输入、
+初始化拒绝与 warning/error、被捕获诊断的来源；未加载 Telora 源码或
+Rust host 运算。此项证明这些场景的当前产物协议，尚不替代完整标准库
+浏览器覆盖，也不代表 CLI 发布/重载入口已交付。
