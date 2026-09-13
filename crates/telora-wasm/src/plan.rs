@@ -225,9 +225,9 @@ impl Plan {
         plan.functions.insert(plan.root, 0);
         plan.demands.insert(plan.root, 0);
         plan.plan_comparisons(executable)?;
-        plan.plan_parsers(executable)?;
         plan.plan_encoders(executable)?;
         plan.plan_decoders(executable)?;
+        plan.plan_parsers(executable)?;
         for root in executable.closure().nodes() {
             let Some((17, name @ ("stringify" | "stringify_pretty"))) =
                 crate::natives::identity(mir, root.node)

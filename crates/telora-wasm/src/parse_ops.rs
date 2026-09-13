@@ -1,4 +1,5 @@
-//! Context: property metadata, path String, shared error cell, depth, original input.
+//! Context: property metadata, path String, shared error cell, depth, original input,
+//! optional codec rejection cell (zero for ordinary string.parse).
 use crate::{abi::*, emit::Emitter};
 use telora_core::mir::{TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
@@ -33,6 +34,7 @@ impl Emitter<'_> {
             ]);
         }
         self.store32(context, 12, 0);
+        self.store32(context, 20, 0);
         let value = self.parse_call(target, context, input)?;
         self.extend([I::LocalGet(value), I::I32Eqz, I::If(BlockType::Empty)]);
         let message = self.read32(error, 0);

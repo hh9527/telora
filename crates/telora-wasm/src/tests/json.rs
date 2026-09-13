@@ -1,6 +1,47 @@
 use super::*;
 
 #[test]
+fn codec_decode_check_blames_are_reported_only_when_raised() {
+    let source = include_str!("../../tests/fixtures/codec-decode-check-origins.telora");
+    let bytes = compile(source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    for (index, (message, needle)) in [
+        ("positive count", "-7"),
+        ("positive record", "-8"),
+        ("positive parsed", "\"-9\""),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(result[index].as_array().unwrap().len(), 1);
+        assert_eq!(result[index][0]["message"], message);
+        assert_eq!(
+            result[index][0]["labels"][1]["location"]["start"],
+            source.find(needle).unwrap()
+        );
+    }
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn codec_decode_nominal_and_parse_checks_return_rejections() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-decode-nominal.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(vec![true; 12])
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn codec_decode_tuple_honors_array_slice_start() {
     let bytes = compile_export(
         include_str!("../../tests/fixtures/codec-decode-tuples.telora"),

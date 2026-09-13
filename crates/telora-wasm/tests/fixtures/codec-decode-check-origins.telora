@@ -1,0 +1,23 @@
+import "std/codec" as codec;
+import "std/value" {Value};
+import "std/_rt" as rt;
+import "std/regex" as regex;
+import "std/string" as string;
+@check(fn(value) {if value > 0 {Ok(())} else {Err(blame!("positive count",value))}})
+type Count = struct(Int);
+@check(fn(value) {if value.number > 0 {Ok(())} else {Err(blame!("positive record",value.number))}})
+type Positive = struct {number: Int};
+@string.decode_by_parse
+@string.encode_by_display
+@regex.parse_by(regex.compile("^(?P<number>.+)$"))
+@check(fn(value) {if value.number > 0 {Ok(())} else {Err(blame!("positive parsed",value.number))}})
+type Parsed = struct {number: Int};
+def capture = fn(f: Fn(Value) -> Int, input: Value) {match rt.with_diagnostics(f)(input) {Err(reports) => reports,Ok(_) => fail!("expected rejection")}};
+export def answer = fn() {
+    let count = Value.Int(-7);
+    let record = Value.Object({number:Value.Int(-8)});
+    let text = Value.String("-9");
+    (capture(fn(value) {match codec.decode(Count.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},count),
+     capture(fn(value) {match codec.decode(Positive.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},record),
+     capture(fn(value) {match codec.decode(Parsed.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},text))
+};

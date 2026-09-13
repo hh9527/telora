@@ -125,7 +125,14 @@ impl Emitter<'_> {
             }
             let value = self.packed_tuple(target, &fields)?;
             self.copy(value, 0, 1, 12);
-            self.construction_check(node, target, PropertySite::Type, value)?;
+            let rejection = self.read32(0, 20);
+            self.construction_check_with_rejection(
+                node,
+                target,
+                PropertySite::Type,
+                value,
+                Some(rejection),
+            )?;
             self.extend([I::LocalGet(value), I::Return, I::End]);
         }
         self.parse_reject("type has no std/string.parse capability")?;

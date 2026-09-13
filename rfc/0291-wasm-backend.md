@@ -902,3 +902,20 @@ Value.Array 且长度精确匹配；Unit 对应空数组。元素沿专用解码
 5 项定向解码测试通过，包含 7 项 Tuple/Unit 语言断言，以及通过合法
 ABI 描述符构造的非零起点切片测试。CLI 默认/Wasm 对照通过。
 Record/newtype/enum、property/ParseBy 解码和此前剩余验收继续推进。
+
+## Record/newtype 与 ParseBy 解码
+
+Record/newtype 已按封闭布局接通，包含递归字段、可选字段缺省、未知
+字段和必需字段验证。rename_all 消费固定 property 身份，验证 CamelCase
+并检查外部名称碰撞。newtype 直接登记解码后的载荷，不深复制对象图。
+
+成对 DecodeByParse/EncodeByDisplay 的解码分支已桥接现有封闭类型
+解析函数图；ParseBy 的正则和字段解析仍使用原 Rust RT 固定操作。
+解码错误上下文增加原 Blame 槽位。newtype、Record 和 ParseBy 的
+构造检查返回 Err 时保存 Blame，根解码调用返回 Result.Err；普通
+构造和 string.parse 的报告语义保持原样。显式 raise 后验证只报告
+一次，数字/字符串载荷来源保留。
+
+76 项 Wasm 库测试通过，包含新增的 12 项语言断言及三类检查来源和
+无重复报告验证；CLI 默认/Wasm 对照通过。enum 解码、更多 property 边界、schema/YAML/TOML、
+独立发布、浏览器和最终性能验收仍待完成，#186 尚未完成。

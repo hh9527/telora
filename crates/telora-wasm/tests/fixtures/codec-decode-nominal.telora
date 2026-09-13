@@ -1,0 +1,33 @@
+import "std/codec" as codec;
+import "std/value" { Value };
+import "std/array" as array;
+import "std/json" as json;
+import "std/regex" as regex;
+import "std/string" as string;
+@check(fn(value) { if value > 0 {Ok(())} else {Err(blame!("positive count",value))} })
+type Count = struct(Int);
+type Counts = struct(Array(Count));
+type Record = struct {number: Count, label: Option(String)};
+@json.rename_all(json.RenameCase.CamelCase)
+type Renamed = struct {some_number: Int};
+@string.decode_by_parse
+@string.encode_by_display
+@regex.parse_by(regex.compile("^(?P<number>.+)$"))
+@check(fn(value) {if value.number > 0 {Ok(())} else {Err(blame!("positive parsed",value.number))}})
+type Parsed = struct {number: Int};
+type Chain = struct {number: Int, next: Option(Chain)};
+export def inspect = fn() {
+    [codec.decode(Count.type,Value.Int(7)) == Ok(Count(7)),
+     match codec.decode(Count.type,Value.Int(-1)) {Err(_) => True,Ok(_) => False},
+     codec.decode(Counts.type,Value.Array([Value.Int(1),Value.Int(2)])) == Ok(Counts([Count(1),Count(2)])),
+     match codec.decode(Record.type,Value.Object({number:Value.Int(3)})) {Ok(value) => value.number == Count(3) && value.label == None,Err(_) => False},
+     match codec.decode(Record.type,Value.Object({label:Value.String("x")})) {Err(_) => True,Ok(_) => False},
+     match codec.decode(Record.type,Value.Object({number:Value.Int(3),extra:Value.True})) {Err(_) => True,Ok(_) => False},
+     match codec.decode(Renamed.type,Value.Object({someNumber:Value.Int(3)})) {Ok(value) => value.some_number == 3,Err(_) => False},
+     match codec.decode(Parsed.type,Value.String("7")) {Ok(value) => value.number == 7,Err(_) => False},
+     match codec.decode(Parsed.type,Value.String("-7")) {Err(_) => True,Ok(_) => False},
+     match codec.decode(Parsed.type,Value.String("x")) {Err(_) => True,Ok(_) => False},
+     match codec.decode(Parsed.type,Value.Int(7)) {Err(_) => True,Ok(_) => False},
+     match codec.decode(Chain.type,Value.Object({number:Value.Int(1),next:Value.Object({number:Value.Int(2)})})) {Ok(value) => value.number == 1 && match value.next {Some(next) => next.number == 2 && next.next == None,None => False},Err(_) => False}]
+};
+export def answer = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));

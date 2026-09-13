@@ -5,6 +5,17 @@ impl Plan {
     pub(crate) fn plan_parsers(&mut self, executable: &SealedExecutable<'_>) -> Result<(), String> {
         let mir = executable.sealed_mir().mir();
         let mut pending = Vec::new();
+        pending.extend(self.functions.keys().filter_map(|key| match key.special {
+            Special::Decode(_, target)
+                if matches!(
+                    mir.types[target.index()].constructor,
+                    T::Nominal(_) | T::Record(_)
+                ) =>
+            {
+                Some(target)
+            }
+            _ => None,
+        }));
         for root in executable.closure().nodes() {
             if crate::natives::identity(mir, root.node) != Some((7, "parse_with")) {
                 continue;

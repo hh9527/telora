@@ -12,6 +12,8 @@ mod checks;
 mod codec_arrays;
 mod codec_decode;
 mod codec_decode_arrays;
+mod codec_decode_nominal;
+mod codec_decode_record;
 mod codec_decode_tuple;
 mod codec_display;
 mod codec_enums;

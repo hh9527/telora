@@ -11,6 +11,18 @@ impl Emitter<'_> {
         site: PropertySite,
         value: u32,
     ) -> Result<(), String> {
+        self.construction_check_with_rejection(node, owner, site, value, None)
+    }
+
+    /// A decoder retains a returned Blame; ordinary construction reports it.
+    pub(crate) fn construction_check_with_rejection(
+        &mut self,
+        node: HirId,
+        owner: TypeId,
+        site: PropertySite,
+        value: u32,
+        rejection: Option<u32>,
+    ) -> Result<(), String> {
         for (&index, &key) in &self.plan.checks {
             let check = &self.mir.construction_checks[index];
             if check.owner != owner || check.site != site {
@@ -60,8 +72,22 @@ impl Emitter<'_> {
                 I::If(BlockType::Empty),
             ]);
             let blame = self.enum_payload(output, index, value)?;
-            let (message, subjects, count) = self.blame_parts(blame);
-            self.report(node, message, subjects, count, false);
+            if let Some(cell) = rejection {
+                self.extend([I::LocalGet(cell), I::If(BlockType::Empty)]);
+                self.extend([
+                    I::LocalGet(cell),
+                    I::LocalGet(blame),
+                    I::I32Store(memory(8, 2)),
+                    I::I32Const(0),
+                    I::Return,
+                ]);
+                self.emit(I::End);
+                let (message, subjects, count) = self.blame_parts(blame);
+                self.report(node, message, subjects, count, false);
+            } else {
+                let (message, subjects, count) = self.blame_parts(blame);
+                self.report(node, message, subjects, count, false);
+            }
             self.emit(I::End);
         }
         Ok(())

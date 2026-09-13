@@ -1,3 +1,5 @@
+//! Context: six property identities, path, rejection cell.
+//! Rejection cell: message, subject, original checker Blame (all pointers).
 use crate::{
     abi::*,
     emit::Emitter,
@@ -28,9 +30,10 @@ impl Emitter<'_> {
         let context = self.alloc(32);
         self.copy(context, 0, properties, 24);
         let path = self.text_as(self.key.node, self.string_type()?, b"$")?;
-        let error = self.alloc(8);
+        let error = self.alloc(12);
         self.store32(error, 0, 0);
         self.store32(error, 4, 0);
+        self.store32(error, 8, 0);
         self.extend([
             I::LocalGet(context),
             I::LocalGet(path),
@@ -43,6 +46,10 @@ impl Emitter<'_> {
         self.extend([I::LocalGet(decoded), I::If(BlockType::Empty)]);
         let ok = self.enum_value(self.key.node, args[3], 1, Some(decoded))?;
         self.extend([I::LocalGet(ok), I::Return, I::End]);
+        let blame = self.read32(error, 8);
+        self.extend([I::LocalGet(blame), I::If(BlockType::Empty)]);
+        let rejected = self.enum_value(self.key.node, args[3], 0, Some(blame))?;
+        self.extend([I::LocalGet(rejected), I::Return, I::End]);
         let message = self.read32(error, 0);
         // No rejection means evaluation already failed; preserve that failure.
         self.checked(message);
@@ -86,6 +93,12 @@ impl Emitter<'_> {
     ) -> Result<u32, String> {
         if target == source {
             return Ok(input);
+        }
+        if matches!(
+            self.mir.types[target.index()].constructor,
+            T::Nominal(_) | T::Record(_)
+        ) {
+            return self.codec_decode_nominal(source, target, input);
         }
         if self.mir.types[target.index()].constructor == T::Tuple {
             return self.codec_decode_tuple(source, target, input);
@@ -165,8 +178,17 @@ impl Emitter<'_> {
     }
 
     pub(crate) fn codec_decode_reject(&mut self, message: &str, input: u32) -> Result<(), String> {
-        let message = self.text_as(self.key.node, self.string_type()?, message.as_bytes())?;
         let path = self.read32(0, 24);
+        self.codec_decode_reject_at(message, input, path)
+    }
+
+    pub(crate) fn codec_decode_reject_at(
+        &mut self,
+        message: &str,
+        input: u32,
+        path: u32,
+    ) -> Result<(), String> {
+        let message = self.text_as(self.key.node, self.string_type()?, message.as_bytes())?;
         let message = self.parse_text(6, path, message)?;
         let error = self.read32(0, 28);
         self.extend([
