@@ -636,3 +636,18 @@ Newtype、空集合和错误结果的原 Dyn 身份。Array slice 尚无源码�
 
 fields/field、Fmt 结构比较、regex/parse/codec 等标准库能力，以及
 最终发布/浏览器/分阶段性能验收仍待完成；本轮未重复性能基准。
+
+## Dyn 命名字段观察
+
+fields_raw/field_raw 已接通，覆盖名义 Record 和有序 Dict。Record 消费
+MIR 中排序后的成员表及偏移；Dict 枚举既有键列，单字段查询复用二分查找，
+元素步长来自静态类型描述。结果只登记原字段引用，保持来源和对象共享。
+空 Record/Dict(Never) 不读取不存在的字段。缺失字段返回带原 Dyn 的
+AccessError；RT 仅扩充现有诊断格式化入口的操作码，不承担类型绑定。
+
+34 项 Wasm 库测试通过，默认/Wasm CLI 字段观察等对照通过，新增 10 项
+语言检查覆盖排序、异构字段、空集合、二分查找命中和缺失字段错误。
+追加 field/fields 取出值的来源验证通过，诊断指向原字段字面量。
+至此 std/dyn 当前声明的 native 操作均已具备 Wasm 实现；这不是整个
+后端的验收结论。Fmt 结构比较、regex/parse/codec 等标准库能力及最终
+发布/浏览器/分阶段性能验收仍待完成。本轮未重复性能基准。

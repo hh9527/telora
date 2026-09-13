@@ -23,6 +23,11 @@ impl Emitter<'_> {
         Ok(result)
     }
     pub(crate) fn dictionary_lookup(&mut self, receiver: u32, key: u32, width: u32) -> u32 {
+        let stride = self.local(ValType::I32);
+        self.extend([I::I32Const(width as i32), I::LocalSet(stride)]);
+        self.dictionary_lookup_stride(receiver, key, stride)
+    }
+    pub(crate) fn dictionary_lookup_stride(&mut self, receiver: u32, key: u32, stride: u32) -> u32 {
         let keys = self.table_data(ARRAYS, receiver, DATA);
         let values = self.table_data(ARRAYS, receiver, 24);
         let low = self.local(ValType::I32);
@@ -60,7 +65,7 @@ impl Emitter<'_> {
             I::If(BlockType::Empty),
             I::LocalGet(values),
             I::LocalGet(middle),
-            I::I32Const(width as i32),
+            I::LocalGet(stride),
             I::I32Mul,
             I::I32Add,
             I::LocalSet(result),

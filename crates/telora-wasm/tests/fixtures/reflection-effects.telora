@@ -35,6 +35,8 @@ export def answer = fn() {
             Err(reports) => reports[0], Ok(_) => fail!("missing element diagnostic"),
         }
     };
+    let named = match dyn.field(packed, "value") { Ok(value) => value, Err(_) => fail!("named field") };
+    let named_fields = match dyn.fields(packed) { Ok(values) => values, Err(_) => fail!("named fields") };
     (match fields { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match variants { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match invalid { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
@@ -47,5 +49,6 @@ export def answer = fn() {
      match negative_variant { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match large_variant { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match payload_origin { Err(reports) => reports[0], Ok(_) => fail!("missing payload diagnostic") },
-     observe_origin(array_children[0]), observe_origin(tuple_children[0]))
+     observe_origin(array_children[0]), observe_origin(tuple_children[0]),
+     observe_origin(named), observe_origin(named_fields[0].1))
 };

@@ -82,6 +82,7 @@ pub unsafe extern "C" fn telora_member_message(operation: u32, a: u32, b: u32) -
         match operation {
             0 => render(format_args!("field index {a} is out of range")),
             1 => render(format_args!("Dyn variant index is {a}, not {b}")),
+            2 => render(format_args!("Dyn record has no field {:?}", crate::text::text(a))),
             _ => core::arch::wasm32::unreachable(),
         }
     }

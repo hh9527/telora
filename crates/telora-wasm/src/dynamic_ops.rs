@@ -5,6 +5,12 @@ use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub fn dynamic_native(&mut self, name: &str) -> Result<u32, String> {
+        if name == "field_raw" {
+            return self.dynamic_named_field();
+        }
+        if name == "fields_raw" {
+            return self.dynamic_fields();
+        }
         if name == "array_items_raw" {
             return self.dynamic_array_items();
         }

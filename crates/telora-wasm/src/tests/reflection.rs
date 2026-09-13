@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn dyn_fields_observe_records_and_sorted_dictionaries() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/dynamic-fields.telora"),
+        "checks",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(vec![true; 10])
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn dyn_sequences_retain_closed_element_types() {
     let bytes = compile_export(
         include_str!("../../tests/fixtures/dynamic-sequences.telora"),
@@ -151,5 +167,11 @@ fn reflection_errors_are_captured_and_dyn_fields_keep_their_origins() {
         result[13]["labels"][1]["location"]["start"],
         source.find("34567").unwrap()
     );
+    for index in [14, 15] {
+        assert_eq!(
+            result[index]["labels"][1]["location"]["start"],
+            source.find("42").unwrap()
+        );
+    }
     assert!(session.diagnostics().unwrap().is_empty());
 }

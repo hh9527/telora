@@ -230,6 +230,8 @@ impl Plan {
                                 | "payload_raw"
                                 | "array_items_raw"
                                 | "tuple_items_raw"
+                                | "fields_raw"
+                                | "field_raw"
                         ))
             })
         }) {
