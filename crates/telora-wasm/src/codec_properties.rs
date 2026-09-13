@@ -13,6 +13,52 @@ pub(crate) const PROPERTY_FIELDS: [&str; 6] = [
 ];
 
 impl Emitter<'_> {
+    pub(crate) fn codec_rename(&mut self, target: TypeId, input: u32) -> Result<u32, String> {
+        let selected = self.codec_property_value(target, 4)?;
+        let rename = self.local(ValType::I32);
+        self.extend([I::LocalGet(selected), I::If(BlockType::Empty)]);
+        for property in &self.mir.properties {
+            if property.owner != target || property.site != PropertySite::Type {
+                continue;
+            }
+            let Some(object) = &self.plan.layouts[property.property.index()].object else {
+                continue;
+            };
+            let Some(case) = object.members.iter().find(|m| m.name == "case") else {
+                continue;
+            };
+            let ty = case.type_id.ok_or("Wasm: rename case type missing")?;
+            let Some(camel) = self.plan.layouts[ty]
+                .variants
+                .iter()
+                .position(|v| v.name == "CamelCase")
+            else {
+                continue;
+            };
+            let offset = case.offset.ok_or("Wasm: rename case offset missing")?;
+            self.extend([
+                I::LocalGet(0),
+                I::I32Load(memory(16, 2)),
+                I::I32Const(property.property.index() as i32),
+                I::I32Eq,
+                I::If(BlockType::Empty),
+            ]);
+            let data = self.table_data(RECORDS, selected, DATA);
+            self.extend([
+                I::LocalGet(data),
+                I::I32Load(memory(offset + DATA, 2)),
+                I::I32Const(camel as i32),
+                I::I32Eq,
+                I::LocalSet(rename),
+                I::End,
+            ]);
+        }
+        self.extend([I::LocalGet(rename), I::I32Eqz, I::If(BlockType::Empty)]);
+        self.codec_error(input, "rename_all requires CamelCase")?;
+        self.extend([I::End, I::End]);
+        Ok(rename)
+    }
+
     pub(crate) fn codec_property_value(
         &mut self,
         owner: TypeId,

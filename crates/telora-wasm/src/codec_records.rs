@@ -29,26 +29,11 @@ impl Emitter<'_> {
         self.codec_property_value(source, 2)?;
         let displayed = self.codec_display(source, target, input)?;
         self.extend([I::LocalGet(displayed), I::Return, I::End]);
-        for slot in [4] {
-            if slot == 4 && (is_record || is_enum) {
-                continue;
-            }
-            let present = self.codec_property_present(source, slot);
-            self.extend([I::LocalGet(present), I::If(BlockType::Empty)]);
-            let message = self.text_as(
-                self.key.node,
-                self.string_type()?,
-                b"Wasm: codec property rule is not yet implemented",
-            )?;
-            let count = self.local(ValType::I32);
-            self.extend([I::I32Const(1), I::LocalSet(count)]);
-            self.report(self.key.node, message, input, count, false);
-            self.emit(I::End);
-        }
+        // A newtype validates this metadata but has no external field names.
+        let rename = self.codec_rename(source, input)?;
         let untagged = self.codec_property_value(source, 5)?;
         if is_enum {
             self.extend([I::LocalGet(untagged), I::If(BlockType::Empty)]);
-            let rename = self.codec_property_present(source, 4);
             self.extend([I::LocalGet(rename), I::If(BlockType::Empty)]);
             self.codec_error(input, "rename_all is not meaningful on an untagged Enum")?;
             self.emit(I::End);
@@ -75,49 +60,13 @@ impl Emitter<'_> {
         if !is_record && !is_enum {
             return Err("Wasm: codec nominal type is not yet supported".into());
         }
-        for (&index, &key) in &self.plan.properties {
-            let property = &self.mir.properties[index];
-            if property.owner != source || property.site != telora_core::mir::PropertySite::Type {
-                continue;
-            }
-            let Some(object) = &self.plan.layouts[property.property.index()].object else {
-                continue;
-            };
-            let Some(case) = object.members.iter().find(|m| m.name == "case") else {
-                continue;
-            };
-            let case_ty = case.type_id.ok_or("Wasm: rename case type missing")?;
-            let Some(camel) = self.plan.layouts[case_ty]
-                .variants
-                .iter()
-                .position(|v| v.name == "CamelCase")
-            else {
-                continue;
-            };
-            let offset = case.offset.ok_or("Wasm: rename case offset missing")?;
-            self.extend([
-                I::LocalGet(0),
-                I::I32Load(memory(16, 2)),
-                I::I32Const(property.property.index() as i32),
-                I::I32Eq,
-                I::If(BlockType::Empty),
-            ]);
-            let capability = self.call_key(key)?;
-            let data = self.table_data(RECORDS, capability, DATA);
-            self.extend([
-                I::LocalGet(data),
-                I::I32Load(memory(offset + DATA, 2)),
-                I::I32Const(camel as i32),
-                I::I32Ne,
-            ]);
-            self.fail_if(self.key.node, ERROR_DATA);
-            let value = if is_enum {
-                self.codec_encode_enum_names(source, target, input, true)?
-            } else {
-                self.codec_record_fields(source, target, input, true)?
-            };
-            self.extend([I::LocalGet(value), I::Return, I::End]);
-        }
+        self.extend([I::LocalGet(rename), I::If(BlockType::Empty)]);
+        let value = if is_enum {
+            self.codec_encode_enum_names(source, target, input, true)?
+        } else {
+            self.codec_record_fields(source, target, input, true)?
+        };
+        self.extend([I::LocalGet(value), I::Return, I::End]);
         if is_enum {
             self.codec_encode_enum(source, target, input)
         } else {

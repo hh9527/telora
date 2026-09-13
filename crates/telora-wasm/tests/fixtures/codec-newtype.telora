@@ -1,5 +1,7 @@
 import "std/codec" as codec;
 import "std/value" { Value };
+import "std/json" as json;
+@json.rename_all(json.RenameCase.CamelCase)
 type Count = struct(Int);
 type Counts = struct(Array(Count));
 export def inspect = fn() { codec.encode(Value.type, Counts([Count(1), Count(2)])) };
