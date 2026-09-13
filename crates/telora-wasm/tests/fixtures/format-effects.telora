@@ -1,0 +1,18 @@
+import "std/fmt" as fmt;
+import "std/_rt" as rt;
+
+def nested: Fn(Int) -> fmt.Fmt = fn(depth) {
+    if depth == 0 { fmt.from_string("x") }
+    else { fmt.concat(["", ""], [nested(depth - 1)]) }
+};
+
+export def answer = fn() {
+    let invalid = rt.with_diagnostics(fn(unit: ()) { fmt.concat([], []) })(());
+    let deep = rt.with_diagnostics(fn(unit: ()) { fmt.render(nested(128)) })(());
+    let left = fn() { let warning: Option(()) = warn!("left"); 7 };
+    let right = fn() { let warning: Option(()) = warn!("right"); "ok" };
+    let rendered = `\{left()}:\{right()}`;
+    (match invalid { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match deep { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     fmt.render(nested(127)), rendered)
+};

@@ -36,8 +36,16 @@ unsafe fn render(arguments: fmt::Arguments<'_>) -> u32 {
 }
 
 pub(crate) unsafe fn render_with(mut write: impl FnMut(&mut dyn Write) -> fmt::Result) -> u32 {
+    let result = unsafe { try_render_with(&mut write) };
+    assert_ne!(result, 0);
+    result
+}
+
+pub(crate) unsafe fn try_render_with(mut write: impl FnMut(&mut dyn Write) -> fmt::Result) -> u32 {
     let mut size = Counter(0);
-    write(&mut size).unwrap();
+    if write(&mut size).is_err() {
+        return 0;
+    }
     let bytes = u32::try_from(size.0).unwrap();
     unsafe {
         let span = crate::telora_alloc(bytes.checked_add(8).unwrap());

@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn wasm_formatting_and_interpolation_match_default_backend() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        include_str!("../../../telora-wasm/tests/fixtures/format.telora"),
+    )
+    .unwrap();
+    let mut results = vec![];
+    for backend in [None, Some("--wasm")] {
+        let output = telora(&cwd)
+            .args(["eval", "@src/main:answer"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+    }
+    assert_eq!(results[0], results[1]);
+    assert_eq!(results[1][7], "n=42, f=3, s=ready");
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_equality_matches_default_backend() {
     let cwd = fixture();
     fs::write(

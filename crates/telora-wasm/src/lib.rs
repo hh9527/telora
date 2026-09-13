@@ -20,6 +20,7 @@ mod entry;
 mod enums;
 mod equality;
 mod equality_plan;
+mod format_ops;
 mod functions;
 mod input;
 mod input_heap;

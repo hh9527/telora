@@ -5,6 +5,7 @@ use telora_core::{
 };
 
 mod equality;
+mod format;
 mod records;
 
 #[test]

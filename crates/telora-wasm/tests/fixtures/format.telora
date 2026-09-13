@@ -1,0 +1,43 @@
+import "std/fmt" as fmt;
+import "std/value" { Value };
+
+type State = enum { Ready };
+impl fmt.Display for State {
+    display: fn(value) { match value { State.Ready => fmt.from_string("ready") } },
+};
+type Wrapper(T) = struct { value: T };
+trait Render { render: Fn(Self) -> String };
+impl(T: fmt.Display) Render for Wrapper(T) {
+    render: fn(value) { `wrapped=\{value.value}` },
+};
+
+def shared = fmt.concat(["[", ":", "]"], [fmt.from_string("é🦀"), fmt.from_int(42)]);
+
+export def inspect = fn() {
+    let state = State.Ready;
+    let number = 42;
+    let float = 3.0;
+    let tiny = 0.00125;
+    let zero = -0.0;
+    let wrapped: Wrapper(Int) = { value: 9 };
+    (fmt.render(shared),
+     fmt.render(fmt.from_int(-9223372036854775807 - 1)),
+     fmt.render(fmt.from_float(float)),
+     fmt.render(fmt.from_float(tiny)),
+     fmt.render(fmt.from_float(zero)),
+     fmt.render(fmt.concat([""], [])),
+     fmt.render(fmt.concat(["", "/", ""], [shared, shared])),
+     `n=\{number}, f=\{float}, s=\{state}`,
+     `nested=\{if True { "yes" } else { "no" }}`,
+     ``, `unicode é🦀`, fmt.render(fmt.from_string("01234567890123456789")),
+     Render.render(wrapped))
+};
+
+def results = inspect();
+export def answer = Value.Array([
+    Value.String(results.0), Value.String(results.1), Value.String(results.2),
+    Value.String(results.3), Value.String(results.4), Value.String(results.5),
+    Value.String(results.6), Value.String(results.7), Value.String(results.8),
+    Value.String(results.9), Value.String(results.10), Value.String(results.11),
+    Value.String(results.12),
+]);

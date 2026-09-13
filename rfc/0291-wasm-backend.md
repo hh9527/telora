@@ -482,3 +482,37 @@ NonFiniteFloat，可被诊断捕获；不再把非有限数值发布为正常 Fl
 未被选择导出引用的顶层值，而当前 Wasm seal_export 只包含所选依赖
 闭包。此差异尚未处理，不能以正向比较用例通过代表初始化语义已对齐。
 资源类型比较、Fmt/插值、其他标准库与最终性能/浏览器验收仍未完成。
+
+## Fmt 节点、插值与封闭 trait 成员
+
+2026-09-13：接通 from_string/from_int/from_float/concat/render 和插值。
+Rust RT 使用固定的格式节点 ABI：操作码、第一参数指针、第二参数指针；
+Fmt 值保存 FormatTable 的稳定 HeapId。参数指向 Wasm 内已经生成的不可变
+值，不复制其堆对象。FormatTable 与其余分类表一起冻结初始化前缀。
+新增分类表使产物 ABI 升至 4；装载端和浏览器 transport 同步更新，旧实验
+产物明确拒绝，不引入兼容路径。
+
+生成器检查已封闭签名，构造格式节点和 String 结果；RT 只按固定操作读取
+参数，不查询 TypeId 或实例化模板。concat 在构造时检查两列长度；render
+维持递归上限，超过上限生成可捕获的语言失败，不用引擎 trap 代替诊断。
+插值按源码顺序求值全部片段后再渲染，片段的 String/Fmt 操作码由 MIR
+决定。数字文本沿用 Rust Display，包括整数下界、浮点负零与小数。
+
+插值验证同时补上了已有的 trait 成员消费缺口：通过已封闭的 implementation
+SymbolId/GenericInstanceId 获取实现记录，按确定字段偏移读取方法。实现
+绑定沿用普通值初始化，不建立运行时方法搜索。语言用例覆盖普通自定义
+Display 与带 Display 约束的泛型 trait 实现。
+
+23 项 Wasm 库测试、9 项 CLI 对照测试通过。13 项格式化结果与默认后端
+一致；127 层格式节点可渲染，128 层产生可捕获诊断，失败后外层继续执行。
+独立 Node 进程重载 ABI 4 产物，13 项结果通过且 imports 为空。本轮未做
+性能基准，ABI 4 的实际浏览器全流程复验留在后续验收。
+
+初始化范围调查确认：共享 SealedMir::seal_export 明确裁剪普通顶层导出，
+保留 concrete property/check 根；Native 和 Wasm 都消费这条规则。默认
+解释器仍从 ExecutionGraph 安装并初始化更大的图。本路线继续遵循共享
+SealedExecutable 的根集合，不为对齐默认解释器而额外执行未准入导出。
+最终对照须明确这项既有差异，不能将所有后端的初始化范围宣称为相同。
+
+Fmt.prepare、DisplayBy 所需的 Dyn/类型反射、Fmt 结构比较以及其余标准库
+操作仍待实现；当前进展不是完整格式化标准库或完整 eval-with 验收。

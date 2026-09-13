@@ -75,6 +75,52 @@ impl Emitter<'_> {
         Ok(result)
     }
     pub fn field(&mut self, node: HirId) -> Result<u32, String> {
+        if let Some(telora_core::mir::MemberSelection::TraitMember { implementation, .. }) =
+            self.mir.member_selections[node.index()]
+        {
+            let instance = self
+                .key
+                .instance
+                .and_then(|id| self.mir.generic_instances[id.index()].implementation(node))
+                .or(self.mir.implementation_instances[node.index()]);
+            let key = if let Some(instance) = instance {
+                self.plan.instances.get(&instance)
+            } else if let Some(symbol) = implementation {
+                self.plan.globals.get(&symbol)
+            } else {
+                None
+            }
+            .copied()
+            .ok_or("Wasm: trait member has no sealed implementation")?;
+            let owner = key.ty(self.mir, key.node)?;
+            let name = child(self.mir, node, Role::Name)?;
+            let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
+                return Err("Wasm: trait member name missing".into());
+            };
+            let field = self.plan.layouts[owner.index()]
+                .object
+                .as_ref()
+                .and_then(|object| object.members.iter().find(|field| &field.name == name))
+                .ok_or("Wasm: sealed implementation member missing")?;
+            let offset = field
+                .offset
+                .ok_or("Wasm: implementation member offset missing")?;
+            if field.type_id != Some(self.ty(node)?.index()) {
+                return Err(
+                    "Wasm: implementation member type differs from sealed selection".into(),
+                );
+            }
+            let record = self.call_key(key)?;
+            let data = self.table_data(RECORDS, record, DATA);
+            let result = self.local(ValType::I32);
+            self.extend([
+                I::LocalGet(data),
+                I::I32Const(offset as i32),
+                I::I32Add,
+                I::LocalSet(result),
+            ]);
+            return Ok(result);
+        }
         if let Some(instance) = self.key.reference(self.mir, node) {
             return self.call_key(
                 *self

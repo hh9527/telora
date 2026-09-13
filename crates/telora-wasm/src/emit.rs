@@ -267,6 +267,7 @@ impl<'a> Emitter<'a> {
             HirKind::Int(value) => self.scalar(node, *value),
             HirKind::Float(value) => self.scalar(node, value.to_bits() as i64),
             HirKind::String(value) => self.text(node, value.as_bytes()),
+            HirKind::InterpolatedString => self.interpolate(node),
             HirKind::Bytes(value) => self.bytes_literal(node, value),
             HirKind::Array => self.array_expression(node),
             HirKind::Dict => {
@@ -295,7 +296,9 @@ impl<'a> Emitter<'a> {
                 }
                 if !matches!(
                     kind,
-                    telora_core::ast::BindingKind::Let | telora_core::ast::BindingKind::Def
+                    telora_core::ast::BindingKind::Let
+                        | telora_core::ast::BindingKind::Def
+                        | telora_core::ast::BindingKind::Impl
                 ) {
                     return Err(format!("Wasm: unsupported binding {kind:?}"));
                 }
