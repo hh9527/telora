@@ -1,0 +1,21 @@
+import "std/yaml" as yaml;
+import "std/value" {Value};
+import "std/array" as array;
+export def inspect = fn() {
+    [yaml.parse("name: Ada\nage: 36\nenabled: true\nlegacy: yes\nwhen: 2026-08-04\n") == Ok(Value.Object({name:Value.String("Ada"),age:Value.Int(36),enabled:Value.True,legacy:Value.String("yes"),when:Value.String("2026-08-04")})),
+     yaml.parse("base: &pair [1, 2]\ncopy: *pair\n") == Ok(Value.Object({base:Value.Array([Value.Int(1),Value.Int(2)]),copy:Value.Array([Value.Int(1),Value.Int(2)])})),
+     yaml.parse("literal: |-\n  a\n  b\nfolded: >\n  hello\n  world\n") == Ok(Value.Object({literal:Value.String("a\nb"),folded:Value.String("hello world\n")})),
+     yaml.parse("defaults: &defaults {a: 1, b: 2}\nitem:\n  <<: *defaults\n  b: 3\n  bytes: !!binary SGk=\n") == Ok(Value.Object({defaults:Value.Object({a:Value.Int(1),b:Value.Int(2)}),item:Value.Object({a:Value.Int(1),b:Value.Int(3),bytes:Value.Bytes(b"Hi")})})),
+     yaml.parse("") == Ok(Value.None),
+     match yaml.parse("a: 1\na: 2\n") {Err(_) => True,Ok(_) => False},
+     match yaml.parse("a: &a {self: *a}\n") {Err(_) => True,Ok(_) => False},
+     match yaml.parse("a: &same 1\nb: &same 2\n") {Err(_) => True,Ok(_) => False},
+     match yaml.parse("a: .inf\n") {Err(_) => True,Ok(_) => False},
+     match yaml.parse("a: !custom x\n") {Err(_) => True,Ok(_) => False},
+     match yaml.parse("a: !!binary SG==\n") {Err(_) => True,Ok(_) => False},
+     match yaml.parse("a: &a {x: 1}\nb: &b {x: 2}\nitem: {<<: [*a, *b]}\n") {Err(_) => True,Ok(_) => False},
+     match yaml.parse("---\na: 1\n---\nb: 2\n") {Err(_) => True,Ok(_) => False},
+     yaml.parse("&root [1, 2]\n") == Ok(Value.Array([Value.Int(1),Value.Int(2)])),
+     yaml.parse("é: &a [1] # &ignored\ncopy: *a\n") == Ok(Value.Object({"é":Value.Array([Value.Int(1)]),copy:Value.Array([Value.Int(1)])}))]
+};
+export def answer = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));

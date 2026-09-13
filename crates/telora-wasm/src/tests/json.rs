@@ -1,18 +1,38 @@
 use super::*;
 
 #[test]
-fn toml_parse_rejection_preserves_original_input_location() {
-    let source = include_str!("../../tests/fixtures/toml-parse.telora");
-    let bytes = compile_export(source, "rejected").unwrap();
+fn yaml_parse_preserves_telora_scalars_aliases_merges_and_binary() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/yaml-parse.telora"),
+        "inspect",
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
-    let result = session.call(&[]).unwrap();
-    assert!(result["message"].as_str().unwrap().contains("duplicate"));
     assert_eq!(
-        result["labels"][1]["location"]["start"],
-        source.find("\"duplicate=1").unwrap()
+        session.call(&[]).unwrap(),
+        serde_json::json!(vec![true; 15])
     );
-    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn data_parse_rejection_preserves_original_input_location() {
+    let source = include_str!("../../tests/fixtures/data-parse-rejections.telora");
+    for (export, input) in [
+        ("toml_rejected", "\"duplicate=1"),
+        ("yaml_rejected", "\"duplicate: 1"),
+    ] {
+        let bytes = compile_export(source, export).unwrap();
+        let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+        session.initialize().unwrap();
+        let result = session.call(&[]).unwrap();
+        assert!(result["message"].as_str().unwrap().contains("duplicate"));
+        assert_eq!(
+            result["labels"][1]["location"]["start"],
+            source.find(input).unwrap()
+        );
+        assert!(session.diagnostics().unwrap().is_empty());
+    }
 }
 
 #[test]

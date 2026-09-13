@@ -21,6 +21,7 @@ pub(crate) enum Node {
     Array(Vec<u32>),
     Object(Vec<(String, u32)>),
     Temporal(TemporalKind, String),
+    Bytes(Vec<u8>),
 }
 
 #[derive(Debug, PartialEq)]

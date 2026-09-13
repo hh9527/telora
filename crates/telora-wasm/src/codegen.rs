@@ -53,6 +53,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         ("telora_json_write", 3),
         ("telora_json_parse", 0),
         ("telora_toml_parse", 0),
+        ("telora_yaml_parse", 0),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }

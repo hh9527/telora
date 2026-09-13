@@ -1,4 +1,4 @@
-//! JSON/TOML postorder plans materialize into sealed Value layouts.
+//! Format parsers return postorder plans, materialized into sealed Value layouts.
 use crate::{abi::*, emit::Emitter};
 use telora_core::mir::{TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
@@ -92,6 +92,7 @@ impl Emitter<'_> {
             "LocalTime",
             "LocalDateTime",
             "OffsetDateTime",
+            "Bytes",
         ]
         .iter()
         .enumerate()
@@ -133,6 +134,29 @@ impl Emitter<'_> {
                         self.text_span_value(ty, span)?
                     }
                     6 | 7 => self.parse_collection(ty, target, row, values, input, code == 7)?,
+                    12 => {
+                        let pointer = self.read32(row, 8);
+                        let count = self.read32(row, 12);
+                        let id = self.local(ValType::I32);
+                        self.extend([
+                            I::I32Const(table_address(BYTES) as i32),
+                            I::LocalGet(pointer),
+                            I::LocalGet(count),
+                            I::Call(TABLE_PUSH),
+                            I::LocalSet(id),
+                        ]);
+                        let value = self.value_as(node, ty, 32)?;
+                        for (offset, local) in [(DATA, id), (24, count)] {
+                            self.extend([
+                                I::LocalGet(value),
+                                I::LocalGet(local),
+                                I::I32Store(memory(offset, 2)),
+                            ]);
+                        }
+                        self.store32(value, 20, 0);
+                        self.store32(value, 28, 0);
+                        value
+                    }
                     _ => return Err("Wasm: unexpected payload in Value contract".into()),
                 };
                 self.copy(payload, 0, input, 12);

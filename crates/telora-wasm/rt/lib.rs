@@ -10,6 +10,8 @@ mod json_writer;
 mod json_parse;
 mod data_parse;
 mod toml_parse;
+mod yaml_parse;
+mod yaml_scalar;
 
 #[allow(dead_code)]
 mod abi;

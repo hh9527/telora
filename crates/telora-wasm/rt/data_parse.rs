@@ -29,6 +29,11 @@ pub unsafe extern "C" fn telora_toml_parse(input: u32) -> u32 {
     unsafe { export_plan(crate::toml_parse::parse(crate::text::text(input))) }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_yaml_parse(input: u32) -> u32 {
+    unsafe { export_plan(crate::yaml_parse::parse(crate::text::text(input))) }
+}
+
 unsafe fn export_plan(parsed: Result<Plan, String>) -> u32 {
     unsafe {
         let result = crate::telora_alloc(16);
@@ -69,6 +74,10 @@ unsafe fn export_plan(parsed: Result<Plan, String>) -> u32 {
                     };
                     let (pointer, length) = string_bytes(value);
                     (kind, u64::from(pointer) | (u64::from(length) << 32))
+                }
+                Node::Bytes(bytes) => {
+                    let bytes = Box::leak(bytes.into_boxed_slice());
+                    (12, bytes.as_mut_ptr() as u64 | ((bytes.len() as u64) << 32))
                 }
                 Node::Array(children) => {
                     let children = Box::leak(children.into_boxed_slice());
