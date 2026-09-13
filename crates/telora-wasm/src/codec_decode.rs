@@ -87,6 +87,9 @@ impl Emitter<'_> {
         if target == source {
             return Ok(input);
         }
+        if self.mir.types[target.index()].constructor == T::Tuple {
+            return self.codec_decode_tuple(source, target, input);
+        }
         if matches!(
             self.mir.types[target.index()].constructor,
             T::Array | T::Dict

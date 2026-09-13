@@ -1,0 +1,16 @@
+import "std/codec" as codec;
+import "std/value" { Value };
+import "std/array" as array;
+export def inspect = fn() {
+    [codec.decode(().type,Value.Array([])) == Ok(()),
+     codec.decode((Int,String).type,Value.Array([Value.Int(7),Value.String("x")])) == Ok((7,"x")),
+     codec.decode((Option(Int),Array(Int)).type,Value.Array([Value.None,Value.Array([Value.Int(3)])])) == Ok((None,[3])),
+     match codec.decode(().type,Value.None) {Err(_) => True,Ok(_) => False},
+     match codec.decode(().type,Value.Array([Value.Int(1)])) {Err(_) => True,Ok(_) => False},
+     match codec.decode((Int,String).type,Value.Array([Value.Int(1)])) {Err(_) => True,Ok(_) => False},
+     match codec.decode((Int,String).type,Value.Array([Value.Int(1),Value.Int(2)])) {Err(_) => True,Ok(_) => False}]
+};
+export def answer = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));
+export def slice = fn(input: Array(Value)) {
+    codec.decode((Int,String).type,Value.Array(input)) == Ok((7,"x"))
+};

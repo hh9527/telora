@@ -1,13 +1,67 @@
 use super::*;
 
 #[test]
+fn codec_decode_tuple_honors_array_slice_start() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-decode-tuples.telora"),
+        "slice",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let function = session.entry().unwrap();
+    let signature = session.manifest.types[session.manifest.entry_type as usize]
+        .arguments
+        .clone();
+    let value = session
+        .input(signature[0], &serde_json::json!([false, 7, "x", false]), 0)
+        .unwrap();
+    // Array slicing has no source syntax; exercise a valid ABI slice descriptor.
+    session
+        .write(value as usize + 20, &1u32.to_le_bytes())
+        .unwrap();
+    session
+        .write(value as usize + 24, &3u32.to_le_bytes())
+        .unwrap();
+    let args = session.allocate(4).unwrap();
+    session.write(args as usize, &value.to_le_bytes()).unwrap();
+    let invoke = session
+        .instance
+        .get_typed_func::<(i32, i32), i32>(&session.store, "telora_invoke")
+        .unwrap();
+    let result = invoke
+        .call(&mut session.store, (function as i32, args as i32))
+        .unwrap();
+    let output = crate::output::Output {
+        memory: session.memory.data(&session.store),
+        manifest: &session.manifest,
+    };
+    assert_eq!(
+        output.json(result as u64, signature[1], 0).unwrap(),
+        serde_json::json!(true)
+    );
+}
+
+#[test]
+fn codec_decode_tuples_use_closed_heterogeneous_layouts() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-decode-tuples.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 7]));
+}
+
+#[test]
 fn codec_decode_nested_error_keeps_path_and_leaf_origin() {
     let source = include_str!("../../tests/fixtures/codec-decode-nested-origin.telora");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
     let result = session.call(&[]).unwrap();
-    assert_eq!(result["message"], "$.items[1]: expected Int");
+    assert_eq!(result["message"], "$[0][1]: expected Int");
     assert_eq!(
         result["labels"][1]["location"]["start"],
         source.find("Value.String(").unwrap()

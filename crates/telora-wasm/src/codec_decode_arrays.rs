@@ -44,11 +44,6 @@ impl Emitter<'_> {
             self.read32(collection, 20)
         };
         let end = self.read32(collection, if dict { 20 } else { 24 });
-        let keys = if dict {
-            Some(self.table_data(ARRAYS, collection, DATA))
-        } else {
-            None
-        };
         let bytes = self.local(ValType::I32);
         let data = self.local(ValType::I32);
         let cursor = self.local(ValType::I32);
@@ -87,20 +82,7 @@ impl Emitter<'_> {
             I::I32Sub,
             I::LocalSet(position),
         ]);
-        let child_path = if let Some(keys) = keys {
-            let key = self.local(ValType::I32);
-            self.extend([
-                I::LocalGet(keys),
-                I::LocalGet(cursor),
-                I::I32Const(32),
-                I::I32Mul,
-                I::I32Add,
-                I::LocalSet(key),
-            ]);
-            self.parse_text(7, path, key)?
-        } else {
-            self.parse_text(8, path, position)?
-        };
+        let child_path = self.parse_text(8, path, position)?;
         self.extend([
             I::LocalGet(context),
             I::LocalGet(child_path),

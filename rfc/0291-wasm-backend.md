@@ -886,8 +886,19 @@ decode 现按封闭的 (Value, target) 身份对规划专用函数，子类型�
 函数，不在生成器中递归展开。上下文携带固定 property 槽位、当前路径
 与共享拒绝证据；根调用统一构造 Result，已有求值失败直接传播。
 Option、Array、Dict 已接通；Dict 复用键列，元素来源保留。嵌套错误
-验证 `$.items[1]: expected Int`，Blame 指向具体出错的 Value.String。
+验证嵌套路径，Blame 指向具体出错的 Value.String。
 
 72 项 Wasm 库测试通过。类型规则仍全部由生成代码执行，RT 只新增
 固定的数组路径格式操作。Tuple/Unit、名义类型、property/ParseBy
 解码及 schema/YAML/TOML、发布和浏览器最终验收仍待完成。
+
+## Tuple/Unit 解码与路径对照
+
+Tuple/Unit 解码现消费封闭的元素类型与 RecordTable 布局。输入必须是
+Value.Array 且长度精确匹配；Unit 对应空数组。元素沿专用解码函数图
+填入异构槽位，保留来源。对照既有语义后，Dict 的错误路径修正为
+有序值列索引，嵌套示例为 `$[0][1]: expected Int`。
+
+5 项定向解码测试通过，包含 7 项 Tuple/Unit 语言断言，以及通过合法
+ABI 描述符构造的非零起点切片测试。CLI 默认/Wasm 对照通过。
+Record/newtype/enum、property/ParseBy 解码和此前剩余验收继续推进。
