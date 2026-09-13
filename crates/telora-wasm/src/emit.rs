@@ -43,15 +43,64 @@ impl<'a> Emitter<'a> {
         self.function_pointers.insert(self.code.len(), index);
         self.emit(I::I32Const(0));
     }
-    pub fn finish(self) -> crate::object::ObjectFunction {
+    pub fn finish(mut self) -> crate::object::ObjectFunction {
+        let demand = (!self.key.callable).then(|| self.plan.demands[&self.key]);
+        let result = self.locals.len() as u32 + 2;
+        if demand.is_some() {
+            self.locals.push(ValType::I32);
+        }
         let mut function = crate::object::ObjectFunction::new(Function::new(
             self.locals.into_iter().map(|ty| (1, ty)),
         ));
         let count = FIRST_FUNCTION + self.plan.functions.len() as u32 + 3;
+        if demand.is_some() {
+            function.instruction(&I::Block(wasm_encoder::BlockType::Result(ValType::I32)));
+        }
+        let mut depth = 0;
         for (index, instruction) in self.code.into_iter().enumerate() {
+            if demand.is_some() {
+                match instruction {
+                    I::Return => {
+                        function.instruction(&I::Br(depth));
+                        continue;
+                    }
+                    I::Block(_) | I::Loop(_) | I::If(_) => depth += 1,
+                    I::End => depth -= 1,
+                    _ => {}
+                }
+            }
             if let Some(&symbol) = self.function_pointers.get(&index) {
                 function.function_pointer(symbol);
             } else {
+                function.linked_instruction(&instruction, count);
+            }
+        }
+        if let Some(offset) = demand {
+            // All exits, including failure propagation, pass through this
+            // boundary. The second word holds either a value or failure origin.
+            for instruction in [
+                I::End,
+                I::LocalSet(result),
+                I::I32Const(offset as i32),
+                I::LocalGet(result),
+                I::I32Eqz,
+                I::If(wasm_encoder::BlockType::Result(ValType::I32)),
+                I::I32Const(3),
+                I::Else,
+                I::I32Const(2),
+                I::End,
+                I::I32Store(memory(0, 2)),
+                I::I32Const(offset as i32),
+                I::LocalGet(result),
+                I::I32Eqz,
+                I::If(wasm_encoder::BlockType::Result(ValType::I32)),
+                I::GlobalGet(ERROR_GLOBAL),
+                I::Else,
+                I::LocalGet(result),
+                I::End,
+                I::I32Store(memory(4, 2)),
+                I::LocalGet(result),
+            ] {
                 function.linked_instruction(&instruction, count);
             }
         }
@@ -409,7 +458,7 @@ pub(crate) fn compile(
         emit.emit(I::LocalGet(value));
     } else {
         let offset = plan.demands[&key];
-        // 0 = empty, 1 = evaluating/failed, 2 = ready. A failed session is terminal.
+        // 0 = empty, 1 = evaluating, 2 = ready, 3 = failed.
         emit.extend([
             I::I32Const(offset as i32),
             I::I32Load(memory(0, 2)),
@@ -418,6 +467,19 @@ pub(crate) fn compile(
             I::If(BlockType::Empty),
             I::I32Const(offset as i32),
             I::I32Load(memory(4, 2)),
+            I::Return,
+            I::End,
+            I::I32Const(offset as i32),
+            I::I32Load(memory(0, 2)),
+            I::I32Const(3),
+            I::I32Eq,
+            I::If(BlockType::Empty),
+            I::I32Const(offset as i32),
+            I::I32Load(memory(4, 2)),
+            I::GlobalSet(ERROR_GLOBAL),
+            I::I32Const(3),
+            I::GlobalSet(PHASE_GLOBAL),
+            I::I32Const(0),
             I::Return,
             I::End,
             I::I32Const(offset as i32),
@@ -433,15 +495,7 @@ pub(crate) fn compile(
             Special::Property(index) => emit.property_chain(index)?,
             _ => emit.expression(key.node)?,
         };
-        emit.extend([
-            I::I32Const(offset as i32),
-            I::LocalGet(value),
-            I::I32Store(memory(4, 2)),
-            I::I32Const(offset as i32),
-            I::I32Const(2),
-            I::I32Store(memory(0, 2)),
-            I::LocalGet(value),
-        ]);
+        emit.emit(I::LocalGet(value));
     }
     Ok(emit.finish())
 }

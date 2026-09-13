@@ -246,6 +246,39 @@ fn persistent_source_positions_and_terminal_initialization_failure() {
 }
 
 #[test]
+fn failed_demands_keep_failure_identity_instead_of_running_state() {
+    let mir = graph("def broken: Int = 1 / 0; export def answer = broken;");
+    let export = mir
+        .exports
+        .iter()
+        .flatten()
+        .copied()
+        .find(|id| mir.symbols[id.index()].name == "answer")
+        .unwrap();
+    let executable = mir.seal_export(export).unwrap();
+    let plan = crate::plan::Plan::new(&executable).unwrap();
+    let bytes = crate::compile_executable(&executable).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
+    assert!(session.initialize().is_err());
+    let memory = session.memory.data(&session.store);
+    let mut failed = 0;
+    for &offset in plan.demands.values() {
+        let offset = offset as usize;
+        let state = u32::from_le_bytes(memory[offset..offset + 4].try_into().unwrap());
+        assert_ne!(state, 1, "unwound demand remained Running");
+        if state == 3 {
+            failed += 1;
+            let error = u32::from_le_bytes(memory[offset + 4..offset + 8].try_into().unwrap());
+            assert_ne!(error, 0, "Failed demand lost its diagnostic identity");
+        }
+    }
+    assert!(failed > 0);
+    assert_eq!(session.diagnostics().unwrap().len(), 1);
+    assert!(session.initialize().is_err());
+    assert_eq!(session.diagnostics().unwrap().len(), 1);
+}
+
+#[test]
 fn interpreter_fuel_is_shared_across_initialization_calls() {
     let bytes =
         compile("def loop = fn(n: Int) -> Int { loop(n + 1) }; export def answer = loop(0);")
