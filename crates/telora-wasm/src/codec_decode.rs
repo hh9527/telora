@@ -1,6 +1,10 @@
-use crate::{abi::*, emit::Emitter};
-use telora_core::mir::TypeConstructor as T;
-use wasm_encoder::{BlockType, Instruction as I};
+use crate::{
+    abi::*,
+    emit::Emitter,
+    plan::{Key, Special},
+};
+use telora_core::mir::{TypeConstructor as T, TypeId};
+use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub(crate) fn codec_decode_native(&mut self) -> Result<u32, String> {
@@ -19,8 +23,98 @@ impl Emitter<'_> {
             return Err("Wasm: codec decode result mismatch".into());
         }
         let input = self.parameter(2);
-        if target == args[2] {
-            return self.enum_value(self.key.node, args[3], 1, Some(input));
+        let properties = self.parameter(0);
+        let properties = self.codec_property_context(args[0], properties)?;
+        let context = self.alloc(32);
+        self.copy(context, 0, properties, 24);
+        let path = self.text_as(self.key.node, self.string_type()?, b"$")?;
+        let error = self.alloc(8);
+        self.store32(error, 0, 0);
+        self.store32(error, 4, 0);
+        self.extend([
+            I::LocalGet(context),
+            I::LocalGet(path),
+            I::I32Store(memory(24, 2)),
+            I::LocalGet(context),
+            I::LocalGet(error),
+            I::I32Store(memory(28, 2)),
+        ]);
+        let decoded = self.codec_decode_call(args[2], target, input, context)?;
+        self.extend([I::LocalGet(decoded), I::If(BlockType::Empty)]);
+        let ok = self.enum_value(self.key.node, args[3], 1, Some(decoded))?;
+        self.extend([I::LocalGet(ok), I::Return, I::End]);
+        let message = self.read32(error, 0);
+        // No rejection means evaluation already failed; preserve that failure.
+        self.checked(message);
+        let subject = self.read32(error, 4);
+        let blame = self.codec_blame(result_types[1], message, subject)?;
+        self.enum_value(self.key.node, args[3], 0, Some(blame))
+    }
+
+    pub(crate) fn codec_decode_call(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        input: u32,
+        context: u32,
+    ) -> Result<u32, String> {
+        let key = Key {
+            special: Special::Decode(source, target),
+            callable: true,
+            ..self.plan.root
+        };
+        let function = *self
+            .plan
+            .functions
+            .get(&key)
+            .ok_or("Wasm: closed decoder was not planned")?;
+        let result = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(context),
+            I::LocalGet(input),
+            I::Call(function),
+            I::LocalSet(result),
+        ]);
+        Ok(result)
+    }
+
+    pub(crate) fn codec_decode_type(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        input: u32,
+    ) -> Result<u32, String> {
+        if target == source {
+            return Ok(input);
+        }
+        if matches!(
+            self.mir.types[target.index()].constructor,
+            T::Array | T::Dict
+        ) {
+            return self.codec_decode_array(source, target, input);
+        }
+        if self.mir.types[target.index()].constructor == T::Option {
+            let null = self.plan.layouts[source.index()]
+                .variants
+                .iter()
+                .position(|v| v.name == "None")
+                .ok_or("Wasm: codec Value lacks None")?;
+            self.extend([
+                I::LocalGet(input),
+                I::I32Load(memory(DATA, 2)),
+                I::I32Const(null as i32),
+                I::I32Eq,
+                I::If(BlockType::Empty),
+            ]);
+            let none = self.enum_value(self.key.node, target, 0, None)?;
+            self.copy(none, 0, input, 12);
+            self.extend([I::LocalGet(none), I::Return, I::End]);
+            let inner = self.mir.types[target.index()].arguments[0];
+            let decoded = self.codec_decode_call(source, inner, input, 0)?;
+            self.checked(decoded);
+            let some = self.enum_value(self.key.node, target, 1, Some(decoded))?;
+            self.copy(some, 0, input, 12);
+            return Ok(some);
         }
         let expected = match self.mir.types[target.index()].constructor {
             T::Int => "Int",
@@ -28,9 +122,10 @@ impl Emitter<'_> {
             T::String => "String",
             T::Bytes => "Bytes",
             T::Bool => "Bool",
+            T::Never => "Never",
             _ => return Err("Wasm: codec decode target not yet implemented".into()),
         };
-        let variants: Vec<_> = self.plan.layouts[args[2].index()]
+        let variants: Vec<_> = self.plan.layouts[source.index()]
             .variants
             .iter()
             .enumerate()
@@ -58,29 +153,50 @@ impl Emitter<'_> {
                 if payload_ty != Some(target.index()) {
                     return Err("Wasm: codec scalar identity mismatch".into());
                 }
-                self.enum_payload(args[2], index as u32, input)?
+                self.enum_payload(source, index as u32, input)?
             };
-            let result = self.enum_value(self.key.node, args[3], 1, Some(value))?;
-            self.extend([I::LocalGet(result), I::Return, I::End]);
+            self.extend([I::LocalGet(value), I::Return, I::End]);
         }
-        let message = self.text_as(
-            self.key.node,
-            self.string_type()?,
-            format!("$: expected {expected}").as_bytes(),
-        )?;
+        self.codec_decode_reject(&format!("expected {expected}"), input)?;
+        Ok(self.local(ValType::I32))
+    }
+
+    pub(crate) fn codec_decode_reject(&mut self, message: &str, input: u32) -> Result<(), String> {
+        let message = self.text_as(self.key.node, self.string_type()?, message.as_bytes())?;
+        let path = self.read32(0, 24);
+        let message = self.parse_text(6, path, message)?;
+        let error = self.read32(0, 28);
+        self.extend([
+            I::LocalGet(error),
+            I::LocalGet(message),
+            I::I32Store(memory(0, 2)),
+            I::LocalGet(error),
+            I::LocalGet(input),
+            I::I32Store(memory(4, 2)),
+        ]);
+        self.extend([I::I32Const(0), I::Return]);
+        Ok(())
+    }
+
+    pub(crate) fn codec_blame(
+        &mut self,
+        ty: TypeId,
+        message: u32,
+        input: u32,
+    ) -> Result<u32, String> {
         let object = self.alloc(56);
         self.copy(object, 0, message, 32);
         self.store32(object, 32, 1);
         self.store32(object, 36, 0);
         self.copy(object, 40, input, 12);
         let id = self.table_push(BLAMES, object, 56);
-        let blame = self.value_as(self.key.node, result_types[1], 24)?;
+        let blame = self.value_as(self.key.node, ty, 24)?;
         self.extend([
             I::LocalGet(blame),
             I::LocalGet(id),
             I::I64ExtendI32U,
             I::I64Store(memory(DATA, 3)),
         ]);
-        self.enum_value(self.key.node, args[3], 0, Some(blame))
+        Ok(blame)
     }
 }

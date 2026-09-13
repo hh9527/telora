@@ -110,6 +110,9 @@ pub unsafe extern "C" fn telora_text_build(operation: u32, a: u32, b: u32, c: u3
                 7 => {
                     write!(output, "{}.{}", text(a), text(b))?;
                 }
+                8 => {
+                    write!(output, "{}[{b}]", text(a))?;
+                }
                 _ => core::arch::wasm32::unreachable(),
             }
             Ok(())

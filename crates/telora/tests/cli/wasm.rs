@@ -7,7 +7,7 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
         (
             "codec-decode-scalars",
             include_str!("../../../telora-wasm/tests/fixtures/codec-decode-scalars.telora"),
-            serde_json::json!(vec![true;7]),
+            serde_json::json!(vec![true;15]),
         ),
         (
             "codec-display",

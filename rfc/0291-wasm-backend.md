@@ -879,3 +879,15 @@ decode_with 已接通 Int/Float/String/Bytes/Bool 与 Value 直接复用。
 
 集合、名义类型、property 与 ParseBy 的解码仍未实现。下一步需要
 像编码侧一样建立有限的专用函数图，并携带路径与拒绝证据上下文。
+
+## 解码函数图与集合
+
+decode 现按封闭的 (Value, target) 身份对规划专用函数，子类型共享
+函数，不在生成器中递归展开。上下文携带固定 property 槽位、当前路径
+与共享拒绝证据；根调用统一构造 Result，已有求值失败直接传播。
+Option、Array、Dict 已接通；Dict 复用键列，元素来源保留。嵌套错误
+验证 `$.items[1]: expected Int`，Blame 指向具体出错的 Value.String。
+
+72 项 Wasm 库测试通过。类型规则仍全部由生成代码执行，RT 只新增
+固定的数组路径格式操作。Tuple/Unit、名义类型、property/ParseBy
+解码及 schema/YAML/TOML、发布和浏览器最终验收仍待完成。

@@ -8,6 +8,14 @@ export def inspect = fn() {
      codec.decode(Bytes.type,Value.Bytes(b"x")) == Ok(b"x"),
      codec.decode(Bool.type,Value.True) == Ok(True),
      codec.decode(Bool.type,Value.False) == Ok(False),
-     match codec.decode(Int.type,Value.Float(1.0)) {Err(_) => True,Ok(_) => False}]
+     match codec.decode(Int.type,Value.Float(1.0)) {Err(_) => True,Ok(_) => False},
+     codec.decode(Option(Int).type,Value.None) == Ok(None),
+     codec.decode(Option(Int).type,Value.Int(3)) == Ok(Some(3)),
+     codec.decode(Option(Never).type,Value.None) == Ok(None),
+     match codec.decode(Option(Int).type,Value.String("x")) {Err(_) => True,Ok(_) => False},
+     codec.decode(Array(Int).type,Value.Array([Value.Int(1),Value.Int(2)])) == Ok([1,2]),
+     codec.decode(Array(Option(Int)).type,Value.Array([Value.None,Value.Int(2)])) == Ok([None,Some(2)]),
+     codec.decode(Dict(Int).type,Value.Object({a:Value.Int(1)})) == Ok({a:1}),
+     match codec.decode(Array(Int).type,Value.Array([Value.String("x")])) {Err(_) => True,Ok(_) => False}]
 };
 export def answer = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));

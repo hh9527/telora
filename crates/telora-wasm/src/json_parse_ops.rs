@@ -61,19 +61,7 @@ impl Emitter<'_> {
         let error = self.read32(packet, 12);
         self.extend([I::LocalGet(error), I::If(BlockType::Empty)]);
         let message = self.text_span_value(args[1], error)?;
-        let object = self.alloc(56);
-        self.copy(object, 0, message, 32);
-        self.store32(object, 32, 1);
-        self.store32(object, 36, 0);
-        self.copy(object, 40, input, 12);
-        let id = self.table_push(BLAMES, object, 56);
-        let blame = self.value_as(node, results[1], 24)?;
-        self.extend([
-            I::LocalGet(blame),
-            I::LocalGet(id),
-            I::I64ExtendI32U,
-            I::I64Store(memory(DATA, 3)),
-        ]);
+        let blame = self.codec_blame(results[1], message, input)?;
         let rejected = self.enum_value(node, args[2], 0, Some(blame))?;
         self.extend([I::LocalGet(rejected), I::Return, I::End]);
         let rows = self.read32(packet, 0);

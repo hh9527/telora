@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn codec_decode_nested_error_keeps_path_and_leaf_origin() {
+    let source = include_str!("../../tests/fixtures/codec-decode-nested-origin.telora");
+    let bytes = compile(source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert_eq!(result["message"], "$.items[1]: expected Int");
+    assert_eq!(
+        result["labels"][1]["location"]["start"],
+        source.find("Value.String(").unwrap()
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn codec_decode_mismatch_retains_input_origin() {
     let source = include_str!("../../tests/fixtures/codec-decode-origins.telora");
     let bytes = compile(source).unwrap();
@@ -24,7 +39,10 @@ fn codec_decode_scalars_match_exact_value_variants() {
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
-    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 7]));
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(vec![true; 15])
+    );
 }
 
 #[test]
