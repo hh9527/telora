@@ -775,3 +775,21 @@ CLI 默认/Wasm 对照测试通过；独立 Node 重载产物，零 imports，�
 引擎栈和 fuel 限制；与其他递归操作一样，最终边界验收需覆盖深层
 输入。尚未增加原生后端的活动对象集合循环检测。JSON parse/schema、
 codec、YAML/TOML 及最终发布/浏览器验收仍未完成。
+
+## JSON 解析与顺序装配
+
+parse_raw/public parse 已接入 Rust no_std serde_json 解析层。保留原始
+数字文本以区分 Int/Float，拒绝 i64 越界、非有限 Float 和解码后重复
+的对象键。解析产生后序节点表，RT 导出固定 16 字节节点记录；节点
+身份不等同 TypeId。生成代码顺序装配已封闭的 Value/Array/Dict 类型，
+不递归装配、不推导类型，字典键按 UTF-8 排序。解析错误返回
+Result.Err(BlameError)，原输入来源保留在错误 subject 和生成值中。
+
+验证：51 项 Wasm 库测试通过，随后追加的错误来源测试通过；CLI
+默认/Wasm 成功结果对照通过；独立 Node 零 imports 产物解析得到
+{"ok":true}。外部 ABI 保持 6。本轮不做性能基准。
+
+尚有明确差异：错误文本使用 serde_json 的行列信息，未对齐默认
+CST 解析器的完整诊断渲染；RawValue 子树解析会重复扫描嵌套文本，
+深层输入与解析限额需要后续统一验收。当前不据此宣称 JSON 完成。
+codec、schema、YAML/TOML 和最终发布/浏览器/性能验收仍继续推进。

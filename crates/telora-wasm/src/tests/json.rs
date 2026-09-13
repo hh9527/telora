@@ -1,6 +1,46 @@
 use super::*;
 
 #[test]
+fn json_parse_error_blames_the_original_text() {
+    let source = include_str!("../../tests/fixtures/json-parse-origins.telora");
+    let bytes = compile(source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert_eq!(
+        result["labels"][1]["location"]["start"],
+        source.find("\"[1,]\"").unwrap()
+    );
+    assert_eq!(result["message"], "expected value at line 1 column 4");
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn json_parse_materializes_postorder_plan_with_closed_types() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/json-parse.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            session.call(&[]).unwrap(),
+            serde_json::json!([
+                "{\"a\":[1,1,true,null,\"中\",{\"k\":false}],\"z\":[]}",
+                true,
+                true,
+                true,
+                true,
+                true
+            ])
+        );
+    }
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn stringify_rejections_are_captured_once_and_preserve_subjects() {
     let source = include_str!("../../tests/fixtures/json-errors.telora");
     let bytes = compile(source).unwrap();

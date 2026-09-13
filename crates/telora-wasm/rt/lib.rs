@@ -7,6 +7,8 @@ mod regex_contract;
 mod hash;
 mod json_text;
 mod json_writer;
+mod json_parse;
+mod data_parse;
 
 #[allow(dead_code)]
 mod abi;

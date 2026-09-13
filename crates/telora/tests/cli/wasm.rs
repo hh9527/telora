@@ -5,6 +5,11 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
+            "json-parse",
+            include_str!("../../../telora-wasm/tests/fixtures/json-parse.telora"),
+            serde_json::json!({"ok": true}),
+        ),
+        (
             "json-stringify",
             include_str!("../../../telora-wasm/tests/fixtures/json-stringify.telora"),
             serde_json::json!("{\"a\":[null,true,false,-7,1,\"中\\n\\\"\"],\"z\":{}}"),

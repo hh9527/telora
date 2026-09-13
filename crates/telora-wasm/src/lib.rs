@@ -38,6 +38,7 @@ mod input;
 mod input_heap;
 mod input_types;
 mod json_ops;
+mod json_parse_ops;
 mod link;
 mod natives;
 pub mod object;
@@ -71,3 +72,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../rt/json_text.rs"]
 mod json_text_tests;
+
+#[cfg(test)]
+#[path = "../rt/json_parse.rs"]
+mod json_parse_tests;
