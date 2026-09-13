@@ -3,6 +3,127 @@ use crate::test_support::{graph, value_type};
 
 const SOURCE: &str = include_str!("../../tests/fixtures/runtime.telora");
 
+#[test]
+fn work_collection_keeps_cycles_main_and_sharing_and_drops_dead_objects() {
+    use crate::abi::CallContext;
+    let mir = graph(SOURCE);
+    let mut rt = Runtime::new(&mir.seal().unwrap()).unwrap();
+    let text_ty = value_type(&mir, "text");
+    let function = value_type(&mir, "function");
+    let text = rt.string(text_ty, [1, 2, 3], "immutable main backing string").unwrap();
+    let text = rt.publish(&[text]).unwrap().remove(0);
+    let main_words = text.words().to_vec();
+    let a = rt.reserve_function(function, [1, 4, 5]).unwrap();
+    let b = rt.reserve_function(function, [1, 6, 7]).unwrap();
+    let body_a = rt.closure(function, [0; 3], 17, &[b.clone(), text.clone()]).unwrap();
+    let body_b = rt.closure(function, [0; 3], 23, &[a.clone()]).unwrap();
+    rt.fill_function(&a, &body_a).unwrap();
+    rt.fill_function(&b, &body_b).unwrap();
+    let mut roots = vec![a.clone(), b, a, text];
+    let mut context = CallContext::with_runtime(rt).with_fuel(100);
+    for _ in 0..20 {
+        for _ in 0..100 {
+            context.runtime_mut().unwrap().string(text_ty, [0; 3], "temporary work string with backing").unwrap();
+        }
+        let stale = roots[0].clone();
+        let (new_roots, stats) = context.collect_work(&roots).unwrap();
+        roots = new_roots;
+        assert_eq!(stats.objects_before, 104);
+        assert_eq!(stats.objects_after, 4);
+        let rt = context.runtime().unwrap();
+        assert!(rt.function_id(&stale).is_err());
+        assert_eq!(roots[0].words(), roots[2].words());
+        assert_eq!(roots[3].words(), main_words);
+        assert_eq!(rt.main.strings.entries.len(), 1);
+        assert!(rt.work.strings.entries.is_empty());
+        let body = rt.resolve_function(&roots[0]).unwrap();
+        assert_eq!(rt.capture(&body, 0).unwrap().words(), roots[1].words());
+        assert_eq!(rt.capture(&body, 1).unwrap().words(), main_words);
+        let body = rt.resolve_function(&roots[1]).unwrap();
+        assert_eq!(rt.capture(&body, 0).unwrap().words(), roots[0].words());
+        assert_eq!(context.remaining_fuel(), Some(100));
+    }
+    let (_, stats) = context.collect_work(&[]).unwrap();
+    assert_eq!(stats.objects_after, 0);
+    assert_eq!(context.runtime().unwrap().main.strings.entries.len(), 1);
+}
+
+#[test]
+fn failed_work_collection_preserves_world_handles_and_allocation_account() {
+    let mir = graph(SOURCE);
+    let mut rt = Runtime::new(&mir.seal().unwrap()).unwrap();
+    rt.publish(&[]).unwrap();
+    let text_ty = value_type(&mir, "text");
+    let text = rt.string(text_ty, [1, 2, 3], "survives failed collection").unwrap();
+    let previous = rt.requested_allocation_bytes();
+    let identity = rt.identity();
+    let mut rt = rt.with_allocation_limit(previous);
+    assert!(rt.collect_work(&[text.clone()]).is_err());
+    assert_eq!(rt.identity(), identity);
+    assert_eq!(rt.requested_allocation_bytes(), previous);
+    assert!(!rt.allocation_exhausted());
+    assert_eq!(rt.text(text.as_ref()).unwrap().as_str(), "survives failed collection");
+    let mut rt = rt.with_allocation_limit(u64::MAX);
+    let (roots, _) = rt.collect_work(&[text]).unwrap();
+    assert_eq!(rt.text(roots[0].as_ref()).unwrap().as_str(), "survives failed collection");
+}
+
+#[test]
+fn collection_keeps_only_reachable_work_interpreter_adapters() {
+    let mir = graph("export def integer = 1; export def witness = Int.type; export def adapter: Fn(Int) -> Int = fn(value) {value}; export def factory: Fn(TypeOf(Int)) -> Fn(Int) -> Int = fn(witness) {fn(value) {value}};");
+    let mut rt = Runtime::new(&mir.seal().unwrap()).unwrap();
+    let factory_ty = value_type(&mir, "factory");
+    let adapter_ty = value_type(&mir, "adapter");
+    let witness = rt.metadata(value_type(&mir, "witness"), [0; 3], value_type(&mir, "integer")).unwrap();
+    let factory = rt.closure(factory_ty, [0; 3], 10, &[]).unwrap();
+    let adapter = rt.interpreter_adapter(&factory, &[witness.clone()], adapter_ty, 11, [0; 3]).unwrap();
+    let published = rt.publish(&[factory, witness, adapter]).unwrap();
+    let live_factory = rt.closure(factory_ty, [0; 3], 10, &[]).unwrap();
+    let live = rt.interpreter_adapter(&live_factory, &[published[1].clone()], adapter_ty, 11, [0; 3]).unwrap();
+    for _ in 0..10 {
+        let dead = rt.closure(factory_ty, [0; 3], 10, &[]).unwrap();
+        rt.interpreter_adapter(&dead, &[published[1].clone()], adapter_ty, 11, [0; 3]).unwrap();
+    }
+    let mut roots = published;
+    roots.extend([live_factory, live]);
+    let (roots, stats) = rt.collect_work(&roots).unwrap();
+    assert_eq!(stats.objects_before, 22);
+    assert_eq!(stats.objects_after, 2);
+    assert_eq!(rt.interpreter_adapters.len(), 2);
+    for (factory, adapter) in [(0, 2), (3, 4)] {
+        let before = rt.requested_allocation_bytes();
+        let repeated = rt.interpreter_adapter(&roots[factory], &[roots[1].clone()], adapter_ty, 11, [0; 3]).unwrap();
+        assert_eq!(repeated.words(), roots[adapter].words());
+        assert_eq!(rt.requested_allocation_bytes(), before);
+    }
+    rt.collect_work(&[]).unwrap();
+    assert_eq!(rt.interpreter_adapters.len(), 1);
+    assert_eq!(rt.work.object_count(), 0);
+}
+
+#[test]
+fn collection_requires_idle_context_and_keeps_resource_aliases() {
+    use crate::abi::{CallContext, Origin, Status};
+    let mir = crate::test_support::graph_with("import \"std/regex\" as regex; export def pattern = regex.compile(\"(?P<word>[a-z]+)\"); export def text = \"abc\";", telora_core::static_sources::BUILTINS);
+    let mut rt = Runtime::new(&mir.seal().unwrap()).unwrap();
+    rt.publish(&[]).unwrap();
+    let pattern = rt.string(value_type(&mir, "text"), [1, 0, 1], "(?P<word>[a-z]+)").unwrap();
+    let regex = rt.regex_compile(value_type(&mir, "pattern"), [1, 0, 1], &pattern).unwrap();
+    let mut context = CallContext::with_runtime(rt);
+    assert_eq!(context.enter_frame(1, Origin::default()), Status::Success);
+    assert!(context.collect_work(&[regex.clone()]).is_err());
+    assert_eq!(context.leave_call(), Status::Success);
+    let (roots, stats) = context.collect_work(&[regex.clone(), regex]).unwrap();
+    assert_eq!(stats.objects_after, 1);
+    assert_eq!(roots[0].words(), roots[1].words());
+    assert_eq!(roots[0].location(), [1, 0, 1]);
+    assert_eq!(context.runtime().unwrap().work.regexes.len(), 1);
+    context.collect_work(&[]).unwrap();
+    assert!(context.runtime().unwrap().work.regexes.is_empty());
+    context.abort_at("stopped", Origin::default());
+    assert!(context.collect_work(&[]).is_err());
+}
+
 #[cfg(feature = "jit")]
 #[path = "tests/language.rs"]
 mod language;

@@ -169,6 +169,21 @@ struct Tables {
     blames: Vec<blame::Blame>,
     tests: Vec<test_description::TestDescription>,
 }
+impl Tables {
+    fn object_count(&self) -> usize {
+        self.strings.entries.len() + self.bytes.entries.len() + self.records.entries.len()
+            + self.newtypes.entries.len() + self.arrays.entries.len() + self.values.entries.len()
+            + self.environments.entries.len() + self.formats.entries.len() + self.regexes.len()
+            + self.hashes.len() + self.blames.len() + self.tests.len()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CollectionStats {
+    pub objects_before: usize,
+    pub objects_after: usize,
+    pub copied_bytes: u64,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Table {
     Records,

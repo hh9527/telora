@@ -1,10 +1,10 @@
 # RFC 0288：服务边界 work-world 复制回收
 
-- 状态：后续阶段草案；不在本期 eval-with 交付范围，不实施
+- 状态：实施中；用户于 2026-09-13 授权继续推进 native run/serve
 - 日期：2026-09-12
 - 上级：[RFC 0282](0282-native-cranelift-roadmap.md)
 - 分支：`feat/native-cranelift`
-- 跟踪：本期不创建实施 issue，待持续服务阶段启动
+- 跟踪：[#185](https://github.com/hh9527/telora/issues/185)，native run/serve 后续实施阶段（RFC 0290）
 
 ## 动机与范围
 
@@ -23,9 +23,36 @@
 
 ## 实施计划
 
+### 服务阶段决议
+
+旧 RFC 0282 的 eval-with 验收保持完成；本阶段按 RFC 0290 扩展，不修改其历史
+交付边界。继续在 feat/native-cranelift 开发，不切换默认后端。
+
+回收只在一次 reducer 调用返回、该轮 effects 已消费后执行；无机器码活动帧，
+host 不保留 native 描述符。显式根为服务 state/reducer 及仍需使用的协议值；
+运行时的已发布需求根保持 main 引用。main 不复制、不重建 TypeId。
+新 work 先完整构建，再整体替换；旧 work 句柄通过 generation 失效。
+转发表沿用统一对象遍历，不新增独立的按名称推断或旧 Heap 搬运桥。
+interpreter adapter 缓存不能把每轮产生的临时闭包永久保活，须按可达性重建。
+
+逻辑分配准入与回收观测分开：回收不能恢复已经 abort 的 session，也不重置 fuel。
+初版在事件安全边界主动回收，后续按数据调整次数/分配阈值；正确保留跨事件根
+优先于降低回收频率。单次调用期间仍不执行 GC。
+
 先落实本模块契约并保证可独立编译，再用简单单测或少量语言用例验证，然后进入后继模块。允许 native 路线阶段性缺失能力，不要求每次提交完成整个语言。实现前将本草案中的待定项补成明确决议，不引入兼容兜底。
 
 ## 验收条件
+
+首批实施已复用 publish 的类型驱动遍历，按目标 world 复制 work 对象并原样保留
+main 引用。临时目标全部构建成功才切换 generation/world/内部需求根；失败恢复
+分配账户检查点，原句柄继续有效。成功后所有外部描述符须使用返回的新 generation。
+work interpreter adapter 缓存按显式可达图重建，不保活死 factory；main 缓存保持。
+CallContext 拒绝活动帧、待转交尾调用及已中止 session 中的回收。
+
+现有验证覆盖连续 20 轮回收临时字符串、真实闭包环及别名、main backing 不复制、
+空根、分配失败原子性、缓存命中/弱保留、Regex 共享和释放、活动帧拒绝。
+CollectionStats 报告前后对象数及本轮逻辑复制字节；不把该值解释为物理 RSS。
+整套 native 146 项单测与 3 项独立实验通过，服务 CLI 总装与真实负载观察继续推进。
 
 验证空根、共享子图、环、main 引用、跨请求状态、资源恰好释放一次、迁移失败原子性和连续多轮请求内存回落。记录分配量、存活量和回收耗时；总装完成后用真实 ontology/model 工作负载观察性能。
 

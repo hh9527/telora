@@ -9,6 +9,7 @@
 pub mod ast;
 pub mod bytecode;
 pub mod codegen;
+pub mod entry_plan;
 pub mod type_image;
 pub mod candidate_layout;
 #[cfg(feature = "experimental-layout-runtime")]

@@ -10,6 +10,13 @@ impl Default for Allocation {
     fn default() -> Self { Self { limit: u64::MAX, requested: Cell::new(0), exhausted: Cell::new(false) } }
 }
 impl Runtime {
+    pub(super) fn allocation_checkpoint(&self) -> (u64, bool) {
+        (self.allocation.requested.get(), self.allocation.exhausted.get())
+    }
+    pub(super) fn restore_allocation(&self, checkpoint: (u64, bool)) {
+        self.allocation.requested.set(checkpoint.0);
+        self.allocation.exhausted.set(checkpoint.1);
+    }
     pub(crate) fn charge_tail_words(&self, words: usize) -> Result<()> {
         self.charge_allocation(words, 8, 0)
     }

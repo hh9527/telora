@@ -357,6 +357,16 @@ pub struct NativeDiagnostic {
     pub subjects: Vec<Origin>,
 }
 impl CallContext {
+    /// Every external descriptor needed after collection must be in roots.
+    /// Successful collection invalidates all previous session descriptors.
+    pub fn collect_work(&mut self, roots: &[Value]) -> Result<(Vec<Value>, crate::runtime::CollectionStats)> {
+        if self.aborted || !self.frames.is_empty() || self.tail_pending {
+            return Err("native collection requires an idle live context".into());
+        }
+        let result = self.runtime_mut()?.collect_work(roots)?;
+        self.tail_packet.clear();
+        Ok(result)
+    }
     pub(crate) fn prepare_tail(&mut self, packet: &[u64], origin: Origin) -> Status {
         if self.aborted { return Status::Failed; }
         if self.tail_pending || packet.len() < 5 { return self.abort_at("invalid native tail transfer", origin); }

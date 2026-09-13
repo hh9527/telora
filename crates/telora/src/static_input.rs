@@ -414,7 +414,7 @@ impl Inventory {
     }
 
     /// Compiler-owned entry sources share the application's graph and passes.
-    pub fn solve_run(&mut self, application: &str, export: &str, mode: telora_core::codegen::RunMode) -> Result<Mir, String> {
+    pub fn solve_run(&mut self, application: &str, export: &str, mode: telora_core::entry_plan::RunMode) -> Result<Mir, String> {
         let adapter = mode.adapter_source(application, export)?;
         for (name, source) in [
             (mode.policy_module(), Source::Embedded(mode.policy_source())),

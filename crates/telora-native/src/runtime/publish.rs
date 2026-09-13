@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 #[derive(Default)]
 struct Copies {
+    work: bool,
     objects: BTreeMap<(Table, u32), u32>,
     strings: BTreeMap<u32, u32>,
     bytes: BTreeMap<u32, u32>,
@@ -11,7 +12,57 @@ struct Copies {
     tests: BTreeMap<u32, u32>,
     blames: BTreeMap<u32, u32>,
 }
+impl Copies {
+    fn destination(&self) -> World { if self.work { World::Work } else { World::Main } }
+    fn keep(&self, raw: u32) -> bool { self.work && HeapRef::from_raw(raw).world() == World::Main }
+}
 impl Runtime {
+    /// Called only at a quiescent host boundary through CallContext.
+    pub(crate) fn collect_work(&mut self, roots: &[Value]) -> Result<(Vec<Value>, CollectionStats)> {
+        if !self.published || self.allocation_exhausted() {
+            return Err("native collection requires a live published world".into());
+        }
+        let checkpoint = self.allocation_checkpoint();
+        let prepared = (|| {
+            let mut target = Tables::default();
+            let mut copies = Copies { work: true, ..Copies::default() };
+            let mut result = Vec::new();
+            for root in roots.iter().chain(self.demand_roots()?.iter()) {
+                self.validate(root.as_ref(), root.type_id())?;
+                let mut words = root.words.to_vec();
+                self.copy_value(&mut words, &mut target, &mut copies, 0)?;
+                result.push(Value { arena: 0, words: words.into_boxed_slice() });
+            }
+            // Cache is weak for work closures. Retain only adapters already
+            // reached from explicit roots; main adapters remain immutable.
+            let mut adapters = BTreeMap::new();
+            for ((_, witnesses), adapter) in &self.interpreter_adapters {
+                let environment = ((adapter.words[2] >> 32) as u32).checked_sub(1).ok_or("adapter has no environment")?;
+                if !copies.keep(environment) && !copies.objects.contains_key(&(Table::Environments, environment)) { continue; }
+                let mut factory = self.capture(adapter, 0)?.words().to_vec();
+                self.copy_value(&mut factory, &mut target, &mut copies, 0)?;
+                let mut words = adapter.words.to_vec();
+                self.copy_value(&mut words, &mut target, &mut copies, 0)?;
+                adapters.insert((factory[2], witnesses.clone()), Value { arena: 0, words: words.into_boxed_slice() });
+            }
+            let identity = NEXT_ARENA.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+                .map_err(|_| "arena identity overflow")?;
+            for root in result.iter_mut().chain(adapters.values_mut()) { root.arena = identity; }
+            Ok::<_, String>((target, result, adapters, identity))
+        })();
+        let (target, mut result, adapters, identity) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => { self.restore_allocation(checkpoint); return Err(error); }
+        };
+        let stats = CollectionStats { objects_before: self.work.object_count(), objects_after: target.object_count(),
+            copied_bytes: self.requested_allocation_bytes() - checkpoint.0 };
+        self.work = target;
+        self.identity = identity;
+        self.interpreter_adapters = adapters;
+        self.publish_demands(result.split_off(roots.len()));
+        Ok((result, stats))
+    }
+
     /// Publish initialization atomically, preserving aliases in the whole root
     /// set. Only after all copies succeed do we retire the initialize world.
     pub fn publish(&mut self, roots: &[Value]) -> Result<Vec<Value>> {
@@ -84,13 +135,13 @@ impl Runtime {
                 };
                 self.bytes_data(&value)?;
                 let old = words[2] as u32;
-                let id = if let Some(&id) = copies.bytes.get(&old) {
+                let id = if copies.keep(old) { old } else if let Some(&id) = copies.bytes.get(&old) {
                     id
                 } else {
                     let reference = HeapRef::from_raw(old);
                     let bytes = self.tables(reference).bytes.get(reference.slot())?;
                     self.charge_allocation(bytes.len(), 1, std::mem::size_of::<RawStringItem>())?;
-                    let id = HeapRef::new(World::Main, target.bytes.push(bytes)?)?.raw();
+                    let id = HeapRef::new(copies.destination(), target.bytes.push(bytes)?)?.raw();
                     copies.bytes.insert(old, id);
                     id
                 };
@@ -131,12 +182,12 @@ impl Runtime {
                 })?;
                 if words[2] as u8 == 1 {
                     let old = (words[2] >> 32) as u32;
-                    let id = if let Some(&id) = copies.strings.get(&old) {
+                    let id = if copies.keep(old) { old } else if let Some(&id) = copies.strings.get(&old) {
                         id
                     } else {
                         let bytes = self.string_bytes(old)?;
                         self.charge_allocation(bytes.len(), 1, std::mem::size_of::<RawStringItem>())?;
-                        let id = HeapRef::new(World::Main, target.strings.push(bytes)?)?.raw();
+                        let id = HeapRef::new(copies.destination(), target.strings.push(bytes)?)?.raw();
                         copies.strings.insert(old, id);
                         id
                     };
@@ -244,11 +295,11 @@ impl Runtime {
                 let value = Value { arena: self.identity, words: words.to_vec().into_boxed_slice() };
                 let old = words[2] as u32;
                 let description = self.test_description(&value)?;
-                words[2] = u64::from(if let Some(&id) = copies.tests.get(&old) { id } else {
+                words[2] = u64::from(if copies.keep(old) { old } else if let Some(&id) = copies.tests.get(&old) { id } else {
                     self.charge_test(description.inputs.iter().map(|words| words.len()))?;
                     let mut description = description.clone();
                     for input in &mut description.inputs { self.copy_value(input, target, copies, depth + 1)?; }
-                    let id = HeapRef::new(World::Main, u32::try_from(target.tests.len()).map_err(|_| "Test table overflow")?)?.raw();
+                    let id = HeapRef::new(copies.destination(), u32::try_from(target.tests.len()).map_err(|_| "Test table overflow")?)?.raw();
                     target.tests.push(description);
                     copies.tests.insert(old, id);
                     id
@@ -258,11 +309,11 @@ impl Runtime {
                 let value = Value { arena: self.identity, words: words.to_vec().into_boxed_slice() };
                 let old = words[2] as u32;
                 let blame = self.blame_object(&value)?;
-                words[2] = u64::from(if let Some(&id) = copies.blames.get(&old) { id } else {
+                words[2] = u64::from(if copies.keep(old) { old } else if let Some(&id) = copies.blames.get(&old) { id } else {
                     self.charge_blame(blame.message.len(), blame.subjects.len())?;
                     let mut blame = blame.clone();
                     self.copy_value(&mut blame.message, target, copies, depth + 1)?;
-                    let id = HeapRef::new(World::Main, u32::try_from(target.blames.len()).map_err(|_| "Blame table overflow")?)?.raw();
+                    let id = HeapRef::new(copies.destination(), u32::try_from(target.blames.len()).map_err(|_| "Blame table overflow")?)?.raw();
                     target.blames.push(blame);
                     copies.blames.insert(old, id);
                     id
@@ -272,9 +323,9 @@ impl Runtime {
                 let value = Value { arena: self.identity, words: words.to_vec().into_boxed_slice() };
                 let state = self.hash_state(&value)?;
                 let old = words[2] as u32;
-                words[2] = u64::from(if let Some(&id) = copies.hashes.get(&old) { id } else {
+                words[2] = u64::from(if copies.keep(old) { old } else if let Some(&id) = copies.hashes.get(&old) { id } else {
                     self.charge_allocation(1, std::mem::size_of::<sha256::Context>(), 0)?;
-                    let id = HeapRef::new(World::Main, u32::try_from(target.hashes.len()).map_err(|_| "HashState table overflow")?)?.raw();
+                    let id = HeapRef::new(copies.destination(), u32::try_from(target.hashes.len()).map_err(|_| "HashState table overflow")?)?.raw();
                     target.hashes.push(state.clone());
                     copies.hashes.insert(old, id);
                     id
@@ -287,12 +338,12 @@ impl Runtime {
                 };
                 let regex = self.regex_object(&value)?;
                 let old = words[2] as u32;
-                words[2] = u64::from(if let Some(&id) = copies.regexes.get(&old) {
+                words[2] = u64::from(if copies.keep(old) { old } else if let Some(&id) = copies.regexes.get(&old) {
                     id
                 } else {
                     self.charge_regex_copy(regex)?;
                     let id = HeapRef::new(
-                        World::Main,
+                        copies.destination(),
                         u32::try_from(target.regexes.len()).map_err(|_| "Regex table overflow")?,
                     )?
                     .raw();
@@ -329,6 +380,7 @@ impl Runtime {
         copies: &mut Copies,
         depth: usize,
     ) -> Result<u32> {
+        if copies.keep(old) { return Ok(old); }
         if let Some(&id) = copies.objects.get(&(table, old)) {
             return Ok(id);
         }
@@ -343,7 +395,7 @@ impl Runtime {
             Table::Environments => target.environments.push(vec![])?,
             Table::Formats => target.formats.push(vec![])?,
         };
-        let id = HeapRef::new(World::Main, slot)?.raw();
+        let id = HeapRef::new(copies.destination(), slot)?.raw();
         copies.objects.insert((table, old), id); // register before traversing cycles
         match table {
             Table::Environments | Table::Formats => {
