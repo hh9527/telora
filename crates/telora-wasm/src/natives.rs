@@ -41,6 +41,7 @@ impl Emitter<'_> {
             Some((13, "decode_with")) => self.codec_decode_native(),
             Some((17, name @ ("stringify" | "stringify_pretty"))) => self.json_native(name),
             Some((17, "parse_raw")) => self.json_parse_native(),
+            Some((17, "schema_with")) => self.schema_native(),
             Some((20, name)) => self.format_native(name),
             Some((26, "call_with_diagnostics")) => self.capture_diagnostics(),
             Some((18, "property")) => self.property_factory(),

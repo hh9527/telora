@@ -1,28 +1,74 @@
 use super::*;
 
 #[test]
+fn wasm_schema_matches_default_for_recursive_types_and_enums() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        include_str!("../../../telora-native/tests/fixtures/schema.telora"),
+    )
+    .unwrap();
+    let mut results = Vec::new();
+    for backend in [None, Some("--wasm")] {
+        let output = telora(&cwd)
+            .args(["eval", "@src/main:answer"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+    }
+    assert_eq!(results[0], results[1]);
+    assert_eq!(results[1].as_array().unwrap().len(), 10);
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_reflection_and_display_properties_match_default_backend() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
+            "schema-structural",
+            include_str!("../../../telora-wasm/tests/fixtures/schema-structural.telora"),
+            {
+                let mut schemas = serde_json::json!([
+                    {"type":"integer"},{"type":"number"},{"type":"boolean"},{"type":"string"},
+                    {"type":"array","prefixItems":[],"minItems":0,"maxItems":0},
+                    {"type":"array","prefixItems":[{"type":"integer"},{"type":"string"}],"minItems":2,"maxItems":2},
+                    {"type":"object","additionalProperties":{"anyOf":[{"type":"null"},{"type":"integer"}]}},
+                    {"type":"array","items":{"type":"string"}}
+                ]);
+                for schema in schemas.as_array_mut().unwrap() {
+                    schema["$schema"] =
+                        serde_json::json!("https://json-schema.org/draft/2020-12/schema");
+                }
+                schemas
+            },
+        ),
+        (
             "codec-decode-enum",
             include_str!("../../../telora-wasm/tests/fixtures/codec-decode-enum.telora"),
-            serde_json::json!(vec![true;17]),
+            serde_json::json!(vec![true; 17]),
         ),
         (
             "codec-decode-nominal",
             include_str!("../../../telora-wasm/tests/fixtures/codec-decode-nominal.telora"),
-            serde_json::json!(vec![true;12]),
+            serde_json::json!(vec![true; 12]),
         ),
         (
             "codec-decode-tuples",
             include_str!("../../../telora-wasm/tests/fixtures/codec-decode-tuples.telora"),
-            serde_json::json!(vec![true;7]),
+            serde_json::json!(vec![true; 7]),
         ),
         (
             "codec-decode-scalars",
             include_str!("../../../telora-wasm/tests/fixtures/codec-decode-scalars.telora"),
-            serde_json::json!(vec![true;15]),
+            serde_json::json!(vec![true; 15]),
         ),
         (
             "codec-display",
@@ -32,7 +78,7 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
         (
             "codec-untagged",
             include_str!("../../../telora-wasm/tests/fixtures/codec-untagged.telora"),
-            serde_json::json!([null,7,"x"]),
+            serde_json::json!([null, 7, "x"]),
         ),
         (
             "codec-enum-rename",
@@ -47,7 +93,7 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
         (
             "codec-newtype",
             include_str!("../../../telora-wasm/tests/fixtures/codec-newtype.telora"),
-            serde_json::json!([1,2]),
+            serde_json::json!([1, 2]),
         ),
         (
             "codec-enum",

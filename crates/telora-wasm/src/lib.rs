@@ -74,6 +74,10 @@ mod regex_prepare;
 #[path = "../rt/abi.rs"]
 mod runtime_abi;
 mod scalars;
+mod schema;
+mod schema_enum;
+mod schema_nominal;
+mod schema_values;
 mod sequences;
 pub mod session;
 mod string_ops;

@@ -1,0 +1,7 @@
+import "std/json" as json;
+import "std/array" as array;
+import "std/value" {Value};
+export def answer = do {
+    let types: Array(Type) = [Int.type, Float.type, Bool.type, String.type, ().type, (Int,String).type, Dict(Option(Int)).type, Array(String).type];
+    Value.Array(array.map(types,fn(target:Type) {json.schema(target)}))
+};

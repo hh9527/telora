@@ -4,7 +4,7 @@ use telora_core::{
     candidate_layout::State,
     mir::{PropertySite, TypeId},
 };
-use wasm_encoder::{BlockType, Instruction as I, ValType};
+use wasm_encoder::{BlockType, Instruction as I};
 
 impl Emitter<'_> {
     pub(crate) fn codec_decode_nominal(

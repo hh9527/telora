@@ -23,6 +23,7 @@ pub(crate) enum Special {
     Encode(TypeId, TypeId),
     Decode(TypeId, TypeId),
     DecodeVariant(TypeId, TypeId, u32),
+    Schema(TypeId, TypeId),
 }
 
 impl Key {
@@ -229,6 +230,7 @@ impl Plan {
         plan.plan_encoders(executable)?;
         plan.plan_decoders(executable)?;
         plan.plan_parsers(executable)?;
+        plan.plan_schemas(executable)?;
         for root in executable.closure().nodes() {
             let Some((17, name @ ("stringify" | "stringify_pretty"))) =
                 crate::natives::identity(mir, root.node)
@@ -299,6 +301,7 @@ impl Plan {
                     | Special::Encode(_, _)
                     | Special::Decode(_, _)
                     | Special::DecodeVariant(_, _, _)
+                    | Special::Schema(_, _)
             ) {
                 continue;
             }
