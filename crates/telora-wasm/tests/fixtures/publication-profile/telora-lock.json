@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "packages": {
+    "fixture": {
+      "source": {
+        "workspace": ""
+      },
+      "modules": [
+        "@src/entry",
+        "@src/input.json"
+      ],
+      "dependencies": []
+    }
+  }
+}

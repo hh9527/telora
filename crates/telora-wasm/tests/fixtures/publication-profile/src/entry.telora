@@ -1,0 +1,26 @@
+import "std/entry" as entry;
+import "std/value" {Value};
+import "@src/input.json" {data};
+import "std/type-property" {get_type_prop};
+
+@property(PropertyTarget.Type)
+type SourceInfo = struct {value: Value};
+def source_info: Fn(Type, Option(SourceInfo)) -> SourceInfo = fn(owner, previous) { {value: data} };
+@source_info
+type Loaded = struct {};
+def from_metadata = match get_type_prop(Loaded.type, SourceInfo.type) {
+    Some(info) => info.value,
+    None => Value.None,
+};
+
+export def answer = Value.Array([data, Value.Int(42)]);
+
+export def main = entry.main(
+    {sources: ["input"], envs: ["TELORA_WASM_TEST_ENV"], args: True},
+    fn(ctx) { Value.Object({
+        loaded: from_metadata,
+        input: ctx.sources.input,
+        arg: Value.String(ctx.args[0]),
+        env: Value.String(ctx.env.TELORA_WASM_TEST_ENV),
+    }) },
+);

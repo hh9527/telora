@@ -1,6 +1,8 @@
 # RFC 0291：独立 Wasm 发布与执行路线
 
-状态：推进中。分支：`feat/wasm-backend`。跟踪：[#186](https://github.com/hh9527/telora/issues/186)。
+状态：第一期验收完成。分支：`feat/wasm-backend`，保留独立路线，未合入 main。
+跟踪：[#186](https://github.com/hh9527/telora/issues/186)。文末为最终验收及性能观察；
+中间各节保留阶段记录，其中的“尚未完成”描述对应当时状态。
 
 ## 目标与范围
 
@@ -125,10 +127,10 @@ Rust 按职责用普通 mod 拆分模块，不用 include! 拼接代码规避行
 - [x] 单一跟踪 issue、远端分支。
 - [x] 最小 SealedExecutable → Wasm → 独立引擎执行；落盘后独立重载。
 - [x] 同一产物在浏览器执行，验证无需源码和 Rust host 语言运算。
-- [ ] 分类堆、闭包、泛型实例、来源诊断和 runtime 基本操作。
-- [ ] 数据注入、property/顶层初始化，隐藏 check/eval/eval-with 接入。
-- [ ] 语言与 CLI 对照、发布物重载、浏览器 demo 验收。
-- [ ] 分开记录 frontend、Wasm codegen、引擎装载/编译、initialize、entry
+- [x] 分类堆、闭包、泛型实例、来源诊断和 runtime 基本操作。
+- [x] 数据注入、property/顶层初始化，隐藏 check/eval/eval-with 接入。
+- [x] 语言与 CLI 对照、发布物重载、浏览器 demo 验收。
+- [x] 分开记录 frontend、Wasm codegen、引擎装载/编译、initialize、entry
   与内存观察；在端到端完成后做性能评估，不每步重复基准。
 
 引擎选型以首条链路的可用性为依据，解释器与 JIT 是运行策略选择，
@@ -1188,3 +1190,116 @@ Wasmi、Node 和真实 Chromium 已验证同一文件的两万次直接、相互
 不增加 Rust RT 模板接口或运行时类型猜测。Option 保持既有 null 编码。
 新增语言资产验证成功/失败分支、无 payload 变体及嵌套 Array(Result)
 的八项断言；38 项 JSON/codec 相关库测试通过。
+
+## 第一期最终验收
+
+2026-09-13，在当前实现重新运行以下验证；不以早期 ABI 产物代替当前产物。
+
+| 要求 | 当前实现及验收证据 |
+| --- | --- |
+| 独立路线、共用 sealed 前端 | telora-wasm::compile_executable 接受 SealedExecutable；生成器消费已封闭类型、引用及实例。Session::load 只接受字节，不持有 MIR。无 native/旧 VM 回退。 |
+| Rust RT 与固定 ABI 胶水 | 独立 no_std rt 编译为 wasm32 staticlib；object/link 模块生成重定位并通过 wasm-ld 静态链接。产物零 imports；浏览器运行没有 Rust host 语言运算。RT 不承担模板实例化。 |
+| 分类堆、确定类型的值及函数 | 95 项常规库测试通过，覆盖容器、代数类型、闭包、局部泛型捕获、互递归、interpreter!、构造检查、property、reflection、codec、格式化、解析、regex/hash、Test 描述及 debug。 |
+| main/work 与初始化 | 数据注入先于 property；需求缓存、循环及失败身份、主动初始化、冻结表前缀和后续 work 追加均有库回归。失败不发布用户结果；没有跨 world 的深复制。 |
+| check/eval/eval-with | 101 项完整 CLI 回归通过；计时接入后再运行 15 项 Wasm CLI 回归通过。check-success-all 聚合初始化成功。 |
+| only-types 纯静态 | 将 TELORA_WASM_LD 指向不存在文件，check --wasm --only-types --lib 仍成功，execution_seconds 为 0，无 Wasm 阶段计时。static_cli 在静态错误或 types-only 时不会创建 Session。 |
+| 免源码发布及独立重载 | wasm_artifact_runs_without_workspace_source_or_data_files 发布后删除整个源工作区，eval/check/eval-with 均按预期执行；重复发布字节一致；静态失败不创建产物；失败初始化不输出结果。运行现有产物也不需要链接器。 |
+| 来源及损坏产物 | 同一 CLI 回归保留数据/property 拒绝来源；debug 发布回归保留位置及标签。Manifest 验证 ABI/TypeId，数据包验证图、范围及来源；Node 的十类损坏数据包均在注入前拒绝。 |
+| 现有语言语义对照 | 重新生成默认记录后，独立 Wasm 回调审计 424/424 结果一致，包含 20 条带 fixture 索引的 case。比较结果状态，不承诺诊断文本逐字一致。 |
+| 浏览器 demo | 从当前源码重新生成 ABI 8 文件。真实 Chromium 153 通过聚合、函数输入、Eval 上下文、初始化拒绝、捕获诊断、YAML/TOML 数据包、数据/property 驱动 Eval、Test 描述。debug 和两万次尾调用由 Node/Chromium 同产物复验通过。HTTP 测试服务已停止。 |
+| 隐藏与范围约束 | 普通 help 不显示 Wasm 入口；本分支未改 README/docs。未添加 Wasm run/serve，未切换默认后端；Rust 模块无 include! 拼接。 |
+| 分阶段时间与内存 | 下节记录 release 实测、边界及复现方法。 |
+
+验收命令：
+
+```sh
+cargo test -p telora-wasm --lib
+cargo test -p telora --test cli
+cargo test -p telora-wasm --lib published_language_callbacks -- --ignored --nocapture
+cargo test -p telora --test cli wasm
+cargo build --release -p telora
+target/release/telora -C target/language-tests/workspace check --wasm @src/generated/check-success-all
+```
+
+语言审计依赖 CLI language_acceptance_fixtures_pass 生成的观察文件，不能与
+生成步骤并行运行。浏览器命令和环境见前文；当前复验还运行了
+debug-smoke.mjs、tail-smoke.mjs 和 bundle-smoke.mjs。
+
+这完成第一期的完整初始化和 Eval 路径，不是初始化 snapshot 或服务运行时。
+Wasm tail-call 支持是引擎要求。Wasmi fuel 包含链接 Rust RT 的低层工作，
+不与其他后端精确等价；浏览器仍通过 worker 停止长任务。main/work 采用
+冻结前缀加追加分配，本期不回收 work 或初始化临时对象。这些既定边界
+保留，不以默认后端兼容分支掩盖它们。
+
+## Release 时间与内存观察
+
+环境：Linux x86_64，rustc 1.98.1，Wasmi 2.0.0，release 默认构建配置。
+各场景、后端顺序执行三次，下面为各指标分别取中位数；非冷缓存实验。
+没有并行构建、测试或浏览器负载。数据用于观察，不据此作性能收益结论。
+
+内部环境变量 TELORA_WASM_TIMINGS=1 向 stderr 写 JSON 阶段记录。
+codegen_link 包含机械生成、对象写入和 wasm-ld 子进程；engine_load 包含
+manifest 验证、引擎编译及实例化。文件模式 engine_load_data 还包含数据包
+验证与注入；entry_output 包含 Wasm 调用、输入装配及外部结果读取，因此
+不等同于 native/default 的 execute。默认路径 frontend/codegen 的 seal
+边界也略有不同。阶段记录可包含出错前耗时，实测只纳入成功且输出一致者。
+
+Eval 场景保存在 crates/telora-wasm/tests/fixtures/publication-profile：
+data module 驱动 property，初始化读取其值，然后 entry 消费 source/env/args。
+单位为毫秒；“—”表示该路径不存在此阶段。
+
+| 阶段 | 默认 | native | 现场 Wasm | 文件 Wasm |
+| --- | ---: | ---: | ---: | ---: |
+| frontend | 14.262 | 14.411 | 14.138 | — |
+| codegen / codegen_link | 0.589 | 20.500 | 59.588 | — |
+| link / runtime_setup / engine_load | 0.073 | 0.889 | 2.724 | 2.824（含数据） |
+| artifact_read | — | — | — | 0.598 |
+| data_input | 包含在 link | 包含在 setup | 0.170 | 包含在 load |
+| initialize | 0.747 | 0.138 | 0.412 | 0.429 |
+| entry_input | 0.029 | 0.040 | 0.044 | 0.119 |
+| execute / entry_output | 0.092 | 0.011 | 0.123 | 0.135 |
+| 单独 output | 未单列 | 0.022 | 包含在上行 | 包含在上行 |
+| 峰值 RSS（KiB） | 13256 | 17436 | 54808 | 11172 |
+
+四条路径输出均为
+`{"arg":"published","env":"observed","input":{"number":42},"loaded":{"number":42}}`。
+单次发布观测：frontend 14.201 ms，codegen_link 59.693 ms，bundle/write
+5.650 ms，文件 1,178,646 bytes。它保存代码/数据，不保存初始化快照。
+
+既有 performance/type-structure 场景的补充观察（2000 次递归，均输出
+2001000）；此处计算发生在顶层初始化，export 只读取完成值：
+
+| 场景 / 后端 | frontend ms | codegen/link ms | initialize ms | 峰值 RSS KiB |
+| --- | ---: | ---: | ---: | ---: |
+| runtime-integer / 默认 | 2.291 | 0.100 + 0.037 | 未埋点 | 11008 |
+| runtime-integer / native | 2.340 | 8.977 | 0.469 | 14208 |
+| runtime-integer / Wasm | 2.317 | 53.736 | 1.288 | 54284 |
+| runtime-plain / 默认 | 2.285 | 0.100 + 0.037 | 未埋点 | 11264 |
+| runtime-plain / native | 2.395 | 9.147 | 1.130 | 14208 |
+| runtime-plain / Wasm | 2.338 | 52.636 | 1.664 | 54032 |
+
+这两个 Wasm 场景的 engine_load 分别为 0.975 / 0.989 ms。默认 eval
+没有 initialize 阶段埋点，因此不将缺失值写成零，也不作该项对比。
+RSS 使用 `/usr/bin/time -f 'wall_s=%e max_rss_kib=%M'`，是进程及已等待
+子进程的峰值观察，现场 Wasm 包含链接器影响，不是纯语言堆大小；文件
+执行没有链接器。wall_s 只有百分之一秒精度，小场景显示 0.00 不代表零耗时。
+
+复现 Eval 场景（从仓库根目录运行；循环三次取中位数）：
+
+```sh
+target/release/telora -C crates/telora-wasm/tests/fixtures/publication-profile lock
+TELORA_WASM_TIMINGS=1 target/release/telora \
+  -C crates/telora-wasm/tests/fixtures/publication-profile \
+  wasm build @src/entry:main -o /tmp/telora-profile.wasm
+TELORA_WASM_TEST_ENV=observed TELORA_WASM_TIMINGS=1 \
+  /usr/bin/time -f 'wall_s=%e max_rss_kib=%M' target/release/telora \
+  wasm eval-with /tmp/telora-profile.wasm \
+  --source input="$PWD/crates/telora-wasm/tests/fixtures/publication-profile/src/input.json" \
+  -- published
+```
+
+现场对照将 wasm eval-with FILE 换成
+`-C crates/telora-wasm/tests/fixtures/publication-profile eval-with --wasm @src/entry:main`。
+native 使用 --native / TELORA_NATIVE_TIMINGS=1，默认不选后端并使用
+TELORA_DEFAULT_TIMINGS=1；其余输入相同。上述计时只用于内部观察，不进入
+公开 CLI 文档。

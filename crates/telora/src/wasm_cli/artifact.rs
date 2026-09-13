@@ -1,4 +1,5 @@
 //! Hidden publication interface. File execution does not load a workspace.
+use super::timing::PhaseTimer;
 use crate::{
     eval_cli::{EvalSelector, parse_eval_selector},
     source_arg::{NamedSource, parse_named_source},
@@ -47,12 +48,16 @@ pub(crate) fn run(context: PathBuf, arguments: ArtifactArgs) -> Result<i32, Stri
         Command::Check { file } | Command::Eval { file } | Command::EvalWith { file, .. } => file,
         Command::Build { .. } => unreachable!(),
     };
+    let timer = PhaseTimer::new("artifact_read");
     let bytes =
         fs::read(file).map_err(|e| format!("cannot read artifact {}: {e}", file.display()))?;
+    drop(timer);
+    let timer = PhaseTimer::new("engine_load_data");
     let mut session = Session::load(
         &bytes,
         (crate::execution_config().session_quota.fuel as u64).saturating_mul(100),
     )?;
+    drop(timer);
     match &command {
         Command::Eval { .. }
             if session.manifest.value_type != Some(session.manifest.entry_type) =>
@@ -67,13 +72,19 @@ pub(crate) fn run(context: PathBuf, arguments: ArtifactArgs) -> Result<i32, Stri
         _ => {}
     }
     session.set_debug_enabled(true)?;
-    let initialized = session.initialize();
+    let initialized = {
+        let _timer = PhaseTimer::new("initialize");
+        session.initialize()
+    };
     super::diagnostics::finish_portable(&session, 0, initialized)?;
     match command {
         Command::Check { .. } => Ok(0),
         Command::Eval { .. } => {
             let before = session.diagnostics()?.len();
-            let result = session.eval();
+            let result = {
+                let _timer = PhaseTimer::new("export_output");
+                session.eval()
+            };
             println!(
                 "{}",
                 super::diagnostics::finish_portable(&session, before, result)?
@@ -98,6 +109,7 @@ pub(crate) fn run(context: PathBuf, arguments: ArtifactArgs) -> Result<i32, Stri
 }
 
 fn build(context: PathBuf, selector: EvalSelector, output: PathBuf) -> Result<i32, String> {
+    let timer = PhaseTimer::new("frontend");
     let mut inventory = Inventory::new(&context, selector.module_id.starts_with("std/"))?;
     let root = inventory.select(&selector.module_id)?;
     let mut mir = inventory.solve(&root);
@@ -123,7 +135,12 @@ fn build(context: PathBuf, selector: EvalSelector, output: PathBuf) -> Result<i3
             .collect::<Vec<_>>()
             .join("\n")
     })?;
-    let bytes = telora_wasm::compile_executable(&executable)?;
+    drop(timer);
+    let bytes = {
+        let _timer = PhaseTimer::new("codegen_link");
+        telora_wasm::compile_executable(&executable)?
+    };
+    let _timer = PhaseTimer::new("bundle_write");
     let manifest = Manifest::read(&bytes)?;
     let mut plans = vec![];
     for module in manifest.data_modules {

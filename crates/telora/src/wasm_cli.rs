@@ -1,6 +1,7 @@
 //! Hidden portable backend. The frontend stops at SealedExecutable.
 pub(crate) mod artifact;
 mod diagnostics;
+mod timing;
 use crate::static_input::Inventory;
 use std::path::PathBuf;
 use telora_core::{
@@ -8,6 +9,7 @@ use telora_core::{
     mir::{ModuleTarget, SealedExecutable, SealedMir},
     source::Severity,
 };
+use timing::PhaseTimer;
 
 pub(crate) fn error(message: impl Into<String>) -> Diagnostic {
     Diagnostic {
@@ -19,7 +21,11 @@ pub(crate) fn error(message: impl Into<String>) -> Diagnostic {
 }
 
 fn compile(executable: &SealedExecutable<'_>) -> Result<telora_wasm::session::Session, String> {
-    let bytes = telora_wasm::compile_executable(executable)?;
+    let bytes = {
+        let _timer = PhaseTimer::new("codegen_link");
+        telora_wasm::compile_executable(executable)?
+    };
+    let _timer = PhaseTimer::new("engine_load");
     // Wasmi counts low-level instructions, including linked Rust library work.
     // This coarse conversion bounds runaway execution, not equivalent billing.
     telora_wasm::session::Session::load(
@@ -54,6 +60,7 @@ pub(crate) fn initialize(
     inventory: &Inventory,
     sources: &mut telora_core::SourceDatabase,
 ) -> Result<(), String> {
+    let timer = PhaseTimer::new("data_input");
     session.set_debug_enabled(true)?;
     for module in session.manifest.data_modules.clone() {
         let (format, text) = inventory.read_data_text(
@@ -78,6 +85,8 @@ pub(crate) fn initialize(
         session.register_data_sources(sources, &plan)?;
         session.inject_data(module.symbol, &plan)?;
     }
+    drop(timer);
+    let _timer = PhaseTimer::new("initialize");
     session.initialize()
 }
 
@@ -99,6 +108,7 @@ pub(crate) fn check_diagnostics(
 }
 
 pub(crate) fn eval(context: PathBuf, module: &str, export: &str) -> Result<i32, String> {
+    let timer = PhaseTimer::new("frontend");
     let mut inventory = Inventory::new(&context, module.starts_with("std/"))?;
     let root = inventory.select(module)?;
     let mut mir = inventory.solve(&root);
@@ -124,6 +134,7 @@ pub(crate) fn eval(context: PathBuf, module: &str, export: &str) -> Result<i32, 
             .collect::<Vec<_>>()
             .join("\n")
     })?;
+    drop(timer);
     let mut session = compile(&executable)?;
     if session.manifest.value_type != Some(session.manifest.entry_type) {
         return Err("eval export must have the authoritative std/value.Value type".into());
@@ -131,7 +142,10 @@ pub(crate) fn eval(context: PathBuf, module: &str, export: &str) -> Result<i32, 
     let result = initialize(&mut session, &inventory, &mut mir.sources);
     diagnostics::finish(&session, &mir.sources, 0, result)?;
     let before = session.diagnostics()?.len();
-    let result = session.eval();
+    let result = {
+        let _timer = PhaseTimer::new("export_output");
+        session.eval()
+    };
     println!(
         "{}",
         diagnostics::finish(&session, &mir.sources, before, result)?
@@ -146,6 +160,7 @@ pub(crate) fn eval_with(
     inputs: Vec<crate::source_arg::NamedSource>,
     args: Vec<String>,
 ) -> Result<i32, String> {
+    let timer = PhaseTimer::new("frontend");
     let mut inventory = Inventory::new(&context, module.starts_with("std/"))?;
     let root = inventory.select(module)?;
     let mut mir = inventory.solve(&root);
@@ -171,6 +186,7 @@ pub(crate) fn eval_with(
             .collect::<Vec<_>>()
             .join("\n")
     })?;
+    drop(timer);
     let mut session = compile(&executable)?;
     if session.manifest.eval_type != Some(session.manifest.entry_type) {
         return Err("eval-with export: expected Eval (std/entry.Eval)".into());
@@ -187,6 +203,7 @@ pub(super) fn execute_with(
     args: Vec<String>,
     portable: bool,
 ) -> Result<i32, String> {
+    let timer = PhaseTimer::new("entry_input");
     let before = session.diagnostics()?.len();
     let config = session.eval_config()?;
     let names = |field: &str| -> Result<Vec<String>, String> {
@@ -256,7 +273,11 @@ pub(super) fn execute_with(
         session.register_data_sources(sources, &plan)?;
         plans.push((name, plan));
     }
-    let result = session.eval_with(&args, &env, &plans);
+    drop(timer);
+    let result = {
+        let _timer = PhaseTimer::new("entry_output");
+        session.eval_with(&args, &env, &plans)
+    };
     println!(
         "{}",
         if portable {
