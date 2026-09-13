@@ -571,6 +571,8 @@ struct RunArgs {
 
 #[derive(Args)]
 struct ApplicationArgs {
+    #[arg(long, hide = true)]
+    native: bool,
     #[arg(value_name = "MODULE:EXPORT", value_parser = parse_application_selector)]
     selector: ApplicationSelector,
     #[arg(long)]
@@ -837,6 +839,7 @@ async fn run_command(
     entry: &str,
     arguments: ApplicationArgs,
 ) -> Result<i32, String> {
+    let frontend_timer = arguments.native.then(|| native_cli::PhaseTimer::new("frontend"));
     let entry_sources = collect_entry_sources(arguments.sources.clone())?;
     if entry == "serve"
         && entry_sources
@@ -879,6 +882,10 @@ async fn run_command(
     let telora_core::mir::ModuleTarget::Bound(root) = mir.roots[0] else { return Err("entry adapter module is unresolved".into()) };
     let symbol = *mir.exports[root.index()].iter().find(|s| mir.symbols[s.index()].name == "configure")
         .ok_or("entry adapter has no configuration export")?;
+    if arguments.native {
+        drop(frontend_timer);
+        return native_cli::run_service(mir, inventory, symbol, mode, arguments, entry_sources).await;
+    }
     let artifact = mir.seal().and_then(|sealed| telora_core::codegen::compile_run(sealed, symbol))
         .map_err(|errors| errors.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
     let config = execution_config();

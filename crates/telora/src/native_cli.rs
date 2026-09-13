@@ -1,4 +1,6 @@
 //! Experimental native session. The default execution path is independent.
+mod run;
+pub(crate) use run::execute as run_service;
 use crate::static_input::Inventory;
 use telora_core::{Diagnostic, SourceDatabase, mir::SealedMir, source::Severity};
 use telora_native::{
@@ -9,13 +11,13 @@ use telora_native::{
 
 // Internal measurement only; never changes the command's JSON result stream.
 // A record measures elapsed wall time, including time until an error returns.
-struct PhaseTimer {
+pub(crate) struct PhaseTimer {
     name: &'static str,
     start: Option<std::time::Instant>,
 }
 
 impl PhaseTimer {
-    fn new(name: &'static str) -> Self {
+    pub(crate) fn new(name: &'static str) -> Self {
         Self {
             name,
             start: (std::env::var_os("TELORA_NATIVE_TIMINGS").as_deref() == Some(std::ffi::OsStr::new("1")))
@@ -113,43 +115,47 @@ impl Session {
     }
 
     fn diagnostics(&self, sources: &SourceDatabase) -> Vec<Diagnostic> {
-        self.context
-            .diagnostics()
-            .iter()
-            .map(|diagnostic| {
-                let [source, start, end] = diagnostic.origin.words();
-                let mut result = match sources.files().find(|file| file.id().get() == source) {
-                    Some(file) => Diagnostic::error(
-                        &diagnostic.message,
+        context_diagnostics(&self.context, sources)
+    }
+}
+
+fn context_diagnostics(context: &CallContext, sources: &SourceDatabase) -> Vec<Diagnostic> {
+    context
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| {
+            let [source, start, end] = diagnostic.origin.words();
+            let mut result = match sources.files().find(|file| file.id().get() == source) {
+                Some(file) => Diagnostic::error(
+                    &diagnostic.message,
+                    telora_core::Loc {
+                        source: file.id(),
+                        start,
+                        end,
+                    },
+                ),
+                None => error(&diagnostic.message),
+            };
+            result.severity = diagnostic.severity;
+            for (index, subject) in diagnostic.subjects.iter().enumerate() {
+                if *subject == diagnostic.origin {
+                    continue;
+                }
+                let [source, start, end] = subject.words();
+                if let Some(file) = sources.files().find(|file| file.id().get() == source) {
+                    result = result.with_secondary(
+                        format!("subject {} originated here", index + 1),
                         telora_core::Loc {
                             source: file.id(),
                             start,
                             end,
                         },
-                    ),
-                    None => error(&diagnostic.message),
-                };
-                result.severity = diagnostic.severity;
-                for (index, subject) in diagnostic.subjects.iter().enumerate() {
-                    if *subject == diagnostic.origin {
-                        continue;
-                    }
-                    let [source, start, end] = subject.words();
-                    if let Some(file) = sources.files().find(|file| file.id().get() == source) {
-                        result = result.with_secondary(
-                            format!("subject {} originated here", index + 1),
-                            telora_core::Loc {
-                                source: file.id(),
-                                start,
-                                end,
-                            },
-                        );
-                    }
+                    );
                 }
-                result
-            })
-            .collect()
-    }
+            }
+            result
+        })
+        .collect()
 }
 
 pub(crate) fn error(message: impl Into<String>) -> Diagnostic {

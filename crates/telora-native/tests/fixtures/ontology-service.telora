@@ -1,0 +1,28 @@
+# Performance adapter: use with the external lab-ontology world-model workspace.
+import "world-model/bin/make-query" as query;
+import "std/actor" as actor;
+import "std/entry" as entry;
+import "std/ees" as ees;
+import "std/value" {Value};
+
+export def run = entry.run(().type, {sources: ["input"], envs: [], args: False}, ees.none, fn(ctx) {
+    let reduce: Fn((), actor.Event) -> actor.Transition(()) = fn(state, event) {
+        match event {
+            actor.Event.Request(request) => ((), [actor.reply(request.id, query.main.evaluate(ctx))]),
+            _ => fail!("unexpected event"),
+        }
+    };
+    ((), reduce)
+});
+
+export def serve = entry.serve(().type, {sources: [], envs: [], args: False}, ees.none, fn(ctx) {
+    let reduce: Fn((), actor.Event) -> actor.Transition(()) = fn(state, event) {
+        match event {
+            actor.Event.Request(request) => ((), [actor.reply(request.id, query.main.evaluate({
+                sources: {input: request.input}, env: {}, args: [],
+            }))]),
+            _ => fail!("unexpected event"),
+        }
+    };
+    ((), reduce)
+});

@@ -761,6 +761,8 @@ mod enums;
 pub(crate) mod helpers;
 #[path = "runtime/publish.rs"]
 mod publish;
+mod service;
+pub use service::ServiceEffect;
 #[cfg(test)]
 #[path = "runtime/tests.rs"]
 mod tests;

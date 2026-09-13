@@ -1,4 +1,68 @@
 #[test]
+fn native_service_collection_stays_bounded_and_protocol_failure_discards_output() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/app.telora"), include_str!("../../../telora-native/tests/fixtures/service-entry.telora")).unwrap();
+    let mut child = telora(&cwd).args(["serve", "--native", "@src/app:serve", "--bind", "stdio://"])
+        .env("TELORA_NATIVE_TIMINGS", "1").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all("null\n".repeat(200).as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let replies = jsonl(&output.stdout);
+    assert_eq!(replies.len(), 200);
+    assert_eq!(replies[199]["ok"], 200);
+    let metrics = String::from_utf8_lossy(&output.stderr).lines().filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|record| record["native_phase"] == "service").unwrap();
+    assert_eq!(metrics["events"], 202);
+    assert_eq!(metrics["collections"], 201);
+    assert!(metrics["max_objects_after"].as_u64().unwrap() < 40, "{metrics}");
+    assert!(metrics["max_objects_before"].as_u64().unwrap() > metrics["max_objects_after"].as_u64().unwrap());
+    for native in [false, true] {
+        let mut command = telora(&cwd);
+        command.args(["serve", "@src/app:serve", "--bind", "stdio://"]);
+        if native { command.arg("--native"); }
+        let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        child.stdin.take().unwrap().write_all(b"null\n{broken\n").unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty(), "must not publish the first response before terminal success");
+    }
+    for command in ["run", "serve"] {
+        let output = telora(&cwd).args([command, "--help"]).output().unwrap();
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("--native"));
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
+fn native_services_keep_state_across_collection_and_recover_language_failures() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/app.telora"), include_str!("../../../telora-native/tests/fixtures/service-entry.telora")).unwrap();
+    for native in [false, true] {
+        let mut command = telora(&cwd);
+        command.args(["run", "@src/app:run"]);
+        if native { command.arg("--native"); }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "native={native}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), serde_json::json!(1));
+        let mut command = telora(&cwd);
+        command.args(["serve", "@src/app:serve", "--bind", "stdio://"]);
+        if native { command.arg("--native"); }
+        let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        child.stdin.take().unwrap().write_all(b"null\n\"fail\"\nnull\nnull\n").unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "native={native}: {}", String::from_utf8_lossy(&output.stderr));
+        let replies = jsonl(&output.stdout);
+        assert_eq!(replies.len(), 4);
+        assert_eq!(replies[0]["ok"], 1);
+        assert_eq!(replies[1]["error"], true);
+        assert_eq!(replies[1]["diagnostics"][0]["message"], "requested service failure");
+        assert_eq!(replies[2]["ok"], 2);
+        assert_eq!(replies[3]["ok"], 3);
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn native_debug_events_preserve_order_location_and_result() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), include_str!("../../../telora-native/tests/fixtures/debug.telora")).unwrap();

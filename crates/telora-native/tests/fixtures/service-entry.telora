@@ -1,0 +1,23 @@
+import "std/actor" as actor;
+import "std/value" {Value};
+import "std/entry" as entry;
+import "std/ees" as ees;
+
+type State = struct { next: Int };
+def config: entry.ContextConfig = {sources: [], envs: [], args: False};
+def start = fn(ctx: entry.Context) {
+    let initial: State = {next: 1};
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            actor.Event.Request(request) => if request.input == Value.String("fail") {
+                fail!("requested service failure")
+            } else {
+                ({next: state.next + 1}, [actor.reply(request.id, Value.Int(state.next))])
+            },
+            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    (initial, reduce)
+};
+export def run = entry.run(State.type, config, ees.none, start);
+export def serve = entry.serve(State.type, config, ees.none, start);
