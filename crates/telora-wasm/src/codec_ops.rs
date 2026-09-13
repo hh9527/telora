@@ -37,6 +37,7 @@ impl Emitter<'_> {
         }
         let input = self.parameter(2);
         let properties = self.parameter(0);
+        let properties = self.codec_property_context(args[0], properties)?;
         self.codec_encode_call(args[2], args[3], input, properties)
     }
 

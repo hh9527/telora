@@ -838,3 +838,14 @@ enum 无 payload 时生成名称字符串，有 payload 时生成单字段对象
 递归 enum、不可居住 payload 和 Result 的 Ok/Err 用例通过；59 项
 Wasm 库测试通过。默认解释器尚不支持 Result 编码，因此该项只作
 Wasm 独立验证，不宣称默认后端对照通过。property 规则仍未实现。
+
+## Record 重命名 property
+
+codec 入口将 Properties 转换为固定六个 TypeId 槽位，供专用函数图
+传递。Record 的 rename_all(CamelCase) 已接通：按槽位的 TypeId 选择
+封闭 property 记录，经现有 demand 求值，再采用编译期准备的名称。
+重命名后重新按 UTF-8 名称排序；名称碰撞在实际选择重命名路径时
+产生可捕获诊断，不让未启用重命名的合法字段受到影响。
+
+62 项 Wasm 库测试通过，覆盖 Unicode/下划线规则及碰撞。enum 重命名、
+untagged、Parse/Display 桥接及 decode 等仍未实现，继续推进。

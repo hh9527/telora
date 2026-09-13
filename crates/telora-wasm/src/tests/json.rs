@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn codec_rename_collision_is_a_captured_evaluation_error() {
+    let bytes = compile(include_str!(
+        "../../tests/fixtures/codec-rename-errors.telora"
+    ))
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert_eq!(result[0]["message"], "duplicate external field name");
+    assert_eq!(result[1], serde_json::json!({"a_b":1,"aB":2}));
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn codec_record_rename_uses_demanded_property_and_sorted_external_keys() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-rename.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!({"aValue":"text","zValue":7})
+    );
+}
+
+#[test]
 fn codec_enums_encode_closed_names_and_recursive_payloads() {
     let bytes = compile_export(
         include_str!("../../tests/fixtures/codec-enum.telora"),

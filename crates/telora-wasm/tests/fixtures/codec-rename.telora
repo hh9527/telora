@@ -1,0 +1,10 @@
+import "std/codec" as codec;
+import "std/json" as json;
+import "std/value" { Value };
+@json.rename_all(json.RenameCase.CamelCase)
+type Record = struct { z_value: Int, a_value: String };
+export def inspect = fn() {
+    let record: Record = {z_value: 7, a_value: "text"};
+    codec.encode(Value.type, record)
+};
+export def answer = inspect();

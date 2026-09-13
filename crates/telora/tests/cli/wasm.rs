@@ -5,6 +5,11 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
+            "codec-rename",
+            include_str!("../../../telora-wasm/tests/fixtures/codec-rename.telora"),
+            serde_json::json!({"aValue":"text","zValue":7}),
+        ),
+        (
             "codec-newtype",
             include_str!("../../../telora-wasm/tests/fixtures/codec-newtype.telora"),
             serde_json::json!([1,2]),

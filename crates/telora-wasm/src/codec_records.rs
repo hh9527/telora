@@ -1,6 +1,6 @@
 use crate::{abi::*, emit::Emitter};
 use telora_core::{candidate_layout::State, mir::TypeId};
-use wasm_encoder::{Instruction as I, ValType};
+use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub(crate) fn codec_encode_record(
@@ -9,13 +9,22 @@ impl Emitter<'_> {
         target: TypeId,
         input: u32,
     ) -> Result<u32, String> {
-        if self
-            .plan
-            .properties
-            .keys()
-            .any(|&index| self.mir.properties[index].owner == source)
-        {
-            return Err("Wasm: codec property rules are not yet implemented".into());
+        let is_record = matches!(&self.plan.layouts[source.index()].layout, State::Known { shape } if shape.table == Some("RecordTable"));
+        for slot in [1, 2, 4, 5] {
+            if slot == 4 && is_record {
+                continue;
+            }
+            let present = self.codec_property_present(source, slot);
+            self.extend([I::LocalGet(present), I::If(BlockType::Empty)]);
+            let message = self.text_as(
+                self.key.node,
+                self.string_type()?,
+                b"Wasm: codec property rule is not yet implemented",
+            )?;
+            let count = self.local(ValType::I32);
+            self.extend([I::I32Const(1), I::LocalSet(count)]);
+            self.report(self.key.node, message, input, count, false);
+            self.emit(I::End);
         }
         let layout = &self.plan.layouts[source.index()];
         if !layout.variants.is_empty() {
@@ -40,6 +49,56 @@ impl Emitter<'_> {
         if !matches!(&layout.layout, State::Known { shape } if shape.table == Some("RecordTable")) {
             return Err("Wasm: codec nominal type is not yet supported".into());
         }
+        for (&index, &key) in &self.plan.properties {
+            let property = &self.mir.properties[index];
+            if property.owner != source || property.site != telora_core::mir::PropertySite::Type {
+                continue;
+            }
+            let Some(object) = &self.plan.layouts[property.property.index()].object else {
+                continue;
+            };
+            let Some(case) = object.members.iter().find(|m| m.name == "case") else {
+                continue;
+            };
+            let case_ty = case.type_id.ok_or("Wasm: rename case type missing")?;
+            let Some(camel) = self.plan.layouts[case_ty]
+                .variants
+                .iter()
+                .position(|v| v.name == "CamelCase")
+            else {
+                continue;
+            };
+            let offset = case.offset.ok_or("Wasm: rename case offset missing")?;
+            self.extend([
+                I::LocalGet(0),
+                I::I32Load(memory(16, 2)),
+                I::I32Const(property.property.index() as i32),
+                I::I32Eq,
+                I::If(BlockType::Empty),
+            ]);
+            let capability = self.call_key(key)?;
+            let data = self.table_data(RECORDS, capability, DATA);
+            self.extend([
+                I::LocalGet(data),
+                I::I32Load(memory(offset + DATA, 2)),
+                I::I32Const(camel as i32),
+                I::I32Ne,
+            ]);
+            self.fail_if(self.key.node, ERROR_DATA);
+            let value = self.codec_record_fields(source, target, input, true)?;
+            self.extend([I::LocalGet(value), I::Return, I::End]);
+        }
+        self.codec_record_fields(source, target, input, false)
+    }
+
+    fn codec_record_fields(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        input: u32,
+        rename: bool,
+    ) -> Result<u32, String> {
+        let layout = &self.plan.layouts[source.index()];
         let mut members: Vec<_> = layout
             .object
             .as_ref()
@@ -48,6 +107,24 @@ impl Emitter<'_> {
             .iter()
             .map(|m| (m.name.clone(), m.type_id, m.offset))
             .collect();
+        let names =
+            match crate::codec_names::external_names(members.iter().map(|m| m.0.clone()), rename) {
+                Ok(names) => names,
+                Err(_) => {
+                    let message = self.text_as(
+                        self.key.node,
+                        self.string_type()?,
+                        b"duplicate external field name",
+                    )?;
+                    let count = self.local(ValType::I32);
+                    self.extend([I::I32Const(1), I::LocalSet(count)]);
+                    self.report(self.key.node, message, input, count, false);
+                    return Ok(self.local(ValType::I32));
+                }
+            };
+        for (member, name) in members.iter_mut().zip(names) {
+            member.0 = name;
+        }
         members.sort_by(|a, b| a.0.cmp(&b.0));
         let width = self.width(target)?;
         let count =

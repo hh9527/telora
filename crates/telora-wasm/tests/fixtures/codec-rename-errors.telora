@@ -1,0 +1,15 @@
+import "std/codec" as codec;
+import "std/json" as json;
+import "std/value" { Value };
+import "std/_rt" as rt;
+@json.rename_all(json.RenameCase.CamelCase)
+type Collision = struct { a_b: Int, aB: Int };
+type Plain = struct { a_b: Int, aB: Int };
+export def answer = fn() {
+    let bad: Collision = {a_b: 1, aB: 2};
+    let plain: Plain = {a_b: 1, aB: 2};
+    let error = match rt.with_diagnostics(fn(value: Collision) { codec.encode(Value.type, value) })(bad) {
+        Err(reports) => reports[0], Ok(_) => fail!("expected duplicate name"),
+    };
+    (error,codec.encode(Value.type, plain))
+};
