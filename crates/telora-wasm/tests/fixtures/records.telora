@@ -1,0 +1,56 @@
+import "std/array" as array;
+import "std/dict" as dict;
+import "std/value" {Value};
+
+type Source = struct {x: Int, y: String, extra: Array(Int)};
+type Target = struct {x: Int, Y: String};
+type Pair = struct {first: Int, second: Int};
+type Empty = struct {};
+type Count = struct {x: Int};
+type WrongCount = struct {x: String};
+type Box(T) = struct {value: T};
+type Named(T) = struct {item: T};
+type Parent = struct {child: Count, values: Array(Int)};
+def rename: for(T) Fn(Box(T)) -> Named(T) = fn(value) { value.{value as item} };
+def replace: for(T) Fn(Box(T), T) -> Box(T) = fn(base, value) { base <~ {value} };
+def source: Source = {x: 1, y: "source", extra: [1, 2]};
+def count: Count = {x: 2};
+def wrong: WrongCount = {x: "overwritten"};
+def before: Dict(Int) = {a: 1, b: 2};
+def after: Dict(Int) = {b: 3, c: 4};
+
+export def inspect = fn() {
+    let selected: Target = source.{x, y as Y};
+    let pair: Pair = source.{x as first, x as second};
+    let empty: Empty = source.{};
+    let copied: Source = {...source, x: 3};
+    let first = source <~ {x: "discarded", ...count};
+    let second = source <~ {...wrong, x: 4};
+    let third = source <~ {...count, ...count};
+    let projected_update = selected <~ source.{y as Y};
+    let named: Box(String) = {value: "generic"};
+    let parent: Parent = {child: {x: 1}, values: [1]};
+    let updated_parent = parent <~ {child: {x: 2}, values: []};
+    let merged: Dict(Int) = {a: 0, ...before, ...after, c: 5};
+    let spread_only: Dict(Int) = {...before};
+    let contextual: Dict(Int) = {...{a: 1}, b: 2};
+    let wide: Dict(Array(Int)) = {z: [9], a: [0]};
+    let wide_merged: Dict(Array(Int)) = {...wide, a: [1, 2], ...{b: [3]}};
+    (selected, pair, empty, copied, source, first, second, third,
+     projected_update, rename(named), replace(named, "changed"), updated_parent, parent,
+     merged, spread_only, before, contextual, wide_merged, dict.keys(wide_merged))
+};
+
+export def answer = do {
+    let result = inspect();
+    Value.Object({
+        projected: Value.String(result.0.Y),
+        updated: Value.Array(array.map([result.3.x, result.5.x, result.6.x, result.7.x], fn(x) { Value.Int(x) })),
+        original: Value.Int(result.4.x),
+        renamed: Value.String(result.9.item),
+        replaced: Value.String(result.10.value),
+        child: Value.Int(result.11.child.x),
+        merged: Value.Object(dict.map_values(result.13, fn(x) { Value.Int(x) })),
+        wide: Value.Object(dict.map_values(result.17, fn(xs) { Value.Array(array.map(xs, fn(x) { Value.Int(x) })) })),
+    })
+};

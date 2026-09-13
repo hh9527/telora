@@ -12,6 +12,7 @@ mod data_input;
 pub mod diagnostic_output;
 mod diagnostics;
 mod dict_build;
+mod dict_literals;
 mod dict_ops;
 mod dictionaries;
 mod emit;
@@ -29,6 +30,7 @@ mod path_ops;
 mod patterns;
 mod plan;
 mod properties;
+mod records;
 #[path = "../rt/abi.rs"]
 mod runtime_abi;
 mod scalars;

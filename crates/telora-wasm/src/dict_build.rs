@@ -1,5 +1,5 @@
 use crate::{abi::*, emit::Emitter};
-use telora_core::mir::{TypeConstructor as T, TypeId};
+use telora_core::mir::{HirId, TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
@@ -117,20 +117,21 @@ impl Emitter<'_> {
         self.dict_result(args[1], keys, values, count, width)
     }
 
-    pub(crate) fn dict_merge(
+    pub(crate) fn dict_merge_values(
         &mut self,
-        args: &[TypeId],
+        node: HirId,
+        ty: TypeId,
         left: u32,
-        left_count: u32,
-        width: u32,
+        right: u32,
     ) -> Result<u32, String> {
-        if args.len() != 3 || args[0] != args[1] || args[0] != args[2] {
-            return Err("Wasm: Dict merge signature mismatch".into());
-        }
-        let right = self.parameter(1);
+        let width = self.width(self.mir.types[ty.index()].arguments[0])?;
+        let left_count = self.local(ValType::I32);
         let right_count = self.local(ValType::I32);
         let capacity = self.local(ValType::I32);
         self.extend([
+            I::LocalGet(left),
+            I::I32Load(memory(20, 2)),
+            I::LocalSet(left_count),
             I::LocalGet(right),
             I::I32Load(memory(20, 2)),
             I::LocalSet(right_count),
@@ -141,7 +142,7 @@ impl Emitter<'_> {
             I::LocalGet(left_count),
             I::I32LtU,
         ]);
-        self.fail_if(self.key.node, ERROR_OVERFLOW);
+        self.fail_if(node, ERROR_OVERFLOW);
         let keys = self.array_storage(capacity, 32);
         let values = self.array_storage(capacity, width);
         let lk = self.table_data(ARRAYS, left, DATA);
@@ -225,6 +226,6 @@ impl Emitter<'_> {
             I::End,
             I::End,
         ]);
-        self.dict_result(args[2], keys, values, count, width)
+        self.dict_result_at(node, ty, keys, values, count, width)
     }
 }

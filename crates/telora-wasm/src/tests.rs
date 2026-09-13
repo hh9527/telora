@@ -4,6 +4,8 @@ use telora_core::{
     static_sources, symbol_resolve, type_resolve,
 };
 
+mod records;
+
 #[test]
 fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {
     let bytes = compile(include_str!("../tests/fixtures/sequences.telora")).unwrap();

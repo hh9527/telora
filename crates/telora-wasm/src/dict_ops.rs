@@ -1,10 +1,21 @@
 use crate::{abi::*, emit::Emitter};
-use telora_core::mir::{TypeConstructor as T, TypeId};
+use telora_core::mir::{HirId, TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub(crate) fn dict_result(
         &mut self,
+        ty: TypeId,
+        keys: u32,
+        values: u32,
+        count: u32,
+        width: u32,
+    ) -> Result<u32, String> {
+        self.dict_result_at(self.key.node, ty, keys, values, count, width)
+    }
+    pub(crate) fn dict_result_at(
+        &mut self,
+        node: HirId,
         ty: TypeId,
         keys: u32,
         values: u32,
@@ -24,7 +35,7 @@ impl Emitter<'_> {
                 I::LocalSet(id),
             ]);
         }
-        let result = self.value_as(self.key.node, ty, 32)?;
+        let result = self.value_as(node, ty, 32)?;
         for (offset, value) in [(16, key_id), (20, count), (24, value_id)] {
             self.extend([
                 I::LocalGet(result),
@@ -32,6 +43,7 @@ impl Emitter<'_> {
                 I::I32Store(memory(offset, 2)),
             ]);
         }
+        self.store32(result, 28, 0);
         Ok(result)
     }
     pub fn dict_native(&mut self, name: &str) -> Result<u32, String> {
@@ -95,7 +107,11 @@ impl Emitter<'_> {
             return self.enum_value(node, output, 1, Some(found));
         }
         if name == "merge" {
-            return self.dict_merge(&args, value, count, width);
+            if args.len() != 3 || args[0] != args[1] || args[0] != args[2] {
+                return Err("Wasm: Dict merge signature mismatch".into());
+            }
+            let right = self.parameter(1);
+            return self.dict_merge_values(node, output, value, right);
         }
         match name {
             "pairs" => {

@@ -278,6 +278,7 @@ impl<'a> Emitter<'a> {
                 }
             }
             HirKind::TupleProjection(index) => self.projection(node, *index),
+            HirKind::FieldProjection => self.field_projection(node),
             HirKind::Field => self.field(node),
             HirKind::Index => self.index(node),
             HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node),
@@ -378,6 +379,9 @@ impl<'a> Emitter<'a> {
                     }
                 }
                 self.expression(child(self.mir, node, Role::Result)?)
+            }
+            HirKind::Binary(telora_core::ast::BinaryOperator::StructUpdate) => {
+                self.struct_update(node)
             }
             HirKind::Binary(op) => self.binary(node, *op),
             HirKind::Unary(op) => self.unary(node, *op),

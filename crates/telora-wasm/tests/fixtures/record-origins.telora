@@ -1,0 +1,53 @@
+import "std/_rt" as rt;
+
+type Source = struct {x: Int, y: String};
+type Count = struct {x: Int};
+type Pair = struct {first: Int, second: Int};
+@check(fn(value) {
+    let warning: Option(Int) = warn!("checked");
+    if value.x > 0 { Ok(()) } else { Err(blame!("positive required", value.x)) }
+})
+type Target = struct {x: Int, Y: String};
+
+def source: Source = {x: 11, y: "original"};
+def count: Count = {x: 21};
+def original_dict: Dict(Int) = {kept: 31};
+def notice: for(T) Fn(String, T) -> T = fn(message, value) {
+    let warning: Option(Int) = warn!(message);
+    value
+};
+
+export def answer = fn() {
+    let updated = notice("base", source) <~ {x: notice("discarded", "wrong"), ...notice("patch", count)};
+    let pair: Pair = notice("projection receiver", source).{x as first, x as second};
+    let merged: Dict(Int) = {a: notice("a", 1), ...notice("dict", original_dict), kept: notice("last", 2)};
+    let copied_dict: Dict(Int) = {...original_dict};
+    let kept = rt.with_diagnostics(fn(ignored: ()) { fail!("kept", updated.y) })(());
+    let replaced = rt.with_diagnostics(fn(ignored: ()) { fail!("replaced", updated.x) })(());
+    let container = rt.with_diagnostics(fn(ignored: ()) { fail!("container", updated) })(());
+    let selected = rt.with_diagnostics(fn(ignored: ()) { fail!("selected", pair.second) })(());
+    let dictionary = rt.with_diagnostics(fn(ignored: ()) { fail!("dict container", copied_dict) })(());
+    let dict_field = rt.with_diagnostics(fn(ignored: ()) { fail!("dict field", copied_dict.kept) })(());
+    let checks = rt.with_diagnostics(fn(ignored: ()) {
+        let initial: Target = source.{x, y as Y};
+        initial <~ {x: -1}
+    })(());
+    let stopped = rt.with_diagnostics(fn(ignored: ()) {
+        source <~ {x: fail!("discarded still fails"), ...notice("must not execute", count)}
+    })(());
+    let dict_stopped = rt.with_diagnostics(fn(ignored: ()) {
+        let broken: Fn() -> Dict(Int) = fn() { fail!("spread still fails") };
+        let value: Dict(Int) = {...broken(), a: notice("must not execute", 0)};
+        value
+    })(());
+    (updated, pair, merged,
+     match kept { Err(reports) => reports[0], Ok(_) => fail!("unexpected") },
+     match replaced { Err(reports) => reports[0], Ok(_) => fail!("unexpected") },
+     match container { Err(reports) => reports[0], Ok(_) => fail!("unexpected") },
+     match selected { Err(reports) => reports[0], Ok(_) => fail!("unexpected") },
+     match dictionary { Err(reports) => reports[0], Ok(_) => fail!("unexpected") },
+     match dict_field { Err(reports) => reports[0], Ok(_) => fail!("unexpected") },
+     match checks { Err(reports) => reports, Ok(_) => fail!("unexpected") },
+     match stopped { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
+     match dict_stopped { Err(reports) => reports[0].message, Ok(_) => "unexpected" })
+};

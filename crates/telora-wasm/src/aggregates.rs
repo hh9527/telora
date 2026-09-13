@@ -65,61 +65,6 @@ impl Emitter<'_> {
             },
         ]);
     }
-    pub fn record(&mut self, node: HirId) -> Result<u32, String> {
-        let ty = self.effective_ty(node)?;
-        let object = self.plan.layouts[ty.index()]
-            .object
-            .as_ref()
-            .ok_or("Wasm: aggregate has no sealed fields")?;
-        let size = u32::try_from(object.bytes.ok_or("Wasm: aggregate has no fixed layout")?)
-            .map_err(|_| "Wasm: record size overflow")?;
-        let members = object
-            .members
-            .iter()
-            .map(|m| (m.name.clone(), m.type_id.unwrap(), m.offset.unwrap() as u32))
-            .collect::<Vec<_>>();
-        let data = self.alloc(size);
-        let mut values = std::collections::BTreeMap::new();
-        for edge in &self.mir.hir[node.index()].children {
-            if edge.role != Role::Field {
-                continue;
-            }
-            let name_node = child(self.mir, edge.node, Role::Name)?;
-            let HirKind::Name(name) = &self.mir.hir[name_node.index()].kind else {
-                return Err("Wasm: missing field name".into());
-            };
-            let item = child(self.mir, edge.node, Role::Value)?;
-            let value = self.expression(item)?;
-            values.insert(name.clone(), (value, self.effective_ty(item)?.index()));
-        }
-        for (name, member, offset) in &members {
-            let (value, actual) = values
-                .remove(name)
-                .ok_or("Wasm: missing sealed record field")?;
-            if actual != *member {
-                return Err("Wasm: record field requires sealed adaptation".into());
-            }
-            let State::Known { shape } = &self.plan.layouts[*member].layout else {
-                return Err("Wasm: field has no value layout".into());
-            };
-            self.copy(data, *offset, value, shape.value_bytes as u32);
-        }
-        if !values.is_empty() {
-            return Err("Wasm: extra record fields".into());
-        }
-        let id = self.table_push(RECORDS, data, size);
-        let result = self.value(node, 24)?;
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(id),
-            I::I64ExtendI32U,
-            I::I64Store(memory(DATA, 3)),
-        ]);
-        if self.mir.value_adjustments[node.index()].is_none() {
-            self.construction_check(node, ty, telora_core::mir::PropertySite::Type, result)?;
-        }
-        Ok(result)
-    }
     pub fn projection(&mut self, node: HirId, index: usize) -> Result<u32, String> {
         let receiver_node = child(self.mir, node, Role::Receiver)?;
         let ty = self.effective_ty(receiver_node)?;

@@ -1,5 +1,5 @@
 use crate::{abi::*, emit::Emitter, plan::child};
-use telora_core::mir::{HirId, HirKind, Role, TypeConstructor as T, TypeId};
+use telora_core::mir::{HirId, Role, TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
@@ -10,58 +10,6 @@ impl Emitter<'_> {
             .find(|layout| self.mir.types[layout.type_id].constructor == T::String)
             .map(|layout| layout.id())
             .ok_or_else(|| "Wasm: sealed graph has no String identity".into())
-    }
-    pub fn dictionary(&mut self, node: HirId) -> Result<u32, String> {
-        let ty = self.effective_ty(node)?;
-        let element = self.mir.types[ty.index()].arguments[0];
-        let width = self.width(element)?;
-        let string = self.string_type()?;
-        let mut fields = std::collections::BTreeMap::new();
-        for edge in &self.mir.hir[node.index()].children {
-            if edge.role != Role::Field {
-                continue;
-            }
-            let name = child(self.mir, edge.node, Role::Name)?;
-            let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
-                return Err("Wasm: missing dictionary key".into());
-            };
-            let expression = child(self.mir, edge.node, Role::Value)?;
-            if self.effective_ty(expression)? != element {
-                return Err("Wasm: dictionary value needs sealed adaptation".into());
-            }
-            let value = self.expression(expression)?;
-            fields.insert(name.clone(), value);
-        }
-        let length = fields.len() as u32;
-        let key_bytes = length
-            .checked_mul(32)
-            .ok_or("Wasm: dictionary size overflow")?;
-        let value_bytes = length
-            .checked_mul(width)
-            .ok_or("Wasm: dictionary size overflow")?;
-        let keys = self.alloc(key_bytes);
-        let values = self.alloc(value_bytes);
-        for (index, (name, value)) in fields.into_iter().enumerate() {
-            let key = self.text_as(node, string, name.as_bytes())?;
-            self.copy(keys, index as u32 * 32, key, 32);
-            self.copy(values, index as u32 * width, value, width);
-        }
-        let keys_id = self.table_push(ARRAYS, keys, key_bytes);
-        let values_id = self.table_push(ARRAYS, values, value_bytes);
-        let result = self.value(node, 32)?;
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(keys_id),
-            I::I32Store(memory(DATA, 2)),
-        ]);
-        self.store32(result, 20, length);
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(values_id),
-            I::I32Store(memory(24, 2)),
-        ]);
-        self.store32(result, 28, 0);
-        Ok(result)
     }
     pub fn dictionary_field(&mut self, node: HirId, name: &str) -> Result<u32, String> {
         let receiver_node = child(self.mir, node, Role::Receiver)?;

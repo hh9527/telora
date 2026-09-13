@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn wasm_record_updates_and_dictionary_spreads_match_default_backend() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        include_str!("../../../telora-wasm/tests/fixtures/records.telora"),
+    )
+    .unwrap();
+    let mut results = vec![];
+    for backend in [None, Some("--wasm")] {
+        let output = telora(&cwd)
+            .args(["eval", "@src/main:answer"])
+            .args(backend)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+    }
+    assert_eq!(results[0], results[1]);
+    assert_eq!(
+        results[1],
+        serde_json::json!({
+            "projected":"source", "updated":[3,2,4,2], "original":1,
+            "renamed":"generic", "replaced":"changed", "child":2,
+            "merged":{"a":1,"b":3,"c":5}, "wide":{"a":[1,2],"b":[3],"z":[9]}
+        })
+    );
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn wasm_sequence_spreads_match_default_backend() {
     let cwd = fixture();
     fs::write(
