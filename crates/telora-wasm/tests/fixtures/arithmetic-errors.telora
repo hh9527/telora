@@ -1,0 +1,10 @@
+def minimum = -9223372036854775807 - 1;
+export def add = 9223372036854775807 + 1;
+export def subtract = minimum - 1;
+export def multiply = 4611686018427387904 * 4;
+export def multiply_min = -1 * minimum;
+export def divide_min = minimum / -1;
+export def negate = -minimum;
+export def divide_zero = 42 / 0;
+export def remainder_zero = 42 % 0;
+export def remainder_min = minimum % -1;

@@ -1,0 +1,12 @@
+def factorial = fn(n: Int) -> Int {
+    if n <= 1 { 1 } else { n * factorial(n - 1) }
+};
+def identity: for(T) Fn(T) -> T = fn(value) { value };
+def make_adder = fn(base: Int) { fn(delta: Int) { base + delta } };
+
+export def answer = do {
+    let add = make_adder(20);
+    let recursive = factorial(identity(4));
+    let floating = identity(1.5) * 2.0;
+    if floating == 3.0 { add(recursive - 2) } else { 0 }
+};

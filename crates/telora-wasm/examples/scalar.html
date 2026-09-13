@@ -14,7 +14,11 @@ input.addEventListener('change', async () => {
   if (!file) return;
   try {
     const { instance } = await WebAssembly.instantiate(await file.arrayBuffer(), {});
-    output.textContent = String(instance.exports.telora_entry());
+    const initialized = instance.exports.telora_initialize();
+    if (!initialized) throw new Error('初始化失败');
+    const pointer = instance.exports.telora_entry();
+    if (!pointer) throw new Error('执行失败');
+    output.textContent = String(new DataView(instance.exports.memory.buffer).getBigInt64(pointer + 16, true));
   } catch (error) {
     output.textContent = String(error);
   }

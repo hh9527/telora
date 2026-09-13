@@ -101,3 +101,22 @@ Wasmi 2 作为当前测试解释器，不绑定最终 CLI 引擎选型。
 本阶段没有增加 CLI 参数、runtime 兼容层或新配额系统。
 下一步建立携带 TypeId/来源的值 ABI、函数/控制流和 Wasm 内存布局，
 再接初始化及 CLI；当前 scalar 导出协议不冻结为最终 ABI。
+
+## 值 ABI 与函数链路
+
+2026-09-13：原先 i64-only 示例协议已移除，统一生成 wasm32 单内存模块。
+值头为 source/start/end/TypeId 四个 u32，标量另带一个 u64；函数另带
+Wasm function-table index 与捕获环境。没有 host 语言操作 imports。
+Wasm 内部的 allocator、间接调用、需求状态表及错误记录随代码一起落盘。
+当前捕获环境是线性内存中的指针列，分类表与 main/work 发布仍待推进。
+
+已实现 Int/Float 基本运算、Bool 短路、if、局部绑定、函数调用、递归、
+互递归局部闭包、跨调用捕获和预先封闭的泛型函数实例。整数溢出/除零
+产生带来源的错误；初始化重复调用使用已计算的值，失败后不再次初始化。
+Manifest 保存稳定类型身份及文件/行列位置，不保存源码文本。
+Session 从 Wasm 文件独立装载，Wasmi fuel 直接使用引擎接口，未新增计费体系。
+
+`cargo test -p telora-wasm`：5 项通过；语言场景集中在 tests/fixtures/*.telora。
+其中覆盖 3 个函数/控制流资产和 8 个算术错误导出、错误位置、失败后重试、
+引擎 fuel。当前仍使用精简 prelude；完整标准库、聚合类型、property 和
+CLI 开关尚未完成，不能将这些结果视为 eval-with 验收。

@@ -1,0 +1,10 @@
+native type Type @0;
+native type Never @2;
+native type Unit @3;
+native type Int @4;
+native type Float @5;
+native type String @6;
+native type Bool @8;
+native type Array @10;
+native type Tuple @14;
+export { Type, Never, Unit, Int, Float, String, Bool, Array, Tuple };

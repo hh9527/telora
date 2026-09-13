@@ -8,6 +8,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args_os()
         .nth(1)
         .ok_or("expected output .wasm filename")?;
+    let source = std::env::args_os()
+        .nth(2)
+        .map(std::fs::read_to_string)
+        .transpose()?
+        .unwrap_or_else(|| "export def answer = 42;".into());
     let inventory = ["@src/main", "std/prelude"]
         .into_iter()
         .map(|name| ModuleSpec {
@@ -23,9 +28,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     let mut mir = module_resolve::resolve(inventory, &["@src/main".into()], |_, name| {
         Ok(if name == "std/prelude" {
-            "native type Int @4; export { Int };"
+            include_str!("../tests/fixtures/prelude.telora")
         } else {
-            "export def answer = 42;"
+            &source
         }
         .into())
     });
@@ -41,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let executable = mir
         .seal_export(export)
         .map_err(|diagnostics| format!("{diagnostics:?}"))?;
-    let bytes = telora_wasm::compile_scalar(&executable)?;
+    let bytes = telora_wasm::compile_executable(&executable)?;
     std::fs::write(path, bytes)?;
     Ok(())
 }
