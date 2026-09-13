@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>Telora Wasm 最小链路</title>
+<h1>Telora Wasm 最小链路</h1>
+<p>选择 scalar 示例生成的 .wasm 文件，直接在浏览器执行。当前只验证整数导出。</p>
+<input type="file" accept=".wasm" aria-label="Wasm 文件">
+<pre role="status"></pre>
+<script type="module">
+const input = document.querySelector('input');
+const output = document.querySelector('pre');
+input.addEventListener('change', async () => {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const { instance } = await WebAssembly.instantiate(await file.arrayBuffer(), {});
+    output.textContent = String(instance.exports.telora_entry());
+  } catch (error) {
+    output.textContent = String(error);
+  }
+});
+</script>
+</html>

@@ -1,0 +1,11 @@
+[package]
+name = "telora-wasm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+telora-core = { path = "../telora-core" }
+wasm-encoder = "0.259"
+
+[dev-dependencies]
+wasmi = "2"
