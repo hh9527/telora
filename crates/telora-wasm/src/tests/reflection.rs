@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn dyn_sequences_retain_closed_element_types() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/dynamic-sequences.telora"),
+        "checks",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 8]));
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn dyn_kind_classifies_closed_values() {
     let bytes = compile_export(
         include_str!("../../tests/fixtures/dynamic-kind.telora"),
@@ -129,6 +142,14 @@ fn reflection_errors_are_captured_and_dyn_fields_keep_their_origins() {
     assert_eq!(
         result[11]["labels"][1]["location"]["start"],
         source.find("12345").unwrap()
+    );
+    assert_eq!(
+        result[12]["labels"][1]["location"]["start"],
+        source.find("23456").unwrap()
+    );
+    assert_eq!(
+        result[13]["labels"][1]["location"]["start"],
+        source.find("34567").unwrap()
     );
     assert!(session.diagnostics().unwrap().is_empty());
 }

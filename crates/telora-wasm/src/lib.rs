@@ -18,6 +18,8 @@ mod dictionaries;
 mod dynamic_kind;
 mod dynamic_members;
 mod dynamic_ops;
+mod dynamic_sequences;
+mod dynamic_tuples;
 mod dynamic_variants;
 mod emit;
 mod entry;

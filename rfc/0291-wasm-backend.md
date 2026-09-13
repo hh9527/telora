@@ -619,3 +619,20 @@ kind 与 13 项变体/Result 查询对照通过；完整 97 项 CLI 测试（含
 通过。独立 Node 重载同一产物，13 项
 检查通过且零 imports。没有重复性能基准。fields/field、array_items、
 tuple_items 及先前列出的其余标准库和最终发布验收仍待完成。
+
+## Dyn Array / Tuple 观察
+
+array_items_raw/tuple_items_raw 已接通，公开包装继续使用 std/dyn 中的
+已实例化函数。Array 消费静态元素 TypeId 和宽度，并遵守描述符的
+start/end 范围；Tuple/Newtype 消费封闭子类型列表。结果只新建 Dyn
+描述符数组，各元素登记原值引用，不复制引用的堆图，不增加 RT ABI。
+Unit 不读取对象句柄；空 Array(Never) 不产生不可能的元素值。
+
+验证：33 项 Wasm 库测试通过，默认/Wasm CLI 的集合、变体、kind、
+反射与 DisplayBy 对照通过。语言用例覆盖异构 Tuple、嵌套数组、
+Newtype、空集合和错误结果的原 Dyn 身份。Array slice 尚无源码语法，
+使用 ABI 测试将四元素数组限制为 [1,3)，确认仅观察中间两个元素。
+另补 Array/Tuple 元素诊断指向原始字面量的来源验证。
+
+fields/field、Fmt 结构比较、regex/parse/codec 等标准库能力，以及
+最终发布/浏览器/分阶段性能验收仍待完成；本轮未重复性能基准。

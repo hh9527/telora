@@ -5,6 +5,12 @@ use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub fn dynamic_native(&mut self, name: &str) -> Result<u32, String> {
+        if name == "array_items_raw" {
+            return self.dynamic_array_items();
+        }
+        if name == "tuple_items_raw" {
+            return self.dynamic_tuple_items();
+        }
         if name == "kind" {
             return self.dynamic_value_kind();
         }

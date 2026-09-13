@@ -228,6 +228,8 @@ impl Plan {
                                 | "get_variant_payload"
                                 | "tag_raw"
                                 | "payload_raw"
+                                | "array_items_raw"
+                                | "tuple_items_raw"
                         ))
             })
         }) {

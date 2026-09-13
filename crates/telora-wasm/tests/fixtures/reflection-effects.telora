@@ -27,6 +27,14 @@ export def answer = fn() {
         None => fail!("missing payload"),
     };
     let payload_origin = rt.with_diagnostics(fn(value: Int) { fail!("payload origin", value) })(scalar);
+    let array_children = match dyn.array_items(dyn.pack(Array(Int).type, [23456])) { Ok(values) => values, Err(_) => fail!("array observation") };
+    let tuple_children = match dyn.tuple_items(dyn.pack((Int, String).type, (34567, "value"))) { Ok(values) => values, Err(_) => fail!("tuple observation") };
+    let observe_origin = fn(value: Dyn) {
+        let value = match dyn.project_with(Int.type, value) { Some(value) => value, None => fail!("projection") };
+        match rt.with_diagnostics(fn(value: Int) { fail!("element origin", value) })(value) {
+            Err(reports) => reports[0], Ok(_) => fail!("missing element diagnostic"),
+        }
+    };
     (match fields { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match variants { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match invalid { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
@@ -38,5 +46,6 @@ export def answer = fn() {
      match not_enum { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match negative_variant { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match large_variant { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
-     match payload_origin { Err(reports) => reports[0], Ok(_) => fail!("missing payload diagnostic") })
+     match payload_origin { Err(reports) => reports[0], Ok(_) => fail!("missing payload diagnostic") },
+     observe_origin(array_children[0]), observe_origin(tuple_children[0]))
 };

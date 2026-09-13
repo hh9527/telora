@@ -5,6 +5,11 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
+            "dynamic-sequences",
+            include_str!("../../../telora-wasm/tests/fixtures/dynamic-sequences.telora"),
+            serde_json::json!(vec![true; 8]),
+        ),
+        (
             "dynamic-kind",
             include_str!("../../../telora-wasm/tests/fixtures/dynamic-kind.telora"),
             serde_json::json!(vec![true; 16]),
