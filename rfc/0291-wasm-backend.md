@@ -73,7 +73,7 @@ Rust 按职责用普通 mod 拆分模块，不用 include! 拼接代码规避行
 - [x] 独立分支与单一 RFC。
 - [x] 单一跟踪 issue、远端分支。
 - [x] 最小 SealedExecutable → Wasm → 独立引擎执行；落盘后独立重载。
-- [ ] 同一产物在浏览器执行，验证无需源码和 Rust host 语言运算。
+- [x] 同一产物在浏览器执行，验证无需源码和 Rust host 语言运算。
 - [ ] 分类堆、闭包、泛型实例、来源诊断和 runtime 基本操作。
 - [ ] 数据注入、property/顶层初始化，隐藏 check/eval/eval-with 接入。
 - [ ] 语言与 CLI 对照、发布物重载、浏览器 demo 验收。
@@ -120,3 +120,46 @@ Session 从 Wasm 文件独立装载，Wasmi fuel 直接使用引擎接口，未�
 其中覆盖 3 个函数/控制流资产和 8 个算术错误导出、错误位置、失败后重试、
 引擎 fuel。当前仍使用精简 prelude；完整标准库、聚合类型、property 和
 CLI 开关尚未完成，不能将这些结果视为 eval-with 验收。
+
+## 分类表与浏览器验证
+
+2026-09-13：增加 Wasm 内部的分类表；每个表的槽位固定为
+`{ payload_offset:u32, byte_length:u32 }`，槽位可以增长但 HeapId 不变。
+Tuple/Record 共表，Array 保存完整元素值并携带 slice 起止范围；String
+支持 14-byte inline 与独立字节对象。Dict 为两个完整 ArrayTable 槽位，
+keys 按 UTF-8 顺序排列，字段读取生成二分查找。函数改为三个 word 的值，
+捕获环境进入独立表；不再把捕获环境的内存地址直接存入函数值。
+
+初始化成功后冻结每张表的已分配前缀，后续调用追加 work 槽位；该实现
+没有深复制 main 对象，也暂不回收初始化临时对象或 work 对象。
+表增长仅复制槽位描述符，不复制它们指向的对象。后续需要 GC 时再细化
+work 管理，本期不以无限次服务为验收目标。
+
+独立 Session 可按 manifest 中的封闭签名输入 JSON 并调用函数。该接口
+用于底层产物验证，不等同于 CLI eval-with 的 Env/Source/entry 适配。
+外部输入写入 Wasm 内存，表注册仍调用 Wasm 函数；输出只在外部 JSON
+边界读取，内部计算不经过 Rust Value 或旧 VM。
+
+`cargo test -p telora-wasm`：7 项通过。新增 Array/Record/Tuple/String、
+Dict 双列与查找、32 次外部输入调用及冻结前缀保持测试。仍是精简 prelude。
+
+实际浏览器：Playwright Chromium 153.0.8010.12，执行
+examples/browser-smoke.mjs；聚合产物输出
+`[42,[{"label":"短文本","score":19},{"label":"a longer string stored in the string table","score":23}],null]`，
+函数产物输入 `[{"name":"浏览器输入","values":[22]}]` 得到
+`{"name":"浏览器输入","total":42}`。同一批文件也由 Node WebAssembly API
+执行通过。页面 examples/scalar.html 通过 module Worker 执行，有手动停止
+按钮；host.mjs 只提供基于持久 schema 的外部传输，不实现语言运算。
+
+浏览器复验需以 HTTP 提供 examples 目录，然后执行：
+
+```sh
+node crates/telora-wasm/examples/browser-smoke.mjs \
+  http://127.0.0.1:18761 /tmp/telora-wasm-aggregates.wasm /tmp/telora-wasm-input.wasm
+```
+
+脚本从普通 playwright 包导入测试工具，也可用 TELORA_PLAYWRIGHT_MODULE
+指定安装位置。浏览器依赖不进入 Rust workspace 或运行时发布物。
+
+下一阶段仍需完成完整 prelude/property、代数类型与 native 标准库操作，
+再接数据模块、CLI 和完整语言验收；本阶段未新增隐藏参数占位实现。

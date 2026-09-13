@@ -6,5 +6,6 @@ native type Float @5;
 native type String @6;
 native type Bool @8;
 native type Array @10;
+native type Dict @11;
 native type Tuple @14;
-export { Type, Never, Unit, Int, Float, String, Bool, Array, Tuple };
+export { Type, Never, Unit, Int, Float, String, Bool, Array, Dict, Tuple };

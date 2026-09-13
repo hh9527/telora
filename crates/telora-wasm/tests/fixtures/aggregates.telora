@@ -1,0 +1,8 @@
+type Row = struct { label: String, score: Int };
+export def answer = do {
+    let short: Row = { label: "短文本", score: 19 };
+    let long: Row = { score: 23, label: "a longer string stored in the string table" };
+    let rows = [short, long];
+    let pair = (rows[0].score, rows[1].score);
+    (pair.0 + pair.1, rows, ())
+};

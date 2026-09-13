@@ -33,16 +33,18 @@ impl Emitter<'_> {
         }
         let result = self.value(node, FUNCTION_BYTES)?;
         self.store32(result, DATA, function);
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(environment),
-            I::I32Store(memory(ENVIRONMENT, 2)),
-        ]);
-        self.extend([
-            I::LocalGet(result),
-            I::I64Const(0),
-            I::I64Store(memory(24, 3)),
-        ]);
+        if captures.is_empty() {
+            self.store32(result, ENVIRONMENT, 0);
+        } else {
+            let id = self.table_push(ENVIRONMENTS, environment, captures.len() as u32 * 4);
+            self.extend([
+                I::LocalGet(result),
+                I::LocalGet(id),
+                I::I32Const(1),
+                I::I32Add,
+                I::I32Store(memory(ENVIRONMENT, 2)),
+            ]);
+        }
         Ok(result)
     }
     pub fn call(&mut self, node: HirId) -> Result<u32, String> {

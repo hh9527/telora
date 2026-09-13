@@ -132,12 +132,58 @@ fn sealed_export_runs_without_mir_or_host_imports() {
 }
 
 #[test]
-fn unsupported_expression_is_not_executed_by_another_backend() {
-    assert!(
-        compile("export def answer = [1, 2];")
-            .unwrap_err()
-            .contains("unsupported")
+fn aggregates_use_closed_layouts_and_classified_heap_tables() {
+    let bytes = compile(include_str!("../tests/fixtures/aggregates.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.eval().unwrap(),
+        serde_json::json!([42, [
+        {"label": "短文本", "score": 19},
+        {"label": "a longer string stored in the string table", "score": 23}
+    ], null])
     );
+}
+
+#[test]
+fn dictionaries_are_sorted_columns_and_use_binary_search() {
+    let bytes = compile(include_str!("../tests/fixtures/dictionaries.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.eval().unwrap(),
+        serde_json::json!([42, {
+            "alpha": 23, "beta": 19, "zebra": 1, "a_very_long_key_name": 7
+        }])
+    );
+}
+
+#[test]
+fn typed_input_and_post_initialization_calls_keep_main_ids() {
+    let bytes = compile(include_str!("../tests/fixtures/call-input.telora")).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    let before = session.memory.data(&session.store)
+        [crate::abi::TABLE_BASE as usize..crate::abi::STATIC_BASE as usize]
+        .to_vec();
+    for index in 0..32 {
+        let input =
+            serde_json::json!({"name": "input with a heap allocated string", "values": [index]});
+        let result = session.call(&[input]).unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!({"name": "input with a heap allocated string", "total": 20 + index})
+        );
+    }
+    let after = session.memory.data(&session.store);
+    for table in 0..crate::abi::TABLE_COUNT as usize {
+        let offset = table * crate::abi::TABLE_BYTES as usize + 12;
+        assert_eq!(
+            &before[offset..offset + 4],
+            &after[crate::abi::TABLE_BASE as usize + offset
+                ..crate::abi::TABLE_BASE as usize + offset + 4]
+        );
+    }
 }
 
 #[test]

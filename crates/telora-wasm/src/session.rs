@@ -1,14 +1,11 @@
 //! Thin execution host: Wasm owns language operations, values, and initialization.
-use crate::{
-    abi,
-    artifact::{Kind, Manifest},
-};
+use crate::{abi, artifact::Manifest};
 
 pub struct Session {
     pub manifest: Manifest,
-    store: wasmi::Store<()>,
-    instance: wasmi::Instance,
-    memory: wasmi::Memory,
+    pub(crate) store: wasmi::Store<()>,
+    pub(crate) instance: wasmi::Instance,
+    pub(crate) memory: wasmi::Memory,
 }
 
 impl Session {
@@ -48,6 +45,10 @@ impl Session {
         Ok(())
     }
     pub fn eval(&mut self) -> Result<serde_json::Value, String> {
+        let pointer = self.entry()?;
+        self.json(pointer)
+    }
+    pub(crate) fn entry(&mut self) -> Result<u32, String> {
         let entry = self
             .instance
             .get_typed_func::<(), i32>(&self.store, "telora_entry")
@@ -56,34 +57,51 @@ impl Session {
         if pointer == abi::NULL {
             return Err(self.failure());
         }
-        self.json(pointer)
+        Ok(pointer)
+    }
+    /// Direct typed invocation used by the independent artifact host. The CLI's
+    /// eval-with adapter will supply its already sealed entry contract separately.
+    pub fn call(&mut self, arguments: &[serde_json::Value]) -> Result<serde_json::Value, String> {
+        let pointer = self.entry()?;
+        let descriptor = &self.manifest.types[self.manifest.entry_type as usize];
+        if descriptor.kind != crate::artifact::Kind::Function
+            || descriptor.arguments.len() != arguments.len() + 1
+        {
+            return Err("Wasm: entry call does not match its sealed signature".into());
+        }
+        let signature = descriptor.arguments.clone();
+        let args = self.allocate(
+            arguments
+                .len()
+                .checked_mul(4)
+                .ok_or("Wasm: argument size overflow")?,
+        )?;
+        for (index, (value, &ty)) in arguments.iter().zip(&signature).enumerate() {
+            let value = self.input(ty, value, 0)?;
+            self.write(args as usize + index * 4, &value.to_le_bytes())?;
+        }
+        let invoke = self
+            .instance
+            .get_typed_func::<(i32, i32), i32>(&self.store, "telora_invoke")
+            .map_err(|e| e.to_string())?;
+        let result = invoke
+            .call(&mut self.store, (pointer as i32, args as i32))
+            .map_err(|e| e.to_string())? as u32;
+        if result == abi::NULL {
+            return Err(self.failure());
+        }
+        crate::output::Output {
+            memory: self.memory.data(&self.store),
+            manifest: &self.manifest,
+        }
+        .json(result as u64, *signature.last().unwrap(), 0)
     }
     fn json(&self, pointer: u32) -> Result<serde_json::Value, String> {
-        let memory = self.memory.data(&self.store);
-        let get = |offset: usize, length: usize| {
-            memory
-                .get(pointer as usize + offset..pointer as usize + offset + length)
-                .ok_or("Wasm: invalid result address")
-        };
-        let ty = u32::from_le_bytes(get(12, 4)?.try_into().unwrap());
-        let kind = self
-            .manifest
-            .types
-            .get(ty as usize)
-            .ok_or("Wasm: invalid result TypeId")?
-            .kind;
-        if kind == Kind::Unit {
-            return Ok(serde_json::Value::Null);
+        crate::output::Output {
+            memory: self.memory.data(&self.store),
+            manifest: &self.manifest,
         }
-        let raw = i64::from_le_bytes(get(16, 8)?.try_into().unwrap());
-        Ok(match kind {
-            Kind::Int => raw.into(),
-            Kind::Float => serde_json::Number::from_f64(f64::from_bits(raw as u64))
-                .ok_or("Wasm: non-finite Float cannot be serialized")?
-                .into(),
-            Kind::Bool => (raw != 0).into(),
-            _ => return Err("Wasm: result JSON encoding is not implemented for this type".into()),
-        })
+        .json(pointer as u64, self.manifest.entry_type, 0)
     }
     fn failure(&self) -> String {
         let Some(global) = self.instance.get_global(&self.store, "telora_error") else {
@@ -104,6 +122,8 @@ impl Session {
             abi::ERROR_OVERFLOW => "integer arithmetic overflowed",
             abi::ERROR_DIVISION => "integer division by zero",
             abi::ERROR_CYCLE => "initialization dependency cycle",
+            abi::ERROR_INDEX => "array index out of bounds",
+            abi::ERROR_KEY => "dictionary key is absent",
             _ => "Wasm execution failed",
         };
         let source = self

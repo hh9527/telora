@@ -54,6 +54,30 @@ impl Emitter<'_> {
             return Err("Wasm: binary operands need identical sealed types".into());
         }
         let kind = &self.mir.types[ty.index()].constructor;
+        if *kind == T::String {
+            let left = self.expression(lhs)?;
+            let right = self.expression(rhs)?;
+            let comparison = match op {
+                B::Equal => I::I32Eq,
+                B::NotEqual => I::I32Ne,
+                B::LessThan => I::I32LtS,
+                B::LessThanOrEqual => I::I32LeS,
+                B::GreaterThan => I::I32GtS,
+                B::GreaterThanOrEqual => I::I32GeS,
+                _ => return Err("Wasm: unsupported String operator".into()),
+            };
+            let bits = self.local(ValType::I64);
+            self.extend([
+                I::LocalGet(left),
+                I::LocalGet(right),
+                I::Call(STRING_COMPARE),
+                I::I32Const(0),
+                comparison,
+                I::I64ExtendI32U,
+                I::LocalSet(bits),
+            ]);
+            return self.scalar_bits(node, bits);
+        }
         if !matches!(kind, T::Int | T::Float | T::Bool) {
             return Err("Wasm: non-scalar binary operation is not implemented yet".into());
         }

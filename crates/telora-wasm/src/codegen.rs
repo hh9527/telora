@@ -13,9 +13,17 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         .ty()
         .function([ValType::I32, ValType::I32], [ValType::I32]);
     types.ty().function([], [ValType::I32]);
+    types
+        .ty()
+        .function([ValType::I32, ValType::I32, ValType::I32], [ValType::I32]);
     module.section(&types);
     let mut functions = FunctionSection::new();
     functions.function(0).function(CALL_TYPE);
+    functions
+        .function(3)
+        .function(CALL_TYPE)
+        .function(2)
+        .function(CALL_TYPE);
     for _ in &plan.functions {
         functions.function(CALL_TYPE);
     }
@@ -64,6 +72,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         .export("memory", ExportKind::Memory, 0)
         .export("telora_alloc", ExportKind::Func, ALLOC)
         .export("telora_invoke", ExportKind::Func, INVOKE)
+        .export("telora_table_push", ExportKind::Func, TABLE_PUSH)
         .export("telora_initialize", ExportKind::Func, initialize)
         .export("telora_entry", ExportKind::Func, entry)
         .export("telora_error", ExportKind::Global, ERROR_GLOBAL);
@@ -78,6 +87,10 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
     let mut code = CodeSection::new();
     code.function(&runtime::allocator())
         .function(&runtime::invoke());
+    code.function(&crate::tables::push())
+        .function(&crate::tables::get())
+        .function(&crate::tables::freeze());
+    code.function(&crate::strings::compare());
     for &key in plan.functions.keys() {
         code.function(&emit::compile(executable.sealed_mir().mir(), &plan, key)?);
     }
@@ -114,7 +127,9 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
             init.instruction(&instruction);
         }
     }
-    init.instruction(&Instruction::I32Const(2))
+    init.instruction(&Instruction::Call(FREEZE))
+        .instruction(&Instruction::Drop)
+        .instruction(&Instruction::I32Const(2))
         .instruction(&Instruction::GlobalSet(PHASE_GLOBAL))
         .instruction(&Instruction::I32Const(1))
         .instruction(&Instruction::End);
@@ -141,7 +156,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         name: Cow::Borrowed("telora.abi"),
         data: Cow::Owned(VERSION.to_le_bytes().to_vec()),
     });
-    let manifest = crate::artifact::Manifest::build(executable)?;
+    let manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
     module.section(&CustomSection {
         name: Cow::Borrowed("telora.manifest"),
         data: Cow::Owned(serde_json::to_vec(&manifest).map_err(|e| e.to_string())?),

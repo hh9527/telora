@@ -1,0 +1,6 @@
+type Input = struct { name: String, values: Array(Int) };
+type Output = struct { name: String, total: Int };
+def base = 20;
+export def answer = fn(input: Input) -> Output {
+    { name: input.name, total: base + input.values[0] }
+};

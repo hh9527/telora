@@ -6,6 +6,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read(path)?;
     let mut session = telora_wasm::session::Session::load(&bytes, 10_000_000)?;
     session.initialize()?;
-    println!("{}", session.eval()?);
+    let result = match std::env::args().nth(2) {
+        Some(arguments) => {
+            session.call(&serde_json::from_str::<Vec<serde_json::Value>>(&arguments)?)?
+        }
+        None => session.eval()?,
+    };
+    println!("{result}");
     Ok(())
 }

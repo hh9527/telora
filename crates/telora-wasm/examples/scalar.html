@@ -1,27 +1,43 @@
 <!doctype html>
 <html lang="zh-CN">
 <meta charset="utf-8">
-<title>Telora Wasm 最小链路</title>
-<h1>Telora Wasm 最小链路</h1>
-<p>选择 scalar 示例生成的 .wasm 文件，直接在浏览器执行。当前只验证整数导出。</p>
+<title>Telora Wasm 产物执行</title>
+<h1>Telora Wasm 产物执行</h1>
+<p>选择生成的 .wasm 文件，无需源码即可执行。函数入口可填写 JSON 参数数组。</p>
 <input type="file" accept=".wasm" aria-label="Wasm 文件">
+<textarea aria-label="参数数组" placeholder="留空求值，函数示例：[42]"></textarea>
+<button id="run">执行</button>
+<button id="stop">停止</button>
 <pre role="status"></pre>
 <script type="module">
 const input = document.querySelector('input');
 const output = document.querySelector('pre');
-input.addEventListener('change', async () => {
+let worker;
+document.querySelector('#stop').onclick = () => { worker?.terminate(); worker = null; output.textContent = '已停止'; };
+document.querySelector('#run').onclick = async () => {
   const file = input.files[0];
   if (!file) return;
+  worker?.terminate();
   try {
-    const { instance } = await WebAssembly.instantiate(await file.arrayBuffer(), {});
-    const initialized = instance.exports.telora_initialize();
-    if (!initialized) throw new Error('初始化失败');
-    const pointer = instance.exports.telora_entry();
-    if (!pointer) throw new Error('执行失败');
-    output.textContent = String(new DataView(instance.exports.memory.buffer).getBigInt64(pointer + 16, true));
+    const args = document.querySelector('textarea').value.trim();
+    const arguments_ = args ? JSON.parse(args) : null;
+    if (arguments_ !== null && !Array.isArray(arguments_)) throw Error('参数必须是 JSON 数组');
+    const active = new Worker('./worker.mjs', { type: 'module' });
+    worker = active;
+    active.onmessage = ({ data }) => {
+      if (worker !== active) return;
+      output.textContent = data.error ?? data.result; active.terminate(); worker = null;
+    };
+    active.onerror = error => {
+      if (worker !== active) return;
+      output.textContent = error.message; active.terminate(); worker = null;
+    };
+    output.textContent = '执行中…';
+    const bytes = await file.arrayBuffer();
+    if (worker === active) active.postMessage({ bytes, arguments: arguments_ }, [bytes]);
   } catch (error) {
     output.textContent = String(error);
   }
-});
+};
 </script>
 </html>

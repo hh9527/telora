@@ -57,10 +57,22 @@ pub(crate) fn allocator() -> Function {
 }
 
 pub(crate) fn invoke() -> Function {
-    let mut function = Function::new([]);
+    let mut function = Function::new([(1, ValType::I32)]);
     for instruction in [
         I::LocalGet(0),
         I::I32Load(memory(ENVIRONMENT, 2)),
+        I::LocalTee(2),
+        I::I32Eqz,
+        I::If(BlockType::Result(ValType::I32)),
+        I::I32Const(0),
+        I::Else,
+        I::I32Const(table_address(ENVIRONMENTS) as i32),
+        I::LocalGet(2),
+        I::I32Const(1),
+        I::I32Sub,
+        I::Call(TABLE_GET),
+        I::I32Load(memory(0, 2)),
+        I::End,
         I::LocalGet(1),
         I::LocalGet(0),
         I::I32Load(memory(DATA, 2)),

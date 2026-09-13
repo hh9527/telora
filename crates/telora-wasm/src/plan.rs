@@ -37,6 +37,7 @@ pub(crate) struct Plan {
     pub instances: BTreeMap<GenericInstanceId, Key>,
     pub demands: BTreeMap<Key, u32>,
     pub captures: BTreeMap<Key, Vec<SymbolId>>,
+    pub layouts: Vec<telora_core::candidate_layout::Entry>,
     pub root: Key,
 }
 
@@ -57,6 +58,7 @@ impl Plan {
             instances: BTreeMap::new(),
             demands: BTreeMap::new(),
             captures: BTreeMap::new(),
+            layouts: telora_core::candidate_layout::calculate(executable.sealed_mir())?,
             root,
         };
         for &symbol in executable.globals() {

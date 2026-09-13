@@ -1,0 +1,5 @@
+export def answer = do {
+    let values: Dict(Int) = { zebra: 1, beta: 19, alpha: 23, a_very_long_key_name: 7 };
+    let ordered = "alpha" < "beta" && "a_very_long_key_name" == "a_very_long_key_name";
+    (if ordered { values.alpha + values.beta } else { 0 }, values)
+};

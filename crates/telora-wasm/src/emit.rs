@@ -65,12 +65,19 @@ impl<'a> Emitter<'a> {
         ]);
     }
     pub fn value(&mut self, node: HirId, bytes: u32) -> Result<u32, String> {
+        let ty = self.effective_ty(node)?;
+        self.value_as(node, ty, bytes)
+    }
+    pub fn value_as(&mut self, node: HirId, ty: TypeId, bytes: u32) -> Result<u32, String> {
+        if self.width(ty)? != bytes {
+            return Err(format!("Wasm: value width mismatch at {node:?}"));
+        }
         let result = self.alloc(bytes);
         let loc = self.mir.hir[node.index()].location;
         self.store32(result, SOURCE, loc.source.get());
         self.store32(result, START, loc.start);
         self.store32(result, END, loc.end);
-        self.store32(result, TYPE, self.ty(node)?.index() as u32);
+        self.store32(result, TYPE, ty.index() as u32);
         Ok(result)
     }
     pub fn scalar(&mut self, node: HirId, bits: i64) -> Result<u32, String> {
@@ -133,12 +140,32 @@ impl<'a> Emitter<'a> {
         Ok(result)
     }
     pub fn expression(&mut self, node: HirId) -> Result<u32, String> {
+        if let Some(telora_core::mir::MemberSelection::Boolean(value)) =
+            self.mir.member_selections[node.index()]
+        {
+            return self.scalar(node, i64::from(value));
+        }
         match &self.mir.hir[node.index()].kind {
             HirKind::Int(value) => self.scalar(node, *value),
             HirKind::Float(value) => self.scalar(node, value.to_bits() as i64),
+            HirKind::String(value) => self.text(node, value.as_bytes()),
+            HirKind::Array => self.array(node),
+            HirKind::Dict => {
+                if self.mir.types[self.effective_ty(node)?.index()].constructor
+                    == TypeConstructor::Dict
+                {
+                    self.dictionary(node)
+                } else {
+                    self.record(node)
+                }
+            }
+            HirKind::TupleProjection(index) => self.projection(node, *index),
+            HirKind::Field => self.field(node),
+            HirKind::Index => self.index(node),
             HirKind::Tuple if self.mir.hir[node.index()].children.is_empty() => {
                 self.value(node, HEADER_BYTES)
             }
+            HirKind::Tuple => self.record(node),
             HirKind::Binding { kind, .. } => {
                 if !matches!(
                     kind,

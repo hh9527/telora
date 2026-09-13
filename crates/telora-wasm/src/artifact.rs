@@ -15,6 +15,15 @@ pub struct Manifest {
 pub struct TypeDesc {
     pub kind: Kind,
     pub arguments: Vec<u32>,
+    pub bytes: u32,
+    pub fields: Vec<Field>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Field {
+    pub name: String,
+    pub ty: u32,
+    pub offset: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +33,11 @@ pub enum Kind {
     Bool,
     Unit,
     Function,
+    String,
+    Array,
+    Tuple,
+    Record,
+    Dict,
     Unsupported,
 }
 
@@ -45,7 +59,10 @@ pub struct Location {
 }
 
 impl Manifest {
-    pub(crate) fn build(executable: &SealedExecutable<'_>) -> Result<Self, String> {
+    pub(crate) fn build(
+        executable: &SealedExecutable<'_>,
+        layouts: &[telora_core::candidate_layout::Entry],
+    ) -> Result<Self, String> {
         let mir = executable.sealed_mir().mir();
         let TypeState::Known(entry) = mir.ty_slots[executable.root().index()] else {
             return Err("Wasm: entry has no sealed type".into());
@@ -82,16 +99,51 @@ impl Manifest {
         let types = mir
             .types
             .iter()
-            .map(|ty| TypeDesc {
+            .enumerate()
+            .map(|(index, ty)| TypeDesc {
                 kind: match ty.constructor {
                     T::Int => Kind::Int,
                     T::Float => Kind::Float,
                     T::Bool => Kind::Bool,
                     T::Tuple if ty.arguments.is_empty() => Kind::Unit,
                     T::Function => Kind::Function,
+                    T::String => Kind::String,
+                    T::Array => Kind::Array,
+                    T::Dict => Kind::Dict,
+                    T::Tuple => Kind::Tuple,
+                    T::Record(_) => Kind::Record,
+                    T::Nominal(symbol) => match executable
+                        .sealed_mir()
+                        .types()
+                        .definition(symbol)
+                        .map(|d| d.operation)
+                    {
+                        Some(telora_core::mir::TypeOperation::Struct) => Kind::Record,
+                        Some(telora_core::mir::TypeOperation::Tuple) => Kind::Tuple,
+                        Some(telora_core::mir::TypeOperation::Unit) => Kind::Unit,
+                        _ => Kind::Unsupported,
+                    },
                     _ => Kind::Unsupported,
                 },
                 arguments: ty.arguments.iter().map(|id| id.index() as u32).collect(),
+                bytes: match &layouts[index].layout {
+                    telora_core::candidate_layout::State::Known { shape } => {
+                        shape.value_bytes as u32
+                    }
+                    _ => 0,
+                },
+                fields: layouts[index]
+                    .object
+                    .iter()
+                    .flat_map(|object| &object.members)
+                    .filter_map(|member| {
+                        Some(Field {
+                            name: member.name.clone(),
+                            ty: member.type_id? as u32,
+                            offset: member.offset? as u32,
+                        })
+                    })
+                    .collect(),
             })
             .collect();
         Ok(Self {
@@ -127,6 +179,10 @@ impl Manifest {
                 ty.arguments
                     .iter()
                     .any(|&arg| arg as usize >= manifest.types.len())
+                    || ty
+                        .fields
+                        .iter()
+                        .any(|field| field.ty as usize >= manifest.types.len())
             })
         {
             return Err("Wasm: invalid manifest TypeId".into());
