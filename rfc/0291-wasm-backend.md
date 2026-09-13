@@ -849,3 +849,7 @@ codec 入口将 Properties 转换为固定六个 TypeId 槽位，供专用函数
 
 62 项 Wasm 库测试通过，覆盖 Unicode/下划线规则及碰撞。enum 重命名、
 untagged、Parse/Display 桥接及 decode 等仍未实现，继续推进。
+
+enum 的 rename_all 已复用同一 property demand 路径。转换只改变
+外部名称，不改变封闭 variant 索引；名称碰撞产生一次可捕获诊断。
+64 项 Wasm 库测试通过。untagged、Parse/Display 和 decode 仍待接通。

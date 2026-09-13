@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn codec_enum_rename_collision_is_reported_once() {
+    let bytes = compile(include_str!(
+        "../../tests/fixtures/codec-enum-collision.telora"
+    ))
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap()["message"],
+        "duplicate external variant name"
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn codec_enum_rename_keeps_sealed_variant_indices() {
+    let bytes = compile_export(
+        include_str!("../../tests/fixtures/codec-enum-rename.telora"),
+        "inspect",
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(["noValue",{"hasValue":42}])
+    );
+}
+
+#[test]
 fn codec_rename_collision_is_a_captured_evaluation_error() {
     let bytes = compile(include_str!(
         "../../tests/fixtures/codec-rename-errors.telora"

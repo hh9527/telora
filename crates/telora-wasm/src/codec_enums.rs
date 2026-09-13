@@ -9,13 +9,41 @@ impl Emitter<'_> {
         target: TypeId,
         input: u32,
     ) -> Result<u32, String> {
+        self.codec_encode_enum_names(source, target, input, false)
+    }
+
+    pub(crate) fn codec_encode_enum_names(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        input: u32,
+        rename: bool,
+    ) -> Result<u32, String> {
         let variants: Vec<_> = self.plan.layouts[source.index()]
             .variants
             .iter()
             .map(|v| (v.name.clone(), v.type_id))
             .collect();
+        let names = match crate::codec_names::external_names(
+            variants.iter().map(|v| v.0.clone()),
+            rename,
+        ) {
+            Ok(names) => names,
+            Err(_) => {
+                let message = self.text_as(
+                    self.key.node,
+                    self.string_type()?,
+                    b"duplicate external variant name",
+                )?;
+                let count = self.local(ValType::I32);
+                self.extend([I::I32Const(1), I::LocalSet(count)]);
+                self.report(self.key.node, message, input, count, false);
+                return Ok(self.local(ValType::I32));
+            }
+        };
         let output = self.local(ValType::I32);
-        for (index, (name, ty)) in variants.iter().enumerate() {
+        for (index, (_, ty)) in variants.iter().enumerate() {
+            let name = &names[index];
             self.extend([
                 I::LocalGet(input),
                 I::I32Load(memory(DATA, 2)),

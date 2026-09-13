@@ -10,8 +10,9 @@ impl Emitter<'_> {
         input: u32,
     ) -> Result<u32, String> {
         let is_record = matches!(&self.plan.layouts[source.index()].layout, State::Known { shape } if shape.table == Some("RecordTable"));
+        let is_enum = !self.plan.layouts[source.index()].variants.is_empty();
         for slot in [1, 2, 4, 5] {
-            if slot == 4 && is_record {
+            if slot == 4 && (is_record || is_enum) {
                 continue;
             }
             let present = self.codec_property_present(source, slot);
@@ -27,9 +28,6 @@ impl Emitter<'_> {
             self.emit(I::End);
         }
         let layout = &self.plan.layouts[source.index()];
-        if !layout.variants.is_empty() {
-            return self.codec_encode_enum(source, target, input);
-        }
         if matches!(&layout.layout, State::Known { shape } if shape.table == Some("NewtypeTable")) {
             let members = &layout
                 .object
@@ -46,7 +44,7 @@ impl Emitter<'_> {
             let payload = self.table_data(NEWTYPES, input, DATA);
             return self.codec_encode_scalar(ty, target, payload);
         }
-        if !matches!(&layout.layout, State::Known { shape } if shape.table == Some("RecordTable")) {
+        if !is_record && !is_enum {
             return Err("Wasm: codec nominal type is not yet supported".into());
         }
         for (&index, &key) in &self.plan.properties {
@@ -85,10 +83,18 @@ impl Emitter<'_> {
                 I::I32Ne,
             ]);
             self.fail_if(self.key.node, ERROR_DATA);
-            let value = self.codec_record_fields(source, target, input, true)?;
+            let value = if is_enum {
+                self.codec_encode_enum_names(source, target, input, true)?
+            } else {
+                self.codec_record_fields(source, target, input, true)?
+            };
             self.extend([I::LocalGet(value), I::Return, I::End]);
         }
-        self.codec_record_fields(source, target, input, false)
+        if is_enum {
+            self.codec_encode_enum(source, target, input)
+        } else {
+            self.codec_record_fields(source, target, input, false)
+        }
     }
 
     fn codec_record_fields(
