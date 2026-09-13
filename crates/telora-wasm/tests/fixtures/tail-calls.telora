@@ -1,0 +1,27 @@
+def direct: Fn(Int) -> Int = fn(n) { if n < 1 { 40 } else { direct(n - 1) } };
+def even: Fn(Int) -> Int = fn(n) { if n < 1 { 42 } else { odd(n - 1) } };
+def odd: Fn(Int) -> Int = fn(n) { if n < 1 { 0 } else { even(n - 1) } };
+def matched: Fn(Int) -> Int = fn(n) { match n { 0 => 42, value => matched(value - 1) } };
+def early: Fn(Int) -> Int = fn(n) {
+    let ignored = if n > 0 { return early(n - 1); } else { () };
+    42
+};
+def iterate: Fn(Fn(Int) -> Int, Int) -> Int = fn(step, n) {
+    if n < 1 { step(0) } else { iterate(step, n - 1) }
+};
+def make: Fn(Int) -> Fn(Int) -> Int = fn(offset) {
+    def local: Fn(Int) -> Int = fn(n) { if n < 1 { offset } else { local(n - 1) } };
+    local
+};
+def metadata: Fn() -> TypeOf(Int) = fn() { Int.type };
+def widened: Fn() -> Type = fn() { metadata() };
+def initialized = direct(20000);
+def stopped: Fn(Int) -> Int = fn(n) {
+    if n == 0 { fail!("tail failure") } else { stopped(n - 1) }
+};
+export def failing: Fn() -> Int = fn() { stopped(20000) };
+export def answer = fn() {
+    (initialized + 2, direct(20000) + 2, even(20000), matched(20000), early(20000),
+     iterate(fn(value) { value + 42 }, 20000), make(42)(20000),
+     widened() == Int.type, dbg!(direct(20000), "after tail recursion"))
+};

@@ -107,9 +107,13 @@ impl Emitter<'_> {
                 value,
             )?);
         }
-        self.invoke(callee, &values)
+        if self.tail_calls.contains(&node) {
+            self.tail_invoke(callee, &values)
+        } else {
+            self.invoke(callee, &values)
+        }
     }
-    pub fn invoke(&mut self, callee: u32, values: &[u32]) -> Result<u32, String> {
+    pub fn argument_array(&mut self, values: &[u32]) -> u32 {
         let args = self.alloc(values.len() as u32 * 4);
         for (index, &value) in values.iter().enumerate() {
             self.extend([
@@ -118,6 +122,10 @@ impl Emitter<'_> {
                 I::I32Store(memory(index as u64 * 4, 2)),
             ]);
         }
+        args
+    }
+    pub fn invoke(&mut self, callee: u32, values: &[u32]) -> Result<u32, String> {
+        let args = self.argument_array(values);
         let result = self.local(ValType::I32);
         self.extend([
             I::LocalGet(callee),

@@ -13,6 +13,8 @@ mod hash;
 mod interpreters;
 mod json;
 mod language;
+mod language_fixtures;
+mod tail_calls;
 mod records;
 mod reflection;
 mod regex;

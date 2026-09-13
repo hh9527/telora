@@ -16,6 +16,7 @@ pub(crate) struct Emitter<'a> {
     pub locals: Vec<ValType>,
     pub bindings: BTreeMap<SymbolId, u32>,
     pub local_instances: BTreeMap<telora_core::mir::GenericInstanceId, u32>,
+    pub tail_calls: BTreeSet<HirId>,
 }
 
 impl<'a> Emitter<'a> {
@@ -30,6 +31,7 @@ impl<'a> Emitter<'a> {
             locals: vec![],
             bindings: BTreeMap::new(),
             local_instances: BTreeMap::new(),
+            tail_calls: BTreeSet::new(),
         }
     }
     pub fn local(&mut self, ty: ValType) -> u32 {
@@ -495,6 +497,7 @@ pub(crate) fn compile(
         let value = emit.constructor()?;
         emit.emit(I::LocalGet(value));
     } else if key.callable {
+        emit.plan_tail_calls()?;
         for (index, symbol) in plan.captures[&key].iter().enumerate() {
             let local = emit.local(ValType::I32);
             emit.extend([

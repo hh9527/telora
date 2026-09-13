@@ -88,6 +88,7 @@ mod schema_values;
 mod sequences;
 pub mod session;
 mod string_ops;
+mod tail_calls;
 mod template_ops;
 mod test_description;
 

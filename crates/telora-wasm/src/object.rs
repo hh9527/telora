@@ -54,9 +54,18 @@ impl ObjectFunction {
             Instruction::CallIndirect {
                 type_index,
                 table_index,
+            }
+            | Instruction::ReturnCallIndirect {
+                type_index,
+                table_index,
             } => {
                 assert_eq!(*table_index, 0);
-                self.reference(0x11, 6, *type_index);
+                let opcode = if matches!(instruction, Instruction::ReturnCallIndirect { .. }) {
+                    0x13
+                } else {
+                    0x11
+                };
+                self.reference(opcode, 6, *type_index);
                 self.relocations.push(Relocation {
                     kind: 20,
                     offset: self.function.byte_len() as u32,

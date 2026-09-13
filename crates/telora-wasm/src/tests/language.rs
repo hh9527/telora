@@ -35,7 +35,7 @@ fn sources(
 }
 
 #[test]
-#[ignore = "run scripts/test-language.sh first; audits its non-fixture case observations"]
+#[ignore = "run scripts/test-language.sh first; audits its case observations"]
 fn published_language_callbacks_match_default_observations() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -99,9 +99,7 @@ fn audit() {
             failures.push(format!("{case}: {error}"));
         }
     }
-    eprintln!(
-        "wasm language audit: checked={checked}, fixture cases outside this harness={fixtures}"
-    );
+    eprintln!("wasm language audit: checked={checked}, including fixture cases={fixtures}");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert!(checked > 0, "no observations executed");
 }
@@ -183,14 +181,6 @@ fn module(
     let plan = crate::plan::Plan::new(&executable)?;
     let bytes = crate::compile_executable(&executable)?;
     for record in cases {
-        if !record["fixtures"]
-            .as_array()
-            .ok_or("missing fixture list")?
-            .is_empty()
-        {
-            *fixtures += 1;
-            continue;
-        }
         let name = record["test"].as_str().ok_or("missing test name")?;
         let export = tests
             .exports
@@ -216,12 +206,31 @@ fn module(
             return Err("test export not initialized".into());
         }
         let value = output.word(offset as u64 + 4)? as u64;
+        let selection =
+            super::language_fixtures::select(&mut session, value, record, root, &mir.sources)?;
+        if !record["fixtures"]
+            .as_array()
+            .ok_or("missing fixture list")?
+            .is_empty()
+        {
+            *fixtures += 1;
+        }
+        let Some(value) = selection else {
+            *checked += 1;
+            if record["status"] != "failed" {
+                failures.push(format!(
+                    "{}/{name}: fixture failed before leaf execution",
+                    tests.module_name
+                ));
+            }
+            continue;
+        };
+        let output = Output {
+            memory: session.memory.data(&session.store),
+            manifest: &session.manifest,
+        };
         let (description, _) = output.payload(TESTS, output.word(value + DATA)?)?;
         let operation = output.word(description)?;
-        if operation == 3 {
-            *fixtures += 1;
-            continue;
-        }
         let callback = output.word(description + 8)?;
         let expected = if operation == 2 {
             Some(output.text(output.word(description + 12)? as u64)?)
