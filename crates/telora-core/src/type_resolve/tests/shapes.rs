@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn seal_rejects_record_nodes_with_non_record_skeletons() {
-    let mut mir = graph(&[("@src/main", "export def value: Dict(Int) = { item: 42 }; export def scalar = 42;")]);
+    let mut mir = graph(&[("@src/main", "export def value: Dict(Int) = { item: 42 }; export def scalar: Int = 42;")]);
     resolve(&mut mir);
     mir.seal().unwrap();
     let TypeState::Known(scalar) = symbol_type(&mir, "scalar") else { panic!("scalar type") };
@@ -63,7 +63,7 @@ fn static_type_uses_reject_value_metadata_and_ordinary_function_results() {
 
 #[test]
 fn newtype_reference_facets_preserve_declarations_and_reject_function_patterns() {
-    let mut mir = graph(&[("@src/main", "type Id = struct(Int); def make: Fn(Int) -> Id = Id; export def value = make(42);")]);
+    let mut mir = graph(&[("@src/main", "type Id = struct(Int); def make: Fn(Int) -> Id = Id; export def value: Id = make(42);")]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
     let TypeState::Known(declaration) = symbol_type(&mir, "Id") else { panic!("type declaration") };
@@ -82,7 +82,7 @@ fn newtype_reference_facets_preserve_declarations_and_reject_function_patterns()
 
 #[test]
 fn record_construction_uses_whole_graph_context_deterministically() {
-    let sources = [("@src/main", "type Item = struct {value: Int}; def item: Item = {value: 42}; def raw = {value: 42}; export def answer = [item] == [{value: 42}] && [raw] != [item];")];
+    let sources = [("@src/main", "type Item = struct {value: Int}; def item: Item = {value: 42}; export def answer: Bool = do { let raw = {value: 42}; [item] == [{value: 42}] && [raw] != [item] };")];
     let mut first = graph(&sources);
     resolve(&mut first);
     first.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", first.dump()));
@@ -98,12 +98,12 @@ fn record_construction_uses_whole_graph_context_deterministically() {
 #[test]
 fn metadata_equality_does_not_unify_represented_types_or_narrow_a_join() {
     for source in [
-        "export def answer = Int.type != String.type;",
-        "def chosen = if True { Int.type } else { String.type }; export def answer = chosen == Int.type;",
-        "type Choice = enum { Selected(Type), Empty }; def chosen = match Choice.Selected(Int.type) { Choice.Selected(value) => value, Choice.Empty => String.type }; export def answer = chosen == Int.type;",
-        "def matches = fn(value) { value == Int.type }; export def answer = matches(String.type);",
-        "def chosen = if True { Int.type } else { Int.type }; export def answer = chosen == String.type;",
-        "def same = fn(left, right) { left == right }; export def answer = same(1, 1);",
+        "export def answer: Bool = Int.type != String.type;",
+        "export def answer: Bool = do { def chosen = if True { Int.type } else { String.type }; chosen == Int.type };",
+        "type Choice = enum { Selected(Type), Empty }; export def answer: Bool = do { def chosen = match Choice.Selected(Int.type) { Choice.Selected(value) => value, Choice.Empty => String.type }; chosen == Int.type };",
+        "export def answer: Bool = do { def matches = fn(value) { value == Int.type }; matches(String.type) };",
+        "export def answer: Bool = do { def chosen = if True { Int.type } else { Int.type }; chosen == String.type };",
+        "export def answer: Bool = do { def same = fn(left, right) { left == right }; same(1, 1) };",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -143,7 +143,7 @@ fn metadata_joins_preserve_witnesses_or_widen_without_equating_represented_types
         ("match 1 { 0 => Int.type, 1 => String.type, _ => Bool.type }", TypeConstructor::Type),
         ("if True { if False { Int.type } else { String.type } } else { Bool.type }", TypeConstructor::Type),
     ] {
-        let source = format!("export def answer = {expression};");
+        let source = format!("export def checked: Bool = do {{ let answer = {expression}; True }};");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
@@ -232,7 +232,7 @@ fn tuple_completion_normalizes_literal_slots_without_erasing_source_identity() {
         type Point = struct {x: Int};
         def candidate: Unchecked(Point) = {x: 42};
         export def pair: (Point, Int) = (candidate, 0);
-        export def inferred = (1, "ok");
+        export def checked: Bool = do { let inferred = (1, "ok"); True };
     "#)]);
     resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
@@ -252,7 +252,7 @@ fn function_tuple_and_unit_type_syntax_are_static_ir_operations() {
         "@src/main",
         r#"
         def pair: Fn(Int, String) -> (Int, String) = fn(x, y) { (x, y) };
-        export def answer = pair(1, "ok"); export def unit: () = ();
+        export def answer: (Int, String) = pair(1, "ok"); export def unit: () = ();
     "#,
     )]);
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
