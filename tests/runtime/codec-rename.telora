@@ -19,7 +19,7 @@ def read: for(T) Fn(TypeOf(T), Value) -> T = fn(target, value) {
     match decode(target, value) { Ok(value) => value, Err(error) => raise!(error) }
 };
 
-export def answer = encode(Value.type, (
+export def answer: Value = encode(Value.type, (
     read(Item.type, Value.Object({someField: Value.Int(42)})),
     read(Choice.type, Value.Object({withValue: Value.Object({someField: Value.Int(7)})})),
     read(Choice.type, Value.String("emptyValue")),

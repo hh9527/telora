@@ -1,4 +1,4 @@
-export def answer = do {
+export def answer: Int = do {
     def alias: Fn(Int) -> Int = later;
     def later: Fn(Int) -> Int = fn(value) {value};
     alias(42)

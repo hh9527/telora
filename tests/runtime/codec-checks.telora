@@ -29,7 +29,7 @@ def identity: for(T) Fn(T) -> T = fn(value) { value };
 })
 type Box(T) = struct {item: T, valid: Bool};
 
-export def answer = encode(Value.type, (
+export def answer: Value = encode(Value.type, (
     match decode(Positive.type, Value.Int(42)) { Ok(value) => value.0, Err(error) => raise!(error) },
     match decode(Positive.type, Value.Int(0)) { Err(_) => True, Ok(_) => False },
     match decode(Parent.type, Value.Object({item: Value.Int(0)})) { Err(_) => True, Ok(_) => False },

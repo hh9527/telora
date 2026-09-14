@@ -46,8 +46,9 @@ impl RunMode {
             def adapt: for(State) Fn(entry.{family}(State)) -> policy.MainType = fn(app) {{
                 {{ config: app.config, ees: app.ees, start: app.start }}
             }};
-            def main = adapt(selected);
-            export def configure = fn(env: rt.Env) {{
+            def main: policy.MainType = adapt(selected);
+            type Reducer = Fn(policy.State, rt.SystemEvent) -> (policy.State, Array(rt.SystemEffect));
+            export def configure: Fn(rt.Env) -> (rt.SystemCaps, Fn(rt.SystemResources) -> (policy.State, Reducer)) = fn(env: rt.Env) {{
                 let configured = policy.config(env, main);
                 (configured.0, fn(resources: rt.SystemResources) {{ configured.1(resources, main) }})
             }};

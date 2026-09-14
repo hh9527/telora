@@ -1,7 +1,7 @@
 import "std/value" as value;
 import "std/codec" as codec;
 import "std/entry" as entry;
-def functions = do {
+def functions: (Fn(Int) -> Int, Fn(Int) -> Int) = do {
     let offset = 42;
     def even: Fn(Int) -> Int = fn(n) {
         if n == 0 { offset } else { odd(n - 1) }
@@ -13,8 +13,8 @@ def functions = do {
     let same = alias == even;
     (fn(n) {if same {alias(n)} else {0}}, odd)
 };
-export def answer = codec.encode(value.Value.type, functions.0(4));
-export def main = entry.main(
+export def answer: value.Value = codec.encode(value.Value.type, functions.0(4));
+export def main: entry.Eval = entry.main(
     {sources: [], envs: [], args: False},
     fn(ctx) {codec.encode(value.Value.type, functions.0(4))},
 );

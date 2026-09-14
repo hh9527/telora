@@ -1,7 +1,7 @@
 import "std/value" as value;
 import "std/codec" as codec;
 import "std/entry" as entry;
-def functions = do {
+def functions: (Fn(Int, String) -> Int, Fn(Int, Int) -> Int) = do {
     let offset = 42;
     decl even: for(T) Fn(Int, T) -> Int;
     def even = fn(n, witness) {
@@ -12,8 +12,8 @@ def functions = do {
     };
     (even@[String], even@[Int])
 };
-export def answer = codec.encode(value.Value.type, functions.0(4, "text"));
-export def main = entry.main(
+export def answer: value.Value = codec.encode(value.Value.type, functions.0(4, "text"));
+export def main: entry.Eval = entry.main(
     {sources: [], envs: [], args: False},
     fn(ctx) {codec.encode(value.Value.type, functions.1(4, 7))},
 );

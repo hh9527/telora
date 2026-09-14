@@ -5,7 +5,7 @@ import "std/ees" as ees;
 
 type State = struct { next: Int };
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-def start = fn(ctx: entry.Context) {
+def start: Fn(entry.Context) -> (State, Fn(State, actor.Event) -> actor.Transition(State)) = fn(ctx: entry.Context) {
     let initial: State = {next: 1};
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
@@ -19,5 +19,5 @@ def start = fn(ctx: entry.Context) {
     };
     (initial, reduce)
 };
-export def run = entry.run(State.type, config, ees.none, start);
-export def serve = entry.serve(State.type, config, ees.none, start);
+export def run: entry.Run(State) = entry.run(State.type, config, ees.none, start);
+export def serve: entry.Serve(State) = entry.serve(State.type, config, ees.none, start);

@@ -4,17 +4,17 @@ import "std/entry" as entry;
 def erased: Fn(Dyn) -> Int = fn(value) { match dyn.check_int(value) { Some(value) => value, None => 0 } };
 def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(dbg!(erased, "operand"));
 def other: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(erased);
-def initialized = factory(Int.type);
+def initialized: Fn(Int) -> Int = factory(Int.type);
 def make: Fn(Int) -> Fn(String) -> Int = fn(offset) {
     def local: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(fn(value) {offset});
     local(String.type)
 };
-def captured = make(42);
+def captured: Fn(String) -> Int = make(42);
 def make_nested: Fn(Int) -> Fn(Int) -> Int = fn(offset) {
     def local: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(fn(value) {offset});
     fn(value) {local(Int.type)(value)}
 };
-def nested = make_nested(42);
+def nested: Fn(Int) -> Int = make_nested(42);
 def unused: for(T) Fn(TypeOf(T)) -> Fn(Int) -> Int = interpreter!(fn(value) {value});
 def checks: Fn() -> Value = fn() {
     let repeated = factory(Int.type);
@@ -29,5 +29,5 @@ def checks: Fn() -> Value = fn() {
         unused(String.type)(42) == 42,
     ])
 };
-export def answer = checks();
-export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });
+export def answer: Value = checks();
+export def main: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });

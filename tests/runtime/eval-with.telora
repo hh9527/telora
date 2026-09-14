@@ -10,7 +10,7 @@ import "std/yaml" as yaml;
 import "std/toml" as toml;
 import "std/json" as json;
 
-export def formats = entry.main(
+export def formats: entry.Eval = entry.main(
     {sources: [], envs: [], args: False},
     fn(ctx) {
         Value.Array([
@@ -26,7 +26,7 @@ export def formats = entry.main(
 @regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
 type Endpoint = struct {host: String, port: Int};
 
-export def text_decoded = entry.main(
+export def text_decoded: entry.Eval = entry.main(
     {sources: ["input"], envs: [], args: False},
     fn(ctx) {
         let input = match dict.get(ctx.sources, "input") {
@@ -55,7 +55,7 @@ type External = struct {answer_value: Count};
 @without_tag
 type ExternalChoice = enum {Data(External)};
 
-export def property_decoded = entry.main(
+export def property_decoded: entry.Eval = entry.main(
     {sources: ["input"], envs: [], args: False},
     fn(ctx) {
         let input = match dict.get(ctx.sources, "input") {
@@ -69,12 +69,12 @@ export def property_decoded = entry.main(
     },
 );
 
-export def answer = entry.main(
+export def answer: entry.Eval = entry.main(
     { sources: ["input"], envs: ["TELORA_NATIVE_TEST_ENV"], args: True },
     fn(ctx) { encode(Value.type, (ctx, base.data)) },
 );
 
-export def selected = entry.main(
+export def selected: entry.Eval = entry.main(
     { sources: ["input"], envs: [], args: False },
     fn(ctx) {
         match dict.get(ctx.sources, "input") {
@@ -84,7 +84,7 @@ export def selected = entry.main(
     },
 );
 
-export def decoded = entry.main(
+export def decoded: entry.Eval = entry.main(
     { sources: ["input"], envs: [], args: False },
     fn(ctx) {
         let input = match dict.get(ctx.sources, "input") {

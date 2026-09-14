@@ -18,7 +18,7 @@ def read: for(T) Fn(TypeOf(T), String) -> T = fn(target, input) {
     }
 };
 
-export def answer = encode(Value.type, (
+export def answer: Value = encode(Value.type, (
     read(Int.type, "42"),
     read(Float.type, "-1.5"),
     read(Option(Int).type, "7"),

@@ -40,5 +40,5 @@ def checks: Fn() -> Value = fn() {
         spread_only == before, before == {a: 1, b: 2},
     ])
 };
-export def answer = checks();
-export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });
+export def answer: Value = checks();
+export def main: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });

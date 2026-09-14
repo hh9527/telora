@@ -1,11 +1,11 @@
-import "std/entry" as entry;
+import "std/entry" as entry; import "std/blame" {BlameError};
 import "std/value" {Value};
 
-def subject = 7;
+def subject: Int = 7;
 def warning: Option(Int) = warn!(blame!("initialization warning", subject));
-def issue = blame!("entry warning", subject);
-export def answer = match warning { None => Value.Int(42), Some(value) => fail!("warn returned Some") };
-export def main = entry.main(
+def issue: BlameError = blame!("entry warning", subject);
+export def answer: Value = match warning { None => Value.Int(42), Some(value) => fail!("warn returned Some") };
+export def main: entry.Eval = entry.main(
     { sources: [], envs: [], args: False },
     fn(ctx) {
         let warning: Option(Int) = warn!(issue);

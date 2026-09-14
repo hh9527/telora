@@ -1,6 +1,6 @@
 import "std/eq" as eq;
 import "std/codec" {encode, Value};
-import "std/entry" as entry;
+import "std/entry" as entry; import "std/blame" {BlameError};
 import "std/dyn" as dynamic;
 import "std/hash" as hash;
 import "std/regex" as regex;
@@ -20,15 +20,15 @@ def first: Node = {value: 1, children: [{value: 2, children: []}]};
 def second: Node = {value: 1, children: [{value: 2, children: []}]};
 def dictionary: Dict(Int) = {a: 1, b: 2};
 def reversed: Dict(Int) = {b: 2, a: 1};
-def packed = dynamic.pack(Int.type, 1);
-def empty_factory = fn() { fn(n: Int) { n + 1 } };
-def captured_factory = fn(base: Int) { fn(n: Int) { n + base } };
-def empty = empty_factory();
-def captured = captured_factory(1);
-def pattern = regex.compile("a+");
-def formatted = fmt.concat(["before", "after"], [fmt.from_int(42)]);
-def state = hash.update_string(hash.new(), "prefix");
-def error = blame!("same message");
+def packed: Dyn = dynamic.pack(Int.type, 1);
+def empty_factory: Fn() -> Fn(Int) -> Int = fn() { fn(n: Int) { n + 1 } };
+def captured_factory: Fn(Int) -> Fn(Int) -> Int = fn(base: Int) { fn(n: Int) { n + base } };
+def empty: Fn(Int) -> Int = empty_factory();
+def captured: Fn(Int) -> Int = captured_factory(1);
+def pattern: regex.Regex = regex.compile("a+");
+def formatted: fmt.Fmt = fmt.concat(["before", "after"], [fmt.from_int(42)]);
+def state: hash.HashState = hash.update_string(hash.new(), "prefix");
+def error: BlameError = blame!("same message");
 def option_text: Fn(Option(Int)) -> Option(String) = fn(value) { let number = value?; Some("success") };
 def result_text: Fn(Result(Int, String)) -> Result(String, String) = fn(value) { let number = value?; Ok("success") };
 def nested: Fn(Option(Int)) -> Option(Int) = fn(value) {
@@ -91,5 +91,5 @@ def checks: Fn() -> Value = fn() {
         eq.equal(error, error), !eq.equal(error, blame!("same message")),
     ])
 };
-export def answer = checks();
-export def main = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });
+export def answer: Value = checks();
+export def main: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });

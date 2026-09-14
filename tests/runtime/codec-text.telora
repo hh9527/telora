@@ -24,7 +24,7 @@ def read: for(T) Fn(TypeOf(T), Value) -> T = fn(target, input) {
     match decode(target, input) { Ok(value) => value, Err(error) => raise!(error) }
 };
 
-export def answer = encode(Value.type, (
+export def answer: Value = encode(Value.type, (
     read(Service.type, Value.String("api@local:42")),
     read(Choice.type, Value.String("unstructured")),
     match decode(Choice.type, Value.String("local:42")) { Err(_) => True, Ok(_) => False },

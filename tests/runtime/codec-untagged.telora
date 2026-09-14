@@ -21,7 +21,7 @@ def read: for(T) Fn(TypeOf(T), Value) -> T = fn(target, input) {
     match decode(target, input) { Ok(value) => value, Err(error) => raise!(error) }
 };
 
-export def answer = encode(Value.type, (
+export def answer: Value = encode(Value.type, (
     read(Signed.type, Value.Int(2)),
     read(Signed.type, Value.Int(-3)),
     read(Nullable.type, Value.None),

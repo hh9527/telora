@@ -5,10 +5,10 @@ import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
 def ees: effect.Config = {vars: {}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]};
 type State = struct {request: String, round: Int, first: Option(Value)};
-def query = fn(id: String, round: Int) {
+def query: Fn(String, Int) -> actor.Effect = fn(id: String, round: Int) {
     actor.ees_call("query", id, effect.sqlite_query("catalog", "SELECT ? AS score", [ScalarValue.Int(round)]))
 };
-export def run = entry.run(State.type, config, ees, fn(ctx) {
+export def run: entry.Run(State) = entry.run(State.type, config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             actor.Event.Request(request) => (

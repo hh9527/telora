@@ -7,14 +7,14 @@ fn source_data_depth_limit_applies_before_materialization() {
     fs::write(cwd.join("src/deep.json"), &input).unwrap();
     fs::write(
         cwd.join("src/main.telora"),
-        "import \"./deep.json\" as data; export def answer = data.data;",
+        "import \"./deep.json\" as data; import \"std/value\" {Value}; export def answer: Value = data.data;",
     )
     .unwrap();
     let output = telora(&cwd).args(["check", "@src/main"]).output().unwrap();
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("depth"), "{stdout}");
-    fs::write(cwd.join("src/main.telora"), "import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer = entry.main({sources: [\"input\"], envs: [], args: False}, fn(ctx) { Value.Int(42) });").unwrap();
+    fs::write(cwd.join("src/main.telora"), "import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer: entry.Eval = entry.main({sources: [\"input\"], envs: [], args: False}, fn(ctx) { Value.Int(42) });").unwrap();
     let output = telora(&cwd)
         .args([
             "eval-with",
@@ -35,26 +35,26 @@ fn source_eval_with_rejects_invalid_config_and_preserves_execution_diagnostics()
     let cwd = fixture();
     for (source, extra, message) in [
         (
-            "import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer = entry.main({sources: [], envs: [], args: False}, fn(ctx) { Value.Int(42) });",
+            "import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) { Value.Int(42) });",
             vec!["--", "unexpected"],
             "does not accept command-line arguments",
         ),
         (
-            "import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer = entry.main({sources: [\"dup\", \"dup\"], envs: [], args: False}, fn(ctx) { Value.Int(42) });",
+            "import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer: entry.Eval = entry.main({sources: [\"dup\", \"dup\"], envs: [], args: False}, fn(ctx) { Value.Int(42) });",
             vec![],
             "unique non-empty names",
         ),
         (
-            "import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer = entry.main({sources: [], envs: [\"TELORA_NATIVE_MISSING_ENV\"], args: False}, fn(ctx) { Value.Int(42) });",
+            "import \"std/entry\" as entry; import \"std/value\" {Value}; export def answer: entry.Eval = entry.main({sources: [], envs: [\"TELORA_NATIVE_MISSING_ENV\"], args: False}, fn(ctx) { Value.Int(42) });",
             vec![],
             "cannot read declared environment variable",
         ),
         (
-            "import \"std/entry\" as entry; export def answer = entry.main({sources: [], envs: [], args: False}, fn(ctx) {\n fail!(\"observed entry failed\");\n});",
+            "import \"std/entry\" as entry; export def answer: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) {\n fail!(\"observed entry failed\");\n});",
             vec![],
             "observed entry failed",
         ),
-        ("export def answer = 42;", vec![], "expected Eval"),
+        ("export def answer: Int = 42;", vec![], "expected Eval"),
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
         let output = telora(&cwd)
