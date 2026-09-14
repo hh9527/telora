@@ -19,6 +19,7 @@ mod records;
 mod reflection;
 mod regex;
 mod test_descriptions;
+mod services;
 
 #[test]
 fn host_source_index_uses_utf8_byte_columns_without_span_tables() {

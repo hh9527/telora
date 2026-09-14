@@ -1,0 +1,8 @@
+export def configure = fn(env: Int) {
+    (env, fn(resources: Int) {
+        (env + resources, fn(state: Int, event: Int) {
+            if event == 0 { fail!("service event failed") }
+            else { (state + event, [state + event]) }
+        })
+    })
+};

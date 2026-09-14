@@ -88,6 +88,8 @@ mod schema_nominal;
 mod schema_values;
 mod sequences;
 pub mod session;
+pub mod service;
+pub mod transport;
 mod string_ops;
 mod tail_calls;
 mod template_ops;
