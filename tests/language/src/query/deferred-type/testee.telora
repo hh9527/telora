@@ -1,2 +1,2 @@
 import "std/test" as test;
-export def deferred = test.with_fixtures(["missing.json"], fn(value) { test.should_ok(fn() { value }) });
+export def deferred: test.Test = test.with_fixtures(["missing.json"], fn(value) { test.should_ok(fn() { value }) });

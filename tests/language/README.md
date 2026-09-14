@@ -54,11 +54,11 @@ Group related cases in one testee and give each export a descriptive name:
 import "std/test" as test;
 import "@src/test-support" {expect};
 
-export def array_index = test.should_ok(fn() {
+export def array_index: test.Test = test.should_ok(fn() {
     let values = [10, 20];
     expect(values[1] == 20)
 });
-export def array_bounds = test.should_fail_with(fn() {
+export def array_bounds: test.Test = test.should_fail_with(fn() {
     [10][1]
 }, "OutOfRange");
 ```
