@@ -104,6 +104,7 @@ export def text_and_path_ok = test.should_ok(fn() {
         && string.trim_margin(r"  |a
     |b
 unchanged", "|") == "a\nb\nunchanged"
+        && string.trim_margin("  |a\r\n    |b\r\nunchanged", "|") == "a\r\nb\r\nunchanged"
         && path.normalize("/a/./b/../../../../c") == "/c"
         && path.normalize("../../a/../b") == "../../b"
         && path.join(["/tool", "bin", "../lib", "gcc"]) == "/tool/lib/gcc"

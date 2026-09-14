@@ -1,0 +1,6 @@
+import "std/test" as test;
+import "./values" as values;
+
+export def physical_newlines = test.should_ok(values.physical_newlines);
+export def explicit_carriage_returns = test.should_ok(values.explicit_carriage_returns);
+export def continuations = test.should_ok(values.continuations);

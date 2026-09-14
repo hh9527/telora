@@ -85,6 +85,23 @@ fn compiled_artifact_is_identical_across_line_endings() {
 }
 
 #[test]
+fn multiline_string_values_and_artifacts_ignore_source_eol() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/language/src/test/string-eol/values.telora")).unwrap()
+        .replace("\r\n", "\n");
+    for name in ["physical_newlines", "explicit_carriage_returns", "continuations"] {
+        let expected = compile_export(&source, name).unwrap();
+        for eol in ["\n", "\r\n", "\r"] {
+            let bytes = compile_export(&source.replace('\n', eol), name).unwrap();
+            assert!(bytes == expected, "{name}: artifact differs for {eol:?}");
+            let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
+            session.initialize().unwrap();
+            assert_eq!(session.call(&[]).unwrap(), serde_json::json!(true));
+        }
+    }
+}
+
+#[test]
 fn runtime_diagnostics_preserve_high_line_bits() {
     let source = format!("{}export def answer = fn() {{ fail!(\"high line\", 42) }};", "\n".repeat(300));
     let bytes = compile(&source).unwrap();

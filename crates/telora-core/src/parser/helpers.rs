@@ -267,7 +267,7 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn decode_string_component(&self, node: NodeRef) -> Result<String, Diagnostic> {
         match self.cst.get(node) {
-            Node::Token(Token::StringText, _) => Ok(self.text(node).into_owned()),
+            Node::Token(Token::StringText, _) => Ok(normalize_source_newlines(&self.text(node))),
             Node::Token(Token::EscapeSequence, _) => self.decode_escape(node),
             Node::Token(Token::RawString, _) => self.decode_raw_string(node),
             _ => Err(self.error(node, "expected string text or escape")),
@@ -320,11 +320,11 @@ impl<'a> Lowerer<'a> {
         if text.len() < opener + terminator.len() || !text.ends_with(&terminator) {
             return Err(self.error(node, "unterminated raw String"));
         }
-        Ok(text[opener..text.len() - terminator.len()].to_owned())
+        Ok(normalize_source_newlines(&text[opener..text.len() - terminator.len()]))
     }
 
     pub(super) fn decode_telora_string(&self, node: NodeRef) -> Result<String, Diagnostic> {
-        let text = self.text(node);
+        let text = normalize_source_newlines(&self.text(node));
         let quoted = text.strip_prefix('b').unwrap_or(&text);
         let mut chars = quoted[1..quoted.len() - 1].chars();
         let mut output = String::new();
@@ -346,5 +346,14 @@ impl<'a> Lowerer<'a> {
             });
         }
         Ok(output)
+    }
+}
+
+// Normalize physical source EOL before escape decoding. An explicit \r remains CR.
+fn normalize_source_newlines(text: &str) -> String {
+    if text.contains('\r') {
+        text.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        text.to_owned()
     }
 }

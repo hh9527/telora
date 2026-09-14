@@ -131,7 +131,8 @@ export def evaluate = entry.main(config, fn(ctx) {
     let stderr = String::from_utf8_lossy(&invalid.stderr);
     assert!(!invalid.status.success());
     assert!(stderr.contains("@eval-ctx/request"), "{stderr}");
-    assert!(!stderr.contains(input.to_string_lossy().as_ref()), "{stderr}");
+    // No physical filename may leak, regardless of separators or JSON escaping.
+    assert!(!stderr.contains(input.file_name().unwrap().to_str().unwrap()), "{stderr}");
 }
 
 #[test]

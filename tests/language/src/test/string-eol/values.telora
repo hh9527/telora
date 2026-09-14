@@ -1,0 +1,36 @@
+def expect: Fn(Bool) -> Bool = fn(value) {
+    if value { True } else { fail!("string EOL mismatch") }
+};
+
+export def physical_newlines = fn() {
+    expect("一
+二" == "一\n二"
+        && r"一
+二" == "一\n二"
+        && r#"a
+"b""# == "a\n\"b\""
+        && `a
+\{42}
+b` == "a\n42\nb"
+        && b"a
+b" == b"a\nb")
+};
+
+export def explicit_carriage_returns = fn() {
+    expect("\r" == "\x0D" && "\r" == "\u{D}"
+        && "\r" != "\n"
+        && r"\r" == "\\r"
+        && "\r
+x" == "\r\nx"
+        && `\r
+\{42}` == "\r\n42"
+        && b"\r
+x" == b"\r\nx")
+};
+
+export def continuations = fn() {
+    expect("a\
+    b" == "ab"
+        && `a\
+    \{42}` == "a42")
+};

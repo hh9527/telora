@@ -16,9 +16,10 @@ fn lock_removes_stale_imos_plans_without_remote_sources() {
     );
     assert!(!plans.join("telora-stale.json").exists());
     assert!(plans.join("host-note.txt").exists());
+    let reported: String = serde_json::from_slice(&locked.stdout).unwrap();
     assert_eq!(
-        serde_json::from_slice::<Value>(&locked.stdout).unwrap(),
-        cwd.join("telora-lock.json").to_string_lossy().as_ref()
+        PathBuf::from(reported).canonicalize().unwrap(),
+        cwd.join("telora-lock.json").canonicalize().unwrap()
     );
 }
 

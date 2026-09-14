@@ -21,6 +21,15 @@ The mode selects the public Telora command used to observe the testee:
 
 ## Writing runtime tests
 
+Test assets may use LF or CRLF; no forced-LF Git checkout is required.
+The harness normalizes line endings in `expected.txt` expectations, while
+language and data files reach the compiler unchanged. The language normalizes
+physical newlines in string literals to LF; explicit CR escapes remain CR.
+The harness does not rewrite literal contents. The Rust CLI runner reads
+the shell script at runtime and invokes Bash explicitly (Bash and `jaq` are
+required on every platform). Set `TELORA_LANGUAGE_ROOT` to a copied acceptance
+directory to verify another checkout's assets without changing tracked files.
+
 Prefer independent `.telora` tests for language behavior, including codecs,
 reflection, text operations, and generic functions. Rust tests should focus on
 compiler structures, Wasm ABI, Host interactions, GC, and precise diagnostic

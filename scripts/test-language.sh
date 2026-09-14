@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-source_root="$repo_root/tests/language"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
+source_root=${TELORA_LANGUAGE_ROOT:-"$repo_root/tests/language"}
 build_root="$repo_root/target/language-tests"
 workspace="$build_root/workspace"
 actual_root="$build_root/actual"
@@ -93,7 +93,7 @@ generated="$workspace/src/generated/check-all.telora"
             printf '        "%s": case_%s.check(required(actual, "%s")),\n' \
                 "${cases[$index]}" "$index" "${cases[$index]}"
         elif [[ ${case_checks[$index]} -eq 2 ]]; then
-            expected=$(jaq -Rs 'rtrimstr("\n")' "$workspace/src/${cases[$index]}/expected.txt")
+            expected=$(jaq -Rs 'split("\r\n") | join("\n") | split("\r") | join("\n") | rtrimstr("\n")' "$workspace/src/${cases[$index]}/expected.txt")
             printf '        "%s": if support.failed_with(required(actual, "%s"), %s) { Value.True } else { Value.False },\n' \
                 "${cases[$index]}" "${cases[$index]}" "$expected"
         else

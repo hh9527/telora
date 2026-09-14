@@ -241,7 +241,7 @@ enum StringToken {
     #[token("\"")]
     DoubleQuote,
     #[regex(
-        r#"\\(0|[nrt"\\]|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]{1,6}\}|\r?\n[ \t\r\n]*)"#,
+        r#"\\(0|[nrt"\\]|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]{1,6}\}|(\r\n|\r|\n)[ \t\r\n]*)"#,
         priority = 4
     )]
     EscapeSequence,
@@ -261,7 +261,7 @@ enum ConcatToken {
     #[token("\\{", priority = 5)]
     InterpolationStart,
     #[regex(
-        r#"\\(0|[nrt`\\]|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]{1,6}\}|\r?\n[ \t\r\n]*)"#,
+        r#"\\(0|[nrt`\\]|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]{1,6}\}|(\r\n|\r|\n)[ \t\r\n]*)"#,
         priority = 4
     )]
     EscapeSequence,
