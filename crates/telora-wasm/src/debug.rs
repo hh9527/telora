@@ -67,11 +67,13 @@ impl Session {
                 .find(|site| site.node == node)
                 .ok_or("Wasm: unknown debug site")?;
             let value = output.word(pointer + 4)? as u64;
+            let source = self.manifest.sources.iter().find(|source| source.id == site.origin[0])
+                .ok_or("Wasm: debug site has no source")?;
             events.push(DebugEvent {
                 name: site.name.clone(),
                 repr: output.debug_repr(value)?,
-                module: site.module.clone(),
-                line: site.line,
+                module: source.name.clone(),
+                line: source.position(site.origin[1]).0 as u32,
                 message: site.message.clone(),
             });
         }

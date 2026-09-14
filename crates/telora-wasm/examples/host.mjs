@@ -6,7 +6,7 @@ export async function load(bytes) {
   const sections = WebAssembly.Module.customSections(module, 'telora.manifest');
   if (sections.length !== 1) throw Error('缺少或重复的 Telora manifest');
   const manifest = JSON.parse(new TextDecoder().decode(sections[0]));
-  if (manifest.abi !== 11) throw Error('不支持的产物 ABI');
+  if (manifest.abi !== 12) throw Error('不支持的产物 ABI');
   const { exports: wasm } = await WebAssembly.instantiate(module, {});
   const view = () => new DataView(wasm.memory.buffer);
   const word = address => view().getUint32(address, true);

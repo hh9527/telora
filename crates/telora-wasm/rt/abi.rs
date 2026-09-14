@@ -1,5 +1,5 @@
 //! Shared physical layout; consumed by both codegen and Rust-compiled RT.
-pub const VERSION: u32 = 11;
+pub const VERSION: u32 = 12;
 pub const ENV_RAW_PARENT: u32 = 0x8000_0000;
 pub const HEADER_BYTES: u32 = 16;
 pub const SCALAR_BYTES: u32 = 24;

@@ -1,6 +1,6 @@
 # RFC 0292：统一 Wasm 源码执行路线
 
-- 状态：实施中；默认 run/serve/test 已接入 Wasm，尚未完成其余默认命令切换与旧后端删除
+- 状态：实施中；所有默认执行命令已接入 Wasm，尚未撤下实验开关、产物 CLI 与旧后端
 - 日期：2026-09-14
 - 跟踪：[#187](https://github.com/hh9527/telora/issues/187)
 - 前置：RFC 0291（Wasm check/eval/eval-with）、RFC 0290（服务语义参考）
@@ -191,3 +191,17 @@ debug 构建验证执行路径，不作为 release 性能数据。
 语言验收脚本；追加用例间回收后的 test_command 专项 8 项通过。覆盖嵌套
 JSON/YAML/TOML fixture、重导出模块相对路径、预期失败后继续、警告保留、
 输入来源、多数据错误汇总与初始化环。其他命令与旧后端删除仍需继续。
+
+2026-09-14：无参数 check/eval/eval-with 已切到 Wasm，删除这些 CLI 路径的
+旧 bytecode 编译、链接和 VM 调用；query 与 only-types 保持静态边界。
+eval 入口契约在 codegen 前由已闭合的标准导出身份验证；JSON 输出不再把
+时间类 Value 隐式转换为字符串。初始化环通过稳定全局 ID 的失败单元列出
+涉及的全局名称。非尾递归限制仍由 Wasmi 执行，语言用例采用引擎的
+`call stack exhausted` 诊断，不模拟旧 VM 的配额文字。
+
+同时清理 debug site 遗留的预计算行号及重复模块名，仅保存原始位置，
+Rust/浏览器 Host 根据 source 名称与 bols 构造显示事件；ABI 更新为 12。
+验证：完整 CLI 102 项、Wasm 库 99 项通过（1 项 opt-in 忽略）；之后的
+debug 元数据变更通过库专项 1 项、CLI 专项 3 项及浏览器 Host JS 语法检查。
+旧 native 显式开关与产物命令仅暂留供迁移中的对照，下一步完整删除，
+不把这些中间态当作 RFC 验收完成。

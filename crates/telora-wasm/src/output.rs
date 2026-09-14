@@ -189,9 +189,11 @@ impl Output<'_> {
                         "None" => Value::Null,
                         "True" => true.into(),
                         "False" => false.into(),
-                        "Int" | "Float" | "String" | "Array" | "Object" | "LocalDate"
-                        | "LocalTime" | "LocalDateTime" | "OffsetDateTime" => {
+                        "Int" | "Float" | "String" | "Array" | "Object" => {
                             payload.ok_or("Wasm: semantic Value payload missing")?
+                        }
+                        "LocalDate" | "LocalTime" | "LocalDateTime" | "OffsetDateTime" => {
+                            return Err("JSON cannot encode temporal values; use a codec first".into());
                         }
                         "Bytes" => {
                             return Err("Value.Bytes cannot be emitted as semantic JSON".into());

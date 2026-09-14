@@ -19,6 +19,7 @@ pub struct Manifest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Global {
     pub symbol: u32,
+    pub name: String,
     pub ty: u32,
     pub demand: u32,
 }
@@ -26,8 +27,7 @@ pub struct Global {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DebugSite {
     pub node: u32,
-    pub module: String,
-    pub line: u32,
+    pub origin: [u32; 3],
     pub name: String,
     pub message: Option<String>,
 }
@@ -242,11 +242,9 @@ impl Manifest {
                     else {
                         return None;
                     };
-                    let source = mir.sources.get(node.location.source);
                     Some(DebugSite {
                         node: index as u32,
-                        module: source.name.to_string(),
-                        line: source.position(node.location.start).line as u32,
+                        origin: [node.location.source.get(), node.location.start, node.location.end],
                         name: expression.clone(),
                         message: message.clone(),
                     })

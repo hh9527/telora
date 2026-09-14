@@ -4,6 +4,7 @@ pub(crate) mod run;
 pub(crate) mod testing;
 mod test_fixtures;
 mod diagnostics;
+mod eval_contract;
 mod timing;
 use crate::static_input::Inventory;
 use std::path::PathBuf;
@@ -147,6 +148,7 @@ pub(crate) fn eval(context: PathBuf, module: &str, export: &str) -> Result<i32, 
         .iter()
         .find(|id| mir.symbols[id.index()].name == export)
         .ok_or_else(|| format!("module has no export {export:?}"))?;
+    eval_contract::validate(&mir, symbol, false)?;
     let executable = sealed.seal_export(symbol).map_err(|diagnostics| {
         diagnostics
             .iter()
@@ -157,7 +159,7 @@ pub(crate) fn eval(context: PathBuf, module: &str, export: &str) -> Result<i32, 
     drop(timer);
     let mut session = compile(&executable)?;
     if session.manifest.value_type != Some(session.manifest.entry_type) {
-        return Err("eval export must have the authoritative std/value.Value type".into());
+        return Err("eval export: expected Value (std/value.Value)".into());
     }
     let result = initialize(&mut session, &inventory, &mut mir.sources);
     diagnostics::finish(&session, &mir.sources, 0, result)?;
@@ -199,6 +201,7 @@ pub(crate) fn eval_with(
         .iter()
         .find(|id| mir.symbols[id.index()].name == export)
         .ok_or_else(|| format!("module has no export {export:?}"))?;
+    eval_contract::validate(&mir, symbol, true)?;
     let executable = sealed.seal_export(symbol).map_err(|diagnostics| {
         diagnostics
             .iter()

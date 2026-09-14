@@ -13,8 +13,12 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
     let plan = Plan::new(executable)?;
     let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
     for (&symbol, &key) in &plan.globals {
+        let mir = executable.sealed_mir().mir();
+        let definition = &mir.symbols[symbol.index()];
+        let module = definition.module.map(|id| mir.modules[id.index()].name.as_str()).unwrap_or("");
         manifest.globals.push(crate::artifact::Global {
             symbol: symbol.index() as u32,
+            name: format!("{module}::{}", definition.name),
             ty: key.ty(executable.sealed_mir().mir(), key.node)?.index() as u32,
             demand: plan.demands[&key],
         });

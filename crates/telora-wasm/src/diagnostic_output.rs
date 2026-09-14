@@ -81,6 +81,15 @@ impl Session {
             let code = output.word(pointer + 12)?;
             let message = if code == ERROR_USER {
                 output.text(output.word(pointer + 16)? as u64)?
+            } else if code == ERROR_CYCLE {
+                let mut affected = vec![];
+                for global in &self.manifest.globals {
+                    if output.word(global.demand as u64)? == 3
+                        && output.word(global.demand as u64 + 4)? as u64 == pointer {
+                        affected.push(global.name.as_str());
+                    }
+                }
+                format!("{}; affected globals: {}", error_message(code), affected.join(", "))
             } else {
                 error_message(code).into()
             };
