@@ -1,0 +1,3 @@
+import "@src/check/instance-order/shared" {identity};
+type Alias = Int;
+export def second = identity@[Alias];

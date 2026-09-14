@@ -1,0 +1,1 @@
+export def identity: for(T) Fn(T) -> T = fn(value) { value };

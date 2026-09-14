@@ -6,6 +6,7 @@ mod generics;
 mod inference;
 mod properties;
 mod shapes;
+mod convergence;
 
 fn graph(sources: &[(&str, &str)]) -> Mir {
     let mut sources = sources.to_vec();

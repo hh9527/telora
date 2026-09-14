@@ -199,10 +199,12 @@ impl Solver<'_> {
                             let bound = self.substitute_resolved(template.1, &substitutions, &mut canonical);
                             if let Some((symbol, arguments)) = self.mir.evidence.iter().find(|e| e.subject == subject && e.bound == bound && e.state.is_proven())
                                 .and_then(|e| e.implementation.map(|symbol| (symbol, e.arguments.clone())))
-                                && let Some(instance) = self.admit_instance((symbol, arguments), &mut indices, &mut canonical)
                             {
-                                implementations.push((node, instance));
-                            } else if self.mir.generic_instances[next].concrete {
+                                if let Some(instance) = self.admit_instance((symbol, arguments), &mut indices, &mut canonical) {
+                                    implementations.push((node, instance));
+                                }
+                            } else if self.mir.generic_instances[next].concrete
+                                && !self.nonconvergent_evidence.contains(&(subject, bound)) {
                                 self.mir.diagnostics.push(Diagnostic::error("generic trait member has no closed implementation evidence", self.mir.hir[node.index()].location));
                             }
                         }
@@ -289,10 +291,14 @@ impl Solver<'_> {
 
     fn admit_instance(
         &mut self,
-        key: Key,
+        mut key: Key,
         indices: &mut BTreeMap<Key, GenericInstanceId>,
         canonical: &mut Canonical,
     ) -> Option<GenericInstanceId> {
+        // Evidence and reference paths may enumerate the same bindings in a
+        // different order. Ordering is not part of an instance's identity.
+        key.1.sort_by_key(|(parameter, _)| *parameter);
+        if self.nonconvergent_instances.contains(&key.0) { return None; }
         // A nominal definition with conflicted member evidence cannot produce
         // instances. In particular, do not restart an argument-growth cycle
         // already rejected before layout materialization.
@@ -304,24 +310,6 @@ impl Solver<'_> {
         }
         if let Some(&id) = indices.get(&key) {
             return Some(id);
-        }
-        // Bound pathological polymorphic recursion just as the syntax/type
-        // passes bound other compiler resources. Never publish a truncated graph.
-        if indices.len() >= 4096 {
-            if indices.len() == 4096
-                && !self
-                    .mir
-                    .diagnostics
-                    .iter()
-                    .any(|d| d.message == "generic instance graph exceeds static expansion limit")
-            {
-                let node = self.mir.symbols[key.0.index()].declarations[0];
-                self.mir.diagnostics.push(Diagnostic::error(
-                    "generic instance graph exceeds static expansion limit",
-                    self.mir.hir[node.index()].location,
-                ));
-            }
-            return None;
         }
         let TypeState::Known(signature) =
             self.mir.ty_slots[self.mir.symbol_types[key.0.index()].index()]

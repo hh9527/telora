@@ -1,0 +1,26 @@
+# These functions are instantiated but deliberately not run: this tests static
+# graph closure, independently of runtime recursion/fuel.
+def same: for(T) Fn(T) -> Int = fn(value) { same(value) };
+def mutual_a: for(T) Fn(T) -> Int = fn(value) { mutual_b(value) };
+def mutual_b: for(T) Fn(T) -> Int = fn(value) { mutual_a(value) };
+def swap: for(A, B) Fn(A, B) -> Int = fn(a, b) { swap(b, a) };
+def reset: for(T) Fn(T) -> Int = fn(value) { reset(0) };
+def left: for(T) Fn(T) -> Int = fn(value) { right([value]) };
+def right: for(T) Fn(Array(T)) -> Int = fn(values) { left(values[0]) };
+def grow_once: for(T) Fn(T) -> Int = fn(value) { reset_other([value]) };
+def reset_other: for(T) Fn(T) -> Int = fn(value) { grow_once(0) };
+
+export def self_loop = same@[Int];
+export def mutual_loop = mutual_a@[Int];
+type Alias = Int;
+export def self_loop_again = same@[Alias];
+export def permutation = swap@[Int, String];
+export def constant_reset = reset@[String];
+export def wrapping_then_unwrapping = left@[Int];
+export def wrapping_then_reset = grow_once@[String];
+
+type Box(T) = struct { item: T };
+trait Show { show: Fn(Self) -> String };
+impl Show for Int { show: fn(value) { "int" } };
+impl(T: Show) Show for Box(T) { show: fn(value) { Show.show(value.item) } };
+export def decreasing_trait = fn(value: Box(Box(Int))) { Show.show(value) };

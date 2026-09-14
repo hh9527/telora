@@ -10,6 +10,8 @@ mod diagnostics;
 mod definitions;
 mod alias_cycles;
 mod family_cycles;
+mod instance_convergence;
+mod instance_patterns;
 mod evidence;
 mod instances;
 mod layouts;
@@ -124,6 +126,8 @@ struct Solver<'a> {
     pending_instances: BTreeSet<TypeSlotId>,
     /// Results of type-position calls have a producer, not a free value hole.
     type_results: Vec<TypeSlotId>,
+    nonconvergent_instances: BTreeSet<SymbolId>,
+    nonconvergent_evidence: BTreeSet<(TypeId, TypeId)>,
     value_spreads: Vec<bool>,
     administrative: Vec<bool>,
     scheme_references: Vec<bool>,
@@ -283,6 +287,8 @@ impl Solver<'_> {
             pending_blocks: vec![false; mir.hir.len()],
             pending_instances: BTreeSet::new(),
             type_results: vec![],
+            nonconvergent_instances: BTreeSet::new(),
+            nonconvergent_evidence: BTreeSet::new(),
             administrative: vec![false; mir.hir.len()],
             scheme_references: vec![false; mir.hir.len()],
             type_uses: vec![false; mir.hir.len()],

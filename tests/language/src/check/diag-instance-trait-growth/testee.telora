@@ -1,0 +1,9 @@
+type Box(T) = struct { item: T };
+trait Show { show: Fn(Self) -> String };
+impl(T) Show for Box(T) {
+    show: fn(value) {
+        let next: Box(Array(T)) = { item: [value.item] };
+        Show.show(next)
+    },
+};
+export def entry = fn(value: Box(Int)) { Show.show(value) };

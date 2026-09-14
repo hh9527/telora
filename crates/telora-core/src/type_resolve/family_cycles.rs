@@ -53,7 +53,7 @@ impl Solver<'_> {
     }
 }
 
-fn components(edges: &[Vec<usize>]) -> Vec<usize> {
+pub(super) fn components(edges: &[Vec<usize>]) -> Vec<usize> {
     let mut reverse = vec![vec![]; edges.len()];
     for (from, targets) in edges.iter().enumerate() {
         for &to in targets { reverse[to].push(from); }

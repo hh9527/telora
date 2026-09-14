@@ -123,6 +123,15 @@ impl Plan {
                 .declarations
                 .last()
                 .ok_or("Wasm: missing global declaration")?;
+            // A monomorphic trait implementation can be reached only through
+            // a selected instance. Emit exactly the contexts sealed by MIR;
+            // global scope alone does not admit another initializer.
+            if executable.closure().nodes().binary_search(&telora_core::mir::ExecutionRoot {
+                node,
+                instance: None,
+            }).is_err() {
+                continue;
+            }
             let key = Key {
                 node,
                 instance: None,

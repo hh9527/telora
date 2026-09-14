@@ -1,0 +1,3 @@
+import "@src/check/instance-order/first" {first};
+import "@src/check/instance-order/second" {second};
+export def values = (first(1), second(2));

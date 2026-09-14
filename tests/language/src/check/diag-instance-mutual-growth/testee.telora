@@ -1,0 +1,3 @@
+def left: for(T) Fn(T) -> Int = fn(value) { right([value]) };
+def right: for(T) Fn(T) -> Int = fn(value) { left(value) };
+export def entry = left@[Int];

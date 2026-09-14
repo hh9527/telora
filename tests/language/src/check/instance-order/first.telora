@@ -1,0 +1,2 @@
+import "@src/check/instance-order/shared" {identity};
+export def first = identity@[Int];

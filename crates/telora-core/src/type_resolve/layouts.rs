@@ -37,6 +37,7 @@ impl Solver<'_> {
             let TypeConstructor::Nominal(symbol) = owner.constructor else {
                 continue;
             };
+            if self.nonconvergent_instances.contains(&symbol) { continue; }
             let Some(definition) = self.nominal_index[symbol.index()] else {
                 continue;
             };
@@ -107,14 +108,6 @@ impl Solver<'_> {
                     members: applied,
                     body,
                 });
-            }
-            if self.mir.types.len() > 65_536 {
-                let declaration = self.mir.symbols[symbol.index()].declarations[0];
-                self.mir.diagnostics.push(Diagnostic::error(
-                    "nominal member graph exceeds static expansion limit",
-                    self.mir.hir[declaration.index()].location,
-                ));
-                break;
             }
         }
     }

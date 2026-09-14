@@ -87,6 +87,7 @@ impl Solver<'_> {
 
     pub(super) fn prove_bounds(&mut self) {
         self.collect_implementations();
+        self.reject_nonconvergent_instances();
         for index in 0..self.mir.hir.len() {
             if !matches!(self.mir.hir[index].kind, HirKind::TypeParameter) {
                 continue;
@@ -165,6 +166,12 @@ impl Solver<'_> {
                     let (implementation, substitutions) = candidates.pop().unwrap();
                     nodes[index].implementation = Some(implementation.symbol);
                     nodes[index].arguments = substitutions.iter().map(|(&p, &t)| (p, t)).collect();
+                    if self.nonconvergent_instances.contains(&implementation.symbol) {
+                        nodes[index].state = BoundState::Unresolved;
+                        self.nonconvergent_evidence.insert((subject, bound));
+                        index += 1;
+                        continue;
+                    }
                     for (parameter, bound) in implementation.requirements {
                         let Some(&subject) = substitutions.get(&parameter) else {
                             nodes[index].state = BoundState::Unresolved;
@@ -201,6 +208,18 @@ impl Solver<'_> {
                 break;
             }
         }
+        loop {
+            let mut changed = false;
+            for node in &nodes {
+                if node.dependencies.iter().any(|&dependency| {
+                    let dependency = &nodes[dependency];
+                    self.nonconvergent_evidence.contains(&(dependency.subject, dependency.bound))
+                }) {
+                    changed |= self.nonconvergent_evidence.insert((node.subject, node.bound));
+                }
+            }
+            if !changed { break; }
+        }
         for node in &mut nodes {
             if node.state == BoundState::Pending {
                 node.state = BoundState::Rejected;
@@ -220,7 +239,8 @@ impl Solver<'_> {
                         implementation: root.and_then(|root| nodes[root].implementation),
                     });
             }
-            if matches!(state, BoundState::Rejected | BoundState::Unresolved | BoundState::Ambiguous) {
+            if matches!(state, BoundState::Rejected | BoundState::Unresolved | BoundState::Ambiguous)
+                && !root.is_some_and(|root| self.nonconvergent_evidence.contains(&(nodes[root].subject, nodes[root].bound))) {
                 let requirement = &self.mir.bound_requirements[index];
                 let subject = self.diagnostic_type(requirement.subject);
                 let bound = self.diagnostic_bound(requirement.bound);
