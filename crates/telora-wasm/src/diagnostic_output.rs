@@ -7,6 +7,7 @@ pub struct Diagnostic {
     pub origin: [u32; 3],
     pub message: String,
     pub subjects: Vec<[u32; 3]>,
+    pub initialization: Option<crate::artifact::InitializationRoot>,
 }
 
 impl Diagnostic {
@@ -116,6 +117,11 @@ impl Session {
                 origin,
                 message,
                 subjects,
+                initialization: match output.word(pointer + 32)? {
+                    0 => None,
+                    index => Some(self.manifest.initialization_roots.get(index as usize - 1)
+                        .ok_or("Wasm: invalid initialization root identity")?.clone()),
+                },
             });
         }
         Ok(diagnostics)

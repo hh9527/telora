@@ -32,6 +32,18 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
             demand: plan.demands[&key],
         });
     }
+    let global_symbols = plan.globals.iter().map(|(&symbol, &key)| (key, symbol))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for key in plan.demands.keys() {
+        let mir = executable.sealed_mir().mir();
+        let symbol = global_symbols.get(key).copied();
+        manifest.initialization_roots.push(crate::artifact::InitializationRoot {
+            node: key.node.index() as u32,
+            module: mir.modules[mir.hir[key.node.index()].module.index()].name.clone(),
+            symbol: symbol.map(|id| id.index() as u32),
+            name: symbol.map(|id| mir.symbols[id.index()].name.clone()),
+        });
+    }
     let mut module = Module::new();
     let mut types = TypeSection::new();
     types.ty().function([ValType::I32], [ValType::I32]);
@@ -160,11 +172,15 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
     ] {
         init.instruction(&instruction);
     }
-    for key in plan.demands.keys() {
+    for (index, key) in plan.demands.keys().enumerate() {
         for instruction in [
+            Instruction::I32Const((index + 1) as i32),
+            Instruction::GlobalSet(INITIALIZATION_ROOT_GLOBAL),
             Instruction::I32Const(0),
             Instruction::I32Const(0),
             Instruction::Call(plan.functions[key]),
+            Instruction::I32Const(0),
+            Instruction::GlobalSet(INITIALIZATION_ROOT_GLOBAL),
         ] {
             init.instruction(&instruction);
         }

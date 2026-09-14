@@ -190,6 +190,8 @@ impl<'a> Emitter<'a> {
         self.store32(pointer, 4, location_words[1]);
         self.store32(pointer, 8, location_words[2]);
         self.store32(pointer, 12, code);
+        self.extend([I::LocalGet(pointer), I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
+            I::I32Store(memory(32, 2))]);
         self.table_push(DIAGNOSTICS, pointer, DIAGNOSTIC_BYTES);
         self.extend([
             I::LocalGet(pointer),

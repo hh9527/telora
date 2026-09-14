@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn initialization_diagnostic_separates_rule_subject_and_triggering_root() {
+    let cwd = fixture();
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/initialization-origin");
+    for name in ["shared", "good", "bad"] {
+        fs::copy(assets.join(format!("{name}.telora")), cwd.join(format!("src/{name}.telora"))).unwrap();
+    }
+    let output = telora(&cwd).args(["check", "--lib"]).output().unwrap();
+    assert!(!output.status.success());
+    let records = jsonl(&output.stdout);
+    let errors = records.iter().filter(|r| r["record"] == "diagnostic"
+        && r["severity"] == "error").collect::<Vec<_>>();
+    assert_eq!(errors.len(), 1, "{records:?}");
+    let error = errors[0];
+    assert_eq!(error["message"], "shared rejection");
+    assert_eq!(error["session"], "--lib");
+    assert!(error["module"].as_str().unwrap().ends_with("/shared"));
+    let root = &error["initialization"];
+    assert!(root["module"].as_str().unwrap().ends_with("/bad"), "{error}");
+    assert_eq!(root["name"], "wrong");
+    assert!(root["symbol"].as_u64().is_some() && root["node"].as_u64().is_some());
+    assert!(error["labels"].as_array().unwrap().iter().any(|label|
+        label["primary"] == false && label["source"].as_str().unwrap().ends_with("/bad")));
+    assert_eq!(records.last().unwrap()["status"], "error");
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn check_collects_independent_roots_without_running_failed_continuations() {
     let cwd = fixture();
     let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/check-roots");

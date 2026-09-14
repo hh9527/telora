@@ -1,0 +1,4 @@
+import "@src/shared" {reject};
+def input: Int = 7;
+export def wrong: Int = reject(input);
+export def dependent: Int = wrong;

@@ -159,6 +159,10 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
   Telora 代码。静态错误阻止整图初始化。初始化可继续独立任务以收集诊断，但最终判定
   仍然严格。stdout 使用 `telora.check/v1` JSONL，先输出诊断，最后输出一份 summary；
   任一静态或初始化错误都得到 `status: "error"` 和非零退出。
+  诊断的 `module` 表示 primary 规则位置所属模块，`session` 保留选择器。初始化产生的
+  诊断另带 `initialization`：`module`、`node` 标识当时执行的初始化根，具名根还提供
+  `symbol` 和 `name`；property 等非具名根的后两项为 null。这些 ID 属于本次封闭图。
+  它记录实际触发，不是导入者或所有受影响导出的清单；缓存失败只报告原事件一次。
   纯导出以 `eval` / `eval-with` 验收；应用 service 仍以 `run` 为准，因为 `run` 还经过
   Entry 和 reducer/effect 调度。
 - `query`（可见别名 `q`）输出 `telora.query/v1` JSONL 语义记录。`query modules`

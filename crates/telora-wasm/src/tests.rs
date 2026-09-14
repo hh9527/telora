@@ -346,6 +346,8 @@ fn diagnostic_scopes_capture_reports_and_resume_outer_execution() {
             .contains("uncaught afterwards")
     );
     assert_eq!(session.diagnostics().unwrap().len(), 1);
+    assert!(session.diagnostics().unwrap()[0].initialization.is_none(),
+        "initialization scope must end before entry execution");
     let bytes = compile_export(source, "exhausted").unwrap();
     let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
     session.initialize().unwrap();

@@ -42,6 +42,8 @@ impl Emitter<'_> {
                 I::I32Store(memory(offset, 2)),
             ]);
         }
+        self.extend([I::LocalGet(packet), I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
+            I::I32Store(memory(32, 2))]);
         self.table_push(DIAGNOSTICS, packet, DIAGNOSTIC_BYTES);
         if !warning {
             self.extend([

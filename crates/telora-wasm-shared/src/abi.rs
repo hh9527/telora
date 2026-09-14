@@ -1,5 +1,5 @@
 //! Shared physical layout; consumed by both codegen and Rust-compiled RT.
-pub const VERSION: u32 = 15;
+pub const VERSION: u32 = 16;
 pub const ENV_RAW_PARENT: u32 = 0x8000_0000;
 pub const HEADER_BYTES: u32 = 16;
 pub const SCALAR_BYTES: u32 = 24;
@@ -32,7 +32,7 @@ pub const TESTS: u32 = 12;
 pub const DEBUG_EVENTS: u32 = 13;
 // Reserved protocol word below the table descriptors; disabled by default.
 pub const DEBUG_ENABLED: u32 = 16;
-pub const DIAGNOSTIC_BYTES: u32 = 32;
+pub const DIAGNOSTIC_BYTES: u32 = 40;
 pub const DEMAND_BYTES: u32 = 8;
 
 pub fn table_address(table: u32) -> u32 {

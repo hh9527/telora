@@ -1,0 +1,1 @@
+export def reject: Fn(Int) -> Int = fn(value) { fail!("shared rejection", value) };

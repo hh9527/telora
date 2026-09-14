@@ -13,6 +13,17 @@ pub struct Manifest {
     pub data_modules: Vec<DataModule>,
     pub debug_sites: Vec<DebugSite>,
     pub globals: Vec<Global>,
+    pub initialization_roots: Vec<InitializationRoot>,
+}
+
+/// The statically selected demand whose execution emitted an event.
+/// Node covers property/anonymous demands; symbol identifies named globals.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitializationRoot {
+    pub node: u32,
+    pub module: String,
+    pub symbol: Option<u32>,
+    pub name: Option<String>,
 }
 
 /// Closed global identity and its fixed initialization cell in linear memory.
@@ -208,6 +219,7 @@ impl Manifest {
             .collect();
         Ok(Self {
             globals: vec![],
+            initialization_roots: vec![],
             abi: crate::abi::VERSION,
             entry_type: entry.index() as u32,
             types,

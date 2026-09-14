@@ -1584,6 +1584,13 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 错误复制给每个导入者。没有可归属的源码 primary 时，`module` 回退为本次根选择。
 这一静态归属不代表运行时失败的触发导出项；规则位置与触发求值的根是不同信息。
 
+初始化执行期间，Wasm 为诊断事件记录当前调度根的稳定身份。`check` 的对应 record
+带有 `initialization: {node, module, symbol, name}`；具名全局值包含 symbol/name，
+property 等其他需求根用 node/module 标识且 symbol/name 为 null。ID 仅在本次封闭图内
+有意义。共享函数中的规则位置、输入值的来源和触发根分别表达；不能由 primary、
+数据来源或 import 闭包推导触发者。依赖者读取缓存失败时保留原事件，不重复报告或
+改写根身份。初始化之外的运行时诊断不携带初始化根。
+
 `query` 的 definition/export/reference/expression record 中，`state` 表达类型或解析
 结果，`failed_constraints` 列出该语法子树产生的失败类型约束 ID（仅在本次图内有效），
 可与静态 diagnostic record 的 `constraint_ids` 对应。

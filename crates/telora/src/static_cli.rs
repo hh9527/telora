@@ -116,6 +116,7 @@ pub fn check(
     }
     let execution_started = Instant::now();
     let mut execution_diagnostics = vec![];
+    let mut initialization_roots = vec![];
     if let Some(sealed) = sealed.filter(|_| !types_only && !roots.is_empty()) {
         {
             match crate::wasm_cli::compile_check(sealed) {
@@ -124,6 +125,8 @@ pub fn check(
                         Ok(()) => crate::wasm_cli::check_diagnostics(&session, &mir.sources, Ok(())),
                         Err(diagnostics) => diagnostics,
                     };
+                    initialization_roots = session.diagnostics()?.into_iter()
+                        .map(|event| event.initialization).collect();
                 }
                 Err(message) => execution_diagnostics.push(crate::wasm_cli::error(message)),
             }
@@ -138,8 +141,15 @@ pub fn check(
         || execution_diagnostics
             .iter()
             .any(|d| d.severity == Severity::Error);
-    for d in mir.diagnostics.iter().chain(&seal_diagnostics).chain(&execution_diagnostics) {
+    for d in mir.diagnostics.iter().chain(&seal_diagnostics) {
         emit(diagnostic(&mir, schema, &root, d))?;
+    }
+    for (index, d) in execution_diagnostics.iter().enumerate() {
+        let mut record = diagnostic(&mir, schema, &root, d);
+        if let Some(Some(origin)) = initialization_roots.get(index) {
+            record["initialization"] = serde_json::to_value(origin).map_err(|e| e.to_string())?;
+        }
+        emit(record)?;
     }
     let check_seconds = static_seconds + execution_seconds;
     emit(
