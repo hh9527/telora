@@ -5,7 +5,8 @@ impl Solver<'_> {
     pub(super) fn solve_contracts(&mut self) -> Vec<bool> {
         let generated = self.mir.hir.iter().enumerate().map(|(index, node)|
             self.type_uses[index] || matches!(node.kind,
-                HirKind::Binding { kind: BindingKind::Type | BindingKind::NativeType, .. }))
+                HirKind::TypeParameter | HirKind::Binding {
+                    kind: BindingKind::Type | BindingKind::NativeType | BindingKind::Trait, .. }))
             .collect::<Vec<_>>();
         for (index, &generate) in generated.iter().enumerate() {
             if generate { self.generate(HirId(index as u32)); }

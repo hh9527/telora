@@ -30,7 +30,7 @@ fn function_value_aliases_do_not_become_enum_pattern_constructors() {
         assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
         assert!(mir.seal().is_err());
     }
-    let mut mir = graph(&[("@src/main", "type Event = enum {Progress(Int)}; import Event.{Progress as Advance}; export def read = match Advance(42) {Advance(value) => value};")]);
+    let mut mir = graph(&[("@src/main", "type Event = enum {Progress(Int)}; import Event.{Progress as Advance}; export def read: Int = match Advance(42) {Advance(value) => value};")]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
 }
@@ -110,8 +110,8 @@ fn recursive_family_growth_is_a_static_conflict_but_permutations_and_resets_clos
 fn generic_references_distinguish_exported_schemes_and_call_instances() {
     let mut mir = graph(&[("@src/main", r#"
         export def identity: for(T) Fn(T) -> T = fn(value) { value };
-        export def answer = identity(42);
-        export def same = identity@[Int] == identity@[Int];
+        export def answer: Int = identity(42);
+        export def same: Bool = identity@[Int] == identity@[Int];
     "#)]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
@@ -199,7 +199,7 @@ fn interpreter_plans_derive_from_resolved_signatures_without_hidden_references()
         type Witness(T) = TypeOf(T);
         def erased: Fn(String, Dyn, Bool, Dyn, Dyn) -> Bool = fn(text, a, flag, b, again) { flag };
         export def adapt: for(A, B) Fn(Witness(B), Witness(A)) -> Fn(String, A, Bool, B, A) -> Bool = interpreter!(erased);
-        export def answer = adapt(Int.type, String.type)("text", "a", True, 42, "b");
+        export def answer: Bool = adapt(Int.type, String.type)("text", "a", True, 42, "b");
     "#)]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
@@ -212,7 +212,7 @@ fn interpreter_plans_derive_from_resolved_signatures_without_hidden_references()
 
 #[test]
 fn empty_option_bottom_evidence_does_not_default_arbitrary_generic_results() {
-    let mut mir = graph(&[("@src/main", "def inspect: for(T) Fn(Option(T)) -> Bool = fn(value) { match value { None => False, Some(_) => True } }; export def empty = Option.None; export def constrained: Option(Int) = None; export def observed = inspect(empty);")]);
+    let mut mir = graph(&[("@src/main", "def inspect: for(T) Fn(Option(T)) -> Bool = fn(value) { match value { None => False, Some(_) => True } }; export def constrained: Option(Int) = None; export def observed: Bool = do { let empty = Option.None; inspect(empty) };")]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
     let TypeState::Known(empty) = symbol_type(&mir, "empty") else { panic!("empty") };
@@ -236,10 +236,10 @@ fn empty_option_bottom_evidence_does_not_default_arbitrary_generic_results() {
 #[test]
 fn imported_generic_constructor_uses_have_independent_type_arguments() {
     for source in [
-        "type Message(T) = enum { Data(T), Empty }; import Message.{Data}; export def answer = (Data(1), Data@[String](\"text\"));",
-        "import Option.{Some as Make}; export def answer = (Make(1), Make@[String](\"text\"));",
-        "type Message(T) = enum { Data(T), Empty }; export def answer = (Message.Data(1), Message.Data@[String](\"text\"));",
-        "import \"std/prelude\" { Option as Family }; export def answer = (Family.Some@[Int](1), Family.Some@[String](\"text\"));",
+        "type Message(T) = enum { Data(T), Empty }; import Message.{Data}; export def completed: Bool = do { let answer = (Data(1), Data@[String](\"text\")); True };",
+        "import Option.{Some as Make}; export def completed: Bool = do { let answer = (Make(1), Make@[String](\"text\")); True };",
+        "type Message(T) = enum { Data(T), Empty }; export def completed: Bool = do { let answer = (Message.Data(1), Message.Data@[String](\"text\")); True };",
+        "import \"std/prelude\" { Option as Family }; export def completed: Bool = do { let answer = (Family.Some@[Int](1), Family.Some@[String](\"text\")); True };",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -259,7 +259,7 @@ fn constructor_alias_arguments_follow_family_order_and_reject_wrong_arity() {
     for source in [
         "import Result.{Err as Reject, Ok as Accept}; export def answer: (Result(Int, String), Result(Int, String)) = (Reject@[Int, String](\"text\"), Accept@[Int, String](1));",
         "type Outcome(T, E) = enum { Accept(T), Reject(E) }; import Outcome.{Reject}; export def answer: Outcome(Int, String) = Reject@[Int, String](\"text\");",
-        "def flip: for(T, E) Fn(E, T) -> (T, E) = fn(e, t) { (t, e) }; def alias = flip; export def answer = alias@[Int, String](\"text\", 1);",
+        "def flip: for(T, E) Fn(E, T) -> (T, E) = fn(e, t) { (t, e) }; export def completed: Bool = do { def alias = flip; let answer = alias@[Int, String](\"text\", 1); True };",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -280,7 +280,7 @@ fn constructor_alias_arguments_follow_family_order_and_reject_wrong_arity() {
 
 #[test]
 fn callable_value_evidence_closes_nested_results_and_aliases_without_call_sites() {
-    let mut mir = graph(&[("@src/main", "export def invoke = fn(factory) { factory()() }; export def alias = fn(callback, value) { let saved = callback; saved(value) }; export def compose = fn(outer, inner, value) { outer(inner(value)) };")]);
+    let mut mir = graph(&[("@src/main", "export def completed: Bool = do { def invoke = fn(factory) { factory()() }; def alias = fn(callback, value) { let saved = callback; saved(value) }; def compose = fn(outer, inner, value) { outer(inner(value)) }; True };")]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
     let query = crate::mir_query::MirQuery::new(&mir);
@@ -297,18 +297,18 @@ fn callable_value_evidence_closes_nested_results_and_aliases_without_call_sites(
 #[test]
 fn implicit_schemes_fill_independent_reference_arguments_in_dependency_order() {
     for source in [
-        "def identity = fn(value) { value }; def alias = identity; export def answer = (alias(1), alias(\"text\"));",
-        "def identity = fn(value) { value }; export def answer = (identity(1), identity(\"text\"), identity@[Int](3));",
-        "export def answer = { let identity = fn(value) { value }; (identity(1), identity(\"text\"), identity@[Int](3)) };",
-        "def first = fn(value) { second(value) }; def second = fn(value) { value }; export def answer = (first(1), first(\"text\"));",
-        "def second = fn(value) { value }; def first = fn(value) { second(value) }; export def answer = (first(1), first(\"text\"));",
-        "def keep = fn(left: Int, right) { left }; export def answer = (keep(1, True), keep(2, \"text\"));",
-        "def pair = fn(value) { (value, value) }; export def answer = (pair(1), pair(\"text\"));",
-        "def outer = fn(value) { let keep = fn(other) { value }; (keep(True), keep(\"text\")) }; export def answer = (outer(1), outer(\"text\"));",
-        "export def apply = fn(callback, value) { callback(value) };",
-        "export def select = fn(condition, value) { if condition { value } else { value } };",
-        "export def wrap = fn(value) { [value] };",
-        "def mixed = fn(value, unused) { value + value }; export def answer = mixed(21, True);",
+        "export def completed: Bool = do { def identity = fn(value) { value }; def alias = identity; def answer = (alias(1), alias(\"text\")); True };",
+        "export def completed: Bool = do { def identity = fn(value) { value }; def answer = (identity(1), identity(\"text\"), identity@[Int](3)); True };",
+        "export def completed: Bool = do { def answer = { let identity = fn(value) { value }; (identity(1), identity(\"text\"), identity@[Int](3)) }; True };",
+        "export def completed: Bool = do { def first = fn(value) { second(value) }; def second = fn(value) { value }; def answer = (first(1), first(\"text\")); True };",
+        "export def completed: Bool = do { def second = fn(value) { value }; def first = fn(value) { second(value) }; def answer = (first(1), first(\"text\")); True };",
+        "export def completed: Bool = do { def keep = fn(left: Int, right) { left }; def answer = (keep(1, True), keep(2, \"text\")); True };",
+        "export def completed: Bool = do { def pair = fn(value) { (value, value) }; def answer = (pair(1), pair(\"text\")); True };",
+        "export def completed: Bool = do { def outer = fn(value) { let keep = fn(other) { value }; (keep(True), keep(\"text\")) }; def answer = (outer(1), outer(\"text\")); True };",
+        "export def completed: Bool = do { def apply = fn(callback, value) { callback(value) }; True };",
+        "export def completed: Bool = do { def select = fn(condition, value) { if condition { value } else { value } }; True };",
+        "export def completed: Bool = do { def wrap = fn(value) { [value] }; True };",
+        "export def completed: Bool = do { def mixed = fn(value, unused) { value + value }; def answer = mixed(21, True); True };",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -318,7 +318,7 @@ fn implicit_schemes_fill_independent_reference_arguments_in_dependency_order() {
 
 #[test]
 fn implicit_schemes_publish_deterministic_signatures_without_renumbering_resolved_symbols() {
-    let sources = [("@src/main", "export def apply = fn(callback, value) { callback(value) }; export def identity = fn(value) { value };")];
+    let sources = [("@src/main", "export def completed: Bool = do { def apply = fn(callback, value) { callback(value) }; def identity = fn(value) { value }; True };")];
     let mut first = graph(&sources);
     let identities = first.symbols.iter().map(|symbol| (symbol.name.clone(), symbol.declarations.clone())).collect::<Vec<_>>();
     resolve(&mut first);
@@ -416,8 +416,8 @@ fn generic_instances_close_body_types_and_transitive_references() {
     let mut mir = graph(&[("@src/main", r#"
         def metadata: for(T) Fn(T) -> TypeOf(Array(T)) = fn(value) { Array(T).type };
         def forward: for(U) Fn(U) -> TypeOf(Array(U)) = fn(value) { metadata(value) };
-        export def number = forward(1);
-        export def text = forward("ok");
+        export def number: TypeOf(Array(Int)) = forward(1);
+        export def text: TypeOf(Array(String)) = forward("ok");
     "#)]);
     resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
@@ -492,7 +492,7 @@ fn generic_templates_are_static_and_value_uses_require_concrete_instances() {
         export def unused: for(T) Fn(T) -> T = fn(value) { value };
         def identity: for(T) Fn(T) -> T = fn(value) { value };
         export def concrete: Fn(Int) -> Int = identity;
-        export def answer = concrete(42);
+        export def answer: Int = concrete(42);
     "#)]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
@@ -521,7 +521,7 @@ fn recursive_generic_references_close_to_the_same_instance() {
         def repeat: for(T) Fn(T, Int) -> T = fn(value, n) {
             if n > 0 { repeat(value, n - 1) } else { value }
         };
-        export def answer = repeat(42, 3);
+        export def answer: Int = repeat(42, 3);
     "#)]);
     resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
@@ -538,9 +538,9 @@ fn retains_per_reference_generic_arguments_for_codegen() {
     let source = [("@src/main", r#"
         def identity: for(T) Fn(T) -> T = fn(value) { value };
         def forward: for(U) Fn(U) -> U = fn(value) { identity(value) };
-        export def number = identity(1);
-        export def text = identity("ok");
-        export def forwarded = forward(True);
+        export def number: Int = identity(1);
+        export def text: String = identity("ok");
+        export def forwarded: Bool = forward(True);
     "#)];
     let mut mir = graph(&source);
     resolve(&mut mir);
@@ -574,13 +574,13 @@ fn phantom_generic_results_keep_their_argument_evidence_across_calls() {
         import "./lib" as lib;
         import "./app" {main as selected};
         def consume: for(T) Fn(lib.Phantom(T)) -> Int = fn(x) { x.n };
-        export def answer = consume(selected);
+        export def answer: Int = consume(selected);
     "#), ("@src/lib", r#"
         export type Phantom(T) = struct { n: Int };
         export def make: for(T) Fn(TypeOf(T), Int) -> Phantom(T) = fn(target, n) { {n} };
     "#), ("@src/app", r#"
         import "./lib" as lib;
-        export def main = lib.make(Int.type, 42);
+        export def main: lib.Phantom(Int) = lib.make(Int.type, 42);
     "#)]);
     resolve(&mut mir);
     assert!(mir.type_unknowns.is_empty(), "{:?}", mir.diagnostics);
@@ -593,7 +593,7 @@ fn generic_alias_application_uses_declared_parameters_including_unused_parameter
         type Pair(A, B) = Tuple([B, A]);
         type Keep(A, B) = Array(A);
         def pair: Pair(Int, String) = ("text", 42);
-        export def number = pair.1;
+        export def number: Int = pair.1;
         export def values: Keep(Int, String) = [1, 2];
     "#)]);
     resolve(&mut mir);
@@ -642,8 +642,8 @@ fn instantiates_generics_and_solves_recursive_nominal_skeletons() {
         type Pair(T) = struct { first: T, second: T };
         type Tree = enum { Leaf(Int), Branch((Tree, Tree)) };
         def pair: Pair(Int) = { first: id(1), second: id(2) };
-        export def text = id("ok");
-        export def number = pair.first;
+        export def text: String = id("ok");
+        export def number: Int = pair.first;
         export def tree: Tree = Tree.Branch((Tree.Leaf(1), Tree.Leaf(2)));
     "#,
     )]);
@@ -671,10 +671,10 @@ fn higher_order_native_calls_use_only_their_declared_generic_signature() {
                 None => None,
             }
         };
-        export def mapped = unrelated_name([1, 2, 3], fn(x) { x > 1 });
-        export def explicit = unrelated_name@[Int, _]([1], fn(x) { "ok" });
-        export def text = ordinary(1, fn(x) { "ok" });
-        export def result = read([(1, "one")]);
+        export def mapped: Array(Bool) = unrelated_name([1, 2, 3], fn(x) { x > 1 });
+        export def explicit: Array(String) = unrelated_name@[Int, _]([1], fn(x) { "ok" });
+        export def text: String = ordinary(1, fn(x) { "ok" });
+        export def result: Option(String) = read([(1, "one")]);
     "#,
     ), ("std/fmt", r#"
         type Fmt = struct(String);

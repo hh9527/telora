@@ -69,7 +69,7 @@ impl Solver<'_> {
                         (HirKind::TypeMetadata | HirKind::TypeSyntax, Role::Operand)
                         | (HirKind::TypeApply | HirKind::TypeOperation(_), Role::Argument)
                         | (HirKind::TypeAscription, Role::Target)
-                        | (HirKind::Binding { kind: BindingKind::Type, .. }, Role::Value)) {
+                        | (HirKind::Binding { kind: BindingKind::Type | BindingKind::Trait, .. }, Role::Value)) {
                     pending.push(edge.node);
                 }
             }
