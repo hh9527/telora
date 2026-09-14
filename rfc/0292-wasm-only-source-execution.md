@@ -1,6 +1,6 @@
 # RFC 0292：统一 Wasm 源码执行路线
 
-- 状态：已实现并验收；位于 feat/wasm-backend，尚未合入 main
+- 状态：已实现并验收，已合入 main
 - 日期：2026-09-14
 - 跟踪：[#187](https://github.com/hh9527/telora/issues/187)
 - 前置：RFC 0291（Wasm check/eval/eval-with）、RFC 0290（服务语义参考）
