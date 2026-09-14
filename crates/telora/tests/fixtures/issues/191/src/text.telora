@@ -1,0 +1,6 @@
+export type LocalizedText = Dict(String);
+@property(PropertyTarget.Type)
+type Decorated = struct { display: LocalizedText };
+
+export def decorate: Fn(LocalizedText, LocalizedText) -> Fn(Type, Option(Decorated)) -> Decorated =
+    fn(display, description) { fn(target, previous) { {display: display} } };

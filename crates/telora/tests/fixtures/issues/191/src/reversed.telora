@@ -1,0 +1,5 @@
+import "@src/fields" { AnyObjectFieldRef };
+type ProbeOwner = enum { ProbeOwner };
+
+export def first: AnyObjectFieldRef = { owner: ProbeOwner.type, scalar: Int.type, name: "state" };
+export def second: AnyObjectFieldRef = { owner: ProbeOwner.type, scalar: String.type, name: "state" };

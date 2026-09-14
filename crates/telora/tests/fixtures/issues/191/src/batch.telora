@@ -1,0 +1,8 @@
+# Select the provider before its consumers; other roots load consumers first.
+import "@src/fields" as fields;
+import "@src/text" as text;
+import "@src/main" as main;
+import "@src/decorated" as decorated;
+import "@src/reversed" as reversed;
+import "@src/local-late" as late;
+export def ok = True;

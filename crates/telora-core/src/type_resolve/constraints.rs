@@ -336,6 +336,12 @@ impl Solver<'_> {
                 if self.pending_blocks.get(actual.index()).copied().unwrap_or(false) {
                     return Ok(Some(Task::Fit { node, expected, actual }));
                 }
+                // A type constructor determines this slot. An argument must
+                // wait for that shape rather than become the shared contract.
+                if self.mir.ty_slots[self.root(expected).index()] == TypeState::Unknown
+                    && self.type_results.iter().any(|&result| self.root(result) == self.root(expected)) {
+                    return Ok(Some(Task::Fit { node, expected, actual }));
+                }
                 // An unresolved instance is not a free inference variable.
                 // Its source may still supply an Unchecked/nominal boundary;
                 // equality now would erase the directional conversion.

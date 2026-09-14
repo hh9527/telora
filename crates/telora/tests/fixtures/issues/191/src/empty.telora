@@ -1,0 +1,3 @@
+import "@src/text" { LocalizedText };
+
+export def empty: LocalizedText = {};

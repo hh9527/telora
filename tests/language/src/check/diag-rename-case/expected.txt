@@ -1,1 +1,1 @@
-cannot unify String with RenameCase
+cannot unify RenameCase with String

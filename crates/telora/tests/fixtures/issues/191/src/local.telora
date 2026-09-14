@@ -1,0 +1,10 @@
+# Control: the same declaration precedes both uses in one module.
+type AnyObjectFieldRef = struct { owner: Type, scalar: Type, name: String };
+type ProbeOwner = enum { ProbeOwner };
+
+export def field_base: AnyObjectFieldRef = {
+    owner: ProbeOwner.type, scalar: String.type, name: "state",
+};
+export def field_other_scalar: AnyObjectFieldRef = {
+    owner: ProbeOwner.type, scalar: Int.type, name: "state",
+};

@@ -1,0 +1,5 @@
+import "@src/text" { decorate };
+
+@decorate({en: "Hello", zh: "你好"}, {})
+type Item = struct { value: Int };
+export { Item };

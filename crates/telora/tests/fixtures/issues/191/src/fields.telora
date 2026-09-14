@@ -1,0 +1,5 @@
+export type AnyObjectFieldRef = struct {
+    owner: Type,
+    scalar: Type,
+    name: String,
+};
