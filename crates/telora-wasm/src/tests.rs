@@ -17,6 +17,7 @@ mod regex;
 mod services;
 mod tail_calls;
 mod test_descriptions;
+mod variant_origins;
 
 #[test]
 fn engine_stops_unbounded_loops_and_allocation() {

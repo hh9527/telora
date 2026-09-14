@@ -1,0 +1,51 @@
+import "origins/model" as model;
+import "origins/reexport" { Make, Empty, Yes, Absent, Present, disabled, saved, wrap };
+import "std/array" { map };
+
+export def observe = fn() {
+    let first = False; # origin:first:False
+    let second = Bool.False; # origin:second:Bool.False
+    let forwarded = model.forward(first);
+    let report0: Option(Int) = warn!(blame!("bool", first, second, forwarded));
+    let report1: Option(Int) = warn!(blame!("values", disabled, saved));
+    let empty = Empty; # origin:empty:Empty
+    let direct = model.Foo.B; # origin:direct:model.Foo.B
+    let report2: Option(Int) = warn!(blame!("empty", empty, direct));
+    let absent: Option(Int) = None; # origin:absent:None
+    let again = absent;
+    let yes = Yes; # origin:yes:Yes
+    let missing: Option(Int) = Absent; # origin:missing:Absent
+    let present = Present(7); # origin:present:Present
+    let report_aliases: Option(Int) = warn!(blame!("aliases", yes, missing, present));
+    let report3: Option(Int) = warn!(blame!("none", absent, again));
+    let payload = 123; # origin:payload:123
+    let ctor = Make; # origin:ctor:Make
+    let constructed = model.forward(ctor)(payload);
+    let wrapped = wrap(payload);
+    let immediate = model.Foo.A(payload); # origin:immediate:model.Foo.A
+    let report4: Option(Int) = warn!(blame!("constructors", ctor, constructed, wrapped, immediate));
+    let report5: Option(Int) = match constructed { model.Foo.A(value) => warn!(blame!("payload", value)), _ => None };
+    let mapped = [payload] |> map\(_, Some); # origin:mapped:Some
+    let report6: Option(Int) = warn!(blame!("mapped", mapped[0]));
+    let report7: Option(Int) = match mapped[0] { Some(value) => warn!(blame!("mapped-payload", value)), None => None };
+    let explicit = Some@[Int]; # origin:explicit:Some@[Int]
+    let typed = explicit(payload);
+    let generic = model.optional(payload);
+    let generic_text = model.optional("text");
+    let report_generic: Option(Int) = warn!(blame!("generic", generic, generic_text));
+    let metadata = Int.type; # origin:metadata:Int.type
+    let widened: Option(Type) = Some(metadata); # origin:widened:Some
+    let report_widened: Option(Int) = warn!(blame!("widened", widened));
+    let report_metadata: Option(Int) = match widened { Some(value) => warn!(blame!("metadata", value)), None => None };
+    let report8: Option(Int) = warn!(blame!("explicit", typed));
+    let True = first;
+    let report9: Option(Int) = warn!(blame!("shadow", True));
+    if (Make == model.Foo.A) && (Some@[Int] == explicit) && (Empty == model.Foo.B) {
+        42
+    } else { fail!("variant identity depends on location") }
+};
+
+export def rejected = fn() {
+    let a = False; # origin:rejected:False
+    if !a { fail!("expect True", a) } else { a }
+};

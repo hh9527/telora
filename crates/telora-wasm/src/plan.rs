@@ -72,6 +72,7 @@ impl Key {
 }
 
 pub(crate) struct Plan {
+    pub constructor_aliases: BTreeMap<Key, Key>,
     pub functions: BTreeMap<Key, u32>,
     pub globals: BTreeMap<SymbolId, Key>,
     pub instances: BTreeMap<GenericInstanceId, Key>,
@@ -98,6 +99,7 @@ impl Plan {
             special: Special::Normal,
         };
         let mut plan = Self {
+            constructor_aliases: BTreeMap::new(),
             functions: BTreeMap::new(),
             globals: BTreeMap::new(),
             instances: BTreeMap::new(),
@@ -288,6 +290,17 @@ impl Plan {
             plan.reflection =
                 crate::reflection_data::build(executable.sealed_mir().types(), &plan.layouts)?;
         }
+        // Constructor identity is (closed signature, variant), independent of
+        // the expression's source location. Values carry their own source head.
+        let mut constructors = BTreeMap::new();
+        for key in plan.functions.keys().copied().collect::<Vec<_>>() {
+            if !key.callable || key.special != Special::Normal { continue; }
+            let Some(fact @ telora_core::mir::ValueMaterialization::EnumVariant { .. }) = mir.value_materializations[key.node.index()] else { continue; };
+            let identity = (key.ty(mir, key.node)?, fact);
+            let canonical = *constructors.entry(identity).or_insert(key);
+            plan.constructor_aliases.insert(key, canonical);
+            if canonical != key { plan.functions.remove(&key); }
+        }
         for (index, function) in plan.functions.values_mut().enumerate() {
             *function = u32::try_from(index)
                 .map_err(|_| "Wasm: function index overflow")?
@@ -330,7 +343,7 @@ impl Plan {
                 if let Some(slot) = syntax.resolution
                     && let ResolveState::Bound(symbol) = mir.resolve_slots[slot.index()]
                     && !executable.globals().contains(&symbol)
-                    && !matches!(mir.member_selections[node.index()],
+                    && !matches!(crate::enums::selection(mir, node),
                         Some(telora_core::mir::MemberSelection::Boolean(_)))
                     && !matches!(
                         crate::enums::selection(mir, node),

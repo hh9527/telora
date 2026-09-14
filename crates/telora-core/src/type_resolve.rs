@@ -14,6 +14,7 @@ mod evidence;
 mod instances;
 mod layouts;
 mod members;
+mod materializations;
 mod record_operations;
 mod sequence_spreads;
 mod propagation;
@@ -225,6 +226,7 @@ pub fn resolve(mir: &mut Mir) {
     solver.prove_bounds();
     solver.finalize_callable_adjustments();
     solver.materialize_instances();
+    solver.finalize_value_materializations();
     let construction_inputs = solver.mir.record_construction_inputs();
     for index in 0..solver.mir.hir.len() {
         let node = HirId(index as u32);

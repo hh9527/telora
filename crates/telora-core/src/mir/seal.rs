@@ -231,6 +231,24 @@ impl Mir {
     }
 
     pub fn seal(&self) -> Result<SealedMir<'_>, Vec<Diagnostic>> {
+        if self.value_materializations.len() == self.hir.len() {
+            let mut invalid = Vec::new();
+            for (index, fact) in self.value_materializations.iter().enumerate() {
+                let node = HirId(index as u32);
+                if fact.is_some() && let Some(TypeState::Known(ty)) = self.ty_slots.get(index)
+                    && !self.valid_materialization_type(node, *ty) {
+                    invalid.push(Diagnostic::error(format!("invalid materialization {fact:?} for {:?}", self.types.get(ty.index())), self.hir[index].location));
+                }
+            }
+            for instance in &self.generic_instances {
+                for &(node, ty) in &instance.types {
+                    if !self.valid_materialization_type(node, ty) {
+                        invalid.push(Diagnostic::error(format!("invalid instantiated materialization {:?} for {:?}", self.value_materializations[node.index()], self.types.get(ty.index())), self.hir[node.index()].location));
+                    }
+                }
+            }
+            if !invalid.is_empty() { return Err(invalid); }
+        }
         let construction_inputs = self.record_construction_inputs();
         if !self.symbols_closed
             || !self.types_solved
@@ -241,6 +259,11 @@ impl Mir {
             || self.implementation_instances.len() != self.hir.len()
             || self.type_layouts.len() != self.types.len()
             || self.member_selections.len() != self.hir.len()
+            || self.value_materializations.len() != self.hir.len()
+            || self.value_materializations.iter().enumerate().any(|(node, fact)| {
+                let node = HirId(node as u32);
+                *fact != self.materialization_identity(node)
+            })
             || !self.valid_type_schemes()
             || !self.valid_generic_references()
             || !self.valid_properties()

@@ -52,6 +52,15 @@ impl Emitter<'_> {
         ty: telora_core::mir::TypeId,
         captures: &[u32],
     ) -> Result<u32, String> {
+        if let Some(canonical) = self.plan.constructor_aliases.get(&key) {
+            let function = self.plan.functions[canonical];
+            let result = self.value_as(node, ty, FUNCTION_BYTES)?;
+            self.emit(I::LocalGet(result));
+            self.function_pointer(function);
+            self.emit(I::I32Store(memory(DATA, 2)));
+            self.store32(result, ENVIRONMENT, 0);
+            return Ok(result);
+        }
         let function = *self
             .plan
             .functions

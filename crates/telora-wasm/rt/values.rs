@@ -9,7 +9,9 @@ pub unsafe extern "C" fn telora_invoke(value: u32, args: u32) -> u32 {
     unsafe {
         let environment = word(value, ENVIRONMENT);
         let environment = if environment == 0 {
-            0
+            // Capture-free constructor literals retain identity in their code
+            // pointer while the value head supplies the materialization origin.
+            value
         } else {
             word(
                 telora_table_get(table_address(ENVIRONMENTS), environment - 1),

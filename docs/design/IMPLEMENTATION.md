@@ -180,6 +180,16 @@ String、Array、Record 等对象位于各自 typed table；Tuple/Record 共用 
 Dict 使用有序 keys/values，字段操作与构造胶水消费已闭合的布局证据。
 具体尺寸与表示以 `telora-wasm-shared/src/abi.rs` 和生成器为准，不构成发布 ABI。
 
+MIR 的 value_materializations 按表达式记录 enum/Bool 与 newtype 构造事实，类型
+来自该节点或封闭泛型实例，Loc 来自该节点。seal 检查身份别名边界、variant 与签名；
+codegen 不沿 def/let initializer 追溯构造器。类型域别名不作为初始化 demand。
+pattern 使用单独的 member selection 事实，不执行值物化。
+
+enum 构造器代码按封闭签名和 variant 复用。其函数值的 environment 为 0，invoke
+将函数值地址作为第一个参数交给构造器胶水，用于复制 12 字节来源头；payload
+仍按原布局搬运，不重写其来源。普通闭包使用非零环境句柄，调用约定不变。
+内部 ABI 版本为 15（此前为 14）；旧 Wasm 制品需重新生成，值布局未改变。
+
 Loc 使用 `src_id:u16`，起止位置各为 `line:u16 + UTF-8 offset:u24`。
 行和偏移从 0 开始，范围为 `[start,end)`；CRLF、LF、CR 都计作一次换行。
 源码和数据注册时检查容量，编译器/Host 将原始字节范围转换为该坐标。

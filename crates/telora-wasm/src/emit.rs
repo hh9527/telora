@@ -235,7 +235,7 @@ impl<'a> Emitter<'a> {
     }
     fn raw_expression(&mut self, node: HirId) -> Result<u32, String> {
         if let Some(telora_core::mir::MemberSelection::Boolean(value)) =
-            self.mir.member_selections[node.index()]
+            crate::enums::selection(self.mir, node)
         {
             return self.scalar(node, i64::from(value));
         }

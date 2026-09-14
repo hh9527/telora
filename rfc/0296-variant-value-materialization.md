@@ -1,6 +1,6 @@
 # RFC 0296：enum variant 的值物化与来源边界
 
-状态：已接受，待实现；由 #188 跟踪落地。
+状态：已实现；由 #188 跟踪落地。
 关联：[#188](https://github.com/hh9527/telora/issues/188)。
 
 ## 动机与范围
@@ -114,3 +114,23 @@ IMPLEMENTATION 的当前契约。实现按这一个 RFC 和 #188 推进，不另
 - 沿声明追溯到 variant 后重新构造：混淆类型域身份别名与普通值绑定。
 - 原地改写共享值来源：污染其他使用处。
 - 只给 Bool 补上与 enum 一样的后端追溯：保留根本的域边界错误。
+
+## 落地结果与验证
+
+- MIR 增加逐表达式的 `value_materializations`，与既有的节点 TypeId、泛型实例类型
+  和 Loc 共同形成完整物化事实。身份闭合只穿透成员导入/重导出，普通值绑定终止追溯。
+  seal 校验事实完整性与构造签名，缺失、伪造物化记录或不匹配类型均被拒绝。
+- 执行闭包不为类型域别名引入运行时依赖；模块检查不将此类别名加入初始化根。
+  后端 enum selection 仅读取物化记录，pattern 单独读取已求解的匹配事实。
+- enum 构造器按封闭签名和 variant 复用代码，函数值保留各自的来源头；零环境
+  构造器调用将 callable 地址传给生成的胶水，外层复制该来源，payload 保留来源。
+  普通 closure 仍使用非零环境句柄。内部 ABI 14 升为 15，Rust/JS Host 同步，值布局不变。
+- seal 与胶水显式支持既有的 TypeOf(T) 到 Type 元数据擦除，例如
+  `Some(Int.type)` 在 Option(Type) 上下文中仍合法，且不丢失 payload 来源。
+- 独立资产位于 `crates/telora-wasm/tests/fixtures/variant-origins/`，Host 测试运行时
+  读取。覆盖 Bool/None/用户 enum 的多层别名、普通值导出、泛型构造器值、多次物化、
+  高阶 map、外层与 payload 的精确范围、主诊断不变，以及三种 EOL 的一致性。
+  构造器相等性和 seal 负向测试同时覆盖。
+- 验证通过：core 136 项、Wasm 75 项、CLI 97 项（包含 414 个语言测试入口）；
+  新增来源/seal 测试在补齐多层 Bool/Option 别名后单独复验通过。
+  Node 位置测试、ABI 15 debug smoke、源文件大小检查和 git diff --check 通过。

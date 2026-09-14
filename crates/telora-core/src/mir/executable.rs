@@ -79,6 +79,7 @@ impl<'a> SealedMir<'a> {
         let mut globals = BTreeSet::new();
         for (index, symbol) in mir.symbols.iter().enumerate() {
             if matches!(symbol.kind, SymbolKind::Declaration(BindingKind::Let | BindingKind::Def | BindingKind::Decl | BindingKind::Native))
+                && !symbol.declarations.iter().any(|node| mir.value_materializations[node.index()].is_some())
                 && symbol.module.is_some_and(|module| modules.contains(&module)
                     && symbol.scope.is_some() && symbol.scope == mir.module_scopes[module.index()]) {
                 globals.insert(SymbolId(index as u32));
@@ -194,6 +195,9 @@ impl SealedMir<'_> {
                     continue;
                 }
             }
+            // A materialization consumes a type-domain identity, not a runtime
+            // export or initializer. Its closed type was validated above.
+            if mir.value_materializations[root.node.index()].is_some() { continue; }
             let reference = if let Some(instance) = instance { instance.reference(root.node) } else {
                 mir.generic_references[root.node.index()].and_then(GenericReference::instance)
             }.or_else(|| if let Some(instance) = instance { instance.implementation(root.node) } else {

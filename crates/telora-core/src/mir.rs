@@ -11,6 +11,7 @@ mod seal;
 mod executable;
 mod type_schemes;
 mod properties;
+mod materializations;
 pub use seal::SealedMir;
 pub use executable::{ExecutionClosure, ExecutionRoot, SealedExecutable};
 
@@ -348,6 +349,15 @@ pub enum MemberSelection {
     },
 }
 
+/// A type-domain identity materialized at this HIR expression's Loc. Its
+/// signature is the node's solved type (or the selected generic instance type).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ValueMaterialization {
+    Boolean(bool),
+    EnumVariant { index: u32 },
+    NewtypeConstructor,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PropertySite {
     Type,
@@ -647,6 +657,7 @@ pub struct Mir {
     pub types: Vec<ResolvedType>,
     pub type_layouts: Vec<Option<TypeLayout>>,
     pub member_selections: Vec<Option<MemberSelection>>,
+    pub value_materializations: Vec<Option<ValueMaterialization>>,
     pub interpreter_plans: Vec<Option<InterpreterPlan>>,
     pub type_definitions: Vec<TypeDefinition>,
     pub properties: Vec<PropertyRecord>,
@@ -815,6 +826,11 @@ impl Mir {
         for (id, plan) in self.interpreter_plans.iter().enumerate() {
             if let Some(plan) = plan {
                 writeln!(out, "interpreter-plan {id} {plan:?}").unwrap();
+            }
+        }
+        for (id, fact) in self.value_materializations.iter().enumerate() {
+            if let Some(fact) = fact {
+                writeln!(out, "value-materialization {id} {fact:?}").unwrap();
             }
         }
         for (id, scheme) in self.type_schemes.iter().enumerate() {

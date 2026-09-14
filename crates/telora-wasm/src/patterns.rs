@@ -1,4 +1,4 @@
-use crate::{abi::*, emit::Emitter, enums::selection, plan::child};
+use crate::{abi::*, emit::Emitter, plan::child};
 use telora_core::mir::{HirId, HirKind, MemberSelection, ResolveState, Role, TypeConstructor as T};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
@@ -17,7 +17,7 @@ impl Emitter<'_> {
                 return Ok(());
             }
         }
-        if let Some(selected) = selection(self.mir, node) {
+        if let Some(selected) = self.mir.member_selections[node.index()] {
             match selected {
                 MemberSelection::Boolean(boolean) => {
                     self.bits(value);

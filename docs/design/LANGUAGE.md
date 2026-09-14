@@ -67,6 +67,17 @@ BuildState.Ready           # BuildState 的无 payload variant
 
 具名 enum 保留自己的 nominal TypeId。variant 的名称和 payload 由 enum 声明定义。
 
+enum variant 首先是类型域身份，import/re-export 只为身份提供名字。在值表达式中
+使用时，variant 如 literal 一样在当前位置物化：无载荷成员产生 enum 值，有载荷
+成员产生构造器函数值。`let a = True` 的值来源精确落在 True，不追溯到 prelude；
+`let b = a` 则保留 a 的来源。普通 `def disabled = False` 创建的是值，导入或重导出
+disabled 不会在读取处重新物化。以上规则由 resolve 后的身份决定，不按名字识别。
+
+有载荷构造器被调用后，enum 外层值继承构造器物化位置，payload 保留自己的来源。
+例如 `arr |> map\(_, Some)` 的输出外层来源是这里的 Some，内部值来源是各输入元素。
+同一封闭签名和 variant 的构造器具有相同身份，来源位置不参与相等；泛型构造器
+必须在 MIR 中完成类型求解后才能成为运行时值。LSP 仍可按符号引用导航到声明。
+
 普通字符串支持 `\0`、`\n`、`\r`、`\t`、`\"`、`\\`、两位 ASCII `\xNN`、
 Unicode scalar `\u{...}` 和反斜杠换行后的显式续行。反引号字符串使用同一组
 标量转义，但以 `` \` `` 代替 `\"`，并作为结构化连接表达式使用 `\{...}` 嵌入

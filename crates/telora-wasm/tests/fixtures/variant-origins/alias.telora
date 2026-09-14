@@ -1,0 +1,2 @@
+import "origins/model" { A as Make, B as Empty, Yes, Absent, Present, disabled, saved, wrap };
+export { Make, Empty, Yes, Absent, Present, disabled, saved, wrap };

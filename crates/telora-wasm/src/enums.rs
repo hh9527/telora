@@ -1,27 +1,15 @@
-use crate::{abi::*, emit::Emitter, plan::child};
+use crate::{abi::*, emit::Emitter};
 use telora_core::mir::{
-    HirId, HirKind, MemberSelection, Mir, ResolveState, Role, TypeConstructor as T, TypeId,
+    HirId, MemberSelection, Mir, TypeConstructor as T, TypeId, ValueMaterialization,
 };
 use wasm_encoder::{Instruction as I, ValType};
 
-pub(crate) fn selection(mir: &Mir, mut node: HirId) -> Option<MemberSelection> {
-    let mut visited = std::collections::BTreeSet::new();
-    while visited.insert(node) {
-        if let Some(selection) = mir.member_selections[node.index()] {
-            return Some(selection);
-        }
-        if matches!(mir.hir[node.index()].kind, HirKind::TypeApply) {
-            node = child(mir, node, Role::Callee).ok()?;
-            continue;
-        }
-        let slot = mir.hir[node.index()].resolution?;
-        let ResolveState::Bound(symbol) = mir.resolve_slots[slot.index()] else {
-            return None;
-        };
-        let declaration = *mir.symbols[symbol.index()].declarations.last()?;
-        node = child(mir, declaration, Role::Value).ok()?;
-    }
-    None
+pub(crate) fn selection(mir: &Mir, node: HirId) -> Option<MemberSelection> {
+    mir.value_materializations[node.index()].map(|fact| match fact {
+        ValueMaterialization::Boolean(value) => MemberSelection::Boolean(value),
+        ValueMaterialization::EnumVariant { index } => MemberSelection::EnumVariant { index },
+        ValueMaterialization::NewtypeConstructor => MemberSelection::NewtypeConstructor,
+    })
 }
 
 impl Emitter<'_> {
@@ -179,7 +167,15 @@ impl Emitter<'_> {
         let payload = self.parameter(0);
         match selection(self.mir, node).ok_or("Wasm: missing constructor selection")? {
             MemberSelection::EnumVariant { index } => {
-                self.enum_value(node, output, index, Some(payload))
+                let target = self.plan.layouts[output.index()].variants[index as usize]
+                    .type_id.ok_or("Wasm: callable variant has no payload type")?;
+                let payload = self.adapt(node, arguments[0], self.plan.layouts[target].id(), payload)?;
+                let result = self.enum_value(node, output, index, Some(payload))?;
+                // Zero-environment constructors receive the callable value,
+                // whose source is the actual materialization site. Payload
+                // provenance was copied independently by enum_value.
+                self.copy(result, 0, 0, 12);
+                Ok(result)
             }
             MemberSelection::NewtypeConstructor => {
                 self.construction_check(
