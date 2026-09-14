@@ -120,7 +120,10 @@ option "ees.imos" {
 The CLI validates each variable against the full regular expression declared by `ees.vars`,
 substitutes it as one safe path segment, and passes the resulting logical locator to the native
 actor component adapter. The adapter resolves `user-data:`, `user-cache:`, `user-config:` and
-`user-state:` through the corresponding XDG directory, with standard `$HOME`-based fallbacks.
+`user-state:` using platform-native directories. Linux honors valid absolute XDG overrides,
+with standard home-directory fallbacks; Windows uses Known Folders and macOS uses Library
+directories. Where no dedicated state directory exists, state uses the local data directory's
+`state` subdirectory. XDG overrides do not apply on Windows or macOS.
 Package preparation uses direct physical `store` and `home` paths and does not consume application
 options or variables.
 

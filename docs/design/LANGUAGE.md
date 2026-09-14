@@ -1656,9 +1656,15 @@ model 名称、kind 和配置完全一致。
 `std/ees.install_shared` 和 `std/ees.sqlite_query` 只构造 component-neutral request，
 不执行 I/O。资源 locator
 使用 `user-data:`、`user-cache:`、`user-config:` 或 `user-state:`，冒号后是规范化
-相对路径。component adapter 优先使用对应的 `XDG_DATA_HOME`、`XDG_CACHE_HOME`、
-`XDG_CONFIG_HOME`、`XDG_STATE_HOME`；缺失时分别回退到 `$HOME/.local/share`、
-`$HOME/.cache`、`$HOME/.config`、`$HOME/.local/state`。Entry 能看到 wrapper 声明的
+相对路径。component adapter 按 Host 平台惯例解析物理目录：Linux 优先使用对应的
+`XDG_DATA_HOME`、`XDG_CACHE_HOME`、`XDG_CONFIG_HOME`、`XDG_STATE_HOME`（必须为非空绝对路径）；
+无效或缺失时分别回退到用户主目录下的 `.local/share`、`.cache`、`.config`、`.local/state`，
+主目录优先取 `HOME`，未设置时使用系统用户目录。Windows 使用 Known Folder：data/config
+使用 RoamingAppData，cache 使用 LocalAppData；macOS 的 data/config 使用
+`~/Library/Application Support`，cache 使用 `~/Library/Caches`。平台没有专用 state
+目录时，使用本地 data 目录下的 `state` 子目录（Windows 为 LocalAppData，macOS 为
+`~/Library/Application Support`）。Windows/macOS 不使用 `XDG_*` 覆盖这些目录。
+Entry 能看到 wrapper 声明的
 逻辑 locator，普通应用代码不能读取解析后的物理路径；物理路径不进入 Telora World，也不能由
 operation 改写。
 

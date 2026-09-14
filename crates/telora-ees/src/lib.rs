@@ -113,7 +113,7 @@ impl ResourceLocator {
             "user-state" => dirs
                 .state_dir()
                 .map(Path::to_path_buf)
-                .unwrap_or_else(|| dirs.home_dir().join(".local/state")),
+                .unwrap_or_else(|| dirs.data_local_dir().join("state")),
             _ => bail!("unsupported user resource locator scheme {scheme:?}"),
         };
         Ok(base.join(relative))
@@ -413,6 +413,91 @@ mod tests {
             serde_json::to_value(event).unwrap(),
             json!({"type": "error", "id": null, "message": "invalid request"})
         );
+    }
+
+    #[test]
+    fn user_locators_resolve_platform_native_directories() {
+        let dirs = BaseDirs::new().expect("test requires a user directory");
+        let state = dirs
+            .state_dir()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| dirs.data_local_dir().join("state"));
+        for (scheme, base) in [
+            ("user-data", dirs.data_dir()),
+            ("user-cache", dirs.cache_dir()),
+            ("user-config", dirs.config_dir()),
+            ("user-state", state.as_path()),
+        ] {
+            let locator = ResourceLocator::user(format!("{scheme}:app/db.sqlite")).unwrap();
+            assert_eq!(locator.resolve().unwrap(), base.join("app/db.sqlite"));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn user_locators_honor_linux_xdg_and_home() {
+        // Separate processes avoid mutating the environment of parallel tests.
+        if let Some(root) = env::var_os("TELORA_TEST_EES_HOME") {
+            let root = PathBuf::from(root);
+            for (scheme, suffix) in [
+                ("user-data", ".local/share"),
+                ("user-cache", ".cache"),
+                ("user-config", ".config"),
+                ("user-state", ".local/state"),
+            ] {
+                let base = if env::var_os("TELORA_TEST_EES_XDG").is_some() {
+                    root.join(scheme)
+                } else {
+                    root.join(suffix)
+                };
+                assert_eq!(
+                    ResourceLocator::user(format!("{scheme}:app/file"))
+                        .unwrap()
+                        .resolve()
+                        .unwrap(),
+                    base.join("app/file")
+                );
+            }
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        for mode in ["missing", "empty", "relative", "absolute"] {
+            let mut child = std::process::Command::new(env::current_exe().unwrap());
+            child
+                .args(["--exact", "tests::user_locators_honor_linux_xdg_and_home"])
+                .env("HOME", root.path())
+                .env("TELORA_TEST_EES_HOME", root.path())
+                .env_remove("TELORA_TEST_EES_XDG");
+            for (variable, scheme) in [
+                ("XDG_DATA_HOME", "user-data"),
+                ("XDG_CACHE_HOME", "user-cache"),
+                ("XDG_CONFIG_HOME", "user-config"),
+                ("XDG_STATE_HOME", "user-state"),
+            ] {
+                match mode {
+                    "missing" => {
+                        child.env_remove(variable);
+                    }
+                    "empty" => {
+                        child.env(variable, "");
+                    }
+                    "relative" => {
+                        child.env(variable, "relative/path");
+                    }
+                    _ => {
+                        child.env(variable, root.path().join(scheme));
+                        child.env("TELORA_TEST_EES_XDG", "1");
+                    }
+                }
+            }
+            let output = child.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{mode}: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     #[test]
