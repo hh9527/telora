@@ -21,6 +21,22 @@ mod regex;
 mod test_descriptions;
 
 #[test]
+fn host_source_index_uses_utf8_byte_columns_without_span_tables() {
+    for text in ["", "ascii\nlast\n", "中文🙂x\r\n下一行\n", "a\rb"] {
+        let mut database = telora_core::SourceDatabase::default();
+        let id = database.add("test", text);
+        let file = database.get(id);
+        let source = crate::artifact::Source::from_file(file);
+        for offset in 0..=text.len() {
+            let prefix = &text.as_bytes()[..offset];
+            let line = prefix.iter().filter(|&&byte| byte == b'\n').count() + 1;
+            let bol = prefix.iter().rposition(|&byte| byte == b'\n').map_or(0, |i| i + 1);
+            assert_eq!(source.position(offset as u32), (line, offset - bol + 1));
+        }
+    }
+}
+
+#[test]
 fn runtime_gap_regressions_keep_closed_calls_and_language_failures() {
     let bytes = compile(include_str!("../tests/fixtures/runtime-gaps.telora")).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
@@ -574,6 +590,8 @@ fn sealed_export_runs_without_mir_or_host_imports() {
     // compile() drops the entire source/MIR before the engine sees the bytes.
     let bytes = compile("export def answer = 42;").unwrap();
     assert_eq!(bytes, compile("export def answer = 42;").unwrap());
+    assert!(bytes.windows(b"|owner=answer|role=demand|hir=".len())
+        .any(|window| window == b"|owner=answer|role=demand|hir="));
     let engine = wasmi::Engine::default();
     let module = wasmi::Module::new(&engine, &bytes[..]).unwrap();
     assert_eq!(module.imports().count(), 0);

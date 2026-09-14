@@ -7,7 +7,7 @@ use crate::{
     plan::Plan,
     session::Session,
 };
-use telora_core::data_plan::{DataPlanNodeKind, ValidatedDataPlan};
+use telora_core::data_plan::ValidatedDataPlan;
 use wasm_encoder::{BlockType, Function, Instruction as I};
 
 pub(crate) fn injector(plan: &Plan, manifest: &Manifest) -> Function {
@@ -69,7 +69,7 @@ impl Manifest {
     pub fn register_data_sources(
         &mut self,
         sources: &telora_core::SourceDatabase,
-        plan: &ValidatedDataPlan,
+        _plan: &ValidatedDataPlan,
     ) -> Result<(), String> {
         for file in sources.files() {
             if self
@@ -86,30 +86,7 @@ impl Manifest {
                 .iter()
                 .any(|source| source.id == file.id().get())
             {
-                self.sources.push(crate::artifact::Source {
-                    id: file.id().get(),
-                    name: file.name.to_string(),
-                });
-            }
-        }
-        for node in plan.nodes() {
-            let mut locations = vec![node.location];
-            if let DataPlanNodeKind::Object(fields) = &node.kind {
-                locations.extend(fields.values().map(|f| f.key_location));
-            }
-            for loc in locations {
-                let file = sources.get(loc.source);
-                let start = file.position(loc.start);
-                let end = file.position(loc.end);
-                self.locations.push(crate::artifact::Location {
-                    source: loc.source.get(),
-                    start: loc.start,
-                    end: loc.end,
-                    line: start.line,
-                    column: start.column,
-                    end_line: end.line,
-                    end_column: end.column,
-                });
+                self.sources.push(crate::artifact::Source::from_file(file));
             }
         }
         Ok(())

@@ -12,19 +12,13 @@ pub struct Diagnostic {
 impl Diagnostic {
     pub fn render(&self, manifest: &Manifest) -> String {
         let [source, start, end] = self.origin;
-        let name = manifest
-            .sources
-            .iter()
-            .find(|s| s.id == source)
-            .map(|s| s.name.as_str())
-            .unwrap_or("<unknown>");
-        match manifest
-            .locations
-            .iter()
-            .find(|l| l.source == source && l.start == start && l.end == end)
-        {
-            Some(loc) => format!("{name}:{}:{}: {}", loc.line, loc.column, self.message),
-            None => format!("{name}:{start}..{end}: {}", self.message),
+        let file = manifest.sources.iter().find(|s| s.id == source);
+        match file {
+            Some(file) => {
+                let (line, column) = file.position(start);
+                format!("{}:{line}:{column}: {}", file.name, self.message)
+            }
+            None => format!("<unknown>:{start}..{end}: {}", self.message),
         }
     }
 }

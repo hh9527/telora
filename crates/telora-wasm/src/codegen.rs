@@ -189,6 +189,8 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         module.section(&data);
     }
     let mut symbols = SymbolTable::new();
+    let names = crate::function_names::FunctionNames::new(executable.sealed_mir().mir());
+    let function_keys: Vec<_> = plan.functions.keys().copied().collect();
     for index in 0..FIRST_FUNCTION {
         symbols.function(SymbolTable::WASM_SYM_UNDEFINED, index, None);
     }
@@ -197,7 +199,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
             n if n == initialize => "telora_initialize".to_owned(),
             n if n == entry => "telora_entry".to_owned(),
             n if n == entry + 1 => "telora_inject_data".to_owned(),
-            n => format!("telora_fn_{n}"),
+            n => names.name(function_keys[(n - FIRST_FUNCTION) as usize], n),
         };
         symbols.function(0, index, Some(&name));
     }

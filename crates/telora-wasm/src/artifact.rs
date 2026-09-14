@@ -8,7 +8,6 @@ pub struct Manifest {
     pub entry_type: u32,
     pub types: Vec<TypeDesc>,
     pub sources: Vec<Source>,
-    pub locations: Vec<Location>,
     pub value_type: Option<u32>,
     pub eval_type: Option<u32>,
     pub data_modules: Vec<DataModule>,
@@ -80,17 +79,34 @@ pub enum Kind {
 pub struct Source {
     pub id: u32,
     pub name: String,
+    pub bols: Vec<u32>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Location {
-    pub source: u32,
-    pub start: u32,
-    pub end: u32,
-    pub line: usize,
-    pub column: usize,
-    pub end_line: usize,
-    pub end_column: usize,
+impl Source {
+    pub(crate) fn from_file(file: &telora_core::source::SourceFile) -> Self {
+        let mut bols = vec![0];
+        let mut offset = 0u32;
+        for chunk in file.text().chunks() {
+            for byte in chunk.bytes() {
+                if byte == b'\n' {
+                    bols.push(offset + 1);
+                }
+                offset += 1;
+            }
+        }
+        Self {
+            id: file.id().get(),
+            name: file.name.to_string(),
+            bols,
+        }
+    }
+
+    /// One-based line and UTF-8 byte column for diagnostic display.
+    pub fn position(&self, offset: u32) -> (usize, usize) {
+        let line = self.bols.partition_point(|&bol| bol <= offset);
+        let bol = self.bols[line - 1];
+        (line, (offset - bol) as usize + 1)
+    }
 }
 
 impl Manifest {
@@ -110,35 +126,7 @@ impl Manifest {
         let TypeState::Known(entry) = mir.ty_slots[executable.root().index()] else {
             return Err("Wasm: entry has no sealed type".into());
         };
-        let sources = mir
-            .sources
-            .files()
-            .map(|file| Source {
-                id: file.id().get(),
-                name: file.name.to_string(),
-            })
-            .collect();
-        let mut positions = std::collections::BTreeSet::new();
-        let mut locations = vec![];
-        for node in &mir.hir {
-            let loc = node.location;
-            if !positions.insert((loc.source.get(), loc.start, loc.end)) {
-                continue;
-            }
-            let file = mir.sources.get(loc.source);
-            let start = file.position(loc.start);
-            let end = file.position(loc.end);
-            locations.push(Location {
-                source: loc.source.get(),
-                start: loc.start,
-                end: loc.end,
-                line: start.line,
-                column: start.column,
-                end_line: end.line,
-                end_column: end.column,
-            });
-        }
-        locations.sort_by_key(|loc| (loc.source, loc.start, loc.end));
+        let sources = mir.sources.files().map(Source::from_file).collect();
         let types = mir
             .types
             .iter()
@@ -215,7 +203,6 @@ impl Manifest {
             entry_type: entry.index() as u32,
             types,
             sources,
-            locations,
             value_type,
             eval_type,
             debug_sites: mir
@@ -284,6 +271,12 @@ impl Manifest {
         let manifest = manifest.ok_or("Wasm: missing manifest")?;
         if manifest.abi != crate::abi::VERSION {
             return Err("Wasm: unsupported artifact ABI version".into());
+        }
+        if manifest.sources.iter().any(|source| {
+            source.bols.first() != Some(&0)
+                || source.bols.windows(2).any(|pair| pair[0] >= pair[1])
+        }) {
+            return Err("Wasm: invalid source position index".into());
         }
         if manifest
             .data_modules
