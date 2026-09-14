@@ -1,4 +1,5 @@
 // Read-only debug transport; never calls language functions or Display providers.
+import { location } from './location.mjs';
 export function debugReader({manifest, word, payload, text, view}) {
   const repr = pointer => {
     let output = '', bytes = 0, truncated = false;
@@ -104,15 +105,10 @@ export function debugReader({manifest, word, payload, text, view}) {
       const site = manifest.debug_sites.find(site => site.node === word(pointer));
       if (!site) throw Error('未知的 debug site');
       const {name, origin, message} = site;
-      const source = manifest.sources.find(source => source.id === origin[0]);
+      const loc = location(origin);
+      const source = manifest.sources.find(source => source.id === loc.source);
       if (!source) throw Error('debug site 没有来源');
-      let low = 0, high = source.bols.length;
-      while (low < high) {
-        const middle = (low + high) >>> 1;
-        if (source.bols[middle] <= origin[1]) low = middle + 1;
-        else high = middle;
-      }
-      const module = source.name, line = low;
+      const module = source.name, line = loc.line;
       events.push({name, repr: repr(word(pointer + 4)), module, line, ...(message === null ? {} : {message})});
     }
     cursor = count;

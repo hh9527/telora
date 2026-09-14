@@ -89,33 +89,20 @@ pub enum Kind {
 pub struct Source {
     pub id: u32,
     pub name: String,
-    pub bols: Vec<u32>,
 }
 
 impl Source {
     pub(crate) fn from_file(file: &telora_core::source::SourceFile) -> Self {
-        let mut bols = vec![0];
-        let mut offset = 0u32;
-        for chunk in file.text().chunks() {
-            for byte in chunk.bytes() {
-                if byte == b'\n' {
-                    bols.push(offset + 1);
-                }
-                offset += 1;
-            }
-        }
         Self {
             id: file.id().get(),
             name: file.name.to_string(),
-            bols,
         }
     }
 
     /// One-based line and UTF-8 byte column for diagnostic display.
-    pub fn position(&self, offset: u32) -> (usize, usize) {
-        let line = self.bols.partition_point(|&bol| bol <= offset);
-        let bol = self.bols[line - 1];
-        (line, (offset - bol) as usize + 1)
+    pub fn position(&self, point: u64) -> (usize, usize) {
+        let (line, column) = telora_core::source::CompactLoc::position(point);
+        (line as usize + 1, column as usize + 1)
     }
 }
 
@@ -244,8 +231,8 @@ impl Manifest {
                     };
                     Some(DebugSite {
                         node: index as u32,
-                        origin: [node.location.source.get(), node.location.start, node.location.end],
-                        name: expression.clone(),
+                        origin: mir.sources.get(node.location.source).compact(node.location).0,
+                        name: expression.replace("\r\n", "\n").replace('\r', "\n"),
                         message: message.clone(),
                     })
                 })
@@ -293,7 +280,7 @@ impl Manifest {
             return Err("Wasm: unsupported artifact ABI version".into());
         }
         if manifest.sources.iter().any(|source| {
-            source.bols.first() != Some(&0) || source.bols.windows(2).any(|pair| pair[0] >= pair[1])
+            source.id == 0 || source.id > u16::MAX as u32
         }) {
             return Err("Wasm: invalid source position index".into());
         }

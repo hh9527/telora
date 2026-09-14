@@ -35,9 +35,6 @@ pub enum Value {
     Object(Vec<Field>),
 }
 
-fn origin(loc: telora_core::Location) -> [u32; 3] {
-    [loc.source.get(), loc.start, loc.end]
-}
 
 impl Value {
     fn children(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
@@ -65,7 +62,7 @@ impl DataPacket {
             .iter()
             .map(|node| {
                 Ok(Node {
-                    origin: origin(node.location),
+                    origin: plan.compact(node.location).0,
                     value: match &node.kind {
                         K::Scalar(scalar) => match scalar {
                             S::Int(value) => Value::Int(value.to_string()),
@@ -91,7 +88,7 @@ impl DataPacket {
                                 .map(|(name, field)| {
                                     Ok(Field {
                                         name: name.clone(),
-                                        origin: origin(field.key_location),
+                                        origin: plan.compact(field.key_location).0,
                                         value: id(field.value.index())?,
                                     })
                                 })
@@ -114,7 +111,8 @@ impl DataPacket {
             return Err("Wasm: invalid data root".into());
         }
         let origin = |loc: [u32; 3]| {
-            if loc[1] > loc[2] || !manifest.sources.iter().any(|source| source.id == loc[0]) {
+            let loc = telora_core::source::CompactLoc(loc);
+            if loc.start() > loc.end() || !manifest.sources.iter().any(|source| source.id == loc.source()) {
                 Err("Wasm: invalid data origin".to_owned())
             } else {
                 Ok(())

@@ -113,7 +113,8 @@ impl Emitter<'_> {
         self.extend([I::LocalGet(callee), I::I32Load(memory(DATA, 2)), I::I32Eqz]);
         self.fail_if(node, ERROR_UNINITIALIZED_CALL);
         let location = self.mir.hir[node.index()].location;
-        for (index, word) in [location.source.get(), location.start, location.end].into_iter().enumerate() {
+        let location_words = self.mir.sources.get(location.source).compact(location).0;
+        for (index, word) in [location_words[0], location_words[1], location_words[2]].into_iter().enumerate() {
             self.extend([I::I32Const(word as i32), I::GlobalSet(CALL_SOURCE_GLOBAL + index as u32)]);
         }
         if self.tail_calls.contains(&node) {

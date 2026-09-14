@@ -28,7 +28,7 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
     assert_eq!(result[0][0]["message"], "positive required");
     assert_eq!(
         result[0][0]["labels"][1]["location"]["start"],
-        source.find("\"-7\"").unwrap()
+        point(source, source.find("\"-7\"").unwrap())
     );
     assert_eq!(result[1], 42);
     assert_eq!(
@@ -37,7 +37,7 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
     );
     assert_eq!(
         result[3]["labels"][1]["location"]["start"],
-        source.find("\"\"").unwrap()
+        point(source, source.find("\"\"").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());
 }
@@ -111,7 +111,7 @@ fn string_parse_uses_closed_scalar_and_option_targets() {
     let report = session.call(&[]).unwrap();
     assert_eq!(
         report["labels"][1]["location"]["start"],
-        source.find("\"12345\"").unwrap()
+        point(source, source.find("\"12345\"").unwrap())
     );
 }
 
@@ -142,7 +142,7 @@ fn regex_errors_are_language_diagnostics_and_leave_the_session_usable() {
     assert_eq!(result[3], true);
     assert_eq!(
         result[0]["labels"][1]["location"]["start"],
-        source.find("\"[\"").unwrap()
+        point(source, source.find("\"[\"").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());
 }

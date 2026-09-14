@@ -101,7 +101,7 @@ fn reflection_errors_are_captured_and_dyn_fields_keep_their_origins() {
     }
     assert_eq!(
         result[6]["labels"][1]["location"]["start"],
-        source.find("42").unwrap()
+        point(source, source.find("42").unwrap())
     );
     for (index, expected) in [
         "Dyn variant index is 1, not 0",
@@ -116,20 +116,20 @@ fn reflection_errors_are_captured_and_dyn_fields_keep_their_origins() {
     }
     assert_eq!(
         result[11]["labels"][1]["location"]["start"],
-        source.find("12345").unwrap()
+        point(source, source.find("12345").unwrap())
     );
     assert_eq!(
         result[12]["labels"][1]["location"]["start"],
-        source.find("23456").unwrap()
+        point(source, source.find("23456").unwrap())
     );
     assert_eq!(
         result[13]["labels"][1]["location"]["start"],
-        source.find("34567").unwrap()
+        point(source, source.find("34567").unwrap())
     );
     for index in [14, 15] {
         assert_eq!(
             result[index]["labels"][1]["location"]["start"],
-            source.find("42").unwrap()
+            point(source, source.find("42").unwrap())
         );
     }
     assert!(session.diagnostics().unwrap().is_empty());

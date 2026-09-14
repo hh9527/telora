@@ -100,8 +100,8 @@ impl<'a> FunctionNames<'a> {
             owner.unwrap_or("<anonymous>"),
             key.node.index(),
             node.location.source.get(),
-            node.location.start,
-            node.location.end
+            mir.sources.get(node.location.source).compact(node.location).start(),
+            mir.sources.get(node.location.source).compact(node.location).end()
         )
     }
 }

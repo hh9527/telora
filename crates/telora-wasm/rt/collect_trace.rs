@@ -17,7 +17,7 @@ impl Collector {
                     let mut offset = 0;
                     while offset < bytes {
                         let ty = word(old + offset, TYPE);
-                        self.sources.insert(word(old + offset, SOURCE));
+                        self.sources.insert(word(old + offset, SOURCE) & 0xffff);
                         let width = word(self.types + ty * 20, 4);
                         assert!(width >= HEADER_BYTES && width <= bytes - offset);
                         self.trace_data(ty, old + offset + 16, at + offset + 16);
@@ -36,9 +36,9 @@ impl Collector {
                     }
                 }
                 BLAMES => {
-                    self.sources.insert(word(old, SOURCE));
+                    self.sources.insert(word(old, SOURCE) & 0xffff);
                     for index in 0..word(old, 32) {
-                        self.sources.insert(word(old, 40 + index as u64 * 12));
+                        self.sources.insert(word(old, 40 + index as u64 * 12) & 0xffff);
                     }
                     self.string(old + 16, at + 16);
                 }
@@ -90,7 +90,7 @@ impl Collector {
                         if word(variant, 4) != 0 {
                             self.handle(VALUES, old + 8, at + 8);
                         } else {
-                            self.sources.insert(word(old, 8));
+                            self.sources.insert(word(old, 8) & 0xffff);
                             self.trace_data(payload, old + 24, at + 24);
                         }
                     }

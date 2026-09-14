@@ -76,9 +76,15 @@ pub struct DataPlanNode {
 pub struct ValidatedDataPlan {
     nodes: Vec<DataPlanNode>,
     root: Option<DataNodeId>,
+    pub(crate) source_index: Option<(crate::source::SourceId, alloc::sync::Arc<crate::source::LineIndex>)>,
 }
 
 impl ValidatedDataPlan {
+    pub fn compact(&self, loc: Location) -> crate::source::CompactLoc {
+        let (source, lines) = self.source_index.as_ref().expect("registered data source");
+        assert_eq!(*source, loc.source);
+        lines.pack(loc)
+    }
     /// Move reachable nodes into child-before-parent order, preserving shared
     /// aliases and all source locations. Payloads are moved, never deep-copied.
     pub fn into_postorder(self) -> Self {
@@ -122,6 +128,7 @@ impl ValidatedDataPlan {
         Self {
             nodes,
             root: Some(root),
+            source_index: self.source_index,
         }
     }
 

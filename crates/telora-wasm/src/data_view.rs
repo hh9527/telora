@@ -50,7 +50,7 @@ impl Iterator for Children<'_> {
 impl ExactSizeIterator for Children<'_> {}
 
 pub(crate) enum Fields<'a> {
-    Parsed(std::collections::btree_map::Iter<'a, String, DataField>),
+    Parsed(std::collections::btree_map::Iter<'a, String, DataField>, &'a ValidatedDataPlan),
     Packet(std::slice::Iter<'a, data_packet::Field>),
 }
 pub(crate) struct Field<'a> {
@@ -62,9 +62,9 @@ impl<'a> Iterator for Fields<'a> {
     type Item = Field<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Parsed(iter) => iter.next().map(|(name, field)| Field {
+            Self::Parsed(iter, plan) => iter.next().map(|(name, field)| Field {
                 name,
-                origin: origin(field.key_location),
+                origin: plan.compact(field.key_location).0,
                 value: field.value.index(),
             }),
             Self::Packet(iter) => iter.next().map(|field| Field {
@@ -74,9 +74,6 @@ impl<'a> Iterator for Fields<'a> {
             }),
         }
     }
-}
-fn origin(loc: telora_core::Location) -> [u32; 3] {
-    [loc.source.get(), loc.start, loc.end]
 }
 
 impl<'a> Graph<'a> {
@@ -100,7 +97,7 @@ impl<'a> Graph<'a> {
             Self::Parsed(plan) => {
                 let node = plan.nodes().get(id).ok_or("Wasm: invalid data edge")?;
                 Node {
-                    origin: origin(node.location),
+                    origin: plan.compact(node.location).0,
                     value: match &node.kind {
                         K::Scalar(scalar) => match scalar {
                             S::Int(n) => Value::Int(*n),
@@ -115,7 +112,7 @@ impl<'a> Graph<'a> {
                             },
                         },
                         K::Array(items) => Value::Array(Children::Parsed(items.iter())),
-                        K::Object(fields) => Value::Object(Fields::Parsed(fields.iter())),
+                        K::Object(fields) => Value::Object(Fields::Parsed(fields.iter(), plan)),
                     },
                 }
             }

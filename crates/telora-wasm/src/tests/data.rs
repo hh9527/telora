@@ -66,3 +66,16 @@ fn portable_data_roundtrip_preserves_integer_bits_aliases_and_rejects_bad_edges(
         ])
     );
 }
+#[test]
+fn data_packet_coordinates_are_identical_across_line_endings() {
+    let text = "{\n  \"é\": [\n    42\n  ]\n}\n";
+    let mut packets = vec![];
+    for eol in ["\n", "\r\n", "\r"] {
+        let mut sources = telora_core::SourceDatabase::default();
+        let id = sources.add("data.json", text.replace('\n', eol));
+        let plan = telora_core::data_plan::parse_registered(&sources, id, telora_core::data_plan::Format::Json).unwrap();
+        packets.push(serde_json::to_value(crate::data_packet::DataPacket::from_plan(&plan).unwrap()).unwrap());
+    }
+    assert_eq!(packets[0], packets[1]);
+    assert_eq!(packets[0], packets[2]);
+}

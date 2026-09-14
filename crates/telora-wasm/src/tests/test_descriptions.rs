@@ -161,7 +161,7 @@ fn test_description_rejects_empty_expectation_before_callback() {
     let diagnostics = session.diagnostics().unwrap();
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(
-        diagnostics[0].subjects[0][1] as usize,
-        source.rfind("\"\"").unwrap()
+        telora_core::source::CompactLoc(diagnostics[0].subjects[0]).start(),
+        point(source, source.rfind("\"\"").unwrap())
     );
 }

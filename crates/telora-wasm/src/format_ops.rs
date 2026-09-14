@@ -137,9 +137,10 @@ impl Emitter<'_> {
         self.emit(I::End);
         let value = self.text_span_value(string, span)?;
         let loc = self.mir.hir[node.index()].location;
-        self.store32(value, SOURCE, loc.source.get());
-        self.store32(value, START, loc.start);
-        self.store32(value, END, loc.end);
+        let loc_words = self.mir.sources.get(loc.source).compact(loc).0;
+        self.store32(value, SOURCE, loc_words[0]);
+        self.store32(value, START, loc_words[1]);
+        self.store32(value, END, loc_words[2]);
         Ok(value)
     }
 

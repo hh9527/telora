@@ -3,7 +3,7 @@
 //! Row (16 bytes): {kind:u32, reserved:u32, payload:u64}.
 //! Payload is scalar bits or {pointer:u32,count:u32}. Object entries are
 //! {key_pointer,key_length,child_id}; Array entries are child IDs.
-use alloc::{boxed::Box, format, string::String};
+use alloc::{boxed::Box, format, string::{String, ToString}};
 use telora_data::{
     data_plan::{
         self, DataPlanNodeKind as Node, DataScalar as Scalar, Format, TemporalKind,
@@ -14,7 +14,7 @@ use telora_data::{
 
 fn parse(input: &str, format: Format) -> Result<Plan, String> {
     let mut sources = SourceDatabase::default();
-    let source = sources.add("<string>", input);
+    let source = sources.try_add("<string>", input).map_err(|error| error.to_string())?;
     let plan = data_plan::parse_registered(&sources, source, format).map_err(|diagnostics| {
         diagnostics
             .into_iter()

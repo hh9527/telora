@@ -1,12 +1,13 @@
 // External transport only. Language functions, heap allocation and initialization run in Wasm.
 import { injectBundle } from './bundle.mjs';
 import { debugReader } from './debug.mjs';
+import { location } from './location.mjs';
 export async function load(bytes) {
   const module = await WebAssembly.compile(bytes);
   const sections = WebAssembly.Module.customSections(module, 'telora.manifest');
   if (sections.length !== 1) throw Error('缺少或重复的 Telora manifest');
   const manifest = JSON.parse(new TextDecoder().decode(sections[0]));
-  if (manifest.abi !== 13) throw Error('不支持的产物 ABI');
+  if (manifest.abi !== 14) throw Error('不支持的产物 ABI');
   const { exports: wasm } = await WebAssembly.instantiate(module, {});
   const view = () => new DataView(wasm.memory.buffer);
   const word = address => view().getUint32(address, true);
@@ -219,28 +220,12 @@ export async function load(bytes) {
     }
     return pointer;
   };
-  const upperBound = (items, value) => {
-    let lo = 0, hi = items.length;
-    while (lo < hi) {
-      const mid = lo + Math.floor((hi - lo) / 2);
-      if (items[mid] <= value) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
-  };
-  const sourcePosition = (source, offset) => {
-    const file = manifest.sources.find(file => file.id === source);
-    if (!file) return undefined;
-    const line = upperBound(file.bols, offset), bol = file.bols[line - 1];
-    // Diagnostic columns are one-based UTF-8 byte offsets, not display widths.
-    return {line, column: offset - bol + 1};
-  };
   const failure = () => {
     const pointer = wasm.telora_error.value >>> 0;
     if (!pointer) return Error('会话未初始化或已失败');
-    const source = word(pointer), start = word(pointer + 4), end = word(pointer + 8), code = word(pointer + 12);
+    const loc = location([word(pointer), word(pointer + 4), word(pointer + 8)]);
+    const {source, start, end} = loc, code = word(pointer + 12);
     const file = manifest.sources.find(file => file.id === source)?.name ?? '<unknown>';
-    const loc = sourcePosition(source, start);
     const message = code === 9 ? text(word(pointer + 16)) : errorMessage(code);
     return Error(`${file}:${loc?.line ?? start}:${loc?.column ?? end}: ${message}`);
   };
@@ -258,8 +243,8 @@ export async function load(bytes) {
         const address = base + index * 12, subject = [word(address), word(address + 4), word(address + 8)];
         if (subject[0] && !subjects.some(prior => prior.every((value, j) => value === subject[j]))) subjects.push(subject);
       }
-      const source = manifest.sources.find(source => source.id === origin[0])?.name ?? '<unknown>';
-      const position = sourcePosition(origin[0], origin[1]);
+      const position = location(origin);
+      const source = manifest.sources.find(source => source.id === position.source)?.name ?? '<unknown>';
       result.push({severity: word(pointer + 28) ? 'warning' : 'error', message, source, origin, subjects, line: position?.line, column: position?.column});
     }
     return result;

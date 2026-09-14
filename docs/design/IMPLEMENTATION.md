@@ -167,11 +167,18 @@ codegen 的公开编译入口接受 SealedExecutable。表达式类型、泛型�
 普通构造拒绝产生运行时失败，codec 解码拒绝返回 Err。读取或复制已完成的值不会重新
 执行构造校验；新构造与 `<~` 更新会检查其结果。
 
-运行时值头包含 `source/start/end/TypeId` 四个 u32（16 字节），后接由静态布局
+运行时值头包含 12 字节的紧凑 Loc 和 4 字节 TypeId（共 16 字节），后接由静态布局
 决定的 payload。标量值为 24 字节；函数保存函数表索引与闭包环境。
 String、Array、Record 等对象位于各自 typed table；Tuple/Record 共用 Record table。
 Dict 使用有序 keys/values，字段操作与构造胶水消费已闭合的布局证据。
-具体尺寸与表示以 `telora-wasm/rt/abi.rs` 和生成器为准，不构成发布 ABI。
+具体尺寸与表示以 `telora-wasm-shared/src/abi.rs` 和生成器为准，不构成发布 ABI。
+
+Loc 使用 `src_id:u16`，起止位置各为 `line:u16 + UTF-8 offset:u24`。
+行和偏移从 0 开始，范围为 `[start,end)`；CRLF、LF、CR 都计作一次换行。
+源码和数据注册时检查容量，编译器/Host 将原始字节范围转换为该坐标。
+Wasm 来源表仅保存 ID 和名称，不携带 bols。诊断可以直接显示行列；
+原始文本片段、UTF-16 列和终端宽度的转换由 Host 负责。
+三个 u32 的精确打包方式见 [RFC 0293](../../rfc/0293-packed-source-coordinates.md)。
 
 类型元数据复用静态 TypeId，不递归重建类型描述符。语言值和闭包留在 Wasm 内存，
 Host 通过带类型的 session 句柄传递根；仅输入、输出、资源和诊断跨 Host 边界。

@@ -93,7 +93,18 @@ pub fn resolve_with_requests(
         } else {
             spec.name.clone()
         };
-        let source = mir.sources.add(source_name, text);
+        let source = match mir.sources.try_add(source_name, text) {
+            Ok(source) => source,
+            Err(error) => {
+                let message = format!("cannot register module {}: {error}", spec.name);
+                mir.diagnostics.push(crate::source::Diagnostic {
+                    severity: crate::source::Severity::Error,
+                    message: message.clone(), labels: vec![], notes: vec![],
+                });
+                mir.modules[id.index()].state = ModuleState::Unavailable(message);
+                continue;
+            }
+        };
         let parsed = parse_registered(&mir.sources, source);
         let syntax_valid = parsed.program.is_some();
         mir.diagnostics.extend(parsed.diagnostics);
@@ -262,6 +273,16 @@ fn canonical_request(owner: &str, request: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn oversized_source_is_an_unavailable_module_diagnostic() {
+        let mir = super::resolve(vec![super::ModuleSpec {
+            native: None, name: "@src/main".into(),
+            kind: super::ModuleKind::Source, implicit_imports: vec![],
+        }], &["@src/main".into()], |_, _| Ok("\n".repeat(65536)));
+        assert!(matches!(mir.modules[0].state, super::ModuleState::Unavailable(_)));
+        assert!(mir.diagnostics[0].message.contains("location capacity"));
+    }
+
     use super::*;
 
     #[test]

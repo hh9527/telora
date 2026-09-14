@@ -1280,7 +1280,10 @@ rt.with_diagnostics:
 ```
 
 `rt.Diagnostic` 是类型化快照，包含 `severity`、`message`、`labels` 和 `notes`。
-每个标签包含 `location`、`message` 和 `primary`；位置记录源码名称以及起止字节偏移。
+每个标签包含 `location`、`message` 和 `primary`；位置记录源码名称以及起止位置。
+`start/end` 是 `(line << 24) | utf8_offset` 编码的 40 bit 整数，
+行号和行内 UTF-8 字节偏移从 0 开始，范围为 `[start,end)`，并非文件绝对字节偏移。
+CRLF、LF、单独 CR 都计作一次换行；面向用户显示时再将行号转换为从 1 开始。
 这些类型和捕获能力限于已有的特权 Entry 边界。
 
 调用成功时返回值和该作用域内产生的 Warning；可恢复 failure 时返回该 failure 以及

@@ -94,6 +94,8 @@ impl Emitter<'_> {
         self.extend([
             I::LocalGet(origin),
             I::I32Load(memory(0, 2)),
+            I::I32Const(0xffff),
+            I::I32And,
             I::Call(SOURCE_NAME),
             I::LocalSet(span),
         ]);
@@ -113,6 +115,16 @@ impl Emitter<'_> {
                 I::LocalGet(origin),
                 I::I32Load(memory(offset, 2)),
                 I::I64ExtendI32U,
+                I::LocalGet(origin),
+                I::I32Load(memory(0, 2)),
+                I::I32Const(if offset == 4 { 16 } else { 24 }),
+                I::I32ShrU,
+                I::I32Const(0xff),
+                I::I32And,
+                I::I64ExtendI32U,
+                I::I64Const(32),
+                I::I64Shl,
+                I::I64Or,
                 I::I64Store(memory(DATA, 3)),
             ]);
         }

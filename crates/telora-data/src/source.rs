@@ -5,6 +5,9 @@ use core::fmt;
 use core::num::NonZeroU32;
 use core::ops::Range;
 
+pub mod compact;
+pub use compact::{CompactLoc, LineIndex};
+
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SourceId(NonZeroU32);
@@ -87,6 +90,7 @@ pub type Location = Loc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LocationError {
+    CompactCapacity,
     OffsetTooLarge,
     SourceTooLarge,
     ReversedRange { start: u32, end: u32 },
@@ -95,6 +99,7 @@ pub enum LocationError {
 impl fmt::Display for LocationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CompactCapacity => formatter.write_str("source exceeds location capacity (65535 source IDs, 65536 lines, 16777215 UTF-8 bytes per line)"),
             Self::OffsetTooLarge => formatter.write_str("source offset exceeds u32::MAX"),
             Self::SourceTooLarge => formatter.write_str("source text exceeds u32::MAX bytes"),
             Self::ReversedRange { start, end } => {
@@ -203,6 +208,7 @@ pub struct SourceFile {
     id: SourceId,
     pub name: Arc<str>,
     text: crate::document::DocumentText,
+    lines: Arc<LineIndex>,
 }
 
 impl SourceFile {
@@ -211,6 +217,7 @@ impl SourceFile {
         name: impl Into<Arc<str>>,
         text: impl AsRef<str>,
     ) -> Result<Self, LocationError> {
+        let lines = Arc::new(LineIndex::new(text.as_ref())?);
         let text = crate::document::DocumentText::new(text);
         if text.byte_len() > u32::MAX as usize {
             return Err(LocationError::SourceTooLarge);
@@ -219,6 +226,7 @@ impl SourceFile {
             id,
             name: name.into(),
             text,
+            lines,
         })
     }
 
@@ -230,10 +238,12 @@ impl SourceFile {
         if text.byte_len() > u32::MAX as usize {
             return Err(LocationError::SourceTooLarge);
         }
+        let lines = Arc::new(LineIndex::new(&text.chunks().collect::<String>())?);
         Ok(Self {
             id,
             name: name.into(),
             text,
+            lines,
         })
     }
 
@@ -241,6 +251,18 @@ impl SourceFile {
         (location.source == self.id)
             .then(|| self.text.slice(location.text_range()).ok())
             .flatten()
+    }
+
+    pub fn compact(&self, location: Loc) -> CompactLoc {
+        assert_eq!(location.source, self.id);
+        self.lines.pack(location)
+    }
+
+    pub fn line_index(&self) -> &Arc<LineIndex> { &self.lines }
+
+    pub fn byte_location(&self, location: CompactLoc) -> Option<Loc> {
+        if location.source() != self.id.get() || location.start() > location.end() { return None; }
+        Some(Loc { source: self.id, start: self.lines.byte(location.start())?, end: self.lines.byte(location.end())? })
     }
 
     pub const fn text(&self) -> &crate::document::DocumentText {
@@ -253,14 +275,21 @@ impl SourceFile {
 
     pub fn position(&self, offset: u32) -> Position {
         let offset = offset.min(self.text.byte_len() as u32);
-        let position = self
-            .text
-            .scalar_position(offset)
-            .expect("registered source offset is valid");
+        let point = self.lines.point(offset);
+        let (line, _) = CompactLoc::position(point);
+        let start = self.lines.byte((line as u64) << 24).unwrap();
+        let end = self.lines.byte(point).unwrap();
+        let column = self.text.slice(TextRange { start, end })
+            .expect("registered source offset is valid").chars().count();
         Position {
-            line: position.line as usize + 1,
-            column: position.character as usize + 1,
+            line: line as usize + 1,
+            column: column + 1,
         }
+    }
+
+    pub fn utf8_position(&self, offset: u32) -> crate::document::TextPosition {
+        let (line, column) = CompactLoc::position(self.lines.point(offset));
+        crate::document::TextPosition::new(line, column)
     }
 
     pub fn offset(&self, line: usize, column: usize) -> Option<u32> {
@@ -276,6 +305,7 @@ pub struct SourceDatabase {
 
 impl SourceDatabase {
     fn next_id(&self) -> Result<SourceId, LocationError> {
+        if self.files.len() >= u16::MAX as usize { return Err(LocationError::CompactCapacity); }
         let raw = u32::try_from(self.files.len())
             .ok()
             .and_then(|length| length.checked_add(1))
@@ -375,3 +405,6 @@ impl core::error::Error for Diagnostic {}
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod compact_tests;

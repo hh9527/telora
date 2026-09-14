@@ -2,6 +2,7 @@ import "std/value" {Value};
 import "std/ees" as ees;
 
 type Severity = enum {Error, Warning, Info};
+# start/end: (zero-based line << 24) | UTF-8 byte column; end is exclusive.
 type SourceRange = struct {source: String, start: Int, end: Int};
 type Label = struct {location: SourceRange, message: String, primary: Bool};
 type Diagnostic = struct {

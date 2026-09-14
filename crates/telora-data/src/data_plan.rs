@@ -31,11 +31,13 @@ pub fn parse_registered(
     source: SourceId,
     format: Format,
 ) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
-    match format {
+    let mut plan = match format {
         Format::Json => crate::json::validate_json_registered(sources, source),
         Format::Yaml => crate::yaml::validate_yaml_registered(sources, source),
         Format::Toml => crate::toml::validate_toml_registered(sources, source),
-    }
+    }?;
+    plan.source_index = Some((source, sources.get(source).line_index().clone()));
+    Ok(plan)
 }
 
 #[cfg(test)]

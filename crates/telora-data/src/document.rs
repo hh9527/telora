@@ -161,25 +161,6 @@ impl DocumentText {
         ))
     }
 
-    pub(crate) fn scalar_position(&self, offset: u32) -> Option<TextPosition> {
-        let offset = offset as usize;
-        if offset > self.byte_len() || !self.is_char_boundary(offset) {
-            return None;
-        }
-        let line = self.rope.line_of_byte(offset);
-        let line_start = self.rope.byte_of_line(line);
-        let character = self
-            .rope
-            .byte_slice(line_start..offset)
-            .chunks()
-            .map(|chunk| chunk.chars().count())
-            .sum::<usize>();
-        Some(TextPosition::new(
-            line.try_into().ok()?,
-            character.try_into().ok()?,
-        ))
-    }
-
     pub(crate) fn scalar_offset(&self, line: usize, character: usize) -> Option<u32> {
         let logical_lines = self.logical_line_count();
         if line >= logical_lines {

@@ -1,4 +1,5 @@
 // External data transport only: the artifact supplies all concrete layouts.
+import { location } from './location.mjs';
 export function injectBundle(module, manifest, rt) {
   const sections = WebAssembly.Module.customSections(module, 'telora.data');
   if (!sections.length) return;
@@ -11,7 +12,7 @@ export function injectBundle(module, manifest, rt) {
   const {allocate, store, copy, push, input, wasm} = rt;
   const origin = loc => {
     if (!Array.isArray(loc) || loc.length !== 3 || loc.some(n => !Number.isInteger(n) || n < 0 || n > 0xffffffff)
-        || loc[1] > loc[2] || !manifest.sources.some(source => source.id === loc[0])) throw Error('无效数据来源');
+        || location(loc).start > location(loc).end || !manifest.sources.some(source => source.id === location(loc).source)) throw Error('无效数据来源');
   };
   const utf8 = text => new TextEncoder().encode(text);
   const compare = (a,b) => {

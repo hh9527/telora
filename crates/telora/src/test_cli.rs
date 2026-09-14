@@ -162,14 +162,8 @@ fn emit_report(
             .iter()
             .map(|label| {
                 let source = sources.get(label.location.source);
-                let start = source
-                    .text()
-                    .position(label.location.start, telora_core::PositionEncoding::Utf8)
-                    .unwrap();
-                let end = source
-                    .text()
-                    .position(label.location.end, telora_core::PositionEncoding::Utf8)
-                    .unwrap();
+                let start = source.utf8_position(label.location.start);
+                let end = source.utf8_position(label.location.end);
                 json!({"source": source.name.as_ref(), "location": {
                 "line": start.line + 1, "column": start.character,
                 "end_line": end.line + 1, "end_column": end.character,

@@ -26,12 +26,8 @@ pub(super) fn convert(
     let location = |words: [u32; 3]| {
         sources
             .files()
-            .find(|file| file.id().get() == words[0])
-            .map(|file| telora_core::Loc {
-                source: file.id(),
-                start: words[1],
-                end: words[2],
-            })
+            .find(|file| file.id().get() == (words[0] & 0xffff))
+            .and_then(|file| file.byte_location(telora_core::source::CompactLoc(words)))
     };
     events
         .into_iter()

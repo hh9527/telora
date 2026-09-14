@@ -59,22 +59,43 @@ fn engine_stops_unbounded_loops_and_allocation() {
 }
 
 #[test]
-fn host_source_index_uses_utf8_byte_columns_without_span_tables() {
-    for text in ["", "ascii\nlast\n", "中文🙂x\r\n下一行\n", "a\rb"] {
+fn packed_sources_are_eol_independent_without_artifact_line_tables() {
+    for eol in ["\n", "\r\n", "\r"] {
+        let text = format!("中文🙂x{eol}next{eol}");
         let mut database = telora_core::SourceDatabase::default();
-        let id = database.add("test", text);
+        let id = database.add("test", &text);
         let file = database.get(id);
         let source = crate::artifact::Source::from_file(file);
-        for offset in 0..=text.len() {
-            let prefix = &text.as_bytes()[..offset];
-            let line = prefix.iter().filter(|&&byte| byte == b'\n').count() + 1;
-            let bol = prefix
-                .iter()
-                .rposition(|&byte| byte == b'\n')
-                .map_or(0, |i| i + 1);
-            assert_eq!(source.position(offset as u32), (line, offset - bol + 1));
-        }
+        let loc = telora_core::Loc::from_usize(id, "中文".len()..text.find("next").unwrap() + 4).unwrap();
+        let packed = file.compact(loc);
+        assert_eq!(source.position(packed.start()), (1, 7));
+        assert_eq!(source.position(packed.end()), (2, 5));
+        assert_eq!(file.byte_location(packed), Some(loc));
+        assert_eq!(serde_json::to_value(source).unwrap(), serde_json::json!({"id": 1, "name": "test"}));
     }
+}
+
+#[test]
+fn compiled_artifact_is_identical_across_line_endings() {
+    let source = "# comment\nexport def answer = fn() {\n    let value = dbg!((\n        42\n    ));\n    fail!(\"same failure\", value)\n};\n";
+    let expected = compile(source).unwrap();
+    for eol in ["\r\n", "\r"] {
+        assert!(compile(&source.replace('\n', eol)).unwrap() == expected, "artifact differs for {eol:?}");
+    }
+}
+
+#[test]
+fn runtime_diagnostics_preserve_high_line_bits() {
+    let source = format!("{}export def answer = fn() {{ fail!(\"high line\", 42) }};", "\n".repeat(300));
+    let bytes = compile(&source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
+    session.initialize().unwrap();
+    assert!(session.call(&[]).is_err());
+    let diagnostics = session.diagnostics().unwrap();
+    let loc = telora_core::source::CompactLoc(diagnostics[0].origin);
+    assert_eq!(loc.start() >> 24, 300);
+    let name = &session.manifest.sources.iter().find(|file| file.id == loc.source()).unwrap().name;
+    assert!(diagnostics[0].render(&session.manifest).starts_with(&format!("{name}:301:")));
 }
 
 #[test]
@@ -147,11 +168,11 @@ fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {
     assert!(diagnostics.iter().all(|d| d.warning));
     assert_eq!(
         result[2]["labels"][1]["location"]["start"],
-        source.find("42").unwrap()
+        point(source, source.find("42").unwrap())
     );
     assert_eq!(
         result[3]["labels"][1]["location"]["start"],
-        source.find("(...original, 3)").unwrap()
+        point(source, source.find("(...original, 3)").unwrap())
     );
 }
 
@@ -458,7 +479,7 @@ fn checks_and_macros_record_one_failure_with_rule_and_subject_origins() {
         assert_eq!(ds[0].subjects.len(), 1);
         assert_ne!(ds[0].origin, ds[0].subjects[0]);
         assert_eq!(
-            &source[ds[0].subjects[0][1] as usize..ds[0].subjects[0][2] as usize],
+            source_slice(source, ds[0].subjects[0]),
             "-7"
         );
         assert!(session.call(&[]).is_err());
@@ -837,4 +858,17 @@ fn language_functions_and_control_flow() {
             "{source}"
         );
     }
+}
+// Expected coordinates for LF-only test assets, independent of the ABI packer.
+fn point(source: &str, byte: usize) -> u64 {
+    let prefix = &source[..byte];
+    let line = prefix.bytes().filter(|&byte| byte == b'\n').count();
+    let column = prefix.rsplit('\n').next().unwrap().len();
+    ((line as u64) << 24) | column as u64
+}
+
+fn source_slice(source: &str, words: [u32; 3]) -> &str {
+    let index = telora_core::source::LineIndex::new(source).unwrap();
+    let loc = telora_core::source::CompactLoc(words);
+    &source[index.byte(loc.start()).unwrap() as usize..index.byte(loc.end()).unwrap() as usize]
 }

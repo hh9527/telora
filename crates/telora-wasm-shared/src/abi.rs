@@ -1,9 +1,10 @@
 //! Shared physical layout; consumed by both codegen and Rust-compiled RT.
-pub const VERSION: u32 = 13;
+pub const VERSION: u32 = 14;
 pub const ENV_RAW_PARENT: u32 = 0x8000_0000;
 pub const HEADER_BYTES: u32 = 16;
 pub const SCALAR_BYTES: u32 = 24;
 pub const FUNCTION_BYTES: u32 = 24;
+// Loc words: [source:u16 | start_hi:u8 | end_hi:u8, start_lo:u32, end_lo:u32].
 pub const SOURCE: u64 = 0;
 pub const START: u64 = 4;
 pub const END: u64 = 8;

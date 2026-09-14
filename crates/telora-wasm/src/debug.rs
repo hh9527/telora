@@ -67,13 +67,14 @@ impl Session {
                 .find(|site| site.node == node)
                 .ok_or("Wasm: unknown debug site")?;
             let value = output.word(pointer + 4)? as u64;
-            let source = self.manifest.sources.iter().find(|source| source.id == site.origin[0])
+            let loc = telora_core::source::CompactLoc(site.origin);
+            let source = self.manifest.sources.iter().find(|source| source.id == loc.source())
                 .ok_or("Wasm: debug site has no source")?;
             events.push(DebugEvent {
                 name: site.name.clone(),
                 repr: output.debug_repr(value)?,
                 module: source.name.clone(),
-                line: source.position(site.origin[1]).0 as u32,
+                line: source.position(loc.start()).0 as u32,
                 message: site.message.clone(),
             });
         }

@@ -11,7 +11,8 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     pub fn render(&self, manifest: &Manifest) -> String {
-        let [source, start, end] = self.origin;
+        let loc = telora_core::source::CompactLoc(self.origin);
+        let (source, start, end) = (loc.source(), loc.start(), loc.end());
         let file = manifest.sources.iter().find(|s| s.id == source);
         match file {
             Some(file) => {

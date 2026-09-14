@@ -12,7 +12,7 @@ fn newtype_projection_uses_its_own_table_and_preserves_payload_origin() {
     session.initialize().unwrap();
     assert_eq!(
         session.call(&[]).unwrap(),
-        serde_json::json!([vec![true; 6], source.find("42;").unwrap()])
+        serde_json::json!([vec![true; 6], point(source, source.find("42;").unwrap())])
     );
 }
 
@@ -63,7 +63,7 @@ fn records_project_and_update_closed_fields_while_dicts_merge_sorted_columns() {
     ] {
         assert_eq!(
             result[index]["labels"][1]["location"]["start"],
-            source.find(text).unwrap(),
+            point(source, source.find(text).unwrap()),
             "{text}"
         );
     }

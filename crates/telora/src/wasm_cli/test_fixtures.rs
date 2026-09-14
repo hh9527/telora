@@ -16,12 +16,8 @@ pub(super) fn diagnostic(message: impl Into<String>, origin: Option<Loc>) -> Dia
 pub(super) fn location(sources: &SourceDatabase, words: [u32; 3]) -> Option<Loc> {
     sources
         .files()
-        .find(|file| file.id().get() == words[0])
-        .map(|file| Loc {
-            source: file.id(),
-            start: words[1],
-            end: words[2],
-        })
+        .find(|file| file.id().get() == (words[0] & 0xffff))
+        .and_then(|file| file.byte_location(telora_core::source::CompactLoc(words)))
 }
 
 pub(super) struct Fixtures<'a, 'b> {

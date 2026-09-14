@@ -15,14 +15,8 @@ use telora_core::{
 
 fn location(mir: &Mir, loc: Location) -> Value {
     let source = mir.sources.get(loc.source);
-    let start = source
-        .text()
-        .position(loc.start, PositionEncoding::Utf8)
-        .expect("HIR position");
-    let end = source
-        .text()
-        .position(loc.end, PositionEncoding::Utf8)
-        .expect("HIR position");
+    let start = source.utf8_position(loc.start);
+    let end = source.utf8_position(loc.end);
     json!({"line": start.line+1, "column": start.character, "end_line": end.line+1, "end_column": end.character})
 }
 
