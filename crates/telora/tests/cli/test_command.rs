@@ -7,16 +7,41 @@ fn test_command(cwd: &Path, name: &str) -> std::process::Output {
 #[test]
 fn test_command_recovers_expected_failures_and_preserves_warnings() {
     let cwd = fixture();
-    fs::write(cwd.join("tests/expectations.telora"),
-        include_str!("../fixtures/test-expectations.telora")).unwrap();
+    fs::write(
+        cwd.join("tests/expectations.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora/tests/fixtures/test-expectations.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let output = test_command(&cwd, "expectations");
-    assert_eq!(output.status.code(), Some(1), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let records = jsonl(&output.stdout);
-    let cases = records.iter().filter(|r| r["record"] == "case").collect::<Vec<_>>();
-    assert_eq!(cases.iter().map(|r| r["status"].as_str().unwrap()).collect::<Vec<_>>(),
-        ["passed", "passed", "failed", "failed", "passed"], "{records:?}");
+    let cases = records
+        .iter()
+        .filter(|r| r["record"] == "case")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        cases
+            .iter()
+            .map(|r| r["status"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["passed", "passed", "failed", "failed", "passed"],
+        "{records:?}"
+    );
     assert_eq!(records.last().unwrap()["aborted"], false);
-    assert!(records.iter().any(|r| r["severity"] == "warning" && r["test"] == "a_expected"));
+    assert!(
+        records
+            .iter()
+            .any(|r| r["severity"] == "warning" && r["test"] == "a_expected")
+    );
     assert!(!records.iter().any(|r| r["message"] == "expected error"));
     assert!(records.iter().any(|r| r["message"] == "actual error"));
     fs::remove_dir_all(cwd).unwrap();
@@ -146,21 +171,33 @@ fn test_command_import_cycles_are_static_and_demand_cycles_fail() {
         )
         .unwrap();
         let output = test_command(&cwd, "t1");
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
         let records = jsonl(&output.stdout);
         assert_eq!(records.last().unwrap()["status"], "ok");
     }
-    fs::write(cwd.join("tests/t1.telora"), r#"
+    fs::write(
+        cwd.join("tests/t1.telora"),
+        r#"
         import "std/test" as test;
         def cycle: Int = cycle;
         export def a_cycle = test.should_ok(fn() { cycle });
         export def healthy = test.should_ok(fn() { 42 });
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
     let output = test_command(&cwd, "t1");
     assert_eq!(output.status.code(), Some(1));
     let records = jsonl(&output.stdout);
-    assert!(records.iter().any(|record| record["message"].as_str()
-        .is_some_and(|message| message.contains("cyclic demand"))), "{records:?}");
+    assert!(
+        records.iter().any(|record| record["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("cyclic demand"))),
+        "{records:?}"
+    );
     assert!(!records.iter().any(|record| record["record"] == "case"));
     assert_eq!(records.last().unwrap()["aborted"], true);
     assert_eq!(records.last().unwrap()["total"], 0);
@@ -360,22 +397,44 @@ fn test_command_expands_fixture_factories_relative_to_their_declaring_module() {
     fs::write(cwd.join("tests/helpers/a.json"), "42").unwrap();
     fs::write(cwd.join("tests/helpers/b.yaml"), "42\n").unwrap();
     fs::write(cwd.join("tests/helpers/c.toml"), "n = 42\n").unwrap();
-    fs::write(cwd.join("tests/helpers/group.telora"), r#"
+    fs::write(
+        cwd.join("tests/helpers/group.telora"),
+        r#"
         import "std/test" as test;
         export def group = test.with_fixtures(["a.json", "b.yaml", "c.toml"], fn(outer) {
             let warning: Option(Int) = warn!("group warning");
             test.with_fixtures(["a.json"], fn(inner) { test.should_ok(fn() { (outer, inner) }) })
         });
-    "#).unwrap();
-    fs::write(cwd.join("tests/main.telora"), "import \"./helpers/group\" {group}; export {group};").unwrap();
+    "#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("tests/main.telora"),
+        "import \"./helpers/group\" {group}; export {group};",
+    )
+    .unwrap();
     let output = test_command(&cwd, "main");
-    assert!(output.status.success(), "{} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     let records = jsonl(&output.stdout);
-    let cases = records.iter().filter(|r| r["record"] == "case").collect::<Vec<_>>();
+    let cases = records
+        .iter()
+        .filter(|r| r["record"] == "case")
+        .collect::<Vec<_>>();
     assert_eq!(cases.len(), 3);
     assert_eq!(cases[2]["fixtures"], serde_json::json!([2, 0]));
     assert_eq!(cases[2]["sources"], serde_json::json!(["c.toml", "a.json"]));
-    assert_eq!(records.iter().filter(|r| r["message"] == "group warning").count(), 3);
+    assert_eq!(
+        records
+            .iter()
+            .filter(|r| r["message"] == "group warning")
+            .count(),
+        3
+    );
     fs::write(cwd.join("tests/helpers/b.yaml"), "[invalid").unwrap();
     let output = test_command(&cwd, "main");
     assert_eq!(output.status.code(), Some(1));
@@ -383,9 +442,18 @@ fn test_command_expands_fixture_factories_relative_to_their_declaring_module() {
     assert_eq!(records.last().unwrap()["passed"], 2);
     assert_eq!(records.last().unwrap()["failed"], 1);
     assert_eq!(records.last().unwrap()["aborted"], false);
-    assert!(records.iter().filter_map(|r| r["labels"].as_array()).flatten().any(|label| {
-        label["source"].as_str().is_some_and(|name| name.starts_with("@test-ctx/") && name.ends_with("/group/1"))
-    }), "{records:?}");
+    assert!(
+        records
+            .iter()
+            .filter_map(|r| r["labels"].as_array())
+            .flatten()
+            .any(|label| {
+                label["source"].as_str().is_some_and(|name| {
+                    name.starts_with("@test-ctx/") && name.ends_with("/group/1")
+                })
+            }),
+        "{records:?}"
+    );
     // Relative paths cannot leave the declaring crate, even through a helper.
     let outside = cwd.with_extension("json");
     fs::write(&outside, "42").unwrap();
@@ -395,7 +463,11 @@ fn test_command_expands_fixture_factories_relative_to_their_declaring_module() {
     "#, outside.file_name().unwrap().to_str().unwrap())).unwrap();
     let output = test_command(&cwd, "main");
     assert_eq!(output.status.code(), Some(1));
-    assert!(jsonl(&output.stdout).iter().any(|record| record["message"] == "fixture path escapes its declaring crate"));
+    assert!(
+        jsonl(&output.stdout)
+            .iter()
+            .any(|record| record["message"] == "fixture path escapes its declaring crate")
+    );
     fs::remove_file(outside).unwrap();
     fs::remove_dir_all(cwd).unwrap();
 }
@@ -405,21 +477,35 @@ fn test_command_reports_all_invalid_data_modules_before_executing_user_code() {
     let cwd = fixture();
     fs::write(cwd.join("tests/bad.json"), "{").unwrap();
     fs::write(cwd.join("tests/bad.yaml"), "[invalid").unwrap();
-    fs::write(cwd.join("tests/main.telora"), r#"
+    fs::write(
+        cwd.join("tests/main.telora"),
+        r#"
         import "std/test" as test;
         import "./bad.json" {data as j};
         import "./bad.yaml" {data as y};
         export def case = dbg!(test.should_ok(fn() { (j, y) }), "must not initialize");
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
     let output = test_command(&cwd, "main");
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stderr.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let records = jsonl(&output.stdout);
     assert_eq!(records.last().unwrap()["total"], 0);
     assert_eq!(records.last().unwrap()["aborted"], true);
     for expected in ["fixture/tests/bad.json", "fixture/tests/bad.yaml"] {
-        assert!(records.iter().filter_map(|record| record["labels"].as_array()).flatten()
-            .any(|label| label["source"] == expected), "{records:?}");
+        assert!(
+            records
+                .iter()
+                .filter_map(|record| record["labels"].as_array())
+                .flatten()
+                .any(|label| label["source"] == expected),
+            "{records:?}"
+        );
     }
     fs::remove_dir_all(cwd).unwrap();
 }

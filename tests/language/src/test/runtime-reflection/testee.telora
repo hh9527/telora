@@ -1,0 +1,47 @@
+import "std/test" as test;
+import "std/codec" as codec;
+import "std/value" {Value};
+import "@src/runtime-support" {equal, all};
+import "@src/test-support" {expect};
+import "./display-by" as p_display_by;
+import "./display.expected.json" {data as expected_display};
+import "./dynamic" as p_dynamic;
+import "./dynamic-fields" as p_dynamic_fields;
+import "./dynamic-fields.expected.json" {data as expected_dynamic_fields};
+import "./dynamic-kind" as p_dynamic_kind;
+import "./dynamic-kind.expected.json" {data as expected_dynamic_kind};
+import "./dynamic-sequences" as p_dynamic_sequences;
+import "./dynamic-sequences.expected.json" {data as expected_dynamic_sequences};
+import "./dynamic-variants" as p_dynamic_variants;
+import "./dynamic-variants.expected.json" {data as expected_dynamic_variants};
+import "./dynamic.expected.json" {data as expected_dynamic};
+import "./reflection" as p_reflection;
+import "./reflection.expected.json" {data as expected_reflection};
+
+export def dynamic_fields = test.should_ok(fn() {
+    equal(p_dynamic_fields.answer, expected_dynamic_fields)
+});
+
+export def dynamic_sequences = test.should_ok(fn() {
+    equal(p_dynamic_sequences.answer, expected_dynamic_sequences)
+});
+
+export def dynamic_kind = test.should_ok(fn() {
+    equal(p_dynamic_kind.answer, expected_dynamic_kind)
+});
+
+export def dynamic_variants = test.should_ok(fn() {
+    equal(p_dynamic_variants.answer, expected_dynamic_variants)
+});
+
+export def reflection = test.should_ok(fn() {
+    equal(p_reflection.answer, expected_reflection)
+});
+
+export def display = test.should_ok(fn() {
+    equal(p_display_by.answer, expected_display)
+});
+
+export def dynamic = test.should_ok(fn() {
+    equal(p_dynamic.answer, expected_dynamic)
+});

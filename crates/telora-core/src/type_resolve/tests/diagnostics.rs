@@ -2,28 +2,59 @@ use super::*;
 
 #[test]
 fn native_value_shapes_are_diagnosed_before_codegen_and_enforced_by_seal() {
-    let mut mir = graph(&[("@src/main", "native value: Int; export { value }; export def independent = 42;")]);
+    let mut mir = graph(&[(
+        "@src/main",
+        "native value: Int; export { value }; export def independent = 42;",
+    )]);
     resolve(&mut mir);
-    assert!(mir.diagnostics.iter().any(|d| d.message == "native declaration requires a function signature"), "{}", mir.dump());
-    assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+    assert!(
+        mir.diagnostics
+            .iter()
+            .any(|d| d.message == "native declaration requires a function signature"),
+        "{}",
+        mir.dump()
+    );
+    assert!(matches!(
+        symbol_type(&mir, "independent"),
+        TypeState::Known(_)
+    ));
     mir.diagnostics.clear();
     assert!(mir.seal().is_err());
 }
 
 #[test]
 fn conflicts_render_both_type_shapes_before_poisoning_the_slots() {
-    let mut mir = graph(&[("@src/main", r#"
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
         def values: Array(Int) = [1];
         export def bad: Bool = values;
         export def independent = 42;
-    "#)]);
+    "#,
+    )]);
     resolve(&mut mir);
-    let conflict = mir.type_conflicts.iter().find(|conflict| conflict.message.contains("cannot unify")).unwrap();
-    assert!(conflict.message.contains("Array<Int>"), "{}", conflict.message);
+    let conflict = mir
+        .type_conflicts
+        .iter()
+        .find(|conflict| conflict.message.contains("cannot unify"))
+        .unwrap();
+    assert!(
+        conflict.message.contains("Array<Int>"),
+        "{}",
+        conflict.message
+    );
     assert!(conflict.message.contains("Bool"), "{}", conflict.message);
     assert!(!conflict.message.contains("SymbolId"));
-    assert!(mir.diagnostics.iter().any(|d| d.message == conflict.message && d.labels.iter().any(|label| Some(label.location) == conflict.location)));
-    assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+    assert!(mir.diagnostics.iter().any(|d| {
+        d.message == conflict.message
+            && d.labels
+                .iter()
+                .any(|label| Some(label.location) == conflict.location)
+    }));
+    assert!(matches!(
+        symbol_type(&mir, "independent"),
+        TypeState::Known(_)
+    ));
     assert!(mir.seal().is_err());
 }
 
@@ -34,7 +65,9 @@ fn diagnostic_type_rendering_is_bounded_and_read_only() {
     let integer = solver.structure(TypeConstructor::Int, vec![]);
     let wide = solver.structure(TypeConstructor::Tuple, vec![integer; 1000]);
     let mut deep = wide;
-    for _ in 0..31 { deep = solver.structure(TypeConstructor::Array, vec![deep]); }
+    for _ in 0..31 {
+        deep = solver.structure(TypeConstructor::Array, vec![deep]);
+    }
     let before = solver.mir.ty_slots.clone();
     let terms = solver.mir.type_terms.len();
     for slot in [wide, deep] {
@@ -49,16 +82,35 @@ fn diagnostic_type_rendering_is_bounded_and_read_only() {
 #[test]
 fn call_arity_diagnostics_use_the_solved_signature() {
     for (source, expected) in [
-        ("def f = fn(a) {a}; export def bad = f(1, 2);", "call expects 1 arguments, found 2"),
-        ("def f: Fn(Int, Int) -> Int = fn(a, b) {a + b}; export def bad = 1 |> f;", "call expects 2 arguments, found 1"),
-        ("type Id = struct(Int); export def bad = Id();", "call expects 1 arguments, found 0"),
-        ("def f: Fn() -> Int = fn() {42}; export def bad = f(1);", "call expects 0 arguments, found 1"),
+        (
+            "def f = fn(a) {a}; export def bad = f(1, 2);",
+            "call expects 1 arguments, found 2",
+        ),
+        (
+            "def f: Fn(Int, Int) -> Int = fn(a, b) {a + b}; export def bad = 1 |> f;",
+            "call expects 2 arguments, found 1",
+        ),
+        (
+            "type Id = struct(Int); export def bad = Id();",
+            "call expects 1 arguments, found 0",
+        ),
+        (
+            "def f: Fn() -> Int = fn() {42}; export def bad = f(1);",
+            "call expects 0 arguments, found 1",
+        ),
     ] {
         let source = format!("{source} export def independent = 42;");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
-        assert!(mir.diagnostics.iter().any(|d| d.message == expected), "{}", mir.dump());
-        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(
+            mir.diagnostics.iter().any(|d| d.message == expected),
+            "{}",
+            mir.dump()
+        );
+        assert!(matches!(
+            symbol_type(&mir, "independent"),
+            TypeState::Known(_)
+        ));
         assert!(mir.seal().is_err());
     }
 }
@@ -76,17 +128,35 @@ fn list_type_constructors_reject_variadic_and_non_list_arguments() {
         let source = format!("type Invalid = {expression}; export def independent = 42;");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
-        assert!(mir.diagnostics.iter().any(|d| d.message.contains(message)), "{expression}\n{}", mir.dump());
-        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(
+            mir.diagnostics.iter().any(|d| d.message.contains(message)),
+            "{expression}\n{}",
+            mir.dump()
+        );
+        assert!(matches!(
+            symbol_type(&mir, "independent"),
+            TypeState::Known(_)
+        ));
         assert!(mir.seal().is_err());
     }
-    let mut mir = graph(&[("@src/main", "import \"std/prelude\" {Tuple as Product}; type Bad = Product(Int, String); export {Bad};")]);
+    let mut mir = graph(&[(
+        "@src/main",
+        "import \"std/prelude\" {Tuple as Product}; type Bad = Product(Int, String); export {Bad};",
+    )]);
     resolve(&mut mir);
-    assert!(mir.diagnostics.iter().any(|d| d.message.contains("expected 1 arguments, got 2")));
+    assert!(
+        mir.diagnostics
+            .iter()
+            .any(|d| d.message.contains("expected 1 arguments, got 2"))
+    );
     assert!(mir.seal().is_err());
-    let mut mir = graph(&[("@src/main", "type Pair = Tuple([Int, String]); type Empty = Tuple([]); type Function = Func([Int], String); export {Pair, Empty, Function};")]);
+    let mut mir = graph(&[(
+        "@src/main",
+        "type Pair = Tuple([Int, String]); type Empty = Tuple([]); type Function = Func([Int], String); export {Pair, Empty, Function};",
+    )]);
     resolve(&mut mir);
-    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    mir.seal()
+        .unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
 }
 
 #[test]
@@ -107,18 +177,39 @@ fn propagation_rejects_wrong_families_and_incompatible_error_evidence() {
 
 #[test]
 fn syntax_recovery_keeps_independent_type_conflicts_without_a_fake_result_obligation() {
-    let mut mir = module_resolve::resolve(vec![ModuleSpec {
-        native: None, name: "main".into(), kind: ModuleKind::Source, implicit_imports: vec![],
-    }], &["main".into()], |_, _| Ok(
+    let mut mir = module_resolve::resolve(
+        vec![ModuleSpec {
+            native: None,
+            name: "main".into(),
+            kind: ModuleKind::Source,
+            implicit_imports: vec![],
+        }],
+        &["main".into()],
+        |_, _| {
+            Ok(
         "export def broken = match A { A 1, _ => 2 }; export def healthy = 42; export def bad = 1 + \"x\";".into()
-    ));
-    assert!(mir.diagnostics.iter().any(|d| d.message == "missing FatArrow"));
+    )
+        },
+    );
+    assert!(
+        mir.diagnostics
+            .iter()
+            .any(|d| d.message == "missing FatArrow")
+    );
     crate::symbol_resolve::resolve(&mut mir);
     resolve(&mut mir);
     assert!(matches!(symbol_type(&mir, "healthy"), TypeState::Known(_)));
     assert!(matches!(symbol_type(&mir, "bad"), TypeState::Conflicted(_)));
-    assert!(mir.diagnostics.iter().any(|d| d.message.contains("cannot unify")));
-    assert!(!mir.diagnostics.iter().any(|d| d.message == "unknown type"), "{}", mir.dump());
+    assert!(
+        mir.diagnostics
+            .iter()
+            .any(|d| d.message.contains("cannot unify"))
+    );
+    assert!(
+        !mir.diagnostics.iter().any(|d| d.message == "unknown type"),
+        "{}",
+        mir.dump()
+    );
     assert!(mir.seal().is_err());
 }
 
@@ -150,7 +241,10 @@ fn retains_independent_conflicts_and_does_not_poison_intrinsic_types() {
 #[test]
 fn unresolved_imports_are_inherited_without_new_type_diagnostics() {
     let mut mir = graph(&[
-        ("@src/main", "import \"@src/other\" {missing}; export def bad = missing; export def good = 42;"),
+        (
+            "@src/main",
+            "import \"@src/other\" {missing}; export def bad = missing; export def good = 42;",
+        ),
         ("@src/other", "export def present = 1;"),
     ]);
     let references = mir.resolve_slots.clone();
@@ -158,7 +252,11 @@ fn unresolved_imports_are_inherited_without_new_type_diagnostics() {
     resolve(&mut mir);
     assert_eq!(references, mir.resolve_slots);
     assert!(matches!(symbol_type(&mir, "bad"), TypeState::Conflicted(_)));
-    assert!(mir.type_conflicts.iter().any(|failure| matches!(failure.resolve_origin, Some(ResolveFailure::Symbol(_)))));
+    assert!(
+        mir.type_conflicts
+            .iter()
+            .any(|failure| matches!(failure.resolve_origin, Some(ResolveFailure::Symbol(_))))
+    );
     assert!(matches!(symbol_type(&mir, "good"), TypeState::Known(_)));
     assert_eq!(mir.diagnostics.len(), diagnostics, "{}", mir.dump());
     assert!(mir.seal().is_err());
@@ -166,16 +264,32 @@ fn unresolved_imports_are_inherited_without_new_type_diagnostics() {
 
 #[test]
 fn unresolved_symbols_remain_authoritative_while_other_slots_are_solved() {
-    let mut mir = graph(&[("@src/main", "def missing = absent; def dependent = [missing.item]; export def good = 1;")]);
+    let mut mir = graph(&[(
+        "@src/main",
+        "def missing = absent; def dependent = [missing.item]; export def good = 1;",
+    )]);
     let references = mir.resolve_slots.clone();
     let diagnostics = mir.diagnostics.len();
     resolve(&mut mir);
     assert_eq!(references, mir.resolve_slots);
-    let TypeState::Conflicted(failure) = symbol_type(&mir, "missing") else { panic!("{}", mir.dump()); };
-    assert!(matches!(mir.type_conflicts[failure.index()].resolve_origin, Some(ResolveFailure::Reference(_))));
-    assert_eq!(symbol_type(&mir, "dependent"), TypeState::Conflicted(failure));
+    let TypeState::Conflicted(failure) = symbol_type(&mir, "missing") else {
+        panic!("{}", mir.dump());
+    };
+    assert!(matches!(
+        mir.type_conflicts[failure.index()].resolve_origin,
+        Some(ResolveFailure::Reference(_))
+    ));
+    assert_eq!(
+        symbol_type(&mir, "dependent"),
+        TypeState::Conflicted(failure)
+    );
     assert!(matches!(symbol_type(&mir, "good"), TypeState::Known(_)));
-    assert_eq!(mir.diagnostics.len(), diagnostics, "the type pass must not repeat the resolve failure: {}", mir.dump());
+    assert_eq!(
+        mir.diagnostics.len(),
+        diagnostics,
+        "the type pass must not repeat the resolve failure: {}",
+        mir.dump()
+    );
     assert!(mir.seal().is_err());
 }
 
@@ -192,7 +306,14 @@ fn diagnostic_macros_accept_the_native_error_identity_without_evaluation() {
         export def text_warning: Option(String) = warn!("bad");
     "#,
         ),
-        ("std/blame", include_str!("../../../modules/std/blame.telora")),
+        (
+            "std/blame",
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../crates/telora-core/modules/std/blame.telora"
+            ))
+            .expect("read test source"),
+        ),
     ]);
     resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);

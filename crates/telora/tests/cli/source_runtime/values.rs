@@ -5,7 +5,11 @@ fn source_debug_events_preserve_order_location_and_result() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../../../tests/runtime/debug.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/debug.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
@@ -38,7 +42,11 @@ fn source_warnings_do_not_block_publication_or_entry_output() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../../../tests/runtime/warnings.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/warnings.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let output = telora(&cwd).args(["check", "@src/main"]).output().unwrap();
@@ -92,7 +100,11 @@ fn source_path_operations_survive_initialization() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../../../tests/runtime/path.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/path.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
@@ -117,7 +129,11 @@ fn source_hash_states_are_persistent_across_initialization_and_entry() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../../../tests/runtime/hash.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/hash.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
@@ -150,11 +166,31 @@ fn source_hash_states_are_persistent_across_initialization_and_entry() {
 fn source_structural_equality_preserves_identity_across_worlds() {
     let cwd = fixture();
     for source in [
-        include_str!("../../../../../tests/runtime/equality.telora"),
-        include_str!("../../../../../tests/runtime/record-spread.telora"),
-        include_str!("../../../../../tests/runtime/sequence-spread.telora"),
-        include_str!("../../../../../tests/runtime/bytes-literal.telora"),
-        include_str!("../../../../../tests/runtime/local-generics.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/equality.telora"
+        ))
+        .expect("read test source"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/record-spread.telora"
+        ))
+        .expect("read test source"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/sequence-spread.telora"
+        ))
+        .expect("read test source"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/bytes-literal.telora"
+        ))
+        .expect("read test source"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/local-generics.telora"
+        ))
+        .expect("read test source"),
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
         for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
@@ -177,7 +213,11 @@ fn source_interpreter_preserves_adapter_identity_across_initialization_and_entry
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../../../tests/runtime/interpreter.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/interpreter.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
@@ -209,7 +249,11 @@ fn source_test_descriptions_initialize_without_running_tests_or_fixtures() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../../../tests/runtime/test-description.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/test-description.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let check = telora(&cwd).args(["check", "@src/main"]).output().unwrap();
@@ -247,8 +291,16 @@ fn source_test_descriptions_initialize_without_running_tests_or_fixtures() {
 fn source_mutual_recursive_closures_survive_initialization_and_entry() {
     let cwd = fixture();
     for source in [
-        include_str!("../../../../../tests/runtime/mutual-recursive-closures.telora"),
-        include_str!("../../../../../tests/runtime/generic-mutual-closures.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/mutual-recursive-closures.telora"
+        ))
+        .expect("read test source"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/generic-mutual-closures.telora"
+        ))
+        .expect("read test source"),
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
         for (command, selector) in [

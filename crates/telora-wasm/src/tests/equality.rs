@@ -2,7 +2,11 @@ use super::*;
 
 #[test]
 fn equality_uses_closed_recursive_layouts_and_function_instance_identity() {
-    let source = include_str!("../../tests/fixtures/equality.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/equality.telora"
+    ))
+    .expect("read test source");
     let bytes = compile_export(source, "checks").unwrap();
     let mut session = crate::session::Session::load(&bytes, 20_000_000).unwrap();
     session.initialize().unwrap();
@@ -13,7 +17,14 @@ fn equality_uses_closed_recursive_layouts_and_function_instance_identity() {
     assert_eq!(checks.as_array().unwrap().len(), 41);
     assert!(session.diagnostics().unwrap().is_empty());
 
-    let bytes = compile(include_str!("../../tests/fixtures/equality-effects.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/equality-effects.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 5_000_000).unwrap();
     session.initialize().unwrap();
     let result = session.call(&[]).unwrap();

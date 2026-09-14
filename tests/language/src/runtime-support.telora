@@ -1,0 +1,17 @@
+import "std/array" as array;
+import "std/value" {Value};
+
+export def equal: Fn(Value, Value) -> Bool = fn(actual, expected) {
+    if actual == expected { True }
+    else { fail!("runtime regression mismatch", actual, expected) }
+};
+
+export def all: Fn(Array(Bool), Int) -> Bool = fn(values, expected_count) {
+    if array.length(values) != expected_count {
+        fail!("unexpected number of runtime checks", values, expected_count)
+    } else {
+        array.fold(values, True, fn(previous, value) {
+            if value { previous } else { fail!("runtime check failed", value) }
+        })
+    }
+};

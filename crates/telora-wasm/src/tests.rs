@@ -9,21 +9,36 @@ mod debug;
 mod dynamic;
 mod equality;
 mod format;
-mod hash;
 mod interpreters;
 mod json;
-mod tail_calls;
 mod records;
 mod reflection;
 mod regex;
-mod test_descriptions;
 mod services;
+mod tail_calls;
+mod test_descriptions;
 
 #[test]
 fn engine_stops_unbounded_loops_and_allocation() {
     for (source, fuel, reason) in [
-        (include_str!("../tests/fixtures/unbounded-loop.telora"), 1_000_000, "fuel"),
-        (include_str!("../tests/fixtures/unbounded-allocation.telora"), 100_000_000, "growth"),
+        (
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../crates/telora-wasm/tests/fixtures/unbounded-loop.telora"
+            ))
+            .expect("read test source"),
+            1_000_000,
+            "fuel",
+        ),
+        (
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../crates/telora-wasm/tests/fixtures/unbounded-allocation.telora"
+            ))
+            .expect("read test source"),
+            100_000_000,
+            "growth",
+        ),
     ] {
         let bytes = compile(source).unwrap();
         let mut session = crate::session::Session::load(&bytes, fuel).unwrap();
@@ -33,7 +48,9 @@ fn engine_stops_unbounded_loops_and_allocation() {
             // does not need to allocate the production limit of 1 GiB.
             let bound = session.memory.data(&session.store).len() + 1024 * 1024;
             *session.store.data_mut() = wasmi::StoreLimitsBuilder::new()
-                .memory_size(bound).trap_on_grow_failure(true).build();
+                .memory_size(bound)
+                .trap_on_grow_failure(true)
+                .build();
         }
         let error = session.call(&[]).unwrap_err();
         assert!(error.contains(reason), "{error}");
@@ -51,7 +68,10 @@ fn host_source_index_uses_utf8_byte_columns_without_span_tables() {
         for offset in 0..=text.len() {
             let prefix = &text.as_bytes()[..offset];
             let line = prefix.iter().filter(|&&byte| byte == b'\n').count() + 1;
-            let bol = prefix.iter().rposition(|&byte| byte == b'\n').map_or(0, |i| i + 1);
+            let bol = prefix
+                .iter()
+                .rposition(|&byte| byte == b'\n')
+                .map_or(0, |i| i + 1);
             assert_eq!(source.position(offset as u32), (line, offset - bol + 1));
         }
     }
@@ -59,7 +79,14 @@ fn host_source_index_uses_utf8_byte_columns_without_span_tables() {
 
 #[test]
 fn runtime_gap_regressions_keep_closed_calls_and_language_failures() {
-    let bytes = compile(include_str!("../tests/fixtures/runtime-gaps.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/runtime-gaps.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(
@@ -76,26 +103,15 @@ fn runtime_gap_regressions_keep_closed_calls_and_language_failures() {
 }
 
 #[test]
-fn local_generic_instances_capture_per_activation_and_support_recursion() {
-    let bytes = compile(include_str!("../tests/fixtures/local-generics.telora")).unwrap();
-    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
-    session.initialize().unwrap();
-    assert_eq!(
-        session.eval().unwrap(),
-        serde_json::json!([true, true, true, true, true])
-    );
-    let bytes = compile(include_str!(
-        "../tests/fixtures/local-generic-declaration.telora"
-    ))
-    .unwrap();
-    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
-    session.initialize().unwrap();
-    assert_eq!(session.eval().unwrap(), serde_json::json!(true));
-}
-
-#[test]
 fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {
-    let bytes = compile(include_str!("../tests/fixtures/sequences.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/sequences.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(
@@ -106,7 +122,11 @@ fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {
             [{"value":42}], [1,2,3], [1,{"value":2},"hi"], 42, 2
         ])
     );
-    let source = include_str!("../tests/fixtures/sequence-origins.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/sequence-origins.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
@@ -136,29 +156,15 @@ fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {
 }
 
 #[test]
-fn paths_are_lexical_and_independent_of_the_host_platform() {
-    let bytes = compile_export(include_str!("../tests/fixtures/path.telora"), "inspect").unwrap();
-    let mut session = crate::session::Session::load(&bytes, 5_000_000).unwrap();
-    session.initialize().unwrap();
-    for (input, expected) in [
-        ("", serde_json::json!([".", null, null])),
-        ("/../../a", serde_json::json!(["/a", "/", "a"])),
-        ("a/../../..", serde_json::json!(["../..", "..", ".."])),
-        ("/a/../../..", serde_json::json!(["/", null, null])),
-        (
-            "目录/🦀/../文件",
-            serde_json::json!(["目录/文件", "目录", "文件"]),
-        ),
-        ("a\\b", serde_json::json!(["a\\b", ".", "a\\b"])),
-    ] {
-        assert_eq!(session.call(&[serde_json::json!(input)]).unwrap(), expected);
-    }
-    assert!(session.diagnostics().unwrap().is_empty());
-}
-
-#[test]
 fn string_operations_preserve_unicode_and_line_semantics() {
-    let bytes = compile(include_str!("../tests/fixtures/string-ops.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/string-ops.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(
@@ -192,7 +198,14 @@ fn string_operations_preserve_unicode_and_line_semantics() {
 
 #[test]
 fn dictionary_operations_use_sorted_columns_and_closed_callbacks() {
-    let bytes = compile(include_str!("../tests/fixtures/dict-ops.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/dict-ops.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 5_000_000).unwrap();
     session.initialize().unwrap();
     let value = session.call(&[]).unwrap();
@@ -216,7 +229,11 @@ fn dictionary_operations_use_sorted_columns_and_closed_callbacks() {
             .all(|d| d.warning && d.message == "visited")
     );
     let bytes = compile_export(
-        include_str!("../tests/fixtures/dict-ops.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/dict-ops.telora"
+        ))
+        .expect("read test source"),
         "sort_input",
     )
     .unwrap();
@@ -241,7 +258,14 @@ fn dictionary_operations_use_sorted_columns_and_closed_callbacks() {
 
 #[test]
 fn diagnostic_scopes_capture_reports_and_resume_outer_execution() {
-    let bytes = compile(include_str!("../tests/fixtures/capture.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/capture.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
     let value = session.call(&[]).unwrap();
@@ -268,7 +292,11 @@ fn diagnostic_scopes_capture_reports_and_resume_outer_execution() {
     assert_eq!(value[5], 42);
     assert!(session.diagnostics().unwrap().is_empty());
     assert_eq!(session.call(&[]).unwrap(), value);
-    let source = include_str!("../tests/fixtures/capture.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/capture.telora"
+    ))
+    .expect("read test source");
     let bytes = compile_export(source, "uncaught").unwrap();
     let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
     session.initialize().unwrap();
@@ -292,7 +320,14 @@ fn diagnostic_scopes_capture_reports_and_resume_outer_execution() {
 
 #[test]
 fn array_callbacks_execute_in_wasm_with_closed_element_types() {
-    let bytes = compile(include_str!("../tests/fixtures/array-ops.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/array-ops.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(
@@ -348,7 +383,14 @@ fn graph(source: &str) -> Mir {
 
 #[test]
 fn enums_patterns_and_propagation_use_full_prelude() {
-    let bytes = compile(include_str!("../tests/fixtures/enums.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/enums.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(
@@ -359,7 +401,14 @@ fn enums_patterns_and_propagation_use_full_prelude() {
 
 #[test]
 fn properties_reduce_and_query_inside_wasm() {
-    let bytes = compile(include_str!("../tests/fixtures/properties.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/properties.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(session.eval().unwrap(), serde_json::json!([42, "amount"]));
@@ -367,9 +416,13 @@ fn properties_reduce_and_query_inside_wasm() {
 
 #[test]
 fn construction_checks_run_sealed_generic_checkers() {
-    let bytes = compile(include_str!(
-        "../../../tests/runtime/construction-checks.telora"
-    ))
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/construction-checks.telora"
+        ))
+        .expect("read test source"),
+    )
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     session.initialize().unwrap();
@@ -382,7 +435,11 @@ fn construction_checks_run_sealed_generic_checkers() {
 
 #[test]
 fn checks_and_macros_record_one_failure_with_rule_and_subject_origins() {
-    let source = include_str!("../tests/fixtures/check-diagnostics.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/check-diagnostics.telora"
+    ))
+    .expect("read test source");
     for (name, message) in [
         ("rejected", "positive required"),
         ("raised", "raised message"),
@@ -424,7 +481,11 @@ fn checks_and_macros_record_one_failure_with_rule_and_subject_origins() {
 
 #[test]
 fn semantic_value_contract_survives_artifact_reload() {
-    let source = include_str!("../tests/fixtures/semantic-value.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/semantic-value.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     assert_eq!(
@@ -445,7 +506,13 @@ fn semantic_value_contract_survives_artifact_reload() {
 
 #[test]
 fn data_injection_precedes_property_initialization_and_is_single_use() {
-    let mir = graph(include_str!("../tests/fixtures/entry.telora"));
+    let mir = graph(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/entry.telora"
+        ))
+        .expect("read test source"),
+    );
     let export = mir
         .exports
         .iter()
@@ -519,7 +586,11 @@ fn compile_export(source: &str, name: &str) -> Result<Vec<u8>, String> {
 
 #[test]
 fn persistent_source_positions_and_terminal_initialization_failure() {
-    let source = include_str!("../tests/fixtures/arithmetic-errors.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/arithmetic-errors.telora"
+    ))
+    .expect("read test source");
     for name in [
         "add",
         "subtract",
@@ -611,8 +682,11 @@ fn sealed_export_runs_without_mir_or_host_imports() {
     // compile() drops the entire source/MIR before the engine sees the bytes.
     let bytes = compile("export def answer = 42;").unwrap();
     assert_eq!(bytes, compile("export def answer = 42;").unwrap());
-    assert!(bytes.windows(b"|owner=answer|role=demand|hir=".len())
-        .any(|window| window == b"|owner=answer|role=demand|hir="));
+    assert!(
+        bytes
+            .windows(b"|owner=answer|role=demand|hir=".len())
+            .any(|window| window == b"|owner=answer|role=demand|hir=")
+    );
     let engine = wasmi::Engine::default();
     let module = wasmi::Module::new(&engine, &bytes[..]).unwrap();
     assert_eq!(module.imports().count(), 0);
@@ -637,7 +711,14 @@ fn sealed_export_runs_without_mir_or_host_imports() {
 
 #[test]
 fn aggregates_use_closed_layouts_and_classified_heap_tables() {
-    let bytes = compile(include_str!("../tests/fixtures/aggregates.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/aggregates.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(
@@ -651,7 +732,14 @@ fn aggregates_use_closed_layouts_and_classified_heap_tables() {
 
 #[test]
 fn dictionaries_are_sorted_columns_and_use_binary_search() {
-    let bytes = compile(include_str!("../tests/fixtures/dictionaries.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/dictionaries.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(
@@ -664,7 +752,14 @@ fn dictionaries_are_sorted_columns_and_use_binary_search() {
 
 #[test]
 fn typed_input_and_post_initialization_calls_keep_main_ids() {
-    let bytes = compile(include_str!("../tests/fixtures/call-input.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/call-input.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
     let before = session.memory.data(&session.store)
@@ -701,9 +796,21 @@ fn typed_input_and_post_initialization_calls_keep_main_ids() {
 #[test]
 fn language_functions_and_control_flow() {
     for source in [
-        include_str!("../tests/fixtures/functions.telora"),
-        include_str!("../tests/fixtures/local-recursion.telora"),
-        include_str!("../tests/fixtures/short-circuit.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/functions.telora"
+        ))
+        .expect("read test source"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/local-recursion.telora"
+        ))
+        .expect("read test source"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/short-circuit.telora"
+        ))
+        .expect("read test source"),
     ] {
         let bytes = compile(source).unwrap();
         let engine = wasmi::Engine::default();

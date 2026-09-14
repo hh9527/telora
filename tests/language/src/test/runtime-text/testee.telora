@@ -1,0 +1,70 @@
+import "std/test" as test;
+import "./path" as p_path;
+
+export def path_lexical = test.should_ok(fn() {
+    expect(p_path.inspect("") == (".", None, None)
+        && p_path.inspect("/../../a") == ("/a", Some("/"), Some("a"))
+        && p_path.inspect("a/../../..") == ("../..", Some(".."), Some(".."))
+        && p_path.inspect("/a/../../..") == ("/", None, None)
+        && p_path.inspect("目录/🦀/../文件") == ("目录/文件", Some("目录"), Some("文件"))
+        && p_path.inspect("a\\b") == ("a\\b", Some("."), Some("a\\b")))
+});
+
+export def path_join = test.should_ok(fn() {
+    match p_path.answer {
+        Value.Object(fields) => equal(fields.joins, codec.encode(Value.type,
+            [".", ".", "a/b", "b", "/root/b", "/", "../b", "目录/文件"])),
+        _ => fail!("expected path object")
+    }
+});
+import "std/codec" as codec;
+import "std/value" {Value};
+import "@src/runtime-support" {equal, all};
+import "@src/test-support" {expect};
+import "./format-equality" as p_format_equality;
+import "./format-equality.expected.json" {data as expected_format_equality};
+import "./hash" as p_hash;
+import "./hash.expected.json" {data as expected_hash};
+import "./regex" as p_regex;
+import "./regex-prepare" as p_regex_prepare;
+import "./regex-prepare.expected.json" {data as expected_regex_prepare};
+import "./regex.expected.json" {data as expected_regex};
+import "./string-parse" as p_string_parse;
+import "./string-parse-record" as p_string_parse_record;
+import "./string-parse-record.expected.json" {data as expected_string_parse_record};
+import "./string-parse.expected.json" {data as expected_string_parse};
+
+export def hash = test.should_ok(fn() {
+    equal(p_hash.answer, expected_hash)
+});
+
+export def string_parse_record = test.should_ok(fn() {
+    equal(p_string_parse_record.answer, expected_string_parse_record)
+});
+
+export def regex_prepare = test.should_ok(fn() {
+    equal(p_regex_prepare.answer, expected_regex_prepare)
+});
+
+export def string_parse = test.should_ok(fn() {
+    equal(p_string_parse.answer, expected_string_parse)
+});
+
+export def regex = test.should_ok(fn() {
+    equal(p_regex.answer, expected_regex)
+});
+
+export def format_equality = test.should_ok(fn() {
+    equal(p_format_equality.answer, expected_format_equality)
+});
+
+export def format_deep_equality = test.should_ok(fn() {
+    all(p_format_equality.deep_checks(), 2)
+});
+
+export def hash_repeated_calls = test.should_ok(fn() {
+    let first = all(p_hash.checks(), 12);
+    let second = all(p_hash.checks(), 12);
+    let third = all(p_hash.checks(), 12);
+    expect(first && second && third)
+});

@@ -1,0 +1,81 @@
+import "std/test" as test;
+import "std/codec" as codec;
+import "std/value" {Value};
+import "@src/runtime-support" {equal, all};
+import "./codec-builtins" as p_codec_builtins;
+import "./codec-builtins.expected.json" {data as expected_codec_builtins};
+import "./codec-collections.expected.json" {data as expected_codec_collections};
+import "./codec-decode-enum" as p_codec_decode_enum;
+import "./codec-decode-enum.expected.json" {data as expected_codec_decode_enum};
+import "./codec-decode-nominal" as p_codec_decode_nominal;
+import "./codec-decode-nominal.expected.json" {data as expected_codec_decode_nominal};
+import "./codec-decode-scalars" as p_codec_decode_scalars;
+import "./codec-decode-scalars.expected.json" {data as expected_codec_decode_scalars};
+import "./codec-decode-tuples" as p_codec_decode_tuples;
+import "./codec-decode-tuples.expected.json" {data as expected_codec_decode_tuples};
+import "./codec-display" as p_codec_display;
+import "./codec-display.expected.json" {data as expected_codec_display};
+import "./codec-enum" as p_codec_enum;
+import "./codec-enum-all.expected.json" {data as expected_codec_enum_all};
+import "./codec-enum-rename" as p_codec_enum_rename;
+import "./codec-enum-rename.expected.json" {data as expected_codec_enum_rename};
+import "./codec-enum.expected.json" {data as expected_codec_enum};
+import "./codec-newtype" as p_codec_newtype;
+import "./codec-newtype.expected.json" {data as expected_codec_newtype};
+import "./codec-rename" as p_codec_rename;
+import "./codec-rename.expected.json" {data as expected_codec_rename};
+import "./codec-scalars" as p_codec_scalars;
+import "./codec-untagged" as p_codec_untagged;
+import "./codec-untagged.expected.json" {data as expected_codec_untagged};
+
+export def codec_decode_enum = test.should_ok(fn() {
+    equal(p_codec_decode_enum.answer, expected_codec_decode_enum)
+});
+
+export def codec_decode_nominal = test.should_ok(fn() {
+    equal(p_codec_decode_nominal.answer, expected_codec_decode_nominal)
+});
+
+export def codec_decode_tuples = test.should_ok(fn() {
+    equal(p_codec_decode_tuples.answer, expected_codec_decode_tuples)
+});
+
+export def codec_decode_scalars = test.should_ok(fn() {
+    equal(p_codec_decode_scalars.answer, expected_codec_decode_scalars)
+});
+
+export def codec_display = test.should_ok(fn() {
+    equal(p_codec_display.answer, expected_codec_display)
+});
+
+export def codec_untagged = test.should_ok(fn() {
+    equal(p_codec_untagged.answer, expected_codec_untagged)
+});
+
+export def codec_enum_rename = test.should_ok(fn() {
+    equal(p_codec_enum_rename.answer, expected_codec_enum_rename)
+});
+
+export def codec_rename = test.should_ok(fn() {
+    equal(p_codec_rename.answer, expected_codec_rename)
+});
+
+export def codec_newtype = test.should_ok(fn() {
+    equal(p_codec_newtype.answer, expected_codec_newtype)
+});
+
+export def codec_enum = test.should_ok(fn() {
+    equal(p_codec_enum.answer, expected_codec_enum)
+});
+
+export def codec_collections = test.should_ok(fn() {
+    equal(p_codec_scalars.answer, expected_codec_collections)
+});
+
+export def codec_builtins = test.should_ok(fn() {
+    equal(p_codec_builtins.answer, expected_codec_builtins)
+});
+
+export def codec_enum_all = test.should_ok(fn() {
+    equal(codec.encode(Value.type, p_codec_enum.inspect()), expected_codec_enum_all)
+});

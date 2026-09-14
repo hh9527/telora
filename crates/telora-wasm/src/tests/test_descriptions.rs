@@ -3,7 +3,14 @@ use super::*;
 #[test]
 fn test_boundary_recovers_language_failures_but_never_traps() {
     use crate::testing::{Description, TestSession};
-    let bytes = compile(include_str!("../../tests/fixtures/test-execution.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/test-execution.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     session.initialize().unwrap();
     let mut testing = TestSession::new(session).unwrap();
@@ -93,7 +100,11 @@ fn test_boundary_recovers_language_failures_but_never_traps() {
 
 #[test]
 fn test_descriptions_preserve_identity_and_defer_callbacks() {
-    let source = include_str!("../../tests/fixtures/test-descriptions.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/language/src/test/runtime-language/test-descriptions.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     session.initialize().unwrap();
@@ -138,7 +149,11 @@ fn test_descriptions_preserve_identity_and_defer_callbacks() {
 
 #[test]
 fn test_description_rejects_empty_expectation_before_callback() {
-    let source = include_str!("../../tests/fixtures/test-description-empty.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/test-description-empty.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     let failure = session.initialize().unwrap_err();

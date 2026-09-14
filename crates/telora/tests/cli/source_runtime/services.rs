@@ -8,7 +8,11 @@ fn ees_source_records_follow_live_values_and_reuse_host_slots() {
     rusqlite::Connection::open(data.join("catalog.sqlite")).unwrap();
     fs::write(
         cwd.join("src/app.telora"),
-        include_str!("../../../../../tests/runtime/ees-source-lifetime.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/ees-source-lifetime.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let output = telora(&cwd)
@@ -47,7 +51,11 @@ fn source_service_processes_many_events_and_discards_output_on_protocol_failure(
     let cwd = fixture();
     fs::write(
         cwd.join("src/app.telora"),
-        include_str!("../../../../../tests/runtime/service-entry.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/service-entry.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let mut child = telora(&cwd)
@@ -109,7 +117,11 @@ fn source_services_keep_state_across_collection_and_recover_language_failures() 
     let cwd = fixture();
     fs::write(
         cwd.join("src/app.telora"),
-        include_str!("../../../../../tests/runtime/service-entry.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/service-entry.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     {

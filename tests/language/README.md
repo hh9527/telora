@@ -21,6 +21,24 @@ The mode selects the public Telora command used to observe the testee:
 
 ## Writing runtime tests
 
+Prefer independent `.telora` tests for language behavior, including codecs,
+reflection, text operations, and generic functions. Rust tests should focus on
+compiler structures, Wasm ABI, Host interactions, GC, and precise diagnostic
+origins. When a Rust test needs source fixtures, read them at runtime with
+`std::fs::read_to_string`; do not embed test assets with `include_str!` or
+`include_bytes!`. Bundling the production standard library is unrelated.
+
+After building the CLI once, source and expectation changes need no Cargo build:
+
+```sh
+TELORA_BIN="$PWD/target/release/telora" bash scripts/test-language.sh
+```
+
+The `runtime-*` groups keep migrated Wasm/CLI assertions alongside their source
+modules. JSON expectations are checked in explicitly; never regenerate them
+from the implementation's current output. `runtime-support.all` also checks
+the number of boolean results to prevent an empty or shortened result passing.
+
 Group related cases in one testee and give each export a descriptive name:
 
 ```telora

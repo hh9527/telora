@@ -12,7 +12,11 @@ fn graph(sources: &[(&str, &str)]) -> Mir {
     if !sources.iter().any(|(name, _)| *name == "std/prelude") {
         sources.push((
             "std/prelude",
-            include_str!("../../modules/std/prelude.telora"),
+            crate::static_sources::BUILTINS
+                .iter()
+                .find(|(name, _)| *name == "std/prelude")
+                .unwrap()
+                .1,
         ));
     }
     let inventory = sources

@@ -2,7 +2,11 @@ use super::*;
 
 #[test]
 fn newtype_projection_uses_its_own_table_and_preserves_payload_origin() {
-    let source = include_str!("../../tests/fixtures/newtype-projection.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/newtype-projection.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
@@ -14,7 +18,11 @@ fn newtype_projection_uses_its_own_table_and_preserves_payload_origin() {
 
 #[test]
 fn records_project_and_update_closed_fields_while_dicts_merge_sorted_columns() {
-    let source = include_str!("../../tests/fixtures/records.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/records.telora"
+    ))
+    .expect("read test source");
     let bytes = compile_export(source, "inspect").unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
@@ -33,7 +41,11 @@ fn records_project_and_update_closed_fields_while_dicts_merge_sorted_columns() {
     );
     assert!(session.diagnostics().unwrap().is_empty());
 
-    let source = include_str!("../../tests/fixtures/record-origins.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/record-origins.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();

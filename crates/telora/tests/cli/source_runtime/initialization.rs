@@ -5,7 +5,11 @@ fn source_check_obeys_phase_boundaries_and_preserves_failure_location() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../../../tests/runtime/generic-initialization.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/generic-initialization.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let output = telora(&cwd).args(["check", "--lib"]).output().unwrap();
@@ -40,12 +44,20 @@ fn source_check_obeys_phase_boundaries_and_preserves_failure_location() {
     assert_eq!(failures[0]["labels"][0]["location"]["line"], 1);
     for (source, message, line) in [
         (
-            include_str!("../../../../../tests/runtime/function-before-initialization.telora"),
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/runtime/function-before-initialization.telora"
+            ))
+            .expect("read test source"),
             "before its declaration",
             3,
         ),
         (
-            include_str!("../../../../../tests/runtime/function-alias-before-initialization.telora"),
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/runtime/function-alias-before-initialization.telora"
+            ))
+            .expect("read test source"),
             "uninitialized function",
             2,
         ),
@@ -71,7 +83,11 @@ fn source_check_obeys_phase_boundaries_and_preserves_failure_location() {
     }
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../../../tests/runtime/failure-subjects.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/failure-subjects.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let output = telora(&cwd).args(["check", "--lib"]).output().unwrap();

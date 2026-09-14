@@ -3,7 +3,11 @@ use super::*;
 #[test]
 fn string_parse_constructs_nested_and_recursive_sealed_records() {
     let bytes = compile_export(
-        include_str!("../../tests/fixtures/string-parse-record.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/language/src/test/runtime-text/string-parse-record.telora"
+        ))
+        .expect("read test source"),
         "checks",
     )
     .unwrap();
@@ -11,7 +15,11 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
     session.initialize().unwrap();
     assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 8]));
     assert!(session.diagnostics().unwrap().is_empty());
-    let source = include_str!("../../tests/fixtures/string-parse-record-effects.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/string-parse-record-effects.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
@@ -37,7 +45,11 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
 #[test]
 fn regex_prepare_validates_sealed_capture_contracts() {
     let bytes = compile_export(
-        include_str!("../../tests/fixtures/regex-prepare.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/language/src/test/runtime-text/regex-prepare.telora"
+        ))
+        .expect("read test source"),
         "checks",
     )
     .unwrap();
@@ -47,9 +59,13 @@ fn regex_prepare_validates_sealed_capture_contracts() {
         session.call(&[]).unwrap(),
         serde_json::json!([true, true, true, true, true])
     );
-    let bytes = compile(include_str!(
-        "../../tests/fixtures/regex-prepare-errors.telora"
-    ))
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/regex-prepare-errors.telora"
+        ))
+        .expect("read test source"),
+    )
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
@@ -69,7 +85,11 @@ fn regex_prepare_validates_sealed_capture_contracts() {
 #[test]
 fn string_parse_uses_closed_scalar_and_option_targets() {
     let bytes = compile_export(
-        include_str!("../../tests/fixtures/string-parse.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/language/src/test/runtime-text/string-parse.telora"
+        ))
+        .expect("read test source"),
         "checks",
     )
     .unwrap();
@@ -80,7 +100,11 @@ fn string_parse_uses_closed_scalar_and_option_targets() {
         serde_json::json!(vec![true; 13])
     );
     assert!(session.diagnostics().unwrap().is_empty());
-    let source = include_str!("../../tests/fixtures/string-parse-origins.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/string-parse-origins.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
@@ -93,7 +117,11 @@ fn string_parse_uses_closed_scalar_and_option_targets() {
 
 #[test]
 fn regex_errors_are_language_diagnostics_and_leave_the_session_usable() {
-    let source = include_str!("../../tests/fixtures/regex-errors.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/regex-errors.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 50_000_000).unwrap();
     session.initialize().unwrap();
@@ -115,19 +143,6 @@ fn regex_errors_are_language_diagnostics_and_leave_the_session_usable() {
     assert_eq!(
         result[0]["labels"][1]["location"]["start"],
         source.find("\"[\"").unwrap()
-    );
-    assert!(session.diagnostics().unwrap().is_empty());
-}
-
-#[test]
-fn regex_compiles_and_matches_in_the_linked_rust_runtime() {
-    let bytes =
-        compile_export(include_str!("../../tests/fixtures/regex.telora"), "checks").unwrap();
-    let mut session = crate::session::Session::load(&bytes, 50_000_000).unwrap();
-    session.initialize().unwrap();
-    assert_eq!(
-        session.call(&[]).unwrap(),
-        serde_json::json!(vec![true; 10])
     );
     assert!(session.diagnostics().unwrap().is_empty());
 }

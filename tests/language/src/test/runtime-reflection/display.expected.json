@@ -1,0 +1,7 @@
+[
+   "localhost:8080",
+   "localhost:8080",
+   "api@localhost:8080 {ready} -0 api",
+   "endpoint=explicit(localhost:8080)",
+   "absent"
+]

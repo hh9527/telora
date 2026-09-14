@@ -1,29 +1,6 @@
 use super::*;
 
 #[test]
-fn format_equality_compares_structure_and_float_bits() {
-    let bytes = compile_export(
-        include_str!("../../tests/fixtures/format-equality.telora"),
-        "checks",
-    )
-    .unwrap();
-    let mut session = crate::session::Session::load(&bytes, 20_000_000).unwrap();
-    session.initialize().unwrap();
-    assert_eq!(
-        session.call(&[]).unwrap(),
-        serde_json::json!(vec![true; 13])
-    );
-    let bytes = compile_export(
-        include_str!("../../tests/fixtures/format-equality.telora"),
-        "deep_checks",
-    )
-    .unwrap();
-    let mut session = crate::session::Session::load(&bytes, 20_000_000).unwrap();
-    session.initialize().unwrap();
-    assert_eq!(session.call(&[]).unwrap(), serde_json::json!([true, true]));
-}
-
-#[test]
 fn private_template_primitive_uses_the_admitted_native_identity() {
     // Select the private declaration directly as a sealed test root, without
     // exposing it through std/fmt's public exports or changing module privacy.
@@ -92,7 +69,11 @@ fn private_template_primitive_uses_the_admitted_native_identity() {
 #[test]
 fn format_nodes_and_interpolation_use_fixed_rust_rt_operations() {
     let bytes = compile_export(
-        include_str!("../../tests/fixtures/format.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/format.telora"
+        ))
+        .expect("read test source"),
         "inspect",
     )
     .unwrap();
@@ -117,7 +98,14 @@ fn format_nodes_and_interpolation_use_fixed_rust_rt_operations() {
     assert_eq!(session.call(&[]).unwrap(), expected);
     assert!(session.diagnostics().unwrap().is_empty());
 
-    let bytes = compile(include_str!("../../tests/fixtures/format-effects.telora")).unwrap();
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/format-effects.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = crate::session::Session::load(&bytes, 20_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(

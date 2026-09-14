@@ -3,7 +3,11 @@ use super::*;
 #[test]
 fn dyn_array_observation_honors_the_abi_slice_range() {
     let bytes = compile_export(
-        include_str!("../../tests/fixtures/dynamic-sequences.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/language/src/test/runtime-reflection/dynamic-sequences.telora"
+        ))
+        .expect("read test source"),
         "inspect",
     )
     .unwrap();
@@ -45,7 +49,11 @@ fn dyn_array_observation_honors_the_abi_slice_range() {
 #[test]
 fn dynamic_projection_uses_exact_type_ids_and_shared_box_identity() {
     let bytes = compile_export(
-        include_str!("../../tests/fixtures/dynamic.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/language/src/test/runtime-reflection/dynamic.telora"
+        ))
+        .expect("read test source"),
         "checks",
     )
     .unwrap();

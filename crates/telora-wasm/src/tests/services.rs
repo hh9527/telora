@@ -4,7 +4,13 @@ use telora_core::{entry_plan, mir::TypeState};
 #[test]
 fn collection_keeps_blame_sources_and_releases_unreachable_input_sources() {
     use telora_core::data_plan::{Format, parse_registered};
-    let mir = super::graph(include_str!("../../tests/fixtures/retained-source.telora"));
+    let mir = super::graph(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/retained-source.telora"
+        ))
+        .expect("read test source"),
+    );
     let symbol = *mir
         .exports
         .iter()
@@ -64,9 +70,13 @@ fn collection_keeps_blame_sources_and_releases_unreachable_input_sources() {
 
 #[test]
 fn collection_retains_growing_service_state_and_reclaims_it_after_reset() {
-    let mir = super::graph(include_str!(
-        "../../tests/fixtures/service-growing-state.telora"
-    ));
+    let mir = super::graph(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/service-growing-state.telora"
+        ))
+        .expect("read test source"),
+    );
     let symbol = *mir
         .exports
         .iter()
@@ -124,7 +134,14 @@ fn collection_retains_growing_service_state_and_reclaims_it_after_reset() {
 
 #[test]
 fn collection_preserves_shared_graphs_resources_and_interpreter_cycles() {
-    let bytes = super::compile(include_str!("../../tests/fixtures/collection.telora")).unwrap();
+    let bytes = super::compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/collection.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
     let mut session = Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
     let factory = crate::transport::Value {
@@ -166,7 +183,13 @@ fn collection_preserves_shared_graphs_resources_and_interpreter_cycles() {
 
 #[test]
 fn service_keeps_state_and_fuel_and_stops_after_failure() {
-    let mir = super::graph(include_str!("../../tests/fixtures/service-state.telora"));
+    let mir = super::graph(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/service-state.telora"
+        ))
+        .expect("read test source"),
+    );
     let symbol = *mir
         .exports
         .iter()

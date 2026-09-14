@@ -7,6 +7,14 @@ soft_limit=1500
 hard_limit=2500
 failed=0
 
+# Only bundled standard-library sources belong in the Rust binary. Test assets
+# must be read at runtime so editing them does not invalidate Cargo compilation.
+if rg -n 'include_str!|include_bytes!' "$repo_root/crates" --glob '*.rs' \
+    | rg '(/tests/|/tests\.rs:)'; then
+    echo 'error: test modules must read external fixtures at runtime'
+    failed=1
+fi
+
 baseline_limit() {
     awk -v target="$1" '$1 == target { print $2 }' "$baseline_file"
 }

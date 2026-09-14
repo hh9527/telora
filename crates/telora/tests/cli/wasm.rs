@@ -1,215 +1,15 @@
 use super::*;
 
 #[test]
-fn wasm_reflection_and_display_properties_produce_expected_values() {
-    let cwd = fixture();
-    for (name, source, expected) in [
-        (
-            "local-generics",
-            include_str!("../../../telora-wasm/tests/fixtures/local-generics.telora"),
-            serde_json::json!(vec![true; 5]),
-        ),
-        (
-            "test-descriptions",
-            include_str!("../../../telora-wasm/tests/fixtures/test-descriptions.telora"),
-            serde_json::json!(vec![true; 5]),
-        ),
-        (
-            "yaml-parse",
-            include_str!("../../../telora-wasm/tests/fixtures/yaml-parse.telora"),
-            serde_json::json!(vec![true; 15]),
-        ),
-        (
-            "toml-parse",
-            include_str!("../../../telora-wasm/tests/fixtures/toml-parse.telora"),
-            serde_json::json!(vec![true; 9]),
-        ),
-        (
-            "codec-decode-enum",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-decode-enum.telora"),
-            serde_json::json!(vec![true; 17]),
-        ),
-        (
-            "codec-decode-nominal",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-decode-nominal.telora"),
-            serde_json::json!(vec![true; 12]),
-        ),
-        (
-            "codec-decode-tuples",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-decode-tuples.telora"),
-            serde_json::json!(vec![true; 7]),
-        ),
-        (
-            "codec-decode-scalars",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-decode-scalars.telora"),
-            serde_json::json!(vec![true; 15]),
-        ),
-        (
-            "codec-display",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-display.telora"),
-            serde_json::json!("localhost:8080"),
-        ),
-        (
-            "codec-untagged",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-untagged.telora"),
-            serde_json::json!([null, 7, "x"]),
-        ),
-        (
-            "codec-enum-rename",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-enum-rename.telora"),
-            serde_json::json!(["noValue",{"hasValue":42}]),
-        ),
-        (
-            "codec-rename",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-rename.telora"),
-            serde_json::json!({"aValue":"text","zValue":7}),
-        ),
-        (
-            "codec-newtype",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-newtype.telora"),
-            serde_json::json!([1, 2]),
-        ),
-        (
-            "codec-enum",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-enum.telora"),
-            serde_json::json!(["Empty",{"Child":{"Number":42}},"Empty"]),
-        ),
-        (
-            "codec-collections",
-            include_str!("../../../telora-wasm/tests/fixtures/codec-scalars.telora"),
-            serde_json::json!(vec![true; 18]),
-        ),
-        (
-            "json-parse",
-            include_str!("../../../telora-wasm/tests/fixtures/json-parse.telora"),
-            serde_json::json!({"ok": true}),
-        ),
-        (
-            "json-stringify",
-            include_str!("../../../telora-wasm/tests/fixtures/json-stringify.telora"),
-            serde_json::json!("{\"a\":[null,true,false,-7,1,\"中\\n\\\"\"],\"z\":{}}"),
-        ),
-        (
-            "hash",
-            include_str!("../../../telora-wasm/tests/fixtures/hash.telora"),
-            serde_json::json!(vec![true; 12]),
-        ),
-        (
-            "string-parse-record",
-            include_str!("../../../telora-wasm/tests/fixtures/string-parse-record.telora"),
-            serde_json::json!(vec![true; 8]),
-        ),
-        (
-            "regex-prepare",
-            include_str!("../../../telora-wasm/tests/fixtures/regex-prepare.telora"),
-            serde_json::json!([true, true, true, true, true]),
-        ),
-        (
-            "string-parse",
-            include_str!("../../../telora-wasm/tests/fixtures/string-parse.telora"),
-            serde_json::json!(vec![true; 13]),
-        ),
-        (
-            "regex",
-            include_str!("../../../telora-wasm/tests/fixtures/regex.telora"),
-            serde_json::json!(vec![true; 10]),
-        ),
-        (
-            "format-equality",
-            include_str!("../../../telora-wasm/tests/fixtures/format-equality.telora"),
-            serde_json::json!(vec![true; 13]),
-        ),
-        (
-            "dynamic-fields",
-            include_str!("../../../telora-wasm/tests/fixtures/dynamic-fields.telora"),
-            serde_json::json!(vec![true; 10]),
-        ),
-        (
-            "dynamic-sequences",
-            include_str!("../../../telora-wasm/tests/fixtures/dynamic-sequences.telora"),
-            serde_json::json!(vec![true; 8]),
-        ),
-        (
-            "dynamic-kind",
-            include_str!("../../../telora-wasm/tests/fixtures/dynamic-kind.telora"),
-            serde_json::json!(vec![true; 16]),
-        ),
-        (
-            "dynamic-variants",
-            include_str!("../../../telora-wasm/tests/fixtures/dynamic-variants.telora"),
-            serde_json::json!(vec![true; 13]),
-        ),
-        (
-            "reflection",
-            include_str!("../../../telora-wasm/tests/fixtures/reflection.telora"),
-            serde_json::json!(vec![true; 30]),
-        ),
-        (
-            "display",
-            include_str!("../../../telora-wasm/tests/fixtures/display-by.telora"),
-            serde_json::json!([
-                "localhost:8080",
-                "localhost:8080",
-                "api@localhost:8080 {ready} -0 api",
-                "endpoint=explicit(localhost:8080)",
-                "absent"
-            ]),
-        ),
-    ] {
-        fs::write(cwd.join(format!("src/{name}.telora")), source).unwrap();
-        {
-            let output = telora(&cwd)
-                .args(["eval", &format!("@src/{name}:answer")])
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "{name}: {} {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert_eq!(
-                serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-                expected
-            );
-        }
-    }
-    fs::remove_dir_all(cwd).unwrap();
-}
-
-#[test]
-fn wasm_dynamic_projection_produce_expected_values() {
-    let cwd = fixture();
-    fs::write(
-        cwd.join("src/main.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/dynamic.telora"),
-    )
-    .unwrap();
-    {
-        let output = telora(&cwd)
-            .args(["eval", "@src/main:answer"])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(
-            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-            serde_json::json!(vec![true; 18])
-        );
-    }
-    fs::remove_dir_all(cwd).unwrap();
-}
-
-#[test]
 fn wasm_formatting_and_interpolation_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/format.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/format.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let result;
@@ -235,7 +35,11 @@ fn wasm_equality_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/equality.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/equality.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let result;
@@ -256,11 +60,19 @@ fn wasm_equality_produce_expected_values() {
     for (name, source) in [
         (
             "nonfinite",
-            include_str!("../../../telora-wasm/tests/fixtures/nonfinite.telora"),
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../crates/telora-wasm/tests/fixtures/nonfinite.telora"
+            ))
+            .expect("read test source"),
         ),
         (
             "overflow",
-            include_str!("../../../telora-wasm/tests/fixtures/float-overflow.telora"),
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../crates/telora-wasm/tests/fixtures/float-overflow.telora"
+            ))
+            .expect("read test source"),
         ),
     ] {
         fs::write(cwd.join(format!("src/{name}.telora")), source).unwrap();
@@ -286,7 +98,11 @@ fn wasm_record_updates_and_dictionary_spreads_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/records.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/records.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let result;
@@ -319,7 +135,11 @@ fn wasm_sequence_spreads_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/sequences.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/sequences.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let result;
@@ -347,40 +167,15 @@ fn wasm_sequence_spreads_produce_expected_values() {
 }
 
 #[test]
-fn wasm_path_operations_produce_expected_values() {
-    let cwd = fixture();
-    fs::write(
-        cwd.join("src/main.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/path.telora"),
-    )
-    .unwrap();
-    let result;
-    {
-        let output = telora(&cwd)
-            .args(["eval", "@src/main:answer"])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
-    }
-    assert_eq!(
-        result["joins"],
-        serde_json::json!([".", ".", "a/b", "b", "/root/b", "/", "../b", "目录/文件"])
-    );
-    fs::remove_dir_all(cwd).unwrap();
-}
-
-#[test]
 fn wasm_string_operations_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/string-value.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/string-value.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let result;
@@ -407,7 +202,11 @@ fn wasm_dict_operations_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/dict-value.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/dict-value.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let result;
@@ -439,7 +238,11 @@ fn wasm_check_preserves_warning_error_and_subject_labels() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/check-rejection.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/check-rejection.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     {
@@ -471,7 +274,11 @@ fn wasm_cli_initializes_data_and_runs_the_authoritative_eval_contract() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/entry.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/entry.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     fs::write(cwd.join("src/input.json"), r#"{"number":42}"#).unwrap();
@@ -525,7 +332,11 @@ fn wasm_cli_initializes_data_and_runs_the_authoritative_eval_contract() {
     }
     fs::write(
         cwd.join("src/check.telora"),
-        include_str!("../../../telora-wasm/tests/fixtures/properties.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/properties.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     let output = telora(&cwd).args(["check", "@src/check"]).output().unwrap();

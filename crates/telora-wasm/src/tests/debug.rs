@@ -2,7 +2,11 @@ use super::*;
 
 #[test]
 fn debug_is_observational_and_separate_from_diagnostics() {
-    let source = include_str!("../../tests/fixtures/debug.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/debug.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.set_debug_enabled(true).unwrap();

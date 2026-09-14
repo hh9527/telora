@@ -1,0 +1,15 @@
+[
+   "Empty",
+   {
+      "Child" : {
+         "Number" : 42
+      }
+   },
+   "Empty",
+   {
+      "Ok" : 7
+   },
+   {
+      "Err" : "bad"
+   }
+]

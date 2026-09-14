@@ -3,7 +3,13 @@ use crate::data_packet::{DataPacket, Value};
 
 #[test]
 fn portable_data_roundtrip_preserves_integer_bits_aliases_and_rejects_bad_edges() {
-    let mir = graph(include_str!("../../tests/fixtures/entry.telora"));
+    let mir = graph(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/entry.telora"
+        ))
+        .expect("read test source"),
+    );
     let export = mir
         .exports
         .iter()

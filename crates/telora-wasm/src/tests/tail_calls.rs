@@ -2,7 +2,11 @@ use super::*;
 
 #[test]
 fn tail_calls_bound_stack_and_preserve_pending_work_and_failures() {
-    let source = include_str!("../../tests/fixtures/tail-calls.telora");
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/tail-calls.telora"
+    ))
+    .expect("read test source");
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.set_debug_enabled(true).unwrap();

@@ -117,7 +117,7 @@ modules_json=$(
             relative=${relative%.telora}
         fi
         printf '@src/%s\n' "$relative"
-    done | jaq -Rsc 'split("\n") | map(select(length > 0))'
+    done | jaq -Rsc 'split("\n") | map(select(length > 0)) | sort'
 )
 
 printf '%s\n' '{"version":1,"members":["."]}' >"$workspace/telora-config.json"

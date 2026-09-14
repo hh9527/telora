@@ -82,7 +82,11 @@ fn source_eval_with_initializes_then_injects_declared_context() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../../../tests/runtime/eval-with.telora"),
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/eval-with.telora"
+        ))
+        .expect("read test source"),
     )
     .unwrap();
     fs::write(cwd.join("src/base.json"), "{\"loaded\":true}").unwrap();
