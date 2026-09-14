@@ -30,7 +30,7 @@ fn invalid_check_signatures_keep_the_original_conflict_and_contract_context() {
         let diagnostics = mir.diagnostics.iter().filter(|d| d.message.starts_with("invalid @check function:")).collect::<Vec<_>>();
         assert_eq!(diagnostics.len(), 1, "{}", mir.dump());
         assert!(diagnostics[0].message.contains("Result((), BlameError)"));
-        assert!(diagnostics[0].message.contains("cannot unify"));
+        assert!(diagnostics[0].message.contains("type mismatch"));
         assert!(!diagnostics[0].labels.is_empty());
         assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
         assert!(mir.seal().is_err());
@@ -442,7 +442,7 @@ fn trait_evidence_rejects_missing_cycles_overlap_and_wrong_member_signatures() {
         ),
         (
             "trait Show { show: Fn(Self) -> String }; impl Show for Int { show: fn(x) { 42 } }; export { Show };",
-            "cannot unify",
+            "type mismatch",
         ),
     ] {
         let mut mir = graph(&[("@src/main", source)]);

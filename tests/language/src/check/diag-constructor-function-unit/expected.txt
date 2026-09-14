@@ -1,1 +1,1 @@
-cannot unify Fn(Int) -> Option<Int> with Option
+type mismatch between Fn(Int) -> Option<Int> and Option

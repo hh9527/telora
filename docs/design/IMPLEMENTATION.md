@@ -266,6 +266,8 @@ main 引用保持稳定。线性内存允许保留高水位，但固定存活状
 
 静态诊断由三个 Pass 和 seal 产生。无静态执行，所以 Unknown/Conflicted 不等于一次
 运行失败，也无需通过重建 VM 或重跑旧求解器恢复。存在静态错误时不进入初始化。
+类型统一冲突使用中立表述 `type mismatch between A and B`；两侧顺序不表示
+actual/expected，也不为统一诊断文案而调整求解器的合并方向。
 
 运行时失败保留规则位置和数据来源；`raise!` 产生 Never，`warn!` 产生值为 None 的
 Option(T)。`blame!` 构造错误数据，规则归因由调用/构造边界与 VM 诊断逻辑共同保留。

@@ -1,1 +1,1 @@
-cannot unify Node with String
+type mismatch between Node and String

@@ -184,7 +184,7 @@ fn record_spreads_reject_incompatible_modes_and_duplicate_explicit_fields() {
         ("type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = base <~ {x: 2, ...base, x: 3};", "duplicate update field"),
         ("type Item = struct {x: Int}; def base: Item = {x: 1}; def dict: Dict(Int) = {x: 2}; export def bad: Item = {...base, ...dict};", "cannot mix Dict and named struct spreads"),
         ("type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = {...base};", "record spread requires a named struct target context"),
-        ("def base: Dict(Int) = {x: 1}; export def bad = {...base, y: \"wrong\"};", "cannot unify"),
+        ("def base: Dict(Int) = {x: 1}; export def bad = {...base, y: \"wrong\"};", "type mismatch"),
         ("type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = base <~ {extra: 1, ...base};", "unknown struct update field"),
     ] {
         let mut mir = graph(&[("@src/main", source)]);
@@ -202,7 +202,7 @@ fn record_operations_reject_invalid_shapes_without_runtime_inference() {
         ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad: Foo = source.{missing as x};", "unknown projection source field"),
         ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad: Foo = source.{x, x};", "duplicate projection destination"),
         ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source <~ {missing: 1};", "unknown struct update field"),
-        ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source <~ {x: \"wrong\"};", "cannot unify"),
+        ("type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source <~ {x: \"wrong\"};", "type mismatch"),
         ("def source: Dict(Int) = {x: 1}; export def bad = source <~ {x: 2};", "struct update requires a named struct operand"),
     ] {
         let mut mir = graph(&[("@src/main", source)]);

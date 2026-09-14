@@ -809,7 +809,7 @@ export def output = render(1);"#;
             invalid.mir
                 .diagnostics
                 .iter()
-                .filter(|diagnostic| diagnostic.message.contains("cannot unify"))
+                .filter(|diagnostic| diagnostic.message.contains("type mismatch"))
                 .count(),
             2
         );

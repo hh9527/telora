@@ -178,7 +178,7 @@ impl Solver<'_> {
                         if self.compatible_structure(left, right, location) {
                             continue;
                         }
-                        let message = format!("cannot unify {} with {}",
+                        let message = format!("type mismatch between {} and {}",
                             self.diagnostic_type(left), self.diagnostic_type(right));
                         self.conflict(left, right, location, message);
                     } else {

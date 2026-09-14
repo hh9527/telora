@@ -1,1 +1,1 @@
-cannot unify ForeignId with NodeId
+type mismatch between ForeignId and NodeId

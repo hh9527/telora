@@ -15,6 +15,6 @@ export def check: Fn(Value) -> Value = fn(actual) {
         _ => False,
     };
     support.bool_value(skipped_execution
-        && support.failed_with(actual, "cannot unify String with Int")
+        && support.failed_with(actual, "type mismatch between String and Int")
         && !support.failed_with(actual, "property provider must not run before static checking"))
 };

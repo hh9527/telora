@@ -1,1 +1,1 @@
-cannot unify A with B
+type mismatch between A and B

@@ -36,7 +36,7 @@ fn conflicts_render_both_type_shapes_before_poisoning_the_slots() {
     let conflict = mir
         .type_conflicts
         .iter()
-        .find(|conflict| conflict.message.contains("cannot unify"))
+        .find(|conflict| conflict.message.contains("type mismatch"))
         .unwrap();
     assert!(
         conflict.message.contains("Array<Int>"),
@@ -203,7 +203,7 @@ fn syntax_recovery_keeps_independent_type_conflicts_without_a_fake_result_obliga
     assert!(
         mir.diagnostics
             .iter()
-            .any(|d| d.message.contains("cannot unify"))
+            .any(|d| d.message.contains("type mismatch"))
     );
     assert!(
         !mir.diagnostics.iter().any(|d| d.message == "unknown type"),

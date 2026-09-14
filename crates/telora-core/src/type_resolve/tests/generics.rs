@@ -176,7 +176,7 @@ fn interpreter_contracts_reject_invalid_witnesses_and_nested_parameters() {
         ("export def bad: for(T) Fn(TypeOf(Int)) -> Fn(T) -> Bool = interpreter!(fn(x) { True });", "quantified type parameter"),
         ("export def bad: for(T) Fn(TypeOf(T)) -> Fn(Array(T)) -> Bool = interpreter!(fn(x) { True });", "cannot nest"),
         ("export def bad: for(T) Fn(TypeOf(T)) -> Fn(T) -> Array(T) = interpreter!(fn(x) { [] });", "result cannot contain"),
-        ("def erased: Fn(Int) -> Bool = fn(x) { True }; export def bad: for(T) Fn(TypeOf(T)) -> Fn(T) -> Bool = interpreter!(erased);", "cannot unify"),
+        ("def erased: Fn(Int) -> Bool = fn(x) { True }; export def bad: for(T) Fn(TypeOf(T)) -> Fn(T) -> Bool = interpreter!(erased);", "type mismatch"),
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -713,7 +713,7 @@ fn generic_call_conflicts_keep_the_use_site_and_other_instances_stay_independent
     assert!(
         mir.diagnostics
             .iter()
-            .any(|d| !d.labels.is_empty() && d.message.contains("cannot unify"))
+            .any(|d| !d.labels.is_empty() && d.message.contains("type mismatch"))
     );
     let TypeState::Known(good) = symbol_type(&mir, "good") else {
         panic!("{}", mir.dump());

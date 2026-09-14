@@ -1,1 +1,1 @@
-cannot unify Fn(PropertyTarget) -> Fn(Type, ?) -> ? with Fn(?, ?) -> ?
+type mismatch between Fn(PropertyTarget) -> Fn(Type, ?) -> ? and Fn(?, ?) -> ?

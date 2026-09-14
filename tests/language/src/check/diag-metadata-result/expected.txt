@@ -1,1 +1,1 @@
-cannot unify Type with Int
+type mismatch between Type and Int

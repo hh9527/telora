@@ -1,1 +1,1 @@
-cannot unify Option<?> with Result<?, ?>
+type mismatch between Option<?> and Result<?, ?>

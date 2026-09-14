@@ -19,7 +19,7 @@ fn finite_instance_cycles_close_and_growth_does_not_cascade() {
         assert!(mir.generic_instances.len() < 100, "growth stopped before enumeration");
         if case == "diag-instance-growth" {
             assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
-            assert!(mir.diagnostics.iter().any(|d| d.message.contains("cannot unify")));
+            assert!(mir.diagnostics.iter().any(|d| d.message.contains("type mismatch")));
             assert!(mir.diagnostics.iter().any(|d| d.message.contains("does not implement Missing")));
         }
     }
