@@ -333,11 +333,12 @@ impl Plan {
                 if let Some(slot) = syntax.resolution
                     && let ResolveState::Bound(symbol) = mir.resolve_slots[slot.index()]
                     && !executable.globals().contains(&symbol)
+                    && !matches!(mir.member_selections[node.index()],
+                        Some(telora_core::mir::MemberSelection::Boolean(_)))
                     && !matches!(
                         crate::enums::selection(mir, node),
                         Some(
-                            telora_core::mir::MemberSelection::Boolean(_)
-                                | telora_core::mir::MemberSelection::EnumVariant { .. }
+                            telora_core::mir::MemberSelection::EnumVariant { .. }
                                 | telora_core::mir::MemberSelection::NewtypeConstructor
                                 | telora_core::mir::MemberSelection::NewtypePattern
                         )

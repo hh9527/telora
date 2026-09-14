@@ -99,7 +99,7 @@ fn ees_serves_install_shared_requests() {
 
 #[test]
 fn run_with_sqlite_query_actor_drives_an_ees_call() {
-    for native in [false, true] {
+    {
     let cwd = fixture();
     let data = cwd.join("data");
     fs::create_dir_all(data.join("hello")).unwrap();
@@ -151,7 +151,7 @@ export def run = entry.run((State).type, config, ees, fn(ctx) {
     .unwrap();
     refresh_fixture_workspace(&cwd);
     let output = telora(&cwd)
-        .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([
+        .arg("run").args([
             "@src/app:run",
             "--ees-var",
             "tenant=hello",
@@ -177,7 +177,7 @@ export def run = entry.run((State).type, config, ees, fn(ctx) {
 
 #[test]
 fn run_actor_can_sequence_multiple_ees_replies_through_explicit_state() {
-    for native in [false, true] {
+    {
     let cwd = fixture();
     let data = cwd.join("data");
     fs::create_dir_all(&data).unwrap();
@@ -224,7 +224,7 @@ export def run = entry.run((State).type, config, ees, fn(ctx) {
     .unwrap();
 
     let output = telora(&cwd)
-        .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([ "@src/app:run"])
+        .arg("run").args([ "@src/app:run"])
         .env("XDG_DATA_HOME", &data)
         .output()
         .unwrap();
@@ -243,7 +243,7 @@ export def run = entry.run((State).type, config, ees, fn(ctx) {
 
 #[test]
 fn run_actor_rejects_duplicate_call_ids_and_reply_with_active_calls() {
-    for native in [false, true] {
+    {
     let cwd = fixture();
     let data = cwd.join("data");
     fs::create_dir_all(&data).unwrap();
@@ -290,7 +290,7 @@ export def run = entry.run(State.type, config, ees, fn(ctx) {{
         )
         .unwrap();
         let output = telora(&cwd)
-            .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([ "@src/app:run"])
+            .arg("run").args([ "@src/app:run"])
             .env("XDG_DATA_HOME", &data)
             .output()
             .unwrap();
@@ -310,7 +310,7 @@ export def run = entry.run(State.type, config, ees, fn(ctx) {{
 
 #[test]
 fn ees_variables_are_declared_required_and_fully_matched() {
-    for native in [false, true] {
+    {
     let cwd = fixture();
     fs::write(
         cwd.join("src/app.telora"),
@@ -337,19 +337,19 @@ export def run = entry.run((State).type, config, ees, fn(ctx) {
     .unwrap();
 
     refresh_fixture_workspace(&cwd);
-    let missing = telora(&cwd).arg("run").args(if native { vec!["--native"] } else { vec![] }).args([ "@src/app:run"]).output().unwrap();
+    let missing = telora(&cwd).arg("run").args([ "@src/app:run"]).output().unwrap();
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("were not provided"));
 
     let invalid = telora(&cwd)
-        .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([ "@src/app:run", "--ees-var", "tenant=INVALID"])
+        .arg("run").args([ "@src/app:run", "--ees-var", "tenant=INVALID"])
         .output()
         .unwrap();
     assert!(!invalid.status.success());
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("does not match"));
 
     let unknown = telora(&cwd)
-        .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([
+        .arg("run").args([
             "@src/app:run",
             "--ees-var",
             "tenant=hello",
@@ -365,7 +365,7 @@ export def run = entry.run((State).type, config, ees, fn(ctx) {
 
 #[test]
 fn serve_with_sqlite_query_actor_correlates_concurrent_calls() {
-    for native in [false, true] {
+    {
     let cwd = fixture();
     let home = cwd.join("home");
     let data = home.join(".local/share");
@@ -419,7 +419,7 @@ export def serve = entry.serve((State).type, config, ees, fn(ctx) {
     )
     .unwrap();
     let mut child = telora(&cwd)
-        .arg("serve").args(if native { vec!["--native"] } else { vec![] }).args([
+        .arg("serve").args([
             "@src/app:serve",
             "--bind",
             "stdio://",
@@ -466,7 +466,7 @@ export def serve = entry.serve((State).type, config, ees, fn(ctx) {
 
 #[test]
 fn application_imos_actor_with_package_name_stays_in_its_bound_root() {
-    for native in [false, true] {
+    {
     let cwd = fixture();
     let actor_root = cwd.join("application-materializer");
     let plan = cwd.join("plan.json");
@@ -516,7 +516,7 @@ export def run = entry.run((State).type, config, ees, fn(ctx) {
     )
     .unwrap();
     let output = telora(&cwd)
-        .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([
+        .arg("run").args([
             "@src/app:run",
             "--source",
             &format!("plan={}", plan.display()),
@@ -543,7 +543,7 @@ export def run = entry.run((State).type, config, ees, fn(ctx) {
 
 #[test]
 fn application_cannot_address_the_package_actor_without_its_own_binding() {
-    for native in [false, true] {
+    {
     let cwd = fixture();
     let data = cwd.join("data");
     fs::create_dir_all(&data).unwrap();
@@ -576,7 +576,7 @@ export def run = entry.run((State).type, config, ees, fn(ctx) {
     )
     .unwrap();
     let output = telora(&cwd)
-        .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([ "@src/app:run"])
+        .arg("run").args([ "@src/app:run"])
         .env("XDG_DATA_HOME", &data)
         .output()
         .unwrap();

@@ -324,6 +324,10 @@ impl<'a> Emitter<'a> {
                     return Err(format!("Wasm: unsupported binding {kind:?}"));
                 }
                 let result = self.expression(child(self.mir, node, Role::Value)?)?;
+                if self.mir.types[self.ty(node)?.index()].constructor == TypeConstructor::Function {
+                    self.extend([I::LocalGet(result), I::I32Load(memory(DATA, 2)), I::I32Eqz]);
+                    self.fail_if(node, ERROR_UNINITIALIZED_FUNCTION);
+                }
                 if let Some(symbol) = self.mir.hir_symbols[node.index()] {
                     if let Some(&reserved) = self.bindings.get(&symbol)
                         && self.mir.types[self.ty(node)?.index()].constructor

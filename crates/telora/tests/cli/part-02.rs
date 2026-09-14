@@ -1,6 +1,6 @@
 #[test]
 fn run_requires_an_entry_run_export() {
-    for native in [false, true] {
+    {
     let cwd = fixture();
     fs::write(
         cwd.join("src/app.telora"),
@@ -11,7 +11,7 @@ export def value: Value = Value.Int(1);"#,
     refresh_fixture_workspace(&cwd);
 
     let output = telora(&cwd)
-        .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([ "@src/app:value"])
+        .arg("run").args([ "@src/app:value"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -25,7 +25,7 @@ export def value: Value = Value.Int(1);"#,
 
 #[test]
 fn run_context_admits_declared_sources_env_and_args() {
-    for native in [false, true] {
+    {
     let cwd = fixture();
     fs::write(
         cwd.join("src/app.telora"),
@@ -64,7 +64,7 @@ export def run = entry.run((State).type, config, ees.none, fn(ctx) {
     refresh_fixture_workspace(&cwd);
 
     let output = telora(&cwd)
-        .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([
+        .arg("run").args([
             "@src/app:run",
             "--source",
             &format!("request={}", input.display()),
@@ -85,7 +85,7 @@ export def run = entry.run((State).type, config, ees.none, fn(ctx) {
 
 #[test]
 fn run_context_rejects_undeclared_inputs() {
-    for native in [false, true] {
+    {
     let cwd = fixture();
     fs::write(
         cwd.join("src/app.telora"),
@@ -110,7 +110,7 @@ export def run = entry.run((State).type, config, ees.none, fn(ctx) {
     refresh_fixture_workspace(&cwd);
 
     let source = telora(&cwd)
-        .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([
+        .arg("run").args([
             "@src/app:run",
             "--source",
             &format!("request={}", input.display()),
@@ -125,7 +125,7 @@ export def run = entry.run((State).type, config, ees.none, fn(ctx) {
     );
 
     let args = telora(&cwd)
-        .arg("run").args(if native { vec!["--native"] } else { vec![] }).args([ "@src/app:run", "--", "unexpected"])
+        .arg("run").args([ "@src/app:run", "--", "unexpected"])
         .output()
         .unwrap();
     assert!(!args.status.success());

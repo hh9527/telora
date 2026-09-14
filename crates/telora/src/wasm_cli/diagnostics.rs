@@ -11,41 +11,6 @@ fn debug(session: &Session) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn finish_portable<T>(
-    session: &Session,
-    before: usize,
-    result: Result<T, String>,
-) -> Result<T, String> {
-    debug(session)?;
-    let mut errors = vec![];
-    for event in session.diagnostics()?.iter().skip(before) {
-        let mut rendered = event.render(&session.manifest);
-        for origin in event
-            .subjects
-            .iter()
-            .filter(|origin| **origin != event.origin)
-        {
-            let subject = telora_wasm::diagnostic_output::Diagnostic {
-                origin: *origin,
-                warning: event.warning,
-                message: "subject originated here".into(),
-                subjects: vec![],
-            };
-            rendered.push_str(&format!("\n{}", subject.render(&session.manifest)));
-        }
-        if event.warning {
-            eprintln!("{rendered}");
-        } else {
-            errors.push(rendered);
-        }
-    }
-    if errors.is_empty() {
-        result
-    } else {
-        Err(errors.join("\n"))
-    }
-}
-
 pub(super) fn collect(
     session: &Session,
     sources: &SourceDatabase,

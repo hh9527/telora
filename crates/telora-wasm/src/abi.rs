@@ -43,6 +43,8 @@ pub const ERROR_PROPERTY: u32 = 6;
 pub const ERROR_MATCH: u32 = 7;
 pub const ERROR_DATA: u32 = 8;
 pub const ERROR_USER: u32 = 9;
+pub const ERROR_UNINITIALIZED_CALL: u32 = 10;
+pub const ERROR_UNINITIALIZED_FUNCTION: u32 = 11;
 
 pub fn memory(offset: u64, align: u32) -> wasm_encoder::MemArg {
     wasm_encoder::MemArg {

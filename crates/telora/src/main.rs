@@ -1,17 +1,15 @@
 use clap::{Args, Parser, Subcommand};
-use serde::Serialize;
 use serde_json::json;
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::PathBuf;
-use std::sync::Arc;
 use telora_core::lir::RegisterId;
 use telora_core::{
-    CallContext, DataLimits, DebugEvent, DebugSink, EesCall, EesReply,
+    CallContext, DataLimits, EesCall, EesReply,
     NativeError, NativeFunction, Quota, RunHost,
-    RunHostFuture, RunTermination, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
+    RunHostFuture, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::{mpsc, watch};
@@ -19,7 +17,6 @@ use tokio::task::JoinSet;
 mod ees_arg;
 mod ees_cli;
 mod eval_cli;
-mod native_cli;
 mod wasm_cli;
 mod source_arg;
 mod static_cli;
@@ -45,33 +42,6 @@ fn execution_config() -> ExecutionConfig {
     ExecutionConfig {
         session_quota: Quota::new(EVALUATION_FUEL, STACK_SLOTS, ALLOCATION_BYTES),
         data_limits: DataLimits::default(),
-    }
-}
-
-struct StderrDebugSink;
-
-#[derive(Serialize)]
-struct DebugRecord<'a> {
-    name: &'a str,
-    repr: &'a str,
-    module: &'a str,
-    line: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<&'a str>,
-}
-
-impl DebugSink for StderrDebugSink {
-    fn emit(&self, event: DebugEvent) {
-        let record = DebugRecord {
-            name: &event.name,
-            repr: &event.repr,
-            module: &event.module,
-            line: event.line,
-            message: event.message.as_deref(),
-        };
-        if let Ok(record) = serde_json::to_string(&record) {
-            eprintln!("{record}");
-        }
     }
 }
 
@@ -541,8 +511,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    #[command(hide = true)]
-    Wasm(wasm_cli::artifact::ArtifactArgs),
     /// Evaluate one exported Value without an Entry or effect system.
     Eval(EvalArgs),
     /// Invoke one pure context function and write its Value result.
@@ -574,8 +542,6 @@ struct RunArgs {
 
 #[derive(Args)]
 struct ApplicationArgs {
-    #[arg(long, hide = true)]
-    native: bool,
     #[arg(value_name = "MODULE:EXPORT", value_parser = parse_application_selector)]
     selector: ApplicationSelector,
     #[arg(long)]
@@ -610,10 +576,6 @@ struct ApplicationSelector {
     after_help = "Examples:\n  telora check @src/lib\n  telora -C examples/app check --lib\n  telora check --tests --only-types\n  telora check --lib --tests"
 )]
 struct CheckArgs {
-    #[arg(long, hide = true)]
-    native: bool,
-    #[arg(long, hide = true, conflicts_with = "native")]
-    wasm: bool,
     /// Solve types without executing tool, property, or runtime code.
     #[arg(long = "only-types")]
     types_only: bool,
@@ -805,7 +767,6 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
     }
     let context = command_context(cli.context)?;
     match cli.command {
-        Command::Wasm(arguments) => wasm_cli::artifact::run(context, arguments),
         Command::Eval(arguments) => eval_cli::run(context, arguments),
         Command::EvalWith(arguments) => eval_cli::run_with(context, arguments),
         Command::Run(arguments) => tokio::runtime::Builder::new_current_thread()
@@ -845,7 +806,6 @@ async fn run_command(
     entry: &str,
     arguments: ApplicationArgs,
 ) -> Result<i32, String> {
-    let frontend_timer = arguments.native.then(|| native_cli::PhaseTimer::new("frontend"));
     let entry_sources = collect_entry_sources(arguments.sources.clone())?;
     if entry == "serve"
         && entry_sources
@@ -888,10 +848,6 @@ async fn run_command(
     let telora_core::mir::ModuleTarget::Bound(root) = mir.roots[0] else { return Err("entry adapter module is unresolved".into()) };
     let symbol = *mir.exports[root.index()].iter().find(|s| mir.symbols[s.index()].name == "configure")
         .ok_or("entry adapter has no configuration export")?;
-    if arguments.native {
-        drop(frontend_timer);
-        return native_cli::run_service(mir, inventory, symbol, mode, arguments, entry_sources).await;
-    }
     wasm_cli::run::execute(mir, inventory, symbol, mode, arguments, entry_sources).await
 }
 

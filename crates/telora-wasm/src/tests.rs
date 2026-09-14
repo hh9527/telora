@@ -348,7 +348,7 @@ fn properties_reduce_and_query_inside_wasm() {
 #[test]
 fn construction_checks_run_sealed_generic_checkers() {
     let bytes = compile(include_str!(
-        "../../telora-native/tests/fixtures/construction-checks.telora"
+        "../../../tests/runtime/construction-checks.telora"
     ))
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();

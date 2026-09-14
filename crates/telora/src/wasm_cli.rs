@@ -1,5 +1,4 @@
-//! Hidden portable backend. The frontend stops at SealedExecutable.
-pub(crate) mod artifact;
+//! Source execution through Wasm. The frontend stops at SealedExecutable.
 pub(crate) mod run;
 pub(crate) mod testing;
 mod test_fixtures;
@@ -216,7 +215,7 @@ pub(crate) fn eval_with(
     }
     let result = initialize(&mut session, &inventory, &mut mir.sources);
     diagnostics::finish(&session, &mir.sources, 0, result)?;
-    execute_with(&mut session, &mut mir.sources, inputs, args, false)
+    execute_with(&mut session, &mut mir.sources, inputs, args)
 }
 
 pub(super) fn execute_with(
@@ -224,7 +223,6 @@ pub(super) fn execute_with(
     sources: &mut telora_core::SourceDatabase,
     inputs: Vec<crate::source_arg::NamedSource>,
     args: Vec<String>,
-    portable: bool,
 ) -> Result<i32, String> {
     let timer = PhaseTimer::new("entry_input");
     let before = session.diagnostics()?.len();
@@ -303,11 +301,7 @@ pub(super) fn execute_with(
     };
     println!(
         "{}",
-        if portable {
-            diagnostics::finish_portable(session, before, result)?
-        } else {
-            diagnostics::finish(session, sources, before, result)?
-        }
+        diagnostics::finish(session, sources, before, result)?
     );
     Ok(0)
 }

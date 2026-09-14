@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "cli/wasm.rs"]
 mod wasm;
-#[path = "cli/wasm_artifact.rs"]
-mod wasm_artifact;
+#[path = "cli/backend_surface.rs"]
+mod backend_surface;
 
 fn fixture() -> PathBuf {
     let unique = SystemTime::now()
@@ -120,4 +120,5 @@ include!("cli/part-03.rs");
 include!("cli/part-04.rs");
 include!("cli/test_command.rs");
 include!("cli/static_mir.rs");
-include!("cli/native.rs");
+#[path = "cli/source_runtime.rs"]
+mod source_runtime;

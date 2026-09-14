@@ -1,6 +1,6 @@
 # RFC 0292：统一 Wasm 源码执行路线
 
-- 状态：实施中；所有默认执行命令已接入 Wasm，尚未撤下实验开关、产物 CLI 与旧后端
+- 状态：实施中；CLI 已仅保留源码 Wasm 执行，native crate 已删除，核心旧 VM/bytecode 清理与最终验收未完成
 - 日期：2026-09-14
 - 跟踪：[#187](https://github.com/hh9527/telora/issues/187)
 - 前置：RFC 0291（Wasm check/eval/eval-with）、RFC 0290（服务语义参考）
@@ -205,3 +205,20 @@ Rust/浏览器 Host 根据 source 名称与 bols 构造显示事件；ABI 更新
 debug 元数据变更通过库专项 1 项、CLI 专项 3 项及浏览器 Host JS 语法检查。
 旧 native 显式开关与产物命令仅暂留供迁移中的对照，下一步完整删除，
 不把这些中间态当作 RFC 验收完成。
+
+2026-09-14：撤下 --native/--wasm 与 wasm build/check/eval/eval-with 命令，
+删除 native CLI、产物 CLI、telora-native crate 及直接 Cranelift 依赖。
+55 份原 native 语言资产迁入 tests/runtime，保留结果与协议断言，撤掉后端
+对照和已取消产物接口的测试；新增所有执行命令拒绝旧接口的验收。
+测试按普通 Rust 模块组织，未用 include! 拼接新增模块。
+
+迁移覆盖补齐两处缺口：局部 Bool 常量别名仍需要闭包捕获，不能通过追踪
+其初始化值而漏捕获；未初始化函数的调用与复制产生带源码位置的语言诊断，
+不再落为 Wasm 空表项 trap。静态入口测试改为验证 SealedExecutable 与
+RunContract，删除无调用者的旧数据 linker 桥接。
+
+验证：完整 CLI 99 项（含语言验收）通过，Wasm 库 99 项通过、1 项 opt-in
+忽略；之后测试分模块专项 15 项、静态入口专项 2 项通过，浏览器 Host JS
+语法检查通过。Cargo 依赖树与 lock 中已无 telora-native/Cranelift。
+删除内容可从 Git 历史恢复。核心旧 VM、bytecode、Heap/Val 及其剩余公共
+协议依赖仍在仓库中，需要下一阶段完整摘除；未完成最终运行寿命与性能验收。

@@ -166,7 +166,7 @@ fn module(
     };
     let tests = telora_core::test_plan::TestPlan::from_mir(&sealed, module)
         .map_err(|ds| format!("tests: {ds:?}"))?;
-    // Match check --wasm: initialize the loaded graph, including capability
+    // Match check: initialize the loaded graph, including capability
     // properties and construction checkers declared in dependency modules.
     let modules = mir
         .hir

@@ -1,18 +1,17 @@
 use super::*;
 
 #[test]
-fn wasm_schema_matches_default_for_recursive_types_and_enums() {
+fn wasm_schema_supports_recursive_types_and_enums() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        include_str!("../../../telora-native/tests/fixtures/schema.telora"),
+        include_str!("../../../../tests/runtime/schema.telora"),
     )
     .unwrap();
-    let mut results = Vec::new();
-    for backend in [None, Some("--wasm")] {
+    let result;
+    {
         let output = telora(&cwd)
             .args(["eval", "@src/main:answer"])
-            .args(backend)
             .output()
             .unwrap();
         assert!(
@@ -21,31 +20,30 @@ fn wasm_schema_matches_default_for_recursive_types_and_enums() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+        result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
     }
-    assert_eq!(results[0], results[1]);
-    assert_eq!(results[1].as_array().unwrap().len(), 10);
+    assert_eq!(result.as_array().unwrap().len(), 10);
     fs::remove_dir_all(cwd).unwrap();
 }
 
 #[test]
-fn wasm_reflection_and_display_properties_match_default_backend() {
+fn wasm_reflection_and_display_properties_produce_expected_values() {
     let cwd = fixture();
     for (name, source, expected) in [
         (
             "local-generics",
             include_str!("../../../telora-wasm/tests/fixtures/local-generics.telora"),
-            serde_json::json!(vec![true;5]),
+            serde_json::json!(vec![true; 5]),
         ),
         (
             "test-descriptions",
             include_str!("../../../telora-wasm/tests/fixtures/test-descriptions.telora"),
-            serde_json::json!(vec![true;5]),
+            serde_json::json!(vec![true; 5]),
         ),
         (
             "yaml-parse",
             include_str!("../../../telora-wasm/tests/fixtures/yaml-parse.telora"),
-            serde_json::json!(vec![true;15]),
+            serde_json::json!(vec![true; 15]),
         ),
         (
             "toml-parse",
@@ -203,15 +201,14 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
         ),
     ] {
         fs::write(cwd.join(format!("src/{name}.telora")), source).unwrap();
-        for backend in [None, Some("--wasm")] {
+        {
             let output = telora(&cwd)
                 .args(["eval", &format!("@src/{name}:answer")])
-                .args(backend)
                 .output()
                 .unwrap();
             assert!(
                 output.status.success(),
-                "{name} {backend:?}: {} {}",
+                "{name}: {} {}",
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
@@ -225,17 +222,16 @@ fn wasm_reflection_and_display_properties_match_default_backend() {
 }
 
 #[test]
-fn wasm_dynamic_projection_matches_default_backend() {
+fn wasm_dynamic_projection_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
         include_str!("../../../telora-wasm/tests/fixtures/dynamic.telora"),
     )
     .unwrap();
-    for backend in [None, Some("--native"), Some("--wasm")] {
+    {
         let output = telora(&cwd)
             .args(["eval", "@src/main:answer"])
-            .args(backend)
             .output()
             .unwrap();
         assert!(
@@ -253,18 +249,17 @@ fn wasm_dynamic_projection_matches_default_backend() {
 }
 
 #[test]
-fn wasm_formatting_and_interpolation_match_default_backend() {
+fn wasm_formatting_and_interpolation_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
         include_str!("../../../telora-wasm/tests/fixtures/format.telora"),
     )
     .unwrap();
-    let mut results = vec![];
-    for backend in [None, Some("--wasm")] {
+    let result;
+    {
         let output = telora(&cwd)
             .args(["eval", "@src/main:answer"])
-            .args(backend)
             .output()
             .unwrap();
         assert!(
@@ -273,26 +268,24 @@ fn wasm_formatting_and_interpolation_match_default_backend() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+        result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
     }
-    assert_eq!(results[0], results[1]);
-    assert_eq!(results[1][7], "n=42, f=3, s=ready");
+    assert_eq!(result[7], "n=42, f=3, s=ready");
     fs::remove_dir_all(cwd).unwrap();
 }
 
 #[test]
-fn wasm_equality_matches_default_backend() {
+fn wasm_equality_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
         include_str!("../../../telora-wasm/tests/fixtures/equality.telora"),
     )
     .unwrap();
-    let mut results = vec![];
-    for backend in [None, Some("--wasm")] {
+    let result;
+    {
         let output = telora(&cwd)
             .args(["eval", "@src/main:answer"])
-            .args(backend)
             .output()
             .unwrap();
         assert!(
@@ -301,10 +294,9 @@ fn wasm_equality_matches_default_backend() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+        result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
     }
-    assert_eq!(results[0], results[1]);
-    assert_eq!(results[1], serde_json::json!(vec![true; 41]));
+    assert_eq!(result, serde_json::json!(vec![true; 41]));
     for (name, source) in [
         (
             "nonfinite",
@@ -316,10 +308,9 @@ fn wasm_equality_matches_default_backend() {
         ),
     ] {
         fs::write(cwd.join(format!("src/{name}.telora")), source).unwrap();
-        for backend in [None, Some("--wasm")] {
+        {
             let output = telora(&cwd)
                 .args(["eval", &format!("@src/{name}:answer")])
-                .args(backend)
                 .output()
                 .unwrap();
             assert!(!output.status.success());
@@ -335,18 +326,17 @@ fn wasm_equality_matches_default_backend() {
 }
 
 #[test]
-fn wasm_record_updates_and_dictionary_spreads_match_default_backend() {
+fn wasm_record_updates_and_dictionary_spreads_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
         include_str!("../../../telora-wasm/tests/fixtures/records.telora"),
     )
     .unwrap();
-    let mut results = vec![];
-    for backend in [None, Some("--wasm")] {
+    let result;
+    {
         let output = telora(&cwd)
             .args(["eval", "@src/main:answer"])
-            .args(backend)
             .output()
             .unwrap();
         assert!(
@@ -355,11 +345,10 @@ fn wasm_record_updates_and_dictionary_spreads_match_default_backend() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+        result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
     }
-    assert_eq!(results[0], results[1]);
     assert_eq!(
-        results[1],
+        result,
         serde_json::json!({
             "projected":"source", "updated":[3,2,4,2], "original":1,
             "renamed":"generic", "replaced":"changed", "child":2,
@@ -370,18 +359,17 @@ fn wasm_record_updates_and_dictionary_spreads_match_default_backend() {
 }
 
 #[test]
-fn wasm_sequence_spreads_match_default_backend() {
+fn wasm_sequence_spreads_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
         include_str!("../../../telora-wasm/tests/fixtures/sequences.telora"),
     )
     .unwrap();
-    let mut results = vec![];
-    for backend in [None, Some("--wasm")] {
+    let result;
+    {
         let output = telora(&cwd)
             .args(["eval", "@src/main:value"])
-            .args(backend)
             .output()
             .unwrap();
         assert!(
@@ -390,11 +378,10 @@ fn wasm_sequence_spreads_match_default_backend() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+        result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
     }
-    assert_eq!(results[0], results[1]);
     assert_eq!(
-        results[1],
+        result,
         serde_json::json!({
             "numbers":[1,2], "items":[42,42,42], "appended":[1,2,3],
             "nominal":2, "metadata":42, "type_count":2
@@ -404,18 +391,17 @@ fn wasm_sequence_spreads_match_default_backend() {
 }
 
 #[test]
-fn wasm_path_operations_match_default_backend() {
+fn wasm_path_operations_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
         include_str!("../../../telora-wasm/tests/fixtures/path.telora"),
     )
     .unwrap();
-    let mut results = vec![];
-    for backend in [None, Some("--wasm")] {
+    let result;
+    {
         let output = telora(&cwd)
             .args(["eval", "@src/main:answer"])
-            .args(backend)
             .output()
             .unwrap();
         assert!(
@@ -424,29 +410,27 @@ fn wasm_path_operations_match_default_backend() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+        result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
     }
-    assert_eq!(results[0], results[1]);
     assert_eq!(
-        results[1]["joins"],
+        result["joins"],
         serde_json::json!([".", ".", "a/b", "b", "/root/b", "/", "../b", "目录/文件"])
     );
     fs::remove_dir_all(cwd).unwrap();
 }
 
 #[test]
-fn wasm_string_operations_match_default_backend() {
+fn wasm_string_operations_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
         include_str!("../../../telora-wasm/tests/fixtures/string-value.telora"),
     )
     .unwrap();
-    let mut results = vec![];
-    for backend in [None, Some("--wasm")] {
+    let result;
+    {
         let output = telora(&cwd)
             .args(["eval", "@src/main:answer"])
-            .args(backend)
             .output()
             .unwrap();
         assert!(
@@ -455,27 +439,25 @@ fn wasm_string_operations_match_default_backend() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+        result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
     }
-    assert_eq!(results[0], results[1]);
-    assert_eq!(results[1]["length"], 3);
-    assert_eq!(results[1]["lines"], serde_json::json!(["a", "b", ""]));
+    assert_eq!(result["length"], 3);
+    assert_eq!(result["lines"], serde_json::json!(["a", "b", ""]));
     fs::remove_dir_all(cwd).unwrap();
 }
 
 #[test]
-fn wasm_dict_operations_match_default_backend() {
+fn wasm_dict_operations_produce_expected_values() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
         include_str!("../../../telora-wasm/tests/fixtures/dict-value.telora"),
     )
     .unwrap();
-    let mut results = vec![];
-    for backend in [None, Some("--wasm")] {
+    let result;
+    {
         let output = telora(&cwd)
             .args(["eval", "@src/main:answer"])
-            .args(backend)
             .output()
             .unwrap();
         assert!(
@@ -484,11 +466,10 @@ fn wasm_dict_operations_match_default_backend() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        results.push(serde_json::from_slice::<Value>(&output.stdout).unwrap());
+        result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
     }
-    assert_eq!(results[0], results[1]);
     assert_eq!(
-        results[1],
+        result,
         serde_json::json!({
             "keys":["a","m","z","é"], "merged":{"a":10,"b":20,"m":2,"z":3,"é":4},
             "filtered":{"z":3,"é":4}, "folded":1234,"missing":null
@@ -505,10 +486,9 @@ fn wasm_check_preserves_warning_error_and_subject_labels() {
         include_str!("../../../telora-wasm/tests/fixtures/check-rejection.telora"),
     )
     .unwrap();
-    let mut results = vec![];
-    for backend in [None, Some("--wasm")] {
+    {
         let mut command = telora(&cwd);
-        command.args(["check", "@src/main"]).args(backend);
+        command.args(["check", "@src/main"]);
         let output = command.output().unwrap();
         assert!(!output.status.success());
         let diagnostics = jsonl(&output.stdout)
@@ -526,9 +506,7 @@ fn wasm_check_preserves_warning_error_and_subject_labels() {
         assert_eq!(diagnostics[0]["message"], "checker initialized");
         assert_eq!(diagnostics[1]["message"], "positive required");
         assert_eq!(diagnostics[1]["labels"].as_array().unwrap().len(), 2);
-        results.push(diagnostics);
     }
-    assert_eq!(results[0], results[1]);
     fs::remove_dir_all(cwd).unwrap();
 }
 
@@ -542,10 +520,9 @@ fn wasm_cli_initializes_data_and_runs_the_authoritative_eval_contract() {
     .unwrap();
     fs::write(cwd.join("src/input.json"), r#"{"number":42}"#).unwrap();
     fs::write(cwd.join("source.yaml"), "items: [1, true, null]\n").unwrap();
-    for backend in [None, Some("--wasm")] {
+    {
         let mut command = telora(&cwd);
         command.args(["eval", "@src/main:answer"]);
-        command.args(backend);
         let output = command.output().unwrap();
         assert!(
             output.status.success(),
@@ -563,7 +540,6 @@ fn wasm_cli_initializes_data_and_runs_the_authoritative_eval_contract() {
             "--source",
             "input=source.yaml",
         ]);
-        command.args(backend);
         let output = command.args(["--", "argument"]).output().unwrap();
         assert!(
             output.status.success(),
@@ -585,21 +561,18 @@ fn wasm_cli_initializes_data_and_runs_the_authoritative_eval_contract() {
             "@src/main:answer"
         };
         let output = telora(&cwd)
-            .args([command, "--native", "--wasm", selector])
+            .args([command, "--wasm", selector])
             .output()
             .unwrap();
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected argument"));
     }
     fs::write(
         cwd.join("src/check.telora"),
         include_str!("../../../telora-wasm/tests/fixtures/properties.telora"),
     )
     .unwrap();
-    let output = telora(&cwd)
-        .args(["check", "--wasm", "@src/check"])
-        .output()
-        .unwrap();
+    let output = telora(&cwd).args(["check", "@src/check"]).output().unwrap();
     assert!(
         output.status.success(),
         "{} {}",
@@ -607,7 +580,7 @@ fn wasm_cli_initializes_data_and_runs_the_authoritative_eval_contract() {
         String::from_utf8_lossy(&output.stderr)
     );
     let output = telora(&cwd)
-        .args(["check", "--wasm", "--only-types", "--lib"])
+        .args(["check", "--only-types", "--lib"])
         .output()
         .unwrap();
     assert!(

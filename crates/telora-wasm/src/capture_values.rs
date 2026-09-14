@@ -160,7 +160,7 @@ impl Emitter<'_> {
         ]);
         let default = self.text_as(node, string, b"Wasm execution failed")?;
         self.extend([I::LocalGet(default), I::LocalSet(message)]);
-        for code in ERROR_OVERFLOW..=ERROR_DATA {
+        for code in (ERROR_OVERFLOW..=ERROR_DATA).chain([ERROR_UNINITIALIZED_CALL, ERROR_UNINITIALIZED_FUNCTION]) {
             self.extend([
                 I::LocalGet(packet),
                 I::I32Load(memory(12, 2)),

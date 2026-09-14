@@ -33,6 +33,8 @@ pub(crate) fn error_message(code: u32) -> &'static str {
         ERROR_PROPERTY => "property type does not support this decorator target",
         ERROR_MATCH => "no match arm accepted the value",
         ERROR_DATA => "data module has not been injected before initialization",
+        ERROR_UNINITIALIZED_CALL => "function called before its declaration was initialized",
+        ERROR_UNINITIALIZED_FUNCTION => "cannot copy an uninitialized function",
         _ => "Wasm execution failed",
     }
 }

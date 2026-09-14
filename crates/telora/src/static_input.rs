@@ -50,13 +50,14 @@ mod tests {
 
     #[test]
     fn generated_entry_policy_and_application_share_one_closed_graph() {
-        for (mode, family) in [(telora_core::codegen::RunMode::Run, "run"), (telora_core::codegen::RunMode::Serve, "serve")] {
+        for (mode, family) in [(telora_core::entry_plan::RunMode::Run, "run"), (telora_core::entry_plan::RunMode::Serve, "serve")] {
             let mir = inventory(family).solve_run("app/main", "main", mode).unwrap();
             let sealed = mir.seal().unwrap_or_else(|d| panic!("{family}: {d:?}\n{}", mir.diagnostics.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n")));
             let telora_core::mir::ModuleTarget::Bound(root) = mir.roots[0] else { panic!("adapter root") };
             let entry = *mir.exports[root.index()].iter().find(|s| mir.symbols[s.index()].name == "configure").unwrap();
-            let compiled = telora_core::codegen::compile_run(sealed, entry).unwrap_or_else(|d| panic!("{family}: {d:?}"));
-            assert!(compiled.run_calls.is_some());
+            let telora_core::mir::TypeState::Known(ty) = mir.ty_slots[mir.symbol_types[entry.index()].index()] else { panic!("closed entry type") };
+            assert!(telora_core::entry_plan::run_contract(sealed.types(), ty).is_some());
+            sealed.seal_export(entry).unwrap_or_else(|d| panic!("{family}: {d:?}"));
             assert_eq!(mir.modules.iter().filter(|m| m.name == "app/main").count(), 1);
             assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
         }
@@ -65,9 +66,9 @@ mod tests {
     #[test]
     fn generated_entry_rejects_wrong_nominal_family_and_unsafe_export_text() {
         let mut inventory = inventory("serve");
-        let mir = inventory.solve_run("app/main", "main", telora_core::codegen::RunMode::Run).unwrap();
+        let mir = inventory.solve_run("app/main", "main", telora_core::entry_plan::RunMode::Run).unwrap();
         assert!(mir.seal().is_err(), "Serve cannot satisfy Run's nominal contract");
-        assert!(inventory.solve_run("app/main", "main }; fail!(\"injected\");", telora_core::codegen::RunMode::Run).is_err());
+        assert!(inventory.solve_run("app/main", "main }; fail!(\"injected\");", telora_core::entry_plan::RunMode::Run).is_err());
         assert!(inventory.request("app/main", "std/_entry/adapter").is_none());
     }
 }
@@ -137,23 +138,6 @@ impl Inventory {
             }
         }
         Ok(warnings)
-    }
-    /// Called by the execution linker after static solving and code generation.
-    pub fn read_data(
-        &self,
-        link: &telora_core::codegen::DataLink,
-        max_bytes: usize,
-    ) -> Result<telora_core::EvalSource, String> {
-        let (format, text) = self.read_data_text(&link.name, max_bytes)?;
-        Ok(telora_core::EvalSource {
-            source_name: link.name.clone(),
-            format: match format {
-                telora_core::data_plan::Format::Json => telora_core::SystemDataFormat::Json,
-                telora_core::data_plan::Format::Yaml => telora_core::SystemDataFormat::Yaml,
-                telora_core::data_plan::Format::Toml => telora_core::SystemDataFormat::Toml,
-            },
-            text,
-        })
     }
     /// Read a catalog data module without depending on an execution linker.
     pub fn read_data_text(&self, name: &str, max_bytes: usize) -> Result<(telora_core::data_plan::Format, String), String> {
