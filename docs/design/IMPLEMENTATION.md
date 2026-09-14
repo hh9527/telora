@@ -94,6 +94,13 @@ manifest，并完成需要的 package 安装。解析器和 VM 不执行 package
 ModuleId，再从所选根逐级读取可达源码。共享依赖只读入并解析一次，未到达模块保持
 Unloaded。完整 inventory 的身份分配与源码读取、初始化顺序无关。
 
+源码访问边界以规范化 cname 为键，逻辑路径始终使用 `/`。Host 根据
+`telora-config.json`、`telora-crate.json` 和 `telora-lock.json` 建立资源地图，
+负责物理路径规范化、目录包含性检查和文件读取；传入 module Pass 的只有逻辑模块清单、
+入口 cname 和按 cname 读取文本的回调。物理路径不进入 MIR 的模块身份。
+入口直接从逻辑清单选择，不构造假文件路径或 `<pending>` 模块。内置源码、磁盘源码和
+编辑器文档使用同一逻辑身份边界。旧的基于物理路径的 `ModuleResolver` 已删除。
+
 `telora-crate.json` 的 modules 是源码与静态数据模块的权威清单。未声明文件只能产生
 warning，不能成为隐式 import 候选。测试选择额外递归建立当前 crate 的 `tests/` 清单，
 拒绝 symlink；测试模块可相互导入，普通源码不能反向导入测试。

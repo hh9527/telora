@@ -20,7 +20,7 @@ pub mod static_sources;
 pub mod module_resolve;
 pub mod symbol_resolve;
 pub mod type_resolve;
-pub mod module_id;
+pub mod module_format;
 pub mod package;
 pub mod parser;
 pub mod query;
@@ -30,11 +30,7 @@ pub mod syntax;
 pub use document::{
     DocumentSnapshot, DocumentText, DocumentVersion, PositionEncoding, TextEdit, TextPosition,
 };
-pub use module_id::{
-    ModuleCName, ModuleCatalogEntry, ModuleCatalogOrigin,
-    ModuleFormat, ModuleResolver, ModuleVendor, ModuleVisibility, ResolveModuleError,
-    ResolvedModule, resolve_root_module,
-};
+pub use module_format::{ModuleFormat, ModuleFormatError};
 pub use package::{
     CONFIG_FILE, CRATE_FILE, CrateManifest, LOCK_FILE, LockedPackage, LockedSource,
     ModuleDeclaration, PackageError, RemoteSource, ResolvedWorkspace, UndeclaredModule,

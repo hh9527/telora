@@ -274,6 +274,32 @@ fn canonical_request(owner: &str, request: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn cname_inventory_needs_no_filesystem_and_ids_ignore_inventory_order() {
+        use super::*;
+        let build = |reverse: bool| {
+            let mut inventory = ["app/bin/main", "dep/lib", "dep/helper"].into_iter().map(|name| ModuleSpec {
+                native: None, name: name.into(), kind: ModuleKind::Source, implicit_imports: vec![],
+            }).collect::<Vec<_>>();
+            if reverse { inventory.reverse(); }
+            let mut reads = Vec::new();
+            let mir = resolve(inventory, &["app/bin/main".into()], |_, cname| {
+                reads.push(cname.to_owned());
+                Ok(match cname {
+                    "app/bin/main" => "import \"dep/lib\" { value }; export { value };",
+                    "dep/lib" => "import \"./helper\" { value }; export { value };",
+                    "dep/helper" => "export def value = 42;",
+                    _ => panic!("unexpected source request: {cname}"),
+                }.into())
+            });
+            assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+            assert_eq!(reads, ["app/bin/main", "dep/lib", "dep/helper"]);
+            assert!(mir.modules.iter().all(|module| module.imports.iter().all(|edge| matches!(mir.imports[*edge].target, ModuleTarget::Bound(_)))));
+            mir.modules.into_iter().map(|module| module.name).collect::<Vec<_>>()
+        };
+        assert_eq!(build(false), build(true));
+    }
+
+    #[test]
     fn oversized_source_is_an_unavailable_module_diagnostic() {
         let mir = super::resolve(vec![super::ModuleSpec {
             native: None, name: "@src/main".into(),

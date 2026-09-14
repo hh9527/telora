@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::module_id::{ModuleFormat, validate_crate_name};
+use crate::module_format::ModuleFormat;
 
 pub const CONFIG_FILE: &str = "telora-config.json";
 pub const CRATE_FILE: &str = "telora-crate.json";
@@ -932,6 +932,19 @@ fn contained_directory(root: &Path, relative: &Path, label: &str) -> Result<Path
         )));
     }
     Ok(path)
+}
+
+fn validate_crate_name(name: &str) -> Result<(), PackageError> {
+    if name.is_empty()
+        || name.starts_with(['@', '_'])
+        || name.contains(['/', '.', '\\'])
+        || !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(PackageError::new(format!(
+            "invalid crate name {name:?}; expected ASCII letters, digits, and '-'"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_relative_path(path: &Path, label: &str) -> Result<(), PackageError> {
