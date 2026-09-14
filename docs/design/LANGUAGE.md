@@ -1571,6 +1571,13 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 错误复制给每个导入者。没有可归属的源码 primary 时，`module` 回退为本次根选择。
 这一静态归属不代表运行时失败的触发导出项；规则位置与触发求值的根是不同信息。
 
+`query` 的 definition/export/reference/expression record 中，`state` 表达类型或解析
+结果，`failed_constraints` 列出该语法子树产生的失败类型约束 ID（仅在本次图内有效），
+可与静态 diagnostic record 的 `constraint_ids` 对应。
+例如 `def value: Int = "wrong"` 可以保留 `Known`、`Int`，同时带有失败约束。
+引用不继承被引用声明的所有失败；导出记录查询其原声明。空列表不代表程序或声明合法，
+仍须结合 Unknown、resolve 结果、缺失契约及其他诊断判断，不能据此绕过 seal。
+
 `query` 查询同一普通 Module 管线产生的全面证据图，包括 recoverable CST、部分语义事实和
 诊断求值结果，因此存在错误或求值失败时仍可返回不受影响的事实。`query` 成功只表示查询
 成功，不表示模块健康；恢复节点通过独立 fact state 表达未确定或失败的状态。

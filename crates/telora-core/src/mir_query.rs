@@ -40,6 +40,11 @@ impl<'a> MirQuery<'a> {
         self.mir
     }
 
+    pub fn expressions(self) -> impl Iterator<Item = (HirId, &'a HirNode)> {
+        self.mir.hir.iter().enumerate().filter(|(index, _)| self.mir.required_types[*index])
+            .map(|(index, node)| (HirId(index as u32), node))
+    }
+
     pub fn symbols(self) -> impl Iterator<Item = (SymbolId, &'a Symbol)> {
         self.mir
             .symbols

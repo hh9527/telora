@@ -1,1 +1,1 @@
-export def enabled = True;
+export def enabled: Bool = True;

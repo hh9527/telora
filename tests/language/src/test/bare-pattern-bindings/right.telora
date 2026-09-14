@@ -1,1 +1,1 @@
-export def value = 2;
+export def value: Int = 2;

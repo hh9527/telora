@@ -1,1 +1,1 @@
-export def helper = 1;
+export def helper: Int = 1;

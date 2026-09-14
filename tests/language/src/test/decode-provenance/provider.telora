@@ -8,5 +8,5 @@ export def parse_value = fn() {
     }
 };
 export def parsed = parse_value();
-export def empty = "";
+export def empty: String = "";
 export def escaped = "{\"value\":\"\\u4e2d\"";

@@ -7,4 +7,4 @@ def choose: for(A) Fn(A) -> A = fn(value) {
     if invalid.x == 0 { value } else { value }
 };
 type Chosen = choose(Int);
-export def value = 2;
+export def value: Int = 2;

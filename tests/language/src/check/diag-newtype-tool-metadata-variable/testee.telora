@@ -3,4 +3,4 @@ type Invalid = {
     let metadata: TypeOf(Wrapped) = Wrapped;
     metadata(Int).0
 };
-export def value = 0;
+export def value: Int = 0;

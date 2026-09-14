@@ -27,6 +27,9 @@ pub(crate) fn diagnostic(mir: &Mir, schema: &str, root: &str, d: &Diagnostic) ->
             _ => None,
         })).unwrap_or(root);
     json!({"schema": schema, "module": module, "session": root, "record": "diagnostic",
+        "constraint_ids": mir.type_conflicts.iter().enumerate().filter_map(|(id, conflict)|
+            conflict.diagnostic.and_then(|index| mir.diagnostics.get(index))
+                .filter(|original| std::ptr::eq(*original, d)).map(|_| id)).collect::<Vec<_>>(),
         "severity": match d.severity { Severity::Error => "error", Severity::Warning => "warning", Severity::Info => "info" },
         "message": d.message, "notes": d.notes,
         "labels": d.labels.iter().map(|l| json!({"source": mir.sources.get(l.location.source).name.as_ref(),
@@ -218,7 +221,17 @@ fn definition(mir: &Mir, root: &str, id: SymbolId, kind: ShowKind) -> Value {
     };
     json!({"schema": QUERY_SCHEMA, "module": root, "record": "definition", "authority": "authoritative",
         "symbol_id": index, "name": symbol.name, "kind": kind_name(kind), "type_id": type_id,
-        "type": ty, "state": state, "resolution": resolution, "target_id": target_id, "target": target, "location": loc})
+        "type": ty, "state": state, "failed_constraints": symbol_failures(mir, id),
+        "resolution": resolution, "target_id": target_id, "target": target, "location": loc})
+}
+
+fn symbol_failures(mir: &Mir, symbol: SymbolId) -> Vec<usize> {
+    let target = match mir.symbols[symbol.index()].resolution {
+        ResolveState::Bound(target) => target,
+        _ => symbol,
+    };
+    mir.symbols[target.index()].declarations.iter().flat_map(|&node| mir.type_conflicts_in(node))
+        .map(|id| id.index()).collect::<std::collections::BTreeSet<_>>().into_iter().collect()
 }
 
 fn position_range(
@@ -304,7 +317,8 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
                 emit(
                     json!({"schema": QUERY_SCHEMA, "module": root, "record": "export", "authority": "authoritative",
                     "name": symbol.name, "symbol_id": id.index(), "target_id": target_id, "resolution": resolution,
-                    "type_id": type_id, "type": ty, "state": state}),
+                    "type_id": type_id, "type": ty, "state": state,
+                    "failed_constraints": symbol_failures(&mir, id)}),
                 )?;
             }
         }
@@ -357,19 +371,21 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
                     };
                     emit(json!({"schema": QUERY_SCHEMA, "module": root, "record": "reference", "authority": "authoritative",
                         "hir_id": reference.node.index(), "resolve_slot": slot.index(), "name": name, "resolved": target_id.is_some(),
-                        "resolution": resolution, "target_id": target_id, "location": location(&mir, reference.location)}))?;
+                        "resolution": resolution, "target_id": target_id,
+                        "failed_constraints": mir.type_conflicts_in(reference.node).iter().map(|id| id.index()).collect::<Vec<_>>(),
+                        "location": location(&mir, reference.location)}))?;
                 }
-                for (i, node) in mir
-                    .hir
-                    .iter()
-                    .enumerate()
+                for (id, node) in MirQuery::new(&mir).expressions()
                     .filter(|(_, n)| n.module.index() == module && intersects(n.location))
                 {
+                    let i = id.index();
                     if mir.required_types[i] {
                         let (type_id, ty, state) = type_fields(&mir, mir.ty_slots[i]);
                         emit(
                             json!({"schema": QUERY_SCHEMA, "module": root, "record": "expression", "authority": "authoritative",
-                            "hir_id": i, "type_slot": i, "type_id": type_id, "type": ty, "state": state, "location": location(&mir,node.location)}),
+                            "hir_id": i, "type_slot": i, "type_id": type_id, "type": ty, "state": state,
+                            "failed_constraints": mir.type_conflicts_in(id).iter().map(|id| id.index()).collect::<Vec<_>>(),
+                            "location": location(&mir,node.location)}),
                         )?;
                     }
                 }

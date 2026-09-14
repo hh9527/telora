@@ -1,6 +1,6 @@
 import "std/blame" {BlameError};
 
-export def invalid_min = -7;
+export def invalid_min: Int = -7;
 
 def nonnegative: Fn(Int) -> Result((), BlameError) = fn(value) {
     if value >= 0 { Ok(()) } else { Err(blame!("nonnegative required", value)) }

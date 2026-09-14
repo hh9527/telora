@@ -633,7 +633,7 @@ fn static_mir_query_returns_known_unknown_and_conflicted_without_evaluation() {
         cwd.join("src/main.telora"),
         r#"
 import "./data.json" { data };
-export def answer = 1 / 0;
+export def answer: Int = 1 / 0;
 export def unknown = unknown;
 export def unresolved = missing;
 export def bad: Int = "wrong";
@@ -662,7 +662,13 @@ export def bad: Int = "wrong";
     assert!(export("answer")["type_id"].is_number());
     assert_eq!(export("unknown")["state"], "Unknown");
     assert_eq!(export("unresolved")["state"], "Conflicted");
-    assert_eq!(export("bad")["state"], "Conflicted");
+    assert_eq!(export("bad")["state"], "Known");
+    assert_eq!(export("bad")["type"], "Int");
+    assert_eq!(export("bad")["failed_constraints"].as_array().unwrap().len(), 1);
+    assert_eq!(export("answer")["failed_constraints"], serde_json::json!([]));
+    let failed = export("bad")["failed_constraints"][0].clone();
+    assert!(records.iter().any(|record| record["record"] == "diagnostic"
+        && record["constraint_ids"].as_array().is_some_and(|ids| ids.contains(&failed))));
     assert!(records.iter().any(|r| {
         r["record"] == "diagnostic"
             && r["message"]
