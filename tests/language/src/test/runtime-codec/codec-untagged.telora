@@ -3,7 +3,7 @@ import "std/json" as json;
 import "std/value" { Value };
 @json.untagged
 type Choice = enum { Empty, Number(Int), Text(String) };
-export def inspect = fn() {
+export def inspect: Fn() -> (Value, Value, Value) = fn() {
     (codec.encode(Value.type,Choice.Empty),codec.encode(Value.type,Choice.Number(7)),codec.encode(Value.type,Choice.Text("x")))
 };
-export def answer = codec.encode(Value.type, inspect());
+export def answer: Value = codec.encode(Value.type, inspect());

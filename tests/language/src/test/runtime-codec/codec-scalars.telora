@@ -2,7 +2,7 @@ import "std/codec" as codec;
 import "std/value" { Value };
 import "std/dict" as dict;
 import "std/array" as array;
-export def inspect = fn() {
+export def inspect: Fn() -> Array(Bool) = fn() {
     let existing = Value.String("same");
     let absent: Option(Int) = None;
     let impossible: Option(Never) = None;
@@ -29,4 +29,4 @@ export def inspect = fn() {
      codec.encode(Value.type, dictionary) == Value.Object(dict.from_pairs([("a",Value.Int(1)),("z",Value.Int(2))])),
      codec.encode(Value.type, no_fields) == Value.Object(dict.from_pairs([]))]
 };
-export def answer = Value.Array(array.map(inspect(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(inspect(), fn(value) { if value { Value.True } else { Value.False } }));

@@ -34,6 +34,7 @@ mod tests {
     use super::*;
 
     fn inventory(family: &str) -> Inventory {
+        let contract = match family { "run" => "Run", "serve" => "Serve", _ => unreachable!() };
         let mut inventory = Inventory::new(Path::new("."), true).unwrap();
         inventory.entries.insert("app/main".into(), Entry {
             name: "app/main".into(), origin: "crate", visibility: "public",
@@ -41,7 +42,7 @@ mod tests {
             source: Source::Generated(format!(r#"
                 import "std/entry" as entry;
                 import "std/ees" as ees;
-                export def main = entry.{family}(Int.type, {{sources: [], envs: [], args: False}}, ees.none,
+                export def main: entry.{contract}(Int) = entry.{family}(Int.type, {{sources: [], envs: [], args: False}}, ees.none,
                     fn(ctx) {{ (42, fn(state, event) {{ (state, []) }}) }});
             "#)),
         });

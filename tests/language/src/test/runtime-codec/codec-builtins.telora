@@ -2,7 +2,7 @@ import "std/codec" as codec;
 import "std/value" {Value};
 import "std/array" as array;
 
-export def inspect = fn() {
+export def inspect: Fn() -> Array(Bool) = fn() {
     let success: Result(Int, String) = Ok(42);
     let failure: Result(Int, String) = Err("no");
     let continued: FoldControl(Int, String) = FoldControl.Continue(7);
@@ -16,4 +16,4 @@ export def inspect = fn() {
      codec.decode(PropertyTarget.type, Value.String("Type")) == Ok(PropertyTarget.Type),
      codec.decode((Array(Result(Int, String))).type, Value.Array([Value.Object({Ok: Value.Int(42)})])) == Ok([success])]
 };
-export def answer = Value.Array(array.map(inspect(), fn(value) {if value {Value.True} else {Value.False}}));
+export def answer: Value = Value.Array(array.map(inspect(), fn(value) {if value {Value.True} else {Value.False}}));

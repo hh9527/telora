@@ -1,1 +1,4 @@
-export def selected = if True { Some(1) } else { None };
+export def selected: Option(Int) = do {
+    let selected = if True { Some(1) } else { None };
+    selected
+};

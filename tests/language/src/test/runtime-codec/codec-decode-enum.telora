@@ -13,7 +13,7 @@ type Ambiguous = enum {First(Int), Second(Int)};
 type Checked = enum {@check(fn(value) {if value > 0 {Ok(())} else {Err(blame!("positive candidate",value))}}) Positive(Int), AnyInt(Int)};
 @json.untagged
 type Units = enum {First, Second};
-export def inspect = fn() {
+export def inspect: Fn() -> Array(Bool) = fn() {
     [codec.decode(Choice.type,Value.String("Empty")) == Ok(Choice.Empty),
      codec.decode(Choice.type,Value.Object({Number:Value.Int(7)})) == Ok(Choice.Number(7)),
      codec.decode(Choice.type,Value.Object({Child:Value.Object({Number:Value.Int(7)})})) == Ok(Choice.Child(Choice.Number(7))),
@@ -32,4 +32,4 @@ export def inspect = fn() {
      match codec.decode(Checked.type,Value.Int(1)) {Err(_) => True,Ok(_) => False},
      match codec.decode(Units.type,Value.None) {Err(_) => True,Ok(_) => False}]
 };
-export def answer = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));
+export def answer: Value = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));

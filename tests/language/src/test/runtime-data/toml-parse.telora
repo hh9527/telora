@@ -1,7 +1,7 @@
 import "std/toml" as toml;
 import "std/value" {Value};
 import "std/array" as array;
-export def inspect = fn() {
+export def inspect: Fn() -> Array(Bool) = fn() {
     [toml.parse("name = 'Ada'\ncount = 0x2a\nratio = 1.5\nenabled = true\n") == Ok(Value.Object({name:Value.String("Ada"),count:Value.Int(42),ratio:Value.Float(1.5),enabled:Value.True})),
      toml.parse("[server]\nhost='localhost'\nports=[80,443]\n") == Ok(Value.Object({server:Value.Object({host:Value.String("localhost"),ports:Value.Array([Value.Int(80),Value.Int(443)])})})),
      toml.parse("[[items]]\nn=1\n[[items]]\nn=2\n") == Ok(Value.Object({items:Value.Array([Value.Object({n:Value.Int(1)}),Value.Object({n:Value.Int(2)})])})),
@@ -12,4 +12,4 @@ export def inspect = fn() {
      match toml.parse("a=2024-02-30\n") {Err(_) => True,Ok(_) => False},
      match toml.parse("a=12:34\n") {Err(_) => True,Ok(_) => False}]
 };
-export def answer = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));
+export def answer: Value = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));

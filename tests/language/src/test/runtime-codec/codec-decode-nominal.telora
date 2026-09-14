@@ -16,7 +16,7 @@ type Renamed = struct {some_number: Int};
 @check(fn(value) {if value.number > 0 {Ok(())} else {Err(blame!("positive parsed",value.number))}})
 type Parsed = struct {number: Int};
 type Chain = struct {number: Int, next: Option(Chain)};
-export def inspect = fn() {
+export def inspect: Fn() -> Array(Bool) = fn() {
     [codec.decode(Count.type,Value.Int(7)) == Ok(Count(7)),
      match codec.decode(Count.type,Value.Int(-1)) {Err(_) => True,Ok(_) => False},
      codec.decode(Counts.type,Value.Array([Value.Int(1),Value.Int(2)])) == Ok(Counts([Count(1),Count(2)])),
@@ -30,4 +30,4 @@ export def inspect = fn() {
      match codec.decode(Parsed.type,Value.Int(7)) {Err(_) => True,Ok(_) => False},
      match codec.decode(Chain.type,Value.Object({number:Value.Int(1),next:Value.Object({number:Value.Int(2)})})) {Ok(value) => value.number == 1 && match value.next {Some(next) => next.number == 2 && next.next == None,None => False},Err(_) => False}]
 };
-export def answer = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));
+export def answer: Value = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));

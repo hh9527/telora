@@ -225,15 +225,15 @@ mod tests {
         std::fs::write(dir.path().join("telora-crate.json"), r#"{"name":"editor","modules":["@src/main","@src/model","@src/other"],"dependencies":[]}"#).unwrap();
         std::fs::write(
             dir.path().join("src/main.telora"),
-            "import \"./model\" as model; export def value = model.value;",
+            "import \"./model\" {value}; export {value};",
         )
         .unwrap();
         std::fs::write(
             dir.path().join("src/model.telora"),
-            "export def value = 42;",
+            "export def value: Int = 42;",
         )
         .unwrap();
-        std::fs::write(dir.path().join("src/other.telora"), "export def other = 1;").unwrap();
+        std::fs::write(dir.path().join("src/other.telora"), "export def other: Int = 1;").unwrap();
         let spec = telora_core::WorkspaceSpec::discover(dir.path()).unwrap();
         spec.write_lock(&spec.generate_lock(&BTreeMap::new()).unwrap())
             .unwrap();
@@ -261,7 +261,7 @@ mod tests {
             .open(
                 &model,
                 DocumentVersion(1),
-                "export def value = \"overlay\";",
+                "export def value: String = \"overlay\";",
             )
             .unwrap();
         workspace
@@ -307,7 +307,7 @@ mod tests {
             .open(
                 &main,
                 DocumentVersion(1),
-                "export def value = panic!(\"must never execute\");",
+                "export def value: Never = panic!(\"must never execute\");",
             )
             .unwrap();
         assert!(matches!(
@@ -340,14 +340,14 @@ mod tests {
         std::fs::create_dir(&tests).unwrap();
         let first = tests.join("_first.telora");
         let second = tests.join("second.telora");
-        std::fs::write(&first, "export def first = 1;").unwrap();
-        std::fs::write(&second, "export def second = 2;").unwrap();
+        std::fs::write(&first, "export def first: Int = 1;").unwrap();
+        std::fs::write(&second, "export def second: Int = 2;").unwrap();
         let workspace = Workspace::new(&first).unwrap();
         workspace
-            .open(&first, DocumentVersion(1), "export def first = 1;")
+            .open(&first, DocumentVersion(1), "export def first: Int = 1;")
             .unwrap();
         workspace
-            .open(&second, DocumentVersion(1), "export def second = 2;")
+            .open(&second, DocumentVersion(1), "export def second: Int = 2;")
             .unwrap();
         let revision = workspace.revision();
         assert!(
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(workspace.revision(), revision);
         assert_eq!(
             workspace.document(&first).unwrap().text().to_string(),
-            "export def first = 1;"
+            "export def first: Int = 1;"
         );
         let old_document = workspace.document(&first).unwrap();
         workspace
@@ -371,11 +371,11 @@ mod tests {
                 &first,
                 DocumentVersion(1),
                 DocumentVersion(2),
-                &[TextEdit::Full("export def first = \"new\";".into())],
+                &[TextEdit::Full("export def first: String = \"new\";".into())],
             )
             .unwrap();
         let snapshot = workspace.rebuild(&workspace.context()).await.unwrap();
-        assert_eq!(old_document.text().to_string(), "export def first = 1;");
+        assert_eq!(old_document.text().to_string(), "export def first: Int = 1;");
         assert!(
             snapshot.mir.diagnostics.is_empty(),
             "{:?}",

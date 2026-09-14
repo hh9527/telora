@@ -795,7 +795,7 @@ export def output = render(1);"#;
             .open(
                 &path,
                 DocumentVersion(1),
-                "def first: Int = \"wrong\"; def second: Bool = 2; export def output = 0;",
+                "def first: Int = \"wrong\"; def second: Bool = 2; export def output: Int = 0;",
             )
             .expect("open invalid source");
         {
@@ -820,7 +820,7 @@ export def output = render(1);"#;
                 &path,
                 DocumentVersion(1),
                 DocumentVersion(2),
-                &[TextEdit::Full("export def output = 1;".to_owned())],
+                &[TextEdit::Full("export def output: Int = 1;".to_owned())],
             )
             .expect("fix source");
         state.borrow_mut().documents.insert(path, 2);

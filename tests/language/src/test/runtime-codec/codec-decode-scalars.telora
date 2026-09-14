@@ -1,7 +1,7 @@
 import "std/codec" as codec;
 import "std/value" { Value };
 import "std/array" as array;
-export def inspect = fn() {
+export def inspect: Fn() -> Array(Bool) = fn() {
     [codec.decode(Int.type,Value.Int(42)) == Ok(42),
      codec.decode(Float.type,Value.Float(1.5)) == Ok(1.5),
      codec.decode(String.type,Value.String("x")) == Ok("x"),
@@ -18,4 +18,4 @@ export def inspect = fn() {
      codec.decode(Dict(Int).type,Value.Object({a:Value.Int(1)})) == Ok({a:1}),
      match codec.decode(Array(Int).type,Value.Array([Value.String("x")])) {Err(_) => True,Ok(_) => False}]
 };
-export def answer = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));
+export def answer: Value = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));

@@ -6,8 +6,8 @@ import "std/value" { Value };
 @string.encode_by_display
 @fmt.display_by("{host}:{port}")
 type Endpoint = struct {host: String, port: Int};
-export def inspect = fn() {
+export def inspect: Fn() -> Value = fn() {
     let endpoint: Endpoint = {host: "localhost",port: 8080};
     codec.encode(Value.type,endpoint)
 };
-export def answer = inspect();
+export def answer: Value = inspect();
