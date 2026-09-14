@@ -110,6 +110,10 @@ impl Emitter<'_> {
                 value,
             )?);
         }
+        let location = self.mir.hir[node.index()].location;
+        for (index, word) in [location.source.get(), location.start, location.end].into_iter().enumerate() {
+            self.extend([I::I32Const(word as i32), I::GlobalSet(CALL_SOURCE_GLOBAL + index as u32)]);
+        }
         if self.tail_calls.contains(&node) {
             self.tail_invoke(callee, &values)
         } else {

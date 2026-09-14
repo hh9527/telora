@@ -99,6 +99,7 @@ mod string_ops;
 mod tail_calls;
 mod template_ops;
 mod test_description;
+pub mod testing;
 
 pub use codegen::compile_executable;
 

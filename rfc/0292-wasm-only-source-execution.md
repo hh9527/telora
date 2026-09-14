@@ -1,6 +1,6 @@
 # RFC 0292：统一 Wasm 源码执行路线
 
-- 状态：实施中；Wasm 服务状态机、work 回收及默认 run/serve 已接入，尚未完成 test 与旧后端删除
+- 状态：实施中；默认 run/serve/test 已接入 Wasm，尚未完成其余默认命令切换与旧后端删除
 - 日期：2026-09-14
 - 跟踪：[#187](https://github.com/hh9527/telora/issues/187)
 - 前置：RFC 0291（Wasm check/eval/eval-with）、RFC 0290（服务语义参考）
@@ -175,3 +175,19 @@ Wasm 库 98 项通过（1 项 opt-in 忽略），完整 CLI 101 项通过。
 world-model make-query 源码执行输出符合预期；strace 的 process/file 跟踪
 仅出现 Telora 自身 execve，没有子进程或以写入方式打开文件。该观察使用
 debug 构建验证执行路径，不作为 release 性能数据。
+
+2026-09-14：默认 test 已切换为 Wasm。初始化后按闭合 SymbolId 读取 Test
+导出，描述与闭包留在 Wasm 堆，Host 负责 fixture 文件协议、展开和 JSONL
+报告。测试边界区分正常返回、语言失败与引擎 trap：仅语言失败允许继续，
+预期错误不重复输出，但保留警告；trap/fuel 耗尽终止会话，不满足 should_fail。
+不重建 session、不重置累计 fuel。待执行描述/工厂作为精确根在用例间回收，
+包含嵌套 fixture 捕获的输入值。
+
+生成调用传递 source/start/end，Test 保存真实调用位置，fixture 相对于
+声明调用所在模块解析。所有数据模块先解析并汇总错误，全部有效后才注入
+和执行初始化。Wasm ABI 更新为 11，不兼容旧实验产物。
+
+验证：Wasm 库 99 项通过（1 项 opt-in 忽略）；完整 CLI 102 项通过，包含
+语言验收脚本；追加用例间回收后的 test_command 专项 8 项通过。覆盖嵌套
+JSON/YAML/TOML fixture、重导出模块相对路径、预期失败后继续、警告保留、
+输入来源、多数据错误汇总与初始化环。其他命令与旧后端删除仍需继续。

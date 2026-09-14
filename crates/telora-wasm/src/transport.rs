@@ -14,6 +14,26 @@ impl Value {
 }
 
 impl Session {
+    /// Read a closed, initialized global by SymbolId. No name lookup or evaluation.
+    pub fn initialized_global(&self, symbol: u32) -> Result<Value, String> {
+        let global = self
+            .manifest
+            .globals
+            .iter()
+            .find(|global| global.symbol == symbol)
+            .ok_or("Wasm: global is outside the sealed executable")?;
+        let output = self.output();
+        if output.word(global.demand as u64)? != 2 {
+            return Err("Wasm: global is not initialized".into());
+        }
+        let value = Value {
+            pointer: output.word(global.demand as u64 + 4)?,
+            ty: global.ty,
+        };
+        self.expect_value(value, global.ty)?;
+        Ok(value)
+    }
+
     pub(crate) fn output(&self) -> Output<'_> {
         Output {
             memory: self.memory.data(&self.store),
@@ -81,6 +101,16 @@ impl Session {
         closure: Value,
         arguments: &[Value],
     ) -> Result<Value, String> {
+        self.invoke_testable(closure, arguments)?
+            .ok_or_else(|| self.failure())
+    }
+
+    /// A normal null return is a language failure; traps remain outer errors.
+    pub(crate) fn invoke_testable(
+        &mut self,
+        closure: Value,
+        arguments: &[Value],
+    ) -> Result<Option<Value>, String> {
         self.expect_value(closure, closure.ty)?;
         let desc = &self.manifest.types[closure.ty as usize];
         if desc.kind != Kind::Function || desc.arguments.len() != arguments.len() + 1 {
@@ -107,10 +137,10 @@ impl Session {
             .call(&mut self.store, (closure.pointer as i32, args as i32))
             .map_err(|e| e.to_string())? as u32;
         if pointer == 0 {
-            return Err(self.failure());
+            return Ok(None);
         }
         let value = Value { pointer, ty };
         self.expect_value(value, ty)?;
-        Ok(value)
+        Ok(Some(value))
     }
 }

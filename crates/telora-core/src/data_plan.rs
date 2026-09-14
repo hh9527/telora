@@ -24,6 +24,12 @@ pub fn enforce_limits(
         .map_err(|error| error.to_string())
 }
 
+/// Logical retained-data accounting, shared by fixture hosts across backends.
+pub fn storage_estimate(plan: &ValidatedDataPlan, limits: crate::DataLimits, file_size: usize) -> Result<usize, String> {
+    let stats = plan.enforce_limits(limits, file_size).map_err(|error| error.to_string())?;
+    Ok(stats.nodes.saturating_mul(64).saturating_add(stats.payloads_bytes))
+}
+
 pub fn parse_registered(
     sources: &SourceDatabase,
     source: SourceId,

@@ -1,6 +1,8 @@
 //! Hidden portable backend. The frontend stops at SealedExecutable.
 pub(crate) mod artifact;
 pub(crate) mod run;
+pub(crate) mod testing;
+mod test_fixtures;
 mod diagnostics;
 mod timing;
 use crate::static_input::Inventory;
@@ -61,34 +63,51 @@ pub(crate) fn initialize(
     inventory: &Inventory,
     sources: &mut telora_core::SourceDatabase,
 ) -> Result<(), String> {
+    initialize_diagnostics(session, inventory, sources).map_err(|diagnostics| {
+        diagnostics.iter().map(|d| sources.render(d)).collect::<Vec<_>>().join("\n")
+    })
+}
+
+pub(crate) fn initialize_diagnostics(
+    session: &mut telora_wasm::session::Session,
+    inventory: &Inventory,
+    sources: &mut telora_core::SourceDatabase,
+) -> Result<(), Vec<Diagnostic>> {
     let timer = PhaseTimer::new("data_input");
-    session.set_debug_enabled(true)?;
+    session.set_debug_enabled(true).map_err(|e| vec![error(e)])?;
+    let mut diagnostics = vec![];
+    let mut prepared = vec![];
     for module in session.manifest.data_modules.clone() {
-        let (format, text) = inventory.read_data_text(
+        let (format, text) = match inventory.read_data_text(
             &module.name,
             crate::execution_config().data_limits.file_size,
-        )?;
+        ) {
+            Ok(data) => data,
+            Err(message) => { diagnostics.push(error(message)); continue; }
+        };
         let source = sources
             .try_add(module.name, &text)
-            .map_err(|e| e.to_string())?;
-        let plan =
-            telora_core::data_plan::parse_registered(sources, source, format).map_err(|ds| {
-                ds.iter()
-                    .map(|d| sources.render(d))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })?;
-        telora_core::data_plan::enforce_limits(
+            .map_err(|e| vec![error(e.to_string())])?;
+        let plan = match telora_core::data_plan::parse_registered(sources, source, format) {
+            Ok(plan) => plan,
+            Err(errors) => { diagnostics.extend(errors); continue; }
+        };
+        if let Err(message) = telora_core::data_plan::enforce_limits(
             &plan,
             crate::execution_config().data_limits,
             text.len(),
-        )?;
-        session.register_data_sources(sources, &plan)?;
-        session.inject_data(module.symbol, &plan)?;
+        ) { diagnostics.push(error(message)); continue; }
+        prepared.push((module.symbol, plan));
+    }
+    if !diagnostics.is_empty() { return Err(diagnostics); }
+    for (symbol, plan) in prepared {
+        session.register_data_sources(sources, &plan).map_err(|e| vec![error(e)])?;
+        session.inject_data(symbol, &plan).map_err(|e| vec![error(e)])?;
     }
     drop(timer);
     let _timer = PhaseTimer::new("initialize");
-    session.initialize()
+    let result = session.initialize();
+    if result.is_err() { Err(check_diagnostics(session, sources, result)) } else { Ok(()) }
 }
 
 pub(crate) fn check_diagnostics(

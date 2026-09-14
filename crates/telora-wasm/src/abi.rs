@@ -31,6 +31,8 @@ pub const FIRST_FUNCTION: u32 = 26;
 pub const CALL_TYPE: u32 = 1;
 pub const ERROR_GLOBAL: u32 = 0;
 pub const PHASE_GLOBAL: u32 = 1;
+pub const CALL_SOURCE_GLOBAL: u32 = 2;
+pub const GLOBAL_COUNT: u32 = 5;
 
 pub const ERROR_OVERFLOW: u32 = 1;
 pub const ERROR_DIVISION: u32 = 2;

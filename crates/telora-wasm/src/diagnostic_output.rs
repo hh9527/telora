@@ -27,7 +27,7 @@ pub(crate) fn error_message(code: u32) -> &'static str {
     match code {
         ERROR_OVERFLOW => "integer arithmetic overflowed",
         ERROR_DIVISION => "integer division by zero",
-        ERROR_CYCLE => "initialization dependency cycle",
+        ERROR_CYCLE => "initialization dependency cycle (cyclic demand)",
         ERROR_INDEX => "OutOfRange: array index out of bounds",
         ERROR_KEY => "dictionary key is absent",
         ERROR_PROPERTY => "property type does not support this decorator target",
@@ -38,6 +38,28 @@ pub(crate) fn error_message(code: u32) -> &'static str {
 }
 
 impl Session {
+    /// Demand failures can propagate an earlier event without reporting it again.
+    pub(crate) fn active_failure(&self) -> Result<Option<Diagnostic>, String> {
+        let pointer = self
+            .instance
+            .get_global(&self.store, "telora_error")
+            .ok_or("Wasm: missing failure global")?
+            .get(&self.store)
+            .i32()
+            .ok_or("Wasm: invalid failure global")? as u32;
+        if pointer == 0 {
+            return Ok(None);
+        }
+        let output = self.output();
+        let events = self.diagnostics()?;
+        for (index, event) in events.into_iter().enumerate() {
+            if output.payload(DIAGNOSTICS, index as u32)?.0 == pointer as u64 {
+                return Ok(Some(event));
+            }
+        }
+        Err("Wasm: failure does not reference a diagnostic event".into())
+    }
+
     pub fn diagnostics(&self) -> Result<Vec<Diagnostic>, String> {
         let output = Output {
             memory: self.memory.data(&self.store),

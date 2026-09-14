@@ -69,7 +69,7 @@ impl ObjectFunction {
                 self.relocations.push(Relocation {
                     kind: 20,
                     offset: self.function.byte_len() as u32,
-                    symbol: functions + 2,
+                    symbol: functions + crate::abi::GLOBAL_COUNT,
                 });
                 self.function.raw([0x80, 0x80, 0x80, 0x80, 0]);
                 self

@@ -12,6 +12,15 @@ pub struct Manifest {
     pub eval_type: Option<u32>,
     pub data_modules: Vec<DataModule>,
     pub debug_sites: Vec<DebugSite>,
+    pub globals: Vec<Global>,
+}
+
+/// Closed global identity and its fixed initialization cell in linear memory.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Global {
+    pub symbol: u32,
+    pub ty: u32,
+    pub demand: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -211,6 +220,7 @@ impl Manifest {
             })
             .collect();
         Ok(Self {
+            globals: vec![],
             abi: crate::abi::VERSION,
             entry_type: entry.index() as u32,
             types,
@@ -299,6 +309,8 @@ impl Manifest {
                 .chain(manifest.eval_type)
                 .any(|ty| ty as usize >= manifest.types.len())
             || manifest.entry_type as usize >= manifest.types.len()
+            || manifest.globals.iter().any(|global| global.ty as usize >= manifest.types.len()
+                || global.demand % crate::abi::DEMAND_BYTES != 0)
             || manifest.types.iter().any(|ty| {
                 ty.arguments
                     .iter()

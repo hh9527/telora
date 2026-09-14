@@ -11,7 +11,14 @@ use wasm_encoder::*;
 /// Generate a self-contained Wasm module from already sealed execution evidence.
 pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, String> {
     let plan = Plan::new(executable)?;
-    let manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
+    let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
+    for (&symbol, &key) in &plan.globals {
+        manifest.globals.push(crate::artifact::Global {
+            symbol: symbol.index() as u32,
+            ty: key.ty(executable.sealed_mir().mir(), key.node)?.index() as u32,
+            demand: plan.demands[&key],
+        });
+    }
     let mut module = Module::new();
     let mut types = TypeSection::new();
     types.ty().function([ValType::I32], [ValType::I32]);
@@ -105,8 +112,9 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         mutable: true,
         shared: false,
     };
-    globals.global(mutable, &ConstExpr::i32_const(0));
-    globals.global(mutable, &ConstExpr::i32_const(0));
+    for _ in 0..GLOBAL_COUNT {
+        globals.global(mutable, &ConstExpr::i32_const(0));
+    }
     module.section(&globals);
     let mut elements = ElementSection::new();
     elements.active(
@@ -205,7 +213,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         symbols.function(0, index, Some(&name));
         function_names.append(index, &name);
     }
-    for (index, name) in ["telora_error", "telora_phase"].iter().enumerate() {
+    for (index, name) in ["telora_error", "telora_phase", "telora_call_source", "telora_call_start", "telora_call_end"].iter().enumerate() {
         symbols.global(0, index as u32, Some(name));
     }
     symbols.table(SymbolTable::WASM_SYM_UNDEFINED, 0, None);

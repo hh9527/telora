@@ -222,6 +222,7 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32) -> Result<Vec<u8>, String
         exports.export(name, ExportKind::Func, rt.functions + index);
     }
     exports.export("telora_error", ExportKind::Global, rt.globals);
+    exports.export("telora_phase", ExportKind::Global, rt.globals + 1);
     output.append_section(&exports)?;
     let mut names = rt.names.clone();
     for (name, bytes) in &program.custom {

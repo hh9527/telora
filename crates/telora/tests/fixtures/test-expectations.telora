@@ -1,0 +1,10 @@
+import "std/test" as test;
+
+export def a_expected = test.should_fail_with(fn() {
+    let notice: Option(Int) = warn!("warning survives expected failure");
+    fail!("expected error");
+}, "expected error");
+export def b_recovered = test.should_ok(fn() { 42 });
+export def c_wrong_message = test.should_fail_with(fn() { fail!("actual error"); }, "other error");
+export def d_returned_normally = test.should_fail(fn() { 1 });
+export def e_last = test.should_ok(fn() { 2 });

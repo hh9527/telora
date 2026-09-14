@@ -3,6 +3,24 @@ fn test_command(cwd: &Path, name: &str) -> std::process::Output {
 }
 
 #[test]
+fn test_command_recovers_expected_failures_and_preserves_warnings() {
+    let cwd = fixture();
+    fs::write(cwd.join("tests/expectations.telora"),
+        include_str!("../fixtures/test-expectations.telora")).unwrap();
+    let output = test_command(&cwd, "expectations");
+    assert_eq!(output.status.code(), Some(1), "{}", String::from_utf8_lossy(&output.stderr));
+    let records = jsonl(&output.stdout);
+    let cases = records.iter().filter(|r| r["record"] == "case").collect::<Vec<_>>();
+    assert_eq!(cases.iter().map(|r| r["status"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["passed", "passed", "failed", "failed", "passed"], "{records:?}");
+    assert_eq!(records.last().unwrap()["aborted"], false);
+    assert!(records.iter().any(|r| r["severity"] == "warning" && r["test"] == "a_expected"));
+    assert!(!records.iter().any(|r| r["message"] == "expected error"));
+    assert!(records.iter().any(|r| r["message"] == "actual error"));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn test_command_composes_top_level_and_nested_modules_without_running_unreachable_tests() {
     let cwd = fixture();
     fs::create_dir_all(cwd.join("tests/helpers")).unwrap();

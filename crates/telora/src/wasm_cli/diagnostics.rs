@@ -51,6 +51,13 @@ pub(super) fn collect(
     sources: &SourceDatabase,
 ) -> Result<Vec<Diagnostic>, String> {
     debug(session)?;
+    Ok(convert(session.diagnostics()?, sources))
+}
+
+pub(super) fn convert(
+    events: Vec<telora_wasm::diagnostic_output::Diagnostic>,
+    sources: &SourceDatabase,
+) -> Vec<Diagnostic> {
     let location = |words: [u32; 3]| {
         sources
             .files()
@@ -61,8 +68,7 @@ pub(super) fn collect(
                 end: words[2],
             })
     };
-    Ok(session
-        .diagnostics()?
+    events
         .into_iter()
         .map(|event| {
             let mut diagnostic = match location(event.origin) {
@@ -85,7 +91,7 @@ pub(super) fn collect(
             }
             diagnostic
         })
-        .collect())
+        .collect()
 }
 
 pub(super) fn finish<T>(

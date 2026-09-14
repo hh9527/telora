@@ -84,7 +84,7 @@ impl<'a> Emitter<'a> {
             if let Some(&symbol) = self.function_pointers.get(&index) {
                 function.function_pointer(symbol);
             } else if self.static_pointers.contains(&index) {
-                function.memory_pointer(count + 3);
+                function.memory_pointer(count + GLOBAL_COUNT + 1);
             } else {
                 function.linked_instruction(&instruction, count);
             }
