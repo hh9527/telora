@@ -43,7 +43,7 @@ def config: entry.ContextConfig = {
     envs: ["TELORA_CONTEXT_TEST"],
     args: True,
 };
-export def run = entry.run((State).type, config, ees.none, fn(ctx) {
+export def run: entry.Run(State) = entry.run((State).type, config, ees.none, fn(ctx) {
     let source_ok = match dict.get(ctx.sources, "request") {
         Some(Value.Int(value)) => value == 7,
         _ => False,
@@ -96,7 +96,7 @@ import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run = entry.run((State).type, config, ees.none, fn(ctx) {
+export def run: entry.Run(State) = entry.run((State).type, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             actor.Event.Request(request) => (state, [actor.reply(request.id, Value.None)]),
@@ -145,7 +145,7 @@ import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {next: Int};
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def serve = entry.serve((State).type, config, ees.none, fn(ctx) {
+export def serve: entry.Serve(State) = entry.serve((State).type, config, ees.none, fn(ctx) {
     let initial: State = {next: 1};
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {

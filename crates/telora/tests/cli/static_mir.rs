@@ -27,10 +27,10 @@ fn batch_type_diagnostics_identify_the_producing_module() {
 fn check_batch_roots_share_a_graph_and_obey_phase_boundaries() {
     let cwd = fixture();
     fs::create_dir_all(cwd.join("tests/nested")).unwrap();
-    fs::write(cwd.join("src/main.telora"), "export def answer = 42;").unwrap();
-    fs::write(cwd.join("src/_private.telora"), "export def unused = 1 / 0;").unwrap();
-    fs::write(cwd.join("tests/nested/helper.telora"), "export def answer = 42;").unwrap();
-    fs::write(cwd.join("tests/main.telora"), "import \"./nested/helper\" {answer}; export def result = answer;").unwrap();
+    fs::write(cwd.join("src/main.telora"), "export def answer: Int = 42;").unwrap();
+    fs::write(cwd.join("src/_private.telora"), "export def unused: Int = 1 / 0;").unwrap();
+    fs::write(cwd.join("tests/nested/helper.telora"), "export def answer: Int = 42;").unwrap();
+    fs::write(cwd.join("tests/main.telora"), "import \"./nested/helper\" {answer}; export def result: Int = answer;").unwrap();
     for (flags, count, initializes) in [
         (vec!["--lib"], 2, false),
         (vec!["--tests"], 2, true),
@@ -85,12 +85,12 @@ fn check_empty_batch_is_successful() {
 fn static_mir_eval_with_executes_actor_service_with_solved_dyn_state() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), r#"
-        import "std/entry" {main};
+        import "std/entry" {main, Eval};
         import "std/actor" as actor;
         import "std/dyn" as dyn;
         import "std/value" {Value};
-        def service = actor.service(Int.type, 41, fn(state, event) { (state + 1, []) });
-        export def answer = main({sources: [], envs: [], args: False}, fn(ctx) {
+        def service: actor.Service = actor.service(Int.type, 41, fn(state, event) { (state + 1, []) });
+        export def answer: Eval = main({sources: [], envs: [], args: False}, fn(ctx) {
             let transition = service.reduce((service.state, actor.Event.Request({id: "request", input: Value.None})));
             match dyn.project_with(Int.type, transition.0) {
                 Some(value) => Value.Int(value),
@@ -140,8 +140,8 @@ fn static_mir_check_injects_data_and_blocks_execution_after_type_errors() {
 fn static_mir_check_executes_session_roots_after_static_solving() {
     let cwd = fixture();
     for (source, expected) in [
-        ("def unused = 1 / 0; export def answer = 42;", Some("division")),
-        ("def unused: Fn() -> Int = fn() { fail!(\"not called\") }; export def answer = 42;", None),
+        ("def unused: Int = 1 / 0; export def answer: Int = 42;", Some("division")),
+        ("def unused: Fn() -> Int = fn() { fail!(\"not called\") }; export def answer: Int = 42;", None),
         ("@property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!(\"check property sentinel\") }; @mark type Item = struct { value: Int }; export {Item};", Some("check property sentinel")),
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
@@ -181,6 +181,7 @@ fn static_mir_eval_property_initialization_precedes_both_entry_modes() {
         } else {
             format!("main({{ sources: [], envs: [], args: False }}, fn(ctx) {{ {body} }})")
         };
+        let entry_type = if mode == "eval" { "Value" } else { "Eval" };
         let provider = if fail {
             "fail!(\"property-query-sentinel\")"
         } else {
@@ -191,13 +192,13 @@ fn static_mir_eval_property_initialization_precedes_both_entry_modes() {
             format!(
                 r#"
             import "std/value" {{ Value }};
-            import "std/entry" {{ main }};
+            import "std/entry" {{ main, Eval }};
             import "std/type-property" {{ get_type_prop as query }};
             @property(PropertyTarget.Type) type Mark = struct {{ value: Int }};
-            def config = 42;
+            def config: Int = 42;
             def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) {{ {provider} }};
             @mark type Item = struct {{ value: Int }};
-            export def answer = {entry};
+            export def answer: {entry_type} = {entry};
         "#
             ),
         )
@@ -232,7 +233,7 @@ fn static_mir_eval_initializes_properties_before_reading_type_metadata() {
         @mark
         type Item = struct { value: Int };
         type Alias = Item;
-        export def answer = Value.Int(if Item.type == Alias.type { 42 } else { 0 });
+        export def answer: Value = Value.Int(if Item.type == Alias.type { 42 } else { 0 });
     "#).unwrap();
     let output = telora(&cwd)
         .args(["eval", "@src/main:answer"])
@@ -253,7 +254,7 @@ fn static_mir_eval_initializes_globals_before_publishing_a_result() {
         import "std/value" { Value };
         def unused: Int = 1 / 0;
         def recurse: Fn(Int) -> Int = fn(n) { if n > 0 { recurse(n - 1) } else { 42 } };
-        export def answer = Value.Int(if True { recurse(3) } else { unused });
+        export def answer: Value = Value.Int(if True { recurse(3) } else { unused });
     "#,
     )
     .unwrap();
@@ -270,7 +271,7 @@ fn static_mir_eval_initializes_globals_before_publishing_a_result() {
         import "std/value" { Value };
         def a: Int = b;
         def b: Int = a;
-        export def answer = Value.Int(a);
+        export def answer: Value = Value.Int(a);
     "#,
     )
     .unwrap();
@@ -299,7 +300,7 @@ fn static_mir_eval_imports_data_after_static_solving() {
         import "./input.json" { data as again };
         import "./input.yaml" { data as y };
         import "./input.toml" { data as t };
-        export def answer = Value.Object({ "j": j, "again": again, "y": y, "t": t });
+        export def answer: Value = Value.Object({ "j": j, "again": again, "y": y, "t": t });
     "#,
     )
     .unwrap();
@@ -324,9 +325,9 @@ fn static_mir_eval_imports_data_after_static_solving() {
     fs::write(
         cwd.join("src/main.telora"),
         r#"
-        import "std/entry" { main };
+        import "std/entry" { main, Eval };
         import "./input.json" { data };
-        export def evaluate = do {
+        export def evaluate: Eval = do {
             let initialized = data;
             main({ sources: [], envs: [], args: False }, fn(ctx) { initialized })
         };
@@ -370,11 +371,11 @@ fn static_mir_eval_imports_data_after_static_solving() {
 fn static_mir_eval_with_injects_declared_inputs_and_rejects_config_mismatches() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), r#"
-        import "std/entry" { main };
+        import "std/entry" { main, Eval };
         import "std/value" { Value };
         import "std/array" { map };
         import "std/dict" { values };
-        export def evaluate = main({ sources: ["j", "t", "y"], envs: ["TELORA_MIR_EVAL_TEST"], args: True }, fn(ctx) {
+        export def evaluate: Eval = main({ sources: ["j", "t", "y"], envs: ["TELORA_MIR_EVAL_TEST"], args: True }, fn(ctx) {
             Value.Object({ "inputs": Value.Object(ctx.sources),
                 "env": Value.Array(map(values(ctx.env), Value.String)),
                 "args": Value.Array(map(ctx.args, Value.String)) })
@@ -445,8 +446,8 @@ fn static_mir_eval_with_injects_declared_inputs_and_rejects_config_mismatches() 
             cwd.join("src/main.telora"),
             format!(
                 r#"
-            import "std/entry" {{ main }}; import "std/value" {{ Value }};
-            export def evaluate = main({config}, fn(ctx) {{ Value.Int(1 / 0) }});
+            import "std/entry" {{ main, Eval }}; import "std/value" {{ Value }};
+            export def evaluate: Eval = main({config}, fn(ctx) {{ Value.Int(1 / 0) }});
         "#
             ),
         )
@@ -475,7 +476,7 @@ fn static_mir_eval_serializes_value_and_rejects_other_contracts_before_execution
         r#"
         import "std/value" { Value };
         import "std/array" { map };
-        export def answer = Value.Object({
+        export def answer: Value = Value.Object({
             "values": Value.Array(map([1, 2], fn(x) { Value.Int(x * 21) })),
             "empty": Value.None,
             "empty_array": Value.Array([]),
@@ -505,8 +506,8 @@ fn static_mir_eval_serializes_value_and_rejects_other_contracts_before_execution
         })
     );
     for source in [
-        "export def answer = 1 / 0;",
-        "import \"std/value\" { Value as Original }; type Value = enum { Int(Int) }; export def answer = Value.Int(42);",
+        "export def answer: Int = 1 / 0;",
+        "import \"std/value\" { Value as Original }; type Value = enum { Int(Int) }; export def answer: Value = Value.Int(42);",
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
         let output = telora(&cwd)
@@ -518,8 +519,8 @@ fn static_mir_eval_serializes_value_and_rejects_other_contracts_before_execution
         assert!(String::from_utf8_lossy(&output.stderr).contains("std/value.Value"));
     }
     for source in [
-        "import \"std/value\" { Value }; export def answer = Value.Int(1 / 0);",
-        "import \"std/value\" { Value }; export def answer = Value.LocalDate(\"2026-09-10\");",
+        "import \"std/value\" { Value }; export def answer: Value = Value.Int(1 / 0);",
+        "import \"std/value\" { Value }; export def answer: Value = Value.LocalDate(\"2026-09-10\");",
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
         let output = telora(&cwd)
@@ -594,7 +595,7 @@ fn static_mir_proves_trait_property_dependencies_without_executing_functions() {
                 r#"
             import "./model" as model;
             def item: model.Item = {{ value: 1 }};
-            export def answer = model.name({value});
+            export def answer: String = model.name({value});
         "#
             ),
         )
@@ -707,7 +708,7 @@ fn static_mir_data_exports_have_the_resolved_value_type_without_parsing_data() {
         import "./payload.json" { data };
         import "std/value" { Value };
         export def payload: Value = data;
-        export def unevaluated = 1 / 0;
+        export def unevaluated: Int = 1 / 0;
     "#,
     )
     .unwrap();
@@ -743,16 +744,16 @@ fn static_mir_query_links_imports_and_source_positions() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/math.telora"),
-        "export def inc = fn(x) { x + 1 };",
+        "export def inc: Fn(Int) -> Int = fn(x) { x + 1 };",
     )
     .unwrap();
     fs::write(
         cwd.join("src/main.telora"),
-        "import \"@src/math\" { inc };\nexport def answer = inc(41);\n",
+        "import \"@src/math\" { inc };\nexport def answer: Int = inc(41);\n",
     )
     .unwrap();
     let output = telora(&cwd)
-        .args(["query", "at", "@src/main:2:20"])
+        .args(["query", "at", "@src/main:2:25"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -769,7 +770,7 @@ fn static_mir_query_links_imports_and_source_positions() {
 
     fs::write(
         cwd.join("tests/probe.telora"),
-        "import \"@src/math\" { inc }; export def answer = inc(1);",
+        "import \"@src/math\" { inc }; export def answer: Int = inc(1);",
     )
     .unwrap();
     let output = telora(&cwd)
@@ -799,7 +800,7 @@ fn static_mir_run_drives_a_host_ees_reply_with_explicit_value_input() {
         import "std/value" {Value};
         type State = enum {Ready, Waiting(String)};
         def config: ees.Config = {vars: {}, models: [ees.sqlite_model("catalog", "user-data:catalog.sqlite")]};
-        export def main = entry.run(State.type, {sources: [], envs: [], args: False}, config, fn(ctx) {
+        export def main: entry.Run(State) = entry.run(State.type, {sources: [], envs: [], args: False}, config, fn(ctx) {
             (State.Ready, fn(state, event) {
                 match (state, event) {
                     (State.Ready, actor.Event.Request(request)) => (
@@ -828,7 +829,7 @@ fn static_mir_serve_initializes_and_handles_eof_in_the_new_session() {
     fs::write(cwd.join("src/main.telora"), r#"
         import "std/entry" as entry;
         import "std/ees" as ees;
-        export def main = entry.serve(Int.type, {sources: [], envs: [], args: False}, ees.none,
+        export def main: entry.Serve(Int) = entry.serve(Int.type, {sources: [], envs: [], args: False}, ees.none,
             fn(ctx) { (0, fn(state, event) { (state, []) }) });
     "#).unwrap();
     let output = telora(&cwd).args(["serve", "@src/main:main", "--bind", "stdio://"]).stdin(Stdio::null()).output().unwrap();
@@ -844,7 +845,7 @@ fn static_mir_serve_collects_a_failed_request_and_continues() {
         import "std/ees" as ees;
         import "std/actor" as actor;
         import "std/value" {Value};
-        export def main = entry.serve(Int.type, {sources: [], envs: [], args: False}, ees.none, fn(ctx) {
+        export def main: entry.Serve(Int) = entry.serve(Int.type, {sources: [], envs: [], args: False}, ees.none, fn(ctx) {
             (42, fn(state, event) {
                 match event {
                     actor.Event.Request(request) => if request.id == "request-0" {
@@ -879,7 +880,7 @@ fn dump_types_layout_is_static_deterministic_and_hidden() {
         export def x: Rec = { a: 1 / 0, b: [1, 2] };
         export def choice: Choices = Choices.Items([1]);
         export def boxed: Box(Int) = {value: 1};
-        export def metadata = Int.type;
+        export def metadata: TypeOf(Int) = Int.type;
     "#).unwrap();
     let help = telora(&cwd).args(["check", "--help"]).output().unwrap();
     assert!(!String::from_utf8_lossy(&help.stdout).contains("dump-types-layout"));
@@ -971,15 +972,15 @@ fn concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types() {
         export type Wrapped = struct(Int);
         export type Rec = struct { item: Int };
         export def pair: (Int, String) = (1, "hello");
-        export def wrapped = Wrapped(1);
-        export def factory = fn(x: Int) { fn(y: Int) { x + y } };
+        export def wrapped: Wrapped = Wrapped(1);
+        export def factory: Fn(Int) -> Fn(Int) -> Int = fn(x: Int) { fn(y: Int) { x + y } };
         export def poly: for(T) Fn(T) -> T = fn(x) { x };
-        export def inferred_identity = fn(x) { x };
-        export def same_poly = poly@[Int] == poly@[Int];
+        export def inferred_identity: for(T) Fn(T) -> T = fn(x) { x };
+        export def same_poly: Bool = poly@[Int] == poly@[Int];
         export def unchecked: Fn(Unchecked(Rec)) -> Int = fn(x) { x.item };
         export def empty: Array(Never) = [];
         export def dictionary: Dict(Int) = {x: 1};
-        export def accepts_dyn = fn(value: Dyn) { value };
+        export def accepts_dyn: Fn(Dyn) -> Dyn = fn(value: Dyn) { value };
         export def dynamics: Array(Dyn) = [];
     "#).unwrap();
     let output = telora(&cwd).args(["check", "@src/main", "--dump-types-layout", "layout.json"]).output().unwrap();

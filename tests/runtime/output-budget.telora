@@ -17,7 +17,7 @@ def format_tree: Fn(Int) -> fmt.Fmt = fn(depth) {
     }
 };
 
-export def answer = fn(formatting: Bool) {
+export def answer: Fn(Bool) -> Result((String, Array(rt.Diagnostic)), Array(rt.Diagnostic)) = fn(formatting: Bool) {
     rt.with_diagnostics(fn(depth: Int) {
         if formatting { fmt.render(format_tree(depth)) }
         else { json.stringify(value_tree(depth)) }

@@ -1,7 +1,7 @@
 import "std/array" as array;
 import "std/dict" as dict;
 
-export def answer = do {
+export def answer: (Int, Int, (Int, String), (Int, String), (Int, String)) = do {
     let offset = 1;
     let values: Dict(Int) = { z: 3, a: 1, b: 2 };
     let empty: Array(Int) = [];

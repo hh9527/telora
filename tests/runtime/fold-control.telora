@@ -1,7 +1,7 @@
 import "std/array" {fold_control};
 type Control = FoldControl(Int, String);
 
-export def answer = do {
+export def answer: (String, Control, Control, Control) = do {
     let text = "shared long early-break payload";
     let empty: Array(Int) = [];
     (

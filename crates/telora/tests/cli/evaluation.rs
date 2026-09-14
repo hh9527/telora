@@ -6,8 +6,8 @@ fn eval_writes_contextual_debug_as_stderr_jsonl() {
     fs::write(
         cwd.join("src/debug.telora"),
         r#"import "std/value" {Value};
-def var = 3;
-def observed = var.dbg!("observed");
+def var: Int = 3;
+def observed: Int = var.dbg!("observed");
 export def answer: Value = Value.Int(observed);"#,
     )
     .unwrap();
@@ -73,7 +73,7 @@ def config: entry.ContextConfig = {
     envs: ["TELORA_EVAL_TEST"],
     args: True,
 };
-export def evaluate = entry.main(config, fn(ctx) {
+export def evaluate: entry.Eval = entry.main(config, fn(ctx) {
     let env_ok = match dict.get(ctx.env, "TELORA_EVAL_TEST") {
         Some(value) => value == "visible",
         None => False,
@@ -141,7 +141,7 @@ fn eval_contracts_require_value_results() {
     fs::write(
         cwd.join("src/pure.telora"),
         r#"import "std/value" {Value};
-export def raw = 42;
+export def raw: Int = 42;
 export def wrong: Fn(Int) -> Value = fn(value) { Value.Int(value) };"#,
     )
     .unwrap();

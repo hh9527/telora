@@ -1,5 +1,5 @@
 import "std/array" as array;
-export def answer = do {
+export def answer: Int = do {
     decl callback: Fn(Int) -> Int;
     let mapped = array.map([], callback);
     def callback = fn(value) {value};

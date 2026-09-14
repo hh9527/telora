@@ -52,16 +52,16 @@ fn test_command_composes_top_level_and_nested_modules_without_running_unreachabl
     let cwd = fixture();
     fs::create_dir_all(cwd.join("tests/helpers")).unwrap();
     for (path, source) in [
-        ("src/model.telora", "export def value = 40;"),
-        ("tests/t2.telora", "export def value = 2;"),
+        ("src/model.telora", "export def value: Int = 40;"),
+        ("tests/t2.telora", "export def value: Int = 2;"),
         (
             "tests/helpers/common.telora",
-            "import \"../t2\" as t2; import \"std/test\" as test; export def value = t2.value; export def check = test.should_ok(fn() { value });",
+            "import \"../t2\" as t2; import \"std/test\" as test; export def value: Int = t2.value; export def check: test.Test = test.should_ok(fn() { value });",
         ),
         ("tests/broken.telora", "export def broken = ;"),
         (
             "tests/failing.telora",
-            "export def broken = fail!(\"unreachable failure\");",
+            "export def broken: Never = fail!(\"unreachable failure\");",
         ),
         (
             "tests/t1.telora",
@@ -69,7 +69,7 @@ fn test_command_composes_top_level_and_nested_modules_without_running_unreachabl
 import "@src/model" as model;
 import "./helpers/common" as common;
 import "fixture/tests/t2" as t2;
-export def check = test.should_ok(fn() -> Bool { if model.value + common.value == 42 && t2.value == 2 { True } else { fail!("wrong answer") } });
+export def check: test.Test = test.should_ok(fn() -> Bool { if model.value + common.value == 42 && t2.value == 2 { True } else { fail!("wrong answer") } });
 export def ordinary_false: Bool = False;
 export def not_invoked: Fn() -> Int = fn() { fail!("must not invoke exports") };
 "#,
@@ -128,13 +128,13 @@ export def not_invoked: Fn() -> Int = fn() { fail!("must not invoke exports") };
     );
     fs::write(
         cwd.join("tests/t1.telora"),
-        "import \"./failing\" as failing; export def value = 1;",
+        "import \"./failing\" as failing; export def value: Int = 1;",
     )
     .unwrap();
     assert_eq!(test_command(&cwd, "t1").status.code(), Some(1));
     fs::write(
         cwd.join("tests/t1.telora"),
-        "import \"./broken\" as broken; export def value = 1;",
+        "import \"./broken\" as broken; export def value: Int = 1;",
     )
     .unwrap();
     assert_eq!(test_command(&cwd, "t1").status.code(), Some(1));
@@ -152,22 +152,22 @@ fn test_command_import_cycles_are_static_and_demand_cycles_fail() {
     ] {
         fs::write(
             cwd.join("tests/t1.telora"),
-            format!("import \"{a}\" as dep; import \"std/test\" as test; export def value = test.should_ok(fn() {{ 1 }});"),
+            format!("import \"{a}\" as dep; import \"std/test\" as test; export def value: test.Test = test.should_ok(fn() {{ 1 }});"),
         )
         .unwrap();
         fs::write(
             cwd.join("tests/t2.telora"),
-            format!("import \"{b}\" as dep; export def value = 2;"),
+            format!("import \"{b}\" as dep; export def value: Int = 2;"),
         )
         .unwrap();
         fs::write(
             cwd.join("tests/helpers/a.telora"),
-            "import \"./b\" as dep; export def value = 3;",
+            "import \"./b\" as dep; export def value: Int = 3;",
         )
         .unwrap();
         fs::write(
             cwd.join("tests/helpers/b.telora"),
-            "import \"./a\" as dep; export def value = 4;",
+            "import \"./a\" as dep; export def value: Int = 4;",
         )
         .unwrap();
         let output = test_command(&cwd, "t1");
@@ -184,8 +184,8 @@ fn test_command_import_cycles_are_static_and_demand_cycles_fail() {
         r#"
         import "std/test" as test;
         def cycle: Int = cycle;
-        export def a_cycle = test.should_ok(fn() { cycle });
-        export def healthy = test.should_ok(fn() { 42 });
+        export def a_cycle: test.Test = test.should_ok(fn() { cycle });
+        export def healthy: test.Test = test.should_ok(fn() { 42 });
     "#,
     )
     .unwrap();
@@ -213,17 +213,17 @@ fn test_command_static_data_and_diamond_imports_preserve_provenance_and_identity
     fs::write(cwd.join("tests/data/input.toml"), "n = 7\n").unwrap();
     fs::write(
         cwd.join("tests/common.telora"),
-        "export def value = dbg!(7, \"initialized once\");",
+        "export def value: Int = dbg!(7, \"initialized once\");",
     )
     .unwrap();
     fs::write(
         cwd.join("tests/left.telora"),
-        "import \"./common\" as common; export def value = common.value;",
+        "import \"./common\" as common; export def value: Int = common.value;",
     )
     .unwrap();
     fs::write(
         cwd.join("tests/right.telora"),
-        "import \"@test/common\" as common; export def value = common.value;",
+        "import \"@test/common\" as common; export def value: Int = common.value;",
     )
     .unwrap();
     fs::write(cwd.join("tests/t1.telora"), r#"import "std/test" as test;
@@ -232,7 +232,7 @@ import "./right" as right;
 import "./data/input.json" { data as j };
 import "./data/input.yaml" { data as y };
 import "./data/input.toml" { data as t };
-export def check = test.should_ok(fn() -> Bool { if j == y && y == t && left.value == right.value { True } else { fail!("mismatch", j) } });
+export def check: test.Test = test.should_ok(fn() -> Bool { if j == y && y == t && left.value == right.value { True } else { fail!("mismatch", j) } });
 "#).unwrap();
     let output = test_command(&cwd, "t1");
     assert!(
@@ -247,7 +247,7 @@ export def check = test.should_ok(fn() -> Bool { if j == y && y == t && left.val
             .count(),
         1
     );
-    fs::write(cwd.join("tests/t1.telora"), "import \"std/test\" as test; import \"std/value\" {Value}; import \"./data/input.json\" { data }; export def check = test.should_ok(fn() { match data { Value.Object(fields) => fail!(\"bad input\", fields.n), _ => fail!(\"bad shape\") } });").unwrap();
+    fs::write(cwd.join("tests/t1.telora"), "import \"std/test\" as test; import \"std/value\" {Value}; import \"./data/input.json\" { data }; export def check: test.Test = test.should_ok(fn() { match data { Value.Object(fields) => fail!(\"bad input\", fields.n), _ => fail!(\"bad shape\") } });").unwrap();
     let output = test_command(&cwd, "t1");
     assert_eq!(output.status.code(), Some(1));
     let records = jsonl(&output.stdout);
@@ -265,8 +265,8 @@ export def check = test.should_ok(fn() -> Bool { if j == y && y == t && left.val
 #[test]
 fn test_command_rejects_invalid_roots_and_source_to_test_imports() {
     let cwd = fixture();
-    fs::write(cwd.join("tests/t1.telora"), "export def value = 1;").unwrap();
-    fs::write(cwd.join("tests/_private.telora"), "export def value = 1;").unwrap();
+    fs::write(cwd.join("tests/t1.telora"), "export def value: Int = 1;").unwrap();
+    fs::write(cwd.join("tests/_private.telora"), "export def value: Int = 1;").unwrap();
     for name in [
         "../t1",
         "/t1",
@@ -299,19 +299,19 @@ fn test_command_rejects_invalid_roots_and_source_to_test_imports() {
     for target in ["@test/t1", "fixture/tests/t1"] {
         fs::write(
             cwd.join("src/lib.telora"),
-            format!("import \"{target}\" as test; export def value = 1;"),
+            format!("import \"{target}\" as test; export def value: Int = 1;"),
         )
         .unwrap();
         fs::write(
             cwd.join("tests/t1.telora"),
-            "import \"@src/lib\" as lib; export def value = 1;",
+            "import \"@src/lib\" as lib; export def value: Int = 1;",
         )
         .unwrap();
         let output = test_command(&cwd, "t1");
         assert_eq!(output.status.code(), Some(1));
         assert_eq!(jsonl(&output.stdout).last().unwrap()["status"], "error");
     }
-    fs::write(cwd.join("tests/t1.telora"), "import \"std/test\" as test; def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked = reject().ok_or_warn!(); def unused: Fn() -> Int = fn() { fail!(\"unused closure must not be called\") }; export def value = test.should_ok(fn() { checked });").unwrap();
+    fs::write(cwd.join("tests/t1.telora"), "import \"std/test\" as test; def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked: Option(Int) = reject().ok_or_warn!(); def unused: Fn() -> Int = fn() { fail!(\"unused closure must not be called\") }; export def value: test.Test = test.should_ok(fn() { checked });").unwrap();
     let output = test_command(&cwd, "t1");
     assert!(output.status.success());
     assert!(
@@ -344,7 +344,7 @@ fn test_command_uses_member_context_and_declared_dependencies() {
         r#"{"name":"dep","modules":["@src/lib"],"dependencies":[]}"#,
     )
     .unwrap();
-    fs::write(cwd.join("dep/src/lib.telora"), "export def value = 42;").unwrap();
+    fs::write(cwd.join("dep/src/lib.telora"), "export def value: Int = 42;").unwrap();
     fs::write(
         cwd.join("dep/tests/broken.telora"),
         "not a valid module !!!",
@@ -352,10 +352,10 @@ fn test_command_uses_member_context_and_declared_dependencies() {
     .unwrap();
     fs::write(
         cwd.join("member/src/lib.telora"),
-        "import \"dep/lib\" as dep; export def value = dep.value;",
+        "import \"dep/lib\" as dep; export def value: Int = dep.value;",
     )
     .unwrap();
-    fs::write(cwd.join("member/tests/nested/t1.telora"), "import \"std/test\" as test; import \"@src/lib\" as lib; export def check = test.should_ok(fn() -> Bool { if lib.value == 42 { True } else { fail!(\"wrong dependency\") } });").unwrap();
+    fs::write(cwd.join("member/tests/nested/t1.telora"), "import \"std/test\" as test; import \"@src/lib\" as lib; export def check: test.Test = test.should_ok(fn() -> Bool { if lib.value == 42 { True } else { fail!(\"wrong dependency\") } });").unwrap();
     let spec = telora_core::WorkspaceSpec::discover(&cwd).unwrap();
     let lock = spec
         .generate_lock(&std::collections::BTreeMap::new())
@@ -377,7 +377,7 @@ fn test_command_uses_member_context_and_declared_dependencies() {
     );
     fs::write(
         cwd.join("member/tests/nested/t1.telora"),
-        "import \"dep/tests/broken\" as dep; export def value = 1;",
+        "import \"dep/tests/broken\" as dep; export def value: Int = 1;",
     )
     .unwrap();
     let output = test_command(&cwd.join("member"), "nested/t1");
@@ -401,7 +401,7 @@ fn test_command_expands_fixture_factories_relative_to_their_declaring_module() {
         cwd.join("tests/helpers/group.telora"),
         r#"
         import "std/test" as test;
-        export def group = test.with_fixtures(["a.json", "b.yaml", "c.toml"], fn(outer) {
+        export def group: test.Test = test.with_fixtures(["a.json", "b.yaml", "c.toml"], fn(outer) {
             let warning: Option(Int) = warn!("group warning");
             test.with_fixtures(["a.json"], fn(inner) { test.should_ok(fn() { (outer, inner) }) })
         });
@@ -459,7 +459,7 @@ fn test_command_expands_fixture_factories_relative_to_their_declaring_module() {
     fs::write(&outside, "42").unwrap();
     fs::write(cwd.join("tests/helpers/group.telora"), format!(r#"
         import "std/test" as test;
-        export def group = test.with_fixtures(["../../../{}"], fn(value) {{ test.should_ok(fn() {{value}}) }});
+        export def group: test.Test = test.with_fixtures(["../../../{}"], fn(value) {{ test.should_ok(fn() {{value}}) }});
     "#, outside.file_name().unwrap().to_str().unwrap())).unwrap();
     let output = test_command(&cwd, "main");
     assert_eq!(output.status.code(), Some(1));
@@ -483,7 +483,7 @@ fn test_command_reports_all_invalid_data_modules_before_executing_user_code() {
         import "std/test" as test;
         import "./bad.json" {data as j};
         import "./bad.yaml" {data as y};
-        export def case = dbg!(test.should_ok(fn() { (j, y) }), "must not initialize");
+        export def case: test.Test = dbg!(test.should_ok(fn() { (j, y) }), "must not initialize");
     "#,
     )
     .unwrap();

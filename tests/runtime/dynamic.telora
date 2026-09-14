@@ -1,10 +1,20 @@
 import "std/dyn" as dyn;
-def items = [42];
-def boxed = dyn.pack(Array(Int).type, items);
+def items: Array(Int) = [42];
+def boxed: Dyn = dyn.pack(Array(Int).type, items);
 type Rec = struct { a: Int };
 def record: Rec = { a: 42 };
 def dict: Dict(Int) = { b: 0, a: 42 };
-export def answer = (
+export def answer: (
+    Dyn, Type, Option(Array(Int)), Option(String), Option(Int), Option(String),
+    dyn.ValueKind, dyn.ValueKind, dyn.ValueKind,
+    Result(Dyn, dyn.AccessError), Result(Dyn, dyn.AccessError),
+    Result(Dyn, dyn.AccessError), Result(Dyn, dyn.AccessError),
+    Result(Array((String, Dyn)), dyn.AccessError),
+    Result(Array(Dyn), dyn.AccessError), Result(Array(Dyn), dyn.AccessError),
+    Result(String, dyn.AccessError), Result(Option(Dyn), dyn.AccessError),
+    Result(Option(Dyn), dyn.AccessError), Result(Array(Dyn), dyn.AccessError),
+    Result(String, dyn.AccessError), Dyn, Int, Option(Dyn), Option(Dyn)
+) = (
     boxed,
     dyn.desc(boxed),
     dyn.project_with(Array(Int).type, boxed),

@@ -1,6 +1,6 @@
 import "std/array" as array;
 
-export def answer = do {
+export def answer: (Array(Int), Array(Int), Bool, Bool, Bool, Bool) = do {
     let minimum = 2;
     let original = [1, 2, 3, 4];
     let selected = array.filter(original, fn(value) { value > minimum });

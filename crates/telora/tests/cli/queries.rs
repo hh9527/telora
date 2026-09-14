@@ -226,7 +226,7 @@ fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
 #[test]
 fn named_queries_emit_stable_jsonl() {
     let cwd = fixture();
-    fs::write(cwd.join("src/lib.telora"), "type Name = String; def hidden = 1; def make: Fn(Int) -> Int = fn(value) { value }; export {Name, make};").unwrap();
+    fs::write(cwd.join("src/lib.telora"), "type Name = String; def hidden: Int = 1; def make: Fn(Int) -> Int = fn(value) { value }; export {Name, make};").unwrap();
     let show = telora(&cwd)
         .args([
             "query",
@@ -407,7 +407,7 @@ fn query_and_cli_jsonl_use_one_based_lines_and_zero_based_utf8_columns() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/lib.telora"),
-        "def other = 42;\ndef value = (\"中\", other);\nexport {value};\n",
+        "def other: Int = 42;\ndef value: (String, Int) = (\"中\", other);\nexport {value};\n",
     )
     .unwrap();
 
@@ -423,7 +423,7 @@ fn query_and_cli_jsonl_use_one_based_lines_and_zero_based_utf8_columns() {
     assert_eq!(records[0]["location"]["end_line"], 2);
     assert_eq!(records[0]["location"]["end_column"], 9);
 
-    for selector in ["@src/lib:2:0", "@src/lib:2:20"] {
+    for selector in ["@src/lib:2:0", "@src/lib:2:35"] {
         let output = telora(&cwd)
             .args(["query", "at", selector])
             .output()
@@ -433,26 +433,26 @@ fn query_and_cli_jsonl_use_one_based_lines_and_zero_based_utf8_columns() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        if selector.ends_with(":20") {
+        if selector.ends_with(":35") {
             let records = jsonl(&output.stdout);
             let reference = records
                 .iter()
                 .find(|record| record["record"] == "reference" && record["name"] == "other")
                 .unwrap();
             assert_eq!(reference["location"]["line"], 2);
-            assert_eq!(reference["location"]["column"], 20);
-            assert_eq!(reference["location"]["end_column"], 25);
+            assert_eq!(reference["location"]["column"], 35);
+            assert_eq!(reference["location"]["end_column"], 40);
         }
     }
     let inside_scalar = telora(&cwd)
-        .args(["query", "at", "@src/lib:2:15"])
+        .args(["query", "at", "@src/lib:2:30"])
         .output()
         .unwrap();
     assert!(!inside_scalar.status.success());
     assert!(String::from_utf8_lossy(&inside_scalar.stderr).contains("outside"));
 
     let at_end = telora(&cwd)
-        .args(["query", "at", "@src/lib:2:25"])
+        .args(["query", "at", "@src/lib:2:40"])
         .output()
         .unwrap();
     assert!(at_end.status.success());

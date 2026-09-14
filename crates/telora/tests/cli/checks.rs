@@ -33,12 +33,12 @@ fn check_collects_independent_roots_without_running_failed_continuations() {
 fn check_preserves_property_provider_alias_and_factory_contracts() {
     let cwd = fixture();
     for definitions in [
-        "def provider: Fn(Type, Option(Tag)) -> Tag = fn(target, previous) { Tag(1) }; def alias = provider;",
-        "def configure: Fn(Int) -> Fn(Type, Option(Tag)) -> Tag = fn(n) { fn(target, previous) { Tag(n) } }; def alias = configure(1);",
-        "def configure = fn(n: Int) { fn(target: Type, previous: Option(Tag)) { Tag(n) } }; def alias = configure(1);",
+        "def provider: Fn(Type, Option(Tag)) -> Tag = fn(target, previous) { Tag(1) }; def alias: Fn(Type, Option(Tag)) -> Tag = provider;",
+        "def configure: Fn(Int) -> Fn(Type, Option(Tag)) -> Tag = fn(n) { fn(target, previous) { Tag(n) } }; def alias: Fn(Type, Option(Tag)) -> Tag = configure(1);",
+        "def configure: Fn(Int) -> Fn(Type, Option(Tag)) -> Tag = fn(n: Int) { fn(target: Type, previous: Option(Tag)) { Tag(n) } }; def alias: Fn(Type, Option(Tag)) -> Tag = configure(1);",
     ] {
         fs::write(cwd.join("src/provider.telora"), format!(
-            "@property(PropertyTarget.Type) type Tag = struct(Int); {definitions} @alias type Item = struct(Int); def requires: for(T: Property(Tag)) Fn(TypeOf(T)) -> Int = fn(target) {{ 1 }}; trait Named {{ name: Fn(Self) -> Int }}; impl(T: Property(Tag)) Named for T {{ name: fn(value) {{ 42 }} }}; export def output = requires((Item).type); export def named = Named.name(Item(1)); export {{ Item }};"
+            "@property(PropertyTarget.Type) type Tag = struct(Int); {definitions} @alias type Item = struct(Int); def requires: for(T: Property(Tag)) Fn(TypeOf(T)) -> Int = fn(target) {{ 1 }}; trait Named {{ name: Fn(Self) -> Int }}; impl(T: Property(Tag)) Named for T {{ name: fn(value) {{ 42 }} }}; export def output: Int = requires((Item).type); export def named: Int = Named.name(Item(1)); export {{ Item }};"
         )).unwrap();
         for arguments in [vec!["check", "@src/provider"], vec!["check", "--only-types", "@src/provider"]] {
             let output = telora(&cwd).args(&arguments).output().unwrap();
@@ -54,12 +54,12 @@ fn types_only_solves_member_provider_contracts_without_execution() {
     fs::write(cwd.join("src/member-provider.telora"), r#"
         @property(PropertyTarget.Field) type Tag = struct(Int);
         type Context = struct { owner: Type, index: Int, name: String, ty: Type };
-        def factory = fn(n: Int) {
+        def factory: Fn(Int) -> Fn(Context, Option(Tag)) -> Tag = fn(n: Int) {
             fn(context: Context, previous: Option(Tag)) -> Tag {
                 fail!("member provider executed")
             }
         };
-        def provider = factory(1);
+        def provider: Fn(Context, Option(Tag)) -> Tag = factory(1);
         type Item = struct { @provider value: Int };
         export { Item };
     "#).unwrap();
@@ -77,9 +77,9 @@ fn types_only_solves_member_provider_contracts_without_execution() {
 fn check_rejects_concrete_runtime_errors_without_synthetic_finalization() {
     let cwd = fixture();
     let cases = [
-        ("failed", "export def output = fail!(\"boom\", 1);"),
-        ("division", "export def output = 1 / 0;"),
-        ("index", "export def output = [1][2];"),
+        ("failed", "export def output: Int = fail!(\"boom\", 1);"),
+        ("division", "export def output: Int = 1 / 0;"),
+        ("index", "export def output: Int = [1][2];"),
     ];
     for (name, source) in cases {
         fs::write(cwd.join(format!("src/{name}.telora")), source).unwrap();
@@ -122,7 +122,7 @@ fn check_suppresses_parser_recovery_fallout_but_keeps_independent_errors() {
         ),
         (
             "two-roots",
-            "export def first = (1 + 2; export def second = match A { A 1, _ => 2 };",
+            "export def first: Int = (1 + 2; export def second: Int = match A { A 1, _ => 2 };",
             &[
                 "invalid syntax, expected one of: ',', ')'",
                 "missing FatArrow",
@@ -158,7 +158,7 @@ fn check_accepts_a_complete_module_with_warnings() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/warning.telora"),
-        "def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked = reject().ok_or_warn!(); export def output = 1;",
+        "def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked: Option(Int) = reject().ok_or_warn!(); export def output: Int = 1;",
     )
     .unwrap();
     let check = telora(&cwd)
@@ -230,7 +230,7 @@ export { CallExpr, Expr, identity };"#,
 #[test]
 fn types_only_check_skips_execution_but_rejects_type_errors() {
     let cwd = fixture();
-    fs::write(cwd.join("src/types-only.telora"), "export def answer = 1 / 0;").unwrap();
+    fs::write(cwd.join("src/types-only.telora"), "export def answer: Int = 1 / 0;").unwrap();
     let output = telora(&cwd).args(["check", "--only-types", "@src/types-only"]).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     let records = String::from_utf8(output.stdout).unwrap();
@@ -289,23 +289,23 @@ fn data_contents_are_checked_after_types_only() {
 fn types_only_and_ordinary_check_agree_on_open_import_resolution() {
     let cwd = fixture();
     fs::write(cwd.join("src/a.telora"), r#"
-        export def shared = 1; export def True = 1;
+        export def shared: Int = 1; export def True: Int = 1;
         export type Choice = enum { done, pending }; export Choice.{done};
     "#).unwrap();
-    fs::write(cwd.join("src/b.telora"), "export def shared = 2; export def done = 0;").unwrap();
+    fs::write(cwd.join("src/b.telora"), "export def shared: Int = 2; export def done: Int = 0;").unwrap();
     fs::write(cwd.join("src/bridge.telora"),
         "import \"./a\" *; export { shared, Choice, done };").unwrap();
     for (source, ambiguous) in [
-        ("import \"./a\" *; import \"./b\" *; export def result = 0;", false),
-        ("import \"./a\" *; import \"./b\" *; export def result = shared;", true),
-        ("import \"./a\" *; import \"./b\" *; def shared = 3; export def result = shared;", false),
-        ("import \"./a\" *; import \"./b\" *; export def result = do { let shared = 3; shared };", false),
-        ("import \"./a\" { shared }; import \"./b\" *; export def result = shared;", false),
-        ("import \"./a\" *; import \"./a\" *; export def result = shared;", false),
+        ("import \"./a\" *; import \"./b\" *; export def result: Int = 0;", false),
+        ("import \"./a\" *; import \"./b\" *; export def result: Int = shared;", true),
+        ("import \"./a\" *; import \"./b\" *; def shared: Int = 3; export def result: Int = shared;", false),
+        ("import \"./a\" *; import \"./b\" *; export def result: Int = do { let shared = 3; shared };", false),
+        ("import \"./a\" { shared }; import \"./b\" *; export def result: Int = shared;", false),
+        ("import \"./a\" *; import \"./a\" *; export def result: Int = shared;", false),
         ("import \"./a\" *; export def result: Int = True;", false),
-        ("import \"./a\" *; import \"std/prelude\" *; export def result = True;", true),
-        ("import \"./a\" *; import \"./b\" *; export def result = match Choice.done { done => 1, _ => 0 };", true),
-        ("import \"./bridge\" *; export def result = match Choice.done { done => shared, Choice.pending => 0 };", false),
+        ("import \"./a\" *; import \"std/prelude\" *; export def result: Int = True;", true),
+        ("import \"./a\" *; import \"./b\" *; export def result: Int = match Choice.done { done => 1, _ => 0 };", true),
+        ("import \"./bridge\" *; export def result: Int = match Choice.done { done => shared, Choice.pending => 0 };", false),
     ] {
         fs::write(cwd.join("src/open.telora"), source).unwrap();
         for types_only in [false, true] {
@@ -328,11 +328,11 @@ fn unused_open_import_with_private_trait_implementation_checks_in_both_modes() {
     fs::write(cwd.join("src/implementation.telora"), r#"
         trait Score { score: Fn(Self) -> Int };
         impl Score for Int { score: fn(value) { 42 } };
-        export def unused = ();
+        export def unused: () = ();
     "#).unwrap();
     fs::write(cwd.join("src/consumer.telora"), r#"
         import "./implementation" *;
-        export def result = 1;
+        export def result: Int = 1;
     "#).unwrap();
     for types_only in [false, true] {
         let mut command = telora(&cwd);

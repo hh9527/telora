@@ -22,7 +22,7 @@ fn help_lists_the_public_command_surface() {
 #[test]
 fn run_and_check_select_logical_roots_from_cwd() {
     let cwd = fixture();
-    fs::write(cwd.join("src/lib.telora"), "export def output = \"42\";").unwrap();
+    fs::write(cwd.join("src/lib.telora"), "export def output: String = \"42\";").unwrap();
     fs::write(
         cwd.join("src/app.telora"),
         r###"import "@src/lib" {output};
@@ -31,7 +31,7 @@ import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {output: String, completed: Bool};
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run = entry.run((State).type, config, ees.none, fn(ctx) {
+export def run: entry.Run(State) = entry.run((State).type, config, ees.none, fn(ctx) {
     let initial: State = {output, completed: False};
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
@@ -71,7 +71,7 @@ export def run = entry.run((State).type, config, ees.none, fn(ctx) {
 #[test]
 fn public_cli_rejects_physical_paths_and_missing_manifests() {
     let cwd = fixture();
-    fs::write(cwd.join("src/lib.telora"), "export def output = 1;").unwrap();
+    fs::write(cwd.join("src/lib.telora"), "export def output: Int = 1;").unwrap();
     let physical = telora(&cwd)
         .args(["run", "src/lib.telora"])
         .output()
@@ -90,7 +90,7 @@ fn public_cli_rejects_physical_paths_and_missing_manifests() {
 #[test]
 fn test_roots_are_selectable_but_not_importable() {
     let cwd = fixture();
-    fs::write(cwd.join("tests/codec.telora"), "export def output = 7;").unwrap();
+    fs::write(cwd.join("tests/codec.telora"), "export def output: Int = 7;").unwrap();
     let run = telora(&cwd)
         .args(["check", "@test/codec"])
         .output()

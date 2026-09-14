@@ -6,5 +6,5 @@ export def b: Int = { let value = helper.reject("root-module"); fail!("false-con
 export def c: Int = { let value = helper.forward("root-facade"); fail!("false-continuation", value) };
 export def d: Int = { let value = helper.make("root-closure")(); fail!("false-continuation", value) };
 export def dependent: Int = { let value = a; fail!("false-dependent", value) };
-export def healthy = 42;
-export def answer = Value.Array([Value.Int(a), Value.Int(b), Value.Int(c), Value.Int(d)]);
+export def healthy: Int = 42;
+export def answer: Value = Value.Array([Value.Int(a), Value.Int(b), Value.Int(c), Value.Int(d)]);

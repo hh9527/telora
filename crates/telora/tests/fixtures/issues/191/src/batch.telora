@@ -5,4 +5,4 @@ import "@src/main" as main;
 import "@src/decorated" as decorated;
 import "@src/reversed" as reversed;
 import "@src/local-late" as late;
-export def ok = True;
+export def ok: Bool = True;

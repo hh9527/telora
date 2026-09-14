@@ -1,9 +1,9 @@
-export def integer = 1;
-export def text = "text";
+export def integer: Int = 1;
+export def text: String = "text";
 export def ints: Array(Int) = [1, 2];
 export def mapping: Dict(Array(Int)) = {a: ints};
-export def repeated = (ints, ints);
+export def repeated: (Array(Int), Array(Int)) = (ints, ints);
 export type Rec = struct {count: Int, label: String};
 export def record: Rec = {count: 1, label: "text"};
-export def pair = (1, "text");
+export def pair: (Int, String) = (1, "text");
 export def function: Fn(Int) -> Int = fn(value) { value };
