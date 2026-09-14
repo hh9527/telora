@@ -102,4 +102,25 @@ impl ServiceSession {
         self.phase = Phase::Reduce { state, reducer };
         Ok(effects)
     }
+
+    /// After effects/diagnostics have been consumed, preserve state and reducer
+    /// plus explicit caller roots. All other work handles become invalid.
+    pub fn collect(
+        &mut self,
+        roots: &[Value],
+    ) -> Result<(Vec<Value>, crate::collection::CollectionStats), String> {
+        let Phase::Reduce { state, reducer } = self.phase else {
+            return Err("Wasm service collection requires an event boundary".into());
+        };
+        self.phase = Phase::Failed;
+        let mut all = vec![state, reducer];
+        all.extend_from_slice(roots);
+        let (mut relocated, stats) = self.session.collect_work(&all)?;
+        let extra = relocated.split_off(2);
+        self.phase = Phase::Reduce {
+            state: relocated[0],
+            reducer: relocated[1],
+        };
+        Ok((extra, stats))
+    }
 }

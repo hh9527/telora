@@ -12,6 +12,22 @@ static mut BUFFER: u32 = 0;
 static mut LENGTH: u32 = 0;
 static mut CAPACITY: u32 = 0;
 
+pub(crate) unsafe fn collect(gc: &mut crate::collect::Collector) {
+    unsafe {
+        let at = gc.reserve(LENGTH*12);
+        for index in 0..LENGTH {
+            let source = (BUFFER as *const Source).add(index as usize).read();
+            let pointer = if source.pointer < gc.base { source.pointer }
+                else { let offset = gc.copy_bytes(source.pointer,source.length); gc.base+offset };
+            gc.put(at+index*12,source.id);
+            gc.put(at+index*12+4,pointer);
+            gc.put(at+index*12+8,source.length);
+        }
+        BUFFER=gc.base+at;
+        CAPACITY=LENGTH;
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_register_source(id: u32, pointer: u32, length: u32) -> u32 {
     unsafe {

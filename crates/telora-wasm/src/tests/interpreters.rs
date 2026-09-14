@@ -11,4 +11,9 @@ fn interpreter_adapters_preserve_identity_captures_and_deferred_operand() {
         serde_json::json!([true, true, true, true, true, true, true, true])
     );
     assert_eq!(session.diagnostics().unwrap().len(), 2);
+    session.collect_work(&[]).unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!([true, true, true, true, true, true, true, true])
+    );
 }

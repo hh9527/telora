@@ -11,13 +11,12 @@ use alloc::{
 };
 use regex_automata::{
     PatternID,
-    nfa::thompson::pikevm::{Cache, PikeVM},
+    nfa::thompson::pikevm::PikeVM,
 };
 
 struct Compiled {
     pattern: String,
     engine: PikeVM,
-    cache: Cache,
     required: alloc::collections::BTreeSet<String>,
 }
 
@@ -42,13 +41,21 @@ fn compile(pattern: &str) -> Result<Compiled, String> {
             return Err(format!("capture group {index} must have a name"));
         }
     }
-    let cache = engine.create_cache();
     Ok(Compiled {
         pattern: pattern.to_string(),
         engine,
-        cache,
         required: crate::regex_contract::required(&hir),
     })
+}
+
+pub(crate) unsafe fn pattern(pointer: u32) -> &'static str {
+    unsafe { &(*(pointer as *const Compiled)).pattern }
+}
+
+pub(crate) fn restore(pattern: &str) -> crate::tables::Slot {
+    let compiled = compile(pattern).expect("previously validated regex");
+    crate::tables::Slot { payload: Box::into_raw(Box::new(compiled)) as u32,
+        bytes: core::mem::size_of::<Compiled>() as u32 }
 }
 
 unsafe fn get(id: u32) -> *mut Compiled {
@@ -84,7 +91,7 @@ pub unsafe extern "C" fn telora_regex(operation: u32, a: u32, b: u32) -> u32 {
                 let compiled = &mut *get(a);
                 compiled
                     .engine
-                    .is_match(&mut compiled.cache, crate::text::text(b)) as u32
+                    .is_match(&mut compiled.engine.create_cache(), crate::text::text(b)) as u32
             }
             2 => ((*get(a)).pattern == (*get(b)).pattern) as u32,
             3 => {
@@ -112,7 +119,7 @@ pub unsafe extern "C" fn telora_regex(operation: u32, a: u32, b: u32) -> u32 {
                 let mut captures = compiled.engine.create_captures();
                 compiled
                     .engine
-                    .captures(&mut compiled.cache, input, &mut captures);
+                    .captures(&mut compiled.engine.create_cache(), input, &mut captures);
                 let output = crate::telora_alloc(4 + count * 12);
                 (output as *mut u32).write(captures.is_match() as u32);
                 for index in 0..count {

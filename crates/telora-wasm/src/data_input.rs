@@ -99,7 +99,8 @@ impl Session {
         sources: &telora_core::SourceDatabase,
         plan: &ValidatedDataPlan,
     ) -> Result<(), String> {
-        self.manifest.register_data_sources(sources, plan)
+        self.manifest.register_data_sources(sources, plan)?;
+        self.register_sources()
     }
     pub fn inject_data(&mut self, symbol: u32, plan: &ValidatedDataPlan) -> Result<(), String> {
         self.inject_graph(symbol, Graph::Parsed(plan))

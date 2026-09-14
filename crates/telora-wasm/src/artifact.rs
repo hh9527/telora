@@ -37,6 +37,7 @@ pub struct TypeDesc {
     pub bytes: u32,
     pub fields: Vec<Field>,
     pub variants: Vec<Variant>,
+    pub resource_table: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -132,6 +133,17 @@ impl Manifest {
             .iter()
             .enumerate()
             .map(|(index, ty)| TypeDesc {
+                resource_table: match ty.constructor {
+                    T::Native(id) => match (id.module, id.slot) {
+                        (19, 0) => Some(crate::abi::REGEXES),
+                        (20, 1) => Some(crate::abi::FORMATS),
+                        (16, 3) => Some(crate::abi::HASHES),
+                        (33, 0) => Some(crate::abi::TESTS),
+                        (34, 0) => Some(crate::abi::BLAMES),
+                        _ => None,
+                    },
+                    _ => None,
+                },
                 kind: if value_type == Some(index as u32) {
                     Kind::Value
                 } else {
@@ -273,8 +285,7 @@ impl Manifest {
             return Err("Wasm: unsupported artifact ABI version".into());
         }
         if manifest.sources.iter().any(|source| {
-            source.bols.first() != Some(&0)
-                || source.bols.windows(2).any(|pair| pair[0] >= pair[1])
+            source.bols.first() != Some(&0) || source.bols.windows(2).any(|pair| pair[0] >= pair[1])
         }) {
             return Err("Wasm: invalid source position index".into());
         }

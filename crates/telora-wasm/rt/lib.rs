@@ -2,6 +2,8 @@
 #![no_std]
 extern crate alloc;
 mod allocator;
+mod collect;
+mod collect_trace;
 mod math;
 mod regex;
 mod regex_contract;
@@ -55,6 +57,10 @@ pub unsafe extern "C" fn telora_alloc(bytes: u32) -> u32 {
             core::arch::wasm32::unreachable();
         }
         NEXT = end;
+        core::ptr::write_bytes(start as *mut u8, 0, bytes as usize);
         start as u32
     }
 }
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_heap_end() -> u32 { unsafe { NEXT as u32 } }

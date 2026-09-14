@@ -1,5 +1,6 @@
 //! Hidden portable backend. The frontend stops at SealedExecutable.
 pub(crate) mod artifact;
+pub(crate) mod run;
 mod diagnostics;
 mod timing;
 use crate::static_input::Inventory;

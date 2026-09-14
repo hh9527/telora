@@ -70,7 +70,10 @@ impl Emitter<'_> {
         self.function_pointer(function);
         self.emit(I::I32Store(memory(DATA, 2)));
         // Even an empty environment gives each evaluated closure an identity.
-        let id = self.table_push(ENVIRONMENTS, environment, captures.len() as u32 * 4);
+        let raw_parent = key.special == Special::Configured
+            && matches!(self.mir.hir[node.index()].kind, telora_core::mir::HirKind::Interpreter);
+        let bytes = captures.len() as u32 * 4 | if raw_parent { ENV_RAW_PARENT } else { 0 };
+        let id = self.table_push(ENVIRONMENTS, environment, bytes);
         self.extend([
             I::LocalGet(result),
             I::LocalGet(id),

@@ -857,8 +857,8 @@ async fn run_command(
     }
     let module_id = &arguments.selector.module_id;
     let mode = match entry {
-        "run" => telora_core::codegen::RunMode::Run,
-        "serve" => telora_core::codegen::RunMode::Serve,
+        "run" => telora_core::entry_plan::RunMode::Run,
+        "serve" => telora_core::entry_plan::RunMode::Serve,
         _ => return Err(format!("unknown entry mode {entry:?}")),
     };
     let mut inventory = static_input::Inventory::new(&context, module_id.starts_with("std/"))?;
@@ -892,32 +892,7 @@ async fn run_command(
         drop(frontend_timer);
         return native_cli::run_service(mir, inventory, symbol, mode, arguments, entry_sources).await;
     }
-    let artifact = mir.seal().and_then(|sealed| telora_core::codegen::compile_run(sealed, symbol))
-        .map_err(|errors| errors.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
-    let config = execution_config();
-    let linked = telora_core::execution_link::link_entry_with_data(artifact, |link| inventory.read_data(link, config.data_limits.file_size))
-        .map_err(|errors| errors.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
-    let mut host = ProcessRunHost::new(entry_sources.locators, arguments.ees_vars);
-    let outcome = telora_core::Vm::new().with_debug_sink(Arc::new(StderrDebugSink))
-        .execute_run(
-            linked,
-            mode,
-            &arguments.args,
-            &entry_sources.entry,
-            &mut host,
-            config.session_quota,
-            config.data_limits,
-            &mut mir.sources,
-        )
-        .await?;
-    io::stdout()
-        .write_all(outcome.output.as_bytes())
-        .and_then(|()| io::stdout().flush())
-        .map_err(|error| format!("cannot write Entry output: {error}"))?;
-    match outcome.termination {
-        RunTermination::Exit(code) => i32::try_from(code)
-            .map_err(|_| format!("Entry exit status {code} is outside the Host range")),
-    }
+    wasm_cli::run::execute(mir, inventory, symbol, mode, arguments, entry_sources).await
 }
 
 fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {

@@ -34,6 +34,8 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32) -> Result<Vec<u8>, String
             "--export=telora_error",
             "--export=telora_register_source",
             "--export=telora_source_name",
+            "--export=telora_collect",
+            "--export=telora_heap_end",
         ])
         .arg(format!("--global-base={base}"))
         .arg(&input)
@@ -43,10 +45,8 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32) -> Result<Vec<u8>, String
         .output()
         .map_err(|e| format!("Wasm linker: {e}"))?;
     if !result.status.success() {
-        let saved = directory.keep();
         return Err(format!(
-            "Wasm linker (inputs preserved at {}): {}",
-            saved.display(),
+            "Wasm linker: {}",
             String::from_utf8_lossy(&result.stderr)
         ));
     }

@@ -8,6 +8,7 @@ pub struct Session {
     pub(crate) memory: wasmi::Memory,
     registered_sources: usize,
     pub(crate) emitted_debug: std::cell::Cell<u32>,
+    pub(crate) trace_types: u32,
 }
 
 impl Session {
@@ -34,6 +35,7 @@ impl Session {
             memory,
             registered_sources: 0,
             emitted_debug: std::cell::Cell::new(0),
+            trace_types: 0,
         };
         for module in bundled_data {
             session.inject_data_packet(module.symbol, &module.packet)?;
@@ -41,6 +43,7 @@ impl Session {
         Ok(session)
     }
     pub fn initialize(&mut self) -> Result<(), String> {
+        self.prepare_collection()?;
         self.register_sources()?;
         let initialize = self
             .instance
@@ -54,7 +57,7 @@ impl Session {
         }
         Ok(())
     }
-    fn register_sources(&mut self) -> Result<(), String> {
+    pub(crate) fn register_sources(&mut self) -> Result<(), String> {
         while self.registered_sources < self.manifest.sources.len() {
             let source = &self.manifest.sources[self.registered_sources];
             let id = source.id;

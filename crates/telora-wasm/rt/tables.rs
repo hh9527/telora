@@ -1,18 +1,19 @@
 use crate::{abi::*, telora_alloc};
 
 #[repr(C)]
-struct Table {
-    buffer: u32,
-    length: u32,
-    capacity: u32,
-    frozen: u32,
+#[derive(Clone, Copy)]
+pub(crate) struct Table {
+    pub buffer: u32,
+    pub length: u32,
+    pub capacity: u32,
+    pub frozen: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct Slot {
-    payload: u32,
-    bytes: u32,
+pub(crate) struct Slot {
+    pub payload: u32,
+    pub bytes: u32,
 }
 
 #[unsafe(no_mangle)]
@@ -66,6 +67,7 @@ pub unsafe extern "C" fn telora_freeze() -> u32 {
             let table = &mut *(table_address(index) as *mut Table);
             table.frozen = table.length;
         }
+        crate::collect::freeze();
         1
     }
 }
