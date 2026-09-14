@@ -10,6 +10,15 @@ use wasm_encoder::*;
 
 /// Generate a self-contained Wasm module from already sealed execution evidence.
 pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, String> {
+    compile(executable, false)
+}
+
+/// Check continues independent initialization demands, never a failed function body.
+pub fn compile_check(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, String> {
+    compile(executable, true)
+}
+
+fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, String> {
     let plan = Plan::new(executable)?;
     let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
     for (&symbol, &key) in &plan.globals {
@@ -156,6 +165,14 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
             Instruction::I32Const(0),
             Instruction::I32Const(0),
             Instruction::Call(plan.functions[key]),
+        ] {
+            init.instruction(&instruction);
+        }
+        if check {
+            init.instruction(&Instruction::Drop);
+            continue;
+        }
+        for instruction in [
             Instruction::I32Eqz,
             Instruction::If(BlockType::Empty),
             Instruction::I32Const(0),
@@ -165,6 +182,17 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
             init.instruction(&instruction);
         }
     }
+    // Failed demands retain their root diagnostic. Never freeze or publish a
+    // session with errors, even when its final independent demand succeeded.
+    for instruction in [
+        Instruction::GlobalGet(PHASE_GLOBAL),
+        Instruction::I32Const(3),
+        Instruction::I32Eq,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End,
+    ] { init.instruction(&instruction); }
     init.instruction(&Instruction::Call(FREEZE))
         .instruction(&Instruction::Drop)
         .instruction(&Instruction::I32Const(2))

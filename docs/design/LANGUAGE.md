@@ -1336,51 +1336,21 @@ Warning 和 failure 诊断属于 evaluation account，而不是普通 Array 返�
 展示 Warning。`warn!` 与 `ok_or_warn!` 产生非阻塞 Warning；`raise!`、
 `unwrap!` 和 `fail!` 使当前结果不可产生。
 
-严格求值和 best-effort 求值使用相同的 rule 与 data sources。Fail 进入 failure arena
-之后，所有依赖传播都引用同一个 root failure；传播点不得生成替代诊断，也不得改写
-原 rule、data sources 或其顺序。
+失败传播保留原始 rule、data sources 及其顺序，不生成替代诊断。
 
-在 best-effort 求值中，`fail!` 得到的内部 `Never` 会阻止所有依赖计算执行；Host
-仍可继续已经证明独立的求值单元，以一次收集更多根因。Struct、Tuple、Array、tagged
-payload 和 Dict 在诊断求值图中可以暂时保留失败子节点。这类节点保持原有静态类型，
-但不是 Telora 值，源码不能构造、匹配或恢复它们。保形逐项操作可以跳过失败槽位并
-继续健康槽位；只依赖容器形状的操作不依赖子节点；选择失败槽位则传播同一根诊断。
+`check` 将多个导出项及所需 property 初始化作为多根求值。共享依赖只计算一次；
+一个根失败后，可以继续其他根。读取已失败的依赖会传播同一个根因，不重复报告。
+每个根内部采用顺序失败传播：函数调用、let initializer、block、闭包、容器构造或
+逐项操作失败后，立即退出当前调用，不执行后续语句或 callback。
+容器不保存可供后续计算使用的失败子节点，也不提供“健康投影”。
 
-Fail 传播按操作实际读取的数据确定：
+静态求解独立收集 Unresolved、Conflicted 和 Unknown 等诊断；类型未闭合不进入求值。
+运行阶段不提供 best-effort。run/serve/eval/eval-with 初始化失败即停止，不启动入口。
+serve 已有的单请求失败恢复属于显式请求边界，不改变普通函数的顺序中断规则。
+资源耗尽等终止性错误中止整个 session，不尝试剩余根。
 
-- 标量一元/二元运算、比较、插值、条件、match 判别、字段/索引/tuple 投影，以及
-  普通 Func 的 callee 或任一实参直接为 Fail 时，结果传播该 Fail；被阻断的 Func
-  body 不执行。tag constructor 属于复合值构造，可以保留失败 payload。
-- Array、Tuple、Struct/Dict 和 tagged 构造只确定外层形状，可以保留失败子节点。
-  `array.length`、`enumerate`、`push`、`zip` 以及 Dict 的 keys/values/pairs 等仅依赖
-  已知形状或保形搬运的操作可以继续；选中失败子节点时才传播。
-- `array.map` 和 `dict.map_values` 保留原位置的失败节点，并继续处理健康成员。
-  `filter`、`flat_map`、`concat`、spread 和 fold 一类输出形状或 accumulator 依赖
-  失败节点的操作，其最终值传播 Fail。filter/flat_map 可以先继续彼此独立的健康
-  callback 以收集诊断；fold 的 accumulator 失败后立即停止依赖它的 reducer。
-- `any` 找到健康的 True、`all` 找到健康的 False 时，短路结果不依赖其他槽位；否则
-  任一失败 predicate 令结果为 Fail。`find` 只有在所选成员之前没有失败 predicate
-  时才能产生 Some；先前失败会令成员身份不确定并传播 Fail。
-- 结构相等、codec、JSON 和 Host value 会读取完整可达数据图；任一可达 Fail 都传播
-  原根因或拒绝边界，不能把内部节点渲染成普通类型错误。Module 在 WorkWorld 与
-  MainWorld 间的内部固化不是 Host publication，可以保留 Fail 以供下游继续诊断。
-
-传播节点不是新的根因诊断。实现可以保存有界的传播 lineage，但同一 Fail 穿过 callback、
-native 函数、模块或边界时不得产生诸如“expected Func/Array”之类的二次类型错误。
-非保形操作不提供源码可观察的“健康投影”；为收集诊断而暂存的健康成员也不能被下游
-代码、codec、Entry 或 Host 当作结果使用。
-
-任何 error diagnostic 都会使本轮命令的最终结果失去 Host 发布意义，即使最终根值不依赖
-内部失败且能够算出。失败节点的可达性只决定 best-effort 还能继续哪些诊断计算，不决定
-结果能否交付。codec、最终返回值和 SystemEffect 都不得越过 Host 边界；一批
-SystemEffect 必须先整体完成可信审计，才能执行其中第一个 effect。严格执行遇到未处理
-失败立即失败。
-
-跨模块 best-effort 始终使用普通 Module。Module 的 `Available/Unavailable` 只表达源码
-是否存在；定义和表达式各自携带 `Known/Unknown/Incomputable` 等事实状态。Module 可以在
-MainWorld 内部同时保留健康 export 与含 Fail 的 export：下游读取健康 export 可继续工作，
-读取失败 export 则传播同一个 Fail。不存在 `PartialModule` 或 `UntrustedModule` 语言实体，
-依赖边界也不重复制造根因诊断。
+任何未消费的 error 都阻止本轮 session 成功发布，即使其他根能够算出健康结果。
+为收集诊断继续初始化不代表可以发布部分结果；失败传播不制造派生类型错误。
 
 ### 9.5 失败类别
 
@@ -1388,8 +1358,7 @@ VM 区分可恢复的程序失败与终止整个 evaluation session 的资源/�
 类型不匹配、missing field、non-exhaustive dynamic match、panic 和 `fail!`；后者
 包括取消、资源耗尽以及执行引擎 trap。
 
-Workspace recovery 可以在一个 binding 或模块失败后继续独立工作，但严格 Host
-执行不会把 recoverable failure 当作成功值。
+check 可以在一个初始化根失败后继续其他根，但不会把 failure 当作成功值。
 
 ## 10. 求值和资源语义
 
@@ -1495,7 +1464,7 @@ telora [-C <context>] check <module>
 telora [-C <context>] test <name>
 telora [-C <context>] eval <module:export>
 telora [-C <context>] eval-with <module:export> [--source <name>=<source>]... [-- <arg>...]
-telora [-C <context>] run <module:export> [--best-effort] [--source <name>=<source>]... [--ees-var <name>=<value>]... [-- <arg>...]
+telora [-C <context>] run <module:export> [--source <name>=<source>]... [--ees-var <name>=<value>]... [-- <arg>...]
 telora [-C <context>] serve <module:export> [--source <name>=<source>]... [--ees-var <name>=<value>]... --bind stdio:// [-- <arg>...]
 telora [-C <context>] query|q modules [-p <substring>]
 telora [-C <context>] query|q exports <module> [-p <substring>]
@@ -1590,12 +1559,8 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 诊断求值结果，因此存在错误或求值失败时仍可返回不受影响的事实。`query` 成功只表示查询
 成功，不表示模块健康；恢复节点通过独立 fact state 表达未确定或失败的状态。
 
-`run --best-effort` 在启动 Entry 前对 Main 执行静默的 best-effort 诊断求值，并把
-`telora.run/v1` diagnostic records 写入 stderr。它只用于遇到问题时扩大诊断覆盖：只要
-本轮出现任何 error，恢复得到的 Main 就整体废弃，命令输出 error summary、非零退出，且
-不初始化 Entry、不解释 SystemEffect；一个不依赖失败的干净根值也不例外。没有 error 时，
-命令重新进入严格 Entry reducer 与 Host effect lifecycle，不进行 speculative recovery。
-最终验收必须使用省略该参数、保持 fail-fast 的普通 `run`。
+运行命令不接受 `--best-effort`。需要多根初始化诊断时使用 `check`；只检查静态事实时
+使用 `check --only-types`。运行命令不为诊断而额外预执行用户代码。
 
 普通 module 用 `std/entry` 构造工具 wrapper。应用以具体 State 类型编写：
 

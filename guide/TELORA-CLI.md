@@ -32,7 +32,7 @@ telora -C examples/my-crate query exports @src/compiler
 telora -C examples/my-crate query at @src/compiler:12:3
 telora -C examples/my-crate query exports std/string
 telora -C examples/my-crate query at std/array -p flat_map
-telora -C examples/my-crate run @src/invalid:run --best-effort
+telora -C examples/my-crate check @src/invalid
 telora -C examples/my-crate lock
 ```
 
@@ -150,10 +150,8 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
   路径；该来源名不是模块，不能 import，也不会由 `query modules` 列出。
 - `telora -C context run module:name` 从 `context` 开始向上发现 workspace config，并以包含
   `context` 的 member crate 解析 module selector。
-- `run ... --best-effort` 当前把静态 Pass 诊断以 `telora.run/v1` JSONL 输出到 stderr；
-  静态错误时输出 error summary 并非零退出，不启动 Entry。它与普通 run 共用 MIR、
-  seal 和初始化路径，不另跑一轮恢复类型推导或严格编译。seal、链接和运行期错误仍按
-  相应命令错误路径报告，不能把该开关理解为所有阶段都采用相同 JSONL 格式。
+- 多根初始化诊断使用 `check`；静态诊断使用 `check --only-types`。运行命令不提供
+  `--best-effort`，初始化失败不启动 Entry，不为诊断额外预执行用户代码。
 - `run`、`check` 和 `query` 的 `-C context` 都从 `context` 开始向上发现 workspace；
   `check` 和 `query` 接受完整稳定模块 ID，`check @test/...` 检查测试入口；`run` 和
   `serve` 接受 `MODULE:EXPORT`。

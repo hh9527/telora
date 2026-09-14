@@ -1,0 +1,10 @@
+import "./helper" as helper;
+import "std/value" { Value };
+def local: Fn() -> Int = fn() { fail!("root-local") };
+export def a: Int = { let value = local(); fail!("false-continuation", value) };
+export def b: Int = { let value = helper.reject("root-module"); fail!("false-continuation", value) };
+export def c: Int = { let value = helper.forward("root-facade"); fail!("false-continuation", value) };
+export def d: Int = { let value = helper.make("root-closure")(); fail!("false-continuation", value) };
+export def dependent: Int = { let value = a; fail!("false-dependent", value) };
+export def healthy = 42;
+export def answer = Value.Array([Value.Int(a), Value.Int(b), Value.Int(c), Value.Int(d)]);

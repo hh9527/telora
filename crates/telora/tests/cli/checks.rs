@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn check_collects_independent_roots_without_running_failed_continuations() {
+    let cwd = fixture();
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/check-roots");
+    for name in ["main", "helper"] {
+        fs::copy(assets.join(format!("{name}.telora")), cwd.join(format!("src/{name}.telora"))).unwrap();
+    }
+    let output = telora(&cwd).args(["check", "@src/main"]).output().unwrap();
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    let records = text.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+    let errors = records.iter().filter(|r| r["record"] == "diagnostic" && r["severity"] == "error").collect::<Vec<_>>();
+    assert_eq!(errors.len(), 4, "{text}");
+    for message in ["root-local", "root-module", "root-facade", "root-closure"] {
+        assert_eq!(errors.iter().filter(|r| r["message"].as_str().is_some_and(|m| m.contains(message))).count(), 1, "{text}");
+    }
+    assert!(!text.contains("false-continuation") && !text.contains("false-dependent"), "{text}");
+    assert_eq!(records.last().unwrap()["status"], "error");
+    let output = telora(&cwd).args(["eval", "@src/main:answer"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(["root-local", "root-module", "root-facade", "root-closure"].iter().filter(|message| error.contains(**message)).count(), 1, "{error}");
+    assert!(!error.contains("false-continuation") && !error.contains("false-dependent"), "{error}");
+    let output = telora(&cwd).args(["check", "--only-types", "@src/main"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn check_preserves_property_provider_alias_and_factory_contracts() {
     let cwd = fixture();
     for definitions in [

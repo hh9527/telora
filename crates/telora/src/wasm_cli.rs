@@ -41,6 +41,19 @@ fn compile(executable: &SealedExecutable<'_>) -> Result<telora_wasm::session::Se
 pub(crate) fn compile_check(
     sealed: SealedMir<'_>,
 ) -> Result<telora_wasm::session::Session, String> {
+    compile_modules(sealed, true)
+}
+
+pub(crate) fn compile_tests(
+    sealed: SealedMir<'_>,
+) -> Result<telora_wasm::session::Session, String> {
+    compile_modules(sealed, false)
+}
+
+fn compile_modules(
+    sealed: SealedMir<'_>,
+    check: bool,
+) -> Result<telora_wasm::session::Session, String> {
     let graph = sealed.mir();
     let modules = graph
         .hir
@@ -56,7 +69,13 @@ pub(crate) fn compile_check(
             .collect::<Vec<_>>()
             .join("\n")
     })?;
-    compile(&executable)
+    if !check { return compile(&executable); }
+    let bytes = {
+        let _timer = PhaseTimer::new("codegen_link");
+        telora_wasm::compile_check(&executable)?
+    };
+    let _timer = PhaseTimer::new("engine_load");
+    telora_wasm::session::Session::load(&bytes, crate::execution_config().fuel)
 }
 
 pub(crate) fn initialize(

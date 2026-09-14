@@ -1,0 +1,3 @@
+export def reject: Fn(String) -> Int = fn(message) { fail!(message) };
+export def forward: Fn(String) -> Int = fn(message) { reject(message) };
+export def make: Fn(String) -> Fn() -> Int = fn(message) { fn() { forward(message) } };

@@ -222,9 +222,9 @@ def require_positive: Fn(Int) -> Int = fn(value) {
 向 Host 报告诊断就把所有 API 改写为领域 `Rejection`。业务调用者确实需要恢复或
 分支时，再显式使用 `Option`、`Result` 或领域 enum。
 
-静态阶段收集独立诊断，类型未闭合时不进入求值。初始化可以传播已有失败并继续独立
-任务，但任何错误都会阻止成功发布。`run --best-effort` 当前提供静态诊断的 JSONL
-输出，与普通 run 共用编译和初始化路径，详见 [CLI 指南](guide/TELORA-CLI.md)。
+静态阶段收集独立诊断，类型未闭合时不进入求值。check 初始化传播已有失败并继续独立
+导出根，但任何错误都会阻止成功发布。多根初始化诊断使用 `check`；运行命令
+遇到失败即停止，不提供 `--best-effort`，详见 [CLI 指南](guide/TELORA-CLI.md)。
 只要存在 error，最终返回值和效果都不会越过 Host 发布边界。
 
 常用诊断组合包括：
@@ -296,7 +296,7 @@ telora query at <module-id>[:line[:column]] [-p pattern] [-k kinds]
 JSONL 位置默认使用 1-based line 和 0-based UTF-8 byte column；LSP 按协议协商位置
 编码。`check` 不进行 Entry 调度，也不把导出函数当作入口调用；初始化计算可以调用函数。
 纯导出由 `eval` 或 `eval-with` 验收，应用 service 由严格 `run` 验收。调查静态错误时可使用
-`run --best-effort` 获取静态阶段的 JSONL 诊断。
+`check --only-types` 获取静态阶段的 JSONL 诊断。
 
 `test parser/expressions` 支持嵌套测试入口。Host 为当前 crate 的整个 `tests/` 建立
 临时模块清单，测试模块可以互相 import，但只求值从选中入口可达的模块。源码不能

@@ -85,7 +85,7 @@ pub(crate) fn run(context: PathBuf, name: &str) -> Result<i32, String> {
             unreachable!("sealed root must be resolved");
         };
         let plan = telora_core::test_plan::TestPlan::from_mir(&sealed, module)?;
-        let session = crate::wasm_cli::compile_check(sealed)
+        let session = crate::wasm_cli::compile_tests(sealed)
             .map_err(|message| vec![crate::wasm_cli::error(message)])?;
         Ok((session, plan))
     });

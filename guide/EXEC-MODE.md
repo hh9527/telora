@@ -222,8 +222,8 @@ locator 和状态机示例见 [`EES.md`](EES.md)。
 程序 failure、类型不匹配、source 错误和 Host 协议错误使对应命令返回非零，诊断写到
 stderr；serve 中可恢复的单请求 failure 使用带内 error 响应。
 
-`run --best-effort` 和 `serve --best-effort` 在启动 Entry 前扩大模块诊断覆盖。只要发现
-error，就不启动 service，也不产生任何 EES effect。最终运行验收应使用普通严格模式。
+`check` 在多个初始化根之间收集诊断；单个根内部失败立即中断。
+run/serve 不提供 `--best-effort`，初始化失败就不启动 service，也不产生 EES effect。
 
 ## 执行前检查
 

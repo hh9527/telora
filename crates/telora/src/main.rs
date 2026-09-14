@@ -400,8 +400,6 @@ struct RunArgs {
 struct ApplicationArgs {
     #[arg(value_name = "MODULE:EXPORT", value_parser = parse_application_selector)]
     selector: ApplicationSelector,
-    #[arg(long)]
-    best_effort: bool,
     /// Provide a named Value source: NAME=PATH or NAME=(file|stdin)+(json|yaml|toml)://PATH.
     #[arg(long = "source", value_name = "NAME=SOURCE", value_parser = parse_named_source)]
     sources: Vec<NamedSource>,
@@ -690,15 +688,7 @@ async fn run_command(
         }
     }
     let static_failed = mir.diagnostics.iter().any(|d| d.severity == telora_core::source::Severity::Error);
-    if arguments.best_effort {
-        for diagnostic in &mir.diagnostics {
-            emit_stderr(static_cli::diagnostic(&mir, "telora.run/v1", module_id, diagnostic))?;
-        }
-        if static_failed {
-            emit_stderr(json!({"schema": "telora.run/v1", "module": module_id, "record": "summary", "status": "error"}))?;
-            return Ok(1);
-        }
-    } else if static_failed {
+    if static_failed {
         return Err(mir.diagnostics.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"));
     }
     let telora_core::mir::ModuleTarget::Bound(root) = mir.roots[0] else { return Err("entry adapter module is unresolved".into()) };

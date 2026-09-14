@@ -96,7 +96,7 @@ mod template_ops;
 mod test_description;
 pub mod testing;
 
-pub use codegen::compile_executable;
+pub use codegen::{compile_check, compile_executable};
 
 #[cfg(test)]
 mod tests;

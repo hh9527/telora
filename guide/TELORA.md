@@ -1143,16 +1143,9 @@ def make_plan: Fn(Model, Request) -> Plan = fn(model, request) {
 求值器与运行时适配器依据这些依赖保留来源、跳过失败值的依赖计算，并尽力继续彼此独立的
 工作。最终结果仍然原子发布：不能产生完整 `T` 时，不发布部分 `T`。
 
-best-effort 求值在复合值内部也按数据依赖推进。`array.map` 会保留失败槽位、跳过它
-继续后续逐项变换，并按索引顺序处理健康槽位；`array.length` 只依赖已知形状；选择
-失败槽位会传播原诊断。`filter` 可以继续检查其他独立 predicate，但任一 predicate
-失败都会令最终成员关系不可发布；`fold` 的 accumulator 失败后不再调用后续 reducer。
-`flat_map`、`concat` 和 spread 的输出形状依赖失败成员，因此最终传播原 Fail，但不会
-再产生“expected Array/Func”一类级联类型错误。普通函数的 callee 或直接实参为 Fail
-时不执行函数体；结构相等、codec 和 JSON 读取完整数据图，遇到可达 Fail 也传播原根因。
-Array/Tuple/Dict/tagged 构造、`map`、`enumerate`、`push` 和 `zip` 等保形操作可以保留
-失败子节点，以便继续健康成员。`any` 的健康 True 和 `all` 的健康 False 可以确定性短路；
-`find` 若在候选成员之前已有失败 predicate，则成员身份不确定并传播 Fail。
+best-effort 仅用于 `check` 的多个初始化根之间。单个根内部，let initializer、函数、
+闭包或逐项操作失败后立即退出，不执行后续语句或 callback。容器不保存失败子节点。
+共享失败依赖只报告原始根因，其他独立导出仍可尝试初始化；有错误则 session 不发布。
 这些失败槽位不是语言值或额外 variant，源码不能匹配或恢复。可达性只决定还可继续
 哪些诊断计算；只要出现任何 error，本轮命令就不会发布结果，即使干净的最终根仍可算出，
 codec、最终返回值和 SystemEffect 也不会越过运行时发布边界。Module 在
@@ -1242,9 +1235,8 @@ telora -C examples/my-crate check @test/compiler
 `check` 用统一 Module 管线的 best-effort 策略求值所选模块；任何 error 都会非零退出，
 但内部图仍可保留以查询健康事实。它不进行 Entry 调度，也不会调用已经
 导出的函数，因此不等价于行为验收。纯导出由 `eval` / `eval-with` 验收，应用 service
-由普通 `run` 严格执行；遇到
-失败时可以用 `run --best-effort` 扩大诊断覆盖，并检查非零退出、CLI 诊断和无
-output。不能仅以 `check` 成功作为行为证据。
+由普通 `run` 严格执行；初始化失败时可以用 `check` 收集多个根因。
+不能仅以 `check` 成功作为行为证据。
 
 在 test 入口中，`./compiler` 以及其他 `./` 或 `../` import 非法。
 在 `src/` 下的模块中，相对 import 合法，并从导入模块的逻辑目录解析。
@@ -1269,4 +1261,4 @@ Telora 支持带显式契约的递归函数。调用和 back-edge 消耗 fuel；
 - 用泛型参数和明确的输入输出契约表达类型关系。
 - 优先让类型表达静态约束；动态失败使用 `fail!` 并携带原始证据。
 - 纯导出使用 `eval` / `eval-with` 验收，应用 service 使用严格 `run` 验收；失败排查时
-  再使用 `--best-effort` 扩大诊断覆盖。
+  使用 `check` 收集初始化诊断。
