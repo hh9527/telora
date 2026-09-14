@@ -22,25 +22,25 @@ def make_identity = fn() { fn(value) { value } };
 def phantom_identity: for(Tag) Fn(Int) -> Int = fn(value) { value };
 type Message(T) = enum {Data(T), Empty};
 
-export def contextual_nullary_value = test.should_ok(fn() {
+export def contextual_nullary_value: test.Test = test.should_ok(fn() {
     let empty = Message.Empty;
     let concrete: Message(String) = empty;
     expect(concrete == Message.Empty@[String])
 });
 
-export def phantom_specialization = test.should_ok(fn() {
+export def phantom_specialization: test.Test = test.should_ok(fn() {
     let first = phantom_identity@[String];
     let second = phantom_identity@[Bool];
     expect(first(42) == 42 && second(43) == 43
         && eq.equal(first, phantom_identity@[String]))
 });
 
-export def bounded_function_value = test.should_ok(fn() {
+export def bounded_function_value: test.Test = test.should_ok(fn() {
     expect(eq.equal(bounded_identity@[Int], bounded_identity@[Int])
         && eq.equal(property_identity@[Marked], property_identity@[Marked]))
 });
 
-export def partially_applied_function = test.should_ok(fn() {
+export def partially_applied_function: test.Test = test.should_ok(fn() {
     let choose_int = choose_left@[Int, _];
     expect(choose_int(42, "text") == 42 && choose_int(43, True) == 43
         && eq.equal(choose_int@[String], choose_int@[String])
@@ -53,22 +53,22 @@ export def partially_applied_function = test.should_ok(fn() {
         && choose_bounded(42, Marked(1)) == 42)
 });
 
-export def returned_function = test.should_ok(fn() {
+export def returned_function: test.Test = test.should_ok(fn() {
     expect(make_identity()(42) == 42 && make_identity()("text") == "text")
 });
 
-export def static_projection = test.should_ok(fn() {
+export def static_projection: test.Test = test.should_ok(fn() {
     expect(project@[Int](dyn.pack(Int.type, 42)) == Some(42)
         && project@[String](dyn.pack(Int.type, 42)) == None)
 });
 
-export def local_alias_instances = test.should_ok(fn() {
+export def local_alias_instances: test.Test = test.should_ok(fn() {
     let identity = fn(value) { value };
     let alias = identity;
     expect(alias(42) == 42 && alias("text") == "text")
 });
 
-export def generic_value_identity_and_calls = test.should_ok(fn() {
+export def generic_value_identity_and_calls: test.Test = test.should_ok(fn() {
     let identity = fn(value) { value };
     let alias = identity;
     expect(eq.equal(identity@[Int], alias@[Int])
@@ -77,7 +77,7 @@ export def generic_value_identity_and_calls = test.should_ok(fn() {
         && alias("text") == "text")
 });
 
-export def captured_generic_value = test.should_ok(fn() {
+export def captured_generic_value: test.Test = test.should_ok(fn() {
     let identity = fn(value) { value };
     let alias = identity;
     let inspect = fn() { eq.equal(identity@[Int], alias@[Int]) };
@@ -85,20 +85,20 @@ export def captured_generic_value = test.should_ok(fn() {
     expect(inspect() && use())
 });
 
-export def generic_property_value = test.should_ok(fn() {
+export def generic_property_value: test.Test = test.should_ok(fn() {
     expect(match get_type_prop(Marked.type, Prop(Int).type) {
         Some(property) => property.value == 42,
         None => False,
     })
 });
 
-export def struct_spread_context = test.should_ok(fn() {
+export def struct_spread_context: test.Test = test.should_ok(fn() {
     let original: Item = {x: 42};
     let copied: Item = {...original};
     expect(copied.x == 42)
 });
 
-export def finite_recursive_layout = test.should_ok(fn() {
+export def finite_recursive_layout: test.Test = test.should_ok(fn() {
     expect(Swap(Int, String).type == Swap(Int, String).type
         && Swap(Int, String).type != Swap(String, Int).type)
 });

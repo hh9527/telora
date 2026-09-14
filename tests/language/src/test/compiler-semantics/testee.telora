@@ -13,23 +13,23 @@ type Package = struct {name: String, version: Int};
 decl explicit_identity: for(A) Fn(A) -> A;
 def explicit_identity = fn(value) { value };
 
-export def record_precedence = test.should_ok(fn() {
+export def record_precedence: test.Test = test.should_ok(fn() {
     expect({b: 2 + 3 * 4, a: 1}.ty!(Dict(Int)).b == 14)
 });
 
-export def enum_tuples = test.should_ok(fn() {
+export def enum_tuples: test.Test = test.should_ok(fn() {
     let ok: Tuple([State, Int]) = (State.Ok, 42);
     expect(ok == (State.Ok, 42) && ok != (State.Err, 42))
 });
 
-export def function_identity = test.should_ok(fn() {
+export def function_identity: test.Test = test.should_ok(fn() {
     expect({
         let f: Fn(Int) -> Int = fn(x) { x };
         f == f && f != fn(x) { x }
     })
 });
 
-export def single_assignment_recursion = test.should_ok(fn() {
+export def single_assignment_recursion: test.Test = test.should_ok(fn() {
     expect({
         decl countdown: Fn(Int) -> Int;
         def countdown = fn(n) { if n < 1 { 0 } else { countdown(n - 1) } };
@@ -52,24 +52,24 @@ export def single_assignment_recursion = test.should_ok(fn() {
     })
 });
 
-export def integer_comparison = test.should_ok(fn() {
+export def integer_comparison: test.Test = test.should_ok(fn() {
     expect(1 == 1 && 1 != 2 && 1 < 2 && 2 > 1 && 1 <= 1 && 2 >= 2)
 });
 
-export def float_comparison = test.should_ok(fn() {
+export def float_comparison: test.Test = test.should_ok(fn() {
     expect(1.0 == 1.0 && 1.0 != 2.0 && 1.0 < 2.0 && 2.0 > 1.0 && 1.0 <= 1.0 && 2.0 >= 2.0 && -0.0 == 0.0)
 });
 
-export def string_ordering = test.should_ok(fn() {
+export def string_ordering: test.Test = test.should_ok(fn() {
     expect("app" < "apple" && "10" < "2" && "Z" < "a" && "é" < "中" && "same" <= "same" && "z" > "a" && "z" >= "z" && "a deliberately heap-backed string" > "a")
 });
 
-export def nested_tuple_equality = test.should_ok(fn() {
+export def nested_tuple_equality: test.Test = test.should_ok(fn() {
     let ok: Tuple([State, Array(Int)]) = (State.Ok, [1, 2]);
     expect(ok == (State.Ok, [1, 2]) && (State.Ok, [1]).ty!(Tuple([State, Array(Int)])) != (State.Err, [1]))
 });
 
-export def recursive_definitions = test.should_ok(fn() {
+export def recursive_definitions: test.Test = test.should_ok(fn() {
     expect({
         let base = 10;
         decl fib: Fn(Int) -> Int;
@@ -89,7 +89,7 @@ export def recursive_definitions = test.should_ok(fn() {
     })
 });
 
-export def inferred_recursion = test.should_ok(fn() {
+export def inferred_recursion: test.Test = test.should_ok(fn() {
     expect({
         def countdown = fn(value) {
             if value < 1 { 0 } else { countdown(value - 1) }
@@ -104,30 +104,30 @@ export def inferred_recursion = test.should_ok(fn() {
     })
 });
 
-export def closure_capture = test.should_ok(fn() {
+export def closure_capture: test.Test = test.should_ok(fn() {
     expect({ let base = 40; let add = fn(value) { base + value }; add(2) } == 42)
 });
 
-export def annotated_lambda = test.should_ok(fn() {
+export def annotated_lambda: test.Test = test.should_ok(fn() {
     expect((fn(value: Int) -> Int { value + 1 })(41) == 42)
 });
 
-export def explicit_generic_identity = test.should_ok(fn() {
+export def explicit_generic_identity: test.Test = test.should_ok(fn() {
     expect(explicit_identity@[Int](42) == 42)
 });
 
-export def local_generalization = test.should_ok(fn() {
+export def local_generalization: test.Test = test.should_ok(fn() {
     expect({
         let identity = fn(value) { value };
         identity(42) == 42 && identity("value") == "value" && identity@[Int](7) == 7
     })
 });
 
-export def indexing = test.should_ok(fn() {
+export def indexing: test.Test = test.should_ok(fn() {
     expect({ let values = [10, 20, 30]; values[1] == 20 && ("left", 42).1 == 42 })
 });
 
-export def pipelines = test.should_ok(fn() {
+export def pipelines: test.Test = test.should_ok(fn() {
     expect({
             let add = fn(a) { fn(b) { a + b } };
             let ops: Operations = {increment: fn(value) { value + 1 }};
@@ -135,7 +135,7 @@ export def pipelines = test.should_ok(fn() {
     })
 });
 
-export def call_sections = test.should_ok(fn() {
+export def call_sections: test.Test = test.should_ok(fn() {
     expect({
         let combine = fn(a, middle, b) { a + middle + b };
         let section = combine\(_, 10, _);
@@ -160,7 +160,7 @@ export def call_sections = test.should_ok(fn() {
     })
 });
 
-export def control_flow = test.should_ok(fn() {
+export def control_flow: test.Test = test.should_ok(fn() {
     expect({
         let chained = if False { 1 } else if False { 2 } else if True { 3 } else { 4 };
         let selected = if False { 1 } else if let Some(value) = Some(3).ty!(Option(Int)) { value } else { 4 };
@@ -182,11 +182,11 @@ export def control_flow = test.should_ok(fn() {
     })
 });
 
-export def tuple_patterns = test.should_ok(fn() {
+export def tuple_patterns: test.Test = test.should_ok(fn() {
     expect(match (True.ty!(Bool), 42) { (True, value) => value, (False, value) => value } == 42)
 });
 
-export def variant_patterns = test.should_ok(fn() {
+export def variant_patterns: test.Test = test.should_ok(fn() {
     expect({
             let Some: Fn(Int) -> Option(Int) = Option.Some;
             let option: Option(Int) = Some(42);
@@ -194,7 +194,7 @@ export def variant_patterns = test.should_ok(fn() {
     } == 42)
 });
 
-export def structural_patterns = test.should_ok(fn() {
+export def structural_patterns: test.Test = test.should_ok(fn() {
     expect({
         let user: User = {name: "Ada", address: {city: "London"}};
         let selected = match user { {name, address: {city}} => (name, city) };
@@ -206,7 +206,7 @@ export def structural_patterns = test.should_ok(fn() {
     })
 });
 
-export def destructuring_let = test.should_ok(fn() {
+export def destructuring_let: test.Test = test.should_ok(fn() {
     expect({
         let (left, user) = (1, {name: "Ada", address: {city: "London"}}).ty!((Int, User));
         let {name, address: {city}} = user;
@@ -214,7 +214,7 @@ export def destructuring_let = test.should_ok(fn() {
     })
 });
 
-export def option_and_result_propagation = test.should_ok(fn() {
+export def option_and_result_propagation: test.Test = test.should_ok(fn() {
     expect({
         let option_step: Fn(Option(Int)) -> Option(Int) = fn(value) {
             let item = value?;
@@ -231,7 +231,7 @@ export def option_and_result_propagation = test.should_ok(fn() {
     })
 });
 
-export def inferred_propagation = test.should_ok(fn() {
+export def inferred_propagation: test.Test = test.should_ok(fn() {
     expect({
         let step = fn(value: Option(Int)) {
             let item = { value? };
@@ -241,7 +241,7 @@ export def inferred_propagation = test.should_ok(fn() {
     })
 });
 
-export def nested_propagation = test.should_ok(fn() {
+export def nested_propagation: test.Test = test.should_ok(fn() {
     expect({
         let outer = fn(value: Option(Int)) -> Option(Option(Int)) {
             let inner: Fn(Option(Int)) -> Option(Int) = fn(inner_value) {
@@ -254,7 +254,7 @@ export def nested_propagation = test.should_ok(fn() {
     })
 });
 
-export def nearest_return = test.should_ok(fn() {
+export def nearest_return: test.Test = test.should_ok(fn() {
     expect({
         let choose = fn(condition: Bool, value: Int, fallback: Int) {
             if condition { return value; } else { fallback }
@@ -267,7 +267,7 @@ export def nearest_return = test.should_ok(fn() {
     })
 });
 
-export def match_guards = test.should_ok(fn() {
+export def match_guards: test.Test = test.should_ok(fn() {
     expect({
         let value: Option(Int) = Some(3);
         match value {
@@ -279,7 +279,7 @@ export def match_guards = test.should_ok(fn() {
     })
 });
 
-export def array_spread = test.should_ok(fn() {
+export def array_spread: test.Test = test.should_ok(fn() {
     expect({
         let middle = [1, 2];
         let empty: Array(Int) = [];
@@ -288,7 +288,7 @@ export def array_spread = test.should_ok(fn() {
     })
 });
 
-export def dict_spread = test.should_ok(fn() {
+export def dict_spread: test.Test = test.should_ok(fn() {
     expect({
         let base: Dict(Int) = {a: 1, b: 2};
         let extra: Dict(Int) = {b: 3, c: 4};
@@ -305,7 +305,7 @@ export def dict_spread = test.should_ok(fn() {
     })
 });
 
-export def string_literals = test.should_ok(fn() {
+export def string_literals: test.Test = test.should_ok(fn() {
     expect({
             let escaped = "A=\x41, shape=\u{5f62}, first \
                 second";
@@ -315,7 +315,7 @@ export def string_literals = test.should_ok(fn() {
 });
 
 
-export def remainders = test.should_ok(fn() {
+export def remainders: test.Test = test.should_ok(fn() {
     expect(
         7 % 3 == 1
             && -7 % 3 == -1
@@ -328,7 +328,7 @@ export def remainders = test.should_ok(fn() {
     )
 });
 
-export def short_circuit_boolean = test.should_ok(fn() {
+export def short_circuit_boolean: test.Test = test.should_ok(fn() {
     expect(
         !(False && (1 / 0 == 0))
             && (True || (1 / 0 == 0))
@@ -336,7 +336,7 @@ export def short_circuit_boolean = test.should_ok(fn() {
     )
 });
 
-export def boolean_and_bitwise_not = test.should_ok(fn() {
+export def boolean_and_bitwise_not: test.Test = test.should_ok(fn() {
     expect(
         !True == False
             && !False
@@ -349,7 +349,7 @@ export def boolean_and_bitwise_not = test.should_ok(fn() {
     )
 });
 
-export def bitwise_operators = test.should_ok(fn() {
+export def bitwise_operators: test.Test = test.should_ok(fn() {
     expect(
         6 & 3 == 2
             && 4 | 1 == 5
@@ -358,7 +358,7 @@ export def bitwise_operators = test.should_ok(fn() {
     )
 });
 
-export def record_shorthand = test.should_ok(fn() {
+export def record_shorthand: test.Test = test.should_ok(fn() {
     expect({
         let name = "telora";
         let version = 1;
@@ -366,7 +366,7 @@ export def record_shorthand = test.should_ok(fn() {
     })
 });
 
-export def tail_calls = test.should_ok(fn() {
+export def tail_calls: test.Test = test.should_ok(fn() {
     expect({
         def direct: Fn(Int) -> Int = fn(n) {
             if n < 1 { 0 } else { direct(n - 1) }
@@ -388,7 +388,7 @@ export def tail_calls = test.should_ok(fn() {
     })
 });
 
-export def let_else = test.should_ok(fn() {
+export def let_else: test.Test = test.should_ok(fn() {
     expect({
         let step: Fn(Option(Int)) -> Option(Int) = fn(option) {
             let Some(item) = option else { return None; };

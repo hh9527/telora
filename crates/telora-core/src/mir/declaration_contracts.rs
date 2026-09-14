@@ -66,7 +66,8 @@ impl Mir {
                 Some(annotation) => match self.contract_hole(annotation) {
                     Some(hole) => DeclarationContractState::Incomplete(hole),
                     None => match self.symbol_types.get(symbol.index()).and_then(|slot| self.ty_slots.get(slot.index())) {
-                        Some(TypeState::Known(ty)) => DeclarationContractState::Complete(*ty),
+                        Some(TypeState::Known(ty)) if self.declaration_contract_ready.get(symbol.index()) == Some(&true)
+                            => DeclarationContractState::Complete(*ty),
                         _ => DeclarationContractState::Unresolved,
                     },
                 },

@@ -11,7 +11,7 @@ def deferred_fields = fn(owner: DeferredOwner, enabled: Bool) {
         None => [],
     }
 };
-export def empty_arm_waits_for_generic_member_evidence = test.should_ok(fn() {
+export def empty_arm_waits_for_generic_member_evidence: test.Test = test.should_ok(fn() {
     let owner: DeferredOwner = {inner: {items: ["value"]}};
     expect(array.length(deferred_fields(owner, True)) == 1
         && array.length(deferred_fields(owner, False)) == 0)
@@ -92,7 +92,7 @@ def int_leaf: FamilyTree(Int) = FamilyTree.Leaf(1);
 def string_leaf: FamilyTree(String) = FamilyTree.Leaf("x");
 def string_tree: FamilyTree(String) = FamilyTree.Branch([string_leaf]);
 
-export def generic_calls = test.should_ok(fn() {
+export def generic_calls: test.Test = test.should_ok(fn() {
     expect(
         generic_identity(1) == 1
             && generic_identity("x") == "x"
@@ -100,7 +100,7 @@ export def generic_calls = test.should_ok(fn() {
     )
 });
 
-export def forward_type_references = test.should_ok(fn() {
+export def forward_type_references: test.Test = test.should_ok(fn() {
     expect(
         early_builder(1).name == "plan 1"
             && late_builder(2).name == "plan 2"
@@ -109,20 +109,20 @@ export def forward_type_references = test.should_ok(fn() {
     )
 });
 
-export def generic_callbacks = test.should_ok(fn() {
+export def generic_callbacks: test.Test = test.should_ok(fn() {
     expect(
         invoke_builder(callback_builder).value.name == "plan:1"
     )
 });
 
-export def recursive_struct = test.should_ok(fn() {
+export def recursive_struct: test.Test = test.should_ok(fn() {
     expect({
         let node: Node = {value: 1, children: []};
         node_value(node) == 1
     })
 });
 
-export def mutually_recursive_types = test.should_ok(fn() {
+export def mutually_recursive_types: test.Test = test.should_ok(fn() {
     expect({
         let expr: Expr = Expr.Call({name: "sum", args: [Expr.Value(1)]});
         let renderer: Renderer(RenderContext) = {
@@ -133,7 +133,7 @@ export def mutually_recursive_types = test.should_ok(fn() {
     })
 });
 
-export def inferred_option_callback = test.should_ok(fn() {
+export def inferred_option_callback: test.Test = test.should_ok(fn() {
     expect({
         let build: Fn(Int) -> Option(String) = fn(value) {
             if value > 0 { Some("ok") } else { None }
@@ -142,7 +142,7 @@ export def inferred_option_callback = test.should_ok(fn() {
     })
 });
 
-export def contextual_enum = test.should_ok(fn() {
+export def contextual_enum: test.Test = test.should_ok(fn() {
     expect({
         let nodes: Array(NodeId) = [NodeId.Other];
         let selected: NodeId = choose_node(NodeId.Base, nodes);
@@ -150,7 +150,7 @@ export def contextual_enum = test.should_ok(fn() {
     })
 });
 
-export def explicit_type_arguments = test.should_ok(fn() {
+export def explicit_type_arguments: test.Test = test.should_ok(fn() {
     expect(
         explicit_pair@[Int, String](1, "x") == (1, "x")
             && explicit_pair@[Int, _](1, "x") == (1, "x")
@@ -159,7 +159,7 @@ export def explicit_type_arguments = test.should_ok(fn() {
     )
 });
 
-export def recursive_function_inference = test.should_ok(fn() {
+export def recursive_function_inference: test.Test = test.should_ok(fn() {
     expect({
         let direct: Fn(Int) -> Int = recursive_countdown;
         let even: Fn(Int) -> Bool = recursive_even;
@@ -172,7 +172,7 @@ export def recursive_function_inference = test.should_ok(fn() {
     })
 });
 
-export def definition_order_and_shadowing = test.should_ok(fn() {
+export def definition_order_and_shadowing: test.Test = test.should_ok(fn() {
     expect({
         def outer = fn(value) {
             def identity = fn(item) { item };
@@ -189,7 +189,7 @@ export def definition_order_and_shadowing = test.should_ok(fn() {
     })
 });
 
-export def local_polymorphism = test.should_ok(fn() {
+export def local_polymorphism: test.Test = test.should_ok(fn() {
     expect({
         let identity = fn(value) { value };
         let wrap = fn(value) { [value] };
@@ -201,14 +201,14 @@ export def local_polymorphism = test.should_ok(fn() {
     })
 });
 
-export def partial_annotations = test.should_ok(fn() {
+export def partial_annotations: test.Test = test.should_ok(fn() {
     expect({
         let keep = fn(left: Int, right) { (left, right) };
         keep(1, "x") == (1, "x") && keep(2, 3) == (2, 3)
     })
 });
 
-export def nested_function_contract = test.should_ok(fn() {
+export def nested_function_contract: test.Test = test.should_ok(fn() {
     expect({
         let nested: Fn(Int) -> Fn(Int) -> Int = fn(left) {
             fn(right) { left + right + 1 }
@@ -217,7 +217,7 @@ export def nested_function_contract = test.should_ok(fn() {
     })
 });
 
-export def contextual_collections_and_patterns = test.should_ok(fn() {
+export def contextual_collections_and_patterns: test.Test = test.should_ok(fn() {
     expect({
         let values: Array(Int) = if True { [] } else { [1] };
         let selected: Int = match (1, "x") { (number, _) => number };
@@ -225,7 +225,7 @@ export def contextual_collections_and_patterns = test.should_ok(fn() {
     })
 });
 
-export def nested_family_contract = test.should_ok(fn() {
+export def nested_family_contract: test.Test = test.should_ok(fn() {
     expect({
         let boxes: Array(FamilyBox(Pair(Int, String))) = [
             {value: {left: 1, right: "x"}},
@@ -234,7 +234,7 @@ export def nested_family_contract = test.should_ok(fn() {
     })
 });
 
-export def distinct_family_instances = test.should_ok(fn() {
+export def distinct_family_instances: test.Test = test.should_ok(fn() {
     expect(
         match int_leaf { FamilyTree.Leaf(value) => value == 1, FamilyTree.Branch(_) => False }
             && match string_tree {

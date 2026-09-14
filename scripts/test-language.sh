@@ -82,7 +82,7 @@ generated="$workspace/src/generated/check-all.telora"
     echo '        None => fail!("missing test observation", name),'
     echo '    }'
     echo '};'
-    echo 'export def check = entry.main(config, fn(ctx) {'
+    echo 'export def check: entry.Eval = entry.main(config, fn(ctx) {'
     echo '    let actual = match dict.get(ctx.sources, "actual") {'
     echo '        Some(Value.Object(values)) => values,'
     echo '        _ => fail!("actual test observations must be an object"),'

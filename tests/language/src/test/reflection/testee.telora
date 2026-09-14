@@ -15,7 +15,7 @@ def require_access: for(A) Fn(Result(A, dyn.AccessError)) -> A = fn(result) {
     match result { Ok(value) => value, Err(error) => raise!(blame!(error.message, error.value)) }
 };
 
-export def verified_case = test.should_ok(fn() {
+export def verified_case: test.Test = test.should_ok(fn() {
 
     {
         let user: User = {name: "Ada", age: 42};

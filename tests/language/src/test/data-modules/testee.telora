@@ -25,12 +25,12 @@ type YamlConfig = struct {
     legacy: String,
 };
 
-export def json_data = test.should_ok(fn() {
+export def json_data: test.Test = test.should_ok(fn() {
     let user = codec.decode((User).type, user_data).unwrap!();
     expect(user == {name: "Ada", age: 36})
 });
 
-export def toml_data_case = test.should_ok(fn() {
+export def toml_data_case: test.Test = test.should_ok(fn() {
     let config = codec.decode((Config).type, toml_data).unwrap!();
     let expected_tools: Array(Tool) = [{name: "telora"}, {name: "rustc"}];
     expect(
@@ -40,7 +40,7 @@ export def toml_data_case = test.should_ok(fn() {
     )
 });
 
-export def yaml_data_case = test.should_ok(fn() {
+export def yaml_data_case: test.Test = test.should_ok(fn() {
     let yaml = codec.decode((YamlConfig).type, yaml_data).unwrap!();
     expect(
         yaml.name == "Telora"

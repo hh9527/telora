@@ -23,30 +23,30 @@ def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
     payload
 };
 
-export def direct = test.should_ok(fn() {
+export def direct: test.Test = test.should_ok(fn() {
     let id = UserId(7);
     expect(id.0 == 7 && codec.encode((Value).type, id) == Value.Int(7))
 });
 
-export def first_class = test.should_ok(fn() {
+export def first_class: test.Test = test.should_ok(fn() {
     let make = UserId;
     let typed: Fn(Int) -> UserId = UserId;
     expect(make(8).0 == 8 && typed(9).0 == 9 && apply(UserId, 10).0 == 10)
 });
 
-export def generic = test.should_ok(fn() {
+export def generic: test.Test = test.should_ok(fn() {
     let contextual: Box(Int) = Box(11);
     let inferred = Box("hello");
     let explicit = Box@[Int](12);
     expect(contextual.0 == 11 && inferred.0 == "hello" && explicit.0 == 12)
 });
 
-export def generic_forwarding = test.should_ok(fn() {
+export def generic_forwarding: test.Test = test.should_ok(fn() {
     let id = box(UserId(13));
     expect(id.0.0 == 13 && codec.encode((Value).type, id) == Value.Int(13))
 });
 
-export def type_facet = test.should_ok(fn() {
+export def type_facet: test.Test = test.should_ok(fn() {
     let metadata: Type = UserId.type;
     let boxed: Type = Box(Int).type;
     let family: Fn(Type) -> Type = fn(metadata) { metadata };
@@ -54,7 +54,7 @@ export def type_facet = test.should_ok(fn() {
         && type_desc.kind(family(boxed)) == type_desc.TypeDescKind.Ref)
 });
 
-export def constructor_dyn = test.should_ok(fn() {
+export def constructor_dyn: test.Test = test.should_ok(fn() {
     let packed = dyn.pack((IdConstructor).type, UserId);
     expect(match dyn.project_with((IdConstructor).type, packed) {
         Some(make) => make(14).0 == 14,
@@ -62,7 +62,7 @@ export def constructor_dyn = test.should_ok(fn() {
     })
 });
 
-export def imported = test.should_ok(fn() {
+export def imported: test.Test = test.should_ok(fn() {
     let a = model.External(15);
     let b = RemoteId(16);
     let c = model.Packet(a);
@@ -73,7 +73,7 @@ export def imported = test.should_ok(fn() {
         && bridge.model.External(23).0 == 23)
 });
 
-export def ordinary_metadata_function = test.should_ok(fn() {
+export def ordinary_metadata_function: test.Test = test.should_ok(fn() {
     let metadata = metadata_factory(0);
     let local: Fn(Int) -> TypeOf(UserId) = fn(value) { UserId.type };
     let local_metadata = local(1);
@@ -84,13 +84,13 @@ export def ordinary_metadata_function = test.should_ok(fn() {
         && type_desc.kind(identity(model.metadata)) == type_desc.TypeDescKind.Ref)
 });
 
-export def contextual_payload = test.should_ok(fn() {
+export def contextual_payload: test.Test = test.should_ok(fn() {
     let item = WrappedItem({value: 19});
     let option = Maybe(Some(20));
     expect(item.0.value == 19 && option.0 == Some(20))
 });
 
-export def constructor_patterns = test.should_ok(fn() {
+export def constructor_patterns: test.Test = test.should_ok(fn() {
     let UserId(id) = UserId(24);
     let Box(UserId(nested)) = Box(UserId(25));
     let model.External(remote) = model.External(26);
@@ -104,7 +104,7 @@ export def constructor_patterns = test.should_ok(fn() {
         && selected == 28 && conditional == 29 && unbox(Box(30)) == 30)
 });
 
-export def pattern_control_flow = test.should_ok(fn() {
+export def pattern_control_flow: test.Test = test.should_ok(fn() {
     let extract: Fn(Maybe) -> Int = fn(value) {
         let Maybe(Some(item)) = value else { return 0; };
         item

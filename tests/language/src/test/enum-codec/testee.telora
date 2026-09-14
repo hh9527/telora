@@ -29,7 +29,7 @@ type FixtureModel = struct {
     scalar: FixtureScalar,
 };
 
-export def verified_case = test.should_ok(fn() {
+export def verified_case: test.Test = test.should_ok(fn() {
     let verified = {
         let fatal: FixtureEvent = FixtureEvent.FatalError("boom");
         let nested: FixtureEnvelope = {event: FixtureEvent.UserJoined({name: "Lin"})};

@@ -10,7 +10,7 @@ type First = struct {value: Int};
 @model.link(First.type)
 type Second = struct {value: Int};
 
-export def configured_metadata_contract = test.should_ok(fn() {
+export def configured_metadata_contract: test.Test = test.should_ok(fn() {
     expect(match property.get_type_prop(First.type, model.Link.type) {
         Some(link) => link.target == Second.type,
         None => False,
@@ -20,12 +20,12 @@ export def configured_metadata_contract = test.should_ok(fn() {
     })
 });
 
-export def constrained_trait = test.should_ok(fn() {
+export def constrained_trait: test.Test = test.should_ok(fn() {
     let item: model.Item = {id: 42};
     expect(model.name(item) == "named" && constrained((model.Item).type))
 });
 
-export def materialized_record = test.should_ok(fn() {
+export def materialized_record: test.Test = test.should_ok(fn() {
     expect(match property.get_type_prop((model.Item).type, (model.Label).type) {
         Some(label) => label.text == "ready",
         None => False,

@@ -36,7 +36,7 @@ def eval_expr: Fn(EvalExpr) -> Int = fn(expr) {
     }
 };
 
-export def namespace_generics = test.should_ok(fn() {
+export def namespace_generics: test.Test = test.should_ok(fn() {
     expect(
         origin.identity(1) == 1
             && origin.identity("x") == "x"
@@ -44,21 +44,21 @@ export def namespace_generics = test.should_ok(fn() {
     )
 });
 
-export def imported_family_alias = test.should_ok(fn() {
+export def imported_family_alias: test.Test = test.should_ok(fn() {
     expect({
         let value: StringBox = {value: "ready"};
         value.value == "ready"
     })
 });
 
-export def local_family_alias = test.should_ok(fn() {
+export def local_family_alias: test.Test = test.should_ok(fn() {
     expect({
         let value: LocalStringBox = {value: "ready"};
         value.value == "ready"
     })
 });
 
-export def recursive_local_families = test.should_ok(fn() {
+export def recursive_local_families: test.Test = test.should_ok(fn() {
     expect({
         let boxed: LocalBox(String) = {value: "ready"};
         let maybe: LocalMaybe(Int) = LocalMaybe.Some(3);
@@ -77,7 +77,7 @@ export def recursive_local_families = test.should_ok(fn() {
     })
 });
 
-export def imported_nominal_values = test.should_ok(fn() {
+export def imported_nominal_values: test.Test = test.should_ok(fn() {
     expect({
         let wrapper: origin.Wrapper = origin.Wrapper.Box("x");
         let expected: origin.Wrapper = origin.Wrapper.Box("x");
@@ -93,11 +93,11 @@ export def imported_nominal_values = test.should_ok(fn() {
     })
 });
 
-export def imported_parameter_context = test.should_ok(fn() {
+export def imported_parameter_context: test.Test = test.should_ok(fn() {
     expect(accepts({statuses: [origin.PrivateReady]}))
 });
 
-export def recursive_imported_family = test.should_ok(fn() {
+export def recursive_imported_family: test.Test = test.should_ok(fn() {
     expect({
         let value: TreeBox = {value: Tree.Branch({children: [Tree.Leaf(1)]})};
         let same: TreeBox = identity(value);
@@ -111,28 +111,28 @@ export def recursive_imported_family = test.should_ok(fn() {
     })
 });
 
-export def imported_result_context = test.should_ok(fn() {
+export def imported_result_context: test.Test = test.should_ok(fn() {
     expect({
         let value: TreeBox = identity({value: Tree.Leaf(1)});
         match value.value { Tree.Leaf(item) => item == 1, Tree.Branch(_) => False }
     })
 });
 
-export def nested_namespace = test.should_ok(fn() {
+export def nested_namespace: test.Test = test.should_ok(fn() {
     expect({
         let value: model.Box(Int) = model.identity({value: 1});
         value.value == 1 && model.identity(1) == 1 && model.identity("x") == "x"
     })
 });
 
-export def namespace_member_schemes = test.should_ok(fn() {
+export def namespace_member_schemes: test.Test = test.should_ok(fn() {
     expect(nested.model.identity(1) == 1
         && nested.model.identity("text") == "text"
         && opened.identity(2) == 2
         && opened.identity("other") == "other")
 });
 
-export def reexport_identity = test.should_ok(fn() {
+export def reexport_identity: test.Test = test.should_ok(fn() {
     expect(
         answer == 7
             && direct@[Int] == relayed@[Int]
@@ -141,21 +141,21 @@ export def reexport_identity = test.should_ok(fn() {
     )
 });
 
-export def opaque_reexport = test.should_ok(fn() {
+export def opaque_reexport: test.Test = test.should_ok(fn() {
     expect(
         type_desc.kind((State).type) == type_desc.TypeDescKind.Opaque
             && type_desc.opaque_name((State).type) == Some("std/hash#HashState")
     )
 });
 
-export def imported_generic_callback = test.should_ok(fn() {
+export def imported_generic_callback: test.Test = test.should_ok(fn() {
     expect({
         let selected: Node = use([{target: Node.B}], target_of);
         selected == Node.B
     })
 });
 
-export def composed_imported_family = test.should_ok(fn() {
+export def composed_imported_family: test.Test = test.should_ok(fn() {
     expect({
         let value: Family(String) = {expr: origin.Literal(1), value: "ready"};
         value.value == "ready"
@@ -166,13 +166,13 @@ export def composed_imported_family = test.should_ok(fn() {
     })
 });
 
-export def recursive_enum_evaluation = test.should_ok(fn() {
+export def recursive_enum_evaluation: test.Test = test.should_ok(fn() {
     expect({
         eval_expr(EvalExpr.Branch({children: [EvalExpr.Leaf(1)]})) == 1
     })
 });
 
-export def private_nominal_alias = test.should_ok(fn() {
+export def private_nominal_alias: test.Test = test.should_ok(fn() {
     expect({
         let via_alias: ImportedLocalBox = {value: Local.A};
         let direct_box: origin.Box(Local) = {value: Local.A};

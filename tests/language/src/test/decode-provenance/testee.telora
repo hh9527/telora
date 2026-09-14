@@ -23,47 +23,47 @@ def second: Fn(codec.Value) -> codec.Value = fn(value) {
         _ => fail!("expected Array"),
     }
 };
-export def repeated_static = test.should_ok(fn() { fail_decode((Int).type, second(data)) });
-export def parsed_function = test.should_ok(fn() { fail_decode((Int).type, second(provider.parse_value())) });
-export def parsed_module = test.should_ok(fn() { fail_decode((Int).type, second(provider.parsed)) });
-export def missing = test.should_ok(fn() {
+export def repeated_static: test.Test = test.should_ok(fn() { fail_decode((Int).type, second(data)) });
+export def parsed_function: test.Test = test.should_ok(fn() { fail_decode((Int).type, second(provider.parse_value())) });
+export def parsed_module: test.Test = test.should_ok(fn() { fail_decode((Int).type, second(provider.parsed)) });
+export def missing: test.Test = test.should_ok(fn() {
     match data {
         codec.Value.Array(items) => fail_decode((Item).type, items[2]),
         _ => fail!("expected Array"),
     }
 });
-export def empty = test.should_ok(fn() {
+export def empty: test.Test = test.should_ok(fn() {
     match json.decode((Item).type, provider.empty) {
         Ok(value) => value,
         Err(error) => raise!(error),
     }
 });
-export def escaped = test.should_ok(fn() {
+export def escaped: test.Test = test.should_ok(fn() {
     match json.decode((Item).type, provider.escaped) {
         Ok(value) => value,
         Err(error) => raise!(error),
     }
 });
-export def unicode = test.should_ok(fn() {
+export def unicode: test.Test = test.should_ok(fn() {
     match data {
         codec.Value.Array(items) => fail_decode((Int).type, items[3]),
         _ => fail!("expected Array"),
     }
 });
-export def untagged = test.should_ok(fn() {
+export def untagged: test.Test = test.should_ok(fn() {
     match data {
         codec.Value.Array(items) => fail_decode((Choice).type, items[4]),
         _ => fail!("expected Array"),
     }
 });
-export def renamed = test.should_ok(fn() {
+export def renamed: test.Test = test.should_ok(fn() {
     match data {
         codec.Value.Array(items) => fail_decode((Renamed).type, items[5]),
         _ => fail!("expected Array"),
     }
 });
 
-export def flattened = test.should_ok(fn() {
+export def flattened: test.Test = test.should_ok(fn() {
     let wrapped: codec.Value = match data {
         codec.Value.Array(items) => codec.Value.Object({inner: items[4]}),
         _ => fail!("expected Array"),
@@ -74,7 +74,7 @@ export def flattened = test.should_ok(fn() {
     }
 });
 
-export def defaulted = test.should_ok(fn() {
+export def defaulted: test.Test = test.should_ok(fn() {
     let input = match data {
         codec.Value.Array(items) => items[4],
         _ => fail!("expected Array"),

@@ -6,7 +6,7 @@ import "@src/test/enum-binding-origins/model" as Model;
 import "@src/test/enum-binding-origins/model" { Model as Direct };
 import "@src/test/enum-binding-origins/bridge" as bridge;
 
-export def verified = test.should_ok(fn() {
+export def verified: test.Test = test.should_ok(fn() {
     let a = Model.Model.Model@[Int](1);
     let b = Direct.Model(2);
     let c = bridge.Namespace.Model.Model(3);

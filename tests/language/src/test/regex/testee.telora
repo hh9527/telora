@@ -25,7 +25,7 @@ def require_parsed: for(A) Fn(Result(A, string.ParseError)) -> A = fn(result) {
     match result { Ok(value) => value, Err(error) => raise!(blame!(error.message, error.value)) }
 };
 
-export def verified_case = test.should_ok(fn() {
+export def verified_case: test.Test = test.should_ok(fn() {
     let first = string.parse((Record).type, "answer=42") |> require_parsed;
     let second = string.parse((Record).type, "size=7;px") |> require_parsed;
     let service = string.parse((Service).type, "api@localhost:8080") |> require_parsed;

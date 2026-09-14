@@ -6,6 +6,6 @@ def read: Fn(Env) -> Int = fn(env) {
     if env.mode == Run { env.data.value } else { 0 }
 };
 
-export def imported_forward_types = test.should_ok(fn() {
+export def imported_forward_types: test.Test = test.should_ok(fn() {
     expect(read({mode: Run, data: {value: 42}}) == 42)
 });

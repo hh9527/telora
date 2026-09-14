@@ -31,7 +31,7 @@ type Record = struct { @field value: Int };
 @on_enum
 type Choice = enum { @variant Item(Int) };
 
-export def capabilities = test.should_ok(fn() {
+export def capabilities: test.Test = test.should_ok(fn() {
     expect(match props.get_type_prop((Record).type, (General).type) { Some(value) => value.value == 1, None => False }
         && match props.get_type_prop((Record).type, (StructOnly).type) { Some(value) => value.value == 2, None => False }
         && match props.get_type_prop((Choice).type, (EnumOnly).type) { Some(value) => value.value == 3, None => False }
@@ -39,7 +39,7 @@ export def capabilities = test.should_ok(fn() {
         && match props.get_variant_prop((Choice).type, 0, (MemberOnly).type) { Some(value) => value.value == 5, None => False })
 });
 
-export def enum_identity = test.should_ok(fn() {
+export def enum_identity: test.Test = test.should_ok(fn() {
     let name: Fn(PropertyTarget) -> String = fn(value) {
         match value {
             OnType => "type",

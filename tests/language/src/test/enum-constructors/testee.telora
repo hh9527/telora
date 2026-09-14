@@ -30,7 +30,7 @@ import "@src/test/enum-constructors/model" { Progress as RemoteProgress, Done as
 import bridge.Packet.{Data as ForwardData};
 def shadowed = match Progress(67) { Progress(shadowed) => shadowed, Event.Finished => 0 };
 
-export def member_imports = test.should_ok(fn() {
+export def member_imports: test.Test = test.should_ok(fn() {
     import Option.{Some as LocalSome};
     let a = Progress(61);
     let b = Data(62);
@@ -59,14 +59,14 @@ export def member_imports = test.should_ok(fn() {
         && match make(68) { Make(value) => value == 68, model.Empty => Bool.False })
 });
 
-export def member_lexical_origin = test.should_ok(fn() {
+export def member_lexical_origin: test.Test = test.should_ok(fn() {
     import Event.{Progress as MakeLocal};
     let Event = 0;
     let result = match MakeLocal(69) { MakeLocal(value) => value, _ => 0 };
     expect(Event == 0 && result == 69)
 });
 
-export def bare_member_patterns = test.should_ok(fn() {
+export def bare_member_patterns: test.Test = test.should_ok(fn() {
     import Option.{Some, None};
     let none: Option(Int) = None;
     let only_empty: Fn(Option(Int)) -> Bool = fn(value) {
@@ -92,23 +92,23 @@ export def bare_member_patterns = test.should_ok(fn() {
         && match RemoteEmpty@[Int] { RemoteEmpty => Bool.True, ForwardData(_) => Bool.False })
 });
 
-export def qualified = test.should_ok(fn() {
+export def qualified: test.Test = test.should_ok(fn() {
     let progress = Event.Progress(42);
     let finished = Event.Finished;
     expect(match progress { Event.Progress(value) => value == 42, Event.Finished => Bool.False }
         && match finished { Event.Finished => Bool.True, Event.Progress(_) => Bool.False })
 });
 
-export def tool_stage = test.should_ok(fn() {
+export def tool_stage: test.Test = test.should_ok(fn() {
     expect(chosen == Int.type)
 });
 
-export def first_class = test.should_ok(fn() {
+export def first_class: test.Test = test.should_ok(fn() {
     let make: Fn(Int) -> Event = Event.Progress;
     expect(match make(43) { Event.Progress(value) => value == 43, Event.Finished => Bool.False })
 });
 
-export def generic = test.should_ok(fn() {
+export def generic: test.Test = test.should_ok(fn() {
     let inferred = Message.Data(44);
     let explicit = Message.Data@[String]("ok");
     let empty: Message(Int) = Message.Empty;
@@ -117,7 +117,7 @@ export def generic = test.should_ok(fn() {
         && match empty { Message.Empty => Bool.True, Message.Data(_) => Bool.False })
 });
 
-export def builtin = test.should_ok(fn() {
+export def builtin: test.Test = test.should_ok(fn() {
     let some = Option.Some(45);
     let none: Option(Int) = Option.None;
     let ok = Result.Ok@[Int, String](46);
@@ -127,7 +127,7 @@ export def builtin = test.should_ok(fn() {
         && Bool.True && !Bool.False)
 });
 
-export def ownership = test.should_ok(fn() {
+export def ownership: test.Test = test.should_ok(fn() {
     let make = dyn.pack((EventConstructor).type, Event.Progress);
     expect(codec.encode((Value).type, Event.Progress(47)) == Value.Object({Progress: Value.Int(47)})
         && codec.encode((Value).type, Event.Finished) == Value.String("Finished")
@@ -137,7 +137,7 @@ export def ownership = test.should_ok(fn() {
         })
 });
 
-export def imported = test.should_ok(fn() {
+export def imported: test.Test = test.should_ok(fn() {
     let a = model.Event.Progress(49);
     let b = RemoteEvent.Progress(50);
     let c = Packet.Data@[String]("ok");
@@ -153,7 +153,7 @@ export def imported = test.should_ok(fn() {
         && codec.encode((Value).type, model.progress(53)) == Value.Object({Progress: Value.Int(53)}))
 });
 
-export def patterns = test.should_ok(fn() {
+export def patterns: test.Test = test.should_ok(fn() {
     let Only.Item(value) = Only.Item(55);
     let nested = match Outer.Wrapped({id: Id(56)}) {
         Outer.Wrapped({id: Id(inner)}) => inner,

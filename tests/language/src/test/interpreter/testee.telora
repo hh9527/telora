@@ -24,7 +24,7 @@ def consume_string: Fn(Dyn) -> Bool = fn(value) {
 def first: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume_string);
 def second: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume_string);
 
-export def verified_case = test.should_ok(fn() {
+export def verified_case: test.Test = test.should_ok(fn() {
     let first_int = first((Int).type);
     let repeated_int = first((Int).type);
     let first_string = first((String).type);

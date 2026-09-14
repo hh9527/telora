@@ -15,7 +15,7 @@ type Model = struct {
 };
 type Node = struct {value: Int, children: Array(Node)};
 
-export def verified_case = test.should_ok(fn() {
+export def verified_case: test.Test = test.should_ok(fn() {
     let user: User = {name: "Ada", age: 36};
     let model: Model = {
         users: [user],

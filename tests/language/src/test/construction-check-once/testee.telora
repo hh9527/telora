@@ -4,7 +4,7 @@ import "std/dyn" as dyn;
 import "./provider" {Point};
 import "@src/test-support" {expect};
 
-export def copies = test.should_ok(fn() {
+export def copies: test.Test = test.should_ok(fn() {
     let point: Point = {x: 1};
     let copy: Point = point;
     let refined: Point = copy;
@@ -16,7 +16,7 @@ export def copies = test.should_ok(fn() {
         && dyn.project_with((Point).type, dyn.pack((Point).type, point)) == Some(point))
 });
 
-export def merge_chain = test.should_ok(fn() {
+export def merge_chain: test.Test = test.should_ok(fn() {
     let point: Point = {x: 1};
     let updated = point <~ {x: 2} <~ {x: 3};
     expect(updated.x == 3)

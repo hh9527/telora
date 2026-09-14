@@ -5,7 +5,7 @@ import "@src/test-support" {expect};
 
 type Nested = ((Int, String), (Bool,), ());
 def swap: Fn((Int, String)) -> (String, Int) = fn(pair) { (pair.1, pair.0) };
-export def values = test.should_ok(fn() {
+export def values: test.Test = test.should_ok(fn() {
     let value: Pair = (1, "one");
     let nested: Nested = (value, (True,), ());
     let Tuple = 1;
@@ -16,7 +16,7 @@ export def values = test.should_ok(fn() {
     expect(swap(typed) == ("one", 1) && nested.1.0 && nested.2 == ()
         && callable(Tuple) + Func == 3 && make(4).0 == 4)
 });
-export def metadata = test.should_ok(fn() {
+export def metadata: test.Test = test.should_ok(fn() {
     let witness: TypeOf(Pair) = (Int, String).type;
     let items = (Int.type, String.type);
     let singleton: Type = (Int,).type;

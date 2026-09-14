@@ -24,33 +24,33 @@ def renderer: for(T: Render) Fn(T) -> Fn() -> String = fn(value) {
     fn() { Render.render(value) }
 };
 
-export def direct_call = test.should_ok(fn() {
+export def direct_call: test.Test = test.should_ok(fn() {
     expect(Render.render(42) == "int=42")
 });
-export def explicit_type_argument = test.should_ok(fn() {
+export def explicit_type_argument: test.Test = test.should_ok(fn() {
     expect(render@[Int](7) == "int=7")
 });
-export def generic_forwarding = test.should_ok(fn() {
+export def generic_forwarding: test.Test = test.should_ok(fn() {
     expect(forward(42) == "int=42")
 });
-export def returned_closure = test.should_ok(fn() {
+export def returned_closure: test.Test = test.should_ok(fn() {
     let render_value = renderer(42);
     expect(render_value() == "int=42")
 });
-export def plain_method = test.should_ok(fn() {
+export def plain_method: test.Test = test.should_ok(fn() {
     let value: Plain = {text: "plain"};
     expect(Render.render(value) == "plain")
 });
-export def namespace_import = test.should_ok(fn() {
+export def namespace_import: test.Test = test.should_ok(fn() {
     let item: provider.Item = {value: 42};
     expect(provider.Render.render(item) == "item=42")
 });
-export def reexported_evidence = test.should_ok(fn() {
+export def reexported_evidence: test.Test = test.should_ok(fn() {
     let item: Item = {value: 7};
     expect(facade.Render.render(item) == "item=7"
         && imported_forward@[Item](item) == "item=7")
 });
-export def reexported_closure = test.should_ok(fn() {
+export def reexported_closure: test.Test = test.should_ok(fn() {
     let item: Item = {value: 42};
     let render_value = imported_renderer(item);
     expect(render_value() == "item=42")

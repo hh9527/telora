@@ -4,7 +4,7 @@ import "@src/test-support" {expect};
 type A = struct {value: Int};
 type B = struct {value: Int};
 
-export def verified_case = test.should_ok(fn() {
+export def verified_case: test.Test = test.should_ok(fn() {
 
     {
         let dynamic_array: Array(Int) = [1, 2];

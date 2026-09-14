@@ -4,7 +4,7 @@ import "std/type-desc" as types;
 import "std/test" as test;
 import "@src/test-support" {expect};
 
-export def dyn_error_keeps_input = test.should_ok(fn() {
+export def dyn_error_keeps_input: test.Test = test.should_ok(fn() {
     let input = dyn.pack((Int).type, 42);
     let checked: Result(Array(Dyn), dyn.AccessError) = dyn.array_items(input);
     expect(match checked {
@@ -14,7 +14,7 @@ export def dyn_error_keeps_input = test.should_ok(fn() {
     })
 });
 
-export def type_error_keeps_input = test.should_ok(fn() {
+export def type_error_keeps_input: test.Test = test.should_ok(fn() {
     let checked: Result(Type, types.ResolveError) = types.resolve((Int).type);
     expect(match checked {
         Err(error) => error.value == (Int).type
@@ -23,7 +23,7 @@ export def type_error_keeps_input = test.should_ok(fn() {
     })
 });
 
-export def parse_error_keeps_input = test.should_ok(fn() {
+export def parse_error_keeps_input: test.Test = test.should_ok(fn() {
     let input = "not-an-integer";
     let checked: Result(Int, string.ParseError) = string.parse((Int).type, input);
     expect(match checked {

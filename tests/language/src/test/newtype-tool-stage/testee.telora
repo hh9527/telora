@@ -34,14 +34,14 @@ def stamp: Fn(Count) -> Fn(Type, Option(Stamp)) -> Stamp = fn(count) {
 @stamp(Count(45))
 type Annotated = struct { value: Int };
 
-export def decorator_argument = test.should_ok(fn() {
+export def decorator_argument: test.Test = test.should_ok(fn() {
     expect(match props.get_type_prop(Annotated.type, Stamp.type) {
         Some(stamp) => stamp.value == 45,
         None => False,
     })
 });
 
-export def metadata_helpers = test.should_ok(fn() {
+export def metadata_helpers: test.Test = test.should_ok(fn() {
     let direct = Wrapped(Int.type).0;
     let from_helper = wrap(Int.type).0;
     let from_generic = unbox(Box@[Type](String.type));

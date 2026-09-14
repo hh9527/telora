@@ -8,29 +8,29 @@ type Scalar = enum {Integer(Int), Text(String)};
 type Wire = enum {Integer(Int), Text(String)};
 def invoke: for(T) Fn(Fn() -> T) -> T = fn(factory) { factory() };
 
-export def ascribed_branch = test.should_ok(fn() {
+export def ascribed_branch: test.Test = test.should_ok(fn() {
     let value = (if True { Some(42) } else { None }).ty!(Option(Int));
     expect(value == Some(42))
 });
-export def generic_context = test.should_ok(fn() {
+export def generic_context: test.Test = test.should_ok(fn() {
     let value = invoke@[Option(Int)](fn() {
         if True { Some(42) } else { None }
     });
     expect(value == Some(42))
 });
-export def nested_context = test.should_ok(fn() {
+export def nested_context: test.Test = test.should_ok(fn() {
     let values = (if True {
         [Scalar.Integer(42), Scalar.Text("text")]
     } else { [] }).ty!(Array(Scalar));
     expect(values == [Scalar.Integer(42), Scalar.Text("text")].ty!(Array(Scalar)))
 });
-export def untagged_codec = test.should_ok(fn() {
+export def untagged_codec: test.Test = test.should_ok(fn() {
     match json.decode((Wire).type, "42") {
         Ok(decoded) => expect(decoded == Wire.Integer(42)),
         Err(_) => fail!("decode failed"),
     }
 });
-export def heterogeneous_data = test.should_ok(fn() {
+export def heterogeneous_data: test.Test = test.should_ok(fn() {
     match json.parse("[1, \"text\"]") {
         Ok(parsed) => expect(parsed == Value.Array([Value.Int(1), Value.String("text")].ty!(Array(Value)))),
         Err(_) => fail!("parse failed"),

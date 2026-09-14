@@ -9,7 +9,7 @@ import "std/result" as result;
 @fmt.display_by("{host}:{port}")
 type Endpoint = struct {host: String, port: Int};
 
-export def option_and_result = test.should_ok(fn() {
+export def option_and_result: test.Test = test.should_ok(fn() {
     expect({
         let ok: Result(Int, String) = Ok(3);
         let err: Result(Int, String) = Err("bad");
@@ -32,7 +32,7 @@ export def option_and_result = test.should_ok(fn() {
     })
 });
 
-export def dictionaries = test.should_ok(fn() {
+export def dictionaries: test.Test = test.should_ok(fn() {
     expect({
         let source: Dict(Int) = {z: 3, a: 1, middle: 2};
         let empty: Array(Tuple([String, Int])) = [];
@@ -54,14 +54,14 @@ export def dictionaries = test.should_ok(fn() {
     })
 });
 
-export def derived_display = test.should_ok(fn() {
+export def derived_display: test.Test = test.should_ok(fn() {
     let endpoint: Endpoint = {host: "localhost", port: 8080};
     expect(
         fmt.render(fmt.display((Endpoint).type, endpoint)) == "localhost:8080"
     )
 });
 
-export def format_fragments = test.should_ok(fn() {
+export def format_fragments: test.Test = test.should_ok(fn() {
     expect(
         fmt.render(fmt.from_string("host")) == "host"
             && fmt.render(fmt.from_int(8080)) == "8080"
@@ -73,7 +73,7 @@ export def format_fragments = test.should_ok(fn() {
     )
 });
 
-export def codec_roundtrip = test.should_ok(fn() {
+export def codec_roundtrip: test.Test = test.should_ok(fn() {
     expect({
         let boolean = codec.decode((Bool).type, codec.encode((codec.Value).type, True.ty!(Bool)))
             .unwrap!();

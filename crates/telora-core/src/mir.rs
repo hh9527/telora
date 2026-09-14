@@ -643,6 +643,8 @@ pub struct Mir {
     pub module_scopes: Vec<Option<ScopeId>>,
     pub exports: Vec<Vec<SymbolId>>,
     pub declaration_contracts: Vec<DeclarationContract>,
+    /// Completeness established before any value implementation constraints.
+    pub declaration_contract_ready: Vec<bool>,
     pub resolve_conflicts: Vec<ResolveConflict>,
     pub symbols_closed: bool,
     pub ty_slots: Vec<TypeState>,

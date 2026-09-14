@@ -28,54 +28,54 @@ import "./codec-scalars" as p_codec_scalars;
 import "./codec-untagged" as p_codec_untagged;
 import "./codec-untagged.expected.json" {data as expected_codec_untagged};
 
-export def codec_decode_enum = test.should_ok(fn() {
+export def codec_decode_enum: test.Test = test.should_ok(fn() {
     equal(p_codec_decode_enum.answer, expected_codec_decode_enum)
 });
 
-export def codec_decode_nominal = test.should_ok(fn() {
+export def codec_decode_nominal: test.Test = test.should_ok(fn() {
     equal(p_codec_decode_nominal.answer, expected_codec_decode_nominal)
 });
 
-export def codec_decode_tuples = test.should_ok(fn() {
+export def codec_decode_tuples: test.Test = test.should_ok(fn() {
     equal(p_codec_decode_tuples.answer, expected_codec_decode_tuples)
 });
 
-export def codec_decode_scalars = test.should_ok(fn() {
+export def codec_decode_scalars: test.Test = test.should_ok(fn() {
     equal(p_codec_decode_scalars.answer, expected_codec_decode_scalars)
 });
 
-export def codec_display = test.should_ok(fn() {
+export def codec_display: test.Test = test.should_ok(fn() {
     equal(p_codec_display.answer, expected_codec_display)
 });
 
-export def codec_untagged = test.should_ok(fn() {
+export def codec_untagged: test.Test = test.should_ok(fn() {
     equal(p_codec_untagged.answer, expected_codec_untagged)
 });
 
-export def codec_enum_rename = test.should_ok(fn() {
+export def codec_enum_rename: test.Test = test.should_ok(fn() {
     equal(p_codec_enum_rename.answer, expected_codec_enum_rename)
 });
 
-export def codec_rename = test.should_ok(fn() {
+export def codec_rename: test.Test = test.should_ok(fn() {
     equal(p_codec_rename.answer, expected_codec_rename)
 });
 
-export def codec_newtype = test.should_ok(fn() {
+export def codec_newtype: test.Test = test.should_ok(fn() {
     equal(p_codec_newtype.answer, expected_codec_newtype)
 });
 
-export def codec_enum = test.should_ok(fn() {
+export def codec_enum: test.Test = test.should_ok(fn() {
     equal(p_codec_enum.answer, expected_codec_enum)
 });
 
-export def codec_collections = test.should_ok(fn() {
+export def codec_collections: test.Test = test.should_ok(fn() {
     equal(p_codec_scalars.answer, expected_codec_collections)
 });
 
-export def codec_builtins = test.should_ok(fn() {
+export def codec_builtins: test.Test = test.should_ok(fn() {
     equal(p_codec_builtins.answer, expected_codec_builtins)
 });
 
-export def codec_enum_all = test.should_ok(fn() {
+export def codec_enum_all: test.Test = test.should_ok(fn() {
     equal(codec.encode(Value.type, p_codec_enum.inspect()), expected_codec_enum_all)
 });

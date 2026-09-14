@@ -12,18 +12,18 @@ import "./toml-parse.expected.json" {data as expected_toml_parse};
 import "./yaml-parse" as p_yaml_parse;
 import "./yaml-parse.expected.json" {data as expected_yaml_parse};
 
-export def yaml_parse = test.should_ok(fn() {
+export def yaml_parse: test.Test = test.should_ok(fn() {
     equal(p_yaml_parse.answer, expected_yaml_parse)
 });
 
-export def toml_parse = test.should_ok(fn() {
+export def toml_parse: test.Test = test.should_ok(fn() {
     equal(p_toml_parse.answer, expected_toml_parse)
 });
 
-export def json_parse = test.should_ok(fn() {
+export def json_parse: test.Test = test.should_ok(fn() {
     equal(p_json_parse.answer, expected_json_parse)
 });
 
-export def json_stringify = test.should_ok(fn() {
+export def json_stringify: test.Test = test.should_ok(fn() {
     equal(p_json_stringify.answer, expected_json_stringify)
 });

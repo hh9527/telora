@@ -3,6 +3,6 @@ import "@src/test-support" { expect };
 import "@src/test/bare-pattern-bindings/left" *;
 import "@src/test/bare-pattern-bindings/right" *;
 
-export def ordinary_candidates = test.should_ok(fn() {
+export def ordinary_candidates: test.Test = test.should_ok(fn() {
     expect(match 76 { value => value == 76 })
 });

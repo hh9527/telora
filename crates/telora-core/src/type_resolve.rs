@@ -24,6 +24,7 @@ mod generalization;
 mod metadata_joins;
 mod properties;
 mod construction_origins;
+mod contracts;
 mod interpreters;
 mod type_facets;
 mod patterns;
@@ -163,7 +164,6 @@ pub fn resolve(mir: &mut Mir) {
     }
     solver.prepare_definitions();
     solver.prepare_type_uses();
-    solver.prepare_properties();
     solver.prepare_generalization();
     for index in 0..solver.mir.symbols.len() {
         let slot = solver.mir.symbol_types[index];
@@ -204,8 +204,10 @@ pub fn resolve(mir: &mut Mir) {
         }
     }
     solver.reject_alias_cycles();
+    let generated = solver.solve_contracts();
+    solver.prepare_properties();
     for index in 0..solver.mir.hir.len() {
-        solver.generate(HirId(index as u32));
+        if !generated[index] { solver.generate(HirId(index as u32)); }
     }
     loop {
         let revision = solver.revision;

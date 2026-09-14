@@ -30,7 +30,7 @@ type StringExpr = Expr(String);
 
 type User = struct {name: String, age: Int};
 
-export def verified_case = test.should_ok(fn() {
+export def verified_case: test.Test = test.should_ok(fn() {
     let int_expr: IntExpr = Expr.Call([Expr.Leaf(1)]);
     let box_int: Type = (Box(Int)).type;
     let same_box_int: Type = (Box(Int)).type;

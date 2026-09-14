@@ -31,12 +31,12 @@ def verify: Fn(actor.Service) -> Bool = fn(service) {
         && second.1 == [actor.reply("b", Value.Int(2))]
 };
 
-export def run_state = test.should_ok(fn() {
+export def run_state: test.Test = test.should_ok(fn() {
     let wrapper = entry.run((State).type, config, ees.none, prepare);
     expect(verify(wrapper.start({sources: {}, env: {}, args: []})))
 });
 
-export def serve_state = test.should_ok(fn() {
+export def serve_state: test.Test = test.should_ok(fn() {
     let wrapper = entry.serve((State).type, config, ees.none, prepare);
     expect(verify(wrapper.start({sources: {}, env: {}, args: []})))
 });

@@ -1,0 +1,4 @@
+import "@src/library" {foo};
+def integer: Fn(Int) -> Int = fn(a) { foo(a) };
+def nested: Fn(String) -> String = fn(a) { foo(foo(a)) };
+export def answer: (Int, String) = (integer(42), nested("healthy"));

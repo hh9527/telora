@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn template_references_instantiate_independently_and_share_only_closed_instances() {
+    let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/template-materialization.telora")).unwrap();
+    let library = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/template-library.telora")).unwrap();
+    let mut mir = graph(&[("@src/main", &source), ("@src/library", &library)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}"));
+    let references = mir.hir.iter().enumerate().filter(|(_, node)|
+        mir.modules[node.module.index()].name == "@src/main" && matches!(&node.kind,
+            HirKind::Variable(name) if name == "foo")).map(|(index, _)| {
+        let Some(GenericReference::Instance(instance)) = mir.generic_references[index] else {
+            panic!("foo reference must select an instance");
+        };
+        instance
+    }).collect::<Vec<_>>();
+    assert_eq!(references.len(), 3);
+    let instances = references.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(instances.len(), 2, "the two String uses can share code; the Int use cannot");
+    let arguments = instances.iter().map(|id| {
+        let instance = &mir.generic_instances[id.index()];
+        assert!(instance.concrete);
+        mir.types[instance.arguments[0].1.index()].constructor.clone()
+    }).collect::<BTreeSet<_>>();
+    assert_eq!(arguments, BTreeSet::from([TypeConstructor::Int, TypeConstructor::String]));
+}
+
+#[test]
 fn standard_library_top_level_contracts_are_explicit() {
     let sources = crate::static_sources::BUILTINS;
     let inventory = sources.iter().map(|(name, _)| ModuleSpec {
@@ -34,6 +62,10 @@ fn explicit_export_obligations_survive_inferred_types_and_diagnostic_removal() {
     for name in ["missing", "alias", "private_inferred"] {
         assert!(matches!(state(name), DeclarationContractState::Missing));
         assert!(matches!(symbol_type(&mir, name), TypeState::Known(_)));
+        let contract = mir.declaration_contracts.iter().find(|contract|
+            mir.symbols[contract.symbol.index()].name == name).unwrap();
+        assert!(!mir.declaration_contract_ready[contract.symbol.index()],
+            "initializer evidence must not establish {name}'s contract");
     }
     for name in ["paired", "local_inference"] {
         assert!(matches!(state(name), DeclarationContractState::Complete(_)));

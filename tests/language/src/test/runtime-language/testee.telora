@@ -10,14 +10,14 @@ import "./local-generics.expected.json" {data as expected_local_generics};
 import "./test-descriptions" as p_test_descriptions;
 import "./test-descriptions.expected.json" {data as expected_test_descriptions};
 
-export def local_generics = test.should_ok(fn() {
+export def local_generics: test.Test = test.should_ok(fn() {
     equal(p_local_generics.answer, expected_local_generics)
 });
 
-export def test_descriptions = test.should_ok(fn() {
+export def test_descriptions: test.Test = test.should_ok(fn() {
     equal(p_test_descriptions.answer, expected_test_descriptions)
 });
 
-export def local_generic_declaration = test.should_ok(fn() {
+export def local_generic_declaration: test.Test = test.should_ok(fn() {
     equal(p_local_generic_declaration.answer, expected_local_generic_declaration)
 });

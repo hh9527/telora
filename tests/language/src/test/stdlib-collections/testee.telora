@@ -8,7 +8,7 @@ import "@src/test-support" {expect};
 
 type Scalar = enum {Integer(Int), Text(String)};
 
-export def arrays_ok = test.should_ok(fn() {
+export def arrays_ok: test.Test = test.should_ok(fn() {
     let arrays_ok = {
         let values = [1, 2, 3];
         let empty: Array(Int) = [];
@@ -49,7 +49,7 @@ export def arrays_ok = test.should_ok(fn() {
     expect(arrays_ok)
 });
 
-export def dict_mapping = test.should_ok(fn() {
+export def dict_mapping: test.Test = test.should_ok(fn() {
     let source: Dict(Int) = {z: 3, a: 1, middle: 2};
     let empty: Dict(Int) = {};
     let mapped: Dict(String) = dict.map_values(source, fn(value) { `v\{value}` });
@@ -59,7 +59,7 @@ export def dict_mapping = test.should_ok(fn() {
         && dict.map_values(empty, fn(value) { `v\{value}` }) == empty_strings)
 });
 
-export def dict_filtering = test.should_ok(fn() {
+export def dict_filtering: test.Test = test.should_ok(fn() {
     let source: Dict(Int) = {z: 3, a: 1, middle: 2};
     let empty: Dict(Int) = {};
     let filtered: Dict(Int) = dict.filter(source, fn(value) { 1 < value });
@@ -68,7 +68,7 @@ export def dict_filtering = test.should_ok(fn() {
         && dict.filter(empty, fn(value) { 0 < value }) == empty)
 });
 
-export def dict_folding = test.should_ok(fn() {
+export def dict_folding: test.Test = test.should_ok(fn() {
     let source: Dict(Int) = {z: 3, a: 1, middle: 2};
     let empty: Dict(Int) = {};
     expect(dict.fold(source, "", fn(total, key, value) {
@@ -77,7 +77,7 @@ export def dict_folding = test.should_ok(fn() {
         && dict.fold(empty, 42, fn(total, key, value) { total + value }) == 42)
 });
 
-export def text_and_path_ok = test.should_ok(fn() {
+export def text_and_path_ok: test.Test = test.should_ok(fn() {
     let text_and_path_ok = array.concat([[1, 2], [], [3]]) == [1, 2, 3]
         && array.any([1, 0], fn(value) {
             if 0 < value { True } else { value / 0 < 1 }
@@ -115,7 +115,7 @@ unchanged", "|") == "a\nb\nunchanged"
     expect(text_and_path_ok)
 });
 
-export def equality_ok = test.should_ok(fn() {
+export def equality_ok: test.Test = test.should_ok(fn() {
     let scalar_left: Scalar = Scalar.Integer(1);
     let scalar_right: Scalar = Scalar.Text("1");
     let identity: Fn(Int) -> Int = fn(value) { value };

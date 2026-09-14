@@ -6,7 +6,7 @@ type Predicate = struct {call: Fn(Int) -> Bool};
 def holder: Predicate = {call: even};
 def odd = fn(value) { if value == 0 { False } else { holder.call(value - 1) } };
 
-export def recursive_record = test.should_ok(fn() {
+export def recursive_record: test.Test = test.should_ok(fn() {
     expect(even(10) && odd(9) && !holder.call(3))
 });
 
@@ -15,6 +15,6 @@ type IntFunction = struct {call: Fn(Int) -> Int};
 def functions: IntFunction = {call: identity};
 def forwarded = fn(value) { functions.call(value) };
 
-export def nonrecursive_record = test.should_ok(fn() {
+export def nonrecursive_record: test.Test = test.should_ok(fn() {
     expect(forwarded(7) == 7 && functions.call(8) == 8 && identity("text") == "text")
 });

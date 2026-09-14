@@ -22,7 +22,7 @@ impl fmt.Display for ExplicitEndpoint {
 
 type Plain = struct {value: Int};
 
-export def verified_case = test.should_ok(fn() {
+export def verified_case: test.Test = test.should_ok(fn() {
     let endpoint: Endpoint = {host: "localhost", port: 8080};
     let explicit: ExplicitEndpoint = {host: "localhost", port: 8080};
     let service: Service = {name: "api", endpoint, ratio: -0.0};

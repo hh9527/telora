@@ -4,23 +4,23 @@ import "std/test" as test;
 import "@src/test-support" {expect};
 import "./provider" as provider;
 
-export def identity = test.should_ok(fn() {
+export def identity: test.Test = test.should_ok(fn() {
     let error: BlameError = provider.error;
     expect(dyn.project_with((BlameError).type, dyn.pack((BlameError).type, error)) == Some(provider.error))
 });
 
-export def empty = test.should_ok(fn() {
+export def empty: test.Test = test.should_ok(fn() {
     let error: BlameError = blame!("no subjects");
     let result: Option(Int) = warn!(error);
     expect(result == None)
 });
 
-export def warning = test.should_ok(fn() {
+export def warning: test.Test = test.should_ok(fn() {
     let result: Option(String) = warn!(provider.error);
     expect(result == None)
 });
 
-export def source = test.should_ok(fn() {
+export def source: test.Test = test.should_ok(fn() {
     let error = provider.error;
     raise!(error)
 });
