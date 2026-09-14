@@ -86,6 +86,10 @@ Conflicted(TypeConflictId)
 
 ## 3. 模块图、骨架和静态身份
 
+let 的普通绑定、解构绑定和 let-else 共用语法前缀。解析完初始化表达式后，才根据
+紧接的 `else` 或 `;` 确定绑定形式；插值和 if/else 的嵌套由表达式语法消费，不用
+额外的括号计数前瞻扫描。CST 仍保留三种绑定节点，供 lowering 和诊断使用。
+
 CLI 的 `package_host` 先准备 `ResolvedWorkspace`：发现 workspace、校验 lock 与 crate
 manifest，并完成需要的 package 安装。解析器和 VM 不执行 package acquisition，也不
 隐式重写 lock。package preparation 与应用 EES service 是两个独立的 Host 生命周期。

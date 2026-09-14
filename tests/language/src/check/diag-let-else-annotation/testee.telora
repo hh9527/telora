@@ -1,0 +1,4 @@
+export def invalid = fn() {
+    let name: Int = 1 else { fail!("unreachable"); };
+    name
+};

@@ -1264,12 +1264,6 @@ impl<'a> Parser<'a> {
             Token::Export if self.predicate_binding_5() => {
                 self.rule_export_statement(diags);
             }
-            Token::Let if self.predicate_binding_4() => {
-                self.rule_let_else_binding(diags);
-            }
-            Token::Let if self.predicate_binding_3() => {
-                self.rule_let_pattern_binding(diags);
-            }
             Token::Let => {
                 self.rule_let_binding(diags);
             }
@@ -1526,23 +1520,99 @@ impl<'a> Parser<'a> {
         let closed = self.close(m, Rule::ExportItem, diags);
         self.create_node_export_item(NodeRef(closed.0), diags);
     }
+    #[allow(unused_assignments)]
     fn rule_let_binding(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
         let m = self.open(diags);
+        let mut node_kind = Rule::LetBinding;
         expect!(Let, "invalid syntax, expected: \'let\'", self, diags);
-        expect!(
-            Identifier,
-            "invalid syntax, expected: <identifier>",
-            self,
-            diags
-        );
+        match self.current {
+            Token::Identifier if self.predicate_let_binding_1() => {
+                expect!(
+                    Identifier,
+                    "invalid syntax, expected: <identifier>",
+                    self,
+                    diags
+                );
+                loop {
+                    match self.current {
+                        Token::Colon => {
+                            expect!(Colon, "invalid syntax, expected: \':\'", self, diags);
+                            self.rule_expression(diags);
+                            break;
+                        }
+                        Token::Equal => break,
+                        Token::At
+                        | Token::Backtick
+                        | Token::Bang
+                        | Token::Bytes
+                        | Token::Decl
+                        | Token::Def
+                        | Token::Do
+                        | Token::DoubleQuote
+                        | Token::EOF
+                        | Token::Export
+                        | Token::Float
+                        | Token::Fn
+                        | Token::FunctionType
+                        | Token::Identifier
+                        | Token::If
+                        | Token::Impl
+                        | Token::Import
+                        | Token::Int
+                        | Token::Interpreter
+                        | Token::LBrace
+                        | Token::LBracket
+                        | Token::LParen
+                        | Token::Let
+                        | Token::Match
+                        | Token::Minus
+                        | Token::Native
+                        | Token::RBrace
+                        | Token::RawString
+                        | Token::Return
+                        | Token::Trait
+                        | Token::Type => {
+                            self.error(
+                                diags,
+                                err![self, "invalid syntax, expected one of: \':\', \'=\'"],
+                            );
+                            break;
+                        }
+                        _ => {
+                            self.advance_with_error(
+                                diags,
+                                err![self, "invalid syntax, expected one of: \':\', \'=\'"],
+                            );
+                        }
+                    }
+                }
+            }
+            Token::DoubleQuote
+            | Token::Float
+            | Token::Identifier
+            | Token::Int
+            | Token::LBrace
+            | Token::LParen
+            | Token::Placeholder
+            | Token::RawString => {
+                self.rule_pattern(diags);
+                node_kind = Rule::LetPatternBinding;
+            }
+            _ => {
+                self.error(diags, err![self, "invalid syntax, expected one of: \'\"\', <float>, <identifier>, <integer>, \'{\', \'(\', \'_\', <raw string>"]);
+            }
+        }
+        expect!(Equal, "invalid syntax, expected: \'=\'", self, diags);
+        self.rule_expression(diags);
         loop {
             match self.current {
-                Token::Colon => {
-                    expect!(Colon, "invalid syntax, expected: \':\'", self, diags);
-                    self.rule_expression(diags);
+                Token::Else => {
+                    expect!(Else, "invalid syntax, expected: \'else\'", self, diags);
+                    self.rule_block(diags);
+                    node_kind = Rule::LetElseBinding;
                     break;
                 }
-                Token::Equal => break,
+                Token::Semicolon => break,
                 Token::At
                 | Token::Backtick
                 | Token::Bang
@@ -1576,51 +1646,21 @@ impl<'a> Parser<'a> {
                 | Token::Type => {
                     self.error(
                         diags,
-                        err![self, "invalid syntax, expected one of: \':\', \'=\'"],
+                        err![self, "invalid syntax, expected one of: \'else\', \';\'"],
                     );
                     break;
                 }
                 _ => {
                     self.advance_with_error(
                         diags,
-                        err![self, "invalid syntax, expected one of: \':\', \'=\'"],
+                        err![self, "invalid syntax, expected one of: \'else\', \';\'"],
                     );
                 }
             }
         }
-        expect!(Equal, "invalid syntax, expected: \'=\'", self, diags);
-        self.rule_expression(diags);
         expect!(Semicolon, "invalid syntax, expected: \';\'", self, diags);
-        let closed = self.close(m, Rule::LetBinding, diags);
-        self.create_node_let_binding(NodeRef(closed.0), diags);
-    }
-    fn rule_let_pattern_binding(
-        &mut self,
-        diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>,
-    ) {
-        let m = self.open(diags);
-        expect!(Let, "invalid syntax, expected: \'let\'", self, diags);
-        self.rule_pattern(diags);
-        expect!(Equal, "invalid syntax, expected: \'=\'", self, diags);
-        self.rule_expression(diags);
-        expect!(Semicolon, "invalid syntax, expected: \';\'", self, diags);
-        let closed = self.close(m, Rule::LetPatternBinding, diags);
-        self.create_node_let_pattern_binding(NodeRef(closed.0), diags);
-    }
-    fn rule_let_else_binding(
-        &mut self,
-        diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>,
-    ) {
-        let m = self.open(diags);
-        expect!(Let, "invalid syntax, expected: \'let\'", self, diags);
-        self.rule_pattern(diags);
-        expect!(Equal, "invalid syntax, expected: \'=\'", self, diags);
-        self.rule_expression(diags);
-        expect!(Else, "invalid syntax, expected: \'else\'", self, diags);
-        self.rule_block(diags);
-        expect!(Semicolon, "invalid syntax, expected: \';\'", self, diags);
-        let closed = self.close(m, Rule::LetElseBinding, diags);
-        self.create_node_let_else_binding(NodeRef(closed.0), diags);
+        let closed = self.close(m, node_kind, diags);
+        self.create_node(node_kind, NodeRef(closed.0), diags);
     }
     fn rule_decl_binding(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
         let m = self.open(diags);
@@ -8588,16 +8628,14 @@ pub trait ParserCallbacks<'a> {
     fn predicate_body_1(&self) -> bool;
     /// Called when semantic predicate `?5` in rule `binding` is visited.
     fn predicate_binding_5(&self) -> bool;
-    /// Called when semantic predicate `?4` in rule `binding` is visited.
-    fn predicate_binding_4(&self) -> bool;
-    /// Called when semantic predicate `?3` in rule `binding` is visited.
-    fn predicate_binding_3(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `binding` is visited.
     fn predicate_binding_1(&self) -> bool;
     /// Called when semantic predicate `?2` in rule `binding` is visited.
     fn predicate_binding_2(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `export_items` is visited.
     fn predicate_export_items_1(&self) -> bool;
+    /// Called when semantic predicate `?1` in rule `let_binding` is visited.
+    fn predicate_let_binding_1(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `type_parameters` is visited.
     fn predicate_type_parameters_1(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `struct_initializer` is visited.

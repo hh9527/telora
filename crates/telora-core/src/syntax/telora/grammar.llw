@@ -19,13 +19,12 @@ start program;
 program: module_body;
 module_body: (?1 binding)* [expression];
 body: (?1 binding)* [expression [';' body]];
-binding^: ?5 export_statement | ?4 let_else_binding | ?3 let_pattern_binding | let_binding | decl_binding | def_binding | ?1 native_type_binding | ?2 native_binding | type_binding | trait_binding | impl_binding | import_binding;
+binding^: ?5 export_statement | let_binding | decl_binding | def_binding | ?1 native_type_binding | ?2 native_binding | type_binding | trait_binding | impl_binding | import_binding;
 export_statement: 'export' (let_binding | def_binding | type_binding | trait_binding | export_items ';' | member_selector ';');
 export_items: '{' export_item (?1 ',' export_item)* [','] '}';
 export_item: Identifier ['as' Identifier];
-let_binding: 'let' Identifier [':' expression] '=' expression ';';
-let_pattern_binding: 'let' pattern '=' expression ';';
-let_else_binding: 'let' pattern '=' expression 'else' block ';';
+let_binding: 'let' (?1 Identifier [':' expression] | pattern @let_pattern_binding)
+  '=' expression ['else' block @let_else_binding] ';';
 decl_binding: 'decl' Identifier ':' type_scheme ';';
 def_binding: 'def' Identifier [':' type_scheme] '=' expression ';';
 native_binding: 'native' Identifier ':' type_scheme ';';

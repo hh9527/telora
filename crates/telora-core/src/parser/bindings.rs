@@ -419,6 +419,9 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn let_else_binding(&self, node: NodeRef) -> Result<(Pattern, Expr, Block), Diagnostic> {
+        if self.token_children(node, Token::Colon).next().is_some() {
+            return Err(self.error(node, "let else does not support a binding annotation"));
+        }
         let equal = self.first_token(node, Token::Equal)?;
         let else_token = self.first_token(node, Token::Else)?;
         let pattern = self
