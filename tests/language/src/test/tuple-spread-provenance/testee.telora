@@ -1,6 +1,6 @@
 import "std/test" as test;
 import "./provider" as provider;
-def copied = (...provider.pair, 3);
+def copied: (Int, String, Int) = (...provider.pair, 3);
 export def original: test.Test = test.should_ok(fn() { fail!("original", copied.0) });
 export def container: test.Test = test.should_ok(fn() { fail!("container", copied) });
 

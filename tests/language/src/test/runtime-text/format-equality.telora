@@ -1,10 +1,10 @@
 import "std/fmt" as fmt;
 import "std/array" as array;
 import "std/value" { Value };
-def nested = fn(depth: Int, value: fmt.Fmt) {
+def nested: Fn(Int, fmt.Fmt) -> fmt.Fmt = fn(depth: Int, value: fmt.Fmt) {
     if depth == 0 { value } else { fmt.concat(["", ""], [nested(depth - 1, value)]) }
 };
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     let number = fmt.from_int(42);
     let text = fmt.from_string("42");
     let concat = fmt.concat(["a", "b"], [number]);
@@ -19,8 +19,8 @@ export def checks = fn() {
      fmt.concat(["42"], []) != text,
      [concat] == [fmt.concat(["a", "b"], [number])]]
 };
-export def deep_checks = fn() {
+export def deep_checks: Fn() -> Array(Bool) = fn() {
     [nested(140, fmt.from_int(42)) == nested(140, fmt.from_int(42)),
      nested(140, fmt.from_int(42)) != nested(140, fmt.from_int(43))]
 };
-export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

@@ -5,7 +5,7 @@ import "std/value" { Value };
 type Record = struct { x: Int };
 type Wrapped = struct(Int);
 type Choice = enum { Empty, Full(()) };
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     let record: Record = { x: 1 };
     let dict: Dict(Int) = { x: 1 };
     let packed = dyn.pack(Int.type, 1);
@@ -27,4 +27,4 @@ export def checks = fn() {
      dyn.kind(dyn.pack((Fn(Int) -> Int).type, callback)) == dyn.ValueKind.Func,
      dyn.kind(dyn.pack(Fmt.type, from_string("x"))) == dyn.ValueKind.Opaque]
 };
-export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

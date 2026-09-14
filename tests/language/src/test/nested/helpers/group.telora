@@ -13,5 +13,5 @@ export def make: Fn() -> test.Test = fn() {
         })
     })
 };
-export def group = make();
+export def group: test.Test = make();
 export def unselected: test.Test = test.should_fail(fn() { 1 });

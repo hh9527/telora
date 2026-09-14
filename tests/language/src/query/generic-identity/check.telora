@@ -8,7 +8,7 @@ export def check: Fn(Value) -> Value = fn(actual) {
     };
     if support.exit_code(actual) == Some(0)
         && support.string_field_equals(exported, "name", "identity")
-        && support.string_field_equals(exported, "type", "for(A) Fn(A) -> A")
+        && support.string_field_equals(exported, "type", "for(T) Fn(T) -> T")
         && support.stream_length(actual, "stderr") == Some(0) {
         Value.True
     } else {

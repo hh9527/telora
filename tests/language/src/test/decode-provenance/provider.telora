@@ -1,12 +1,13 @@
 import "std/json" as json;
+import "std/value" {Value};
 
-export def text = "[\"wrong\",\"wrong\"]";
-export def parse_value = fn() {
+export def text: String = "[\"wrong\",\"wrong\"]";
+export def parse_value: Fn() -> Value = fn() {
     match json.parse(text) {
         Ok(value) => value,
         Err(error) => raise!(error),
     }
 };
-export def parsed = parse_value();
+export def parsed: Value = parse_value();
 export def empty: String = "";
-export def escaped = "{\"value\":\"\\u4e2d\"";
+export def escaped: String = "{\"value\":\"\\u4e2d\"";

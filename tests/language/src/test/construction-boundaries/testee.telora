@@ -8,8 +8,8 @@ import "@src/test-support" {expect};
 
 type Plain = struct {value: String, count: Int};
 export def generic_body_rejection: test.Test = test.should_fail_with(fn() { consume("hi") }, "count below minimum");
-def inferred_consume = fn(value) { consume(value) };
 export def inferred_body_rejection: test.Test = test.should_fail_with(fn() {
+    let inferred_consume = fn(value) { consume(value) };
     inferred_consume("hi")
 }, "count below minimum");
 export def local_body_rejection: test.Test = test.should_fail_with(fn() {

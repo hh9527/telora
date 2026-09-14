@@ -14,10 +14,10 @@ def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
     payload
 };
 def apply: Fn(Fn(Type) -> Wrapped, Type) -> Wrapped = fn(make, value) { make(value) };
-def make = Wrapped;
+def make: Fn(Type) -> Wrapped = Wrapped;
 def make_generic: for(T) Fn(T) -> Box(T) = Box;
 def metadata_factory: Fn(Type) -> TypeOf(Wrapped) = fn(value) { Wrapped.type };
-def typed_make = do {
+def typed_make: Fn(Type) -> Wrapped = do {
     let make: Fn(Type) -> Wrapped = Wrapped;
     make
 };

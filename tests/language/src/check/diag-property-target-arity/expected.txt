@@ -1,1 +1,1 @@
-type mismatch between Fn(PropertyTarget) -> Fn(Type, ?) -> ? and Fn(?, ?) -> ?
+type mismatch between Fn(PropertyTarget) -> Fn(Type, Option<PropertyAttr>) -> PropertyAttr and Fn(?, ?) -> ?

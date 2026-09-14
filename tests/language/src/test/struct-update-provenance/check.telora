@@ -26,8 +26,8 @@ export def check: Fn(Value) -> Value = fn(actual) {
             support.bool_value(support.exit_code(actual) == Some(1)
                 && located("kept", 3, 31)
                 && located("spread", 4, 37)
-                && located("literal", 5, 25)
-                && located("container", 6, 21))
+                && located("literal", 5, 30)
+                && located("container", 6, 27))
         },
         _ => Value.False,
     }

@@ -6,11 +6,11 @@ export def inspect: Fn(String) -> (String, Option(String), Option(String)) = fn(
     (path.normalize(input), path.parent(input), path.file_name(input))
 };
 
-def optional = fn(value: Option(String)) {
+def optional: Fn(Option(String)) -> Value = fn(value: Option(String)) {
     match value { Some(text) => Value.String(text), None => Value.None }
 };
 
-export def answer = Value.Object({
+export def answer: Value = Value.Object({
     paths: Value.Array(array.map([
         "", ".", "/", "..", "../..", "a/..", "a/../..", "/../../a",
         "//a///b/./../c/", "a/b/../../c", "../../a/../b", "/a", "a",

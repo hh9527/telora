@@ -1,24 +1,25 @@
 import "std/value" {Value};
 
-def factory = fn(number: Int) {
+type Captured = Fn() -> ((Int, Int), (Int, String));
+def factory: Fn(Int) -> Captured = fn(number: Int) {
     let identity = fn(value) {(number, value)};
     let alias = identity;
-    fn() {(alias(1), alias("text"))}
+    fn() {(alias(1), identity("text"))}
 };
-def first = factory(7);
-def second = factory(9);
-def recursive = do {
+def first: Captured = factory(7);
+def second: Captured = factory(9);
+def recursive: (Int, String) = do {
     def repeat: for(T) Fn(T, Int) -> T = fn(value, count) {
         if count == 0 {value} else {repeat(value, count - 1)}
     };
     (repeat(42, 3), repeat("done", 2))
 };
-def mutual = do {
+def mutual: (Int, String) = do {
     def left: for(T) Fn(T, Int) -> T = fn(value, count) {if count == 0 {value} else {right(value, count - 1)}};
     def right: for(T) Fn(T, Int) -> T = fn(value, count) {if count == 0 {value} else {left(value, count - 1)}};
     (left(42, 3), right("done", 2))
 };
-export def answer = Value.Array([
+export def answer: Value = Value.Array([
     if first() == ((7,1),(7,"text")) {Value.True} else {Value.False},
     if second() == ((9,1),(9,"text")) {Value.True} else {Value.False},
     if first() == ((7,1),(7,"text")) {Value.True} else {Value.False},

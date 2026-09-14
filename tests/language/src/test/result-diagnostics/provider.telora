@@ -2,7 +2,7 @@ import "std/blame" {BlameError};
 
 export def message: String = "rejected";
 export def subject: Int = 42;
-export def error = blame!(message, subject, subject);
+export def error: BlameError = blame!(message, subject, subject);
 export def string_error: Fn() -> Result(Int, String) = fn() { Err(message) };
 export def blame_error: Fn() -> Result(Int, BlameError) = fn() { Err(error) };
 export def success: Fn() -> Result(Int, BlameError) = fn() { Ok(7) };

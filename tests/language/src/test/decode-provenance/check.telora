@@ -31,10 +31,10 @@ export def check: Fn(Value) -> Value = fn(actual) {
                 && located("renamed", "input.json", 7, 15)
                 && located("flattened", "input.json", 6, 11)
                 && located("defaulted", "input.json", 6, 11)
-                && located("parsed_function", "decode-provenance/provider", 3, 18)
-                && located("parsed_module", "decode-provenance/provider", 3, 18)
-                && located("empty", "decode-provenance/provider", 11, 19)
-                && located("escaped", "decode-provenance/provider", 12, 21))
+                && located("parsed_function", "decode-provenance/provider", 4, 26)
+                && located("parsed_module", "decode-provenance/provider", 4, 26)
+                && located("empty", "decode-provenance/provider", 12, 27)
+                && located("escaped", "decode-provenance/provider", 13, 29))
         },
         _ => Value.False,
     }

@@ -4,7 +4,7 @@ import "std/string" as string;
 import "std/test" as test;
 import "@src/test-support" {expect};
 
-def record_pattern = regex.compile(
+def record_pattern: regex.Regex = regex.compile(
     r"^(?P<name>\w+)=(?P<value>\d+)(?:;(?P<unit>\w+))?$"
 );
 

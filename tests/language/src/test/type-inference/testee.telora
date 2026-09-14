@@ -5,13 +5,13 @@ def generic_identity: for(A) Fn(A) -> A = fn(value) { value };
 type DeferredItems = struct {items: Array(String)};
 type DeferredOwner = struct {inner: DeferredItems};
 def deferred_wrap: for(T) Fn(T) -> Option(T) = fn(value) { Some(value) };
-def deferred_fields = fn(owner: DeferredOwner, enabled: Bool) {
-    match if enabled { deferred_wrap(owner) } else { None } {
-        Some(value) => value.inner.items,
-        None => [],
-    }
-};
 export def empty_arm_waits_for_generic_member_evidence: test.Test = test.should_ok(fn() {
+    let deferred_fields = fn(owner: DeferredOwner, enabled: Bool) {
+        match if enabled { deferred_wrap(owner) } else { None } {
+            Some(value) => value.inner.items,
+            None => [],
+        }
+    };
     let owner: DeferredOwner = {inner: {items: ["value"]}};
     expect(array.length(deferred_fields(owner, True)) == 1
         && array.length(deferred_fields(owner, False)) == 0)
@@ -61,21 +61,6 @@ def choose_node: for(N) Fn(N, Array(N)) -> N = fn(base, nodes) { base };
 def explicit_pair: for(A, B) Fn(A, B) -> Tuple([A, B]) = fn(left, right) {
     (left, right)
 };
-
-def recursive_countdown = fn(value) {
-    if value < 1 { 0 } else { recursive_countdown(value - 1) }
-};
-def recursive_even = fn(value) -> Bool {
-    if value < 1 { True } else { recursive_odd(value - 1) }
-};
-def recursive_odd = fn(value) -> Bool {
-    if value < 1 { False } else { recursive_even(value - 1) }
-};
-
-def ordered_identity = fn(value) { value };
-def ordered_apply = fn(value) { ordered_identity(value) };
-def reverse_apply = fn(value) { reverse_identity(value) };
-def reverse_identity = fn(value) { value };
 
 type Pair(Left, Right) = struct {left: Left, right: Right};
 type FamilyBox(Content) = struct {value: Content};
@@ -160,6 +145,15 @@ export def explicit_type_arguments: test.Test = test.should_ok(fn() {
 });
 
 export def recursive_function_inference: test.Test = test.should_ok(fn() {
+    def recursive_countdown = fn(value) {
+        if value < 1 { 0 } else { recursive_countdown(value - 1) }
+    };
+    def recursive_even = fn(value) -> Bool {
+        if value < 1 { True } else { recursive_odd(value - 1) }
+    };
+    def recursive_odd = fn(value) -> Bool {
+        if value < 1 { False } else { recursive_even(value - 1) }
+    };
     expect({
         let direct: Fn(Int) -> Int = recursive_countdown;
         let even: Fn(Int) -> Bool = recursive_even;
@@ -173,6 +167,10 @@ export def recursive_function_inference: test.Test = test.should_ok(fn() {
 });
 
 export def definition_order_and_shadowing: test.Test = test.should_ok(fn() {
+    def ordered_identity = fn(value) { value };
+    def ordered_apply = fn(value) { ordered_identity(value) };
+    def reverse_apply = fn(value) { reverse_identity(value) };
+    def reverse_identity = fn(value) { value };
     expect({
         def outer = fn(value) {
             def identity = fn(item) { item };

@@ -5,7 +5,7 @@ import "@src/test-support" { expect };
 import "std/prelude" { Some as ImportedSome, None as ImportedNone };
 import "@src/test/prelude-constructors/model" as model;
 
-def chosen = match Some(Int.type) { Some(value) => value, None => String.type };
+def chosen: Type = match Some(Int.type) { Some(value) => value, None => String.type };
 
 export def values: test.Test = test.should_ok(fn() {
     let yes: Bool = True;

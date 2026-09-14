@@ -3,7 +3,7 @@ import "std/array" as array;
 
 @check(validate)
 type Point = struct {x: Int};
-def early = array.map([Int.type], fn(item) {
+def early: Array(TypeOf(Int)) = array.map([Int.type], fn(item) {
     let candidate: Point = {x: 2};
     if candidate.x == 2 { item } else { item }
 });
@@ -11,7 +11,7 @@ def choose: for(A) Fn(A) -> A = fn(value) {
     let candidate: Point = {x: 2};
     if candidate.x == 2 { value } else { value }
 };
-def chosen = choose(Int.type);
+def chosen: TypeOf(Int) = choose(Int.type);
 def validate: Fn(Unchecked(Point)) -> Result((), BlameError) = fn(value) {
     if value.x >= minimum { Ok(()) } else { Err(blame!("below minimum", value.x)) }
 };

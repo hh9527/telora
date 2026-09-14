@@ -1,2 +1,3 @@
 import "@src/fixture-helper/module" { make };
-export def source_relative = make();
+import "std/test" as test;
+export def source_relative: test.Test = make();

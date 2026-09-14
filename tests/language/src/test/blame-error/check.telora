@@ -30,8 +30,8 @@ export def check: Fn(Value) -> Value = fn(actual) {
                 && array.length(array.filter(records, fn(record) {
                     support.string_field_equals(record, "severity", "warning")
                 })) == 2
-                && located("subject 1 originated here", 3, 19)
-                && located("subject 2 originated here", 4, 20)
+                && located("subject 1 originated here", 3, 24)
+                && located("subject 2 originated here", 4, 28)
                 && array.any(records, fn(record) {
                     support.string_field_equals(record, "record", "summary")
                         && support.record_field(record, "passed") == Some(Value.Int(3))

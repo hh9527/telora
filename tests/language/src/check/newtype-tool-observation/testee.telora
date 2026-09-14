@@ -1,5 +1,5 @@
 type Wrapped = struct(Type);
-def observed = do {
+def observed: Type = do {
     let value: Wrapped = dbg!(Wrapped(Int.type), "newtype metadata");
     value.0
 };

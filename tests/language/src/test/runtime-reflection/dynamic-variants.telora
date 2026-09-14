@@ -4,7 +4,7 @@ import "std/value" { Value };
 
 type Chain = enum { End, More((Int, Chain)) };
 
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     let chain = Chain.More((42, Chain.End));
     let boxed = dyn.pack(Chain.type, chain);
     let unit: Option(()) = Some(());
@@ -32,4 +32,4 @@ export def checks = fn() {
      match dyn.tag(integer) { Err(error) => error.value == integer && error.message == "Dyn variant access expects Enum", Ok(_) => False },
      match dyn.payload(integer) { Err(error) => error.value == integer && error.message == "Dyn variant access expects Enum", Ok(_) => False }]
 };
-export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

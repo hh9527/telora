@@ -28,8 +28,8 @@ export def check: Fn(Value) -> Value = fn(actual) {
                     && support.string_field_equals(record, "test", "order")
             });
             support.bool_value(support.exit_code(actual) == Some(1)
-                && located("original", "tuple-spread-provenance/provider", 1, 19)
-                && located("container", "tuple-spread-provenance/testee", 3, 13)
+                && located("original", "tuple-spread-provenance/provider", 1, 34)
+                && located("container", "tuple-spread-provenance/testee", 3, 33)
                 && array.length(notices) == 3
                 && support.string_field_equals(notices[0], "message", "first")
                 && support.string_field_equals(notices[1], "message", "middle")

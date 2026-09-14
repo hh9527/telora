@@ -3,7 +3,7 @@ import "std/array" as array;
 import "std/value" { Value };
 type Item = struct { z: Int, a: String };
 type Empty = struct {};
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     let item: Item = { z: 42, a: "shared long string" };
     let item = dyn.pack(Item.type, item);
     let dictionary: Dict(Int) = { z: 3, a: 1, m: 2 };
@@ -31,4 +31,4 @@ export def checks = fn() {
      match dyn.fields(integer) { Err(error) => error.value == integer && error.message == "Dyn field access expects Struct", Ok(_) => False },
      match dyn.field(integer, "x") { Err(error) => error.value == integer && error.message == "Dyn field access expects Struct", Ok(_) => False }]
 };
-export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

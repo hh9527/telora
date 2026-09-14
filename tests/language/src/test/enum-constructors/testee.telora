@@ -19,7 +19,7 @@ type TypeChoice = enum { Selected(Type), Empty };
 type Lowercase = enum { done, pending };
 import Lowercase.{done, pending};
 import TypeChoice.{Selected as Choose, Empty as NoChoice};
-def chosen = match Choose(Int.type) {
+def chosen: Type = match Choose(Int.type) {
     Choose(value) => value,
     NoChoice => String.type,
 };
@@ -28,7 +28,7 @@ import Message.{Data, Empty};
 import Result.{Ok as Success, Err as Failure};
 import "@src/test/enum-constructors/model" { Progress as RemoteProgress, Done as RemoteDone, Empty as RemoteEmpty };
 import bridge.Packet.{Data as ForwardData};
-def shadowed = match Progress(67) { Progress(shadowed) => shadowed, Event.Finished => 0 };
+def shadowed: Int = match Progress(67) { Progress(shadowed) => shadowed, Event.Finished => 0 };
 
 export def member_imports: test.Test = test.should_ok(fn() {
     import Option.{Some as LocalSome};

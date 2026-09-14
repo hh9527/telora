@@ -1,7 +1,7 @@
 import "std/value" {Value};
-def declared = do {
+def declared: (Int, String) = do {
     decl identity: for(T) Fn(T) -> T;
     def identity = fn(value) {value};
     (identity(42),identity("done"))
 };
-export def answer = if declared == (42,"done") {Value.True} else {Value.False};
+export def answer: Value = if declared == (42,"done") {Value.True} else {Value.False};
