@@ -15,6 +15,29 @@ use telora_core::{
 };
 use timing::PhaseTimer;
 
+fn load_session(bytes: &[u8]) -> Result<telora_wasm::session::Session, String> {
+    let config = crate::execution_config();
+    let mut session = telora_wasm::session::Session::load_with_limits(
+        bytes, config.fuel, config.memory_limit,
+    )?;
+    if config.report_usage {
+        session.usage_reporter = Some(|usage| {
+            let _ = crate::emit_stderr(serde_json::json!({
+                "schema": "telora.execution/v1", "record": "diagnostic",
+                "severity": "info", "code": "execution-usage",
+                "message": "Wasm execution resource usage", "labels": [], "notes": [],
+                "usage": {
+                    "fuel": {"limit": usage.fuel_budget,
+                        "consumed": usage.fuel_budget.saturating_sub(usage.fuel_remaining),
+                        "remaining": usage.fuel_remaining},
+                    "linear_memory": {"bytes": usage.memory_bytes, "limit_bytes": usage.memory_limit}
+                }
+            }));
+        });
+    }
+    Ok(session)
+}
+
 pub(crate) fn error(message: impl Into<String>) -> Diagnostic {
     Diagnostic {
         severity: Severity::Error,
@@ -32,10 +55,7 @@ fn compile(executable: &SealedExecutable<'_>) -> Result<telora_wasm::session::Se
     let _timer = PhaseTimer::new("engine_load");
     // Use the engine's stopping boundary, including linked Rust library work.
     // No conversion to Telora operations or allocation costs is required.
-    telora_wasm::session::Session::load(
-        &bytes,
-        crate::execution_config().fuel,
-    )
+    load_session(&bytes)
 }
 
 pub(crate) fn compile_check(
@@ -75,7 +95,7 @@ fn compile_modules(
         telora_wasm::compile_check(&executable)?
     };
     let _timer = PhaseTimer::new("engine_load");
-    telora_wasm::session::Session::load(&bytes, crate::execution_config().fuel)
+    load_session(&bytes)
 }
 
 pub(crate) fn initialize(

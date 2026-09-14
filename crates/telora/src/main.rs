@@ -27,22 +27,33 @@ use source_arg::{NamedSource, collect_entry_sources, is_stdin_source, parse_name
 use telora::package_host;
 
 const EVALUATION_FUEL: u64 = 100_000_000;
+static EXECUTION_OPTIONS: std::sync::OnceLock<(u64, usize, bool)> = std::sync::OnceLock::new();
 const QUERY_SCHEMA: &str = "telora.query/v1";
 
 struct ExecutionConfig {
     fuel: u64,
+    memory_limit: usize,
+    report_usage: bool,
     data_limits: DataLimits,
 }
 
 fn execution_config() -> ExecutionConfig {
+    let (fuel, memory_limit, report_usage) = *EXECUTION_OPTIONS.get()
+        .unwrap_or(&(EVALUATION_FUEL, 1_024_000_000, false));
     ExecutionConfig {
-        fuel: EVALUATION_FUEL,
+        fuel,
+        memory_limit,
+        report_usage,
         data_limits: DataLimits::default(),
     }
 }
 
 fn main() {
-    match run_cli(Cli::parse()) {
+    let cli = Cli::parse();
+    EXECUTION_OPTIONS.set((cli.with_fuel * 1_000_000,
+        (cli.with_memory_limit * 1_000_000) as usize, cli.report_usage))
+        .expect("execution configuration is initialized once");
+    match run_cli(cli) {
         Ok(0) => {}
         Ok(code) => std::process::exit(code),
         Err(error) => {
@@ -358,6 +369,15 @@ impl Drop for ProcessRunHost {
 #[derive(Parser)]
 #[command(name = "telora", version, about = "The Telora language toolchain")]
 struct Cli {
+    /// Session fuel budget in millions (1 = 1,000,000 fuel).
+    #[arg(long, global = true, default_value_t = 100, value_parser = clap::value_parser!(u64).range(1..=u64::MAX / 1_000_000))]
+    with_fuel: u64,
+    /// Wasm linear memory limit in decimal MB (1 = 1,000,000 bytes).
+    #[arg(long, global = true, default_value_t = 1024, value_parser = clap::value_parser!(u64).range(1..=(usize::MAX as u64) / 1_000_000))]
+    with_memory_limit: u64,
+    /// Emit an informational JSON diagnostic with execution usage to stderr.
+    #[arg(long, global = true)]
+    report_usage: bool,
     /// Find telora-config.json upward from this path (default: current directory).
     #[arg(short = 'C', value_name = "CONTEXT")]
     context: Option<PathBuf>,

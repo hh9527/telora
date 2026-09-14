@@ -7,6 +7,9 @@ const MEMORY_BOUND: usize = 1024 * 1024 * 1024;
 const TABLE_BOUND: usize = 1_000_000;
 
 pub struct Session {
+    fuel_budget: u64,
+    memory_limit: usize,
+    pub usage_reporter: Option<fn(Usage)>,
     pub manifest: Manifest,
     pub(crate) store: wasmi::Store<wasmi::StoreLimits>,
     pub(crate) instance: wasmi::Instance,
@@ -16,9 +19,36 @@ pub struct Session {
     pub(crate) trace_types: u32,
 }
 
+/// Engine boundaries and consumption, in raw fuel units and bytes (not RSS).
+pub struct Usage {
+    pub fuel_budget: u64,
+    pub fuel_remaining: u64,
+    pub memory_bytes: usize,
+    pub memory_limit: usize,
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(report) = self.usage_reporter {
+            if let Ok(remaining) = self.store.get_fuel() {
+                report(Usage {
+                    fuel_budget: self.fuel_budget,
+                    fuel_remaining: remaining,
+                    memory_bytes: self.memory.data_size(&self.store),
+                    memory_limit: self.memory_limit,
+                });
+            }
+        }
+    }
+}
+
 impl Session {
     /// Load a persistent artifact without MIR, a source loader, or a type solver.
     pub fn load(bytes: &[u8], fuel: u64) -> Result<Self, String> {
+        Self::load_with_limits(bytes, fuel, MEMORY_BOUND)
+    }
+
+    pub fn load_with_limits(bytes: &[u8], fuel: u64, memory_limit: usize) -> Result<Self, String> {
         let manifest = Manifest::read(bytes)?;
         let bundled_data = crate::bundle::read(bytes, &manifest)?;
         let mut config = wasmi::Config::default();
@@ -26,7 +56,7 @@ impl Session {
         let engine = wasmi::Engine::new(&config);
         let module = wasmi::Module::new(&engine, bytes).map_err(|e| e.to_string())?;
         let limits = wasmi::StoreLimitsBuilder::new()
-            .memory_size(MEMORY_BOUND)
+            .memory_size(memory_limit)
             .table_elements(TABLE_BOUND)
             .trap_on_grow_failure(true)
             .build();
@@ -40,6 +70,9 @@ impl Session {
             .get_memory(&store, "memory")
             .ok_or("Wasm: missing memory export")?;
         let mut session = Self {
+            fuel_budget: fuel,
+            memory_limit,
+            usage_reporter: None,
             manifest,
             store,
             instance,
