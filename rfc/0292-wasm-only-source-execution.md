@@ -1,0 +1,150 @@
+# RFC 0292：统一 Wasm 源码执行路线
+
+- 状态：方向已确认，待实施
+- 日期：2026-09-14
+- 跟踪：[#187](https://github.com/hh9527/telora/issues/187)
+- 前置：RFC 0291（Wasm check/eval/eval-with）、RFC 0290（服务语义参考）
+
+## 动机与决策
+
+Telora 不再长期维护 default bytecode、直接 Cranelift native 与 Wasm 三条
+执行路线。本期将 Wasm 确立为唯一代码生成与语言运行时路线，补齐 run、serve、
+test，然后删除旧后端及分支。使用一个 RFC 和一个 issue 跟踪全部实施与验收，
+不拆子 RFC 或子 issue。
+
+所有需要执行语言代码的用户命令默认从源码开始，复用模块图、符号求解、
+类型求解和 SealedExecutable，生成内存中的 Wasm，交给 Wasmi 执行。
+不引入独立 fast-interpreter，不在本期更换 Wasm 引擎。
+
+本 RFC 修订 RFC 0291 的“独立隐藏路线、不切换默认后端、先提供发布产物”
+边界。撤下隐藏 `wasm build/eval/eval-with/check` 产物命令与 `--wasm`、
+`--native` 后端开关，暂不提供用户可见的 Wasm 发布或文件执行接口。
+模块发布、产物格式兼容和缓存策略另行决策，不为试验性旧产物保留兼容路径。
+
+## 已有观察与取舍
+
+world-model 的 `@src/bin/make-query:main` 涉及 21 个源码模块、10,762 行
+源码。2026-09-14 release 观察：预热两次、测量七次，以下为中位数；不是冷缓存数据。
+
+| 边界 | 耗时 |
+| --- | ---: |
+| 源码 → SealedExecutable | 416.9 ms |
+| Wasm 生成与链接 | 141.3 ms |
+| 发布打包与写出（新默认路径不需要此步骤） | 13.9 ms |
+| 完整发布构建进程 | 589.7 ms |
+| 从发布文件执行的完整进程 | 64.5 ms |
+| 其中引擎加载及数据准备 / initialize / entry 执行与输出 | 25.3 / 21.4 / 9.3 ms |
+
+同一任务此前 default 从源码执行约 454.8 ms。发布构建加文件执行约 654 ms，
+只能作为边界参考，不能当作尚未测量的新默认内存流水线耗时。接受源码单次
+执行可能慢于旧 default 的取舍，换取单一编译后端与运行时；最终另测统一路径。
+
+含可读函数映射的产物为 4,167,482 字节，其中指令 section 2,021,998 字节。
+来源信息为 source 名称与 bols，不含逐 span 行列号；生成函数名称带来源、
+职责及实例类型。产物大小用于解释构建/加载成本，不是本期发布接口承诺。
+以上只支撑路线选择，不证明 run/serve 吞吐、尾延迟或长期内存已经合格。
+
+## 命令边界
+
+| 命令 | 执行边界 |
+| --- | --- |
+| check --only-types | 静态求解与类型闭合；不 codegen、不链接、不创建 VM |
+| query | 消费 MIR 查询结果；保持静态边界，不因切换后端而创建 VM |
+| check（含 --lib/--tests） | 所选模块闭合、代码生成、数据注入、初始化与现有检查；不执行 Test 回调 |
+| eval / eval-with | 数据与初始化完成后，按既有导出/Eval 契约执行 |
+| test | 按现有 Test/fixture/诊断预期协议执行、隔离与报告 |
+| run / serve | 按现有静态 entry adapter 与服务协议完成 configure、资源注入、initialize、事件 reduce |
+
+其他静态或工程管理命令不受影响。保留模块选择、入口、`--source`、环境、
+参数、资源输入、退出码与 Host 外部协议；不借后端切换重设计语言或标准库。
+CLI 从源码运行无需用户安装 Rust 编译器；RT 在构建 Telora 时预编译。
+目前生成程序仍需要 wasm-ld，发布 CLI 时必须明确提供/定位此依赖。
+
+“不落盘”指不产生或依赖用户可见、可复用的 `.wasm` 发布文件。对象文件、
+RT archive 与 wasm-ld 输出允许作为独占临时目录中的内部链接中间文件，
+读取到内存后清理；错误路径同样清理。不在 workspace 写产物或隐藏持久缓存。
+本期不要求为避免临时 IO 而重写链接器。
+
+## 编译与运行时边界
+
+全图 resolve 与类型闭合均不访问 VM。后端仅消费 SealedExecutable 中的稳定
+类型、实例、引用与执行闭包；不重新推导，不根据用户名称识别内置能力。
+各命令的根集合由公共静态准备确定，保留 check/test 与 entry 求值范围的区别。
+
+Rust RT 与生成胶水静态链接；语言堆、闭包、property、初始化需求表与操作
+均在 Wasm 中执行。Host 负责资源、事件、IO、计时与诊断展示，不通过旧
+Val/Heap/VM 执行语言运算。类型确定的胶水仍由 codegen 机械生成。
+
+位置继续使用 `(source_id, start, end)` 三个 u32，UTF-8 字节偏移语义不变。
+Host 使用源码名与 bols 求行号/行内字节偏移，UTF-16、终端显示宽度不是本期
+产物契约。保留 rule 与 subject 来源、debug 输出及诊断捕获边界。
+
+## run/serve 与 work 生命周期
+
+复用既有 entry_plan、静态 adapter、Configure → Initialize → Reduce
+状态机与 Host IO/EES 调度。保留 EOF、终端 effect、请求/回复及失败终止顺序。
+资源配置或初始化失败不得启动服务；静态失败不得创建执行 session。
+
+初始化只执行一次，类型骨架、初始化顶层值与 property 结果在 main 区固化。
+后续事件在 work 区执行。服务状态并非无状态请求：跨事件 reducer state、
+闭包环境、主区引用与必要的 Host 句柄必须作为显式根保活。
+
+在安全事件边界采用 work copy-collect 或等价的精确根回收，依据既定类型
+布局遍历，不猜测值类型，不借用 native/default collector。回收须维护共享、
+环和稳定的 main 引用；所有可移动 work 引用同步更新，不能留悬空 Host 偏移。
+正确性优先，可先每个安全边界回收，频率调优延后；不能以持续追加不释放
+作为 run/serve 完成交付。Wasm 线性内存可以保持高水位，但后续请求应复用
+空间，存活数据固定时不得随请求数线性增长。
+
+语言可恢复错误沿用现有会话协议，资源 abort/trap 不伪装为可捕获语言错误。
+fuel 是限制不确定执行/失控循环的粗粒度保护，不是跨后端精确计费承诺；
+优先直接使用引擎配额，不为复刻旧指令收费而扩展设计。服务终止释放全部
+执行资源；不能用“失败后重建 session”偷偷丢弃协议要求保留的状态。
+
+## test
+
+现有 std Test 描述、名称筛选、fixture 加载、回调、预期诊断与汇总退出码
+保持不变。普通 check 只构造和检查描述，不运行测试回调；test 真正执行。
+每个用例的失败、诊断、配额与可变 work 状态不污染后续用例，fixture 与
+闭包的来源和寿命须明确。优先复用 .telora 测试资产，不建设第二套测试语义。
+
+## 实施与删除
+
+1. 补齐 Wasm 服务会话、work 回收、run/serve 和 test；旧后端暂作语义对照，
+   新模块不得依赖将被删除的 VM、native runtime 或其转换桥。
+2. 切换所有命令为源码 → 内存 Wasm，统一公共准备与 Host adapter；撤下
+   后端开关和产物 CLI。对照验证后摘除旧模块，不留运行时 fallback。
+3. 删除 telora-native、旧 bytecode codegen/VM、专属 Heap/Val 转换、配置、
+   构建依赖与测试；公共静态/Host 能力先独立出来。清理直接 Cranelift/JIT
+   依赖，不能按文件名字批量误删仍被前端使用的定义。
+4. 完成全流程回归、服务寿命与内存验证，记录 release 时间分布，刷新 docs、
+   帮助和工程说明。历史 RFC 保留，不把新决策静默写成历史事实。
+
+阶段性成果在同一个 issue 更新；切换最终提交必须完整删除替代路径。
+中间可编译/可测试进展不等同于迁移验收。现有工作分支继续承载准备工作，
+本 RFC 不自动授权合入 main。
+
+## 验收条件
+
+- 无后端参数的 check/eval/eval-with/test/run/serve 均走 Wasm；query 和
+  check --only-types 仍不创建 VM，不调用 linker。
+- --lib/--tests、源与数据导入、property 初始化、泛型实例、诊断及来源、
+  Test/fixture/筛选/退出码均有语言或 CLI 回归；旧语言资产的结果对照完成。
+- run、stdio serve、多事件状态、EES 往返、EOF、终端 effects、语言失败
+  后继事件、初始化拒绝、资源终止均通过；不新增 HTTP/browser 交付要求。
+- 固定存活状态的长事件流验证 work 回收与内存平台期；另验真实增长状态、
+  共享/环/闭包根、main 引用与收集后再次调用，不能靠丢弃状态得到平稳 RSS。
+- workspace 构建与相关完整测试通过；依赖和调用点审计确认无旧 codegen/VM、
+  telora-native 执行路径、运行时重新求类型或兼容 fallback。
+- 用户 workspace 不留下 Wasm 产物；临时链接文件成功/失败后清理；发布式
+  CLI 与后端选择开关不再接受。内部格式保留多少只由源码执行和测试需要决定。
+- release 记录 world-model 等实际入口的 frontend、codegen/link、engine
+  load、data、initialize、entry，以及服务多事件延迟和峰值/稳态内存；只记录
+  可比边界，不把“从已发布文件运行”冒充新的默认源码启动时间。
+
+## 延后与非目标
+
+本期不设计 Wasm 模块发布、持久化缓存、初始化 snapshot、Wasm JIT/AOT
+引擎选择或独立 fast-interpreter；不进行为体积而做的泛型合并、指令优化。
+浏览器已有 demo 尽量保持，但 run/serve/test 的浏览器支持不阻塞 CLI 验收。
+已有来源索引与函数映射成果继续保留，后续优化必须以观察为依据。
