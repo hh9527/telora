@@ -92,7 +92,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
     let entry = initialize + 1;
     functions.function(2).function(2).function(CALL_TYPE);
     module.section(&functions);
-    let heap_start = STATIC_BASE
+    let heap_start = crate::compose::static_base()?
         .checked_add(
             (plan.demands.len() as u32)
                 .checked_mul(DEMAND_BYTES)
@@ -191,6 +191,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
     let mut symbols = SymbolTable::new();
     let names = crate::function_names::FunctionNames::new(executable.sealed_mir().mir());
     let function_keys: Vec<_> = plan.functions.keys().copied().collect();
+    let mut function_names = NameMap::new();
     for index in 0..FIRST_FUNCTION {
         symbols.function(SymbolTable::WASM_SYM_UNDEFINED, index, None);
     }
@@ -202,6 +203,7 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
             n => names.name(function_keys[(n - FIRST_FUNCTION) as usize], n),
         };
         symbols.function(0, index, Some(&name));
+        function_names.append(index, &name);
     }
     for (index, name) in ["telora_error", "telora_phase"].iter().enumerate() {
         symbols.global(0, index as u32, Some(name));
@@ -237,6 +239,9 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         module.section(LinkingSection::new().symbol_table(&symbols));
     }
     module.section(&relocations);
+    let mut name_section = NameSection::new();
+    name_section.functions(&function_names);
+    module.section(&name_section);
     module.section(&CustomSection {
         name: Cow::Borrowed("telora.abi"),
         data: Cow::Owned(VERSION.to_le_bytes().to_vec()),
@@ -245,5 +250,5 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, 
         name: Cow::Borrowed("telora.manifest"),
         data: Cow::Owned(serde_json::to_vec(&manifest).map_err(|e| e.to_string())?),
     });
-    crate::link::link(&module.finish(), heap_start)
+    crate::compose::link(&module.finish(), heap_start)
 }

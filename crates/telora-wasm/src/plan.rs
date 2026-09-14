@@ -296,11 +296,12 @@ impl Plan {
                 .checked_add(crate::abi::FIRST_FUNCTION)
                 .ok_or("Wasm: function index overflow")?;
         }
+        let static_base = crate::compose::static_base()?;
         for (index, offset) in plan.demands.values_mut().enumerate() {
             *offset = u32::try_from(index)
                 .ok()
                 .and_then(|i| i.checked_mul(crate::abi::DEMAND_BYTES))
-                .and_then(|n| n.checked_add(crate::abi::STATIC_BASE))
+                .and_then(|n| n.checked_add(static_base))
                 .ok_or("Wasm: demand offset overflow")?;
         }
         for &key in plan.functions.keys().filter(|key| key.callable) {

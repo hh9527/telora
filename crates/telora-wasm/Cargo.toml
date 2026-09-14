@@ -10,4 +10,3 @@ wasmparser = "0.259"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 wasmi = "2"
-tempfile = "3"

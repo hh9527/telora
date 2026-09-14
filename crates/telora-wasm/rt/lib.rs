@@ -64,3 +64,12 @@ pub unsafe extern "C" fn telora_alloc(bytes: u32) -> u32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_heap_end() -> u32 { unsafe { NEXT as u32 } }
+
+/// Called by the generated Wasm start function, before any allocation or input.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_reserve_static(end: u32) {
+    unsafe {
+        assert!(NEXT == 0 && end as usize >= core::ptr::addr_of!(__heap_base) as usize);
+        NEXT = end as u64;
+    }
+}
