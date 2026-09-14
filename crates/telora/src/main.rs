@@ -5,10 +5,8 @@ use std::env;
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
-use telora_core::lir::RegisterId;
 use telora_core::{
-    CallContext, DataLimits, EesCall, EesReply,
-    NativeError, NativeFunction, Quota, RunHost,
+    DataLimits, EesCall, EesReply, RunHost,
     RunHostFuture, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -28,19 +26,17 @@ use eval_cli::{EvalArgs, EvalWithArgs};
 use source_arg::{NamedSource, collect_entry_sources, is_stdin_source, parse_named_source};
 use telora::package_host;
 
-const EVALUATION_FUEL: usize = 1_000_000;
-const STACK_SLOTS: usize = 65_536;
-const ALLOCATION_BYTES: u64 = 256 * 1024 * 1024;
+const EVALUATION_FUEL: u64 = 100_000_000;
 const QUERY_SCHEMA: &str = "telora.query/v1";
 
 struct ExecutionConfig {
-    session_quota: Quota,
+    fuel: u64,
     data_limits: DataLimits,
 }
 
 fn execution_config() -> ExecutionConfig {
     ExecutionConfig {
-        session_quota: Quota::new(EVALUATION_FUEL, STACK_SLOTS, ALLOCATION_BYTES),
+        fuel: EVALUATION_FUEL,
         data_limits: DataLimits::default(),
     }
 }
@@ -116,170 +112,7 @@ impl ProcessRunHost {
     }
 }
 
-fn native_string(
-    context: &CallContext<'_, '_>,
-    register: RegisterId,
-    path: &str,
-) -> Result<String, NativeError> {
-    context
-        .value(register)?
-        .as_str()
-        .map(|value| value.as_str().to_owned())
-        .ok_or_else(|| NativeError::new(format!("{path} must be String")))
-}
-
-fn native_field(
-    context: &mut CallContext<'_, '_>,
-    source: RegisterId,
-    field: &str,
-) -> Result<RegisterId, NativeError> {
-    let destination = context.scratch()?;
-    context.copy_field(destination, source, field)?;
-    Ok(destination)
-}
-
-fn native_dict_fields(
-    context: &CallContext<'_, '_>,
-    register: RegisterId,
-    path: &str,
-) -> Result<Vec<String>, NativeError> {
-    context
-        .value(register)?
-        .dict_fields()
-        .map(|fields| fields.into_iter().map(str::to_owned).collect())
-        .ok_or_else(|| NativeError::new(format!("{path} must be Dict")))
-}
-
-fn prepare_system_resources(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let caps = context.argument(0)?;
-    let _value_owner = context.argument(1)?;
-    let prepared_data = context.argument(2)?;
-    let prepared_keys = native_dict_fields(context, prepared_data, "prepared data sources")?
-        .into_iter()
-        .collect::<std::collections::HashSet<_>>();
-
-    let data_requests = native_field(context, caps, "data_srcs")?;
-    let mut data_fields = Vec::new();
-    for key in native_dict_fields(context, data_requests, "SystemCaps.data_srcs")? {
-        if prepared_keys.contains(key.as_str()) {
-            let item = context.scratch()?;
-            context.copy_field(item, prepared_data, &key)?;
-            data_fields.push((key, item));
-            continue;
-        }
-        let request = native_field(context, data_requests, &key)?;
-        let src_register = native_field(context, request, "src")?;
-        let src = native_string(context, src_register, "DataSrc.src")?;
-        let data = context.scratch()?;
-        let default = native_field(context, request, "default")?;
-        if context.value(default)?.as_atom().as_deref() == Some("None") {
-            return Err(NativeError::new(format!(
-                "cannot read data source {src:?}: file does not exist"
-            )));
-        }
-        context.copy_tagged_payload(data, default)?;
-        let item = context.scratch()?;
-        context.make_dict(item, &[("data".into(), data), ("src".into(), src_register)])?;
-        data_fields.push((key, item));
-    }
-    let data = context.scratch()?;
-    context.make_dict(data, &data_fields)?;
-
-    let text_requests = native_field(context, caps, "text_srcs")?;
-    let mut text_fields = Vec::new();
-    for key in native_dict_fields(context, text_requests, "SystemCaps.text_srcs")? {
-        let request = native_field(context, text_requests, &key)?;
-        let src_register = native_field(context, request, "src")?;
-        let src = native_string(context, src_register, "TextSrc.src")?;
-        let text = context.scratch()?;
-        match fs::read_to_string(&src) {
-            Ok(source) => context.set_string(text, source)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let default = native_field(context, request, "default")?;
-                if context.value(default)?.as_atom().as_deref() == Some("None") {
-                    return Err(NativeError::new(format!(
-                        "cannot read text source {src:?}: {error}"
-                    )));
-                }
-                context.copy_tagged_payload(text, default)?;
-            }
-            Err(error) => {
-                return Err(NativeError::new(format!(
-                    "cannot read text source {src:?}: {error}"
-                )));
-            }
-        }
-        let item = context.scratch()?;
-        context.make_dict(item, &[("data".into(), text), ("src".into(), src_register)])?;
-        text_fields.push((key, item));
-    }
-    let texts = context.scratch()?;
-    context.make_dict(texts, &text_fields)?;
-
-    let requested_vars = native_field(context, caps, "vars")?;
-    let var_count = context
-        .value(requested_vars)?
-        .sequence_len()
-        .ok_or_else(|| NativeError::new("SystemCaps.vars must be Array(String)"))?;
-    let mut var_fields = Vec::new();
-    for index in 0..var_count {
-        let name_register = context.scratch()?;
-        context.copy_sequence_item(name_register, requested_vars, index)?;
-        let name = native_string(context, name_register, "SystemCaps.vars item")?;
-        match env::var(&name) {
-            Ok(value) => {
-                let value_register = context.scratch()?;
-                context.set_string(value_register, value)?;
-                var_fields.push((name, value_register));
-            }
-            Err(env::VarError::NotPresent) => {}
-            Err(error) => {
-                return Err(NativeError::new(format!(
-                    "cannot read variable {name:?}: {error}"
-                )));
-            }
-        }
-    }
-    let vars = context.scratch()?;
-    context.make_dict(vars, &var_fields)?;
-
-    let stdin_mode = native_field(context, caps, "stdin")?;
-    let stdin = context.scratch()?;
-    match context.value(stdin_mode)?.as_atom().as_deref() {
-        Some("Text") => {
-            let mut source = String::new();
-            Read::read_to_string(&mut io::stdin(), &mut source).map_err(|error| {
-                NativeError::new(format!("cannot read standard input: {error}"))
-            })?;
-            let tag = context.scratch()?;
-            let payload = context.scratch()?;
-            context.set_atom(tag, "Some")?;
-            context.set_string(payload, source)?;
-            context.make_tagged(stdin, tag, payload)?;
-        }
-        Some("Lined" | "Null") => context.set_none(stdin)?,
-        _ => return Err(NativeError::new("SystemCaps.stdin is invalid")),
-    }
-
-    context.make_dict(
-        context.result(),
-        &[
-            ("data".into(), data),
-            ("texts".into(), texts),
-            ("vars".into(), vars),
-            ("stdin".into(), stdin),
-        ],
-    )
-}
-
 impl RunHost for ProcessRunHost {
-    fn resources_provider(&mut self) -> NativeFunction {
-        NativeFunction::new(
-            "telora.cli.prepare_system_resources",
-            3,
-            prepare_system_resources,
-        )
-    }
 
     fn ees_actors(&self) -> BTreeMap<String, String> {
         self.ees_actors.clone()

@@ -1,6 +1,6 @@
 # RFC 0292：统一 Wasm 源码执行路线
 
-- 状态：实施中；CLI 已仅保留源码 Wasm 执行，native crate 已删除，核心旧 VM/bytecode 清理与最终验收未完成
+- 状态：实施中；CLI 仅保留源码 Wasm 执行，native 与核心旧 VM/bytecode 已删除，最终寿命与性能验收未完成
 - 日期：2026-09-14
 - 跟踪：[#187](https://github.com/hh9527/telora/issues/187)
 - 前置：RFC 0291（Wasm check/eval/eval-with）、RFC 0290（服务语义参考）
@@ -222,3 +222,17 @@ RunContract，删除无调用者的旧数据 linker 桥接。
 语法检查通过。Cargo 依赖树与 lock 中已无 telora-native/Cranelift。
 删除内容可从 Git 历史恢复。核心旧 VM、bytecode、Heap/Val 及其剩余公共
 协议依赖仍在仓库中，需要下一阶段完整摘除；未完成最终运行寿命与性能验收。
+
+2026-09-14：删除 core 的旧 bytecode/codegen/LIR/VM、Heap/Val、执行链接与
+执行图，以及专属测试和 CLI Host 桥接。保留纯静态 MIR、类型镜像、入口计划、
+数据解析计划与 Host 协议。包摘要改用 sha2 crate，保持输入协议；Wasm RT 的
+HashState 实现尚未调整，状态相等契约需另行审视。
+
+静态查询与 TestPlan 测试直接构造 MIR；JSON/YAML/TOML 测试改为验证扁平解析
+计划，保留内容、来源、错误范围及配额边界。MIR 示例只提供静态阶段 dump。
+正式实现文档刷新为 SealedExecutable → 内存 Wasm → Wasmi 路线。
+
+验证：workspace 全 target/feature 编译检查通过；完整 workspace 测试通过，
+其中 CLI 99 项（含语言验收）、core 181 项、Wasm 99 项通过，1 项 opt-in 忽略。
+旧执行模块的调用点搜索为空。删除代码保留于 Git 历史。最终长服务与 release
+测量仍待完成，这一阶段不声称已完成 RFC 验收。

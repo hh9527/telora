@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn opaque_names_and_generic_arguments_come_from_the_solved_graph() {
-        let mir = crate::codegen::tests::graph(
+        let mir = crate::test_graph::graph(
             "import \"std/test\" as test; type Box(T) = struct {value: T}; export def deferred = test.should_ok(fn() { 42 }); export def pair: Box((Int, String)) = {value: (1, \"x\")};",
             "",
         );
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn references_and_hover_use_the_resolved_cross_module_identity() {
-        let mir = crate::codegen::tests::graph(
+        let mir = crate::test_graph::graph(
             "import \"./math\" {value as renamed}; export def answer = renamed + renamed;",
             "export def value = 42;",
         );
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn shadowed_locals_keep_distinct_symbol_ids() {
-        let mir = crate::codegen::tests::graph(
+        let mir = crate::test_graph::graph(
             "def x = 1; export def answer = do { let x = \"inner\"; x }; export def outer = x;",
             "",
         );
@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn member_queries_use_export_ids_and_precomputed_generic_layouts() {
-        let mir = crate::codegen::tests::graph(
+        let mir = crate::test_graph::graph(
             "import \"./math\" as math; type Box(T) = struct { item: T }; def box: Box(Int) = {item: 42}; export def answer = (math.value, box.item);",
             "export def value = 7; def private_value = 9;",
         );
@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn invalid_program_queries_do_not_recover_or_guess_names() {
-        let mir = crate::codegen::tests::graph(
+        let mir = crate::test_graph::graph(
             "def duplicated = 1; def duplicated = 2; export def first = duplicated; export def second = missing; export def bad: Int = \"wrong\";",
             "",
         );

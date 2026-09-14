@@ -105,8 +105,6 @@ pub enum SystemEvent {
 pub type RunHostFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
 
 pub trait RunHost {
-    fn resources_provider(&mut self) -> crate::NativeFunction;
-
     fn ees_actors(&self) -> BTreeMap<String, String>;
 
     fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>>;
@@ -125,24 +123,6 @@ pub trait RunHost {
     fn next_event(&mut self) -> RunHostFuture<'_, Result<Option<SystemEvent>, String>>;
 
     fn finish(&mut self) -> RunHostFuture<'_, Result<(), String>>;
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RunTermination {
-    Exit(i64),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RunOutcome {
-    pub output: String,
-    pub termination: RunTermination,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct EvalContext {
-    pub sources: BTreeMap<String, EvalSource>,
-    pub env: BTreeMap<String, String>,
-    pub args: Vec<String>,
 }
 
 #[derive(Clone, Debug)]

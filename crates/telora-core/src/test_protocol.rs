@@ -43,24 +43,3 @@ pub struct TestContext<'a> {
     pub limits: TestLimits,
     pub module_paths: std::collections::HashMap<String, std::path::PathBuf>,
 }
-
-#[derive(Clone, Debug)]
-pub(crate) struct TestDescription {
-    pub(crate) kind: TestKind,
-    pub(crate) expected: Option<String>,
-    pub(crate) sources: Vec<String>,
-    pub(crate) origin: Option<crate::Loc>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TestKind {
-    ShouldOk,
-    ShouldFail,
-    ShouldFailWith,
-    Fixtures,
-}
-
-pub(crate) const TEST_NATIVE_TYPE: crate::value::NativeTypeId = crate::value::NativeTypeId {
-    module: crate::value::NativeModuleId(crate::mir::NativeTypeId::TEST.module),
-    local: crate::mir::NativeTypeId::TEST.slot,
-};

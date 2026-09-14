@@ -495,7 +495,7 @@ def add: Fn(Int, Int) -> Int = fn(left, right) {
 ```
 
 函数是一等不可变值，可以捕获词法环境。参数和返回值可以显式标注；调用 arity 是
-静态和运行时契约的一部分。尾位置的 bytecode 函数调用支持 proper tail call。
+静态和运行时契约的一部分。尾位置的函数调用支持 proper tail call。
 
 模块级 `def` 按依赖 component 分析。无环 definition 可以按依赖顺序推断和泛化；
 递归及相互递归 definition 在没有显式泛型契约时保持单态，并通过固定点约束获得
@@ -1377,26 +1377,27 @@ MainWorld 内部同时保留健康 export 与含 Fail 的 export：下游读取�
 
 VM 区分可恢复的程序失败与终止整个 evaluation session 的资源/一致性失败。前者包括
 类型不匹配、missing field、non-exhaustive dynamic match、panic 和 `fail!`；后者
-包括取消、fuel/分配/栈/调用深度耗尽以及无效 bytecode。
+包括取消、资源耗尽以及执行引擎 trap。
 
 Workspace recovery 可以在一个 binding 或模块失败后继续独立工作，但严格 Host
 执行不会把 recoverable failure 当作成功值。
 
 ## 10. 求值和资源语义
 
-当前工具链使用 lossless CST、AST/HIR、类型分析、LIR、bytecode 和寄存器 VM 实现
+当前工具链使用 lossless CST、扁平 HIR/MIR、全图类型求解、Wasm 和 Wasmi 实现
 语言。各层共同服从本文定义的可观察语义和来源映射，不建立彼此竞争的语言模型。
 各阶段、运行时布局、模块骨架、World 和 promotion 的当前实现见
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md)；这些私有结构不是第二套语言语义。
 
 ### 10.1 两个阶段，一个求值器
 
-Tool stage 执行 annotation、type initializer、decorator、module interface 和其他分析
-所需的闭合计算。Program stage 使用显式 Host 输入执行普通应用函数。两者共用：
+模块、符号和类型求解是纯静态阶段，不执行语言代码。Tool stage 在静态闭合后执行
+property provider 和顶层初始化；Program stage 使用显式 Host 输入执行普通应用函数。
+两个执行阶段共用：
 
-- bytecode 与函数调用规则；
+- Wasm 与函数调用规则；
 - 不可变值和 heap 表示；
-- fuel、stack、call-depth 和 allocation account；
+- 执行资源约束；
 - runtime failure 与来源规则。
 
 静态 annotation 和 witness 默认从程序执行中擦除；当程序显式把 TypeMetadata 当作

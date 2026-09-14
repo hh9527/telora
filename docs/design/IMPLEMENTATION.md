@@ -1,11 +1,11 @@
 # Telora 当前实现架构
 
-本文描述当前 main 的编译器、运行时、模块系统与 Host。语言可观察语义以
+本文描述当前源码的编译器、运行时、模块系统与 Host。语言可观察语义以
 [LANGUAGE.md](LANGUAGE.md) 为准，术语以 [CONCEPT.md](CONCEPT.md) 为准。
 Rust 类型名、文件名和内存布局是实现事实，不构成公开 ABI 承诺。
 
-RFC 0280 的整图 MIR 流水线已通过 #176 合入 main（`a408c68`），批量检查随后在
-`cb0e23b` 落地。历史迁移过程和测量保留在 RFC 中；本文只描述当前路径。
+整图 MIR 流水线延续 RFC 0280；RFC 0292 将执行统一为 Wasm。历史迁移过程和
+测量保留在 RFC 中；本文只描述当前路径，最终验收状态见 RFC 0292。
 
 ## 1. 总体管线
 
@@ -16,13 +16,11 @@ workspace/package 清单 + 所选根模块
   -> module-resolve：模块图、可达 CST、扁平 HIR
   -> symbol-resolve：符号与引用槽闭合
   -> type-resolve：全图类型槽、泛型实例与静态证据闭合
-  -> SealedMir
-  -> codegen：bytecode + TypeImage + ExecutionGraph
-  -> 链接 native 与数据模块
-  -> VM：安装 TypeImage，注入数据
-  -> 一个 Initialize WorkWorld：求值全部初始化根
-  -> 一次发布到 MainWorld
-  -> 新 WorkWorld：eval 调用、Test 或 Entry 调度
+  -> SealedMir / SealedExecutable：类型镜像与所选执行闭包
+  -> Wasm codegen：在预链接 Rust RT 模板上纯内存追加代码和数据
+  -> Wasmi Session：加载内存模块、注入已验证的数据
+  -> 求值初始化根，冻结 main 区
+  -> work 区：eval 调用、Test 或 Entry 调度，安全边界精确回收
 ```
 
 前三个 Pass 不持有 VM 或运行时 heap，不执行 Telora 代码。Query/LSP 可以读取未成功
@@ -37,16 +35,17 @@ seal 的 MIR；执行入口必须通过 seal。后续阶段直接使用静态结
 | session 图与 HIR lowering | `mir.rs`、`mir/lower.rs`、`module-resolve.rs` |
 | 符号、类型求解 | `symbol-resolve.rs`、`type-resolve.rs` 及其子目录 |
 | 封闭与只读查询 | `mir/seal.rs`、`mir_query.rs` |
-| 代码与运行时静态数据 | `codegen.rs`、`bytecode.rs`、`type_image.rs`、`execution_graph.rs` |
-| 链接 | `execution_link.rs` |
-| 初始化、需求求值与发布 | `vm/solved-check.rs`、`vm/demand.rs`、`heap/publish.rs` |
-| 运行时、值与复制 | `vm.rs`、`heap.rs`、`heap/value.rs`、`heap/copy.rs` |
+| 静态执行闭包与类型镜像 | `mir/executable.rs`、`type_image.rs` |
+| Wasm 生成与内存组装 | `crates/telora-wasm/src/{codegen,compose,template}.rs` |
+| 初始化、需求求值 | `crates/telora-wasm/src/{entry,properties,session}.rs` |
+| Rust RT、值与复制回收 | `crates/telora-wasm/rt/`、`rt/collect.rs`、`rt/collect_trace.rs` |
 | package 与 Host 契约 | `package.rs`、`runtime_host.rs` |
 | CLI 静态输入与编辑器快照 | `crates/telora/src/static_input.rs`、`crates/telora/src/mir_workspace.rs` |
 | CLI 命令消费者 | `crates/telora/src/{static_cli,eval_cli,test_cli,main}.rs` |
 
-codegen 直接消费 SealedMir 并生成寄存器 bytecode。仓库中仍有 `lir.rs`，但当前主流程
-不经过旧的 elaborated AST / compiler 管线。
+codegen 消费 SealedExecutable，生成 Wasm 指令和类型确定的胶水。Rust RT 在 Cargo
+构建期间预编译、预链接并嵌入 Telora；用户执行期间无需外部 linker，不写临时代码文件。
+旧 bytecode/LIR/VM 与直接 Cranelift 后端已删除，无后端选择开关或产物 CLI。
 
 ## 2. Frontend 与静态诊断
 
@@ -72,7 +71,7 @@ Conflicted(TypeConflictId)
 是前一阶段的权威结果；后续阶段继续处理独立信息，不回退到另一套解析或推导器。
 静态阶段的诊断积累不采用 VM 的失败恢复语义。
 
-源码位置从 CST/HIR 保留到 bytecode 和运行时值。逻辑模块名用于诊断，物理路径由 Host
+源码位置从 CST/HIR 保留到 Wasm debug origins 和运行时值。逻辑模块名用于诊断，物理路径由 Host
 单独保存。CLI JSONL 使用 1-based line、0-based UTF-8 byte column；LSP 根据客户端协商
 编码转换位置。
 
@@ -99,7 +98,7 @@ export { data };
 ```
 
 数据内容在静态阶段不读取、不解析；因此类型检查成功不代表 JSON/YAML/TOML 内容有效。
-实际内容在链接和 VM 数据注入阶段接受格式与 DataLimits 检查。
+实际内容在执行准备阶段接受格式与 DataLimits 检查，全部有效后才注入 Wasm。
 
 symbol Pass 先索引模块的声明、导出和作用域，再闭合引用。import * 建立搜索范围，
 具体引用才选择绑定；显式绑定与遮蔽按普通名称解析规则处理。内置类型的特殊身份来自
@@ -125,11 +124,11 @@ MIR 拥有 HIR、resolve_slots、ty_slots、结构类型项、最终类型表及
 
 入口执行另有 `Mir::seal_export` 发布的 `SealedExecutable`：它保留 TypeImage，
 并封闭所选导出的值依赖、具体实例及元数据初始化集合。未实例化模板仅属于静态
-声明图；进入执行集合的类型必须具体化。native 入口和模块检查都消费这一发布
+声明图；进入执行集合的类型必须具体化。Wasm 入口和模块检查都消费这一发布
 能力，分别由 `seal_export` 和 `seal_modules` 确定执行范围，不在 codegen 中重建
-依赖闭包。默认 bytecode 入口仍使用原来的 `SealedMir` 接口。
+依赖闭包。
 
-相同完整输入应产生确定的 MIR ID、TypeImage、bytecode 和执行图，不受 inventory
+相同完整输入应产生确定的 MIR ID、TypeImage 和执行闭包，不受 inventory
 枚举顺序影响。这是完整构建的确定性，不是跨版本或增量编辑的永久 ID 保证。
 
 TypeImage 是扁平只读数组，保存类型、已应用布局和类型定义。其索引对应静态 Pass
@@ -142,7 +141,7 @@ TypeImage 是扁平只读数组，保存类型、已应用布局和类型定义�
 
 ## 5. codegen、构造校验与运行时表示
 
-codegen 的公开编译入口接受 SealedMir。表达式类型、泛型实例、模式构造器和成员选择
+codegen 的公开编译入口接受 SealedExecutable。表达式类型、泛型实例、模式构造器和成员选择
 来自已完成的证据表；生成闭包、调用和构造代码不再启动类型推导。
 
 `@check` 的静态阶段确定校验器签名与构造目标；校验函数在 VM 中执行。具名字段 struct
@@ -150,17 +149,14 @@ codegen 的公开编译入口接受 SealedMir。表达式类型、泛型实例�
 普通构造拒绝产生运行时失败，codec 解码拒绝返回 Err。读取或复制已完成的值不会重新
 执行构造校验；新构造与 `<~` 更新会检查其结果。
 
-Struct 暂仍复用 Dict 的字段表示。merge-update 根据左侧已解出的具名类型和字段契约
-生成代码，新建外层容器并复用保留字段的 Val；projection 同样消费静态字段证据。
-它们保留嵌套值的身份和来源。当前没有将全部 field access 降为固定偏移量。
+运行时值头包含 `source/start/end/TypeId` 四个 u32（16 字节），后接由静态布局
+决定的 payload。标量值为 24 字节；函数保存函数表索引与闭包环境。
+String、Array、Record 等对象位于各自 typed table；Tuple/Record 共用 Record table。
+Dict 使用有序 keys/values，字段操作与构造胶水消费已闭合的布局证据。
+具体尺寸与表示以 `telora-wasm/rt/abi.rs` 和生成器为准，不构成发布 ABI。
 
-寄存器和对象字段使用 32-byte Val，包含来源、表示标签、类型标记和 payload。
-静态 TypeId 与底层表示不同：具名 newtype 使用单元素 Tuple，enum 使用内部 Atom/Tagged
-表示。内部表示标签不重新成为公开的表面类型。
-
-类型元数据可以用 `SolvedType(TypeId)` 表示。复制器验证其属于同一个 session TypeImage，
-直接复用身份，不递归重建类型描述符。复合数据和闭包仍由 scoped handle 指向 heap；
-不能据此宣称所有运行时值都已消除深复制或引用计数。
+类型元数据复用静态 TypeId，不递归重建类型描述符。语言值和闭包留在 Wasm 内存，
+Host 通过带类型的 session 句柄传递根；仅输入、输出、资源和诊断跨 Host 边界。
 
 typed equality 使用类型身份及对应值表示，来源位置不参与相等；Dyn 的投影与 codec
 通过已确定的见证检查契约。动态值检查属于运行时行为，不是重新推断表达式类型。
@@ -171,25 +167,22 @@ typed equality 使用类型身份及对应值表示，来源位置不参与相�
 签名和来源。判断 HasProperty 不需要执行 provider。property 内容则是运行时值，
 不属于类型骨架。
 
-ExecutionGraph 从 SealedMir 建立全局值、泛型实例、property fold 和构造检查等任务。
-property 使用 TypeId、carrier TypeId 和 member/site 身份建立键。同一键的 provider
-按既定顺序 fold，最终只有一个有效结果；不同成员仍是不同键。
+SealedExecutable 确定全局值、具体函数实例与 property 初始化集合。property 使用
+TypeId、carrier TypeId 和 member/site 身份建立键。同一键的 provider 按既定顺序
+fold，最终只有一个有效结果；不同成员仍是不同键。
 
-VM 持有可变求值状态表，任务经历 Pending、Running、Ready 或 Failed。需求指令读取
-已完成的 Val，或启动目标任务；再次请求 Running 节点报告依赖环，Failed 传播已有失败。
-codegen 只生成利用这张表的代码，不与 VM 共用可变推导状态。
+生成代码访问 Wasm 内的需求状态表：Pending、Running、Ready、Failed。读取已完成值
+直接复用结果；再次请求 Running 节点报告依赖环，Failed 传播已有失败。
+codegen 不与运行时共用可变推导状态。
 
-初始化时先安装 TypeImage 和执行图，再注入数据。整张可达图使用一个 Initialize
-WorkWorld，主动完成全部初始化根；顶层值与 property 的相互依赖通过需求求值处理。
-初始化不调用普通函数的函数体，除非某个初始化计算实际调用它。
+数据注入后主动完成初始化根，顶层值与 property 的相互依赖由需求求值处理。
+初始化不调用普通函数体，除非某个初始化计算实际调用它。成功后冻结线性内存的 main
+边界，后续分配属于 work；执行阶段不重新启动初始化。
 
-完成后 `freeze_initialized_world` 验证所有初始化根 Ready，再用一次多根复制把全局值与
-property 结果发布到 MainWorld。共用 forwarding map 保留跨根共享、闭包引用及来源，
-Main 对象不能引用即将释放的 Work storage。失败或未完成任务不能作为成功初始化发布。
-
-之后创建新的 WorkWorld。执行读取 Main 中的已完成结果，不在新的 WorkWorld 中重新
-启动初始化。Work-to-Work 的值迁移也使用根驱动复制；已有 Main 引用可直接保留。
-外层结构仍会分配，普通值图复制的成本没有在本次架构改造中全部消除。
+服务事件及测试边界进行精确 work copy-collect。根包括跨事件状态、闭包、待执行
+测试描述与必要缓存；遍历依据闭合类型布局，更新所有移动句柄，保留共享与环。
+main 引用保持稳定。线性内存允许保留高水位，但固定存活状态应复用 work 空间，
+不能以重建 session 或丢弃状态实现回收。
 
 ## 7. 诊断、失败与发布
 
@@ -209,8 +202,9 @@ Option(T)。`blame!` 构造错误数据，规则归因由调用/构造边界与 
 
 ## 8. 资源与 Host 边界
 
-VM 的 QuotaAccount 核算 fuel、栈与分配，并携带诊断和取消上下文。静态类型求解不
-消耗 VM fuel；这不表示解析、求解或编辑器请求没有资源与取消约束。
+Wasmi 提供 fuel 与调用栈限制，Session 管理诊断和终止状态。静态类型求解不消耗
+执行 fuel；这不表示解析、求解或编辑器请求没有资源与取消约束。引擎 trap 和 fuel
+耗尽终止会话，不能伪装为可恢复语言失败，也不重置 fuel 后继续测试。
 
 Fuel 是约束失控执行的机制，不是精确计费器。实现应在调用和实际执行的回边等
 动态扩展点保留检查，不必为每条指令、每次复制或 native 库内部的每一步建立账目。
@@ -276,11 +270,10 @@ LSP 的 `mir_workspace` 把文档覆盖内容和磁盘清单送入同一静态�
 - 构造校验覆盖新的合法值边界，不能用跳过检查换取性能。
 - query/LSP 可观察失败图，执行入口只能接受成功 seal 的图。
 
-验证入口包括三个 resolve 模块的单元测试、`codegen/tests/` 的确定性与执行测试、
-`vm/tests/demand.rs` 的初始化/共享测试，以及 `crates/telora/tests/cli.rs` 和
+验证入口包括三个 resolve 模块的单元测试、`crates/telora-wasm/src/tests/` 的
+执行与回收测试，以及 `crates/telora/tests/cli.rs`、`tests/runtime/` 和
 `tests/language/`。语言规则与诊断回归优先使用 Telora 用例，检查成功、拒绝、来源、
 泛型实例以及构造/解码/更新边界。
 
-完整构建确定性测试比较不同 inventory 顺序下的 MIR dump、TypeImage、bytecode、
-native links 和 ExecutionGraph。运行时布局分离、字段偏移量 codegen、native backend
-和进一步减少值复制仍是后续工作，不能描述为本轮已经实现。
+完整构建的确定性覆盖静态身份与所选执行闭包；Wasm 测试覆盖生成代码、初始化、
+数据来源和长期服务根。发布缓存、snapshot、引擎替换与进一步减少复制不属于当前路径。

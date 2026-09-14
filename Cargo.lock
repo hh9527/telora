@@ -1703,6 +1703,7 @@ dependencies = [
  "regex-syntax",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

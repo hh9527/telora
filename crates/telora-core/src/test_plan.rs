@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn discovers_native_test_exports_without_running_initializers_or_thunks() {
-        let mir = crate::codegen::tests::graph(
+        let mir = crate::test_graph::graph(
             r#"
             import "std/test" as testing;
             type Test = struct {value: Int};
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn reexports_keep_their_resolved_target() {
-        let mir = crate::codegen::tests::graph(
+        let mir = crate::test_graph::graph(
             r#"import "./math" {forwarded}; export {forwarded};"#,
             r#"import "std/test" as testing; export def forwarded = testing.should_ok(fn() {42});"#,
         );
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn rejects_modules_without_direct_test_values() {
-        let mir = crate::codegen::tests::graph(
+        let mir = crate::test_graph::graph(
             r#"
             import "std/test" as testing;
             export def factory = fn() { testing.should_ok(fn() { 42 }) };
@@ -226,33 +226,4 @@ mod tests {
         assert_eq!(errors[0].message, "test module has no direct Test exports");
     }
 
-    #[test]
-    fn test_bootstrap_initializes_exports_without_running_test_bodies() {
-        let mut mir = crate::codegen::tests::graph(
-            r#"
-            import "std/test" as testing;
-            export def first = testing.should_ok(fn() { 42 });
-            export def second = testing.should_ok(fn() { fail!("do not run a thunk during bootstrap") });
-        "#,
-            "",
-        );
-        let ModuleTarget::Bound(module) = mir.roots[0] else {
-            panic!("root");
-        };
-        let compiled = crate::codegen::compile_tests(mir.seal().unwrap(), module).unwrap();
-        assert_eq!(compiled.plan.exports.len(), 2);
-        for case in &compiled.plan.exports {
-            assert!(compiled.bootstrap.graph.global(case.target).is_some());
-        }
-        let linked = crate::execution_link::link_entry(compiled.bootstrap).unwrap();
-        let result = crate::Vm::new()
-            .execute_linked(
-                linked,
-                crate::Quota::with_fuel(10000),
-                crate::DataLimits::default(),
-                &mut mir.sources,
-            )
-            .unwrap();
-        assert_eq!(result.value().sequence_len(), Some(0));
-    }
 }

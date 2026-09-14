@@ -33,7 +33,7 @@ fn compile(executable: &SealedExecutable<'_>) -> Result<telora_wasm::session::Se
     // This coarse conversion bounds runaway execution, not equivalent billing.
     telora_wasm::session::Session::load(
         &bytes,
-        (crate::execution_config().session_quota.fuel as u64).saturating_mul(100),
+        crate::execution_config().fuel,
     )
 }
 

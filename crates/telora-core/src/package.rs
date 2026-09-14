@@ -963,14 +963,16 @@ fn absolute(path: &Path) -> Result<PathBuf, PackageError> {
 }
 
 fn package_digest(domain: &[u8], parts: &[&[u8]]) -> String {
-    let mut hash = crate::sha256::Context::default();
+    use sha2::{Digest, Sha256};
+
+    let mut hash = Sha256::new();
     hash.update(b"telora.package.tarball\0\x01");
     hash.update(domain);
     for part in parts {
         hash.update(&(part.len() as u64).to_be_bytes());
         hash.update(part);
     }
-    hash.finish()
+    hash.finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()

@@ -1,61 +1,8 @@
-use crate::DataWorld;
-use crate::heap::{DecodedValue, Heap, Object, Val};
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::json::lexer::Token;
 use crate::syntax::json::parser::{CstData, Node, NodeRef, Rule};
 use std::collections::BTreeMap;
 use std::fmt;
-
-#[derive(Clone, Copy)]
-pub(crate) struct SemanticDataTarget<'a> {
-    pub(crate) background: Option<&'a Heap>,
-    pub(crate) type_id: crate::TypeId,
-}
-
-pub(crate) fn semantic_tag(
-    heap: &mut Heap,
-    target: SemanticDataTarget<'_>,
-    tag: &str,
-    mut payload: Val,
-    location: Location,
-) -> Val {
-    if tag == "Object" && let Some(owner) = target.type_id.solved_id() {
-        let types = heap.solved_types.as_ref()
-            .or_else(|| target.background.and_then(|heap| heap.solved_types.as_ref()))
-            .expect("solved data requires its session type image");
-        let payload_type = types.semantic_object_payload(owner)
-            .expect("solved data Object requires its closed Dict(Value) payload");
-        // Keep the parsed dictionary handle and its provenance; attach only
-        // the type ID already provided by the native Value contract.
-        payload = payload.with_type_id(crate::TypeId::solved(payload_type));
-    }
-    let tag = Val::original(heap.atom(target.background, tag), Some(location));
-    Val::original(
-        DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload })),
-        Some(location),
-    )
-    .with_type_id(target.type_id)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct JsonError {
-    pub source_name: String,
-    pub line: usize,
-    pub column: usize,
-    pub message: String,
-}
-
-impl fmt::Display for JsonError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "{}:{}:{}: {}",
-            self.source_name, self.line, self.column, self.message
-        )
-    }
-}
-
-impl std::error::Error for JsonError {}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ValuePathSegment {
@@ -84,72 +31,6 @@ impl TemporalKind {
         match self {
             Self::LocalDate => "LocalDate", Self::LocalTime => "LocalTime",
             Self::LocalDateTime => "LocalDateTime", Self::OffsetDateTime => "OffsetDateTime",
-        }
-    }
-}
-
-impl DataScalar {
-    pub(crate) fn lower(&self, heap: &mut Heap, location: Location) -> Val {
-        let value = match self {
-            Self::Int(value) => DecodedValue::Int(*value),
-            Self::Float(value) => DecodedValue::Float(*value),
-            Self::String(value) => heap.string(None, value),
-            Self::Bytes(value) => {
-                DecodedValue::Bytes(heap.allocate(Object::Bytes(value.clone().into_boxed_slice())))
-            }
-            Self::Null => heap.atom(None, "None"),
-            Self::Bool(value) => heap.atom(None, if *value { "True" } else { "False" }),
-            Self::Temporal { kind, value } => {
-                let tag = Val::original(heap.atom(None, kind.variant()), Some(location));
-                let payload = Val::original(heap.string(None, value), Some(location));
-                DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload }))
-            }
-        };
-        Val::original(value, Some(location))
-    }
-
-    pub(crate) fn lower_semantic(
-        &self,
-        heap: &mut Heap,
-        target: SemanticDataTarget<'_>,
-        location: Location,
-    ) -> Val {
-        match self {
-            Self::Int(value) => semantic_tag(
-                heap,
-                target,
-                "Int",
-                Val::original(DecodedValue::Int(*value), Some(location)),
-                location,
-            ),
-            Self::Float(value) => semantic_tag(
-                heap,
-                target,
-                "Float",
-                Val::original(DecodedValue::Float(*value), Some(location)),
-                location,
-            ),
-            Self::String(value) => {
-                let payload = Val::original(heap.string(target.background, value), Some(location));
-                semantic_tag(heap, target, "String", payload, location)
-            }
-            Self::Bytes(value) => {
-                let payload = Val::original(
-                    DecodedValue::Bytes(
-                        heap.allocate(Object::Bytes(value.clone().into_boxed_slice())),
-                    ),
-                    Some(location),
-                );
-                semantic_tag(heap, target, "Bytes", payload, location)
-            }
-            Self::Null => Val::original(heap.atom(target.background, "None"), Some(location))
-                .with_type_id(target.type_id),
-            Self::Bool(value) => Val::original(heap.atom(target.background, if *value { "True" } else { "False" }), Some(location))
-                .with_type_id(target.type_id),
-            Self::Temporal { kind, value } => {
-                let payload = Val::original(heap.string(target.background, value), Some(location));
-                semantic_tag(heap, target, kind.variant(), payload, location)
-            }
         }
     }
 }
@@ -445,166 +326,6 @@ impl fmt::Display for DataLimitError {
     }
 }
 
-pub(crate) fn materialize_data_plan(
-    plan: &ValidatedDataPlan,
-    heap: &mut Heap,
-    semantic: Option<SemanticDataTarget<'_>>,
-) -> MaterializedValue {
-    fn materialize(
-        plan: &ValidatedDataPlan,
-        id: DataNodeId,
-        heap: &mut Heap,
-        semantic: Option<SemanticDataTarget<'_>>,
-        provenance: &mut Provenance,
-        path: &mut ValuePath,
-    ) -> Val {
-        let node = plan.node(id);
-        let location = node.location;
-        let value = match &node.kind {
-            DataPlanNodeKind::Scalar(value) => match semantic {
-                Some(target) => value.lower_semantic(heap, target, location),
-                None => value.lower(heap, location),
-            },
-            DataPlanNodeKind::Array(items) => {
-                let mut values = Vec::with_capacity(items.len());
-                for (index, item) in items.iter().copied().enumerate() {
-                    path.push(ValuePathSegment::Index(index));
-                    values.push(materialize(plan, item, heap, semantic, provenance, path));
-                    path.pop();
-                }
-                let raw = Val::original(
-                    DecodedValue::Array(heap.allocate(Object::Array(values.into_boxed_slice()))),
-                    Some(location),
-                );
-                semantic.map_or(raw, |target| {
-                    semantic_tag(heap, target, "Array", raw, location)
-                })
-            }
-            DataPlanNodeKind::Object(fields) => {
-                let mut names = Vec::with_capacity(fields.len());
-                let mut values = Vec::with_capacity(fields.len());
-                for (name, field) in fields {
-                    path.push(ValuePathSegment::Key(name.clone()));
-                    provenance.keys.insert(path.clone(), field.key_location);
-                    names.push(heap.intern(name));
-                    values.push(materialize(
-                        plan,
-                        field.value,
-                        heap,
-                        semantic,
-                        provenance,
-                        path,
-                    ));
-                    path.pop();
-                }
-                let shape = heap.intern_shape(names);
-                let raw = Val::original(
-                    DecodedValue::Dict(heap.allocate(Object::Dict {
-                        shape,
-                        values: values.into_boxed_slice(),
-                    })),
-                    Some(location),
-                );
-                semantic.map_or(raw, |target| {
-                    semantic_tag(heap, target, "Object", raw, location)
-                })
-            }
-        };
-        provenance.values.insert(path.clone(), location);
-        value
-    }
-
-    let mut provenance = Provenance::default();
-    let value = materialize(
-        plan,
-        plan.root(),
-        heap,
-        semantic,
-        &mut provenance,
-        &mut Vec::new(),
-    );
-    MaterializedValue { value, provenance }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Provenance {
-    pub values: BTreeMap<ValuePath, Location>,
-    pub keys: BTreeMap<ValuePath, Location>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SourcedValue {
-    pub value: DataWorld,
-    pub provenance: Provenance,
-}
-
-pub(crate) struct MaterializedValue {
-    pub(crate) value: Val,
-    pub(crate) provenance: Provenance,
-}
-
-#[derive(Debug)]
-pub struct JsonParse {
-    pub cst: CstData,
-    pub value: Option<SourcedValue>,
-    pub diagnostics: Vec<Diagnostic>,
-}
-
-pub fn parse_json(source_name: &str, source: &str) -> Result<DataWorld, JsonError> {
-    parse_json_with_provenance(source_name, source).map(|parsed| parsed.value)
-}
-
-pub fn parse_json_with_provenance(
-    source_name: &str,
-    source: &str,
-) -> Result<SourcedValue, JsonError> {
-    let mut sources = SourceDatabase::default();
-    let source_id = sources.add(source_name, source);
-    let parsed = parse_json_registered(&sources, source_id);
-    parsed
-        .value
-        .ok_or_else(|| compatibility_error(&sources, source_id, &parsed.diagnostics))
-}
-
-pub fn parse_json_registered(sources: &SourceDatabase, source_id: SourceId) -> JsonParse {
-    let source = sources.get(source_id);
-    let parsed = crate::syntax::json::parse_document(source_id, source.text());
-    let mut diagnostics = parsed.diagnostics;
-    let value = if diagnostics.is_empty() {
-        match JsonLowerer::new(source_id, source.text(), &parsed.syntax).validated_plan() {
-            Ok(plan) => {
-                let mut heap = Heap::work();
-                let value = materialize_data_plan(&plan, &mut heap, None);
-                Some(SourcedValue {
-                    value: DataWorld::new(heap, value.value),
-                    provenance: value.provenance,
-                })
-            }
-            Err(diagnostic) => {
-                diagnostics.push(diagnostic);
-                None
-            }
-        }
-    } else {
-        None
-    };
-    JsonParse {
-        cst: parsed.syntax,
-        value,
-        diagnostics,
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn materialize_json_registered(
-    sources: &SourceDatabase,
-    source_id: SourceId,
-    heap: &mut Heap,
-) -> Result<MaterializedValue, Vec<Diagnostic>> {
-    let source = sources.get(source_id);
-    materialize_json_source(source_id, source.text(), heap)
-}
-
 pub(crate) fn validate_json_registered(
     sources: &SourceDatabase,
     source_id: SourceId,
@@ -617,43 +338,6 @@ pub(crate) fn validate_json_registered(
     JsonLowerer::new(source_id, source.text(), &parsed.syntax)
         .validated_plan()
         .map_err(|diagnostic| vec![diagnostic])
-}
-
-#[cfg(test)]
-pub(crate) fn materialize_json_source(
-    source_id: SourceId,
-    source: &crate::document::DocumentText,
-    heap: &mut Heap,
-) -> Result<MaterializedValue, Vec<Diagnostic>> {
-    let parsed = crate::syntax::json::parse_document(source_id, source);
-    if !parsed.diagnostics.is_empty() {
-        return Err(parsed.diagnostics);
-    }
-    let plan = JsonLowerer::new(source_id, source, &parsed.syntax)
-        .validated_plan()
-        .map_err(|diagnostic| vec![diagnostic])?;
-    Ok(materialize_data_plan(&plan, heap, None))
-}
-
-fn compatibility_error(
-    sources: &SourceDatabase,
-    source_id: SourceId,
-    diagnostics: &[Diagnostic],
-) -> JsonError {
-    let diagnostic = diagnostics
-        .first()
-        .expect("failed JSON parse has a diagnostic");
-    let offset = diagnostic
-        .labels
-        .first()
-        .map_or(0, |label| label.location.start);
-    let position = sources.get(source_id).position(offset);
-    JsonError {
-        source_name: sources.get(source_id).name.to_string(),
-        line: position.line,
-        column: position.column,
-        message: diagnostic.message.clone(),
-    }
 }
 
 struct JsonLowerer<'a> {
@@ -703,11 +387,7 @@ impl<'a> JsonLowerer<'a> {
                 Ok(plan.scalar(DataScalar::Bool(false), location))
             }
             Node::Token(Token::Number, _) => {
-                let value = match self.number(node)? {
-                    DecodedValue::Int(value) => DataScalar::Int(value),
-                    DecodedValue::Float(value) => DataScalar::Float(value),
-                    _ => unreachable!("JSON number decoder returns a number"),
-                };
+                let value = self.number(node)?;
                 Ok(plan.scalar(value, location))
             }
             Node::Rule(Rule::StringLiteral, _) => {
@@ -765,7 +445,7 @@ impl<'a> JsonLowerer<'a> {
         }
     }
 
-    fn number(&self, node: NodeRef) -> Result<DecodedValue, Diagnostic> {
+    fn number(&self, node: NodeRef) -> Result<DataScalar, Diagnostic> {
         let text = self.text(node);
         if text.contains(['.', 'e', 'E']) {
             let value = text
@@ -774,10 +454,10 @@ impl<'a> JsonLowerer<'a> {
             if !value.is_finite() {
                 return Err(self.error(node, "JSON Float must be finite"));
             }
-            Ok(DecodedValue::Float(value))
+            Ok(DataScalar::Float(value))
         } else {
             text.parse::<i64>()
-                .map(DecodedValue::Int)
+                .map(DataScalar::Int)
                 .map_err(|_| self.error(node, "JSON integer is outside the i64 range"))
         }
     }

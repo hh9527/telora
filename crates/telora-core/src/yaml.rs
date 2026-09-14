@@ -1,20 +1,10 @@
-use crate::DataWorld;
-use crate::heap::Heap;
 use crate::json::{
-    DataField, DataNodeId, DataPlanNodeKind, DataScalar, SourcedValue, ValidatedDataPlan,
-    materialize_data_plan,
+    DataField, DataNodeId, DataPlanNodeKind, DataScalar, ValidatedDataPlan,
 };
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::yaml::lexer::Token;
 use crate::syntax::yaml::parser::{CstData, Node, NodeRef};
 use std::collections::BTreeMap;
-
-#[derive(Debug)]
-pub struct YamlParse {
-    pub cst: crate::syntax::yaml::CstData,
-    pub value: Option<SourcedValue>,
-    pub diagnostics: Vec<Diagnostic>,
-}
 
 pub(crate) fn validate_yaml_registered(
     sources: &SourceDatabase,
@@ -28,61 +18,6 @@ pub(crate) fn validate_yaml_registered(
     YamlLowerer::new(source_id, source.text(), &parsed.syntax)
         .validated_plan()
         .map_err(|diagnostic| vec![diagnostic])
-}
-
-pub fn parse_yaml_registered(sources: &SourceDatabase, source_id: SourceId) -> YamlParse {
-    let source = sources.get(source_id);
-    let parsed = crate::syntax::yaml::parse_document(source_id, source.text());
-    let mut diagnostics = parsed.diagnostics;
-    let value = if diagnostics.is_empty() {
-        let mut heap = Heap::work();
-        match YamlLowerer::new(source_id, source.text(), &parsed.syntax).validated_plan() {
-            Ok(plan) => {
-                let value = materialize_data_plan(&plan, &mut heap, None);
-                Some(SourcedValue {
-                    value: DataWorld::new(heap, value.value),
-                    provenance: value.provenance,
-                })
-            }
-            Err(diagnostic) => {
-                diagnostics.push(diagnostic);
-                None
-            }
-        }
-    } else {
-        None
-    };
-    YamlParse {
-        cst: parsed.syntax,
-        value,
-        diagnostics,
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn materialize_yaml_registered(
-    sources: &SourceDatabase,
-    source_id: SourceId,
-    heap: &mut Heap,
-) -> Result<crate::json::MaterializedValue, Vec<Diagnostic>> {
-    let source = sources.get(source_id);
-    materialize_yaml_source(source_id, source.text(), heap)
-}
-
-#[cfg(test)]
-pub(crate) fn materialize_yaml_source(
-    source_id: SourceId,
-    source: &crate::document::DocumentText,
-    heap: &mut Heap,
-) -> Result<crate::json::MaterializedValue, Vec<Diagnostic>> {
-    let parsed = crate::syntax::yaml::parse_document(source_id, source);
-    if !parsed.diagnostics.is_empty() {
-        return Err(parsed.diagnostics);
-    }
-    let plan = YamlLowerer::new(source_id, source, &parsed.syntax)
-        .validated_plan()
-        .map_err(|diagnostic| vec![diagnostic])?;
-    Ok(materialize_data_plan(&plan, heap, None))
 }
 
 #[derive(Clone)]
