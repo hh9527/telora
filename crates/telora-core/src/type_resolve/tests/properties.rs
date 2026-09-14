@@ -24,7 +24,7 @@ fn seal_requires_a_record_for_every_construction_check() {
 #[test]
 fn invalid_check_signatures_keep_the_original_conflict_and_contract_context() {
     for expression in ["fn(value) {True}", "fn(value) {Ok(value)}", "fn(value) {Err(\"bad\")}", "fn(value) {None}"] {
-        let source = format!("@check({expression}) type Checked = struct(Int); export def independent = 42;");
+        let source = format!("@check({expression}) type Checked = struct(Int); export def independent: Int = 42;");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         let diagnostics = mir.diagnostics.iter().filter(|d| d.message.starts_with("invalid @check function:")).collect::<Vec<_>>();
@@ -35,7 +35,7 @@ fn invalid_check_signatures_keep_the_original_conflict_and_contract_context() {
         assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
         assert!(mir.seal().is_err());
     }
-    let mut mir = graph(&[("@src/main", "@check(missing) type Checked = struct(Int); export def independent = 42;")]);
+    let mut mir = graph(&[("@src/main", "@check(missing) type Checked = struct(Int); export def independent: Int = 42;")]);
     let count = mir.diagnostics.len();
     resolve(&mut mir);
     assert_eq!(mir.diagnostics.len(), count);
@@ -47,9 +47,9 @@ fn invalid_check_signatures_keep_the_original_conflict_and_contract_context() {
 fn decorators_on_aliases_are_diagnosed_and_cannot_be_silently_dropped() {
     for declaration in ["type Prop = Int;", "type Base = struct {value: Int}; @property(PropertyTarget.Type) type Prop = Base;"] {
         let source = if declaration.starts_with("type Prop") {
-            format!("@property(PropertyTarget.Type) {declaration} export def independent = 42;")
+            format!("@property(PropertyTarget.Type) {declaration} export def independent: Int = 42;")
         } else {
-            format!("{declaration} export def independent = 42;")
+            format!("{declaration} export def independent: Int = 42;")
         };
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);

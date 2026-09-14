@@ -67,7 +67,7 @@ fn finite_graph_larger_than_the_old_instance_cap_seals() {
         .join("../../tests/language/src/check/instance-convergence/large-template.telora")).unwrap();
     // Deterministic source generation avoids checking in thousands of copies.
     for index in 0..4100 {
-        writeln!(source, "type Item{index} = struct {{}}; def instance{index} = identity@[Item{index}];").unwrap();
+        writeln!(source, "type Item{index} = struct {{}}; def instance{index}: Fn(Item{index}) -> Item{index} = identity@[Item{index}];").unwrap();
     }
     let mut mir = graph(&[("@src/main", &source)]);
     resolve(&mut mir);

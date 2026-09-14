@@ -55,14 +55,14 @@ fn sealed_full_build_is_independent_of_inventory_enumeration_order() {
     let main = "import \"./math\" { identity }; \
                 import \"./math\" { choose }; \
                 import \"std/array\" { map, fold }; \
-                def selected = choose@[Int, _]; \
-                def seed = selected(0, \"seed\"); \
-                def other = selected(0, True); \
+                def selected: for(B) Fn(Int, B) -> Int = choose@[Int, _]; \
+                def seed: Int = selected(0, \"seed\"); \
+                def other: Int = selected(0, True); \
                 @property(PropertyTarget.Type) type Mark = struct { value: Int }; \
                 def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: seed} }; \
                 @mark \
                 type Tree = enum { Leaf(Int), Branch((Tree, Tree)) }; \
-                export def answer = fold(map([1, 2, 3], fn(x) { identity(x * 7) }), seed + other, fn(a, b) { a + b });";
+                export def answer: Int = fold(map([1, 2, 3], fn(x) { identity(x * 7) }), seed + other, fn(a, b) { a + b });";
     let math = "export def identity: for(T) Fn(T) -> T = fn(x) { x }; \
                 export def choose: for(A, B) Fn(A, B) -> A = fn(a, b) { a };";
     let baseline = graph_order(main, math, 0);

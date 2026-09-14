@@ -4,7 +4,7 @@ use super::*;
 fn native_value_shapes_are_diagnosed_before_codegen_and_enforced_by_seal() {
     let mut mir = graph(&[(
         "@src/main",
-        "native value: Int; export { value }; export def independent = 42;",
+        "native value: Int; export { value }; export def independent: Int = 42;",
     )]);
     resolve(&mut mir);
     assert!(
@@ -29,7 +29,7 @@ fn conflicts_render_both_type_shapes_before_poisoning_the_slots() {
         r#"
         def values: Array(Int) = [1];
         export def bad: Bool = values;
-        export def independent = 42;
+        export def independent: Int = 42;
     "#,
     )]);
     resolve(&mut mir);
@@ -99,7 +99,7 @@ fn call_arity_diagnostics_use_the_solved_signature() {
             "call expects 0 arguments, found 1",
         ),
     ] {
-        let source = format!("{source} export def independent = 42;");
+        let source = format!("{source} export def independent: Int = 42;");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         assert!(
@@ -125,7 +125,7 @@ fn list_type_constructors_reject_variadic_and_non_list_arguments() {
         ("Func([Int])", "expected 2 arguments, got 1"),
         ("Func([Int], String, Bool)", "expected 2 arguments, got 3"),
     ] {
-        let source = format!("type Invalid = {expression}; export def independent = 42;");
+        let source = format!("type Invalid = {expression}; export def independent: Int = 42;");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         assert!(

@@ -6,7 +6,7 @@ fn non_callable_diagnostics_render_existing_type_evidence() {
         ("1", "Int"), ("\"text\"", "String"), ("[1]", "Array<Int>"),
         ("{item: 1}", "{item: Int}"), ("Int", "TypeOf(Int)"),
     ] {
-        let source = format!("export def bad = {{ let value = {value}; value(2) }}; export def independent = 42;");
+        let source = format!("export def bad = {{ let value = {value}; value(2) }}; export def independent: Int = 42;");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         let message = format!("cannot call value of type {expected}");
@@ -23,7 +23,7 @@ fn function_value_aliases_do_not_become_enum_pattern_constructors() {
         "import Event.{Progress}; def make: Fn(Int) -> Event = Progress;",
         "def first = Event.Progress; def make = first;",
     ] {
-        let source = format!("type Event = enum {{Progress(Int), Finished}}; {setup} export def invalid = match Event.Progress(1) {{make(value) => value, _ => 0}}; export def independent = 42;");
+        let source = format!("type Event = enum {{Progress(Int), Finished}}; {setup} export def invalid = match Event.Progress(1) {{make(value) => value, _ => 0}}; export def independent: Int = 42;");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         assert!(mir.diagnostics.iter().any(|d| d.message.contains("constructor pattern requires a type declaration")), "{}", mir.dump());
@@ -80,8 +80,8 @@ fn principal_schemes_preserve_quantified_bounds() {
 #[test]
 fn recursive_family_growth_is_a_static_conflict_but_permutations_and_resets_close() {
     for source in [
-        "type Grow(A) = struct {next: Grow(Array(A))}; export {Grow}; export def independent = 42;",
-        "type Left(A) = struct {next: Right(Array(A))}; type Right(B) = struct {next: Left(B)}; export {Left}; export def independent = 42;",
+        "type Grow(A) = struct {next: Grow(Array(A))}; export {Grow}; export def independent: Int = 42;",
+        "type Left(A) = struct {next: Right(Array(A))}; type Right(B) = struct {next: Left(B)}; export {Left}; export def independent: Int = 42;",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -449,7 +449,7 @@ fn generic_instance_closure_reports_all_unsolved_arguments() {
         ("def phantom: for(A, B, C) Fn() -> Int = fn() {42};", "phantom@[Int, _, _]()", vec!["B", "C"]),
         ("def accept: for(A, B) Fn(A) -> Int = fn(value) {42};", "accept@[String, _](1)", vec!["B"]),
     ] {
-        let source = format!("{declaration} export def bad = {call}; export def independent = 42;");
+        let source = format!("{declaration} export def bad = {call}; export def independent: Int = 42;");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         let messages = mir.diagnostics.iter().filter(|d| d.message.starts_with("unknown generic argument"))

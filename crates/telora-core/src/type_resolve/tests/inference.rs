@@ -7,14 +7,14 @@ fn explicit_type_application_reports_contract_arity_and_inherits_resolution_fail
         ("def identity: for(T) Fn(T) -> T = fn(value) {value};", "identity@[Int, String](1)", "expects 1 arguments, found 2"),
         ("def pair: for(A, B) Fn(A, B) -> A = fn(left, right) {left};", "pair@[Int](1, 2)", "expects 2 arguments, found 1"),
     ] {
-        let source = format!("{declaration} export def bad = {application}; export def independent = 42;");
+        let source = format!("{declaration} export def bad: Int = {application}; export def independent: Int = 42;");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         assert!(mir.diagnostics.iter().any(|d| d.message.contains(expected)), "{}", mir.dump());
         assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
         assert!(mir.seal().is_err());
     }
-    let mut mir = graph(&[("@src/main", "export def bad = missing@[Int](1); export def independent = 42;")]);
+    let mut mir = graph(&[("@src/main", "export def bad: Int = missing@[Int](1); export def independent: Int = 42;")]);
     resolve(&mut mir);
     assert_eq!(mir.diagnostics.len(), 1, "{}", mir.dump());
     assert!(mir.diagnostics[0].message.contains("unknown binding"));
@@ -28,10 +28,12 @@ fn explicit_type_application_reports_contract_arity_and_inherits_resolution_fail
 #[test]
 fn bottom_tails_wait_for_explicit_return_evidence_from_generalized_constructors() {
     let mut mir = graph(&[("@src/main", r#"
-        export def choose = fn(flag) {
+        export def answer: Bool = do {
+        def choose = fn(flag) {
             if flag { return Ok("hi"); } else { return Err(2); }
         };
-        export def answer = choose(True) == Ok("hi") && choose(False) == Err(2);
+        choose(True) == Ok("hi") && choose(False) == Err(2)
+        };
     "#)]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
@@ -46,7 +48,7 @@ fn bottom_tails_wait_for_explicit_return_evidence_from_generalized_constructors(
 #[test]
 fn let_else_checks_divergence_without_overwriting_the_inferred_branch_type() {
     for branch in ["0", "()", "if flag { 0 } else { fail!(\"stop\") }"] {
-        let source = format!("export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }}; export def independent = 42;");
+        let source = format!("export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }}; export def independent: Int = 42;");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         assert!(mir.diagnostics.iter().any(|diagnostic| diagnostic.message == "let else branch must have type Never"), "{}", mir.dump());
@@ -76,7 +78,7 @@ fn nonreturning_array_items_supply_bottom_only_after_live_element_evidence() {
         ("if True { [stop()] } else { [1] }", TypeConstructor::Int),
         ("if True { [1] } else { [stop()] }", TypeConstructor::Int),
     ] {
-        let source = format!("def stop: Fn() -> Never = fn() {{ fail!(\"stop\") }}; export def answer = {expression};");
+        let source = format!("def stop: Fn() -> Never = fn() {{ fail!(\"stop\") }}; export def checked: Bool = do {{ let answer = {expression}; True }};");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
@@ -92,7 +94,7 @@ fn nonreturning_array_items_supply_bottom_only_after_live_element_evidence() {
 
 #[test]
 fn propagation_keeps_never_tail_error_evidence_and_infers_operand_from_return_context() {
-    let mut mir = graph(&[("@src/main", "export def stopped = fn(value: Result(Int, String)) { value?; fail!(\"tail\") }; export def contextual = fn(value) -> Option(Int) { Some(value? + 1) };")]);
+    let mut mir = graph(&[("@src/main", "export def checked: Bool = do { def stopped = fn(value: Result(Int, String)) { value?; fail!(\"tail\") }; def contextual = fn(value) -> Option(Int) { Some(value? + 1) }; True };")]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
     let TypeState::Known(stopped) = symbol_type(&mir, "stopped") else { panic!("closed function") };
@@ -108,7 +110,7 @@ fn propagation_keeps_never_tail_error_evidence_and_infers_operand_from_return_co
 #[test]
 fn branch_completion_does_not_unify_candidate_and_checked_identity() {
     for expression in ["if True { candidate } else { good }", "match True { True => good, False => candidate }"] {
-        let source = format!("type Point = struct {{x: Int}}; def candidate: Unchecked(Point) = {{x: 0}}; def good: Point = {{x: 42}}; export def answer = {expression};");
+        let source = format!("type Point = struct {{x: Int}}; def candidate: Unchecked(Point) = {{x: 0}}; def good: Point = {{x: 42}}; export def checked: Bool = do {{ let answer = {expression}; True }};");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
@@ -126,9 +128,9 @@ fn solves_function_calls_across_modules_in_one_arena() {
     let mut mir = graph(&[
         (
             "@src/main",
-            "import \"./math\" { inc }; export def answer = inc(41); export def pair = (answer, 2);",
+            "import \"./math\" { inc }; export def answer: Int = inc(41); export def pair: (Int, Int) = (answer, 2);",
         ),
-        ("@src/math", "export def inc = fn(x) { x + 1 };"),
+        ("@src/math", "export def inc: Fn(Int) -> Int = fn(x) { x + 1 };"),
     ]);
     let hir = mir.hir.as_ptr();
     let references = mir.resolve_slots.clone();
@@ -187,8 +189,8 @@ fn solves_match_boolean_and_never_branches() {
                 Choice.Missing => fail!("missing"),
             }
         };
-        export def answer = read(Choice.Number(3));
-        export def projection = (1, "ok").0;
+        export def answer: Int = read(Choice.Number(3));
+        export def projection: Int = (1, "ok").0;
     "#,
     )]);
     resolve(&mut mir);
@@ -244,7 +246,7 @@ fn data_contract_resolves_the_exported_value_type_without_reading_data() {
     let mut mir = graph(&[
         (
             "@src/main",
-            "import \"./payload.json\" { data }; export def answer = data;",
+            "import \"./payload.json\" { data }; import \"std/value\" {Value}; export def answer: Value = data;",
         ),
         ("@src/payload.json", "THIS IS NOT JSON OR TELORA"),
         ("std/value", "export type Value = Int;"),

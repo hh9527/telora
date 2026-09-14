@@ -162,8 +162,8 @@ mod tests {
             import "std/test" as testing;
             type Test = struct {value: Int};
             export def imitation: Test = {value: 1};
-            export def factory = fn() { testing.should_ok(fn() { 42 }) };
-            export def z_case = testing.should_fail(fn() { fail!("deferred thunk") });
+            export def factory: Fn() -> testing.Test = fn() { testing.should_ok(fn() { 42 }) };
+            export def z_case: testing.Test = testing.should_fail(fn() { fail!("deferred thunk") });
             export def a_case: testing.Test = fail!("must not initialize while planning");
         "#,
             "",
@@ -196,7 +196,7 @@ mod tests {
     fn reexports_keep_their_resolved_target() {
         let mir = crate::test_graph::graph(
             r#"import "./math" {forwarded}; export {forwarded};"#,
-            r#"import "std/test" as testing; export def forwarded = testing.should_ok(fn() {42});"#,
+            r#"import "std/test" as testing; export def forwarded: testing.Test = testing.should_ok(fn() {42});"#,
         );
         assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
         let ModuleTarget::Bound(module) = mir.roots[0] else {
@@ -214,8 +214,8 @@ mod tests {
         let mir = crate::test_graph::graph(
             r#"
             import "std/test" as testing;
-            export def factory = fn() { testing.should_ok(fn() { 42 }) };
-            export def ordinary = 42;
+            export def factory: Fn() -> testing.Test = fn() { testing.should_ok(fn() { 42 }) };
+            export def ordinary: Int = 42;
         "#,
             "",
         );

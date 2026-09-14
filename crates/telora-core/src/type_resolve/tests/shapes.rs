@@ -37,8 +37,8 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
 #[test]
 fn static_type_uses_reject_value_metadata_and_ordinary_function_results() {
     for source in [
-        "def metadata: TypeOf(Int) = Int.type; type Invalid = metadata; export def independent = 42;",
-        "def choose: for(A) Fn(A) -> A = fn(value) {value}; type Invalid = choose(Int); export def independent = 42;",
+        "def metadata: TypeOf(Int) = Int.type; type Invalid = metadata; export def independent: Int = 42;",
+        "def choose: for(A) Fn(A) -> A = fn(value) {value}; type Invalid = choose(Int); export def independent: Int = 42;",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -47,7 +47,7 @@ fn static_type_uses_reject_value_metadata_and_ordinary_function_results() {
         assert!(mir.seal().is_err());
     }
     let mut mir = graph(&[
-        ("@src/main", "import \"@src/types\" {metadata}; type Invalid = metadata; export def independent = 42;"),
+        ("@src/main", "import \"@src/types\" {metadata}; type Invalid = metadata; export def independent: Int = 42;"),
         ("@src/types", "export def metadata: TypeOf(Int) = Int.type;"),
     ]);
     resolve(&mut mir);
