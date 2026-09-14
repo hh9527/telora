@@ -28,7 +28,7 @@ pub(super) struct Fixtures<'a, 'b> {
     pub context: &'a mut TestContext<'b>,
     pub limits: DataLimits,
     pub sources: &'a mut SourceDatabase,
-    pub retained: usize,
+    pub admitted_bytes: usize,
 }
 
 impl Fixtures<'_, '_> {
@@ -67,9 +67,9 @@ impl Fixtures<'_, '_> {
         if text.len() > self.limits.file_size {
             return Err(error("fixture file size limit exceeded".into()));
         }
-        self.retained = self.retained.saturating_add(text.len());
-        if self.retained > self.context.limits.fixture_bytes {
-            return Err(error("aggregate fixture budget exceeded".into()));
+        self.admitted_bytes = self.admitted_bytes.saturating_add(text.len());
+        if self.admitted_bytes > self.context.limits.fixture_bytes {
+            return Err(error("cumulative fixture input limit exceeded".into()));
         }
         let name = format!(
             "@test-ctx/{}/{}/{}",
@@ -88,11 +88,7 @@ impl Fixtures<'_, '_> {
             SystemDataFormat::Toml => data_plan::Format::Toml,
         };
         let plan = data_plan::parse_registered(self.sources, id, format)?;
-        let bytes = data_plan::storage_estimate(&plan, self.limits, text.len()).map_err(error)?;
-        self.retained = self.retained.saturating_add(bytes);
-        if self.retained > self.context.limits.fixture_bytes {
-            return Err(error("aggregate fixture budget exceeded".into()));
-        }
+        data_plan::enforce_limits(&plan, self.limits, text.len()).map_err(error)?;
         Ok(plan)
     }
 }

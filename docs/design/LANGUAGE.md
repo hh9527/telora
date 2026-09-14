@@ -106,7 +106,7 @@ property-constrained blanket impl 由此为 `Endpoint` 提供 `Display` evidence
 由常量 String 与字段名 Array 组成。property interpreter
 在发布阶段解析模板、验证字段、把字段名解析为 canonical index，并捕获字段的 Display
 closure。运行期路径只按固定 index 投影并调用已捕获 closure。codec 的 text bridge 通过
-VM continuation 调用同一个 closure，共用当前 quota account；失败的公开 rule 保持调用者
+VM continuation 调用同一个 closure，共用当前 session 的执行边界；失败的公开 rule 保持调用者
 位置，data-src 保持 closure 输入的数据来源。它直接支持
 String、Int、Float 以及嵌套的 `DisplayBy` struct；它不动态调用字段类型上的任意
 显式 `Display` impl。
@@ -1305,7 +1305,7 @@ value.dbg!("message")
 
 观察使用有界、确定、cycle-safe 的 debug formatter，直接读取 VM 值图。
 其表示独立于 JSON serialization contract。Host sink、格式化、截断或输出
-失败不能改变 Telora 的值、失败、诊断、控制流、fuel、stack 或 allocation account。
+失败不能改变 Telora 的值、失败、诊断、控制流或执行终止边界。
 Float 的 debug 表示与 Rust `f64` 的 `{:?}` 一致且不受 locale 影响；它与 Display
 表示有意区分，例如 `3.0` 和 `-0.0` 的 debug 表示分别保留为 `3.0` 和 `-0.0`。
 
@@ -1427,28 +1427,22 @@ family，不引入隐式反射或新的表面语法。
 
 ### 10.2 Fuel 和配额
 
-Fuel 在函数调用及实际执行的 control-flow back edge 等动态扩展点扣减。直线指令和
-未采取的 back edge 不消耗同类进度 fuel。Fuel 是确定的终止边界，不代表 CPU 时间。
+资源边界的目的，是让持续循环、持续分配或无法取得进展的执行能够被终止，
+不是精确核算成本或严格约束实际资源占用。阈值可以宽松，不构成 CPU 时间、
+进程 RSS 或跨版本可消费操作数量的承诺。
 
 Fuel 用于对抗执行能否收敛的不确定性，而不是对执行成本精确计费。这是既有的
 求值语义（RFC 0010）：不要求逐指令、逐元素或逐字节核算，也不要求按 native
 算法的内部操作次数扣减。指令融合、数据复制方式或库内部实现的变化，不应成为
 重新定义 fuel 计费规则的理由。
 
-Native function 自身必须终止，并遵守输入规模与结构限制；重新进入 Telora 的
-callback 按正常调用扣减 fuel。昂贵的 native 操作可以有专门的工作量限制，但
-fuel 不是墙钟超时，也不能单独保证任意 native 调用及时返回。
+当前直接使用 Wasm 引擎的 fuel、内存增长和调用栈限制，不另建 Telora 操作、
+逻辑分配或跨边界调用的统一 account。编译到 Wasm 的 Rust RT 与语言代码同受
+引擎限制，超限终止会话，不能作为可恢复语言失败被吞掉。
 
-独立配额限制：
-
-- 逻辑分配量；
-- VM stack slot；
-- 调用深度；
-- 输出和递归格式化深度；
-- module 与整个 session 的工作量。
-
-Native function 和 Telora callback 共享调用 session 的 account，不能通过跨 native
-边界绕过预算。配额耗尽产生带来源的结构化失败。
+Host 的解析、fixture 展开和外部 IO 不由 Wasm fuel 覆盖，仍需简单的输入规模、
+结构深度、有限展开或超时/取消边界。fuel 不是墙钟超时，不能让任意 Host 调用
+自动及时返回。验收验证持续循环与持续分配能被拦住，不验证精确扣费次数。
 
 ### 10.3 确定性
 
@@ -1766,7 +1760,7 @@ graph 解引用、TOML table 组装所需的索引，进入必要的 side table�
 不会包含递归 Owned payload graph，也不会分配运行时对象；目标 Heap materializer 在
 验证和结构限制预检全部成功后单次消费它。
 
-数据源不消耗也不依赖 VM 的 fuel、stack 或 allocation quota。Host 在完整分配 source
+数据源不消耗也不依赖引擎的执行 fuel 或内存增长上限。Host 在完整分配 source
 字符串前以有界读取检查原始 `file_size`；验证计划随后独立检查 `nodes`（YAML alias/merge
 按最终每次出现计数）、`depth`（根为 1）、单个 `container_size`、单个 `bytes_len`、单个
 UTF-8 `string_len`，以及所有 String、对象键、时间字符串和 Bytes 解码后长度之和
@@ -1785,8 +1779,8 @@ EES 调用。terminal、reducer 失败、协议失败或 Host 失败时，Host �
 编码 Telora 值。Entry 可以用自己的 `MainType`、codec 和 formatter 生成任意多个
 String chunk。CLI 在 terminal effect 前缓冲它们；协议失败不暴露部分输出。
 `Exit(Int)` 是 terminal effect，必须位于 effects 尾部。没有内部 Wake 或任意 turn
-上限；无队列事件且无活动 EES 调用时判定无进展。每次 reducer 调用仍受普通 VM quota
-约束。
+上限；无队列事件且无活动 EES 调用时判定无进展。所有 reducer 调用共同受 session
+的引擎终止边界约束，不重新建立逐事件计账。
 
 `check`、`test`、`query` 和 `lsp` 当前仍是 Host 固定命令路径，尚未通过 run Entry ABI。它们
 把目标当作 module。`check` 给出严格 module load/compile verdict，但不等价于一次
@@ -1981,7 +1975,7 @@ alias 绑定后，只在该 alias 初始化时实例化一次；需要在多个�
 2. 对不可变小型值模型的普通函数计算；
 3. 由同一 VM 求值并由类型检查器解释的 TypeMetadata；
 4. 明确受限的 `Dyn`、诊断和 Host bridge；
-5. 由资源 account 包围、成功后原子发布的一次执行；
+5. 具有执行终止边界、成功后原子发布的一次执行；
 6. 最终仍需 Host 赋予意义的普通输出值。
 
 Telora 的核心承诺不是“所有错误都能静态发现”，也不是“所有程序都会终止”。它的

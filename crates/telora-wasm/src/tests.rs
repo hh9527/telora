@@ -20,6 +20,28 @@ mod test_descriptions;
 mod services;
 
 #[test]
+fn engine_stops_unbounded_loops_and_allocation() {
+    for (source, fuel, reason) in [
+        (include_str!("../tests/fixtures/unbounded-loop.telora"), 1_000_000, "fuel"),
+        (include_str!("../tests/fixtures/unbounded-allocation.telora"), 100_000_000, "growth"),
+    ] {
+        let bytes = compile(source).unwrap();
+        let mut session = crate::session::Session::load(&bytes, fuel).unwrap();
+        session.initialize().unwrap();
+        if reason == "growth" {
+            // Exercise the same engine limiter with a smaller bound so the test
+            // does not need to allocate the production limit of 1 GiB.
+            let bound = session.memory.data(&session.store).len() + 1024 * 1024;
+            *session.store.data_mut() = wasmi::StoreLimitsBuilder::new()
+                .memory_size(bound).trap_on_grow_failure(true).build();
+        }
+        let error = session.call(&[]).unwrap_err();
+        assert!(error.contains(reason), "{error}");
+        assert!(session.diagnostics().unwrap().is_empty());
+    }
+}
+
+#[test]
 fn host_source_index_uses_utf8_byte_columns_without_span_tables() {
     for text in ["", "ascii\nlast\n", "中文🙂x\r\n下一行\n", "a\rb"] {
         let mut database = telora_core::SourceDatabase::default();

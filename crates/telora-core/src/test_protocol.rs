@@ -1,12 +1,13 @@
-//! Deferred test value protocol shared by native constructors and VM consumers.
+//! Deferred test value protocol shared by the Wasm runtime and fixture Host.
 use crate::SystemDataFormat;
 use std::path::Path;
 
-/// Finite bounds on deferred expansion and host-retained fixture data.
+/// Coarse stopping bounds on deferred expansion and cumulative fixture input.
 #[derive(Clone, Copy, Debug)]
 pub struct TestLimits {
     pub cases: usize,
     pub depth: usize,
+    /// Cumulative source bytes admitted, not a measurement of heap allocation.
     pub fixture_bytes: usize,
 }
 

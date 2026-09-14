@@ -1,9 +1,14 @@
 //! Thin execution host: Wasm owns language operations, values, and initialization.
 use crate::{abi, artifact::Manifest};
 
+// Generous execution boundaries, not an allocation accounting model. The engine
+// refuses growth before allocating; its ordinary stack limits remain in force.
+const MEMORY_BOUND: usize = 1024 * 1024 * 1024;
+const TABLE_BOUND: usize = 1_000_000;
+
 pub struct Session {
     pub manifest: Manifest,
-    pub(crate) store: wasmi::Store<()>,
+    pub(crate) store: wasmi::Store<wasmi::StoreLimits>,
     pub(crate) instance: wasmi::Instance,
     pub(crate) memory: wasmi::Memory,
     pub(crate) registered_sources: usize,
@@ -20,7 +25,13 @@ impl Session {
         config.consume_fuel(true);
         let engine = wasmi::Engine::new(&config);
         let module = wasmi::Module::new(&engine, bytes).map_err(|e| e.to_string())?;
-        let mut store = wasmi::Store::new(&engine, ());
+        let limits = wasmi::StoreLimitsBuilder::new()
+            .memory_size(MEMORY_BOUND)
+            .table_elements(TABLE_BOUND)
+            .trap_on_grow_failure(true)
+            .build();
+        let mut store = wasmi::Store::new(&engine, limits);
+        store.limiter(|limits| limits);
         store.set_fuel(fuel).map_err(|e| e.to_string())?;
         let instance = wasmi::Linker::new(&engine)
             .instantiate_and_start(&mut store, &module)

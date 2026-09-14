@@ -30,8 +30,8 @@ fn compile(executable: &SealedExecutable<'_>) -> Result<telora_wasm::session::Se
         telora_wasm::compile_executable(executable)?
     };
     let _timer = PhaseTimer::new("engine_load");
-    // Wasmi counts low-level instructions, including linked Rust library work.
-    // This coarse conversion bounds runaway execution, not equivalent billing.
+    // Use the engine's stopping boundary, including linked Rust library work.
+    // No conversion to Telora operations or allocation costs is required.
     telora_wasm::session::Session::load(
         &bytes,
         crate::execution_config().fuel,

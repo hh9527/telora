@@ -68,7 +68,7 @@ pub(crate) fn run(
         context: &mut context,
         limits,
         sources,
-        retained: 0,
+        admitted_bytes: 0,
     };
     let mut expanded = 0;
     while !pending.is_empty() {
@@ -202,7 +202,7 @@ pub(crate) fn run(
                 child.sources.push(label.clone());
                 child.phase = "fixture";
                 let plan = fixtures.prepare(&plan.module_name, &child, label, origin, &mut cache);
-                if fixtures.retained > fixtures.context.limits.fixture_bytes {
+                if fixtures.admitted_bytes > fixtures.context.limits.fixture_bytes {
                     child.diagnostics.extend(plan.err().unwrap_or_default());
                     report.cases.push(child);
                     report.aborted = true;
