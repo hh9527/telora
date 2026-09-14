@@ -4,10 +4,10 @@ import "std/value" {Value};
 type Item = struct {value: Int};
 def append: for(T) Fn((T, String)) -> (T, String, Int) = fn(value) { (...value, 3) };
 def append_array: for(T) Fn(Array(T), T) -> Array(T) = fn(values, value) { [...values, value] };
-def base = (1, "text");
+def base: (Int, String) = (1, "text");
 def shared: Item = {value: 42};
 def items: Array(Item) = [shared];
-export def answer = fn() {
+export def answer: Fn() -> ((Int, String, Int), (), ((Int, Int), Int), (Int, String, Int), Array(Int), Array(Int), Array(Int), Array(Array(Int)), Array(Item), Array(Item), Array(Int), (Int, Item, String), Int, Int) = fn() {
     let empty = [];
     let nominal: (Int, Item, String) = (...(1, {value: 2}), "hi");
     let metadata: (Type, Int) = (...(Int.type,), 42);
@@ -18,7 +18,7 @@ export def answer = fn() {
      nominal, metadata.1, array.length(types))
 };
 
-export def value = do {
+export def value: Value = do {
     let result = answer();
     Value.Object({
         numbers: Value.Array(array.map(result.6, fn(x) { Value.Int(x) })),

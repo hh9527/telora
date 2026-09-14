@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn materialized_template_value_is_not_generalized_at_each_use() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let source = std::fs::read_to_string(directory.join("template-value-binding.telora")).unwrap();
+    let library = std::fs::read_to_string(directory.join("template-library.telora")).unwrap();
+    let mut mir = graph(&[("@src/main", &source), ("@src/library", &library)]);
+    resolve(&mut mir);
+    assert!(!mir.type_conflicts.is_empty(), "a function value cannot select different type arguments at each call: {}", mir.dump());
+    let valid = mir.symbols.iter().find(|symbol| symbol.name == "valid").unwrap();
+    assert!(valid.declarations.iter().all(|declaration| mir.type_conflicts_in(*declaration).is_empty()), "{:?}", mir.diagnostics);
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn template_references_instantiate_independently_and_share_only_closed_instances() {
     let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/template-materialization.telora")).unwrap();

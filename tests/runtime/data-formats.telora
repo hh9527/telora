@@ -7,7 +7,7 @@ def read: Fn(Result(Value, BlameError)) -> Value = fn(result) {
     match result { Ok(value) => value, Err(error) => raise!(error) }
 };
 
-export def answer = json.stringify(Value.Array([
+export def answer: String = json.stringify(Value.Array([
     read(json.parse(r#"{"z": [1, true, null], "a": "文本"}"#)),
     read(yaml.parse("a: &shared [1, 2]\nb: *shared\n")),
     read(toml.parse("count = 42\nname = \"sample\"\n")),

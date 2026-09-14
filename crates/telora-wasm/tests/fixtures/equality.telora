@@ -14,7 +14,7 @@ def tree: Fn(Int) -> Tree = fn(n) {
     if n == 0 { Tree.Leaf(42) } else { Tree.Branch([tree(n - 1)]) }
 };
 
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     let item: Item = {value: 42, names: ["a", "very long string retained in the heap"]};
     let values: Dict(Item) = {a: item};
     let a = fresh();
@@ -49,4 +49,4 @@ export def checks = fn() {
     ]
 };
 
-export def answer = Value.Array(array.map(checks(), fn(value) { if value {Value.True} else {Value.False} }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value {Value.True} else {Value.False} }));

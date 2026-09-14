@@ -31,11 +31,12 @@ impl Solver<'_> {
             let declaration = symbol.declarations[0];
             if self.child(declaration, Role::Annotation).is_some() { continue; }
             let Some(value) = self.child(declaration, Role::Value) else { continue; };
-            // Constructor imports lower to ordinary member-valued bindings.
-            // These non-expansive aliases need the same independent use-site
-            // instances as closure literals; sharing their holes makes the
-            // first call monomorphize every later use.
-            if !self.non_expansive(value) { continue; }
+            // Imports preserve declaration identity. Ordinary value aliases
+            // materialize once and must not regain polymorphism at each use.
+            let imported = matches!(self.mir.hir[declaration.index()].kind,
+                HirKind::Binding { imported: Some(_), .. });
+            if !matches!(self.mir.hir[value.index()].kind, HirKind::Closure)
+                && !(imported && self.non_expansive(value)) { continue; }
             let mut nodes = vec![];
             let mut pending = vec![value];
             while let Some(node) = pending.pop() {

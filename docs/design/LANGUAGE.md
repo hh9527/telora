@@ -614,8 +614,13 @@ fact；定义是否合法以严格检查的结果为准。
 
 未标注、由 closure 字面量初始化的合格局部 binding 可以得到保守 rank-1 scheme。
 Generalization 保留尚未解决的 callable 和数值 obligation；递归组、不稳定约束以及
-普通 alias 不会被无条件泛化。跨模块导出的 scheme 会在每个合法使用点重新实例化，
-且其私有 bound identity 不泄漏到导入方。
+普通值 alias 不会产生新的隐式 scheme。跨模块导出的模板声明在每个值域引用处独立
+实例化，且其私有 bound identity 不泄漏到导入方。
+
+局部 `let foo = foo;` 的右侧若引用模板声明，只产生一次实例化；左侧绑定的是函数值。
+后续作用域中的 foo 引用共享该实例，可以继续为其补齐类型实参，但不能各自选择不同
+实例。所有实参必须在可执行 MIR seal 前闭合。真正的 import/reexport 传递声明身份，
+不等同于普通值 alias。
 
 ### 6.4 静态 Trait 与约束
 

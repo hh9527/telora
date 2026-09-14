@@ -1,6 +1,6 @@
 def identity: for(T) Fn(T) -> T = fn(value) { value };
 def wrap: for(T) Fn(T) -> Array(T) = fn(value) { [identity(value)] };
-export def answer = (
+export def answer: (Int, String, Array(Int)) = (
     identity(42),
     identity@[String]("native generic text"),
     wrap(7),

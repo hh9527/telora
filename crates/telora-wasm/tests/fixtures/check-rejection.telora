@@ -7,5 +7,5 @@
 })
 type Positive = struct {number: Int};
 
-def number = -7;
-export def answer = do { let value: Positive = {number}; value.number };
+def number: Int = -7;
+export def answer: Int = do { let value: Positive = {number}; value.number };

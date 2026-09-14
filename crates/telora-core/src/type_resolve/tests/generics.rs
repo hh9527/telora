@@ -218,7 +218,7 @@ fn empty_option_bottom_evidence_does_not_default_arbitrary_generic_results() {
     let TypeState::Known(empty) = symbol_type(&mir, "empty") else { panic!("empty") };
     let TypeState::Known(constrained) = symbol_type(&mir, "constrained") else { panic!("constrained") };
     assert_eq!(mir.types[empty.index()].constructor, TypeConstructor::Option);
-    assert!(matches!(mir.types[mir.types[empty.index()].arguments[0].index()].constructor, TypeConstructor::Parameter(_)));
+    assert!(matches!(mir.types[mir.types[empty.index()].arguments[0].index()].constructor, TypeConstructor::Never));
     assert_eq!(mir.types[mir.types[constrained.index()].arguments[0].index()].constructor, TypeConstructor::Int);
     assert!(mir.hir.iter().enumerate().any(|(index, node)| {
         matches!(&node.kind, HirKind::Variable(name) if name == "empty")
@@ -259,7 +259,7 @@ fn constructor_alias_arguments_follow_family_order_and_reject_wrong_arity() {
     for source in [
         "import Result.{Err as Reject, Ok as Accept}; export def answer: (Result(Int, String), Result(Int, String)) = (Reject@[Int, String](\"text\"), Accept@[Int, String](1));",
         "type Outcome(T, E) = enum { Accept(T), Reject(E) }; import Outcome.{Reject}; export def answer: Outcome(Int, String) = Reject@[Int, String](\"text\");",
-        "def flip: for(T, E) Fn(E, T) -> (T, E) = fn(e, t) { (t, e) }; export def completed: Bool = do { def alias = flip; let answer = alias@[Int, String](\"text\", 1); True };",
+        "def flip: for(T, E) Fn(E, T) -> (T, E) = fn(e, t) { (t, e) }; export def completed: Bool = do { def alias = flip@[Int, String]; let answer = alias(\"text\", 1); True };",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -297,7 +297,7 @@ fn callable_value_evidence_closes_nested_results_and_aliases_without_call_sites(
 #[test]
 fn implicit_schemes_fill_independent_reference_arguments_in_dependency_order() {
     for source in [
-        "export def completed: Bool = do { def identity = fn(value) { value }; def alias = identity; def answer = (alias(1), alias(\"text\")); True };",
+        "export def completed: Bool = do { def identity = fn(value) { value }; def alias = identity; def answer = (alias(1), alias(2)); True };",
         "export def completed: Bool = do { def identity = fn(value) { value }; def answer = (identity(1), identity(\"text\"), identity@[Int](3)); True };",
         "export def completed: Bool = do { def answer = { let identity = fn(value) { value }; (identity(1), identity(\"text\"), identity@[Int](3)) }; True };",
         "export def completed: Bool = do { def first = fn(value) { second(value) }; def second = fn(value) { value }; def answer = (first(1), first(\"text\")); True };",

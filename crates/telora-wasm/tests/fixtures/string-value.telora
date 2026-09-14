@@ -1,7 +1,7 @@
 import "std/string" as string;
 import "std/array" as array;
 import "std/value" {Value};
-export def answer = Value.Object({
+export def answer: Value = Value.Object({
     length: Value.Int(string.length("aé🦀")),
     contains: if string.contains("aé🦀", "🦀") { Value.True } else { Value.False },
     joined: Value.String(string.join(["a", "é", "🦀"], ":")),

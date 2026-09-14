@@ -1,0 +1,11 @@
+import "@src/library" {foo};
+
+export def valid: Fn() -> Int = fn() {
+    let foo = foo;
+    foo(foo(42))
+};
+
+export def invalid: Fn() -> (Int, String) = fn() {
+    let foo = foo;
+    (foo(42), foo("different instance forbidden"))
+};

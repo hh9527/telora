@@ -19,7 +19,7 @@ def wrong: WrongCount = {x: "overwritten"};
 def before: Dict(Int) = {a: 1, b: 2};
 def after: Dict(Int) = {b: 3, c: 4};
 
-export def inspect = fn() {
+export def inspect: Fn() -> (Target, Pair, Empty, Source, Source, Source, Source, Source, Target, Named(String), Box(String), Parent, Parent, Dict(Int), Dict(Int), Dict(Int), Dict(Int), Dict(Array(Int)), Array(String)) = fn() {
     let selected: Target = source.{x, y as Y};
     let pair: Pair = source.{x as first, x as second};
     let empty: Empty = source.{};
@@ -41,7 +41,7 @@ export def inspect = fn() {
      merged, spread_only, before, contextual, wide_merged, dict.keys(wide_merged))
 };
 
-export def answer = do {
+export def answer: Value = do {
     let result = inspect();
     Value.Object({
         projected: Value.String(result.0.Y),

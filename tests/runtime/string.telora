@@ -1,7 +1,7 @@
 import "std/string" as string;
-def source = "first long line\n第二行\n";
-def lines = string.lines(source);
-export def answer = (
+def source: String = "first long line\n第二行\n";
+def lines: Array(String) = string.lines(source);
+export def answer: (String, String, Array(String), Bool, Bool, Bool, String, String, String, String, Array(String), String, String, String, String) = (
     string.join(lines, "|"),
     string.join_lines(["a", "b"]),
     string.split("你好", ""),
