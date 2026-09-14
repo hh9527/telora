@@ -5,9 +5,9 @@ import "std/value" { Value };
 type First = struct { n: Int };
 type Second = struct { n: Int };
 def first: First = { n: 42 };
-def boxed = dyn.pack(First.type, first);
+def boxed: Dyn = dyn.pack(First.type, first);
 
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     let integer = dyn.pack(Int.type, 42);
     let alias = integer;
     let other = dyn.pack(Int.type, 42);
@@ -35,4 +35,4 @@ export def checks = fn() {
      }]
 };
 
-export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

@@ -2,8 +2,8 @@ export type Foo = enum { A(Int), B };
 export Foo.{A, B};
 export Bool.{True as Yes};
 export Option.{None as Absent, Some as Present};
-export def disabled = False; # origin:disabled:False
-export def saved = Foo.B; # origin:saved:Foo.B
-export def wrap = Foo.A; # origin:wrap:Foo.A
-export def optional = Some; # origin:optional:Some
+export def disabled: Bool = False; # origin:disabled:False
+export def saved: Foo = Foo.B; # origin:saved:Foo.B
+export def wrap: Fn(Int) -> Foo = Foo.A; # origin:wrap:Foo.A
+export def optional: for(T) Fn(T) -> Option(T) = Some; # origin:optional:Some
 export def forward: for(T) Fn(T) -> T = fn(value) { value };

@@ -1,7 +1,7 @@
 import "std/string" as string;
 import "std/array" as array;
 import "std/value" { Value };
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     [string.parse(Int.type, "42") == Ok(42),
      string.parse(Int.type, "-9223372036854775808") == Ok(-9223372036854775807 - 1),
      string.parse(Int.type, "+1") == Ok(1),
@@ -16,4 +16,4 @@ export def checks = fn() {
      match string.parse(Float.type, "inf") { Err(error) => error.message == "$: input is not a finite Float", Ok(_) => False },
      match string.parse(Float.type, "1e999") { Err(error) => error.message == "$: input is not a finite Float", Ok(_) => False }]
 };
-export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

@@ -7,7 +7,7 @@ type Pair(T) = struct { a: T, b: String };
 type Chain = enum { End, More((Int, Chain)) };
 type Wrapper = struct(Int);
 
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     let integer: Type = Int.type;
     let string: Type = String.type;
     let pair_fields = td.fields(Pair(Int).type);
@@ -35,4 +35,4 @@ export def checks = fn() {
      td.opaque_name(fmt.Fmt.type) == Some("std/fmt#Fmt"), td.opaque_name(Int.type) == None,
      match td.resolve(Wrapper.type) { Ok(body) => td.kind(body) == td.TypeDescKind.Newtype && td.children(body) == [integer], Err(_) => False }]
 };
-export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

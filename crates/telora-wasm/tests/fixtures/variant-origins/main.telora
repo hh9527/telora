@@ -2,7 +2,7 @@ import "origins/model" as model;
 import "origins/reexport" { Make, Empty, Yes, Absent, Present, disabled, saved, wrap };
 import "std/array" { map };
 
-export def observe = fn() {
+export def observe: Fn() -> Int = fn() {
     let first = False; # origin:first:False
     let second = Bool.False; # origin:second:Bool.False
     let forwarded = model.forward(first);
@@ -45,7 +45,7 @@ export def observe = fn() {
     } else { fail!("variant identity depends on location") }
 };
 
-export def rejected = fn() {
+export def rejected: Fn() -> Bool = fn() {
     let a = False; # origin:rejected:False
     if !a { fail!("expect True", a) } else { a }
 };

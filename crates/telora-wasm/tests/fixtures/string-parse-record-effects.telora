@@ -9,7 +9,7 @@ def manual: Fn(Type, Option(regex.ParseBy)) -> regex.ParseBy = fn(target, previo
 type Invalid = struct { number: Int };
 @regex.parse_by(regex.compile("^(?P<label>x)?$"))
 type Maybe = struct { label: Option(String) };
-export def answer = fn() {
+export def answer: Fn() -> (Array(rt.Diagnostic), Int, String, rt.Diagnostic) = fn() {
     let rejected = rt.with_diagnostics(fn(input: String) { string.parse(Positive.type, input) })("-7");
     let success = string.parse(Positive.type, "42");
     let invalid = string.parse(Invalid.type, "a");

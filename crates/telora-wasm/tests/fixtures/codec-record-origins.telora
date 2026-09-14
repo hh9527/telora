@@ -3,7 +3,7 @@ import "std/value" { Value };
 import "std/_rt" as rt;
 type Empty = struct {};
 type Record = struct { field: Int };
-export def answer = fn() {
+export def answer: Fn() -> (Value, rt.Diagnostic) = fn() {
     let empty: Empty = {};
     let record: Record = {field: 12345};
     let encoded = codec.encode(Value.type, record);

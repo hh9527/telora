@@ -2,7 +2,7 @@ import "std/codec" {encode, Value};
 import "std/dyn" as dyn;
 import "std/_rt" as rt;
 
-def seed = dbg!(41, "initialize");
+def seed: Int = dbg!(41, "initialize");
 type Row = struct {name: String, value: Int};
 def original: Row = {name: "é🦀", value: 42};
 def callback: Fn(Int) -> Int = fn(n) { n + 1 };
@@ -18,6 +18,6 @@ export def answer: Fn() -> Value = fn() {
         match observed { Ok((value, reports)) => value == 42 && reports == [], Err(_) => False },
         match origin { Err(reports) => reports[0].message == "origin", Ok(_) => False }])
 };
-export def evaluated = answer();
+export def evaluated: Value = answer();
 export def stopped: Fn() -> Int = fn() { dbg!(fail!("stopped")) };
 export def long: Fn(String) -> Int = fn(text) { let ignored = dbg!(text); 42 };

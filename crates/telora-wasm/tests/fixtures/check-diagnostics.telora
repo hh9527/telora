@@ -10,16 +10,16 @@ type Choice = enum { @check(fn(value) {
     if value > 0 { Ok(()) } else { Err(blame!("positive variant", value)) }
 }) Item(Int), Empty };
 
-def subject = -7;
-export def rejected = fn() -> Int { let value: Positive = {number: subject}; value.number };
-export def raised = fn() -> Int { raise!(blame!("raised message", subject)) };
-export def failed = fn() -> Int { fail!("failed message", subject) };
-export def variant = fn() -> Int { let value = Choice.Item(subject); 42 };
-export def unwrapped = fn() -> Int {
+def subject: Int = -7;
+export def rejected: Fn() -> Int = fn() -> Int { let value: Positive = {number: subject}; value.number };
+export def raised: Fn() -> Int = fn() -> Int { raise!(blame!("raised message", subject)) };
+export def failed: Fn() -> Int = fn() -> Int { fail!("failed message", subject) };
+export def variant: Fn() -> Int = fn() -> Int { let value = Choice.Item(subject); 42 };
+export def unwrapped: Fn() -> Int = fn() -> Int {
     let result: Result(Int, BlameError) = Err(blame!("unwrap message", subject));
     unwrap!(result)
 };
-export def warned = fn() -> Int {
+export def warned: Fn() -> Int = fn() -> Int {
     let first: Option(Int) = warn!("string warning");
     let second: Option(Int) = warn!(blame!("blame warning", subject));
     let result: Result(Int, BlameError) = Err(blame!("result warning", subject));

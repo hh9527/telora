@@ -4,7 +4,7 @@ use super::*;
 fn private_template_primitive_uses_the_admitted_native_identity() {
     // Select the private declaration directly as a sealed test root, without
     // exposing it through std/fmt's public exports or changing module privacy.
-    let mir = graph("import \"std/fmt\" as fmt; export def answer = 0;");
+    let mir = graph("import \"std/fmt\" as fmt; export def answer: Int = 0;");
     let symbol = mir
         .symbols
         .iter()

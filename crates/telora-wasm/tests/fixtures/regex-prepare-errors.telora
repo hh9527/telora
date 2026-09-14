@@ -3,7 +3,7 @@ import "std/_rt" as rt;
 type Required = struct { x: Int };
 type Optional = struct { x: Option(Int) };
 type Unsupported = struct { x: Bool };
-export def answer = fn() {
+export def answer: Fn() -> (String, String, String, String, String) = fn() {
     let missing = rt.with_diagnostics(fn(unused: Int) { regex.parse_by(regex.compile("(?P<y>a)"))(Required.type, None) })(0);
     let optional = rt.with_diagnostics(fn(unused: Int) { regex.parse_by(regex.compile("(?P<x>a)?"))(Required.type, None) })(0);
     let required = rt.with_diagnostics(fn(unused: Int) { regex.parse_by(regex.compile("(?P<x>a)"))(Optional.type, None) })(0);

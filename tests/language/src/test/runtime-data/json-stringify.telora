@@ -1,12 +1,12 @@
 import "std/json" as json;
 import "std/value" { Value };
 import "std/dict" as dict;
-def value = Value.Object(dict.from_pairs([
+def value: Value = Value.Object(dict.from_pairs([
     ("z", Value.Object(dict.from_pairs([]))),
     ("a", Value.Array([Value.None, Value.True, Value.False, Value.Int(-7), Value.Float(1.0), Value.String("中\n\"")]))
 ]));
-def pretty = json.stringify_pretty(2);
-export def inspect = fn() {
+def pretty: Fn(Value) -> String = json.stringify_pretty(2);
+export def inspect: Fn() -> Array(String) = fn() {
     [json.stringify(value), pretty(value), json.stringify_pretty(0)(value), json.stringify(Value.Array([]))]
 };
-export def answer = Value.String(json.stringify(value));
+export def answer: Value = Value.String(json.stringify(value));

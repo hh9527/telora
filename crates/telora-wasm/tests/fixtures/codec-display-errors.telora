@@ -13,7 +13,7 @@ type Missing = struct { value: Int };
 @string.encode_by_display
 @broken_display
 type Broken = struct { value: Int };
-export def answer = fn() {
+export def answer: Fn() -> (Array(rt.Diagnostic), Array(rt.Diagnostic)) = fn() {
     let missing: Missing = {value: 1};
     let broken: Broken = {value: 2};
     (match rt.with_diagnostics(fn(value: Missing) {codec.encode(Value.type,value)})(missing) {Err(reports) => reports,Ok(_) => fail!("expected missing display")},

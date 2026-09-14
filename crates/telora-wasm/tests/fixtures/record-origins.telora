@@ -17,7 +17,7 @@ def notice: for(T) Fn(String, T) -> T = fn(message, value) {
     value
 };
 
-export def answer = fn() {
+export def answer: Fn() -> (Source, Pair, Dict(Int), rt.Diagnostic, rt.Diagnostic, rt.Diagnostic, rt.Diagnostic, rt.Diagnostic, rt.Diagnostic, Array(rt.Diagnostic), String, String) = fn() {
     let updated = notice("base", source) <~ {x: notice("discarded", "wrong"), ...notice("patch", count)};
     let pair: Pair = notice("projection receiver", source).{x as first, x as second};
     let merged: Dict(Int) = {a: notice("a", 1), ...notice("dict", original_dict), kept: notice("last", 2)};

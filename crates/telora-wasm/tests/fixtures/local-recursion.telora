@@ -1,4 +1,4 @@
-export def answer = do {
+export def answer: Int = do {
     let base = 40;
     def even = fn(n: Int) -> Int {
         if n == 0 { base + 2 } else { odd(n - 1) }

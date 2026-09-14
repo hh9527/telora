@@ -1,7 +1,8 @@
 import "std/_rt" as rt;
 
-def subject = -7;
-export def answer = fn() {
+def subject: Int = -7;
+type Captured(T) = Result((T, Array(rt.Diagnostic)), Array(rt.Diagnostic));
+export def answer: Fn() -> (Captured(Int), Captured(Int), Captured(Int), Captured(Never), Captured(Int), Int) = fn() {
     let success = rt.with_diagnostics(fn(n: Int) {
         let warning: Option(Int) = warn!("captured warning");
         n + 1
@@ -23,13 +24,13 @@ export def answer = fn() {
 };
 
 def spin: Fn(Int) -> Int = fn(n) { 1 + spin(n + 1) };
-export def exhausted = fn() {
+export def exhausted: Fn() -> Captured(Int) = fn() {
     rt.with_diagnostics(fn(n: Int) {
         let entered: Option(Int) = warn!("entered exhausted scope");
         spin(n)
     })(0)
 };
-export def uncaught = fn() {
+export def uncaught: Fn() -> Never = fn() {
     let ignored = rt.with_diagnostics(fn(n: Int) { fail!("caught first") })(0);
     fail!("uncaught afterwards")
 };

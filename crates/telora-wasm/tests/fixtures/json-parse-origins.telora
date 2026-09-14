@@ -1,9 +1,10 @@
 import "std/json" as json;
 import "std/_rt" as rt;
-def decode = fn(text: String) {
+import "std/value" {Value};
+def decode: Fn(String) -> Value = fn(text: String) {
     match json.parse(text) { Ok(value) => value, Err(error) => raise!(error) }
 };
-export def answer = fn() {
+export def answer: Fn() -> rt.Diagnostic = fn() {
     match rt.with_diagnostics(decode)("[1,]") {
         Err(reports) => reports[0],
         Ok(_) => fail!("expected parse error"),

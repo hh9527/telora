@@ -6,7 +6,7 @@ type Count = struct(Int);
 type Item = struct { label: String, values: Array(Int) };
 type Tree = enum { Empty, More((Int, Tree)) };
 
-export def answer = fn(number: Int) {
+export def answer: Fn(Int) -> Fn() -> (Bool, Bool, Bool, Bool, String, Bool, Int, Int, Int, Bool) = fn(number: Int) {
     let item: Item = {label: "a long shared string é🦀", values: [number, number + 1]};
     let alias = item;
     let dictionary: Dict(Item) = {first: item, second: alias};

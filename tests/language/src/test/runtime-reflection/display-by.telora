@@ -13,7 +13,7 @@ impl fmt.Display for Explicit {
 };
 type Plain = struct {value: Int};
 
-export def inspect = fn() {
+export def inspect: Fn() -> (String, String, String, String, Array(String), String) = fn() {
     let endpoint: Endpoint = {host: "localhost", port: 8080};
     let explicit: Explicit = {host: "localhost", port: 8080};
     let service: Service = {name: "api", endpoint, ratio: -0.0};
@@ -24,6 +24,6 @@ export def inspect = fn() {
      match property.get_type_prop(Endpoint.type, fmt.DisplayBy.type) { Some(p) => p.template.fields, None => [] },
      match property.get_type_prop(Plain.type, fmt.DisplayBy.type) { Some(_) => "unexpected", None => "absent" })
 };
-def results = inspect();
-export def answer = Value.Array([Value.String(results.0), Value.String(results.1), Value.String(results.2),
+def results: (String, String, String, String, Array(String), String) = inspect();
+export def answer: Value = Value.Array([Value.String(results.0), Value.String(results.1), Value.String(results.2),
     Value.String(results.3), Value.String(results.5)]);

@@ -3,7 +3,7 @@ def notice: for(T) Fn(String, T) -> T = fn(message, value) {
     let warning: Option(Int) = warn!(message);
     value
 };
-export def answer = fn() {
+export def answer: Fn() -> (Bool, Array(rt.Diagnostic), Array(rt.Diagnostic), String, String) = fn() {
     let unequal = notice("left", [1]) == notice("right", [2]);
     let fail_left = rt.with_diagnostics(fn(ignored: ()) {
         fail!("left failed") == notice("must not execute", [1])

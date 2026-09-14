@@ -4,7 +4,7 @@ import "std/value" { Value };
 import "std/_rt" as rt;
 @json.rename_all(json.RenameCase.CamelCase)
 type Choice = enum { A_b, AB };
-export def answer = fn() {
+export def answer: Fn() -> rt.Diagnostic = fn() {
     match rt.with_diagnostics(fn(value: Choice) { codec.encode(Value.type,value) })(Choice.A_b) {
         Err(reports) => reports[0], Ok(_) => fail!("expected collision"),
     }

@@ -1,6 +1,6 @@
 import "std/json" as json;
 import "std/value" { Value };
-export def inspect = fn() {
+export def inspect: Fn() -> (String, Bool, Bool, Bool, Bool, Bool) = fn() {
     let parsed = match json.parse("{\"z\":[],\"a\":[1,1.0,true,null,\"中\",{\"k\":false}]}") {
         Ok(value) => value,
         Err(error) => raise!(error),
@@ -12,4 +12,4 @@ export def inspect = fn() {
      match json.parse("1.0") { Ok(Value.Float(_)) => True, _ => False },
      match json.parse("1") { Ok(Value.Int(_)) => True, _ => False })
 };
-export def answer = match json.parse("{\"ok\":true}") { Ok(value) => value, Err(error) => raise!(error) };
+export def answer: Value = match json.parse("{\"ok\":true}") { Ok(value) => value, Err(error) => raise!(error) };

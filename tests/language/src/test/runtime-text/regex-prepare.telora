@@ -9,7 +9,7 @@ type Outer = struct { inner: Inner, label: Option(String) };
 type Empty = struct {};
 type Maybe = struct { x: Option(String) };
 type Many = struct { x: String };
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     let inner = property.get_type_prop(Inner.type, regex.ParseBy.type);
     let outer = property.get_type_prop(Outer.type, regex.ParseBy.type);
     let empty = regex.parse_by(regex.compile("^$"))(Empty.type, None);
@@ -19,4 +19,4 @@ export def checks = fn() {
      match outer { Some(p) => regex.is_match(p.regex, "123-label") && regex.is_match(p.regex, "123"), None => False },
      regex.is_match(empty.regex, ""), regex.is_match(alternative.regex, "b"), regex.is_match(repeated.regex, "aaa")]
 };
-export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

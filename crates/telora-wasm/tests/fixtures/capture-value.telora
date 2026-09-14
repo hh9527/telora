@@ -2,12 +2,12 @@ import "std/_rt" as rt;
 import "std/array" as array;
 import "std/value" {Value};
 
-def captured = rt.with_diagnostics(fn(n: Int) -> Int {
+def captured: Result((Int, Array(rt.Diagnostic)), Array(rt.Diagnostic)) = rt.with_diagnostics(fn(n: Int) -> Int {
     let warning: Option(Int) = warn!("before failure");
     fail!("captured failure", n)
 })(42);
 
-export def answer = match captured {
+export def answer: Value = match captured {
     Err(reports) => Value.Array(array.map(reports, fn(report) {
         Value.Object({
             message: Value.String(report.message),

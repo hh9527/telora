@@ -1,6 +1,6 @@
 import "std/codec" {encode, Value};
 import "std/dyn" as dyn;
-def seed = dbg!(41, "initialize");
+def seed: Int = dbg!(41, "initialize");
 type Row = struct {name: String, value: Int};
 def original: Row = {name: "é🦀", value: 42};
 def callback: Fn(Int) -> Int = fn(n) { n + 1 };
@@ -12,4 +12,4 @@ export def answer: Fn() -> Value = fn() {
     let other = dbg!((True, (), b"ab", [1, 2], dict, Some(3), -0.0, dyn.pack(Int.type, number)));
     encode(Value.type, [number == 42, record == original, function == callback])
 };
-export def evaluated = answer();
+export def evaluated: Value = answer();

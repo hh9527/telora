@@ -1,6 +1,6 @@
 import "std/array" as array;
 
-export def answer: (Array(String), Array(String), Array((Int, String)), Array(String), Array((String, Int)), Array((String, String)), Array((String, String))) = do {
+export def answer: (Array(String), Array(String), Array((Int, String)), Array(String), Option(Array((String, Int))), Option(Array((String, String))), Option(Array((String, String)))) = do {
     let input = ["long heap-backed array source"];
     let empty: Array(String) = [];
     (

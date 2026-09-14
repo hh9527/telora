@@ -1,4 +1,4 @@
-export def answer = do {
+export def answer: Int = do {
     let no = 1 == 2;
     let yes = 1 == 1;
     let safe = (no && (1 / 0 == 0)) || (yes || (1 / 0 == 0));

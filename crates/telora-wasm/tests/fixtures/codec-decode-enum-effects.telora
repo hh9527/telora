@@ -4,7 +4,7 @@ import "std/json" as json;
 type Tagged = enum {@check(fn(value) {let ignored:Option(Int) = warn!("tag visited"); Ok(())}) Number(Int)};
 @json.untagged
 type Untagged = enum {@check(fn(value) {let ignored:Option(Int) = warn!("untagged visited"); Ok(())}) Number(Int)};
-export def answer = fn() {
+export def answer: Fn() -> (Bool, Bool) = fn() {
     (match codec.decode(Tagged.type,Value.Object({Number:Value.Int(1)})) {Ok(_) => True,Err(_) => False},
      match codec.decode(Untagged.type,Value.Int(2)) {Ok(_) => True,Err(_) => False})
 };

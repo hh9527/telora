@@ -1,7 +1,7 @@
 type P = struct { a: Array(String) };
 type Q = struct { p: P };
 def wrap: for(T) Fn(T) -> Option(T) = fn(value) { Some(value) };
-export def answer = fn(q: Q, enabled: Bool) {
+export def answer: Fn(Q, Bool) -> Array(String) = fn(q: Q, enabled: Bool) {
     match if enabled { wrap(q) } else { None } {
         Some(value) => value.p.a,
         None => [],

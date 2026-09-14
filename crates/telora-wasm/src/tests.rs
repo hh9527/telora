@@ -78,7 +78,7 @@ fn packed_sources_are_eol_independent_without_artifact_line_tables() {
 
 #[test]
 fn compiled_artifact_is_identical_across_line_endings() {
-    let source = "# comment\nexport def answer = fn() {\n    let value = dbg!((\n        42\n    ));\n    fail!(\"same failure\", value)\n};\n";
+    let source = "# comment\nexport def answer: Fn() -> Never = fn() {\n    let value = dbg!((\n        42\n    ));\n    fail!(\"same failure\", value)\n};\n";
     let expected = compile(source).unwrap();
     for eol in ["\r\n", "\r"] {
         assert!(compile(&source.replace('\n', eol)).unwrap() == expected, "artifact differs for {eol:?}");
@@ -104,7 +104,7 @@ fn multiline_string_values_and_artifacts_ignore_source_eol() {
 
 #[test]
 fn runtime_diagnostics_preserve_high_line_bits() {
-    let source = format!("{}export def answer = fn() {{ fail!(\"high line\", 42) }};", "\n".repeat(300));
+    let source = format!("{}export def answer: Fn() -> Never = fn() {{ fail!(\"high line\", 42) }};", "\n".repeat(300));
     let bytes = compile(&source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
     session.initialize().unwrap();
@@ -669,7 +669,7 @@ fn persistent_source_positions_and_terminal_initialization_failure() {
 
 #[test]
 fn failed_demands_keep_failure_identity_instead_of_running_state() {
-    let mir = graph("def broken: Int = 1 / 0; export def answer = broken;");
+    let mir = graph("def broken: Int = 1 / 0; export def answer: Int = broken;");
     let export = mir
         .exports
         .iter()
@@ -703,7 +703,7 @@ fn failed_demands_keep_failure_identity_instead_of_running_state() {
 #[test]
 fn interpreter_fuel_is_shared_across_initialization_calls() {
     let bytes =
-        compile("def loop = fn(n: Int) -> Int { loop(n + 1) }; export def answer = loop(0);")
+        compile("def loop: Fn(Int) -> Int = fn(n: Int) -> Int { loop(n + 1) }; export def answer: Int = loop(0);")
             .unwrap();
     let mut session = crate::session::Session::load(&bytes, 1000).unwrap();
     assert!(
@@ -719,8 +719,8 @@ fn interpreter_fuel_is_shared_across_initialization_calls() {
 #[test]
 fn sealed_export_runs_without_mir_or_host_imports() {
     // compile() drops the entire source/MIR before the engine sees the bytes.
-    let bytes = compile("export def answer = 42;").unwrap();
-    assert_eq!(bytes, compile("export def answer = 42;").unwrap());
+    let bytes = compile("export def answer: Int = 42;").unwrap();
+    assert_eq!(bytes, compile("export def answer: Int = 42;").unwrap());
     assert!(
         bytes
             .windows(b"|owner=answer|role=demand|hir=".len())

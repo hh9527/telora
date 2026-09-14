@@ -1,14 +1,14 @@
 import "std/toml" as toml;
 import "std/yaml" as yaml;
 import "std/_rt" as rt;
-export def toml_rejected = fn() {
+export def toml_rejected: Fn() -> rt.Diagnostic = fn() {
     let input = "duplicate=1\nduplicate=2\n";
     match rt.with_diagnostics(fn(text:String) {unwrap!(toml.parse(text))})(input) {
         Err(reports) => reports[0],
         Ok(_) => fail!("expected TOML rejection"),
     }
 };
-export def yaml_rejected = fn() {
+export def yaml_rejected: Fn() -> rt.Diagnostic = fn() {
     let input = "duplicate: 1\nduplicate: 2\n";
     match rt.with_diagnostics(fn(text:String) {unwrap!(yaml.parse(text))})(input) {
         Err(reports) => reports[0],

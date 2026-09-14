@@ -6,7 +6,7 @@ import "std/_rt" as rt;
 type DecodeOnly = struct { value: Int };
 @string.encode_by_display
 type EncodeOnly = struct { value: Int };
-export def answer = fn() {
+export def answer: Fn() -> (rt.Diagnostic, rt.Diagnostic) = fn() {
     let decode: DecodeOnly = {value: 1};
     let encode: EncodeOnly = {value: 2};
     (match rt.with_diagnostics(fn(value: DecodeOnly) { codec.encode(Value.type,value) })(decode) { Err(reports) => reports[0], Ok(_) => fail!("expected missing encode marker") },

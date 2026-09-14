@@ -2,9 +2,9 @@ import "std/dict" as dict;
 import "std/array" as array;
 import "std/_rt" as rt;
 
-def pairs = [("z", 3), ("a", 1), ("é", 4), ("m", 2)];
-def input = dict.from_pairs(pairs);
-export def answer = fn() {
+def pairs: Array((String, Int)) = [("z", 3), ("a", 1), ("é", 4), ("m", 2)];
+def input: Dict(Int) = dict.from_pairs(pairs);
+export def answer: Fn() -> (Array(String), Array(Int), Array((String, Int)), Dict(Int), Dict(Int), Int, Option(Int), Option(Int), Dict(Int), Dict(Int), Dict(Int), Array(String), Int, String, Array(Array(Int)), Int, Array((String, Int)), Option(Array(Int))) = fn() {
     let mapped = dict.map_values(input, fn(n) { n + 10 });
     let filtered = dict.filter(mapped, fn(n) { n > 12 });
     let folded = dict.fold(input, 0, fn(acc, key, n) { acc * 10 + n });
@@ -22,7 +22,7 @@ export def answer = fn() {
      duplicate_message, dict.values(visited), array.length(dict.keys(visited)), pairs, dict.get(visited, "m"))
 };
 
-export def sort_input = fn(pairs: Array((String, Int))) {
+export def sort_input: Fn(Array((String, Int))) -> (Array(String), Array(Int), Array((String, Int))) = fn(pairs: Array((String, Int))) {
     let value = dict.from_pairs(pairs);
     (dict.keys(value), dict.values(value), pairs)
 };

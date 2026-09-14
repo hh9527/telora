@@ -1,7 +1,7 @@
 import "std/test" as test;
 
 def loop: Fn(Int) -> Int = fn(n: Int) -> Int { loop(n) };
-export def answer = (
+export def answer: (test.Test, test.Test, test.Test, test.Test) = (
     test.should_fail_with(fn() { fail!("expected failure") }, "expected failure"),
     test.should_ok(fn() { 42 }),
     test.should_fail(fn() { loop(0) }),

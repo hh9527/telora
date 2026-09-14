@@ -14,8 +14,8 @@ type Collision = enum {some_value(Int), someValue(Int)};
 @json.untagged
 @json.rename_all(json.RenameCase.CamelCase)
 type Incompatible = enum {Number(Int)};
-def capture = fn(f: Fn(Value) -> Int, input: Value) {match rt.with_diagnostics(f)(input) {Err(reports) => reports,Ok(_) => fail!("expected failure")}};
-export def answer = fn() {
+def capture: Fn(Fn(Value) -> Int, Value) -> Array(rt.Diagnostic) = fn(f: Fn(Value) -> Int, input: Value) {match rt.with_diagnostics(f)(input) {Err(reports) => reports,Ok(_) => fail!("expected failure")}};
+export def answer: Fn() -> (Array(rt.Diagnostic), Array(rt.Diagnostic), Array(rt.Diagnostic), Array(rt.Diagnostic), Array(rt.Diagnostic)) = fn() {
     let input = Value.Object({number:Value.String("bad")});
     (capture(fn(value) {match codec.decode(Choice.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},input),
      capture(fn(value) {match codec.decode(Ambiguous.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},Value.Int(3)),

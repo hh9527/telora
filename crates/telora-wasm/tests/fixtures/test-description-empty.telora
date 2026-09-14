@@ -1,2 +1,2 @@
 import "std/test" as test;
-export def answer = test.should_fail_with(fn() -> Int {fail!("callback must not execute");}, "");
+export def answer: test.Test = test.should_fail_with(fn() -> Int {fail!("callback must not execute");}, "");

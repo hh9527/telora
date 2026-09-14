@@ -2,7 +2,7 @@ import "std/value" {Value};
 import "@src/input.yaml" as yaml;
 import "@src/input.toml" as toml;
 
-export def answer = Value.Array([
+export def answer: Value = Value.Array([
     if yaml.data == Value.Object({
         max: Value.Int(9223372036854775807),
         bytes: Value.Bytes(b"Hi"),

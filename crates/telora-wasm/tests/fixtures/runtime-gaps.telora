@@ -1,7 +1,7 @@
 import "std/codec" {encode, Value};
 import "std/_rt" as rt;
 type Action = struct {run: Fn(Int) -> Int};
-export def answer = fn() {
+export def answer: Fn() -> (Int, Array(Float), String, String, String) = fn() {
     decl even: Fn(Int) -> Int;
     decl odd: Fn(Int) -> Int;
     def even = fn(n) { if n == 0 { 42 } else { odd(n - 1) } };

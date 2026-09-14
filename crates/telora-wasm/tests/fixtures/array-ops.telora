@@ -1,11 +1,11 @@
 import "std/array" as array;
 
-def input = [1, 2, 3, 4];
-def mapped = array.map(input, fn(value) { value + 10 });
-def filtered = array.filter(mapped, fn(value) { value > 12 });
+def input: Array(Int) = [1, 2, 3, 4];
+def mapped: Array(Int) = array.map(input, fn(value) { value + 10 });
+def filtered: Array(Int) = array.filter(mapped, fn(value) { value > 12 });
 def empty: Array(Int) = [];
 type Control = FoldControl(Int, String);
-export def answer = (
+export def answer: (Array(Int), Array(Int), Int, Int, Option(Int), Option(Int), Option(Int), Bool, Bool, Bool, Array(Int), Array((Int, String)), Option(Array((Int, String))), Option(Array((Int, Int))), Array(Int), Array(Int), Control, Control) = (
     mapped,
     filtered,
     array.fold(filtered, 0, fn(total, value) { total + value }),

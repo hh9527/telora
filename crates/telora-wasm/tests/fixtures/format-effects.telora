@@ -6,7 +6,7 @@ def nested: Fn(Int) -> fmt.Fmt = fn(depth) {
     else { fmt.concat(["", ""], [nested(depth - 1)]) }
 };
 
-export def answer = fn() {
+export def answer: Fn() -> (String, String, String, String) = fn() {
     let invalid = rt.with_diagnostics(fn(unit: ()) { fmt.concat([], []) })(());
     let deep = rt.with_diagnostics(fn(unit: ()) { fmt.render(nested(128)) })(());
     let left = fn() { let warning: Option(()) = warn!("left"); 7 };

@@ -4,9 +4,9 @@ import "std/_rt" as rt;
 
 type Item = struct { value: Int };
 def item: Item = { value: 42 };
-def packed = dyn.pack(Item.type, item);
+def packed: Dyn = dyn.pack(Item.type, item);
 
-export def answer = fn() {
+export def answer: Fn() -> (String, String, String, String, String, String, rt.Diagnostic, String, String, String, String, rt.Diagnostic, rt.Diagnostic, rt.Diagnostic, rt.Diagnostic, rt.Diagnostic) = fn() {
     let fields = rt.with_diagnostics(fn(value: Type) { td.fields(value) })(Int.type);
     let variants = rt.with_diagnostics(fn(value: Type) { td.variants(value) })(String.type);
     let invalid = rt.with_diagnostics(fn(value: Dyn) { dyn.get_field_value(value, 0) })(dyn.pack(Int.type, 1));

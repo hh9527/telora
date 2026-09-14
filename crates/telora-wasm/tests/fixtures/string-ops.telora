@@ -1,7 +1,7 @@
 import "std/string" as string;
 import "std/_rt" as rt;
 
-export def answer = fn() {
+export def answer: Fn() -> (Int, Bool, Bool, Bool, Bool, Bool, String, String, String, Array(String), Array(String), Array(String), Array(String), String, String, String, String, String, String, String, String) = fn() {
     let negative = rt.with_diagnostics(fn(n: Int) { string.indent("x", n) })(-1);
     let empty_margin = rt.with_diagnostics(fn(s: String) { string.trim_margin("|x", s) })("");
     (string.length("aé🦀"), string.starts_with("éclair", "é"), string.ends_with("éclair", "air"),

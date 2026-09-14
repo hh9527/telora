@@ -11,7 +11,7 @@ type Chain = struct { n: Int, next: Option(Chain) };
 @regex.parse_by(regex.compile("^$"))
 type Empty = struct {};
 type Plain = struct { value: Int };
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     [match string.parse(Outer.type, "42:é🦀") { Ok(value) => value.inner.value == 42 && value.label == Some("é🦀"), Err(_) => False },
      match string.parse(Outer.type, "42") { Ok(value) => value.label == None, Err(_) => False },
      match string.parse(Outer.type, "42:") { Ok(value) => value.label == Some(""), Err(_) => False },
@@ -22,4 +22,4 @@ export def checks = fn() {
      match string.parse(Plain.type, "42") { Err(error) => error.message == "$: type has no std/string.parse capability", Ok(_) => False },
      match string.parse(Empty.type, "") { Ok(_) => True, Err(_) => False }]
 };
-export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

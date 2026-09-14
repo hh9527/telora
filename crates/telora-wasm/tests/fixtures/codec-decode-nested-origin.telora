@@ -1,7 +1,7 @@
 import "std/codec" as codec;
 import "std/value" { Value };
 import "std/_rt" as rt;
-export def answer = fn() {
+export def answer: Fn() -> rt.Diagnostic = fn() {
     let input = Value.Object({items:Value.Array([Value.Int(1),Value.String("wrong type")])});
     match rt.with_diagnostics(fn(value: Value) {
         match codec.decode(Dict(Array(Int)).type,value) {Ok(value) => value,Err(error) => raise!(error)}

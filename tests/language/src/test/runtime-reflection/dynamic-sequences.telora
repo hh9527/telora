@@ -2,13 +2,13 @@ import "std/dyn" as dyn;
 import "std/array" as array;
 import "std/value" { Value };
 type Wrapped = struct((Int, String));
-export def inspect = fn(values: Array(Int)) {
+export def inspect: Fn(Array(Int)) -> Array(Int) = fn(values: Array(Int)) {
     match dyn.array_items(dyn.pack(Array(Int).type, values)) {
         Ok(values) => array.map(values, fn(value) { match dyn.project_with(Int.type, value) { Some(value) => value, None => fail!("wrong element type") } }),
         Err(_) => fail!("wrong sequence type"),
     }
 };
-export def checks = fn() {
+export def checks: Fn() -> Array(Bool) = fn() {
     let integer = dyn.pack(Int.type, 1);
     let nested = ["a long shared string", "é🦀"];
     [match dyn.array_items(dyn.pack(Array(Int).type, [1, 2, 3])) {
@@ -32,4 +32,4 @@ export def checks = fn() {
      match dyn.array_items(integer) { Err(error) => error.value == integer && error.message == "Dyn sequence access has the wrong type", Ok(_) => False },
      match dyn.tuple_items(integer) { Err(error) => error.value == integer && error.message == "Dyn sequence access has the wrong type", Ok(_) => False }]
 };
-export def answer = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

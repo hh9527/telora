@@ -1,6 +1,6 @@
 import "std/regex" as regex;
 import "std/_rt" as rt;
-export def answer = fn() {
+export def answer: Fn() -> (rt.Diagnostic, rt.Diagnostic, rt.Diagnostic, Bool) = fn() {
     let invalid = rt.with_diagnostics(regex.compile)("[");
     let unnamed = rt.with_diagnostics(regex.compile)("(a)");
     let unsupported = rt.with_diagnostics(regex.compile)("(?=a)");

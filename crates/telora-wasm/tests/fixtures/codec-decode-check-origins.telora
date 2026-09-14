@@ -12,8 +12,8 @@ type Positive = struct {number: Int};
 @regex.parse_by(regex.compile("^(?P<number>.+)$"))
 @check(fn(value) {if value.number > 0 {Ok(())} else {Err(blame!("positive parsed",value.number))}})
 type Parsed = struct {number: Int};
-def capture = fn(f: Fn(Value) -> Int, input: Value) {match rt.with_diagnostics(f)(input) {Err(reports) => reports,Ok(_) => fail!("expected rejection")}};
-export def answer = fn() {
+def capture: Fn(Fn(Value) -> Int, Value) -> Array(rt.Diagnostic) = fn(f: Fn(Value) -> Int, input: Value) {match rt.with_diagnostics(f)(input) {Err(reports) => reports,Ok(_) => fail!("expected rejection")}};
+export def answer: Fn() -> (Array(rt.Diagnostic), Array(rt.Diagnostic), Array(rt.Diagnostic)) = fn() {
     let count = Value.Int(-7);
     let record = Value.Object({number:Value.Int(-8)});
     let text = Value.String("-9");

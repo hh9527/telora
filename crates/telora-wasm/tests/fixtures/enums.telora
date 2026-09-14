@@ -1,14 +1,14 @@
 type Message = enum { Idle, Number(Int), Names(Array(String)) };
 type Count = struct(Int);
-def increment = fn(value: Option(Int)) -> Option(Int) { Some(value? + 1) };
-def extract = fn(value: Message) -> Int {
+def increment: Fn(Option(Int)) -> Option(Int) = fn(value: Option(Int)) -> Option(Int) { Some(value? + 1) };
+def extract: Fn(Message) -> Int = fn(value: Message) -> Int {
     match value {
         Message.Number(n) if n > 0 => n,
         Message.Names(names) => if names[0] == "answer" { 42 } else { 0 },
         _ => 0,
     }
 };
-export def answer = do {
+export def answer: (Int, Option(Int), Message, Message) = do {
     let count = Count(41);
     let unwrapped = match count { Count(value) => value };
     let first = if let Some(value) = increment(Some(unwrapped)) { value } else { 0 };

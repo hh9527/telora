@@ -8,14 +8,14 @@ type SourceInfo = struct {value: Value};
 def source_info: Fn(Type, Option(SourceInfo)) -> SourceInfo = fn(owner, previous) { {value: data} };
 @source_info
 type Loaded = struct {};
-def from_metadata = match get_type_prop(Loaded.type, SourceInfo.type) {
+def from_metadata: Value = match get_type_prop(Loaded.type, SourceInfo.type) {
     Some(info) => info.value,
     None => Value.None,
 };
 
-export def answer = Value.Array([data, Value.Int(42)]);
+export def answer: Value = Value.Array([data, Value.Int(42)]);
 
-export def main = entry.main(
+export def main: entry.Eval = entry.main(
     {sources: ["input"], envs: ["TELORA_WASM_TEST_ENV"], args: True},
     fn(ctx) { Value.Object({
         loaded: from_metadata,
