@@ -1,0 +1,13 @@
+def require_int: Fn(TypeOf(Int)) -> Int = fn(witness) { 42 };
+def metadata: Type = Int.type;
+def rejected_witness: Int = require_int(metadata);
+def valid_witness: Int = require_int(Int.type);
+
+def number: Int = 7;
+def rejected_diagnostic: Never = fail!(number);
+def healthy_number: Int = number;
+
+def consume: Fn(Int) -> Int = fn(value) { value };
+def broken: Int = consume(1, 2);
+def propagated: Int = consume(broken);
+def healthy_call: Int = consume(3);

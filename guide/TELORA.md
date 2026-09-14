@@ -238,6 +238,10 @@ if ready { value } else return fallback;
 
 ## 函数与契约
 
+所有顶层普通 `def` 都需要完整类型签名，私有辅助函数和导出入口遵守同一规则。
+局部 `let`、局部函数和调用实参仍可推导。`for(T)` 显式绑定泛型参数是完整签名；
+顶层签名中的 `_` 不能靠实现或调用者补齐。也可以先 `decl name: Type;`，再定义 name。
+
 ```telora
 fn(value) { value + 1 }
 
@@ -264,6 +268,17 @@ pair@[Int, _](1, "text")
 
 `_` 表示由完整调用上下文推断该类型实参。没有标记的 `value[index]` 只表示
 Array 索引。
+
+直接引用模板会独立实例化；普通值别名只实例化一次。例如下列局部代码中的 alias
+是一个确定的 `Fn(Int) -> Int` 值，不能再调用 `alias("text")`：
+
+```telora
+let alias = identity;
+let number = alias(42);
+let text = identity("text");
+```
+
+`let identity = identity;` 同样先物化右侧模板，再由左侧局部值遮蔽模板名。
 
 回调参数和 Result 分支需要足够的类型上下文。例如，`Err("bad")` 只提供错误
 类型，可以用完整契约确定成功类型及回调参数：

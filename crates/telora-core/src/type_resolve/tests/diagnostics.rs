@@ -255,7 +255,8 @@ fn unresolved_imports_are_inherited_without_new_type_diagnostics() {
     let diagnostics = mir.diagnostics.len();
     resolve(&mut mir);
     assert_eq!(references, mir.resolve_slots);
-    assert!(matches!(symbol_type(&mir, "bad"), TypeState::Conflicted(_)));
+    let TypeState::Known(bad) = symbol_type(&mir, "bad") else { panic!("{}", mir.dump()); };
+    assert_eq!(mir.types[bad.index()].constructor, TypeConstructor::Int);
     assert!(
         mir.type_conflicts
             .iter()
@@ -276,17 +277,14 @@ fn unresolved_symbols_remain_authoritative_while_other_slots_are_solved() {
     let diagnostics = mir.diagnostics.len();
     resolve(&mut mir);
     assert_eq!(references, mir.resolve_slots);
-    let TypeState::Conflicted(failure) = symbol_type(&mir, "missing") else {
-        panic!("{}", mir.dump());
-    };
-    assert!(matches!(
-        mir.type_conflicts[failure.index()].resolve_origin,
-        Some(ResolveFailure::Reference(_))
-    ));
-    assert_eq!(
-        symbol_type(&mir, "dependent"),
-        TypeState::Conflicted(failure)
-    );
+    assert!(matches!(symbol_type(&mir, "missing"), TypeState::Known(_)));
+    assert!(matches!(symbol_type(&mir, "dependent"), TypeState::Known(_)));
+    assert!(mir.type_conflicts.iter().any(|failure|
+        matches!(failure.resolve_origin, Some(ResolveFailure::Reference(_)))));
+    let unresolved = mir.hir.iter().enumerate().find(|(_, node)|
+        matches!(&node.kind, HirKind::Variable(name) if name == "absent")).unwrap().0;
+    assert!(matches!(mir.ty_slots[unresolved], TypeState::Conflicted(_)),
+        "the unresolved expression keeps the inherited failure, while declarations keep their contracts");
     assert!(matches!(symbol_type(&mir, "good"), TypeState::Known(_)));
     assert_eq!(
         mir.diagnostics.len(),

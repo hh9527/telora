@@ -121,6 +121,9 @@ struct Solver<'a> {
     mir: &'a mut Mir,
     revision: usize,
     constraint_origin: Option<HirId>,
+    /// Skeletons established from declarations before any value evidence.
+    /// Kept on union representatives; inferred structures are not contracts.
+    contract_slots: Vec<bool>,
     tasks: Vec<Task>,
     nominal_index: Vec<Option<usize>>,
     nominal_owner: Vec<Option<SymbolId>>,
@@ -304,6 +307,7 @@ impl Solver<'_> {
             bottom_candidates: vec![],
             generalizations: vec![],
             value_slots: vec![false; mir.hir.len()],
+            contract_slots: vec![false; mir.hir.len()],
             mir,
             revision: 0,
             constraint_origin: None,

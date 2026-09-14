@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn explicit_error_paths_cannot_poison_closed_contracts() {
+    let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/contract-error-boundaries.telora")).unwrap();
+    let mut mir = graph(&[("@src/main", &source)]);
+    resolve(&mut mir);
+    for name in ["require_int", "metadata", "valid_witness", "number", "healthy_number",
+        "consume", "broken", "propagated", "healthy_call"] {
+        assert!(matches!(symbol_type(&mir, name), TypeState::Known(_)), "{name}: {}", mir.dump());
+    }
+    assert_eq!(mir.type_conflicts.len(), 3, "{:?}", mir.diagnostics);
+    mir.diagnostics.clear();
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn materialized_template_value_is_not_generalized_at_each_use() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let source = std::fs::read_to_string(directory.join("template-value-binding.telora")).unwrap();

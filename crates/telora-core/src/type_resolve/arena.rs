@@ -12,6 +12,7 @@ impl Solver<'_> {
         );
         self.mir.ty_slots.push(TypeState::Unknown);
         self.value_slots.push(false);
+        self.contract_slots.push(false);
         id
     }
     pub(super) fn structure(
@@ -99,8 +100,11 @@ impl Solver<'_> {
             return;
         }
         let id = self.record_conflict(left, right, location, message);
-        self.mir.ty_slots[left.index()] = TypeState::Conflicted(id);
-        self.mir.ty_slots[right.index()] = TypeState::Conflicted(id);
+        for slot in [left, right] {
+            if !self.contract_slots[slot.index()] {
+                self.mir.ty_slots[slot.index()] = TypeState::Conflicted(id);
+            }
+        }
         self.revision += 1;
     }
 
@@ -159,8 +163,14 @@ impl Solver<'_> {
             let b = self.mir.ty_slots[right.index()];
             match (a, b) {
                 (TypeState::Conflicted(id), _) | (_, TypeState::Conflicted(id)) => {
-                    self.mir.ty_slots[left.index()] = TypeState::Conflicted(id);
-                    self.mir.ty_slots[right.index()] = TypeState::ProxyTo(left);
+                    // Inherit the existing failed evidence only into inference
+                    // state. A declaration remains inspectable even when its
+                    // implementation or a consumer already failed.
+                    for slot in [left, right] {
+                        if !self.contract_slots[slot.index()] {
+                            self.mir.ty_slots[slot.index()] = TypeState::Conflicted(id);
+                        }
+                    }
                 }
                 (TypeState::Unknown, _) => {
                     if self.occurs(left, right) {
@@ -207,7 +217,10 @@ impl Solver<'_> {
             for (left, right) in structures {
                 let left = self.find(left);
                 let right = self.find(right);
-                if left != right { self.mir.ty_slots[right.index()] = TypeState::ProxyTo(left); }
+                if left != right {
+                    self.contract_slots[left.index()] |= self.contract_slots[right.index()];
+                    self.mir.ty_slots[right.index()] = TypeState::ProxyTo(left);
+                }
             }
         }
     }

@@ -35,7 +35,24 @@ impl Solver<'_> {
                     self.mir.symbols[parameter.index()].declarations.iter().all(|node|
                         self.children(*node, Role::Bound).iter().all(|bound| self.closed_contract(bound.ty())))))
             .collect();
+        self.protect_contracts();
         generated
+    }
+
+    fn protect_contracts(&mut self) {
+        let mut pending = self.mir.symbol_types.iter().enumerate().filter_map(|(index, slot)|
+            self.mir.declaration_contract_ready[index].then_some(*slot)).collect::<Vec<_>>();
+        while let Some(slot) = pending.pop() {
+            let root = self.root(slot);
+            if self.contract_slots[root.index()] { continue; }
+            let Some(term) = self.term(root).cloned() else { continue; };
+            self.contract_slots[root.index()] = true;
+            pending.extend(term.arguments);
+            if let TypeConstructor::Nominal(symbol) = term.constructor
+                && let Some(index) = self.nominal_index[symbol.index()] {
+                pending.extend(self.mir.type_definitions[index].members.iter().filter_map(|member| member.payload));
+            }
+        }
     }
 
     fn closed_contract(&self, slot: TypeSlotId) -> bool {
