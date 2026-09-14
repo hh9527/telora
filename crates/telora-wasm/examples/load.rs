@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     session.initialize()?;
     let result = match std::env::args().nth(2) {
         Some(arguments) => {
-            session.call(&serde_json::from_str::<Vec<serde_json::Value>>(&arguments)?)?
+            session.call(&telora_data::json_serde::from_str::<Vec<serde_json::Value>>(&arguments)?)?
         }
         None => session.eval()?,
     };

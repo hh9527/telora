@@ -103,7 +103,7 @@ pub(crate) fn read(bytes: &[u8], manifest: &Manifest) -> Result<Vec<ModuleData>,
                 return Err("Wasm: duplicate data bundle".into());
             }
             bundle =
-                Some(serde_json::from_slice::<Bundle>(section.data()).map_err(|e| e.to_string())?);
+                Some(telora_data::json_serde::from_slice::<Bundle>(section.data()).map_err(|e| e.to_string())?);
         }
     }
     let Some(bundle) = bundle else {

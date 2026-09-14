@@ -6,6 +6,7 @@ license = "MIT"
 description = "Extra Effect Service facade for Telora native actor components"
 
 [dependencies]
+telora-data = { path = "../telora-data", features = ["serde"] }
 anyhow = "1"
 directories = "6"
 imos = { path = "../imos" }

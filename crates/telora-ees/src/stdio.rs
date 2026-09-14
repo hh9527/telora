@@ -194,7 +194,7 @@ pub async fn serve(service: Service, events_to_stderr: bool) -> Result<ServeOutc
                         None
                     }
                     Ok(_) if line.iter().all(u8::is_ascii_whitespace) => None,
-                    Ok(_) => Some(match serde_json::from_slice::<Call>(&line) {
+                    Ok(_) => Some(match telora_data::json_serde::from_slice::<Call>(&line) {
                         Ok(call) => Event::Call(call),
                         Err(error) => Event::ProtocolError {
                             id: recover_id(&line),
@@ -306,7 +306,7 @@ where
 }
 
 fn recover_id(line: &[u8]) -> Option<String> {
-    serde_json::from_slice::<Value>(line)
+    telora_data::json_serde::from_slice::<Value>(line)
         .ok()?
         .get("id")?
         .as_str()

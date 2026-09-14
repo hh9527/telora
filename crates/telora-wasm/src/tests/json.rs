@@ -531,7 +531,7 @@ fn json_parse_error_blames_the_original_text() {
         result["labels"][1]["location"]["start"],
         source.find("\"[1,]\"").unwrap()
     );
-    assert_eq!(result["message"], "<json string>: expected value at line 1 column 4");
+    assert_eq!(result["message"], r#"<json string>: invalid syntax, expected one of: '"', 'false', '{', '[', 'null', <number>, 'true'"#);
     assert!(session.diagnostics().unwrap().is_empty());
 }
 

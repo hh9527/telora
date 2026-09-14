@@ -32,6 +32,7 @@ seal 的 MIR；执行入口必须通过 seal。后续阶段直接使用静态结
 | 层次 | 当前实现 |
 | --- | --- |
 | grammar、CST、parser | `syntax/telora/`、`parser.rs`、`ast.rs` |
+| 共享数据 parser、source 与 document | `crates/telora-data/src/` |
 | session 图与 HIR lowering | `mir.rs`、`mir/lower.rs`、`module_resolve.rs` |
 | 符号、类型求解 | `symbol_resolve.rs`、`type_resolve.rs` 及其子目录 |
 | 封闭与只读查询 | `mir/seal.rs`、`mir_query.rs` |
@@ -50,8 +51,9 @@ codegen 消费 SealedExecutable，生成 Wasm 指令和类型确定的胶水。R
 
 ## 2. Frontend 与静态诊断
 
-四种语法的 Lelwel 生成 parser 作为普通 Rust 模块检入，手写 callback 位于对应的
-`syntax/{telora,json,toml,yaml}/parser/support.rs`。修改 `grammar.llw` 后运行
+四种语法的 Lelwel 生成 parser 作为普通 Rust 模块检入。Telora 语法在 core 的
+`syntax/telora/`；JSON/TOML/YAML 语法在 `telora-data/src/syntax/`。手写 callback
+位于各自的 `parser/support.rs`。修改 `grammar.llw` 后运行
 `cargo run -p telora-parser-gen`，同时提交 grammar 与生成代码。工具固定 Lelwel 版本，
 并用 rustfmt 格式化生成文件；正常 Cargo 构建不生成或改写源码。
 生成的状态机不受手写源文件大小限制，手写逻辑和测试使用正常子模块划分。
@@ -106,10 +108,14 @@ export { data };
 
 数据内容在静态阶段不读取、不解析；因此类型检查成功不代表 JSON/YAML/TOML 内容有效。
 
-目前有两套数据解析入口：Host 的数据模块导入使用 core 中自有 grammar/CST 与
-lowerer；Wasm RT 的 `json.parse`、`toml.parse`、`yaml.parse` 分别使用 serde_json、toml、
-saphyr-parser，并转换成 RT 数据节点。两端尚未共享解析核心，这是待统一的实现重复，
-不能假设仅凭格式名称就有完全相同的接受范围和错误诊断。
+Host 的数据模块导入与 Wasm RT 的 `json.parse`、`toml.parse`、`yaml.parse` 共用
+`telora-data` 中自有的 LLW grammar、lexer、CST 和 lowerer。共享库使用 `no_std + alloc`，
+输出带来源位置的扁平数据图；RT 导出时将节点移动成子节点优先的顺序，重排 ID，
+保留别名共享而不深度复制载荷。运行时产生的 Telora 值沿用输入字符串的来源位置。
+
+Host 配置、产物元数据和 EES 协议的 JSON 文本也先由 LLW parser 校验，再由可选的
+`json_serde` 适配器转换为 Rust 结构。Serde 不参与这些入口的文本解析；JSON 输出仍可
+使用 serde_json 序列化。LSP 协议保留原有 serde/serde_json 实现。
 实际内容在执行准备阶段接受格式与 DataLimits 检查，全部有效后才注入 Wasm。
 
 symbol Pass 先索引模块的声明、导出和作用域，再闭合引用。import * 建立搜索范围，

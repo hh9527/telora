@@ -11,10 +11,9 @@ path = "lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]
+telora-data = { path = "../../telora-data" }
 telora-wasm-shared = { path = "../../telora-wasm-shared" }
 libm = "=0.2.16"
-toml = { version = "=0.9.12", default-features = false, features = ["parse"] }
-saphyr-parser = "=0.0.12"
 telora-sha256 = { path = "../../telora-sha256" }
 regex-automata = { version = "=0.4.16", default-features = false, features = ["alloc", "syntax", "nfa-pikevm", "unicode"] }
 regex-syntax = { version = "0.8", default-features = false, features = ["unicode"] }

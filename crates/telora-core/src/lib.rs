@@ -13,9 +13,7 @@ pub mod candidate_layout;
 pub mod test_plan;
 mod test_protocol;
 pub use test_protocol::{TestContext, TestHost, TestLimits, TestSource};
-pub mod document;
-pub mod json;
-pub mod data_plan;
+pub use telora_data::{document, json, data_plan, source};
 pub mod mir;
 pub mod mir_query;
 pub mod static_sources;
@@ -27,10 +25,7 @@ pub mod package;
 pub mod parser;
 pub mod query;
 pub mod runtime_host;
-pub mod source;
 pub mod syntax;
-pub mod toml;
-pub mod yaml;
 
 pub use document::{
     DocumentSnapshot, DocumentText, DocumentVersion, PositionEncoding, TextEdit, TextPosition,
@@ -57,5 +52,3 @@ pub use source::{
 };
 #[cfg(test)]
 mod test_graph;
-#[cfg(test)]
-mod data_plan_test;

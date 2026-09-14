@@ -93,8 +93,8 @@ pub fn quoted(output: &mut dyn Write, input: &str) -> fmt::Result {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{vec, vec::Vec};
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     #[test]
     fn compact_and_pretty_collections() {

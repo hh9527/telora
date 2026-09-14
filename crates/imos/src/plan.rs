@@ -86,7 +86,7 @@ impl Plan {
     pub fn read(path: &Path) -> Result<Self> {
         let bytes =
             std::fs::read(path).with_context(|| format!("read plan file {}", path.display()))?;
-        let value: serde_json::Value = serde_json::from_slice(&bytes)
+        let value: serde_json::Value = telora_data::json_serde::from_slice(&bytes)
             .with_context(|| format!("parse plan file {}", path.display()))?;
         Self::from_value(value).with_context(|| format!("validate plan file {}", path.display()))
     }

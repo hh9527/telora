@@ -829,6 +829,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tar",
+ "telora-data",
  "tempfile",
  "time",
  "tokio",
@@ -1696,13 +1697,24 @@ name = "telora-core"
 version = "0.1.0"
 dependencies = [
  "codespan-reporting",
- "crop",
  "logos",
  "regex",
  "regex-syntax",
  "serde",
  "serde_json",
  "sha2",
+ "telora-data",
+]
+
+[[package]]
+name = "telora-data"
+version = "0.1.0"
+dependencies = [
+ "codespan-reporting",
+ "crop",
+ "logos",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1716,6 +1728,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlite-query",
+ "telora-data",
  "tempfile",
  "tokio",
 ]
@@ -1741,6 +1754,7 @@ dependencies = [
  "serde",
  "serde_json",
  "telora-core",
+ "telora-data",
  "telora-wasm-shared",
  "wasm-encoder",
  "wasmi",

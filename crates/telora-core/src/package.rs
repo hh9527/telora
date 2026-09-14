@@ -913,7 +913,7 @@ fn ensure_sorted_set(label: &str, values: &[String]) -> Result<(), PackageError>
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, PackageError> {
     let source = fs::read(path)
         .map_err(|error| PackageError::new(format!("cannot read {}: {error}", path.display())))?;
-    serde_json::from_slice(&source)
+    telora_data::json_serde::from_slice(&source)
         .map_err(|error| PackageError::new(format!("invalid {}: {error}", path.display())))
 }
 

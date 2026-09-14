@@ -364,7 +364,7 @@ impl ProgressLock {
                             .map_or(0, |position| position + 1);
                         for line in new[..complete].split(|byte| *byte == b'\n') {
                             if !line.is_empty()
-                                && let Ok(status) = serde_json::from_slice::<Status>(line)
+                                && let Ok(status) = telora_data::json_serde::from_slice::<Status>(line)
                             {
                                 observed(status).await?;
                             }

@@ -7,8 +7,8 @@ edition.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+telora-data = { path = "../telora-data", features = ["serde"] }
 codespan-reporting = "0.13"
-crop = { version = "0.4.3", features = ["utf16-metric"] }
 logos = "0.16"
 regex = "1.12"
 regex-syntax = "0.8"

@@ -6,6 +6,7 @@ license = "MIT"
 description = "Immutable object store component for shared artifact installation"
 
 [dependencies]
+telora-data = { path = "../telora-data", features = ["serde"] }
 anyhow = "1"
 flate2 = "1"
 fs2 = "0.4"

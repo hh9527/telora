@@ -3,8 +3,28 @@
 //! Row (16 bytes): {kind:u32, reserved:u32, payload:u64}.
 //! Payload is scalar bits or {pointer:u32,count:u32}. Object entries are
 //! {key_pointer,key_length,child_id}; Array entries are child IDs.
-use crate::json_parse::{Node, Plan, TemporalKind};
 use alloc::{boxed::Box, format, string::String};
+use telora_data::{
+    data_plan::{
+        self, DataPlanNodeKind as Node, DataScalar as Scalar, Format, TemporalKind,
+        ValidatedDataPlan as Plan,
+    },
+    source::SourceDatabase,
+};
+
+fn parse(input: &str, format: Format) -> Result<Plan, String> {
+    let mut sources = SourceDatabase::default();
+    let source = sources.add("<string>", input);
+    let plan = data_plan::parse_registered(&sources, source, format).map_err(|diagnostics| {
+        diagnostics
+            .into_iter()
+            .next()
+            .expect("parse diagnostic")
+            .message
+    })?;
+    data_plan::enforce_limits(&plan, telora_data::DataLimits::default(), input.len())?;
+    Ok(plan)
+}
 
 unsafe fn put(pointer: u32, offset: u32, value: u32) {
     unsafe {
@@ -23,7 +43,7 @@ fn string_bytes(value: String) -> (u32, u32) {
 pub unsafe extern "C" fn telora_json_parse(input: u32) -> u32 {
     unsafe {
         export_plan(
-            Plan::parse(crate::text::text(input))
+            parse(crate::text::text(input), Format::Json)
                 .map_err(|error| format!("<json string>: {error}")),
         )
     }
@@ -33,7 +53,7 @@ pub unsafe extern "C" fn telora_json_parse(input: u32) -> u32 {
 pub unsafe extern "C" fn telora_toml_parse(input: u32) -> u32 {
     unsafe {
         export_plan(
-            crate::toml_parse::parse(crate::text::text(input))
+            parse(crate::text::text(input), Format::Toml)
                 .map_err(|error| format!("<toml string>: {error}")),
         )
     }
@@ -43,7 +63,7 @@ pub unsafe extern "C" fn telora_toml_parse(input: u32) -> u32 {
 pub unsafe extern "C" fn telora_yaml_parse(input: u32) -> u32 {
     unsafe {
         export_plan(
-            crate::yaml_parse::parse(crate::text::text(input))
+            parse(crate::text::text(input), Format::Yaml)
                 .map_err(|error| format!("<yaml string>: {error}")),
         )
     }
@@ -63,24 +83,27 @@ unsafe fn export_plan(parsed: Result<Plan, String>) -> u32 {
                 return result;
             }
         };
-        let count = u32::try_from(plan.nodes.len()).unwrap();
+        let plan = plan.into_postorder();
+        let root = plan.root_node().expect("parsed root").index() as u32;
+        let nodes = plan.into_nodes();
+        let count = u32::try_from(nodes.len()).unwrap();
         let rows = crate::telora_alloc(count.checked_mul(16).unwrap());
         put(result, 0, rows);
         put(result, 4, count);
-        put(result, 8, plan.root);
-        for (index, node) in plan.nodes.into_iter().enumerate() {
+        put(result, 8, root);
+        for (index, node) in nodes.into_iter().enumerate() {
             let row = rows + index as u32 * 16;
             put(row, 4, 0);
-            let (kind, payload) = match node {
-                Node::Null => (0, 0),
-                Node::Bool(value) => (if value { 1 } else { 2 }, 0),
-                Node::Int(value) => (3, value as u64),
-                Node::Float(value) => (4, value.to_bits()),
-                Node::String(value) => {
+            let (kind, payload) = match node.kind {
+                Node::Scalar(Scalar::Null) => (0, 0),
+                Node::Scalar(Scalar::Bool(value)) => (if value { 1 } else { 2 }, 0),
+                Node::Scalar(Scalar::Int(value)) => (3, value as u64),
+                Node::Scalar(Scalar::Float(value)) => (4, value.to_bits()),
+                Node::Scalar(Scalar::String(value)) => {
                     let (pointer, length) = string_bytes(value);
                     (5, u64::from(pointer) | (u64::from(length) << 32))
                 }
-                Node::Temporal(kind, value) => {
+                Node::Scalar(Scalar::Temporal { kind, value }) => {
                     let kind = match kind {
                         TemporalKind::LocalDate => 8,
                         TemporalKind::LocalTime => 9,
@@ -90,12 +113,18 @@ unsafe fn export_plan(parsed: Result<Plan, String>) -> u32 {
                     let (pointer, length) = string_bytes(value);
                     (kind, u64::from(pointer) | (u64::from(length) << 32))
                 }
-                Node::Bytes(bytes) => {
+                Node::Scalar(Scalar::Bytes(bytes)) => {
                     let bytes = Box::leak(bytes.into_boxed_slice());
                     (12, bytes.as_mut_ptr() as u64 | ((bytes.len() as u64) << 32))
                 }
                 Node::Array(children) => {
-                    let children = Box::leak(children.into_boxed_slice());
+                    let children = Box::leak(
+                        children
+                            .into_iter()
+                            .map(|id| id.index() as u32)
+                            .collect::<alloc::vec::Vec<_>>()
+                            .into_boxed_slice(),
+                    );
                     (
                         6,
                         children.as_mut_ptr() as u64 | ((children.len() as u64) << 32),
@@ -109,7 +138,7 @@ unsafe fn export_plan(parsed: Result<Plan, String>) -> u32 {
                         let (pointer, length) = string_bytes(key);
                         put(entry, 0, pointer);
                         put(entry, 4, length);
-                        put(entry, 8, child);
+                        put(entry, 8, child.value.index() as u32);
                     }
                     (7, u64::from(entries) | (u64::from(count) << 32))
                 }

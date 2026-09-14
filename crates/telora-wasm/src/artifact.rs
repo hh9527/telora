@@ -284,7 +284,7 @@ impl Manifest {
                     return Err("Wasm: duplicate manifest".into());
                 }
                 manifest = Some(
-                    serde_json::from_slice::<Self>(section.data()).map_err(|e| e.to_string())?,
+                    telora_data::json_serde::from_slice::<Self>(section.data()).map_err(|e| e.to_string())?,
                 );
             }
         }
