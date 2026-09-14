@@ -12,6 +12,8 @@ mod executable;
 mod type_schemes;
 mod properties;
 mod materializations;
+mod declaration_contracts;
+pub use declaration_contracts::{DeclarationContract, DeclarationContractState};
 pub use seal::SealedMir;
 pub use executable::{ExecutionClosure, ExecutionRoot, SealedExecutable};
 
@@ -465,6 +467,9 @@ pub struct TypeConflict {
     pub location: Option<Location>,
     pub message: String,
     pub resolve_origin: Option<ResolveFailure>,
+    /// The exact diagnostic emitted for this failed constraint, if any.
+    /// Inherited resolve failures reuse their earlier diagnostic instead.
+    pub diagnostic: Option<usize>,
 }
 
 /// An inherited static result, not a new type-solver diagnostic.
@@ -637,6 +642,7 @@ pub struct Mir {
     pub hir_symbols: Vec<Option<SymbolId>>,
     pub module_scopes: Vec<Option<ScopeId>>,
     pub exports: Vec<Vec<SymbolId>>,
+    pub declaration_contracts: Vec<DeclarationContract>,
     pub resolve_conflicts: Vec<ResolveConflict>,
     pub symbols_closed: bool,
     pub ty_slots: Vec<TypeState>,

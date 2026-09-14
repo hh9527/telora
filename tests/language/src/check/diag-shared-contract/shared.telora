@@ -1,0 +1,1 @@
+export def increment: Fn(Int) -> Int = fn(value) { value + 1 };

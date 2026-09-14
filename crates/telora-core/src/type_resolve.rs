@@ -263,6 +263,7 @@ pub fn resolve(mir: &mut Mir) {
             solver.mir.generic_references[index] = Some(GenericReference::Scheme { symbol, scheme });
         }
     }
+    solver.mir.build_declaration_contracts();
     solver.mir.types_solved = true;
 }
 
@@ -340,6 +341,7 @@ impl Solver<'_> {
                     location: None,
                     message: format!("inherited resolve failure {origin:?}"),
                     resolve_origin: Some(origin),
+                    diagnostic: None,
                 });
                 id
             });

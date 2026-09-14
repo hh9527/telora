@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn batch_type_diagnostics_identify_the_producing_module() {
+    let cwd = fixture();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/language/src/check/diag-shared-contract");
+    let destination = cwd.join("src/check/diag-shared-contract");
+    fs::create_dir_all(&destination).unwrap();
+    for name in ["shared", "good", "bad", "testee"] {
+        fs::copy(source.join(format!("{name}.telora")), destination.join(format!("{name}.telora"))).unwrap();
+    }
+    let output = telora(&cwd).args(["check", "--lib", "--only-types"]).output().unwrap();
+    assert!(!output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let diagnostics = text.lines().map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|record| record["record"] == "diagnostic").collect::<Vec<_>>();
+    assert_eq!(diagnostics.len(), 2, "{text}");
+    for diagnostic in diagnostics {
+        assert_eq!(diagnostic["module"], "fixture/check/diag-shared-contract/bad");
+        assert_eq!(diagnostic["session"], "--lib");
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn check_batch_roots_share_a_graph_and_obey_phase_boundaries() {
     let cwd = fixture();
     fs::create_dir_all(cwd.join("tests/nested")).unwrap();

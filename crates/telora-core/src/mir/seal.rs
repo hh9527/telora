@@ -252,6 +252,7 @@ impl Mir {
         let construction_inputs = self.record_construction_inputs();
         if !self.symbols_closed
             || !self.types_solved
+            || !self.validate_declaration_contracts()
             || !self.type_unknowns.is_empty()
             || !self.type_conflicts.is_empty()
             || self.types.iter().any(|ty| matches!(ty.constructor, TypeConstructor::ArrayLiteral | TypeConstructor::TupleLiteral))

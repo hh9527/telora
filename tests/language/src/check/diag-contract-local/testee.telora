@@ -1,0 +1,7 @@
+def same: for(T) Fn(T, T) -> T = fn(a, b) { a };
+export def good: Int = same(1, 2);
+export def input: String = "bad";
+export def wrong: Int = same(1, input);
+export def broken_body: Fn(Int) -> Int = fn(value) { "wrong result" };
+def identity: for(T) Fn(T) -> T = fn(value) { value };
+def inferred: String = identity("healthy");

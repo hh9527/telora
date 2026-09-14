@@ -1,0 +1,2 @@
+import "@src/check/diag-shared-contract/shared" {increment};
+export def answer: Int = increment(41);

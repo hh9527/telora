@@ -21,7 +21,12 @@ fn location(mir: &Mir, loc: Location) -> Value {
 }
 
 pub(crate) fn diagnostic(mir: &Mir, schema: &str, root: &str, d: &Diagnostic) -> Value {
-    json!({"schema": schema, "module": root, "record": "diagnostic",
+    let module = d.labels.iter().filter(|label| label.primary).find_map(|label|
+        mir.modules.iter().find_map(|module| match module.state {
+            ModuleState::Source { source, .. } if source == label.location.source => Some(module.name.as_str()),
+            _ => None,
+        })).unwrap_or(root);
+    json!({"schema": schema, "module": module, "session": root, "record": "diagnostic",
         "severity": match d.severity { Severity::Error => "error", Severity::Warning => "warning", Severity::Info => "info" },
         "message": d.message, "notes": d.notes,
         "labels": d.labels.iter().map(|l| json!({"source": mir.sources.get(l.location.source).name.as_ref(),

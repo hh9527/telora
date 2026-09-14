@@ -106,9 +106,7 @@ impl Solver<'_> {
                 // Preserve the diagnostic emitted with the original evidence.
                 // A failed name resolution already has its own explanation.
                 if conflict.resolve_origin.is_none()
-                    && let Some(diagnostic) = self.mir.diagnostics.iter_mut().find(|diagnostic|
-                        diagnostic.message == conflict.message
-                            && diagnostic.labels.iter().any(|label| Some(label.location) == conflict.location)) {
+                    && let Some(diagnostic) = conflict.diagnostic.and_then(|index| self.mir.diagnostics.get_mut(index)) {
                     diagnostic.message = format!("invalid @check function: {}; expected one construction input and Result((), BlameError)", diagnostic.message);
                     let location = self.mir.hir[decorator.index()].location;
                     if !diagnostic.labels.iter().any(|label| label.location == location) {
