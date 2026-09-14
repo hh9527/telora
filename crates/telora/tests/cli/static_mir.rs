@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn check_batch_roots_share_a_graph_and_obey_phase_boundaries() {
     let cwd = fixture();

@@ -140,4 +140,4 @@ async fn completion_response(
     }
 }
 
-include!("part-01.rs");
+mod cases;

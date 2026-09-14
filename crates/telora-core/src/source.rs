@@ -16,13 +16,6 @@ impl SourceId {
     const fn index(self) -> u32 {
         self.get() - 1
     }
-
-    pub(crate) const fn from_raw(value: u32) -> Option<Self> {
-        match NonZeroU32::new(value) {
-            Some(value) => Some(Self(value)),
-            None => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -380,5 +373,4 @@ impl fmt::Display for Diagnostic {
 impl std::error::Error for Diagnostic {}
 
 #[cfg(test)]
-#[path = "source/tests/mod.rs"]
 mod tests;

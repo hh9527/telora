@@ -1,32 +1,6 @@
 use super::*;
 
 #[test]
-fn wasm_schema_supports_recursive_types_and_enums() {
-    let cwd = fixture();
-    fs::write(
-        cwd.join("src/main.telora"),
-        include_str!("../../../../tests/runtime/schema.telora"),
-    )
-    .unwrap();
-    let result;
-    {
-        let output = telora(&cwd)
-            .args(["eval", "@src/main:answer"])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
-    }
-    assert_eq!(result.as_array().unwrap().len(), 10);
-    fs::remove_dir_all(cwd).unwrap();
-}
-
-#[test]
 fn wasm_reflection_and_display_properties_produce_expected_values() {
     let cwd = fixture();
     for (name, source, expected) in [
@@ -49,24 +23,6 @@ fn wasm_reflection_and_display_properties_produce_expected_values() {
             "toml-parse",
             include_str!("../../../telora-wasm/tests/fixtures/toml-parse.telora"),
             serde_json::json!(vec![true; 9]),
-        ),
-        (
-            "schema-structural",
-            include_str!("../../../telora-wasm/tests/fixtures/schema-structural.telora"),
-            {
-                let mut schemas = serde_json::json!([
-                    {"type":"integer"},{"type":"number"},{"type":"boolean"},{"type":"string"},
-                    {"type":"array","prefixItems":[],"minItems":0,"maxItems":0},
-                    {"type":"array","prefixItems":[{"type":"integer"},{"type":"string"}],"minItems":2,"maxItems":2},
-                    {"type":"object","additionalProperties":{"anyOf":[{"type":"null"},{"type":"integer"}]}},
-                    {"type":"array","items":{"type":"string"}}
-                ]);
-                for schema in schemas.as_array_mut().unwrap() {
-                    schema["$schema"] =
-                        serde_json::json!("https://json-schema.org/draft/2020-12/schema");
-                }
-                schemas
-            },
         ),
         (
             "codec-decode-enum",

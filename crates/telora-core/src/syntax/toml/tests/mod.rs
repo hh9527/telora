@@ -12,4 +12,4 @@ fn reconstruct(cst: &CstData, source: &str, node: NodeRef, output: &mut String) 
     }
 }
 
-include!("part-01.rs");
+mod cases;

@@ -56,61 +56,6 @@ fn toml_parse_uses_closed_values_and_preserves_temporal_precision() {
 }
 
 #[test]
-fn schema_rejects_unsupported_types_and_invalid_property_contracts() {
-    let bytes = compile(include_str!("../../tests/fixtures/schema-errors.telora")).unwrap();
-    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
-    session.initialize().unwrap();
-    assert_eq!(
-        session.eval().unwrap(),
-        serde_json::json!([
-            "Type Bytes has no JSON Schema mapping",
-            "JSON Schema cannot describe Dyn",
-            "std/string.decode_by_parse and std/string.encode_by_display must be used together",
-            "$.fooBar: duplicate external field name",
-            "$: untagged Enum may contain at most one unit variant"
-        ])
-    );
-    assert!(session.diagnostics().unwrap().is_empty());
-}
-
-#[test]
-fn schema_nominal_definitions_close_recursion_and_consume_properties() {
-    let bytes = compile(include_str!("../../tests/fixtures/schema-nominal.telora")).unwrap();
-    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
-    session.initialize().unwrap();
-    let mut expected = serde_json::json!([
-        {"$ref":"#/$defs/Type0","$defs":{"Type0":{"type":"object","properties":{"someField":{"type":"integer"},"optionalField":{"anyOf":[{"type":"null"},{"type":"string"}]}},"additionalProperties":false,"required":["someField"]}}},
-        {"$ref":"#/$defs/Type0","$defs":{"Type0":{"type":"object","properties":{"children":{"type":"array","items":{"$ref":"#/$defs/Type0"}},"value":{"$ref":"#/$defs/Type1"}},"additionalProperties":false,"required":["children","value"]},"Type1":{"type":"integer"}}},
-        {"type":"string"}
-    ]);
-    for schema in expected.as_array_mut().unwrap() {
-        schema["$schema"] = serde_json::json!("https://json-schema.org/draft/2020-12/schema");
-    }
-    assert_eq!(session.eval().unwrap(), expected);
-}
-
-#[test]
-fn schema_dispatches_runtime_metadata_and_builds_structural_schemas() {
-    let bytes = compile(include_str!(
-        "../../tests/fixtures/schema-structural.telora"
-    ))
-    .unwrap();
-    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
-    session.initialize().unwrap();
-    let mut expected = serde_json::json!([
-        {"type":"integer"},{"type":"number"},{"type":"boolean"},{"type":"string"},
-        {"type":"array","prefixItems":[],"minItems":0,"maxItems":0},
-        {"type":"array","prefixItems":[{"type":"integer"},{"type":"string"}],"minItems":2,"maxItems":2},
-        {"type":"object","additionalProperties":{"anyOf":[{"type":"null"},{"type":"integer"}]}},
-        {"type":"array","items":{"type":"string"}}
-    ]);
-    for schema in expected.as_array_mut().unwrap() {
-        schema["$schema"] = serde_json::json!("https://json-schema.org/draft/2020-12/schema");
-    }
-    assert_eq!(session.eval().unwrap(), expected);
-}
-
-#[test]
 fn codec_decode_enum_checks_run_once_per_candidate() {
     let bytes = compile(include_str!(
         "../../tests/fixtures/codec-decode-enum-effects.telora"

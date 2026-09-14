@@ -22,9 +22,9 @@ deferred Test migration maps them to their current locations in the next section
 | `check/type-inference` | generic contracts, local generalization, recursive inference, explicit type application, and type families |
 | `check/diag-*` | parser, elaboration, type, trait, property, module, and intrinsic diagnostics |
 | `check/module-interfaces` | imports, exports, re-exports, namespaces, private nominal identity, and cross-module generic interfaces |
-| `check/stdlib-semantics` | Option, Result, Dict, codec, schema, Fmt, and Display contracts |
+| `check/stdlib-semantics` | Option, Result, Dict, codec, Fmt, and Display contracts |
 | `eval/stdlib-collections` | Array, Dict, String, Path, and equality results |
-| `eval/codec-schema`, `eval/enum-codec` | structural and recursive codecs, enum representations, JSON schema, and JSON/TOML/YAML string parsing |
+| `eval/codec-schema`, `eval/enum-codec` | structural and recursive codecs, enum representations, and JSON/TOML/YAML string parsing; experimental JSON Schema checks were removed |
 | `eval/data-modules` | manifest-backed JSON, TOML, and YAML module loading and typed decoding |
 | `eval/runtime-intrinsics`, `eval/diag-*` | dynamic projection, cast, unwrap, diagnostic intrinsic, bounds, and non-finite runtime behavior |
 | `eval/display`, `eval/properties` | Display, interpolation, typed properties, member properties, and property-driven blanket implementations |

@@ -996,5 +996,4 @@ impl<'a> FlowParser<'a> {
 }
 
 #[cfg(test)]
-#[path = "yaml/tests/mod.rs"]
 mod tests;

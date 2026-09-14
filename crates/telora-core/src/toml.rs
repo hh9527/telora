@@ -887,5 +887,4 @@ fn normalize_multiline_newlines(value: String, multiline: bool) -> String {
 }
 
 #[cfg(test)]
-#[path = "toml/tests/mod.rs"]
 mod tests;

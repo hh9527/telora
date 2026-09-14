@@ -1,12 +1,14 @@
+use super::*;
+
 impl<'a> Lowerer<'a> {
-    fn expression_children(&self, node: NodeRef) -> Result<Vec<Expr>, Diagnostic> {
+    pub(super) fn expression_children(&self, node: NodeRef) -> Result<Vec<Expr>, Diagnostic> {
         self.children(node)
             .filter(|child| self.is_expression(*child))
             .map(|child| self.expression(child))
             .collect()
     }
 
-    fn type_arguments(&self, node: NodeRef) -> Result<Vec<TypeArgument>, Diagnostic> {
+    pub(super) fn type_arguments(&self, node: NodeRef) -> Result<Vec<TypeArgument>, Diagnostic> {
         self.rule_children(node)
             .filter(|child| self.rule(*child) == Some(Rule::TypeArgument))
             .map(|argument| {
@@ -25,7 +27,7 @@ impl<'a> Lowerer<'a> {
             .collect()
     }
 
-    fn section_expression(
+    pub(super) fn section_expression(
         &self,
         callee: Expr,
         arguments_node: Option<NodeRef>,
@@ -44,7 +46,7 @@ impl<'a> Lowerer<'a> {
             .map_err(|(node, message)| self.error(node, message))
     }
 
-    fn call_argument(&self, node: NodeRef) -> Result<CallArgument, Diagnostic> {
+    pub(super) fn call_argument(&self, node: NodeRef) -> Result<CallArgument, Diagnostic> {
         if let Some(placeholder) = self.token_children(node, Token::Placeholder).next() {
             return Ok(CallArgument::Bare {
                 node: placeholder,
@@ -68,7 +70,7 @@ impl<'a> Lowerer<'a> {
             .ok_or_else(|| self.error(node, "call argument has no expression"))?;
         Ok(CallArgument::Expression(self.expression(expression)?))
     }
-    fn is_expression(&self, node: NodeRef) -> bool {
+    pub(super) fn is_expression(&self, node: NodeRef) -> bool {
         matches!(
             self.cst.get(node),
             Node::Token(
@@ -113,7 +115,7 @@ impl<'a> Lowerer<'a> {
             )
         )
     }
-    fn is_pattern(&self, node: NodeRef) -> bool {
+    pub(super) fn is_pattern(&self, node: NodeRef) -> bool {
         matches!(
             self.cst.get(node),
             Node::Token(
@@ -134,22 +136,22 @@ impl<'a> Lowerer<'a> {
             )
         )
     }
-    fn children(&self, node: NodeRef) -> impl Iterator<Item = NodeRef> + '_ {
+    pub(super) fn children(&self, node: NodeRef) -> impl Iterator<Item = NodeRef> + '_ {
         self.cst.children(node)
     }
-    fn rule_children(&self, node: NodeRef) -> impl Iterator<Item = NodeRef> + '_ {
+    pub(super) fn rule_children(&self, node: NodeRef) -> impl Iterator<Item = NodeRef> + '_ {
         self.children(node)
             .filter(|child| matches!(self.cst.get(*child), Node::Rule(..)))
     }
-    fn token_children(&self, node: NodeRef, token: Token) -> impl Iterator<Item = NodeRef> + '_ {
+    pub(super) fn token_children(&self, node: NodeRef, token: Token) -> impl Iterator<Item = NodeRef> + '_ {
         self.children(node).filter(
             move |child| matches!(self.cst.get(*child), Node::Token(found, _) if found == token),
         )
     }
-    fn first_rule(&self, node: NodeRef) -> Option<NodeRef> {
+    pub(super) fn first_rule(&self, node: NodeRef) -> Option<NodeRef> {
         self.rule_children(node).next()
     }
-    fn expression_head(&self, mut node: NodeRef) -> NodeRef {
+    pub(super) fn expression_head(&self, mut node: NodeRef) -> NodeRef {
         while matches!(
             self.rule(node),
             Some(Rule::Expression | Rule::Primary | Rule::Braced)
@@ -161,25 +163,25 @@ impl<'a> Lowerer<'a> {
         }
         node
     }
-    fn first_token(&self, node: NodeRef, token: Token) -> Result<NodeRef, Diagnostic> {
+    pub(super) fn first_token(&self, node: NodeRef, token: Token) -> Result<NodeRef, Diagnostic> {
         self.token_children(node, token)
             .next()
             .ok_or_else(|| self.error(node, format!("missing {token:?}")))
     }
-    fn rule(&self, node: NodeRef) -> Option<Rule> {
+    pub(super) fn rule(&self, node: NodeRef) -> Option<Rule> {
         match self.cst.get(node) {
             Node::Rule(rule, _) => Some(rule),
             Node::Token(..) => None,
         }
     }
-    fn location(&self, node: NodeRef) -> Location {
+    pub(super) fn location(&self, node: NodeRef) -> Location {
         Location::from_usize(self.source_id, self.cst.span(node))
             .expect("CST span fits registered source")
     }
-    fn identifier(&self, node: NodeRef) -> Identifier {
+    pub(super) fn identifier(&self, node: NodeRef) -> Identifier {
         located(self.text(node).into_owned(), self.location(node))
     }
-    fn text(&self, node: NodeRef) -> std::borrow::Cow<'_, str> {
+    pub(super) fn text(&self, node: NodeRef) -> std::borrow::Cow<'_, str> {
         self.source
             .slice(
                 crate::source::TextRange::from_usize(self.cst.span(node))
@@ -187,11 +189,11 @@ impl<'a> Lowerer<'a> {
             )
             .expect("CST span is a valid source slice")
     }
-    fn error(&self, node: NodeRef, message: impl Into<String>) -> Diagnostic {
+    pub(super) fn error(&self, node: NodeRef, message: impl Into<String>) -> Diagnostic {
         Diagnostic::error(message, self.location(node))
     }
 
-    fn string_expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
+    pub(super) fn string_expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
         let text_node = self
             .rule_children(node)
             .find(|child| {
@@ -233,14 +235,14 @@ impl<'a> Lowerer<'a> {
         ))
     }
 
-    fn plain_string(&self, node: NodeRef, context: &str) -> Result<String, Diagnostic> {
+    pub(super) fn plain_string(&self, node: NodeRef, context: &str) -> Result<String, Diagnostic> {
         let mut components = Vec::new();
         self.collect_string_components(node, &mut components);
         let _ = context;
         self.decode_string_components(&components)
     }
 
-    fn collect_string_components(&self, node: NodeRef, output: &mut Vec<NodeRef>) {
+    pub(super) fn collect_string_components(&self, node: NodeRef, output: &mut Vec<NodeRef>) {
         match self.cst.get(node) {
             Node::Token(Token::StringText | Token::EscapeSequence | Token::RawString, _) => {
                 output.push(node)
@@ -255,7 +257,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn decode_string_components(&self, components: &[NodeRef]) -> Result<String, Diagnostic> {
+    pub(super) fn decode_string_components(&self, components: &[NodeRef]) -> Result<String, Diagnostic> {
         let mut output = String::new();
         for component in components {
             output.push_str(&self.decode_string_component(*component)?);
@@ -263,7 +265,7 @@ impl<'a> Lowerer<'a> {
         Ok(output)
     }
 
-    fn decode_string_component(&self, node: NodeRef) -> Result<String, Diagnostic> {
+    pub(super) fn decode_string_component(&self, node: NodeRef) -> Result<String, Diagnostic> {
         match self.cst.get(node) {
             Node::Token(Token::StringText, _) => Ok(self.text(node).into_owned()),
             Node::Token(Token::EscapeSequence, _) => self.decode_escape(node),
@@ -272,7 +274,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn decode_escape(&self, node: NodeRef) -> Result<String, Diagnostic> {
+    pub(super) fn decode_escape(&self, node: NodeRef) -> Result<String, Diagnostic> {
         let text = self.text(node);
         let escaped = &text[1..];
         if escaped.starts_with(['\n', '\r']) {
@@ -307,7 +309,7 @@ impl<'a> Lowerer<'a> {
         Ok(decoded)
     }
 
-    fn decode_raw_string(&self, node: NodeRef) -> Result<String, Diagnostic> {
+    pub(super) fn decode_raw_string(&self, node: NodeRef) -> Result<String, Diagnostic> {
         let text = self.text(node);
         let hashes = text[1..].bytes().take_while(|byte| *byte == b'#').count();
         if hashes > 255 {
@@ -321,7 +323,7 @@ impl<'a> Lowerer<'a> {
         Ok(text[opener..text.len() - terminator.len()].to_owned())
     }
 
-    fn decode_telora_string(&self, node: NodeRef) -> Result<String, Diagnostic> {
+    pub(super) fn decode_telora_string(&self, node: NodeRef) -> Result<String, Diagnostic> {
         let text = self.text(node);
         let quoted = text.strip_prefix('b').unwrap_or(&text);
         let mut chars = quoted[1..quoted.len() - 1].chars();

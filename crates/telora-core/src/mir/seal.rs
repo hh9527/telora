@@ -328,9 +328,4 @@ impl<'a> SealedMir<'a> {
     pub fn types(&self) -> &TypeImage {
         &self.types
     }
-
-    /// Transfer the image to the executable artifact without a second copy.
-    pub(crate) fn into_parts(self) -> (&'a Mir, TypeImage) {
-        (self.mir, self.types)
-    }
 }

@@ -143,10 +143,17 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "saphyr-parser",
+ "telora-sha256",
+ "telora-wasm-shared",
+ "toml",
+]
+
+[[package]]
+name = "telora-wasm-shared"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
- "telora-sha256",
- "toml",
 ]
 
 [[package]]

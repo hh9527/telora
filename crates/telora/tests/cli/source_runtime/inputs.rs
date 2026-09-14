@@ -100,19 +100,6 @@ fn source_eval_with_initializes_then_injects_declared_context() {
         serde_json::from_slice::<Value>(&formats.stdout).unwrap(),
         serde_json::json!([{ "answer": 42 }, { "answer": 43 }, { "answer": 44 }])
     );
-    let schema = telora(&cwd)
-        .args(["eval-with", "@src/main:schema"])
-        .output()
-        .unwrap();
-    assert!(
-        schema.status.success(),
-        "{}",
-        String::from_utf8_lossy(&schema.stderr)
-    );
-    assert_eq!(
-        serde_json::from_slice::<Value>(&schema.stdout).unwrap(),
-        serde_json::json!({"type":"string", "$schema":"https://json-schema.org/draft/2020-12/schema"})
-    );
     let output = telora(&cwd)
         .env("TELORA_NATIVE_TEST_ENV", "selected")
         .args([

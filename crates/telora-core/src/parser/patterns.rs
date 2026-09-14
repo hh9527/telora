@@ -1,5 +1,7 @@
+use super::*;
+
 impl<'a> Lowerer<'a> {
-    fn match_arm(&self, node: NodeRef) -> Result<MatchArm, Diagnostic> {
+    pub(super) fn match_arm(&self, node: NodeRef) -> Result<MatchArm, Diagnostic> {
         let arrow = self.first_token(node, Token::FatArrow)?;
         let arrow_start = self.cst.span(arrow).start;
         let pattern = self
@@ -33,7 +35,7 @@ impl<'a> Lowerer<'a> {
         ))
     }
 
-    fn pattern(&self, node: NodeRef) -> Result<Pattern, Diagnostic> {
+    pub(super) fn pattern(&self, node: NodeRef) -> Result<Pattern, Diagnostic> {
         if let Node::Token(token, _) = self.cst.get(node) {
             let inner = match token {
                 Token::Identifier | Token::Placeholder => {
@@ -143,7 +145,7 @@ impl<'a> Lowerer<'a> {
         Ok(located(inner, self.location(node)))
     }
 
-    fn struct_pattern_field(&self, node: NodeRef) -> Result<StructPatternField, Diagnostic> {
+    pub(super) fn struct_pattern_field(&self, node: NodeRef) -> Result<StructPatternField, Diagnostic> {
         let name_node = self.first_token(node, Token::Identifier)?;
         let name = self.identifier(name_node);
         let pattern = self
@@ -155,7 +157,7 @@ impl<'a> Lowerer<'a> {
         Ok(StructPatternField { name, pattern })
     }
 
-    fn parameters(&self, node: NodeRef) -> Result<Vec<ClosureParameter>, Diagnostic> {
+    pub(super) fn parameters(&self, node: NodeRef) -> Result<Vec<ClosureParameter>, Diagnostic> {
         self.children(node)
             .filter(|child| self.rule(*child) == Some(Rule::Parameter))
             .map(|parameter| {
@@ -180,7 +182,7 @@ impl<'a> Lowerer<'a> {
             .collect()
     }
 
-    fn function_contract_expression(
+    pub(super) fn function_contract_expression(
         &self,
         parameters: Vec<Expr>,
         result: Expr,
@@ -198,18 +200,18 @@ impl<'a> Lowerer<'a> {
         located(ExprKind::TypeSyntax(Box::new(expression)), location)
     }
 
-    fn unit_type_expression(&self, location: Location) -> Expr {
+    pub(super) fn unit_type_expression(&self, location: Location) -> Expr {
         located(
             ExprKind::Variable(located("\0telora_unit_type".to_owned(), location)),
             location,
         )
     }
 
-    fn type_expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
+    pub(super) fn type_expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
         self.normalize_type_expression(self.expression(node)?)
     }
 
-    fn normalize_type_expression(&self, expression: Expr) -> Result<Expr, Diagnostic> {
+    pub(super) fn normalize_type_expression(&self, expression: Expr) -> Result<Expr, Diagnostic> {
         let location = expression.location;
         let value = match expression.value {
             ExprKind::TypeSyntax(_) => return Ok(expression),
@@ -246,7 +248,7 @@ impl<'a> Lowerer<'a> {
         Ok(located(ExprKind::TypeSyntax(Box::new(value)), location))
     }
 
-    fn contract_expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
+    pub(super) fn contract_expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
         let location = self.location(node);
         match self.rule(node) {
             Some(Rule::UnitContract) => {
@@ -348,7 +350,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn decorators(&self, node: NodeRef) -> Result<Vec<Decorator>, Diagnostic> {
+    pub(super) fn decorators(&self, node: NodeRef) -> Result<Vec<Decorator>, Diagnostic> {
         self.rule_children(node)
             .filter(|child| self.rule(*child) == Some(Rule::Decorator))
             .map(|decorator| {
@@ -398,7 +400,7 @@ impl<'a> Lowerer<'a> {
             .collect()
     }
 
-    fn declared_type_initializer(&self, node: NodeRef) -> Result<(Expr, Decorator), Diagnostic> {
+    pub(super) fn declared_type_initializer(&self, node: NodeRef) -> Result<(Expr, Decorator), Diagnostic> {
         let (operation, members) = match self.rule(node) {
             Some(Rule::StructInitializer) if self.first_token(node, Token::LParen).is_ok() => {
                 let payload = self.children(node)
@@ -522,7 +524,7 @@ impl<'a> Lowerer<'a> {
         ))
     }
 
-    fn apply_decorators(
+    pub(super) fn apply_decorators(
         &self,
         decorators: &[Decorator],
         kind: &str,
@@ -554,7 +556,7 @@ impl<'a> Lowerer<'a> {
         value
     }
 
-    fn decorator_context(&self, kind: &str, name: &Identifier, target_location: Location) -> Expr {
+    pub(super) fn decorator_context(&self, kind: &str, name: &Identifier, target_location: Location) -> Expr {
         located(
             ExprKind::Dict(vec![
                 located(

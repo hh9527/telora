@@ -745,5 +745,4 @@ fn fact_state_name(state: TypeState) -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "lsp/tests/mod.rs"]
 mod tests;

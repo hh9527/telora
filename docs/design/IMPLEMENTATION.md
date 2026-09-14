@@ -32,13 +32,14 @@ seal 的 MIR；执行入口必须通过 seal。后续阶段直接使用静态结
 | 层次 | 当前实现 |
 | --- | --- |
 | grammar、CST、parser | `syntax/telora/`、`parser.rs`、`ast.rs` |
-| session 图与 HIR lowering | `mir.rs`、`mir/lower.rs`、`module-resolve.rs` |
-| 符号、类型求解 | `symbol-resolve.rs`、`type-resolve.rs` 及其子目录 |
+| session 图与 HIR lowering | `mir.rs`、`mir/lower.rs`、`module_resolve.rs` |
+| 符号、类型求解 | `symbol_resolve.rs`、`type_resolve.rs` 及其子目录 |
 | 封闭与只读查询 | `mir/seal.rs`、`mir_query.rs` |
 | 静态执行闭包与类型镜像 | `mir/executable.rs`、`type_image.rs` |
 | Wasm 生成与内存组装 | `crates/telora-wasm/src/{codegen,compose,template}.rs` |
 | 初始化、需求求值 | `crates/telora-wasm/src/{entry,properties,session}.rs` |
 | Rust RT、值与复制回收 | `crates/telora-wasm/rt/`、`rt/collect.rs`、`rt/collect_trace.rs` |
+| RT 共享 ABI、JSON 文本原语 | `crates/telora-wasm-shared/src/` |
 | package 与 Host 契约 | `package.rs`、`runtime_host.rs` |
 | CLI 静态输入与编辑器快照 | `crates/telora/src/static_input.rs`、`crates/telora/src/mir_workspace.rs` |
 | CLI 命令消费者 | `crates/telora/src/{static_cli,eval_cli,test_cli,main}.rs` |
@@ -48,6 +49,12 @@ codegen 消费 SealedExecutable，生成 Wasm 指令和类型确定的胶水。R
 旧 bytecode/LIR/VM 与直接 Cranelift 后端已删除，无后端选择开关或产物 CLI。
 
 ## 2. Frontend 与静态诊断
+
+四种语法的 Lelwel 生成 parser 作为普通 Rust 模块检入，手写 callback 位于对应的
+`syntax/{telora,json,toml,yaml}/parser/support.rs`。修改 `grammar.llw` 后运行
+`cargo run -p telora-parser-gen`，同时提交 grammar 与生成代码。工具固定 Lelwel 版本，
+并用 rustfmt 格式化生成文件；正常 Cargo 构建不生成或改写源码。
+生成的状态机不受手写源文件大小限制，手写逻辑和测试使用正常子模块划分。
 
 parser 保留 lossless CST、恢复后的语法和诊断。module Pass 将可达源码挂入 MIR，
 记录源码有效性，并分配扁平 HIR 节点及相应 resolve/type 槽。源码不完整也能产生可查询图，
@@ -98,6 +105,11 @@ export { data };
 ```
 
 数据内容在静态阶段不读取、不解析；因此类型检查成功不代表 JSON/YAML/TOML 内容有效。
+
+目前有两套数据解析入口：Host 的数据模块导入使用 core 中自有 grammar/CST 与
+lowerer；Wasm RT 的 `json.parse`、`toml.parse`、`yaml.parse` 分别使用 serde_json、toml、
+saphyr-parser，并转换成 RT 数据节点。两端尚未共享解析核心，这是待统一的实现重复，
+不能假设仅凭格式名称就有完全相同的接受范围和错误诊断。
 实际内容在执行准备阶段接受格式与 DataLimits 检查，全部有效后才注入 Wasm。
 
 symbol Pass 先索引模块的声明、导出和作用域，再闭合引用。import * 建立搜索范围，

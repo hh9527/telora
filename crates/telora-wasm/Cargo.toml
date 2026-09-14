@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+telora-wasm-shared = { path = "../telora-wasm-shared" }
 telora-core = { path = "../telora-core" }
 wasm-encoder = "0.259"
 wasmparser = "0.259"

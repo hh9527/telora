@@ -41,8 +41,7 @@ export def unconstrained_identity = test.should_ok(fn() {
 export def wire_contract = test.should_ok(fn() {
     let checked: Box(String) = {value: "hi", count: 2};
     let plain: Plain = {value: "hi", count: 2};
-    expect(json.schema((Box(String)).type) == json.schema((Plain).type)
-        && codec.encode((codec.Value).type, checked) == codec.encode((codec.Value).type, plain))
+    expect(codec.encode((codec.Value).type, checked) == codec.encode((codec.Value).type, plain))
 });
 
 export def imported_generic = test.should_ok(fn() {

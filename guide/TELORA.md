@@ -612,7 +612,7 @@ type Expr(Leaf) = enum {
 变换或换序、mutual family cycle、mixed cycle、无生产 alias，以及对普通局部 helper
 的依赖仍然非法。family 也可以引用已经封闭的 concrete recursive type，并由类型参数保留静态关系。
 
-## Value、格式、codec 与 schema
+## Value、格式与 codec
 
 JSON、YAML 和 TOML 统一归一化为 `std/value.Value`。它是普通的 nominal recursive
 enum，表示归一化后的语义数据：
@@ -630,7 +630,7 @@ type Value = enum {
 `std/value.ScalarValue` 是带 untagged codec 的标量子集，包含 null、Bool、Int、Float 和
 String。参数化查询用它表达 bindings，codec 会直接产生对应的 JSON scalar。
 
-`std/json` 负责 JSON 文本和 schema，`std/codec` 在 Value 与有类型值之间转换：
+`std/json` 负责 JSON 文本，`std/codec` 在 Value 与有类型值之间转换：
 
 ```telora
 import "std/codec" as codec;
@@ -647,8 +647,6 @@ let query: Query = codec.decode(Query.type, raw).unwrap!();
 let encoded: Value = codec.encode(Value.type, query);
 let compact: String = json.stringify(encoded);
 let pretty: String = encoded |> json.stringify_pretty(2);
-let query_schema = json.schema(Query.type);
-let schema_text = json.stringify(query_schema);
 ```
 
 也可以用 `json.decode(Query.type, text)` 直接把 JSON 文本解码成 `Query`。两条路径的
@@ -681,7 +679,7 @@ Value 与领域 model 的 rename/default/flatten 转换只能由 codec 完成。
 parse 和 decode 的错误可以通过 `match` 恢复或选择其他路径。encode 直接返回
 `Value`；无法编码的输入或有冲突的编码配置产生诊断。Codec 失败不会发布部分结果。
 
-Struct 和 enum 默认从同一份 TypeMetadata 派生 codec 与 JSON schema。`std/json`
+Struct 和 enum 从封闭类型信息生成 codec。`std/json`
 目前保留两个类型级 typed-property decorator：
 
 ```telora
@@ -698,8 +696,8 @@ type Scalar = enum {
 };
 ```
 
-`rename_all` 接受 `RenameCase` enum，支持 `json.RenameCase.CamelCase`。`json.schema` 返回 `Value`，
-可以直接交给 `json.stringify`。`rename_all` 和 `untagged` 产生具名 property，codec 和 schema 按目标 TypeId 与
+`rename_all` 接受 `RenameCase` enum，支持 `json.RenameCase.CamelCase`。
+`rename_all` 和 `untagged` 产生具名 property，codec 按目标 TypeId 与
 property TypeId 查询同一份 MainWorld 数据。字段和 variant property 按 owner TypeId、
 canonical member index 和 property TypeId 安全存取。当前 JSON API 在类型层提供
 `rename_all` 和 `untagged`；member 表示定制在领域模型或显式 codec 层表达。
@@ -942,7 +940,7 @@ type Renderer(Context) = struct {
 
 `codec.encode(Value.type, value)` 的首个参数固定为公共 Value witness；编码直接返回
 `Value`，失败产生诊断。codec 从输入
-已经携带的 canonical witness 读取 source schema。对于参数很多的 concrete family，
+在 MIR 中确定的具体类型读取编码布局。对于参数很多的 concrete family，
 规范做法仍是在定义模块中建立一次 concrete type alias，并导出 alias 或有类型的
 边界函数：
 
@@ -965,9 +963,9 @@ export { Snapshot, encode_snapshot };
 ### Bytes 没有默认 JSON 表示
 
 公共 Value 可以显式携带 `Value.Bytes(bytes)`，YAML `!!binary` 也映射到该 variant；但
-JSON 没有原生 Bytes 类别，`json.stringify` 和 schema 不为 Bytes 选择隐式文本编码。
-包含裸 `Bytes` 的类型不能作为完整 JSON text/schema 边界。设计需要稳定 JSON
-codec/schema 的数据模型时，当前应从公共 `Val`、Model、Plan 和输出类型中排除 Bytes：
+JSON 没有原生 Bytes 类别，`json.stringify` 不为 Bytes 选择隐式文本编码。
+包含裸 `Bytes` 的类型不能直接作为 JSON 文本边界。设计需要稳定 JSON
+表示的数据模型时，应显式选择 Bytes 的文本编码，或从输出类型中排除 Bytes：
 
 ```telora
 type Val = enum {

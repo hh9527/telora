@@ -1,5 +1,7 @@
+use super::*;
+
 impl<'a> Lowerer<'a> {
-    fn new(
+    pub(super) fn new(
         source_id: SourceId,
         source: &'a crate::document::DocumentText,
         cst: &'a CstData,
@@ -11,7 +13,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn program(&self) -> Result<Program, Diagnostic> {
+    pub(super) fn program(&self) -> Result<Program, Diagnostic> {
         let root = NodeRef::ROOT;
         let body_node = self
             .rule_children(root)
@@ -61,7 +63,7 @@ impl<'a> Lowerer<'a> {
         ))
     }
 
-    fn recover_program(&self, diagnostics: &mut Vec<Diagnostic>) -> RecoveredProgram {
+    pub(super) fn recover_program(&self, diagnostics: &mut Vec<Diagnostic>) -> RecoveredProgram {
         use crate::syntax::telora::ast::{AstNode, Program as SyntaxProgram};
 
         let root = SyntaxProgram::root(self.cst);
@@ -132,11 +134,11 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn block_body(&self, node: NodeRef) -> Result<Block, Diagnostic> {
+    pub(super) fn block_body(&self, node: NodeRef) -> Result<Block, Diagnostic> {
         self.block_body_with_destructuring(node, true)
     }
 
-    fn block_body_with_destructuring(
+    pub(super) fn block_body_with_destructuring(
         &self,
         node: NodeRef,
         allow_destructuring: bool,
@@ -402,7 +404,7 @@ impl<'a> Lowerer<'a> {
         Ok(block)
     }
 
-    fn let_pattern_binding(&self, node: NodeRef) -> Result<(Pattern, Expr), Diagnostic> {
+    pub(super) fn let_pattern_binding(&self, node: NodeRef) -> Result<(Pattern, Expr), Diagnostic> {
         let equal = self.first_token(node, Token::Equal)?;
         let equal_start = self.cst.span(equal).start;
         let pattern = self
@@ -416,7 +418,7 @@ impl<'a> Lowerer<'a> {
         Ok((self.pattern(pattern)?, self.expression(value)?))
     }
 
-    fn let_else_binding(&self, node: NodeRef) -> Result<(Pattern, Expr, Block), Diagnostic> {
+    pub(super) fn let_else_binding(&self, node: NodeRef) -> Result<(Pattern, Expr, Block), Diagnostic> {
         let equal = self.first_token(node, Token::Equal)?;
         let else_token = self.first_token(node, Token::Else)?;
         let pattern = self
@@ -444,7 +446,7 @@ impl<'a> Lowerer<'a> {
         ))
     }
 
-    fn type_parameters(
+    pub(super) fn type_parameters(
         &self,
         node: NodeRef,
     ) -> Result<(Vec<Identifier>, Vec<Vec<Expr>>), Diagnostic> {
@@ -478,7 +480,7 @@ impl<'a> Lowerer<'a> {
         Ok((parameters, bounds))
     }
 
-    fn binding(&self, node: NodeRef) -> Result<Binding, Diagnostic> {
+    pub(super) fn binding(&self, node: NodeRef) -> Result<Binding, Diagnostic> {
         let identifiers = self
             .token_children(node, Token::Identifier)
             .collect::<Vec<_>>();
@@ -928,7 +930,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn import_bindings(&self, node: NodeRef) -> Result<Vec<Binding>, Diagnostic> {
+    pub(super) fn import_bindings(&self, node: NodeRef) -> Result<Vec<Binding>, Diagnostic> {
         if let Some(selector) = self.rule_children(node)
             .find(|child| self.rule(*child) == Some(Rule::MemberSelector))
         {
@@ -1028,7 +1030,7 @@ impl<'a> Lowerer<'a> {
         Ok(bindings)
     }
 
-    fn export_bindings(&self, node: NodeRef) -> Result<Vec<Binding>, Diagnostic> {
+    pub(super) fn export_bindings(&self, node: NodeRef) -> Result<Vec<Binding>, Diagnostic> {
         if let Some(selector) = self.rule_children(node)
             .find(|child| self.rule(*child) == Some(Rule::MemberSelector))
         {
@@ -1100,7 +1102,7 @@ impl<'a> Lowerer<'a> {
             .collect()
     }
 
-    fn member_bindings(&self, node: NodeRef, exported: bool) -> Result<Vec<Binding>, Diagnostic> {
+    pub(super) fn member_bindings(&self, node: NodeRef, exported: bool) -> Result<Vec<Binding>, Diagnostic> {
         let mut names = self.token_children(node, Token::Identifier)
             .map(|name| self.identifier(name));
         let first = names.next().ok_or_else(|| self.error(node, "member import has no type name"))?;

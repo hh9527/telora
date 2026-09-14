@@ -98,83 +98,6 @@ pub struct ModuleCatalogEntry {
     pub visibility: ModuleVisibility,
 }
 
-/// Stable identity assigned after the complete module graph has been discovered.
-///
-/// The numeric value is the module's position in the graph sorted by canonical
-/// module name. It is deliberately distinct from [`ModuleCName`], which is a
-/// resolver-level name and may contain paths.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ModuleId(u32);
-
-impl ModuleId {
-    pub(crate) const ANONYMOUS: Self = Self(0);
-    pub const FIRST_DYNAMIC: u32 = 16;
-
-    pub(crate) fn from_index(index: usize) -> Self {
-        let index = u32::try_from(index).expect("module graph exceeds u32 ID space");
-        Self(
-            Self::FIRST_DYNAMIC
-                .checked_add(index)
-                .expect("module graph exceeds u32 ID space"),
-        )
-    }
-
-    pub(crate) const fn from_raw(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    pub const fn index(self) -> usize {
-        (self.0 - Self::FIRST_DYNAMIC) as usize
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-}
-
-pub const FIRST_DYNAMIC_MODULE_LOCAL: u32 = 1024;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct TypeConstructorId {
-    pub module: ModuleId,
-    pub local: u32,
-}
-
-/// Stable identity of a static trait declaration.
-///
-/// A trait dictionary is a nominal type family, so its trait and constructor
-/// identities deliberately share the same module-local slot.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct TraitId {
-    pub module: ModuleId,
-    pub local: u32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct TraitImplId {
-    pub module: ModuleId,
-    pub local: u32,
-}
-
-impl From<TypeConstructorId> for TraitId {
-    fn from(value: TypeConstructorId) -> Self {
-        Self {
-            module: value.module,
-            local: value.local,
-        }
-    }
-}
-
-impl From<TraitId> for TypeConstructorId {
-    fn from(value: TraitId) -> Self {
-        Self {
-            module: value.module,
-            local: value.local,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ModuleCName {
     Source { owner: String, path: PathBuf },
@@ -303,22 +226,6 @@ pub struct ModuleResolver {
 }
 
 impl ModuleResolver {
-    pub(crate) fn builtin_inventory(builtins: impl IntoIterator<Item = (String, u32)>) -> Self {
-        Self {
-            crate_name: "std".into(),
-            standalone: false,
-            workspace_root: PathBuf::new(),
-            source_root: PathBuf::new(),
-            root_path: PathBuf::new(),
-            root_id: ModuleCName::builtin("std/prelude"),
-            dependencies: BTreeMap::new(),
-            builtins: builtins.into_iter().collect(),
-            selected_entry: None,
-            workspace: None,
-            tests: None,
-        }
-    }
-
     pub fn standalone(root_module: &Path) -> Result<Self, ResolveModuleError> {
         Self::standalone_with_source(root_module, None)
     }
@@ -1266,5 +1173,4 @@ fn lexical_normalize_relative(path: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-#[path = "module_id/tests/mod.rs"]
 mod tests;

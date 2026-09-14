@@ -81,13 +81,8 @@ mod reflection_data;
 mod reflection_ops;
 mod regex_ops;
 mod regex_prepare;
-#[path = "../rt/abi.rs"]
-mod runtime_abi;
+use telora_wasm_shared::abi as runtime_abi;
 mod scalars;
-mod schema;
-mod schema_enum;
-mod schema_nominal;
-mod schema_values;
 mod sequences;
 pub mod session;
 pub mod service;
@@ -105,12 +100,3 @@ pub use codegen::compile_executable;
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-#[path = "../rt/json_text.rs"]
-mod json_text_tests;
-
-#[cfg(test)]
-#[path = "../rt/json_parse.rs"]
-#[allow(dead_code)] // Temporal nodes are exercised by the Wasm TOML tests.
-mod json_parse_tests;

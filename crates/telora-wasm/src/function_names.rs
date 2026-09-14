@@ -54,12 +54,10 @@ impl<'a> FunctionNames<'a> {
             Special::Json(ty) => format!("json[{}#{}]", query.type_name(ty), ty.index()),
             Special::Encode(a, b)
             | Special::Decode(a, b)
-            | Special::Schema(a, b)
             | Special::DecodeVariant(a, b, _) => {
                 let kind = match key.special {
                     Special::Encode(..) => "encode".to_owned(),
                     Special::Decode(..) => "decode".to_owned(),
-                    Special::Schema(..) => "schema".to_owned(),
                     Special::DecodeVariant(_, _, variant) => format!("decode-variant-{variant}"),
                     _ => unreachable!(),
                 };

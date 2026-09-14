@@ -6,15 +6,10 @@ use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::telora::parser::CstData;
 use std::fmt::Write;
 
-#[path = "mir/lower.rs"]
 pub(crate) mod lower;
-#[path = "mir/seal.rs"]
 mod seal;
-#[path = "mir/executable.rs"]
 mod executable;
-#[path = "mir/type-schemes.rs"]
 mod type_schemes;
-#[path = "mir/properties.rs"]
 mod properties;
 pub use seal::SealedMir;
 pub use executable::{ExecutionClosure, ExecutionRoot, SealedExecutable};

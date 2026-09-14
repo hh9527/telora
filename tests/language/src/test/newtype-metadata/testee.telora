@@ -74,12 +74,3 @@ export def dynamic_payload = test.should_ok(fn() {
     expect(dyn.project_with(UserId.type, items[0]) == Some(nested.0)
         && dyn.project_with((Int).type, items[0]) == None)
 });
-
-export def schema = test.should_ok(fn() {
-    let recursive = json.schema(Tree.type);
-    let expected = match json.parse(r##"{"$defs":{"Type0":{"type":"integer"}},"$ref":"#/$defs/Type0","$schema":"https://json-schema.org/draft/2020-12/schema"}"##) {
-        Ok(value) => value,
-        Err(error) => raise!(error),
-    };
-    expect(json.schema(UserId.type) == expected)
-});

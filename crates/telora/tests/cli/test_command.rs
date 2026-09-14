@@ -1,3 +1,5 @@
+use super::*;
+
 fn test_command(cwd: &Path, name: &str) -> std::process::Output {
     telora(cwd).args(["test", name]).output().unwrap()
 }

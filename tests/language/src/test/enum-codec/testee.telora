@@ -1,7 +1,6 @@
 import "std/codec" as codec;
 import "std/json" as json;
 import "std/result" as results;
-import "std/string" as string;
 import "std/value" {ScalarValue};
 import "std/test" as test;
 import "@src/test-support" {expect};
@@ -57,10 +56,6 @@ export def verified_case = test.should_ok(fn() {
             (Ambiguous).type,
             codec.encode((codec.Value).type, "text"),
         );
-        let model_schema = json.schema((FixtureModel).type);
-        let schema_text = json.stringify(
-            codec.encode((codec.Value).type, model_schema),
-        );
         let idle = codec.decode(
             (FixtureEvent).type,
             codec.encode((codec.Value).type, "idle"),
@@ -76,9 +71,6 @@ export def verified_case = test.should_ok(fn() {
         let checks = [
             expect(!results.is_ok(no_match)),
             expect(!results.is_ok(ambiguous)),
-            expect(string.contains(schema_text, "userId")),
-            expect(string.contains(schema_text, "event")),
-            expect(string.contains(schema_text, "scalar")),
             expect(idle == FixtureEvent.Idle),
             expect(joined == FixtureEvent.UserJoined({name: "Ada"})),
             expect(encoded_fatal == codec.Value.Object({fatalError: codec.Value.String("boom")})),

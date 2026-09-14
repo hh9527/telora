@@ -352,5 +352,4 @@ impl From<LexToken> for Token {
 }
 
 #[cfg(test)]
-#[path = "lexer/tests/mod.rs"]
 mod tests;

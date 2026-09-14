@@ -156,5 +156,4 @@ impl Future for YieldOnce {
 }
 
 #[cfg(test)]
-#[path = "query/tests/mod.rs"]
 mod tests;

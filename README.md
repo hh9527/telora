@@ -163,7 +163,7 @@ constructor 使用相同类型实参时得到相同的 canonical 类型。
 `T` 是静态类型，`T.type` 将其投影为精确的 `TypeOf(T)` 元数据，可作为 `Type`
 传递。普通函数可以观察和组合元数据，但不能把函数返回的元数据反向用作类型声明。
 类型骨架由声明和受信任的类型构造器建立；typed property 与用户空间 interpreter
-在此基础上支持验证、codec、schema 和文档生成。工具阶段和程序阶段共用求值器。
+在此基础上支持验证、codec 和文档生成。工具阶段和程序阶段共用求值器。
 
 ### 模块与静态数据
 
@@ -200,8 +200,8 @@ def request: Request = json.decode(Request.type, raw_text).unwrap!();
 export def encoded: Value = codec.encode(Value.type, request);
 ```
 
-`std/codec` 在 `Value` 与有类型值之间转换；`std/json` 负责 JSON 文本和 schema。
-Decorator provider 计算 typed property，codec 与 schema 消费对应的类型元数据和 property。
+`std/codec` 在 `Value` 与有类型值之间转换；`std/json` 负责 JSON 文本。
+Decorator provider 计算 typed property，codec 消费对应的类型元数据和 property。
 
 字符串插值 `` `value=\{value}` `` 只依据运行时 primitive meta 支持 String、Int、
 Float 和 Atom，不隐式调用用户 Display。稳定的数据交换使用 codec；临时观察使用

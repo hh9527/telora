@@ -6,15 +6,11 @@ import "std/_codec" {rename_all, untagged};
 native parse_raw: Fn(TypeOf(Value), String) -> Result(Value, BlameError);
 native stringify: Fn(Value) -> String;
 native stringify_pretty: Fn(Int) -> Fn(Value) -> String;
-native schema_with: Fn(codec.Properties, Type, TypeOf(Value)) -> Value;
 def decode: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError) = fn(target, text) {
     match parse(text) {
         Ok(value) => codec.decode(target, value),
         Err(error) => Err(error),
     }
-};
-def schema: Fn(Type) -> Value = fn(target) {
-    schema_with(codec.properties, target, Value.type)
 };
 def parse: Fn(String) -> Result(Value, BlameError) = fn(text) {
     parse_raw(Value.type, text)
@@ -30,5 +26,4 @@ export {
     Untagged,
     rename_all,
     untagged,
-    schema,
 };

@@ -29,4 +29,4 @@ fn contains_rule_error(cst: &CstData, node: NodeRef) -> bool {
             .any(|child| contains_rule_error(cst, child))
 }
 
-include!("part-01.rs");
+mod cases;

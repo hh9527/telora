@@ -12,9 +12,6 @@ pub(crate) const PROPERTY_TARGET_VARIANTS: [&str; 6] = [
     "EnumType", "Field", "Member", "StructType", "Type", "Variant",
 ];
 
-/// Capability bits are independent of canonical enum member indices.
-pub(crate) const PROPERTY_TARGET_MASKS: [i64; 6] = [4, 16, 8, 2, 1, 32];
-
 pub(crate) fn builtin_variant(
     constructor: &crate::mir::TypeConstructor,
     index: u32,
@@ -51,9 +48,6 @@ pub struct TypeImage {
     pub layouts: Vec<Option<crate::mir::TypeLayout>>,
     pub definitions: Vec<TypeDefinition>,
     pub(crate) native_definitions: Vec<(crate::mir::NativeTypeId, String)>,
-    /// Input identity from the admitted JSON formatter's solved ABI signature.
-    /// Runtime serializers must not infer this contract from the payload stamp.
-    pub(crate) json_value_type: Option<TypeId>,
     definition_by_symbol: Vec<Option<usize>>,
 }
 
@@ -78,16 +72,6 @@ impl TypeImage {
     pub fn native_name(&self, id: crate::mir::NativeTypeId) -> Option<&str> {
         self.native_definitions.iter().find(|(key, _)| *key == id).map(|(_, name)| name.as_str())
     }
-    /// Native Value producers use the same dictionary witness as a source
-    /// Object constructor. This is a lookup in the closed applied layout.
-    pub(crate) fn semantic_object_payload(&self, owner: TypeId) -> Option<TypeId> {
-        let TypeConstructor::Nominal(symbol) = self.types.get(owner.index())?.constructor else { return None; };
-        let index = self.definition(symbol)?.members.iter().position(|member| member.name == "Object")?;
-        let payload = self.layout(owner)?.members[index]?;
-        let shape = &self.types[payload.index()];
-        (shape.constructor == TypeConstructor::Dict && shape.arguments == [owner]).then_some(payload)
-    }
-
     /// Applied member types in canonical member-name order. This is an array lookup,
     /// including for recursive and generic nominal applications.
     pub fn layout(&self, ty: TypeId) -> Option<&crate::mir::TypeLayout> {
@@ -171,27 +155,6 @@ impl TypeImage {
                     Some((id, format!("{module}#{}", symbol.name)))
                 })
                 .collect(),
-            json_value_type: mir.symbols.iter().find_map(|symbol| {
-                use crate::{
-                    ast::BindingKind,
-                    mir::{SymbolKind, TypeConstructor},
-                };
-                if symbol.kind != SymbolKind::Declaration(BindingKind::Native)
-                    || symbol.name != "stringify"
-                    || mir.modules[symbol.module?.index()].native.as_ref()?.id != 17
-                {
-                    return None;
-                }
-                let TypeState::Known(signature) =
-                    mir.ty_slots[symbol.declarations.first()?.ty().index()]
-                else {
-                    return None;
-                };
-                let signature = &mir.types[signature.index()];
-                (signature.constructor == TypeConstructor::Function
-                    && signature.arguments.len() == 2)
-                    .then(|| signature.arguments[0])
-            }),
             definition_by_symbol,
         })
     }

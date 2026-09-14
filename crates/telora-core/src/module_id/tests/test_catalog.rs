@@ -1,3 +1,5 @@
+use super::*;
+
 fn test_catalog_fixture(label: &str) -> (PathBuf, PathBuf) {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

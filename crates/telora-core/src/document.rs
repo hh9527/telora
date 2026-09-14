@@ -359,5 +359,4 @@ fn utf32_to_byte(slice: crop::RopeSlice<'_>, target: usize) -> Option<usize> {
 }
 
 #[cfg(test)]
-#[path = "document/tests/mod.rs"]
 mod tests;

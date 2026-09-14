@@ -785,7 +785,7 @@ type Status = enum {
 
 每个直接声明拥有由 provider module 与声明位置确定的私有身份。不同声明即使字段或
 variant 完全相同，也不是同一个类型；alias、import 和 reexport 则保留原身份。普通
-TypeMetadata 值、codec、schema、`Dyn`、TypeDesc 和工具从同一份权威元数据图工作。
+TypeMetadata 值、codec、`Dyn`、TypeDesc 和工具从同一份权威元数据图工作。
 
 Decorator 只适用于没有类型参数的具名 Struct/Enum 声明及其直接字段/variant。
 Property carrier 本身也必须是具名 Struct/Enum，并用内建 capability 标记：
@@ -1407,7 +1407,7 @@ property provider 和顶层初始化；Program stage 使用显式 Host 输入执
 解码返回 `Result(Target, codec.BlameError)`。编码直接返回 `Value`，失败产生诊断，
 并保留失败值和编码规则的来源位置。
 `codec.encode(Value.type, model)` 的首个参数固定为 canonical `TypeOf(Value)`，并从 model
-已经携带的 nominal witness 选择 schema。Dyn 中的模型需先投影到具体类型。
+在 MIR 中确定的具体类型选择编码实现。Dyn 中的模型需先投影到具体类型。
 复杂 concrete family 的定义模块应拥有一次完整实例化，并导出 concrete
 alias 或 typed boundary function：
 
@@ -1827,7 +1827,7 @@ declarations。普通 definitions 实现 Option、Result、argv 等组合政策�
 declarations 提供需要高效 heap 观察或受控 runtime identity 的确定操作。
 
 当前通用能力包括 Array/Dict 组合、String、lexical path、SHA-256、regex、JSON codec
-与 schema、typed property、Dyn observer、文本 parse/display 等。
+、typed property、Dyn observer、文本 parse/display 等。
 这些 API 不授予环境或文件系统访问权限。例如 path 操作是词法操作，hash 操作只
 处理显式输入。
 

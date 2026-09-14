@@ -8,16 +8,15 @@ mod math;
 mod regex;
 mod regex_contract;
 mod hash;
-mod json_text;
+use telora_wasm_shared::json_text;
 mod json_writer;
-mod json_parse;
+use telora_wasm_shared::json_parse;
 mod data_parse;
 mod toml_parse;
 mod yaml_parse;
 mod yaml_scalar;
 
-#[allow(dead_code)]
-mod abi;
+use telora_wasm_shared::abi;
 mod format;
 mod format_nodes;
 mod path;

@@ -13,4 +13,4 @@ fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
-include!("part-01.rs");
+mod cases;

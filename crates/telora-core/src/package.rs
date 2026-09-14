@@ -979,5 +979,4 @@ fn package_digest(domain: &[u8], parts: &[&[u8]]) -> String {
 }
 
 #[cfg(test)]
-#[path = "package/tests.rs"]
 mod tests;

@@ -1,4 +1,6 @@
-fn synthesize_export_record(bindings: &[Binding], location: Location) -> Expr {
+use super::*;
+
+pub(super) fn synthesize_export_record(bindings: &[Binding], location: Location) -> Expr {
     let fields = bindings
         .iter()
         .filter(|binding| binding.value.kind == BindingKind::Export)
@@ -22,7 +24,7 @@ fn synthesize_export_record(bindings: &[Binding], location: Location) -> Expr {
     located(ExprKind::Dict(fields), location)
 }
 
-fn push_unique_diagnostic(diagnostics: &mut Vec<Diagnostic>, diagnostic: Diagnostic) {
+pub(super) fn push_unique_diagnostic(diagnostics: &mut Vec<Diagnostic>, diagnostic: Diagnostic) {
     let location = diagnostic.labels.first().map(|label| label.location);
     if diagnostics.iter().any(|existing| {
         existing.message == diagnostic.message
@@ -33,7 +35,7 @@ fn push_unique_diagnostic(diagnostics: &mut Vec<Diagnostic>, diagnostic: Diagnos
     diagnostics.push(diagnostic);
 }
 
-fn elaborate_pipeline(location: Location, left: Expr, right: Expr) -> Expr {
+pub(super) fn elaborate_pipeline(location: Location, left: Expr, right: Expr) -> Expr {
     located(
         ExprKind::Call {
             callee: Box::new(right),
@@ -45,7 +47,7 @@ fn elaborate_pipeline(location: Location, left: Expr, right: Expr) -> Expr {
 
 const MAX_PLACEHOLDER_PARAMETERS: usize = u16::MAX as usize;
 
-fn elaborate_call_section(
+pub(super) fn elaborate_call_section(
     callee: Expr,
     arguments: Vec<CallArgument>,
     section_node: NodeRef,
@@ -173,16 +175,16 @@ fn elaborate_call_section(
     ))
 }
 
-fn placeholder_parameter(index: usize) -> String {
+pub(super) fn placeholder_parameter(index: usize) -> String {
     format!("\0telora_placeholder_{index}")
 }
 
-struct InterpreterSyntaxPlan {
-    witness_count: usize,
-    parameters: Vec<Option<usize>>,
+pub(super) struct InterpreterSyntaxPlan {
+    pub(super) witness_count: usize,
+    pub(super) parameters: Vec<Option<usize>>,
 }
 
-fn interpreter_syntax_plan(
+pub(super) fn interpreter_syntax_plan(
     type_parameters: &[Identifier],
     contract: &Expr,
 ) -> Option<InterpreterSyntaxPlan> {
@@ -226,7 +228,7 @@ fn interpreter_syntax_plan(
     })
 }
 
-fn function_contract_parts(contract: &Expr) -> Option<(&[Expr], &Expr)> {
+pub(super) fn function_contract_parts(contract: &Expr) -> Option<(&[Expr], &Expr)> {
     if let ExprKind::TypeSyntax(inner) = &contract.value {
         return function_contract_parts(inner);
     }
@@ -245,11 +247,11 @@ fn function_contract_parts(contract: &Expr) -> Option<(&[Expr], &Expr)> {
     Some((parameters, result))
 }
 
-fn is_variable(expression: &Expr, expected: &str) -> bool {
+pub(super) fn is_variable(expression: &Expr, expected: &str) -> bool {
     matches!(&expression.value, ExprKind::Variable(name) if name.value == expected)
 }
 
-fn interpreter_expansion(operand: Expr, location: Location, plan: &InterpreterSyntaxPlan) -> Expr {
+pub(super) fn interpreter_expansion(operand: Expr, location: Location, plan: &InterpreterSyntaxPlan) -> Expr {
     let variable = |name: &str| {
         located(
             ExprKind::Variable(located(name.to_owned(), location)),
@@ -321,7 +323,7 @@ fn interpreter_expansion(operand: Expr, location: Location, plan: &InterpreterSy
     )
 }
 
-fn placeholder_variable(index: usize, location: Location) -> Expr {
+pub(super) fn placeholder_variable(index: usize, location: Location) -> Expr {
     located(
         ExprKind::Variable(located(placeholder_parameter(index), location)),
         location,

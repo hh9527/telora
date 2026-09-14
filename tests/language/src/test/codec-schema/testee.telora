@@ -2,7 +2,6 @@ import "std/codec" as codec;
 import "std/dict" as dict;
 import "std/json" as json;
 import "std/result" as results;
-import "std/string" as string;
 import "std/toml" as toml;
 import "std/yaml" as yaml;
 import "std/test" as test;
@@ -30,10 +29,6 @@ export def verified_case = test.should_ok(fn() {
     let decoded_user = codec.decode((User).type, encoded_user).unwrap!();
     let decoded_model = codec.decode((Model).type, encoded_model).unwrap!();
     let decoded_node = codec.decode((Node).type, encoded_node).unwrap!();
-    let model_schema = json.schema((Model).type);
-    let node_schema = json.schema((Node).type);
-    let model_schema_text = json.stringify(model_schema);
-    let node_schema_text = json.stringify(node_schema);
     let parsed_json = json.parse("{\"name\":\"Ada\",\"age\":36}").unwrap!();
     let parsed_toml = toml.parse("name = \"Ada\"\nage = 36\n").unwrap!();
     let parsed_yaml = yaml.parse("name: Ada\nage: 36\n").unwrap!();
@@ -49,10 +44,6 @@ export def verified_case = test.should_ok(fn() {
             age: codec.Value.String("old"),
         })))
         && dict.keys(model.labels) == ["role"]
-        && string.contains(model_schema_text, "properties")
-        && string.contains(model_schema_text, "users")
-        && string.contains(node_schema_text, "$defs")
-        && string.contains(node_schema_text, "$ref")
         && json.stringify(encoded_user) == "{\"age\":36,\"name\":\"Ada\"}"
         && (json.stringify_pretty(2))(encoded_user)
             == "{\n  \"age\": 36,\n  \"name\": \"Ada\"\n}";

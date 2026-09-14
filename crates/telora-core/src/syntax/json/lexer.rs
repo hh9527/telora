@@ -286,5 +286,4 @@ fn token_is_invalid_escape(token: Token) -> bool {
 }
 
 #[cfg(test)]
-#[path = "lexer/tests/mod.rs"]
 mod tests;

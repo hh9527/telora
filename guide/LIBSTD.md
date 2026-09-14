@@ -67,9 +67,12 @@ type Endpoint = struct {host: String, port: Int};
   构造或传递错误值本身不产生诊断。
 - `std/value`：定义递归的 `Value`，以及数据库绑定等边界使用的 `ScalarValue`。
 - `std/codec`：在名义类型与 Value 之间编码、解码，并统一消费 codec property。
-- `std/json`：JSON 解析、类型化解码、编码、schema 与 JSON codec decorator。
+- `std/json`：JSON 解析、类型化解码、文本输出与 JSON codec decorator。
+
 - `std/yaml`：把 YAML 文本解析为 Value。
 - `std/toml`：把 TOML 文本解析为 Value。
+
+早期实验的 `std/json.schema` 已删除；JSON 文本处理与 codec 不受影响。
 
 `Value` 是 source、Entry、EES 和 JSON 共享的数据边界。`ScalarValue` 的 untagged codec
 把 `ScalarValue.None`、`ScalarValue.Bool(...)`、`ScalarValue.Int(...)`、
@@ -98,7 +101,7 @@ JSON null、boolean、number 和 string。
 
 newtype 的具名类型返回 Ref；解析引用后，kind 为 Newtype，children 包含唯一的
 载荷类型。`dyn.tuple_items` 可读取其单个载荷，并保留载荷自己的类型身份。
-newtype 的 JSON 表示和 schema 使用载荷契约。
+newtype 的 JSON 表示使用载荷契约。
 
 ## 执行与效果
 
