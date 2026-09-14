@@ -7,7 +7,7 @@ type Request = struct {
     count: Int,
 };
 
-export def main = entry.main({sources: ["input"], envs: [], args: False}, fn(ctx) {
+export def main: entry.Eval = entry.main({sources: ["input"], envs: [], args: False}, fn(ctx) {
     let request = codec.decode(Request.type, ctx.sources.input).unwrap!();
     codec.encode(Value.type, request)
 });

@@ -208,7 +208,7 @@ def effects: ees.Config = {
 
 type State = enum {Ready, Waiting};
 
-export def run = entry.run(State.type, config, effects, fn(ctx) {
+export def run: entry.Run(State) = entry.run(State.type, config, effects, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match (state, event) {
             (State.Ready, actor.Event.Request(request)) => (

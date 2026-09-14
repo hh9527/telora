@@ -465,6 +465,8 @@ pub struct ResolvedType {
 pub struct TypeConflict {
     /// Syntax obligation being checked when this relation failed.
     pub origin: Option<HirId>,
+    /// Explicit annotations that supplied this use's expected contract.
+    pub contracts: Vec<HirId>,
     pub left: TypeSlotId,
     pub right: TypeSlotId,
     pub location: Option<Location>,

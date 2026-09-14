@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn contract_checks_cover_value_shapes_and_unresolved_aliases() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/language/src/check");
+    for (fixture, names, unresolved) in [
+        ("diag-top-level-contract", &["scalar", "container", "metadata", "function", "exported", "renamed"][..], false),
+        ("diag-top-level-contract-unresolved", &["aliased"][..], true),
+    ] {
+        let source = std::fs::read_to_string(directory.join(fixture).join("testee.telora")).unwrap();
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        for name in names {
+            let contract = mir.declaration_contracts.iter().find(|contract|
+                mir.symbols[contract.symbol.index()].name == *name).unwrap();
+            assert!(if unresolved { contract.state == DeclarationContractState::Unresolved }
+                else { contract.state == DeclarationContractState::Missing }, "{name}: {contract:?}");
+        }
+        mir.diagnostics.clear();
+        assert!(mir.seal().is_err());
+    }
+}
+
+#[test]
 fn explicit_error_paths_cannot_poison_closed_contracts() {
     let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/contract-error-boundaries.telora")).unwrap();
@@ -121,6 +143,14 @@ fn failed_generic_use_and_body_keep_other_inference_results() {
     assert_eq!(mir.types[signature.index()].constructor, TypeConstructor::Function);
     assert!(mir.types[signature.index()].arguments.iter().all(|ty| mir.types[ty.index()].constructor == TypeConstructor::Int));
     assert_eq!(mir.type_conflicts.len(), 2, "{:?}", mir.diagnostics);
+    for name in ["same", "broken_body"] {
+        let symbol = mir.symbols.iter().find(|symbol| symbol.name == name).unwrap();
+        let annotation = symbol.declarations.iter().find_map(|node|
+            mir.hir[node.index()].children.iter().find(|edge| edge.role == Role::Annotation)
+                .map(|edge| edge.node)).unwrap();
+        assert!(mir.type_conflicts.iter().any(|failure| failure.contracts.contains(&annotation)),
+            "{name}: {:?}", mir.type_conflicts);
+    }
     assert!(mir.seal().is_err());
 }
 
@@ -150,6 +180,10 @@ fn rejected_uses_preserve_shared_contracts_and_independent_diagnostics() {
         assert_eq!(mir.diagnostics.len(), 2, "{:?}", mir.diagnostics);
         assert!(mir.diagnostics.iter().all(|d| d.labels.iter().any(|label|
             label.primary && mir.sources.get(label.location.source).name.ends_with("/bad"))));
+        assert!(mir.diagnostics.iter().all(|d| d.labels.iter().any(|label|
+            !label.primary && label.message == "type contract declared here"
+                && mir.sources.get(label.location.source).name.ends_with("/shared"))), "{:?}", mir.diagnostics);
+        assert!(mir.type_conflicts.iter().all(|failure| !failure.contracts.is_empty()));
         assert!(mir.seal().is_err());
         // Publication must be blocked by failed constraints, not only text.
         mir.diagnostics.clear();

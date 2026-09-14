@@ -70,7 +70,7 @@ BuildState.Ready           # BuildState 的无 payload variant
 enum variant 首先是类型域身份，import/re-export 只为身份提供名字。在值表达式中
 使用时，variant 如 literal 一样在当前位置物化：无载荷成员产生 enum 值，有载荷
 成员产生构造器函数值。`let a = True` 的值来源精确落在 True，不追溯到 prelude；
-`let b = a` 则保留 a 的来源。普通 `def disabled = False` 创建的是值，导入或重导出
+`let b = a` 则保留 a 的来源。普通 `def disabled: Bool = False` 创建的是值，导入或重导出
 disabled 不会在读取处重新物化。以上规则由 resolve 后的身份决定，不按名字识别。
 
 有载荷构造器被调用后，enum 外层值继承构造器物化位置，payload 保留自己的来源。
@@ -263,7 +263,7 @@ pairs 保留元素类型 A，merge 的两个输入共享 A，同名键由右侧�
 ```telora
 type State = struct {count: Int, label: String};
 type Label = struct {label: String};
-def update = fn(base: State, label: Label) {
+def update: Fn(State, Label) -> State = fn(base, label) {
     base <~ label <~ {count: 2, ...label}
 };
 ```
@@ -753,7 +753,7 @@ Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函�
 type Window = struct { limit: Int, offset: Int };
 
 def first: Window = { limit: 10, offset: 0 };
-def next = first <~ { offset: 10 };
+def next: Window = first <~ { offset: 10 };
 ```
 
 `next` 保留 limit，更新后的整个 Window 再接受校验；`first <~ { limit: 0 }` 会被拒绝。
@@ -1033,7 +1033,7 @@ export {LocalPlan as Plan};
 alias 只供下游 import 和 Module member resolution 使用。
 
 `export def` 和 `export type` 是普通 module binding 后接 export marker
-的语法糖。例如 `export def f = value;` 与 `def f = value; export {f};` 具有相同
+的语法糖。例如 `export def f: T = value;` 与 `def f: T = value; export {f};` 具有相同
 语义。本地 `f` 由 `def` 建立；export marker 不建立 lexical binding、不执行用户代码，
 只选择要发布的 local binding。
 
@@ -1093,7 +1093,7 @@ production catalog。枚举顺序确定，符号链接（包括 tests 根）被�
 Production module 使用显式命名导出：
 
 ```telora
-export def version = 1;
+export def version: Int = 1;
 export def compile: Fn(Input) -> Option(Output) = fn(input) { ... };
 export { User, compile };
 ```
@@ -1416,7 +1416,7 @@ alias 或 typed boundary function：
 ```telora
 type Rejection = RejectionPayload(Entity, Dimension, Intent, Expr, Plan, Sql);
 
-def encode_rejection = fn(value: Rejection) {
+def encode_rejection: Fn(Rejection) -> Value = fn(value) {
     codec.encode(Value.type, value)
 };
 
@@ -1583,6 +1583,10 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 `session` 保留本次查询或检查的根选择（例如 `--lib`）。批量检查不会把同一条
 错误复制给每个导入者。没有可归属的源码 primary 时，`module` 回退为本次根选择。
 这一静态归属不代表运行时失败的触发导出项；规则位置与触发求值的根是不同信息。
+显式契约失配时，secondary 的 `type contract declared here` 指向提供期望类型的
+原始注解。该来源随具体使用关系保存；导入和重导出沿用原声明位置，成功的类型槽
+合并不会把错误调用的来源改成某个无关的健康调用。延迟产生类型的表达式也保留
+先前接收的契约来源。
 
 初始化执行期间，Wasm 为诊断事件记录当前调度根的稳定身份。`check` 的对应 record
 带有 `initialization: {node, module, symbol, name}`；具名全局值包含 symbol/name，
@@ -1611,7 +1615,7 @@ property 等其他需求根用 node/module 标识且 symbol/name 为 null。ID �
 import "std/ees" as ees;
 
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run = entry.run(State.type, config, ees.none, fn(ctx) {
+export def run: entry.Run(State) = entry.run(State.type, config, ees.none, fn(ctx) {
     let initial: State = ...;
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = ...;
     (initial, reduce)

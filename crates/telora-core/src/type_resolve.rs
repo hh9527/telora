@@ -25,6 +25,7 @@ mod metadata_joins;
 mod properties;
 mod construction_origins;
 mod contracts;
+mod contract_sources;
 mod interpreters;
 mod type_facets;
 mod patterns;
@@ -98,6 +99,7 @@ enum Task {
         node: HirId,
         expected: TypeSlotId,
         actual: TypeSlotId,
+        contract: Option<HirId>,
     },
     Tuple {
         node: HirId,
@@ -121,6 +123,10 @@ struct Solver<'a> {
     mir: &'a mut Mir,
     revision: usize,
     constraint_origin: Option<HirId>,
+    constraint_contract: Option<HirId>,
+    /// Expected contracts attached to syntax uses, never canonical type roots.
+    contract_uses: Vec<Vec<HirId>>,
+    annotation_sources: Vec<Option<HirId>>,
     /// Skeletons established from declarations before any value evidence.
     /// Kept on union representatives; inferred structures are not contracts.
     contract_slots: Vec<bool>,
@@ -308,9 +314,12 @@ impl Solver<'_> {
             generalizations: vec![],
             value_slots: vec![false; mir.hir.len()],
             contract_slots: vec![false; mir.hir.len()],
-            mir,
             revision: 0,
             constraint_origin: None,
+            constraint_contract: None,
+            contract_uses: vec![vec![]; mir.hir.len()],
+            annotation_sources: Self::annotation_sources(mir),
+            mir,
             tasks: vec![],
         }
     }
@@ -347,6 +356,7 @@ impl Solver<'_> {
                 let id = TypeConflictId(self.mir.type_conflicts.len() as u32);
                 self.mir.type_conflicts.push(TypeConflict {
                     origin: None,
+                    contracts: vec![],
                     left: slot,
                     right: slot,
                     location: None,
@@ -890,6 +900,7 @@ impl Solver<'_> {
         }
     }
     fn solve_task(&mut self, task: Task) -> Option<Task> {
+        let contract = match &task { Task::Fit { contract, .. } => *contract, _ => None };
         let origin = match &task {
             Task::Interpreter { node, .. } | Task::TypeFacet { node, .. }
             | Task::ValueEqual { node, .. } | Task::Ordered { node, .. }
@@ -907,8 +918,10 @@ impl Solver<'_> {
             | Task::RefineInstance { origin, .. } => *origin,
         };
         let previous = std::mem::replace(&mut self.constraint_origin, origin);
+        let previous_contract = std::mem::replace(&mut self.constraint_contract, contract);
         let result = self.solve_task_inner(task);
         self.constraint_origin = previous;
+        self.constraint_contract = previous_contract;
         result
     }
     fn solve_task_inner(&mut self, task: Task) -> Option<Task> {

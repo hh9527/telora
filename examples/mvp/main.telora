@@ -1,5 +1,6 @@
 import "./user.json" { data };
 import "std/codec" as codec;
+import "std/blame" {BlameError};
 
 type User = struct {
     name: String,
@@ -7,5 +8,5 @@ type User = struct {
     nickname: Option(String),
 };
 
-def result = codec.decode(User.type, data);
+def result: Result(User, BlameError) = codec.decode(User.type, data);
 export { result as output };

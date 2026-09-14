@@ -38,7 +38,7 @@ import "std/value" {Value};
 
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run = entry.run(State.type, config, ees.none, fn(ctx) {
+export def run: entry.Run(State) = entry.run(State.type, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             actor.Event.Request(request) => (state, [actor.reply(request.id, Value.String("hello, telora"))]),
@@ -85,7 +85,7 @@ IEEE 754 binary64。Float 字面量接受小数点形式（`3.5`）和指数形�
 `1.25e-3`）。NaN、正无穷和负无穷都不是 Telora 值。
 
 ```telora
-def answer = 40 + 2;
+def answer: Int = 40 + 2;
 def increment: Fn(Int) -> Int = fn(value) { value + 1 };
 ```
 
@@ -167,7 +167,7 @@ Float 的 `+`、`-`、`*`、`/` 和 `%` 必须产生有限 Float。产生 NaN �
 ```telora
 type State = struct {count: Int, label: String};
 type Label = struct {label: String};
-def update = fn(base: State, label: Label) {
+def update: Fn(State, Label) -> State = fn(base, label) {
     base <~ label <~ {count: 2, ...label}
 };
 ```
@@ -194,7 +194,7 @@ Struct spread 用于更新字面量，普通 Dict spread 使用 `Dict(T)` 操作
 type Source = struct {x: Int, y: String, extra: Int};
 type Foo = struct {x: Int, Y: String};
 def select: Fn(Source) -> Foo = fn(source) { source.{x, y as Y} };
-def update = fn(base: Foo, source: Source) {
+def update: Fn(Foo, Source) -> Foo = fn(base, source) {
     base <~ source.{x, y as Y}
 };
 ```
@@ -965,7 +965,7 @@ import "std/value" { Value };
 
 type Snapshot = PipelineSnapshot(Stage, Input, Expr, Plan, Output);
 
-def encode_snapshot = fn(value: Snapshot) {
+def encode_snapshot: Fn(Snapshot) -> Value = fn(value) {
     codec.encode(Value.type, value)
 };
 
@@ -1018,7 +1018,7 @@ String 拆成字符数组。应在模块级编译一次规则并复用，例如 
 ```telora
 import "std/regex" as regex;
 
-def sql_identifier = regex.compile(r"^[A-Za-z_][A-Za-z0-9_]*$");
+def sql_identifier: regex.Regex = regex.compile(r"^[A-Za-z_][A-Za-z0-9_]*$");
 def is_sql_identifier: Fn(String) -> Bool = fn(text) {
     regex.is_match(sql_identifier, text)
 };

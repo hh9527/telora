@@ -36,12 +36,12 @@ import "std/test" as test;
 
 def twice: Fn(Int) -> Int = fn(value) { value * 2 };
 
-export def doubles_positive = test.should_ok(fn() {
+export def doubles_positive: test.Test = test.should_ok(fn() {
     let actual = twice(3);
     if actual == 6 { True } else { fail!("unexpected doubled value", actual) }
 });
 
-export def doubles_zero = test.should_ok(fn() {
+export def doubles_zero: test.Test = test.should_ok(fn() {
     let actual = twice(0);
     if actual == 0 { True } else { fail!("zero must stay zero", actual) }
 });
@@ -51,7 +51,7 @@ export def doubles_zero = test.should_ok(fn() {
 `False`、`Err(...)` 或 `None` 都会通过。需要验证结果时，必须匹配结果或让不满足的
 条件执行 `fail!`。
 
-不要写顶层 `def actual = twice(3);`，再在 Test 中读取它来代替测试计算。
+不要写顶层 `def actual: Int = twice(3);`，再在 Test 中读取它来代替测试计算。
 顶层值在模块初始化时计算；失败会阻止整个入口执行。可复用类型、decorator、纯输入
 常量和函数可以放在顶层，被测调用与断言放进零参数 thunk。计算复杂的输入准备也宜
 封装成函数，在需要它的用例中调用。
@@ -71,12 +71,12 @@ def positive: Fn(Int) -> Result(Int, String) = fn(value) {
     if value > 0 { Ok(value) } else { Err("expected positive") }
 };
 
-export def accepts_positive = test.should_ok(fn() {
+export def accepts_positive: test.Test = test.should_ok(fn() {
     let actual = positive(3).unwrap!();
     if actual == 3 { True } else { fail!("wrong payload", actual) }
 });
 
-export def returns_rejection = test.should_ok(fn() {
+export def returns_rejection: test.Test = test.should_ok(fn() {
     match positive(0) {
         Err(message) => if message == "expected positive" { True }
             else { fail!("wrong rejection", message) },
@@ -84,7 +84,7 @@ export def returns_rejection = test.should_ok(fn() {
     }
 });
 
-export def raises_rejection = test.should_fail_with(fn() {
+export def raises_rejection: test.Test = test.should_fail_with(fn() {
     positive(0).unwrap!()
 }, "expected positive");
 ```
@@ -148,16 +148,16 @@ def check_positive: Fn(Int) -> Result((), BlameError) = fn(value) {
 @check(check_positive)
 type Positive = struct(Int);
 
-export def constructs = test.should_ok(fn() {
+export def constructs: test.Test = test.should_ok(fn() {
     let value = Positive(2);
     if value.0 == 2 { True } else { fail!("wrong positive value", value) }
 });
 
-export def rejects_construction = test.should_fail_with(fn() {
+export def rejects_construction: test.Test = test.should_fail_with(fn() {
     Positive(0)
 }, "expected positive");
 
-export def rejects_decode = test.should_ok(fn() {
+export def rejects_decode: test.Test = test.should_ok(fn() {
     match codec.decode(Positive.type, Value.Int(0)) {
         Err(_) => True,
         Ok(value) => fail!("decoder accepted zero", value),
@@ -183,7 +183,7 @@ import "std/test" as test;
 import "std/codec" as codec;
 import "std/value" { Value };
 
-export def positive_integers = test.with_fixtures([
+export def positive_integers: test.Test = test.with_fixtures([
     "fixtures/one.json", "fixtures/two.json",
 ], fn(input) {
     test.should_ok(fn() {

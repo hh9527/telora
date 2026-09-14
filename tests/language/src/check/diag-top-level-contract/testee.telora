@@ -1,0 +1,7 @@
+def scalar = 1;
+def container = [1, 2];
+def metadata = Int.type;
+def function = fn(value: Int) -> Int { value };
+export def exported = "value";
+def renamed = True;
+export {renamed as visible};

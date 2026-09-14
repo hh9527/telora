@@ -118,8 +118,10 @@ impl Solver<'_> {
         message: String,
     ) -> TypeConflictId {
         let id = TypeConflictId(self.mir.type_conflicts.len().try_into().expect("type conflict capacity"));
+        let contracts = self.failed_contract_sources();
         self.mir.type_conflicts.push(TypeConflict {
             origin: self.constraint_origin,
+            contracts: contracts.clone(),
             left,
             right,
             location,
@@ -138,6 +140,15 @@ impl Solver<'_> {
                 labels: vec![],
                 notes: vec![],
             });
+        }
+        for annotation in contracts {
+            let location = self.mir.hir[annotation.index()].location;
+            let diagnostic = self.mir.diagnostics.last_mut().unwrap();
+            if !diagnostic.labels.iter().any(|label| label.location == location) {
+                diagnostic.labels.push(crate::source::Label {
+                    location, message: "type contract declared here".into(), primary: false,
+                });
+            }
         }
         id
     }

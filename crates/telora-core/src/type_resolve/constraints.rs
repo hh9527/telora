@@ -17,14 +17,18 @@ impl Solver<'_> {
         let pending = std::mem::take(&mut self.tasks);
         let mut changed = false;
         for task in pending {
-            if let Task::Fit { node, expected, actual } = task
+            if let Task::Fit { node, expected, actual, contract } = task
                 && self.mir.ty_slots[self.root(expected).index()] == TypeState::Unknown
                 && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
                 && !self.pending_instances.iter().any(|&target| self.root(target) == self.root(expected))
             {
                 // No independent contract chose a checked owner. A genuinely
                 // unconstrained parameter (e.g. identity) keeps Unchecked.
+                let previous = self.constraint_origin.replace(node);
+                let previous_contract = std::mem::replace(&mut self.constraint_contract, contract);
                 self.equal(expected, actual, Some(self.mir.hir[node.index()].location));
+                self.constraint_origin = previous;
+                self.constraint_contract = previous_contract;
                 changed = true;
             } else {
                 self.tasks.push(task);
@@ -132,10 +136,12 @@ impl Solver<'_> {
     }
 
     pub(super) fn fit(&mut self, node: HirId, expected: TypeSlotId, actual: TypeSlotId) {
+        let contract = self.fit_source(node, actual);
         self.tasks.push(Task::Fit {
             node,
             expected,
             actual,
+            contract,
         });
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
@@ -333,33 +339,34 @@ impl Solver<'_> {
                 node,
                 expected,
                 actual,
+                contract,
             } => {
                 if self.pending_blocks.get(actual.index()).copied().unwrap_or(false) {
-                    return Ok(Some(Task::Fit { node, expected, actual }));
+                    return Ok(Some(Task::Fit { node, expected, actual, contract }));
                 }
                 // A type constructor determines this slot. An argument must
                 // wait for that shape rather than become the shared contract.
                 if self.mir.ty_slots[self.root(expected).index()] == TypeState::Unknown
                     && self.type_results.iter().any(|&result| self.root(result) == self.root(expected)) {
-                    return Ok(Some(Task::Fit { node, expected, actual }));
+                    return Ok(Some(Task::Fit { node, expected, actual, contract }));
                 }
                 // An unresolved instance is not a free inference variable.
                 // Its source may still supply an Unchecked/nominal boundary;
                 // equality now would erase the directional conversion.
                 if [expected, actual].into_iter().any(|slot| self.term(slot).is_none()
                     && self.pending_instances.iter().any(|&target| self.root(target) == self.root(slot))) {
-                    return Ok(Some(Task::Fit { node, expected, actual }));
+                    return Ok(Some(Task::Fit { node, expected, actual, contract }));
                 }
                 if self.mir.ty_slots[self.root(expected).index()] == TypeState::Unknown
                     && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Unchecked) {
-                    return Ok(Some(Task::Fit { node, expected, actual }));
+                    return Ok(Some(Task::Fit { node, expected, actual, contract }));
                 }
                 if self.term(expected).is_some_and(|term| matches!(term.constructor, TypeConstructor::Record(_)))
                     && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Unchecked) {
                     // A construction can supply fields before its annotation
                     // supplies nominal identity. Keep the completion edge
                     // directional until that identity arrives.
-                    return Ok(Some(Task::Fit { node, expected, actual }));
+                    return Ok(Some(Task::Fit { node, expected, actual, contract }));
                 }
                 if self.term(expected).is_some_and(|term| term.constructor == TypeConstructor::TypeOf)
                     && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Type) {

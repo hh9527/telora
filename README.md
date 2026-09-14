@@ -58,7 +58,7 @@ import "std/value" { Value };
 
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run = entry.run(State.type, config, ees.none, fn(ctx) {
+export def run: entry.Run(State) = entry.run(State.type, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             actor.Event.Request(request) => (

@@ -59,9 +59,9 @@ telora -C examples/my-crate check --lib --tests --only-types
 需要局部步骤时把它们放进 `do`：
 
 ```telora
-export def lowering_case = do {
+export def lowering_case: () = do {
     let plan = lower(request);
-    validate_plan(plan).unwrap!()
+    validate_plan(plan).unwrap!();
 };
 ```
 
@@ -80,9 +80,9 @@ Test export 隔离用例；不要先在顶层计算断言再把结果包装成 T
 import "std/test" as test;
 import "std/value" {Value};
 
-export def accepts = test.should_ok(fn() { 1 + 1 });
-export def rejects = test.should_fail_with(fn() { fail!("expected rejection") }, "rejection");
-export def inputs = test.with_fixtures(["fixtures/a.json", "fixtures/b.yaml"], fn(value) {
+export def accepts: test.Test = test.should_ok(fn() { 1 + 1 });
+export def rejects: test.Test = test.should_fail_with(fn() { fail!("expected rejection") }, "rejection");
+export def inputs: test.Test = test.with_fixtures(["fixtures/a.json", "fixtures/b.yaml"], fn(value) {
     test.should_ok(fn() {
         match value { Value.Object(_) => True, _ => fail!("expected object", value) }
     })

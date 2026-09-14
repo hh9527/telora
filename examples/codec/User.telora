@@ -1,13 +1,15 @@
 import "std/codec" as codec;
+import "std/value" {Value};
+import "std/blame" {BlameError};
 
 type Type = struct {v: Option(String)};
 
-def decode = fn(value) {
+def decode: Fn(Value) -> Result(Type, BlameError) = fn(value) {
     codec.decode((Type).type, value)
 };
 
-def encode = fn(value) {
-    codec.encode((codec.Value).type, value)
+def encode: Fn(Type) -> Value = fn(value) {
+    codec.encode(Value.type, value)
 };
 
 export { Type, decode, encode };
