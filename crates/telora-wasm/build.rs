@@ -44,7 +44,7 @@ fn main() {
         telora_path telora_format_render telora_format_message telora_format_join
         telora_template_prepare telora_member_message telora_regex telora_hash
         telora_json_write telora_json_parse telora_toml_parse telora_yaml_parse
-        telora_float_remainder telora_register_source telora_collect telora_heap_end
+        telora_float_remainder telora_register_source telora_source_retained telora_collect telora_heap_end
         telora_reserve_static __heap_base __indirect_function_table";
     let status = Command::new(linker)
         .args([

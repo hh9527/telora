@@ -1,6 +1,48 @@
 use super::*;
 
 #[test]
+fn ees_source_records_follow_live_values_and_reuse_host_slots() {
+    let cwd = fixture();
+    let data = cwd.join("data");
+    fs::create_dir_all(&data).unwrap();
+    rusqlite::Connection::open(data.join("catalog.sqlite")).unwrap();
+    fs::write(
+        cwd.join("src/app.telora"),
+        include_str!("../../../../../tests/runtime/ees-source-lifetime.telora"),
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args(["run", "@src/app:run"])
+        .env("XDG_DATA_HOME", &data)
+        .env("TELORA_WASM_TIMINGS", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        serde_json::json!([
+            {"columns": ["score"], "rows": [[0]]}, {"columns": ["score"], "rows": [[127]]}
+        ])
+    );
+    let observations: Vec<Value> = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|record| record["wasm_observation"] == "service_memory")
+        .collect();
+    assert!(observations.len() >= 128);
+    for record in observations.iter().skip(8) {
+        for field in ["heap_after", "memory_bytes", "source_slots", "live_sources"] {
+            assert_eq!(record[field], observations[8][field], "{field}: {record}");
+        }
+        assert_eq!(record["buffered_output_bytes"], 0);
+    }
+}
+
+#[test]
 fn source_service_processes_many_events_and_discards_output_on_protocol_failure() {
     let cwd = fixture();
     fs::write(
@@ -44,7 +86,9 @@ fn source_service_processes_many_events_and_discards_output_on_protocol_failure(
             .stdin
             .take()
             .unwrap()
-            .write_all(b"null\n{broken\n")
+            // Fill the bounded reader queue before failure; shutdown must wake
+            // a producer waiting to send, while discarding buffered output.
+            .write_all(format!("null\n{{broken\n{}", "null\n".repeat(200)).as_bytes())
             .unwrap();
         let output = child.wait_with_output().unwrap();
         assert!(!output.status.success());

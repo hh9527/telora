@@ -100,6 +100,17 @@ impl Session {
         let after = heap_end
             .call(&mut self.store, ())
             .map_err(|e| e.to_string())? as u32;
+        let retained = self.instance
+            .get_typed_func::<i32, i32>(&self.store, "telora_source_retained")
+            .map_err(|e| e.to_string())?;
+        let mut live = std::collections::BTreeSet::new();
+        for source in &self.manifest.sources {
+            if retained.call(&mut self.store, source.id as i32).map_err(|e| e.to_string())? != 0 {
+                live.insert(source.id);
+            }
+        }
+        self.manifest.sources.retain(|source| live.contains(&source.id));
+        self.registered_sources = self.manifest.sources.len();
         self.emitted_debug.set(
             self.output()
                 .word(abi::table_address(abi::DEBUG_EVENTS) as u64 + 4)?,

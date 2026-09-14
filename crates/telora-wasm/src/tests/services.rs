@@ -2,6 +2,67 @@ use crate::{service::ServiceSession, session::Session};
 use telora_core::{entry_plan, mir::TypeState};
 
 #[test]
+fn collection_keeps_blame_sources_and_releases_unreachable_input_sources() {
+    use telora_core::data_plan::{Format, parse_registered};
+    let mir = super::graph(include_str!("../../tests/fixtures/retained-source.telora"));
+    let symbol = *mir
+        .exports
+        .iter()
+        .flatten()
+        .find(|id| mir.symbols[id.index()].name == "answer")
+        .unwrap();
+    let bytes = crate::compile_executable(&mir.seal_export(symbol).unwrap()).unwrap();
+    let mut sources = mir.sources;
+    let mut session = Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let baseline = session.manifest.sources.len();
+    let retained = sources.add("retained.json", "42");
+    let plan = parse_registered(&sources, retained, Format::Json).unwrap();
+    session.register_data_sources(&sources, &plan).unwrap();
+    let value = session.materialize_value(&plan).unwrap();
+    let factory = crate::transport::Value {
+        pointer: session.entry().unwrap(),
+        ty: session.manifest.entry_type,
+    };
+    let mut closure = session.invoke_values(factory, &[value]).unwrap();
+    let scratch = sources.add("scratch.json", "0");
+    let mut plateau = None;
+    for n in 0..256 {
+        sources
+            .replace_unreferenced(scratch, format!("scratch-{n}.json"), n.to_string())
+            .unwrap();
+        let plan = parse_registered(&sources, scratch, Format::Json).unwrap();
+        session.register_data_sources(&sources, &plan).unwrap();
+        let _discarded = session.materialize_value(&plan).unwrap();
+        let (roots, stats) = session.collect_work(&[closure]).unwrap();
+        closure = roots[0];
+        assert_eq!(session.manifest.sources.len(), baseline + 1);
+        assert!(
+            session
+                .manifest
+                .sources
+                .iter()
+                .any(|s| s.id == retained.get())
+        );
+        assert!(
+            !session
+                .manifest
+                .sources
+                .iter()
+                .any(|s| s.id == scratch.get())
+        );
+        if let Some(bytes) = plateau {
+            assert_eq!(stats.heap_after, bytes);
+        }
+        plateau = Some(stats.heap_after);
+    }
+    assert!(session.invoke_values(closure, &[]).is_err());
+    let diagnostics = session.diagnostics().unwrap();
+    assert_eq!(diagnostics[0].message, "retained input");
+    assert_eq!(diagnostics[0].subjects, vec![[retained.get(), 0, 2]]);
+}
+
+#[test]
 fn collection_retains_growing_service_state_and_reclaims_it_after_reset() {
     let mir = super::graph(include_str!(
         "../../tests/fixtures/service-growing-state.telora"

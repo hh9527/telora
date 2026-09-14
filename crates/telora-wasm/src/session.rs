@@ -6,7 +6,7 @@ pub struct Session {
     pub(crate) store: wasmi::Store<()>,
     pub(crate) instance: wasmi::Instance,
     pub(crate) memory: wasmi::Memory,
-    registered_sources: usize,
+    pub(crate) registered_sources: usize,
     pub(crate) emitted_debug: std::cell::Cell<u32>,
     pub(crate) trace_types: u32,
 }

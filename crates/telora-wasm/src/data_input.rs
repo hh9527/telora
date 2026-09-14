@@ -69,9 +69,18 @@ impl Manifest {
     pub fn register_data_sources(
         &mut self,
         sources: &telora_core::SourceDatabase,
-        _plan: &ValidatedDataPlan,
+        plan: &ValidatedDataPlan,
     ) -> Result<(), String> {
-        for file in sources.files() {
+        let mut ids = std::collections::BTreeSet::new();
+        for node in plan.nodes() {
+            ids.insert(node.location.source);
+            if let telora_core::data_plan::DataPlanNodeKind::Object(fields) = &node.kind {
+                ids.extend(fields.values().map(|field| field.key_location.source));
+            }
+        }
+        for id in ids {
+            let file = sources.files().find(|file| file.id() == id)
+                .ok_or("Wasm: data plan references an unregistered source")?;
             if self
                 .sources
                 .iter()

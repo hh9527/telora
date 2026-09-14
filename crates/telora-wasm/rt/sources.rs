@@ -11,20 +11,57 @@ struct Source {
 static mut BUFFER: u32 = 0;
 static mut LENGTH: u32 = 0;
 static mut CAPACITY: u32 = 0;
+static mut FROZEN: u32 = 0;
+
+pub(crate) unsafe fn freeze() {
+    unsafe {
+        FROZEN = LENGTH;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_source_retained(id: u32) -> u32 {
+    unsafe {
+        for index in 0..LENGTH {
+            if (BUFFER as *const Source).add(index as usize).read().id == id {
+                return 1;
+            }
+        }
+        0
+    }
+}
 
 pub(crate) unsafe fn collect(gc: &mut crate::collect::Collector) {
     unsafe {
-        let at = gc.reserve(LENGTH*12);
+        let retained = (0..LENGTH)
+            .filter(|&index| {
+                index < FROZEN
+                    || gc
+                        .sources
+                        .contains(&(BUFFER as *const Source).add(index as usize).read().id)
+            })
+            .count() as u32;
+        let at = gc.reserve(retained * 12);
+        let mut next = 0;
         for index in 0..LENGTH {
             let source = (BUFFER as *const Source).add(index as usize).read();
-            let pointer = if source.pointer < gc.base { source.pointer }
-                else { let offset = gc.copy_bytes(source.pointer,source.length); gc.base+offset };
-            gc.put(at+index*12,source.id);
-            gc.put(at+index*12+4,pointer);
-            gc.put(at+index*12+8,source.length);
+            if index >= FROZEN && !gc.sources.contains(&source.id) {
+                continue;
+            }
+            let pointer = if source.pointer < gc.base {
+                source.pointer
+            } else {
+                let offset = gc.copy_bytes(source.pointer, source.length);
+                gc.base + offset
+            };
+            gc.put(at + next * 12, source.id);
+            gc.put(at + next * 12 + 4, pointer);
+            gc.put(at + next * 12 + 8, source.length);
+            next += 1;
         }
-        BUFFER=gc.base+at;
-        CAPACITY=LENGTH;
+        BUFFER = gc.base + at;
+        LENGTH = retained;
+        CAPACITY = retained;
     }
 }
 

@@ -93,6 +93,8 @@ target/release/telora -C hello query exports @src/app
 所有编译入口共用 module-resolve、symbol-resolve、type-resolve 三个 Pass。
 执行前由 SealedMir 确认类型、泛型实例和必要证据已经闭合，codegen 和 VM 直接消费
 这些结果。查询可以保留错误图中的已确定信息，不回退到旧求解器。
+执行命令统一从源码生成内存中的 Wasm，再由 Wasmi 执行；无需先生成 `.wasm`
+文件，也无需在用户执行时安装或调用外部 linker。
 普通 `check` 保持完整检查行为。两种模式的 JSON summary
 均包含 `catalog_seconds` 和 `check_seconds`，分别记录清单准备及所选检查路径耗时。
 两种模式共用 MIR 类型闭合阶段；`static_seconds` 包含类型闭合，

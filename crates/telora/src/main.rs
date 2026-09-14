@@ -62,14 +62,27 @@ enum ReaderEvent {
     Error(String),
 }
 
+async fn send_reader_event(
+    sender: &mpsc::Sender<ReaderEvent>,
+    cancel: &mut watch::Receiver<bool>,
+    event: ReaderEvent,
+) -> bool {
+    if *cancel.borrow() { return false; }
+    tokio::select! {
+        biased;
+        _ = cancel.changed() => false,
+        sent = sender.send(event) => sent.is_ok(),
+    }
+}
+
 struct ProcessRunHost {
     source_locators: BTreeMap<String, String>,
     ees: Option<telora_ees::Service>,
     ees_actors: BTreeMap<String, String>,
     ees_active: HashSet<String>,
     ees_vars: Vec<NamedEesVar>,
-    sender: mpsc::UnboundedSender<ReaderEvent>,
-    receiver: mpsc::UnboundedReceiver<ReaderEvent>,
+    sender: mpsc::Sender<ReaderEvent>,
+    receiver: mpsc::Receiver<ReaderEvent>,
     cancel: watch::Sender<bool>,
     tasks: JoinSet<(String, Result<(), String>)>,
     finished: bool,
@@ -77,7 +90,7 @@ struct ProcessRunHost {
 
 impl ProcessRunHost {
     fn new(source_locators: BTreeMap<String, String>, ees_vars: Vec<NamedEesVar>) -> Self {
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, receiver) = mpsc::channel(64);
         let (cancel, _) = watch::channel(false);
         Self {
             source_locators,
@@ -168,17 +181,19 @@ impl RunHost for ProcessRunHost {
                         };
                         match line {
                             Ok(Some(line)) => {
-                                let _ = sender
-                                    .send(ReaderEvent::Event(SystemEvent::StdinLine(Some(line))));
+                                if !send_reader_event(&sender, &mut cancel,
+                                    ReaderEvent::Event(SystemEvent::StdinLine(Some(line)))).await {
+                                    return ("<stdin>".into(), Ok(()));
+                                }
                             }
                             Ok(None) => {
-                                let _ =
-                                    sender.send(ReaderEvent::Event(SystemEvent::StdinLine(None)));
+                                send_reader_event(&sender, &mut cancel,
+                                    ReaderEvent::Event(SystemEvent::StdinLine(None))).await;
                                 return ("<stdin>".into(), Ok(()));
                             }
                             Err(error) => {
                                 let message = format!("cannot read standard input: {error}");
-                                let _ = sender.send(ReaderEvent::Error(message.clone()));
+                                send_reader_event(&sender, &mut cancel, ReaderEvent::Error(message.clone())).await;
                                 return ("<stdin>".into(), Err(message));
                             }
                         }
@@ -249,6 +264,7 @@ impl RunHost for ProcessRunHost {
             };
             let key = call.key.clone();
             let sender = self.sender.clone();
+            let mut cancel = self.cancel.subscribe();
             self.tasks.spawn(async move {
                 let event = service
                     .dispatch(
@@ -262,12 +278,13 @@ impl RunHost for ProcessRunHost {
                     )
                     .await;
                 let result = event.into_value();
-                let sent = sender
-                    .send(ReaderEvent::Event(SystemEvent::EesReply(EesReply {
+                let sent = send_reader_event(&sender, &mut cancel,
+                    ReaderEvent::Event(SystemEvent::EesReply(EesReply {
                         key: key.clone(),
                         result,
-                    })))
-                    .map_err(|_| "EES reply channel disconnected".to_owned());
+                    }))).await;
+                let sent = if sent || *cancel.borrow() { Ok(()) }
+                    else { Err("EES reply channel disconnected".to_owned()) };
                 (format!("ees:{key}"), sent)
             });
             Ok(())
@@ -277,6 +294,12 @@ impl RunHost for ProcessRunHost {
     fn next_event(&mut self) -> RunHostFuture<'_, Result<Option<SystemEvent>, String>> {
         Box::pin(async move {
             loop {
+                // A continuously nonempty event queue must not retain completed
+                // task records until shutdown.
+                while let Some(joined) = self.tasks.try_join_next() {
+                    let (_, result) = joined.map_err(|error| format!("Host task failed: {error}"))?;
+                    result?;
+                }
                 if let Ok(event) = self.receiver.try_recv() {
                     return self.receive_event(event);
                 }

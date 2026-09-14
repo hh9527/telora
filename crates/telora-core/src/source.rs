@@ -328,6 +328,19 @@ impl SourceDatabase {
         &self.files[id.index() as usize]
     }
 
+    /// Reuse a runtime-owned slot after all references to its previous contents
+    /// have been released. Static MIR source slots must never be reused.
+    pub fn replace_unreferenced(
+        &mut self,
+        id: SourceId,
+        name: impl Into<Arc<str>>,
+        text: impl AsRef<str>,
+    ) -> Result<(), LocationError> {
+        let file = SourceFile::new(id, name, text)?;
+        self.files[id.index() as usize] = file;
+        Ok(())
+    }
+
     pub fn files(&self) -> impl ExactSizeIterator<Item = &SourceFile> {
         self.files.iter()
     }

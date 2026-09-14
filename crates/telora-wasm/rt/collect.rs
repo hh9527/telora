@@ -10,6 +10,7 @@ static mut MAIN_END: u32 = 0;
 pub(crate) unsafe fn freeze() {
     unsafe {
         MAIN_END = crate::NEXT as u32;
+        crate::sources::freeze();
     }
 }
 
@@ -24,6 +25,7 @@ pub(crate) struct Collector {
     pub environments: BTreeMap<u32, u32>,
     pub pending: Vec<(u32, u32, u32, u32)>, // table, old pointer, destination offset, bytes
     pub patches: Vec<(u32, u32)>,
+    pub sources: alloc::collections::BTreeSet<u32>,
 }
 
 impl Collector {
@@ -56,6 +58,7 @@ impl Collector {
                 return self.base + at;
             }
             let ty = word(pointer, TYPE);
+            self.sources.insert(word(pointer, SOURCE));
             let bytes = word(self.types + ty * 20, 4);
             assert!(bytes >= HEADER_BYTES);
             let at = self.copy_bytes(pointer, bytes);
@@ -188,6 +191,7 @@ pub unsafe extern "C" fn telora_collect(types: u32, roots: u32, count: u32) -> u
             environments: BTreeMap::new(),
             pending: vec![],
             patches: vec![],
+            sources: alloc::collections::BTreeSet::new(),
         };
         gc.reserve(count * 4);
         let env = old[ENVIRONMENTS as usize];

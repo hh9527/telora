@@ -64,11 +64,12 @@ pub(crate) async fn execute(
 fn input(
     service: &mut ServiceSession,
     sources: &mut SourceDatabase,
+    runtime_sources: &mut super::runtime_sources::RuntimeSources,
     name: String,
     format: telora_core::SystemDataFormat,
     text: &str,
 ) -> Result<Value, String> {
-    let source = sources.try_add(name, text).map_err(|e| e.to_string())?;
+    let source = runtime_sources.add(sources, name, text)?;
     let format = match format {
         telora_core::SystemDataFormat::Json => telora_core::data_plan::Format::Json,
         telora_core::SystemDataFormat::Yaml => telora_core::data_plan::Format::Yaml,
@@ -110,6 +111,7 @@ async fn execute_inner(
     host: &mut crate::ProcessRunHost,
 ) -> Result<(String, i64), String> {
     let timer = PhaseTimer::new("service_setup");
+    let mut runtime_sources = super::runtime_sources::RuntimeSources::default();
     let contract = service.contract();
     let env =
         service
@@ -130,7 +132,7 @@ async fn execute_inner(
         {
             prepared.insert(
                 name.clone(),
-                input(service, sources, request.src.clone(), request.format, &text)?,
+                input(service, sources, &mut runtime_sources, request.src.clone(), request.format, &text)?,
             );
         }
     }
@@ -191,6 +193,7 @@ async fn execute_inner(
                 Ok(value) => Some(input(
                     service,
                     sources,
+                    &mut runtime_sources,
                     "<EES reply>".into(),
                     telora_core::SystemDataFormat::Json,
                     &value.to_string(),
@@ -216,7 +219,9 @@ async fn execute_inner(
             }
         }
         let timer = PhaseTimer::new("service_collect");
-        service.collect(&[])?;
+        let (_, stats) = service.collect(&[])?;
+        runtime_sources.collect(sources, service.session())?;
+        super::timing::collection(&stats, sources.files().len(), service.session().manifest.sources.len(), output.len());
         drop(timer);
         next = Some(
             host.next_event()

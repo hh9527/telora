@@ -1,0 +1,5 @@
+import "std/value" {Value};
+export def answer = fn(value: Value) {
+    let error = blame!("retained input", value);
+    fn() { raise!(error) }
+};

@@ -5,6 +5,7 @@ mod test_fixtures;
 mod diagnostics;
 mod eval_contract;
 mod timing;
+mod runtime_sources;
 use crate::static_input::Inventory;
 use std::path::PathBuf;
 use telora_core::{

@@ -184,6 +184,11 @@ codegen 不与运行时共用可变推导状态。
 main 引用保持稳定。线性内存允许保留高水位，但固定存活状态应复用 work 空间，
 不能以重建 session 或丢弃状态实现回收。
 
+运行期数据的来源记录也参与回收：值、内联 enum payload、闭包及 Blame 的来源
+标记决定哪些记录仍存活。静态/初始化来源固定保留；动态来源从 RT 和 Host manifest
+同步移除后，Host 才能清空并复用其专属 SourceDatabase 槽位。MIR 的源码槽不复用。
+来源注册只读取数据计划实际引用的文件，不能重新注册已释放的历史输入。
+
 ## 7. 诊断、失败与发布
 
 静态诊断由三个 Pass 和 seal 产生。无静态执行，所以 Unknown/Conflicted 不等于一次
@@ -219,6 +224,11 @@ Fuel 是约束失控执行的机制，不是精确计费器。实现应在调用
 `telora-ees` 组合 IMOS 与 sqlite-query 等 native actor components。package preparation
 使用自己的 Service，run/serve 根据应用配置另建 Service；core 仅依赖 component-neutral
 Host ABI。实际文件、环境、stdin 与 EES 调用由 Host 执行，纯 Telora 代码不能直接访问。
+
+CLI 输入事件队列最多暂存 64 项，发送者受背压约束，终止通知唤醒等待发送的任务。
+事件消费同时收割完成的异步任务。尚未完成的 EES 调用仍是有效工作，不因回收而取消。
+Output chunk 按现有契约缓冲至 terminal success 后发布；累计输出是存活数据，
+其大小会影响 Host 内存，不能将其增长解释为 work 回收失效。
 
 run/serve 的生成 adapter 与应用在同一 MIR 中求解，wrapper family 和具体泛型实参
 在静态阶段闭合。初始化完成后才进入资源协商和 Entry 调度；Host 根据声明的 capabilities

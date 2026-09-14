@@ -1,6 +1,6 @@
 # RFC 0292：统一 Wasm 源码执行路线
 
-- 状态：实施中；CLI 仅保留源码 Wasm 执行，native 与核心旧 VM/bytecode 已删除，最终寿命与性能验收未完成
+- 状态：已实现并验收；位于 feat/wasm-backend，尚未合入 main
 - 日期：2026-09-14
 - 跟踪：[#187](https://github.com/hh9527/telora/issues/187)
 - 前置：RFC 0291（Wasm check/eval/eval-with）、RFC 0290（服务语义参考）
@@ -261,3 +261,55 @@ CLI/EES 长期 Host 来源数据库与输出缓冲的寿命审计，后者仍待
 独立计算，不以其总和替代进程时间。输出均为预期 Asia 查询。release strace
 仅发现 Telora 自身 execve，无子进程及写方式打开文件；没有执行期 linker 或
 临时代码产物。此次仅观察当前源码路线，不作跨版本性能归因。
+
+2026-09-14：Host 寿命审计发现每条 EES 回复的来源记录永久保留。现由精确回收
+追踪存活值/内联 payload/Blame 的 source-id，保留冻结来源，清理无引用动态来源；
+Host 同步清理 manifest 并复用仅属于运行输入的 SourceDatabase 槽。数据注册只取
+计划实际引用的来源，避免复活历史输入。ABI 更新为 13，不兼容旧试验产物。
+
+输入事件队列改为 64 项背压队列；终止通知解除阻塞发送，持续有事件时也及时
+收割已完成异步任务。Output 仍按原契约缓冲至 terminal success；这部分属于
+存活的待发布数据，不承诺在持续累计输出时进程 RSS 恒定。
+
+专项验证：256 次丢弃输入后来源表/heap 恒定，闭包保留的 Blame 仍引用最初
+数据位置；128 次真实 SQLite EES 测试保留第 0 条回复并返回第 127 条，稳定期
+Host 来源槽、有效来源、Wasm heap/memory 均恒定。协议失败测试加入超过队列
+容量的后继输入，验证终止不被发送等待阻塞且不发布部分输出。
+
+release 384 次 EES 回复观察：正确输出第 0/383 条；reduce 中位数 0.0278 ms，
+collect（含 Host 来源清理）中位数 0.1119 ms。稳定期 heap end 538,264 字节，
+Wasm memory 589,824 字节，Host 来源槽 23 个、有效来源 22 个；20 ms 间隔采样
+的稳定期 RSS 为 22,376 KiB。该短任务采样不是 OS 内存的精确峰值证明。
+尝试 4,096 次同样 EES 往返时，现有累计 fuel 在第 478 次 reduce 附近耗尽，
+正确非零退出且无 stdout；未提高或重置额度，也不把该次运行算作完成 4,096 次。
+此前简单 reducer 的 4,096 次回收验证仍独立有效。
+
+最终 world-model release 复测在 workspace 测试退出后进行，预热 2 次、测量 7 次，
+stdout 与计时 stderr 分开采集：完整进程中位数 0.53 s（0.52–0.54 s），峰值
+RSS 中位数 67,524 KiB（67,280–67,812 KiB）。阶段中位数 frontend 371.1 ms、
+codegen/内存组装 84.5 ms、engine load 29.9 ms、initialize 21.9 ms、entry 输入
+0.093 ms、entry/输出 10.5 ms；无静态数据模块的 data_input 约 0.002 ms。
+并发测试期间的一组受负载干扰、合并输出流交错的采样未用于本结果。最新 release
+strace 再次确认只有自身 execve、无子进程或写文件操作。
+
+## 最终验收证据
+
+2026-09-14：workspace 所有 target/feature 编译通过；完整 workspace 测试通过，
+其中 CLI 100 项（含完整语言验收）、core 182 项、Wasm 101 项。之后仅删除旧
+迁移对照 runner 并再次运行 Wasm 库，101 项通过、0 项忽略。JS Host 语法检查与
+git diff 检查通过。各项要求按下表完成，未合入 main。
+
+| 要求 | 实现与验证入口 |
+| --- | --- |
+| 单一源码 Wasm 路线；query/only-types 保持静态 | CLI `wasm_cli` 消费 SealedExecutable；`static_cli` 保留静态分支；`cli/backend_surface.rs` 验证所有执行命令拒绝旧接口，`cli/part-01.rs` 覆盖纯类型与普通检查差异 |
+| RT 预链接、执行期不落盘/不调用 linker | `build.rs` 预链接并嵌入；`template.rs`/`compose.rs` 内存组装；最新 release 的 process/file strace 无子进程及写文件 |
+| 删除旧 native/default 与桥接 | telora-native、旧 core VM/bytecode/LIR/Heap/Val 已删除；Cargo 清单/lock 无 Cranelift/native crate；执行调用点无旧模块，无 linker fallback |
+| 数据、property、泛型、来源与 CLI 契约 | `cli/source_runtime/`、`cli/wasm.rs`、完整语言验收覆盖注入、初始化、eval-with、诊断及封闭实例；数据解析保留纯计划 |
+| test 描述、fixture、失败恢复与退出码 | 正式 `TestSession` 与 CLI runner；嵌套/重导出 JSON/YAML/TOML fixture、预期失败、警告、初始化环和筛选验收；删除迁移期按用例重建 session 的旧对照 runner |
+| run/serve IO/EES/EOF/终止顺序 | CLI `part-02.rs`、`part-03.rs`、`source_runtime/services.rs` 覆盖声明资源、并发 EES、重复请求、协议失败、EOF 和语言失败后续事件；满队列失败仍退出且不发布部分输出 |
+| 固定/增长状态、共享/环、闭包与来源寿命 | Wasm `tests/services.rs`：4,096 次固定状态、128 次增长/清空、共享与解释器环、保留 Blame 来源；CLI 128 次真实 EES 验证 Host 来源池，release 384 次观察内存与延迟 |
+| 构建、完整回归、文档与性能 | `cargo check --workspace --all-targets --all-features`、完整 `cargo test --workspace`；README、LANGUAGE、IMPLEMENTATION 刷新；上文记录源码完整路径和服务观察 |
+
+实现保留既有累计 fuel 与终止语义，不以指令精确计费为验收目标。累计待发布输出、
+真实增长的状态和未完成的外部请求仍是存活数据，内存可能随之增长；固定存活根的
+回收平台期不意味着任意应用内存恒定。浏览器服务、发布格式、缓存与引擎替换仍为非目标。
