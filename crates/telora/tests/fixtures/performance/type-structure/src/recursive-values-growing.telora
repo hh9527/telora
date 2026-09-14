@@ -23,4 +23,4 @@ def e17: Expr = Expr.And({ items: [e16, e16] });
 def e18: Expr = Expr.And({ items: [e17, e17] });
 def e19: Expr = Expr.And({ items: [e18, e18] });
 
-export def output = "ok";
+export def output: String = "ok";

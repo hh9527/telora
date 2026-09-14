@@ -14,7 +14,7 @@ fn fixture_loop() -> (PathBuf, Rc<RefCell<State>>, async_lsp::MainLoop<Server>) 
     std::fs::write(root.join("telora-config.json"), r#"{"version":1,"members":["."]}"#).unwrap();
     std::fs::write(root.join("telora-crate.json"), r#"{"name":"editor","modules":["@src/main","@src/model","@src/new"],"dependencies":[]}"#).unwrap();
     for name in ["main", "model", "new"] {
-        std::fs::write(root.join(format!("src/{name}.telora")), "export def placeholder = 0;").unwrap();
+        std::fs::write(root.join(format!("src/{name}.telora")), "export def placeholder: Int = 0;").unwrap();
     }
     let spec = telora_core::WorkspaceSpec::discover(&root).unwrap();
     spec.write_lock(&spec.generate_lock(&std::collections::BTreeMap::new()).unwrap()).unwrap();

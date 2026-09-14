@@ -1,6 +1,6 @@
-def identity = fn(value) { value };
-def keep = fn(left: Int, right) { (left, right) };
-def nested = fn(left) { fn(right) { left + right + 1 } };
+def identity: for(A) Fn(A) -> A = fn(value) { value };
+def keep: for(A) Fn(Int, A) -> (Int, A) = fn(left: Int, right) { (left, right) };
+def nested: Fn(Int) -> Fn(Int) -> Int = fn(left) { fn(right) { left + right + 1 } };
 def recursive: Fn(Int) -> Int = fn(value) {
     if value < 1 { 0 } else { recursive(value - 1) }
 };

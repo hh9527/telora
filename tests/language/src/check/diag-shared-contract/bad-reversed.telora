@@ -1,0 +1,4 @@
+import "@src/check/diag-shared-contract/shared" {increment};
+export def also_wrong: Int = increment(False);
+export def wrong: Int = increment(input);
+export def input: String = "bad";

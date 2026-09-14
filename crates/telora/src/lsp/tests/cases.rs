@@ -59,12 +59,12 @@ use super::*;
         let main = app.join("src/main.telora");
         std::fs::write(
             &main,
-            "import \"dependency/lib\" {answer}; export def value = answer;",
+            "import \"dependency/lib\" {answer}; export def value: Int = answer;",
         )
         .expect("write app module");
         std::fs::write(
             dependency.join("src/lib.telora"),
-            "export def answer = 42;",
+            "export def answer: Int = 42;",
         )
         .expect("write dependency module");
         std::fs::write(
@@ -484,7 +484,7 @@ use super::*;
     async fn hover_preserves_the_local_function_principal_signature() {
         let (_, state, uri) =
             semantic_fixture(
-                "export def output = do { let identity = fn(value) { value };\nidentity(1) };",
+                "export def output: Int = do { let identity = fn(value) { value };\nidentity(1) };",
             )
             .await;
         let hover: Option<lsp::Hover> = serde_json::from_value(
@@ -519,7 +519,7 @@ impl(T: Marker) Display for T { display: fn(value) { `int=\{Marker.mark(value)}`
 export def render: for(T: Display) Fn(T) -> String = fn(value) {
     Display.display(value)
 };
-export def output = render(1);"#;
+export def output: String = render(1);"#;
         let (_, state, uri) = semantic_fixture(source).await;
         let hover: Option<lsp::Hover> = serde_json::from_value(
             dispatch_request(
@@ -529,7 +529,7 @@ export def output = render(1);"#;
                     lsp::request::HoverRequest::METHOD,
                     serde_json::json!({
                         "textDocument": { "uri": uri },
-                        "position": { "line": 7, "character": 20 }
+                        "position": { "line": 7, "character": 28 }
                     }),
                 ),
             )
@@ -642,7 +642,7 @@ export def output = render(1);"#;
         let (root, state) = fixture();
         let model = root.join("src/model.telora");
         let main = root.join("src/main.telora");
-        std::fs::write(&model, "export def alpha = 1; export def beta = \"x\";")
+        std::fs::write(&model, "export def alpha: Int = 1; export def beta: String = \"x\";")
             .expect("write model");
         let source = "import \"./model\" as model; model.alpha";
         std::fs::write(&main, format!("{source}; export {{ model as output }};"))
@@ -667,7 +667,7 @@ export def output = render(1);"#;
         let (root, state) = fixture();
         let model = root.join("src/model.telora");
         let main = root.join("src/main.telora");
-        std::fs::write(&model, "export def alpha = 1; export def beta = \"x\";")
+        std::fs::write(&model, "export def alpha: Int = 1; export def beta: String = \"x\";")
             .expect("write model");
         let source = "import \"./model\" as model; model.";
         std::fs::write(&main, format!("{source}\nexport {{ model as output }};"))

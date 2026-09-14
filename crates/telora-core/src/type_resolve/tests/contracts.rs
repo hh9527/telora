@@ -158,11 +158,13 @@ fn failed_generic_use_and_body_keep_other_inference_results() {
 fn rejected_uses_preserve_shared_contracts_and_independent_diagnostics() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/language/src/check/diag-shared-contract");
-    for root in ["testee", "reversed"] {
-        let sources = [root, "shared", "good", "bad"].map(|name| (
-            format!("@src/check/diag-shared-contract/{name}"),
-            std::fs::read_to_string(directory.join(format!("{name}.telora"))).unwrap(),
-        ));
+    for (root, reverse) in [("testee", false), ("reversed", true)] {
+        let mut sources = [root, "shared", "good", "bad"].map(|name| {
+            let file = if reverse && name == "bad" { "bad-reversed" } else { name };
+            (format!("@src/check/diag-shared-contract/{name}"),
+                std::fs::read_to_string(directory.join(format!("{file}.telora"))).unwrap())
+        });
+        if reverse { sources[1..].reverse(); }
         let inventory = sources.iter().map(|(name, source)| (name.as_str(), source.as_str())).collect::<Vec<_>>();
         let mut mir = graph(&inventory);
         resolve(&mut mir);

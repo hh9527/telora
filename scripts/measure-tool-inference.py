@@ -207,7 +207,7 @@ def main():
                 (workspace / "tests" / f"{name}.telora").write_text(
                     f'import "@src/{name}" as workload;\n'
                     'import "std/test" as test;\n'
-                    'export def smoke = test.should_ok(fn() { True });\n', encoding="ascii"
+                    'export def smoke: test.Test = test.should_ok(fn() { True });\n', encoding="ascii"
                 )
         for binary in binaries:
             command = [str(binary), "-C", directory]

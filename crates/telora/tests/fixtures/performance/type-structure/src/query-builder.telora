@@ -123,7 +123,7 @@ type Query = struct {
 
 # ---------------------------------------------------------------- Identifiers
 
-def sql_identifier_re = regex.compile(r"^[A-Za-z_][A-Za-z0-9_]*$");
+def sql_identifier_re: regex.Regex = regex.compile(r"^[A-Za-z_][A-Za-z0-9_]*$");
 
 def reserved_words: Array(String) = [
   "select", "from", "where", "group", "by", "order", "limit", "as", "join",
