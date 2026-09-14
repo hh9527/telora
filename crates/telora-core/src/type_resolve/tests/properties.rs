@@ -44,6 +44,23 @@ fn invalid_check_signatures_keep_the_original_conflict_and_contract_context() {
 }
 
 #[test]
+fn deferred_check_conflicts_retain_language_fixture_context() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/language/src/check");
+    for case in ["empty-body", "err-payload", "input", "legacy-none", "legacy-some",
+        "ok-payload", "result", "result-statement", "return-unit", "warning-tail"] {
+        let source = std::fs::read_to_string(directory.join(format!("diag-check-{case}/testee.telora"))).unwrap();
+        let mut sources = vec![("@src/main", source.as_str())];
+        sources.extend_from_slice(crate::static_sources::BUILTINS);
+        let mut mir = graph(&sources);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|d| d.message.starts_with("invalid @check function:")),
+            "{case}: {:?}", mir.diagnostics);
+        assert!(mir.seal().is_err());
+    }
+}
+
+#[test]
 fn decorators_on_aliases_are_diagnosed_and_cannot_be_silently_dropped() {
     for declaration in ["type Prop = Int;", "type Base = struct {value: Int}; @property(PropertyTarget.Type) type Prop = Base;"] {
         let source = if declaration.starts_with("type Prop") {

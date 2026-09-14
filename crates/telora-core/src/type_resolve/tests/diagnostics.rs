@@ -199,7 +199,10 @@ fn syntax_recovery_keeps_independent_type_conflicts_without_a_fake_result_obliga
     crate::symbol_resolve::resolve(&mut mir);
     resolve(&mut mir);
     assert!(matches!(symbol_type(&mir, "healthy"), TypeState::Known(_)));
-    assert!(matches!(symbol_type(&mir, "bad"), TypeState::Conflicted(_)));
+    assert!(matches!(symbol_type(&mir, "bad"), TypeState::Known(_)));
+    let bad = mir.symbols.iter().find(|symbol| symbol.name == "bad"
+        && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap().declarations[0];
+    assert_eq!(mir.type_conflicts_in(bad).len(), 1, "failed use must remain queryable");
     assert!(
         mir.diagnostics
             .iter()
@@ -223,19 +226,20 @@ fn retains_independent_conflicts_and_does_not_poison_intrinsic_types() {
     "#,
     )]);
     resolve(&mut mir);
-    assert!(matches!(
-        symbol_type(&mir, "first"),
-        TypeState::Conflicted(_)
-    ));
-    assert!(matches!(
-        symbol_type(&mir, "second"),
-        TypeState::Conflicted(_)
-    ));
+    for (name, constructor) in [("first", TypeConstructor::Int), ("second", TypeConstructor::String)] {
+        let TypeState::Known(ty) = symbol_type(&mir, name) else { panic!("contract must survive"); };
+        assert_eq!(mir.types[ty.index()].constructor, constructor);
+        let declaration = mir.symbols.iter().find(|symbol| symbol.name == name
+            && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap().declarations[0];
+        assert_eq!(mir.type_conflicts_in(declaration).len(), 1);
+    }
     assert_eq!(mir.type_conflicts.len(), 2, "{}", mir.dump());
     let TypeState::Known(good) = symbol_type(&mir, "good") else {
         panic!("{}", mir.dump());
     };
     assert_eq!(mir.types[good.index()].constructor, TypeConstructor::Int);
+    mir.diagnostics.clear();
+    assert!(mir.seal().is_err(), "failed obligations survive removal of diagnostic text");
 }
 
 #[test]
@@ -243,9 +247,9 @@ fn unresolved_imports_are_inherited_without_new_type_diagnostics() {
     let mut mir = graph(&[
         (
             "@src/main",
-            "import \"@src/other\" {missing}; export def bad = missing; export def good = 42;",
+            "import \"@src/other\" {missing}; export def bad: Int = missing; export def good: Int = 42;",
         ),
-        ("@src/other", "export def present = 1;"),
+        ("@src/other", "export def present: Int = 1;"),
     ]);
     let references = mir.resolve_slots.clone();
     let diagnostics = mir.diagnostics.len();
@@ -266,7 +270,7 @@ fn unresolved_imports_are_inherited_without_new_type_diagnostics() {
 fn unresolved_symbols_remain_authoritative_while_other_slots_are_solved() {
     let mut mir = graph(&[(
         "@src/main",
-        "def missing = absent; def dependent = [missing.item]; export def good = 1;",
+        "type Item = struct {item: Int}; def missing: Item = absent; def dependent: Array(Int) = [missing.item]; export def good: Int = 1;",
     )]);
     let references = mir.resolve_slots.clone();
     let diagnostics = mir.diagnostics.len();

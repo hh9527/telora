@@ -200,6 +200,7 @@ impl Solver<'_> {
         }
         self.pending_instances.insert(target);
         self.tasks.push(Task::Instantiate {
+            origin: self.constraint_origin,
             source: self.mir.symbol_types[symbol.index()],
             target,
             arguments,
@@ -216,6 +217,7 @@ impl Solver<'_> {
         let target = self.fresh();
         self.pending_instances.insert(target);
         self.tasks.push(Task::Instantiate {
+            origin: self.constraint_origin,
             source,
             target,
             arguments: arguments.to_vec(),
@@ -302,6 +304,7 @@ impl Solver<'_> {
         }
         let Some(term) = self.term(source).cloned() else {
             return Some(Task::Instantiate {
+            origin: self.constraint_origin,
                 source,
                 target,
                 arguments,
@@ -340,6 +343,6 @@ impl Solver<'_> {
         // An inferred record/array literal can later receive its declared
         // nominal/collection identity. Keep that evidence edge alive: copying
         // only its initial fields loses phantom generic arguments on refinement.
-        provisional.then_some(Task::RefineInstance { source, target, arguments, location, constructor })
+        provisional.then_some(Task::RefineInstance { source, target, arguments, location, constructor, origin: self.constraint_origin })
     }
 }

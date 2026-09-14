@@ -13,6 +13,7 @@ mod type_schemes;
 mod properties;
 mod materializations;
 mod declaration_contracts;
+mod constraint_outcomes;
 pub use declaration_contracts::{DeclarationContract, DeclarationContractState};
 pub use seal::SealedMir;
 pub use executable::{ExecutionClosure, ExecutionRoot, SealedExecutable};
@@ -462,6 +463,8 @@ pub struct ResolvedType {
 }
 #[derive(Debug)]
 pub struct TypeConflict {
+    /// Syntax obligation being checked when this relation failed.
+    pub origin: Option<HirId>,
     pub left: TypeSlotId,
     pub right: TypeSlotId,
     pub location: Option<Location>,

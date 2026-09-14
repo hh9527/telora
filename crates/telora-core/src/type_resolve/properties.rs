@@ -35,7 +35,9 @@ impl Solver<'_> {
     fn attach_properties(&mut self, syntax: HirId, owner: TypeSlotId, site: PropertySite) {
         for decorator in self.children(syntax, Role::Decorator) {
             if matches!(self.mir.hir[decorator.index()].kind, HirKind::ConstructionCheck { .. }) {
+                let previous = self.constraint_origin.replace(decorator);
                 self.attach_check(decorator, owner, site);
+                self.constraint_origin = previous;
                 continue;
             }
             let context = match site {
@@ -100,8 +102,8 @@ impl Solver<'_> {
     pub(super) fn finalize_checks(&mut self) {
         let mut described = std::collections::BTreeSet::new();
         for &(owner, site, decorator) in &self.check_declarations {
-            if let TypeState::Conflicted(id) = self.mir.ty_slots[decorator.ty().index()]
-                && described.insert(id) {
+            for id in self.mir.type_conflicts_in(decorator) {
+                if !described.insert(id) { continue; }
                 let conflict = &self.mir.type_conflicts[id.index()];
                 // Preserve the diagnostic emitted with the original evidence.
                 // A failed name resolution already has its own explanation.

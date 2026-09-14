@@ -44,9 +44,10 @@ enum Task {
     RecordSpread { node: HirId },
     StructUpdate { node: HirId, left: TypeSlotId, right: TypeSlotId },
     FieldProjection { node: HirId, receiver: TypeSlotId },
-    ShapeEqual { left: TypeSlotId, right: TypeSlotId, location: Option<Location> },
+    ShapeEqual { left: TypeSlotId, right: TypeSlotId, location: Option<Location>, origin: Option<HirId> },
     Unchecked { node: HirId, argument: TypeSlotId },
     RefineInstance {
+        origin: Option<HirId>,
         source: TypeSlotId,
         target: TypeSlotId,
         arguments: Vec<(SymbolId, TypeSlotId)>,
@@ -63,6 +64,7 @@ enum Task {
         input: TypeSlotId,
     },
     Instantiate {
+        origin: Option<HirId>,
         source: TypeSlotId,
         target: TypeSlotId,
         arguments: Vec<(SymbolId, TypeSlotId)>,
@@ -118,6 +120,7 @@ enum Task {
 struct Solver<'a> {
     mir: &'a mut Mir,
     revision: usize,
+    constraint_origin: Option<HirId>,
     tasks: Vec<Task>,
     nominal_index: Vec<Option<usize>>,
     nominal_owner: Vec<Option<SymbolId>>,
@@ -303,6 +306,7 @@ impl Solver<'_> {
             value_slots: vec![false; mir.hir.len()],
             mir,
             revision: 0,
+            constraint_origin: None,
             tasks: vec![],
         }
     }
@@ -338,6 +342,7 @@ impl Solver<'_> {
             .unwrap_or_else(|| {
                 let id = TypeConflictId(self.mir.type_conflicts.len() as u32);
                 self.mir.type_conflicts.push(TypeConflict {
+                    origin: None,
                     left: slot,
                     right: slot,
                     location: None,
@@ -351,6 +356,11 @@ impl Solver<'_> {
         self.mir.ty_slots[root.index()] = TypeState::Conflicted(id);
     }
     fn generate(&mut self, node: HirId) {
+        let previous = self.constraint_origin.replace(node);
+        self.generate_inner(node);
+        self.constraint_origin = previous;
+    }
+    fn generate_inner(&mut self, node: HirId) {
         if self.administrative[node.index()] {
             return;
         }
@@ -876,6 +886,28 @@ impl Solver<'_> {
         }
     }
     fn solve_task(&mut self, task: Task) -> Option<Task> {
+        let origin = match &task {
+            Task::Interpreter { node, .. } | Task::TypeFacet { node, .. }
+            | Task::ValueEqual { node, .. } | Task::Ordered { node, .. }
+            | Task::Reference { node, .. } | Task::TypeApply { node }
+            | Task::Propagate { node } | Task::TupleSpread { node }
+            | Task::RecordSpread { node } | Task::StructUpdate { node, .. }
+            | Task::FieldProjection { node, .. } | Task::Unchecked { node, .. }
+            | Task::BoundContext { node, .. } | Task::DiagnosticInput { node, .. }
+            | Task::Call { node, .. } | Task::Join { node, .. } | Task::Block { node, .. }
+            | Task::Projection { node, .. } | Task::ConstructorPattern { node, .. }
+            | Task::Fit { node, .. } | Task::Tuple { node, .. } | Task::Member { node, .. }
+            | Task::Not { node, .. } | Task::Numeric { node, .. } => Some(*node),
+            Task::PropagationBottom { body, .. } => Some(*body),
+            Task::ShapeEqual { origin, .. } | Task::Instantiate { origin, .. }
+            | Task::RefineInstance { origin, .. } => *origin,
+        };
+        let previous = std::mem::replace(&mut self.constraint_origin, origin);
+        let result = self.solve_task_inner(task);
+        self.constraint_origin = previous;
+        result
+    }
+    fn solve_task_inner(&mut self, task: Task) -> Option<Task> {
         let task = match self.solve_constraint(task) {
             Ok(done) => return done,
             Err(task) => task,

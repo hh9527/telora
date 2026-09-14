@@ -115,6 +115,7 @@ impl Solver<'_> {
     ) -> TypeConflictId {
         let id = TypeConflictId(self.mir.type_conflicts.len().try_into().expect("type conflict capacity"));
         self.mir.type_conflicts.push(TypeConflict {
+            origin: self.constraint_origin,
             left,
             right,
             location,
