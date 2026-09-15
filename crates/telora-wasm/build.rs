@@ -40,6 +40,23 @@ fn main() {
         .join("lib/rustlib")
         .join(env::var("HOST").unwrap())
         .join("bin/gcc-ld/wasm-ld");
+    let help = Command::new(&linker)
+        .arg("--help")
+        .output()
+        .unwrap_or_else(|error| panic!("Failed to probe {} --help: {error}", linker.display()));
+    assert!(
+        help.status.success(),
+        "Failed to probe {} --help ({}):\n{}\n{}",
+        linker.display(),
+        help.status,
+        String::from_utf8_lossy(&help.stdout),
+        String::from_utf8_lossy(&help.stderr),
+    );
+    // Older LLD defaults to placing the stack after static data and has no
+    // inverse flag. Newer LLD supports the flag and defaults to stack-first.
+    let no_stack_first = String::from_utf8_lossy(&help.stdout)
+        .split_whitespace()
+        .any(|word| word == "--no-stack-first");
     let exports = "telora_alloc telora_invoke telora_table_push telora_table_get telora_freeze
         telora_string_compare telora_source_name telora_subject_label telora_sort_pairs
         telora_duplicate_key_message telora_text_query telora_text_build telora_text_split
@@ -48,14 +65,14 @@ fn main() {
         telora_json_write telora_json_parse telora_toml_parse telora_yaml_parse
         telora_float_remainder telora_register_source telora_source_retained telora_collect telora_heap_end
         telora_reserve_static __heap_base __indirect_function_table";
-    let status = Command::new(linker)
+    let status = Command::new(&linker)
         .args([
             "--no-entry",
-            "--no-stack-first",
             "--export-memory",
             "--global-base=512",
             "--strip-debug",
         ])
+        .args(no_stack_first.then_some("--no-stack-first"))
         .args(
             exports
                 .split_whitespace()
@@ -66,5 +83,9 @@ fn main() {
         .arg(output_dir.join("telora-rt.wasm"))
         .status()
         .expect("prelink Wasm runtime template");
-    assert!(status.success(), "Wasm runtime template linking failed");
+    assert!(
+        status.success(),
+        "Wasm runtime template linking failed: {} ({status})",
+        linker.display(),
+    );
 }
