@@ -124,7 +124,7 @@ use super::*;
         let parsed = parse(id, source);
         assert_eq!(parsed.diagnostics.len(), 1);
         assert_eq!(parsed.diagnostics[0].labels[0].location.range(), 2..4);
-        let string_node = find_rule(&parsed.syntax, NodeRef::ROOT, parser::Rule::StringLiteral)
+        let string_node = find_rule(&parsed.syntax, NodeRef::ROOT, cst::Rule::StringLiteral)
             .expect("string literal remains in CST");
         let string = StringLiteral::cast(&parsed.syntax, string_node).unwrap();
         let parts = string

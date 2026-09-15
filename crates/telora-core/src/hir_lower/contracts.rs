@@ -41,6 +41,7 @@ impl Lower<'_> {
                     .map(|node| Input::with(Role::Item, node, Mode::Contract))
                     .collect(),
             )),
+            Some(Rule::Error) => Ok(Shape::Node(HirKind::Missing, vec![])),
             _ => Err(self.error(node, "invalid contract")),
         }
     }
@@ -72,8 +73,17 @@ impl Lower<'_> {
         let parts = self.contract_parts(node);
         let operation = match self.rule(node) {
             Some(Rule::FunctionContract) => {
-                if parts.is_empty() {
-                    return Err(self.error(node, "function contract has no result"));
+                let arrow = self.token(node, Token::Arrow);
+                if !arrow.is_some_and(|arrow| parts.iter().any(|part| part.0 > arrow.0)) {
+                    let mut inputs: Vec<_> = parts
+                        .into_iter()
+                        .map(|part| Input::with(Role::Argument, part, Mode::Contract))
+                        .collect();
+                    inputs.push(self.synthetic(Role::Argument, node, HirKind::Missing, vec![]));
+                    return Ok(Shape::Desugared(
+                        HirKind::TypeOperation(TypeOperation::Function),
+                        inputs,
+                    ));
                 }
                 TypeOperation::Function
             }
@@ -106,6 +116,7 @@ impl Lower<'_> {
                     self.rule(*child),
                     Some(
                         Rule::Contract
+                            | Rule::Error
                             | Rule::ContractExpr
                             | Rule::FunctionContract
                             | Rule::UnitContract

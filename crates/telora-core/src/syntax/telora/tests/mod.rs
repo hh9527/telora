@@ -1,7 +1,7 @@
 use super::*;
 use ast::{AstNode, Binding, ExpectedSyntax, Program, StringLiteral};
-use lexer::Token;
-use parser::{Node, NodeRef};
+use super::Token;
+use cst::{Node, NodeRef};
 
 fn reconstruct(cst: &CstData, source: &str, node: NodeRef, output: &mut String) {
     match cst.get(node) {
@@ -14,7 +14,7 @@ fn reconstruct(cst: &CstData, source: &str, node: NodeRef, output: &mut String) 
     }
 }
 
-fn find_rule(cst: &CstData, node: NodeRef, expected: parser::Rule) -> Option<NodeRef> {
+fn find_rule(cst: &CstData, node: NodeRef, expected: cst::Rule) -> Option<NodeRef> {
     if matches!(cst.get(node), Node::Rule(rule, _) if rule == expected) {
         return Some(node);
     }
@@ -23,7 +23,7 @@ fn find_rule(cst: &CstData, node: NodeRef, expected: parser::Rule) -> Option<Nod
 }
 
 fn contains_rule_error(cst: &CstData, node: NodeRef) -> bool {
-    matches!(cst.get(node), Node::Rule(parser::Rule::Error, _))
+    matches!(cst.get(node), Node::Rule(cst::Rule::Error, _))
         || cst
             .children(node)
             .any(|child| contains_rule_error(cst, child))

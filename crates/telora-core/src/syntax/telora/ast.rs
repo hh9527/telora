@@ -1,5 +1,5 @@
-use super::lexer::Token;
-use super::parser::{CstData, Node, NodeRef, Rule};
+use super::Token;
+use super::cst::{CstData, Node, NodeRef, Rule};
 use crate::source::{Diagnostic, Location, SourceId, TextRange};
 
 #[derive(Clone, Copy)]
@@ -80,7 +80,7 @@ pub struct Program<'tree> {
 
 impl<'tree> Program<'tree> {
     pub fn root(tree: &'tree CstData) -> Self {
-        Self::cast(tree, NodeRef::ROOT).expect("Lelwel root is a program")
+        Self::cast(tree, NodeRef::ROOT).expect("syntax root is a program")
     }
 
     pub fn body(self) -> Option<Body<'tree>> {
@@ -116,7 +116,18 @@ impl<'tree> Body<'tree> {
 
     pub fn result(self) -> Option<Expr<'tree>> {
         let tail = self.body_chain().last()?;
-        expression_slots(tail.syntax).into_iter().last().flatten()
+        let result = expression_slots(tail.syntax).into_iter().last().flatten()?;
+        // A flat body can contain several expression statements. Only its
+        // unterminated final expression supplies the result.
+        let end = result.syntax().range().end;
+        if tail.syntax.children().any(|child| {
+            child
+                .token()
+                .is_some_and(|token| token.kind() == Token::Semicolon && token.range().start >= end)
+        }) {
+            return None;
+        }
+        Some(result)
     }
 
     fn body_chain(self) -> impl Iterator<Item = Self> {
@@ -503,16 +514,30 @@ impl SyntaxIssue {
 }
 
 pub fn validate(source: SourceId, tree: &CstData) -> Vec<SyntaxIssue> {
+    validate_cancellable(source, tree, &mut || false).expect("uncancelled validation")
+}
+
+pub(super) fn validate_cancellable(
+    source: SourceId,
+    tree: &CstData,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Option<Vec<SyntaxIssue>> {
+    if cancelled() {
+        return None;
+    }
     let program = Program::root(tree);
     let Some(body) = program.body() else {
-        return vec![missing_at(
+        return Some(vec![missing_at(
             source,
             program.syntax(),
             ExpectedSyntax::ProgramBody,
-        )];
+        )]);
     };
     let mut issues = Vec::new();
     for binding in body.bindings() {
+        if cancelled() {
+            return None;
+        }
         if binding.name().is_none()
             && !matches!(binding, Binding::Import(import) if import.has_selector())
             && !matches!(binding, Binding::Export(_) | Binding::Impl(_))
@@ -547,15 +572,17 @@ pub fn validate(source: SourceId, tree: &CstData) -> Vec<SyntaxIssue> {
                     Some(Token::Semicolon),
                     ExpectedSyntax::BindingValue,
                 )),
-            Binding::Import(node) if node.path().is_none()
-                && child_node(node.syntax, Rule::MemberSelector).is_none() => {
+            Binding::Import(node)
+                if node.path().is_none()
+                    && child_node(node.syntax, Rule::MemberSelector).is_none() =>
+            {
                 issues.push(missing_at(source, node.syntax, ExpectedSyntax::ImportPath))
             }
             Binding::Export(_) => {}
             _ => {}
         }
     }
-    issues
+    Some(issues)
 }
 
 fn child_node(syntax: SyntaxNode<'_>, rule: Rule) -> Option<SyntaxNode<'_>> {
@@ -627,16 +654,23 @@ fn is_complete_expression(mut syntax: SyntaxNode<'_>) -> bool {
     let mut pending = Vec::new();
     loop {
         if is_expression_slot(syntax) {
-            if matches!(syntax.rule(), Some(Rule::Expression | Rule::Primary | Rule::Braced)) {
+            if matches!(
+                syntax.rule(),
+                Some(Rule::Expression | Rule::Primary | Rule::Braced)
+            ) {
                 let mut children = syntax.children().filter(|child| is_expression_slot(*child));
                 if let Some(first) = children.next() {
                     pending.extend(children);
                     syntax = first;
                     continue;
                 }
-            } else { return true; }
+            } else {
+                return true;
+            }
         }
-        let Some(next) = pending.pop() else { return false; };
+        let Some(next) = pending.pop() else {
+            return false;
+        };
         syntax = next;
     }
 }

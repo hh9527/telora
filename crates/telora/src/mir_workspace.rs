@@ -153,7 +153,7 @@ impl Workspace {
         roots.sort();
         roots.dedup();
         context.checkpoint().await?;
-        let mir = inventory.solve_documents(&roots, &overlays);
+        let mir = inventory.solve_documents(&roots, &overlays, context)?;
         context.checkpoint().await?;
         let files = inventory.module_paths();
         let mut paths = BTreeMap::new();

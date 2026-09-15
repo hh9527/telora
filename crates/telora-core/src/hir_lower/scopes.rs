@@ -179,6 +179,10 @@ impl Lower<'_> {
     }
 
     pub(super) fn binding(&self, node: NodeRef) -> Result<Shape, ()> {
+        if self.rule(node) == Some(Rule::Error) {
+            // Parsing already diagnosed this unavailable declaration.
+            return Ok(Shape::Node(HirKind::Missing, vec![]));
+        }
         if self.rule(node) == Some(Rule::Binding) {
             let inner = self
                 .cst

@@ -50,16 +50,27 @@ codegen 消费 SealedExecutable，生成 Wasm 指令和类型确定的胶水。R
 
 ## 2. Frontend 与静态诊断
 
-四种语法的 Lelwel 生成 parser 作为普通 Rust 模块检入。Telora 语法在 core 的
-`syntax/telora/`；JSON/TOML/YAML 语法在 `telora-data/src/syntax/`。手写 callback
-位于各自的 `parser/support.rs`。修改 `grammar.llw` 后运行
-`cargo run -p telora-parser-gen`，同时提交 grammar 与生成代码。工具固定 Lelwel 版本，
-并用 rustfmt 格式化生成文件；正常 Cargo 构建不生成或改写源码。
+`.telora` 使用 Tree-sitter 单一路径。语法位于 `tree-sitter-telora/grammar.js`，
+生成的 C parser 与手写 external scanner 一同编译；修改语法后在子模块运行
+`tree-sitter generate` 并提交生成结果，不手工修改生成代码。
+core 的 `syntax/telora/tree_sitter/` 负责分块输入、token 分类与验证；
+`tree_sitter.rs` 迭代投影到独立的 `cst.rs` 平坦语义 CST。节点分类使用数值 ID 映射，
+遍历携带父上下文，避免反复从根查找父节点。补全直接消费已保存的 CST token。
+
+JSON/TOML/YAML 仍使用 `telora-data/src/syntax/` 中的 Lelwel parser，手写 callback
+位于各自的 `parser/support.rs`。修改这些 `grammar.llw` 后运行
+`cargo run -p telora-parser-gen`，同时提交 grammar 与生成代码。
+正常 Cargo 构建不生成或改写上述 parser 源码。
 生成的状态机不受手写源文件大小限制，手写逻辑和测试使用正常子模块划分。
 
 parser 保留 lossless CST、恢复后的语法和诊断。module Pass 将可达源码挂入 MIR，
 记录源码有效性，并分配扁平 HIR 节点及相应 resolve/type 槽。源码不完整也能产生可查询图，
 但不能因此获得执行资格。
+
+解析支持合作式取消：源码分块读取、Tree-sitter 进度回调、token/CST 遍历和结构诊断
+均检查取消。取消后不发布部分 CST/MIR，也不回退旧解析器。编辑器的 QueryContext
+将取消及版本过期传入模块构图；单次节点操作和后续静态 Pass 仍有各自的检查粒度，
+这一机制不等同于资源总量配额或抢占式调度。
 
 CST 是语法数据的唯一所有者；`syntax/telora/ast.rs` 提供借用视图，不构造完整 Owned AST。
 `hir_lower` 用显式任务栈读取这些视图，直接向 HIR arena 写入节点和 Id 边。

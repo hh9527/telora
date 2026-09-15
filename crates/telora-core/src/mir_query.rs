@@ -226,7 +226,8 @@ impl<'a> MirQuery<'a> {
     }
 
     pub fn completion_at(self, location: Location) -> Option<Completion<'a>> {
-        use crate::syntax::telora::lexer::Token;
+        use crate::syntax::telora::{ast::SyntaxNode, cst::NodeRef};
+        use crate::syntax::telora::Token;
         if location.start != location.end {
             return None;
         }
@@ -235,17 +236,25 @@ impl<'a> MirQuery<'a> {
         if cursor > file.text().byte_len() {
             return None;
         }
-        let (tokens, spans) =
-            crate::syntax::telora::lexer::tokenize_document(file.text(), &mut vec![]);
-        let significant = tokens
-            .iter()
-            .zip(&spans)
-            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::Comment))
+        let cst = self.mir.modules.iter().find_map(|module| match &module.state {
+            ModuleState::Source { source, cst, .. } if *source == location.source => Some(cst),
+            _ => None,
+        })?;
+        // Consume the frontend's existing token boundaries, including recovered
+        // syntax. Completion must not run a second, potentially different lexer.
+        let significant = SyntaxNode::new(cst, NodeRef::ROOT)
+            .descendants_and_self()
+            .filter_map(|node| node.token())
+            .map(|token| {
+                let range = token.range();
+                (token.kind(), range.start as usize..range.end as usize)
+            })
+            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::Comment | Token::EOF))
             .take_while(|(_, span)| span.end <= cursor)
             .collect::<Vec<_>>();
         let (dot, replacement, prefix) = match significant.as_slice() {
             [.., (Token::Dot, dot)] if dot.end == cursor => (
-                *dot,
+                dot.clone(),
                 crate::source::TextRange::at(location.start),
                 String::new(),
             ),
@@ -254,7 +263,7 @@ impl<'a> MirQuery<'a> {
             {
                 let replacement = crate::source::TextRange::from_usize((*prefix).clone()).ok()?;
                 (
-                    *dot,
+                    dot.clone(),
                     replacement,
                     file.text().slice(replacement).ok()?.into_owned(),
                 )

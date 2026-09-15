@@ -1,0 +1,15 @@
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+export def space_escape: test.Test = test.should_ok(fn() {
+    expect("a\ b" == "ab");
+    expect("a\  b" == "ab");
+    expect("a\  b" == "ab");
+    expect("a\ 	
+        b" == "ab");
+    expect(`a\ 	
+        b` == "ab");
+    expect(`a\ b` == "ab");
+    expect(`a\ \{ "b" }` == "ab");
+    expect(r#"a\ b"# == "a\\ b");
+});

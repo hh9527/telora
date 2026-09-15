@@ -70,8 +70,13 @@ impl Inventory {
             .ok_or_else(|| format!("document {} is not in the module catalog", path.display()))
     }
 
-    pub fn solve_documents(&self, roots: &[String], overlays: &BTreeMap<String, telora_core::DocumentText>) -> Mir {
-        self.solve_inputs(roots, None, overlays)
+    pub fn solve_documents(&self, roots: &[String], overlays: &BTreeMap<String, telora_core::DocumentText>, context: &telora_core::QueryContext) -> Result<Mir, telora_core::QueryError> {
+        let mut error = None;
+        let mir = self.solve_inputs_cancellable(roots, None, overlays, &mut || {
+            error = context.check().err();
+            error.is_some()
+        });
+        mir.ok_or_else(|| error.expect("interrupted query records its cause"))
     }
 
     pub fn workspace(&self) -> Option<Arc<ResolvedWorkspace>> {
@@ -386,6 +391,12 @@ impl Inventory {
     }
 
     fn solve_inputs(&self, roots: &[String], application: Option<&str>, overlays: &BTreeMap<String, telora_core::DocumentText>) -> Mir {
+        self.solve_inputs_cancellable(roots, application, overlays, &mut || false)
+            .expect("uncancelled compilation")
+    }
+
+    fn solve_inputs_cancellable(&self, roots: &[String], application: Option<&str>, overlays: &BTreeMap<String, telora_core::DocumentText>, cancelled: &mut dyn FnMut() -> bool) -> Option<Mir> {
+        if cancelled() { return None; }
         let specs = self
             .entries
             .values()
@@ -408,7 +419,7 @@ impl Inventory {
                 },
             })
             .collect();
-        let mut mir = module_resolve::resolve_with_requests(
+        let mut mir = module_resolve::resolve_with_requests_cancellable(
             specs,
             roots,
             |_, name| if let Some(text) = overlays.get(name) { Ok(text.to_string()) } else { match &self.entries[name].source {
@@ -428,10 +439,13 @@ impl Inventory {
                     self.request(owner, request)
                 }
             },
-        );
+            cancelled,
+        )?;
         module_resolve::validate_source_modules(&mut mir, |name| self.entries[name].origin == "builtin");
+        if cancelled() { return None; }
         telora_core::symbol_resolve::resolve(&mut mir);
+        if cancelled() { return None; }
         telora_core::type_resolve::resolve_with_options(&mut mir, self.compiler);
-        mir
+        if cancelled() { None } else { Some(mir) }
     }
 }

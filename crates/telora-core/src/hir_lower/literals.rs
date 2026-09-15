@@ -111,7 +111,7 @@ impl Lower<'_> {
             }
             Node::Token(Token::EscapeSequence, _) => {
                 let escaped = &text[1..];
-                if escaped.starts_with(['\n', '\r']) {
+                if !escaped.is_empty() && escaped.chars().all(char::is_whitespace) {
                     return Ok(String::new());
                 }
                 Ok(match escaped {

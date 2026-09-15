@@ -3,7 +3,7 @@ use crate::syntax::kinds::{
     BinaryOperator, BindingKind, BlameAction, DeclaredInitializerKind, UnaryOperator,
 };
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
-use crate::syntax::telora::parser::{CstData, NodeRef};
+use crate::syntax::telora::cst::{CstData, NodeRef};
 use std::fmt::Write;
 
 mod seal;

@@ -25,15 +25,30 @@ pub fn resolve(
 
 /// The host supplies logical naming/access policy, never another module graph.
 pub fn resolve_with_requests(
+    inventory: Vec<ModuleSpec>,
+    roots: &[String],
+    read: impl FnMut(ModuleId, &str) -> Result<String, String>,
+    request_name: impl FnMut(&str, &str) -> Option<String>,
+) -> Mir {
+    resolve_with_requests_cancellable(inventory, roots, read, request_name, &mut || false)
+        .expect("uncancelled module graph")
+}
+
+/// Cancellation discards the in-progress graph. Syntax errors remain ordinary
+/// diagnostics; cancellation is not an unresolved module or a syntax error.
+pub fn resolve_with_requests_cancellable(
     mut inventory: Vec<ModuleSpec>,
     roots: &[String],
     mut read: impl FnMut(ModuleId, &str) -> Result<String, String>,
     mut request_name: impl FnMut(&str, &str) -> Option<String>,
-) -> Mir {
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Option<Mir> {
+    if cancelled() { return None; }
     inventory.sort_by(|a, b| a.name.cmp(&b.name));
     let mut mir = Mir::default();
     let mut names = BTreeMap::<String, Vec<ModuleId>>::new();
     for spec in &inventory {
+        if cancelled() { return None; }
         let id = ModuleId(mir.modules.len().try_into().expect("module capacity"));
         names.entry(spec.name.clone()).or_default().push(id);
         mir.modules.push(Module {
@@ -65,6 +80,7 @@ pub fn resolve_with_requests(
     }
     let mut pending = mir.roots.iter().filter_map(bound).collect::<BTreeSet<_>>();
     while let Some(id) = pending.pop_first() {
+        if cancelled() { return None; }
         if !matches!(mir.modules[id.index()].state, ModuleState::Unloaded) {
             continue;
         }
@@ -105,8 +121,13 @@ pub fn resolve_with_requests(
                 continue;
             }
         };
-        let parsed = crate::syntax::telora::parse_document(source, mir.sources.get(source).text());
+        if cancelled() { return None; }
+        let parsed = crate::syntax::telora::parse_document_cancellable(
+            source, mir.sources.get(source).text(), cancelled,
+        )?;
+        if cancelled() { return None; }
         let lowered = hir_lower::lower_module(&mut mir, id, source, &parsed.syntax);
+        if cancelled() { return None; }
         let syntax_valid = parsed.diagnostics.is_empty() && lowered.diagnostics.is_empty();
         mir.diagnostics.extend(parsed.diagnostics);
         mir.diagnostics.extend(lowered.diagnostics);
@@ -174,7 +195,7 @@ pub fn resolve_with_requests(
             mir.modules[id.index()].imports.push(edge);
         }
     }
-    mir
+    if cancelled() { None } else { Some(mir) }
 }
 
 /// Apply source-module declaration rules at the workspace admission boundary.
@@ -182,12 +203,14 @@ pub fn resolve_with_requests(
 /// Diagnostics do not prevent subsequent symbol/type passes from filling MIR.
 pub fn validate_source_modules(mir: &mut Mir, trusted: impl Fn(&str) -> bool) {
     use crate::source::Diagnostic;
-    use crate::syntax::telora::ast::Program;
+    use crate::syntax::telora::ast::{AstNode, Expr, Program};
 
     for module in &mir.modules {
         let ModuleState::Source { cst, body, syntax_valid, .. } = &module.state else { continue };
         let location = mir.hir[body.index()].location;
-        let authored_result = Program::root(cst).body().is_some_and(|body| body.result().is_some());
+        let authored_result = Program::root(cst).body().is_some_and(|body| {
+            body.syntax().children().any(|child| Expr::cast(cst, child.node_ref()).is_some())
+        });
         let mut has_exports = false;
         for edge in &mir.hir[body.index()].children {
             if edge.role != Role::Binding { continue; }
@@ -258,6 +281,28 @@ fn canonical_request(owner: &str, request: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancellation_discards_the_module_graph() {
+        let token = crate::query::CancellationToken::default();
+        let mut reads = 0;
+        let mir = super::resolve_with_requests_cancellable(
+            vec![super::ModuleSpec {
+                native: None, name: "app/main".into(),
+                kind: crate::mir::ModuleKind::Source, implicit_imports: vec![],
+            }],
+            &["app/main".into()],
+            |_, _| {
+                reads += 1;
+                token.cancel();
+                Ok("1".into())
+            },
+            super::canonical_request,
+            &mut || token.is_cancelled(),
+        );
+        assert_eq!(reads, 1);
+        assert!(mir.is_none());
+    }
+
     #[test]
     fn cname_inventory_needs_no_filesystem_and_ids_ignore_inventory_order() {
         use super::*;
