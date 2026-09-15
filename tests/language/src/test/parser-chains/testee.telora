@@ -1,0 +1,16 @@
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+def curried: Fn(Int) -> Fn(Int) -> Fn(Int) -> Int =
+    fn(a) { fn(b) { fn(c) { a - b * c } } };
+
+export def precedence: test.Test = test.should_ok(fn() {
+    expect(--[3][0] * 4 - 2 == 10);
+    expect(-curried(20)(3)(4) + 10 == 2);
+    expect(!!True && !False);
+    expect(10 - 3 - 2 == 5);
+    expect(24 / 3 / 2 == 4);
+    expect(if False { False } else if let Some(x) = Some(3) {
+        x == 3
+    } else if True { False } else { False })
+});

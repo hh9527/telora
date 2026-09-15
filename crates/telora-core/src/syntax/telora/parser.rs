@@ -63,8 +63,10 @@ pub enum Rule {
     FloatExpr,
     FloatPattern,
     FunctionContract,
+    FunctionContractHead,
     IdentifierPattern,
     IfExpr,
+    IfHead,
     IfLetExpr,
     ImplBinding,
     ImplMember,
@@ -94,6 +96,7 @@ pub enum Rule {
     ParenExpr,
     Pattern,
     PipelineExpr,
+    PostfixExpr,
     PostfixIntrinsicSuffix,
     Primary,
     Program,
@@ -502,8 +505,10 @@ impl std::fmt::Debug for Rule {
             Rule::FloatExpr => write!(f, "float_expr"),
             Rule::FloatPattern => write!(f, "float_pattern"),
             Rule::FunctionContract => write!(f, "function_contract"),
+            Rule::FunctionContractHead => write!(f, "function_contract_head"),
             Rule::IdentifierPattern => write!(f, "identifier_pattern"),
             Rule::IfExpr => write!(f, "if_expr"),
+            Rule::IfHead => write!(f, "if_head"),
             Rule::IfLetExpr => write!(f, "if_let_expr"),
             Rule::ImplBinding => write!(f, "impl_binding"),
             Rule::ImplMember => write!(f, "impl_member"),
@@ -533,6 +538,7 @@ impl std::fmt::Debug for Rule {
             Rule::ParenExpr => write!(f, "paren_expr"),
             Rule::Pattern => write!(f, "pattern"),
             Rule::PipelineExpr => write!(f, "pipeline_expr"),
+            Rule::PostfixExpr => write!(f, "postfix_expr"),
             Rule::PostfixIntrinsicSuffix => write!(f, "postfix_intrinsic_suffix"),
             Rule::Primary => write!(f, "primary"),
             Rule::Program => write!(f, "program"),
@@ -837,8 +843,10 @@ impl<'a> Parser<'a> {
             Rule::FloatExpr => self.create_node_float_expr(node_ref, diags),
             Rule::FloatPattern => self.create_node_float_pattern(node_ref, diags),
             Rule::FunctionContract => self.create_node_function_contract(node_ref, diags),
+            Rule::FunctionContractHead => self.create_node_function_contract_head(node_ref, diags),
             Rule::IdentifierPattern => self.create_node_identifier_pattern(node_ref, diags),
             Rule::IfExpr => self.create_node_if_expr(node_ref, diags),
+            Rule::IfHead => self.create_node_if_head(node_ref, diags),
             Rule::IfLetExpr => self.create_node_if_let_expr(node_ref, diags),
             Rule::ImplBinding => self.create_node_impl_binding(node_ref, diags),
             Rule::ImplMember => self.create_node_impl_member(node_ref, diags),
@@ -870,6 +878,7 @@ impl<'a> Parser<'a> {
             Rule::ParenExpr => self.create_node_paren_expr(node_ref, diags),
             Rule::Pattern => self.create_node_pattern(node_ref, diags),
             Rule::PipelineExpr => self.create_node_pipeline_expr(node_ref, diags),
+            Rule::PostfixExpr => self.create_node_postfix_expr(node_ref, diags),
             Rule::PostfixIntrinsicSuffix => {
                 self.create_node_postfix_intrinsic_suffix(node_ref, diags)
             }
@@ -1067,7 +1076,8 @@ impl<'a> Parser<'a> {
         self.create_node_module_body(NodeRef(closed.0), diags);
     }
     fn rule_body(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
-        let m = self.open(diags);
+        self.action_body_1(diags);
+        self.action_body_2(diags);
         loop {
             match self.current {
                 Token::At
@@ -1162,12 +1172,146 @@ impl<'a> Parser<'a> {
                 | Token::RawString
                 | Token::Return => {
                     self.rule_expression(diags);
+                    self.action_body_4(diags);
                     loop {
                         match self.current {
-                            Token::Semicolon => {
+                            Token::Semicolon if self.predicate_body_2() => {
                                 expect!(Semicolon, "invalid syntax, expected: \';\'", self, diags);
-                                self.rule_body(diags);
-                                break;
+                                self.action_body_2(diags);
+                                loop {
+                                    match self.current {
+                                        Token::At
+                                        | Token::Decl
+                                        | Token::Def
+                                        | Token::Export
+                                        | Token::Impl
+                                        | Token::Import
+                                        | Token::Let
+                                        | Token::Native
+                                        | Token::Trait
+                                        | Token::Type
+                                            if self.predicate_body_1() =>
+                                        {
+                                            self.rule_binding(diags);
+                                        }
+                                        Token::Backtick
+                                        | Token::Bang
+                                        | Token::Bytes
+                                        | Token::Do
+                                        | Token::DoubleQuote
+                                        | Token::Float
+                                        | Token::Fn
+                                        | Token::FunctionType
+                                        | Token::Identifier
+                                        | Token::If
+                                        | Token::Int
+                                        | Token::Interpreter
+                                        | Token::LBrace
+                                        | Token::LBracket
+                                        | Token::LParen
+                                        | Token::Match
+                                        | Token::Minus
+                                        | Token::RBrace
+                                        | Token::RawString
+                                        | Token::Return
+                                        | Token::Semicolon => break,
+                                        Token::AndAnd
+                                        | Token::BangEqual
+                                        | Token::BitAnd
+                                        | Token::BitOr
+                                        | Token::BitXor
+                                        | Token::Comma
+                                        | Token::Dot
+                                        | Token::EOF
+                                        | Token::Else
+                                        | Token::Equal
+                                        | Token::EqualEqual
+                                        | Token::FatArrow
+                                        | Token::Greater
+                                        | Token::GreaterEqual
+                                        | Token::Less
+                                        | Token::LessEqual
+                                        | Token::OrOr
+                                        | Token::Percent
+                                        | Token::Pipe
+                                        | Token::Plus
+                                        | Token::Question
+                                        | Token::RBracket
+                                        | Token::RParen
+                                        | Token::SectionLParen
+                                        | Token::Slash
+                                        | Token::Star
+                                        | Token::StructUpdate => {
+                                            self.error(diags, err![self, "invalid syntax, expected one of: \'@\', \'`\', \'!\', <bytes>, \'decl\', \'def\', \'do\', \'\"\', \'export\', <float>, \'fn\', \'Fn\', <identifier>, \'if\', \'impl\', \'import\', <integer>, \'interpreter\', \'{\', \'[\', \'(\', \'let\', \'match\', \'-\', \'native\', \'}\', <raw string>, \'return\', \';\', \'trait\', \'type\'"]);
+                                            break;
+                                        }
+                                        _ => {
+                                            self.advance_with_error(diags, err![self, "invalid syntax, expected one of: \'@\', \'`\', \'!\', <bytes>, \'decl\', \'def\', \'do\', \'\"\', \'export\', <float>, \'fn\', \'Fn\', <identifier>, \'if\', \'impl\', \'import\', <integer>, \'interpreter\', \'{\', \'[\', \'(\', \'let\', \'match\', \'-\', \'native\', \'}\', <raw string>, \'return\', \';\', \'trait\', \'type\'"]);
+                                        }
+                                    }
+                                }
+                                loop {
+                                    match self.current {
+                                        Token::Backtick
+                                        | Token::Bang
+                                        | Token::Bytes
+                                        | Token::Do
+                                        | Token::DoubleQuote
+                                        | Token::Float
+                                        | Token::Fn
+                                        | Token::FunctionType
+                                        | Token::Identifier
+                                        | Token::If
+                                        | Token::Int
+                                        | Token::Interpreter
+                                        | Token::LBrace
+                                        | Token::LBracket
+                                        | Token::LParen
+                                        | Token::Match
+                                        | Token::Minus
+                                        | Token::RawString
+                                        | Token::Return => {
+                                            self.rule_expression(diags);
+                                            self.action_body_4(diags);
+                                            break;
+                                        }
+                                        Token::RBrace | Token::Semicolon => break,
+                                        Token::AndAnd
+                                        | Token::At
+                                        | Token::BangEqual
+                                        | Token::BitAnd
+                                        | Token::BitOr
+                                        | Token::BitXor
+                                        | Token::Comma
+                                        | Token::Dot
+                                        | Token::EOF
+                                        | Token::Else
+                                        | Token::Equal
+                                        | Token::EqualEqual
+                                        | Token::FatArrow
+                                        | Token::Greater
+                                        | Token::GreaterEqual
+                                        | Token::Less
+                                        | Token::LessEqual
+                                        | Token::OrOr
+                                        | Token::Percent
+                                        | Token::Pipe
+                                        | Token::Plus
+                                        | Token::Question
+                                        | Token::RBracket
+                                        | Token::RParen
+                                        | Token::SectionLParen
+                                        | Token::Slash
+                                        | Token::Star
+                                        | Token::StructUpdate => {
+                                            self.error(diags, err![self, "invalid syntax, expected one of: \'`\', \'!\', <bytes>, \'do\', \'\"\', <float>, \'fn\', \'Fn\', <identifier>, \'if\', <integer>, \'interpreter\', \'{\', \'[\', \'(\', \'match\', \'-\', \'}\', <raw string>, \'return\', \';\'"]);
+                                            break;
+                                        }
+                                        _ => {
+                                            self.advance_with_error(diags, err![self, "invalid syntax, expected one of: \'`\', \'!\', <bytes>, \'do\', \'\"\', <float>, \'fn\', \'Fn\', <identifier>, \'if\', <integer>, \'interpreter\', \'{\', \'[\', \'(\', \'match\', \'-\', \'}\', <raw string>, \'return\', \';\'"]);
+                                        }
+                                    }
+                                }
                             }
                             Token::RBrace => break,
                             Token::AndAnd
@@ -1256,8 +1400,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        let closed = self.close(m, Rule::Body, diags);
-        self.create_node_body(NodeRef(closed.0), diags);
+        self.action_body_3(diags);
     }
     fn rule_binding(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
         match self.current {
@@ -1570,6 +1713,7 @@ impl<'a> Parser<'a> {
                         | Token::RBrace
                         | Token::RawString
                         | Token::Return
+                        | Token::Semicolon
                         | Token::Trait
                         | Token::Type => {
                             self.error(
@@ -1723,6 +1867,7 @@ impl<'a> Parser<'a> {
                 | Token::RBrace
                 | Token::RawString
                 | Token::Return
+                | Token::Semicolon
                 | Token::Trait
                 | Token::Type => {
                     self.error(
@@ -1884,6 +2029,7 @@ impl<'a> Parser<'a> {
                 | Token::RBrace
                 | Token::RawString
                 | Token::Return
+                | Token::Semicolon
                 | Token::Trait
                 | Token::Type => {
                     self.error(
@@ -1937,6 +2083,7 @@ impl<'a> Parser<'a> {
                 | Token::RBrace
                 | Token::RawString
                 | Token::Return
+                | Token::Semicolon
                 | Token::Trait
                 | Token::Type => {
                     self.error(
@@ -2007,6 +2154,7 @@ impl<'a> Parser<'a> {
                             | Token::RBrace
                             | Token::RawString
                             | Token::Return
+                            | Token::Semicolon
                             | Token::Trait
                             | Token::Type => {
                                 self.error(
@@ -2062,6 +2210,7 @@ impl<'a> Parser<'a> {
                 | Token::RBrace
                 | Token::RawString
                 | Token::Return
+                | Token::Semicolon
                 | Token::Trait
                 | Token::Type => {
                     self.error(
@@ -2123,6 +2272,7 @@ impl<'a> Parser<'a> {
                 | Token::RBrace
                 | Token::RawString
                 | Token::Return
+                | Token::Semicolon
                 | Token::Trait => {
                     self.error(
                         diags,
@@ -2180,6 +2330,7 @@ impl<'a> Parser<'a> {
                 | Token::RBrace
                 | Token::RawString
                 | Token::Return
+                | Token::Semicolon
                 | Token::Trait
                 | Token::Type => {
                     self.error(
@@ -2862,6 +3013,7 @@ impl<'a> Parser<'a> {
                             | Token::Native
                             | Token::RawString
                             | Token::Return
+                            | Token::Semicolon
                             | Token::Trait
                             | Token::Type => {
                                 self.error(
@@ -2913,6 +3065,7 @@ impl<'a> Parser<'a> {
                             | Token::Native
                             | Token::RawString
                             | Token::Return
+                            | Token::Semicolon
                             | Token::Trait
                             | Token::Type => {
                                 self.error(
@@ -2959,6 +3112,7 @@ impl<'a> Parser<'a> {
                 | Token::Native
                 | Token::RawString
                 | Token::Return
+                | Token::Semicolon
                 | Token::Trait
                 | Token::Type => {
                     self.error(
@@ -3029,6 +3183,7 @@ impl<'a> Parser<'a> {
                 | Token::RBrace
                 | Token::RawString
                 | Token::Return
+                | Token::Semicolon
                 | Token::Trait
                 | Token::Type => {
                     self.error(
@@ -3094,6 +3249,7 @@ impl<'a> Parser<'a> {
                             | Token::Native
                             | Token::RawString
                             | Token::Return
+                            | Token::Semicolon
                             | Token::Trait
                             | Token::Type => {
                                 self.error(
@@ -3145,6 +3301,7 @@ impl<'a> Parser<'a> {
                             | Token::Native
                             | Token::RawString
                             | Token::Return
+                            | Token::Semicolon
                             | Token::Trait
                             | Token::Type => {
                                 self.error(
@@ -3191,6 +3348,7 @@ impl<'a> Parser<'a> {
                 | Token::Native
                 | Token::RawString
                 | Token::Return
+                | Token::Semicolon
                 | Token::Trait
                 | Token::Type => {
                     self.error(
@@ -3610,26 +3768,7 @@ impl<'a> Parser<'a> {
             let mut node_kind = Rule::Expression;
             match parser.current {
                 Token::Bang | Token::Minus => {
-                    let m = parser.open(diags);
-                    match parser.current {
-                        Token::Minus => {
-                            expect!(Minus, "invalid syntax, expected: \'-\'", parser, diags);
-                        }
-                        Token::Bang => {
-                            expect!(Bang, "invalid syntax, expected: \'!\'", parser, diags);
-                        }
-                        _ => {
-                            parser.error(
-                                diags,
-                                err![parser, "invalid syntax, expected one of: \'!\', \'-\'"],
-                            );
-                        }
-                    }
-                    let lhs = parser.mark(diags);
-                    rec(parser, diags, 22, lhs);
-                    node_kind = Rule::UnaryExpr;
-                    let closed = parser.close(m, node_kind, diags);
-                    parser.create_node(node_kind, NodeRef(closed.0), diags);
+                    parser.rule_unary_expr(diags);
                 }
                 Token::Backtick
                 | Token::Bytes
@@ -3648,7 +3787,7 @@ impl<'a> Parser<'a> {
                 | Token::Match
                 | Token::RawString
                 | Token::Return => {
-                    parser.rule_primary(diags);
+                    parser.rule_postfix_expr(diags);
                 }
                 _ => {
                     parser.error(diags, err![parser, "invalid syntax, expected one of: \'`\', \'!\', <bytes>, \'do\', \'\"\', <float>, \'fn\', \'Fn\', <identifier>, \'if\', <integer>, \'interpreter\', \'{\', \'[\', \'(\', \'match\', \'-\', <raw string>, \'return\'"]);
@@ -3657,82 +3796,6 @@ impl<'a> Parser<'a> {
             loop {
                 node_kind = Rule::Expression;
                 match parser.current {
-                    Token::Question => {
-                        if 34 < min_bp {
-                            break;
-                        }
-                        let m = parser.open_before(lhs, diags);
-                        expect!(Question, "invalid syntax, expected: ?", parser, diags);
-                        node_kind = Rule::PropagateExpr;
-                        let closed = parser.close(m, node_kind, diags);
-                        parser.create_node(node_kind, NodeRef(closed.0), diags);
-                        lhs = closed;
-                        continue;
-                    }
-                    Token::LParen => {
-                        if 32 < min_bp {
-                            break;
-                        }
-                        let m = parser.open_before(lhs, diags);
-                        parser.rule_arguments(diags);
-                        node_kind = Rule::CallExpr;
-                        let closed = parser.close(m, node_kind, diags);
-                        parser.create_node(node_kind, NodeRef(closed.0), diags);
-                        lhs = closed;
-                        continue;
-                    }
-                    Token::At => {
-                        if 30 < min_bp {
-                            break;
-                        }
-                        let m = parser.open_before(lhs, diags);
-                        expect!(At, "invalid syntax, expected: \'@\'", parser, diags);
-                        parser.rule_type_arguments(diags);
-                        node_kind = Rule::TypeApplyExpr;
-                        let closed = parser.close(m, node_kind, diags);
-                        parser.create_node(node_kind, NodeRef(closed.0), diags);
-                        lhs = closed;
-                        continue;
-                    }
-                    Token::LBracket => {
-                        if 28 < min_bp {
-                            break;
-                        }
-                        let m = parser.open_before(lhs, diags);
-                        expect!(LBracket, "invalid syntax, expected: \'[\'", parser, diags);
-                        parser.rule_expression(diags);
-                        expect!(RBracket, "invalid syntax, expected: \']\'", parser, diags);
-                        node_kind = Rule::IndexExpr;
-                        let closed = parser.close(m, node_kind, diags);
-                        parser.create_node(node_kind, NodeRef(closed.0), diags);
-                        lhs = closed;
-                        continue;
-                    }
-                    Token::SectionLParen => {
-                        if 26 < min_bp {
-                            break;
-                        }
-                        let m = parser.open_before(lhs, diags);
-                        parser.rule_section_arguments(diags);
-                        node_kind = Rule::SectionExpr;
-                        let closed = parser.close(m, node_kind, diags);
-                        parser.create_node(node_kind, NodeRef(closed.0), diags);
-                        lhs = closed;
-                        continue;
-                    }
-                    Token::Dot => {
-                        if 24 < min_bp {
-                            break;
-                        }
-                        let m = parser.open_before(lhs, diags);
-                        expect!(Dot, "invalid syntax, expected: \'.\'", parser, diags);
-                        parser.rule_dot_suffix(diags);
-                        node_kind = Rule::DotPostfixExpr;
-                        let closed = parser.close(m, node_kind, diags);
-                        parser.create_node(node_kind, NodeRef(closed.0), diags);
-                        lhs = closed;
-                        continue;
-                    }
                     Token::Percent | Token::Slash | Token::Star => {
                         if 20 < min_bp {
                             break;
@@ -3965,6 +4028,198 @@ impl<'a> Parser<'a> {
         }
         let lhs = self.mark(diags);
         rec(self, diags, 0, lhs);
+    }
+    fn rule_unary_expr(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
+        self.action_unary_expr_1(diags);
+        self.action_unary_expr_2(diags);
+        match self.current {
+            Token::Minus => {
+                expect!(Minus, "invalid syntax, expected: \'-\'", self, diags);
+            }
+            Token::Bang => {
+                expect!(Bang, "invalid syntax, expected: \'!\'", self, diags);
+            }
+            _ => {
+                self.error(
+                    diags,
+                    err![self, "invalid syntax, expected one of: \'!\', \'-\'"],
+                );
+            }
+        }
+        loop {
+            match self.current {
+                Token::Bang | Token::Minus => {
+                    self.action_unary_expr_2(diags);
+                    match self.current {
+                        Token::Minus => {
+                            expect!(Minus, "invalid syntax, expected: \'-\'", self, diags);
+                        }
+                        Token::Bang => {
+                            expect!(Bang, "invalid syntax, expected: \'!\'", self, diags);
+                        }
+                        _ => {
+                            self.error(
+                                diags,
+                                err![self, "invalid syntax, expected one of: \'!\', \'-\'"],
+                            );
+                        }
+                    }
+                }
+                Token::Backtick
+                | Token::Bytes
+                | Token::Do
+                | Token::DoubleQuote
+                | Token::Float
+                | Token::Fn
+                | Token::FunctionType
+                | Token::Identifier
+                | Token::If
+                | Token::Int
+                | Token::Interpreter
+                | Token::LBrace
+                | Token::LBracket
+                | Token::LParen
+                | Token::Match
+                | Token::RawString
+                | Token::Return => break,
+                Token::AndAnd
+                | Token::BangEqual
+                | Token::BitAnd
+                | Token::BitOr
+                | Token::BitXor
+                | Token::Comma
+                | Token::EOF
+                | Token::Else
+                | Token::Equal
+                | Token::EqualEqual
+                | Token::FatArrow
+                | Token::Greater
+                | Token::GreaterEqual
+                | Token::Less
+                | Token::LessEqual
+                | Token::OrOr
+                | Token::Percent
+                | Token::Pipe
+                | Token::Plus
+                | Token::RBrace
+                | Token::RBracket
+                | Token::RParen
+                | Token::Semicolon
+                | Token::Slash
+                | Token::Star
+                | Token::StructUpdate => {
+                    self.error(diags, err![self, "invalid syntax, expected one of: \'`\', \'!\', <bytes>, \'do\', \'\"\', <float>, \'fn\', \'Fn\', <identifier>, \'if\', <integer>, \'interpreter\', \'{\', \'[\', \'(\', \'match\', \'-\', <raw string>, \'return\'"]);
+                    break;
+                }
+                _ => {
+                    self.advance_with_error(diags, err![self, "invalid syntax, expected one of: \'`\', \'!\', <bytes>, \'do\', \'\"\', <float>, \'fn\', \'Fn\', <identifier>, \'if\', <integer>, \'interpreter\', \'{\', \'[\', \'(\', \'match\', \'-\', <raw string>, \'return\'"]);
+                }
+            }
+        }
+        self.rule_postfix_expr(diags);
+        self.action_unary_expr_3(diags);
+    }
+    #[allow(unused_assignments)]
+    fn rule_postfix_expr(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
+        fn rec<'a>(
+            parser: &mut Parser<'a>,
+            diags: &mut Vec<<Parser<'a> as ParserCallbacks<'a>>::Diagnostic>,
+            mut lhs: MarkClosed,
+        ) {
+            let mut node_kind = Rule::PostfixExpr;
+            match parser.current {
+                Token::Backtick
+                | Token::Bytes
+                | Token::Do
+                | Token::DoubleQuote
+                | Token::Float
+                | Token::Fn
+                | Token::FunctionType
+                | Token::Identifier
+                | Token::If
+                | Token::Int
+                | Token::Interpreter
+                | Token::LBrace
+                | Token::LBracket
+                | Token::LParen
+                | Token::Match
+                | Token::RawString
+                | Token::Return => {
+                    parser.rule_primary(diags);
+                }
+                _ => {
+                    parser.error(diags, err![parser, "invalid syntax, expected one of: \'`\', <bytes>, \'do\', \'\"\', <float>, \'fn\', \'Fn\', <identifier>, \'if\', <integer>, \'interpreter\', \'{\', \'[\', \'(\', \'match\', <raw string>, \'return\'"]);
+                }
+            }
+            loop {
+                node_kind = Rule::PostfixExpr;
+                match parser.current {
+                    Token::Question => {
+                        let m = parser.open_before(lhs, diags);
+                        expect!(Question, "invalid syntax, expected: ?", parser, diags);
+                        node_kind = Rule::PropagateExpr;
+                        let closed = parser.close(m, node_kind, diags);
+                        parser.create_node(node_kind, NodeRef(closed.0), diags);
+                        lhs = closed;
+                        continue;
+                    }
+                    Token::LParen => {
+                        let m = parser.open_before(lhs, diags);
+                        parser.rule_arguments(diags);
+                        node_kind = Rule::CallExpr;
+                        let closed = parser.close(m, node_kind, diags);
+                        parser.create_node(node_kind, NodeRef(closed.0), diags);
+                        lhs = closed;
+                        continue;
+                    }
+                    Token::At => {
+                        let m = parser.open_before(lhs, diags);
+                        expect!(At, "invalid syntax, expected: \'@\'", parser, diags);
+                        parser.rule_type_arguments(diags);
+                        node_kind = Rule::TypeApplyExpr;
+                        let closed = parser.close(m, node_kind, diags);
+                        parser.create_node(node_kind, NodeRef(closed.0), diags);
+                        lhs = closed;
+                        continue;
+                    }
+                    Token::LBracket => {
+                        let m = parser.open_before(lhs, diags);
+                        expect!(LBracket, "invalid syntax, expected: \'[\'", parser, diags);
+                        parser.rule_expression(diags);
+                        expect!(RBracket, "invalid syntax, expected: \']\'", parser, diags);
+                        node_kind = Rule::IndexExpr;
+                        let closed = parser.close(m, node_kind, diags);
+                        parser.create_node(node_kind, NodeRef(closed.0), diags);
+                        lhs = closed;
+                        continue;
+                    }
+                    Token::SectionLParen => {
+                        let m = parser.open_before(lhs, diags);
+                        parser.rule_section_arguments(diags);
+                        node_kind = Rule::SectionExpr;
+                        let closed = parser.close(m, node_kind, diags);
+                        parser.create_node(node_kind, NodeRef(closed.0), diags);
+                        lhs = closed;
+                        continue;
+                    }
+                    Token::Dot => {
+                        let m = parser.open_before(lhs, diags);
+                        expect!(Dot, "invalid syntax, expected: \'.\'", parser, diags);
+                        parser.rule_dot_suffix(diags);
+                        node_kind = Rule::DotPostfixExpr;
+                        let closed = parser.close(m, node_kind, diags);
+                        parser.create_node(node_kind, NodeRef(closed.0), diags);
+                        lhs = closed;
+                        continue;
+                    }
+                    _ => {
+                        break;
+                    }
+                }
+            }
+        }
+        let lhs = self.mark(diags);
+        rec(self, diags, lhs);
     }
     #[allow(unused_assignments)]
     fn rule_primary(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
@@ -5597,7 +5852,78 @@ impl<'a> Parser<'a> {
         &mut self,
         diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>,
     ) {
-        let m = self.open(diags);
+        self.action_function_contract_1(diags);
+        self.action_function_contract_2(diags);
+        self.rule_function_contract_head(diags);
+        loop {
+            match self.current {
+                Token::FunctionType if self.predicate_function_contract_1() => {
+                    self.action_function_contract_3(diags);
+                    self.action_function_contract_2(diags);
+                    self.rule_function_contract_head(diags);
+                }
+                Token::FunctionType | Token::Identifier | Token::LParen => break,
+                Token::AndAnd
+                | Token::At
+                | Token::BangEqual
+                | Token::BitAnd
+                | Token::BitOr
+                | Token::BitXor
+                | Token::Comma
+                | Token::Dot
+                | Token::EOF
+                | Token::Else
+                | Token::Equal
+                | Token::EqualEqual
+                | Token::FatArrow
+                | Token::For
+                | Token::Greater
+                | Token::GreaterEqual
+                | Token::LBrace
+                | Token::LBracket
+                | Token::Less
+                | Token::LessEqual
+                | Token::Minus
+                | Token::OrOr
+                | Token::Percent
+                | Token::Pipe
+                | Token::Plus
+                | Token::Question
+                | Token::RBrace
+                | Token::RBracket
+                | Token::RParen
+                | Token::SectionLParen
+                | Token::Semicolon
+                | Token::Slash
+                | Token::Star
+                | Token::StructUpdate => {
+                    self.error(
+                        diags,
+                        err![
+                            self,
+                            "invalid syntax, expected one of: \'Fn\', <identifier>, \'(\'"
+                        ],
+                    );
+                    break;
+                }
+                _ => {
+                    self.advance_with_error(
+                        diags,
+                        err![
+                            self,
+                            "invalid syntax, expected one of: \'Fn\', <identifier>, \'(\'"
+                        ],
+                    );
+                }
+            }
+        }
+        self.rule_contract(diags);
+        self.action_function_contract_4(diags);
+    }
+    fn rule_function_contract_head(
+        &mut self,
+        diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>,
+    ) {
         expect!(
             FunctionType,
             "invalid syntax, expected: \'Fn\'",
@@ -5611,7 +5937,7 @@ impl<'a> Parser<'a> {
                     self.rule_contract(diags);
                     loop {
                         match self.current {
-                            Token::Comma if self.predicate_function_contract_1() => {
+                            Token::Comma if self.predicate_function_contract_head_1() => {
                                 expect!(Comma, "invalid syntax, expected: \',\'", self, diags);
                                 self.rule_contract(diags);
                             }
@@ -5629,8 +5955,10 @@ impl<'a> Parser<'a> {
                             | Token::EqualEqual
                             | Token::FatArrow
                             | Token::For
+                            | Token::FunctionType
                             | Token::Greater
                             | Token::GreaterEqual
+                            | Token::Identifier
                             | Token::LBrace
                             | Token::LBracket
                             | Token::LParen
@@ -5683,8 +6011,10 @@ impl<'a> Parser<'a> {
                             | Token::EqualEqual
                             | Token::FatArrow
                             | Token::For
+                            | Token::FunctionType
                             | Token::Greater
                             | Token::GreaterEqual
+                            | Token::Identifier
                             | Token::LBrace
                             | Token::LBracket
                             | Token::LParen
@@ -5775,9 +6105,6 @@ impl<'a> Parser<'a> {
         }
         expect!(RParen, "invalid syntax, expected: \')\'", self, diags);
         expect!(Arrow, "invalid syntax, expected: \'->\'", self, diags);
-        self.rule_contract(diags);
-        let closed = self.close(m, Rule::FunctionContract, diags);
-        self.create_node_function_contract(NodeRef(closed.0), diags);
     }
     #[allow(unused_assignments)]
     fn rule_contract(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
@@ -7309,27 +7636,145 @@ impl<'a> Parser<'a> {
         }
     }
     fn rule_if_expr(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
-        let m = self.open(diags);
-        expect!(If, "invalid syntax, expected: \'if\'", self, diags);
-        self.rule_expression(diags);
-        self.rule_block(diags);
-        expect!(Else, "invalid syntax, expected: \'else\'", self, diags);
+        self.action_if_expr_1(diags);
+        self.action_if_expr_2(diags);
+        self.rule_if_head(diags);
+        loop {
+            match self.current {
+                Token::If if self.predicate_if_expr_1() => {
+                    self.action_if_expr_2(diags);
+                    self.rule_if_head(diags);
+                }
+                Token::If | Token::LBrace | Token::Match | Token::Return => break,
+                Token::AndAnd
+                | Token::At
+                | Token::BangEqual
+                | Token::BitAnd
+                | Token::BitOr
+                | Token::BitXor
+                | Token::Comma
+                | Token::Dot
+                | Token::EOF
+                | Token::Else
+                | Token::Equal
+                | Token::EqualEqual
+                | Token::FatArrow
+                | Token::Greater
+                | Token::GreaterEqual
+                | Token::LBracket
+                | Token::LParen
+                | Token::Less
+                | Token::LessEqual
+                | Token::Minus
+                | Token::OrOr
+                | Token::Percent
+                | Token::Pipe
+                | Token::Plus
+                | Token::Question
+                | Token::RBrace
+                | Token::RBracket
+                | Token::RParen
+                | Token::SectionLParen
+                | Token::Semicolon
+                | Token::Slash
+                | Token::Star
+                | Token::StructUpdate => {
+                    self.error(
+                        diags,
+                        err![
+                            self,
+                            "invalid syntax, expected one of: \'if\', \'{\', \'match\', \'return\'"
+                        ],
+                    );
+                    break;
+                }
+                _ => {
+                    self.advance_with_error(
+                        diags,
+                        err![
+                            self,
+                            "invalid syntax, expected one of: \'if\', \'{\', \'match\', \'return\'"
+                        ],
+                    );
+                }
+            }
+        }
         self.rule_ctrl_block(diags);
-        let closed = self.close(m, Rule::IfExpr, diags);
-        self.create_node_if_expr(NodeRef(closed.0), diags);
+        self.action_if_expr_3(diags);
     }
     fn rule_if_let_expr(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
-        let m = self.open(diags);
+        self.rule_if_expr(diags);
+    }
+    fn rule_if_head(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
         expect!(If, "invalid syntax, expected: \'if\'", self, diags);
-        expect!(Let, "invalid syntax, expected: \'let\'", self, diags);
-        self.rule_pattern(diags);
-        expect!(Equal, "invalid syntax, expected: \'=\'", self, diags);
+        loop {
+            match self.current {
+                Token::Let => {
+                    expect!(Let, "invalid syntax, expected: \'let\'", self, diags);
+                    self.rule_pattern(diags);
+                    expect!(Equal, "invalid syntax, expected: \'=\'", self, diags);
+                    break;
+                }
+                Token::Backtick
+                | Token::Bang
+                | Token::Bytes
+                | Token::Do
+                | Token::DoubleQuote
+                | Token::Float
+                | Token::Fn
+                | Token::FunctionType
+                | Token::Identifier
+                | Token::If
+                | Token::Int
+                | Token::Interpreter
+                | Token::LBrace
+                | Token::LBracket
+                | Token::LParen
+                | Token::Match
+                | Token::Minus
+                | Token::RawString
+                | Token::Return => break,
+                Token::AndAnd
+                | Token::At
+                | Token::BangEqual
+                | Token::BitAnd
+                | Token::BitOr
+                | Token::BitXor
+                | Token::Comma
+                | Token::Dot
+                | Token::EOF
+                | Token::Else
+                | Token::Equal
+                | Token::EqualEqual
+                | Token::FatArrow
+                | Token::Greater
+                | Token::GreaterEqual
+                | Token::Less
+                | Token::LessEqual
+                | Token::OrOr
+                | Token::Percent
+                | Token::Pipe
+                | Token::Plus
+                | Token::Question
+                | Token::RBrace
+                | Token::RBracket
+                | Token::RParen
+                | Token::SectionLParen
+                | Token::Semicolon
+                | Token::Slash
+                | Token::Star
+                | Token::StructUpdate => {
+                    self.error(diags, err![self, "invalid syntax, expected one of: \'`\', \'!\', <bytes>, \'do\', \'\"\', <float>, \'fn\', \'Fn\', <identifier>, \'if\', <integer>, \'interpreter\', \'{\', \'[\', \'(\', \'let\', \'match\', \'-\', <raw string>, \'return\'"]);
+                    break;
+                }
+                _ => {
+                    self.advance_with_error(diags, err![self, "invalid syntax, expected one of: \'`\', \'!\', <bytes>, \'do\', \'\"\', <float>, \'fn\', \'Fn\', <identifier>, \'if\', <integer>, \'interpreter\', \'{\', \'[\', \'(\', \'let\', \'match\', \'-\', <raw string>, \'return\'"]);
+                }
+            }
+        }
         self.rule_expression(diags);
         self.rule_block(diags);
         expect!(Else, "invalid syntax, expected: \'else\'", self, diags);
-        self.rule_ctrl_block(diags);
-        let closed = self.close(m, Rule::IfLetExpr, diags);
-        self.create_node_if_let_expr(NodeRef(closed.0), diags);
     }
     fn rule_match_expr(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
         let m = self.open(diags);
@@ -8311,6 +8756,13 @@ pub trait ParserCallbacks<'a> {
         _diags: &mut Vec<Self::Diagnostic>,
     ) {
     }
+    /// Called when `function_contract_head` node is created.
+    fn create_node_function_contract_head(
+        &mut self,
+        _node_ref: NodeRef,
+        _diags: &mut Vec<Self::Diagnostic>,
+    ) {
+    }
     /// Called when `identifier_pattern` node is created.
     fn create_node_identifier_pattern(
         &mut self,
@@ -8320,6 +8772,8 @@ pub trait ParserCallbacks<'a> {
     }
     /// Called when `if_expr` node is created.
     fn create_node_if_expr(&mut self, _node_ref: NodeRef, _diags: &mut Vec<Self::Diagnostic>) {}
+    /// Called when `if_head` node is created.
+    fn create_node_if_head(&mut self, _node_ref: NodeRef, _diags: &mut Vec<Self::Diagnostic>) {}
     /// Called when `if_let_expr` node is created.
     fn create_node_if_let_expr(&mut self, _node_ref: NodeRef, _diags: &mut Vec<Self::Diagnostic>) {}
     /// Called when `impl_binding` node is created.
@@ -8444,6 +8898,9 @@ pub trait ParserCallbacks<'a> {
         _node_ref: NodeRef,
         _diags: &mut Vec<Self::Diagnostic>,
     ) {
+    }
+    /// Called when `postfix_expr` node is created.
+    fn create_node_postfix_expr(&mut self, _node_ref: NodeRef, _diags: &mut Vec<Self::Diagnostic>) {
     }
     /// Called when `postfix_intrinsic_suffix` node is created.
     fn create_node_postfix_intrinsic_suffix(
@@ -8626,6 +9083,8 @@ pub trait ParserCallbacks<'a> {
     fn predicate_module_body_1(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `body` is visited.
     fn predicate_body_1(&self) -> bool;
+    /// Called when semantic predicate `?2` in rule `body` is visited.
+    fn predicate_body_2(&self) -> bool;
     /// Called when semantic predicate `?5` in rule `binding` is visited.
     fn predicate_binding_5(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `binding` is visited.
@@ -8682,6 +9141,8 @@ pub trait ParserCallbacks<'a> {
     fn predicate_field_projection_suffix_1(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `function_contract` is visited.
     fn predicate_function_contract_1(&self) -> bool;
+    /// Called when semantic predicate `?1` in rule `function_contract_head` is visited.
+    fn predicate_function_contract_head_1(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `contract` is visited.
     fn predicate_contract_1(&self) -> bool;
     /// Called when semantic predicate `?2` in rule `contract` is visited.
@@ -8702,6 +9163,8 @@ pub trait ParserCallbacks<'a> {
     fn predicate_section_arguments_1(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `ctrl_block` is visited.
     fn predicate_ctrl_block_1(&self) -> bool;
+    /// Called when semantic predicate `?1` in rule `if_expr` is visited.
+    fn predicate_if_expr_1(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `match_expr` is visited.
     fn predicate_match_expr_1(&self) -> bool;
     /// Called when semantic predicate `?4` in rule `pattern` is visited.
@@ -8710,6 +9173,34 @@ pub trait ParserCallbacks<'a> {
     fn predicate_pattern_1(&self) -> bool;
     /// Called when semantic predicate `?3` in rule `pattern` is visited.
     fn predicate_pattern_3(&self) -> bool;
+    /// Called when semantic action `#1` in rule `body` is visited.
+    fn action_body_1(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#2` in rule `body` is visited.
+    fn action_body_2(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#4` in rule `body` is visited.
+    fn action_body_4(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#3` in rule `body` is visited.
+    fn action_body_3(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#1` in rule `unary_expr` is visited.
+    fn action_unary_expr_1(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#2` in rule `unary_expr` is visited.
+    fn action_unary_expr_2(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#3` in rule `unary_expr` is visited.
+    fn action_unary_expr_3(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#1` in rule `function_contract` is visited.
+    fn action_function_contract_1(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#2` in rule `function_contract` is visited.
+    fn action_function_contract_2(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#3` in rule `function_contract` is visited.
+    fn action_function_contract_3(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#4` in rule `function_contract` is visited.
+    fn action_function_contract_4(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#1` in rule `if_expr` is visited.
+    fn action_if_expr_1(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#2` in rule `if_expr` is visited.
+    fn action_if_expr_2(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#3` in rule `if_expr` is visited.
+    fn action_if_expr_3(&mut self, diags: &mut Vec<Self::Diagnostic>);
 }
 
 mod support;

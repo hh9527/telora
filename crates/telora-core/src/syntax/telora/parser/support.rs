@@ -1,5 +1,13 @@
 use super::*;
 
+#[derive(Default)]
+pub struct ParseContext {
+    prefixes: Vec<Vec<MarkOpened>>,
+    contracts: Vec<Vec<(MarkOpened, Rule)>>,
+    conditionals: Vec<Vec<(MarkOpened, Rule)>>,
+    bodies: Vec<(Vec<MarkOpened>, bool)>,
+}
+
 impl<'a> Parser<'a> {
     pub fn from_token_stream(source_len: usize, tokens: Vec<Token>, spans: Vec<Span>) -> Self {
         Self {
@@ -12,7 +20,7 @@ impl<'a> Parser<'a> {
             tokens,
             pos: 0,
             max_offset: source_len,
-            context: (),
+            context: ParseContext::default(),
             error_node: None,
             in_ordered_choice: false,
             error_since_advance: false,
@@ -22,7 +30,107 @@ impl<'a> Parser<'a> {
 
 impl<'a> ParserCallbacks<'a> for Parser<'a> {
     type Diagnostic = Diagnostic;
-    type Context = (); // TODO: add context information to the parser if required
+    type Context = ParseContext;
+
+    fn action_unary_expr_1(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.context.prefixes.push(Vec::new());
+    }
+
+    fn action_unary_expr_2(&mut self, diags: &mut Vec<Diagnostic>) {
+        let mark = self.open(diags);
+        self.context.prefixes.last_mut().unwrap().push(mark);
+    }
+
+    fn action_unary_expr_3(&mut self, diags: &mut Vec<Diagnostic>) {
+        for mark in self.context.prefixes.pop().unwrap().into_iter().rev() {
+            let closed = self.close(mark, Rule::UnaryExpr, diags);
+            self.create_node_unary_expr(NodeRef(closed.0), diags);
+        }
+    }
+
+    fn action_function_contract_1(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.context.contracts.push(Vec::new());
+    }
+
+    fn action_function_contract_2(&mut self, diags: &mut Vec<Diagnostic>) {
+        let mark = self.open(diags);
+        self.context
+            .contracts
+            .last_mut()
+            .unwrap()
+            .push((mark, Rule::FunctionContract));
+    }
+
+    fn action_function_contract_3(&mut self, diags: &mut Vec<Diagnostic>) {
+        let mark = self.open(diags);
+        self.context
+            .contracts
+            .last_mut()
+            .unwrap()
+            .push((mark, Rule::Contract));
+    }
+
+    fn action_function_contract_4(&mut self, diags: &mut Vec<Diagnostic>) {
+        for (mark, rule) in self.context.contracts.pop().unwrap().into_iter().rev() {
+            let closed = self.close(mark, rule, diags);
+            self.create_node(rule, NodeRef(closed.0), diags);
+        }
+    }
+
+    fn action_if_expr_1(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.context.conditionals.push(Vec::new());
+    }
+
+    fn action_if_expr_2(&mut self, diags: &mut Vec<Diagnostic>) {
+        let rule = if self.peek(1) == Token::Let {
+            Rule::IfLetExpr
+        } else {
+            Rule::IfExpr
+        };
+        let mark = self.open(diags);
+        self.context
+            .conditionals
+            .last_mut()
+            .unwrap()
+            .push((mark, rule));
+    }
+
+    fn action_if_expr_3(&mut self, diags: &mut Vec<Diagnostic>) {
+        for (mark, rule) in self.context.conditionals.pop().unwrap().into_iter().rev() {
+            let closed = self.close(mark, rule, diags);
+            self.create_node(rule, NodeRef(closed.0), diags);
+        }
+    }
+
+    fn predicate_if_expr_1(&self) -> bool {
+        self.current == Token::If
+    }
+
+    fn action_body_1(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.context.bodies.push((Vec::new(), false));
+    }
+
+    fn action_body_2(&mut self, diags: &mut Vec<Diagnostic>) {
+        let mark = self.open(diags);
+        let (marks, has_expression) = self.context.bodies.last_mut().unwrap();
+        marks.push(mark);
+        *has_expression = false;
+    }
+
+    fn action_body_3(&mut self, diags: &mut Vec<Diagnostic>) {
+        for mark in self.context.bodies.pop().unwrap().0.into_iter().rev() {
+            let closed = self.close(mark, Rule::Body, diags);
+            self.create_node_body(NodeRef(closed.0), diags);
+        }
+    }
+
+    fn action_body_4(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.context.bodies.last_mut().unwrap().1 = true;
+    }
+
+    fn predicate_body_2(&self) -> bool {
+        self.context.bodies.last().unwrap().1
+    }
 
     fn create_tokens(
         _context: &mut Self::Context,
@@ -206,6 +314,9 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
         self.current == Token::Dot
     }
     fn predicate_function_contract_1(&self) -> bool {
+        self.current == Token::FunctionType
+    }
+    fn predicate_function_contract_head_1(&self) -> bool {
         self.peek(1) != Token::RParen
     }
     fn predicate_unit_contract_1(&self) -> bool {
