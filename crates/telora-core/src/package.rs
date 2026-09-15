@@ -12,7 +12,7 @@ pub const CRATE_FILE: &str = "telora-crate.json";
 pub const LOCK_FILE: &str = "telora-lock.json";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceConfig {
     pub version: u32,
     pub members: Vec<PathBuf>,
@@ -23,19 +23,19 @@ pub struct WorkspaceConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RemoteSource {
     pub tarball: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PathOverride {
     pub path: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CrateManifest {
     pub name: String,
     pub modules: Vec<String>,
@@ -65,14 +65,14 @@ pub enum ModuleDeclarationKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceLock {
     pub version: u32,
     pub packages: BTreeMap<String, LockedPackage>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LockedPackage {
     pub source: LockedSource,
     pub modules: Vec<String>,
@@ -80,7 +80,7 @@ pub struct LockedPackage {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(untagged)]
+#[serde(untagged, rename_all_fields = "camelCase")]
 pub enum LockedSource {
     Workspace { workspace: PathBuf },
     Tarball { tarball: String },

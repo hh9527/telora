@@ -60,6 +60,10 @@ telora query modules
 workspace 中同一个 crate name 只有一个来源。crate 依赖只写名称；config 为名称选择
 workspace member 或远程 tarball；lock 固定选择结果、模块清单和依赖边。
 
+这三个 JSON 文件的正式属性名统一使用 camelCase。`sources`、`overrides` 和
+`packages` 中的键是 crate 名称，遵循 crate 命名规则，不进行大小写或连字符转换。
+命令行参数仍使用 kebab-case。
+
 Telora 不进行语义版本求解，也不在同一 workspace 中安装同名 crate 的多个版本或多个
 来源。crate 依赖图必须无环。
 
