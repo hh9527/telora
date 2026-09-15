@@ -352,6 +352,13 @@ impl Plan {
                 if let Some(slot) = syntax.resolution
                     && let ResolveState::Bound(symbol) = mir.resolve_slots[slot.index()]
                     && !executable.globals().contains(&symbol)
+                    // Patterns consume sealed tags/layouts, not constructor values.
+                    // They intentionally have no value-materialization record.
+                    && !(matches!(syntax.kind, HirKind::ConstructorPattern | HirKind::PatternName(_))
+                        && matches!(mir.member_selections[node.index()],
+                            Some(telora_core::mir::MemberSelection::Boolean(_)
+                                | telora_core::mir::MemberSelection::EnumVariant { .. }
+                                | telora_core::mir::MemberSelection::NewtypePattern)))
                     && !matches!(crate::enums::selection(mir, node),
                         Some(telora_core::mir::MemberSelection::Boolean(_)))
                     && !matches!(

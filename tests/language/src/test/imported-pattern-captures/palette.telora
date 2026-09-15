@@ -1,0 +1,2 @@
+export type Color = enum { Red, Blue, Shade(Int) };
+export type Wrapped = struct(Int);

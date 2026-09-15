@@ -1,0 +1,49 @@
+import "std/test" as test;
+import "@src/test-support" { expect };
+import "./palette" { Color, Wrapped };
+import Color.{Red, Blue, Shade};
+
+type Label = enum { Warm, Cold };
+
+def classify: Fn(Option(Color)) -> Fn(Label) -> Label = fn(maybe) {
+    fn(fallback: Label) -> Label {
+        match maybe {
+            Some(Red) => Label.Warm,
+            _ => fallback,
+        }
+    }
+};
+
+def shade: Fn(Color) -> Int = fn(color) {
+    match color { Red => 1, Blue => 2, Shade(value) => value }
+};
+
+export def nested: test.Test = test.should_ok(fn() {
+    expect(classify(Some(Red))(Label.Cold) == Label.Warm
+        && classify(Some(Blue))(Label.Cold) == Label.Cold
+        && classify(None)(Label.Cold) == Label.Cold)
+});
+
+export def payload_and_capture: test.Test = test.should_ok(fn() {
+    let offset = 7;
+    let make = fn(color: Color) -> Fn(Int) -> Int {
+        match color {
+            Shade(value) => fn(extra: Int) { value + offset + extra },
+            _ => fn(extra: Int) { offset + extra },
+        }
+    };
+    expect(shade(Red) == 1 && shade(Blue) == 2 && shade(Shade(9)) == 9
+        && make(Shade(10))(3) == 20 && make(Red)(3) == 10)
+});
+
+export def boolean_and_newtype: test.Test = test.should_ok(fn() {
+    let offset = 4;
+    let unpack = fn(wrapped: Wrapped) -> Int {
+        let Wrapped(value) = wrapped;
+        value + offset
+    };
+    let select = fn(flag: Bool) -> Int {
+        match flag { True => offset, False => 0 }
+    };
+    expect(unpack(Wrapped(8)) == 12 && select(True) == 4 && select(False) == 0)
+});
