@@ -120,6 +120,13 @@ struct Pass<'a> {
     reference_active: Vec<bool>,
     import_edges: BTreeMap<HirId, usize>,
 }
+#[derive(Clone, Copy)]
+enum IndexPass {
+    Block,
+    Node,
+}
+type IndexTask = (HirId, ScopeId, IndexPass);
+
 impl Pass<'_> {
     fn link_native_types(&mut self) {
         let mut slots = BTreeMap::<NativeTypeId, Vec<SymbolId>>::new();
@@ -265,6 +272,15 @@ impl Pass<'_> {
         id
     }
     fn index_block(&mut self, node: HirId, scope: ScopeId) {
+        let mut pending = vec![(node, scope, IndexPass::Block)];
+        while let Some((node, scope, pass)) = pending.pop() {
+            match pass {
+                IndexPass::Block => self.index_block_node(node, scope, &mut pending),
+                IndexPass::Node => self.index(node, scope, &mut pending),
+            }
+        }
+    }
+    fn index_block_node(&mut self, node: HirId, scope: ScopeId, pending: &mut Vec<IndexTask>) {
         self.mir.hir_scopes[node.index()] = Some(scope);
         let edges = self.mir.hir[node.index()].children.clone();
         for edge in &edges {
@@ -295,18 +311,18 @@ impl Pass<'_> {
                 }
             }
         }
-        for edge in edges {
-            self.index(edge.node, scope);
+        for edge in edges.into_iter().rev() {
+            pending.push((edge.node, scope, IndexPass::Node));
         }
     }
-    fn index(&mut self, node: HirId, scope: ScopeId) {
+    fn index(&mut self, node: HirId, scope: ScopeId, pending: &mut Vec<IndexTask>) {
         self.mir.hir_scopes[node.index()] = Some(scope);
         let edges = self.mir.hir[node.index()].children.clone();
         let module = self.mir.hir[node.index()].module;
         match self.mir.hir[node.index()].kind {
             HirKind::Block => {
                 let child = self.scope(module, Some(scope));
-                self.index_block(node, child);
+                pending.push((node, child, IndexPass::Block));
             }
             HirKind::Binding { .. } | HirKind::Closure => {
                 let nested = if edges
@@ -326,13 +342,13 @@ impl Pass<'_> {
                 } else {
                     scope
                 };
-                for edge in edges {
-                    self.index(edge.node, nested);
+                for edge in edges.into_iter().rev() {
+                    pending.push((edge.node, nested, IndexPass::Node));
                 }
             }
             HirKind::IfLet | HirKind::LetElse | HirKind::MatchArm { .. } => {
                 let nested = self.scope(module, Some(scope));
-                for edge in edges {
+                for edge in edges.into_iter().rev() {
                     let target =
                         if matches!(
                             edge.role,
@@ -343,15 +359,15 @@ impl Pass<'_> {
                         } else {
                             scope
                         };
-                    self.index(edge.node, target);
+                    pending.push((edge.node, target, IndexPass::Node));
                 }
             }
             HirKind::PatternName(_) => {
                 self.declare(node, SymbolKind::Pattern, scope, None);
             }
             _ => {
-                for edge in edges {
-                    self.index(edge.node, scope);
+                for edge in edges.into_iter().rev() {
+                    pending.push((edge.node, scope, IndexPass::Node));
                 }
             }
         }

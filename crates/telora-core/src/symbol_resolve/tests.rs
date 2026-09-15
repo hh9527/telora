@@ -1,6 +1,25 @@
 use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
+#[test]
+fn deep_expression_symbol_indexing_uses_a_bounded_call_stack() {
+    // Parse before entering the small stack: this test measures symbol closure,
+    // independently of the parser's own depth limits.
+    let source = format!("export def result: Int = {};", vec!["1"; 4_000].join(" + "));
+    let mut mir = graph(&[("@src/main", &source)]);
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || {
+            resolve(&mut mir);
+            assert!(mir.symbols_closed);
+            assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+            assert!(mir.hir_scopes.iter().all(Option::is_some));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 fn graph(sources: &[(&str, &str)]) -> Mir {
     let mut sources = sources.to_vec();
     sources.push(("std/prelude", "native type Int @4; export { Int };"));
