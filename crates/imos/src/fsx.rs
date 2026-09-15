@@ -11,9 +11,14 @@ mod unix;
 #[cfg(unix)]
 use unix as platform;
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows as platform;
+
+#[cfg(not(any(unix, windows)))]
 compile_error!(
-    "imos filesystem backend currently requires Unix; other platforms need an fsx backend"
+    "imos filesystem backend currently requires Unix or Windows; other platforms need an fsx backend"
 );
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

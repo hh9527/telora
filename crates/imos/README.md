@@ -33,3 +33,16 @@ Windows 需要针对大小写和路径别名确定一致的锁范围；不能仅
 
 运行契约测试：`cargo test -p imos -p telora-ees`。测试覆盖硬链接身份与引用回收、
 只读请求替换后旧链接保持有效、锁竞争、完整目录发布，以及 store 的安装和回收。
+
+## Windows 后端
+
+Windows 后端为 `fsx/windows.rs`，处理方式如下。
+
+- 文件身份来自 `GetFileInformationByHandle`：volume serial 对应 `st_dev`、
+  file index 对应 `st_ino`、`nNumberOfLinks` 对应 `st_nlink`。
+- FAT/exFAT 的 file index 恒为 0，后端对此显式报错：store 要求本地 NTFS。
+- `set_access`/`protect_file` 为 no-op：用户 profile 目录的默认 ACL 已覆盖私有
+  目录策略；只读属性会挡住请求文件替换（tempfile persist）与陈旧对象回收。
+- `sync_directory` 为 no-op：接受 Windows 上的崩溃持久性缺口。
+- `request_lock_key` 剥掉 `\\?\` verbatim 前缀并做大小写折叠，使 Win32 路径
+  别名共享同一把锁。
