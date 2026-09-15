@@ -3,12 +3,20 @@ use crate::syntax::kinds::{BindingKind, DeclaredInitializerKind};
 use crate::mir::*;
 use crate::source::Diagnostic;
 use std::collections::BTreeMap;
+mod closure;
+mod queries;
+mod schedule;
+use schedule::Scheduler;
 
 #[cfg(test)]
 mod tests;
 
 /// All names come from declarations and imports, including the prelude.
 pub fn resolve(mir: &mut Mir) {
+    resolve_with_scheduler(mir, Scheduler::default());
+}
+
+fn resolve_with_scheduler(mir: &mut Mir, scheduler: Scheduler) {
     assert!(
         !mir.symbols_closed && mir.symbols.is_empty(),
         "symbol pass runs once"
@@ -19,8 +27,7 @@ pub fn resolve(mir: &mut Mir) {
     mir.exports.resize_with(mir.modules.len(), Vec::new);
     let mut pass = Pass {
         mir,
-        active: vec![],
-        reference_active: vec![],
+        scheduler,
         import_edges: BTreeMap::new(),
     };
     for (id, edge) in pass.mir.imports.iter().enumerate() {
@@ -50,11 +57,15 @@ pub fn resolve(mir: &mut Mir) {
     }
     pass.link_native_types();
     pass.diagnose_duplicates(false);
-    pass.active.resize(pass.mir.symbols.len(), false);
-    pass.reference_active
-        .resize(pass.mir.resolve_slots.len(), false);
+    pass.mir.resolution_facts.namespaces.resize(pass.mir.symbols.len(), None);
+    pass.mir.resolution_facts.constructors.resize(pass.mir.symbols.len(), None);
+    pass.mir.resolution_facts.constructor_namespaces.resize(pass.mir.hir.len(), None);
     for id in 0..pass.mir.symbols.len() {
-        let state = pass.resolve_symbol(SymbolId(id as u32));
+        pass.scheduler.enqueue(ResolveTask::Symbol(SymbolId(id as u32)));
+    }
+    pass.drain();
+    for id in 0..pass.mir.symbols.len() {
+        let state = pass.mir.symbols[id].resolution.clone();
         let symbol = &pass.mir.symbols[id];
         if state == ResolveState::Unresolved
             && matches!(symbol.kind, SymbolKind::Import | SymbolKind::Export)
@@ -82,9 +93,10 @@ pub fn resolve(mir: &mut Mir) {
     pass.diagnose_duplicates(true);
     for id in 0..pass.mir.hir.len() {
         if pass.mir.hir[id].resolution.is_some() {
-            pass.reference(HirId(id as u32));
+            pass.scheduler.enqueue(ResolveTask::Reference(HirId(id as u32)));
         }
     }
+    pass.drain();
     for node in &pass.mir.hir {
         if let Some(slot) = node.resolution {
             assert_ne!(pass.mir.resolve_slots[slot.index()], ResolveState::Pending);
@@ -112,12 +124,19 @@ pub fn resolve(mir: &mut Mir) {
             .all(|symbol| symbol.resolution != ResolveState::Pending)
     );
     pass.mir.symbols_closed = true;
+    // Discovery timing is an implementation detail; presentation is ordered
+    // by source evidence before the type pass attaches diagnostic indices.
+    pass.mir.diagnostics.sort_by(|a, b| {
+        a.labels.first().map(|label| label.location)
+            .cmp(&b.labels.first().map(|label| label.location))
+            .then_with(|| a.message.cmp(&b.message))
+    });
+    pass.mir.diagnostics.dedup();
 }
 
 struct Pass<'a> {
     mir: &'a mut Mir,
-    active: Vec<bool>,
-    reference_active: Vec<bool>,
+    scheduler: Scheduler,
     import_edges: BTreeMap<HirId, usize>,
 }
 #[derive(Clone, Copy)]
@@ -496,321 +515,5 @@ impl Pass<'_> {
                 }
             }
         }
-    }
-    fn exported(&mut self, module: ModuleId, name: &str) -> ResolveState {
-        let candidates = self.mir.exports[module.index()]
-            .iter()
-            .copied()
-            .filter(|id| self.mir.symbols[id.index()].name == name)
-            .collect::<Vec<_>>();
-        match candidates.as_slice() {
-            [] => ResolveState::Unresolved,
-            [id] => self.resolve_symbol(*id),
-            _ => self.mir.symbols[candidates[0].index()].resolution.clone(),
-        }
-    }
-    fn resolve_symbol(&mut self, id: SymbolId) -> ResolveState {
-        let existing = self.mir.symbols[id.index()].resolution.clone();
-        if existing != ResolveState::Pending {
-            return existing;
-        }
-        if self.active[id.index()] {
-            return ResolveState::Unresolved;
-        }
-        self.active[id.index()] = true;
-        let node = self.mir.symbols[id.index()].declarations[0];
-        let result = match self.mir.symbols[id.index()].kind {
-            SymbolKind::Export => self
-                .child(node, Role::Value)
-                .and_then(|value| self.reference_value(value))
-                .unwrap_or(ResolveState::Bound(id)),
-            SymbolKind::Import => match self
-                .import_edges
-                .get(&node)
-                .map(|edge| self.mir.imports[*edge].target.clone())
-            {
-                Some(ModuleTarget::Bound(module)) => {
-                    let HirKind::Binding { imported, .. } = &self.mir.hir[node.index()].kind else {
-                        unreachable!()
-                    };
-                    match imported.clone() {
-                        Some(name) => self.exported(module, &name),
-                        None => {
-                            self.mir.symbols[id.index()].kind = SymbolKind::Namespace(module);
-                            ResolveState::Bound(id)
-                        }
-                    }
-                }
-                Some(ModuleTarget::Conflicted(candidates)) => {
-                    self.conflict(ResolveConflict::ModuleCandidates { candidates })
-                }
-                _ => ResolveState::Unresolved,
-            },
-            SymbolKind::Pattern => {
-                let scope = self.mir.symbols[id.index()].scope.unwrap();
-                let name = self.mir.symbols[id.index()].name.clone();
-                match self.mir.scopes[scope.index()]
-                    .parent
-                    .map(|parent| self.lookup(parent, node, &name, true))
-                {
-                    None | Some(ResolveState::Unresolved) => ResolveState::Bound(id),
-                    Some(state) => state,
-                }
-            }
-            _ => unreachable!(),
-        };
-        self.active[id.index()] = false;
-        self.mir.symbols[id.index()].resolution = result.clone();
-        result
-    }
-    fn lookup(
-        &mut self,
-        mut scope: ScopeId,
-        node: HirId,
-        name: &str,
-        pattern: bool,
-    ) -> ResolveState {
-        loop {
-            let local = self.mir.scopes[scope.index()]
-                .bindings
-                .iter()
-                .rev()
-                .find(|binding| {
-                    self.mir.symbols[binding.symbol.index()].name == name
-                        && binding.after.is_none_or(|after| after < node)
-                })
-                .map(|binding| binding.symbol);
-            if let Some(id) = local {
-                let state = self.resolve_symbol(id);
-                return if !pattern || self.constructor(&state, &mut vec![]) {
-                    state
-                } else {
-                    ResolveState::Unresolved
-                };
-            }
-            let imports = self.mir.scopes[scope.index()].open_imports.clone();
-            let mut candidates = vec![];
-            let mut implicit_candidates = vec![];
-            for import in imports {
-                if let ModuleTarget::Bound(module) = self.mir.imports[import].target {
-                    let selected = if self.mir.imports[import].syntax.is_none() {
-                        &mut implicit_candidates
-                    } else {
-                        &mut candidates
-                    };
-                    selected.extend(
-                        self.mir.exports[module.index()]
-                            .iter()
-                            .copied()
-                            .filter(|id| self.mir.symbols[id.index()].name == name),
-                    );
-                }
-            }
-            // Implicit prelude imports supply the outer default scope. An
-            // explicitly written import participates at the current scope.
-            if candidates.is_empty() {
-                candidates = implicit_candidates;
-            }
-            if !candidates.is_empty() {
-                let mut targets = BTreeMap::new();
-                for candidate in candidates {
-                    let state = self.resolve_symbol(candidate);
-                    let key = if let ResolveState::Bound(id) = state {
-                        id
-                    } else {
-                        candidate
-                    };
-                    targets.entry(key).or_insert((candidate, state));
-                }
-                if pattern
-                    && !targets
-                        .values()
-                        .any(|(_, state)| self.constructor(state, &mut vec![]))
-                {
-                    return ResolveState::Unresolved;
-                }
-                if targets.len() == 1 {
-                    return targets.into_values().next().unwrap().1;
-                }
-                let candidates = targets.into_values().map(|(id, _)| id).collect();
-                let state = self.conflict(ResolveConflict::AmbiguousImport {
-                    name: name.into(),
-                    candidates,
-                });
-                self.mir.diagnostics.push(Diagnostic::error(
-                    format!("ambiguous import {name:?}"),
-                    self.mir.hir[node.index()].location,
-                ));
-                return state;
-            }
-            match self.mir.scopes[scope.index()].parent {
-                Some(parent) => scope = parent,
-                None => break,
-            }
-        }
-        ResolveState::Unresolved
-    }
-    fn constructor(&mut self, state: &ResolveState, seen: &mut Vec<SymbolId>) -> bool {
-        let ResolveState::Bound(id) = *state else {
-            return false;
-        };
-        if seen.contains(&id) {
-            return false;
-        }
-        seen.push(id);
-        let Some(&node) = self.mir.symbols[id.index()].declarations.last() else {
-            return false;
-        };
-        match self.mir.hir[node.index()].kind {
-            HirKind::Binding {
-                initializer: Some(DeclaredInitializerKind::Newtype),
-                ..
-            }
-            | HirKind::Binding {
-                kind: BindingKind::Def,
-                imported: Some(_),
-                ..
-            } => true,
-            HirKind::Binding {
-                kind: BindingKind::Type,
-                ..
-            } => {
-                let state = self
-                    .child(node, Role::Value)
-                    .and_then(|value| self.reference_value(value));
-                state.is_some_and(|state| self.constructor(&state, seen))
-            }
-            HirKind::Binding {
-                kind: BindingKind::Def,
-                ..
-            } => {
-                let Some(value) = self.child(node, Role::Value) else {
-                    return false;
-                };
-                if matches!(self.mir.hir[value.index()].kind, HirKind::Field) {
-                    let receiver = self.child(value, Role::Receiver).unwrap();
-                    self.constructor_namespace(receiver, seen)
-                } else {
-                    self.reference_value(value)
-                        .is_some_and(|state| self.constructor(&state, seen))
-                }
-            }
-            _ => false,
-        }
-    }
-    fn constructor_namespace(&mut self, node: HirId, seen: &mut Vec<SymbolId>) -> bool {
-        if matches!(
-            self.mir.hir[node.index()].kind,
-            HirKind::Call | HirKind::TypeApply
-        ) {
-            return self
-                .child(node, Role::Callee)
-                .is_some_and(|callee| self.constructor_namespace(callee, seen));
-        }
-        let Some(ResolveState::Bound(symbol)) = self.reference_value(node) else {
-            return false;
-        };
-        let declaration = &self.mir.symbols[symbol.index()];
-        if let Some(id) = declaration.native_type {
-            let native = self.mir.modules[declaration.module.unwrap().index()]
-                .native
-                .as_ref()
-                .unwrap();
-            return native.types.iter().any(|(slot, rule)| {
-                *slot == id.slot
-                    && matches!(
-                        rule,
-                        NativeTypeRule::Primitive(
-                            TypeConstructor::Bool | TypeConstructor::PropertyTarget
-                        ) | NativeTypeRule::Constructor(
-                            TypeFunction::Option | TypeFunction::Result | TypeFunction::FoldControl
-                        )
-                    )
-            });
-        }
-        if seen.contains(&symbol) {
-            return false;
-        }
-        seen.push(symbol);
-        let Some(&node) = declaration.declarations.last() else {
-            return false;
-        };
-        matches!(
-            self.mir.hir[node.index()].kind,
-            HirKind::Binding {
-                initializer: Some(DeclaredInitializerKind::Enum),
-                ..
-            }
-        )
-    }
-    fn namespace(&mut self, id: SymbolId, seen: &mut Vec<SymbolId>) -> Option<ModuleId> {
-        if seen.contains(&id) {
-            return None;
-        }
-        seen.push(id);
-        if let SymbolKind::Namespace(module) = self.mir.symbols[id.index()].kind {
-            return Some(module);
-        }
-        if !matches!(
-            self.mir.symbols[id.index()].kind,
-            SymbolKind::Declaration(BindingKind::Def)
-        ) {
-            return None;
-        }
-        let node = *self.mir.symbols[id.index()].declarations.last()?;
-        let value = self.child(node, Role::Value)?;
-        let ResolveState::Bound(id) = self.reference_value(value)? else {
-            return None;
-        };
-        self.namespace(id, seen)
-    }
-    fn reference_value(&mut self, node: HirId) -> Option<ResolveState> {
-        self.mir.hir[node.index()]
-            .resolution
-            .map(|_| self.reference(node))
-    }
-    fn reference(&mut self, node: HirId) -> ResolveState {
-        let slot = self.mir.hir[node.index()]
-            .resolution
-            .expect("reference slot");
-        let state = self.mir.resolve_slots[slot.index()].clone();
-        if state != ResolveState::Pending {
-            return state;
-        }
-        if self.reference_active[slot.index()] {
-            return ResolveState::Unresolved;
-        }
-        self.reference_active[slot.index()] = true;
-        let scope = self.mir.hir_scopes[node.index()].expect("reference scope");
-        let state = match &self.mir.hir[node.index()].kind {
-            HirKind::Variable(name) => {
-                let name = name.clone();
-                self.lookup(scope, node, &name, false)
-            }
-            HirKind::PatternName(_) => self
-                .resolve_symbol(self.mir.hir_symbols[node.index()].expect("pattern declaration")),
-            HirKind::Field => {
-                let receiver = self.child(node, Role::Receiver).unwrap();
-                let name = self.child(node, Role::Name).unwrap();
-                if matches!(self.mir.hir[name.index()].kind, HirKind::Missing) {
-                    ResolveState::Unresolved
-                } else {
-                    match self.reference_value(receiver) {
-                        Some(ResolveState::Bound(symbol)) => {
-                            match self.namespace(symbol, &mut vec![]) {
-                                Some(module) => self.exported(module, &self.name(name)),
-                                _ => ResolveState::Member { receiver, name },
-                            }
-                        }
-                        Some(state @ (ResolveState::Unresolved | ResolveState::Conflicted(_))) => state,
-                        _ => ResolveState::Member { receiver, name },
-                    }
-                }
-            }
-            _ => unreachable!(),
-        };
-        self.reference_active[slot.index()] = false;
-        self.mir.resolve_slots[slot.index()] = state.clone();
-        state
     }
 }

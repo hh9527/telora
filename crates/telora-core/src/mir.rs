@@ -13,6 +13,10 @@ mod properties;
 mod materializations;
 mod declaration_contracts;
 mod constraint_outcomes;
+mod resolution;
+mod substitution;
+pub use resolution::{ResolutionFacts, ResolveTask};
+pub use substitution::TypeSubstitution;
 pub use declaration_contracts::{DeclarationContract, DeclarationContractState};
 pub use seal::SealedMir;
 pub use executable::{ExecutionClosure, ExecutionRoot, SealedExecutable};
@@ -662,6 +666,8 @@ pub struct Mir {
     /// Completeness established before any value implementation constraints.
     pub declaration_contract_ready: Vec<bool>,
     pub resolve_conflicts: Vec<ResolveConflict>,
+    /// Syntax-only query results and pending dependencies of symbol mini passes.
+    pub resolution_facts: ResolutionFacts,
     pub symbols_closed: bool,
     pub ty_slots: Vec<TypeState>,
     pub symbol_types: Vec<TypeSlotId>,
@@ -679,6 +685,8 @@ pub struct Mir {
     pub implementation_instances: Vec<Option<GenericInstanceId>>,
     pub type_terms: Vec<TypeTerm>,
     pub types: Vec<ResolvedType>,
+    /// Reusable working slots for the current resolved-type substitution.
+    pub type_substitution: TypeSubstitution,
     pub type_layouts: Vec<Option<TypeLayout>>,
     pub member_selections: Vec<Option<MemberSelection>>,
     pub value_materializations: Vec<Option<ValueMaterialization>>,
@@ -784,6 +792,30 @@ impl Mir {
         }
         for (id, conflict) in self.resolve_conflicts.iter().enumerate() {
             writeln!(out, "resolve-conflict {id} {conflict:?}").unwrap();
+        }
+        for (task, dependency) in &self.resolution_facts.waiting {
+            writeln!(out, "resolve-wait {task:?} => {dependency:?}").unwrap();
+        }
+        for (id, namespace) in self.resolution_facts.namespaces.iter().enumerate() {
+            if let Some(namespace) = namespace {
+                writeln!(out, "namespace {id} => {namespace:?}").unwrap();
+            }
+        }
+        for (id, constructor) in self.resolution_facts.constructors.iter().enumerate() {
+            if let Some(constructor) = constructor {
+                writeln!(out, "constructor {id} => {constructor}").unwrap();
+            }
+        }
+        for (id, constructor) in self.resolution_facts.constructor_namespaces.iter().enumerate() {
+            if let Some(constructor) = constructor {
+                writeln!(out, "constructor-namespace {id} => {constructor}").unwrap();
+            }
+        }
+        if !self.type_substitution.nodes.is_empty() {
+            writeln!(out, "type-substitution-parameters {:?}", self.type_substitution.parameters).unwrap();
+            for (id, node) in self.type_substitution.nodes.iter().enumerate() {
+                writeln!(out, "type-substitution {id} {node:?}").unwrap();
+            }
         }
         for (id, term) in self.type_terms.iter().enumerate() {
             writeln!(out, "type-term {id} {term:?}").unwrap();

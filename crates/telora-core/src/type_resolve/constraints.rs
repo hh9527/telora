@@ -806,6 +806,7 @@ impl Solver<'_> {
         left: TypeSlotId,
         right: TypeSlotId,
         location: Option<Location>,
+        pending: &mut std::collections::VecDeque<(TypeSlotId, TypeSlotId)>,
     ) -> bool {
         let a = self.term(left).unwrap().clone();
         let b = self.term(right).unwrap().clone();
@@ -819,7 +820,7 @@ impl Solver<'_> {
             for (expected, actual) in target.into_iter().zip(items) {
                 if actual.index() < self.mir.hir.len() {
                     self.fit(HirId(actual.0), expected, actual);
-                } else { self.equal(expected, actual, location); }
+                } else { pending.push_back((expected, actual)); }
             }
             self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
             self.revision += 1;
@@ -834,11 +835,11 @@ impl Solver<'_> {
                 for item in items {
                     if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Never) {
                         self.bottom_candidates.push(element);
-                    } else { self.equal(element, item, location); }
+                    } else { pending.push_back((element, item)); }
                 }
                 elements.push(element);
             }
-            self.equal(elements[0], elements[1], location);
+            pending.push_back((elements[0], elements[1]));
             let left_array = self.structure(TypeConstructor::Array, vec![elements[0]]);
             let right_array = self.structure(TypeConstructor::Array, vec![elements[1]]);
             self.mir.ty_slots[left.index()] = TypeState::ProxyTo(left_array);
@@ -859,7 +860,7 @@ impl Solver<'_> {
             for &item in &items {
                 if item.index() < self.mir.hir.len() {
                     self.fit(HirId(item.0), element, item);
-                } else { self.equal(element, item, location); }
+                } else { pending.push_back((element, item)); }
             }
             let own_element = self.fresh();
             for item in items {
@@ -874,9 +875,9 @@ impl Solver<'_> {
                 } else { self.mir.value_adjustments.get(item.index()).copied().flatten().unwrap_or(item) };
                 if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Never) {
                     self.bottom_candidates.push(own_element);
-                } else { self.equal(own_element, item, location); }
+                } else { pending.push_back((own_element, item)); }
             }
-            self.equal(own_element, element, location);
+            pending.push_back((own_element, element));
             let array = self.structure(TypeConstructor::Array, vec![own_element]);
             self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(array);
             self.revision += 1;
@@ -942,7 +943,7 @@ impl Solver<'_> {
             let value = record.arguments[index];
             if value.index() < self.mir.hir.len() {
                 self.fit(HirId(value.0), ty, value);
-            } else { self.equal(ty, value, location); }
+            } else { pending.push_back((ty, value)); }
         }
         self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
         self.revision += 1;

@@ -47,6 +47,9 @@ impl Solver<'_> {
             }
         }
         // Flattening preserves the ordinary tuple's type/value-world rules.
-        self.solve_task(Task::Tuple { node, items: elements })
+        // Changing the operation is progress even before the tuple's type
+        // becomes known. Its mini pass runs through the outer scheduler.
+        self.revision += 1;
+        Some(Task::Tuple { node, items: elements })
     }
 }

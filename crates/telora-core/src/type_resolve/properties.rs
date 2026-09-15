@@ -212,23 +212,25 @@ impl Solver<'_> {
         actual: TypeId,
         substitutions: &mut BTreeMap<SymbolId, TypeId>,
     ) -> bool {
-        let template = &self.mir.types[template.index()];
-        if let TypeConstructor::Parameter(parameter) = template.constructor {
-            return match substitutions.get(&parameter) {
-                Some(&bound) => bound == actual,
-                None => {
-                    substitutions.insert(parameter, actual);
-                    true
+        let mut pending = vec![(template, actual)];
+        let mut seen = BTreeSet::new();
+        while let Some((template, actual)) = pending.pop() {
+            if !seen.insert((template, actual)) { continue; }
+            let template = &self.mir.types[template.index()];
+            if let TypeConstructor::Parameter(parameter) = template.constructor {
+                match substitutions.get(&parameter) {
+                    Some(&bound) if bound != actual => return false,
+                    Some(_) => {},
+                    None => { substitutions.insert(parameter, actual); }
                 }
-            };
+                continue;
+            }
+            let actual = &self.mir.types[actual.index()];
+            if template.constructor != actual.constructor || template.arguments.len() != actual.arguments.len() {
+                return false;
+            }
+            pending.extend(template.arguments.iter().copied().zip(actual.arguments.iter().copied()).rev());
         }
-        let actual = &self.mir.types[actual.index()];
-        template.constructor == actual.constructor
-            && template.arguments.len() == actual.arguments.len()
-            && template
-                .arguments
-                .iter()
-                .zip(&actual.arguments)
-                .all(|(&t, &a)| self.match_type(t, a, substitutions))
+        true
     }
 }

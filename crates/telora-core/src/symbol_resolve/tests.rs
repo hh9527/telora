@@ -1,5 +1,6 @@
 use super::*;
 use crate::module_resolve::{self, ModuleSpec};
+mod scheduling;
 
 #[test]
 fn deep_expression_symbol_indexing_uses_a_bounded_call_stack() {

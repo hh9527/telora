@@ -2,6 +2,8 @@ use super::*;
 use std::collections::BTreeMap;
 
 type Canonical = BTreeMap<(TypeConstructor, Vec<TypeId>), TypeId>;
+#[cfg(test)]
+mod tests;
 
 fn evidence_slot(
     nodes: &mut Vec<EvidenceNode>,
@@ -271,41 +273,27 @@ impl Solver<'_> {
         substitutions: &BTreeMap<SymbolId, TypeId>,
         canonical: &mut Canonical,
     ) -> TypeId {
-        let template = self.mir.types[ty.index()].clone();
-        if let TypeConstructor::Parameter(parameter) = template.constructor {
-            return substitutions.get(&parameter).copied().unwrap_or(ty);
-        }
-        let arguments = template
-            .arguments
-            .into_iter()
-            .map(|a| self.substitute_resolved(a, substitutions, canonical))
-            .collect::<Vec<_>>();
-        if template.constructor == TypeConstructor::Unchecked && arguments.len() == 1
-            && self.mir.types[arguments[0].index()].constructor == TypeConstructor::Unchecked
-        { return arguments[0]; }
-        let key = (template.constructor, arguments);
-        *canonical.entry(key.clone()).or_insert_with(|| {
-            let id = TypeId(self.mir.types.len() as u32);
-            self.mir.types.push(ResolvedType {
-                constructor: key.0,
-                arguments: key.1,
-            });
-            id
-        })
+        self.mir.substitute_resolved_type(ty, substitutions, canonical)
     }
 
     pub(super) fn contains_parameter(&self, ty: TypeId) -> bool {
-        fn visit(solver: &Solver<'_>, ty: TypeId, binder: Option<u32>) -> bool {
-            let ty = &solver.mir.types[ty.index()];
+        let mut pending = vec![(ty, None)];
+        let mut seen = BTreeSet::new();
+        while let Some((ty, binder)) = pending.pop() {
+            if !seen.insert((ty, binder)) { continue; }
+            let ty = &self.mir.types[ty.index()];
             let binder = match ty.constructor {
                 TypeConstructor::Parameter(_) => return true,
-                TypeConstructor::Bound(index) => return binder.is_none_or(|count| index >= count),
+                TypeConstructor::Bound(index) => {
+                    if binder.is_none_or(|count| index >= count) { return true; }
+                    continue;
+                }
                 TypeConstructor::Quantified(count) => Some(count),
                 _ => binder,
             };
-            ty.arguments.iter().any(|&child| visit(solver, child, binder))
+            pending.extend(ty.arguments.iter().map(|&child| (child, binder)));
         }
-        visit(self, ty, None)
+        false
     }
 
     fn concrete_implementation(&self, implementation: &TraitImplementation) -> bool {
@@ -348,12 +336,16 @@ impl Solver<'_> {
         ty: TypeId,
         substitutions: &BTreeMap<SymbolId, TypeId>,
     ) -> bool {
-        let ty = &self.mir.types[self.pattern_root(ty, substitutions).index()];
-        ty.constructor == TypeConstructor::Parameter(parameter)
-            || ty
-                .arguments
-                .iter()
-                .any(|&arg| self.pattern_occurs(parameter, arg, substitutions))
+        let mut pending = vec![ty];
+        let mut seen = BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            let ty = self.pattern_root(ty, substitutions);
+            if !seen.insert(ty) { continue; }
+            let ty = &self.mir.types[ty.index()];
+            if ty.constructor == TypeConstructor::Parameter(parameter) { return true; }
+            pending.extend(ty.arguments.iter().copied());
+        }
+        false
     }
 
     /// Pure overlap predicate over two declaration skeletons. This scratch

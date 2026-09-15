@@ -1,0 +1,3 @@
+import "./bridge" { lost };
+export { lost };
+export def independent: Int = 1;

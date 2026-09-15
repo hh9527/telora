@@ -93,10 +93,15 @@ impl Solver<'_> {
     ) {
         let left = self.find(left);
         let right = self.find(right);
-        if matches!(self.mir.ty_slots[left.index()], TypeState::Conflicted(_))
-            || matches!(self.mir.ty_slots[right.index()], TypeState::Conflicted(_))
+        if let (TypeState::Conflicted(id), _) | (_, TypeState::Conflicted(id)) =
+            (self.mir.ty_slots[left.index()], self.mir.ty_slots[right.index()])
         {
-            self.equal(left, right, location);
+            if left == right { return; }
+            let value_slot = self.value_slots[left.index()] || self.value_slots[right.index()];
+            self.value_slots[left.index()] = value_slot;
+            self.value_slots[right.index()] = value_slot;
+            self.inherit_conflict(left, right, id);
+            self.revision += 1;
             return;
         }
         let id = self.record_conflict(left, right, location, message);
@@ -106,6 +111,14 @@ impl Solver<'_> {
             }
         }
         self.revision += 1;
+    }
+
+    fn inherit_conflict(&mut self, left: TypeSlotId, right: TypeSlotId, id: TypeConflictId) {
+        for slot in [left, right] {
+            if !self.contract_slots[slot.index()] {
+                self.mir.ty_slots[slot.index()] = TypeState::Conflicted(id);
+            }
+        }
     }
 
     /// A failed relation does not invalidate either operand's type identity.
@@ -177,11 +190,7 @@ impl Solver<'_> {
                     // Inherit the existing failed evidence only into inference
                     // state. A declaration remains inspectable even when its
                     // implementation or a consumer already failed.
-                    for slot in [left, right] {
-                        if !self.contract_slots[slot.index()] {
-                            self.mir.ty_slots[slot.index()] = TypeState::Conflicted(id);
-                        }
-                    }
+                    self.inherit_conflict(left, right, id);
                 }
                 (TypeState::Unknown, _) => {
                     if self.occurs(left, right) {
@@ -203,11 +212,11 @@ impl Solver<'_> {
                     if a.constructor == TypeConstructor::ArrayLiteral && b.constructor == TypeConstructor::ArrayLiteral {
                         // Array literal children are element evidence, not
                         // positional type arguments, even at equal lengths.
-                        self.compatible_structure(left, right, location);
+                        self.compatible_structure(left, right, location, &mut queue);
                         continue;
                     }
                     if a.constructor != b.constructor || a.arguments.len() != b.arguments.len() {
-                        if self.compatible_structure(left, right, location) {
+                        if self.compatible_structure(left, right, location, &mut queue) {
                             continue;
                         }
                         let message = format!("type mismatch between {} and {}",
