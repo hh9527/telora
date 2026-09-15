@@ -1,0 +1,23 @@
+import "std/transform-service" {Context, TransformService, Sources};
+import "std/type-property" as property;
+import "std/value" {Value};
+import "std/_rt" as rt;
+
+type Observed = Result((Value, Array(rt.Diagnostic)), Array(rt.Diagnostic));
+type Handler = Fn(Value) -> Observed;
+type Plan = (Array(String), Fn(Context) -> Handler);
+
+def prepare: for(S: TransformService) Fn(TypeOf(S)) -> Plan = fn(target) {
+    let sources = match property.get_type_prop(target, Sources.type) {
+        Some(sources) => sources.names,
+        None => [],
+    };
+    (sources, fn(ctx) {
+        let service: S = TransformService(S).init(ctx);
+        rt.with_diagnostics(fn(input: Value) {
+            TransformService(S).transform(service, input)
+        })
+    })
+};
+
+export {Observed, Handler, Plan, prepare};

@@ -424,6 +424,11 @@ impl<'a> Emitter<'a> {
                 }
                 for edge in &self.mir.hir[node.index()].children {
                     if edge.role == Role::Binding {
+                        if matches!(self.mir.hir[edge.node.index()].kind,
+                            HirKind::Binding {kind: telora_core::syntax::kinds::BindingKind::Type
+                                | telora_core::syntax::kinds::BindingKind::Trait, ..}) {
+                            continue;
+                        }
                         if self.emit_local_template(edge.node)? {
                             continue;
                         }

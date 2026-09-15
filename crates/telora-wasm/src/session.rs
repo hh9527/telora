@@ -7,8 +7,9 @@ const MEMORY_BOUND: usize = 1024 * 1024 * 1024;
 const TABLE_BOUND: usize = 1_000_000;
 
 pub struct Session {
-    fuel_budget: u64,
-    memory_limit: usize,
+    pub(crate) fuel_budget: u64,
+    pub(crate) memory_limit: usize,
+    pub(crate) module: wasmi::Module,
     pub usage_reporter: Option<fn(Usage)>,
     pub manifest: Manifest,
     pub(crate) store: wasmi::Store<wasmi::StoreLimits>,
@@ -70,6 +71,7 @@ impl Session {
             .get_memory(&store, "memory")
             .ok_or("Wasm: missing memory export")?;
         let mut session = Self {
+            module,
             fuel_budget: fuel,
             memory_limit,
             usage_reporter: None,

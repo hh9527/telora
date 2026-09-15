@@ -1,29 +1,16 @@
 use clap::{Args, Parser, Subcommand};
 use serde_json::json;
-use std::collections::{BTreeMap, HashSet};
 use std::env;
-use std::fs;
-use std::io::{self, Read};
 use std::path::PathBuf;
-use telora_core::{
-    DataLimits, EesCall, EesReply, RunHost,
-    RunHostFuture, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
-};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use tokio::sync::{mpsc, watch};
-use tokio::task::JoinSet;
-mod ees_arg;
-mod ees_cli;
+use telora_core::DataLimits;
 mod eval_cli;
 mod wasm_cli;
 mod source_arg;
 mod static_cli;
 use telora::static_input;
 mod test_cli;
-use ees_arg::{NamedEesVar, collect_ees_models, parse_named_ees_var};
-use ees_cli::EesArgs;
-use eval_cli::{EvalArgs, EvalWithArgs};
-use source_arg::{NamedSource, collect_entry_sources, is_stdin_source, parse_named_source};
+use eval_cli::EvalArgs;
+use source_arg::{NamedSource, parse_named_source};
 use telora::package_host;
 
 static EXECUTION_OPTIONS: std::sync::OnceLock<(Option<u64>, Option<u64>, bool)> = std::sync::OnceLock::new();
@@ -72,304 +59,6 @@ fn main() {
     }
 }
 
-enum ReaderEvent {
-    Event(SystemEvent),
-    Error(String),
-}
-
-async fn send_reader_event(
-    sender: &mpsc::Sender<ReaderEvent>,
-    cancel: &mut watch::Receiver<bool>,
-    event: ReaderEvent,
-) -> bool {
-    if *cancel.borrow() { return false; }
-    tokio::select! {
-        biased;
-        _ = cancel.changed() => false,
-        sent = sender.send(event) => sent.is_ok(),
-    }
-}
-
-struct ProcessRunHost {
-    source_locators: BTreeMap<String, String>,
-    ees: Option<telora_ees::Service>,
-    ees_actors: BTreeMap<String, String>,
-    ees_active: HashSet<String>,
-    ees_vars: Vec<NamedEesVar>,
-    sender: mpsc::Sender<ReaderEvent>,
-    receiver: mpsc::Receiver<ReaderEvent>,
-    cancel: watch::Sender<bool>,
-    tasks: JoinSet<(String, Result<(), String>)>,
-    finished: bool,
-}
-
-impl ProcessRunHost {
-    fn new(source_locators: BTreeMap<String, String>, ees_vars: Vec<NamedEesVar>) -> Self {
-        let (sender, receiver) = mpsc::channel(64);
-        let (cancel, _) = watch::channel(false);
-        Self {
-            source_locators,
-            ees: None,
-            ees_actors: BTreeMap::new(),
-            ees_active: HashSet::new(),
-            ees_vars,
-            sender,
-            receiver,
-            cancel,
-            tasks: JoinSet::new(),
-            finished: false,
-        }
-    }
-
-    fn source_locator<'a>(&'a self, source: &'a SystemDataSource) -> &'a str {
-        self.source_locators
-            .get(&source.src)
-            .map_or(source.src.as_str(), String::as_str)
-    }
-
-    fn receive_event(&mut self, event: ReaderEvent) -> Result<Option<SystemEvent>, String> {
-        match event {
-            ReaderEvent::Error(error) => Err(error),
-            ReaderEvent::Event(event) => {
-                if let SystemEvent::EesReply(reply) = &event {
-                    self.ees_active.remove(&reply.key);
-                }
-                Ok(Some(event))
-            }
-        }
-    }
-}
-
-impl RunHost for ProcessRunHost {
-
-    fn ees_actors(&self) -> BTreeMap<String, String> {
-        self.ees_actors.clone()
-    }
-
-    fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>> {
-        Box::pin(async move {
-            let collected = collect_ees_models(
-                &caps.ees_vars,
-                &caps.ees_models,
-                std::mem::take(&mut self.ees_vars),
-            )?;
-            if caps.ees != collected.actors {
-                return Err(format!(
-                    "EES actor declarations do not match model configs: declared {:?}, configured {:?}",
-                    caps.ees, collected.actors
-                ));
-            }
-            self.ees_actors = collected.actors;
-            self.ees = match collected.manifest {
-                Some(manifest) => Some(
-                    telora_ees::Service::open(manifest)
-                        .await
-                        .map_err(|error| format!("cannot initialize application EES: {error:#}"))?,
-                ),
-                None => None,
-            };
-            if caps.stdin != SystemStdin::Null
-                && caps
-                    .data_sources
-                    .values()
-                    .any(|source| is_stdin_source(self.source_locator(source)))
-            {
-                return Err(
-                    "standard input cannot be both an event stream and a data source".into(),
-                );
-            }
-            if caps.stdin == SystemStdin::Lined {
-                let sender = self.sender.clone();
-                let mut cancel = self.cancel.subscribe();
-                self.tasks.spawn(async move {
-                    let mut lines = BufReader::new(tokio::io::stdin()).lines();
-                    loop {
-                        let line = tokio::select! {
-                            biased;
-                            changed = cancel.changed() => {
-                                if changed.is_ok() && *cancel.borrow() {
-                                    return ("<stdin>".into(), Ok(()));
-                                }
-                                continue;
-                            }
-                            line = lines.next_line() => line,
-                        };
-                        match line {
-                            Ok(Some(line)) => {
-                                if !send_reader_event(&sender, &mut cancel,
-                                    ReaderEvent::Event(SystemEvent::StdinLine(Some(line)))).await {
-                                    return ("<stdin>".into(), Ok(()));
-                                }
-                            }
-                            Ok(None) => {
-                                send_reader_event(&sender, &mut cancel,
-                                    ReaderEvent::Event(SystemEvent::StdinLine(None))).await;
-                                return ("<stdin>".into(), Ok(()));
-                            }
-                            Err(error) => {
-                                let message = format!("cannot read standard input: {error}");
-                                send_reader_event(&sender, &mut cancel, ReaderEvent::Error(message.clone())).await;
-                                return ("<stdin>".into(), Err(message));
-                            }
-                        }
-                    }
-                });
-            }
-            Ok(())
-        })
-    }
-
-    fn read_data_source(
-        &mut self,
-        source: &SystemDataSource,
-        max_bytes: usize,
-    ) -> RunHostFuture<'_, Result<Option<String>, String>> {
-        let src = source.src.clone();
-        let locator = self.source_locator(source).to_owned();
-        Box::pin(async move {
-            let max_read = u64::try_from(max_bytes)
-                .unwrap_or(u64::MAX)
-                .saturating_add(1);
-            let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
-            if is_stdin_source(&locator) {
-                tokio::io::stdin()
-                    .take(max_read)
-                    .read_to_end(&mut bytes)
-                    .await
-                    .map_err(|error| format!("cannot read data source {src:?}: {error}"))?;
-            } else {
-                let path = match locator.split_once("://") {
-                    Some((scheme, path)) if scheme.starts_with("file+") => path,
-                    _ => locator.as_str(),
-                };
-                let file = match fs::File::open(path) {
-                    Ok(file) => file,
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-                    Err(error) => {
-                        return Err(format!("cannot read data source {src:?}: {error}"));
-                    }
-                };
-                file.take(max_read)
-                    .read_to_end(&mut bytes)
-                    .map_err(|error| format!("cannot read data source {src:?}: {error}"))?;
-            }
-            if bytes.len() > max_bytes {
-                return Err(format!(
-                    "data source exceeds file_size limit ({} > {max_bytes})",
-                    bytes.len()
-                ));
-            }
-            String::from_utf8(bytes)
-                .map(Some)
-                .map_err(|error| format!("cannot read data source {src:?}: {error}"))
-        })
-    }
-
-    fn ees_call(&mut self, call: EesCall) -> RunHostFuture<'_, Result<(), String>> {
-        Box::pin(async move {
-            if !self.ees_actors.contains_key(&call.actor) {
-                return Err(format!("EES actor {:?} is not configured", call.actor));
-            }
-            if !self.ees_active.insert(call.key.clone()) {
-                return Err(format!("EES call key {:?} is already active", call.key));
-            }
-            let Some(service) = self.ees.clone() else {
-                self.ees_active.remove(&call.key);
-                return Err("EES service is not configured".into());
-            };
-            let key = call.key.clone();
-            let sender = self.sender.clone();
-            let mut cancel = self.cancel.subscribe();
-            self.tasks.spawn(async move {
-                let event = service
-                    .dispatch(
-                        telora_ees::Call {
-                            id: key.clone(),
-                            actor: call.actor,
-                            operation: call.operation,
-                            input: call.input,
-                        },
-                        None,
-                    )
-                    .await;
-                let result = event.into_value();
-                let sent = send_reader_event(&sender, &mut cancel,
-                    ReaderEvent::Event(SystemEvent::EesReply(EesReply {
-                        key: key.clone(),
-                        result,
-                    }))).await;
-                let sent = if sent || *cancel.borrow() { Ok(()) }
-                    else { Err("EES reply channel disconnected".to_owned()) };
-                (format!("ees:{key}"), sent)
-            });
-            Ok(())
-        })
-    }
-
-    fn next_event(&mut self) -> RunHostFuture<'_, Result<Option<SystemEvent>, String>> {
-        Box::pin(async move {
-            loop {
-                // A continuously nonempty event queue must not retain completed
-                // task records until shutdown.
-                while let Some(joined) = self.tasks.try_join_next() {
-                    let (_, result) = joined.map_err(|error| format!("Host task failed: {error}"))?;
-                    result?;
-                }
-                if let Ok(event) = self.receiver.try_recv() {
-                    return self.receive_event(event);
-                }
-                if self.tasks.is_empty() {
-                    return Ok(None);
-                }
-                tokio::select! {
-                    event = self.receiver.recv() => {
-                        let event = event.ok_or_else(|| {
-                            "child event channel disconnected".to_owned()
-                        })?;
-                        return self.receive_event(event);
-                    }
-                    joined = self.tasks.join_next(), if !self.tasks.is_empty() => {
-                        let Some(joined) = joined else { continue };
-                        let (_, result) = joined.map_err(|error| {
-                            format!("Host task failed: {error}")
-                        })?;
-                        result?;
-                    }
-                }
-            }
-        })
-    }
-
-    fn finish(&mut self) -> RunHostFuture<'_, Result<(), String>> {
-        Box::pin(async move {
-            if self.finished {
-                return Ok(());
-            }
-            self.finished = true;
-            let _ = self.cancel.send(true);
-            let mut first_error = None;
-            while let Some(joined) = self.tasks.join_next().await {
-                match joined {
-                    Ok((_, Ok(()))) => {}
-                    Ok((_, Err(error))) if first_error.is_none() => first_error = Some(error),
-                    Err(error) if first_error.is_none() => {
-                        first_error = Some(format!("Host task failed: {error}"));
-                    }
-                    _ => {}
-                }
-            }
-            first_error.map_or(Ok(()), Err)
-        })
-    }
-}
-
-impl Drop for ProcessRunHost {
-    fn drop(&mut self) {
-        let _ = self.cancel.send(true);
-        self.tasks.abort_all();
-    }
-}
-
 #[derive(Parser)]
 #[command(name = "telora", version, about = "The Telora language toolchain")]
 struct Cli {
@@ -393,14 +82,10 @@ struct Cli {
 enum Command {
     /// Evaluate one exported Value without an Entry or effect system.
     Eval(EvalArgs),
-    /// Invoke one pure context function and write its Value result.
-    EvalWith(EvalWithArgs),
-    /// Submit one request to an application reducer service.
+    /// Transform one JSON input using the module's MainService.
     Run(RunArgs),
-    /// Process transport requests with one application reducer service.
+    /// Transform JSONL requests using the module's MainService.
     Serve(ServeArgs),
-    #[command(hide = true)]
-    Ees(EesArgs),
     /// Resolve package sources and rewrite telora-lock.json.
     Lock,
     /// Check modules through type closure or initialization and emit JSONL diagnostics.
@@ -422,16 +107,12 @@ struct RunArgs {
 
 #[derive(Args)]
 struct ApplicationArgs {
-    #[arg(value_name = "MODULE:EXPORT", value_parser = parse_application_selector)]
-    selector: ApplicationSelector,
+    #[arg(value_name = "MODULE")]
+    module: String,
     /// Provide a named Value source: NAME=PATH or NAME=(file|stdin)+(json|yaml|toml)://PATH.
     #[arg(long = "source", value_name = "NAME=SOURCE", value_parser = parse_named_source)]
     sources: Vec<NamedSource>,
-    /// Bind a variable declared by the selected ees.Config value: NAME=VALUE.
-    #[arg(long = "ees-var", value_name = "NAME=VALUE", value_parser = parse_named_ees_var)]
-    ees_vars: Vec<NamedEesVar>,
-    #[arg(last = true, value_name = "ARG")]
-    args: Vec<String>,
+
 }
 
 #[derive(Args)]
@@ -441,12 +122,6 @@ struct ServeArgs {
     /// Request/response transport. The first version supports stdio:// JSONL.
     #[arg(long, value_name = "URI")]
     bind: String,
-}
-
-#[derive(Clone)]
-struct ApplicationSelector {
-    module_id: String,
-    export: String,
 }
 
 #[derive(Args)]
@@ -569,27 +244,6 @@ fn non_empty(value: &str) -> Result<String, String> {
         .ok_or_else(|| "pattern must not be empty".into())
 }
 
-fn parse_application_selector(value: &str) -> Result<ApplicationSelector, String> {
-    let (module_id, export) = value
-        .rsplit_once(':')
-        .ok_or_else(|| "expected MODULE:EXPORT".to_owned())?;
-    if module_id.is_empty() {
-        return Err("application module selector must not be empty".into());
-    }
-    let mut characters = export.chars();
-    if !characters
-        .next()
-        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
-        || !characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
-    {
-        return Err("application export name must be an identifier".into());
-    }
-    Ok(ApplicationSelector {
-        module_id: module_id.to_owned(),
-        export: export.to_owned(),
-    })
-}
-
 fn parse_kinds(value: &str) -> Result<KindSet, String> {
     let mut kinds = value
         .split(',')
@@ -640,32 +294,16 @@ fn parse_module_selector(value: &str) -> Result<ModuleSelector, String> {
 }
 
 fn run_cli(cli: Cli) -> Result<i32, String> {
-    if let Command::Ees(arguments) = &cli.command {
-        return ees_cli::run(arguments, cli.context.is_some());
-    }
     let context = command_context(cli.context)?;
     match cli.command {
         Command::Eval(arguments) => eval_cli::run(context, arguments),
-        Command::EvalWith(arguments) => eval_cli::run_with(context, arguments),
-        Command::Run(arguments) => tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| format!("cannot start the run Host: {error}"))?
-            .block_on(run_command(context, "run", arguments.application)),
+        Command::Run(arguments) => wasm_cli::run::execute(context, arguments.application, false),
         Command::Serve(arguments) => {
             if arguments.bind != "stdio://" {
-                return Err(format!(
-                    "unsupported serve binding {:?}; the first version supports stdio://",
-                    arguments.bind
-                ));
+                return Err("serve supports only stdio://".into());
             }
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| format!("cannot start the serve Host: {error}"))?
-                .block_on(run_command(context, "serve", arguments.application))
+            wasm_cli::run::execute(context, arguments.application, true)
         }
-        Command::Ees(_) => unreachable!("EES returns before workspace context discovery"),
         Command::Lock => package_host::lock(&context)
             .and_then(|path| emit(json!(path.to_string_lossy())).map(|()| 0)),
         Command::Check(arguments) => check_command(context, arguments, "telora.check/v1"),
@@ -677,48 +315,6 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
 
 fn lsp_command(root: PathBuf) -> Result<(), String> {
     telora::lsp::run_stdio(root).map_err(|error| error.to_string())
-}
-
-async fn run_command(
-    context: PathBuf,
-    entry: &str,
-    arguments: ApplicationArgs,
-) -> Result<i32, String> {
-    let entry_sources = collect_entry_sources(arguments.sources.clone())?;
-    if entry == "serve"
-        && entry_sources
-            .locators
-            .values()
-            .any(|locator| is_stdin_source(locator))
-    {
-        return Err("serve --bind stdio:// reserves standard input for JSONL requests".into());
-    }
-    let module_id = &arguments.selector.module_id;
-    let mode = match entry {
-        "run" => telora_core::entry_plan::RunMode::Run,
-        "serve" => telora_core::entry_plan::RunMode::Serve,
-        _ => return Err(format!("unknown entry mode {entry:?}")),
-    };
-    let mut inventory = static_input::Inventory::new(&context, module_id.starts_with("std/"))?;
-    let application = inventory.select(module_id)?;
-    let mut mir = inventory.solve_run(&application, &arguments.selector.export, mode)?;
-    let adapter_conflicts = mir.type_conflicts.iter().filter_map(|conflict| conflict.location)
-        .filter(|location| mir.sources.get(location.source).name.as_ref() == "std/_entry/adapter")
-        .collect::<std::collections::BTreeSet<_>>();
-    for diagnostic in &mut mir.diagnostics {
-        if diagnostic.severity == telora_core::source::Severity::Error
-            && diagnostic.labels.iter().any(|label| label.primary && adapter_conflicts.contains(&label.location)) {
-            diagnostic.message = format!("entry export {:?}: expected {}(State); {}", arguments.selector.export, if entry == "run" { "Run" } else { "Serve" }, diagnostic.message);
-        }
-    }
-    let static_failed = mir.diagnostics.iter().any(|d| d.severity == telora_core::source::Severity::Error);
-    if static_failed {
-        return Err(mir.diagnostics.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"));
-    }
-    let telora_core::mir::ModuleTarget::Bound(root) = mir.roots[0] else { return Err("entry adapter module is unresolved".into()) };
-    let symbol = *mir.exports[root.index()].iter().find(|s| mir.symbols[s.index()].name == "configure")
-        .ok_or("entry adapter has no configuration export")?;
-    wasm_cli::run::execute(mir, inventory, symbol, mode, arguments, entry_sources).await
 }
 
 fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {

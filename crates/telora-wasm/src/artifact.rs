@@ -9,7 +9,6 @@ pub struct Manifest {
     pub types: Vec<TypeDesc>,
     pub sources: Vec<Source>,
     pub value_type: Option<u32>,
-    pub eval_type: Option<u32>,
     pub data_modules: Vec<DataModule>,
     pub debug_sites: Vec<DebugSite>,
     pub globals: Vec<Global>,
@@ -130,7 +129,6 @@ impl Manifest {
             .map(|node| node.node.index())
             .collect::<std::collections::BTreeSet<_>>();
         let value_type = exported_type(mir, 23, "Value");
-        let eval_type = exported_type(mir, 32, "Eval");
         let TypeState::Known(entry) = mir.ty_slots[executable.root().index()] else {
             return Err("Wasm: entry has no sealed type".into());
         };
@@ -225,7 +223,6 @@ impl Manifest {
             types,
             sources,
             value_type,
-            eval_type,
             debug_sites: mir
                 .hir
                 .iter()
@@ -303,7 +300,6 @@ impl Manifest {
             || manifest
                 .value_type
                 .into_iter()
-                .chain(manifest.eval_type)
                 .any(|ty| ty as usize >= manifest.types.len())
             || manifest.entry_type as usize >= manifest.types.len()
             || manifest.globals.iter().any(|global| global.ty as usize >= manifest.types.len()

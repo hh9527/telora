@@ -39,9 +39,7 @@ pub use package::{
 };
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
 pub use runtime_host::{
-    DataLimits, EesCall, EesReply, EntryDataSources, EvalSource, RunHost,
-    RunHostFuture, SystemCaps, SystemDataFormat, SystemDataSource,
-    SystemEesModel, SystemEvent, SystemStdin, SystemTextSource,
+    DataLimits, EvalSource, SystemDataFormat, SystemDataSource,
 };
 pub use source::{
     Diagnostic, Label, Loc, Located, Location, Origin, SourceDatabase, SourceId, TextRange,
