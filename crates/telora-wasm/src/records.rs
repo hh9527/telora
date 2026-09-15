@@ -22,8 +22,12 @@ impl Emitter<'_> {
                 _ => Err("Wasm: record evidence is not a runtime value".into()),
             };
         }
-        let ty = self.effective_ty(node)?;
         let value = self.expression(node)?;
+        self.record_value(node, value)
+    }
+
+    fn record_value(&mut self, node: HirId, value: u32) -> Result<Fields, String> {
+        let ty = self.effective_ty(node)?;
         let members = self.plan.layouts[ty.index()]
             .object
             .as_ref()
@@ -76,6 +80,10 @@ impl Emitter<'_> {
     fn projected_fields(&mut self, node: HirId, depth: usize) -> Result<Fields, String> {
         let receiver = child(self.mir, node, Role::Receiver)?;
         let source = self.record_inputs(receiver, depth + 1)?;
+        self.select_fields(node, source)
+    }
+
+    fn select_fields(&self, node: HirId, source: Fields) -> Result<Fields, String> {
         let names = self.mir.hir[node.index()]
             .children
             .iter()
@@ -147,13 +155,20 @@ impl Emitter<'_> {
         self.finish_record(node, fields)
     }
 
-    pub fn struct_update(&mut self, node: HirId) -> Result<u32, String> {
+    pub fn field_projection_value(&mut self, node: HirId, value: u32) -> Result<u32, String> {
+        let receiver = child(self.mir, node, Role::Receiver)?;
+        let source = self.record_value(receiver, value)?;
+        let fields = self.select_fields(node, source)?;
+        self.finish_record(node, fields)
+    }
+
+    pub fn struct_update_left(&mut self, node: HirId, value: u32) -> Result<u32, String> {
         let left = child(self.mir, node, Role::Left)?;
         let right = child(self.mir, node, Role::Right)?;
         if self.effective_ty(left)? != self.effective_ty(node)? {
             return Err("Wasm: struct update changed its sealed owner identity".into());
         }
-        let mut fields = self.record_inputs(left, 0)?;
+        let mut fields = self.record_value(left, value)?;
         fields.extend(self.record_inputs(right, 0)?);
         self.finish_record(node, fields)
     }

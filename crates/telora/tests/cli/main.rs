@@ -138,6 +138,7 @@ mod command_surface;
 mod entry_services;
 mod evaluation;
 mod language;
+mod codegen_stack_safety;
 mod context;
 mod test_command;
 mod static_mir;

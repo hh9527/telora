@@ -1,6 +1,6 @@
 //! Observational event transport. No user code, inference or value copies.
-use crate::{abi::*, emit::Emitter, output::Output, plan::child, session::Session};
-use telora_core::mir::{HirId, Role};
+use crate::{abi::*, emit::Emitter, output::Output, session::Session};
+use telora_core::mir::HirId;
 use wasm_encoder::{BlockType, Instruction as I};
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -14,8 +14,7 @@ pub struct DebugEvent {
 }
 
 impl Emitter<'_> {
-    pub fn debug(&mut self, node: HirId) -> Result<u32, String> {
-        let input = self.expression(child(self.mir, node, Role::Value)?)?;
+    pub fn debug_value(&mut self, node: HirId, input: u32) -> Result<u32, String> {
         self.extend([
             I::I32Const(DEBUG_ENABLED as i32),
             I::I32Load(memory(0, 2)),

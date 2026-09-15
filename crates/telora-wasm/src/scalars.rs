@@ -1,15 +1,14 @@
 use crate::{abi::*, emit::Emitter, plan::child};
 use telora_core::{
-    syntax::kinds::{BinaryOperator as B, UnaryOperator as U},
     mir::{HirId, Role, TypeConstructor as T},
+    syntax::kinds::{BinaryOperator as B, UnaryOperator as U},
 };
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
-    pub fn unary(&mut self, node: HirId, op: U) -> Result<u32, String> {
+    pub fn unary_value(&mut self, node: HirId, op: U, operand: u32) -> Result<u32, String> {
         let operand_node = child(self.mir, node, Role::Operand)?;
         let ty = self.ty(operand_node)?;
-        let operand = self.expression(operand_node)?;
         let bits = self.local(ValType::I64);
         match (&self.mir.types[ty.index()].constructor, op) {
             (T::Int, U::Negate) => {
@@ -46,9 +45,9 @@ impl Emitter<'_> {
         ]);
         Ok(result)
     }
-    pub fn binary(&mut self, node: HirId, op: B) -> Result<u32, String> {
+    pub fn binary_left(&mut self, node: HirId, op: B, left: u32) -> Result<u32, String> {
         if matches!(op, B::Equal | B::NotEqual) {
-            return self.equal_expression(node, op == B::NotEqual);
+            return self.equal_left(node, op == B::NotEqual, left);
         }
         let lhs = child(self.mir, node, Role::Left)?;
         let rhs = child(self.mir, node, Role::Right)?;
@@ -58,7 +57,6 @@ impl Emitter<'_> {
         }
         let kind = &self.mir.types[ty.index()].constructor;
         if *kind == T::String {
-            let left = self.expression(lhs)?;
             let right = self.expression(rhs)?;
             let comparison = match op {
                 B::LessThan => I::I32LtS,
@@ -82,7 +80,6 @@ impl Emitter<'_> {
         if !matches!(kind, T::Int | T::Float | T::Bool) {
             return Err("Wasm: non-scalar binary operation is not implemented yet".into());
         }
-        let left = self.expression(lhs)?;
         let result = self.local(ValType::I64);
         if matches!(op, B::And | B::Or) {
             if *kind != T::Bool {

@@ -35,39 +35,41 @@ impl Emitter<'_> {
         Ok(())
     }
     fn mark_tail(&mut self, node: HirId, output: TypeId) -> Result<(), String> {
-        if matches!(self.mir.hir[node.index()].kind, HirKind::Return) {
-            return self.mark_tail(child(self.mir, node, Role::Value)?, output);
-        }
-        // A constructor check or metadata widening must still run after the
-        // operand returns; such a call is not a tail call in the lowered ABI.
-        if self.mir.value_adjustments[node.index()].is_some() || self.ty(node)? != output {
-            return Ok(());
-        }
-        let roles: &[Role] = match self.mir.hir[node.index()].kind {
-            HirKind::Call => {
-                self.tail_calls.insert(node);
-                return Ok(());
+        let mut pending = vec![node];
+        while let Some(node) = pending.pop() {
+            if matches!(self.mir.hir[node.index()].kind, HirKind::Return) {
+                pending.push(child(self.mir, node, Role::Value)?);
+                continue;
             }
-            HirKind::Block => &[Role::Result],
-            HirKind::If | HirKind::IfLet => &[Role::Then, Role::Else],
-            HirKind::LetElse => &[Role::Body, Role::Else],
-            HirKind::TypeAscription => &[Role::Value],
-            HirKind::Match => {
-                let bodies = self.mir.hir[node.index()]
-                    .children
-                    .iter()
-                    .filter(|edge| edge.role == Role::Arm)
-                    .map(|edge| child(self.mir, edge.node, Role::Value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                for body in bodies {
-                    self.mark_tail(body, output)?;
+            // A constructor check or metadata widening must still run after the
+            // operand returns; such a call is not a tail call in the lowered ABI.
+            if self.mir.value_adjustments[node.index()].is_some() || self.ty(node)? != output {
+                continue;
+            }
+            let roles: &[Role] = match self.mir.hir[node.index()].kind {
+                HirKind::Call => {
+                    self.tail_calls.insert(node);
+                    continue;
                 }
-                return Ok(());
+                HirKind::Block => &[Role::Result],
+                HirKind::If | HirKind::IfLet => &[Role::Then, Role::Else],
+                HirKind::LetElse => &[Role::Body, Role::Else],
+                HirKind::TypeAscription => &[Role::Value],
+                HirKind::Match => {
+                    let bodies = self.mir.hir[node.index()]
+                        .children
+                        .iter()
+                        .filter(|edge| edge.role == Role::Arm)
+                        .map(|edge| child(self.mir, edge.node, Role::Value))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    pending.extend(bodies.into_iter().rev());
+                    continue;
+                }
+                _ => continue,
+            };
+            for role in roles.iter().rev() {
+                pending.push(child(self.mir, node, *role)?);
             }
-            _ => return Ok(()),
-        };
-        for role in roles {
-            self.mark_tail(child(self.mir, node, *role)?, output)?;
         }
         Ok(())
     }
