@@ -157,12 +157,12 @@ pub(crate) fn set_access(path: &Path, policy: AccessPolicy) -> io::Result<()> {
 fn set_owner_only_dacl(path: &Path) -> io::Result<()> {
     use windows_sys::Win32::Foundation::LocalFree;
     use windows_sys::Win32::Security::Authorization::{
-        GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W,
-        GRANT_ACCESS, SE_FILE_OBJECT, TRUSTEE_W, TRUSTEE_IS_SID,
+        EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, SE_FILE_OBJECT, SetEntriesInAclW,
+        SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_W,
     };
     use windows_sys::Win32::Security::{
-        AllocateAndInitializeSid, FreeSid, PSID, DACL_SECURITY_INFORMATION,
-        OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SECURITY_NT_AUTHORITY,
+        AllocateAndInitializeSid, DACL_SECURITY_INFORMATION, FreeSid, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSID, SECURITY_NT_AUTHORITY,
         SUB_CONTAINERS_AND_OBJECTS_INHERIT,
     };
 
@@ -197,10 +197,7 @@ fn set_owner_only_dacl(path: &Path) -> io::Result<()> {
         Ok(sid)
     }
 
-    let system = match unsafe { well_known_sid(&[18]) } {
-        Ok(sid) => sid,
-        Err(error) => return Err(error),
-    };
+    let system = unsafe { well_known_sid(&[18]) }?;
     let administrators = match unsafe { well_known_sid(&[32, 544]) } {
         Ok(sid) => sid,
         Err(error) => {
@@ -367,13 +364,11 @@ mod tests {
     #[test]
     fn private_directory_dacl_grants_owner_only() {
         use windows_sys::Win32::Foundation::LocalFree;
-        use windows_sys::Win32::Security::Authorization::{
-            GetNamedSecurityInfoW, SE_FILE_OBJECT,
-        };
+        use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
         use windows_sys::Win32::Security::{
-            AllocateAndInitializeSid, EqualSid, FreeSid, GetAclInformation, GetAce,
-            GetSecurityDescriptorControl, ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION, PSID,
-            SECURITY_WORLD_SID_AUTHORITY, SE_DACL_PROTECTED,
+            ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION, AllocateAndInitializeSid, EqualSid, FreeSid,
+            GetAce, GetAclInformation, GetSecurityDescriptorControl, PSID, SE_DACL_PROTECTED,
+            SECURITY_WORLD_SID_AUTHORITY,
         };
         use windows_sys::Win32::Security::{AclSizeInformation, DACL_SECURITY_INFORMATION};
 
@@ -429,7 +424,14 @@ mod tests {
                 AllocateAndInitializeSid(
                     &SECURITY_WORLD_SID_AUTHORITY,
                     1,
-                    0, 0, 0, 0, 0, 0, 0, 0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
                     &mut everyone,
                 ),
                 0
