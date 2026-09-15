@@ -403,6 +403,9 @@ impl Solver<'_> {
                     // that is not equality between the two signatures. Keep
                     // the declared skeleton, and check the return separately
                     // after the body's own constraints have contributed evidence.
+                    if actual.index() < self.mir.hir.len() {
+                        self.mir.callable_boundaries[actual.index()] = Some(expected);
+                    }
                     let last = expected_type.arguments.len() - 1;
                     self.revision += 1;
                     for (index, (expected, actual)) in expected_type.arguments.into_iter()

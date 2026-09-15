@@ -1,0 +1,3 @@
+type Message = enum { Call(Fn(Int) -> Int) };
+def stop: Fn(Int) -> Never = fn(x) { fail!("stop", x) };
+export def answer: Message = Message.Call(stop);

@@ -12,6 +12,28 @@ pub struct SealedMir<'a> {
 }
 
 impl Mir {
+    /// A callable which cannot return needs no result conversion. Only its
+    /// value's exposed signature changes; parameter identities must be exact.
+    pub(crate) fn never_callable_view(&self, source: TypeId, target: TypeId) -> bool {
+        let (Some(source), Some(target)) = (self.types.get(source.index()), self.types.get(target.index())) else { return false; };
+        if source.constructor != TypeConstructor::Function || target.constructor != TypeConstructor::Function
+            || source.arguments.is_empty() || source.arguments.len() != target.arguments.len() { return false; }
+        let last = source.arguments.len() - 1;
+        source.arguments[..last] == target.arguments[..last]
+            && self.types.get(source.arguments[last].index()).is_some_and(|ty| ty.constructor == TypeConstructor::Never)
+    }
+
+    fn valid_callable_boundaries(&self) -> bool {
+        self.callable_boundaries.len() == self.hir.len()
+            && self.callable_boundaries.iter().enumerate().all(|(node, expected)| {
+                let Some(expected) = expected else { return true; };
+                let (Some(TypeState::Known(source)), Some(TypeState::Known(target))) =
+                    (self.ty_slots.get(node), self.ty_slots.get(expected.index())) else { return false; };
+                if source == target || !self.never_callable_view(*source, *target) { return true; }
+                self.value_adjustments.get(node).copied().flatten()
+                    .and_then(|slot| self.ty_slots.get(slot.index())) == Some(&TypeState::Known(*target))
+            })
+    }
     pub(crate) fn record_construction_inputs(&self) -> Vec<bool> {
         let mut inputs = vec![false; self.hir.len()];
         let mut pending = Vec::new();
@@ -47,6 +69,7 @@ impl Mir {
         inputs
     }
     fn valid_value_adjustment(&self, node: HirId, source: TypeId, target: TypeId, instance: Option<&GenericInstance>) -> bool {
+        if self.never_callable_view(source, target) { return true; }
         let source = &self.types[source.index()];
         if source.constructor == TypeConstructor::Unchecked { return source.arguments == [target]; }
         let target = &self.types[target.index()];
@@ -292,6 +315,7 @@ impl Mir {
             || self.hir.iter().enumerate().any(|(node, _)| matches!(self.ty_slots.get(node), Some(TypeState::Known(ty))
                 if !self.valid_pattern_selection(HirId(node as u32), *ty)))
             || self.value_adjustments.len() != self.hir.len()
+            || !self.valid_callable_boundaries()
             || self.propagation_boundaries.len() != self.hir.len()
             || self.hir.iter().enumerate().any(|(node, hir)| matches!(hir.kind, HirKind::Propagate)
                 && self.propagation_boundaries[node].is_none_or(|boundary| boundary.index() >= self.hir.len()))

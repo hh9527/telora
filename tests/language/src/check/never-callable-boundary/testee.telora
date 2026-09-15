@@ -1,0 +1,5 @@
+def stop: Fn(Int) -> Never = fn(x) { fail!("stop", x) };
+def accept: Fn(Fn(Int) -> Int) -> Int = fn(f) { 1 };
+type Message = enum { Call(Fn(Int) -> Int) };
+export def answer: Int = accept(stop);
+export def payload: Message = Message.Call(stop);

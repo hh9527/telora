@@ -284,6 +284,7 @@ pub fn resolve(mir: &mut Mir) {
 impl Solver<'_> {
     fn new(mir: &mut Mir) -> Solver<'_> {
         mir.value_adjustments.resize(mir.hir.len(), None);
+        mir.callable_boundaries.resize(mir.hir.len(), None);
         let mut value_spreads = vec![false; mir.hir.len()];
         for field in &mir.hir {
             if matches!(field.kind, HirKind::DictField | HirKind::Array | HirKind::Tuple) {

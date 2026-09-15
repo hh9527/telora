@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn never_callable_boundary_requires_sealed_use_site_evidence() {
+    let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/issue-198/src/boundary.telora")).unwrap();
+    let mut mir = graph(&[("@src/main", &source)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|diagnostics| panic!("{diagnostics:?}"));
+    let (node, target) = mir.callable_boundaries.iter().enumerate().find_map(|(node, target)| {
+        let target = (*target)?;
+        let (TypeState::Known(source), TypeState::Known(expected)) =
+            (mir.ty_slots[node], mir.ty_slots[target.index()]) else { return None; };
+        (source != expected && mir.never_callable_view(source, expected)).then_some((node, target))
+    }).expect("stop argument has a distinct exposed signature");
+    let original = mir.ty_slots[node];
+    assert_eq!(mir.value_adjustments[node], Some(target));
+    let TypeState::Known(stop) = symbol_type(&mir, "stop") else { panic!("closed declaration"); };
+    let result = *mir.types[stop.index()].arguments.last().unwrap();
+    assert_eq!(mir.types[result.index()].constructor, TypeConstructor::Never);
+    mir.value_adjustments[node] = None;
+    assert!(mir.seal().is_err(), "removing adaptation must not publish an incomplete boundary");
+    mir.value_adjustments[node] = Some(TypeSlotId(node as u32));
+    assert!(mir.seal().is_err(), "an identity adjustment does not satisfy the expected signature");
+    mir.value_adjustments[node] = Some(target);
+    assert_eq!(mir.ty_slots[node], original, "adaptation must not overwrite the source signature");
+    mir.seal().unwrap_or_else(|diagnostics| panic!("{diagnostics:?}"));
+}
+
+#[test]
 fn native_value_shapes_are_diagnosed_before_codegen_and_enforced_by_seal() {
     let mut mir = graph(&[(
         "@src/main",

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "packages": {
+    "issue-198": {
+      "source": {
+        "workspace": ""
+      },
+      "modules": [
+        "@src/boundary",
+        "@src/capture-control",
+        "@src/enum-payload"
+      ],
+      "dependencies": []
+    }
+  }
+}

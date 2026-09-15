@@ -6,6 +6,14 @@ impl Solver<'_> {
     /// Record the complete signature before instance materialization so every
     /// backend can consume an existing TypeId, including generic instances.
     pub(super) fn finalize_callable_adjustments(&mut self) {
+        for index in 0..self.mir.hir.len() {
+            let Some(expected) = self.mir.callable_boundaries[index] else { continue; };
+            let (TypeState::Known(source), TypeState::Known(target)) =
+                (self.mir.ty_slots[index], self.mir.ty_slots[expected.index()]) else { continue; };
+            if source != target && self.mir.never_callable_view(source, target) {
+                self.mir.value_adjustments[index] = Some(expected);
+            }
+        }
         let mut canonical = self.mir.types.iter().enumerate().map(|(index, ty)|
             ((ty.constructor.clone(), ty.arguments.clone()), TypeId(index as u32)))
             .collect::<std::collections::BTreeMap<_, _>>();

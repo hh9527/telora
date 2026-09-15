@@ -1,0 +1,5 @@
+import "std/value" { Value };
+type Message = enum { Item(Int) };
+import Message.{Item};
+def make: Fn(Int) -> Message = fn(value) { Item(value) };
+export def answer: Value = Value.Int(match make(1) { Message.Item(x) => x });

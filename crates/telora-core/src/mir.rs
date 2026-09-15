@@ -696,6 +696,9 @@ pub struct Mir {
     pub construction_checks: Vec<ConstructionCheck>,
     /// Implicit construction boundaries; the source expression retains its own type.
     pub value_adjustments: Vec<Option<TypeSlotId>>,
+    /// Expected signatures at authored function-value uses. These retain the
+    /// obligation independently of the adjustment chosen by type solving.
+    pub callable_boundaries: Vec<Option<TypeSlotId>>,
     /// Lexical function/module boundary for each propagation expression.
     pub propagation_boundaries: Vec<Option<HirId>>,
     pub bound_requirements: Vec<BoundRequirement>,
@@ -831,6 +834,11 @@ impl Mir {
         }
         for (node, target) in self.value_adjustments.iter().enumerate() {
             if let Some(target) = target { writeln!(out, "value-adjustment {node} {:?}", self.ty_slots[target.index()]).unwrap(); }
+        }
+        for (node, target) in self.callable_boundaries.iter().enumerate() {
+            if let Some(target) = target {
+                writeln!(out, "callable-boundary {node} {target:?} => {:?}", self.ty_slots[target.index()]).unwrap();
+            }
         }
         for (node, boundary) in self.propagation_boundaries.iter().enumerate() {
             if let Some(boundary) = boundary { writeln!(out, "propagation-boundary {node} {boundary:?}").unwrap(); }
