@@ -1,7 +1,8 @@
 # RFC 0298：以 MIR 节点 mini pass 驱动静态求解
 
-状态：实施中。
+状态：已实现并完成分支验收，待合入 main。
 跟踪：[#199](https://github.com/hh9527/telora/issues/199)。
+实现分支：`refactor/199-mir-mini-passes`。
 关联：[#197](https://github.com/hh9527/telora/issues/197)、
 [#165](https://github.com/hh9527/telora/issues/165)。
 
@@ -132,3 +133,60 @@ symbol-resolve 即使存在 Unresolved/Conflicted，也将其结论交给 type-r
 
 暂不引入并行任务、通用异步执行器、持久化调度状态或增量编译协议。
 调度模型可以为后续工作提供基础，但这些都不是本次验收条件。
+
+## 实现与验收记录（2026-09-15）
+
+实现提交：`aef4c36a`（索引工作表）、`8c2ca356`（依赖调度及类型操作）。
+当前设计见 [IMPLEMENTATION.md](../docs/design/IMPLEMENTATION.md#静态-mini-pass-调度)。
+
+符号阶段分为索引与引用闭合。引用闭合的任务覆盖 Symbol、Reference、Namespace、
+Constructor 和 ConstructorNamespace；结果与等待边在 MIR 中，外层调度器保存就绪队列、
+去重集合与消费者索引。每次读到第一个未就绪输入便登记等待，无需复制函数栈或类型环境。
+队列静止后用迭代遍历识别等待环，优先发布无依据的分类查询的否定结论，然后恢复消费者。
+循环引用没有健康依据时成为 Unresolved，仍允许独立节点继续进入类型求解。
+
+类型替换使用 MIR 中可复用的 `type_substitution` 工作槽位。相同上下文中的共享类型
+只分配一个结果槽；切换上下文时重建操作槽，规范 TypeId 保留在全局类型表。
+匹配、参数存在性和模式 occurs 使用显式遍历，并分别按类型对或类型/binder 上下文去重。
+
+调用链审视除最初列出的递归外，还发现并替换了两条路径：
+
+- `equal → compatible_structure → equal`：改为共享相等约束队列，子约束不重入求解器。
+- `tuple_spread → solve_task`：返回新的 Tuple 任务，由外层调度循环执行。
+
+已存在的 module 工作表、类型约束 revision 固定点轮次、代理归一化、实例展开、
+SCC 分析和 seal 检查继续复用，没有为了任务形式一致而另写一套求解器。
+直接/间接调用候选扫描与人工检查覆盖了 module/symbol/type、MIR seal 和 TypeImage 构建；
+保留的诊断渲染递归有深度 32、节点预算 128 的固定上限，不执行语义 mini pass。
+这项审视结合针对性测试提供实现证据，不将文本扫描等同于形式化调用图证明，
+也不扩展为解析器或 Wasm 后端的栈安全保证。
+
+验证结果：
+
+- `CARGO_INCREMENTAL=0 cargo test --workspace --no-fail-fast` 通过。
+- 最终 core 测试 166 项通过，release 语言测试 427 项通过。
+- 256 KiB 线程栈覆盖 4,000 项表达式、1,500 模块重导出链、4,000 层命名空间别名、
+  4,000 层构造器别名、4,000 层共享类型匹配/替换和 2,000 层数组字面量兼容。
+  符号测试先在外部解析，类型测试直接构造扁平类型图，避免混入 parser 的栈限制。
+- FIFO/LIFO 就绪顺序对照中，菱形重导出的最终绑定、sealed 类型 ID 和完整 MIR dump
+  一致；循环引用的符号及类型诊断一致。已有全量构建测试继续覆盖清单顺序、泛型实例
+  和 property 等信息的确定性。
+- lab-ontology 的 query/ontology/intent/construction-rules/model-rules，以及
+  world-model、spider-model、dog-model 的 query，共 507 项测试通过。
+  6 个故意失败的诊断用例仍保持消息、执行阶段、rule 来源与精确 subject 位置。
+- 源文件大小检查、测试资产嵌入检查和 `git diff --check` 通过。
+
+性能基线是本 RFC 改造前的 `a8763648`，不是更早架构的累计基线。
+同机 release、相同 ontology 源码和清单；hyperfine 预热 3 次、采样 15 次，
+RSS 是 `/usr/bin/time` 5 次采样的中位数。模型测试使用 `--with-fuel 10000`，
+下面的 check 性能命令使用默认参数。
+
+| 命令 | 改造前均值 | 改造后均值 | 耗时变化 | 改造前峰值 RSS | 改造后峰值 RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ontology check --lib --only-types | 386.25 ms | 391.66 ms | +1.40% | 39.80 MiB | 40.35 MiB |
+| ontology check --lib | 603.28 ms | 594.08 ms | −1.52% | 70.96 MiB | 70.92 MiB |
+| ontology check @test/query | 495.73 ms | 500.45 ms | +0.95% | 71.27 MiB | 71.78 MiB |
+| world-model check --lib | 629.22 ms | 635.08 ms | +0.93% | 71.24 MiB | 71.08 MiB |
+
+这些负载未观察到明显性能回退，也没有明确的提速收益。纯静态阶段增加约 0.55 MiB
+峰值 RSS；完整初始化的峰值基本持平。此次收益在栈深度边界、显式依赖和 MIR 可观察性。
