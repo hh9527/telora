@@ -103,7 +103,7 @@ impl Plan {
             "unsupported plan version {}",
             self.version
         );
-        validate_name(&self.name, "plan")?;
+        validate_plan_name(&self.name).context("invalid plan name")?;
         validate_file_name(&self.name).context("invalid plan name")?;
         validate_key(&self.key).context("invalid plan key")?;
 
@@ -251,6 +251,30 @@ fn validate_name(name: &str, subject: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_plan_name(name: &str) -> Result<()> {
+    validate_name(name, "plan")?;
+    let mut separator = true;
+    for byte in name.bytes() {
+        if byte.is_ascii_lowercase() || byte.is_ascii_digit() {
+            separator = false;
+        } else if matches!(byte, b'-' | b'_' | b'.') && !separator {
+            separator = true;
+        } else {
+            bail!("plan name must use lowercase ASCII letters and digits separated by single '-', '_' or '.'");
+        }
+    }
+    ensure!(!separator, "plan name must end with an ASCII letter or digit");
+    // Windows reserves device names even when followed by an extension.
+    let stem = name.split('.').next().unwrap_or_default();
+    let numbered_device = stem.strip_prefix("com").or_else(|| stem.strip_prefix("lpt"))
+        .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'));
+    ensure!(
+        !matches!(stem, "con" | "prn" | "aux" | "nul") && !numbered_device,
+        "plan name must not use a reserved Windows device name"
+    );
+    Ok(())
+}
+
 fn validate_file_name(name: &str) -> Result<()> {
     ensure!(!name.is_empty(), "file name must not be empty");
     validate_relative_path(Path::new(name), false)?;
@@ -323,6 +347,12 @@ mod tests {
 
     #[test]
     fn accepts_top_level_extensions_and_rejects_unsafe_plan_names() {
+        for name in ["a", "1", "tool-v1_linux.json", "com10.json", &"a".repeat(64)] {
+            assert!(Plan::from_value(json!({
+                "version": 1, "name": name, "key": "tool-v1", "items": []
+            })).is_ok(), "expected valid name: {name}");
+        }
+        assert!(validate_plan_name(&"a".repeat(65)).is_err());
         let extended = json!({
             "version": 1,
             "name": "tool.json",
@@ -332,7 +362,9 @@ mod tests {
         });
         assert!(Plan::from_value(extended).is_ok());
 
-        for name in [".", "..", "../escape", "dir/file", "bad\0name"] {
+        for name in [".", "..", "../escape", "dir/file", "bad\0name",
+            "Σ", "ς", "中文", "Tool", "example plan", "tool.", "tool..json",
+            "tool:stream", "-tool", "tool_", "con", "nul.json", "com1.json", "lpt9"] {
             let value = json!({
                 "version": 1,
                 "name": name,
@@ -350,7 +382,7 @@ mod tests {
     fn rejects_dot_in_plan_and_download_keys() {
         let mut value = json!({
             "version": 1,
-            "name": "example plan",
+            "name": "example-plan",
             "key": "plan.v1",
             "items": []
         });
@@ -375,7 +407,7 @@ mod tests {
     fn uses_pascal_case_for_enum_values() {
         let plan: Plan = serde_json::from_value(json!({
             "version": 1,
-            "name": "example plan",
+            "name": "example-plan",
             "key": "plan-v1",
             "items": [{
                 "name": "example archive",
@@ -400,7 +432,7 @@ mod tests {
     fn rejects_conflicting_definitions_for_a_global_download_key() {
         let plan: Plan = serde_json::from_value(json!({
             "version": 1,
-            "name": "conflicting plan",
+            "name": "conflicting-plan",
             "key": "plan-v1",
             "items": [
                 {
