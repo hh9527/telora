@@ -286,7 +286,11 @@ impl WorkspaceSpec {
                             .root
                             .strip_prefix(&self.root)
                             .expect("workspace members are contained")
-                            .to_owned(),
+                            .components()
+                            .map(|part| part.as_os_str().to_string_lossy())
+                            .collect::<Vec<_>>()
+                            .join("/")
+                            .into(),
                     }
                 } else {
                     LockedSource::Tarball {

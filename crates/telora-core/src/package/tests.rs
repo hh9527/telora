@@ -148,12 +148,20 @@ fn reports_files_absent_from_the_module_catalog() {
 #[test]
 fn generates_and_atomically_writes_the_complete_workspace_lock() {
     let root = fixture();
+    fs::create_dir(root.join("members")).unwrap();
+    fs::rename(root.join("app"), root.join("members/app")).unwrap();
+    fs::write(root.join(CONFIG_FILE), r#"{"version":1,"members":["members/app","model"]}"#).unwrap();
     fs::remove_file(root.join(LOCK_FILE)).unwrap();
     let spec = WorkspaceSpec::discover(&root).unwrap();
     let lock = spec.generate_lock(&BTreeMap::new()).unwrap();
     assert_eq!(lock.packages.keys().collect::<Vec<_>>(), ["app", "model"]);
     spec.write_lock(&lock).unwrap();
     assert_eq!(spec.validate_existing_lock().unwrap(), lock);
+    let json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join(LOCK_FILE)).unwrap()
+    ).unwrap();
+    assert_eq!(json["packages"]["app"]["source"]["workspace"], "members/app");
+    assert_eq!(json["packages"]["model"]["source"]["workspace"], "model");
     assert!(
         fs::read_to_string(root.join(LOCK_FILE))
             .unwrap()

@@ -305,7 +305,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             wasm_cli::run::execute(context, arguments.application, true)
         }
         Command::Lock => package_host::lock(&context)
-            .and_then(|path| emit(json!(path.to_string_lossy())).map(|()| 0)),
+            .and_then(|path| emit(json!(display_host_path(&path))).map(|()| 0)),
         Command::Check(arguments) => check_command(context, arguments, "telora.check/v1"),
         Command::Test(arguments) => test_cli::run(context, &arguments.name),
         Command::Query(arguments) => static_cli::query(context, arguments),
@@ -315,6 +315,21 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
 
 fn lsp_command(root: PathBuf) -> Result<(), String> {
     telora::lsp::run_stdio(root).map_err(|error| error.to_string())
+}
+
+// Display only: filesystem operations keep their canonical verbatim paths.
+fn display_host_path(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{unc}");
+        }
+        if let Some(local) = text.strip_prefix(r"\\?\") {
+            return local.to_owned();
+        }
+    }
+    text.into_owned()
 }
 
 fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
