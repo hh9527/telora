@@ -2,28 +2,9 @@ use super::*;
 use std::collections::BTreeMap;
 
 type Canonical = BTreeMap<(TypeConstructor, Vec<TypeId>), TypeId>;
+mod queue;
 #[cfg(test)]
 mod tests;
-
-fn evidence_slot(
-    nodes: &mut Vec<EvidenceNode>,
-    indices: &mut BTreeMap<(TypeId, TypeId), usize>,
-    subject: TypeId,
-    bound: TypeId,
-) -> usize {
-    *indices.entry((subject, bound)).or_insert_with(|| {
-        let id = nodes.len();
-        nodes.push(EvidenceNode {
-            subject,
-            bound,
-            state: BoundState::Pending,
-            implementation: None,
-            arguments: vec![],
-            dependencies: vec![],
-        });
-        id
-    })
-}
 
 impl Solver<'_> {
     pub(super) fn is_trait(&self, symbol: SymbolId) -> bool {
@@ -89,7 +70,6 @@ impl Solver<'_> {
 
     pub(super) fn prove_bounds(&mut self) {
         self.collect_implementations();
-        self.reject_nonconvergent_instances();
         for index in 0..self.mir.hir.len() {
             if !matches!(self.mir.hir[index].kind, HirKind::TypeParameter) {
                 continue;
@@ -121,118 +101,13 @@ impl Solver<'_> {
                 )
             })
             .collect::<Canonical>();
-        let mut nodes = vec![];
-        let mut indices = BTreeMap::new();
-        let roots = self
-            .mir
-            .bound_requirements
-            .iter()
-            .map(|r| {
-                self.known(r.subject)
-                    .zip(self.known(r.bound))
-                    .map(|(subject, bound)| evidence_slot(&mut nodes, &mut indices, subject, bound))
-            })
-            .collect::<Vec<_>>();
-        let mut index = 0;
-        while index < nodes.len() {
-            if !self.check_type_expansion(None) {
-                self.mir.evidence = nodes;
-                return;
-            }
-            let (subject, bound) = (nodes[index].subject, nodes[index].bound);
-            if let Some(state) = self.direct_evidence(subject, bound) {
-                nodes[index].state = state;
-                index += 1;
-                continue;
-            }
-            let Some(raw) = self.meta_type(bound) else {
-                nodes[index].state = BoundState::Rejected;
-                index += 1;
-                continue;
-            };
-            let mut candidates = vec![];
-            for implementation in &self.mir.trait_implementations {
-                let mut substitutions = BTreeMap::new();
-                if self.match_type(implementation.trait_type, raw, &mut substitutions) {
-                    candidates.push((implementation.clone(), substitutions));
-                }
-            }
-            // RFC 0260 defines exact concrete precedence over a property
-            // blanket. All other overlap remains a declaration diagnostic.
-            if candidates
-                .iter()
-                .any(|(implementation, _)| self.concrete_implementation(implementation))
-            {
-                candidates
-                    .retain(|(implementation, _)| self.concrete_implementation(implementation));
-            }
-            match candidates.len() {
-                0 => nodes[index].state = BoundState::Rejected,
-                1 => {
-                    let (implementation, substitutions) = candidates.pop().unwrap();
-                    nodes[index].implementation = Some(implementation.symbol);
-                    nodes[index].arguments = substitutions.iter().map(|(&p, &t)| (p, t)).collect();
-                    if self.nonconvergent_instances.contains(&implementation.symbol) {
-                        nodes[index].state = BoundState::Unresolved;
-                        self.nonconvergent_evidence.insert((subject, bound));
-                        index += 1;
-                        continue;
-                    }
-                    for (parameter, bound) in implementation.requirements {
-                        let Some(&subject) = substitutions.get(&parameter) else {
-                            nodes[index].state = BoundState::Unresolved;
-                            continue;
-                        };
-                        let bound = self.substitute_resolved(bound, &substitutions, &mut canonical);
-                        let dependency = evidence_slot(&mut nodes, &mut indices, subject, bound);
-                        nodes[index].dependencies.push(dependency);
-                    }
-                }
-                _ => nodes[index].state = BoundState::Ambiguous,
-            }
-            index += 1;
-        }
-        // Least fixed point over one obligation graph. Cycles cannot prove
-        // themselves; there is no speculative solve, rollback or recovery.
-        loop {
-            let mut changed = false;
-            for index in 0..nodes.len() {
-                if nodes[index].state != BoundState::Pending {
-                    continue;
-                }
-                if let Some(implementation) = nodes[index].implementation
-                    && nodes[index]
-                        .dependencies
-                        .iter()
-                        .all(|&d| nodes[d].state.is_proven())
-                {
-                    nodes[index].state = BoundState::Implementation(implementation);
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-        loop {
-            let mut changed = false;
-            for node in &nodes {
-                if node.dependencies.iter().any(|&dependency| {
-                    let dependency = &nodes[dependency];
-                    self.nonconvergent_evidence.contains(&(dependency.subject, dependency.bound))
-                }) {
-                    changed |= self.nonconvergent_evidence.insert((node.subject, node.bound));
-                }
-            }
-            if !changed { break; }
-        }
-        for node in &mut nodes {
-            if node.state == BoundState::Pending {
-                node.state = BoundState::Rejected;
-            }
-        }
+        let requirements = self.mir.bound_requirements.iter().map(|r|
+            self.known(r.subject).zip(self.known(r.bound))).collect::<Vec<_>>();
+        let roots = requirements.into_iter().map(|types|
+            types.map(|(subject, bound)| self.request_evidence(subject, bound))).collect::<Vec<_>>();
+        self.solve_pending_evidence(&mut canonical, None);
         for (index, root) in roots.into_iter().enumerate() {
-            let state = root.map_or(BoundState::Unresolved, |root| nodes[root].state);
+            let state = root.map_or(BoundState::Unresolved, |root| self.mir.evidence[root].state);
             self.mir.bound_requirements[index].state = state;
             self.mir.bound_requirements[index].evidence = root;
             let reference = self.mir.bound_requirements[index].reference;
@@ -242,11 +117,11 @@ impl Solver<'_> {
                 self.mir.member_selections[reference.index()] =
                     Some(MemberSelection::TraitMember {
                         index,
-                        implementation: root.and_then(|root| nodes[root].implementation),
+                        implementation: root.and_then(|root| self.mir.evidence[root].implementation),
                     });
             }
             if matches!(state, BoundState::Rejected | BoundState::Unresolved | BoundState::Ambiguous)
-                && !root.is_some_and(|root| self.nonconvergent_evidence.contains(&(nodes[root].subject, nodes[root].bound))) {
+                && !self.expansion_exhausted {
                 let requirement = &self.mir.bound_requirements[index];
                 let subject = self.diagnostic_type(requirement.subject);
                 let bound = self.diagnostic_bound(requirement.bound);
@@ -266,7 +141,6 @@ impl Solver<'_> {
                 ));
             }
         }
-        self.mir.evidence = nodes;
     }
 
     /// Exact substitution of already resolved IDs during static evidence

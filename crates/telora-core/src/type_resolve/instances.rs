@@ -77,6 +77,12 @@ impl Solver<'_> {
                     self.admit_instance(key, &mut indices, &mut canonical).map(GenericReference::Instance);
             }
         }
+        let mut requirements = vec![vec![]; self.mir.hir.len()];
+        for requirement in &self.mir.bound_requirements {
+            if let Some(evidence) = requirement.evidence {
+                requirements[requirement.reference.index()].push(evidence);
+            }
+        }
         let mut next = 0;
         let mut next_type = 0;
         let mut check_templates = BTreeMap::<SymbolId, Vec<ConstructionCheck>>::new();
@@ -196,21 +202,34 @@ impl Solver<'_> {
                 let mut adjustments = vec![];
                 let mut translated = BTreeMap::new();
                 for node in nodes {
-                    if matches!(self.mir.member_selections[node.index()], Some(MemberSelection::TraitMember { .. })) {
-                        if let Some(template) = self.mir.bound_requirements.iter().find(|r| r.reference == node)
-                            .and_then(|r| r.evidence).map(|id| (self.mir.evidence[id].subject, self.mir.evidence[id].bound))
-                        {
-                            let subject = self.substitute_resolved(template.0, &substitutions, &mut canonical);
-                            let bound = self.substitute_resolved(template.1, &substitutions, &mut canonical);
-                            if let Some((symbol, arguments)) = self.mir.evidence.iter().find(|e| e.subject == subject && e.bound == bound && e.state.is_proven())
-                                .and_then(|e| e.implementation.map(|symbol| (symbol, e.arguments.clone())))
-                            {
-                                if let Some(instance) = self.admit_instance((symbol, arguments), &mut indices, &mut canonical) {
-                                    implementations.push((node, instance));
+                    for (position, &template) in requirements[node.index()].iter().enumerate() {
+                        let template = &self.mir.evidence[template];
+                        let (subject, bound) = (template.subject, template.bound);
+                        let subject = self.substitute_resolved(subject, &substitutions, &mut canonical);
+                        let bound = self.substitute_resolved(bound, &substitutions, &mut canonical);
+                        let evidence = self.request_evidence(subject, bound);
+                        let origin = Some(self.mir.hir[node.index()].location);
+                        if !self.solve_pending_evidence(&mut canonical, origin) { return; }
+                        let evidence = &self.mir.evidence[evidence];
+                        if !evidence.state.is_proven() {
+                            if self.mir.generic_instances[next].concrete {
+                                let message = format!("instantiated generic constraint is not satisfied: {} requires {}",
+                                    self.diagnostic_resolved_type(subject),
+                                    self.diagnostic_resolved_type(self.meta_type(bound).unwrap_or(bound)));
+                                let location = self.mir.hir[node.index()].location;
+                                if !self.mir.diagnostics.iter().any(|d| d.message == message
+                                    && d.labels.iter().any(|label| label.primary && label.location == location)) {
+                                    self.mir.diagnostics.push(Diagnostic::error(message, location));
                                 }
-                            } else if self.mir.generic_instances[next].concrete
-                                && !self.nonconvergent_evidence.contains(&(subject, bound)) {
-                                self.mir.diagnostics.push(Diagnostic::error("generic trait member has no closed implementation evidence", self.mir.hir[node.index()].location));
+                            }
+                            continue;
+                        }
+                        if position == 0
+                            && matches!(self.mir.member_selections[node.index()], Some(MemberSelection::TraitMember { .. }))
+                            && let Some(symbol) = evidence.implementation {
+                            let arguments = evidence.arguments.clone();
+                            if let Some(instance) = self.admit_instance((symbol, arguments), &mut indices, &mut canonical) {
+                                implementations.push((node, instance));
                             }
                         }
                     }
@@ -303,7 +322,6 @@ impl Solver<'_> {
         // Evidence and reference paths may enumerate the same bindings in a
         // different order. Ordering is not part of an instance's identity.
         key.1.sort_by_key(|(parameter, _)| *parameter);
-        if self.nonconvergent_instances.contains(&key.0) { return None; }
         // A nominal definition with conflicted member evidence cannot produce
         // instances. In particular, do not restart an argument-growth cycle
         // already rejected before layout materialization.

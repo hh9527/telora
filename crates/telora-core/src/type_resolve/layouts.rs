@@ -38,7 +38,6 @@ impl Solver<'_> {
             let TypeConstructor::Nominal(symbol) = owner.constructor else {
                 continue;
             };
-            if self.nonconvergent_instances.contains(&symbol) { continue; }
             let Some(definition) = self.nominal_index[symbol.index()] else {
                 continue;
             };

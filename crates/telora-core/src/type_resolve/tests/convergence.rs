@@ -11,12 +11,12 @@ fn finite_instance_cycles_close_and_growth_does_not_cascade() {
         let source = source(case);
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
-        assert!(mir.diagnostics.iter().any(|d| d.message.contains("finite generic instance expansion")),
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains("type expansion depth limit exceeded")),
             "{case}: {:?}", mir.diagnostics);
         assert!(!mir.diagnostics.iter().any(|d| d.message.contains("no closed implementation evidence")),
             "{case}: {:?}", mir.diagnostics);
         assert!(mir.seal().is_err());
-        assert!(mir.generic_instances.len() < 100, "growth stopped before enumeration");
+        assert!(mir.generic_instances.len() < 10000, "growth stopped at the type depth guard");
         if case == "diag-instance-growth" {
             assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
             assert!(mir.diagnostics.iter().any(|d| d.message.contains("type mismatch")));
@@ -122,4 +122,26 @@ fn finite_substitution_is_checked_before_more_expansion() {
             }
         }
     }
+}
+
+#[test]
+fn concrete_instance_obligations_share_one_closed_evidence_graph() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests");
+    let entry = std::fs::read_to_string(root.join("fixtures/type-expansion-limits/evidence.telora")).unwrap();
+    let provider = std::fs::read_to_string(root.join("language/src/test/instance-evidence/provider.telora")).unwrap();
+    let mut mir = graph(&[("@src/main", &entry), ("@src/provider", &provider)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}"));
+    let keys = mir.evidence.iter().map(|node| (node.subject, node.bound)).collect::<BTreeSet<_>>();
+    assert_eq!(keys.len(), mir.evidence.len(), "one stable node per obligation");
+    assert!(mir.evidence.iter().all(|node| node.state.is_proven()));
+    assert!(mir.evidence.iter().any(|node| !node.dependencies.is_empty()));
+    for instance in mir.generic_instances.iter().filter(|instance| instance.concrete) {
+        for &(node, implementation) in &instance.implementations {
+            assert!(matches!(mir.member_selections[node.index()], Some(MemberSelection::TraitMember { .. })));
+            assert!(mir.generic_instances[implementation.index()].concrete);
+        }
+    }
+    assert!(mir.generic_instances.iter().filter(|instance| instance.concrete)
+        .any(|instance| !instance.implementations.is_empty()));
 }
