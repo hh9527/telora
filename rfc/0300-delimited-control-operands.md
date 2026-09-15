@@ -1,6 +1,6 @@
 # RFC 0300：控制表达式操作数的显式边界
 
-状态：已接受，实施中。
+状态：已实现，已通过 Linux debug/release 小栈及语言回归；等待 Windows 回归。
 关联：[#165](https://github.com/hh9527/telora/issues/165)。
 分支：`fix/165-parser-stack-safety`。
 

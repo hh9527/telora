@@ -1,8 +1,8 @@
 //! Blame objects and diagnostic events are constructed inside Wasm.
 use crate::{abi::*, emit::Emitter, plan::child};
 use telora_core::{
-    syntax::kinds::BlameAction,
     mir::{HirId, NativeTypeId, Role, TypeConstructor as T},
+    syntax::kinds::BlameAction,
 };
 use wasm_encoder::{Instruction as I, ValType};
 
@@ -42,8 +42,11 @@ impl Emitter<'_> {
                 I::I32Store(memory(offset, 2)),
             ]);
         }
-        self.extend([I::LocalGet(packet), I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
-            I::I32Store(memory(32, 2))]);
+        self.extend([
+            I::LocalGet(packet),
+            I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
+            I::I32Store(memory(32, 2)),
+        ]);
         self.table_push(DIAGNOSTICS, packet, DIAGNOSTIC_BYTES);
         if !warning {
             self.extend([
@@ -56,20 +59,15 @@ impl Emitter<'_> {
             ]);
         }
     }
-    pub fn raise(&mut self, node: HirId, action: BlameAction) -> Result<u32, String> {
+    pub fn raise_values(
+        &mut self,
+        node: HirId,
+        action: BlameAction,
+        message: u32,
+        values: &[u32],
+    ) -> Result<u32, String> {
         let message_node = child(self.mir, node, Role::Value)?;
-        let message = self.expression(message_node)?;
         let message_type = self.ty(message_node)?;
-        let subject_nodes = self.mir.hir[node.index()]
-            .children
-            .iter()
-            .filter(|e| e.role == Role::Subject)
-            .map(|e| e.node)
-            .collect::<Vec<_>>();
-        let mut values = vec![];
-        for subject in subject_nodes {
-            values.push(self.expression(subject)?);
-        }
         let (message, subjects, count) =
             if self.mir.types[message_type.index()].constructor == T::String {
                 let subjects = self.alloc(values.len() as u32 * 12);

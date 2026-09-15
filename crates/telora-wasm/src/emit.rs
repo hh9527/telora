@@ -234,6 +234,18 @@ impl<'a> Emitter<'a> {
             Binary(HirId, telora_core::syntax::kinds::BinaryOperator),
             If(HirId, u32),
             IfLet(HirId, u32),
+            LetElse(HirId, u32),
+            Debug(HirId),
+            RaiseMessage(HirId, telora_core::syntax::kinds::BlameAction),
+            RaiseSubject(
+                HirId,
+                telora_core::syntax::kinds::BlameAction,
+                u32,
+                Vec<HirId>,
+                Vec<u32>,
+            ),
+            MatchInput(HirId),
+            MatchArm(HirId, u32, u32, Vec<HirId>, usize),
             Adjust(HirId),
             Ascription(HirId),
             StructUpdate(HirId),
@@ -251,6 +263,27 @@ impl<'a> Emitter<'a> {
             let mut prepared = None;
             loop {
                 match self.mir.hir[current.index()].kind {
+                    HirKind::Raise(_) | HirKind::Panic => {
+                        let action = match self.mir.hir[current.index()].kind {
+                            HirKind::Raise(action) => action,
+                            _ => telora_core::syntax::kinds::BlameAction::Fail,
+                        };
+                        pending.push(Pending::RaiseMessage(current, action));
+                        current = child(self.mir, current, Role::Value)?;
+                    }
+                    HirKind::Debug { .. } => {
+                        pending.push(Pending::Debug(current));
+                        current = child(self.mir, current, Role::Value)?;
+                    }
+                    HirKind::Match => {
+                        pending.push(Pending::MatchInput(current));
+                        current = child(self.mir, current, Role::Value)?;
+                    }
+                    HirKind::LetElse => {
+                        let result = self.let_start(current)?;
+                        pending.push(Pending::LetElse(current, result));
+                        current = child(self.mir, current, Role::Body)?;
+                    }
                     HirKind::Index => {
                         pending.push(Pending::Index(current));
                         current = child(self.mir, current, Role::Receiver)?;
@@ -341,6 +374,67 @@ impl<'a> Emitter<'a> {
             };
             while let Some(frame) = pending.pop() {
                 let node = match frame {
+                    Pending::RaiseMessage(node, action) => {
+                        let subjects = self.mir.hir[node.index()]
+                            .children
+                            .iter()
+                            .filter(|edge| edge.role == Role::Subject)
+                            .map(|edge| edge.node)
+                            .collect::<Vec<_>>();
+                        if let Some(&subject) = subjects.first() {
+                            pending.push(Pending::RaiseSubject(
+                                node,
+                                action,
+                                value,
+                                subjects,
+                                Vec::new(),
+                            ));
+                            current = subject;
+                            continue 'evaluate;
+                        }
+                        value = self.raise_values(node, action, value, &[])?;
+                        node
+                    }
+                    Pending::RaiseSubject(node, action, message, subjects, mut values) => {
+                        values.push(value);
+                        if let Some(&subject) = subjects.get(values.len()) {
+                            pending.push(Pending::RaiseSubject(
+                                node, action, message, subjects, values,
+                            ));
+                            current = subject;
+                            continue 'evaluate;
+                        }
+                        value = self.raise_values(node, action, message, &values)?;
+                        node
+                    }
+                    Pending::MatchInput(node) => {
+                        let arms = self.mir.hir[node.index()]
+                            .children
+                            .iter()
+                            .filter(|edge| edge.role == Role::Arm)
+                            .map(|edge| edge.node)
+                            .collect::<Vec<_>>();
+                        let result = self.match_start();
+                        if let Some(&arm) = arms.first() {
+                            current = self.match_arm_start(arm, value)?;
+                            pending.push(Pending::MatchArm(node, result, value, arms, 0));
+                            continue 'evaluate;
+                        }
+                        self.match_finish(node);
+                        value = result;
+                        node
+                    }
+                    Pending::MatchArm(node, result, input, arms, index) => {
+                        self.match_arm_finish(node, arms[index], result, value)?;
+                        if let Some(&arm) = arms.get(index + 1) {
+                            current = self.match_arm_start(arm, input)?;
+                            pending.push(Pending::MatchArm(node, result, input, arms, index + 1));
+                            continue 'evaluate;
+                        }
+                        self.match_finish(node);
+                        value = result;
+                        node
+                    }
                     Pending::CallCallee(node, arguments) => {
                         if let Some(&argument) = arguments.first() {
                             pending.push(Pending::CallArgument(node, value, arguments, Vec::new()));
@@ -362,6 +456,17 @@ impl<'a> Emitter<'a> {
                         node
                     }
                     Pending::Adjust(node) => node,
+                    Pending::Debug(node) => {
+                        value = self.debug_value(node, value)?;
+                        node
+                    }
+                    Pending::LetElse(node, result) => {
+                        let body = child(self.mir, node, Role::Body)?;
+                        self.let_success(node, body, result, value)?;
+                        let no = self.expression(child(self.mir, node, Role::Else)?)?;
+                        value = self.if_let_finish(node, result, no)?;
+                        node
+                    }
                     Pending::Index(node) => {
                         value = self.index_receiver(node, value)?;
                         node
@@ -503,8 +608,9 @@ impl<'a> Emitter<'a> {
             }
         }
         match &self.mir.hir[node.index()].kind {
-            HirKind::Raise(action) => self.raise(node, *action),
-            HirKind::Panic => self.raise(node, telora_core::syntax::kinds::BlameAction::Fail),
+            HirKind::Raise(_) | HirKind::Panic => {
+                unreachable!("diagnostics are emitted by expression")
+            }
             HirKind::TypeMetadata => {
                 let ty = self.ty(node)?;
                 let shape = &self.mir.types[ty.index()];
@@ -544,7 +650,8 @@ impl<'a> Emitter<'a> {
             HirKind::FieldProjection => self.field_projection(node),
             HirKind::Field => unreachable!("fields are emitted by expression"),
             HirKind::Index => unreachable!("index nodes are emitted by expression"),
-            HirKind::Match | HirKind::LetElse => self.pattern_branch(node),
+            HirKind::Match => unreachable!("match is emitted by expression"),
+            HirKind::LetElse => unreachable!("let-else is emitted by expression"),
             HirKind::IfLet => unreachable!("if-let nodes are emitted by expression"),
             HirKind::Propagate => unreachable!("propagation is emitted by expression"),
             HirKind::Tuple => self.tuple_expression(node),
@@ -643,7 +750,7 @@ impl<'a> Emitter<'a> {
                 self.extend([I::LocalGet(value), I::Return]);
                 Ok(value)
             }
-            HirKind::Debug { .. } => self.debug(node),
+            HirKind::Debug { .. } => unreachable!("debug is emitted by expression"),
             HirKind::Closure | HirKind::Interpreter => self.closure(node),
             HirKind::Call => unreachable!("calls are emitted by expression"),
             other => Err(format!(

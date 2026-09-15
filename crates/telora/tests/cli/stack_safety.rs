@@ -84,6 +84,8 @@ fn full_check_and_types_only_are_stack_safe_for_syntax_boundaries() {
         (format!("{}1", "-".repeat(2000)), None),
         (format!("{}1", "1 + ".repeat(2000)), None),
         (format!("1{}", ".ty!(Int)".repeat(2000)), None),
+        (format!("1{}", ".dbg!()".repeat(2000)), None),
+        (format!("do {{ def ident: Fn(Int) -> Int = fn(x) {{ x }}; ident{}(1) }}", "\\(_)".repeat(2000)), None),
         (format!("1{}", " |> fn(x) { x }".repeat(2000)), None),
         (
             format!(
@@ -121,6 +123,17 @@ fn full_check_and_types_only_are_stack_safe_for_syntax_boundaries() {
             None,
         ),
         (format!("do {{ {}1 }}", "1; ".repeat(2000)), None),
+        (
+            format!("do {{ {}1 }}", "let (x, y) = (1, 2); ".repeat(2000)),
+            None,
+        ),
+        (
+            format!(
+                "do {{ def go: Fn() -> Int = fn() {{ {}1 }}; go() }}",
+                "let Some(x) = Some(1) else { return 0; }; ".repeat(2000)
+            ),
+            None,
+        ),
         (
             format!("{}{{ 0 }}", "if False { 1 } else ".repeat(2000)),
             None,
