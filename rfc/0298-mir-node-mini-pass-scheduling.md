@@ -1,6 +1,6 @@
 # RFC 0298：以 MIR 节点 mini pass 驱动静态求解
 
-状态：已实现并完成分支验收，待合入 main。
+状态：已实现、完成验收并合入 main。
 跟踪：[#199](https://github.com/hh9527/telora/issues/199)。
 实现分支：`refactor/199-mir-mini-passes`。
 关联：[#197](https://github.com/hh9527/telora/issues/197)、
