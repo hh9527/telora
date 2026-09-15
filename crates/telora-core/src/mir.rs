@@ -1,9 +1,9 @@
 //! Session-owned, partially solved IR. No resolver, type checker or VM lives here.
-use crate::ast::{
+use crate::syntax::kinds::{
     BinaryOperator, BindingKind, BlameAction, DeclaredInitializerKind, UnaryOperator,
 };
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
-use crate::syntax::telora::parser::CstData;
+use crate::syntax::telora::parser::{CstData, NodeRef};
 use std::fmt::Write;
 
 pub(crate) mod lower;
@@ -490,10 +490,19 @@ pub enum ResolveFailure {
 #[derive(Debug)]
 pub struct HirNode {
     pub module: ModuleId,
+    /// Logical reference into this module's CST; synthesized nodes can share
+    /// a source node. Compiler-only nodes need not have a syntax origin.
+    pub origin: Option<HirOrigin>,
     pub location: Location,
     pub kind: HirKind,
     pub children: Vec<Edge>,
     pub resolution: Option<ResolveSlotId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HirOrigin {
+    Source(NodeRef),
+    Desugared(NodeRef),
 }
 impl HirId {
     pub fn ty(self) -> TypeSlotId {
@@ -719,6 +728,7 @@ impl Mir {
         let id = HirId(self.hir.len().try_into().expect("HIR capacity"));
         self.hir.push(HirNode {
             module,
+            origin: None,
             location,
             kind,
             children,
@@ -877,6 +887,9 @@ impl Mir {
                 self.ty_slots[id]
             )
             .unwrap();
+            if let Some(origin) = node.origin {
+                writeln!(out, "hir-origin {id} {:?} {origin:?}", node.module).unwrap();
+            }
         }
         for diagnostic in &self.diagnostics {
             writeln!(out, "diagnostic {diagnostic:?}").unwrap();

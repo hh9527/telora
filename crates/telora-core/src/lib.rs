@@ -15,6 +15,7 @@ mod test_protocol;
 pub use test_protocol::{TestContext, TestHost, TestLimits, TestSource};
 pub use telora_data::{document, json, data_plan, source};
 pub mod mir;
+pub mod hir_lower;
 pub mod mir_query;
 pub mod static_sources;
 pub mod module_resolve;

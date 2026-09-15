@@ -19,9 +19,15 @@ use std::collections::{BTreeMap, HashMap};
 #[derive(Debug)]
 pub struct FrontendParse {
     pub cst: CstData,
-    pub program: Option<Program>,
-    pub recovered: RecoveredProgram,
+    pub body: FrontendBody,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// A module has one lowering result, never both a complete and a recovery tree.
+#[derive(Debug)]
+pub enum FrontendBody {
+    Complete(Program),
+    Recovered(RecoveredProgram),
 }
 
 #[derive(Clone, Debug)]
@@ -37,28 +43,26 @@ pub fn parse_registered(sources: &SourceDatabase, source_id: SourceId) -> Fronte
     let syntax_diagnostics = parsed.diagnostics;
     let mut lowering_diagnostics = Vec::new();
     let lowerer = Lowerer::new(source_id, source.text(), &parsed.syntax);
+    if syntax_diagnostics.is_empty() {
+        match lowerer.program() {
+            Ok(program) => return FrontendParse {
+                cst: parsed.syntax,
+                body: FrontendBody::Complete(program),
+                diagnostics: Vec::new(),
+            },
+            Err(diagnostic) => lowering_diagnostics.push(diagnostic),
+        }
+    }
     let recovered = lowerer.recover_program(&mut lowering_diagnostics);
-    let mut diagnostics = reconcile_frontend_diagnostics(
+    let diagnostics = reconcile_frontend_diagnostics(
         source.text(),
         &parsed.syntax,
         syntax_diagnostics,
         lowering_diagnostics,
     );
-    let program = if diagnostics.is_empty() {
-        match lowerer.program() {
-            Ok(program) => Some(program),
-            Err(diagnostic) => {
-                diagnostics.push(diagnostic);
-                None
-            }
-        }
-    } else {
-        None
-    };
     FrontendParse {
         cst: parsed.syntax,
-        program,
-        recovered,
+        body: FrontendBody::Recovered(recovered),
         diagnostics,
     }
 }
@@ -172,7 +176,11 @@ fn reconcile_frontend_diagnostics(
 }
 
 fn collect_recovery_units(cst: &CstData, node: NodeRef, units: &mut Vec<RecoveryUnit>) {
-    if let Node::Rule(rule, _) = cst.get(node) {
+    use crate::syntax::telora::ast::SyntaxNode;
+
+    for syntax in SyntaxNode::new(cst, node).descendants_and_self() {
+        let Some(rule) = syntax.rule() else { continue };
+        let node = syntax.node_ref();
         let accepts_trailing_diagnostic = matches!(
             rule,
             Rule::Argument
@@ -214,9 +222,6 @@ fn collect_recovery_units(cst: &CstData, node: NodeRef, units: &mut Vec<Recovery
                 accepts_trailing_diagnostic,
             });
         }
-    }
-    for child in cst.children(node) {
-        collect_recovery_units(cst, child, units);
     }
 }
 

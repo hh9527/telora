@@ -6,7 +6,7 @@ use super::*;
         let id = sources.add("test.telora", "let x = 1; x == 2");
         let parsed = parse_registered(&sources, id);
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-        let program = parsed.program.unwrap();
+        let FrontendBody::Complete(program) = parsed.body else { panic!("expected complete module"); };
         assert_eq!(program.location.range(), 0..17);
         assert_eq!(program.value.body.value.bindings[0].location.range(), 0..10);
         assert!(matches!(
@@ -33,7 +33,7 @@ use super::*;
             let id = sources.add("statements.telora", source);
             let parsed = parse_registered(&sources, id);
             assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-            let program = parsed.program.unwrap();
+            let FrontendBody::Complete(program) = parsed.body else { panic!("expected complete module"); };
             let ExprKind::Block(block) = &program.value.body.value.result.value else { panic!("expected block"); };
             assert_eq!(block.value.bindings.len(), if has_tail { 2 } else { 3 });
             assert!(block.value.bindings[0].value.name.value.starts_with('\0'));
@@ -57,7 +57,7 @@ use super::*;
         let id = sources.add("test.telora", "if True { 1 } else if { 2 } else { 3 }");
         let parsed = parse_registered(&sources, id);
         assert!(!parsed.diagnostics.is_empty());
-        assert!(parsed.program.is_none());
+        assert!(matches!(parsed.body, FrontendBody::Recovered(_)));
     }
 
     #[test]
@@ -65,7 +65,7 @@ use super::*;
         let mut sources = SourceDatabase::default();
         let id = sources.add("broken.telora", "let x = ; let y = ; y");
         let parsed = parse_registered(&sources, id);
-        assert!(parsed.program.is_none());
+        assert!(matches!(parsed.body, FrontendBody::Recovered(_)));
         assert!(parsed.diagnostics.len() >= 2);
     }
 
@@ -149,16 +149,14 @@ use super::*;
             "let before = 1; let broken = ; let after = 2; after",
         );
         let parsed = parse_registered(&sources, id);
-        assert!(parsed.program.is_none());
+        let FrontendBody::Recovered(recovered) = parsed.body else { panic!("expected recovered module"); };
         assert!(!parsed.diagnostics.is_empty());
-        let names = parsed
-            .recovered
-            .bindings
+        let names = recovered.bindings
             .iter()
             .map(|binding| binding.value.name.value.as_str())
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["before", "after"]);
-        assert!(parsed.recovered.result.is_some());
+        assert!(recovered.result.is_some());
     }
 
     #[test]
@@ -167,7 +165,7 @@ use super::*;
             let mut sources = SourceDatabase::default();
             let source = sources.add("test", text);
             let parsed = parse_registered(&sources, source);
-            assert!(parsed.program.is_none());
+            assert!(matches!(parsed.body, FrontendBody::Recovered(_)));
             parsed.diagnostics.into_iter().next().unwrap()
         }
         let invalid = error(r#""bad\q""#);

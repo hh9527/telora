@@ -2,7 +2,7 @@
 //! The source reader supplies text only, never resolved symbols or types.
 use crate::ast::BindingKind;
 use crate::mir::{self, *};
-use crate::parser::parse_registered;
+use crate::parser::{FrontendBody, parse_registered};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug)]
@@ -106,23 +106,23 @@ pub fn resolve_with_requests(
             }
         };
         let parsed = parse_registered(&mir.sources, source);
-        let syntax_valid = parsed.program.is_some();
+        let syntax_valid = matches!(&parsed.body, FrontendBody::Complete(_));
         mir.diagnostics.extend(parsed.diagnostics);
         let mut lower = mir::lower::Lower {
             mir: &mut mir,
             module: id,
             needs_display: false,
         };
-        let body = match parsed.program {
-            Some(program) => lower.body(
+        let body = match parsed.body {
+            FrontendBody::Complete(program) => lower.body(
                 program.value.body.location,
                 program.value.body.value.bindings,
                 Some(*program.value.body.value.result),
             ),
-            None => lower.body(
-                parsed.recovered.location,
-                parsed.recovered.bindings,
-                parsed.recovered.result,
+            FrontendBody::Recovered(recovered) => lower.body(
+                recovered.location,
+                recovered.bindings,
+                recovered.result,
             ),
         };
         lower.finish_module(body);

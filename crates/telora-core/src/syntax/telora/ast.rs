@@ -27,6 +27,16 @@ impl<'tree> SyntaxNode<'tree> {
             .map(|node| SyntaxNode::new(self.tree, node))
     }
 
+    /// CST subtrees occupy a contiguous preorder range. Scanning that range
+    /// needs neither an owned tree nor a recursive visitor.
+    pub fn descendants_and_self(self) -> impl DoubleEndedIterator<Item = Self> {
+        let last = match self.tree.get(self.node) {
+            Node::Rule(_, offset) => self.node.0 + usize::from(offset),
+            Node::Token(..) => self.node.0,
+        };
+        (self.node.0..=last).map(move |index| Self::new(self.tree, NodeRef(index)))
+    }
+
     pub fn rule(self) -> Option<Rule> {
         match self.tree.get(self.node) {
             Node::Rule(rule, _) => Some(rule),

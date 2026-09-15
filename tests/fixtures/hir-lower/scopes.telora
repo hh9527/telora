@@ -1,0 +1,6 @@
+do {
+    let identity: Fn(Int) -> Int = fn(x: Int) -> Int { x };
+    let values: Array(Int) = [1 + 2 * 3, identity(4)];
+    identity(5);
+    (values[0], 6 |> identity, ())
+}

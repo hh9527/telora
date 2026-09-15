@@ -1,12 +1,8 @@
 use crate::source::{Located, Location};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BlameAction {
-    Build,
-    Raise,
-    Warn,
-    Fail,
-}
+pub use crate::syntax::kinds::{
+    BinaryOperator, BindingKind, BlameAction, DeclaredInitializerKind, UnaryOperator,
+};
 
 pub type Identifier = Located<String>;
 pub type Program = Located<ProgramKind>;
@@ -56,33 +52,11 @@ impl BindingData {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DeclaredInitializerKind {
-    Struct,
-    Newtype,
-    Enum,
-}
-
 #[derive(Clone, Debug)]
 pub struct DecoratorKind {
     pub callee: Expr,
     pub arguments: Vec<Expr>,
     pub configured: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BindingKind {
-    Let,
-    Decl,
-    Def,
-    Native,
-    NativeType,
-    Type,
-    Trait,
-    Impl,
-    Import,
-    OpenImport,
-    Export,
 }
 
 #[derive(Clone, Debug)]
@@ -201,35 +175,6 @@ pub enum TypeArgumentKind {
 pub enum StringPartKind {
     Text(String),
     Expression(Expr),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UnaryOperator {
-    Negate,
-    Not,
-    LogicalNot,
-    BitNot,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BinaryOperator {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Remainder,
-    LessThan,
-    LessThanOrEqual,
-    GreaterThan,
-    GreaterThanOrEqual,
-    Equal,
-    NotEqual,
-    BitAnd,
-    StructUpdate,
-    BitOr,
-    BitXor,
-    And,
-    Or,
 }
 
 #[derive(Clone, Debug)]
