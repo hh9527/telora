@@ -39,7 +39,7 @@ pub use package::{
 };
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
 pub use runtime_host::{
-    DataLimits, EvalSource, SystemDataFormat, SystemDataSource,
+    DataLimits, ServiceSource, SystemDataFormat, SystemDataSource,
 };
 pub use source::{
     Diagnostic, Label, Loc, Located, Location, Origin, SourceDatabase, SourceId, TextRange,

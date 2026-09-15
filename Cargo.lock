@@ -1676,13 +1676,10 @@ version = "0.1.0"
 dependencies = [
  "async-lsp",
  "clap",
- "flate2",
  "futures",
  "regex",
- "rusqlite",
  "serde",
  "serde_json",
- "tar",
  "telora-core",
  "telora-ees",
  "telora-wasm",

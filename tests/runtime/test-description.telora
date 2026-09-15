@@ -1,11 +1,16 @@
 import "std/test" as test;
 import "std/eq" as eq;
 import "std/codec" {encode, Value};
-import "std/entry" as entry;
+import "std/transform-service" as entry;
 
 export def passing: test.Test = test.should_ok(fn() { fail!("must not execute during initialization") });
 export def failing: test.Test = test.should_fail(fn() { 42 });
 export def matching: test.Test = test.should_fail_with(fn() { fail!("expected message") }, "expected");
 export def fixtures: test.Test = test.with_fixtures(["missing.json", "missing.json"], fn(value) { fail!("must not load fixture or invoke factory") });
 export def answer: Value = encode(Value.type, [eq.equal(passing, passing), !eq.equal(failing, test.should_fail(fn() {42}))]);
-export def main: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) { answer });
+type MainService = struct {};
+impl entry.TransformService for MainService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) { answer },
+};
+export {MainService};

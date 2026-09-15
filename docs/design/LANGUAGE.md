@@ -1130,7 +1130,7 @@ builtin vendor 提供 `std`，全部 `std/*` selector 都只在该 crate 内解�
 tarball URL。
 
 resolver 配置只来自 prepared workspace。runtime Context、EES 和执行工具契约由
-`std/entry` 的名义 wrapper 表达。Telora 源文件没有独立的 `option` 声明；`option`
+实现 TransformService 的 MainService 类型导出表达。Telora 源文件没有独立的 `option` 声明；`option`
 可以作为普通 identifier 使用。
 
 Telora selector 不写且不能写 `.telora`；resolver 在物理查找时补上后缀。静态数据
@@ -1369,7 +1369,7 @@ Warning 和 failure 诊断属于 evaluation account，而不是普通 Array 返�
 容器不保存可供后续计算使用的失败子节点，也不提供“健康投影”。
 
 静态求解独立收集 Unresolved、Conflicted 和 Unknown 等诊断；类型未闭合不进入求值。
-运行阶段不提供 best-effort。run/serve/eval/eval-with 初始化失败即停止，不启动入口。
+运行阶段不提供 best-effort。run/serve/eval 初始化失败即停止，不启动入口。
 serve 已有的单请求失败恢复属于显式请求边界，不改变普通函数的顺序中断规则。
 资源耗尽等终止性错误中止整个 session，不尝试剩余根。
 
@@ -1457,27 +1457,8 @@ Host 的解析、fixture 展开和外部 IO 不由 Wasm fuel 覆盖，仍需简�
 
 ## 11. Host 边界
 
-Host 负责所有开放世界行为：文件和 package 解析、环境捕获、外部输入、权限、时钟、
-持久化、重试、事务以及真实效果。典型调用顺序为：
-
-```text
-Host 选择普通模块中的导出值
-  -> 固定依赖与 source snapshot
-  -> 按工具要求验证 Value、Eval、Run(State) 或 Serve(State) 名义类型
-  -> 解开 wrapper 中的 ContextConfig 与 Ees，并构造含参数和平台事实的 Env
-  -> 在准备 WorkWorld 调用内置 Entry.config(env, wrapper)，取得 SystemCaps 和 initializer
-  -> Host 按 SystemCaps 配置事件源，并提供私有 resources native
-  -> 在新的运行 WorkWorld 内由 native 生成 SystemResources，并直接调用 initializer(resources, wrapper)
-  -> 构造具体 State，并在唯一工具边界擦除为 actor.Service
-  -> 以 SystemEvent 驱动纯 reducer，解释返回的 SystemEffect
-  -> 原子发布成功结果，或丢弃失败过程的候选结果
-```
-
-Host virtual input 属于一次调用，在 Main 执行前冻结。Main 不能反向 import Host entry
-runtime，也不能请求 Host 在执行途中打开新的观察窗口。
-
-Plan 没有语言级权限。一个值即使静态类型为应用定义的 `ExecPlan`，也只是一段数据；
-只有相应 Host adapter 可以解释它。
+Telora 只进行数据求解，业务 Host 负责外部输入输出。模块清单和类型求解在 VM 之外完成，
+内置 entry 与业务代码在同一 MIR 中静态封闭。
 
 ### 11.1 当前 CLI Host
 
@@ -1487,9 +1468,8 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 telora [-C <context>] check <module>
 telora [-C <context>] test <name>
 telora [-C <context>] eval <module:export>
-telora [-C <context>] eval-with <module:export> [--source <name>=<source>]... [-- <arg>...]
-telora [-C <context>] run <module:export> [--source <name>=<source>]... [--ees-var <name>=<value>]... [-- <arg>...]
-telora [-C <context>] serve <module:export> [--source <name>=<source>]... [--ees-var <name>=<value>]... --bind stdio:// [-- <arg>...]
+telora [-C <context>] run <module> [--source <name>=<source>]...
+telora [-C <context>] serve <module> [--source <name>=<source>]... --bind stdio://
 telora [-C <context>] query|q modules [-p <substring>]
 telora [-C <context>] query|q exports <module> [-p <substring>]
 telora [-C <context>] query|q at <module>[:<line>[:<column>]] [-p <substring>] [-k type,let,def,import]
@@ -1503,20 +1483,8 @@ Value；`dbg!` 和命令错误在 stderr 输出 JSONL record。`check`、`test`�
 `serve` 输出各自的 JSONL 协议，`lock` 输出生成的 lock path JSON String。进程退出码
 独立表达命令是否成功。
 
-`eval @src/model:answer` 是选择普通 module 公开导出的一个示例。`eval` 要求导出类型是
-`Value`；`eval-with` 要求导出类型是 `entry.Eval`。该 wrapper 中的
-`entry.ContextConfig` 声明 source、环境变量和参数能力。前者只读取求值后的导出，
-后者只做一次普通函数调用；二者都不运行 reducer loop 或应用 EES。
-
-Context 声明中的名称必须唯一；CLI 提供的 source 必须与声明全集相等，环境变量必须
-存在并可表示为 String。
-`--` 后的参数保持顺序进入 `args`。source transport、格式验证、data limits 与
-run context 相同，但 canonical source path 使用 `@eval-ctx/<name>`。物理 locator 与
-未声明环境变量不进入 Telora World。
-
-`run` 和 `serve` 从 CWD 向上发现最近的 manifest，解析 `MODULE:EXPORT`，执行普通模块，
-再按 wrapper 的名义类型验收 export。`run` 要求 `entry.Run(State)`；`serve` 要求
-`entry.Serve(State)`。`-C` 指定 manifest discovery 的起始目录，该目录不必就是 crate root。
+`eval MODULE:NAME` 要求导出 Value。run/serve 接受 MODULE，选择具体类型 MainService。
+-C 指定 manifest discovery 的起点。服务契约见下文 TransformService 入口。
 
 `test <name>` 选择 `tests/<name>.telora`，名称必须是无后缀的规范相对路径；不接受
 绝对路径、parent traversal 或 export selector。当前只支持显式选择一个 Telora 根，
@@ -1609,175 +1577,44 @@ property 等其他需求根用 node/module 标识且 symbol/name 为 null。ID �
 运行命令不接受 `--best-effort`。需要多根初始化诊断时使用 `check`；只检查静态事实时
 使用 `check --only-types`。运行命令不为诊断而额外预执行用户代码。
 
-普通 module 用 `std/entry` 构造工具 wrapper。应用以具体 State 类型编写：
+### TransformService 入口
+
+服务入口是模块导出的具体类型 MainService，必须实现 std/transform-service.TransformService：
 
 ```telora
-import "std/ees" as ees;
-
-def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run: entry.Run(State) = entry.run(State.type, config, ees.none, fn(ctx) {
-    let initial: State = ...;
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = ...;
-    (initial, reduce)
-});
-```
-
-`entry.Run(State)` / `Serve(State)` 保留 State 类型到工具阶段。内置 Entry adapter 调用
-wrapper 中的初始化函数，再在 actor service 边界把 State 擦除为 Dyn；应用 reducer 内
-仍保留具体 State 类型。每个 transition 返回完整新 State 与 `Array(actor.Effect)`。
-Event 与 Effect 都是一阶数据，不包含 callback 或 continuation。
-
-```text
-Event  = Request {id, input}
-       | EesReply {id, request_id, result}
-
-Effect = EesCall {id, request_id, request}
-       | Reply {request_id, value}
-```
-
-`run` 产生唯一 `Request {id: "run", input: None}`，持续处理 EES reply，收到对应 Reply
-后输出其中的 Value 并退出。`serve` 为每个 stdin JSONL 输入分配 request ID；多个请求和
-EES call 可以同时 pending，reply 通过显式 ID 关联并可按完成顺序输出。重复的活动 call
-ID、未知 request、存在活动 call 时提前 Reply，以及同一请求重复 Reply 都是协议错误。
-
-`ees.Config` 声明完整 actor 集合。Host 据此构造 application EES service：
-
-```telora
-def ees_config: ees.Config = {
-    vars: {"tenant": "[a-z][a-z0-9-]{0,31}"},
-    models: [
-        ees.imos_model(
-            "materializer",
-            "user-cache:imos/{tenant}",
-            "user-data:materialized/{tenant}",
-        ),
-        ees.sqlite_model("catalog", "user-data:catalog/{tenant}/db.sqlite"),
-    ],
+trait TransformService {
+    init: Fn(Context) -> Self,
+    transform: Fn(Self, Value) -> Value,
 };
 ```
 
-actor name 在所有 component 间唯一。`ees.Config.vars` 的 Dict key 是变量名，value 是自动
-进行整串匹配的正则表达式。
-每个声明变量都必须被 locator 使用并通过 `--ees-var NAME=VALUE` 恰好绑定一次；未知、缺失、
-重复、格式不匹配以及含路径分隔符的值都失败。EES 声明不改变 reducer 接口；Host 校验
-model 名称、kind 和配置完全一致。
+Context 为 {sources: Dict(Value)}。@service.source("name") 是普通类型 property，
+多次声明归并为稳定来源清单，重复声明报错。Host 提供的来源必须与清单一致。
+MainService 可以是正常类型别名或重导出，所有类型参数和方法实例都在 MIR 中确定。
+内置 entry 包装方法调用，无运行时 trait 派发，也不按模块成员 shape 猜测入口。
 
-`std/ees.Request` 是 `(model, operation, input)` 的 component-neutral 普通数据。
-应用用 `actor.ees_call(id, request_id, request)` 发出调用；Host 异步执行并把结果作为
-`actor.EesReply` 重新送入 reducer。多步调用所需的阶段与关联信息保存在显式 State 中。
-`std/ees.install_shared` 和 `std/ees.sqlite_query` 只构造 component-neutral request，
-不执行 I/O。资源 locator
-使用 `user-data:`、`user-cache:`、`user-config:` 或 `user-state:`，冒号后是规范化
-相对路径。component adapter 按 Host 平台惯例解析物理目录：Linux 优先使用对应的
-`XDG_DATA_HOME`、`XDG_CACHE_HOME`、`XDG_CONFIG_HOME`、`XDG_STATE_HOME`（必须为非空绝对路径）；
-无效或缺失时分别回退到用户主目录下的 `.local/share`、`.cache`、`.config`、`.local/state`，
-主目录优先取 `HOME`，未设置时使用系统用户目录。Windows 使用 Known Folder：data/config
-使用 RoamingAppData，cache 使用 LocalAppData；macOS 的 data/config 使用
-`~/Library/Application Support`，cache 使用 `~/Library/Caches`。平台没有专用 state
-目录时，使用本地 data 目录下的 `state` 子目录（Windows 为 LocalAppData，macOS 为
-`~/Library/Application Support`）。Windows/macOS 不使用 `XDG_*` 覆盖这些目录。
-Entry 能看到 wrapper 声明的
-逻辑 locator，普通应用代码不能读取解析后的物理路径；物理路径不进入 Telora World，也不能由
-operation 改写。
+模块顶层值与 property 初始化完成后，Host 准备来源并调用 init；随后每次调用 transform。
+来源只读取一次，服务间隙 reset 到初始化后的确定基线。transform 不产生跨请求状态更新。
+init 失败不发布实例。内置 with_diagnostics 捕获普通语言 failure 并保留完整诊断；
+fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一基线获得独立预算。
+配额用于可停机，不是精确计费，reset 和页级计量方式不构成语言契约。
 
-Package Host 使用单独的私有 Service，其中的 actor 名为 `telora-packages`。该 actor 不进入应用
-`Env`、`SystemCaps` 或 manifest；应用即使使用相同逻辑名字，也只能寻址自己 Service 中
-显式绑定的实例。
+run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；serve --bind stdio:// 读取 JSONL，
+每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
+message、labels、notes；已捕获诊断不重复输出。两者都保留 stdin 给请求，不接受 stdin
+初始化 source。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
+初始化来源使用 @service/name，请求来源使用 @request；物理路径不进入来源身份。
 
-`entry.ContextConfig.sources` 声明初始化 source 契约。声明名必须唯一，且 CLI 提供的
-source 名与声明集合完全相等。`--source name=path.json` 按文件扩展名选择
-JSON/YAML/TOML；`file+json://path` 等形式显式选择文件 transport 和格式；
-`stdin+json://` 等形式从 stdin 读取一次。一次运行最多有一个 stdin source。
-`serve --bind stdio://` 使用 stdin 作为 JSONL 请求通道，因此拒绝 stdin 初始化 source。
-`Context.sources` 的 key 是 CLI 中的 `name`，value 是对应 source 解析出的数据。
-数据的 canonical source path 是由 key 确定的 `@run-ctx/<name>`；保留字符按 UTF-8 byte
-百分号编码。文件路径或 stdin URI 只是 Host 私有 locator，不进入 provenance 和普通
-诊断。`@run-ctx/<name>` 不是 module ID：它不进入模块图、不能被 import，也不出现在
-`query modules` 中。
-所有 source 先经过统一 CST admission，再作为带 provenance 的 `Value` 直接物化到
-Entry WorkWorld；内置 adapter 只把 `SrcItem.data` 投影为 `Context.sources`。
-
-Entry 在纯 Telora 中实现以下 ABI：
-
-```telora
-import "std/_rt" as rt;
-
-export type MainType = ...;
-export type State = ...;
-type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
-export def config:
-    Fn(rt.Env, MainType) -> Tuple([rt.SystemCaps, Initializer])
-    = ...;
-```
-
-`Env` 包含 `--` 后的 Entry 参数、OS/arch 平台事实和 CLI 提供的具名 data sources。
-准备 WorkWorld 中的 `config` 接收已验收的 wrapper，并返回经 Host
-校验的 `SystemCaps` 和 initializer；Host 根据 caps 配置事件源并提供私有 native，随后初始化
-运行时服务。runtime 在同一个 Entry WorkWorld 中调用
-native 生成 `SystemResources`，并把结果直接传给 initializer；该值不返回 Rust Host，也不
-在 Host 侧解码或重建。所有环境上下文必须由
-initializer 显式传给 wrapper factory。运行阶段使用一系列 WorkWorld；
-`MainType` 是内置 Entry 验收的 `Run(State)` 或 `Serve(State)` wrapper family。
-`State` 对 Host 不透明，也不会物化为 Host-owned Value。每轮结束时，runtime 只把
-`SystemEffect` 导出给 Host；它从下一 State root 开始 trace，保留 MainWorld edge，借助
-同一个 forwarding table 把可达 Work object 直接复制到新的 WorkWorld，再释放旧
-WorkWorld。共享、循环、身份和 provenance 在迁移后保持，reducer 临时垃圾不迁移。
-当前每轮均执行一次这种迁移；未来可以在确定性阈值内复用 WorkWorld，再用相同机制做
-周期性 copying GC，但这不是当前语义。
-
-Entry reducer 接受单个
-`SystemEvent`，返回下一 State 和 `SystemEffect` 数组。Effect 没有同步返回值；新的
-外部信息只能在后续 turn 作为 Event 注入。当前固定协议为：
-
-```text
-DataFormat = Json | Yaml | Toml
-DataSrc = { default: Option(Value), fmt: DataFormat, src: String }
-Env = {
-    args: Array(String), ees: Dict(String),
-    platform: Platform, sources: Dict(DataSrc),
-}
-TextSrc = { default: Option(String), src: String }
-SystemStdin = Text | Lined | Null
-SystemCaps = {
-    data_srcs: Dict(DataSrc), ees: Dict(String),
-    text_srcs: Dict(TextSrc), vars: Array(String), stdin: SystemStdin,
-}
-SrcItem(T) = { data: T, src: String }
-SystemResources = {
-    data: Dict(SrcItem(Value)), texts: Dict(SrcItem(String)),
-    vars: Dict(String), stdin: Option(String),
-}
-
-SystemEvent = Initialize
-            | EesReply({key: String, result: Result(Value, String)})
-            | StdinLine(Option(String))
-
-SystemEffect = EesCall({actor: String, input: Value, key: String, operation: String})
-             | Output(String)
-             | Exit(Int)
-```
-
-`Text` 在 initializer 前读到 EOF，并通过 `SystemResources.stdin` 注入完整文本；
-`Lined` 不注入完整文本，而是在 `Initialize` 之后逐行发送不含换行符的 `Some`，EOF
-恰好发送一次 `None`；`Null` 不读取也不产生事件。私有 resources native 对 `data_srcs`
-复用 JSON/YAML/TOML import 的完整数据源管线，在当前 Entry WorkWorld 中直接生成带
-provenance 的 `Value` 和完整 `SystemResources`；静态 import 则在依赖图和稳定 module
-slot 建立后，直接把相同的 `Value` 物化到尚未封闭的 MainWorld。两条路径都不构造中间
-`DataWorld`，不把 Telora value 解码为 Host-owned 表示，也不在 Host 与 World 之间复制
-完成的数据图；`text_srcs` 保留文本和
-来源名。请求的数据文件不存在时，`default: Some(value)` 直接提供已经类型化的
-`Value`，不按 `fmt` 再解析；文本文件的默认值仍是 String。`None` 表示缺失即失败，
-其他 I/O 错误也始终失败。数据文件只要存在，解析失败就直接报错，不使用默认值。
-`vars` 是环境变量快照诉求：不存在的名字从 `SystemResources.vars` 省略，存在但不能
-表示为字符串的值会在 Main/initializer 运行前失败。
+服务不获得环境、进程、网络或任意文件能力；需要的业务输入由 Host 显式转成 Value。
+旧 eval-with、entry.Eval/Run/Serve、应用 EES 与 reducer 协议均已删除。
+包管理的 IMOS 能力只在私有 Host 中使用。详细用法见 [执行模式](../../guide/EXEC-MODE.md)。
 
 统一数据源管线严格分成三步：读取物理 source 并注册逻辑 source name；构造 lossless
 CST，并在不分配运行时数据对象的前提下完成格式级验证；只有验证全部成功后，才向目标
 Heap 直接物化通用 `Value`。格式级验证覆盖所有可能使物化失败的数据条件，包括重复键、
 TOML table 冲突、非法数字/时间值，以及不受支持或有歧义的 YAML graph 特性。失败产生
 带 source location 的诊断，不产生部分 `Value`。这一层不检查业务 schema：import 和
-`data_srcs` 的结果都只是 `Value`，业务数据是否符合某个 struct/enum 属于 codec。
+初始化 source 的结果都只是 `Value`，业务数据是否符合某个 struct/enum 属于 codec。
 
 验证阶段必须优先借用 lossless CST，而不是再构造一棵递归 Owned 数据树。实现以一个
 扁平 arena 表达 validated plan：节点只保存 source span、已验证的节点种类，以及指向
@@ -1796,18 +1633,7 @@ UTF-8 `string_len`，以及所有 String、对象键、时间字符串和 Bytes 
 `SourceId + range`，后续诊断可以稳定地把该节点作为 source 位置。MainWorld 和 Entry
 WorkWorld 仅是不同 target，CST、格式验证、location、data limits 和 `Value` 构造逻辑相同。
 
-Host 在单个异步事件循环中执行 EES effect 并回送 event；reducer 调用始终串行，每次只
-注入一个已排队的 `SystemEvent`。`Exit(code)` 是 terminal barrier：Host 完成活动 EES
-任务并提交已缓冲 Output 后，才向 CLI 交付退出状态。Host 以结构化任务集合持有异步
-EES 调用。terminal、reducer 失败、协议失败或 Host 失败时，Host 取消并 join 全部任务；
-这些任务不得脱离所有权树继续运行。
-
-`Output(String)` 是 Entry reducer 的输出效果，不是 Main 返回类型，也不要求 Host
-编码 Telora 值。Entry 可以用自己的 `MainType`、codec 和 formatter 生成任意多个
-String chunk。CLI 在 terminal effect 前缓冲它们；协议失败不暴露部分输出。
-`Exit(Int)` 是 terminal effect，必须位于 effects 尾部。没有内部 Wake 或任意 turn
-上限；无队列事件且无活动 EES 调用时判定无进展。所有 reducer 调用共同受 session
-的引擎终止边界约束，不重新建立逐事件计账。
+每次服务请求在独立执行边界内处理，结果发布后或请求失败后 reset。
 
 `check`、`test`、`query` 和 `lsp` 当前仍是 Host 固定命令路径，尚未通过 run Entry ABI。它们
 把目标当作 module。`check` 给出严格 module load/compile verdict，但不等价于一次

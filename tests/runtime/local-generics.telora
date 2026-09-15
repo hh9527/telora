@@ -1,5 +1,5 @@
 import "std/codec" {encode, Value};
-import "std/entry" as entry;
+import "std/transform-service" as entry;
 def make: Fn(Int) -> Fn() -> Int = fn(offset) {
     def add: for(T) Fn(T) -> Int = fn(value) {offset};
     fn() {add(0) + add@[String]("ignored")}
@@ -11,4 +11,9 @@ def checks: Fn() -> Value = fn() {
     encode(Value.type, [shared() == 42, make(20)() == 40, sum(8) == 38])
 };
 export def answer: Value = checks();
-export def main: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) {checks()});
+type MainService = struct {};
+impl entry.TransformService for MainService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) {checks()},
+};
+export {MainService};

@@ -1,4 +1,3 @@
-# Telora 当前实现架构
 
 本文描述当前源码的编译器、运行时、模块系统与 Host。语言可观察语义以
 [LANGUAGE.md](LANGUAGE.md) 为准，术语以 [CONCEPT.md](CONCEPT.md) 为准。
@@ -127,7 +126,7 @@ let 的普通绑定、解构绑定和 let-else 共用语法前缀。解析完初
 
 CLI 的 `package_host` 先准备 `ResolvedWorkspace`：发现 workspace、校验 lock 与 crate
 manifest，并完成需要的 package 安装。解析器和 VM 不执行 package acquisition，也不
-隐式重写 lock。package preparation 与应用 EES service 是两个独立的 Host 生命周期。
+隐式重写 lock。package preparation 与业务服务初始化分离。
 
 `static_input::Inventory` 从所有可用模块名称建立清单。module Pass 先排序清单并分配
 ModuleId，再从所选根逐级读取可达源码。共享依赖只读入并解析一次，未到达模块保持
@@ -366,20 +365,18 @@ fixture 仅累计已接受的源文本字节作为粗略输入边界，保留展
 不再按“节点数 × 固定字节数”估算并重复扣除 guest 堆用量。
 错误消息和来源应保留，但配额的具体数值是 Host 配置，不是语言语法。
 
-`telora-ees` 组合 IMOS 与 sqlite-query 等 native actor components。package preparation
-使用自己的 Service，run/serve 根据应用配置另建 Service；core 仅依赖 component-neutral
-Host ABI。实际文件、环境、stdin 与 EES 调用由 Host 执行，纯 Telora 代码不能直接访问。
+包管理继续使用私有 IMOS Host。应用不再创建 EES service。
 
-CLI 输入事件队列最多暂存 64 项，发送者受背压约束，终止通知唤醒等待发送的任务。
-事件消费同时收割完成的异步任务。尚未完成的 EES 调用仍是有效工作，不因回收而取消。
-Output chunk 按现有契约缓冲至 terminal success 后发布；累计输出是存活数据，
-其大小会影响 Host 内存，不能将其增长解释为 work 回收失效。
+内置 std/_entry/transform 与应用在同一 MIR 中求解，MainService 的 init/transform
+实例由静态 trait 证据选择。Plan 是内部 (sources, initializer)；initializer 返回捕获 Self
+的已类型化 handler，with_diagnostics 包装每次调用。Host 不解码 Self。
 
-run/serve 的生成 adapter 与应用在同一 MIR 中求解，wrapper family 和具体泛型实参
-在静态阶段闭合。初始化完成后才进入资源协商和 Entry 调度；Host 根据声明的 capabilities
-读取输入并检查 effects。eval/eval-with 不启动 reducer loop 或应用 EES service。
+当前 reset 复用 wasmi Module，创建新 store/instance，再恢复初始化后的线性内存及
+全部 mutable globals（包括 Rust stack pointer）。函数表由静态链接确定。
+不重复 codegen、数据加载或 init。请求临时值、trap 状态和来源登记随 reset 丢弃。
+该基线复制是首版实现，不是语言规定；后续可优化 reset 成本。
 
-## 9. CLI 与 LSP 的阶段边界
+## 9. CLI## 9. CLI 与 LSP 的阶段边界
 
 | 命令 | 消费边界 |
 | --- | --- |
@@ -388,9 +385,8 @@ run/serve 的生成 adapter 与应用在同一 MIR 中求解，wrapper family �
 | check --only-types | 三个 Pass 与 seal，不读取数据内容或执行 Telora 代码 |
 | check | seal、codegen、链接、数据注入及整图初始化 |
 | eval | 初始化后取得选中 Value 导出 |
-| eval-with | 初始化后调用选中 entry.Eval |
 | test NAME | 初始化后执行该测试模块直接导出的 Test |
-| run / serve | 初始化后按 Entry 策略调度 |
+| run / serve | 初始化 MainService，按请求调用 transform，间隙 reset |
 
 `check MODULE_ID` 选择一个根。`check --lib` 选择当前 crate 清单里的全部模块，包括
 私有模块和数据模块；`check --tests` 递归选择当前 crate 的 tests/ 模块。两个开关

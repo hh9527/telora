@@ -6,25 +6,12 @@ fn run_selector_uses_the_manifest_discovery_start() {
     let other = fixture();
     fs::write(
         other.join("src/app.telora"),
-        r###"import "std/actor" as actor; import "std/value" {Value};
-import "std/ees" as ees;
-import "std/entry" as entry;
-type State = struct {};
-def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run: entry.Run(State) = entry.run((State).type, config, ees.none, fn(ctx) {
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            actor.Event.Request(request) => (state, [actor.reply(request.id, Value.Int(9))]),
-            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    ({}, reduce)
-});"###,
+        runtime_source("bytes-literal.telora"),
     )
     .unwrap();
     refresh_fixture_workspace(&other);
     let run = telora(&cwd)
-        .args(["-C", other.to_str().unwrap(), "run", "@src/app:run"])
+        .args(["-C", other.to_str().unwrap(), "serve", "@src/app", "--bind", "stdio://"])
         .output()
         .unwrap();
     assert!(
@@ -32,7 +19,7 @@ export def run: entry.Run(State) = entry.run((State).type, config, ees.none, fn(
         "{}",
         String::from_utf8_lossy(&run.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "9");
+    assert!(run.stdout.is_empty());
 }
 
 #[test]

@@ -5,6 +5,7 @@ fn static_service_initializes_and_captures_each_request() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/transform-service.telora")).unwrap();
     let bytes = super::compile(&source).unwrap();
+    assert_eq!(bytes, super::compile(&source).unwrap(), "entry codegen must be deterministic");
     let mut session = Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
     let plan = Value {pointer: session.entry().unwrap(), ty: session.manifest.entry_type};
@@ -42,6 +43,7 @@ fn reset_restores_initialized_service_after_fuel_and_memory_traps() {
     let a = service.session_mut().input_value(ty, &serde_json::json!(42)).unwrap();
     let b = service.session_mut().input_value(ty, &serde_json::Value::Null).unwrap();
     service.initialize(&std::collections::BTreeMap::from([("a".into(), a), ("b".into(), b)])).unwrap();
+    service.seal_initialization().unwrap();
     for input in ["ok", "loop", "ok", "grow", "ok"] {
         service.reset().unwrap();
         if input == "loop" { service.session_mut().store.set_fuel(100_000).unwrap(); }
@@ -52,5 +54,14 @@ fn reset_restores_initialized_service_after_fuel_and_memory_traps() {
             "grow" => assert!(result.unwrap_err().contains("growth")),
             _ => assert_eq!(result.unwrap()["Ok"][0], serde_json::json!([42, "ok"])),
         }
+    }
+    let mut size = None;
+    for _ in 0..256 {
+        service.reset().unwrap();
+        let current = service.session().memory.data_size(&service.session().store);
+        if let Some(expected) = size { assert_eq!(current, expected); }
+        size = Some(current);
+        let value = service.session_mut().input_value(ty, &serde_json::json!(42)).unwrap();
+        assert_eq!(service.transform(value).unwrap()["Ok"][0], serde_json::json!([42, 42]));
     }
 }

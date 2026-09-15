@@ -1,6 +1,6 @@
 import "std/hash" as hash;
 import "std/codec" {encode, Value};
-import "std/entry" as entry;
+import "std/transform-service" as entry;
 
 def initial: hash.HashState = hash.new();
 def base: hash.HashState = hash.update_string(initial, "shared prefix");
@@ -18,4 +18,9 @@ def checks: Fn() -> Value = fn() {
     ))
 };
 export def answer: Value = checks();
-export def main: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });
+type MainService = struct {};
+impl entry.TransformService for MainService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) { checks() },
+};
+export {MainService};

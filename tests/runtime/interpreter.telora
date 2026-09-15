@@ -1,6 +1,6 @@
 import "std/dyn" as dyn;
 import "std/codec" {encode, Value};
-import "std/entry" as entry;
+import "std/transform-service" as entry;
 def erased: Fn(Dyn) -> Int = fn(value) { match dyn.check_int(value) { Some(value) => value, None => 0 } };
 def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(dbg!(erased, "operand"));
 def other: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(erased);
@@ -30,4 +30,9 @@ def checks: Fn() -> Value = fn() {
     ])
 };
 export def answer: Value = checks();
-export def main: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });
+type MainService = struct {};
+impl entry.TransformService for MainService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) { checks() },
+};
+export {MainService};

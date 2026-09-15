@@ -235,8 +235,7 @@ Telora selector 省略且不能写 `.telora`。JSON、YAML、YML 和 TOML 静态
 清单中的文件必须存在并保持在 crate root 内。存在于 `src/`、但不在清单中的 Telora 或
 静态数据文件不会进入 resolver；`telora check` 会为它们产生 warning。
 
-`src/` 内的目录只组织逻辑路径，不赋予文件特殊执行身份。程序通过导出的名义类型选择
-执行模式，例如 `entry.Eval`、`entry.Run(State)` 或 `entry.Serve(State)`。
+`src/` 内的目录只组织逻辑路径，不赋予文件特殊执行身份。服务模块导出实现 TransformService 的具体类型 MainService。
 
 ### `dependencies`
 
@@ -389,7 +388,7 @@ workspace config、member manifest 或远程基线发生变化后运行：
 telora lock
 ```
 
-`eval`、`eval-with`、`run`、`serve`、`test`、`check`、`query` 和 LSP 都要求 lock 存在且与当前
+`eval`、`run`、`serve`、`test`、`check`、`query` 和 LSP 都要求 lock 存在且与当前
 config、manifest 和远程物化结果一致。发现陈旧 lock 时，命令会要求刷新，不会隐式
 改写它。
 
@@ -430,7 +429,7 @@ telora -C app query at @src/main
 
 ```bash
 telora -C app eval @src/model:schema
-telora -C app eval-with @src/compiler:compile --source request=request.json
+telora -C app run @src/compiler < request.json
 telora -C app run @src/service:run
 telora -C app serve @src/service:serve --bind stdio://
 ```

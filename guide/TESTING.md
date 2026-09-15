@@ -22,9 +22,9 @@
 | 可恢复的执行失败及其消息 | `test.should_fail` / `test.should_fail_with` |
 | 语法、类型、导入或模块初始化失败 | 独立运行 `check`，检查退出码与诊断 |
 | 导出签名和语义查询结果 | 运行 `query`，检查对应输出 |
-| Entry、reducer、外部效果和 Host 协议 | 对应的 `eval-with`、`run`、`serve` 集成验证 |
+| 服务初始化、请求隔离和 Host 协议 | run/serve 集成验证 |
 
-`test` 不驱动应用 reducer 或 EES。资源耗尽、取消等终止错误不能当作预期失败通过；
+`test` 不自动驱动服务入口。资源耗尽、取消等终止错误不能当作预期失败通过；
 测试初始化错误也不能由尚未执行的 `should_fail` 捕获。
 
 ## 把计算放进 thunk，显式断言结果

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use telora_core::{EvalSource, SystemDataFormat, SystemDataSource};
+use telora_core::{ServiceSource, SystemDataFormat, SystemDataSource};
 
 #[derive(Clone)]
 pub(crate) struct NamedSource {
@@ -82,7 +82,6 @@ pub(crate) fn parse_named_source(value: &str) -> Result<NamedSource, String> {
         source: SystemDataSource {
             src,
             format,
-            has_default: false,
         },
     })
 }
@@ -90,7 +89,7 @@ pub(crate) fn parse_named_source(value: &str) -> Result<NamedSource, String> {
 pub(crate) fn collect_service_sources(
     sources: Vec<NamedSource>,
     max_bytes: usize,
-) -> Result<BTreeMap<String, EvalSource>, String> {
+) -> Result<BTreeMap<String, ServiceSource>, String> {
     let mut collected = BTreeMap::new();
     let mut read_stdin = false;
     for source in sources {
@@ -124,7 +123,7 @@ pub(crate) fn collect_service_sources(
             .map_err(|error| format!("service source is not UTF-8: {error}"))?;
         collected.insert(
             source.name,
-            EvalSource {
+            ServiceSource {
                 source_name: public_name,
                 format: source.source.format,
                 text,

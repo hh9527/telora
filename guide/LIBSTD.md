@@ -2,7 +2,7 @@
 
 本文是公开标准库的模块地图，帮助程序作者找到承载某项能力的模块。语言用法见
 [`TELORA.md`](TELORA.md)，执行模式见 [`EXEC-MODE.md`](EXEC-MODE.md)，外部效果见
-[`EES.md`](EES.md)。
+[`EXEC-MODE.md`](EXEC-MODE.md)。
 
 标准库随 Telora binary 一起发布。接口以当前 binary 的查询结果为准，编写代码时应
 优先使用工具发现类型和公开成员：
@@ -74,7 +74,7 @@ type Endpoint = struct {host: String, port: Int};
 
 早期实验的 `std/json.schema` 已删除；JSON 文本处理与 codec 不受影响。
 
-`Value` 是 source、Entry、EES 和 JSON 共享的数据边界。`ScalarValue` 的 untagged codec
+`Value` 是 source、服务和 JSON 共享的数据边界。`ScalarValue` 的 untagged codec
 把 `ScalarValue.None`、`ScalarValue.Bool(...)`、`ScalarValue.Int(...)`、
 `ScalarValue.Float(...)`、`ScalarValue.String(...)` 分别编码为普通
 JSON null、boolean、number 和 string。
@@ -103,15 +103,11 @@ newtype 的具名类型返回 Ref；解析引用后，kind 为 Newtype，childre
 载荷类型。`dyn.tuple_items` 可读取其单个载荷，并保留载荷自己的类型身份。
 newtype 的 JSON 表示使用载荷契约。
 
-## 执行与效果
+## 服务协议
 
-- `std/entry`：构造 Host 可选择的 `Eval`、`Run(State)` 和 `Serve(State)` 值。
-- `std/actor`：定义 reducer 的 `Event`、`Effect`、`Transition` 和 `Service`。
-- `std/ees`：声明 Native Effect Service model 并构造请求。
-
-`std/ees` 的公共入口包括通用 model/request 构造器、空配置，以及 SQLite Query 和 IMOS
-组件的便捷构造器。应用通过 `std/actor` 发出 EES 请求，不直接执行物理 I/O。具体写法
-见 [`EES.md`](EES.md)。
+`std/transform-service` 提供 TransformService、Context、Sources 和 source。
+服务导出具体类型 MainService，实现 init/transform；run/serve 共用该协议。
+来源与请求隔离见 [执行模式](EXEC-MODE.md)。
 
 ## 工具协议
 

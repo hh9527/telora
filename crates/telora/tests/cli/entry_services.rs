@@ -1,181 +1,119 @@
 use super::*;
 
-#[test]
-fn run_requires_an_entry_run_export() {
-    {
+fn service_fixture() -> PathBuf {
     let cwd = fixture();
-    fs::write(
-        cwd.join("src/app.telora"),
-        r#"import "std/value" {Value};
-export def value: Value = Value.Int(1);"#,
-    )
-    .unwrap();
-    refresh_fixture_workspace(&cwd);
+    fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transform-service/src/main.telora"),
+        cwd.join("src/main.telora")).unwrap();
+    cwd
+}
 
-    let output = telora(&cwd)
-        .arg("run").args([ "@src/app:value"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("expected Run(State)"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+#[test]
+fn run_and_serve_share_the_same_static_entry_and_preserve_diagnostics() {
+    let cwd = service_fixture();
+    let mut command = telora(&cwd);
+    command.args(["run", "@src/main"]);
+    let result = input_command(command, b"42");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap(), 42);
+    let mut command = telora(&cwd);
+    command.args(["serve", "@src/main", "--bind", "stdio://"]);
+    let result = input_command(command, b"42\nnull\n43\n{bad}\n44\n");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let replies = jsonl(&result.stdout);
+    assert_eq!(replies.len(), 5);
+    assert_eq!(replies[0]["ok"], 42);
+    assert_eq!(replies[1]["error"], true);
+    assert_eq!(replies[1]["diagnostics"][0]["message"], "missing input");
+    assert_eq!(replies[1]["diagnostics"][0]["labels"][1]["location"]["source"], "@request");
+    assert_eq!(replies[2]["ok"], 43);
+    assert_eq!(replies[3]["error"], true);
+    assert_eq!(replies[4]["ok"], 44);
+}
+
+#[test]
+fn service_type_can_be_reexported_across_modules() {
+    let cwd = service_fixture();
+    fs::rename(cwd.join("src/main.telora"), cwd.join("src/provider.telora")).unwrap();
+    fs::write(cwd.join("src/main.telora"), runtime_source("transform-reexport.telora")).unwrap();
+    let mut command = telora(&cwd);
+    command.args(["run", "@src/main"]);
+    let output = input_command(command, b"42");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), 42);
+}
+
+#[test]
+fn service_resets_after_request_resource_exhaustion() {
+    let cwd = service_fixture();
+    for (fuel, memory, payload, reason) in [
+        ("1", "64", "42\n\"loop\"\n43\n", "fuel"),
+        ("1000", "8", "42\n\"grow\"\n43\n", "growth"),
+    ] {
+        let mut command = telora(&cwd);
+        command.args(["--report-usage", "--with-fuel", fuel, "--with-memory-limit", memory, "serve", "@src/main", "--bind", "stdio://"]);
+        let output = input_command(command, payload.as_bytes());
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let replies = jsonl(&output.stdout);
+        assert_eq!(replies.len(), 3);
+        assert_eq!(replies[0]["ok"], 42);
+        assert_eq!(replies[1]["error"], true);
+        assert!(replies[1]["diagnostics"][0]["message"].as_str().unwrap().contains(reason));
+        assert_eq!(replies[2]["ok"], 43);
+        let reports = jsonl(&output.stderr).into_iter()
+            .filter(|record| record["code"] == "execution-usage").collect::<Vec<_>>();
+        assert_eq!(reports.len(), 3);
+        assert_eq!(reports[0]["usage"]["fuel"]["limit"], reports[2]["usage"]["fuel"]["limit"]);
+        assert!(reports[2]["usage"]["fuel"]["remaining"].as_u64().unwrap() > 0);
+        assert_eq!(reports[0]["usage"]["linear_memory"], reports[2]["usage"]["linear_memory"]);
     }
 }
 
 #[test]
-fn run_context_admits_declared_sources_env_and_args() {
-    {
+fn entry_validation_precedes_user_initialization_and_rejects_old_protocols() {
     let cwd = fixture();
-    fs::write(
-        cwd.join("src/app.telora"),
-        r###"import "std/actor" as actor; import "std/value" {Value};
-import "std/array" as array;
-import "std/dict" as dict;
-import "std/ees" as ees;
-import "std/entry" as entry;
-
-type State = struct {answer: Int};
-def config: entry.ContextConfig = {
-    sources: ["request"],
-    envs: ["TELORA_CONTEXT_TEST"],
-    args: True,
-};
-export def run: entry.Run(State) = entry.run((State).type, config, ees.none, fn(ctx) {
-    let source_ok = match dict.get(ctx.sources, "request") {
-        Some(Value.Int(value)) => value == 7,
-        _ => False,
-    };
-    let env_ok = dict.get(ctx.env, "TELORA_CONTEXT_TEST") == Some("visible");
-    let args_ok = array.length(ctx.args) == 1 && array.get(ctx.args, 0) == Some("arg");
-    let initial: State = {answer: if source_ok && env_ok && args_ok { 42 } else { 0 }};
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            actor.Event.Request(request) => (state, [actor.reply(request.id, Value.Int(state.answer))]),
-            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    (initial, reduce)
-});"###,
-    )
-    .unwrap();
-    let input = cwd.join("request.json");
-    fs::write(&input, "7").unwrap();
-    refresh_fixture_workspace(&cwd);
-
-    let output = telora(&cwd)
-        .arg("run").args([
-            "@src/app:run",
-            "--source",
-            &format!("request={}", input.display()),
-            "--",
-            "arg",
-        ])
-        .env("TELORA_CONTEXT_TEST", "visible")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    for (file, message) in [
+        ("transform-no-impl.telora", "TransformService"),
+        ("transform-value-entry.telora", "type"),
+        ("transform-duplicate-source.telora", "duplicate service source"),
+        ("transform-init-failure.telora", "service initialization failed"),
+    ] {
+        fs::write(cwd.join("src/main.telora"), runtime_source(file)).unwrap();
+        let output = execute_value(&cwd, "run", "@src/main");
+        assert!(!output.status.success(), "{file}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(message), "{file}: {error}");
+        assert!(output.stdout.is_empty());
+    }
+    for command in ["eval-with", "ees"] {
+        let output = telora(&cwd).arg(command).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
     }
 }
 
 #[test]
-fn run_context_rejects_undeclared_inputs() {
-    {
+fn initialization_sources_are_separate_from_each_transform_input() {
     let cwd = fixture();
-    fs::write(
-        cwd.join("src/app.telora"),
-        r###"import "std/actor" as actor; import "std/value" {Value};
-import "std/ees" as ees;
-import "std/entry" as entry;
-type State = struct {};
-def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run: entry.Run(State) = entry.run((State).type, config, ees.none, fn(ctx) {
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            actor.Event.Request(request) => (state, [actor.reply(request.id, Value.None)]),
-            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    ({}, reduce)
-});"###,
-    )
-    .unwrap();
-    let input = cwd.join("request.json");
-    fs::write(&input, "null").unwrap();
-    refresh_fixture_workspace(&cwd);
-
-    let source = telora(&cwd)
-        .arg("run").args([
-            "@src/app:run",
-            "--source",
-            &format!("request={}", input.display()),
-        ])
-        .output()
-        .unwrap();
-    assert!(!source.status.success());
-    assert!(
-        String::from_utf8_lossy(&source.stderr).contains("undeclared source"),
-        "{}",
-        String::from_utf8_lossy(&source.stderr)
-    );
-
-    let args = telora(&cwd)
-        .arg("run").args([ "@src/app:run", "--", "unexpected"])
-        .output()
-        .unwrap();
-    assert!(!args.status.success());
-    assert!(String::from_utf8_lossy(&args.stderr).contains("arguments"));
-    }
-}
-
-#[test]
-fn serve_stdio_reuses_one_typed_state() {
-    let cwd = fixture();
-    fs::write(
-        cwd.join("src/app.telora"),
-        r###"import "std/actor" as actor; import "std/value" {Value};
-import "std/ees" as ees;
-import "std/entry" as entry;
-type State = struct {next: Int};
-def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def serve: entry.Serve(State) = entry.serve((State).type, config, ees.none, fn(ctx) {
-    let initial: State = {next: 1};
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            actor.Event.Request(request) => (
-                {next: state.next + 1},
-                [actor.reply(request.id, Value.Int(state.next))],
-            ),
-            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    (initial, reduce)
-});"###,
-    )
-    .unwrap();
-    refresh_fixture_workspace(&cwd);
-    let mut child = telora(&cwd)
-        .args(["serve", "@src/app:serve", "--bind", "stdio://"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child.stdin.take().unwrap().write_all(b"null\nnull\n").unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    fs::write(cwd.join("src/main.telora"), runtime_source("transform-input.telora")).unwrap();
+    fs::write(cwd.join("src/base.json"), "{\"loaded\":true}").unwrap();
+    fs::write(cwd.join("config.json"), "{\"prefix\":42}").unwrap();
+    let mut command = telora(&cwd);
+    command.args(["serve", "@src/main", "--source", "config=config.json", "--bind", "stdio://"]);
+    let output = input_command(command, b"{\"answer\":1,\"endpoint\":\"localhost:42\"}\n{\"answer\":0,\"endpoint\":\"localhost:42\"}\n{\"answer\":2,\"endpoint\":\"localhost:42\"}\n");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let replies = jsonl(&output.stdout);
-    assert_eq!(replies[0]["ok"], 1);
-    assert_eq!(replies[1]["ok"], 2);
+    assert_eq!(replies.len(), 3);
+    assert_eq!(replies[0]["ok"], serde_json::json!([{"prefix":42},{"loaded":true},{"answer":1,"endpoint":"localhost:42"}]));
+    assert_eq!(replies[1]["error"], true);
+    assert!(replies[1]["diagnostics"].to_string().contains("positive input required"));
+    assert!(replies[1]["diagnostics"].to_string().contains("@request"));
+    assert_eq!(replies[2]["ok"][2]["answer"], 2);
+    for extra in [vec![], vec!["--source", "other=config.json"], vec!["--source", "config=stdin+json://"]] {
+        let output = telora(&cwd).args(["run", "@src/main"]).args(extra).output().unwrap();
+        assert!(!output.status.success());
+    }
+    fs::write(cwd.join("config.json"), "{bad}").unwrap();
+    let output = telora(&cwd).args(["run", "@src/main", "--source", "config=config.json"]).output().unwrap();
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("@service/config"), "{error}");
+    assert!(!error.contains("config.json"), "{error}");
 }

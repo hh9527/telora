@@ -1,0 +1,1 @@
+export def MainService: Int = 42;

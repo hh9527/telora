@@ -1,5 +1,5 @@
 import "std/codec" {encode, Value};
-import "std/entry" as entry;
+import "std/transform-service" as entry;
 type Item = struct {value: Int};
 def append: for(T) Fn((T, String)) -> (T, String, Int) = fn(value) { (...value, 3) };
 def append_array: for(T) Fn(Array(T), T) -> Array(T) = fn(values, value) { [...values, value] };
@@ -30,4 +30,9 @@ def checks: Fn() -> Value = fn() {
     ])
 };
 export def answer: Value = checks();
-export def main: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });
+type MainService = struct {};
+impl entry.TransformService for MainService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) { checks() },
+};
+export {MainService};

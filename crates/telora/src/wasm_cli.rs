@@ -189,7 +189,7 @@ pub(crate) fn eval(context: PathBuf, module: &str, export: &str) -> Result<i32, 
         .iter()
         .find(|id| mir.symbols[id.index()].name == export)
         .ok_or_else(|| format!("module has no export {export:?}"))?;
-    eval_contract::validate(&mir, symbol, false)?;
+    eval_contract::validate(&mir, symbol)?;
     let executable = sealed.seal_export(symbol).map_err(|diagnostics| {
         diagnostics
             .iter()

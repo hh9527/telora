@@ -32,8 +32,16 @@ impl TransformSession {
     pub fn session(&self) -> &Session { &self.session }
     pub fn session_mut(&mut self) -> &mut Session { &mut self.session }
 
+    pub fn usage(&self) -> crate::session::Usage {
+        let mut usage = self.session.usage();
+        if let Some(baseline) = &self.baseline {
+            usage.memory_limit = usage.memory_limit.saturating_add(baseline.memory.len());
+        }
+        usage
+    }
+
     pub fn initialize(&mut self, sources: &std::collections::BTreeMap<String, Value>) -> Result<(), String> {
-        if self.baseline.is_some() { return Err("service is already initialized".into()); }
+        if self.handler.is_some() { return Err("service is already initialized".into()); }
         if self.sources.iter().ne(sources.keys()) {
             return Err("service sources do not match declared sources".into());
         }
@@ -50,6 +58,14 @@ impl TransformSession {
         let ctx = self.session.input_record_values(ctx_ty,
             &std::collections::BTreeMap::from([("sources", dict)]))?;
         let handler = self.session.invoke_values(self.initializer, &[Value {pointer: ctx, ty: ctx_ty}])?;
+        self.handler = Some(handler);
+        Ok(())
+    }
+
+    /// The host consumes initialization diagnostics before fixing the baseline.
+    pub fn seal_initialization(&mut self) -> Result<(), String> {
+        if self.baseline.is_some() { return Err("service initialization is already sealed".into()); }
+        let handler = self.handler.ok_or("service is not initialized")?;
         let (roots, _) = self.session.collect_work(&[handler])?;
         self.handler = Some(roots[0]);
         let globals = self.session.instance.exports(&self.session.store)

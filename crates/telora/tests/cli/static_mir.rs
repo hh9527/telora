@@ -82,29 +82,6 @@ fn check_empty_batch_is_successful() {
 }
 
 #[test]
-fn static_mir_eval_with_executes_actor_service_with_solved_dyn_state() {
-    let cwd = fixture();
-    fs::write(cwd.join("src/main.telora"), r#"
-        import "std/entry" {main, Eval};
-        import "std/actor" as actor;
-        import "std/dyn" as dyn;
-        import "std/value" {Value};
-        def service: actor.Service = actor.service(Int.type, 41, fn(state, event) { (state + 1, []) });
-        export def answer: Eval = main({sources: [], envs: [], args: False}, fn(ctx) {
-            let transition = service.reduce((service.state, actor.Event.Request({id: "request", input: Value.None})));
-            match dyn.project_with(Int.type, transition.0) {
-                Some(value) => Value.Int(value),
-                None => fail!("state witness mismatch"),
-            }
-        });
-    "#).unwrap();
-    let output = telora(&cwd).args(["eval-with", "@src/main:answer"]).output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), serde_json::json!(42));
-    fs::remove_dir_all(cwd).unwrap();
-}
-
-#[test]
 fn static_mir_check_injects_data_and_blocks_execution_after_type_errors() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), r#"
@@ -172,8 +149,6 @@ fn static_mir_eval_property_initialization_precedes_both_entry_modes() {
         ("eval", false, "Item", true),
         ("eval", true, "Int", false),
         ("eval", true, "Item", false),
-        ("eval-with", false, "Item", true),
-        ("eval-with", true, "Item", false),
     ] {
         let body = format!("match query({queried_type}.type, Mark.type) {{ Some(property) => Value.Int(property.value), None => Value.Int(42) }}");
         let entry = if mode == "eval" {
@@ -192,7 +167,6 @@ fn static_mir_eval_property_initialization_precedes_both_entry_modes() {
             format!(
                 r#"
             import "std/value" {{ Value }};
-            import "std/entry" {{ main, Eval }};
             import "std/type-property" {{ get_type_prop as query }};
             @property(PropertyTarget.Type) type Mark = struct {{ value: Int }};
             def config: Int = 42;
@@ -325,19 +299,19 @@ fn static_mir_eval_imports_data_after_static_solving() {
     fs::write(
         cwd.join("src/main.telora"),
         r#"
-        import "std/entry" { main, Eval };
+        import "std/transform-service" as service;
+        import "std/value" {Value};
         import "./input.json" { data };
-        export def evaluate: Eval = do {
-            let initialized = data;
-            main({ sources: [], envs: [], args: False }, fn(ctx) { initialized })
+        type MainService = struct {data: Value};
+        impl service.TransformService for MainService {
+            init: fn(ctx) { {data}.ty!(Self) },
+            transform: fn(self, input) { self.data },
         };
+        export {MainService};
     "#,
     )
     .unwrap();
-    let output = telora(&cwd)
-        .args(["eval-with", "@src/main:evaluate"])
-        .output()
-        .unwrap();
+    let output = execute_value(&cwd, "run", "@src/main");
     assert!(
         output.status.success(),
         "{}",
@@ -358,113 +332,12 @@ fn static_mir_eval_imports_data_after_static_solving() {
         String::from_utf8_lossy(&output.stderr)
     );
     let output = telora(&cwd)
-        .args(["eval-with", "@src/main:evaluate"])
+        .args(["serve", "@src/main", "--bind", "stdio://"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("input.json"));
-    fs::remove_dir_all(cwd).unwrap();
-}
-
-#[test]
-fn static_mir_eval_with_injects_declared_inputs_and_rejects_config_mismatches() {
-    let cwd = fixture();
-    fs::write(cwd.join("src/main.telora"), r#"
-        import "std/entry" { main, Eval };
-        import "std/value" { Value };
-        import "std/array" { map };
-        import "std/dict" { values };
-        export def evaluate: Eval = main({ sources: ["j", "t", "y"], envs: ["TELORA_MIR_EVAL_TEST"], args: True }, fn(ctx) {
-            Value.Object({ "inputs": Value.Object(ctx.sources),
-                "env": Value.Array(map(values(ctx.env), Value.String)),
-                "args": Value.Array(map(ctx.args, Value.String)) })
-        });
-    "#).unwrap();
-    let json = cwd.join("input.json");
-    let yaml = cwd.join("input.yaml");
-    let toml = cwd.join("input.toml");
-    fs::write(&json, r#"{"x":[1,true,null]}"#).unwrap();
-    fs::write(&yaml, "x: 2\n").unwrap();
-    fs::write(&toml, "x = 3\n").unwrap();
-    let inputs = [
-        format!("j={}", json.display()),
-        format!("y={}", yaml.display()),
-        format!("t={}", toml.display()),
-    ];
-    let output = telora(&cwd)
-        .env("TELORA_MIR_EVAL_TEST", "visible")
-        .args([
-            "eval-with",
-            "@src/main:evaluate",
-            "--source",
-            &inputs[0],
-            "--source",
-            &inputs[1],
-            "--source",
-            &inputs[2],
-            "--",
-            "one",
-            "two",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-        serde_json::json!({
-            "inputs": {"j":{"x":[1,true,null]}, "y":{"x":2}, "t":{"x":3}},
-            "env":["visible"], "args":["one","two"]
-        })
-    );
-    let output = telora(&cwd)
-        .args(["eval-with", "@src/main:evaluate"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("sources do not match"));
-    for (config, expected) in [
-        (
-            "{ sources: [], envs: [], args: False }",
-            "does not accept command-line",
-        ),
-        (
-            "{ sources: [], envs: [\"TELORA_MIR_MISSING\"], args: True }",
-            "cannot read declared environment",
-        ),
-        (
-            "{ sources: [], envs: [\"x\", \"x\"], args: True }",
-            "unique non-empty",
-        ),
-    ] {
-        fs::write(
-            cwd.join("src/main.telora"),
-            format!(
-                r#"
-            import "std/entry" {{ main, Eval }}; import "std/value" {{ Value }};
-            export def evaluate: Eval = main({config}, fn(ctx) {{ Value.Int(1 / 0) }});
-        "#
-            ),
-        )
-        .unwrap();
-        let output = telora(&cwd)
-            .env_remove("TELORA_MIR_MISSING")
-            .args(["eval-with", "@src/main:evaluate", "--", "arg"])
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        assert!(output.stdout.is_empty());
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains(expected),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
     fs::remove_dir_all(cwd).unwrap();
 }
 
@@ -783,89 +656,6 @@ fn static_mir_query_links_imports_and_source_positions() {
             .iter()
             .any(|r| r["record"] == "export" && r["name"] == "answer" && r["type"] == "Int")
     );
-    fs::remove_dir_all(cwd).unwrap();
-}
-#[test]
-fn static_mir_run_drives_a_host_ees_reply_with_explicit_value_input() {
-    let cwd = fixture();
-    let data = cwd.join("data");
-    fs::create_dir_all(&data).unwrap();
-    let connection = rusqlite::Connection::open(data.join("catalog.sqlite")).unwrap();
-    connection.execute_batch("CREATE TABLE items (score INTEGER); INSERT INTO items VALUES (42);").unwrap();
-    drop(connection);
-    fs::write(cwd.join("src/main.telora"), r#"
-        import "std/entry" as entry;
-        import "std/ees" as ees;
-        import "std/actor" as actor;
-        import "std/value" {Value};
-        type State = enum {Ready, Waiting(String)};
-        def config: ees.Config = {vars: {}, models: [ees.sqlite_model("catalog", "user-data:catalog.sqlite")]};
-        export def main: entry.Run(State) = entry.run(State.type, {sources: [], envs: [], args: False}, config, fn(ctx) {
-            (State.Ready, fn(state, event) {
-                match (state, event) {
-                    (State.Ready, actor.Event.Request(request)) => (
-                        State.Waiting(request.id),
-                        [actor.ees_call("query", request.id, ees.request("catalog", "Query", Value.Object({
-                            sql: Value.String("SELECT score FROM items"), bindings: Value.Array([]),
-                        })))],
-                    ),
-                    (State.Waiting(id), actor.Event.EesReply(reply)) => match reply.result {
-                        Ok(value) => (State.Ready, [actor.reply(id, value)]),
-                        Err(message) => fail!(message),
-                    },
-                    _ => fail!("unexpected event"),
-                }
-            })
-        });
-    "#).unwrap();
-    let output = telora(&cwd).args(["run", "@src/main:main"]).env("XDG_DATA_HOME", &data).output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), serde_json::json!({"columns": ["score"], "rows": [[42]]}));
-    fs::remove_dir_all(cwd).unwrap();
-}
-#[test]
-fn static_mir_serve_initializes_and_handles_eof_in_the_new_session() {
-    let cwd = fixture();
-    fs::write(cwd.join("src/main.telora"), r#"
-        import "std/entry" as entry;
-        import "std/ees" as ees;
-        export def main: entry.Serve(Int) = entry.serve(Int.type, {sources: [], envs: [], args: False}, ees.none,
-            fn(ctx) { (0, fn(state, event) { (state, []) }) });
-    "#).unwrap();
-    let output = telora(&cwd).args(["serve", "@src/main:main", "--bind", "stdio://"]).stdin(Stdio::null()).output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert!(output.stdout.is_empty());
-    fs::remove_dir_all(cwd).unwrap();
-}
-#[test]
-fn static_mir_serve_collects_a_failed_request_and_continues() {
-    let cwd = fixture();
-    fs::write(cwd.join("src/main.telora"), r#"
-        import "std/entry" as entry;
-        import "std/ees" as ees;
-        import "std/actor" as actor;
-        import "std/value" {Value};
-        export def main: entry.Serve(Int) = entry.serve(Int.type, {sources: [], envs: [], args: False}, ees.none, fn(ctx) {
-            (42, fn(state, event) {
-                match event {
-                    actor.Event.Request(request) => if request.id == "request-0" {
-                        fail!("rejected")
-                    } else { (state, [actor.reply(request.id, Value.Int(state))]) },
-                    _ => fail!("unexpected EES reply"),
-                }
-            })
-        });
-    "#).unwrap();
-    let mut child = telora(&cwd).args(["serve", "@src/main:main", "--bind", "stdio://"])
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(b"null\nnull\n").unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let replies = jsonl(&output.stdout);
-    assert_eq!(replies.len(), 2);
-    assert_eq!(replies[0]["error"], true);
-    assert_eq!(replies[0]["diagnostics"][0]["message"], "rejected");
-    assert_eq!(replies[1]["ok"], 42);
     fs::remove_dir_all(cwd).unwrap();
 }
 #[test]

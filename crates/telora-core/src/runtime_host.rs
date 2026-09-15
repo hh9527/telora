@@ -1,4 +1,4 @@
-//! Host inputs and effects shared by VM entry execution and its callers.
+//! Host data inputs shared by services and test fixtures.
 //! These contracts do not depend on module loading or type inference.
 
 pub use telora_data::DataLimits;
@@ -14,11 +14,10 @@ pub enum SystemDataFormat {
 pub struct SystemDataSource {
     pub src: String,
     pub format: SystemDataFormat,
-    pub has_default: bool,
 }
 
 #[derive(Clone, Debug)]
-pub struct EvalSource {
+pub struct ServiceSource {
     pub source_name: String,
     pub format: SystemDataFormat,
     pub text: String,

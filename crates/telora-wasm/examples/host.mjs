@@ -249,13 +249,6 @@ export async function load(bytes) {
     }
     return result;
   };
-  const field = (pointer, ty, name) => {
-    const desc = manifest.types[ty], field = desc.fields.find(field => field.name === name);
-    if (desc.kind !== 'Record' || !field || word(pointer + 12) !== ty) throw Error('入口 record 契约不匹配');
-    const [base, bytes] = payload(2, word(pointer + 16));
-    if (field.offset + manifest.types[field.ty].bytes > bytes) throw Error('入口字段越界');
-    return [base + field.offset, field.ty];
-  };
   const invoke = (closure, type, arguments_) => {
     const desc = manifest.types[type];
     if (desc.kind !== 'Function' || desc.arguments.length !== arguments_.length + 1) throw Error('调用参数与封闭签名不同');
@@ -286,22 +279,6 @@ export async function load(bytes) {
       const closure = wasm.telora_entry() >>> 0;
       if (!closure) throw failure();
       return invoke(closure, manifest.entry_type, arguments_);
-    },
-    evalWith(context) {
-      if (manifest.entry_type !== manifest.eval_type) throw Error('入口需要 std/entry.Eval');
-      const root = wasm.telora_entry() >>> 0;
-      if (!root) throw failure();
-      const [config, configType] = field(root, manifest.entry_type, 'config');
-      const declared = JSON.parse(json(config, configType));
-      for (const [name, inputName] of [['sources', 'sources'], ['envs', 'env']]) {
-        const names = declared[name].toSorted();
-        if (names.some((value, i) => !value || value === names[i - 1])) throw Error('配置需要不重复的非空名字');
-        if (JSON.stringify(names) !== JSON.stringify(Object.keys(context[inputName]).sort())) throw Error('输入名字与声明不同');
-      }
-      if (!declared.args && context.args.length) throw Error('此入口不接收参数');
-      const [closure, type] = field(root, manifest.entry_type, 'evaluate');
-      if (manifest.types[type].arguments.at(-1) !== manifest.value_type) throw Error('入口结果需要 std/value.Value');
-      return invoke(closure, type, [context]);
     },
   };
 }

@@ -114,13 +114,28 @@ fn jsonl(bytes: &[u8]) -> Vec<Value> {
         .collect()
 }
 
+fn input_command(mut command: Command, input: &[u8]) -> std::process::Output {
+    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn execute_value(cwd: &Path, mode: &str, selector: &str) -> std::process::Output {
+    let mut command = telora(cwd);
+    command.args([mode, selector]);
+    input_command(command, b"null")
+}
+
+fn runtime_source(name: &str) -> String {
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/runtime").join(name)).unwrap()
+}
+
 mod source_runtime;
 
 mod checks;
 mod queries;
 mod command_surface;
 mod entry_services;
-mod ees;
 mod evaluation;
 mod language;
 mod context;

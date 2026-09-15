@@ -1,6 +1,6 @@
 # RFC 0299：以静态 TransformService trait 统一查询入口
 
-状态：实施中。
+状态：已实现并完成回归，独立分支待审阅。
 跟踪：[#201](https://github.com/hh9527/telora/issues/201)。
 实现分支：`feat/transform-service`。
 
@@ -22,7 +22,7 @@ Wasm 发布格式或磁盘快照。imos 继续服务包管理，其 Host 能力�
 
 ## 现状调查与缺口
 
-以下为当前源码调查结论，不是新协议已经通过运行验证的声明。
+以下保留立项时的源码调查，描述被本 RFC 替换的实现；落地结果见文末。
 
 | 部分 | 当前证据 | 本次处理 |
 | --- | --- | --- |
@@ -201,8 +201,7 @@ eval-with 测试；同步 docs/design、guide/EXEC-MODE.md、guide/TELORA.md 及
 3. **总装清理**：删除旧入口与 EES 应用路径，迁移真实模型、脚本、测试和文档，
    完成全量回归与一次 release 性能观察。不在每个内部改动后反复跑性能。
 
-本草案不声称无接收者 trait 调用、二次冻结或请求配额 trap 后恢复已经验证；
-其中请求配额隔离与恢复是 serve 落地的必要条件。
+请求配额隔离与恢复是 serve 落地的必要条件。
 第一项若发现通用 trait 实现缺口，在本 RFC 范围内补齐现有静态语义；若必须新增
 存在类型等语言机制则暂停重新讨论，不以兼容旧动态路径绕过。
 
@@ -232,3 +231,38 @@ eval-with 测试；同步 docs/design、guide/EXEC-MODE.md、guide/TELORA.md 及
 导出 `initialize: Fn(Context) -> TransformService` 会引入 trait 作为返回值的额外语义；本次不采用。
 保留 reducer 状态转换增加跨请求更新与副作用规约，不符合只读查询目标。
 强制立即实现快照/新堆/并发 TransformService 会扩大本次范围，优先复用现有类型化 Wasm 值和回收。
+
+## 落地记录（2026-09-15）
+
+- 标准库提供 TransformService、Context、Sources/source；静态 adapter 只引用 MainService
+  类型并调用 prepare，MIR 确定 init/transform 实例。impl 中的 Self 通过普通词法类型别名
+  绑定实现目标，支持具体泛型目标；没有新增运行时类型推断。
+- CLI run/serve 共用一个执行器；普通失败由内置 with_diagnostics 捕获。旧 eval-with、
+  Eval/Run/Serve、应用 EES/reducer 与对应浏览器示例兼容入口删除；包管理 IMOS 保留。
+  浏览器示例本轮只保留普通值和具体函数调用，未增加浏览器 TransformService 调度器。
+- 初始化后 collector 保留 handler 及其闭包依赖，保存线性内存和可变 globals。
+  每请求复用已编译 Module，创建新 Store/Instance 并恢复初始化基线；不重新求解、编译、
+  读取来源或执行用户 init。首版复制完整已分配内存，不承诺最优 reset 成本。
+- 请求 memory 上限暂按基线字节数加配置预算实现，usage 报告对应有效线性内存上限；
+  fuel 每次重新补充。serve 的 --report-usage 逐次报告已进入请求处理的用量。
+  初始化及 Host 内存不属于精准计费契约。
+- 工作区测试全部通过（CLI 83 项、Wasm 75 项）；语言验收 431 项通过。
+  后续 usage/timing 收尾经 5 项入口测试复验。覆盖重导出、确定性 codegen、具体 Self、
+  来源检查、诊断标签、成功/失败/成功、fuel/内存 trap 后恢复和连续 256 次 reset。
+- lab-ontology 三个 make-query 及脚本已迁移，同输入结果与旧入口逐字一致。
+  四个 crate 的 check --lib 通过。world/spider/dog 查询测试分别 22/28/42 项通过，
+  完整套件使用 --with-fuel 10000；默认预算运行会提前耗尽，未修改默认配置。
+
+同机 release 单次观察（墙钟非统计基准；RSS 含 Host 与 Wasm）：
+
+| 模型 | 旧 eval-with | 新 run | 旧峰值 RSS KiB | 新峰值 RSS KiB |
+| --- | ---: | ---: | ---: | ---: |
+| world | 0.58 s | 0.60 s | 73388 | 71364 |
+| spider | 0.58 s | 0.62 s | 71852 | 69664 |
+| dog | 0.60 s | 0.61 s | 70752 | 69436 |
+
+补充计时后的 world run 为 0.62 s / 71968 KiB：前端 409.3 ms、codegen/link 93.1 ms、
+引擎加载 79.6 ms、模块初始化 22.3 ms、服务来源/init/基线建立 3.1 ms、首次 reset 2.2 ms、
+首次输入/转换/输出 8.5 ms。world serve 的成功/null 失败/成功/成功序列正确：后两条成功
+请求 reset 为 1.01/0.92 ms，输入/转换/输出为 0.52/0.48 ms，进程峰值 RSS 71664 KiB。
+这些观测不推出性能收益结论，首次与后续调用也不要求 fuel 消耗相同。

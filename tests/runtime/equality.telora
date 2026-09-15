@@ -1,6 +1,6 @@
 import "std/eq" as eq;
 import "std/codec" {encode, Value};
-import "std/entry" as entry; import "std/blame" {BlameError};
+import "std/transform-service" as entry; import "std/blame" {BlameError};
 import "std/dyn" as dynamic;
 import "std/hash" as hash;
 import "std/regex" as regex;
@@ -92,4 +92,9 @@ def checks: Fn() -> Value = fn() {
     ])
 };
 export def answer: Value = checks();
-export def main: entry.Eval = entry.main({sources: [], envs: [], args: False}, fn(ctx) { checks() });
+type MainService = struct {};
+impl entry.TransformService for MainService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) { checks() },
+};
+export {MainService};

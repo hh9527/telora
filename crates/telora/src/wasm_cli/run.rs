@@ -5,18 +5,24 @@ use telora_core::{SourceDatabase, SourceId, data_plan::{self, Format}};
 use telora_wasm::{transform_service::TransformSession, transport::Value};
 
 pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve: bool) -> Result<i32, String> {
+    let frontend = PhaseTimer::new("frontend");
     if arguments.module.contains(':') { return Err("service entry expects MODULE, exporting MainService".into()); }
     let mut inventory = Inventory::new(&context, arguments.module.starts_with("std/"))?;
     let module = inventory.select(&arguments.module)?;
     let mut mir = inventory.solve_transform(&module)?;
+    if mir.diagnostics.iter().any(|d| d.severity == Severity::Error) {
+        return Err(mir.diagnostics.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"));
+    }
     let sealed = mir.seal().map_err(|ds| ds.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
     let ModuleTarget::Bound(root) = mir.roots[0] else { return Err("unresolved service entry".into()); };
     let symbol = *mir.exports[root.index()].iter().find(|s| mir.symbols[s.index()].name == "main")
         .ok_or("missing static service plan")?;
     let executable = sealed.seal_export(symbol).map_err(|ds| ds.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
+    drop(frontend);
     let mut session = compile(&executable, inventory.runtime_options())?;
     let result = initialize(&mut session, &inventory, &mut mir.sources);
     diagnostics::finish(&session, &mir.sources, 0, result)?;
+    let service_init = PhaseTimer::new("service_initialize");
     let mut service = TransformSession::new(session)?;
     let names = crate::source_arg::service_source_names(&arguments.sources)?;
     if names != service.sources() {
@@ -37,12 +43,16 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
     }
     let result = service.initialize(&values);
     diagnostics::finish(service.session(), &mir.sources, 0, result)?;
+    service.seal_initialization()?;
+    drop(service_init);
+    let usage_reporter = service.session_mut().usage_reporter.take();
     let request = mir.sources.try_add("@request", "").map_err(|e| e.to_string())?;
     let stdin = std::io::stdin();
     if !serve {
         let input = crate::source_arg::read_limited(stdin.lock(), limits.file_size, "query input")?;
         let input = String::from_utf8(input).map_err(|e| e.to_string())?;
         let response = transform(&mut service, &mut mir.sources, request, &input);
+        if let Some(report) = usage_reporter { report(service.usage()); }
         for diagnostic in response["diagnostics"].as_array().into_iter().flatten() {
             crate::emit_stderr(serde_json::json!({"schema":"telora.execution/v1", "record":"diagnostic",
                 "severity":diagnostic["severity"], "message":diagnostic["message"],
@@ -71,7 +81,11 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
         let response = if oversized {
             failure("request exceeds file_size limit")
         } else { match std::str::from_utf8(&bytes) {
-            Ok(input) => transform(&mut service, &mut mir.sources, request, input),
+            Ok(input) => {
+                let response = transform(&mut service, &mut mir.sources, request, input);
+                if let Some(report) = usage_reporter { report(service.usage()); }
+                response
+            },
             Err(_) => failure("request is not UTF-8"),
         }};
         crate::emit(response)?;
@@ -91,10 +105,18 @@ fn materialize(service: &mut TransformSession, sources: &SourceDatabase, source:
 
 fn transform(service: &mut TransformSession, sources: &mut SourceDatabase, request: SourceId, input: &str) -> serde_json::Value {
     let result = (|| {
-        service.reset()?;
+        {
+            let _timer = PhaseTimer::new("request_reset");
+            service.reset()?;
+        }
+        let _timer = PhaseTimer::new("request_transform");
         sources.replace_unreferenced(request, "@request", input).map_err(|e| e.to_string())?;
         let input = materialize(service, sources, request, Format::Json, input.len())?;
-        service.transform(input)
+        let result = service.transform(input);
+        for event in service.session().take_debug_events()? {
+            crate::emit_stderr(serde_json::to_value(event).map_err(|e| e.to_string())?)?;
+        }
+        result
     })();
     match result {
         Ok(observed) => if let Some(ok) = observed.get("Ok") {
