@@ -1,0 +1,4 @@
+import "./provider" { wrap };
+export def first: String = wrap(7);
+export def second: String = wrap("text");
+export def repeated: String = wrap(8);

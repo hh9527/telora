@@ -1,237 +1,92 @@
-# Telora 执行模式指南
+# Telora 执行模式
 
-Telora 提供 `eval`、`eval-with`、`run` 和 `serve` 四种执行模式。它们都从 workspace 中
-选择一个公开导出，但对导出值的类型、Host 输入和执行生命周期有不同要求。
+Telora 从源码建立封闭 MIR，生成内存中的 Wasm，初始化后执行。无需中间制品落盘。
 
-标准库模块见 [`LIBSTD.md`](LIBSTD.md)，EES 与 Actor 协议见 [`EES.md`](EES.md)，完整
-命令参数见 [`TELORA-CLI.md`](TELORA-CLI.md)。
+| 命令 | 入口 | 行为 |
+| --- | --- | --- |
+| `eval MODULE:NAME` | 一个 Value 导出 | 输出初始化后的值 |
+| `run MODULE` | 类型导出 MainService | 读取一个 stdin JSON，返回一个 JSON |
+| `serve MODULE --bind stdio://` | 同一个 MainService | 按 JSONL 连续处理独立请求 |
 
-## 选择执行模式
-
-| 命令 | 导出类型 | 外部输入 | reducer/effect | 生命周期 |
-| --- | --- | --- | --- | --- |
-| `eval` | `Value` | 无 | 无 | 求值一次 |
-| `eval-with` | `entry.Eval` | source、声明的 env、args | 无 | 调用一次纯函数 |
-| `run` | `entry.Run(State)` | source、声明的 env、args、一个 Host request | 有 | 完成一个请求 |
-| `serve` | `entry.Serve(State)` | source、声明的 env、args、持续 transport request | 有 | 持续服务 |
-
-选择原则：
-
-- 已经能在模块求值阶段得到 Value，使用 `eval`。
-- 需要由 Host 准备输入，但计算本身没有外部效果，使用 `eval-with`。
-- 需要 EES 或显式 reducer 状态，并且只处理一个请求，使用 `run`。
-- 需要复用同一份初始化结果和 State 持续处理请求，使用 `serve`。
-
-四种命令都使用 `MODULE:EXPORT` 选择器。模块可以被 resolve 只表示 Host 能找到它；被
-某个执行模式选择还要求导出的名义 wrapper 类型与该模式匹配。
-
-## `eval`
-
-`eval` 直接求值一个公开的 `std/value.Value` 导出：
+服务实现 `std/transform-service.TransformService`：
 
 ```telora
+import "std/transform-service" as service;
 import "std/value" {Value};
 
-export def answer: Value = Value.Object({
-    value: Value.Int(42),
-    label: Value.String("answer"),
-});
-```
+@service.source("knowledge")
+type MyService = struct {knowledge: Value};
 
-```bash
-telora eval @src/app:answer
-```
-
-stdout 是该 Value 的 JSON 表示。`eval` 不构造 `entry.Context`，不运行 reducer，也不
-调用 EES。它适合确定的计划、schema、常量数据和完全由模块内容决定的计算。
-
-## `eval-with`
-
-`eval-with` 选择 `entry.Eval`。程序用 `entry.main` 声明允许的 Host 输入，并提供一个
-`Fn(entry.Context) -> Value`：
-
-```telora
-import "std/dict" as dict;
-import "std/entry" as entry;
-
-def config: entry.ContextConfig = {
-    sources: ["request"],
-    envs: ["TARGET"],
-    args: True,
+impl service.TransformService for MyService {
+    init: fn(ctx) {
+        {knowledge: ctx.sources["knowledge"]}.ty!(Self)
+    },
+    transform: fn(self, input) {
+        Value.Object({knowledge: self.knowledge, request: input})
+    },
 };
 
-export def evaluate: entry.Eval = entry.main(config, fn(ctx) {
-    match dict.get(ctx.sources, "request") {
-        Some(value) => value,
-        None => fail!("missing request source"),
-    }
-});
+export {MyService as MainService};
 ```
 
-```bash
-telora eval-with @src/app:evaluate \
-  --source request=request.json \
-  -- argument-1
+`Self` 是具体实现类型，不是运行时 trait object。MIR 在执行前确定 init 与 transform
+的方法实例。模块可以正常重导出或给类型起别名；入口只要求导出名是 MainService。
+
+```sh
+printf '{"question":42}\n' | telora run @src/app --source knowledge=model.json
+printf '1\n2\n' | telora serve @src/app --source knowledge=model.json --bind stdio://
 ```
 
-`entry.ContextConfig` 与 `entry.Context` 为：
+`init: Fn(Context) -> Self` 消费固定来源，返回初始化实例。
+`transform: Fn(Self, Value) -> Value` 处理一次输入，不修改跨请求状态。
+没有来源时省略 source 装饰器，Context.sources 为空。
 
-```telora
-type ContextConfig = struct {
-    sources: Array(String),
-    envs: Array(String),
-    args: Bool,
-};
+## 来源与生命周期
 
-type Context = struct {
-    sources: Dict(Value),
-    env: Dict(String),
-    args: Array(String),
-};
-```
+`@service.source("name")` 声明逻辑来源。可以声明多个不同名称，重复声明报错。
+CLI 提供的来源集合必须与声明相同，缺失、多余和重复绑定均失败。
+`--source name=path.json` 按扩展名识别 JSON/YAML/TOML；`file+json://path`
+等形式可显式指定格式。stdin 留给请求，两种服务命令都不接受 stdin 初始化来源。
 
-只有 config 声明的 source 和 env 才能进入 Context。`args: False` 表示入口不接受命令
-参数。`eval-with` 调用一次 evaluate 函数并把返回 Value 编码到 stdout；它没有 Actor
-事件、State 或 EES。
+Context 只有 `sources: Dict(Value)`。没有隐式环境变量、字符串参数或外部 I/O。
+需要这些信息时，由业务宿主明确转成输入数据。初始化来源只加载一次，逐次请求的数据
+直接进入 transform 的第二个参数。
 
-## `run`
+来源诊断使用 `@service/name`，特殊名称按 UTF-8 字节百分号编码；请求使用 `@request`。
+物理文件位置只属于 Host，不进入数据来源身份。
 
-`run` 选择 `entry.Run(State)`。初始化函数接收 Context，并返回初始 State 和 reducer：
+顺序为：模块与 property 初始化 → 准备来源 → init → 固定实例 → transform。
+每次 transform 都从同一初始化状态开始；服务间隙 reset 执行环境，保证干净、确定的
+起点，不重新读取外部来源。状态在 Wasm 内保留，不转成 Host JSON 再构造回来。
 
-```telora
-import "std/actor" as actor;
-import "std/ees" as ees;
-import "std/entry" as entry;
-import "std/value" {Value};
+## 失败与配额
 
-type State = struct {handled: Int};
+初始化失败不发布服务实例。普通语言失败由内置 entry 的 with_diagnostics 包装捕获；
+transform 本身仍返回 Value，无需为了执行错误添加 Result。
 
-def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-
-export def run: entry.Run(State) = entry.run(State.type, config, ees.none, fn(ctx) {
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            actor.Event.Request(request) => (
-                {handled: state.handled + 1},
-                [actor.reply(request.id, Value.String("done"))],
-            ),
-            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    ({handled: 0}, reduce)
-});
-```
-
-```bash
-telora run @src/app:run
-```
-
-Host 初始化 service，投递一个 `actor.Request`，执行 reducer 产生的 effect，直到该请求
-得到 `actor.Reply` 或执行终止。最终 Reply 的 Value 作为命令结果写到 stdout。
-
-run 本身仍采用标准 reducer/effect 模型。`ees.none` 只表示此 service 没有 native
-model；需要外部能力时换成明确的 `ees.Config` 并处理 `actor.EesReply`。
-
-## `serve`
-
-`serve` 选择 `entry.Serve(State)`。Telora 代码的 wrapper 和 reducer 形状与 run 相同，
-区别由 Host 生命周期和请求 transport 决定：
-
-```telora
-export def serve: entry.Serve(State) = entry.serve(State.type, config, ees.none, fn(ctx) {
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            actor.Event.Request(request) => (
-                {handled: state.handled + 1},
-                [actor.reply(request.id, request.input)],
-            ),
-            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    ({handled: 0}, reduce)
-});
-```
-
-```bash
-telora serve @src/app:serve --bind stdio://
-```
-
-当前公开 transport 是 `stdio://` JSONL。stdin 每行是一个请求 Value；stdout 每行是一个
-响应：
+serve 每条请求恰好输出一行：
 
 ```json
-{"ok":{"message":"done"},"error":false,"diagnostics":[]}
-{"ok":null,"error":true,"diagnostics":[{"message":"invalid request"}]}
+{"ok":42,"error":false,"diagnostics":[]}
 ```
 
-同一个 service State 在请求间延续。一次可恢复的请求 failure 产生 error 响应，随后仍
-可处理下一行；初始化、Entry 协议或资源类终止失败会结束进程。
+失败时 `error` 为 true、`ok` 为 null。diagnostics 保留 severity、message、labels 和 notes；
+其中来源坐标保留行与 UTF-8 字节偏移信息。业务返回 null 与执行失败由 error 区分。
+请求成功、语言失败或配额耗尽后，下一条请求都获得独立的执行机会。
 
-## Source
+fuel/memoryLimit 只约束单次服务调用，不在整个 serve 生命周期累计；目的在于可停机，
+不要求精准计费。参数读取 workspace 的 runtime 配置，CLI 可用 --with-fuel 和
+--with-memory-limit 覆盖。fuel 单位为一百万，memoryLimit 单位为 MiB。
+请求之间的 reset 实现与页级计量方式不构成语言语义。
 
-`eval-with`、`run` 和 `serve` 使用相同的 `--source NAME=SOURCE` 形式：
+run 成功只向 stdout 输出结果；失败非零退出，诊断走 stderr JSONL。serve 使用上面的
+响应封装。dbg! 和 usage 观察仍输出到 stderr，不混入结果。
 
-```bash
---source request=request.json
---source request=file+json://request.data
---source request=file+yaml://request.yaml
---source request=file+toml://request.toml
---source request=stdin+json://
-```
+## 检查与迁移
 
-省略显式 scheme 时，Host 按 `.json`、`.yaml`、`.yml` 或 `.toml` 后缀选择 parser。
-NAME 来自命令行左侧，并成为 `ctx.sources` 的 key；source 文件自身的名字不会成为 key。
+`check --only-types` 不执行代码；普通 check 完成模块初始化，但不调用 init/transform，
+也不获取服务来源。行为验证使用 run/serve 或显式调用方法的 `.telora` 测试。
 
-每个声明的 source 必须提供一次，未声明和重复的 source 都会被拒绝。单次命令最多使用
-一个 stdin source。`serve --bind stdio://` 已将 stdin 用作请求通道，因此不能再用 stdin
-初始化 source。
-
-source 中 Value 的诊断来源使用稳定名称：eval-with 使用 `@eval-ctx/NAME`，run 和 serve
-使用 `@run-ctx/NAME`。这些名称不暴露物理文件路径，是数据来源而不是模块 ID。
-
-## Env 与 args
-
-`ContextConfig.envs` 是允许进入 `ctx.env` 的环境变量名称全集。Telora 程序不能枚举或
-读取未声明的 Host 环境变量。
-
-命令参数放在 `--` 后：
-
-```bash
-telora eval-with @src/app:evaluate -- first second
-telora run @src/app:run -- first second
-```
-
-只有 `ContextConfig.args == True` 的入口接受这些参数。
-
-## EES
-
-run 和 serve 的第二个参数是 `ees.Config`。配置声明逻辑 native model 与 locator 变量；
-CLI 使用 `--ees-var NAME=VALUE` 绑定声明的变量：
-
-```bash
-telora run @src/app:run --ees-var tenant=production
-telora serve @src/app:serve --bind stdio:// --ees-var tenant=production
-```
-
-reducer 通过 `actor.ees_call` 发出请求，在后续 `actor.EesReply` 中处理结果。完整模型、
-locator 和状态机示例见 [`EES.md`](EES.md)。
-
-## 失败与输出
-
-成功的 eval、eval-with 和 run 各向 stdout 写一个 JSON 值。serve 按 JSONL 写响应。
-程序 failure、类型不匹配、source 错误和 Host 协议错误使对应命令返回非零，诊断写到
-stderr；serve 中可恢复的单请求 failure 使用带内 error 响应。
-
-`check` 在多个初始化根之间收集诊断；单个根内部失败立即中断。
-run/serve 不提供 `--best-effort`，初始化失败就不启动 service，也不产生 EES effect。
-
-## 执行前检查
-
-```bash
-telora check @src/app
-telora query exports @src/app
-```
-
-`check` 检查并求值模块导出，但不会调用导出的函数或启动 service。`query exports` 可以
-确认导出名称和精确 wrapper 类型。纯 Value 用 `eval` 验收，Context 函数用 `eval-with`
-验收，reducer service 用 `run` 或 `serve` 验收。
+旧 eval-with、entry.Eval/Run/Serve、actor reducer 和应用 EES 协议已移除。
+原来承载单次查询的 source 应迁到 transform 参数；固定知识库来源才放进 init。
+包管理的 IMOS Host 能力保持私有，不成为 Telora 程序的 effect system。

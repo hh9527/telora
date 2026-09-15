@@ -46,7 +46,11 @@ impl Snapshot {
         MirQuery::new(&self.mir)
     }
     pub fn module_by_path(&self, path: &Path) -> Option<ModuleId> {
-        self.paths.get(path).copied()
+        // URI paths and canonical filesystem paths differ on Windows. Keep
+        // physical identity at this host boundary, not in module cnames.
+        self.paths.get(path).copied().or_else(|| {
+            self.paths.get(&canonical(path).ok()?).copied()
+        })
     }
     pub fn path_by_source(&self, source: telora_core::SourceId) -> Option<&Path> {
         self.paths.iter().find_map(
@@ -253,6 +257,20 @@ mod tests {
         query.type_name(ty)
     }
     #[tokio::test]
+    async fn editor_rebuild_uses_current_workspace_compiler_options() {
+        let dir = fixture();
+        let workspace = Workspace::new(dir.path().join("src/main.telora")).unwrap();
+        let config = dir.path().join("telora-config.json");
+        std::fs::write(&config, r#"{"version":1,"members":["."],"compiler":{"maxTypeDepth":1}}"#).unwrap();
+        let limited = workspace.rebuild(&workspace.context()).await.unwrap();
+        assert!(limited.mir.diagnostics.iter().any(|d| d.message.contains("compiler.maxTypeDepth = 1")));
+        assert!(limited.mir.seal().is_err());
+        std::fs::write(&config, r#"{"version":1,"members":["."],"compiler":{"maxTypeDepth":256}}"#).unwrap();
+        let restored = workspace.rebuild(&workspace.context()).await.unwrap();
+        restored.mir.seal().unwrap_or_else(|d| panic!("{d:?}"));
+    }
+
+    #[tokio::test]
     async fn overlays_and_all_open_roots_share_one_static_graph() {
         let dir = fixture();
         let workspace = Workspace::new(dir.path().join("src/main.telora")).unwrap();
@@ -281,7 +299,13 @@ mod tests {
         let ModuleState::Source { source, .. } = snapshot.mir.modules[module.index()].state else {
             panic!("source");
         };
-        assert_eq!(snapshot.path_by_source(source), Some(model.as_path()));
+        let canonical_model = canonical(&model).unwrap();
+        assert_eq!(snapshot.path_by_source(source), Some(canonical_model.as_path()));
+        let uri = async_lsp::lsp_types::Url::from_file_path(&model).unwrap();
+        let uri_path = uri.to_file_path().unwrap();
+        assert_eq!(snapshot.module_by_path(&uri_path), Some(module));
+        assert_eq!(snapshot.source_by_path(&uri_path), Some(source));
+        assert_eq!(snapshot.module_by_path(&dir.path().join("src/./model.telora")), Some(module));
         assert_eq!(
             snapshot
                 .mir

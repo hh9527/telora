@@ -4,7 +4,7 @@
 公开语言表面。完整语义以 [`../docs/design/LANGUAGE.md`](../docs/design/LANGUAGE.md)
 为准；本文没有说明的行为不能据此推断为存在。
 
-本文把嵌入 Telora、准备外部输入、执行 Entry 效果并呈现诊断的 CLI 或运行时适配器
+本文把嵌入 Telora、准备外部输入、执行数据转换并呈现诊断的 CLI 或运行时适配器
 称为运行时宿主（Host）。
 
 Telora 是一门确定、纯、面向表达式的语言，用于把意图编译为不可变计划。
@@ -31,22 +31,15 @@ hello/
 
 ```telora
 # src/app.telora；# 引入行注释
-import "std/actor" as actor;
-import "std/ees" as ees;
-import "std/entry" as entry;
+import "std/transform-service" as service;
 import "std/value" {Value};
+type MainService = struct {};
+impl service.TransformService for MainService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) { Value.String("hello, telora") },
+};
+export {MainService};
 
-type State = struct {};
-def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run: entry.Run(State) = entry.run(State.type, config, ees.none, fn(ctx) {
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            actor.Event.Request(request) => (state, [actor.reply(request.id, Value.String("hello, telora"))]),
-            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    ({}, reduce)
-});
 ```
 
 在 crate 目录运行：
@@ -54,7 +47,7 @@ export def run: entry.Run(State) = entry.run(State.type, config, ees.none, fn(ct
 ```bash
 telora lock
 telora check @src/app
-telora run @src/app:run
+printf 'null\n' | telora run @src/app
 telora query exports @src/app
 ```
 
@@ -1226,32 +1219,12 @@ import "@src/compiler" { compile };
 plan-lib/types     -> <plan-lib>/src/types.telora
 ```
 
-CLI 从当前目录向上查找最近的 `telora-config.json`，因此可以在 workspace 内运行
-命令。`run @src/app:run` 选择普通模块的 `run` export；该值必须是
-`entry.Run(State)`。工具解开 wrapper、初始化具体 State、投递一个 Request，并把 Reply
-中的 Value 编码为 JSON。环境与输入由 `entry.ContextConfig` 显式声明，不形成 ambient
-binding。
+模块导出具体类型 MainService，实现 `std/transform-service.TransformService` 的 init 与 transform。
+MIR 封闭所有方法实例；Host 准备声明的来源并初始化服务，run 处理一个 stdin JSON，
+serve 处理 JSONL。每次调用从同一初始化状态开始，服务间隙 reset；fuel/memory 配额只
+约束单次调用。来源与诊断细节见 [执行模式](EXEC-MODE.md)。
 
-普通 module 的纯结果使用 `telora eval module:name`；带显式 source、环境变量
-白名单和字符串参数的纯函数使用 `eval-with`。两者都要求返回 `Value`，并且不创建 Entry
-或 effect loop。完整示例：
-
-```text
-telora -C examples/my-crate run @src/app:run
-telora -C examples/my-crate serve @src/app:serve --bind stdio://
-telora -C examples/my-crate eval @src/model:answer
-telora -C examples/my-crate check @test/compiler
-```
-
-`serve --bind stdio://` 的每行响应包含 `ok`、`error` 和 `diagnostics`。请求成功或
-产生可恢复诊断后服务均继续运行；当前响应中的诊断项稳定公开 `message`。初始化失败、
-协议失败和资源类 terminal failure 仍由运行时适配器带外报告。
-
-`check` 用统一 Module 管线的 best-effort 策略求值所选模块；任何 error 都会非零退出，
-但内部图仍可保留以查询健康事实。它不进行 Entry 调度，也不会调用已经
-导出的函数，因此不等价于行为验收。纯导出由 `eval` / `eval-with` 验收，应用 service
-由普通 `run` 严格执行；初始化失败时可以用 `check` 收集多个根因。
-不能仅以 `check` 成功作为行为证据。
+`check` 不调用 init/transform，不读取服务来源；行为验证使用 run/serve。
 
 在 test 入口中，`./compiler` 以及其他 `./` 或 `../` import 非法。
 在 `src/` 下的模块中，相对 import 合法，并从导入模块的逻辑目录解析。
@@ -1275,5 +1248,5 @@ Telora 支持带显式契约的递归函数。调用和 back-edge 消耗 fuel；
 - 应用事实和物理映射留在可复用方法库之外。
 - 用泛型参数和明确的输入输出契约表达类型关系。
 - 优先让类型表达静态约束；动态失败使用 `fail!` 并携带原始证据。
-- 纯导出使用 `eval` / `eval-with` 验收，应用 service 使用严格 `run` 验收；失败排查时
+- 纯导出使用 `eval` 验收，应用 service 使用严格 `run` 验收；失败排查时
   使用 `check` 收集初始化诊断。

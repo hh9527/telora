@@ -146,6 +146,10 @@ impl Session {
     pub(crate) fn materialize_data(&mut self, plan: &ValidatedDataPlan) -> Result<u32, String> {
         self.materialize_graph(Graph::Parsed(plan))
     }
+    pub fn materialize_value(&mut self, plan: &ValidatedDataPlan) -> Result<crate::transport::Value, String> {
+        let ty = self.manifest.value_type.ok_or("Wasm: missing semantic Value type")?;
+        Ok(crate::transport::Value {pointer: self.materialize_data(plan)?, ty})
+    }
     fn materialize_graph(&mut self, plan: Graph<'_>) -> Result<u32, String> {
         self.data_node(
             plan,

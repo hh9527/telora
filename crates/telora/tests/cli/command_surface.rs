@@ -25,32 +25,11 @@ fn run_and_check_select_logical_roots_from_cwd() {
     fs::write(cwd.join("src/lib.telora"), "export def output: String = \"42\";").unwrap();
     fs::write(
         cwd.join("src/app.telora"),
-        r###"import "@src/lib" {output};
-import "std/actor" as actor; import "std/value" {Value};
-import "std/ees" as ees;
-import "std/entry" as entry;
-type State = struct {output: String, completed: Bool};
-def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run: entry.Run(State) = entry.run((State).type, config, ees.none, fn(ctx) {
-    let initial: State = {output, completed: False};
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            actor.Event.Request(request) => (
-                {output: state.output, completed: True},
-                [actor.reply(request.id, Value.String(state.output))],
-            ),
-            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    (initial, reduce)
-});"###,
+        runtime_source("transform-import.telora"),
     )
     .unwrap();
     refresh_fixture_workspace(&cwd);
-    let run = telora(&cwd)
-        .args(["run", "@src/app:run"])
-        .output()
-        .unwrap();
+    let run = execute_value(&cwd, "run", "@src/app");
     assert!(
         run.status.success(),
         "{}",

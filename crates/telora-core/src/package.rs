@@ -6,13 +6,14 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::module_format::ModuleFormat;
+mod config;
 
 pub const CONFIG_FILE: &str = "telora-config.json";
 pub const CRATE_FILE: &str = "telora-crate.json";
 pub const LOCK_FILE: &str = "telora-lock.json";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceConfig {
     pub version: u32,
     pub members: Vec<PathBuf>,
@@ -20,22 +21,26 @@ pub struct WorkspaceConfig {
     pub sources: BTreeMap<String, RemoteSource>,
     #[serde(default)]
     pub overrides: BTreeMap<String, PathOverride>,
+    #[serde(default)]
+    pub compiler: crate::CompilerOptions,
+    #[serde(default)]
+    pub runtime: crate::RuntimeOptions,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RemoteSource {
     pub tarball: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PathOverride {
     pub path: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CrateManifest {
     pub name: String,
     pub modules: Vec<String>,
@@ -65,14 +70,14 @@ pub enum ModuleDeclarationKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceLock {
     pub version: u32,
     pub packages: BTreeMap<String, LockedPackage>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LockedPackage {
     pub source: LockedSource,
     pub modules: Vec<String>,
@@ -80,7 +85,7 @@ pub struct LockedPackage {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(untagged)]
+#[serde(untagged, rename_all_fields = "camelCase")]
 pub enum LockedSource {
     Workspace { workspace: PathBuf },
     Tarball { tarball: String },
@@ -98,6 +103,8 @@ pub struct ResolvedWorkspace {
     root: PathBuf,
     crates: BTreeMap<String, ResolvedCrate>,
     lock: WorkspaceLock,
+    compiler: crate::CompilerOptions,
+    runtime: crate::RuntimeOptions,
 }
 
 #[derive(Clone, Debug)]
@@ -161,14 +168,7 @@ impl WorkspaceSpec {
             .parent()
             .expect("workspace config has a parent")
             .to_owned();
-        let config: WorkspaceConfig = read_json(&config_path)?;
-        if config.version != 1 {
-            return Err(PackageError::new(format!(
-                "unsupported {} version {}; expected 1",
-                config_path.display(),
-                config.version
-            )));
-        }
+        let config = WorkspaceConfig::read(&config_path)?;
         validate_source_catalog(&config)?;
 
         let mut members = BTreeMap::new();
@@ -286,7 +286,11 @@ impl WorkspaceSpec {
                             .root
                             .strip_prefix(&self.root)
                             .expect("workspace members are contained")
-                            .to_owned(),
+                            .components()
+                            .map(|part| part.as_os_str().to_string_lossy())
+                            .collect::<Vec<_>>()
+                            .join("/")
+                            .into(),
                     }
                 } else {
                     LockedSource::Tarball {
@@ -372,6 +376,8 @@ impl WorkspaceSpec {
             root: self.root.clone(),
             crates,
             lock,
+            compiler: self.config.compiler,
+            runtime: self.config.runtime,
         })
     }
 
@@ -406,6 +412,10 @@ impl WorkspaceSpec {
 }
 
 impl ResolvedWorkspace {
+    pub fn compiler_options(&self) -> crate::CompilerOptions { self.compiler }
+
+    pub fn runtime_options(&self) -> crate::RuntimeOptions { self.runtime }
+
     pub fn root(&self) -> &Path {
         &self.root
     }

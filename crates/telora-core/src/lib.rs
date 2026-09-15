@@ -22,6 +22,8 @@ pub mod symbol_resolve;
 pub mod type_resolve;
 pub mod module_format;
 pub mod package;
+pub mod options;
+pub use options::{CompilerOptions, RuntimeOptions};
 pub mod query;
 pub mod runtime_host;
 pub mod syntax;
@@ -37,9 +39,7 @@ pub use package::{
 };
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
 pub use runtime_host::{
-    DataLimits, EesCall, EesReply, EntryDataSources, EvalSource, RunHost,
-    RunHostFuture, SystemCaps, SystemDataFormat, SystemDataSource,
-    SystemEesModel, SystemEvent, SystemStdin, SystemTextSource,
+    DataLimits, ServiceSource, SystemDataFormat, SystemDataSource,
 };
 pub use source::{
     Diagnostic, Label, Loc, Located, Location, Origin, SourceDatabase, SourceId, TextRange,

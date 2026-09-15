@@ -1,9 +1,0 @@
-export def configure: Fn(Int) -> (Int, Fn(Int) -> (Array(Int), Fn(Array(Int), Int) -> (Array(Int), Array(Int)))) = fn(env: Int) {
-    (env, fn(resources: Int) {
-        let initial: Array(Int) = [resources];
-        (initial, fn(state: Array(Int), event: Int) {
-            let next: Array(Int) = if event < 0 { [] } else { [...state, event] };
-            (next, next)
-        })
-    })
-};

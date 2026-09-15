@@ -6,18 +6,23 @@ Telora CLI 及其运行时适配器共同充当运行时宿主（Host）：它�
 workspace、crate manifest、模块清单和依赖来源的完整用法见
 [`WORKSPACE.md`](WORKSPACE.md)。
 
+编译限制通过 workspace 配置的 `compiler` 设置，没有对应 CLI 参数。
+运行时 `runtime.fuel` 和 `runtime.memoryLimit` 分别默认 100 和 1024，单位为
+1,000,000 fuel 和 MiB（`1 << 20` 字节）。显式的 `--with-fuel N`、`--with-memory-limit N`
+逐项覆盖配置；未传入的项保留配置值。`--report-usage` 输出会话实际使用的上限和用量。
+
 每个 Telora crate 的模块位于 `src/`，测试位于 `tests/`。`telora-crate.json` 声明
 canonical crate name、模块清单和直接依赖名称；workspace 根的 `telora-config.json`
 选择这些名称的唯一来源，`telora-lock.json` 固定完整包图。
 
 Telora 从当前目录向上查找最近的 `telora-config.json`，因此命令可以从 workspace 内
 任意目录执行。`-C` 可以显式改变查找的起始目录。`telora lock` 是唯一写入 lock 的
-命令；`eval`、`eval-with`、`run`、`serve`、`test`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
+命令；`eval`、`run`、`serve`、`test`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
 命令参数使用稳定逻辑模块 ID，不使用物理文件名：
 
 ```text
 telora -C examples/my-crate eval @src/model:answer
-telora -C examples/my-crate eval-with @src/model:evaluate --source request=request.json -- arg
+telora -C examples/my-crate run @src/model < request.json
 telora -C examples/my-crate run @src/app:run
 telora -C examples/my-crate run @src/app:run --source request=stdin+json://
 telora -C examples/my-crate run @src/app:run --ees-var tenant=production
@@ -124,37 +129,20 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
 保留 `telora.check/v1`；显式的
 `query at/exports @test/NAME` 同样支持嵌套测试与测试依赖。
 
-- `eval module:name` 要求公开导出 `name: Value`，直接求值并编码为 JSON。
-  `eval-with` 要求导出 `entry.Eval`。其 `entry.ContextConfig` 声明 source、环境变量和
-  参数能力；两条命令都不进入 reducer/effect loop。
-- `run module:name` 和 `serve module:name --bind stdio://` 分别要求导出
-  `entry.Run(State)` 和 `entry.Serve(State)`。`run` 投递一次 Request 并在 Reply 后输出
-  Value；`serve` 持续把每行 JSON 转成 Request，每个 Reply 产生一行
-  JSON 响应。成功响应是 `{"ok": value, "error": false, "diagnostics": [...]}`；请求
-  触发可恢复 failure 时是 `{"ok": null, "error": true, "diagnostics": [...]}`，服务
-  继续处理下一行。当前诊断 JSON 只稳定公开 `message`。资源耗尽、取消等终止性失败，
-  以及初始化和 Entry 协议错误仍带外报告并终止进程。
-- `run` 和 `serve` 在 `ees.Config` 中声明命名 native model，并以 `ees.Config.vars` 与
-  `--ees-var` 绑定 locator 变量。model 由 `std/ees.imos_model` 或
-  `std/ees.sqlite_model` 构造。
-  reducer 发出 `actor.EesCall`，Host 完成调用后投递 `actor.EesReply`；多步行为的阶段
-  和关联信息保存在显式 State。应用 EES 与 package Host 的私有 IMOS Service 完全隔离。
-- `entry.ContextConfig.sources` 声明初始化 source。声明的名称必须全部提供，CLI 也不能
-  提供未声明或重复的名称。
-  `--source name=path.json` 按 `.json/.yaml/.yml/.toml` 推断格式；
-  `file+json://path`、`file+yaml://path`、`file+toml://path` 显式指定 transport 与格式；
-  `stdin+json://`、`stdin+yaml://`、`stdin+toml://` 从标准输入读取一次。
-  单次命令最多声明一个 stdin source。`serve --bind stdio://` 已把 stdin 用作 JSONL
-  请求通道，因此不能再用 stdin 初始化 source。
-  Main 收到的 Dict key 就是 `name`。值的诊断来源固定为 `@run-ctx/name`，不会暴露文件
-  路径；该来源名不是模块，不能 import，也不会由 `query modules` 列出。
-- `telora -C context run module:name` 从 `context` 开始向上发现 workspace config，并以包含
+- `eval module:name` 读取 Value 导出。
+- `run module` 选择 MainService，读取 stdin JSON，输出一个 JSON Value。
+- `serve module --bind stdio://` 持续处理 JSONL，响应含 ok/error/diagnostics；诊断保留
+  severity、message、labels、notes。语言失败和请求配额耗尽不影响下一条请求。
+- `@service.source("name")` 声明初始化来源，--source 的名称集合须精确匹配。
+  来源使用文件 JSON/YAML/TOML，stdin 保留给请求。逻辑来源为 @service/name。
+  参见 [执行模式](EXEC-MODE.md)。
+- `telora -C context run module` 从 `context` 开始向上发现 workspace config，并以包含
   `context` 的 member crate 解析 module selector。
 - 多根初始化诊断使用 `check`；静态诊断使用 `check --only-types`。运行命令不提供
   `--best-effort`，初始化失败不启动 Entry，不为诊断额外预执行用户代码。
 - `run`、`check` 和 `query` 的 `-C context` 都从 `context` 开始向上发现 workspace；
   `check` 和 `query` 接受完整稳定模块 ID，`check @test/...` 检查测试入口；`run` 和
-  `serve` 接受 `MODULE:EXPORT`。
+  `serve` 接受 `MODULE`。
 - `check` 先完成全图模块、符号和类型求解及 seal，再编译并初始化；静态阶段不执行
   Telora 代码。静态错误阻止整图初始化。初始化可继续独立任务以收集诊断，但最终判定
   仍然严格。stdout 使用 `telora.check/v1` JSONL，先输出诊断，最后输出一份 summary；
@@ -163,8 +151,7 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
   诊断另带 `initialization`：`module`、`node` 标识当时执行的初始化根，具名根还提供
   `symbol` 和 `name`；property 等非具名根的后两项为 null。这些 ID 属于本次封闭图。
   它记录实际触发，不是导入者或所有受影响导出的清单；缓存失败只报告原事件一次。
-  纯导出以 `eval` / `eval-with` 验收；应用 service 仍以 `run` 为准，因为 `run` 还经过
-  Entry 和 reducer/effect 调度。
+  纯导出以 eval 验收；服务以 run/serve 验收。
 - `query`（可见别名 `q`）输出 `telora.query/v1` JSONL 语义记录。`query modules`
   列出当前 crate 可见的规范模块 ID；`query exports <module>` 查询公共接口；
   `query at <module>` 查询顶层 local definitions，追加 `:<line>` 或 `:<line>:<column>`

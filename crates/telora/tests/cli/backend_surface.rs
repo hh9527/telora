@@ -6,7 +6,6 @@ fn execution_commands_reject_removed_backend_and_artifact_interfaces() {
     for (command, selector) in [
         ("check", "@src/main"),
         ("eval", "@src/main:answer"),
-        ("eval-with", "@src/main:answer"),
         ("run", "@src/main:run"),
         ("serve", "@src/main:serve"),
         ("test", "main"),

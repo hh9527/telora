@@ -17,6 +17,7 @@ mod regex;
 mod services;
 mod tail_calls;
 mod test_descriptions;
+mod transform_service;
 mod variant_origins;
 
 #[test]

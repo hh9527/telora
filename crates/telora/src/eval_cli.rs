@@ -1,4 +1,3 @@
-use crate::source_arg::{NamedSource, parse_named_source};
 use clap::Args;
 use std::path::PathBuf;
 
@@ -12,17 +11,6 @@ pub(crate) struct EvalSelector {
 pub(crate) struct EvalArgs {
     #[arg(value_name = "MODULE:NAME", value_parser = parse_eval_selector)]
     selector: EvalSelector,
-}
-
-#[derive(Args)]
-pub(crate) struct EvalWithArgs {
-    #[arg(value_name = "MODULE:NAME", value_parser = parse_eval_selector)]
-    selector: EvalSelector,
-    /// Provide a named Value source: NAME=PATH or NAME=(file|stdin)+(json|yaml|toml)://PATH.
-    #[arg(long = "source", value_name = "NAME=SOURCE", value_parser = parse_named_source)]
-    sources: Vec<NamedSource>,
-    #[arg(last = true, value_name = "ARG")]
-    args: Vec<String>,
 }
 
 pub(crate) fn parse_eval_selector(value: &str) -> Result<EvalSelector, String> {
@@ -51,15 +39,5 @@ pub(crate) fn run(context: PathBuf, arguments: EvalArgs) -> Result<i32, String> 
         context,
         &arguments.selector.module_id,
         &arguments.selector.export,
-    )
-}
-
-pub(crate) fn run_with(context: PathBuf, arguments: EvalWithArgs) -> Result<i32, String> {
-    crate::wasm_cli::eval_with(
-        context,
-        &arguments.selector.module_id,
-        &arguments.selector.export,
-        arguments.sources,
-        arguments.args,
     )
 }

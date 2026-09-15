@@ -1,1 +1,1 @@
-cannot establish finite generic instance expansion
+type expansion depth limit exceeded

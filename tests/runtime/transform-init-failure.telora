@@ -1,0 +1,7 @@
+import "std/transform-service" as service;
+type MainService = struct {};
+impl service.TransformService for MainService {
+    init: fn(ctx) { fail!("service initialization failed") },
+    transform: fn(self, input) { input },
+};
+export {MainService};

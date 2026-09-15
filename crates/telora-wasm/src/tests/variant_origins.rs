@@ -11,6 +11,8 @@ fn sources(eol: &str) -> BTreeMap<String, String> {
                 format!("origins/{name}"),
                 std::fs::read_to_string(directory.join(format!("{name}.telora")))
                     .unwrap()
+                    .replace("\r\n", "\n")
+                    .replace('\r', "\n")
                     .replace('\n', eol),
             )
         })

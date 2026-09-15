@@ -12,9 +12,9 @@ fn source_debug_events_preserve_order_location_and_result() {
         .expect("read test source"),
     )
     .unwrap();
-    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
-        let selector = format!("@src/main:{export}");
-        let observed = telora(&cwd).args([command, &selector]).output().unwrap();
+    for (command, export) in [("eval", "answer"), ("run", "main")] {
+        let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+        let observed = execute_value(&cwd, command, &selector);
         {
             let output = &observed;
             assert!(
@@ -68,11 +68,8 @@ fn source_warnings_do_not_block_publication_or_entry_output() {
     assert_eq!(warnings.len(), 1, "{records:?}");
     assert_eq!(warnings[0]["message"], "initialization warning");
     assert_eq!(warnings[0]["labels"].as_array().unwrap().len(), 2);
-    for (command, export, expected) in [("eval", "answer", 42), ("eval-with", "main", 43)] {
-        let output = telora(&cwd)
-            .args([command, &format!("@src/main:{export}")])
-            .output()
-            .unwrap();
+    for (command, _export, expected) in [("eval", "answer", 42), ("run", "main", 43)] {
+        let output = execute_value(&cwd, command, if command == "run" { "@src/main" } else { "@src/main:answer" });
         assert!(
             output.status.success(),
             "{}",
@@ -88,7 +85,7 @@ fn source_warnings_do_not_block_publication_or_entry_output() {
             command == "eval",
             "{stderr}"
         );
-        if command == "eval-with" {
+        if command == "run" {
             assert!(stderr.contains("entry warning"), "{stderr}");
         }
     }
@@ -107,9 +104,9 @@ fn source_path_operations_survive_initialization() {
         .expect("read test source"),
     )
     .unwrap();
-    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
-        let selector = format!("@src/main:{export}");
-        let observed = telora(&cwd).args([command, &selector]).output().unwrap();
+    for (command, export) in [("eval", "answer"), ("run", "main")] {
+        let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+        let observed = execute_value(&cwd, command, &selector);
         assert!(
             observed.status.success(),
             "{}",
@@ -136,9 +133,9 @@ fn source_hash_states_are_persistent_across_initialization_and_entry() {
         .expect("read test source"),
     )
     .unwrap();
-    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
-        let selector = format!("@src/main:{export}");
-        let observed = telora(&cwd).args([command, &selector]).output().unwrap();
+    for (command, export) in [("eval", "answer"), ("run", "main")] {
+        let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+        let observed = execute_value(&cwd, command, &selector);
         assert!(
             observed.status.success(),
             "{}",
@@ -193,9 +190,9 @@ fn source_structural_equality_preserves_identity_across_worlds() {
         .expect("read test source"),
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
-        for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
-            let selector = format!("@src/main:{export}");
-            let observed = telora(&cwd).args([command, &selector]).output().unwrap();
+        for (command, export) in [("eval", "answer"), ("run", "main")] {
+            let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+            let observed = execute_value(&cwd, command, &selector);
             assert!(
                 observed.status.success(),
                 "{}",
@@ -220,9 +217,9 @@ fn source_interpreter_preserves_adapter_identity_across_initialization_and_entry
         .expect("read test source"),
     )
     .unwrap();
-    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
-        let selector = format!("@src/main:{export}");
-        let observed = telora(&cwd).args([command, &selector]).output().unwrap();
+    for (command, export) in [("eval", "answer"), ("run", "main")] {
+        let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+        let observed = execute_value(&cwd, command, &selector);
         {
             let output = &observed;
             assert!(
@@ -235,7 +232,7 @@ fn source_interpreter_preserves_adapter_identity_across_initialization_and_entry
             .lines()
             .map(|line| serde_json::from_str::<Value>(line).unwrap())
             .collect::<Vec<_>>();
-        // Only the selected export is evaluated; eval-with does not evaluate answer.
+        // Only the selected entry is evaluated; run does not evaluate answer.
         assert_eq!(events.len(), 1);
         assert!(events.iter().all(|event| event["message"] == "operand"));
         let observed = serde_json::from_slice::<Value>(&observed.stdout).unwrap();
@@ -263,9 +260,9 @@ fn source_test_descriptions_initialize_without_running_tests_or_fixtures() {
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    for (command, export) in [("eval", "answer"), ("eval-with", "main")] {
-        let selector = format!("@src/main:{export}");
-        let observed = telora(&cwd).args([command, &selector]).output().unwrap();
+    for (command, export) in [("eval", "answer"), ("run", "main")] {
+        let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+        let observed = execute_value(&cwd, command, &selector);
         assert!(
             observed.status.success(),
             "{}",
@@ -305,12 +302,13 @@ fn source_mutual_recursive_closures_survive_initialization_and_entry() {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
         for (command, selector) in [
             ("eval", "@src/main:answer"),
-            ("eval-with", "@src/main:main"),
+            ("run", "@src/main"),
         ] {
             {
                 let mut process = telora(&cwd);
                 process.arg(command);
-                let result = process.arg(selector).output().unwrap();
+                process.arg(selector);
+                let result = input_command(process, b"null");
                 assert!(
                     result.status.success(),
                     "{}",

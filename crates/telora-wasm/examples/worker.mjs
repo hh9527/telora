@@ -5,7 +5,8 @@ self.onmessage = async ({ data: { bytes, arguments: args } }) => {
     session = await load(bytes);
     session.setDebugEnabled(true);
     session.initialize();
-    const result = args === null ? session.eval() : Array.isArray(args) ? session.call(args) : session.evalWith(args);
+    if (args !== null && !Array.isArray(args)) throw Error('参数必须是数组');
+    const result = args === null ? session.eval() : session.call(args);
     self.postMessage({ result, diagnostics: session.diagnostics(), debug: session.debugEvents() });
   } catch (error) {
     self.postMessage({ error: String(error), diagnostics: session?.diagnostics() ?? [], debug: session?.debugEvents() ?? [] });

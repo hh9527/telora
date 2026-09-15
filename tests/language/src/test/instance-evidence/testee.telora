@@ -1,0 +1,7 @@
+import "std/test" as test;
+import "@src/test-support" { expect };
+import "./provider" { wrap };
+
+export def concrete_dependencies: test.Test = test.should_ok(fn() {
+    expect(wrap(7) == "int" && wrap("text") == "text" && wrap(8) == "int")
+});

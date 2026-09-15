@@ -10,8 +10,7 @@ mod diagnostics;
 mod definitions;
 mod alias_cycles;
 mod family_cycles;
-mod instance_convergence;
-mod instance_patterns;
+mod expansion_limits;
 mod evidence;
 mod instances;
 mod layouts;
@@ -139,8 +138,11 @@ struct Solver<'a> {
     pending_instances: BTreeSet<TypeSlotId>,
     /// Results of type-position calls have a producer, not a free value hole.
     type_results: Vec<TypeSlotId>,
-    nonconvergent_instances: BTreeSet<SymbolId>,
-    nonconvergent_evidence: BTreeSet<(TypeId, TypeId)>,
+    evidence_indices: std::collections::BTreeMap<(TypeId, TypeId), usize>,
+    evidence_cursor: usize,
+    type_depths: Vec<usize>,
+    expansion_exhausted: bool,
+    options: crate::CompilerOptions,
     value_spreads: Vec<bool>,
     administrative: Vec<bool>,
     scheme_references: Vec<bool>,
@@ -157,6 +159,16 @@ struct Solver<'a> {
 }
 
 pub fn resolve(mir: &mut Mir) {
+    resolve_with_options(mir, crate::CompilerOptions::default());
+}
+
+pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
+    if let Err(message) = options.validate() {
+        mir.diagnostics.push(Diagnostic {
+            severity: crate::source::Severity::Error, message, labels: vec![], notes: vec![],
+        });
+        return;
+    }
     assert!(
         mir.symbols_closed,
         "type pass consumes a closed symbol result"
@@ -170,6 +182,7 @@ pub fn resolve(mir: &mut Mir) {
     mir.interpreter_plans.resize(mir.hir.len(), None);
     mir.type_instances.resize_with(mir.hir.len(), Vec::new);
     let mut solver = Solver::new(mir);
+    solver.options = options;
     for _ in 0..solver.mir.symbols.len() {
         let slot = solver.fresh();
         solver.mir.symbol_types.push(slot);
@@ -239,13 +252,25 @@ pub fn resolve(mir: &mut Mir) {
     solver.resolve_constructor_patterns();
     solver.diagnose_pending_constraints();
     solver.finalize();
+    if !solver.check_type_expansion(None) {
+        solver.mir.types_solved = true;
+        return;
+    }
     solver.reject_expanding_families();
     solver.validate_diverging_branches();
     solver.finalize_properties();
     solver.finalize_checks();
     solver.prove_bounds();
+    if !solver.check_type_expansion(None) {
+        solver.mir.types_solved = true;
+        return;
+    }
     solver.finalize_callable_adjustments();
     solver.materialize_instances();
+    if !solver.check_type_expansion(None) {
+        solver.mir.types_solved = true;
+        return;
+    }
     solver.finalize_value_materializations();
     let construction_inputs = solver.mir.record_construction_inputs();
     for index in 0..solver.mir.hir.len() {
@@ -303,8 +328,11 @@ impl Solver<'_> {
             pending_blocks: vec![false; mir.hir.len()],
             pending_instances: BTreeSet::new(),
             type_results: vec![],
-            nonconvergent_instances: BTreeSet::new(),
-            nonconvergent_evidence: BTreeSet::new(),
+            evidence_indices: std::collections::BTreeMap::new(),
+            evidence_cursor: 0,
+            type_depths: vec![],
+            expansion_exhausted: false,
+            options: crate::CompilerOptions::default(),
             administrative: vec![false; mir.hir.len()],
             scheme_references: vec![false; mir.hir.len()],
             type_uses: vec![false; mir.hir.len()],

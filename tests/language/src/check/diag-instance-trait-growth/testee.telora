@@ -6,4 +6,4 @@ impl(T) Show for Box(T) {
         Show.show(next)
     },
 };
-export def entry = fn(value: Box(Int)) { Show.show(value) };
+export def entry: Fn(Box(Int)) -> String = fn(value: Box(Int)) { Show.show(value) };

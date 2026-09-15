@@ -1,4 +1,3 @@
-# Telora 当前实现架构
 
 本文描述当前源码的编译器、运行时、模块系统与 Host。语言可观察语义以
 [LANGUAGE.md](LANGUAGE.md) 为准，术语以 [CONCEPT.md](CONCEPT.md) 为准。
@@ -127,7 +126,7 @@ let 的普通绑定、解构绑定和 let-else 共用语法前缀。解析完初
 
 CLI 的 `package_host` 先准备 `ResolvedWorkspace`：发现 workspace、校验 lock 与 crate
 manifest，并完成需要的 package 安装。解析器和 VM 不执行 package acquisition，也不
-隐式重写 lock。package preparation 与应用 EES service 是两个独立的 Host 生命周期。
+隐式重写 lock。package preparation 与业务服务初始化分离。
 
 `static_input::Inventory` 从所有可用模块名称建立清单。module Pass 先排序清单并分配
 ModuleId，再从所选根逐级读取可达源码。共享依赖只读入并解析一次，未到达模块保持
@@ -189,25 +188,36 @@ MIR 拥有 HIR、resolve_slots、ty_slots、结构类型项、最终类型表及
 
 泛型实例以声明 SymbolId 和按参数 SymbolId 排序的归一化类型绑定为键，先登记 ID
 再展开，递归引用复用已登记的节点。实例图没有固定总数上限，也没有对应的配额参数。
-展开前的 `instance_convergence` 分析从已求解的引用、nominal 类型应用和 trait 义务
-提取有限参数流图。边权是构造层次变化：包装为正，trait 模式拆解为负，参数复用为零，
-常量重置不传递旧参数；幂等的 Unchecked 包装不累计深度。分析在递归连通分量中检查
-正权环，而不是根据展开出的实例数量猜测递归是否收敛。
+源码义务和具体实例新产生的义务共用 MIR 的 evidence 图，以 (subject TypeId, bound
+TypeId) 去重，先登记 ID，再展开候选实现及其依赖。增量游标只处理新节点；依赖展开
+结束后，用反向依赖与待满足计数驱动证明队列。已有节点的依赖不再变化，后续批次直接
+消费其结果。没有外部证明的循环不能自证，闭合后保留 Rejected；不使用失败回滚。
 
-没有正权环意味着归一化类型的深度有界；类型构造器和模板中的分支数有限，因此实例键
-集合有限。trait 选择在此阶段使用符号模式的保守近似；若正权环可能因实际匹配条件而
-不可达，分析仍只报告“无法证明有限展开”，不冒充已证明的无限递归。诊断列出参数传递
-边的位置和深度变化，阻止相关声明的实例及义务继续展开；独立错误仍然报告。
-`instance_patterns` 在提取边之前，使用分离变量作用域的有限一阶合一检查完整候选模式，
-保留重复参数的相等约束并排除矛盾匹配。被条件固定到具体类型的源参数按常量处理，
-例如 T = Int 且 U = Array(T) 不会产生可无限增长的 T → U 边。递归声明两次出现的
-参数使用不同作用域，不会把合法的 T → Array(T) 错当成 occurs-check 冲突。
-含幂等 Unchecked 的候选保留保守匹配，避免用普通一阶合一误排除可归一化的匹配。
-尚未固定的结构条件没有跨整条递归环进行关系传播，因此当前规则是充分的有限性证明，
-不是对所有有限实例图的完备判定；后续提高精度应组合候选环的匹配条件，而不是增加
-实例数量上限。
-未闭合图不能 seal，不能进入 codegen 或 VM。nominal 成员原有的增长检测继续提供
-类型布局诊断，布局展开也不再以固定类型数量作为停机依据。
+实例代入时，所有绑定到引用节点的泛型约束都会请求具体 evidence，不仅处理直接的
+trait member 调用。调用所选实现继续产生具体 impl 实例，代码生成消费实例中的
+implementation ID，不重新选择 trait。重复调用共享 evidence 和实现实例身份。
+
+旧的保守参数流增长拒绝及其符号匹配近似已经移除；不再仅因“无法证明有限展开”而
+拒绝实例。nominal 成员原有的确定性增长检测仍提供类型布局诊断。一般实例增长由
+`expansion_limits` 兜底：初始限制为归一化类型结构深度 256（叶节点为 1）、
+Tuple 单元数 1024、其他类型节点参数数 4096。这些是编译期结构限制，不是实例
+总量限制，也不使用 Wasm fuel。名义类型的成员布局不作为该名义类型的子参数递归
+计算；布局自身的结构节点仍受检查。每个已解析类型在子类型之后进入数组，深度按
+TypeId 增量记录，每个节点只计算一次。
+
+这三个默认值通过 workspace 配置的 `compiler.maxTypeDepth`、`compiler.maxTupleItems`
+和 `compiler.maxTypeArguments` 覆盖，没有对应 CLI 参数。Inventory 将配置传入核心
+类型求解器，CLI 与 LSP 共用入口；配置不参与 package lock，依赖不能覆盖 session 设置。
+
+检查覆盖首次类型归一化之后，以及 evidence、名义布局和函数实例队列继续展开之前。
+一次对有限模板的替换仍可能先生成有限的一批新节点，检查在下一次展开前拦截，不是
+逐次堆分配的硬限额。触限报告资源诊断，保留已有类型求解结果并停止后续展开，禁止
+seal；它不证明程序无限展开，也不承诺严格的编译时间或内存上界。此阶段停止整个
+后续展开，而不是按失败依赖分量继续处理的 best-effort 调度。evidence 因触限而未完成
+时保留 Unresolved，不派生虚假的“缺少实现”诊断。
+
+这个实现仍不声称已经完成所有静态分析路径的停机性证明；保护覆盖已解析类型的展开，
+不能替代对前序约束生成、归一化和调度自身的审计。
 
 `Mir::seal` 检查必需类型槽、泛型实例、成员选择、类型布局、构造检查、property 与 bound
 证据是否完整。成功返回只读借用 `SealedMir` 和独立的 TypeImage；seal 不重新编号。
@@ -329,13 +339,14 @@ Wasmi 提供 fuel、内存增长与调用栈限制，Session 管理诊断和终�
 耗尽终止会话，不能伪装为可恢复语言失败，也不重置 fuel 后继续测试。
 
 目标是执行有边界、失控时能停机，不是精确计费或限制进程的实际资源占用。
-直接使用引擎 fuel；CLI 线性内存增长默认上限为 1,024,000,000 字节，函数表上限为 100 万项，
+直接使用引擎 fuel；CLI 线性内存增长默认上限为 1024 MiB（1 GiB），函数表上限为 100 万项，
 调用栈沿用引擎限制。增长超限直接 trap，不模拟逻辑分配量，也不核算每次复制。
 这些是私有实现阈值；Wasm 内存边界不是进程 RSS 上限。
 
-CLI 正式参数 `--with-fuel N` 设置执行会话的 fuel，单位为 1,000,000 fuel，默认 N=100；
-`--with-memory-limit N` 设置 Wasm 线性内存上限，单位为 1,000,000 字节，默认 N=1024。
-N 必须为正整数，超出可表示范围的输入在参数解析时拒绝。
+workspace 配置的 `runtime.fuel` 和 `runtime.memoryLimit` 提供会话默认值，分别为
+100 和 1024，单位为 1,000,000 fuel 和 MiB（`1 << 20` 字节，16 个 Wasm 页）。CLI 正式参数
+`--with-fuel N`、`--with-memory-limit N` 仅在显式传入时逐项覆盖对应配置。
+N 必须为正整数，超出可表示范围的输入在配置或参数解析时拒绝。
 参数适用于所有执行命令；批量 roots、初始化与后续执行共享预算，不按模块数量放大，
 也不在用例或请求之间重置。`check --only-types` 不创建执行会话，因此没有执行用量报告。
 `--report-usage` 在执行会话结束时向 stderr 输出合法的 info 级 JSON 诊断
@@ -354,20 +365,18 @@ fixture 仅累计已接受的源文本字节作为粗略输入边界，保留展
 不再按“节点数 × 固定字节数”估算并重复扣除 guest 堆用量。
 错误消息和来源应保留，但配额的具体数值是 Host 配置，不是语言语法。
 
-`telora-ees` 组合 IMOS 与 sqlite-query 等 native actor components。package preparation
-使用自己的 Service，run/serve 根据应用配置另建 Service；core 仅依赖 component-neutral
-Host ABI。实际文件、环境、stdin 与 EES 调用由 Host 执行，纯 Telora 代码不能直接访问。
+包管理继续使用私有 IMOS Host。应用不再创建 EES service。
 
-CLI 输入事件队列最多暂存 64 项，发送者受背压约束，终止通知唤醒等待发送的任务。
-事件消费同时收割完成的异步任务。尚未完成的 EES 调用仍是有效工作，不因回收而取消。
-Output chunk 按现有契约缓冲至 terminal success 后发布；累计输出是存活数据，
-其大小会影响 Host 内存，不能将其增长解释为 work 回收失效。
+内置 std/_entry/transform 与应用在同一 MIR 中求解，MainService 的 init/transform
+实例由静态 trait 证据选择。Plan 是内部 (sources, initializer)；initializer 返回捕获 Self
+的已类型化 handler，with_diagnostics 包装每次调用。Host 不解码 Self。
 
-run/serve 的生成 adapter 与应用在同一 MIR 中求解，wrapper family 和具体泛型实参
-在静态阶段闭合。初始化完成后才进入资源协商和 Entry 调度；Host 根据声明的 capabilities
-读取输入并检查 effects。eval/eval-with 不启动 reducer loop 或应用 EES service。
+当前 reset 复用 wasmi Module，创建新 store/instance，再恢复初始化后的线性内存及
+全部 mutable globals（包括 Rust stack pointer）。函数表由静态链接确定。
+不重复 codegen、数据加载或 init。请求临时值、trap 状态和来源登记随 reset 丢弃。
+该基线复制是首版实现，不是语言规定；后续可优化 reset 成本。
 
-## 9. CLI 与 LSP 的阶段边界
+## 9. CLI## 9. CLI 与 LSP 的阶段边界
 
 | 命令 | 消费边界 |
 | --- | --- |
@@ -376,9 +385,8 @@ run/serve 的生成 adapter 与应用在同一 MIR 中求解，wrapper family �
 | check --only-types | 三个 Pass 与 seal，不读取数据内容或执行 Telora 代码 |
 | check | seal、codegen、链接、数据注入及整图初始化 |
 | eval | 初始化后取得选中 Value 导出 |
-| eval-with | 初始化后调用选中 entry.Eval |
 | test NAME | 初始化后执行该测试模块直接导出的 Test |
-| run / serve | 初始化后按 Entry 策略调度 |
+| run / serve | 初始化 MainService，按请求调用 transform，间隙 reset |
 
 `check MODULE_ID` 选择一个根。`check --lib` 选择当前 crate 清单里的全部模块，包括
 私有模块和数据模块；`check --tests` 递归选择当前 crate 的 tests/ 模块。两个开关

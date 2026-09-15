@@ -223,6 +223,11 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32) -> Result<Vec<u8>, String
     }
     exports.export("telora_error", ExportKind::Global, rt.globals);
     exports.export("telora_phase", ExportKind::Global, rt.globals + 1);
+    // Reset restores every global, including the Rust stack pointer. Values
+    // live in linear memory; function tables are fixed by this linker.
+    for index in 0..rt.globals + crate::abi::GLOBAL_COUNT {
+        exports.export(&format!("telora_reset_global_{index}"), ExportKind::Global, index);
+    }
     output.append_section(&exports)?;
     let mut names = rt.names.clone();
     for (name, bytes) in &program.custom {

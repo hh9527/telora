@@ -67,7 +67,7 @@ success_all="$workspace/src/generated/check-success-all.telora"
 generated="$workspace/src/generated/check-all.telora"
 {
     echo 'import "std/dict" as dict;'
-    echo 'import "std/entry" as entry;'
+    echo 'import "std/transform-service" as entry;'
     echo 'import "std/value" { Value };'
     echo 'import "@src/support" as support;'
     for index in "${!cases[@]}"; do
@@ -75,16 +75,18 @@ generated="$workspace/src/generated/check-all.telora"
             printf 'import "@src/%s/check" as case_%s;\n' "${cases[$index]}" "$index"
         fi
     done
-    echo 'def config: entry.ContextConfig = {sources: ["actual"], envs: [], args: False};'
     echo 'def required: Fn(Dict(Value), String) -> Value = fn(values, name) {'
     echo '    match dict.get(values, name) {'
     echo '        Some(value) => value,'
     echo '        None => fail!("missing test observation", name),'
     echo '    }'
     echo '};'
-    echo 'export def check: entry.Eval = entry.main(config, fn(ctx) {'
-    echo '    let actual = match dict.get(ctx.sources, "actual") {'
-    echo '        Some(Value.Object(values)) => values,'
+    echo 'type MainService = struct {};'
+    echo 'impl entry.TransformService for MainService {'
+    echo '    init: fn(ctx) { {}.ty!(Self) },'
+    echo '    transform: fn(self, input) {'
+    echo '    let actual = match input {'
+    echo '        Value.Object(values) => values,'
     echo '        _ => fail!("actual test observations must be an object"),'
     echo '    };'
     echo '    Value.Object({'
@@ -102,7 +104,9 @@ generated="$workspace/src/generated/check-all.telora"
         fi
     done
     echo '    })'
-    echo '});'
+    echo '    },'
+    echo '};'
+    echo 'export {MainService};'
 } >"$generated"
 
 mapfile -t module_files < <(
@@ -199,8 +203,8 @@ jaq -s 'from_entries' "$entries" >"$observations"
 check_stdout="$build_root/check.stdout.json"
 check_stderr="$build_root/check.stderr.jsonl"
 set +e
-"$telora_bin" -C "$workspace" eval-with "@src/generated/check-all:check" \
-    --source "actual=$observations" >"$check_stdout" 2>"$check_stderr"
+"$telora_bin" -C "$workspace" run "@src/generated/check-all" \
+    <"$observations" >"$check_stdout" 2>"$check_stderr"
 check_exit=$?
 set -e
 

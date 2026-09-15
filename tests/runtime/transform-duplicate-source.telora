@@ -1,0 +1,9 @@
+import "std/transform-service" as service;
+@service.source("a")
+@service.source("a")
+type MainService = struct {};
+impl service.TransformService for MainService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) { input },
+};
+export {MainService};

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "packages": {
+    "transform-service-tests": {
+      "source": {
+        "workspace": ""
+      },
+      "modules": [
+        "@src/main"
+      ],
+      "dependencies": []
+    }
+  }
+}

@@ -21,8 +21,3 @@ tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "proce
 tokio-util = { version = "0.7", features = ["compat"] }
 tower-service = "0.3"
 tempfile = "3"
-
-[dev-dependencies]
-flate2 = "1"
-rusqlite = { version = "0.37", features = ["bundled"] }
-tar = "0.4"

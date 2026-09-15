@@ -160,34 +160,41 @@ Host 是权限边界，不只是 foreign-function interface。
 **Application export** 是一次 Host 调用所选择的普通封闭 module graph 中的公开值。除非 Host 在冻结前把信息
 显式准备成输入值或静态数据模块，否则 Main 不能观察 Host facility。
 
-### Entry
+### Entry 与 TransformService
 
-**Entry wrapper** 是普通模块构造的名义值。`entry.Eval`、`entry.Run(State)` 和
-`entry.Serve(State)` 把 Context 契约、EES 声明、初始化函数与具体 State 类型保留到
-工具阶段。Host 解析 `MODULE:EXPORT` 后按 wrapper 类型选择内置 adapter；adapter 描述
-effect orchestration，Host 执行 effect。
+服务入口是模块导出的具体类型 MainService，必须实现 std/transform-service.TransformService：
 
-文件 stem 以 `_` 开头的模块是 private，只能由同 crate 模块访问；该规则由 module
-resolver 执行。内置工具 adapter 可以访问 `std/_...` 内部协议模块。只有内置 `std`
-crate 可以声明 native symbol。
+```telora
+trait TransformService {
+    init: Fn(Context) -> Self,
+    transform: Fn(Self, Value) -> Value,
+};
+```
 
-### Actor Service
+Context 为 {sources: Dict(Value)}。@service.source("name") 是普通类型 property，
+多次声明归并为稳定来源清单，重复声明报错。Host 提供的来源必须与清单一致。
+MainService 可以是正常类型别名或重导出，所有类型参数和方法实例都在 MIR 中确定。
+内置 entry 包装方法调用，无运行时 trait 派发，也不按模块成员 shape 猜测入口。
 
-**Actor Service** 是 `Run(State)` 或 `Serve(State)` 初始化出的单 actor 状态机。它由一个显式
-State 和一个 `reduce(State, Event) -> (State, Array(Effect))` reducer 组成。每次成功
-transition 返回完整新 State；Event 与 Effect 都是一阶数据，不携带 callback 或
-continuation。
+模块顶层值与 property 初始化完成后，Host 准备来源并调用 init；随后每次调用 transform。
+来源只读取一次，服务间隙 reset 到初始化后的确定基线。transform 不产生跨请求状态更新。
+init 失败不发布实例。内置 with_diagnostics 捕获普通语言 failure 并保留完整诊断；
+fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一基线获得独立预算。
+配额用于可停机，不是精确计费，reset 和页级计量方式不构成语言契约。
 
-`run` 产生一个 Request 并在对应 Reply 后结束，`serve` 从 transport 持续产生 Request。
-二者共享相同的 service、EES capability、状态迁移和诊断语义。应用执行还可以拥有一个
-EES actor；其中的多个命名 native model 只执行 reducer 发出的 `EesCall`，并把结果作为
-`EesReply` 重新送入 reducer。
+run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；serve --bind stdio:// 读取 JSONL，
+每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
+message、labels、notes；已捕获诊断不重复输出。两者都保留 stdin 给请求，不接受 stdin
+初始化 source。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
+初始化来源使用 @service/name，请求来源使用 @request；物理路径不进入来源身份。
+
+服务不获得环境、进程、网络或任意文件能力；需要的业务输入由 Host 显式转成 Value。
+旧 eval-with、entry.Eval/Run/Serve、应用 EES 与 reducer 协议均已删除。
+包管理的 IMOS 能力只在私有 Host 中使用。详细用法见 [执行模式](../../guide/EXEC-MODE.md)。
 
 ### Pure Eval
 
-**Pure Eval** 是不经过 reducer/effect loop 的导出求值。`eval` 读取一个 `Value` 导出；
-`eval-with` 调用一个 `entry.Eval`。source、环境变量和参数能力由 wrapper 中的
-`ContextConfig` 声明，调用开始前形成封闭输入。
+`eval` 读取一个 Value 导出，不构造服务实例。
 
 ### Freeze 与 Publication
 
@@ -205,13 +212,7 @@ EES actor；其中的多个命名 native model 只执行 reducer 发出的 `EesC
 
 **Canonical source path（规范来源路径）**是 Source 对语言值和诊断公开的稳定名字。
 它与 Host 用于读取数据的物理 locator 分离，也不必是 module identity。运行上下文中的
-具名 run/serve source 使用 `@run-ctx/<key>`，eval-with source 使用
-`@eval-ctx/<key>`；这些名字只标识来源，不创建模块、不能被 import，也不会出现在模块
-查询中。
-
-### Static Data Module
-
-**Static data module（静态数据模块）**是作为不可变、带位置的值导入的非 Telora
+服务初始化来源使用 `@service/<key>`，逐次输入使用 `@request`。
 源码文档。它保留格式特定的 syntax behavior 和字段级 origin。
 
 ### Value
@@ -243,21 +244,8 @@ graph；除显式 lock 操作外，Host 只验证和消费它。
 生命周期内不变的 crate-name 到 root 映射。Package source 和物理 root 不进入 module
 identity。
 
-**Extra Effect Service（EES）** 是由完整 manifest 构造的命名 Native Actor Components
-组合 facade。IMOS actor 通过 `InstallShared` 构造、发布并复用共享不可变 installation
-root；`sqlite-query` actor 对一个只读数据库执行带 positional JSON scalar bindings 的
-`Query`。operation 只能选择 manifest 中已有的逻辑名称，不能选择物理资源。
-
-Package Host 构造只含 `telora-packages` IMOS actor 的私有 Service。应用 wrapper 以
-`ees.Config` 声明另一个 Service；Host 校验 `ees.Config.vars` 与 `--ees-var` bindings 后
-构造 actor，并把 name-to-kind 清单作为 Entry capability。
-`user-*:` locator 是 component 解释的用户资源位置，物理路径不进入 Telora World。
-两个 Service 的名称空间、资源和生命周期隔离；应用不能发现或调用 package Service。
-Telora 工具链和 `telora-core` 不依赖 component 内部类型。
-
-`run` 与 `serve` 共享 capability、effect、actor 和诊断语义。`run` 投递一个 Request
-并等待 Reply，`serve` 使用同一个 reducer service 处理输入流中的多个 Request；二者的
-差异是请求来源、请求基数和终止条件。
+包管理 Host 使用私有 IMOS 服务物化依赖；业务 TransformService 不获得外部 effect 能力。
+run/serve 共用静态方法协议，差异仅在单次输入和持续请求流。
 
 只有模块图节点拥有 module identity 和 `ModuleId`。Telora module 与 static data module
 的 canonical source path 通常等于其 module identity；运行上下文 source 等非模块输入

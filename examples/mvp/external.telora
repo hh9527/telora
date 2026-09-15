@@ -1,5 +1,5 @@
 import "std/codec" as codec;
-import "std/entry" as entry;
+import "std/transform-service" as service;
 import "std/value" { Value };
 
 type Request = struct {
@@ -7,7 +7,12 @@ type Request = struct {
     count: Int,
 };
 
-export def main: entry.Eval = entry.main({sources: ["input"], envs: [], args: False}, fn(ctx) {
-    let request = codec.decode(Request.type, ctx.sources.input).unwrap!();
-    codec.encode(Value.type, request)
-});
+type MainService = struct {};
+impl service.TransformService for MainService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) {
+        let request = codec.decode(Request.type, input).unwrap!();
+        codec.encode(Value.type, request)
+    },
+};
+export {MainService};

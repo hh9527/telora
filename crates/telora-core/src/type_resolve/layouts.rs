@@ -19,6 +19,7 @@ impl Solver<'_> {
             .collect::<BTreeMap<_, _>>();
         let mut index = self.mir.type_layouts.len();
         while index < self.mir.types.len() {
+            if !self.check_type_expansion(None) { return; }
             self.mir.type_layouts.push(None);
             let owner = self.mir.types[index].clone();
             index += 1;
@@ -37,7 +38,6 @@ impl Solver<'_> {
             let TypeConstructor::Nominal(symbol) = owner.constructor else {
                 continue;
             };
-            if self.nonconvergent_instances.contains(&symbol) { continue; }
             let Some(definition) = self.nominal_index[symbol.index()] else {
                 continue;
             };

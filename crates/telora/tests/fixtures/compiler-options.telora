@@ -1,0 +1,5 @@
+export type Wide = (
+    Int, Int, Int, Int, Int, Int, Int, Int, Int,
+    Int, Int, Int, Int, Int, Int, Int, Int, Int
+);
+export def answer: Int = 42;

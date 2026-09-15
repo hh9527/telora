@@ -29,50 +29,6 @@ pub fn read_limited(reader: impl std::io::Read, max_bytes: usize, description: &
     Ok(bytes)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn inventory(family: &str) -> Inventory {
-        let contract = match family { "run" => "Run", "serve" => "Serve", _ => unreachable!() };
-        let mut inventory = Inventory::new(Path::new("."), true).unwrap();
-        inventory.entries.insert("app/main".into(), Entry {
-            name: "app/main".into(), origin: "crate", visibility: "public",
-            format: ModuleFormat::Telora, test: false,
-            source: Source::Generated(format!(r#"
-                import "std/entry" as entry;
-                import "std/ees" as ees;
-                export def main: entry.{contract}(Int) = entry.{family}(Int.type, {{sources: [], envs: [], args: False}}, ees.none,
-                    fn(ctx) {{ (42, fn(state, event) {{ (state, []) }}) }});
-            "#)),
-        });
-        inventory
-    }
-
-    #[test]
-    fn generated_entry_policy_and_application_share_one_closed_graph() {
-        for (mode, family) in [(telora_core::entry_plan::RunMode::Run, "run"), (telora_core::entry_plan::RunMode::Serve, "serve")] {
-            let mir = inventory(family).solve_run("app/main", "main", mode).unwrap();
-            let sealed = mir.seal().unwrap_or_else(|d| panic!("{family}: {d:?}\n{}", mir.diagnostics.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n")));
-            let telora_core::mir::ModuleTarget::Bound(root) = mir.roots[0] else { panic!("adapter root") };
-            let entry = *mir.exports[root.index()].iter().find(|s| mir.symbols[s.index()].name == "configure").unwrap();
-            let telora_core::mir::TypeState::Known(ty) = mir.ty_slots[mir.symbol_types[entry.index()].index()] else { panic!("closed entry type") };
-            assert!(telora_core::entry_plan::run_contract(sealed.types(), ty).is_some());
-            sealed.seal_export(entry).unwrap_or_else(|d| panic!("{family}: {d:?}"));
-            assert_eq!(mir.modules.iter().filter(|m| m.name == "app/main").count(), 1);
-            assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
-        }
-    }
-
-    #[test]
-    fn generated_entry_rejects_wrong_nominal_family_and_unsafe_export_text() {
-        let mut inventory = inventory("serve");
-        let mir = inventory.solve_run("app/main", "main", telora_core::entry_plan::RunMode::Run).unwrap();
-        assert!(mir.seal().is_err(), "Serve cannot satisfy Run's nominal contract");
-        assert!(inventory.solve_run("app/main", "main }; fail!(\"injected\");", telora_core::entry_plan::RunMode::Run).is_err());
-        assert!(inventory.request("app/main", "std/_entry/adapter").is_none());
-    }
-}
 pub struct Entry {
     pub name: String,
     pub origin: &'static str,
@@ -85,6 +41,8 @@ pub struct Inventory {
     pub entries: BTreeMap<String, Entry>,
     workspace: Option<Arc<ResolvedWorkspace>>,
     owner: String,
+    compiler: telora_core::CompilerOptions,
+    runtime: telora_core::RuntimeOptions,
 }
 
 fn private(name: &str) -> bool {
@@ -92,6 +50,10 @@ fn private(name: &str) -> bool {
 }
 
 impl Inventory {
+    pub fn runtime_options(&self) -> telora_core::RuntimeOptions {
+        self.runtime
+    }
+
     /// Editor roots may be private modules. Identity still comes exclusively
     /// from the workspace catalog (or its normal test-module inventory).
     pub fn document_name(&mut self, path: &Path) -> Result<String, String> {
@@ -168,6 +130,13 @@ impl Inventory {
         } else {
             Some(crate::package_host::prepare(context)?)
         };
+        let (compiler, runtime) = if let Some(workspace) = &workspace {
+            (workspace.compiler_options(), workspace.runtime_options())
+        } else if let Some(config) = telora_core::WorkspaceConfig::discover_optional(context).map_err(|e| e.to_string())? {
+            (config.compiler, config.runtime)
+        } else {
+            Default::default()
+        };
         let owner = workspace
             .as_ref()
             .map(|w| {
@@ -219,6 +188,8 @@ impl Inventory {
             entries,
             workspace,
             owner,
+            compiler,
+            runtime,
         })
     }
 
@@ -399,18 +370,15 @@ impl Inventory {
     }
 
     /// Compiler-owned entry sources share the application's graph and passes.
-    pub fn solve_run(&mut self, application: &str, export: &str, mode: telora_core::entry_plan::RunMode) -> Result<Mir, String> {
-        let adapter = mode.adapter_source(application, export)?;
-        for (name, source) in [
-            (mode.policy_module(), Source::Embedded(mode.policy_source())),
-            ("std/_entry/adapter", Source::Generated(adapter)),
-        ] {
-            self.entries.insert(name.into(), Entry {
-                name: name.into(), origin: "builtin", visibility: "private",
-                format: ModuleFormat::Telora, source, test: false,
-            });
-        }
-        Ok(self.solve_with_entry("std/_entry/adapter", Some(application)))
+    pub fn solve_transform(&mut self, application: &str) -> Result<Mir, String> {
+        let name = "std/_entry/adapter";
+        self.entries.insert(name.into(), Entry {
+            name: name.into(), origin: "builtin", visibility: "private",
+            format: ModuleFormat::Telora,
+            source: Source::Generated(telora_core::entry_plan::transform_adapter(application)?),
+            test: false,
+        });
+        Ok(self.solve_with_entry(name, Some(application)))
     }
 
     fn solve_with_entry(&self, root: &str, application: Option<&str>) -> Mir {
@@ -463,7 +431,7 @@ impl Inventory {
         );
         module_resolve::validate_source_modules(&mut mir, |name| self.entries[name].origin == "builtin");
         telora_core::symbol_resolve::resolve(&mut mir);
-        telora_core::type_resolve::resolve(&mut mir);
+        telora_core::type_resolve::resolve_with_options(&mut mir, self.compiler);
         mir
     }
 }

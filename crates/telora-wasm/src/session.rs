@@ -7,8 +7,9 @@ const MEMORY_BOUND: usize = 1024 * 1024 * 1024;
 const TABLE_BOUND: usize = 1_000_000;
 
 pub struct Session {
-    fuel_budget: u64,
-    memory_limit: usize,
+    pub(crate) fuel_budget: u64,
+    pub(crate) memory_limit: usize,
+    pub(crate) module: wasmi::Module,
     pub usage_reporter: Option<fn(Usage)>,
     pub manifest: Manifest,
     pub(crate) store: wasmi::Store<wasmi::StoreLimits>,
@@ -30,19 +31,20 @@ pub struct Usage {
 impl Drop for Session {
     fn drop(&mut self) {
         if let Some(report) = self.usage_reporter {
-            if let Ok(remaining) = self.store.get_fuel() {
-                report(Usage {
-                    fuel_budget: self.fuel_budget,
-                    fuel_remaining: remaining,
-                    memory_bytes: self.memory.data_size(&self.store),
-                    memory_limit: self.memory_limit,
-                });
-            }
+            report(self.usage());
         }
     }
 }
 
 impl Session {
+    pub fn usage(&self) -> Usage {
+        Usage {
+            fuel_budget: self.fuel_budget,
+            fuel_remaining: self.store.get_fuel().unwrap_or(0),
+            memory_bytes: self.memory.data_size(&self.store),
+            memory_limit: self.memory_limit,
+        }
+    }
     /// Load a persistent artifact without MIR, a source loader, or a type solver.
     pub fn load(bytes: &[u8], fuel: u64) -> Result<Self, String> {
         Self::load_with_limits(bytes, fuel, MEMORY_BOUND)
@@ -70,6 +72,7 @@ impl Session {
             .get_memory(&store, "memory")
             .ok_or("Wasm: missing memory export")?;
         let mut session = Self {
+            module,
             fuel_budget: fuel,
             memory_limit,
             usage_reporter: None,
@@ -141,8 +144,8 @@ impl Session {
         }
         Ok(pointer)
     }
-    /// Direct typed invocation used by the independent artifact host. The CLI's
-    /// eval-with adapter will supply its already sealed entry contract separately.
+    /// Direct typed invocation for artifact consumers; service calls use their
+    /// compiler-owned sealed init/transform contract.
     pub fn call(&mut self, arguments: &[serde_json::Value]) -> Result<serde_json::Value, String> {
         let pointer = self.entry()?;
         let descriptor = &self.manifest.types[self.manifest.entry_type as usize];

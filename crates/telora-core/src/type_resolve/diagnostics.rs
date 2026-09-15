@@ -33,6 +33,10 @@ impl Solver<'_> {
         self.render_evidence(Reference::Slot(slot), 0, &mut 128)
     }
 
+    pub(super) fn diagnostic_resolved_type(&self, ty: TypeId) -> String {
+        self.render_evidence(Reference::Known(ty), 0, &mut 128)
+    }
+
     pub(super) fn diagnostic_bound(&self, slot: TypeSlotId) -> String {
         if let Some(ty) = self.known(slot).and_then(|ty| self.meta_type(ty)) {
             self.render_evidence(Reference::Known(ty), 0, &mut 128)

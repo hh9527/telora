@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use telora_core::{EntryDataSources, EvalSource, SystemDataFormat, SystemDataSource};
+use telora_core::{ServiceSource, SystemDataFormat, SystemDataSource};
 
 #[derive(Clone)]
 pub(crate) struct NamedSource {
@@ -17,16 +17,18 @@ pub(crate) fn parse_fixture_source(value: &str) -> Result<SystemDataSource, Stri
     Ok(source)
 }
 
-pub(crate) struct CollectedEntrySources {
-    pub(crate) entry: EntryDataSources,
-    pub(crate) locators: BTreeMap<String, String>,
-}
-
 pub(crate) fn is_stdin_source(src: &str) -> bool {
     matches!(
         src.split_once("://"),
         Some((scheme, "")) if scheme.starts_with("stdin+")
     )
+}
+
+pub(crate) fn reject_stdin_sources(sources: &[NamedSource]) -> Result<(), String> {
+    if sources.iter().any(|source| is_stdin_source(&source.source.src)) {
+        return Err("service reserves stdin for request input".into());
+    }
+    Ok(())
 }
 
 fn data_format(name: &str) -> Result<SystemDataFormat, String> {
@@ -80,47 +82,14 @@ pub(crate) fn parse_named_source(value: &str) -> Result<NamedSource, String> {
         source: SystemDataSource {
             src,
             format,
-            has_default: false,
         },
     })
 }
 
-pub(crate) fn collect_entry_sources(
-    sources: Vec<NamedSource>,
-) -> Result<CollectedEntrySources, String> {
-    let mut entry = BTreeMap::new();
-    let mut locators = BTreeMap::new();
-    for source in sources {
-        if entry.contains_key(&source.name) {
-            return Err(format!(
-                "source {:?} was provided more than once",
-                source.name
-            ));
-        }
-        let public_name = run_context_source_name(&source.name);
-        locators.insert(public_name.clone(), source.source.src.clone());
-        entry.insert(
-            source.name,
-            SystemDataSource {
-                src: public_name,
-                ..source.source
-            },
-        );
-    }
-    let stdin_count = locators
-        .values()
-        .filter(|locator| is_stdin_source(locator))
-        .count();
-    if stdin_count > 1 {
-        return Err("standard input can provide at most one named source".into());
-    }
-    Ok(CollectedEntrySources { entry, locators })
-}
-
-pub(crate) fn collect_eval_sources(
+pub(crate) fn collect_service_sources(
     sources: Vec<NamedSource>,
     max_bytes: usize,
-) -> Result<BTreeMap<String, EvalSource>, String> {
+) -> Result<BTreeMap<String, ServiceSource>, String> {
     let mut collected = BTreeMap::new();
     let mut read_stdin = false;
     for source in sources {
@@ -130,8 +99,8 @@ pub(crate) fn collect_eval_sources(
                 source.name
             ));
         }
-        let public_name = run_context_source_name(&source.name).replace("@run-ctx/", "@eval-ctx/");
-        let description = format!("eval source {public_name:?}");
+        let public_name = service_source_name(&source.name);
+        let description = format!("service source {public_name:?}");
         let locator = source.source.src.as_str();
         let bytes = if let Some((scheme, location)) = locator.split_once("://") {
             if scheme.starts_with("stdin+") {
@@ -151,10 +120,10 @@ pub(crate) fn collect_eval_sources(
             read_limited(file, max_bytes, &description)?
         };
         let text = String::from_utf8(bytes)
-            .map_err(|error| format!("eval source is not UTF-8: {error}"))?;
+            .map_err(|error| format!("service source is not UTF-8: {error}"))?;
         collected.insert(
             source.name,
-            EvalSource {
+            ServiceSource {
                 source_name: public_name,
                 format: source.source.format,
                 text,
@@ -166,19 +135,19 @@ pub(crate) fn collect_eval_sources(
 
 pub(crate) use telora::static_input::read_limited;
 
-pub(crate) fn eval_source_names(sources: &[NamedSource]) -> Result<Vec<String>, String> {
+pub(crate) fn service_source_names(sources: &[NamedSource]) -> Result<Vec<String>, String> {
     let mut names = sources
         .iter()
         .map(|source| source.name.clone())
         .collect::<Vec<_>>();
     names.sort();
     if names.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err("an eval source name was provided more than once".into());
+        return Err("an service source name was provided more than once".into());
     }
     Ok(names)
 }
 
-fn run_context_source_name(key: &str) -> String {
+fn service_source_name(key: &str) -> String {
     let mut encoded = String::with_capacity(key.len());
     for byte in key.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
@@ -188,5 +157,5 @@ fn run_context_source_name(key: &str) -> String {
             write!(encoded, "%{byte:02X}").expect("writing to String cannot fail");
         }
     }
-    format!("@run-ctx/{encoded}")
+    format!("@service/{encoded}")
 }
