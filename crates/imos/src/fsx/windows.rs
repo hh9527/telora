@@ -22,8 +22,15 @@ const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
 const INVALID_HANDLE_VALUE: isize = -1;
 
 // FILETIME is 100ns ticks since 1601-01-01; 11_644_473_600 seconds lie
-// between that epoch and 1970-01-01.
-const FILETIME_EPOCH_OFFSET_TICKS: u64 = 11_644_473_600_000_000;
+// between that epoch and 1970-01-01, i.e. 11_644_473_600 * 10_000_000 ticks.
+const FILETIME_EPOCH_OFFSET_TICKS: u64 = 116_444_736_000_000_000;
+
+/// Converts FILETIME ticks to nanoseconds since the Unix epoch, the stamp
+/// contract shared with the Unix backend. The subtraction is signed so
+/// timestamps from before 1970 stay negative instead of clamping to zero.
+fn filetime_ticks_to_unix_ns(ticks: u64) -> i128 {
+    (i128::from(ticks) - i128::from(FILETIME_EPOCH_OFFSET_TICKS)) * 100
+}
 
 // Mirrors BY_HANDLE_FILE_INFORMATION: every field is a DWORD (or a FILETIME
 // pair of DWORDs), so no padding can appear.
@@ -73,9 +80,7 @@ fn from_handle_information(info: &ByHandleFileInformation) -> io::Result<FileSna
         },
         links: info.links as u64,
         length: ((info.size_high as u64) << 32) | info.size_low as u64,
-        modified: ModificationStamp(
-            i128::from(ticks.saturating_sub(FILETIME_EPOCH_OFFSET_TICKS)).saturating_mul(100),
-        ),
+        modified: ModificationStamp(filetime_ticks_to_unix_ns(ticks)),
         is_file: info.attributes & FILE_ATTRIBUTE_DIRECTORY == 0,
         is_dir: info.attributes & FILE_ATTRIBUTE_DIRECTORY != 0,
     })
@@ -160,4 +165,32 @@ pub(crate) fn request_lock_key(target: &Path) -> String {
         text.into_owned()
     };
     hex::encode(Sha256::digest(normalized.to_lowercase().as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unix_epoch_filetime_converts_to_zero() {
+        assert_eq!(filetime_ticks_to_unix_ns(FILETIME_EPOCH_OFFSET_TICKS), 0);
+    }
+
+    #[test]
+    fn filetime_before_unix_epoch_stays_negative() {
+        // 1601-01-01, the FILETIME zero point, is a whole number of seconds
+        // before 1970-01-01 and must not clamp to zero.
+        assert_eq!(
+            filetime_ticks_to_unix_ns(0),
+            -11_644_473_600i128 * 1_000_000_000
+        );
+    }
+
+    #[test]
+    fn filetime_one_second_after_unix_epoch() {
+        assert_eq!(
+            filetime_ticks_to_unix_ns(FILETIME_EPOCH_OFFSET_TICKS + 10_000_000),
+            1_000_000_000
+        );
+    }
 }
