@@ -5077,13 +5077,16 @@ impl<'a> Parser<'a> {
     }
     fn rule_closure(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
         let m = self.open(diags);
+        self.action_closure_1(diags);
         expect!(Fn, "invalid syntax, expected: \'fn\'", self, diags);
         self.rule_parameters(diags);
         loop {
             match self.current {
                 Token::Arrow => {
                     expect!(Arrow, "invalid syntax, expected: \'->\'", self, diags);
+                    self.action_closure_2(diags);
                     self.rule_expression(diags);
+                    self.action_closure_3(diags);
                     break;
                 }
                 Token::LBrace => break,
@@ -7612,12 +7615,6 @@ impl<'a> Parser<'a> {
             Token::LBrace => {
                 self.rule_block(diags);
             }
-            Token::If if self.predicate_ctrl_block_1() => {
-                self.rule_if_let_expr(diags);
-            }
-            Token::If => {
-                self.rule_if_expr(diags);
-            }
             Token::Match => {
                 self.rule_match_expr(diags);
             }
@@ -7629,7 +7626,7 @@ impl<'a> Parser<'a> {
                     diags,
                     err![
                         self,
-                        "invalid syntax, expected one of: \'if\', \'{\', \'match\', \'return\'"
+                        "invalid syntax, expected one of: \'{\', \'match\', \'return\'"
                     ],
                 );
             }
@@ -7645,7 +7642,7 @@ impl<'a> Parser<'a> {
                     self.action_if_expr_2(diags);
                     self.rule_if_head(diags);
                 }
-                Token::If | Token::LBrace | Token::Match | Token::Return => break,
+                Token::LBrace | Token::Match | Token::Return => break,
                 Token::AndAnd
                 | Token::At
                 | Token::BangEqual
@@ -7772,14 +7769,19 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        self.action_if_head_1(diags);
         self.rule_expression(diags);
+        self.action_if_head_2(diags);
         self.rule_block(diags);
         expect!(Else, "invalid syntax, expected: \'else\'", self, diags);
     }
     fn rule_match_expr(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
         let m = self.open(diags);
+        self.action_match_expr_1(diags);
         expect!(Match, "invalid syntax, expected: \'match\'", self, diags);
+        self.action_match_expr_2(diags);
         self.rule_expression(diags);
+        self.action_match_expr_3(diags);
         expect!(LBrace, "invalid syntax, expected: \'{\'", self, diags);
         self.rule_match_arm(diags);
         loop {
@@ -7896,8 +7898,11 @@ impl<'a> Parser<'a> {
     fn rule_return_expr(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
         let m = self.open(diags);
         let mut node_kind = Rule::ReturnExpr;
+        self.action_return_expr_1(diags);
         expect!(Return, "invalid syntax, expected: \'return\'", self, diags);
+        self.action_return_expr_2(diags);
         self.rule_expression(diags);
+        self.action_return_expr_3(diags);
         expect!(Semicolon, "invalid syntax, expected: ;", self, diags);
         node_kind = Rule::ReturnExpr;
         let closed = self.close(m, node_kind, diags);
@@ -9161,8 +9166,6 @@ pub trait ParserCallbacks<'a> {
     fn predicate_type_arguments_1(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `section_arguments` is visited.
     fn predicate_section_arguments_1(&self) -> bool;
-    /// Called when semantic predicate `?1` in rule `ctrl_block` is visited.
-    fn predicate_ctrl_block_1(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `if_expr` is visited.
     fn predicate_if_expr_1(&self) -> bool;
     /// Called when semantic predicate `?1` in rule `match_expr` is visited.
@@ -9187,6 +9190,12 @@ pub trait ParserCallbacks<'a> {
     fn action_unary_expr_2(&mut self, diags: &mut Vec<Self::Diagnostic>);
     /// Called when semantic action `#3` in rule `unary_expr` is visited.
     fn action_unary_expr_3(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#1` in rule `closure` is visited.
+    fn action_closure_1(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#2` in rule `closure` is visited.
+    fn action_closure_2(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#3` in rule `closure` is visited.
+    fn action_closure_3(&mut self, diags: &mut Vec<Self::Diagnostic>);
     /// Called when semantic action `#1` in rule `function_contract` is visited.
     fn action_function_contract_1(&mut self, diags: &mut Vec<Self::Diagnostic>);
     /// Called when semantic action `#2` in rule `function_contract` is visited.
@@ -9201,6 +9210,22 @@ pub trait ParserCallbacks<'a> {
     fn action_if_expr_2(&mut self, diags: &mut Vec<Self::Diagnostic>);
     /// Called when semantic action `#3` in rule `if_expr` is visited.
     fn action_if_expr_3(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#1` in rule `if_head` is visited.
+    fn action_if_head_1(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#2` in rule `if_head` is visited.
+    fn action_if_head_2(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#1` in rule `match_expr` is visited.
+    fn action_match_expr_1(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#2` in rule `match_expr` is visited.
+    fn action_match_expr_2(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#3` in rule `match_expr` is visited.
+    fn action_match_expr_3(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#1` in rule `return_expr` is visited.
+    fn action_return_expr_1(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#2` in rule `return_expr` is visited.
+    fn action_return_expr_2(&mut self, diags: &mut Vec<Self::Diagnostic>);
+    /// Called when semantic action `#3` in rule `return_expr` is visited.
+    fn action_return_expr_3(&mut self, diags: &mut Vec<Self::Diagnostic>);
 }
 
 mod support;

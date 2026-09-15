@@ -1,0 +1,1 @@
+export def invalid: Int = match if True { Some(1) } else { None } { _ => 0 };

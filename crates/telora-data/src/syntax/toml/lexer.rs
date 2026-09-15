@@ -56,7 +56,7 @@ enum LexToken {
     #[token("\"", scan_basic_string)]
     #[token("'", scan_literal_string)]
     String,
-    #[regex(r"[A-Za-z0-9_+:-]+(\.[A-Za-z0-9_+:-]+)*")]
+    #[regex(r"[A-Za-z0-9_+:-]", scan_atom)]
     Atom,
     #[regex(r"\r?\n")]
     Newline,
@@ -64,6 +64,22 @@ enum LexToken {
     Whitespace,
     #[regex(r"#[^\r\n]*", allow_greedy = true)]
     Comment,
+}
+
+fn scan_atom(lexer: &mut Lexer<'_, LexToken>) {
+    let bytes = lexer.remainder().as_bytes();
+    let atom_byte = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'+' | b':' | b'-');
+    let mut end = 0;
+    while end < bytes.len() {
+        if atom_byte(bytes[end]) {
+            end += 1;
+        } else if bytes[end] == b'.' && bytes.get(end + 1).is_some_and(|&byte| atom_byte(byte)) {
+            end += 2;
+        } else {
+            break;
+        }
+    }
+    lexer.bump(end);
 }
 
 fn scan_basic_string(lexer: &mut Lexer<'_, LexToken>) -> bool {

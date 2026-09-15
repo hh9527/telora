@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn source_data_depth_limit_applies_before_materialization() {
+fn source_data_parser_nesting_limit_applies_before_materialization() {
     let cwd = fixture();
     let input = format!("{}0{}", "[".repeat(256), "]".repeat(256));
     fs::write(cwd.join("src/deep.json"), &input).unwrap();
@@ -13,6 +13,6 @@ fn source_data_depth_limit_applies_before_materialization() {
     let output = telora(&cwd).args(["check", "@src/main"]).output().unwrap();
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("depth"), "{stdout}");
+    assert!(stdout.contains("data syntax nesting exceeds parser limit"), "{stdout}");
     fs::remove_dir_all(cwd).unwrap();
 }

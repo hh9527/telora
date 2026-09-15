@@ -18,7 +18,6 @@ macro_rules! err {
 #[allow(dead_code)]
 pub enum Rule {
     Array,
-    ArrayTail,
     Document,
     Error,
     InlineTable,
@@ -361,7 +360,6 @@ impl core::fmt::Debug for Rule {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Rule::Array => write!(f, "array"),
-            Rule::ArrayTail => write!(f, "array_tail"),
             Rule::Document => write!(f, "document"),
             Rule::Error => write!(f, "error"),
             Rule::InlineTable => write!(f, "inline_table"),
@@ -596,7 +594,6 @@ impl<'a> Parser<'a> {
     ) {
         match rule {
             Rule::Array => self.create_node_array(node_ref, diags),
-            Rule::ArrayTail => self.create_node_array_tail(node_ref, diags),
             Rule::Document => self.create_node_document(node_ref, diags),
             Rule::Error => self.create_node_error(node_ref, diags),
             Rule::InlineTable => self.create_node_inline_table(node_ref, diags),
@@ -844,8 +841,35 @@ impl<'a> Parser<'a> {
                     self.rule_value(diags);
                     loop {
                         match self.current {
+                            Token::Comma if self.predicate_array_1() => {
+                                expect!(Comma, "invalid syntax, expected: \',\'", self, diags);
+                                self.rule_value(diags);
+                            }
+                            Token::Comma | Token::RBracket => break,
+                            Token::Atom
+                            | Token::EOF
+                            | Token::LBracket
+                            | Token::Newline
+                            | Token::RBrace
+                            | Token::String => {
+                                self.error(
+                                    diags,
+                                    err![self, "invalid syntax, expected one of: \',\', \']\'"],
+                                );
+                                break;
+                            }
+                            _ => {
+                                self.advance_with_error(
+                                    diags,
+                                    err![self, "invalid syntax, expected one of: \',\', \']\'"],
+                                );
+                            }
+                        }
+                    }
+                    loop {
+                        match self.current {
                             Token::Comma => {
-                                self.rule_array_tail(diags);
+                                expect!(Comma, "invalid syntax, expected: \',\'", self, diags);
                                 break;
                             }
                             Token::RBracket => break,
@@ -896,67 +920,6 @@ impl<'a> Parser<'a> {
         expect!(RBracket, "invalid syntax, expected: \']\'", self, diags);
         let closed = self.close(m, Rule::Array, diags);
         self.create_node_array(NodeRef(closed.0), diags);
-    }
-    fn rule_array_tail(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
-        let m = self.open(diags);
-        expect!(Comma, "invalid syntax, expected: \',\'", self, diags);
-        loop {
-            match self.current {
-                Token::Atom | Token::LBrace | Token::LBracket | Token::String => {
-                    self.rule_value(diags);
-                    loop {
-                        match self.current {
-                            Token::Comma => {
-                                self.rule_array_tail(diags);
-                                break;
-                            }
-                            Token::RBracket => break,
-                            Token::Atom
-                            | Token::EOF
-                            | Token::LBracket
-                            | Token::Newline
-                            | Token::RBrace
-                            | Token::String => {
-                                self.error(
-                                    diags,
-                                    err![self, "invalid syntax, expected one of: \',\', \']\'"],
-                                );
-                                break;
-                            }
-                            _ => {
-                                self.advance_with_error(
-                                    diags,
-                                    err![self, "invalid syntax, expected one of: \',\', \']\'"],
-                                );
-                            }
-                        }
-                    }
-                    break;
-                }
-                Token::RBracket => break,
-                Token::Comma | Token::EOF | Token::Newline | Token::RBrace => {
-                    self.error(
-                        diags,
-                        err![
-                            self,
-                            "invalid syntax, expected one of: <atom>, \'{\', \'[\', \']\', <string>"
-                        ],
-                    );
-                    break;
-                }
-                _ => {
-                    self.advance_with_error(
-                        diags,
-                        err![
-                            self,
-                            "invalid syntax, expected one of: <atom>, \'{\', \'[\', \']\', <string>"
-                        ],
-                    );
-                }
-            }
-        }
-        let closed = self.close(m, Rule::ArrayTail, diags);
-        self.create_node_array_tail(NodeRef(closed.0), diags);
     }
     fn rule_inline_table(&mut self, diags: &mut Vec<<Self as ParserCallbacks<'a>>::Diagnostic>) {
         let m = self.open(diags);
@@ -1042,8 +1005,6 @@ pub trait ParserCallbacks<'a> {
 
     /// Called when `array` node is created.
     fn create_node_array(&mut self, _node_ref: NodeRef, _diags: &mut Vec<Self::Diagnostic>) {}
-    /// Called when `array_tail` node is created.
-    fn create_node_array_tail(&mut self, _node_ref: NodeRef, _diags: &mut Vec<Self::Diagnostic>) {}
     /// Called when `document` node is created.
     fn create_node_document(&mut self, _node_ref: NodeRef, _diags: &mut Vec<Self::Diagnostic>) {}
     /// Called when `error` node is created.
@@ -1063,6 +1024,9 @@ pub trait ParserCallbacks<'a> {
     fn create_node_table_tail(&mut self, _node_ref: NodeRef, _diags: &mut Vec<Self::Diagnostic>) {}
     /// Called when `value` node is created.
     fn create_node_value(&mut self, _node_ref: NodeRef, _diags: &mut Vec<Self::Diagnostic>) {}
+
+    /// Called when semantic predicate `?1` in rule `array` is visited.
+    fn predicate_array_1(&self) -> bool;
 }
 
 mod support;

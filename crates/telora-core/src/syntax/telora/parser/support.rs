@@ -1,7 +1,10 @@
 use super::*;
+mod operands;
 
 #[derive(Default)]
 pub struct ParseContext {
+    token_depths: Vec<u32>,
+    operands: Vec<u32>,
     prefixes: Vec<Vec<MarkOpened>>,
     contracts: Vec<Vec<(MarkOpened, Rule)>>,
     conditionals: Vec<Vec<(MarkOpened, Rule)>>,
@@ -10,6 +13,10 @@ pub struct ParseContext {
 
 impl<'a> Parser<'a> {
     pub fn from_token_stream(source_len: usize, tokens: Vec<Token>, spans: Vec<Span>) -> Self {
+        let context = ParseContext {
+            token_depths: super::super::nesting::depths(&tokens),
+            ..Default::default()
+        };
         Self {
             current: Token::EOF,
             end_of_input: Token::EOF,
@@ -20,7 +27,7 @@ impl<'a> Parser<'a> {
             tokens,
             pos: 0,
             max_offset: source_len,
-            context: ParseContext::default(),
+            context,
             error_node: None,
             in_ordered_choice: false,
             error_since_advance: false,
@@ -31,6 +38,40 @@ impl<'a> Parser<'a> {
 impl<'a> ParserCallbacks<'a> for Parser<'a> {
     type Diagnostic = Diagnostic;
     type Context = ParseContext;
+
+    fn action_if_head_1(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.begin_operand();
+    }
+    fn action_if_head_2(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.end_operand();
+    }
+    fn action_match_expr_1(&mut self, diags: &mut Vec<Diagnostic>) {
+        self.check_control_operand(diags);
+    }
+    fn action_match_expr_2(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.begin_operand();
+    }
+    fn action_match_expr_3(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.end_operand();
+    }
+    fn action_return_expr_1(&mut self, diags: &mut Vec<Diagnostic>) {
+        self.check_control_operand(diags);
+    }
+    fn action_return_expr_2(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.begin_operand();
+    }
+    fn action_return_expr_3(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.end_operand();
+    }
+    fn action_closure_1(&mut self, diags: &mut Vec<Diagnostic>) {
+        self.check_control_operand(diags);
+    }
+    fn action_closure_2(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.begin_operand();
+    }
+    fn action_closure_3(&mut self, _diags: &mut Vec<Diagnostic>) {
+        self.end_operand();
+    }
 
     fn action_unary_expr_1(&mut self, _diags: &mut Vec<Diagnostic>) {
         self.context.prefixes.push(Vec::new());
@@ -77,7 +118,8 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
         }
     }
 
-    fn action_if_expr_1(&mut self, _diags: &mut Vec<Diagnostic>) {
+    fn action_if_expr_1(&mut self, diags: &mut Vec<Diagnostic>) {
+        self.check_control_operand(diags);
         self.context.conditionals.push(Vec::new());
     }
 
@@ -133,11 +175,13 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     }
 
     fn create_tokens(
-        _context: &mut Self::Context,
+        context: &mut Self::Context,
         source: &'a str,
         diags: &mut Vec<Self::Diagnostic>,
     ) -> (Vec<Token>, Vec<Span>) {
-        tokenize(source, diags)
+        let (tokens, spans) = tokenize(source, diags);
+        context.token_depths = super::super::nesting::depths(&tokens);
+        (tokens, spans)
     }
     fn create_diagnostic(&self, span: Span, message: String) -> Self::Diagnostic {
         Self::Diagnostic::error()
@@ -213,9 +257,6 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     }
     fn predicate_primary_7(&self) -> bool {
         self.current == Token::Do
-    }
-    fn predicate_ctrl_block_1(&self) -> bool {
-        self.predicate_primary_6()
     }
     fn predicate_braced_1(&self) -> bool {
         if self.peek(1) == Token::RBrace

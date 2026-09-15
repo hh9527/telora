@@ -229,6 +229,16 @@ else match fallback { Some(value) => value, None => default }
 if ready { value } else return fallback;
 ```
 
+条件中再使用控制表达式时，需要用括号标出边界。例如：
+
+```telora
+if (if ready { True } else { False }) { 1 } else { 0 }
+match (if ready { Some(1) } else { None }) { Some(x) => x, None => 0 }
+```
+
+`return` 的返回值也遵守这条规则：写 `return (if ready { 1 } else { 0 });`。
+`if if …` 和 `if !if …` 不合法。已有的调用参数括号或块边界不需要再额外包一层。
+
 ## 函数与契约
 
 所有顶层普通 `def` 都需要完整类型签名，私有辅助函数和导出入口遵守同一规则。

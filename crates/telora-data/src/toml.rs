@@ -302,7 +302,6 @@ impl<'a> TomlLowerer<'a> {
                 Some(Rule::Value | Rule::Array | Rule::InlineTable) => {
                     output.push(self.value(plan, child)?)
                 }
-                Some(Rule::ArrayTail) => self.collect_array_values(plan, child, output)?,
                 _ if matches!(
                     self.cst.get(child),
                     Node::Token(Token::String | Token::Atom, _)
@@ -399,65 +398,65 @@ impl<'a> TomlLowerer<'a> {
 
 fn table_at(
     plan: &mut TomlPlan,
-    table: DataNodeId,
+    mut table: DataNodeId,
     path: &[String],
     location: Location,
     dotted: bool,
 ) -> Result<DataNodeId, Conflict> {
-    if path.is_empty() {
-        return Ok(table);
-    }
-    if plan.tables[&table].sealed {
-        return Err(Conflict {
-            message: "cannot extend an inline TOML table".into(),
-            previous: plan.data.node(table).location,
-        });
-    }
-    let entry = match plan.fields(table).get(&path[0]).cloned() {
-        Some(entry) => Entry {
-            node: entry.value,
-            key_location: entry.key_location,
-        },
-        None => {
-            let child = plan.table(location, dotted);
-            plan.fields_mut(table).insert(
-                path[0].clone(),
-                DataField {
-                    value: child,
-                    key_location: location,
-                },
-            );
-            Entry {
-                node: child,
-                key_location: location,
-            }
-        }
-    };
-    let next = match &plan.data.node(entry.node).kind {
-        DataPlanNodeKind::Object(_) => entry.node,
-        DataPlanNodeKind::Array(values) if plan.table_arrays.contains(&entry.node) => {
-            let Some(next) = values.last().copied() else {
-                return Err(Conflict {
-                    message: "array of tables has no current element".into(),
-                    previous: entry.key_location,
-                });
-            };
-            if !matches!(plan.data.node(next).kind, DataPlanNodeKind::Object(_)) {
-                return Err(Conflict {
-                    message: "array of tables has no current element".into(),
-                    previous: entry.key_location,
-                });
-            }
-            next
-        }
-        _ => {
+    for name in path {
+        if plan.tables[&table].sealed {
             return Err(Conflict {
-                message: format!("TOML key {:?} is not a table", path[0]),
-                previous: entry.key_location,
+                message: "cannot extend an inline TOML table".into(),
+                previous: plan.data.node(table).location,
             });
         }
-    };
-    table_at(plan, next, &path[1..], location, dotted)
+        let entry = match plan.fields(table).get(name).cloned() {
+            Some(entry) => Entry {
+                node: entry.value,
+                key_location: entry.key_location,
+            },
+            None => {
+                let child = plan.table(location, dotted);
+                plan.fields_mut(table).insert(
+                    name.clone(),
+                    DataField {
+                        value: child,
+                        key_location: location,
+                    },
+                );
+                Entry {
+                    node: child,
+                    key_location: location,
+                }
+            }
+        };
+        let next = match &plan.data.node(entry.node).kind {
+            DataPlanNodeKind::Object(_) => entry.node,
+            DataPlanNodeKind::Array(values) if plan.table_arrays.contains(&entry.node) => {
+                let Some(next) = values.last().copied() else {
+                    return Err(Conflict {
+                        message: "array of tables has no current element".into(),
+                        previous: entry.key_location,
+                    });
+                };
+                if !matches!(plan.data.node(next).kind, DataPlanNodeKind::Object(_)) {
+                    return Err(Conflict {
+                        message: "array of tables has no current element".into(),
+                        previous: entry.key_location,
+                    });
+                }
+                next
+            }
+            _ => {
+                return Err(Conflict {
+                    message: format!("TOML key {name:?} is not a table"),
+                    previous: entry.key_location,
+                });
+            }
+        };
+        table = next;
+    }
+    Ok(table)
 }
 
 fn insert_entry(
@@ -559,18 +558,18 @@ fn open_array_table(
 }
 
 fn seal_table(plan: &mut TomlPlan, table: DataNodeId) {
-    plan.tables
-        .get_mut(&table)
-        .expect("TOML table state exists")
-        .sealed = true;
-    let children = plan
-        .fields(table)
-        .values()
-        .map(|field| field.value)
-        .filter(|child| plan.tables.contains_key(child))
-        .collect::<Vec<_>>();
-    for child in children {
-        seal_table(plan, child);
+    let mut pending = vec![table];
+    while let Some(table) = pending.pop() {
+        plan.tables
+            .get_mut(&table)
+            .expect("TOML table state exists")
+            .sealed = true;
+        pending.extend(
+            plan.fields(table)
+                .values()
+                .map(|field| field.value)
+                .filter(|child| plan.tables.contains_key(child)),
+        );
     }
 }
 

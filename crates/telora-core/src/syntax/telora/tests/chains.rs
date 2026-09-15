@@ -24,7 +24,42 @@ fn long_chains_parse_and_lower_on_a_small_stack() {
     std::thread::Builder::new()
         .stack_size(1024 * 1024)
         .spawn(|| {
+            let bytes = format!(r#"b\"{}\""#, r#"\\n"#.repeat(10000));
+            let (_, spans) = lexer::tokenize(&bytes, &mut Vec::new());
+            assert_eq!(spans.last().unwrap().end, bytes.len());
             for (source, valid) in [
+                (
+                    format!(
+                        "{}True{}",
+                        "if !".repeat(2000),
+                        " { True } else { False }".repeat(2000)
+                    ),
+                    false,
+                ),
+                (
+                    format!("{}Int{}", "fn() -> ".repeat(2000), " { 0 }".repeat(2000)),
+                    false,
+                ),
+                (
+                    format!("{}0{}", "return ".repeat(2000), ";".repeat(2000)),
+                    false,
+                ),
+                (
+                    format!(
+                        "{}True{}",
+                        "if ".repeat(2000),
+                        " { True } else { False }".repeat(2000)
+                    ),
+                    false,
+                ),
+                (
+                    format!(
+                        "{}True{}",
+                        "match ".repeat(2000),
+                        " { _ => True }".repeat(2000)
+                    ),
+                    false,
+                ),
                 ("do { 1;; }".into(), false),
                 ("do { 1; let a = 2; ; }".into(), false),
                 (format!("do {{ {}0 }}", "1; ".repeat(5000)), true),

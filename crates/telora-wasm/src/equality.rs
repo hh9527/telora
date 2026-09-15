@@ -29,12 +29,11 @@ impl Emitter<'_> {
         self.unequal_if();
         Ok(())
     }
-    pub fn equal_expression(&mut self, node: HirId, negate: bool) -> Result<u32, String> {
+    pub fn equal_left(&mut self, node: HirId, negate: bool, left: u32) -> Result<u32, String> {
         let lhs = child(self.mir, node, Role::Left)?;
         let rhs = child(self.mir, node, Role::Right)?;
         let a = self.effective_ty(lhs)?;
         let b = self.effective_ty(rhs)?;
-        let left = self.expression(lhs)?;
         if self.width(a)? == 0 {
             return Ok(left);
         }

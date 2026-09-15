@@ -10,6 +10,11 @@ export def precedence: test.Test = test.should_ok(fn() {
     expect(!!True && !False);
     expect(10 - 3 - 2 == 5);
     expect(24 / 3 / 2 == 4);
+    expect(if (if True { True } else { False }) { True } else { False });
+    expect(if !(if True { False } else { True }) { True } else { False });
+    expect(match (if True { Some(3) } else { None }) { Some(x) => x == 3, None => False });
+    let returning = fn() { return (if True { 3 } else { 4 }); };
+    expect(returning() == 3);
     expect(if False { False } else if let Some(x) = Some(3) {
         x == 3
     } else if True { False } else { False })

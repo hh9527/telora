@@ -1,0 +1,3 @@
+import "./{{FILE}}" as input;
+import "std/value" {Value};
+export def answer: Value = input.data;

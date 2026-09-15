@@ -7,7 +7,7 @@ type DeferredOwner = struct {inner: DeferredItems};
 def deferred_wrap: for(T) Fn(T) -> Option(T) = fn(value) { Some(value) };
 export def empty_arm_waits_for_generic_member_evidence: test.Test = test.should_ok(fn() {
     let deferred_fields = fn(owner: DeferredOwner, enabled: Bool) {
-        match if enabled { deferred_wrap(owner) } else { None } {
+        match (if enabled { deferred_wrap(owner) } else { None }) {
             Some(value) => value.inner.items,
             None => [],
         }

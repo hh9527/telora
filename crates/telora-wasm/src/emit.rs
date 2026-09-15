@@ -190,8 +190,11 @@ impl<'a> Emitter<'a> {
         self.store32(pointer, 4, location_words[1]);
         self.store32(pointer, 8, location_words[2]);
         self.store32(pointer, 12, code);
-        self.extend([I::LocalGet(pointer), I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
-            I::I32Store(memory(32, 2))]);
+        self.extend([
+            I::LocalGet(pointer),
+            I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
+            I::I32Store(memory(32, 2)),
+        ]);
         self.table_push(DIAGNOSTICS, pointer, DIAGNOSTIC_BYTES);
         self.extend([
             I::LocalGet(pointer),
@@ -224,7 +227,131 @@ impl<'a> Emitter<'a> {
         Ok(result)
     }
     pub fn expression(&mut self, node: HirId) -> Result<u32, String> {
+        // Prefix and else-if chains have no delimiter nesting limit. Keep
+        // continuations on the heap, including each node's value adjustment.
+        enum Pending {
+            Unary(HirId, telora_core::syntax::kinds::UnaryOperator),
+            Binary(HirId, telora_core::syntax::kinds::BinaryOperator),
+            If(HirId, u32),
+            IfLet(HirId, u32),
+            Adjust(HirId),
+        }
+        let mut pending = Vec::new();
+        let mut current = node;
+        loop {
+            match self.mir.hir[current.index()].kind {
+                HirKind::IfLet => {
+                    let result = self.if_let_start(current)?;
+                    pending.push(Pending::IfLet(current, result));
+                    current = child(self.mir, current, Role::Else)?;
+                }
+                HirKind::Binary(op)
+                    if op != telora_core::syntax::kinds::BinaryOperator::StructUpdate =>
+                {
+                    pending.push(Pending::Binary(current, op));
+                    current = child(self.mir, current, Role::Left)?;
+                }
+                HirKind::Block => {
+                    self.block_bindings(current)?;
+                    pending.push(Pending::Adjust(current));
+                    current = child(self.mir, current, Role::Result)?;
+                }
+                HirKind::Unary(op) => {
+                    pending.push(Pending::Unary(current, op));
+                    current = child(self.mir, current, Role::Operand)?;
+                }
+                HirKind::If => {
+                    let condition_node = child(self.mir, current, Role::Condition)?;
+                    if self.mir.types[self.ty(condition_node)?.index()].constructor
+                        != TypeConstructor::Bool
+                    {
+                        return Err("Wasm: condition is not sealed Bool".into());
+                    }
+                    let condition = self.expression(condition_node)?;
+                    let result = self.local(ValType::I32);
+                    self.bits(condition);
+                    self.extend([I::I64Eqz, I::If(BlockType::Empty)]);
+                    pending.push(Pending::If(current, result));
+                    current = child(self.mir, current, Role::Else)?;
+                }
+                _ => break,
+            }
+        }
+        let mut value = self.adjusted_expression(current)?;
+        for frame in pending.into_iter().rev() {
+            let node = match frame {
+                Pending::Adjust(node) => node,
+                Pending::IfLet(node, result) => {
+                    value = self.if_let_finish(node, result, value)?;
+                    node
+                }
+                Pending::Binary(node, op) => {
+                    value = self.binary_left(node, op, value)?;
+                    node
+                }
+                Pending::Unary(node, op) => {
+                    value = self.unary_value(node, op, value)?;
+                    node
+                }
+                Pending::If(node, result) => {
+                    self.extend([I::LocalGet(value), I::LocalSet(result), I::Else]);
+                    let yes = self.expression(child(self.mir, node, Role::Then)?)?;
+                    self.extend([I::LocalGet(yes), I::LocalSet(result), I::End]);
+                    value = result;
+                    node
+                }
+            };
+            value = self.adjust_value(node, value)?;
+        }
+        Ok(value)
+    }
+    fn adjusted_expression(&mut self, node: HirId) -> Result<u32, String> {
         let value = self.raw_expression(node)?;
+        self.adjust_value(node, value)
+    }
+    fn block_bindings(&mut self, node: HirId) -> Result<(), String> {
+        self.reserve_local_instances(node)?;
+        for edge in &self.mir.hir[node.index()].children {
+            if edge.role == Role::Binding
+                && matches!(
+                    self.mir.hir[edge.node.index()].kind,
+                    HirKind::Binding {
+                        kind: telora_core::syntax::kinds::BindingKind::Def,
+                        ..
+                    }
+                )
+                && self.mir.hir_symbols[edge.node.index()]
+                    .is_some_and(|symbol| self.mir.symbol_generics[symbol.index()].is_empty())
+                && self.mir.types[self.ty(edge.node)?.index()].constructor
+                    == TypeConstructor::Function
+            {
+                let symbol = self.mir.hir_symbols[edge.node.index()]
+                    .ok_or("Wasm: local definition has no symbol")?;
+                let reserved = self.alloc(FUNCTION_BYTES);
+                self.bindings.insert(symbol, reserved);
+            }
+        }
+        for edge in &self.mir.hir[node.index()].children {
+            if edge.role == Role::Binding {
+                if matches!(
+                    self.mir.hir[edge.node.index()].kind,
+                    HirKind::Binding {
+                        kind: telora_core::syntax::kinds::BindingKind::Type
+                            | telora_core::syntax::kinds::BindingKind::Trait,
+                        ..
+                    }
+                ) {
+                    continue;
+                }
+                if self.emit_local_template(edge.node)? {
+                    continue;
+                }
+                self.expression(edge.node)?;
+            }
+        }
+        Ok(())
+    }
+    fn adjust_value(&mut self, node: HirId, value: u32) -> Result<u32, String> {
         if self.mir.value_adjustments[node.index()].is_some() {
             let target = self.effective_ty(node)?;
             self.construction_check(node, target, telora_core::mir::PropertySite::Type, value)?;
@@ -301,7 +428,8 @@ impl<'a> Emitter<'a> {
             HirKind::FieldProjection => self.field_projection(node),
             HirKind::Field => self.field(node),
             HirKind::Index => self.index(node),
-            HirKind::Match | HirKind::IfLet | HirKind::LetElse => self.pattern_branch(node),
+            HirKind::Match | HirKind::LetElse => self.pattern_branch(node),
+            HirKind::IfLet => unreachable!("if-let nodes are emitted by expression"),
             HirKind::Propagate => self.propagate(node),
             HirKind::Tuple => self.tuple_expression(node),
             HirKind::Binding { kind, .. } => {
@@ -399,66 +527,13 @@ impl<'a> Emitter<'a> {
                     value,
                 )
             }
-            HirKind::Block => {
-                self.reserve_local_instances(node)?;
-                for edge in &self.mir.hir[node.index()].children {
-                    if edge.role == Role::Binding
-                        && matches!(
-                            self.mir.hir[edge.node.index()].kind,
-                            HirKind::Binding {
-                                kind: telora_core::syntax::kinds::BindingKind::Def,
-                                ..
-                            }
-                        )
-                        && self.mir.hir_symbols[edge.node.index()].is_some_and(|symbol| {
-                            self.mir.symbol_generics[symbol.index()].is_empty()
-                        })
-                        && self.mir.types[self.ty(edge.node)?.index()].constructor
-                            == TypeConstructor::Function
-                    {
-                        let symbol = self.mir.hir_symbols[edge.node.index()]
-                            .ok_or("Wasm: local definition has no symbol")?;
-                        let reserved = self.alloc(FUNCTION_BYTES);
-                        self.bindings.insert(symbol, reserved);
-                    }
-                }
-                for edge in &self.mir.hir[node.index()].children {
-                    if edge.role == Role::Binding {
-                        if matches!(self.mir.hir[edge.node.index()].kind,
-                            HirKind::Binding {kind: telora_core::syntax::kinds::BindingKind::Type
-                                | telora_core::syntax::kinds::BindingKind::Trait, ..}) {
-                            continue;
-                        }
-                        if self.emit_local_template(edge.node)? {
-                            continue;
-                        }
-                        self.expression(edge.node)?;
-                    }
-                }
-                self.expression(child(self.mir, node, Role::Result)?)
-            }
+            HirKind::Block => unreachable!("block nodes are emitted by expression"),
             HirKind::Binary(telora_core::syntax::kinds::BinaryOperator::StructUpdate) => {
                 self.struct_update(node)
             }
-            HirKind::Binary(op) => self.binary(node, *op),
-            HirKind::Unary(op) => self.unary(node, *op),
-            HirKind::If => {
-                let condition_node = child(self.mir, node, Role::Condition)?;
-                if self.mir.types[self.ty(condition_node)?.index()].constructor
-                    != TypeConstructor::Bool
-                {
-                    return Err("Wasm: condition is not sealed Bool".into());
-                }
-                let condition = self.expression(condition_node)?;
-                let result = self.local(ValType::I32);
-                self.bits(condition);
-                self.extend([I::I64Eqz, I::If(BlockType::Empty)]);
-                let no = self.expression(child(self.mir, node, Role::Else)?)?;
-                self.extend([I::LocalGet(no), I::LocalSet(result), I::Else]);
-                let yes = self.expression(child(self.mir, node, Role::Then)?)?;
-                self.extend([I::LocalGet(yes), I::LocalSet(result), I::End]);
-                Ok(result)
-            }
+            HirKind::Binary(_) => unreachable!("binary nodes are emitted by expression"),
+            HirKind::Unary(_) => unreachable!("prefix nodes are emitted by expression"),
+            HirKind::If => unreachable!("if nodes are emitted by expression"),
             HirKind::Return => {
                 let value = self.expression(child(self.mir, node, Role::Value)?)?;
                 self.extend([I::LocalGet(value), I::Return]);

@@ -20,3 +20,5 @@ pub use source::SourceDatabase;
 
 #[cfg(test)]
 mod data_plan_test;
+#[cfg(test)]
+mod stack_tests;

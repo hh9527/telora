@@ -455,6 +455,16 @@ if ready { value } else return fallback;
 
 `return expression;` 从最近的函数返回。它不是模块导出机制。
 
+条件、`if let` / `match` 的被匹配值、`return` 的返回值及 `fn` 的显式返回类型注解中，
+嵌套的 `if`、`match`、`return`、`fn` 表达式需要显式定界符。
+例如写 `if (if enabled { True } else { False }) { 1 } else { 0 }`，不能写
+`if if …` 或 `if !if …`；返回条件结果写作 `return (if enabled { 1 } else { 0 });`。
+已有的调用参数括号、数组、索引、插值和块边界足够，不必再重复加括号。
+普通 `else if` 链与函数体内的控制流不受影响。此规则在开始解析内层表达式之前检查。
+
+解析前按词法 token 检查定界符深度，目前最多 32 层。超限在源码位置产生诊断，
+不进入递归语法分析；字符串正文及注释中的括号不计入。该限制独立于类型展开配置。
+
 ### 4.1 模式匹配
 
 Pattern 可以匹配字面量、enum variant 及其 payload、Tuple 和 Struct 字段：
@@ -1615,6 +1625,13 @@ Heap 直接物化通用 `Value`。格式级验证覆盖所有可能使物化失�
 TOML table 冲突、非法数字/时间值，以及不受支持或有歧义的 YAML graph 特性。失败产生
 带 source location 的诊断，不产生部分 `Value`。这一层不检查业务 schema：import 和
 初始化 source 的结果都只是 `Value`，业务数据是否符合某个 struct/enum 属于 codec。
+
+Host 解析器另有独立的语法嵌套保护：JSON/TOML 在进入递归 parser 前按 token
+预检定界符，当前最多 32 层；YAML 在进入嵌套 block/flow/anchor 解析前检查调用深度。
+超限产生带位置的 `data syntax nesting exceeds parser limit (32)` 诊断。
+字符串、注释中的括号不计入，错配闭括号不能抵消未闭合的深度。
+这项保护针对 Host 解析调用栈，不是 Wasm 运行期 fuel，也不代表数据图深度：
+TOML 点分键组装和数据图后序排序使用显式工作栈，长键路径及共享边不增加 Rust 调用栈。
 
 验证阶段必须优先借用 lossless CST，而不是再构造一棵递归 Owned 数据树。实现以一个
 扁平 arena 表达 validated plan：节点只保存 source span、已验证的节点种类，以及指向

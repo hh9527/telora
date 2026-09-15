@@ -110,7 +110,7 @@ decorator: '@' decorator_path [arguments];
 decorator_path: Identifier ('.' Identifier)*;
 block: '{' body '}';
 do_expr: 'do' block;
-closure: 'fn' parameters ['->' expression] block;
+closure: #1 'fn' parameters ['->' #2 expression #3] block;
 interpreter_intrinsic: 'interpreter' '!' '(' [expression (?1 ',' expression)* [',']] ')';
 named_intrinsic: Identifier '!' '(' [expression (?1 ',' expression)* [',']] ')';
 dot_suffix^: ?1 postfix_intrinsic_suffix | field_projection_suffix | projection_suffix | metadata_suffix;
@@ -138,14 +138,14 @@ section_arguments: '\\(' [argument (?1 ',' argument)* [',']] ')';
 argument: expression | Placeholder | IndexedPlaceholder;
 array_item^: spread_item | expression;
 spread_item: '...' expression @spread_expr;
-ctrl_block^: block | ?1 if_let_expr | if_expr | match_expr | return_expr;
+ctrl_block^: block | match_expr | return_expr;
 // The callback selects IfExpr / IfLetExpr for each head and closes rightward
 // branches in reverse. Conditions and branch blocks keep their own frames.
 if_expr^: #1 #2 if_head (?1 #2 if_head)* ctrl_block #3;
 if_let_expr^: if_expr;
-if_head^: 'if' ['let' pattern '='] expression block 'else';
-match_expr: 'match' expression '{' match_arm (?1 ',' match_arm)* [','] '}';
-return_expr: 'return' expression Semicolon @return_expr;
+if_head^: 'if' ['let' pattern '='] #1 expression #2 block 'else';
+match_expr: #1 'match' #2 expression #3 '{' match_arm (?1 ',' match_arm)* [','] '}';
+return_expr: #1 'return' #2 expression #3 Semicolon @return_expr;
 match_arm: pattern ['if' expression] '=>' expression;
 pattern:
   ?4 constructor_pattern ^

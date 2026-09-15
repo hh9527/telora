@@ -1,0 +1,1 @@
+export def invalid: Fn() -> Int = fn() { return if True { 1 } else { 0 }; };

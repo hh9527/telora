@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 pub mod json;
 pub mod toml;
 pub mod yaml;
+pub(crate) mod nesting;
 
 use crate::source::Diagnostic;
 

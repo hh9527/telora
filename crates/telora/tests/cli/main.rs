@@ -9,6 +9,7 @@ mod wasm;
 mod backend_surface;
 mod usage;
 mod declaration_shapes;
+mod stack_safety;
 
 fn fixture() -> PathBuf {
     let unique = SystemTime::now()

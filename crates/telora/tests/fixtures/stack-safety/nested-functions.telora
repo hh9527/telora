@@ -1,0 +1,2 @@
+def unused: {{TYPE}} = {{VALUE}};
+export def answer: Int = 1;

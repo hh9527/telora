@@ -161,12 +161,7 @@ impl Emitter<'_> {
         } else {
             self.emit(I::Block(BlockType::Empty));
             self.pattern(child(self.mir, node, Role::Pattern)?, value)?;
-            let then = if matches!(self.mir.hir[node.index()].kind, HirKind::LetElse) {
-                Role::Body
-            } else {
-                Role::Then
-            };
-            let body = child(self.mir, node, then)?;
+            let body = child(self.mir, node, Role::Body)?;
             let yes = self.expression(body)?;
             let yes = self.adapt(
                 body,
@@ -181,6 +176,28 @@ impl Emitter<'_> {
             self.extend([I::LocalGet(no), I::LocalSet(result)]);
         }
         self.emit(I::End);
+        Ok(result)
+    }
+    pub fn if_let_start(&mut self, node: HirId) -> Result<u32, String> {
+        let value = self.expression(child(self.mir, node, Role::Value)?)?;
+        let result = self.local(ValType::I32);
+        self.extend([I::Block(BlockType::Empty), I::Block(BlockType::Empty)]);
+        self.pattern(child(self.mir, node, Role::Pattern)?, value)?;
+        let body = child(self.mir, node, Role::Then)?;
+        let yes = self.expression(body)?;
+        let yes = self.adapt(
+            body,
+            self.effective_ty(body)?,
+            self.effective_ty(node)?,
+            yes,
+        )?;
+        self.extend([I::LocalGet(yes), I::LocalSet(result), I::Br(1), I::End]);
+        Ok(result)
+    }
+    pub fn if_let_finish(&mut self, node: HirId, result: u32, no: u32) -> Result<u32, String> {
+        let body = child(self.mir, node, Role::Else)?;
+        let no = self.adapt(body, self.effective_ty(body)?, self.effective_ty(node)?, no)?;
+        self.extend([I::LocalGet(no), I::LocalSet(result), I::End]);
         Ok(result)
     }
     pub fn propagate(&mut self, node: HirId) -> Result<u32, String> {

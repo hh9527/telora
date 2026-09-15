@@ -11,6 +11,5 @@ key_value: key '=' value;
 key: key_part ('.' key_part)*;
 key_part: String | Atom;
 value^: String | Atom | array | inline_table;
-array: '[' [value [array_tail]] ']';
-array_tail: ',' [value [array_tail]];
+array: '[' [value (?1 ',' value)* [',']] ']';
 inline_table: '{' [key_value (',' key_value)*] '}';

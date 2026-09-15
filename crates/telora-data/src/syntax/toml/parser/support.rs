@@ -25,6 +25,10 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     type Diagnostic = Diagnostic;
     type Context = ();
 
+    fn predicate_array_1(&self) -> bool {
+        self.peek(1) != Token::RBracket
+    }
+
     fn create_tokens(
         _context: &mut Self::Context,
         source: &'a str,
