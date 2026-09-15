@@ -22,3 +22,6 @@ time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
 url = "2"
 zstd = "0.13"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
