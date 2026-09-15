@@ -315,11 +315,17 @@ pub(crate) fn sync_directory(_path: &Path) -> io::Result<()> {
 }
 
 pub(crate) fn request_lock_key(target: &Path) -> String {
-    // Callers pass `std::fs::canonicalize` output, which keeps the Windows
-    // verbatim (`\\?\`) prefix, and Win32 path lookup is case-insensitive:
-    // drop the prefix and fold case so aliases of one target share a lock
-    // key. Over-merging cannot happen for distinct files, because names that
-    // differ only by case denote the same file under default NTFS semantics.
+    // Input premise: callers resolve the request home with
+    // `std::fs::canonicalize` before joining the target name, and the name is
+    // restricted by `validate_plan_name` to lowercase ASCII letters, digits
+    // and single separators. Under those premises the residual alias classes
+    // are the verbatim (`\\?\` and `\\?\UNC\`) prefixes that canonicalize
+    // keeps and differences in drive/directory casing: strip the prefixes and
+    // fold case so those spellings share one lock key. This is not a general
+    // Windows path normalizer; alias forms outside the premise (e.g. 8.3
+    // short names or symlinks under the canonical parent) are expected to be
+    // resolved by canonicalize before the key is computed, and any that are
+    // not would surface as separate keys for the same target.
     let text = target.as_os_str().to_string_lossy();
     let normalized = if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{unc}")
@@ -439,5 +445,35 @@ mod tests {
             FreeSid(everyone);
             LocalFree(descriptor.cast());
         }
+    }
+
+    #[test]
+    fn lock_key_folds_verbatim_prefixes_and_casing() {
+        let verbatim = request_lock_key(Path::new(r"\\?\C:\Users\Dev\Data\plan.json"));
+        let plain = request_lock_key(Path::new(r"C:\Users\Dev\Data\plan.json"));
+        assert_eq!(verbatim, plain);
+
+        let folded = request_lock_key(Path::new(r"C:\users\dev\data\plan.json"));
+        assert_eq!(plain, folded);
+    }
+
+    #[test]
+    fn lock_key_normalizes_unc_verbatim_prefix() {
+        let verbatim = request_lock_key(Path::new(r"\\?\UNC\server\share\plan.json"));
+        let plain = request_lock_key(Path::new(r"\\server\share\plan.json"));
+        assert_eq!(verbatim, plain);
+    }
+
+    #[test]
+    fn lock_key_distinguishes_names_and_parents() {
+        let home = Path::new(r"C:\store\home");
+        assert_ne!(
+            request_lock_key(&home.join("plan-a.json")),
+            request_lock_key(&home.join("plan-b.json"))
+        );
+        assert_ne!(
+            request_lock_key(&home.join("plan.json")),
+            request_lock_key(Path::new(r"C:\store\other\plan.json"))
+        );
     }
 }
