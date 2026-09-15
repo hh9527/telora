@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::fsx;
 use anyhow::{Context, Result};
-use fs2::FileExt;
 use serde_json::Value;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::{Mutex, mpsc};
@@ -299,14 +299,10 @@ impl FileLock {
             .into_std()
             .await;
         loop {
-            let result = if exclusive {
-                FileExt::try_lock_exclusive(&file)
-            } else {
-                FileExt::try_lock_shared(&file)
-            };
+            let result = fsx::try_lock(&file, exclusive);
             match result {
-                Ok(()) => return Ok(Self(file)),
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Ok(true) => return Ok(Self(file)),
+                Ok(false) => {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 Err(error) => {
@@ -319,7 +315,7 @@ impl FileLock {
 
 impl Drop for FileLock {
     fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.0);
+        let _ = fsx::unlock(&self.0);
     }
 }
 
@@ -348,9 +344,9 @@ impl ProgressLock {
         let mut followed = 0_u64;
         let mut waited = false;
         loop {
-            match FileExt::try_lock_exclusive(&file) {
-                Ok(()) => break,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            match fsx::try_lock(&file, true) {
+                Ok(true) => break,
+                Ok(false) => {
                     waited = true;
                     let bytes = tokio::fs::read(path).await?;
                     if (bytes.len() as u64) < followed {
@@ -364,7 +360,8 @@ impl ProgressLock {
                             .map_or(0, |position| position + 1);
                         for line in new[..complete].split(|byte| *byte == b'\n') {
                             if !line.is_empty()
-                                && let Ok(status) = telora_data::json_serde::from_slice::<Status>(line)
+                                && let Ok(status) =
+                                    telora_data::json_serde::from_slice::<Status>(line)
                             {
                                 observed(status).await?;
                             }
@@ -417,7 +414,7 @@ impl StatusReporter {
 
 impl Drop for ProgressLock {
     fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.lock);
+        let _ = fsx::unlock(&self.lock);
     }
 }
 

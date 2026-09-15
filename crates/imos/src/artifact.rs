@@ -1,6 +1,6 @@
+use crate::fsx::{self, AccessPolicy};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{
     Arc,
@@ -126,7 +126,12 @@ where
             item.key
         );
     }
-    tokio::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o444)).await?;
+    let destination = destination.to_owned();
+    tokio::task::spawn_blocking(move || {
+        fsx::set_access(&destination, AccessPolicy::WriteProtected)
+    })
+    .await
+    .context("protect downloaded file")??;
     Ok(())
 }
 
@@ -160,7 +165,7 @@ where
 
 pub fn prepare_install_root(root: &Path) -> Result<()> {
     std::fs::create_dir_all(root)?;
-    set_mode(root, 0o755)
+    fsx::set_access(root, AccessPolicy::Directory).map_err(Into::into)
 }
 
 pub fn execute_item(
@@ -427,7 +432,7 @@ fn create_directory(path: &Path) -> Result<()> {
     } else {
         std::fs::create_dir_all(path)?;
     }
-    set_mode(path, 0o755)
+    fsx::set_access(path, AccessPolicy::Directory).map_err(Into::into)
 }
 
 fn normalize_directories(root: &Path) -> Result<()> {
@@ -435,10 +440,10 @@ fn normalize_directories(root: &Path) -> Result<()> {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
             normalize_directories(&entry.path())?;
-            set_mode(&entry.path(), 0o755)?;
+            fsx::set_access(&entry.path(), AccessPolicy::Directory)?;
         }
     }
-    set_mode(root, 0o755)
+    fsx::set_access(root, AccessPolicy::Directory).map_err(Into::into)
 }
 
 fn normalized_archive_mode(mode: u32) -> u32 {
@@ -446,7 +451,12 @@ fn normalized_archive_mode(mode: u32) -> u32 {
 }
 
 fn set_mode(path: &Path, mode: u32) -> Result<()> {
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+    let policy = if mode & 0o111 != 0 {
+        AccessPolicy::ExecutableFile
+    } else {
+        AccessPolicy::RegularFile
+    };
+    fsx::set_access(path, policy)?;
     Ok(())
 }
 

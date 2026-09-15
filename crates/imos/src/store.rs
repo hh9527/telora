@@ -1,7 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
@@ -12,6 +10,7 @@ use crate::artifact::{
     download_to, execute_item, finalize_install_root, prepare_install_root, verify_download,
 };
 use crate::db::IntentDb;
+use crate::fsx::{self, AccessPolicy, FileIdentity, FileSnapshot};
 use crate::plan::{Item, Plan};
 use crate::progress::{
     BlockingEventSender, Effect as ProgressEffect, Event as ProgressEvent, FileLock, ProgressLock,
@@ -33,18 +32,8 @@ pub struct GcReport {
 }
 
 #[derive(Clone)]
-struct PlanFileState {
-    device: u64,
-    inode: u64,
-    links: u64,
-    length: u64,
-    modified_seconds: i64,
-    modified_nanoseconds: i64,
-}
-
-#[derive(Clone)]
 struct PreparedCreate {
-    state: PlanFileState,
+    state: FileSnapshot,
     request_path: PathBuf,
     already_registered: bool,
     plan: Plan,
@@ -223,7 +212,7 @@ impl Store {
     fn open_blocking(root: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(&root)
             .with_context(|| format!("create store root {}", root.display()))?;
-        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
+        fsx::set_access(&root, AccessPolicy::PrivateDirectory)?;
         for directory in [
             "requests",
             "dl",
@@ -328,13 +317,19 @@ impl Store {
     }
 
     pub async fn remove(&self, plan_file: &Path) -> Result<()> {
-        let metadata = tokio::fs::metadata(plan_file)
-            .await
-            .with_context(|| format!("read plan metadata {}", plan_file.display()))?;
-        let request_ino = metadata.ino().to_string();
         let _gc_lock = FileLock::shared(&self.gc_lock_path()).await?;
         let store = self.clone();
+        let plan_file = plan_file.to_owned();
         blocking(move || {
+            let metadata = fsx::snapshot(&plan_file)
+                .with_context(|| format!("read plan metadata {}", plan_file.display()))?;
+            ensure!(
+                metadata
+                    .identity
+                    .same_volume(fsx::snapshot(&store.root)?.identity),
+                "plan file and store must be on the same file system"
+            );
+            let request_ino = metadata.identity.request_key();
             store.db()?.remove_request(&request_ino)?;
             let request_path = store.root.join("requests").join(request_ino);
             if request_path.exists() {
@@ -352,46 +347,48 @@ impl Store {
     }
 
     fn prepare_create(&self, plan_file: &Path) -> Result<PreparedCreate> {
-        let metadata = std::fs::metadata(plan_file)
+        let metadata = fsx::snapshot(plan_file)
             .with_context(|| format!("read plan metadata {}", plan_file.display()))?;
-        ensure!(metadata.is_file(), "plan must be a regular file");
-        let store_device = std::fs::metadata(&self.root)?.dev();
+        ensure!(metadata.is_file, "plan must be a regular file");
+        let store_identity = fsx::snapshot(&self.root)?.identity;
         ensure!(
-            metadata.dev() == store_device,
+            metadata.identity.same_volume(store_identity),
             "plan file and store must be on the same file system"
         );
-        let request_path = self.root.join("requests").join(metadata.ino().to_string());
+        let request_path = self
+            .root
+            .join("requests")
+            .join(metadata.identity.request_key());
         let already_registered = request_path.exists();
         if !already_registered {
             ensure!(
-                metadata.nlink() == 1,
+                metadata.links == 1,
                 "a new plan file must have exactly one link"
             );
         }
         let plan = Plan::read(plan_file)?;
         Ok(PreparedCreate {
-            state: PlanFileState {
-                device: metadata.dev(),
-                inode: metadata.ino(),
-                links: metadata.nlink(),
-                length: metadata.len(),
-                modified_seconds: metadata.mtime(),
-                modified_nanoseconds: metadata.mtime_nsec(),
-            },
+            state: metadata,
             request_path,
             already_registered,
             plan,
         })
     }
 
-    fn persist_request(&self, home: &Path, value: serde_json::Value) -> Result<(PathBuf, u64)> {
+    fn persist_request(
+        &self,
+        home: &Path,
+        value: serde_json::Value,
+    ) -> Result<(PathBuf, FileIdentity)> {
         let bytes = serde_json::to_vec(&value).context("serialize plan")?;
         let plan = Plan::from_value(value)?;
-        let home_metadata = std::fs::metadata(home)
-            .with_context(|| format!("read request home {}", home.display()))?;
-        ensure!(home_metadata.is_dir(), "request home must be a directory");
+        let home_metadata =
+            fsx::snapshot(home).with_context(|| format!("read request home {}", home.display()))?;
+        ensure!(home_metadata.is_dir, "request home must be a directory");
         ensure!(
-            home_metadata.dev() == std::fs::metadata(&self.root)?.dev(),
+            home_metadata
+                .identity
+                .same_volume(fsx::snapshot(&self.root)?.identity),
             "request home and store must be on the same file system"
         );
         let target = home.join(&plan.name);
@@ -399,32 +396,28 @@ impl Store {
             .with_context(|| format!("create temporary request in {}", home.display()))?;
         temporary.write_all(&bytes)?;
         temporary.as_file().sync_all()?;
-        temporary
-            .as_file()
-            .set_permissions(std::fs::Permissions::from_mode(0o444))?;
-        let inode = temporary.as_file().metadata()?.ino();
-        let file = temporary
-            .persist(&target)
-            .map_err(|error| error.error)
+        fsx::protect_file(temporary.as_file())?;
+        let identity = fsx::snapshot_file(temporary.as_file())?.identity;
+        let file = fsx::replace_request(temporary, &target)
             .with_context(|| format!("replace request file {}", target.display()))?;
         file.sync_all()?;
-        std::fs::File::open(home)?.sync_all()?;
+        fsx::sync_directory(home)?;
         ensure!(
-            file.metadata()?.ino() == inode,
+            fsx::snapshot_file(&file)?.identity == identity,
             "request inode changed while publishing"
         );
-        Ok((target, inode))
+        Ok((target, identity))
     }
 
     fn register_create(&self, plan_file: &Path, prepared: PreparedCreate) -> Result<()> {
-        let request_ino = prepared.state.inode.to_string();
+        let request_ino = prepared.state.identity.request_key();
         if !prepared.already_registered {
-            match std::fs::hard_link(plan_file, &prepared.request_path) {
+            match fsx::hard_link(plan_file, &prepared.request_path) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let registered = std::fs::metadata(&prepared.request_path)?;
+                    let registered = fsx::snapshot(&prepared.request_path)?;
                     ensure!(
-                        registered.ino() == prepared.state.inode,
+                        registered.identity == prepared.state.identity,
                         "request inode path is already bound to another file"
                     );
                 }
@@ -434,15 +427,13 @@ impl Store {
                 }
             }
         }
-        let internal = std::fs::metadata(&prepared.request_path)?;
+        let internal = fsx::snapshot(&prepared.request_path)?;
         ensure!(
-            internal.dev() == prepared.state.device && internal.ino() == prepared.state.inode,
+            internal.identity == prepared.state.identity,
             "plan file was replaced while being registered"
         );
         ensure!(
-            internal.len() == prepared.state.length
-                && internal.mtime() == prepared.state.modified_seconds
-                && internal.mtime_nsec() == prepared.state.modified_nanoseconds,
+            internal.same_content_stamp(&prepared.state),
             "plan file was modified while create was running"
         );
         let minimum_links = if prepared.already_registered {
@@ -451,7 +442,7 @@ impl Store {
             2
         };
         ensure!(
-            internal.nlink() >= minimum_links,
+            internal.links >= minimum_links,
             "upstream plan file was removed"
         );
 
@@ -484,8 +475,8 @@ impl Store {
         for entry in std::fs::read_dir(self.root.join("requests"))? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            let metadata = entry.metadata()?;
-            if metadata.nlink() == 1 || !known.contains(&name) {
+            let metadata = fsx::snapshot(&entry.path())?;
+            if metadata.links == 1 || !known.contains(&name) {
                 if known.contains(&name) {
                     db.remove_request(&name)?;
                 }
@@ -842,7 +833,7 @@ impl CreateEffect {
                     })
                     .await?;
                     let target = canonical_home.join(&parsed.name);
-                    let lock_name = hex::encode(Sha256::digest(target.as_os_str().as_bytes()));
+                    let lock_name = fsx::request_lock_key(&target);
                     let lock_path = store.root.join("locks/request").join(lock_name);
                     let lock = std::sync::Arc::new(FileLock::exclusive(&lock_path).await?);
                     Result::<_>::Ok((canonical_home, lock))
@@ -857,10 +848,10 @@ impl CreateEffect {
                 let store = context.store.clone();
                 vec![CreateEvent::RequestFilePrepared(
                     blocking(move || {
-                        let (path, inode) = store.persist_request(&home, plan)?;
+                        let (path, identity) = store.persist_request(&home, plan)?;
                         let prepared = store.prepare_create(&path)?;
                         ensure!(
-                            prepared.state.inode == inode,
+                            prepared.state.identity == identity,
                             "request file was replaced while install was starting"
                         );
                         Ok((path, prepared))
@@ -967,7 +958,7 @@ impl CreateEffect {
             } => {
                 let result = blocking(move || {
                     finalize_install_root(&temporary.join("root"))?;
-                    std::fs::rename(&temporary, &object)
+                    fsx::publish_directory(&temporary, &object)
                         .with_context(|| format!("publish installation {}", object.display()))?;
                     Ok(root)
                 })
@@ -1107,9 +1098,13 @@ async fn apply_download(context: &CreateContext, item: Item) -> Result<PathBuf> 
     .await;
     match result {
         Ok(()) => {
-            tokio::fs::rename(&temporary, &object)
-                .await
-                .with_context(|| format!("publish download object {}", object.display()))?;
+            let publish_target = object.clone();
+            blocking(move || {
+                fsx::publish_directory(&temporary, &publish_target).with_context(|| {
+                    format!("publish download object {}", publish_target.display())
+                })
+            })
+            .await?;
             let path = object.join("data");
             let bytes = tokio::fs::metadata(&path).await?.len();
             send_progress(
