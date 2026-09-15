@@ -85,6 +85,8 @@ pub struct Inventory {
     pub entries: BTreeMap<String, Entry>,
     workspace: Option<Arc<ResolvedWorkspace>>,
     owner: String,
+    compiler: telora_core::CompilerOptions,
+    runtime: telora_core::RuntimeOptions,
 }
 
 fn private(name: &str) -> bool {
@@ -92,6 +94,10 @@ fn private(name: &str) -> bool {
 }
 
 impl Inventory {
+    pub fn runtime_options(&self) -> telora_core::RuntimeOptions {
+        self.runtime
+    }
+
     /// Editor roots may be private modules. Identity still comes exclusively
     /// from the workspace catalog (or its normal test-module inventory).
     pub fn document_name(&mut self, path: &Path) -> Result<String, String> {
@@ -168,6 +174,13 @@ impl Inventory {
         } else {
             Some(crate::package_host::prepare(context)?)
         };
+        let (compiler, runtime) = if let Some(workspace) = &workspace {
+            (workspace.compiler_options(), workspace.runtime_options())
+        } else if let Some(config) = telora_core::WorkspaceConfig::discover_optional(context).map_err(|e| e.to_string())? {
+            (config.compiler, config.runtime)
+        } else {
+            Default::default()
+        };
         let owner = workspace
             .as_ref()
             .map(|w| {
@@ -219,6 +232,8 @@ impl Inventory {
             entries,
             workspace,
             owner,
+            compiler,
+            runtime,
         })
     }
 
@@ -463,7 +478,7 @@ impl Inventory {
         );
         module_resolve::validate_source_modules(&mut mir, |name| self.entries[name].origin == "builtin");
         telora_core::symbol_resolve::resolve(&mut mir);
-        telora_core::type_resolve::resolve(&mut mir);
+        telora_core::type_resolve::resolve_with_options(&mut mir, self.compiler);
         mir
     }
 }

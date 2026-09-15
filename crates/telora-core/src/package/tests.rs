@@ -3,6 +3,46 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
 
+#[test]
+fn compiler_and_runtime_config_are_validated_and_do_not_enter_the_lock() {
+    let root = fixture();
+    let before = WorkspaceSpec::discover(&root).unwrap().generate_lock(&BTreeMap::new()).unwrap();
+    let base = serde_json::json!({"version":1,"members":["app","model"]});
+    for (section, options, expected) in [
+        ("compiler", serde_json::json!({"maxTypeDepth":0}), "compiler.maxTypeDepth"),
+        ("compiler", serde_json::json!({"maxTupleItems":0}), "compiler.maxTupleItems"),
+        ("compiler", serde_json::json!({"maxTypeArguments":0}), "compiler.maxTypeArguments"),
+        ("compiler", serde_json::json!({"max_type_depth":32}), "unknown field"),
+        ("compiler", serde_json::json!({"maxTypeDepth":1.5}), "invalid type"),
+        ("runtime", serde_json::json!({"fuel":0}), "runtime.fuel"),
+        ("runtime", serde_json::json!({"fuel":u64::MAX / 1_000_000 + 1}), "runtime.fuel"),
+        ("runtime", serde_json::json!({"memoryLimit":0}), "runtime.memoryLimit"),
+        ("runtime", serde_json::json!({"memoryLimit":(usize::MAX as u64) / (1 << 20) + 1}), "runtime.memoryLimit"),
+        ("runtime", serde_json::json!({"memory_limit":64}), "unknown field"),
+        ("runtime", serde_json::json!({"fuel":-1}), "invalid value"),
+    ] {
+        let mut config = base.clone();
+        config[section] = options;
+        fs::write(root.join(CONFIG_FILE), serde_json::to_vec(&config).unwrap()).unwrap();
+        let error = WorkspaceSpec::discover(&root).unwrap_err().to_string();
+        assert!(error.contains(expected), "{error}");
+    }
+    let mut config = base;
+    config["compiler"] = serde_json::json!({"maxTypeDepth":512});
+    config["runtime"] = serde_json::json!({"fuel":200,"memoryLimit":64});
+    fs::write(root.join(CONFIG_FILE), serde_json::to_vec(&config).unwrap()).unwrap();
+    let spec = WorkspaceSpec::discover(&root).unwrap();
+    assert_eq!(before, spec.generate_lock(&BTreeMap::new()).unwrap());
+    let workspace = spec.resolve_workspace_only().unwrap();
+    assert_eq!(workspace.compiler_options().max_type_depth, 512);
+    assert_eq!(workspace.compiler_options().max_tuple_items, 1024);
+    assert_eq!(workspace.runtime_options().limits().unwrap(), (200_000_000, 64 << 20));
+    let serialized = serde_json::to_value(spec.config()).unwrap();
+    assert_eq!(serialized["compiler"]["maxTypeDepth"], 512);
+    assert_eq!(serialized["runtime"]["memoryLimit"], 64);
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn fixture() -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "telora-package-test-{}-{}",

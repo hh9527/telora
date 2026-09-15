@@ -6,6 +6,11 @@ Telora CLI 及其运行时适配器共同充当运行时宿主（Host）：它�
 workspace、crate manifest、模块清单和依赖来源的完整用法见
 [`WORKSPACE.md`](WORKSPACE.md)。
 
+编译限制通过 workspace 配置的 `compiler` 设置，没有对应 CLI 参数。
+运行时 `runtime.fuel` 和 `runtime.memoryLimit` 分别默认 100 和 1024，单位为
+1,000,000 fuel 和 MiB（`1 << 20` 字节）。显式的 `--with-fuel N`、`--with-memory-limit N`
+逐项覆盖配置；未传入的项保留配置值。`--report-usage` 输出会话实际使用的上限和用量。
+
 每个 Telora crate 的模块位于 `src/`，测试位于 `tests/`。`telora-crate.json` 声明
 canonical crate name、模块清单和直接依赖名称；workspace 根的 `telora-config.json`
 选择这些名称的唯一来源，`telora-lock.json` 固定完整包图。

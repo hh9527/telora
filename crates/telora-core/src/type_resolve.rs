@@ -142,6 +142,7 @@ struct Solver<'a> {
     evidence_cursor: usize,
     type_depths: Vec<usize>,
     expansion_exhausted: bool,
+    options: crate::CompilerOptions,
     value_spreads: Vec<bool>,
     administrative: Vec<bool>,
     scheme_references: Vec<bool>,
@@ -158,6 +159,16 @@ struct Solver<'a> {
 }
 
 pub fn resolve(mir: &mut Mir) {
+    resolve_with_options(mir, crate::CompilerOptions::default());
+}
+
+pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
+    if let Err(message) = options.validate() {
+        mir.diagnostics.push(Diagnostic {
+            severity: crate::source::Severity::Error, message, labels: vec![], notes: vec![],
+        });
+        return;
+    }
     assert!(
         mir.symbols_closed,
         "type pass consumes a closed symbol result"
@@ -171,6 +182,7 @@ pub fn resolve(mir: &mut Mir) {
     mir.interpreter_plans.resize(mir.hir.len(), None);
     mir.type_instances.resize_with(mir.hir.len(), Vec::new);
     let mut solver = Solver::new(mir);
+    solver.options = options;
     for _ in 0..solver.mir.symbols.len() {
         let slot = solver.fresh();
         solver.mir.symbol_types.push(slot);
@@ -320,6 +332,7 @@ impl Solver<'_> {
             evidence_cursor: 0,
             type_depths: vec![],
             expansion_exhausted: false,
+            options: crate::CompilerOptions::default(),
             administrative: vec![false; mir.hir.len()],
             scheme_references: vec![false; mir.hir.len()],
             type_uses: vec![false; mir.hir.len()],

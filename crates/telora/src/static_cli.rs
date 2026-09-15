@@ -119,7 +119,7 @@ pub fn check(
     let mut initialization_roots = vec![];
     if let Some(sealed) = sealed.filter(|_| !types_only && !roots.is_empty()) {
         {
-            match crate::wasm_cli::compile_check(sealed) {
+            match crate::wasm_cli::compile_check(sealed, inventory.runtime_options()) {
                 Ok(mut session) => {
                     execution_diagnostics = match crate::wasm_cli::initialize_diagnostics(&mut session, &inventory, &mut mir.sources) {
                         Ok(()) => crate::wasm_cli::check_diagnostics(&session, &mir.sources, Ok(())),

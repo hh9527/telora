@@ -35,7 +35,7 @@ pub(crate) async fn execute(
             .collect::<Vec<_>>()
             .join("\n")
     })?;
-    let mut session = compile(&executable)?;
+    let mut session = compile(&executable, inventory.runtime_options())?;
     let result = initialize(&mut session, &inventory, &mut mir.sources);
     diagnostics::finish(&session, &mir.sources, 0, result)?;
     let mut service = ServiceSession::new(session, contract)?;

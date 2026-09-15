@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::module_format::ModuleFormat;
+mod config;
 
 pub const CONFIG_FILE: &str = "telora-config.json";
 pub const CRATE_FILE: &str = "telora-crate.json";
@@ -20,6 +21,10 @@ pub struct WorkspaceConfig {
     pub sources: BTreeMap<String, RemoteSource>,
     #[serde(default)]
     pub overrides: BTreeMap<String, PathOverride>,
+    #[serde(default)]
+    pub compiler: crate::CompilerOptions,
+    #[serde(default)]
+    pub runtime: crate::RuntimeOptions,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -98,6 +103,8 @@ pub struct ResolvedWorkspace {
     root: PathBuf,
     crates: BTreeMap<String, ResolvedCrate>,
     lock: WorkspaceLock,
+    compiler: crate::CompilerOptions,
+    runtime: crate::RuntimeOptions,
 }
 
 #[derive(Clone, Debug)]
@@ -161,14 +168,7 @@ impl WorkspaceSpec {
             .parent()
             .expect("workspace config has a parent")
             .to_owned();
-        let config: WorkspaceConfig = read_json(&config_path)?;
-        if config.version != 1 {
-            return Err(PackageError::new(format!(
-                "unsupported {} version {}; expected 1",
-                config_path.display(),
-                config.version
-            )));
-        }
+        let config = WorkspaceConfig::read(&config_path)?;
         validate_source_catalog(&config)?;
 
         let mut members = BTreeMap::new();
@@ -372,6 +372,8 @@ impl WorkspaceSpec {
             root: self.root.clone(),
             crates,
             lock,
+            compiler: self.config.compiler,
+            runtime: self.config.runtime,
         })
     }
 
@@ -406,6 +408,10 @@ impl WorkspaceSpec {
 }
 
 impl ResolvedWorkspace {
+    pub fn compiler_options(&self) -> crate::CompilerOptions { self.compiler }
+
+    pub fn runtime_options(&self) -> crate::RuntimeOptions { self.runtime }
+
     pub fn root(&self) -> &Path {
         &self.root
     }

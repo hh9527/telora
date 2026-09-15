@@ -69,12 +69,21 @@ Telora 不进行语义版本求解，也不在同一 workspace 中安装同名 c
 
 ## Workspace Config
 
-`telora-config.json` 的完整顶层结构为：
+`telora-config.json` 的顶层结构如下；`compiler` 和 `runtime` 可省略，示例列出默认值：
 
 ```json
 {
   "version": 1,
   "members": ["app", "query"],
+  "compiler": {
+    "maxTypeDepth": 256,
+    "maxTupleItems": 1024,
+    "maxTypeArguments": 4096
+  },
+  "runtime": {
+    "fuel": 100,
+    "memoryLimit": 1024
+  },
   "sources": {
     "codec-lib": {
       "tarball": "https://packages.example/codec-lib-r17.tar.gz"
@@ -87,6 +96,31 @@ Telora 不进行语义版本求解，也不在同一 workspace 中安装同名 c
   }
 }
 ```
+
+### `compiler` 与 `runtime`
+
+两个对象及各自字段都可省略，省略的字段独立采用内置默认值。字段必须为正整数，
+未知字段、错误类型及不可表示的数值会导致配置诊断。
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `compiler.maxTypeDepth` | 256 | 归一化类型结构深度，叶节点深度为 1；不沿名义类型成员布局递归计数 |
+| `compiler.maxTupleItems` | 1024 | 单个 Tuple 的最大单元数 |
+| `compiler.maxTypeArguments` | 4096 | 单个类型节点的直接子类型数量，包括 Tuple、Record、类型列表和函数签名（含返回类型）；不是实例总数 |
+| `runtime.fuel` | 100 | 会话 fuel，1 表示 1,000,000 fuel |
+| `runtime.memoryLimit` | 1024 | Wasm 线性内存上限，单位 MiB：1 表示 `1 << 20` 字节（16 个 64 KiB 页）；不是进程 RSS |
+
+编译限制只在此配置，没有对应 CLI 参数。整个静态求解 session 使用 workspace 根的
+配置，依赖 crate 不能覆盖；CLI 和 LSP 共用该设置。直接处理标准库模块时也读取
+当前 workspace 配置，没有 workspace 时才使用内置默认值。
+
+运行时限制按字段分别采用 **CLI 显式参数 > workspace 配置 > 内置默认值**：
+`--with-fuel N` 覆盖 `runtime.fuel`，`--with-memory-limit N` 覆盖 `runtime.memoryLimit`。
+显式传入默认数值也属于覆盖。初始化和后续运行共享会话预算；普通 `check` 使用
+运行时配置，`check --only-types` 不创建 VM。
+
+这两类配置不写入 `telora-lock.json`，调整限制不需要重新生成 lock。超出编译限制
+会诊断对应的配置路径与当前上限，不能 seal；这不代表已经证明程序无限展开。
 
 ### `members`
 

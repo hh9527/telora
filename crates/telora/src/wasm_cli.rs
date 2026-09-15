@@ -15,8 +15,8 @@ use telora_core::{
 };
 use timing::PhaseTimer;
 
-fn load_session(bytes: &[u8]) -> Result<telora_wasm::session::Session, String> {
-    let config = crate::execution_config();
+fn load_session(bytes: &[u8], runtime: telora_core::RuntimeOptions) -> Result<telora_wasm::session::Session, String> {
+    let config = crate::execution_config_for(runtime)?;
     let mut session = telora_wasm::session::Session::load_with_limits(
         bytes, config.fuel, config.memory_limit,
     )?;
@@ -47,7 +47,7 @@ pub(crate) fn error(message: impl Into<String>) -> Diagnostic {
     }
 }
 
-fn compile(executable: &SealedExecutable<'_>) -> Result<telora_wasm::session::Session, String> {
+fn compile(executable: &SealedExecutable<'_>, runtime: telora_core::RuntimeOptions) -> Result<telora_wasm::session::Session, String> {
     let bytes = {
         let _timer = PhaseTimer::new("codegen_link");
         telora_wasm::compile_executable(executable)?
@@ -55,24 +55,27 @@ fn compile(executable: &SealedExecutable<'_>) -> Result<telora_wasm::session::Se
     let _timer = PhaseTimer::new("engine_load");
     // Use the engine's stopping boundary, including linked Rust library work.
     // No conversion to Telora operations or allocation costs is required.
-    load_session(&bytes)
+    load_session(&bytes, runtime)
 }
 
 pub(crate) fn compile_check(
     sealed: SealedMir<'_>,
+    runtime: telora_core::RuntimeOptions,
 ) -> Result<telora_wasm::session::Session, String> {
-    compile_modules(sealed, true)
+    compile_modules(sealed, true, runtime)
 }
 
 pub(crate) fn compile_tests(
     sealed: SealedMir<'_>,
+    runtime: telora_core::RuntimeOptions,
 ) -> Result<telora_wasm::session::Session, String> {
-    compile_modules(sealed, false)
+    compile_modules(sealed, false, runtime)
 }
 
 fn compile_modules(
     sealed: SealedMir<'_>,
     check: bool,
+    runtime: telora_core::RuntimeOptions,
 ) -> Result<telora_wasm::session::Session, String> {
     let graph = sealed.mir();
     let modules = graph
@@ -89,13 +92,13 @@ fn compile_modules(
             .collect::<Vec<_>>()
             .join("\n")
     })?;
-    if !check { return compile(&executable); }
+    if !check { return compile(&executable, runtime); }
     let bytes = {
         let _timer = PhaseTimer::new("codegen_link");
         telora_wasm::compile_check(&executable)?
     };
     let _timer = PhaseTimer::new("engine_load");
-    load_session(&bytes)
+    load_session(&bytes, runtime)
 }
 
 pub(crate) fn initialize(
@@ -196,7 +199,7 @@ pub(crate) fn eval(context: PathBuf, module: &str, export: &str) -> Result<i32, 
             .join("\n")
     })?;
     drop(timer);
-    let mut session = compile(&executable)?;
+    let mut session = compile(&executable, inventory.runtime_options())?;
     if session.manifest.value_type != Some(session.manifest.entry_type) {
         return Err("eval export: expected Value (std/value.Value)".into());
     }
@@ -249,7 +252,7 @@ pub(crate) fn eval_with(
             .join("\n")
     })?;
     drop(timer);
-    let mut session = compile(&executable)?;
+    let mut session = compile(&executable, inventory.runtime_options())?;
     if session.manifest.eval_type != Some(session.manifest.entry_type) {
         return Err("eval-with export: expected Eval (std/entry.Eval)".into());
     }

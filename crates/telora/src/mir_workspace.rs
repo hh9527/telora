@@ -253,6 +253,20 @@ mod tests {
         query.type_name(ty)
     }
     #[tokio::test]
+    async fn editor_rebuild_uses_current_workspace_compiler_options() {
+        let dir = fixture();
+        let workspace = Workspace::new(dir.path().join("src/main.telora")).unwrap();
+        let config = dir.path().join("telora-config.json");
+        std::fs::write(&config, r#"{"version":1,"members":["."],"compiler":{"maxTypeDepth":1}}"#).unwrap();
+        let limited = workspace.rebuild(&workspace.context()).await.unwrap();
+        assert!(limited.mir.diagnostics.iter().any(|d| d.message.contains("compiler.maxTypeDepth = 1")));
+        assert!(limited.mir.seal().is_err());
+        std::fs::write(&config, r#"{"version":1,"members":["."],"compiler":{"maxTypeDepth":256}}"#).unwrap();
+        let restored = workspace.rebuild(&workspace.context()).await.unwrap();
+        restored.mir.seal().unwrap_or_else(|d| panic!("{d:?}"));
+    }
+
+    #[tokio::test]
     async fn overlays_and_all_open_roots_share_one_static_graph() {
         let dir = fixture();
         let workspace = Workspace::new(dir.path().join("src/main.telora")).unwrap();

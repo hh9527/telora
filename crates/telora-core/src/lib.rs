@@ -22,6 +22,8 @@ pub mod symbol_resolve;
 pub mod type_resolve;
 pub mod module_format;
 pub mod package;
+pub mod options;
+pub use options::{CompilerOptions, RuntimeOptions};
 pub mod query;
 pub mod runtime_host;
 pub mod syntax;

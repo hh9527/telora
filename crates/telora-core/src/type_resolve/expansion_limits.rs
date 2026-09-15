@@ -3,14 +3,10 @@
 //! once; nominal member layouts are not traversed as structural type arguments.
 use super::*;
 
-pub(super) const MAX_TYPE_DEPTH: usize = 256;
-pub(super) const MAX_TUPLE_ITEMS: usize = 1024;
-// Also bounds variable-arity internal shapes (records, signatures, type lists).
-pub(super) const MAX_TYPE_ARGUMENTS: usize = 4096;
-
 impl Solver<'_> {
     pub(super) fn check_type_expansion(&mut self, origin: Option<Location>) -> bool {
         if self.expansion_exhausted { return false; }
+        let crate::CompilerOptions { max_type_depth, max_tuple_items, max_type_arguments } = self.options;
         while self.type_depths.len() < self.mir.types.len() {
             let index = self.type_depths.len();
             let ty = &self.mir.types[index];
@@ -20,12 +16,12 @@ impl Solver<'_> {
             self.type_depths.push(depth);
             let tuple = matches!(ty.constructor,
                 TypeConstructor::Tuple | TypeConstructor::TupleLiteral);
-            let message = if tuple && ty.arguments.len() > MAX_TUPLE_ITEMS {
-                Some(format!("tuple item limit exceeded (maximum {MAX_TUPLE_ITEMS}); type closure incomplete"))
-            } else if ty.arguments.len() > MAX_TYPE_ARGUMENTS {
-                Some(format!("type argument limit exceeded (maximum {MAX_TYPE_ARGUMENTS}); type closure incomplete"))
-            } else if depth > MAX_TYPE_DEPTH {
-                Some(format!("type expansion depth limit exceeded (maximum {MAX_TYPE_DEPTH}); type closure incomplete"))
+            let message = if tuple && ty.arguments.len() > max_tuple_items {
+                Some(format!("tuple item limit exceeded (compiler.maxTupleItems = {max_tuple_items}); type closure incomplete"))
+            } else if ty.arguments.len() > max_type_arguments {
+                Some(format!("type argument limit exceeded (compiler.maxTypeArguments = {max_type_arguments}); type closure incomplete"))
+            } else if depth > max_type_depth {
+                Some(format!("type expansion depth limit exceeded (compiler.maxTypeDepth = {max_type_depth}); type closure incomplete"))
             } else { None };
             if let Some(message) = message {
                 let location = origin.or_else(|| self.mir.hir.iter().enumerate().find_map(|(node, syntax)| {
