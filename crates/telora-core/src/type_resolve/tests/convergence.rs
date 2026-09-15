@@ -82,13 +82,18 @@ fn explicit_type_depth_and_tuple_width_are_guarded() {
     let depth = std::fs::read_to_string(fixtures.join("depth.telora")).unwrap();
     let tuple = std::fs::read_to_string(fixtures.join("tuple.telora")).unwrap();
     for (source, expected) in [
-        (depth.replace("{{TYPE}}", &format!("{}Int{}", "Array(".repeat(240), ")".repeat(240))), None),
-        (depth.replace("{{TYPE}}", &format!("{}Int{}", "Array(".repeat(257), ")".repeat(257))), Some("type expansion depth limit exceeded")),
+        (depth.replace("{{TYPE}}", &format!("{}Int{}", "Array(".repeat(16), ")".repeat(16))), None),
+        (depth.replace("{{TYPE}}", &format!("{}Int{}", "Array(".repeat(25), ")".repeat(25))), Some("type expansion depth limit exceeded")),
         (tuple.replace("{{ITEMS}}", &vec!["Int"; 1024].join(", ")), None),
         (tuple.replace("{{ITEMS}}", &vec!["Int"; 1025].join(", ")), Some("tuple item limit exceeded")),
     ] {
         let mut mir = graph(&[("@src/main", &source)]);
-        resolve(&mut mir);
+        // Keep parser nesting below its guard; exercise the independent type
+        // expansion limit with an explicitly smaller compiler configuration.
+        resolve_with_options(&mut mir, crate::CompilerOptions {
+            max_type_depth: 24,
+            ..Default::default()
+        });
         if let Some(expected) = expected {
             let diagnostics = mir.diagnostics.iter().filter(|d| d.message.contains(expected)).collect::<Vec<_>>();
             assert_eq!(diagnostics.len(), 1, "{:?}", mir.diagnostics);
@@ -108,11 +113,14 @@ fn finite_substitution_is_checked_before_more_expansion() {
     let nested = |leaf: &str, depth| format!("{}{leaf}{}", "Array(".repeat(depth), ")".repeat(depth));
     for case in ["layout", "instance"] {
         let template = std::fs::read_to_string(fixtures.join(format!("{case}.telora"))).unwrap();
-        for (depth, accepted) in [(100, true), (200, false)] {
-            let source = template.replace("{{TYPE}}", &nested("T", 80))
+        for (depth, accepted) in [(10, true), (20, false)] {
+            let source = template.replace("{{TYPE}}", &nested("T", 8))
                 .replace("{{INPUT}}", &nested("Int", depth));
             let mut mir = graph(&[("@src/main", &source)]);
-            resolve(&mut mir);
+            resolve_with_options(&mut mir, crate::CompilerOptions {
+                max_type_depth: 24,
+                ..Default::default()
+            });
             if accepted {
                 mir.seal().unwrap_or_else(|d| panic!("{case}: {d:?}"));
             } else {
