@@ -80,7 +80,10 @@ impl Emitter<'_> {
         self.emit(I::I32Store(memory(DATA, 2)));
         // Even an empty environment gives each evaluated closure an identity.
         let raw_parent = key.special == Special::Configured
-            && matches!(self.mir.hir[node.index()].kind, telora_core::mir::HirKind::Interpreter);
+            && matches!(
+                self.mir.hir[node.index()].kind,
+                telora_core::mir::HirKind::Interpreter
+            );
         let bytes = captures.len() as u32 * 4 | if raw_parent { ENV_RAW_PARENT } else { 0 };
         let id = self.table_push(ENVIRONMENTS, environment, bytes);
         self.extend([
@@ -92,13 +95,12 @@ impl Emitter<'_> {
         ]);
         Ok(result)
     }
-    pub fn call(&mut self, node: HirId) -> Result<u32, String> {
+    pub fn call_arguments(&self, node: HirId) -> Result<Vec<HirId>, String> {
         let callee_node = child(self.mir, node, Role::Callee)?;
         let callee_ty = self.ty(callee_node)?;
         if self.mir.types[callee_ty.index()].constructor != TypeConstructor::Function {
             return Err("Wasm: call target does not have a sealed function type".into());
         }
-        let callee = self.expression(callee_node)?;
         let arguments = self.mir.hir[node.index()]
             .children
             .iter()
@@ -109,27 +111,38 @@ impl Emitter<'_> {
         if signature.len() != arguments.len() + 1 {
             return Err("Wasm: call arity mismatch".into());
         }
-        let mut values = vec![];
-        for (index, argument) in arguments.iter().enumerate() {
-            let value = self.expression(*argument)?;
-            values.push(self.adapt(
-                *argument,
-                self.effective_ty(*argument)?,
-                signature[index],
-                value,
-            )?);
-        }
+        Ok(arguments)
+    }
+    pub fn call_argument(
+        &mut self,
+        node: HirId,
+        index: usize,
+        argument: HirId,
+        value: u32,
+    ) -> Result<u32, String> {
+        let callee = child(self.mir, node, Role::Callee)?;
+        let ty = self.ty(callee)?;
+        let target = self.mir.types[ty.index()].arguments[index];
+        self.adapt(argument, self.effective_ty(argument)?, target, value)
+    }
+    pub fn call_values(&mut self, node: HirId, callee: u32, values: &[u32]) -> Result<u32, String> {
         self.extend([I::LocalGet(callee), I::I32Load(memory(DATA, 2)), I::I32Eqz]);
         self.fail_if(node, ERROR_UNINITIALIZED_CALL);
         let location = self.mir.hir[node.index()].location;
         let location_words = self.mir.sources.get(location.source).compact(location).0;
-        for (index, word) in [location_words[0], location_words[1], location_words[2]].into_iter().enumerate() {
-            self.extend([I::I32Const(word as i32), I::GlobalSet(CALL_SOURCE_GLOBAL + index as u32)]);
+        for (index, word) in [location_words[0], location_words[1], location_words[2]]
+            .into_iter()
+            .enumerate()
+        {
+            self.extend([
+                I::I32Const(word as i32),
+                I::GlobalSet(CALL_SOURCE_GLOBAL + index as u32),
+            ]);
         }
         if self.tail_calls.contains(&node) {
-            self.tail_invoke(callee, &values)
+            self.tail_invoke(callee, values)
         } else {
-            self.invoke(callee, &values)
+            self.invoke(callee, values)
         }
     }
     pub fn argument_array(&mut self, values: &[u32]) -> u32 {

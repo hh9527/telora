@@ -11,11 +11,15 @@ impl Emitter<'_> {
             .map(|layout| layout.id())
             .ok_or_else(|| "Wasm: sealed graph has no String identity".into())
     }
-    pub fn dictionary_field(&mut self, node: HirId, name: &str) -> Result<u32, String> {
+    pub fn dictionary_field(
+        &mut self,
+        node: HirId,
+        name: &str,
+        receiver: u32,
+    ) -> Result<u32, String> {
         let receiver_node = child(self.mir, node, Role::Receiver)?;
         let ty = self.effective_ty(receiver_node)?;
         let width = self.width(self.mir.types[ty.index()].arguments[0])?;
-        let receiver = self.expression(receiver_node)?;
         let key = self.text_as(node, self.string_type()?, name.as_bytes())?;
         let result = self.dictionary_lookup(receiver, key, width);
         self.extend([I::LocalGet(result), I::I32Eqz]);

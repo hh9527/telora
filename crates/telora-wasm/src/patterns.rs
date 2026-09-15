@@ -200,7 +200,7 @@ impl Emitter<'_> {
         self.extend([I::LocalGet(no), I::LocalSet(result), I::End]);
         Ok(result)
     }
-    pub fn propagate(&mut self, node: HirId) -> Result<u32, String> {
+    pub fn propagate_value(&mut self, node: HirId, value: u32) -> Result<u32, String> {
         let operand = child(self.mir, node, Role::Operand)?;
         let input = self.ty(operand)?;
         let function = self.ty(self.key.node)?;
@@ -214,7 +214,6 @@ impl Emitter<'_> {
         {
             return Err("Wasm: propagation return family differs from its sealed contract".into());
         }
-        let value = self.expression(operand)?;
         self.extend([
             I::LocalGet(value),
             I::I32Load(memory(DATA, 2)),

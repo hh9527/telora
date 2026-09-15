@@ -235,75 +235,191 @@ impl<'a> Emitter<'a> {
             If(HirId, u32),
             IfLet(HirId, u32),
             Adjust(HirId),
+            Ascription(HirId),
+            StructUpdate(HirId),
+            FieldProjection(HirId),
+            Field(HirId),
+            Projection(HirId, usize),
+            Index(HirId),
+            Propagate(HirId),
+            CallCallee(HirId, Vec<HirId>),
+            CallArgument(HirId, u32, Vec<HirId>, Vec<u32>),
         }
         let mut pending = Vec::new();
         let mut current = node;
-        loop {
-            match self.mir.hir[current.index()].kind {
-                HirKind::IfLet => {
-                    let result = self.if_let_start(current)?;
-                    pending.push(Pending::IfLet(current, result));
-                    current = child(self.mir, current, Role::Else)?;
-                }
-                HirKind::Binary(op)
-                    if op != telora_core::syntax::kinds::BinaryOperator::StructUpdate =>
-                {
-                    pending.push(Pending::Binary(current, op));
-                    current = child(self.mir, current, Role::Left)?;
-                }
-                HirKind::Block => {
-                    self.block_bindings(current)?;
-                    pending.push(Pending::Adjust(current));
-                    current = child(self.mir, current, Role::Result)?;
-                }
-                HirKind::Unary(op) => {
-                    pending.push(Pending::Unary(current, op));
-                    current = child(self.mir, current, Role::Operand)?;
-                }
-                HirKind::If => {
-                    let condition_node = child(self.mir, current, Role::Condition)?;
-                    if self.mir.types[self.ty(condition_node)?.index()].constructor
-                        != TypeConstructor::Bool
-                    {
-                        return Err("Wasm: condition is not sealed Bool".into());
+        'evaluate: loop {
+            let mut prepared = None;
+            loop {
+                match self.mir.hir[current.index()].kind {
+                    HirKind::Index => {
+                        pending.push(Pending::Index(current));
+                        current = child(self.mir, current, Role::Receiver)?;
                     }
-                    let condition = self.expression(condition_node)?;
-                    let result = self.local(ValType::I32);
-                    self.bits(condition);
-                    self.extend([I::I64Eqz, I::If(BlockType::Empty)]);
-                    pending.push(Pending::If(current, result));
-                    current = child(self.mir, current, Role::Else)?;
+                    HirKind::Propagate => {
+                        pending.push(Pending::Propagate(current));
+                        current = child(self.mir, current, Role::Operand)?;
+                    }
+                    HirKind::Field => {
+                        if crate::enums::selection(self.mir, current).is_some() {
+                            break;
+                        }
+                        if let Some(value) = self.field_start(current)? {
+                            prepared = Some(value);
+                            break;
+                        }
+                        pending.push(Pending::Field(current));
+                        current = child(self.mir, current, Role::Receiver)?;
+                    }
+                    HirKind::TupleProjection(index) => {
+                        pending.push(Pending::Projection(current, index));
+                        current = child(self.mir, current, Role::Receiver)?;
+                    }
+                    HirKind::FieldProjection => {
+                        let receiver = child(self.mir, current, Role::Receiver)?;
+                        if matches!(
+                            self.mir.types[self.effective_ty(receiver)?.index()].constructor,
+                            TypeConstructor::Record(_)
+                        ) {
+                            break;
+                        }
+                        pending.push(Pending::FieldProjection(current));
+                        current = receiver;
+                    }
+                    HirKind::Binary(telora_core::syntax::kinds::BinaryOperator::StructUpdate) => {
+                        pending.push(Pending::StructUpdate(current));
+                        current = child(self.mir, current, Role::Left)?;
+                    }
+                    HirKind::Call => {
+                        let arguments = self.call_arguments(current)?;
+                        pending.push(Pending::CallCallee(current, arguments));
+                        current = child(self.mir, current, Role::Callee)?;
+                    }
+                    HirKind::TypeAscription => {
+                        pending.push(Pending::Ascription(current));
+                        current = child(self.mir, current, Role::Value)?;
+                    }
+                    HirKind::IfLet => {
+                        let result = self.if_let_start(current)?;
+                        pending.push(Pending::IfLet(current, result));
+                        current = child(self.mir, current, Role::Else)?;
+                    }
+                    HirKind::Binary(op)
+                        if op != telora_core::syntax::kinds::BinaryOperator::StructUpdate =>
+                    {
+                        pending.push(Pending::Binary(current, op));
+                        current = child(self.mir, current, Role::Left)?;
+                    }
+                    HirKind::Block => {
+                        self.block_bindings(current)?;
+                        pending.push(Pending::Adjust(current));
+                        current = child(self.mir, current, Role::Result)?;
+                    }
+                    HirKind::Unary(op) => {
+                        pending.push(Pending::Unary(current, op));
+                        current = child(self.mir, current, Role::Operand)?;
+                    }
+                    HirKind::If => {
+                        let condition_node = child(self.mir, current, Role::Condition)?;
+                        if self.mir.types[self.ty(condition_node)?.index()].constructor
+                            != TypeConstructor::Bool
+                        {
+                            return Err("Wasm: condition is not sealed Bool".into());
+                        }
+                        let condition = self.expression(condition_node)?;
+                        let result = self.local(ValType::I32);
+                        self.bits(condition);
+                        self.extend([I::I64Eqz, I::If(BlockType::Empty)]);
+                        pending.push(Pending::If(current, result));
+                        current = child(self.mir, current, Role::Else)?;
+                    }
+                    _ => break,
                 }
-                _ => break,
             }
-        }
-        let mut value = self.adjusted_expression(current)?;
-        for frame in pending.into_iter().rev() {
-            let node = match frame {
-                Pending::Adjust(node) => node,
-                Pending::IfLet(node, result) => {
-                    value = self.if_let_finish(node, result, value)?;
-                    node
-                }
-                Pending::Binary(node, op) => {
-                    value = self.binary_left(node, op, value)?;
-                    node
-                }
-                Pending::Unary(node, op) => {
-                    value = self.unary_value(node, op, value)?;
-                    node
-                }
-                Pending::If(node, result) => {
-                    self.extend([I::LocalGet(value), I::LocalSet(result), I::Else]);
-                    let yes = self.expression(child(self.mir, node, Role::Then)?)?;
-                    self.extend([I::LocalGet(yes), I::LocalSet(result), I::End]);
-                    value = result;
-                    node
-                }
+            let mut value = match prepared {
+                Some(value) => self.adjust_value(current, value)?,
+                None => self.adjusted_expression(current)?,
             };
-            value = self.adjust_value(node, value)?;
+            while let Some(frame) = pending.pop() {
+                let node = match frame {
+                    Pending::CallCallee(node, arguments) => {
+                        if let Some(&argument) = arguments.first() {
+                            pending.push(Pending::CallArgument(node, value, arguments, Vec::new()));
+                            current = argument;
+                            continue 'evaluate;
+                        }
+                        value = self.call_values(node, value, &[])?;
+                        node
+                    }
+                    Pending::CallArgument(node, callee, arguments, mut values) => {
+                        let index = values.len();
+                        values.push(self.call_argument(node, index, arguments[index], value)?);
+                        if let Some(&argument) = arguments.get(values.len()) {
+                            pending.push(Pending::CallArgument(node, callee, arguments, values));
+                            current = argument;
+                            continue 'evaluate;
+                        }
+                        value = self.call_values(node, callee, &values)?;
+                        node
+                    }
+                    Pending::Adjust(node) => node,
+                    Pending::Index(node) => {
+                        value = self.index_receiver(node, value)?;
+                        node
+                    }
+                    Pending::Propagate(node) => {
+                        value = self.propagate_value(node, value)?;
+                        node
+                    }
+                    Pending::Field(node) => {
+                        value = self.field_value(node, value)?;
+                        node
+                    }
+                    Pending::Projection(node, index) => {
+                        value = self.projection_value(node, index, value)?;
+                        node
+                    }
+                    Pending::FieldProjection(node) => {
+                        value = self.field_projection_value(node, value)?;
+                        node
+                    }
+                    Pending::StructUpdate(node) => {
+                        value = self.struct_update_left(node, value)?;
+                        node
+                    }
+                    Pending::Ascription(node) => {
+                        let inner = child(self.mir, node, Role::Value)?;
+                        value = self.adapt(
+                            node,
+                            self.effective_ty(inner)?,
+                            self.effective_ty(node)?,
+                            value,
+                        )?;
+                        node
+                    }
+                    Pending::IfLet(node, result) => {
+                        value = self.if_let_finish(node, result, value)?;
+                        node
+                    }
+                    Pending::Binary(node, op) => {
+                        value = self.binary_left(node, op, value)?;
+                        node
+                    }
+                    Pending::Unary(node, op) => {
+                        value = self.unary_value(node, op, value)?;
+                        node
+                    }
+                    Pending::If(node, result) => {
+                        self.extend([I::LocalGet(value), I::LocalSet(result), I::Else]);
+                        let yes = self.expression(child(self.mir, node, Role::Then)?)?;
+                        self.extend([I::LocalGet(yes), I::LocalSet(result), I::End]);
+                        value = result;
+                        node
+                    }
+                };
+                value = self.adjust_value(node, value)?;
+            }
+            return Ok(value);
         }
-        Ok(value)
     }
     fn adjusted_expression(&mut self, node: HirId) -> Result<u32, String> {
         let value = self.raw_expression(node)?;
@@ -424,13 +540,13 @@ impl<'a> Emitter<'a> {
                     self.record(node)
                 }
             }
-            HirKind::TupleProjection(index) => self.projection(node, *index),
+            HirKind::TupleProjection(_) => unreachable!("projections are emitted by expression"),
             HirKind::FieldProjection => self.field_projection(node),
-            HirKind::Field => self.field(node),
-            HirKind::Index => self.index(node),
+            HirKind::Field => unreachable!("fields are emitted by expression"),
+            HirKind::Index => unreachable!("index nodes are emitted by expression"),
             HirKind::Match | HirKind::LetElse => self.pattern_branch(node),
             HirKind::IfLet => unreachable!("if-let nodes are emitted by expression"),
-            HirKind::Propagate => self.propagate(node),
+            HirKind::Propagate => unreachable!("propagation is emitted by expression"),
             HirKind::Tuple => self.tuple_expression(node),
             HirKind::Binding { kind, .. } => {
                 if *kind == telora_core::syntax::kinds::BindingKind::Decl
@@ -517,20 +633,8 @@ impl<'a> Emitter<'a> {
                         ))?,
                 )
             }
-            HirKind::TypeAscription => {
-                let inner = child(self.mir, node, Role::Value)?;
-                let value = self.expression(inner)?;
-                self.adapt(
-                    node,
-                    self.effective_ty(inner)?,
-                    self.effective_ty(node)?,
-                    value,
-                )
-            }
+            HirKind::TypeAscription => unreachable!("ascriptions are emitted by expression"),
             HirKind::Block => unreachable!("block nodes are emitted by expression"),
-            HirKind::Binary(telora_core::syntax::kinds::BinaryOperator::StructUpdate) => {
-                self.struct_update(node)
-            }
             HirKind::Binary(_) => unreachable!("binary nodes are emitted by expression"),
             HirKind::Unary(_) => unreachable!("prefix nodes are emitted by expression"),
             HirKind::If => unreachable!("if nodes are emitted by expression"),
@@ -541,7 +645,7 @@ impl<'a> Emitter<'a> {
             }
             HirKind::Debug { .. } => self.debug(node),
             HirKind::Closure | HirKind::Interpreter => self.closure(node),
-            HirKind::Call => self.call(node),
+            HirKind::Call => unreachable!("calls are emitted by expression"),
             other => Err(format!(
                 "Wasm: unsupported expression {other:?} at {:?}",
                 self.mir.hir[node.index()].location

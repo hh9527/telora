@@ -54,7 +54,12 @@ impl Emitter<'_> {
             },
         ]);
     }
-    pub fn projection(&mut self, node: HirId, index: usize) -> Result<u32, String> {
+    pub fn projection_value(
+        &mut self,
+        node: HirId,
+        index: usize,
+        receiver: u32,
+    ) -> Result<u32, String> {
         let receiver_node = child(self.mir, node, Role::Receiver)?;
         let ty = self.effective_ty(receiver_node)?;
         let field = self.plan.layouts[ty.index()]
@@ -73,7 +78,6 @@ impl Emitter<'_> {
             },
             _ => return Err("Wasm: projection has no concrete product layout".into()),
         };
-        let receiver = self.expression(receiver_node)?;
         let data = self.table_data(table, receiver, DATA);
         let result = self.local(ValType::I32);
         self.extend([
@@ -84,7 +88,7 @@ impl Emitter<'_> {
         ]);
         self.adapt(node, actual, self.ty(node)?, result)
     }
-    pub fn field(&mut self, node: HirId) -> Result<u32, String> {
+    pub fn field_start(&mut self, node: HirId) -> Result<Option<u32>, String> {
         if let Some(telora_core::mir::MemberSelection::TraitMember { implementation, .. }) =
             self.mir.member_selections[node.index()]
         {
@@ -129,47 +133,51 @@ impl Emitter<'_> {
                 I::I32Add,
                 I::LocalSet(result),
             ]);
-            return Ok(result);
+            return Ok(Some(result));
         }
         if let Some(instance) = self.key.reference(self.mir, node) {
-            return self.call_key(
-                *self
-                    .plan
-                    .instances
-                    .get(&instance)
-                    .ok_or("Wasm: missing sealed member instance")?,
-            );
+            return self
+                .call_key(
+                    *self
+                        .plan
+                        .instances
+                        .get(&instance)
+                        .ok_or("Wasm: missing sealed member instance")?,
+                )
+                .map(Some);
         }
         if let Some(slot) = self.mir.hir[node.index()].resolution
             && let telora_core::mir::ResolveState::Bound(symbol) =
                 self.mir.resolve_slots[slot.index()]
         {
             if let Some(&key) = self.plan.globals.get(&symbol) {
-                return self.call_key(key);
+                return self.call_key(key).map(Some);
             }
         }
-        let receiver = child(self.mir, node, Role::Receiver)?;
-        let ty = self.effective_ty(receiver)?;
+        Ok(None)
+    }
+    pub fn field_value(&mut self, node: HirId, receiver: u32) -> Result<u32, String> {
+        let receiver_node = child(self.mir, node, Role::Receiver)?;
+        let ty = self.effective_ty(receiver_node)?;
         let name = child(self.mir, node, Role::Name)?;
         let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
             return Err("Wasm: missing field name".into());
         };
         if self.mir.types[ty.index()].constructor == T::Dict {
-            return self.dictionary_field(node, name);
+            return self.dictionary_field(node, name, receiver);
         }
         let index = self.plan.layouts[ty.index()]
             .object
             .as_ref()
             .and_then(|o| o.members.iter().position(|m| &m.name == name))
             .ok_or("Wasm: field is not in sealed layout")?;
-        self.projection(node, index)
+        self.projection_value(node, index, receiver)
     }
-    pub fn index(&mut self, node: HirId) -> Result<u32, String> {
+    pub fn index_receiver(&mut self, node: HirId, receiver: u32) -> Result<u32, String> {
         let receiver_node = child(self.mir, node, Role::Receiver)?;
         let ty = self.effective_ty(receiver_node)?;
         if self.mir.types[ty.index()].constructor == T::Dict {
             let width = self.width(self.mir.types[ty.index()].arguments[0])?;
-            let receiver = self.expression(receiver_node)?;
             let key = self.expression(child(self.mir, node, Role::Index)?)?;
             let result = self.dictionary_lookup(receiver, key, width);
             self.extend([I::LocalGet(result), I::I32Eqz]);
@@ -180,7 +188,6 @@ impl Emitter<'_> {
             return Err("Wasm: index receiver is not Array".into());
         }
         let width = self.width(self.mir.types[ty.index()].arguments[0])?;
-        let receiver = self.expression(receiver_node)?;
         let index = self.expression(child(self.mir, node, Role::Index)?)?;
         let bits = self.local(ValType::I64);
         self.bits(index);

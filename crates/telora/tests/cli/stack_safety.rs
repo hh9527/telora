@@ -83,6 +83,43 @@ fn full_check_and_types_only_are_stack_safe_for_syntax_boundaries() {
     for (value, error) in [
         (format!("{}1", "-".repeat(2000)), None),
         (format!("{}1", "1 + ".repeat(2000)), None),
+        (format!("1{}", ".ty!(Int)".repeat(2000)), None),
+        (format!("1{}", " |> fn(x) { x }".repeat(2000)), None),
+        (
+            format!(
+                "do {{ type R = struct {{ next: Fn() -> Array(R), a: Int }}; def make: Fn() -> Array(R) = fn() {{ [{{ next: make, a: 1 }}] }}; make()[0]{}.a }}",
+                ".next()[0]".repeat(2000)
+            ),
+            None,
+        ),
+        (
+            format!(
+                "do {{ type R = struct {{ next: Fn() -> Option(R), a: Int }}; def make: Fn() -> Option(R) = fn() {{ Some({{ next: make, a: 1 }}) }}; def go: Fn() -> Option(Int) = fn() {{ Some(make()?{}.a) }}; match go() {{ Some(x) => x, None => 0 }} }}",
+                ".next()?".repeat(2000)
+            ),
+            None,
+        ),
+        (
+            format!(
+                "do {{ type R = struct {{ next: Fn() -> R, a: Int }}; def make: Fn() -> R = fn() {{ {{ next: make, a: 1 }} }}; make(){}.a }}",
+                ".next()".repeat(2000)
+            ),
+            None,
+        ),
+        (
+            format!(
+                "do {{ type R = struct {{ a: Int }}; let r: R = {{ a: 1 }}; r{}.a }}",
+                ".{a}.ty!(R)".repeat(2000)
+            ),
+            None,
+        ),
+        (
+            format!(
+                "do {{ type R = struct {{ a: Int }}; let r: R = {{ a: 1 }}; (r{}).a }}",
+                " <~ { a: 1 }".repeat(2000)
+            ),
+            None,
+        ),
         (format!("do {{ {}1 }}", "1; ".repeat(2000)), None),
         (
             format!("{}{{ 0 }}", "if False { 1 } else ".repeat(2000)),
