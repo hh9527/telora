@@ -106,9 +106,14 @@ impl Solver<'_> {
         }
     }
 
-    pub(super) fn finish_bottoms(&mut self) -> bool {
+    pub(super) fn finish_bottoms(&mut self, literals: bool) -> bool {
         let mut changed = false;
-        for slot in std::mem::take(&mut self.bottom_candidates) {
+        // Empty array element defaults must wait for scheme materialization:
+        // a generic constructor can carry the annotated record field context.
+        // Diverging return defaults, conversely, must precede generalization.
+        let candidates = if literals { &mut self.literal_bottom_candidates } else { &mut self.bottom_candidates };
+        let mut deferred = Vec::new();
+        for slot in std::mem::take(candidates) {
             let root = self.root(slot);
             if self.mir.ty_slots[root.index()] == TypeState::Unknown {
                 // Explicit returns may still await a generalized reference.
@@ -124,7 +129,7 @@ impl Solver<'_> {
                         self.unknown_leaves(*target).contains(&root),
                     _ => false,
                 }) {
-                    self.bottom_candidates.push(slot);
+                    deferred.push(slot);
                     continue;
                 }
                 let never = self.structure(TypeConstructor::Never, vec![]);
@@ -132,6 +137,8 @@ impl Solver<'_> {
                 changed = true;
             }
         }
+        if literals { self.literal_bottom_candidates.extend(deferred); }
+        else { self.bottom_candidates.extend(deferred); }
         changed
     }
 
@@ -978,7 +985,7 @@ impl Solver<'_> {
                 // Empty literals contribute no element evidence. A delayed
                 // member or generic call may still supply the concrete type.
                 let element = self.fresh();
-                self.bottom_candidates.push(element);
+                self.literal_bottom_candidates.push(element);
                 element
             } else {
                 self.fresh()

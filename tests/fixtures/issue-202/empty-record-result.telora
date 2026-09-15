@@ -1,0 +1,6 @@
+type Diagnostic = struct { message: String };
+type Normalized = struct { diagnostics: Array(Diagnostic) };
+export def normalize: Fn() -> Result(Normalized, String) = fn() {
+    Ok({ diagnostics: [] })
+};
+export def unrelated: Array(Int) = [];

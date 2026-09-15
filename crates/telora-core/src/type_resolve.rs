@@ -151,6 +151,7 @@ struct Solver<'a> {
     property_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
     check_declarations: Vec<(TypeSlotId, PropertySite, HirId)>,
     bottom_candidates: Vec<TypeSlotId>,
+    literal_bottom_candidates: Vec<TypeSlotId>,
     generalizations: Vec<Option<generalization::Candidate>>,
     /// A Function's parameter/result slots belong to the value domain. This
     /// evidence lets calls constrain unknown value slots without guessing that
@@ -243,7 +244,7 @@ pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
             }
         }
         if solver.revision == revision {
-            if !solver.finish_type_facets() && !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms() && !solver.finish_unchecked_fits() && !solver.generalize_ready() && !solver.finish_empty_options() {
+            if !solver.finish_type_facets() && !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms(false) && !solver.finish_unchecked_fits() && !solver.generalize_ready() && !solver.finish_empty_options() && !solver.finish_bottoms(true) {
                 break;
             }
         }
@@ -340,6 +341,7 @@ impl Solver<'_> {
             property_declarations: vec![],
             check_declarations: vec![],
             bottom_candidates: vec![],
+            literal_bottom_candidates: vec![],
             generalizations: vec![],
             value_slots: vec![false; mir.hir.len()],
             contract_slots: vec![false; mir.hir.len()],

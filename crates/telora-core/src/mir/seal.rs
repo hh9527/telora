@@ -254,6 +254,10 @@ impl Mir {
     }
 
     pub fn seal(&self) -> Result<SealedMir<'_>, Vec<Diagnostic>> {
+        if self.types_solved && self.type_unknowns.is_empty() && self.type_conflicts.is_empty() {
+            let invalid = self.record_boundary_diagnostics();
+            if !invalid.is_empty() { return Err(invalid); }
+        }
         if self.value_materializations.len() == self.hir.len() {
             let mut invalid = Vec::new();
             for (index, fact) in self.value_materializations.iter().enumerate() {

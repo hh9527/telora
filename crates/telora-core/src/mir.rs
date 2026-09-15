@@ -7,6 +7,7 @@ use crate::syntax::telora::parser::{CstData, NodeRef};
 use std::fmt::Write;
 
 mod seal;
+mod record_boundaries;
 mod executable;
 mod type_schemes;
 mod properties;

@@ -1,0 +1,23 @@
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+type Diagnostic = struct { message: String };
+type Normalized = struct { diagnostics: Array(Diagnostic) };
+type Nested = struct { rows: Array(Array(Diagnostic)) };
+
+def normalize: Fn() -> Result(Normalized, String) = fn() {
+    Ok({ diagnostics: [] })
+};
+def nested: Fn() -> Result(Nested, String) = fn() {
+    Ok({ rows: [[], []] })
+};
+def wrapped: for(T) Fn(T) -> Result(T, String) = fn(value) { Ok(value) };
+def through_generic: Fn() -> Result(Normalized, String) = fn() {
+    wrapped({ diagnostics: [] })
+};
+
+export def contextual_empty_arrays: test.Test = test.should_ok(fn() {
+    expect(normalize().unwrap!().diagnostics == [].ty!(Array(Diagnostic)));
+    expect(through_generic().unwrap!().diagnostics == [].ty!(Array(Diagnostic)));
+    expect(nested().unwrap!().rows == [[], []].ty!(Array(Array(Diagnostic))))
+});

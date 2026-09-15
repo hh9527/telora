@@ -108,6 +108,26 @@ fn propagation_keeps_never_tail_error_evidence_and_infers_operand_from_return_co
 }
 
 #[test]
+fn empty_record_fields_receive_context_before_bottom_and_seal_checks_the_boundary() {
+    let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/issue-202/empty-record-result.telora")).unwrap();
+    let mut mir = graph(&[("@src/main", &source)]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}"));
+    let arrays = mir.hir.iter().enumerate()
+        .filter(|(_, n)| n.module == ModuleId(0) && matches!(n.kind, HirKind::Array))
+        .map(|(index, _)| index).collect::<Vec<_>>();
+    assert_eq!(arrays.len(), 2);
+    let TypeState::Known(ty) = mir.ty_slots[arrays[0]] else { panic!("array type") };
+    assert!(matches!(mir.types[mir.types[ty.index()].arguments[0].index()].constructor, TypeConstructor::Nominal(_)));
+    // A fully known but wrong field type must not reach codegen.
+    mir.ty_slots[arrays[0]] = mir.ty_slots[arrays[1]];
+    let errors = mir.seal().err().expect("invalid field boundary must reject seal");
+    assert!(errors.iter().any(|d| d.message.contains("diagnostics")
+        && d.labels.iter().any(|label| label.location == mir.hir[arrays[0]].location)));
+}
+
+#[test]
 fn branch_completion_does_not_unify_candidate_and_checked_identity() {
     for expression in ["if True { candidate } else { good }", "match True { True => good, False => candidate }"] {
         let source = format!("type Point = struct {{x: Int}}; def candidate: Unchecked(Point) = {{x: 0}}; def good: Point = {{x: 42}}; export def checked: Bool = do {{ let answer = {expression}; True }};");
