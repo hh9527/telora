@@ -2,17 +2,28 @@ use super::*;
 use crate::syntax::kinds::{BinaryOperator as B, UnaryOperator};
 
 impl Lower<'_> {
-    pub(super) fn expr(&self, node: NodeRef) -> Result<Shape, Diagnostic> {
+    pub(super) fn expr(&self, node: NodeRef) -> Result<Shape, ()> {
         let shape = match self.rule(node) {
+            Some(Rule::StringExpr) => return self.string(node),
+            Some(Rule::BytesExpr) => return self.bytes(node),
+            Some(Rule::NamedIntrinsic | Rule::InterpreterIntrinsic) => return self.intrinsic(node),
+            Some(Rule::LegacyInterpreterExpr) => {
+                return Err(self.error(
+                    node,
+                    "interpreter(...) has been replaced by interpreter!(...)",
+                ));
+            }
+            Some(Rule::SectionExpr) => return self.section(node),
+            Some(Rule::TypeApplyExpr) => return self.type_apply(node),
+            Some(Rule::DictExpr) => return self.record(node),
+            Some(Rule::IfExpr | Rule::IfLetExpr | Rule::MatchExpr) => return self.control(node),
             Some(Rule::FunctionContract) => Shape::Alias(node, Mode::Type),
             Some(Rule::Expression | Rule::Primary | Rule::Braced) => {
                 let [inner] = self.operands(node)?;
                 Shape::Alias(inner, Mode::Expression)
             }
             Some(Rule::IntExpr) => {
-                let token = self
-                    .token(node, Token::Int)
-                    .ok_or_else(|| self.error(node, "missing Int"))?;
+                let token = self.token(node, Token::Int).ok_or(())?;
                 let value = self
                     .text(token)
                     .parse()
@@ -20,9 +31,7 @@ impl Lower<'_> {
                 Shape::Node(HirKind::Int(value), vec![])
             }
             Some(Rule::FloatExpr) => {
-                let token = self
-                    .token(node, Token::Float)
-                    .ok_or_else(|| self.error(node, "missing Float"))?;
+                let token = self.token(node, Token::Float).ok_or(())?;
                 let value: f64 = self
                     .text(token)
                     .parse()
@@ -33,9 +42,7 @@ impl Lower<'_> {
                 Shape::Node(HirKind::Float(value), vec![])
             }
             Some(Rule::VariableExpr) => {
-                let token = self
-                    .token(node, Token::Identifier)
-                    .ok_or_else(|| self.error(node, "missing Identifier"))?;
+                let token = self.token(node, Token::Identifier).ok_or(())?;
                 Shape::Node(HirKind::Variable(self.text(token).into_owned()), vec![])
             }
             Some(Rule::ArrayExpr | Rule::ParenExpr) => {
@@ -62,7 +69,7 @@ impl Lower<'_> {
                 }
             }
             Some(Rule::SpreadExpr | Rule::PropagateExpr | Rule::ReturnExpr | Rule::UnaryExpr) => {
-                let [operand] = self.operands(node)?;
+                let operand = self.expressions(node).into_iter().next();
                 let (kind, role) = match self.rule(node).unwrap() {
                     Rule::SpreadExpr => (HirKind::Spread, Role::Operand),
                     Rule::PropagateExpr => (HirKind::Propagate, Role::Operand),
@@ -76,13 +83,13 @@ impl Lower<'_> {
                         Role::Operand,
                     ),
                 };
-                Shape::Node(kind, vec![Input::expr(role, operand)])
+                Shape::Node(kind, vec![self.optional_expression(role, node, operand)])
             }
             Some(Rule::BinaryExpr) => {
-                let [left, right] = self.operands(node)?;
+                let operands = self.expressions(node);
                 let operator = self.binary_operator(node)?;
                 if comparison(operator)
-                    && [left, right].into_iter().any(|child| {
+                    && operands.iter().copied().any(|child| {
                         self.rule(child) == Some(Rule::BinaryExpr)
                             && self.binary_operator(child).is_ok_and(comparison)
                     })
@@ -95,18 +102,18 @@ impl Lower<'_> {
                 Shape::Node(
                     HirKind::Binary(operator),
                     vec![
-                        Input::expr(Role::Left, left),
-                        Input::expr(Role::Right, right),
+                        self.optional_expression(Role::Left, node, operands.first().copied()),
+                        self.optional_expression(Role::Right, node, operands.get(1).copied()),
                     ],
                 )
             }
             Some(Rule::IndexExpr) => {
-                let [receiver, index] = self.operands(node)?;
+                let operands = self.expressions(node);
                 Shape::Node(
                     HirKind::Index,
                     vec![
-                        Input::expr(Role::Receiver, receiver),
-                        Input::expr(Role::Index, index),
+                        self.optional_expression(Role::Receiver, node, operands.first().copied()),
+                        self.optional_expression(Role::Index, node, operands.get(1).copied()),
                     ],
                 )
             }
@@ -122,9 +129,7 @@ impl Lower<'_> {
                             ],
                         )
                     } else {
-                        let index = self
-                            .token(suffix, Token::Int)
-                            .ok_or_else(|| self.error(suffix, "tuple projection has no index"))?;
+                        let index = self.token(suffix, Token::Int).ok_or(())?;
                         let index = self.text(index).parse().map_err(|_| {
                             self.error(index, "tuple projection index is too large")
                         })?;
@@ -138,16 +143,23 @@ impl Lower<'_> {
                         HirKind::TypeMetadata,
                         vec![Input::with(Role::Operand, receiver, Mode::Type)],
                     )
+                } else if let Ok(suffix) = self.child(node, Rule::FieldProjectionSuffix) {
+                    return self.field_projection(node, receiver, suffix);
+                } else if let Ok(suffix) = self.child(node, Rule::PostfixIntrinsicSuffix) {
+                    return self.postfix_intrinsic(node, receiver, suffix);
                 } else {
-                    return Err(self.error(
-                        node,
-                        "CST-to-HIR lowering for this dot suffix is not implemented yet",
-                    ));
+                    Shape::Node(
+                        HirKind::Field,
+                        vec![
+                            Input::expr(Role::Receiver, receiver),
+                            self.synthetic(Role::Name, node, HirKind::Missing, vec![]),
+                        ],
+                    )
                 }
             }
             Some(Rule::CallExpr) => {
-                let [callee] = self.operands(node)?;
-                let mut inputs = vec![Input::expr(Role::Callee, callee)];
+                let callee = self.expressions(node).into_iter().next();
+                let mut inputs = vec![self.optional_expression(Role::Callee, node, callee)];
                 if let Ok(args) = self.child(node, Rule::Arguments) {
                     inputs.extend(
                         self.expressions(args)
@@ -183,7 +195,7 @@ impl Lower<'_> {
         Ok(shape)
     }
 
-    fn binary_operator(&self, node: NodeRef) -> Result<B, Diagnostic> {
+    fn binary_operator(&self, node: NodeRef) -> Result<B, ()> {
         [
             (Token::Plus, B::Add),
             (Token::Minus, B::Subtract),
@@ -205,7 +217,7 @@ impl Lower<'_> {
         ]
         .into_iter()
         .find_map(|(token, kind)| self.token(node, token).map(|_| kind))
-        .ok_or_else(|| self.error(node, "binary expression has no operator"))
+        .ok_or(())
     }
 }
 

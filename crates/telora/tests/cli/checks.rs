@@ -144,15 +144,15 @@ fn check_suppresses_parser_recovery_fallout_but_keeps_independent_errors() {
     let cases: &[(&str, &str, &[&str])] = &[
         (
             "one-root",
-            "export def broken = match A { A 1, _ => 2 };",
-            &["missing FatArrow"],
+            "export def broken: Int = match True { True 1, _ => 2 };",
+            &["invalid syntax, expected one of: '=>', 'if'"],
         ),
         (
             "two-roots",
-            "export def first: Int = (1 + 2; export def second: Int = match A { A 1, _ => 2 };",
+            "export def first: Int = (1 + 2; export def second: Int = match True { True 1, _ => 2 };",
             &[
                 "invalid syntax, expected one of: ',', ')'",
-                "missing FatArrow",
+                "invalid syntax, expected one of: '=>', 'if'",
             ],
         ),
     ];

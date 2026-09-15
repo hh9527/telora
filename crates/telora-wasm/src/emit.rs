@@ -261,7 +261,7 @@ impl<'a> Emitter<'a> {
         }
         match &self.mir.hir[node.index()].kind {
             HirKind::Raise(action) => self.raise(node, *action),
-            HirKind::Panic => self.raise(node, telora_core::ast::BlameAction::Fail),
+            HirKind::Panic => self.raise(node, telora_core::syntax::kinds::BlameAction::Fail),
             HirKind::TypeMetadata => {
                 let ty = self.ty(node)?;
                 let shape = &self.mir.types[ty.index()];
@@ -271,7 +271,7 @@ impl<'a> Emitter<'a> {
                 self.scalar(node, shape.arguments[0].index() as i64)
             }
             HirKind::Binding {
-                kind: telora_core::ast::BindingKind::Native,
+                kind: telora_core::syntax::kinds::BindingKind::Native,
                 ..
             } => {
                 let key = Key {
@@ -305,14 +305,14 @@ impl<'a> Emitter<'a> {
             HirKind::Propagate => self.propagate(node),
             HirKind::Tuple => self.tuple_expression(node),
             HirKind::Binding { kind, .. } => {
-                if *kind == telora_core::ast::BindingKind::Decl
+                if *kind == telora_core::syntax::kinds::BindingKind::Decl
                     && self.mir.modules[self.mir.hir[node.index()].module.index()].kind
                         == telora_core::mir::ModuleKind::Data
                 {
                     self.failure(node, ERROR_DATA);
                     return Ok(self.local(ValType::I32));
                 }
-                if *kind == telora_core::ast::BindingKind::Decl {
+                if *kind == telora_core::syntax::kinds::BindingKind::Decl {
                     let symbol = self.mir.hir_symbols[node.index()]
                         .ok_or("Wasm: local declaration has no stable symbol")?;
                     return self.bindings.get(&symbol).copied().ok_or_else(|| {
@@ -321,9 +321,9 @@ impl<'a> Emitter<'a> {
                 }
                 if !matches!(
                     kind,
-                    telora_core::ast::BindingKind::Let
-                        | telora_core::ast::BindingKind::Def
-                        | telora_core::ast::BindingKind::Impl
+                    telora_core::syntax::kinds::BindingKind::Let
+                        | telora_core::syntax::kinds::BindingKind::Def
+                        | telora_core::syntax::kinds::BindingKind::Impl
                 ) {
                     return Err(format!("Wasm: unsupported binding {kind:?}"));
                 }
@@ -406,7 +406,7 @@ impl<'a> Emitter<'a> {
                         && matches!(
                             self.mir.hir[edge.node.index()].kind,
                             HirKind::Binding {
-                                kind: telora_core::ast::BindingKind::Def,
+                                kind: telora_core::syntax::kinds::BindingKind::Def,
                                 ..
                             }
                         )
@@ -432,7 +432,7 @@ impl<'a> Emitter<'a> {
                 }
                 self.expression(child(self.mir, node, Role::Result)?)
             }
-            HirKind::Binary(telora_core::ast::BinaryOperator::StructUpdate) => {
+            HirKind::Binary(telora_core::syntax::kinds::BinaryOperator::StructUpdate) => {
                 self.struct_update(node)
             }
             HirKind::Binary(op) => self.binary(node, *op),

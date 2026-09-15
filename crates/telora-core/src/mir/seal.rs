@@ -16,7 +16,7 @@ impl Mir {
         let mut inputs = vec![false; self.hir.len()];
         let mut pending = Vec::new();
         for node in &self.hir {
-            if matches!(node.kind, HirKind::Binary(crate::ast::BinaryOperator::StructUpdate)) {
+            if matches!(node.kind, HirKind::Binary(crate::syntax::kinds::BinaryOperator::StructUpdate)) {
                 pending.extend(node.children.iter().filter(|edge| edge.role == Role::Right).map(|edge| edge.node));
             }
         }
@@ -70,7 +70,7 @@ impl Mir {
     pub(crate) fn value_shape_error(&self, node: HirId, ty: TypeId, construction_inputs: &[bool]) -> Option<&'static str> {
         let shape = &self.types[ty.index()];
         match self.hir[node.index()].kind {
-            HirKind::Binding { kind: crate::ast::BindingKind::Native, .. }
+            HirKind::Binding { kind: crate::syntax::kinds::BindingKind::Native, .. }
                 if shape.constructor != TypeConstructor::Function =>
                 Some("native declaration requires a function signature"),
             HirKind::Dict | HirKind::FieldProjection => {
@@ -252,6 +252,7 @@ impl Mir {
         let construction_inputs = self.record_construction_inputs();
         if !self.symbols_closed
             || !self.types_solved
+            || self.hir.iter().any(|node| matches!(node.kind, HirKind::Missing))
             || !self.validate_declaration_contracts()
             || !self.type_unknowns.is_empty()
             || !self.type_conflicts.is_empty()

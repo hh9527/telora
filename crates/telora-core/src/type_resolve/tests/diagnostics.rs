@@ -194,7 +194,7 @@ fn syntax_recovery_keeps_independent_type_conflicts_without_a_fake_result_obliga
     assert!(
         mir.diagnostics
             .iter()
-            .any(|d| d.message == "missing FatArrow")
+            .any(|d| d.message == "invalid syntax, expected one of: '=>', 'if'")
     );
     crate::symbol_resolve::resolve(&mut mir);
     resolve(&mut mir);

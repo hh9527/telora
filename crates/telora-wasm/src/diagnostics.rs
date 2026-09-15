@@ -1,7 +1,7 @@
 //! Blame objects and diagnostic events are constructed inside Wasm.
 use crate::{abi::*, emit::Emitter, plan::child};
 use telora_core::{
-    ast::BlameAction,
+    syntax::kinds::BlameAction,
     mir::{HirId, NativeTypeId, Role, TypeConstructor as T},
 };
 use wasm_encoder::{Instruction as I, ValType};

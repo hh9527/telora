@@ -1,5 +1,5 @@
 //! Second MIR pass: syntax-only declaration indexing and reference closure.
-use crate::ast::{BindingKind, DeclaredInitializerKind};
+use crate::syntax::kinds::{BindingKind, DeclaredInitializerKind};
 use crate::mir::*;
 use crate::source::Diagnostic;
 use std::collections::BTreeMap;
@@ -97,10 +97,11 @@ pub fn resolve(mir: &mut Mir) {
                         }),
                     _ => None,
                 };
-                pass.mir.diagnostics.push(Diagnostic::error(
-                    name.map_or_else(|| "unresolved reference".into(), |name| format!("unknown binding {name:?}")),
-                    node.location,
-                ));
+                if let Some(name) = name {
+                    pass.mir.diagnostics.push(Diagnostic::error(
+                        format!("unknown binding {name:?}"), node.location,
+                    ));
+                }
             }
         }
     }
@@ -775,15 +776,19 @@ impl Pass<'_> {
             HirKind::Field => {
                 let receiver = self.child(node, Role::Receiver).unwrap();
                 let name = self.child(node, Role::Name).unwrap();
-                match self.reference_value(receiver) {
-                    Some(ResolveState::Bound(symbol)) => {
-                        match self.namespace(symbol, &mut vec![]) {
-                            Some(module) => self.exported(module, &self.name(name)),
-                            _ => ResolveState::Member { receiver, name },
+                if matches!(self.mir.hir[name.index()].kind, HirKind::Missing) {
+                    ResolveState::Unresolved
+                } else {
+                    match self.reference_value(receiver) {
+                        Some(ResolveState::Bound(symbol)) => {
+                            match self.namespace(symbol, &mut vec![]) {
+                                Some(module) => self.exported(module, &self.name(name)),
+                                _ => ResolveState::Member { receiver, name },
+                            }
                         }
+                        Some(state @ (ResolveState::Unresolved | ResolveState::Conflicted(_))) => state,
+                        _ => ResolveState::Member { receiver, name },
                     }
-                    Some(state @ (ResolveState::Unresolved | ResolveState::Conflicted(_))) => state,
-                    _ => ResolveState::Member { receiver, name },
                 }
             }
             _ => unreachable!(),

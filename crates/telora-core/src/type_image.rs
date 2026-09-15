@@ -146,7 +146,7 @@ impl TypeImage {
                 .iter()
                 .filter_map(|symbol| {
                     if symbol.kind
-                        != crate::mir::SymbolKind::Declaration(crate::ast::BindingKind::NativeType)
+                        != crate::mir::SymbolKind::Declaration(crate::syntax::kinds::BindingKind::NativeType)
                     {
                         return None;
                     }

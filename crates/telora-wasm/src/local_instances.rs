@@ -72,7 +72,7 @@ impl Emitter<'_> {
         if matches!(
             self.mir.hir[node.index()].kind,
             HirKind::Binding {
-                kind: telora_core::ast::BindingKind::Decl,
+                kind: telora_core::syntax::kinds::BindingKind::Decl,
                 ..
             }
         ) {

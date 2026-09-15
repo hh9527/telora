@@ -16,7 +16,7 @@ fn private_template_primitive_uses_the_admitted_native_identity() {
                 && matches!(
                     symbol.kind,
                     telora_core::mir::SymbolKind::Declaration(
-                        telora_core::ast::BindingKind::Native
+                        telora_core::syntax::kinds::BindingKind::Native
                     )
                 )
         })

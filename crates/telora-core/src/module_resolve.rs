@@ -1,8 +1,8 @@
 //! First MIR pass: inventory identities, reachable source syntax and import edges.
 //! The source reader supplies text only, never resolved symbols or types.
-use crate::ast::BindingKind;
-use crate::mir::{self, *};
-use crate::parser::{FrontendBody, parse_registered};
+use crate::syntax::kinds::BindingKind;
+use crate::mir::*;
+use crate::hir_lower;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug)]
@@ -105,34 +105,19 @@ pub fn resolve_with_requests(
                 continue;
             }
         };
-        let parsed = parse_registered(&mir.sources, source);
-        let syntax_valid = matches!(&parsed.body, FrontendBody::Complete(_));
+        let parsed = crate::syntax::telora::parse_document(source, mir.sources.get(source).text());
+        let lowered = hir_lower::lower_module(&mut mir, id, source, &parsed.syntax);
+        let syntax_valid = parsed.diagnostics.is_empty() && lowered.diagnostics.is_empty();
         mir.diagnostics.extend(parsed.diagnostics);
-        let mut lower = mir::lower::Lower {
-            mir: &mut mir,
-            module: id,
-            needs_display: false,
-        };
-        let body = match parsed.body {
-            FrontendBody::Complete(program) => lower.body(
-                program.value.body.location,
-                program.value.body.value.bindings,
-                Some(*program.value.body.value.result),
-            ),
-            FrontendBody::Recovered(recovered) => lower.body(
-                recovered.location,
-                recovered.bindings,
-                recovered.result,
-            ),
-        };
-        lower.finish_module(body);
+        mir.diagnostics.extend(lowered.diagnostics);
+        let body = lowered.body;
         mir.modules[id.index()].state = if spec.kind == ModuleKind::Data {
             ModuleState::Data { body }
         } else {
             ModuleState::Source {
                 source,
                 syntax_valid,
-                cst: parsed.cst,
+                cst: parsed.syntax,
                 body,
             }
         };
@@ -220,8 +205,8 @@ pub fn validate_source_modules(mir: &mut Mir, trusted: impl Fn(&str) -> bool) {
                 mir.diagnostics.push(Diagnostic::error(message, node.location));
             }
         }
-        // The parser already diagnoses the explicit-export + expression case.
-        if *syntax_valid && authored_result && !has_exports {
+        // Admission checks the authored module shape only after syntax is valid.
+        if *syntax_valid && authored_result {
             mir.diagnostics.push(Diagnostic::error(
                 "top-level expressions are not supported; bind the computation with def and export the intended result", location,
             ));

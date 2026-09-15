@@ -6,7 +6,6 @@
     clippy::type_complexity
 )]
 
-pub mod ast;
 pub mod entry_plan;
 pub mod type_image;
 pub mod candidate_layout;
@@ -23,7 +22,6 @@ pub mod symbol_resolve;
 pub mod type_resolve;
 pub mod module_format;
 pub mod package;
-pub mod parser;
 pub mod query;
 pub mod runtime_host;
 pub mod syntax;

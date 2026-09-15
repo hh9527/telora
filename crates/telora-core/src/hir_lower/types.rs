@@ -2,7 +2,7 @@ use super::*;
 use crate::mir::TypeOperation;
 
 impl Lower<'_> {
-    pub(super) fn type_term(&self, node: NodeRef) -> Result<Shape, Diagnostic> {
+    pub(super) fn type_term(&self, node: NodeRef) -> Result<Shape, ()> {
         match self.rule(node) {
             Some(Rule::Expression | Rule::Primary | Rule::Braced) => {
                 let [inner] = self.operands(node)?;
@@ -10,6 +10,11 @@ impl Lower<'_> {
             }
             Some(Rule::VariableExpr) => self.expr(node),
             Some(Rule::DotPostfixExpr) => {
+                if self.child(node, Rule::MetadataSuffix).is_ok()
+                    || self.child(node, Rule::PostfixIntrinsicSuffix).is_ok()
+                {
+                    return Err(self.invalid_type(node));
+                }
                 let suffix = self.child(node, Rule::ProjectionSuffix)?;
                 if self.token(suffix, Token::Identifier).is_none() {
                     return Err(self.invalid_type(node));
@@ -51,7 +56,7 @@ impl Lower<'_> {
         }
     }
 
-    pub(super) fn type_argument(&self, node: NodeRef) -> Result<Shape, Diagnostic> {
+    pub(super) fn type_argument(&self, node: NodeRef) -> Result<Shape, ()> {
         match self.rule(node) {
             Some(Rule::Expression | Rule::Primary | Rule::Braced) => {
                 let [inner] = self.operands(node)?;
@@ -68,7 +73,7 @@ impl Lower<'_> {
         }
     }
 
-    fn invalid_type(&self, node: NodeRef) -> Diagnostic {
+    fn invalid_type(&self, node: NodeRef) {
         self.error(node,
             "a static type requires a type declaration, constructor or family; computed metadata cannot become a type")
     }

@@ -1,6 +1,6 @@
 use crate::{abi::*, emit::Emitter, plan::child};
 use telora_core::{
-    ast::{BinaryOperator as B, UnaryOperator as U},
+    syntax::kinds::{BinaryOperator as B, UnaryOperator as U},
     mir::{HirId, Role, TypeConstructor as T},
 };
 use wasm_encoder::{BlockType, Instruction as I, ValType};

@@ -1,5 +1,6 @@
 use super::*;
 use crate::mir::{Module, ModuleKind, ModuleState, ResolveState, TypeState};
+mod frontend;
 
 fn parsed(text: &str) -> (Mir, SourceId, CstData, NodeRef) {
     let mut mir = Mir::default();
@@ -137,9 +138,36 @@ fn deep_expression_lowering_and_drop_do_not_use_the_native_call_stack() {
 }
 
 #[test]
-fn unsupported_rules_are_explicit_and_do_not_invoke_the_owned_ast() {
-    let (mut mir, source, cst, root) = parsed("match 1 { _ => 2 }");
+fn invalid_intrinsics_do_not_invoke_the_owned_ast() {
+    let (mut mir, source, cst, root) = parsed("missing_intrinsic!(T)");
     let diagnostic = expression(&mut mir, ModuleId(0), source, &cst, root).unwrap_err();
-    assert!(diagnostic.message.contains("not implemented"));
-    assert!(mir.hir.is_empty());
+    assert!(diagnostic.message.contains("unknown contextual intrinsic"));
+    assert!(
+        mir.hir
+            .iter()
+            .any(|node| matches!(node.kind, HirKind::Missing))
+    );
+}
+
+#[test]
+fn builtin_modules_lower_without_an_owned_ast() {
+    let mut failures = vec![];
+    for &(name, text) in crate::static_sources::BUILTINS {
+        let mut mir = Mir::default();
+        let source = mir.sources.add(name, text);
+        let parsed = crate::syntax::telora::parse_document(source, mir.sources.get(source).text());
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "{name}: {:?}",
+            parsed.diagnostics
+        );
+        let lowered = lower_module(&mut mir, ModuleId(0), source, &parsed.syntax);
+        failures.extend(
+            lowered
+                .diagnostics
+                .into_iter()
+                .map(|error| format!("{name}: {error:?}")),
+        );
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

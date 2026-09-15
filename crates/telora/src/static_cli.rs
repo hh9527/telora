@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::{path::PathBuf, time::Instant};
 use telora_core::{
     Location, PositionEncoding, TextPosition,
-    ast::BindingKind,
+    syntax::kinds::BindingKind,
     mir::{Mir, ModuleState, ResolveState, Symbol, SymbolId, SymbolKind, TypeState},
     mir_query::MirQuery,
     source::{Diagnostic, Severity},

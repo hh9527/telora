@@ -12,7 +12,7 @@ pub(crate) fn identity(mir: &Mir, node: HirId) -> Option<(u32, &str)> {
     if !matches!(
         mir.hir[node.index()].kind,
         HirKind::Binding {
-            kind: telora_core::ast::BindingKind::Native,
+            kind: telora_core::syntax::kinds::BindingKind::Native,
             ..
         }
     ) {

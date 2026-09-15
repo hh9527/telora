@@ -6,7 +6,6 @@ use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::telora::parser::{CstData, NodeRef};
 use std::fmt::Write;
 
-pub(crate) mod lower;
 mod seal;
 mod executable;
 mod type_schemes;
@@ -564,6 +563,9 @@ pub enum TypeOperation {
 /// edges. No node owns another HIR node or contains a resolved type descriptor.
 #[derive(Debug)]
 pub enum HirKind {
+    /// A required semantic position for which syntax supplied no information.
+    /// It contributes no evidence and cannot be sealed or evaluated.
+    Missing,
     NativeTypeSlot(i64),
     TypeOperation(TypeOperation),
     TypeMember {

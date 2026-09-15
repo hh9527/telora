@@ -184,7 +184,7 @@ impl Plan {
                 HirKind::Closure
                     | HirKind::Interpreter
                     | HirKind::Binding {
-                        kind: telora_core::ast::BindingKind::Native,
+                        kind: telora_core::syntax::kinds::BindingKind::Native,
                         ..
                     }
             ) || constructor
@@ -367,9 +367,9 @@ impl Plan {
                         telora_core::mir::SymbolKind::Parameter
                             | telora_core::mir::SymbolKind::Pattern
                             | telora_core::mir::SymbolKind::Declaration(
-                                telora_core::ast::BindingKind::Let
-                                    | telora_core::ast::BindingKind::Def
-                                    | telora_core::ast::BindingKind::Decl
+                                telora_core::syntax::kinds::BindingKind::Let
+                                    | telora_core::syntax::kinds::BindingKind::Def
+                                    | telora_core::syntax::kinds::BindingKind::Decl
                             )
                     )
                 {

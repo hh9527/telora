@@ -2,14 +2,14 @@ use super::*;
 use crate::mir::TypeOperation;
 
 impl Lower<'_> {
-    pub(super) fn contract(&self, node: NodeRef) -> Result<Shape, Diagnostic> {
+    pub(super) fn contract(&self, node: NodeRef) -> Result<Shape, ()> {
         match self.rule(node) {
             Some(Rule::Contract) => {
                 let inner = self
                     .cst
                     .children(node)
                     .find(|child| self.rule(*child).is_some())
-                    .ok_or_else(|| self.error(node, "empty contract"))?;
+                    .ok_or(())?;
                 Ok(Shape::Alias(inner, Mode::Contract))
             }
             Some(Rule::FunctionContract | Rule::UnitContract) => Ok(Shape::Alias(node, Mode::Type)),
@@ -22,7 +22,7 @@ impl Lower<'_> {
                         matches!(self.cst.get(*child), Node::Token(Token::Identifier, _))
                     })
                     .last()
-                    .ok_or_else(|| self.error(node, "contract has no name"))?;
+                    .ok_or(())?;
                 let args = self.contract_parts(node);
                 if args.is_empty() {
                     return Ok(Shape::Alias(path, Mode::Path(last)));
@@ -45,7 +45,7 @@ impl Lower<'_> {
         }
     }
 
-    pub(super) fn path(&self, node: NodeRef, last: NodeRef) -> Result<Shape, Diagnostic> {
+    pub(super) fn path(&self, node: NodeRef, last: NodeRef) -> Result<Shape, ()> {
         let previous = self
             .cst
             .children(node)
@@ -68,7 +68,7 @@ impl Lower<'_> {
         }
     }
 
-    pub(super) fn contract_term(&self, node: NodeRef) -> Result<Shape, Diagnostic> {
+    pub(super) fn contract_term(&self, node: NodeRef) -> Result<Shape, ()> {
         let parts = self.contract_parts(node);
         let operation = match self.rule(node) {
             Some(Rule::FunctionContract) => {
@@ -98,7 +98,7 @@ impl Lower<'_> {
         ))
     }
 
-    fn contract_parts(&self, node: NodeRef) -> Vec<NodeRef> {
+    pub(super) fn contract_parts(&self, node: NodeRef) -> Vec<NodeRef> {
         self.cst
             .children(node)
             .filter(|child| {
@@ -114,5 +114,9 @@ impl Lower<'_> {
                 )
             })
             .collect()
+    }
+
+    pub(super) fn contract_child(&self, node: NodeRef) -> Result<NodeRef, ()> {
+        self.contract_parts(node).into_iter().next().ok_or(())
     }
 }

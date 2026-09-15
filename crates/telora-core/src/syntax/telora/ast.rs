@@ -614,6 +614,7 @@ fn is_expression_slot(syntax: SyntaxNode<'_>) -> bool {
                 | Rule::PropagateExpr
                 | Rule::ReturnExpr
                 | Rule::SectionExpr
+                | Rule::SpreadExpr
                 | Rule::StringExpr
                 | Rule::TypeApplyExpr
                 | Rule::UnaryExpr
@@ -622,16 +623,21 @@ fn is_expression_slot(syntax: SyntaxNode<'_>) -> bool {
     )
 }
 
-fn is_complete_expression(syntax: SyntaxNode<'_>) -> bool {
-    if !is_expression_slot(syntax) {
-        return false;
-    }
-    match syntax.rule() {
-        Some(Rule::Expression | Rule::Primary | Rule::Braced) => {
-            syntax.children().any(is_complete_expression)
+fn is_complete_expression(mut syntax: SyntaxNode<'_>) -> bool {
+    let mut pending = Vec::new();
+    loop {
+        if is_expression_slot(syntax) {
+            if matches!(syntax.rule(), Some(Rule::Expression | Rule::Primary | Rule::Braced)) {
+                let mut children = syntax.children().filter(|child| is_expression_slot(*child));
+                if let Some(first) = children.next() {
+                    pending.extend(children);
+                    syntax = first;
+                    continue;
+                }
+            } else { return true; }
         }
-        Some(_) => true,
-        None => false,
+        let Some(next) = pending.pop() else { return false; };
+        syntax = next;
     }
 }
 

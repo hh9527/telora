@@ -31,9 +31,9 @@ seal 的 MIR；执行入口必须通过 seal。后续阶段直接使用静态结
 
 | 层次 | 当前实现 |
 | --- | --- |
-| grammar、CST、parser | `syntax/telora/`、`parser.rs`、`ast.rs` |
+| grammar、CST、parser、借用语法视图 | `syntax/telora/` |
 | 共享数据 parser、source 与 document | `crates/telora-data/src/` |
-| session 图与 HIR lowering | `mir.rs`、`mir/lower.rs`、`module_resolve.rs` |
+| session 图与 HIR lowering | `mir.rs`、`hir_lower/`、`module_resolve.rs` |
 | 符号、类型求解 | `symbol_resolve.rs`、`type_resolve.rs` 及其子目录 |
 | 封闭与只读查询 | `mir/seal.rs`、`mir_query.rs` |
 | 静态执行闭包与类型镜像 | `mir/executable.rs`、`type_image.rs` |
@@ -61,6 +61,17 @@ codegen 消费 SealedExecutable，生成 Wasm 指令和类型确定的胶水。R
 parser 保留 lossless CST、恢复后的语法和诊断。module Pass 将可达源码挂入 MIR，
 记录源码有效性，并分配扁平 HIR 节点及相应 resolve/type 槽。源码不完整也能产生可查询图，
 但不能因此获得执行资格。
+
+CST 是语法数据的唯一所有者；`syntax/telora/ast.rs` 提供借用视图，不构造完整 Owned AST。
+`hir_lower` 用显式任务栈读取这些视图，直接向 HIR arena 写入节点和 Id 边。
+源码节点记录 `HirOrigin::Source`，脱糖节点记录 `HirOrigin::Desugared`，两者都引用所属模块
+CST 中的节点；这不是一对一映射，同一处语法可以产生多个语义节点。
+字符串等字面量在 lowering 时解码，后续阶段消费语义载荷，不重新解析源码。
+
+语法恢复由 parser 决定，CST 保存恢复结果，借用视图允许必要子节点缺失。
+HIR 保留仍有意义的操作和绑定，以 `Missing` 表示没有语法证据的必要位置；
+缺失子节点不会把父节点变成错误节点。lowering 不重新扫描错误子树，也不按诊断文本
+拼接或替换 parser 的结论。后续静态 Pass 可以继续求解已有信息，但含 `Missing` 的图不能 seal。
 
 模块状态包括 `Unloaded`、`Source`、`Data` 和 `Unavailable`。符号求解结果包括
 `Bound`、`Unresolved` 和 `Conflicted`；冲突区分重复定义、多个 import 候选等。
