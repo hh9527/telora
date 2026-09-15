@@ -11,6 +11,7 @@ mod definitions;
 mod alias_cycles;
 mod family_cycles;
 mod instance_convergence;
+mod expansion_limits;
 mod instance_patterns;
 mod evidence;
 mod instances;
@@ -140,6 +141,8 @@ struct Solver<'a> {
     /// Results of type-position calls have a producer, not a free value hole.
     type_results: Vec<TypeSlotId>,
     nonconvergent_instances: BTreeSet<SymbolId>,
+    type_depths: Vec<usize>,
+    expansion_exhausted: bool,
     nonconvergent_evidence: BTreeSet<(TypeId, TypeId)>,
     value_spreads: Vec<bool>,
     administrative: Vec<bool>,
@@ -239,13 +242,25 @@ pub fn resolve(mir: &mut Mir) {
     solver.resolve_constructor_patterns();
     solver.diagnose_pending_constraints();
     solver.finalize();
+    if !solver.check_type_expansion(None) {
+        solver.mir.types_solved = true;
+        return;
+    }
     solver.reject_expanding_families();
     solver.validate_diverging_branches();
     solver.finalize_properties();
     solver.finalize_checks();
     solver.prove_bounds();
+    if !solver.check_type_expansion(None) {
+        solver.mir.types_solved = true;
+        return;
+    }
     solver.finalize_callable_adjustments();
     solver.materialize_instances();
+    if !solver.check_type_expansion(None) {
+        solver.mir.types_solved = true;
+        return;
+    }
     solver.finalize_value_materializations();
     let construction_inputs = solver.mir.record_construction_inputs();
     for index in 0..solver.mir.hir.len() {
@@ -304,6 +319,8 @@ impl Solver<'_> {
             pending_instances: BTreeSet::new(),
             type_results: vec![],
             nonconvergent_instances: BTreeSet::new(),
+            type_depths: vec![],
+            expansion_exhausted: false,
             nonconvergent_evidence: BTreeSet::new(),
             administrative: vec![false; mir.hir.len()],
             scheme_references: vec![false; mir.hir.len()],

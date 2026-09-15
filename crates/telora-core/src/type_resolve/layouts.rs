@@ -19,6 +19,7 @@ impl Solver<'_> {
             .collect::<BTreeMap<_, _>>();
         let mut index = self.mir.type_layouts.len();
         while index < self.mir.types.len() {
+            if !self.check_type_expansion(None) { return; }
             self.mir.type_layouts.push(None);
             let owner = self.mir.types[index].clone();
             index += 1;

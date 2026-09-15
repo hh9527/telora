@@ -100,6 +100,7 @@ impl Solver<'_> {
             }
         }
         loop {
+            if !self.check_type_expansion(None) { return; }
             // Applied member skeletons can discover decorated types that do not
             // occur directly in source references (e.g. Envelope(Int).item).
             let previous_types = self.mir.types.len();
@@ -115,6 +116,7 @@ impl Solver<'_> {
                 );
             }
             while next_type < self.mir.types.len() {
+                if !self.check_type_expansion(None) { return; }
                 let owner = TypeId(next_type as u32);
                 next_type += 1;
                 let TypeConstructor::Nominal(symbol) = self.mir.types[owner.index()].constructor
@@ -172,6 +174,9 @@ impl Solver<'_> {
             }
             while next < self.mir.generic_instances.len() {
                 let symbol = self.mir.generic_instances[next].symbol;
+                let origin = self.mir.symbols[symbol.index()].declarations.first()
+                    .map(|node| self.mir.hir[node.index()].location);
+                if !self.check_type_expansion(origin) { return; }
                 let substitutions = self.mir.generic_instances[next]
                     .arguments
                     .iter()

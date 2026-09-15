@@ -1,0 +1,3 @@
+type Expanded(T) = struct { item: {{TYPE}} };
+type Input = {{INPUT}};
+export def metadata: Type = Expanded(Input).type;

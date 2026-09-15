@@ -135,6 +135,10 @@ impl Solver<'_> {
             .collect::<Vec<_>>();
         let mut index = 0;
         while index < nodes.len() {
+            if !self.check_type_expansion(None) {
+                self.mir.evidence = nodes;
+                return;
+            }
             let (subject, bound) = (nodes[index].subject, nodes[index].bound);
             if let Some(state) = self.direct_evidence(subject, bound) {
                 nodes[index].state = state;
