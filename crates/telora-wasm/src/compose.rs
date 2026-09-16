@@ -9,7 +9,7 @@ pub(crate) fn static_base() -> Result<u32, String> {
     Ok(template::runtime()?.heap_base)
 }
 
-pub(crate) fn link(object: &[u8], reserved_bytes: u32) -> Result<Vec<u8>, String> {
+pub(crate) fn link(object: &[u8], reserved_bytes: u32, locations: &[u8]) -> Result<Vec<u8>, String> {
     let rt = template::runtime()?;
     let mut program = Parts::read(object)?;
     let mut output = Parts::read(rt.bytes)?;
@@ -51,6 +51,10 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32) -> Result<Vec<u8>, String
             _ => {}
         }
     }
+    let locations_base = image_base.checked_add(u32::try_from(data.len())
+        .map_err(|_| "Wasm: static image too large")?).ok_or("Wasm: location base overflow")?;
+    let locations_len = u32::try_from(locations.len()).map_err(|_| "Wasm: location table too large")?;
+    data.extend_from_slice(locations);
     if imports.len() != FIRST_FUNCTION as usize {
         return Err("Wasm: generated RT import contract changed".into());
     }
@@ -205,6 +209,11 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32) -> Result<Vec<u8>, String
             *rt.exports
                 .get("telora_reserve_static")
                 .ok_or("Wasm: template lacks heap initializer")?,
+        ))
+        .instruction(&Instruction::I32Const(locations_base as i32))
+        .instruction(&Instruction::I32Const(locations_len as i32))
+        .instruction(&Instruction::Call(
+            *rt.exports.get("telora_locations_bootstrap").ok_or("Wasm: missing location bootstrap")?,
         ))
         .instruction(&Instruction::End);
     let mut boot_code = CodeSection::new();

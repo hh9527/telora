@@ -306,5 +306,5 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
         name: Cow::Borrowed("telora.manifest"),
         data: Cow::Owned(serde_json::to_vec(&manifest).map_err(|e| e.to_string())?),
     });
-    crate::compose::link(&module.finish(), heap_start)
+    crate::compose::link(&module.finish(), heap_start, &plan.locations.bytes)
 }

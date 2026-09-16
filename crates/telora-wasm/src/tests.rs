@@ -5,6 +5,8 @@ use telora_core::{
 };
 
 mod data;
+mod location_tables;
+mod host_memory;
 mod debug;
 mod dynamic;
 mod equality;
@@ -708,7 +710,9 @@ fn interpreter_fuel_is_shared_across_initialization_calls() {
     let bytes =
         compile("def loop: Fn(Int) -> Int = fn(n: Int) -> Int { loop(n + 1) }; export def answer: Int = loop(0);")
             .unwrap();
-    let mut session = crate::session::Session::load(&bytes, 1000).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000).unwrap();
+    // Startup work may change; this test constrains the initialization loop.
+    session.store.set_fuel(1000).unwrap();
     assert!(
         session
             .initialize()

@@ -64,6 +64,7 @@ mod json_ops;
 mod compose;
 mod template;
 mod local_instances;
+mod locations;
 mod natives;
 pub mod object;
 mod output;

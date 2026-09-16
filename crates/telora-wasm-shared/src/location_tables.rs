@@ -12,7 +12,7 @@ pub enum LocationTableError {
 
 pub struct LocationTables<'a> {
     static_bytes: &'a [u8],
-    initialization: Vec<LocationRecord>,
+    initialization: Vec<[u8; RECORD_BYTES as usize]>,
     frozen: bool,
 }
 
@@ -41,7 +41,7 @@ impl<'a> LocationTables<'a> {
         self.initialization
             .try_reserve(1)
             .map_err(|_| LocationTableError::Capacity)?;
-        self.initialization.push(record);
+        self.initialization.push(record.encode());
         Ok(id)
     }
 
@@ -50,21 +50,26 @@ impl<'a> LocationTables<'a> {
     }
 
     pub fn get(&self, id: LocId) -> Result<Option<LocationRecord>, LocationTableError> {
-        let record = match id.index() {
+        Ok(self.bytes(id)?.and_then(LocationRecord::decode))
+    }
+
+    pub fn bytes(&self, id: LocId) -> Result<Option<&[u8]>, LocationTableError> {
+        let bytes = match id.index() {
             LocationIndex::None => return Ok(None),
             LocationIndex::Static(index) => {
                 let offset = (index as usize)
                     .checked_mul(RECORD_BYTES as usize)
                     .ok_or(LocationTableError::Missing)?;
-                self.static_bytes
-                    .get(offset..)
-                    .and_then(LocationRecord::decode)
+                let end = offset
+                    .checked_add(RECORD_BYTES as usize)
+                    .ok_or(LocationTableError::Missing)?;
+                self.static_bytes.get(offset..end)
             }
             LocationIndex::Initialization(index) => {
-                self.initialization.get(index as usize).copied()
+                self.initialization.get(index as usize).map(|r| &r[..])
             }
         };
-        record.map(Some).ok_or(LocationTableError::Missing)
+        bytes.map(Some).ok_or(LocationTableError::Missing)
     }
 }
 
