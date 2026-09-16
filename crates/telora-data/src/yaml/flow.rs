@@ -170,30 +170,7 @@ impl<'a, 'b> Flow<'a, 'b> {
     }
     fn scalar_text(&mut self, stops: &[u8]) -> Result<&'a str, Diagnostic> {
         let start = self.pos;
-        let mut quote = None;
-        while let Some(byte) = self.peek() {
-            if let Some(q) = quote {
-                self.pos += 1;
-                if q == b'"' && byte == b'\\' {
-                    if let Some(ch) = self.text[self.pos..].chars().next() {
-                        self.pos += ch.len_utf8();
-                    }
-                } else if byte == q {
-                    if q == b'\'' && self.peek() == Some(b'\'') {
-                        self.pos += 1;
-                    } else {
-                        quote = None;
-                    }
-                }
-            } else if matches!(byte, b'\'' | b'"') {
-                quote = Some(byte);
-                self.pos += 1;
-            } else if stops.contains(&byte) {
-                break;
-            } else {
-                self.pos += 1;
-            }
-        }
+        self.pos += super::lexer::scalar_end(&self.text[start..], stops);
         if start == self.pos {
             Err(self.error("expected YAML flow scalar"))
         } else {

@@ -12,6 +12,7 @@ use core::ops::Range;
 mod block_scalar;
 mod build;
 mod flow;
+mod lexer;
 mod lines;
 mod scalar;
 use build::Build;

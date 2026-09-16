@@ -76,6 +76,14 @@ export def scalars_and_flow: test.Test = test.should_ok(fn() {
         && yaml.parse(r#""\x41\u4e2d\U0001f600""#) == Ok(Value.String("A中😀")))
 });
 
+export def quoted_punctuation_and_comments: test.Test = test.should_ok(fn() {
+    expect(yaml.parse(r#"{'a''b: #[]': 'x''y,{}', "c\"d: #[]": "\"\\:#,[]{}"} # ignored"#)
+        == Ok(Value.Object({"a'b: #[]": Value.String("x'y,{}"), "c\"d: #[]": Value.String("\"\\:#,[]{}")}))
+        && yaml.parse("a#b: c#d # ignored\nurl: https://host/path\n")
+        == Ok(Value.Object({"a#b": Value.String("c#d"), url: Value.String("https://host/path")}))
+        && yaml.parse(r#""a\\": 'b''c' # ignored"#) == Ok(Value.Object({"a\\": Value.String("b'c")})))
+});
+
 export def depth_is_a_diagnostic: test.Test = test.should_fail_with(fn() {
     let a = "[[[[[[[[[[[[[[[[";
     let b = string.join([a, a], "");

@@ -121,51 +121,29 @@ pub(super) fn value(
 }
 
 fn quoted(build: &mut Build, text: &str, loc: Location) -> Result<String, Diagnostic> {
-    let quote = text.as_bytes()[0];
-    let mut pos = 1;
+    use super::lexer::{Kind, Scanner};
+    let mut scanner = Scanner::new(text);
+    let opening = scanner.next();
+    debug_assert_eq!(opening.map(|t| t.kind), Some(Kind::Start));
     let mut output = String::new();
-    while pos < text.len() {
-        let start = pos;
-        let byte = text.as_bytes()[pos];
-        if byte != quote && !(quote == b'"' && byte == b'\\') {
-            // Decode ordinary text in bounded borrowed runs, checking limits
-            // before appending rather than allocating an entire quoted value.
-            let mut end = (pos + 4096).min(text.len());
-            while !text.is_char_boundary(end) {
-                end -= 1;
+    while let Some(token) = scanner.next() {
+        let start = token.span.start;
+        let local = build.loc(loc.start as usize + start..loc.start as usize + scanner.pos);
+        let ch = match token.kind {
+            Kind::Text => {
+                build.append(&mut output, &text[token.span], local)?;
+                continue;
             }
-            let run = &text[pos..end];
-            let length = run
-                .find(|c| c == char::from(quote) || quote == b'"' && c == '\\')
-                .unwrap_or(run.len());
-            pos += length;
-            build.append(
-                &mut output,
-                &text[start..pos],
-                build.loc(loc.start as usize + start..loc.start as usize + pos),
-            )?;
-            continue;
-        }
-        pos += 1;
-        let ch = if byte == quote {
-            if quote == b'\'' && text.as_bytes().get(pos) == Some(&b'\'') {
-                pos += 1;
-                '\''
-            } else if pos == text.len() {
-                return Ok(output);
-            } else {
-                return Err(build.error(
-                    loc.start as usize + start..loc.start as usize + pos,
+            Kind::End if scanner.pos == text.len() => return Ok(output),
+            Kind::End => {
+                return Err(Diagnostic::error(
                     "unexpected content after quoted YAML String",
+                    local,
                 ));
             }
-        } else {
-            let escaped = text[pos..]
-                .chars()
-                .next()
-                .ok_or_else(|| Diagnostic::error("unterminated YAML escape", loc))?;
-            pos += escaped.len_utf8();
-            match escaped {
+            Kind::Quote => '\'',
+            Kind::Escape(None) => return Err(Diagnostic::error("unterminated YAML escape", loc)),
+            Kind::Escape(Some(escaped)) => match escaped {
                 '0' => '\0',
                 'a' => '\u{7}',
                 'b' => '\u{8}',
@@ -186,13 +164,12 @@ fn quoted(build: &mut Build, text: &str, loc: Location) -> Result<String, Diagno
                     };
                     let mut value = 0u32;
                     for _ in 0..digits {
-                        let c = text[pos..].chars().next().ok_or_else(|| {
+                        let c = scanner.character().ok_or_else(|| {
                             Diagnostic::error("incomplete YAML Unicode escape", loc)
                         })?;
-                        pos += c.len_utf8();
                         let digit = c.to_digit(16).ok_or_else(|| {
                             build.error(
-                                loc.start as usize + start..loc.start as usize + pos,
+                                loc.start as usize + start..loc.start as usize + scanner.pos,
                                 "invalid YAML Unicode escape",
                             )
                         })?;
@@ -200,24 +177,19 @@ fn quoted(build: &mut Build, text: &str, loc: Location) -> Result<String, Diagno
                     }
                     char::from_u32(value).ok_or_else(|| {
                         build.error(
-                            loc.start as usize + start..loc.start as usize + pos,
+                            loc.start as usize + start..loc.start as usize + scanner.pos,
                             "invalid YAML Unicode scalar",
                         )
                     })?
                 }
-                _ => {
-                    return Err(build.error(
-                        loc.start as usize + start..loc.start as usize + pos,
-                        "invalid YAML escape",
-                    ));
-                }
-            }
+                _ => return Err(Diagnostic::error("invalid YAML escape", local)),
+            },
+            _ => unreachable!("quoted scanner remains in string mode until End"),
         };
-        let mut bytes = [0; 4];
         build.append(
             &mut output,
-            ch.encode_utf8(&mut bytes),
-            build.loc(loc.start as usize + start..loc.start as usize + pos),
+            ch.encode_utf8(&mut [0; 4]),
+            build.loc(loc.start as usize + start..loc.start as usize + scanner.pos),
         )?;
     }
     Err(Diagnostic::error("unclosed YAML string", loc))

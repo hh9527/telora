@@ -59,8 +59,10 @@ core 的 `syntax/telora/tree_sitter/` 负责分块输入、token 分类与验证
 
 JSON 使用 `telora-data/src/json/` 中的 Logos 局部词法识别与显式状态栈，直接构建
 带位置的 DataPlan；不生成 token 数组或 CST，跨输入块保留状态而不重扫前缀。
-YAML 使用 `telora-data/src/yaml/` 中的行索引、block任务栈与flow容器栈直接构建DataPlan，
-不构造CST，不支持anchor、alias和merge。行索引跨chunk识别LF/CRLF/CR，不重扫pending前缀。
+YAML 使用 `telora-data/src/yaml/` 中的 Logos 局部词法识别、行索引、block任务栈与flow容器栈
+直接构建DataPlan，不构造CST，不支持anchor、alias和merge。行索引跨chunk识别LF/CRLF/CR，
+不重扫pending前缀。mapping/注释/flow边界与字符串解码共用外置引号状态；
+缩进、block scalar 的折叠和chomping仍由解析状态处理，字符串按有界文本片段准入。
 TOML 使用 `telora-data/src/toml/` 中的 Logos 局部词法识别与显式容器任务栈。
 四种字符串模式和分块游标外置，解码过程中检查配额。表以稳定 NodeId 组装，
 当前表直接保存 NodeId；dotted key 和数组表按最终数据结构的深度准入。

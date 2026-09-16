@@ -1,6 +1,47 @@
 extern crate std;
 use super::*;
 
+#[test]
+fn quoted_runs_cross_lexical_windows_without_exposing_punctuation() {
+    use crate::json::{DataPlanNodeKind, DataScalar};
+    for length in [4094, 4095, 4096, 8191] {
+        let prefix = "x".repeat(length);
+        for (encoded, decoded) in [
+            (
+                format!("'{prefix}''中:#,[]{{}}'"),
+                format!("{prefix}'中:#,[]{{}}"),
+            ),
+            (
+                format!("\"{prefix}\\\"\\\\中:#,[]{{}}\\u263a\""),
+                format!("{prefix}\"\\中:#,[]{{}}☺"),
+            ),
+        ] {
+            let text = format!("{{{encoded}: [{encoded}]}} # ignored");
+            let plan = parse(&text, DataLimits::default()).unwrap();
+            let DataPlanNodeKind::Object(fields) = &plan.node(plan.root()).kind else {
+                panic!("object")
+            };
+            let field = fields.get(&decoded).expect("decoded key");
+            assert_eq!(field.key_location.range(), 1..1 + encoded.len());
+            let DataPlanNodeKind::Array(items) = &plan.node(field.value).kind else {
+                panic!("array")
+            };
+            assert!(
+                matches!(&plan.node(items[0]).kind, DataPlanNodeKind::Scalar(DataScalar::String(s)) if s == &decoded)
+            );
+            let short = DataLimits {
+                string_len: decoded.len() - 1,
+                ..DataLimits::default()
+            };
+            assert!(
+                parse(&text, short).unwrap_err()[0]
+                    .message
+                    .contains("string_len")
+            );
+        }
+    }
+}
+
 fn fixture(name: &str) -> String {
     std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
