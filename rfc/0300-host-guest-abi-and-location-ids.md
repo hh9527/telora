@@ -1,6 +1,6 @@
 # RFC 0300：Host/Guest 服务 ABI 与 Guest 位置表
 
-- 状态：实施中，LocId 值布局及 Rust 服务 ABI 已接通；CLI 总装及初始化诊断接口待完成
+- 状态：实施中，LocId 值布局、Rust 服务 ABI、CLI 字节协议及初始化诊断接口已接通；数据模块与测试加载路径、解析诊断质量仍待完成
 - 跟踪：[#209](https://github.com/hh9527/telora/issues/209)
 - 分支：`feat/rfc-0300-guest-abi`
 - 日期：2026-09-16
@@ -55,7 +55,7 @@ codegen 只根据封闭 MIR 提供布局常量及函数入口，链接器将这�
 本协议不引入位置相关的 Host import，也不提供 set-locs；Locs 由 Guest 自主管理。
 fmt 使用固定编号：1=JSON、2=YAML、3=TOML；数据均为 UTF-8。
 未知 fmt 是 ABI 违约，trap；合法 fmt 下的非法 UTF-8/语法错误属于输入诊断。
-查询请求/结果使用下述 JSON 协议；初始化诊断接口见“待定事项”。
+查询请求/结果使用下述 JSON 协议；初始化诊断通过 get-service-diagnostics 获取。
 这些未定项在 ABI 落地前必须补齐；本草案不声明已经可以独立互操作。
 
 ## 内存与所有权
@@ -259,15 +259,23 @@ Wasm trap 不保证产生响应，由 Host 捕获并丢弃本次实例状态。
 输入解析失败和结果无法 JSON 编码时也形成失败响应，不能把普通语言错误当成 ABI 违约。
 当前输入解析失败已接通文本诊断；保留多条解析诊断及请求内相对坐标仍须完善。
 
-## 失败协议及待定事项
+## 初始化诊断与失败协议
 
-上述服务 ABI 尚未完全规定以下内容，实施前需补充本 RFC，而不是由代码隐式决定：
+`get-service-diagnostics(out: u32, out_cap: u32, result: u32)` 获取初始化诊断。
+输出缓冲区沿用 run-service 的 move 语义和 align=1 分配契约；result 是调用方
+提供的 12 字节、align=4 可写描述符，接收 `[out, out_len, out_cap]`。
+返回 UTF-8 JSON 数组，每项遵循 std/_rt.Diagnostic 的结构。Guest 展开 LocId，
+Host 无需读取语言值或解释位置表。读取不消费诊断，重复读取保留原有记录。
 
-- set-data-source 的解析诊断及 create-service 的初始化诊断如何读取。
-  二者可能失败，不能因为 set-data-source 没有返回值就忽略失败或继续初始化。
-  应复用现有诊断捕获语义，但必须确定显式获取入口或结果协议。
-- create-service 返回 0 成功、1 初始化失败，不允许失败后重试；详细失败由诊断表达。
-- ABI 版本协商及来源名称表的具体编码；不需要独立位置旁文件的配对协议。
+在来源枚举触发准备后、来源注入期间以及 create-service 完成后均可读取；
+来源解析失败和缺失来源都记录为初始化错误。create-service 返回 0 成功、1 失败，
+失败后不得发布初始化快照或开始查询，也不允许替换输入后重试。
+该接口用于初始化阶段，不作为查询诊断接口；查询诊断由 run-service 响应携带。
+Wasm trap 后不得继续读取诊断或释放所有权不确定的缓冲区，应丢弃或重置实例。
+
+ABI 版本由制品元数据声明，Host 必须拒绝不支持的版本，不提供旧 ABI 兼容路径。
+来源名称采用 UTF-8 字节序列，由 name_ptr/name_len 表达，不以 NUL 结尾；
+不需要独立位置旁文件的配对协议。
 
 ABI 违约和 Wasm trap 与可收集的语言诊断不同。配额继续以可停机为目标，
 不追求精确计费，不借本次 ABI 改造增加复杂配额机制。

@@ -1,5 +1,7 @@
-//! A closed init/transform entry. Reset restores bytes, never host-owned values.
-use crate::{artifact::Manifest, session::Session, transport::Value};
+//! Byte-only service host. Guest owns Context, initialization and the handler.
+use crate::{artifact::Manifest, session::Session};
+use telora_core::data_plan::Format;
+mod buffers;
 
 struct Baseline {
     memory: Vec<u8>,
@@ -9,28 +11,71 @@ struct Baseline {
     emitted_debug: u32,
 }
 
+pub struct SourceInput<'a> {
+    pub name: &'a str,
+    pub data: &'a [u8],
+    pub format: Format,
+}
+
+pub struct Initialization {
+    pub success: bool,
+    pub diagnostics: serde_json::Value,
+}
+
 pub struct TransformSession {
     session: Session,
-    initializer: Value,
-    handler: Option<Value>,
     baseline: Option<Baseline>,
     sources: Vec<String>,
+    source_ids: Vec<u32>,
+    ready: bool,
+    poisoned: bool,
 }
 
 impl TransformSession {
-    /// Called after normal module initialization. The compiler-owned Plan is
-    /// (source names, Context -> (Value -> String)), with all types sealed.
     pub fn new(mut session: Session) -> Result<Self, String> {
-        let plan = Value {pointer: session.entry()?, ty: session.manifest.entry_type};
-        let (sources, initializer) = session.pair(plan)?;
-        let sources = serde_json::from_value(session.output_value(sources)?)
-            .map_err(|e| format!("invalid sealed source list: {e}"))?;
-        Ok(Self {session, initializer, sources, handler: None, baseline: None})
+        let count = session
+            .instance
+            .get_typed_func::<(), u32>(&session.store, "get-data-source-count")
+            .map_err(|e| e.to_string())?
+            .call(&mut session.store, ())
+            .map_err(|e| e.to_string())?;
+        let result = buffers::alloc(&mut session, 12, 4)?;
+        let get = session
+            .instance
+            .get_typed_func::<(u32, u32), ()>(&session.store, "get-data-source-name")
+            .map_err(|e| e.to_string())?;
+        let mut sources = Vec::new();
+        let mut source_ids = Vec::new();
+        for index in 0..count {
+            get.call(&mut session.store, (index, result))
+                .map_err(|e| e.to_string())?;
+            let [id, pointer, length] = buffers::words(&session, result)?;
+            sources.push(
+                String::from_utf8(buffers::bytes(&session, pointer, length)?)
+                    .map_err(|e| e.to_string())?,
+            );
+            source_ids.push(id);
+        }
+        buffers::free(&mut session, result, 12, 4)?;
+        Ok(Self {
+            session,
+            baseline: None,
+            sources,
+            source_ids,
+            ready: false,
+            poisoned: false,
+        })
     }
 
-    pub fn sources(&self) -> &[String] { &self.sources }
-    pub fn session(&self) -> &Session { &self.session }
-    pub fn session_mut(&mut self) -> &mut Session { &mut self.session }
+    pub fn sources(&self) -> &[String] {
+        &self.sources
+    }
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+    pub fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
+    }
 
     pub fn usage(&self) -> crate::session::Usage {
         let mut usage = self.session.usage();
@@ -40,49 +85,107 @@ impl TransformSession {
         usage
     }
 
-    pub fn initialize(&mut self, sources: &std::collections::BTreeMap<String, Value>) -> Result<(), String> {
-        if self.handler.is_some() { return Err("service is already initialized".into()); }
-        if self.sources.iter().ne(sources.keys()) {
+    pub fn initialize(&mut self, sources: &[SourceInput<'_>]) -> Result<Initialization, String> {
+        if self.poisoned || self.ready {
+            return Err("service initialization cannot be repeated".into());
+        }
+        if self
+            .sources
+            .iter()
+            .map(String::as_str)
+            .ne(sources.iter().map(|source| source.name))
+        {
             return Err("service sources do not match declared sources".into());
         }
-        let ctx_ty = self.session.manifest.types[self.initializer.ty as usize].arguments[0];
-        let dict_ty = self.session.manifest.types[ctx_ty as usize].fields[0].ty;
-        let string_ty = self.session.manifest.types.iter().position(|ty|
-            ty.kind == crate::artifact::Kind::String).ok_or("missing String layout")? as u32;
-        let mut values = vec![];
-        for (name, &value) in sources {
-            let key = self.session.input_value(string_ty, &name.clone().into())?;
-            values.push((key.pointer, value.pointer));
+        self.poisoned = true;
+        let cap = u32::try_from(
+            sources
+                .iter()
+                .map(|source| source.data.len())
+                .max()
+                .unwrap_or(0),
+        )
+        .map_err(|_| "service source exceeds wasm32")?;
+        let pointer = buffers::alloc(&mut self.session, cap, 1)?;
+        let set = self
+            .session
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.session.store, "set-data-source")
+            .map_err(|e| e.to_string())?;
+        for (source, &id) in sources.iter().zip(&self.source_ids) {
+            self.session
+                .memory
+                .write(&mut self.session.store, pointer as usize, source.data)
+                .map_err(|e| e.to_string())?;
+            let format = match source.format {
+                Format::Json => 1,
+                Format::Yaml => 2,
+                Format::Toml => 3,
+            };
+            set.call(
+                &mut self.session.store,
+                (id, pointer, source.data.len() as u32, format),
+            )
+            .map_err(|e| e.to_string())?;
         }
-        let dict = self.session.input_dict_values(dict_ty, &values)?;
-        let ctx = self.session.input_record_values(ctx_ty,
-            &std::collections::BTreeMap::from([("sources", dict)]))?;
-        let handler = self.session.invoke_values(self.initializer, &[Value {pointer: ctx, ty: ctx_ty}])?;
-        self.handler = Some(handler);
-        Ok(())
+        buffers::free(&mut self.session, pointer, cap, 1)?;
+        let status = self
+            .session
+            .instance
+            .get_typed_func::<(), i32>(&self.session.store, "create-service")
+            .map_err(|e| e.to_string())?
+            .call(&mut self.session.store, ())
+            .map_err(|e| e.to_string())?;
+        let diagnostics = self.initialization_diagnostics()?;
+        self.ready = status == 0;
+        // A failed initialization has no baseline and can never be retried.
+        self.poisoned = !self.ready;
+        Ok(Initialization {
+            success: self.ready,
+            diagnostics,
+        })
     }
 
-    /// The host consumes initialization diagnostics before fixing the baseline.
-    pub fn seal_initialization(&mut self) -> Result<(), String> {
-        if self.baseline.is_some() { return Err("service initialization is already sealed".into()); }
-        let handler = self.handler.ok_or("service is not initialized")?;
-        // Module evaluation is not the end of service initialization. Freeze
-        // injected source records together with the completed service graph,
-        // before any collector can reuse their arena storage.
-        let freeze = self.session.instance
-            .get_typed_func::<(), u32>(&self.session.store, "telora_freeze")
+    fn initialization_diagnostics(&mut self) -> Result<serde_json::Value, String> {
+        let result = buffers::alloc(&mut self.session, 12, 4)?;
+        self.session
+            .instance
+            .get_typed_func::<(u32, u32, u32), ()>(&self.session.store, "get-service-diagnostics")
+            .map_err(|e| e.to_string())?
+            .call(&mut self.session.store, (1, 0, result))
             .map_err(|e| e.to_string())?;
-        freeze.call(&mut self.session.store, ()).map_err(|e| e.to_string())?;
-        let (roots, _) = self.session.collect_work(&[handler])?;
-        self.handler = Some(roots[0]);
-        let globals = self.session.instance.exports(&self.session.store)
+        let diagnostics = buffers::response(&mut self.session, result)?;
+        if !diagnostics.is_array() {
+            return Err("invalid initialization diagnostic response".into());
+        }
+        Ok(diagnostics)
+    }
+
+    /// All Host-owned ABI buffers have been freed before snapshot or reset.
+    pub fn seal_initialization(&mut self) -> Result<(), String> {
+        if self.baseline.is_some() {
+            return Err("service initialization is already sealed".into());
+        }
+        if !self.ready || self.poisoned {
+            return Err("service is not initialized".into());
+        }
+        let globals = self
+            .session
+            .instance
+            .exports(&self.session.store)
             .filter_map(|export| {
                 let name = export.name().to_owned();
-                if !name.starts_with("telora_reset_global_") { return None; }
+                if !name.starts_with("telora_reset_global_") {
+                    return None;
+                }
                 let global = export.into_global()?;
-                global.ty(&self.session.store).mutability().is_mut()
+                global
+                    .ty(&self.session.store)
+                    .mutability()
+                    .is_mut()
                     .then(|| (name, global.get(&self.session.store)))
-            }).collect();
+            })
+            .collect();
         self.baseline = Some(Baseline {
             memory: self.session.memory.data(&self.session.store).to_vec(),
             globals,
@@ -98,43 +201,81 @@ impl TransformSession {
     pub fn reset(&mut self) -> Result<(), String> {
         let baseline = self.baseline.as_ref().ok_or("service is not initialized")?;
         let engine = self.session.module.engine();
-        let limit = baseline.memory.len().checked_add(self.session.memory_limit)
+        let limit = baseline
+            .memory
+            .len()
+            .checked_add(self.session.memory_limit)
             .ok_or("service memory limit overflow")?;
-        let limits = wasmi::StoreLimitsBuilder::new().memory_size(limit)
-            .table_elements(1_000_000).trap_on_grow_failure(true).build();
+        let limits = wasmi::StoreLimitsBuilder::new()
+            .memory_size(limit)
+            .table_elements(1_000_000)
+            .trap_on_grow_failure(true)
+            .build();
         let mut store = wasmi::Store::new(engine, limits);
         store.limiter(|limits| limits);
-        store.set_fuel(self.session.fuel_budget).map_err(|e| e.to_string())?;
+        store
+            .set_fuel(self.session.fuel_budget)
+            .map_err(|e| e.to_string())?;
         let instance = wasmi::Linker::new(engine)
-            .instantiate_and_start(&mut store, &self.session.module).map_err(|e| e.to_string())?;
-        let memory = instance.get_memory(&store, "memory").ok_or("missing service memory")?;
+            .instantiate_and_start(&mut store, &self.session.module)
+            .map_err(|e| e.to_string())?;
+        let memory = instance
+            .get_memory(&store, "memory")
+            .ok_or("missing service memory")?;
         let current = memory.data_size(&store);
         if baseline.memory.len() > current {
-            memory.grow(&mut store, ((baseline.memory.len() - current) / 65536) as u64)
+            memory
+                .grow(
+                    &mut store,
+                    ((baseline.memory.len() - current) / 65536) as u64,
+                )
                 .map_err(|e| e.to_string())?;
         }
-        memory.write(&mut store, 0, &baseline.memory).map_err(|e| e.to_string())?;
+        memory
+            .write(&mut store, 0, &baseline.memory)
+            .map_err(|e| e.to_string())?;
         for (name, value) in &baseline.globals {
-            instance.get_global(&store, name).ok_or("missing reset global")?
-                .set(&mut store, value.clone()).map_err(|e| e.to_string())?;
+            instance
+                .get_global(&store, name)
+                .ok_or("missing reset global")?
+                .set(&mut store, value.clone())
+                .map_err(|e| e.to_string())?;
         }
-        store.set_fuel(self.session.fuel_budget).map_err(|e| e.to_string())?;
+        store
+            .set_fuel(self.session.fuel_budget)
+            .map_err(|e| e.to_string())?;
         self.session.store = store;
         self.session.instance = instance;
         self.session.memory = memory;
         self.session.manifest = baseline.manifest.clone();
         self.session.registered_sources = baseline.registered_sources;
         self.session.emitted_debug.set(baseline.emitted_debug);
+        self.poisoned = false;
         Ok(())
     }
 
-    /// Input is materialized after reset. Language errors are serialized by the Guest entry;
-    /// engine traps return an outer error and the next reset discards the store.
-    pub fn transform(&mut self, input: Value) -> Result<serde_json::Value, String> {
-        let handler = self.handler.ok_or("service is not initialized")?;
-        let output = self.session.invoke_values(handler, &[input])?;
-        let text = self.session.output_value(output)?;
-        let text = text.as_str().ok_or("service entry did not return serialized JSON")?;
-        serde_json::from_str(text).map_err(|e| format!("invalid service response: {e}"))
+    pub fn transform(&mut self, input: &[u8]) -> Result<serde_json::Value, String> {
+        if !self.ready || self.poisoned {
+            return Err("service requires initialization or reset".into());
+        }
+        self.poisoned = true;
+        let length = u32::try_from(input.len()).map_err(|_| "service request exceeds wasm32")?;
+        let pointer = buffers::alloc(&mut self.session, length, 1)?;
+        self.session
+            .memory
+            .write(&mut self.session.store, pointer as usize, input)
+            .map_err(|e| e.to_string())?;
+        let result = buffers::alloc(&mut self.session, 12, 4)?;
+        self.session
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32, u32), ()>(&self.session.store, "run-service")
+            .map_err(|e| e.to_string())?
+            .call(&mut self.session.store, (pointer, length, 1, 0, result))
+            .map_err(|e| e.to_string())?;
+        // No free after a trap: the next reset discards the entire failed instance.
+        buffers::free(&mut self.session, pointer, length, 1)?;
+        let response = buffers::response(&mut self.session, result)?;
+        self.poisoned = false;
+        Ok(response)
     }
 }

@@ -4,6 +4,7 @@ use crate::{abi::*, service_sources as inputs, tables, values::{word, telora_inv
 use telora_wasm_shared::service::Contract;
 mod buffers;
 mod run;
+mod diagnostics;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Phase { Unprepared, Preparing, Prepared, Failed, Ready }
@@ -13,6 +14,7 @@ struct Service {
     phase: Phase,
     initializer: u32,
     handler: u32,
+    errors: alloc::vec::Vec<alloc::string::String>,
 }
 static mut SERVICE: Option<Service> = None;
 
@@ -26,7 +28,7 @@ pub unsafe extern "C" fn telora_service_bootstrap(pointer: u32) {
         assert!((&*core::ptr::addr_of!(SERVICE)).is_none());
         let contract = (pointer as *const Contract).read_unaligned();
         *core::ptr::addr_of_mut!(SERVICE) = Some(Service {
-            contract, phase: Phase::Unprepared, initializer: 0, handler: 0,
+            contract, phase: Phase::Unprepared, initializer: 0, handler: 0, errors: alloc::vec::Vec::new(),
         });
     }
 }
@@ -76,7 +78,13 @@ pub unsafe extern "C" fn set_source(id: u32, pointer: u32, length: u32, format: 
         if !prepare() { return; }
         assert!(service().phase == Phase::Prepared);
         let packet = inputs::telora_service_source_parse(id, pointer, length, format);
-        if word(packet, 12) != 0 { service().phase = Phase::Failed; return; }
+        let error = word(packet, 12);
+        if error != 0 {
+            let message = diagnostics::source_error(id, error);
+            service().errors.push(message);
+            service().phase = Phase::Failed;
+            return;
+        }
         let materialize: unsafe extern "C" fn(u32, u32) -> u32 =
             core::mem::transmute(service().contract.materialize);
         let value = materialize(packet, 0);
@@ -92,6 +100,11 @@ pub unsafe extern "C" fn create() -> i32 {
         assert!(service().phase == Phase::Prepared, "service already created");
         service().phase = Phase::Failed;
         let contract = service().contract;
+        let missing = inputs::missing();
+        if !missing.is_empty() {
+            service().errors.extend(missing);
+            return 1;
+        }
         let context = inputs::context::telora_service_context(contract.context_type,
             contract.dict_type, contract.value_bytes, contract.sources_offset);
         if context == 0 { return 1; }

@@ -110,3 +110,11 @@ pub unsafe extern "C" fn telora_service_sources_seal() -> u32 {
         u32::from(state.failed)
     }
 }
+
+pub(crate) unsafe fn missing() -> Vec<alloc::string::String> {
+    unsafe {
+        sources().slots.iter().filter(|slot| slot.value == 0)
+            .map(|slot| format!("missing required data source @service/{}", crate::text::text(slot.key)))
+            .collect()
+    }
+}

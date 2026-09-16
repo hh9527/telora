@@ -71,31 +71,7 @@ impl Session {
         Ok(())
     }
 
-    pub(crate) fn pair(&self, value: Value) -> Result<(Value, Value), String> {
-        self.expect_value(value, value.ty)?;
-        let desc = &self.manifest.types[value.ty as usize];
-        if desc.kind != Kind::Tuple || desc.fields.len() != 2 {
-            return Err("Wasm: service transition requires a sealed pair".into());
-        }
-        let output = self.output();
-        let (base, bytes) =
-            output.payload(abi::RECORDS, output.word(value.pointer as u64 + abi::DATA)?)?;
-        let field = |index: usize| -> Result<Value, String> {
-            let field = &desc.fields[index];
-            if field.offset as u64 + self.manifest.types[field.ty as usize].bytes as u64 > bytes {
-                return Err("Wasm: transition field exceeds tuple".into());
-            }
-            let value = Value {
-                pointer: u32::try_from(base + field.offset as u64)
-                    .map_err(|_| "Wasm: field address overflow")?,
-                ty: field.ty,
-            };
-            self.expect_value(value, field.ty)?;
-            Ok(value)
-        };
-        Ok((field(0)?, field(1)?))
-    }
-
+    #[cfg(test)]
     pub(crate) fn invoke_values(
         &mut self,
         closure: Value,

@@ -25,21 +25,7 @@ impl Diagnostic {
     }
 }
 
-pub(crate) fn error_message(code: u32) -> &'static str {
-    match code {
-        ERROR_OVERFLOW => "integer arithmetic overflowed",
-        ERROR_DIVISION => "integer division by zero",
-        ERROR_CYCLE => "initialization dependency cycle (cyclic demand)",
-        ERROR_INDEX => "OutOfRange: array index out of bounds",
-        ERROR_KEY => "dictionary key is absent",
-        ERROR_PROPERTY => "property type does not support this decorator target",
-        ERROR_MATCH => "no match arm accepted the value",
-        ERROR_DATA => "data module has not been injected before initialization",
-        ERROR_UNINITIALIZED_CALL => "function called before its declaration was initialized",
-        ERROR_UNINITIALIZED_FUNCTION => "cannot copy an uninitialized function",
-        _ => "Wasm execution failed",
-    }
-}
+pub(crate) use telora_wasm_shared::diagnostics::error_message;
 
 impl Session {
     /// Demand failures can propagate an earlier event without reporting it again.
@@ -85,11 +71,16 @@ impl Session {
                 let mut affected = vec![];
                 for global in &self.manifest.globals {
                     if output.word(global.demand as u64)? == 3
-                        && output.word(global.demand as u64 + 4)? as u64 == pointer {
+                        && output.word(global.demand as u64 + 4)? as u64 == pointer
+                    {
                         affected.push(global.name.as_str());
                     }
                 }
-                format!("{}; affected globals: {}", error_message(code), affected.join(", "))
+                format!(
+                    "{}; affected globals: {}",
+                    error_message(code),
+                    affected.join(", ")
+                )
             } else {
                 error_message(code).into()
             };
@@ -111,8 +102,13 @@ impl Session {
                 subjects,
                 initialization: match output.word(pointer + DIAG_ROOT)? {
                     0 => None,
-                    index => Some(self.manifest.initialization_roots.get(index as usize - 1)
-                        .ok_or("Wasm: invalid initialization root identity")?.clone()),
+                    index => Some(
+                        self.manifest
+                            .initialization_roots
+                            .get(index as usize - 1)
+                            .ok_or("Wasm: invalid initialization root identity")?
+                            .clone(),
+                    ),
                 },
             });
         }

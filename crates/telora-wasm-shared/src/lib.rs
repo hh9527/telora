@@ -8,3 +8,5 @@ pub mod location_tables;
 pub mod locations;
 
 pub mod service;
+
+pub mod diagnostics;
