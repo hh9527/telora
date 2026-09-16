@@ -92,3 +92,17 @@ export def depth_is_a_diagnostic: test.Test = test.should_fail_with(fn() {
     let e = string.join([d, d], "");
     match yaml.parse(string.join([e, "[0]", string.replace(e, "[", "]")], "")) {Err(error) => raise!(error), Ok(_) => 0}
 }, "depth limit");
+
+export def shared_decoding_and_trimmed_flow: test.Test = test.should_ok(fn() {
+    expect(yaml.parse(r#"{ a : [ 1 , 2.5 , hello , 'world' , "a\nb" , !!binary SGk= ] }"#)
+        == Ok(Value.Object({a: Value.Array([Value.Int(1), Value.Float(2.5), Value.String("hello"),
+            Value.String("world"), Value.String("a\nb"), Value.Bytes(b"Hi")])})))
+});
+
+export def multiple_semantic_errors: test.Test = test.should_fail_with(fn() {
+    yaml.parse("a: 9223372036854775808\n\"\\u0061\": 1e999\nnested: {x: 0xZZ, 'x': .inf}").unwrap!()
+}, "YAML integer is outside the i64 range\nduplicate YAML key \"a\"\nYAML Float must be finite\ninvalid YAML integer\nduplicate YAML key \"x\"\nYAML Float must be finite");
+
+export def extra_commas_do_not_hide_numeric_errors: test.Test = test.should_fail_with(fn() {
+    yaml.parse("[,1e999,,9223372036854775808]").unwrap!()
+}, "unexpected YAML flow comma\nYAML Float must be finite\nunexpected YAML flow comma\nYAML integer is outside the i64 range");

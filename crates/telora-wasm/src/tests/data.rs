@@ -19,10 +19,10 @@ fn portable_data_roundtrip_preserves_integer_bits_and_rejects_bad_edges() {
         .unwrap();
     let bytes = crate::compile_executable(&mir.seal_export(export).unwrap()).unwrap();
     let mut sources = mir.sources;
-    let id = sources.add(
+    let id = sources.try_add_data(
         "bundled.yaml",
         std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/portable-values.yaml")).unwrap(),
-    );
+    ).unwrap();
     let plan = telora_core::data_plan::parse_registered(
         &sources,
         id,

@@ -44,7 +44,7 @@ impl TemporalKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct DataNodeId(usize);
+pub struct DataNodeId(pub(crate) usize);
 impl DataNodeId {
     pub fn index(self) -> usize {
         self.0

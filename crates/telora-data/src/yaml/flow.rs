@@ -1,18 +1,20 @@
+use super::structure::Text;
 use super::{build::Build, scalar};
 use crate::{
     json::{DataField, DataNodeId},
     source::{Diagnostic, Location},
 };
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use alloc::vec::Vec;
 
 enum Container {
     Array(Vec<DataNodeId>),
-    Object(BTreeMap<String, DataField>, Option<(String, Location)>),
+    Object(Vec<(Text, DataField)>, Option<(Text, Location)>),
 }
 struct Frame {
     start: usize,
     container: Container,
     separator: bool,
+    recovered: usize,
 }
 
 pub(super) struct Flow<'a, 'b> {
@@ -99,24 +101,30 @@ impl<'a, 'b> Flow<'a, 'b> {
                     Container::Array(items) => items.len(),
                     Container::Object(fields, _) => fields.len(),
                 };
-                self.build.slot(count, self.loc(self.pos, self.pos))?;
+                self.build
+                    .slot(count + frame.recovered, self.loc(self.pos, self.pos))?;
+                if self.peek() == Some(b',') {
+                    let loc = self.loc(self.pos, self.pos + 1);
+                    self.build.reserve(self.depth + self.frames.len(), loc)?;
+                    self.build
+                        .plan
+                        .diagnostics
+                        .push(Diagnostic::error("unexpected YAML flow comma", loc));
+                    self.frames.last_mut().unwrap().recovered += 1;
+                    self.pos += 1;
+                    continue;
+                }
                 if matches!(frame.container, Container::Object(..)) {
                     let start = self.pos;
                     let text = self.scalar_text(&[b':', b',', b'}'])?;
-                    let loc = self.loc(start, self.pos);
+                    let loc = self.loc(start, self.pos - (text.len() - text.trim_end().len()));
                     let key = scalar::key(self.build, text.trim(), loc)?;
                     self.expect(b':')?;
-                    let Container::Object(fields, pending) =
+                    let Container::Object(_, pending) =
                         &mut self.frames.last_mut().unwrap().container
                     else {
                         unreachable!()
                     };
-                    if let Some(previous) = fields.get(&key) {
-                        return Err(
-                            Diagnostic::error(format!("duplicate YAML key {key:?}"), loc)
-                                .with_secondary("first defined here", previous.key_location),
-                        );
-                    }
                     *pending = Some((key, loc));
                     self.ws();
                 }
@@ -129,18 +137,19 @@ impl<'a, 'b> Flow<'a, 'b> {
                     let container = if self.peek() == Some(b'[') {
                         Container::Array(Vec::new())
                     } else {
-                        Container::Object(BTreeMap::new(), None)
+                        Container::Object(Vec::new(), None)
                     };
                     self.pos += 1;
                     self.frames.push(Frame {
                         start,
                         container,
                         separator: false,
+                        recovered: 0,
                     });
                 }
                 _ => {
                     let raw = self.scalar_text(&[b',', b']', b'}'])?;
-                    let loc = self.loc(start, self.pos);
+                    let loc = self.loc(start, self.pos - (raw.len() - raw.trim_end().len()));
                     let value = scalar::value(self.build, raw.trim(), loc)?;
                     let id = self.build.plan.scalar(value, loc);
                     self.attach(id);
@@ -154,13 +163,13 @@ impl<'a, 'b> Flow<'a, 'b> {
                 Container::Array(items) => items.push(id),
                 Container::Object(fields, key) => {
                     let (key, key_location) = key.take().unwrap();
-                    fields.insert(
+                    fields.push((
                         key,
                         DataField {
                             key_location,
                             value: id,
                         },
-                    );
+                    ));
                 }
             }
             frame.separator = true;

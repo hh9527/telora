@@ -13,6 +13,7 @@ use telora_data::{
 };
 
 mod json;
+mod yaml;
 
 fn parse(input: &str, format: Format) -> Result<Plan, String> {
     let mut sources = SourceDatabase::default();
@@ -26,7 +27,7 @@ fn parse(input: &str, format: Format) -> Result<Plan, String> {
     })?;
     match plan {
         data_plan::ParsedData::Owned(plan) => Ok(plan),
-        data_plan::ParsedData::Json { .. } => unreachable!("JSON has a direct span ABI"),
+        data_plan::ParsedData::Json { .. } | data_plan::ParsedData::Yaml { .. } => unreachable!("span plan has a direct ABI"),
     }
 }
 
@@ -63,10 +64,7 @@ pub unsafe extern "C" fn telora_toml_parse(input: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_yaml_parse(input: u32) -> u32 {
     unsafe {
-        export_plan(
-            parse(crate::text::text(input), Format::Yaml)
-                .map_err(|error| format!("<yaml string>: {error}")),
-        )
+        yaml::parse(crate::text::text(input))
     }
 }
 

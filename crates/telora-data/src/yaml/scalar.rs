@@ -1,9 +1,7 @@
 use super::build::Build;
-use crate::{
-    json::DataScalar,
-    source::{Diagnostic, Location},
-};
-use alloc::{string::String, vec::Vec};
+use super::structure::{Scalar, Text};
+use crate::source::{Diagnostic, Location};
+use alloc::borrow::Cow;
 
 fn looks_integer(text: &str) -> bool {
     let unsigned = text.trim_start_matches(['+', '-']);
@@ -15,11 +13,11 @@ fn looks_integer(text: &str) -> bool {
 fn looks_float(text: &str) -> bool {
     text.contains(['.', 'e', 'E']) && text.chars().any(|ch| ch.is_ascii_digit())
 }
-fn parse_yaml_int(text: &str) -> Result<i64, &'static str> {
-    let normalized = text.replace('_', "");
+pub(super) fn parse_yaml_int(text: &str) -> Result<i64, &'static str> {
+    let normalized = normalize_number(text);
     let (negative, unsigned) = normalized
         .strip_prefix('-')
-        .map_or((false, normalized.as_str()), |v| (true, v));
+        .map_or((false, normalized.as_ref()), |v| (true, v));
     let unsigned = unsigned.strip_prefix('+').unwrap_or(unsigned);
     let (radix, digits) = unsigned.strip_prefix("0x").map_or_else(
         || {
@@ -58,83 +56,109 @@ fn core_non_string(text: &str) -> bool {
         || text.parse::<f64>().is_ok()
 }
 
-pub(super) fn key(build: &mut Build, text: &str, loc: Location) -> Result<String, Diagnostic> {
+pub(super) fn normalize_number(text: &str) -> Cow<'_, str> {
+    if text.contains('_') {
+        Cow::Owned(text.replace('_', ""))
+    } else {
+        Cow::Borrowed(text)
+    }
+}
+
+fn string(build: &mut Build, text: &str, loc: Location) -> Result<Text, Diagnostic> {
+    let mut length = 0;
+    if text.starts_with(['\'', '"']) {
+        let escaped = quoted(text, loc, |piece, local| {
+            build.admit(&mut length, piece.len(), false, local)
+        })?;
+        Ok(if escaped {
+            Text::Quoted(loc.range())
+        } else {
+            Text::Source(loc.start as usize + 1..loc.end as usize - 1)
+        })
+    } else {
+        build.admit(&mut length, text.len(), false, loc)?;
+        Ok(Text::Source(loc.range()))
+    }
+}
+
+pub(super) fn key(build: &mut Build, text: &str, loc: Location) -> Result<Text, Diagnostic> {
     if text == "<<" {
         return Err(Diagnostic::error("YAML merge keys are not supported", loc));
     }
     build.unsupported(text, loc)?;
-    if text.is_empty() || text.starts_with(['[', '{', '?', '!']) {
+    if text.is_empty()
+        || text.starts_with(['[', '{', '?', '!'])
+        || (!text.starts_with(['\'', '"']) && core_non_string(text))
+    {
         return Err(Diagnostic::error("YAML mapping keys must be Strings", loc));
     }
-    if text.starts_with(['\'', '"']) {
-        return quoted(build, text, loc);
-    }
-    if core_non_string(text) {
-        return Err(Diagnostic::error("YAML mapping keys must be Strings", loc));
-    }
-    let mut value = String::new();
-    build.append(&mut value, text, loc)?;
-    Ok(value)
+    string(build, text, loc)
 }
 
-pub(super) fn value(
-    build: &mut Build,
-    text: &str,
-    loc: Location,
-) -> Result<DataScalar, Diagnostic> {
+pub(super) fn value(build: &mut Build, text: &str, loc: Location) -> Result<Scalar, Diagnostic> {
     build.unsupported(text, loc)?;
     if let Some(encoded) = text.strip_prefix("!!binary") {
-        return binary(build, encoded.trim(), loc).map(DataScalar::Bytes);
+        let encoded = encoded.trim();
+        let mut length = 0;
+        binary(encoded, loc, |bytes| {
+            build.admit(&mut length, bytes.len(), true, loc)
+        })?;
+        return Ok(Scalar::Bytes(
+            loc.end as usize - encoded.len()..loc.end as usize,
+        ));
     }
     if text.starts_with('!') {
         return Err(Diagnostic::error("custom YAML tags are not supported", loc));
     }
     if text.starts_with(['\'', '"']) {
-        return quoted(build, text, loc).map(DataScalar::String);
+        return string(build, text, loc).map(Scalar::String);
     }
     Ok(match text {
-        "" | "~" | "null" | "Null" | "NULL" => DataScalar::Null,
-        "true" | "True" | "TRUE" => DataScalar::Bool(true),
-        "false" | "False" | "FALSE" => DataScalar::Bool(false),
-        ".inf" | ".Inf" | ".INF" | "-.inf" | "-.Inf" | "-.INF" | ".nan" | ".NaN" | ".NAN" => {
-            return Err(Diagnostic::error("YAML Float must be finite", loc));
-        }
-        _ if looks_integer(text) => {
-            DataScalar::Int(parse_yaml_int(text).map_err(|m| Diagnostic::error(m, loc))?)
-        }
-        _ if looks_float(text) => {
-            let number = text
-                .replace('_', "")
-                .parse::<f64>()
-                .map_err(|_| Diagnostic::error("invalid YAML Float", loc))?;
-            if !number.is_finite() {
-                return Err(Diagnostic::error("YAML Float must be finite", loc));
+        "" | "~" | "null" | "Null" | "NULL" => Scalar::Null,
+        "true" | "True" | "TRUE" => Scalar::Bool(true),
+        "false" | "False" | "FALSE" => Scalar::Bool(false),
+        _ if looks_integer(text) => Scalar::Number {
+            range: loc.range(),
+            float: false,
+        },
+        _ if looks_float(text)
+            || matches!(
+                text,
+                ".inf" | ".Inf" | ".INF" | "-.inf" | "-.Inf" | "-.INF" | ".nan" | ".NaN" | ".NAN"
+            ) =>
+        {
+            Scalar::Number {
+                range: loc.range(),
+                float: true,
             }
-            DataScalar::Float(number)
         }
-        _ => {
-            let mut value = String::new();
-            build.append(&mut value, text, loc)?;
-            DataScalar::String(value)
-        }
+        _ => Scalar::String(string(build, text, loc)?),
     })
 }
 
-fn quoted(build: &mut Build, text: &str, loc: Location) -> Result<String, Diagnostic> {
+pub(super) fn quoted(
+    text: &str,
+    loc: Location,
+    mut emit: impl FnMut(&str, Location) -> Result<(), Diagnostic>,
+) -> Result<bool, Diagnostic> {
     use super::lexer::{Kind, Scanner};
     let mut scanner = Scanner::new(text);
     let opening = scanner.next();
     debug_assert_eq!(opening.map(|t| t.kind), Some(Kind::Start));
-    let mut output = String::new();
+    let mut escaped = false;
     while let Some(token) = scanner.next() {
         let start = token.span.start;
-        let local = build.loc(loc.start as usize + start..loc.start as usize + scanner.pos);
+        let local = Location::from_usize(
+            loc.source,
+            loc.start as usize + start..loc.start as usize + scanner.pos,
+        )
+        .unwrap();
         let ch = match token.kind {
             Kind::Text => {
-                build.append(&mut output, &text[token.span], local)?;
+                emit(&text[token.span], local)?;
                 continue;
             }
-            Kind::End if scanner.pos == text.len() => return Ok(output),
+            Kind::End if scanner.pos == text.len() => return Ok(escaped),
             Kind::End => {
                 return Err(Diagnostic::error(
                     "unexpected content after quoted YAML String",
@@ -168,17 +192,25 @@ fn quoted(build: &mut Build, text: &str, loc: Location) -> Result<String, Diagno
                             Diagnostic::error("incomplete YAML Unicode escape", loc)
                         })?;
                         let digit = c.to_digit(16).ok_or_else(|| {
-                            build.error(
-                                loc.start as usize + start..loc.start as usize + scanner.pos,
+                            Diagnostic::error(
                                 "invalid YAML Unicode escape",
+                                Location::from_usize(
+                                    loc.source,
+                                    loc.start as usize + start..loc.start as usize + scanner.pos,
+                                )
+                                .unwrap(),
                             )
                         })?;
                         value = value * 16 + digit;
                     }
                     char::from_u32(value).ok_or_else(|| {
-                        build.error(
-                            loc.start as usize + start..loc.start as usize + scanner.pos,
+                        Diagnostic::error(
                             "invalid YAML Unicode scalar",
+                            Location::from_usize(
+                                loc.source,
+                                loc.start as usize + start..loc.start as usize + scanner.pos,
+                            )
+                            .unwrap(),
                         )
                     })?
                 }
@@ -186,16 +218,24 @@ fn quoted(build: &mut Build, text: &str, loc: Location) -> Result<String, Diagno
             },
             _ => unreachable!("quoted scanner remains in string mode until End"),
         };
-        build.append(
-            &mut output,
+        escaped = true;
+        emit(
             ch.encode_utf8(&mut [0; 4]),
-            build.loc(loc.start as usize + start..loc.start as usize + scanner.pos),
+            Location::from_usize(
+                loc.source,
+                loc.start as usize + start..loc.start as usize + scanner.pos,
+            )
+            .unwrap(),
         )?;
     }
     Err(Diagnostic::error("unclosed YAML string", loc))
 }
 
-fn binary(build: &mut Build, text: &str, loc: Location) -> Result<Vec<u8>, Diagnostic> {
+pub(super) fn binary(
+    text: &str,
+    loc: Location,
+    mut emit: impl FnMut(&[u8]) -> Result<(), Diagnostic>,
+) -> Result<(), Diagnostic> {
     let digit = |b: u8| match b {
         b'A'..=b'Z' => Some(b - b'A'),
         b'a'..=b'z' => Some(b - b'a' + 26),
@@ -211,7 +251,6 @@ fn binary(build: &mut Build, text: &str, loc: Location) -> Result<Vec<u8>, Diagn
         )
     };
     let mut input = text.bytes().filter(|b| !b.is_ascii_whitespace());
-    let mut output = Vec::new();
     let mut any = false;
     while let Some(a) = input.next() {
         any = true;
@@ -238,10 +277,10 @@ fn binary(build: &mut Build, text: &str, loc: Location) -> Result<Vec<u8>, Diagn
             return Err(error());
         }
         let bytes = [(a << 2) | (b >> 4), (b << 4) | (c >> 2), (c << 6) | d];
-        build.bytes(&mut output, &bytes[..3 - padding], loc)?;
+        emit(&bytes[..3 - padding])?;
     }
     if !any {
         return Err(error());
     }
-    Ok(output)
+    Ok(())
 }

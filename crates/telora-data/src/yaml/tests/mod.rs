@@ -1,5 +1,7 @@
 extern crate std;
 use super::*;
+use crate::{SourceDatabase, json::ValidatedDataPlan};
+use alloc::string::String;
 
 #[test]
 fn quoted_runs_cross_lexical_windows_without_exposing_punctuation() {
@@ -52,13 +54,14 @@ fn fixture(name: &str) -> String {
 }
 fn parse(text: &str, limits: DataLimits) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
     let mut sources = SourceDatabase::default();
-    let id = sources.add("test.yaml", text);
+    let id = sources.try_add_data("test.yaml", text.into()).unwrap();
     crate::data_plan::parse_registered_with_limits(
         &sources,
         id,
         crate::data_plan::Format::Yaml,
         limits,
-    ).map(crate::data_plan::ParsedData::owned)
+    )
+    .map(|parsed| project(parsed, &sources, id))
 }
 
 #[test]
@@ -68,9 +71,11 @@ fn eol_and_chunk_boundaries_preserve_values_and_positions() {
     for eol in ["\n", "\r\n", "\r"] {
         let text = text.replace('\n', eol);
         let mut sources = SourceDatabase::default();
-        let id = sources.add("core.yaml", &text);
-        let plan = crate::data_plan::parse_registered(&sources, id, crate::data_plan::Format::Yaml)
-            .unwrap().owned();
+        let id = sources.try_add_data("core.yaml", text.clone()).unwrap();
+        let parsed =
+            crate::data_plan::parse_registered(&sources, id, crate::data_plan::Format::Yaml)
+                .unwrap();
+        let plan = project(parsed, &sources, id);
         snapshots.push((
             crate::data_plan_test::render(&plan),
             plan.nodes()
@@ -89,12 +94,15 @@ fn eol_and_chunk_boundaries_preserve_values_and_positions() {
                 expected
             );
         }
-        let mut parser = Parser::new(id, sources.get(id).text(), DataLimits::default()).unwrap();
+        let mut parser = Parser::new(id, &text, DataLimits::default()).unwrap();
         parser.lines = lines::index(
             text.char_indices()
                 .map(|(i, ch)| &text[i..i + ch.len_utf8()]),
         );
-        let plan = parser.parse().unwrap();
+        let raw = parser.parse().unwrap();
+        let (plan, ctx) = validate::validate(raw, &text).unwrap();
+        let (decoded, bytes) = ctx.into_decoded();
+        let plan = plan.into_owned(&text, &decoded, &bytes);
         assert_eq!(
             crate::data_plan_test::render(&plan),
             snapshots.last().unwrap().0
@@ -248,3 +256,26 @@ fn small_stack_handles_flow_block_wide_errors_and_cleanup() {
         .join()
         .unwrap();
 }
+
+fn project(
+    parsed: crate::data_plan::ParsedData,
+    sources: &SourceDatabase,
+    id: SourceId,
+) -> ValidatedDataPlan {
+    let crate::data_plan::ParsedData::Yaml {
+        plan,
+        decoded,
+        bytes,
+    } = parsed
+    else {
+        panic!("YAML span plan")
+    };
+    let mut plan = plan.into_owned(
+        sources.get(id).text().contiguous().unwrap(),
+        &decoded,
+        &bytes,
+    );
+    plan.source_index = Some((id, sources.get(id).line_index().clone()));
+    plan
+}
+mod phases;

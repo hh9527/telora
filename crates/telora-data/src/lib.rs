@@ -12,7 +12,7 @@ mod limits;
 pub mod source;
 pub mod syntax;
 mod toml;
-mod yaml;
+pub mod yaml;
 
 pub use document::DocumentText;
 pub use limits::DataLimits;

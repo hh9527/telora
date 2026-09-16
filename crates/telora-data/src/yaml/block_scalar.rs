@@ -1,4 +1,5 @@
 use super::*;
+use structure::Piece;
 
 impl Parser<'_> {
     pub(super) fn block_scalar(
@@ -33,7 +34,8 @@ impl Parser<'_> {
             })
             .filter(|indent| *indent > parent);
         let indent = explicit.or(inferred).unwrap_or(parent + 1);
-        let mut output = String::new();
+        let pieces_start = self.build.plan.pieces.len();
+        let mut length = 0;
         let mut pending_newlines = 0usize;
         let mut previous: Option<(bool, bool)> = None;
         let mut end = start + header.len();
@@ -42,25 +44,25 @@ impl Parser<'_> {
             if !content.trim().is_empty() && line.indent < indent {
                 break;
             }
-            let raw = if line.indent <= parent && content.trim().is_empty() {
-                Cow::Borrowed("")
+            let range = if line.indent <= parent && content.trim().is_empty() {
+                line.end..line.end
             } else {
-                self.text((line.start + indent).min(line.end)..line.end)
+                (line.start + indent).min(line.end)..line.end
             };
-            let empty = raw.is_empty();
+            let empty = range.is_empty();
             let more = line.indent > indent;
             let piece_loc = self.build.loc(line.start..line.end);
             if let Some((prev_empty, prev_more)) = previous {
                 if style == b'|' || prev_empty || empty || prev_more || more {
                     pending_newlines += 1;
                 } else {
-                    self.flush_newlines(&mut output, &mut pending_newlines, piece_loc)?;
-                    self.build.append(&mut output, " ", piece_loc)?;
+                    self.flush_newlines(&mut length, &mut pending_newlines, piece_loc)?;
+                    self.piece(&mut length, Piece::Spaces(1), piece_loc)?;
                 }
             }
             if !empty {
-                self.flush_newlines(&mut output, &mut pending_newlines, piece_loc)?;
-                self.build.append(&mut output, &raw, piece_loc)?;
+                self.flush_newlines(&mut length, &mut pending_newlines, piece_loc)?;
+                self.piece(&mut length, Piece::Source(range), piece_loc)?;
             }
             previous = Some((empty, more));
             end = line.end;
@@ -70,26 +72,35 @@ impl Parser<'_> {
             Some('-') => {}
             Some('+') => {
                 pending_newlines += 1;
-                self.flush_newlines(&mut output, &mut pending_newlines, loc)?;
+                self.flush_newlines(&mut length, &mut pending_newlines, loc)?;
             }
-            _ if previous.is_some() => self.build.append(&mut output, "\n", loc)?,
+            _ if previous.is_some() => self.piece(&mut length, Piece::Newlines(1), loc)?,
             _ => {}
         }
-        Ok(self
-            .build
-            .plan
-            .scalar(DataScalar::String(output), self.build.loc(start..end)))
+        Ok(self.build.plan.scalar(
+            Scalar::String(Text::Block(pieces_start..self.build.plan.pieces.len())),
+            self.build.loc(start..end),
+        ))
+    }
+    fn piece(&mut self, length: &mut usize, piece: Piece, loc: Location) -> Result<(), Diagnostic> {
+        let bytes = match &piece {
+            Piece::Source(range) => range.len(),
+            Piece::Spaces(n) | Piece::Newlines(n) => *n,
+        };
+        self.build.admit(length, bytes, false, loc)?;
+        self.build.plan.pieces.push(piece);
+        Ok(())
     }
     fn flush_newlines(
         &mut self,
-        output: &mut String,
+        length: &mut usize,
         count: &mut usize,
         loc: Location,
     ) -> Result<(), Diagnostic> {
-        while *count > 0 {
-            self.build.append(output, "\n", loc)?;
-            *count -= 1;
+        if *count > 0 {
+            self.piece(length, Piece::Newlines(*count), loc)?;
         }
+        *count = 0;
         Ok(())
     }
 }

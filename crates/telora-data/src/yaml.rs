@@ -2,12 +2,12 @@
 //! merge expansion, and resource admission before decoded payload allocation.
 use crate::{
     DataLimits,
-    source::SourceText,
-    json::{DataField, DataNodeId, DataScalar, ValidatedDataPlan},
-    source::{Diagnostic, Location, SourceDatabase, SourceId, TextRange},
+    json::{DataField, DataNodeId},
+    source::{Diagnostic, Location, SourceId},
 };
-use alloc::{borrow::Cow, collections::BTreeMap, string::String, vec::Vec};
+use alloc::vec::Vec;
 use core::ops::Range;
+use structure::{Plan, Scalar, Text};
 
 mod block_scalar;
 mod build;
@@ -18,14 +18,31 @@ mod scalar;
 use build::Build;
 use lines::Line;
 
-pub(crate) fn parse_with_limits(
-    sources: &SourceDatabase,
+mod structure;
+mod validate;
+pub use validate::{ParseCtx, YamlKind, YamlNode, YamlPlan};
+
+/// Parse-0 admits resources and records source spans, without decoded payloads.
+pub fn parse_structure(
     source: SourceId,
+    input: &str,
     limits: DataLimits,
-) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
-    Parser::new(source, sources.get(source).text(), limits)
+) -> Result<YamlStructure<'_>, Vec<Diagnostic>> {
+    let raw = Parser::new(source, input, limits)
         .and_then(Parser::parse)
-        .map_err(|error| vec![error])
+        .map_err(|error| vec![error])?;
+    Ok(YamlStructure { src: input, raw })
+}
+
+#[derive(Debug)]
+pub struct YamlStructure<'a> {
+    src: &'a str,
+    raw: Plan,
+}
+impl<'a> YamlStructure<'a> {
+    pub fn validate(self) -> Result<(YamlPlan, ParseCtx<'a>), Vec<Diagnostic>> {
+        validate::validate(self.raw, self.src)
+    }
 }
 
 struct Sequence {
@@ -40,9 +57,9 @@ struct Mapping {
     depth: usize,
     start: usize,
     end: usize,
-    fields: BTreeMap<String, DataField>,
+    fields: Vec<(Text, DataField)>,
     first: Option<Range<usize>>,
-    waiting: Option<(String, Location)>,
+    waiting: Option<(Text, Location)>,
 }
 enum Task {
     Block { indent: usize, depth: usize },
@@ -51,7 +68,7 @@ enum Task {
 }
 
 struct Parser<'a> {
-    source: &'a SourceText,
+    source: &'a str,
     lines: Vec<Line>,
     position: usize,
     build: Build,
@@ -60,15 +77,15 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(id: SourceId, source: &'a SourceText, limits: DataLimits) -> Result<Self, Diagnostic> {
+    fn new(id: SourceId, source: &'a str, limits: DataLimits) -> Result<Self, Diagnostic> {
         let build = Build::new(id, limits);
         build.check(
-            build.loc(0..source.byte_len()),
+            build.loc(0..source.len()),
             "file_size",
-            source.byte_len(),
+            source.len(),
             limits.file_size,
         )?;
-        let lines = lines::index(source.chunks());
+        let lines = lines::index(core::iter::once(source));
         Ok(Self {
             source,
             lines,
@@ -78,12 +95,10 @@ impl<'a> Parser<'a> {
             result: None,
         })
     }
-    fn text(&self, range: Range<usize>) -> Cow<'a, str> {
-        self.source
-            .slice(TextRange::from_usize(range).expect("registered YAML range"))
-            .expect("YAML character boundaries")
+    fn text(&self, range: Range<usize>) -> &'a str {
+        &self.source[range]
     }
-    fn content(&self, index: usize) -> Cow<'a, str> {
+    fn content(&self, index: usize) -> &'a str {
         let line = self.lines[index];
         self.text(line.start + line.indent..line.end)
     }
@@ -107,14 +122,11 @@ impl<'a> Parser<'a> {
     }
     fn here(&self) -> Location {
         self.lines.get(self.position).map_or_else(
-            || {
-                self.build
-                    .loc(self.source.byte_len()..self.source.byte_len())
-            },
+            || self.build.loc(self.source.len()..self.source.len()),
             |line| self.build.loc(line.start + line.indent..line.end),
         )
     }
-    fn parse(mut self) -> Result<ValidatedDataPlan, Diagnostic> {
+    fn parse(mut self) -> Result<Plan, Diagnostic> {
         for line in &self.lines {
             if line.tab_indent {
                 return Err(self.build.error(
@@ -131,7 +143,7 @@ impl<'a> Parser<'a> {
         if self.position == self.lines.len() {
             let loc = self.build.loc(0..0);
             self.build.reserve(1, loc)?;
-            self.result = Some(self.build.plan.scalar(DataScalar::Null, loc));
+            self.result = Some(self.build.plan.scalar(Scalar::Null, loc));
         } else {
             self.tasks.push(Task::Block {
                 indent: self.lines[self.position].indent,
@@ -155,7 +167,6 @@ impl<'a> Parser<'a> {
         self.build
             .plan
             .set_root(self.result.expect("completed YAML root"));
-        self.build.plan.postordered = true;
         Ok(self.build.plan)
     }
     fn block(&mut self, indent: usize, depth: usize) -> Result<(), Diagnostic> {
@@ -200,7 +211,7 @@ impl<'a> Parser<'a> {
             depth,
             start,
             end: start,
-            fields: BTreeMap::new(),
+            fields: Vec::new(),
             first,
             waiting: None,
         }));
@@ -269,13 +280,13 @@ impl<'a> Parser<'a> {
         if let Some((key, key_location)) = mapping.waiting.take() {
             let value = self.result.take().expect("mapping child");
             mapping.end = self.build.plan.node(value).location.end as usize;
-            mapping.fields.insert(
+            mapping.fields.push((
                 key,
                 DataField {
                     key_location,
                     value,
                 },
-            );
+            ));
         }
         self.skip();
         let range = if let Some(first) = mapping.first.take() {
@@ -309,12 +320,6 @@ impl<'a> Parser<'a> {
         let key_location = self.build.loc(key_start..key_start + key_text.len());
         self.build.slot(mapping.fields.len(), key_location)?;
         let key = scalar::key(&mut self.build, key_text, key_location)?;
-        if let Some(previous) = mapping.fields.get(&key) {
-            return Err(
-                Diagnostic::error(format!("duplicate YAML key {key:?}"), key_location)
-                    .with_secondary("first defined here", previous.key_location),
-            );
-        }
         let tail = &raw[colon + 1..];
         let rest = lines::uncomment(tail).trim();
         let start = range.start + colon + 1 + tail.len() - tail.trim_start().len();
@@ -330,7 +335,7 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
             self.build.reserve(depth, key_location)?;
-            self.result = Some(self.build.plan.scalar(DataScalar::Null, key_location));
+            self.result = Some(self.build.plan.scalar(Scalar::Null, key_location));
         } else if rest.starts_with(['|', '>']) {
             self.result = Some(self.block_scalar(rest, mapping.indent, depth, start)?);
         } else {

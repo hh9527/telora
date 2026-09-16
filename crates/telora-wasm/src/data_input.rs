@@ -76,6 +76,9 @@ impl Manifest {
             ParsedData::Json { plan, .. } => {
                 ids.extend(plan.nodes.iter().map(|node| node.location.source));
             }
+            ParsedData::Yaml { plan, .. } => {
+                ids.extend(plan.nodes.iter().map(|node| node.location.source));
+            }
             ParsedData::Owned(plan) => {
                 for node in plan.nodes() {
                     ids.insert(node.location.source);

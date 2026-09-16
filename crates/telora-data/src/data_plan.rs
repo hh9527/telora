@@ -25,18 +25,19 @@ pub fn enforce_limits(
         .map_err(|error| error.to_string())
 }
 
-/// Original JSON input belongs to the source database. Its plan owns only
-/// flat nodes and one decoded buffer, never an allocation per text value.
+/// JSON/YAML inputs belong to the source database. Plans own flat nodes and
+/// shared decoded buffers, never an allocation per text value.
 #[derive(Clone, Debug)]
 pub enum ParsedData {
     Json { plan: crate::json::JsonPlan, decoded: String },
+    Yaml { plan: crate::yaml::YamlPlan, decoded: String, bytes: Vec<u8> },
     Owned(ValidatedDataPlan),
 }
 
 #[cfg(test)]
 impl ParsedData {
     pub(crate) fn owned(self) -> ValidatedDataPlan {
-        match self { Self::Owned(plan) => plan, Self::Json { .. } => panic!("expected non-JSON plan") }
+        match self { Self::Owned(plan) => plan, Self::Json { .. } | Self::Yaml { .. } => panic!("expected owned plan") }
     }
 }
 
@@ -62,11 +63,15 @@ pub fn parse_registered_with_limits(
         let (plan, ctx) = crate::json::parse_structure(source, text, limits)?.validate()?;
         return Ok(ParsedData::Json { plan, decoded: ctx.into_decoded() });
     }
-    let mut plan = match format {
-        Format::Json => unreachable!(),
-        Format::Yaml => crate::yaml::parse_with_limits(sources, source, limits),
-        Format::Toml => crate::toml::parse_with_limits(sources, source, limits),
-    }?;
+    if matches!(format, Format::Yaml) {
+        let text = sources.get(source).text().contiguous().ok_or_else(|| vec![
+            Diagnostic::error("YAML data requires a contiguous source", crate::source::Location::from_usize(source, 0..0).unwrap())
+        ])?;
+        let (plan, ctx) = crate::yaml::parse_structure(source, text, limits)?.validate()?;
+        let (decoded, bytes) = ctx.into_decoded();
+        return Ok(ParsedData::Yaml { plan, decoded, bytes });
+    }
+    let mut plan = crate::toml::parse_with_limits(sources, source, limits)?;
     plan.source_index = Some((source, sources.get(source).line_index().clone()));
     Ok(ParsedData::Owned(plan))
 }
@@ -134,8 +139,9 @@ mod tests {
     fn backend_data_limits_count_nodes_and_decoded_payloads() {
         let mut sources = SourceDatabase::default();
         let text = "base: [1, 2]\ncopy: [1, 2]\n";
-        let source = sources.add("limits.yaml", text);
-        let ParsedData::Owned(plan) = parse_registered(&sources, source, Format::Yaml).unwrap() else { panic!("YAML plan") };
+        let source = sources.try_add_data("limits.yaml", text.into()).unwrap();
+        let ParsedData::Yaml { plan, decoded, bytes } = parse_registered(&sources, source, Format::Yaml).unwrap() else { panic!("YAML plan") };
+        let plan = plan.into_owned(text, &decoded, &bytes);
         let mut limits = crate::DataLimits::default();
         limits.nodes = 6;
         assert!(

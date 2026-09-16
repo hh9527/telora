@@ -1,14 +1,14 @@
+use super::structure::Plan;
 use crate::{
     DataLimits,
-    json::ValidatedDataPlan,
     source::{Diagnostic, Location, SourceId},
 };
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 use core::ops::Range;
 
 pub(super) struct Build {
     pub source: SourceId,
-    pub plan: ValidatedDataPlan,
+    pub plan: Plan,
     pub limits: DataLimits,
     nodes: usize,
     payload: usize,
@@ -19,7 +19,7 @@ impl Build {
         Self {
             source,
             limits,
-            plan: ValidatedDataPlan::default(),
+            plan: Plan::default(),
             nodes: 0,
             payload: 0,
         }
@@ -64,34 +64,24 @@ impl Build {
         self.payload = next;
         Ok(())
     }
-    pub fn append(
+    pub fn admit(
         &mut self,
-        output: &mut String,
-        text: &str,
+        length: &mut usize,
+        bytes: usize,
+        binary: bool,
         loc: Location,
     ) -> Result<(), Diagnostic> {
-        let next = output
-            .len()
-            .checked_add(text.len())
-            .ok_or_else(|| Diagnostic::error("data string length overflow", loc))?;
-        self.check(loc, "string_len", next, self.limits.string_len)?;
-        self.payload(text.len(), loc)?;
-        output.push_str(text);
-        Ok(())
-    }
-    pub fn bytes(
-        &mut self,
-        output: &mut Vec<u8>,
-        bytes: &[u8],
-        loc: Location,
-    ) -> Result<(), Diagnostic> {
-        let next = output
-            .len()
-            .checked_add(bytes.len())
-            .ok_or_else(|| Diagnostic::error("data bytes length overflow", loc))?;
-        self.check(loc, "bytes_len", next, self.limits.bytes_len)?;
-        self.payload(bytes.len(), loc)?;
-        output.extend_from_slice(bytes);
+        let next = length
+            .checked_add(bytes)
+            .ok_or_else(|| Diagnostic::error("data payload length overflow", loc))?;
+        let (name, limit) = if binary {
+            ("bytes_len", self.limits.bytes_len)
+        } else {
+            ("string_len", self.limits.string_len)
+        };
+        self.check(loc, name, next, limit)?;
+        self.payload(bytes, loc)?;
+        *length = next;
         Ok(())
     }
     pub fn unsupported(&self, text: &str, loc: Location) -> Result<(), Diagnostic> {
