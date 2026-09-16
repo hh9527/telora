@@ -37,7 +37,7 @@ pub struct Global {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DebugSite {
     pub node: u32,
-    pub origin: [u32; 3],
+    pub origin: u32,
     pub name: String,
     pub message: Option<String>,
 }
@@ -120,6 +120,7 @@ impl Manifest {
     pub(crate) fn build(
         executable: &SealedExecutable<'_>,
         layouts: &[telora_core::candidate_layout::Entry],
+        locations: &crate::locations::StaticLocations,
     ) -> Result<Self, String> {
         let mir = executable.sealed_mir().mir();
         let executable_nodes = executable
@@ -240,7 +241,7 @@ impl Manifest {
                     };
                     Some(DebugSite {
                         node: index as u32,
-                        origin: mir.sources.get(node.location.source).compact(node.location).0,
+                        origin: locations.id(node.location).bits(),
                         name: expression.replace("\r\n", "\n").replace('\r', "\n"),
                         message: message.clone(),
                     })

@@ -11,6 +11,19 @@ pub(crate) struct Output<'a> {
 }
 
 impl Output<'_> {
+    pub(crate) fn location(&self, id: u32) -> Result<Option<telora_wasm_shared::locations::LocationRecord>, String> {
+        use telora_wasm_shared::locations::{LocId, LocationIndex, LocationRecord, RECORD_BYTES, record_address};
+        let (descriptor, index) = match LocId::from_bits(id).index() {
+            LocationIndex::None => return Ok(None),
+            LocationIndex::Static(index) => (STATIC_LOCS, index),
+            LocationIndex::Initialization(index) => (INITIALIZATION_LOCS, index),
+        };
+        let address = record_address(self.word(descriptor as u64)?, self.word(descriptor as u64 + 4)?,
+            index, self.memory.len() as u64).ok_or("Wasm: invalid LocId")?;
+        LocationRecord::decode(self.bytes(address as u64, RECORD_BYTES as u64)?)
+            .map(Some).ok_or_else(|| "Wasm: invalid location record".into())
+    }
+
     pub(crate) fn field(&self, pointer: u64, ty: u32, name: &str) -> Result<(u32, u32), String> {
         if self.word(pointer + TYPE)? != ty {
             return Err("Wasm: record type differs from sealed contract".into());

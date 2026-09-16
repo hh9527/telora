@@ -1,5 +1,5 @@
 //! Shared physical layout; consumed by both codegen and Rust-compiled RT.
-pub const VERSION: u32 = 16;
+pub const VERSION: u32 = 17;
 pub const ENV_RAW_PARENT: u32 = 0x8000_0000;
 pub const HEADER_BYTES: u32 = 16;
 pub const SCALAR_BYTES: u32 = 24;
@@ -32,6 +32,9 @@ pub const TESTS: u32 = 12;
 pub const DEBUG_EVENTS: u32 = 13;
 // Reserved protocol word below the table descriptors; disabled by default.
 pub const DEBUG_ENABLED: u32 = 16;
+// Read-only transport descriptors: {base, count}, outside the reclaimable heap.
+pub const STATIC_LOCS: u32 = 20;
+pub const INITIALIZATION_LOCS: u32 = 28;
 pub const DIAGNOSTIC_BYTES: u32 = 40;
 pub const DEMAND_BYTES: u32 = 8;
 

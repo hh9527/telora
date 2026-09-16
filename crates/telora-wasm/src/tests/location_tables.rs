@@ -27,6 +27,23 @@ fn guest_location_tables_are_embedded_and_initialization_ids_survive_growth() {
     };
     let static_record = read(&session, static_pointer);
     assert_ne!(static_record.source, 0);
+    // Names are already present before Host registration or language initialization.
+    let name = session
+        .instance
+        .get_typed_func::<u32, u32>(&session.store, "telora_source_name")
+        .unwrap();
+    let span = name.call(&mut session.store, static_record.source).unwrap() as usize;
+    let memory = session.memory.data(&session.store);
+    let pointer = u32::from_le_bytes(memory[span..span + 4].try_into().unwrap()) as usize;
+    let length = u32::from_le_bytes(memory[span + 4..span + 8].try_into().unwrap()) as usize;
+    let expected = &session
+        .manifest
+        .sources
+        .iter()
+        .find(|s| s.id == static_record.source)
+        .unwrap()
+        .name;
+    assert_eq!(&memory[pointer..pointer + length], expected.as_bytes());
     let record = LocationRecord {
         source: 123,
         start_line: 70_000,

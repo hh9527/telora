@@ -45,6 +45,10 @@ impl<'a> LocationTables<'a> {
         Ok(id)
     }
 
+    pub fn initialization_storage(&self) -> &[[u8; RECORD_BYTES as usize]] {
+        &self.initialization
+    }
+
     pub fn freeze(&mut self) {
         self.frozen = true;
     }

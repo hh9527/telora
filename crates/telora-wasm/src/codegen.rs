@@ -20,7 +20,7 @@ pub fn compile_check(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, Strin
 
 fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, String> {
     let plan = Plan::new(executable)?;
-    let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
+    let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts, &plan.locations)?;
     for (&symbol, &key) in &plan.globals {
         let mir = executable.sealed_mir().mir();
         let definition = &mir.symbols[symbol.index()];
@@ -306,5 +306,5 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
         name: Cow::Borrowed("telora.manifest"),
         data: Cow::Owned(serde_json::to_vec(&manifest).map_err(|e| e.to_string())?),
     });
-    crate::compose::link(&module.finish(), heap_start, &plan.locations.bytes)
+    crate::compose::link(&module.finish(), heap_start, &plan.locations.bytes, &manifest.sources)
 }

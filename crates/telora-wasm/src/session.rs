@@ -71,6 +71,7 @@ impl Session {
         let memory = instance
             .get_memory(&store, "memory")
             .ok_or("Wasm: missing memory export")?;
+        let registered_sources = manifest.sources.len();
         let mut session = Self {
             module,
             fuel_budget: fuel,
@@ -80,7 +81,7 @@ impl Session {
             store,
             instance,
             memory,
-            registered_sources: 0,
+            registered_sources,
             emitted_debug: std::cell::Cell::new(0),
             trace_types: 0,
         };

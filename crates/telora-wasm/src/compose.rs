@@ -9,7 +9,12 @@ pub(crate) fn static_base() -> Result<u32, String> {
     Ok(template::runtime()?.heap_base)
 }
 
-pub(crate) fn link(object: &[u8], reserved_bytes: u32, locations: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn link(
+    object: &[u8],
+    reserved_bytes: u32,
+    locations: &[u8],
+    sources: &[crate::artifact::Source],
+) -> Result<Vec<u8>, String> {
     let rt = template::runtime()?;
     let mut program = Parts::read(object)?;
     let mut output = Parts::read(rt.bytes)?;
@@ -51,10 +56,24 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32, locations: &[u8]) -> Resu
             _ => {}
         }
     }
-    let locations_base = image_base.checked_add(u32::try_from(data.len())
-        .map_err(|_| "Wasm: static image too large")?).ok_or("Wasm: location base overflow")?;
-    let locations_len = u32::try_from(locations.len()).map_err(|_| "Wasm: location table too large")?;
+    let locations_base = image_base
+        .checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: static image too large")?)
+        .ok_or("Wasm: location base overflow")?;
+    let locations_len =
+        u32::try_from(locations.len()).map_err(|_| "Wasm: location table too large")?;
     data.extend_from_slice(locations);
+    let mut source_names = Vec::new();
+    for source in sources {
+        while data.len() % 8 != 0 {
+            data.push(0);
+        }
+        let pointer = image_base
+            .checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: source name image overflow")?)
+            .ok_or("Wasm: source name address overflow")?;
+        let length = u32::try_from(source.name.len()).map_err(|_| "Wasm: source name too long")?;
+        source_names.push((source.id, pointer, length));
+        data.extend_from_slice(source.name.as_bytes());
+    }
     if imports.len() != FIRST_FUNCTION as usize {
         return Err("Wasm: generated RT import contract changed".into());
     }
@@ -213,9 +232,22 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32, locations: &[u8]) -> Resu
         .instruction(&Instruction::I32Const(locations_base as i32))
         .instruction(&Instruction::I32Const(locations_len as i32))
         .instruction(&Instruction::Call(
-            *rt.exports.get("telora_locations_bootstrap").ok_or("Wasm: missing location bootstrap")?,
-        ))
-        .instruction(&Instruction::End);
+            *rt.exports
+                .get("telora_locations_bootstrap")
+                .ok_or("Wasm: missing location bootstrap")?,
+        ));
+    for (id, pointer, length) in source_names {
+        boot.instruction(&Instruction::I32Const(id as i32))
+            .instruction(&Instruction::I32Const(pointer as i32))
+            .instruction(&Instruction::I32Const(length as i32))
+            .instruction(&Instruction::Call(
+                *rt.exports
+                    .get("telora_register_source")
+                    .ok_or("Wasm: missing source registry")?,
+            ))
+            .instruction(&Instruction::Drop);
+    }
+    boot.instruction(&Instruction::End);
     let mut boot_code = CodeSection::new();
     boot_code.function(&boot);
     output.append_section(&boot_code)?;
@@ -235,7 +267,11 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32, locations: &[u8]) -> Resu
     // Reset restores every global, including the Rust stack pointer. Values
     // live in linear memory; function tables are fixed by this linker.
     for index in 0..rt.globals + crate::abi::GLOBAL_COUNT {
-        exports.export(&format!("telora_reset_global_{index}"), ExportKind::Global, index);
+        exports.export(
+            &format!("telora_reset_global_{index}"),
+            ExportKind::Global,
+            index,
+        );
     }
     output.append_section(&exports)?;
     let mut names = rt.names.clone();
@@ -259,9 +295,10 @@ pub(crate) fn link(object: &[u8], reserved_bytes: u32, locations: &[u8]) -> Resu
     let bytes = template::payload(&section);
     let mut r = wasmparser::BinaryReader::new(&bytes, 0);
     r.read_string().map_err(|e| e.to_string())?;
-    output
-        .custom
-        .push(("name".into(), bytes[r.original_position() as usize..].to_vec()));
+    output.custom.push((
+        "name".into(),
+        bytes[r.original_position() as usize..].to_vec(),
+    ));
     output.custom.extend(
         program
             .custom
