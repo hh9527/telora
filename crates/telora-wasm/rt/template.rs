@@ -98,9 +98,11 @@ pub unsafe extern "C" fn telora_template_prepare(value: u32) -> u32 {
             }
             Piece::Field(field) => {
                 span(strings + index * 8, buffer + start, offset - start);
+                let owned = telora_alloc(field.len() as u32);
+                core::ptr::copy_nonoverlapping(field.as_ptr(), owned as *mut u8, field.len());
                 span(
                     fields + index * 8,
-                    field.as_ptr() as u32,
+                    owned,
                     field.len() as u32,
                 );
                 start = offset;

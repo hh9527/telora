@@ -97,3 +97,27 @@ fn payload_tag_does_not_steal_the_fifteenth_inline_byte() {
     assert_eq!(payload[15], 15);
     assert_eq!(Bytes::decode([255; 16]), Err(Error::Bounds));
 }
+
+#[test]
+fn work_collection_keeps_unobserved_frozen_content_and_relocates_only_suffix() {
+    let mut content = Content::default();
+    let frozen = content.insert(&[42; 100]).unwrap();
+    content.seal_work().unwrap();
+    let frozen_slice = content.slice(&frozen, 20, 40).unwrap();
+    let dead = content.insert(&[7; 1000]).unwrap();
+    let raw = content.insert(&[3; 200]).unwrap();
+    let slice = content.slice(&raw, 30, 70).unwrap();
+    let mut ranges = LiveRanges::default();
+    ranges.observe(&content, &slice).unwrap();
+    let (mut next, relocation) = ranges.copy_work(&content).unwrap();
+    assert_eq!(next.len(), 140);
+    assert_eq!(next.view(&frozen).unwrap(), [42; 100]);
+    assert_eq!(relocation.apply(frozen_slice).unwrap(), frozen_slice);
+    assert_eq!(relocation.apply(dead), Err(Error::Bounds));
+    let moved = relocation.apply(slice).unwrap();
+    assert_eq!(next.view(&moved).unwrap(), [3; 40]);
+    next.reset().unwrap();
+    assert_eq!(next.len(), 100);
+    assert_eq!(next.view(&frozen).unwrap(), [42; 100]);
+    assert_eq!(next.view(&moved), Err(Error::Bounds));
+}

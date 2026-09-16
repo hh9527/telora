@@ -147,7 +147,7 @@ impl Emitter<'_> {
                 self.extend([I::F64ReinterpretI64, I::F64Eq]);
                 return Ok(());
             }
-            T::String => {
+            T::String | T::Bytes => {
                 self.extend([
                     I::LocalGet(0),
                     I::LocalGet(1),
@@ -156,7 +156,7 @@ impl Emitter<'_> {
                 ]);
                 return Ok(());
             }
-            T::Array | T::Dict | T::Bytes => return self.compare_sequence(ty),
+            T::Array | T::Dict => return self.compare_sequence(ty),
             _ => {}
         }
         let variants = &self.plan.layouts[ty.index()].variants;
@@ -227,16 +227,11 @@ impl Emitter<'_> {
     }
     fn compare_sequence(&mut self, ty: TypeId) -> Result<(), String> {
         let kind = &self.mir.types[ty.index()].constructor;
-        let bytes = *kind == T::Bytes;
         let dict = *kind == T::Dict;
-        let element = (!bytes).then(|| self.mir.types[ty.index()].arguments[0]);
-        let width = if let Some(element) = element {
-            self.width(element)?
-        } else {
-            1
-        };
-        let (left, a) = self.comparison_parts(0, width, bytes, dict);
-        let (right, b) = self.comparison_parts(1, width, bytes, dict);
+        let element = self.mir.types[ty.index()].arguments[0];
+        let width = self.width(element)?;
+        let (left, a) = self.comparison_parts(0, width, dict);
+        let (right, b) = self.comparison_parts(1, width, dict);
         self.extend([I::LocalGet(a), I::LocalGet(b), I::I32Ne]);
         self.unequal_if();
         let keys = if dict {
@@ -268,18 +263,7 @@ impl Emitter<'_> {
         }
         let left = self.array_item(left, index, width);
         let right = self.array_item(right, index, width);
-        if let Some(element) = element {
-            self.compare_child(element, left, right)?;
-        } else {
-            self.extend([
-                I::LocalGet(left),
-                I::I32Load8U(memory(0, 0)),
-                I::LocalGet(right),
-                I::I32Load8U(memory(0, 0)),
-                I::I32Ne,
-            ]);
-            self.unequal_if();
-        }
+        self.compare_child(element, left, right)?;
         self.extend([
             I::LocalGet(index),
             I::I32Const(1),
@@ -292,37 +276,21 @@ impl Emitter<'_> {
         ]);
         Ok(())
     }
-    fn comparison_parts(&mut self, value: u32, width: u32, bytes: bool, dict: bool) -> (u32, u32) {
-        if !bytes && !dict {
+    fn comparison_parts(&mut self, value: u32, width: u32, dict: bool) -> (u32, u32) {
+        if !dict {
             return self.array_parts(value, width);
         }
         let data = self.table_data(
-            if bytes { BYTES } else { ARRAYS },
+            ARRAYS,
             value,
-            if dict { DATA + 8 } else { DATA },
+            DATA + 8,
         );
         let count = self.local(ValType::I32);
-        if bytes {
-            self.extend([
-                I::LocalGet(data),
-                I::LocalGet(value),
-                I::I32Load(memory(DATA + 4, 2)),
-                I::I32Add,
-                I::LocalSet(data),
-                I::LocalGet(value),
-                I::I32Load(memory(DATA + 8, 2)),
-                I::LocalGet(value),
-                I::I32Load(memory(DATA + 4, 2)),
-                I::I32Sub,
-                I::LocalSet(count),
-            ]);
-        } else {
-            self.extend([
-                I::LocalGet(value),
-                I::I32Load(memory(DATA + 4, 2)),
-                I::LocalSet(count),
-            ]);
-        }
+        self.extend([
+            I::LocalGet(value),
+            I::I32Load(memory(DATA + 4, 2)),
+            I::LocalSet(count),
+        ]);
         (data, count)
     }
 }

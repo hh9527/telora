@@ -5,6 +5,7 @@ use telora_core::{
 };
 
 mod data;
+mod content;
 mod source_ranges;
 mod host_memory;
 mod service_sources;

@@ -143,25 +143,7 @@ impl Emitter<'_> {
                     12 => {
                         let pointer = self.read32(row, 16);
                         let count = self.read32(row, 20);
-                        let id = self.local(ValType::I32);
-                        self.extend([
-                            I::I32Const(table_address(BYTES) as i32),
-                            I::LocalGet(pointer),
-                            I::LocalGet(count),
-                            I::Call(TABLE_PUSH),
-                            I::LocalSet(id),
-                        ]);
-                        let value = self.value_as(node, ty, STRING_BYTES)?;
-                        for (offset, local) in [(DATA, id), (DATA + 8, count)] {
-                            self.extend([
-                                I::LocalGet(value),
-                                I::LocalGet(local),
-                                I::I32Store(memory(offset, 2)),
-                            ]);
-                        }
-                        self.store32(value, DATA + 4, 0);
-                        self.store32(value, DATA + 12, 0);
-                        value
+                        self.byte_span_value(ty, pointer, count)?
                     }
                     _ => return Err("Wasm: unexpected payload in Value contract".into()),
                 };

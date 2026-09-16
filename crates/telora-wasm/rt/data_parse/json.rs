@@ -6,7 +6,7 @@ use telora_data::{
     json::{self, JsonKind},
 };
 
-pub(super) unsafe fn parse(input: &str, origins: &Origins, borrowed: bool) -> u32 {
+pub(super) unsafe fn parse(input: &str, origins: &Origins) -> u32 {
     let mut sources = SourceDatabase::default();
     // Dynamic parser errors carry messages; no source indexing is needed here.
     let source = sources.try_add_data("<json string>", String::new()).expect("empty source");
@@ -38,7 +38,7 @@ pub(super) unsafe fn parse(input: &str, origins: &Origins, borrowed: bool) -> u3
                 JsonKind::Bool(value) => (if value { 1 } else { 2 }, 0),
                 JsonKind::Int(value) => (3, value as u64),
                 JsonKind::Float(value) => (4, value.to_bits()),
-                JsonKind::String(span) => (5, span_bits(span, source_pointer, decoded_pointer, borrowed)),
+                JsonKind::String(span) => (5, span_bits(span, source_pointer, decoded_pointer)),
                 JsonKind::Array(items) => {
                     let count = items.len() as u32;
                     let entries = crate::telora_alloc(count.checked_mul(4).unwrap());
@@ -52,7 +52,7 @@ pub(super) unsafe fn parse(input: &str, origins: &Origins, borrowed: bool) -> u3
                     let entries = crate::telora_alloc(count.checked_mul(24).unwrap());
                     for (index, (key, field)) in fields.into_iter().enumerate() {
                         let entry = entries + index as u32 * 24;
-                        let bits = span_bits(key, source_pointer, decoded_pointer, borrowed);
+                        let bits = span_bits(key, source_pointer, decoded_pointer);
                         put(entry, 0, bits as u32);
                         put(entry, 4, (bits >> 32) as u32);
                         put(entry, 8, field.value.index() as u32);

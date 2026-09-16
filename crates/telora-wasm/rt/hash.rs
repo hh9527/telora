@@ -30,11 +30,9 @@ pub unsafe extern "C" fn telora_hash(operation: u32, a: u32, b: u32) -> u32 {
         match operation {
             1 => {}
             2 => {
-                let base = word(telora_table_get(table_address(BYTES), word(b, DATA)), 0);
-                let start = word(b, DATA + 4);
-                let length = word(b, DATA + 8) - start;
+                let (base, length) = crate::values::string_span(b);
                 let bytes =
-                    core::slice::from_raw_parts((base + start) as *const u8, length as usize);
+                    core::slice::from_raw_parts(base as *const u8, length as usize);
                 next.update(&[1]);
                 next.update(&(length as u64).to_be_bytes());
                 next.update(bytes);

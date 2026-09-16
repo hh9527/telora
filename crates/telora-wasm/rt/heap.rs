@@ -69,6 +69,7 @@ pub unsafe extern "C" fn telora_heap_bytes() -> u32 {
     unsafe {
         (&*core::ptr::addr_of!(MAIN)).iter()
             .chain((&*core::ptr::addr_of!(WORK)).iter())
-            .map(|block| block.used as u64 * 8).sum::<u64>().try_into().unwrap()
+            .map(|block| block.used as u64 * 8).sum::<u64>()
+            .checked_add(crate::content::len() as u64).unwrap().try_into().unwrap()
     }
 }

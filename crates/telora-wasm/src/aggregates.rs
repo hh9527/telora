@@ -223,33 +223,14 @@ impl Emitter<'_> {
         self.text_as(node, self.effective_ty(node)?, bytes)
     }
     pub fn bytes_literal(&mut self, node: HirId, bytes: &[u8]) -> Result<u32, String> {
-        let length = u32::try_from(bytes.len()).map_err(|_| "Wasm: bytes literal size overflow")?;
-        let data = self.alloc(length);
-        for (offset, byte) in bytes.iter().enumerate() {
-            self.extend([
-                I::LocalGet(data),
-                I::I32Const(*byte as i32),
-                I::I32Store8(memory(offset as u64, 0)),
-            ]);
-        }
-        let id = self.table_push(BYTES, data, length);
-        let result = self.value(node, STRING_BYTES)?;
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(id),
-            I::I32Store(memory(DATA, 2)),
-        ]);
-        self.store32(result, DATA + 4, 0);
-        self.store32(result, DATA + 8, length);
-        self.store32(result, DATA + 12, 0);
-        Ok(result)
+        self.text_as(node, self.effective_ty(node)?, bytes)
     }
     pub fn text_as(&mut self, node: HirId, ty: TypeId, bytes: &[u8]) -> Result<u32, String> {
         let result = self.value_as(node, ty, STRING_BYTES)?;
-        if bytes.len() <= 14 {
+        if bytes.len() < 16 {
             let mut inline = [0u8; 16];
-            inline[1] = bytes.len() as u8;
-            inline[2..2 + bytes.len()].copy_from_slice(bytes);
+            inline[15] = bytes.len() as u8;
+            inline[..bytes.len()].copy_from_slice(bytes);
             for (index, word) in inline.chunks_exact(8).enumerate() {
                 self.extend([
                     I::LocalGet(result),
@@ -266,15 +247,12 @@ impl Emitter<'_> {
                     I::I32Store8(memory(index as u64, 0)),
                 ]);
             }
-            let id = self.table_push(STRINGS, data, bytes.len() as u32);
-            self.store32(result, DATA, 1);
             self.extend([
                 I::LocalGet(result),
-                I::LocalGet(id),
-                I::I32Store(memory(DATA + 4, 2)),
+                I::I32Const(DATA as i32), I::I32Add,
+                I::LocalGet(data), I::I32Const(bytes.len() as i32),
+                I::Call(CONTENT_WRITE), I::Drop,
             ]);
-            self.store32(result, DATA + 8, 0);
-            self.store32(result, DATA + 12, bytes.len() as u32);
         }
         Ok(result)
     }

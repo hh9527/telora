@@ -45,6 +45,7 @@ pub struct Object {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Storage {
     Fixed { bytes: u64 },
+    ByteContent,
     Sequence { stride: u64, empty_only: bool },
     Dictionary { value_stride: u64, empty_only: bool },
     Captures,
@@ -65,6 +66,9 @@ impl Storage {
         };
         match (self, extent) {
             (Self::Fixed { bytes }, Extent::Fixed) => Ok(*bytes),
+            (Self::ByteContent, Extent::Sequence { length }) => {
+                Ok(if length < 16 { 0 } else { u64::from(length) })
+            }
             (Self::Sequence { stride, empty_only }, Extent::Sequence { length }) => {
                 if *empty_only && length != 0 {
                     return Err("uninhabited elements require an empty sequence".into());
@@ -455,13 +459,12 @@ impl<'a> Builder<'a> {
             match &ty.constructor {
                 T::Int | T::Float | T::Bool => shape(8, 8, None, "scalar_bits")?,
                 T::Type | T::TypeOf => shape(4, 4, None, "represented_type_id:u32")?,
-                T::String => shape(
+                T::String | T::Bytes => shape(
                     16,
                     8,
-                    Some("StringTable"),
-                    "tag:u8,length:u8,inline_utf8:[u8;14] OR tag:u8,pad:[u8;3],heap:u32,start:u32,end:u32",
+                    Some("Content"),
+                    "inline:[u8;15],length:u8 (length<16) OR start:u32,end:u32,raw_start:u32,reserved:[u8;3]=0,tag:u8=16",
                 )?,
-                T::Bytes => shape(12, 4, Some("BytesTable"), "heap:u32,start:u32,end:u32")?,
                 T::Array => shape(12, 4, Some("ArrayTable"), "heap:u32,start:u32,end:u32")?,
                 T::Dict => shape(
                     16,
@@ -580,13 +583,10 @@ impl<'a> Builder<'a> {
             storage: Storage::Fixed { bytes: 0 },
         };
         match table {
-            "StringTable" | "BytesTable" => {
+            "Content" => {
                 o.element_stride = Some(1);
-                o.storage = Storage::Sequence {
-                    stride: 1,
-                    empty_only: false,
-                };
-                o.storage_rule="byte_length bytes; table entry stores byte_length:u32; slice bounds checked against byte_length".into();
+                o.storage = Storage::ByteContent;
+                o.storage_rule="byte_length<16: inline, no content allocation; otherwise byte_length bytes in shared content Vec; absolute start/end/raw_start offsets; slices retain raw_start; no table entry or length header".into();
             }
             "ArrayTable" if ty.constructor != T::Dict => {
                 let t = ty.arguments[0];
@@ -809,6 +809,9 @@ mod tests {
     }
     #[test]
     fn storage_extents_are_checked() {
+        for (length, bytes) in [(0, 0), (15, 0), (16, 16)] {
+            assert_eq!(Storage::ByteContent.allocation_bytes(Extent::Sequence { length }).unwrap(), bytes);
+        }
         let dict = Storage::Dictionary {
             value_stride: 24,
             empty_only: false,

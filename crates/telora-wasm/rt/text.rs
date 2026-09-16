@@ -127,7 +127,7 @@ pub unsafe extern "C" fn telora_text_build(operation: u32, a: u32, b: u32, c: u3
     }
 }
 
-unsafe fn spans(pieces: impl Iterator<Item = &'static str> + Clone) -> u32 {
+unsafe fn spans(source: &str, pieces: impl Iterator<Item = &'static str> + Clone) -> u32 {
     unsafe {
         let count = pieces.clone().count();
         let bytes = count.checked_mul(8).and_then(|n| n.checked_add(8)).unwrap();
@@ -136,7 +136,7 @@ unsafe fn spans(pieces: impl Iterator<Item = &'static str> + Clone) -> u32 {
         ((result + 4) as *mut u32).write(count as u32);
         for (index, piece) in pieces.enumerate() {
             let row = (result + 8 + index as u32 * 8) as *mut u32;
-            row.write(piece.as_ptr() as u32);
+            row.write((piece.as_ptr() as usize).checked_sub(source.as_ptr() as usize).unwrap() as u32);
             row.add(1).write(piece.len() as u32);
         }
         result
@@ -147,8 +147,9 @@ unsafe fn spans(pieces: impl Iterator<Item = &'static str> + Clone) -> u32 {
 pub unsafe extern "C" fn telora_text_split(operation: u32, a: u32, b: u32) -> u32 {
     unsafe {
         match operation {
-            0 => spans(text(a).split(text(b))),
+            0 => spans(text(a), text(a).split(text(b))),
             1 => spans(
+                text(a),
                 text(a)
                     .split('\n')
                     .map(|line| line.strip_suffix('\r').unwrap_or(line)),

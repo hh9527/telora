@@ -9,6 +9,7 @@ use alloc::{collections::BTreeMap, vec, vec::Vec};
 pub(crate) unsafe fn freeze() {
     unsafe {
         crate::heap::freeze();
+        crate::content::freeze();
         crate::sources::freeze();
     }
 }
@@ -21,6 +22,7 @@ pub(crate) struct Collector {
     pub values: BTreeMap<u32, u32>,
     pub pending: Vec<(u32, u32, u32, u32)>, // table, old pointer, destination offset, bytes
     pub sources: alloc::collections::BTreeSet<u32>,
+    pub content: Vec<u32>,
 }
 
 impl Collector {
@@ -102,6 +104,7 @@ impl Collector {
             while let Some((table, old, at, bytes)) = self.pending.pop() {
                 self.trace_object(table, old, at, bytes);
             }
+            crate::content::collect(&self.content);
             // Sources are Host metadata, but RT may render their names in captures.
             crate::sources::collect(&mut self);
             let mut tables = self.old;
@@ -164,6 +167,7 @@ pub unsafe extern "C" fn telora_collect(types: u32, roots: u32, count: u32) -> u
             values: BTreeMap::new(),
             pending: vec![],
             sources: alloc::collections::BTreeSet::new(),
+            content: vec![],
         };
         let result = gc.reserve(count * 4);
         for index in 0..count {

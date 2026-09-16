@@ -18,7 +18,7 @@ impl Collector {
     pub unsafe fn trace_object(&mut self, table: u32, old: u32, at: u32, bytes: u32) {
         unsafe {
             match table {
-                STRINGS | BYTES | HASHES => {}
+                HASHES => {}
                 RECORDS | ARRAYS | VALUES | NEWTYPES => {
                     let mut offset = 0;
                     while offset < bytes {
@@ -62,12 +62,8 @@ impl Collector {
         }
     }
 
-    unsafe fn string(&mut self, old: u32, at: u32) {
-        unsafe {
-            if *(old as *const u8) == 1 {
-                self.handle(STRINGS, old + 4, at + 4);
-            }
-        }
+    unsafe fn string(&mut self, _old: u32, at: u32) {
+        self.content.push(at);
     }
 
     unsafe fn trace_data(&mut self, ty: u32, old: u32, at: u32) {
@@ -75,8 +71,7 @@ impl Collector {
             let desc = self.types + ty * 20;
             match word(desc, 0) {
                 0 => {}
-                1 => self.string(old, at),
-                2 => self.handle(BYTES, old, at),
+                1 | 2 => self.string(old, at),
                 3 => self.handle(RECORDS, old, at),
                 4 => self.handle(ARRAYS, old, at),
                 5 => {

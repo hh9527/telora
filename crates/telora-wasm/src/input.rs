@@ -5,20 +5,20 @@ use serde_json::Value;
 impl Session {
     pub(crate) fn write_input_text(&mut self, pointer: u32, text: &str) -> Result<(), String> {
         let bytes = text.as_bytes();
-        if bytes.len() <= 14 {
+        if bytes.len() < 16 {
             let mut inline = [0u8; 16];
-            inline[1] = bytes.len() as u8;
-            inline[2..2 + bytes.len()].copy_from_slice(bytes);
+            inline[15] = bytes.len() as u8;
+            inline[..bytes.len()].copy_from_slice(bytes);
             self.write(pointer as usize + (DATA as usize), &inline)?;
         } else {
             let data = self.allocate(bytes.len())?;
             self.write(data as usize, bytes)?;
             let length =
                 u32::try_from(bytes.len()).map_err(|_| "Wasm: string input size overflow")?;
-            let id = self.push_input(STRINGS, data, length)?;
-            self.write(pointer as usize + (DATA as usize), &1u32.to_le_bytes())?;
-            self.write(pointer as usize + (DATA + 4) as usize, &id.to_le_bytes())?;
-            self.write(pointer as usize + (DATA + 12) as usize, &length.to_le_bytes())?;
+            let write = self.instance.get_typed_func::<(u32, u32, u32), u32>(
+                &self.store, "telora_content_write").map_err(|e| e.to_string())?;
+            write.call(&mut self.store, (pointer + DATA as u32, data, length))
+                .map_err(|e| e.to_string())?;
         }
         Ok(())
     }

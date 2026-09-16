@@ -301,7 +301,12 @@ codegen 的公开编译入口接受 SealedExecutable。表达式类型、泛型�
 
 运行时值头包含 12 字节 Loc（src/start/end 三个 u32）和 4 字节 TypeId（共 16 字节），
 后接由静态布局决定的 payload。标量值为 24 字节；函数保存函数表索引与闭包环境。
-String、Array、Record 等对象位于各自 typed table；Tuple/Record 共用 Record table。
+Array、Record 等对象位于各自 typed table；Tuple/Record 共用 Record table。
+String/Bytes 共用独立的 `Vec<u8>` 内容池：不足 16 字节时直接内联，最后一字节保存
+长度；其余值保存 `start/end/raw_start` 三个绝对偏移，最后一字节为 16。
+共享切片保留 raw_start；回收先汇总同组存活区间，再复制包围区间并重定位全部视图。
+没有独立 String/Bytes 表。Host 的只读内容视图位于线性内存 48/52（地址/长度），
+不可跨 Guest 调用缓存内容地址。结构化对象的单 Vec 迁移仍由 RFC 0302 推进。
 Dict 使用有序 keys/values，字段操作与构造胶水消费已闭合的布局证据。
 具体尺寸与表示以 `telora-wasm-shared/src/abi.rs` 和生成器为准，不构成发布 ABI。
 
@@ -313,7 +318,7 @@ pattern 使用单独的 member selection 事实，不执行值物化。
 enum 构造器代码按封闭签名和 variant 复用。其函数值的 environment 为 0，invoke
 将函数值地址作为第一个参数交给构造器胶水，用于复制 12 字节 Loc；payload
 仍按原布局搬运，不重写其来源。普通闭包使用非零环境句柄，调用约定不变。
-内部 ABI 版本为 22；旧 Wasm 制品需重新生成，不能混用旧调用约定。
+内部 ABI 版本为 23；旧 Wasm 制品需重新生成，不能混用旧布局或调用约定。
 `interpreter!` 在构造时捕获输入函数，工厂和适配器使用普通值引用环境；
 没有适配器 memo 槽或 raw-parent 环境，回收不再扫描、修补冻结环境中的该类缓存。
 

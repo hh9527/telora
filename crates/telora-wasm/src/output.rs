@@ -271,26 +271,25 @@ impl Output<'_> {
         self.text_str(pointer).map(str::to_owned)
     }
     pub(crate) fn text_str(&self, pointer: u64) -> Result<&str, String> {
+        std::str::from_utf8(self.content_bytes(pointer)?)
+            .map_err(|_| "Wasm: invalid UTF-8 output".into())
+    }
+    pub(crate) fn content_bytes(&self, pointer: u64) -> Result<&[u8], String> {
         let header = self.bytes(pointer + DATA, 16)?;
-        let bytes = match header[0] {
-            0 => {
-                let length = header[1] as usize;
-                if length > 14 {
-                    return Err("Wasm: invalid inline string".into());
+        match header[15] {
+            len @ 0..=15 => Ok(&header[..usize::from(len)]),
+            16 => {
+                let base = u64::from(self.word(u64::from(CONTENT_VIEW))?);
+                let length = u64::from(self.word(u64::from(CONTENT_VIEW + 4))?);
+                let start = u64::from(self.word(pointer + DATA)?);
+                let end = u64::from(self.word(pointer + DATA + 4)?);
+                let raw = u64::from(self.word(pointer + DATA + 8)?);
+                if raw > start || start > end || end > length || end - start < 16 || header[12..15] != [0; 3] {
+                    return Err("Wasm: invalid content slice".into());
                 }
-                &header[2..2 + length]
+                self.bytes(base + start, end - start)
             }
-            1 => {
-                let (base, length) = self.payload(STRINGS, self.word(pointer + DATA + 4)?)?;
-                let start = self.word(pointer + DATA + 8)? as u64;
-                let end = self.word(pointer + DATA + 12)? as u64;
-                if start > end || end > length {
-                    return Err("Wasm: invalid string slice".into());
-                }
-                self.bytes(base + start, end - start)?
-            }
-            _ => return Err("Wasm: invalid string representation".into()),
-        };
-        std::str::from_utf8(bytes).map_err(|_| "Wasm: invalid UTF-8 output".into())
+            _ => Err("Wasm: invalid content representation".into()),
+        }
     }
 }

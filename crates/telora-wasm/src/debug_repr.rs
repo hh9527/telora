@@ -63,17 +63,12 @@ impl Formatter {
             Kind::Dyn => self.push("<dyn>"),
             Kind::Metadata => self.push(&format!("<TypeId:{}>", output.word(pointer + DATA)?)),
             Kind::Bytes => {
-                let (base, bytes) = output.payload(BYTES, output.word(pointer + DATA)?)?;
-                let start = output.word(pointer + DATA + 4)? as u64;
-                let end = output.word(pointer + DATA + 8)? as u64;
-                if start > end || end > bytes {
-                    return Err("Wasm: invalid debug Bytes slice".into());
-                }
+                let bytes = output.content_bytes(pointer)?;
                 self.push("b\"");
-                for byte in output.bytes(base + start, (end - start).min(32))? {
+                for byte in bytes.iter().take(32) {
                     self.push(&format!("\\x{byte:02x}"));
                 }
-                if end - start > 32 {
+                if bytes.len() > 32 {
                     self.push("...");
                 }
                 self.push("\"");

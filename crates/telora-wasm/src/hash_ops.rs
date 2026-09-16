@@ -72,17 +72,9 @@ impl Emitter<'_> {
             return self.text_span_value(output, result);
         }
         if operation == 5 {
-            let id = self.table_push(BYTES, result, 32);
-            let value = self.value_as(self.key.node, output, STRING_BYTES)?;
-            self.extend([
-                I::LocalGet(value),
-                I::LocalGet(id),
-                I::I32Store(memory(DATA, 2)),
-            ]);
-            self.store32(value, DATA + 4, 0);
-            self.store32(value, DATA + 8, 32);
-            self.store32(value, DATA + 12, 0);
-            return Ok(value);
+            let length = self.local(ValType::I32);
+            self.extend([I::I32Const(32), I::LocalSet(length)]);
+            return self.byte_span_value(output, result, length);
         }
         let value = self.value_as(self.key.node, output, SCALAR_BYTES)?;
         self.extend([

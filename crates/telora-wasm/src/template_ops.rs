@@ -49,7 +49,7 @@ impl Emitter<'_> {
                 I::I32Load(memory(index as u64 * 8 + 4, 2)),
                 I::LocalSet(count),
             ]);
-            values.push(self.text_span_array(ty, base, count)?);
+            values.push(self.text_span_array(ty, base, count, None)?);
         }
         self.packed_tuple(args[1], &values)
     }

@@ -116,7 +116,8 @@ pub unsafe extern "C" fn telora_regex(operation: u32, a: u32, b: u32) -> u32 {
             }
             4 => {
                 // Packet: input String, field count, then field-name Strings.
-                // Result: matched flag, then {UTF-8 pointer, length, present}.
+                // Result: matched flag, then {relative byte offset, length, present}.
+                // Parsing a preceding field may grow the content arena.
                 let compiled = &mut *get(a);
                 let input = crate::text::text(word(b, 0));
                 let count = word(b, 4);
@@ -132,7 +133,7 @@ pub unsafe extern "C" fn telora_regex(operation: u32, a: u32, b: u32) -> u32 {
                     let row = (output + 4 + index * 12) as *mut u32;
                     match capture {
                         Some(span) => {
-                            row.write(input.as_ptr() as u32 + span.start as u32);
+                            row.write(span.start as u32);
                             row.add(1).write((span.end - span.start) as u32);
                             row.add(2).write(1);
                         }

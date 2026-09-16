@@ -1,0 +1,10 @@
+import "std/string" as string;
+
+export def answer: Fn(String) -> Array(String) = fn(text) {
+    let parts = string.split(text, "|");
+    [parts[1], parts[2], parts[3]]
+};
+
+export def inline_bytes: Fn() -> (Bytes, Bytes, Bytes) = fn() {
+    (b"", b"123456789012345", b"1234567890123456")
+};

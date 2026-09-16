@@ -111,7 +111,9 @@ impl Emitter<'_> {
                 let input = self.local(ValType::I32);
                 let present = self.read32(span, 8);
                 self.extend([I::LocalGet(present), I::If(BlockType::Empty)]);
-                let text = self.text_span_value(self.string_type()?, span)?;
+                let start = self.read32(span, 0);
+                let length = self.read32(span, 4);
+                let text = self.byte_slice_value(self.string_type()?, 1, start, length)?;
                 self.copy(text, 0, 1, LOC_BYTES);
                 self.extend([I::LocalGet(text), I::LocalSet(input), I::End]);
                 let path = self.parse_text(7, path, names[index])?;

@@ -8,6 +8,7 @@ impl Emitter<'_> {
         ty: telora_core::mir::TypeId,
         base: u32,
         count: u32,
+        owner: Option<u32>,
     ) -> Result<u32, String> {
         let shape = &self.mir.types[ty.index()];
         if shape.constructor != T::Array
@@ -28,7 +29,13 @@ impl Emitter<'_> {
             I::BrIf(1),
         ]);
         let span = self.array_item(base, index, 8);
-        let value = self.text_span_value(string, span)?;
+        let value = if let Some(owner) = owner {
+            let start = self.read32(span, 0);
+            let length = self.read32(span, 4);
+            self.byte_slice_value(string, owner, start, length)?
+        } else {
+            self.text_span_value(string, span)?
+        };
         let destination = self.array_item(data, index, STRING_BYTES);
         self.copy(destination, 0, value, STRING_BYTES);
         self.extend([
@@ -113,7 +120,7 @@ impl Emitter<'_> {
                 I::I32Load(memory(4, 2)),
                 I::LocalSet(count),
             ]);
-            return self.text_span_array(output, base, count);
+            return self.text_span_array(output, base, count, Some(source));
         }
         let operation = [
             "join",

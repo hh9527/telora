@@ -1,6 +1,7 @@
 //! Rust implementation of the Wasm runtime, statically linked into artifacts.
 extern crate alloc;
 mod heap;
+mod content;
 mod host_memory;
 mod collect;
 mod collect_trace;

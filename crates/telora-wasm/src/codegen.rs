@@ -102,6 +102,8 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         ("telora_yaml_parse", 0),
         ("telora_float_remainder", 5),
         ("telora_source_range", 0),
+        ("telora_content_write", 3),
+        ("telora_content_slice", 4),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }

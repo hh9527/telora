@@ -702,7 +702,8 @@ fn dump_types_layout_is_static_deterministic_and_hidden() {
         }
         if entry["constructor"] == "Bytes" {
             assert_eq!(entry["layout"]["shape"]["value_bytes"], 32);
-            assert_eq!(entry["layout"]["shape"]["table"], "BytesTable");
+            assert_eq!(entry["layout"]["shape"]["table"], "Content");
+            assert_eq!(entry["layout"]["shape"]["data_bytes"], 16);
             assert_eq!(entry["object"]["element_stride"], 1);
         }
     }

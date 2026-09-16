@@ -37,26 +37,26 @@ impl Emitter<'_> {
         if self.mir.types[ty.index()].constructor != T::String {
             return Err("Wasm: diagnostic text field is not String".into());
         }
-        let id = self.local(ValType::I32);
-        self.extend([
-            I::I32Const(table_address(STRINGS) as i32),
-            I::LocalGet(span),
-            I::I32Load(memory(0, 2)),
-            I::LocalGet(span),
-            I::I32Load(memory(4, 2)),
-            I::Call(TABLE_PUSH),
-            I::LocalSet(id),
-        ]);
+        let pointer = self.read32(span, 0);
+        let length = self.read32(span, 4);
+        self.byte_span_value(ty, pointer, length)
+    }
+    pub(crate) fn byte_span_value(&mut self, ty: TypeId, pointer: u32, length: u32) -> Result<u32, String> {
         let value = self.value_as(self.key.node, ty, STRING_BYTES)?;
-        self.store32(value, DATA, 1);
         self.extend([
             I::LocalGet(value),
-            I::LocalGet(id),
-            I::I32Store(memory(DATA + 4, 2)),
-            I::LocalGet(value),
-            I::LocalGet(span),
-            I::I32Load(memory(4, 2)),
-            I::I32Store(memory(DATA + 12, 2)),
+            I::I32Const(DATA as i32), I::I32Add,
+            I::LocalGet(pointer), I::LocalGet(length),
+        ]);
+        self.extend([I::Call(CONTENT_WRITE), I::Drop]);
+        Ok(value)
+    }
+    pub(crate) fn byte_slice_value(&mut self, ty: TypeId, owner: u32, start: u32, length: u32) -> Result<u32, String> {
+        let value = self.value_as(self.key.node, ty, STRING_BYTES)?;
+        self.extend([
+            I::LocalGet(value), I::I32Const(DATA as i32), I::I32Add,
+            I::LocalGet(owner), I::I32Const(DATA as i32), I::I32Add,
+            I::LocalGet(start), I::LocalGet(length), I::Call(CONTENT_SLICE), I::Drop,
         ]);
         Ok(value)
     }

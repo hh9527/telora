@@ -61,6 +61,11 @@ pub struct Content {
 }
 
 impl Content {
+    pub const fn new() -> Self { Self { bytes: Vec::new(), work_base: None } }
+
+    /// Read-only ABI views are valid only until the next mutating operation.
+    pub fn bytes(&self) -> &[u8] { &self.bytes }
+
     pub fn insert(&mut self, bytes: &[u8]) -> Result<Bytes, Error> {
         if bytes.len() < 16 { return Ok(inline(bytes)); }
         let start = self.bytes.len();
@@ -131,9 +136,26 @@ impl LiveRanges {
 
     /// Consumes the discovery phase, preventing late widening after copying.
     pub fn copy(self, source: &Content) -> Result<(Content, Relocation), Error> {
-        let mut target = Content::default();
+        self.copy_from(source, 0, false)
+    }
+
+    /// Event-boundary collection preserves every initialized byte at its offset.
+    /// Full initialization collection instead uses `copy` before sealing work.
+    pub fn copy_work(self, source: &Content) -> Result<(Content, Relocation), Error> {
+        self.copy_from(source, source.work_base.ok_or(Error::Phase)?, true)
+    }
+
+    fn copy_from(self, source: &Content, prefix: usize, sealed: bool) -> Result<(Content, Relocation), Error> {
+        let mut target = Content {
+            bytes: source.bytes[..prefix].to_vec(),
+            work_base: sealed.then_some(prefix),
+        };
         let mut moved = BTreeMap::new();
         for (raw, (lo, hi)) in self.0 {
+            if (raw as usize) < prefix {
+                if hi as usize > prefix { return Err(Error::Bounds); }
+                continue;
+            }
             let base = u32::try_from(target.bytes.len()).map_err(|_| Error::Overflow)?;
             let bytes = source.bytes.get(lo as usize..hi as usize).ok_or(Error::Bounds)?;
             let end = target.bytes.len().checked_add(bytes.len()).ok_or(Error::Overflow)?;
@@ -141,16 +163,25 @@ impl LiveRanges {
             target.bytes.extend_from_slice(bytes);
             moved.insert(raw, (lo, hi, base));
         }
-        Ok((target, Relocation(moved)))
+        Ok((target, Relocation { moved, prefix: prefix as u32 }))
     }
 }
 
-pub struct Relocation(BTreeMap<u32, (u32, u32, u32)>);
+pub struct Relocation {
+    moved: BTreeMap<u32, (u32, u32, u32)>,
+    prefix: u32,
+}
 
 impl Relocation {
     pub fn apply(&self, value: Bytes) -> Result<Bytes, Error> {
         let Bytes::Slice(slice) = value else { return Ok(value); };
-        let &(lo, hi, base) = self.0.get(&slice.raw_start).ok_or(Error::Bounds)?;
+        if slice.raw_start < self.prefix {
+            if slice.raw_start > slice.start || slice.start > slice.end || slice.end > self.prefix {
+                return Err(Error::Bounds);
+            }
+            return Ok(value);
+        }
+        let &(lo, hi, base) = self.moved.get(&slice.raw_start).ok_or(Error::Bounds)?;
         if slice.start < lo || slice.end < slice.start || slice.end > hi { return Err(Error::Bounds); }
         Ok(Bytes::Slice(Slice {
             start: base.checked_add(slice.start - lo).ok_or(Error::Overflow)?,

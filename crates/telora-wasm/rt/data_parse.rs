@@ -13,11 +13,12 @@ mod toml;
 mod yaml;
 
 // External input is borrowed. Only published source spans need persistent bytes;
-// decoded spans already belong to the Guest. Language String input stays owned.
-fn span_bits(span: telora_data::json::text::TextSpan, source: u32, decoded: u32, borrowed: bool) -> u64 {
+// decoded spans already belong to the Guest. Content-backed language inputs can
+// move while the generated caller materializes the plan, so retain their spans too.
+fn span_bits(span: telora_data::json::text::TextSpan, source: u32, decoded: u32) -> u64 {
     use telora_data::json::text::TextSpan;
     let (base, range, copy) = match span {
-        TextSpan::Source(range) => (source, range, borrowed),
+        TextSpan::Source(range) => (source, range, true),
         TextSpan::Decoded(range) => (decoded, range, false),
     };
     let length = u32::try_from(range.len()).unwrap();
@@ -68,15 +69,15 @@ pub(crate) unsafe fn error_text(span: u32) -> &'static str {
 /// Generated callers supply final language type identities and layouts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_json_parse(input: u32) -> u32 {
-    unsafe { json::parse(crate::text::text(input), &Origins::inherit(input), false) }
+    unsafe { json::parse(crate::text::text(input), &Origins::inherit(input)) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_yaml_parse(input: u32) -> u32 {
-    unsafe { yaml::parse(crate::text::text(input), &Origins::inherit(input), false) }
+    unsafe { yaml::parse(crate::text::text(input), &Origins::inherit(input)) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_toml_parse(input: u32) -> u32 {
-    unsafe { toml::parse(crate::text::text(input), &Origins::inherit(input), false) }
+    unsafe { toml::parse(crate::text::text(input), &Origins::inherit(input)) }
 }
 
 /// Internal plan producer. Retain published text spans and the source index,
@@ -95,9 +96,9 @@ pub unsafe extern "C" fn telora_parse_data(pointer: u32, length: u32, format: u3
         };
         let origins = Origins::new(source, input);
         match format {
-            1 => json::parse(input, &origins, true),
-            2 => yaml::parse(input, &origins, true),
-            3 => toml::parse(input, &origins, true),
+            1 => json::parse(input, &origins),
+            2 => yaml::parse(input, &origins),
+            3 => toml::parse(input, &origins),
             _ => core::arch::wasm32::unreachable(),
         }
     }
