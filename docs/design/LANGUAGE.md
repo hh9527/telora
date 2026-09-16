@@ -1611,23 +1611,24 @@ message、labels、notes；已捕获诊断不重复输出。两者都保留 stdi
 旧 eval-with、entry.Eval/Run/Serve、应用 EES 与 reducer 协议均已删除。
 包管理的 IMOS 能力只在私有 Host 中使用。详细用法见 [执行模式](../../guide/EXEC-MODE.md)。
 
-统一数据源管线严格分成三步：读取物理 source 并注册逻辑 source name；构造 lossless
-CST，并在不分配运行时数据对象的前提下完成格式级验证；只有验证全部成功后，才向目标
+统一数据源管线严格分成三步：读取物理 source 并注册逻辑 source name；
+在不分配运行时数据对象的前提下完成格式级验证并构建带位置的 DataPlan；只有验证全部成功后，才向目标
 Heap 直接物化通用 `Value`。格式级验证覆盖所有可能使物化失败的数据条件，包括重复键、
 TOML table 冲突、非法数字/时间值，以及不受支持或有歧义的 YAML graph 特性。失败产生
 带 source location 的诊断，不产生部分 `Value`。这一层不检查业务 schema：import 和
 初始化 source 的结果都只是 `Value`，业务数据是否符合某个 struct/enum 属于 codec。
 
-验证阶段必须优先借用 lossless CST，而不是再构造一棵递归 Owned 数据树。实现以一个
+验证阶段不构造递归 Owned 数据树。实现以一个
 扁平 arena 表达 validated plan：节点只保存 source span、已验证的节点种类，以及指向
-arena 节点的轻量边；JSON/TOML 节点来自对应 CST node，YAML 节点来自行级 CST span。
+arena 节点的轻量边；JSON 由显式词法状态和容器栈直接构建节点，保留 token 的来源位置，
+无需 CST；TOML 节点来自对应 CST node，YAML 节点来自行级 CST span。
 字符串、规范化时间、binary 等必须在物化前验证的解码结果，以及重复键检测、YAML
 graph 解引用、TOML table 组装所需的索引，进入必要的 side table。plan
 不会包含递归 Owned payload graph，也不会分配运行时对象；目标 Heap materializer 在
 验证和结构限制预检全部成功后单次消费它。
 
 数据源不消耗也不依赖引擎的执行 fuel 或内存增长上限。Host 在完整分配 source
-字符串前以有界读取检查原始 `file_size`；验证计划随后独立检查 `nodes`（YAML alias/merge
+字符串前以有界读取检查原始 `file_size`；JSON 在构建时、TOML/YAML 在验证计划建成后检查 `nodes`（YAML alias/merge
 按最终每次出现计数）、`depth`（根为 1）、单个 `container_size`、单个 `bytes_len`、单个
 UTF-8 `string_len`，以及所有 String、对象键、时间字符串和 Bytes 解码后长度之和
 `payloads_bytes`。对象键不是节点。全部计数使用 checked arithmetic，任何溢出均视为

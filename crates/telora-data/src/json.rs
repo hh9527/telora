@@ -1,6 +1,4 @@
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
-use crate::syntax::json::lexer::Token;
-use crate::syntax::json::parser::{CstData, Node, NodeRef, Rule};
 use alloc::collections::BTreeMap;
 use alloc::{string::String, vec::Vec};
 use core::fmt;
@@ -74,6 +72,7 @@ pub struct DataPlanNode {
 /// parsers never construct a second recursive data tree before Heap allocation.
 #[derive(Clone, Debug, Default)]
 pub struct ValidatedDataPlan {
+    pub(crate) postordered: bool,
     nodes: Vec<DataPlanNode>,
     root: Option<DataNodeId>,
     pub(crate) source_index: Option<(crate::source::SourceId, alloc::sync::Arc<crate::source::LineIndex>)>,
@@ -88,6 +87,7 @@ impl ValidatedDataPlan {
     /// Move reachable nodes into child-before-parent order, preserving shared
     /// aliases and all source locations. Payloads are moved, never deep-copied.
     pub fn into_postorder(self) -> Self {
+        if self.postordered { return self; }
         fn visit(
             id: DataNodeId,
             pending: &mut [Option<DataPlanNode>],
@@ -126,6 +126,7 @@ impl ValidatedDataPlan {
         let mut nodes = Vec::with_capacity(pending.len());
         let root = visit(root, &mut pending, &mut mapped, &mut nodes);
         Self {
+            postordered: true,
             nodes,
             root: Some(root),
             source_index: self.source_index,
@@ -389,261 +390,25 @@ impl fmt::Display for DataLimitError {
     }
 }
 
+mod lexer;
+mod parse;
+
+#[cfg(test)]
 pub(crate) fn validate_json_registered(
     sources: &SourceDatabase,
-    source_id: SourceId,
+    source: SourceId,
 ) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
-    let source = sources.get(source_id);
-    let parsed = crate::syntax::json::parse_document(source_id, source.text());
-    if !parsed.diagnostics.is_empty() {
-        return Err(parsed.diagnostics);
-    }
-    JsonLowerer::new(source_id, source.text(), &parsed.syntax)
-        .validated_plan()
+    parse_with_limits(sources, source, crate::DataLimits::default())
+}
+
+pub(crate) fn parse_with_limits(
+    sources: &SourceDatabase,
+    source: SourceId,
+    limits: crate::DataLimits,
+) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
+    let text = sources.get(source).text();
+    parse::Parser::new(source, text.chunks(), limits).parse(text.byte_len())
         .map_err(|diagnostic| vec![diagnostic])
-}
-
-struct JsonLowerer<'a> {
-    source_id: SourceId,
-    source: &'a crate::document::DocumentText,
-    cst: &'a CstData,
-}
-
-impl<'a> JsonLowerer<'a> {
-    fn new(
-        source_id: SourceId,
-        source: &'a crate::document::DocumentText,
-        cst: &'a CstData,
-    ) -> Self {
-        Self {
-            source_id,
-            source,
-            cst,
-        }
-    }
-
-    fn validated_plan(&self) -> Result<ValidatedDataPlan, Diagnostic> {
-        let value = self
-            .children(NodeRef::ROOT)
-            .find(|node| self.is_value(*node))
-            .ok_or_else(|| self.error(NodeRef::ROOT, "expected a JSON value"))?;
-        let mut plan = ValidatedDataPlan::default();
-        let root = self.plan_value(value, &mut plan)?;
-        plan.set_root(root);
-        Ok(plan)
-    }
-
-    fn plan_value(
-        &self,
-        node: NodeRef,
-        plan: &mut ValidatedDataPlan,
-    ) -> Result<DataNodeId, Diagnostic> {
-        let location = self.location(node);
-        match self.cst.get(node) {
-            Node::Token(Token::Null, _) => Ok(plan.scalar(DataScalar::Null, location)),
-            Node::Token(Token::True, _) => Ok(plan.scalar(DataScalar::Bool(true), location)),
-            Node::Token(Token::False, _) => Ok(plan.scalar(DataScalar::Bool(false), location)),
-            Node::Token(Token::Number, _) => {
-                let value = self.number(node)?;
-                Ok(plan.scalar(value, location))
-            }
-            Node::Rule(Rule::StringLiteral, _) => {
-                Ok(plan.scalar(DataScalar::String(self.decode_string(node)?), location))
-            }
-            Node::Rule(Rule::Literal | Rule::Value, _) => {
-                let child = self
-                    .children(node)
-                    .find(|child| self.is_value(*child))
-                    .ok_or_else(|| self.error(node, "empty JSON value"))?;
-                self.plan_value(child, plan)
-            }
-            Node::Rule(Rule::Array, _) => {
-                let mut values = Vec::new();
-                for child in self.children(node).filter(|child| self.is_value(*child)) {
-                    values.push(self.plan_value(child, plan)?);
-                }
-                Ok(plan.array(values, location))
-            }
-            Node::Rule(Rule::Object, _) => {
-                let mut fields: BTreeMap<String, DataField> = BTreeMap::new();
-                for member in self
-                    .rule_children(node)
-                    .filter(|child| self.rule(*child) == Some(Rule::Member))
-                {
-                    let key_node = self
-                        .rule_children(member)
-                        .find(|child| self.rule(*child) == Some(Rule::StringLiteral))
-                        .ok_or_else(|| self.error(member, "JSON object key must be a string"))?;
-                    let key = self.decode_string(key_node)?;
-                    let key_location = self.location(key_node);
-                    if let Some(previous) = fields.get(&key) {
-                        return Err(Diagnostic::error(
-                            format!("duplicate JSON object key {key:?}"),
-                            key_location,
-                        )
-                        .with_secondary("first defined here", previous.key_location));
-                    }
-                    let value = self
-                        .children(member)
-                        .find(|child| *child != key_node && self.is_value(*child))
-                        .ok_or_else(|| self.error(member, "JSON member has no value"))?;
-                    let value = self.plan_value(value, plan)?;
-                    fields.insert(
-                        key,
-                        DataField {
-                            key_location,
-                            value,
-                        },
-                    );
-                }
-                Ok(plan.object(fields, location))
-            }
-            _ => Err(self.error(node, "expected a JSON value")),
-        }
-    }
-
-    fn number(&self, node: NodeRef) -> Result<DataScalar, Diagnostic> {
-        let text = self.text(node);
-        if text.contains(['.', 'e', 'E']) {
-            let value = text
-                .parse::<f64>()
-                .map_err(|_| self.error(node, "invalid Float value"))?;
-            if !value.is_finite() {
-                return Err(self.error(node, "JSON Float must be finite"));
-            }
-            Ok(DataScalar::Float(value))
-        } else {
-            text.parse::<i64>()
-                .map(DataScalar::Int)
-                .map_err(|_| self.error(node, "JSON integer is outside the i64 range"))
-        }
-    }
-
-    fn decode_string(&self, node: NodeRef) -> Result<String, Diagnostic> {
-        let text = self.text(node);
-        let mut decoder = StringDecoder {
-            bytes: text.as_bytes(),
-            offset: 1,
-        };
-        let mut output = String::new();
-        while decoder.offset < decoder.bytes.len() - 1 {
-            let byte = decoder.bytes[decoder.offset];
-            if byte != b'\\' {
-                let character = text[decoder.offset..].chars().next().expect("valid UTF-8");
-                output.push(character);
-                decoder.offset += character.len_utf8();
-                continue;
-            }
-            decoder.offset += 1;
-            let escaped = *decoder
-                .bytes
-                .get(decoder.offset)
-                .ok_or_else(|| self.error(node, "unterminated JSON escape"))?;
-            decoder.offset += 1;
-            match escaped {
-                b'"' => output.push('"'),
-                b'\\' => output.push('\\'),
-                b'/' => output.push('/'),
-                b'b' => output.push('\u{0008}'),
-                b'f' => output.push('\u{000c}'),
-                b'n' => output.push('\n'),
-                b'r' => output.push('\r'),
-                b't' => output.push('\t'),
-                b'u' => output.push(
-                    decoder
-                        .unicode_escape()
-                        .map_err(|message| self.error(node, message))?,
-                ),
-                other => {
-                    return Err(
-                        self.error(node, format!("invalid JSON escape \\{}", char::from(other)))
-                    );
-                }
-            }
-        }
-        Ok(output)
-    }
-
-    fn is_value(&self, node: NodeRef) -> bool {
-        matches!(
-            self.cst.get(node),
-            Node::Token(Token::Number | Token::True | Token::False | Token::Null, _)
-        ) || matches!(
-            self.rule(node),
-            Some(Rule::Value | Rule::Literal | Rule::Array | Rule::Object | Rule::StringLiteral)
-        )
-    }
-    fn children(&self, node: NodeRef) -> impl Iterator<Item = NodeRef> + '_ {
-        self.cst.children(node)
-    }
-    fn rule_children(&self, node: NodeRef) -> impl Iterator<Item = NodeRef> + '_ {
-        self.children(node)
-            .filter(|child| matches!(self.cst.get(*child), Node::Rule(..)))
-    }
-    fn rule(&self, node: NodeRef) -> Option<Rule> {
-        match self.cst.get(node) {
-            Node::Rule(rule, _) => Some(rule),
-            Node::Token(..) => None,
-        }
-    }
-    fn text(&self, node: NodeRef) -> alloc::borrow::Cow<'_, str> {
-        self.source
-            .slice(
-                crate::source::TextRange::from_usize(self.cst.span(node))
-                    .expect("CST span fits registered source"),
-            )
-            .expect("CST span is a valid source slice")
-    }
-    fn location(&self, node: NodeRef) -> Location {
-        Location::from_usize(self.source_id, self.cst.span(node))
-            .expect("CST span fits registered source")
-    }
-    fn error(&self, node: NodeRef, message: impl Into<String>) -> Diagnostic {
-        Diagnostic::error(message, self.location(node))
-    }
-}
-
-struct StringDecoder<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl StringDecoder<'_> {
-    fn unicode_escape(&mut self) -> Result<char, &'static str> {
-        let first = self.hex_quad()?;
-        let codepoint = if (0xd800..=0xdbff).contains(&first) {
-            if self.bytes.get(self.offset..self.offset + 2) != Some(b"\\u") {
-                return Err("high surrogate requires a low surrogate");
-            }
-            self.offset += 2;
-            let second = self.hex_quad()?;
-            if !(0xdc00..=0xdfff).contains(&second) {
-                return Err("invalid low surrogate");
-            }
-            0x10000 + (((first - 0xd800) as u32) << 10) + (second - 0xdc00) as u32
-        } else if (0xdc00..=0xdfff).contains(&first) {
-            return Err("unexpected low surrogate");
-        } else {
-            first as u32
-        };
-        char::from_u32(codepoint).ok_or("invalid Unicode scalar value")
-    }
-
-    fn hex_quad(&mut self) -> Result<u16, &'static str> {
-        let mut value = 0u16;
-        for _ in 0..4 {
-            let byte = *self
-                .bytes
-                .get(self.offset)
-                .ok_or("Unicode escape requires four hex digits")?;
-            self.offset += 1;
-            let digit = char::from(byte)
-                .to_digit(16)
-                .ok_or("Unicode escape requires four hex digits")?;
-            value = value * 16 + digit as u16;
-        }
-        Ok(value)
-    }
 }
 
 #[cfg(test)]

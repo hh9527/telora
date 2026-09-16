@@ -83,8 +83,7 @@ impl Fixtures<'_, '_> {
             SystemDataFormat::Yaml => data_plan::Format::Yaml,
             SystemDataFormat::Toml => data_plan::Format::Toml,
         };
-        let plan = data_plan::parse_registered(self.sources, id, format)?;
-        data_plan::enforce_limits(&plan, self.limits, text.len()).map_err(error)?;
+        let plan = data_plan::parse_registered_with_limits(self.sources, id, format, self.limits)?;
         Ok(plan)
     }
 }

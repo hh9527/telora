@@ -1,5 +1,6 @@
 use super::*;
 use alloc::{string::ToString, vec::Vec};
+mod machine;
 
 fn parse(source: &str) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
     let mut sources = SourceDatabase::default();
@@ -8,7 +9,7 @@ fn parse(source: &str) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
 }
 
 #[test]
-fn lowers_all_json_categories_directly_from_cst() {
+fn constructs_all_json_categories_directly() {
     let value = parse(r#"{"a":null,"b":true,"c":false,"d":-2,"e":1.5,"f":["x"]}"#).unwrap();
     assert_eq!(
         crate::data_plan_test::render(&value),

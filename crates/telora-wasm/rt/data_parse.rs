@@ -22,7 +22,6 @@ fn parse(input: &str, format: Format) -> Result<Plan, String> {
             .expect("parse diagnostic")
             .message
     })?;
-    data_plan::enforce_limits(&plan, telora_data::DataLimits::default(), input.len())?;
     Ok(plan)
 }
 

@@ -57,7 +57,9 @@ core 的 `syntax/telora/tree_sitter/` 负责分块输入、token 分类与验证
 `tree_sitter.rs` 迭代投影到独立的 `cst.rs` 平坦语义 CST。节点分类使用数值 ID 映射，
 遍历携带父上下文，避免反复从根查找父节点。补全直接消费已保存的 CST token。
 
-JSON/TOML/YAML 仍使用 `telora-data/src/syntax/` 中的 Lelwel parser，手写 callback
+JSON 使用 `telora-data/src/json/` 中的 Logos 局部词法识别与显式状态栈，直接构建
+带位置的 DataPlan；不生成 token 数组或 CST，跨输入块保留状态而不重扫前缀。
+TOML/YAML 仍使用 `telora-data/src/syntax/` 中的 Lelwel parser，手写 callback
 位于各自的 `parser/support.rs`。修改这些 `grammar.llw` 后运行
 `cargo run -p telora-parser-gen`，同时提交 grammar 与生成代码。
 正常 Cargo 构建不生成或改写上述 parser 源码。
@@ -165,11 +167,13 @@ export { data };
 数据内容在静态阶段不读取、不解析；因此类型检查成功不代表 JSON/YAML/TOML 内容有效。
 
 Host 的数据模块导入与 Wasm RT 的 `json.parse`、`toml.parse`、`yaml.parse` 共用
-`telora-data` 中自有的 LLW grammar、lexer、CST 和 lowerer。共享库使用 `no_std + alloc`，
-输出带来源位置的扁平数据图；RT 导出时将节点移动成子节点优先的顺序，重排 ID，
-保留别名共享而不深度复制载荷。运行时产生的 Telora 值沿用输入字符串的来源位置。
+`telora-data`。共享库使用 `no_std + alloc`，输出带来源位置的扁平数据图。
+JSON 的词法模式、容器栈、字符串解码和配额计数显式保存；字符串按
+QStart/QEnd/Text/EscChar/EscUtf16 消费，不接受 `\x`。深度、节点、容器、解码字符串
+和累计 payload 限制在构建时检查，成功后不再遍历检查配额。JSON 节点天然子节点优先，
+RT 导出不需重排；TOML/YAML 保留原有解析及共享图重排。运行时产生的 Telora 值沿用输入字符串的来源位置。
 
-Host 配置、产物元数据和 EES 协议的 JSON 文本也先由 LLW parser 校验，再由可选的
+Host 配置、产物元数据和 EES 协议的 JSON 文本也先由同一 JSON 状态机校验，再由可选的
 `json_serde` 适配器转换为 Rust 结构。Serde 不参与这些入口的文本解析；JSON 输出仍可
 使用 serde_json 序列化。LSP 协议保留原有 serde/serde_json 实现。
 实际内容在执行准备阶段接受格式与 DataLimits 检查，全部有效后才注入 Wasm。

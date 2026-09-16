@@ -38,7 +38,7 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
             telora_core::SystemDataFormat::Yaml => Format::Yaml,
             telora_core::SystemDataFormat::Toml => Format::Toml,
         };
-        let value = materialize(&mut service, &mir.sources, id, format, input.text.len())?;
+        let value = materialize(&mut service, &mir.sources, id, format)?;
         values.insert(name, value);
     }
     let result = service.initialize(&values);
@@ -95,10 +95,9 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
 }
 
 fn materialize(service: &mut TransformSession, sources: &SourceDatabase, source: SourceId,
-    format: Format, bytes: usize) -> Result<Value, String> {
-    let plan = data_plan::parse_registered(sources, source, format)
+    format: Format) -> Result<Value, String> {
+    let plan = data_plan::parse_registered_with_limits(sources, source, format, crate::execution_config().data_limits)
         .map_err(|ds| ds.iter().map(|d| sources.render(d)).collect::<Vec<_>>().join("\n"))?;
-    data_plan::enforce_limits(&plan, crate::execution_config().data_limits, bytes)?;
     service.session_mut().register_data_sources(sources, &plan)?;
     service.session_mut().materialize_value(&plan)
 }
@@ -111,7 +110,7 @@ fn transform(service: &mut TransformSession, sources: &mut SourceDatabase, reque
         }
         let _timer = PhaseTimer::new("request_transform");
         sources.replace_unreferenced(request, "@request", input).map_err(|e| e.to_string())?;
-        let input = materialize(service, sources, request, Format::Json, input.len())?;
+        let input = materialize(service, sources, request, Format::Json)?;
         let result = service.transform(input);
         for event in service.session().take_debug_events()? {
             crate::emit_stderr(serde_json::to_value(event).map_err(|e| e.to_string())?)?;

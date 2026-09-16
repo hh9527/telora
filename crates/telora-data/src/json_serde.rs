@@ -1,4 +1,4 @@
-//! Deserialize Host contracts from the same LLW JSON parser used for data.
+//! Deserialize Host contracts from the same stateful JSON parser used for data.
 //! Serde maps the validated nodes to Rust types; it does not parse text here.
 use crate::{
     SourceDatabase,
@@ -47,7 +47,6 @@ pub fn from_str<T: DeserializeOwned>(input: &str) -> Result<T, Error> {
                 .join("\n"),
         )
     })?;
-    data_plan::enforce_limits(&plan, crate::DataLimits::default(), input.len()).map_err(Error)?;
     T::deserialize(Node {
         plan: &plan,
         id: plan.root_node().expect("parsed root"),

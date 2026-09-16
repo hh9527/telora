@@ -31,11 +31,26 @@ pub fn parse_registered(
     source: SourceId,
     format: Format,
 ) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
+    parse_registered_with_limits(sources, source, format, crate::DataLimits::default())
+}
+
+/// JSON admits resources during construction. The other formats retain their
+/// existing post-parse validation until their separate parser migration.
+pub fn parse_registered_with_limits(
+    sources: &SourceDatabase,
+    source: SourceId,
+    format: Format,
+    limits: crate::DataLimits,
+) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
     let mut plan = match format {
-        Format::Json => crate::json::validate_json_registered(sources, source),
+        Format::Json => crate::json::parse_with_limits(sources, source, limits),
         Format::Yaml => crate::yaml::validate_yaml_registered(sources, source),
         Format::Toml => crate::toml::validate_toml_registered(sources, source),
     }?;
+    if !matches!(format, Format::Json) {
+        enforce_limits(&plan, limits, sources.get(source).text().byte_len())
+            .map_err(|message| vec![Diagnostic::error(message, plan.node(plan.root()).location)])?;
+    }
     plan.source_index = Some((source, sources.get(source).line_index().clone()));
     Ok(plan)
 }

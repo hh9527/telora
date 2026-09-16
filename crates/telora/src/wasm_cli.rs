@@ -130,15 +130,12 @@ pub(crate) fn initialize_diagnostics(
         let source = sources
             .try_add(module.name, &text)
             .map_err(|e| vec![error(e.to_string())])?;
-        let plan = match telora_core::data_plan::parse_registered(sources, source, format) {
+        let plan = match telora_core::data_plan::parse_registered_with_limits(
+            sources, source, format, crate::execution_config().data_limits,
+        ) {
             Ok(plan) => plan,
             Err(errors) => { diagnostics.extend(errors); continue; }
         };
-        if let Err(message) = telora_core::data_plan::enforce_limits(
-            &plan,
-            crate::execution_config().data_limits,
-            text.len(),
-        ) { diagnostics.push(error(message)); continue; }
         prepared.push((module.symbol, plan));
     }
     if !diagnostics.is_empty() { return Err(diagnostics); }

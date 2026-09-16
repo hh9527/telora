@@ -410,7 +410,7 @@ fn json_parse_error_blames_the_original_text() {
     );
     assert_eq!(
         result["message"],
-        r#"<json string>: invalid syntax, expected one of: '"', 'false', '{', '[', 'null', <number>, 'true'"#
+        "<json string>: expected a JSON value"
     );
     assert!(session.diagnostics().unwrap().is_empty());
 }
