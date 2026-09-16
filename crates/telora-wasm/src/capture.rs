@@ -58,12 +58,8 @@ impl Emitter<'_> {
         ]);
         let callable = self.parameter(0);
         let argument = self.parameter(1);
-        let arguments = self.alloc(4);
-        self.extend([
-            I::LocalGet(arguments),
-            I::LocalGet(argument),
-            I::I32Store(memory(0, 2)),
-        ]);
+        let origin = self.computation_origin(node)?;
+        let arguments = self.argument_array(&[argument], Some(origin));
         let returned = self.local(ValType::I32);
         // Deliberately no checked(): zero is the captured language failure.
         // Engine traps still unwind the engine and are not converted to Err.

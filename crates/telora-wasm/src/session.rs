@@ -178,6 +178,7 @@ impl Session {
         let args = self.allocate(
             arguments
                 .len()
+                .checked_add(1).ok_or("Wasm: argument count overflow")?
                 .checked_mul(4)
                 .ok_or("Wasm: argument size overflow")?,
         )?;
@@ -185,6 +186,8 @@ impl Session {
             let value = self.input(ty, value, 0)?;
             self.write(args as usize + index * 4, &value.to_le_bytes())?;
         }
+        // Host invocation has no Telora computation expression to blame.
+        self.write(args as usize + arguments.len() * 4, &0u32.to_le_bytes())?;
         let invoke = self
             .instance
             .get_typed_func::<(i32, i32), i32>(&self.store, "telora_invoke")

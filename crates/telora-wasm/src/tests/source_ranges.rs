@@ -102,3 +102,18 @@ fn diagnostic_ranges_keep_full_width_columns_and_reject_invalid_origins() {
         assert!(expand.call(&mut session.store, pointer).is_err());
     }
 }
+
+#[test]
+fn host_native_invocation_has_no_fabricated_computation_source() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/native-origin.telora")).unwrap();
+    let bytes = super::compile(&source).unwrap();
+    let mut session = Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    let callable = Value { pointer: session.entry().unwrap(), ty: session.manifest.entry_type };
+    let input_ty = session.manifest.types[callable.ty as usize].arguments[0];
+    let input = session.input_value(input_ty, &serde_json::json!("abc")).unwrap();
+    let result = session.invoke_values(callable, &[input]).unwrap();
+    assert_eq!(session.output_value(result).unwrap(), serde_json::json!(3));
+    assert_eq!(session.output().location_words(result.pointer as u64).unwrap(), [0; 5]);
+}

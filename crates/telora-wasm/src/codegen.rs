@@ -254,9 +254,11 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
     )?);
     let (code, relocations) = code.finish(5);
     module.section(&code);
-    if !plan.reflection.is_empty() {
+    let mut static_image = plan.reflection.clone();
+    static_image.extend_from_slice(&plan.origins.borrow().bytes);
+    if !static_image.is_empty() {
         let mut data = DataSection::new();
-        data.active(0, &ConstExpr::i32_const(0), plan.reflection.iter().copied());
+        data.active(0, &ConstExpr::i32_const(0), static_image.iter().copied());
         module.section(&data);
     }
     let mut symbols = SymbolTable::new();
@@ -275,18 +277,18 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         symbols.function(0, index, Some(&name));
         function_names.append(index, &name);
     }
-    for (index, name) in ["telora_error", "telora_phase", "telora_call_source", "telora_initialization_root"].iter().enumerate() {
+    for (index, name) in ["telora_error", "telora_phase", "telora_initialization_root"].iter().enumerate() {
         symbols.global(0, index as u32, Some(name));
     }
     symbols.table(SymbolTable::WASM_SYM_UNDEFINED, 0, None);
-    if !plan.reflection.is_empty() {
+    if !static_image.is_empty() {
         symbols.data(
             0,
             "telora_type_image",
             Some(DataSymbolDefinition {
                 index: 0,
                 offset: 0,
-                size: plan.reflection.len() as u32,
+                size: static_image.len() as u32,
             }),
         );
         // wasm-encoder does not yet expose the segment-info subsection.

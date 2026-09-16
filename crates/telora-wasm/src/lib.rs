@@ -49,6 +49,7 @@ mod dynamic_sequences;
 mod dynamic_tuples;
 mod dynamic_variants;
 mod emit;
+mod value_origins;
 mod enums;
 mod equality;
 mod equality_format;

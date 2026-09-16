@@ -1,0 +1,2 @@
+import "std/string" {length};
+export {length as answer};

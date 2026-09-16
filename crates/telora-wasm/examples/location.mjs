@@ -1,4 +1,4 @@
-// ABI 19: independent u32 components, never a packed u64 Number.
+// Independent u32 components, never a packed u64 Number.
 export function location(words) {
   return {
     source: words[0],

@@ -32,9 +32,8 @@ pub const FIRST_FUNCTION: u32 = 27;
 pub const CALL_TYPE: u32 = 1;
 pub const ERROR_GLOBAL: u32 = 0;
 pub const PHASE_GLOBAL: u32 = 1;
-pub const CALL_SOURCE_GLOBAL: u32 = 2;
-pub const INITIALIZATION_ROOT_GLOBAL: u32 = 3;
-pub const GLOBAL_COUNT: u32 = 4;
+pub const INITIALIZATION_ROOT_GLOBAL: u32 = 2;
+pub const GLOBAL_COUNT: u32 = 3;
 
 pub const ERROR_OVERFLOW: u32 = 1;
 pub const ERROR_DIVISION: u32 = 2;

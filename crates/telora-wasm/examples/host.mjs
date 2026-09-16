@@ -7,7 +7,7 @@ export async function load(bytes) {
   const sections = WebAssembly.Module.customSections(module, 'telora.manifest');
   if (sections.length !== 1) throw Error('缺少或重复的 Telora manifest');
   const manifest = JSON.parse(new TextDecoder().decode(sections[0]));
-  if (manifest.abi !== 19) throw Error('不支持的产物 ABI');
+  if (manifest.abi !== 20) throw Error('不支持的产物 ABI');
   const { exports: wasm } = await WebAssembly.instantiate(module, {});
   const view = () => new DataView(wasm.memory.buffer);
   const word = address => view().getUint32(address, true);
@@ -248,7 +248,8 @@ export async function load(bytes) {
   const invoke = (closure, type, arguments_) => {
     const desc = manifest.types[type];
     if (desc.kind !== 'Function' || desc.arguments.length !== arguments_.length + 1) throw Error('调用参数与封闭签名不同');
-    const args = allocate(arguments_.length * 4);
+    const args = allocate((arguments_.length + 1) * 4);
+    store(args + arguments_.length * 4, 0);
     arguments_.forEach((value, index) => store(args + index * 4, input(desc.arguments[index], value)));
     const result = wasm.telora_invoke(closure, args) >>> 0;
     if (!result) throw failure();

@@ -1,0 +1,52 @@
+import "@src/support" as support;
+import "std/value" {Value};
+import "std/array" as array;
+
+def location: Fn(Array(Value), Int) -> Value = fn(labels, index) {
+    match support.record_field(labels[index], "location") {
+        Some(value) => value,
+        None => Value.None,
+    }
+};
+def line: Fn(Array(Value), Int) -> Int = fn(labels, index) {
+    match support.record_field(location(labels, index), "line") {
+        Some(Value.Int(value)) => value,
+        _ => -1,
+    }
+};
+def verify: Fn(Value) -> Bool = fn(record) {
+    let labels = match support.record_field(record, "labels") {
+        Some(Value.Array(labels)) => labels,
+        _ => [],
+    };
+    # Every subject here was produced in this module, never a native declaration.
+    array.all(labels, fn(label) { support.string_field_contains(label, "source", "value-production-origins/testee") })
+        && match support.record_field(record, "message") {
+            # Repeated locations are deduplicated: all forwards collapse to the input.
+            Some(Value.String("forwarded")) => array.length(labels) == 3
+                && line(labels, 2) == line(labels, 1) + 2,
+            Some(Value.String("materialized")) => array.length(labels) == 5
+                && line(labels, 2) == line(labels, 1) + 1
+                && line(labels, 4) == line(labels, 3) + 1,
+            Some(Value.String("computed")) => array.length(labels) == 6
+                && line(labels, 2) == line(labels, 1) + 1
+                && line(labels, 4) == line(labels, 3) + 1
+                && line(labels, 5) == line(labels, 3) + 2,
+            Some(Value.String("native")) => array.length(labels) == 4
+                && line(labels, 2) == line(labels, 1) + 1
+                && line(labels, 3) == 8,
+            Some(Value.String("parsed")) => array.length(labels) == 2,
+            _ => False,
+        }
+};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    let diagnostics = match support.record_field(actual, "stdout") {
+        Some(Value.Array(records)) => array.filter(records, fn(record) {
+            support.string_field_equals(record, "record", "diagnostic")
+        }),
+        _ => [],
+    };
+    support.bool_value(support.exit_code(actual) == Some(1)
+        && array.length(diagnostics) == 5 && array.all(diagnostics, verify))
+};

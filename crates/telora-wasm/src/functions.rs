@@ -128,21 +128,21 @@ impl Emitter<'_> {
     pub fn call_values(&mut self, node: HirId, callee: u32, values: &[u32]) -> Result<u32, String> {
         self.extend([I::LocalGet(callee), I::I32Load(memory(DATA, 2)), I::I32Eqz]);
         self.fail_if(node, ERROR_UNINITIALIZED_CALL);
-        let location = self.mir.hir[node.index()].location;
-        let range = self.alloc(LOC_BYTES);
-        self.store_location(range, location);
-        self.extend([
-            I::LocalGet(range),
-            I::GlobalSet(CALL_SOURCE_GLOBAL),
-        ]);
+        let target = child(self.mir, node, Role::Callee)?;
+        // A closed signature can still select either a native or a user closure.
+        // Only signatures with an admitted native implementation need the footer;
+        // user closures ignore it and return their values without relocation.
+        let origin = if self.plan.native_signatures.contains(&self.ty(target)?) {
+            Some(self.computation_origin(node)?)
+        } else { None };
         if self.tail_calls.contains(&node) {
-            self.tail_invoke(callee, values)
+            self.tail_invoke(callee, values, origin)
         } else {
-            self.invoke(callee, values)
+            self.invoke_at(callee, values, origin)
         }
     }
-    pub fn argument_array(&mut self, values: &[u32]) -> u32 {
-        let args = self.alloc(values.len() as u32 * 4);
+    pub fn argument_array(&mut self, values: &[u32], origin: Option<u32>) -> u32 {
+        let args = self.alloc((values.len() as u32 + u32::from(origin.is_some())) * 4);
         for (index, &value) in values.iter().enumerate() {
             self.extend([
                 I::LocalGet(args),
@@ -150,10 +150,18 @@ impl Emitter<'_> {
                 I::I32Store(memory(index as u64 * 4, 2)),
             ]);
         }
+        if let Some(origin) = origin {
+            self.extend([I::LocalGet(args), I::LocalGet(origin),
+                I::I32Store(memory(values.len() as u64 * 4, 2))]);
+        }
         args
     }
     pub fn invoke(&mut self, callee: u32, values: &[u32]) -> Result<u32, String> {
-        let args = self.argument_array(values);
+        let origin = self.computation_origin(self.key.node)?;
+        self.invoke_at(callee, values, Some(origin))
+    }
+    fn invoke_at(&mut self, callee: u32, values: &[u32], origin: Option<u32>) -> Result<u32, String> {
+        let args = self.argument_array(values, origin);
         let result = self.local(ValType::I32);
         self.extend([
             I::LocalGet(callee),

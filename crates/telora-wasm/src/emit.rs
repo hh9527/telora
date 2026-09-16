@@ -154,8 +154,7 @@ impl<'a> Emitter<'a> {
             return Err(format!("Wasm: value width mismatch at {node:?}"));
         }
         let result = self.alloc(bytes);
-        let loc = self.mir.hir[node.index()].location;
-        self.store_location(result, loc);
+        self.produced_origin(result, node)?;
         self.store32(result, TYPE, ty.index() as u32);
         Ok(result)
     }

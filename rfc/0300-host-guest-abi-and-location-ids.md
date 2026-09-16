@@ -169,6 +169,16 @@ start/end 是实际输入文本中的 UTF-8 字节偏移，范围左闭右开；
 不再划分行号位宽或行内偏移位宽，也不把位置编码成单个 u64。
 值复制、来源传播和 blame 直接复制三个字段，不执行位置 interning 或查表。
 
+Loc 属于值的产生处，不属于绑定或调用动作。字面量、类型域物化、计算、构造产生新来源；
+变量引用、字段/元素读取及返回已有值保持其来源。native 计算使用调用表达式的位置，
+而不是 native 声明的位置；即使内容不变，也不能把新计算结果的来源等同于输入。
+解析/codec 仍遵循保留输入来源的既定语义。
+
+ABI 20 的内部参数数组为可能调用 native 的封闭签名附加一个静态来源指针。
+来源常量随 Wasm 生成，调用时不分配 Loc；native 回调继承所属 native 计算的来源。
+普通函数忽略此隐藏参数，不可能指向 native 的签名不传递它。
+Test 构造按产生值处理，不维护全局调用位置。
+
 ### 来源元数据与诊断
 
 只保留按 SourceId 索引的来源名称、文本长度及换行索引，不保留逐位置 Locs 表。
@@ -301,7 +311,7 @@ ABI 违约和 Wasm trap 与可收集的语言诊断不同。配额继续以可�
 
 ## 实现验收记录（2026-09-16）
 
-运行时使用 ABI 19。旧 LocId 表及 Host DataPacket/materializer 已删除；
+以下首轮验收使用 ABI 19；后续值来源修正提升为 ABI 20。旧 LocId 表及 Host DataPacket/materializer 已删除；
 内部实验 bundle 改为携带原始文本，由 Guest 解析，不作为正式发布格式。
 CLI fixture 同样在 Guest 解析，语法错误保留 fixture 阶段和独立诊断。
 
@@ -336,3 +346,19 @@ world-model 输入为按 country_continent=Asia 查询 country_name 的 list int
 world-model 初始化快照为 1,245,184 字节，查询后的线性内存包含该基线。
 check 无类型冲突、Unknown 或未证明约束；模型服务返回预期 SQL 与绑定 `["Asia"]`。
 后续发布格式、跨 EOL 制品一致性和分配器优化仍按前述范围明确延后。
+
+### 值产生与来源转发修正（ABI 20）
+
+删除通用调用路径的 Loc 堆分配及 `telora_call_source` 全局变量。
+新值在产生时取得来源，转发不重写来源。native 计算及 Test 构造通过参数末尾的
+静态来源指针取得计算位置；native 回调使用所属计算的来源，不受嵌套调用干扰。
+`tests/language/src/test/value-production-origins` 验证类型物化、算术、record 构造、
+字段/元素/identity 转发、native 间接及尾调用、native 回调、内容不变的字符串计算，
+以及解析结果保留输入来源。
+
+与本分支上一提交 `757ac170` 的 release 二进制比较，同一 world-model list intent，
+hyperfine 预热 2 次、各测 7 次：端到端均值为 742.2 ± 18.2 ms → 745.2 ± 5.5 ms，
+无可辨认的整体加速。Wasm 制品为 4,627,594 → 4,583,130 字节；
+查询 fuel 为 4,393,078 → 4,243,111；查询后线性内存均为 1,310,720 字节。
+单次阶段观察 transform 为 13.21 → 12.81 ms，仅作观察，不作为稳定加速结论。
+修正首先保证来源语义并删除不必要的分配，前端仍占端到端耗时的大部分。

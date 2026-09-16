@@ -99,12 +99,14 @@ impl Session {
         let args = self.allocate(
             arguments
                 .len()
+                .checked_add(1).ok_or("Wasm: argument count overflow")?
                 .checked_mul(4)
                 .ok_or("Wasm: argument size overflow")?,
         )?;
         for (index, value) in arguments.iter().enumerate() {
             self.write(args as usize + index * 4, &value.pointer.to_le_bytes())?;
         }
+        self.write(args as usize + arguments.len() * 4, &0u32.to_le_bytes())?;
         let invoke = self
             .instance
             .get_typed_func::<(i32, i32), i32>(&self.store, "telora_invoke")

@@ -1,0 +1,49 @@
+import "std/test" as test;
+import "std/string" as string;
+import "std/array" as array;
+import "std/json" as json;
+
+type Item = struct {number: Int};
+def identity: for(T) Fn(T) -> T = fn(value) { value };
+def apply: for(A, B) Fn(Fn(A) -> B, A) -> B = fn(callback, input) { callback(input) };
+
+export def forwarded_values: test.Test = test.should_ok(fn() {
+    let input = 42;
+    let copied = input;
+    let record: Item = {number: input};
+    let field = record.number;
+    let tuple = (input, "other");
+    let items = [input];
+    fail!("forwarded", input, copied, field, tuple.0, items[0], identity(input), apply(identity, input), record)
+});
+
+export def materialized_types: test.Test = test.should_ok(fn() {
+    let first = True;
+    let second = True;
+    let none: Option(Item) = None;
+    let next: Option(Item) = None;
+    fail!("materialized", first, second, none, next, identity(none))
+});
+
+export def computations: test.Test = test.should_ok(fn() {
+    let first = 1;
+    let next = first + 1;
+    let text = "abc";
+    let changed = string.replace(text, "a", "b");
+    let same = string.replace(text, "missing", "unused");
+    fail!("computed", first, next, text, changed, same, identity(same))
+});
+
+export def native_callbacks: test.Test = test.should_ok(fn() {
+    let length = string.length;
+    let direct = length("abc");
+    let mapped = array.map(["abc", "x"], string.length);
+    let wrapped = apply(string.length, "abc");
+    fail!("native", direct, mapped, mapped[0], mapped[1], wrapped)
+});
+
+export def parse_preserves_input: test.Test = test.should_ok(fn() {
+    let input = "42";
+    let result = json.parse(input).unwrap!();
+    fail!("parsed", input, result)
+});

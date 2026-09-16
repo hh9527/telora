@@ -88,6 +88,8 @@ pub(crate) struct Plan {
     pub comparisons: BTreeMap<TypeId, Key>,
     pub parsers: BTreeMap<TypeId, Key>,
     pub reflection: Vec<u8>,
+    pub origins: crate::value_origins::OriginConstants,
+    pub native_signatures: BTreeSet<TypeId>,
 }
 
 impl Plan {
@@ -116,6 +118,8 @@ impl Plan {
             comparisons: BTreeMap::new(),
             parsers: BTreeMap::new(),
             reflection: vec![],
+            origins: Default::default(),
+            native_signatures: BTreeSet::new(),
         };
         for &symbol in executable.globals() {
             if !mir.symbol_generics[symbol.index()].is_empty() {
@@ -401,6 +405,12 @@ impl Plan {
                     .filter(|id| !declared.contains(&mir.generic_instances[id.index()].symbol))
                     .collect(),
             );
+        }
+        for key in plan.functions.keys() {
+            if key.callable && key.special == Special::Normal
+                && crate::natives::identity(mir, key.node).is_some() {
+                plan.native_signatures.insert(key.ty(mir, key.node)?);
+            }
         }
         Ok(plan)
     }
