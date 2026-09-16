@@ -3,6 +3,7 @@
 extern crate alloc;
 
 pub mod abi;
+pub mod arena;
 pub mod json_text;
 pub mod source_range;
 
