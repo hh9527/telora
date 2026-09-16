@@ -4,6 +4,7 @@ use crate::{
     template::{self, Parts},
 };
 use wasm_encoder::*;
+mod trace_image;
 
 pub(crate) fn static_base() -> Result<u32, String> {
     Ok(template::runtime()?.heap_base)
@@ -13,6 +14,8 @@ pub(crate) fn link(
     object: &[u8],
     reserved_bytes: u32,
     sources: &[crate::artifact::Source],
+    types: &[crate::artifact::TypeDesc],
+    demands: u32,
     service: Option<telora_wasm_shared::service::Contract>,
     generated_exports: &[(&str, u32)],
 ) -> Result<Vec<u8>, String> {
@@ -57,6 +60,10 @@ pub(crate) fn link(
             _ => {}
         }
     }
+    while data.len() % 8 != 0 { data.push(0); }
+    let trace_base = image_base.checked_add(u32::try_from(data.len())
+        .map_err(|_| "Wasm: trace image overflow")?).ok_or("Wasm: trace address overflow")?;
+    data.extend_from_slice(&trace_image::encode(types)?);
     let mut source_names = Vec::new();
     for source in sources {
         while data.len() % 8 != 0 {
@@ -242,6 +249,11 @@ pub(crate) fn link(
                 .get("telora_reserve_static")
                 .ok_or("Wasm: template lacks heap initializer")?,
         ));
+    boot.instruction(&Instruction::I32Const(trace_base as i32))
+        .instruction(&Instruction::I32Const(rt.heap_base as i32))
+        .instruction(&Instruction::I32Const(demands as i32))
+        .instruction(&Instruction::Call(*rt.exports.get("telora_collection_bootstrap")
+            .ok_or("Wasm: missing collection bootstrap")?));
     for (id, pointer, length, index_pointer, count) in source_names {
         boot.instruction(&Instruction::I32Const(id as i32))
             .instruction(&Instruction::I32Const(pointer as i32))

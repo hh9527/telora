@@ -42,6 +42,59 @@ fn initialize(service: &mut TransformSession) {
 }
 
 #[test]
+fn initialization_compacts_and_completed_requests_truncate_in_place() {
+    use crate::abi::*;
+    let mut service = TransformSession::new(Session::load(&artifact(), 100_000_000).unwrap()).unwrap();
+    initialize(&mut service);
+    let session = service.session_mut();
+    let metric = session.instance.get_typed_func::<u32, u32>(
+        &session.store, "telora_initialization_stat").unwrap();
+    let before = metric.call(&mut session.store, 0).unwrap();
+    let after = metric.call(&mut session.store, 1).unwrap();
+    assert!(after < before, "initialization garbage must be removed: {before} -> {after}");
+    assert!(metric.call(&mut session.store, 2).unwrap() > 0);
+    service.reset().unwrap();
+    let word = |service: &TransformSession, address| service.session().output().word(address).unwrap();
+    let words_len = word(&service, u64::from(WORDS_VIEW + 4));
+    let content_len = word(&service, u64::from(CONTENT_VIEW + 4));
+    let origin = word(&service, u64::from(WORDS_ORIGIN));
+    let prefix = service.session().output().bytes(origin.into(), words_len.into()).unwrap().to_vec();
+    let table_counts: Vec<_> = (0..TABLE_COUNT)
+        .map(|table| word(&service, u64::from(table_address(table) + 4))).collect();
+    let request = serde_json::to_vec(&"request content é🦀".repeat(8192)).unwrap();
+    let mut memory_plateau = None;
+    for iteration in 0..8 {
+        let response = service.transform(&request).unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&response).unwrap();
+        assert_eq!(response["ok"][0], 42);
+        assert_eq!(response["ok"][1], serde_json::from_slice::<serde_json::Value>(&request).unwrap());
+        assert!(word(&service, u64::from(WORDS_VIEW + 4)) > words_len);
+        assert!(word(&service, u64::from(CONTENT_VIEW + 4)) > content_len);
+        let words_pointer = word(&service, u64::from(WORDS_VIEW));
+        let content_pointer = word(&service, u64::from(CONTENT_VIEW));
+        service.reset().unwrap();
+        assert_eq!(word(&service, u64::from(WORDS_VIEW)), words_pointer, "reuse the word allocation");
+        assert_eq!(word(&service, u64::from(CONTENT_VIEW)), content_pointer, "reuse the content allocation");
+        assert_eq!(word(&service, u64::from(WORDS_VIEW + 4)), words_len);
+        assert_eq!(word(&service, u64::from(CONTENT_VIEW + 4)), content_len);
+        assert_eq!(service.session().output().bytes(origin.into(), words_len.into()).unwrap(), prefix);
+        for table in 0..TABLE_COUNT {
+            assert_eq!(word(&service, u64::from(table_address(table) + 4)), table_counts[table as usize]);
+        }
+        // Language serialization failures must also dispose of their Rust
+        // writer; only traps may rely on discarding the entire instance.
+        let failed = service.transform(br#""warnings""#).unwrap();
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&failed).unwrap()["error"], true);
+        service.reset().unwrap();
+        if iteration >= 2 {
+            let bytes = service.session().memory.data_size(&service.session().store);
+            if let Some(plateau) = memory_plateau { assert_eq!(bytes, plateau); }
+            memory_plateau = Some(bytes);
+        }
+    }
+}
+
+#[test]
 fn source_readers_grow_reuse_and_enforce_exact_byte_limit() {
     use crate::transform_service::SourceReader;
     use std::io::Cursor;

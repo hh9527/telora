@@ -148,6 +148,7 @@ pub(crate) fn initialize_diagnostics(
     drop(timer);
     let _timer = PhaseTimer::new("initialize");
     let result = session.initialize();
+    if result.is_ok() { timing::initialization_heap(session).map_err(|e| vec![error(e)])?; }
     if result.is_err() { Err(check_diagnostics(session, sources, result)) } else { Ok(()) }
 }
 

@@ -79,6 +79,7 @@ pub(crate) fn execute(
         return Ok(1);
     }
     service.seal_initialization()?;
+    timing::initialization_heap(service.session_mut())?;
     drop(service_init);
     let usage_reporter = service.session_mut().usage_reporter.take();
     let stdin = std::io::stdin();

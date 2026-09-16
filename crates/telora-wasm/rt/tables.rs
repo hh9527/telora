@@ -16,6 +16,24 @@ pub(crate) struct Slot {
     pub bytes: u32,
 }
 
+static mut BASELINE: Option<[Table; TABLE_COUNT as usize]> = None;
+
+pub(crate) unsafe fn reset() {
+    unsafe {
+        let baseline = (*core::ptr::addr_of!(BASELINE)).expect("tables not frozen");
+        let regex = (table_address(REGEXES) as *const Table).read();
+        for id in regex.frozen..regex.length {
+            let slot: Slot = crate::heap::read(regex.buffer + id * 8);
+            crate::regex::release(slot.payload);
+        }
+        for (index, table) in baseline.into_iter().enumerate() {
+            (table_address(index as u32) as *mut Table).write(table);
+        }
+        crate::heap::reset();
+        crate::content::reset();
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_table_push(address: u32, payload: u32, bytes: u32) -> u32 {
     unsafe {
@@ -64,11 +82,14 @@ pub unsafe extern "C" fn telora_table_get(address: u32, id: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_freeze() -> u32 {
     unsafe {
+        crate::collect::collect_initialization();
         for index in 0..TABLE_COUNT {
             let table = &mut *(table_address(index) as *mut Table);
             table.frozen = table.length;
         }
         crate::collect::freeze();
+        BASELINE = Some(core::array::from_fn(|index|
+            (table_address(index as u32) as *const Table).read()));
         1
     }
 }

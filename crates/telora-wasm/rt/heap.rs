@@ -65,6 +65,13 @@ pub unsafe fn freeze() {
         WORK_BASE = Some((&*core::ptr::addr_of!(WORDS)).len());
     }
 }
+pub(crate) unsafe fn reset() {
+    unsafe {
+        let base = (*core::ptr::addr_of!(WORK_BASE)).expect("heap not frozen");
+        (&mut *core::ptr::addr_of_mut!(WORDS)).truncate(base);
+        publish();
+    }
+}
 pub unsafe fn is_frozen(reference: u32) -> bool {
     unsafe {
         reference < ORIGIN || (*core::ptr::addr_of!(WORK_BASE))
@@ -91,6 +98,16 @@ pub unsafe fn take_work() -> OldWords {
         let old = OldWords { words: core::mem::replace(words, prefix), origin: ORIGIN };
         publish();
         old
+    }
+}
+pub unsafe fn take_initialization() -> OldWords {
+    unsafe {
+        assert!((*core::ptr::addr_of!(WORK_BASE)).is_none());
+        // All immutable tracing/reflection metadata lives in the static image;
+        // the fixed words prefix is therefore empty in this implementation.
+        let words = core::mem::take(&mut *core::ptr::addr_of_mut!(WORDS));
+        publish();
+        OldWords { words, origin: ORIGIN }
     }
 }
 #[unsafe(no_mangle)]

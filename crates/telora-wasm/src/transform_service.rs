@@ -193,16 +193,34 @@ impl TransformSession {
         Ok(())
     }
 
-    /// Fresh engine store, same compiled module and initialized memory. No
-    /// codegen, source reads, module initialization or user init is repeated.
+    /// Completed calls truncate the language arenas in the existing instance.
+    /// A trapped/poisoned instance is restored from the initialization snapshot.
     pub fn reset(&mut self) -> Result<(), String> {
         let baseline = self.baseline.as_ref().ok_or("service is not initialized")?;
-        let engine = self.session.module.engine();
         let limit = baseline
             .memory
             .len()
             .checked_add(self.session.memory_limit)
             .ok_or("service memory limit overflow")?;
+        if !self.poisoned {
+            // Cleanup is not charged to the next request, and must not inherit
+            // the previous request's nearly exhausted fuel.
+            self.session.store.set_fuel(self.session.fuel_budget).map_err(|e| e.to_string())?;
+            if self.session.exports.reset_service.call(&mut self.session.store, ()).is_ok() {
+                for (name, value) in &baseline.globals {
+                    self.session.instance.get_global(&self.session.store, name)
+                        .ok_or("missing reset global")?
+                        .set(&mut self.session.store, value.clone()).map_err(|e| e.to_string())?;
+                }
+                *self.session.store.data_mut() = wasmi::StoreLimitsBuilder::new()
+                    .memory_size(limit).table_elements(1_000_000).trap_on_grow_failure(true).build();
+                self.session.store.set_fuel(self.session.fuel_budget).map_err(|e| e.to_string())?;
+                self.session.emitted_debug.set(baseline.emitted_debug);
+                return Ok(());
+            }
+            self.poisoned = true;
+        }
+        let engine = self.session.module.engine();
         let limits = wasmi::StoreLimitsBuilder::new()
             .memory_size(limit)
             .table_elements(1_000_000)

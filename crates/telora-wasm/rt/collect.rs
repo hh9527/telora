@@ -5,6 +5,20 @@ use crate::{
     values::word,
 };
 use alloc::{collections::BTreeMap, vec, vec::Vec};
+mod initialization;
+pub(crate) use initialization::collect as collect_initialization;
+
+static mut TRACE_TYPES: u32 = 0;
+static mut DEMANDS: (u32, u32) = (0, 0);
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_collection_bootstrap(types: u32, demands: u32, count: u32) {
+    unsafe {
+        assert_eq!(*core::ptr::addr_of!(TRACE_TYPES), 0);
+        TRACE_TYPES = types;
+        DEMANDS = (demands, count);
+    }
+}
 
 pub(crate) unsafe fn freeze() {
     unsafe {
@@ -15,6 +29,7 @@ pub(crate) unsafe fn freeze() {
 }
 
 pub(crate) struct Collector {
+    pub initialization: bool,
     pub heap: crate::heap::OldWords,
     pub types: u32,
     pub old: [Table; TABLE_COUNT as usize],
@@ -84,20 +99,14 @@ impl Collector {
                 bytes: slot.bytes,
             });
             let at = if table == REGEXES {
-                let pattern = crate::regex::pattern(slot.payload);
-                let at = self.reserve(pattern.len() as u32);
-                core::ptr::copy_nonoverlapping(pattern.as_ptr(), crate::heap::ptr::<u8>(at), pattern.len());
-                at
+                // Owned Rust resource: move its table ownership, not its bytes.
+                slot.payload
             } else {
                 self.copy_bytes(slot.payload, slot.bytes)
             };
             self.slots[table as usize][next as usize] = Slot {
                 payload: at,
-                bytes: if table == REGEXES {
-                    crate::regex::pattern(slot.payload).len() as u32
-                } else {
-                    slot.bytes
-                },
+                bytes: slot.bytes,
             };
             if table != REGEXES {
                 self.pending.push((table, slot.payload, at, slot.bytes));
@@ -110,7 +119,7 @@ impl Collector {
             while let Some((table, old, at, bytes)) = self.pending.pop() {
                 self.trace_object(table, old, at, bytes);
             }
-            crate::content::collect(&self.content);
+            crate::content::collect(&self.content, self.initialization);
             // Sources are Host metadata, but RT may render their names in captures.
             crate::sources::collect(&mut self);
             let mut tables = self.old;
@@ -131,28 +140,35 @@ impl Collector {
             }
             let old_regex = self.old[REGEXES as usize];
             for id in old_regex.frozen..old_regex.length {
-                let slot: Slot = self.heap.read(old_regex.buffer + id * 8);
-                crate::regex::release(slot.payload);
-            }
-            let regex = tables[REGEXES as usize];
-            for id in regex.frozen..regex.length {
-                let slot = crate::heap::ptr::<Slot>(regex.buffer + id * 8);
-                let text = core::str::from_utf8(core::slice::from_raw_parts(
-                    crate::heap::ptr::<u8>((*slot).payload),
-                    (*slot).bytes as usize,
-                ))
-                .unwrap();
-                *slot = crate::regex::restore(text);
+                if !self.objects.contains_key(&(REGEXES, id)) {
+                    let slot: Slot = self.heap.read(old_regex.buffer + id * 8);
+                    crate::regex::release(slot.payload);
+                }
             }
         }
     }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn telora_collect(types: u32, roots: u32, count: u32) -> u32 {
+pub unsafe extern "C" fn telora_collect(roots: u32, count: u32) -> u32 {
     unsafe {
-        // Keep old blocks alive until all traversal and pointer patching finishes.
-        let old_work = crate::heap::take_work();
+        let mut gc = Collector::begin(false);
+        let result = gc.reserve(count * 4);
+        for index in 0..count {
+            let pointer = gc.value(gc.old_word(roots, index as u64 * 4));
+            gc.put(result + index * 4, pointer);
+        }
+        gc.finish();
+        result
+    }
+}
+
+impl Collector {
+    unsafe fn begin(initialization: bool) -> Self {
+      unsafe {
+        // Keep the old arena alive until all traversal and patching finishes.
+        let old_work = if initialization { crate::heap::take_initialization() }
+            else { crate::heap::take_work() };
         let old = core::array::from_fn(|i| (table_address(i as u32) as *const Table).read());
         let slots = old
             .iter()
@@ -165,9 +181,10 @@ pub unsafe extern "C" fn telora_collect(types: u32, roots: u32, count: u32) -> u
                 }
             })
             .collect();
-        let mut gc = Collector {
+        Collector {
+            initialization,
             heap: old_work,
-            types,
+            types: TRACE_TYPES,
             old,
             slots,
             objects: BTreeMap::new(),
@@ -175,13 +192,7 @@ pub unsafe extern "C" fn telora_collect(types: u32, roots: u32, count: u32) -> u
             pending: vec![],
             sources: alloc::collections::BTreeSet::new(),
             content: vec![],
-        };
-        let result = gc.reserve(count * 4);
-        for index in 0..count {
-            let pointer = gc.value(gc.old_word(roots, index as u64 * 4));
-            gc.put(result + index * 4, pointer);
         }
-        gc.finish();
-        result
+      }
     }
 }

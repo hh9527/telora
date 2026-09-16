@@ -2,28 +2,6 @@ use super::{content::*, *};
 use alloc::vec;
 
 #[test]
-fn word_offsets_survive_growth_and_static_prefix_copy() {
-    let mut source = Words::default();
-    let types = source.allocate(16).unwrap();
-    source.get_mut(types, 2).unwrap().copy_from_slice(&[24, 32]);
-    source.seal_static().unwrap();
-    let value = source.allocate(24).unwrap();
-    source.get_mut(value, 3).unwrap().copy_from_slice(&[1, 2, 3]);
-    for _ in 0..100 { source.allocate(4096).unwrap(); }
-    assert_eq!(source.get(types, 2).unwrap(), [24, 32]);
-    assert_eq!(source.get(value, 3).unwrap(), [1, 2, 3]);
-    assert_eq!(source.get_mut(types, 1), Err(Error::Frozen));
-    let mut compact = source.copy_static().unwrap();
-    assert!(compact.is_static(types));
-    assert_eq!(compact.get(types, 2).unwrap(), [24, 32]);
-    compact.seal_work().unwrap();
-    let baseline = compact.len();
-    compact.allocate(100).unwrap();
-    compact.reset().unwrap();
-    assert_eq!(compact.len(), baseline);
-}
-
-#[test]
 fn live_slices_trim_both_ends_keep_gaps_and_share_after_repeated_collection() {
     let mut source = Content::default();
     let bytes: vec::Vec<_> = (0..200).collect();

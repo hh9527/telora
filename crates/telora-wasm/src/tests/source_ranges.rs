@@ -60,6 +60,7 @@ fn guest_input_owns_text_after_transfer_buffer_is_reused() {
     let mut session = Session::load(&artifact(), 10_000_000).unwrap();
     let input = r#"{"long key outside inline storage": ["original long string é🦀", "escaped\ntext", 9223372036854775807]}"#;
     let source = register(&mut session, input);
+    session.initialize().unwrap();
     let pointer = session.exports.alloc.call(&mut session.store, (input.len() as u32, 1)).unwrap();
     session.memory.write(&mut session.store, pointer as usize, input.as_bytes()).unwrap();
     let parse = session.instance.get_typed_func::<(u32,u32,u32,u32),u32>(&session.store, "telora_parse_data").unwrap();
@@ -68,7 +69,6 @@ fn guest_input_owns_text_after_transfer_buffer_is_reused() {
     let value = materialize.call(&mut session.store, (packet, 0)).unwrap();
     session.memory.write(&mut session.store, pointer as usize, &vec![b'x'; input.len()]).unwrap();
     session.exports.free.call(&mut session.store, (pointer, input.len() as u32, 1)).unwrap();
-    session.initialize().unwrap();
     assert_eq!(session.output_value(Value { pointer: value, ty: session.manifest.value_type.unwrap() }).unwrap(),
         serde_json::json!({"long key outside inline storage": ["original long string é🦀", "escaped\ntext", i64::MAX]}));
     assert_eq!(session.output().word(value as u64).unwrap(), source);

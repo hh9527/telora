@@ -23,6 +23,17 @@ struct Sources {
 
 static mut SOURCES: Option<Sources> = None;
 
+/// Context and the service handler now own any source values they retain.
+/// Keep only Host-visible source descriptors, never dangling language handles.
+pub(crate) unsafe fn release_initialization_values() {
+    unsafe {
+        if let Some(state) = (&mut *core::ptr::addr_of_mut!(SOURCES)).as_mut() {
+            assert!(state.sealed);
+            for slot in &mut state.slots { slot.key = 0; slot.value = 0; }
+        }
+    }
+}
+
 unsafe fn sources() -> &'static mut Sources {
     unsafe { (&mut *core::ptr::addr_of_mut!(SOURCES)).as_mut().expect("service sources not prepared") }
 }

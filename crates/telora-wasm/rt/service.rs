@@ -19,8 +19,29 @@ struct Service {
 }
 static mut SERVICE: Option<Service> = None;
 
+pub(crate) unsafe fn collect_initialization(gc: &mut crate::collect::Collector) {
+    unsafe {
+        if let Some(service) = (&mut *core::ptr::addr_of_mut!(SERVICE)).as_mut() {
+            assert!(service.phase == Phase::Ready);
+            service.handler = gc.value(service.handler);
+            service.initializer = 0;
+            inputs::release_initialization_values();
+        }
+    }
+}
+
 unsafe fn service() -> &'static mut Service {
     unsafe { (&mut *core::ptr::addr_of_mut!(SERVICE)).as_mut().expect("not a service artifact") }
+}
+
+/// Only after a completed call and after Host has consumed/freed its buffers.
+/// Traps require instance restoration rather than re-entry into Rust cleanup.
+#[unsafe(export_name = "reset-service")]
+pub unsafe extern "C" fn reset() {
+    unsafe {
+        assert!(service().phase == Phase::Ready);
+        tables::reset();
+    }
 }
 
 #[unsafe(no_mangle)]

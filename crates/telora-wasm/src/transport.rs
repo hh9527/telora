@@ -1,6 +1,9 @@
 //! Typed host handles into Wasm memory; no host copy of language object graphs.
 use crate::{abi, artifact::Kind, output::Output, session::Session};
 
+/// A borrowed language handle. Initialization compacts its owned graph: inject
+/// pre-initialization inputs into their demand slots, then acquire fresh handles
+/// afterwards. Work collection similarly returns replacements for explicit roots.
 #[derive(Clone, Copy, Debug)]
 pub struct Value {
     pub(crate) pointer: u32,

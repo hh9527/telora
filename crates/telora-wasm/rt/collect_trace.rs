@@ -57,6 +57,26 @@ impl Collector {
                         self.put(at + 8 + index * 4, next);
                     }
                 }
+                DEBUG_EVENTS => {
+                    let next = self.value(self.old_word(old, 4));
+                    self.put(at + 4, next);
+                }
+                DIAGNOSTICS => {
+                    self.trace_location(self.old_word(old, SOURCE));
+                    let message = self.value(self.old_word(old, DIAG_MESSAGE));
+                    self.put(at + DIAG_MESSAGE as u32, message);
+                    let count = self.old_word(old, DIAG_COUNT);
+                    let subjects = self.old_word(old, DIAG_SUBJECTS);
+                    if count != 0 {
+                        let next = self.copy_bytes(subjects, count.checked_mul(LOC_BYTES).unwrap());
+                        self.put(at + DIAG_SUBJECTS as u32, next);
+                        for index in 0..count {
+                            self.trace_location(self.old_word(subjects, index as u64 * LOC_BYTES as u64));
+                        }
+                    } else {
+                        self.put(at + DIAG_SUBJECTS as u32, 0);
+                    }
+                }
                 _ => core::arch::wasm32::unreachable(),
             }
         }

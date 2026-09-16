@@ -1,5 +1,5 @@
 //! Shared physical layout; consumed by both codegen and Rust-compiled RT.
-pub const VERSION: u32 = 24;
+pub const VERSION: u32 = 25;
 pub const HEADER_BYTES: u32 = 16;
 pub const SCALAR_BYTES: u32 = 24;
 pub const FUNCTION_BYTES: u32 = 24;

@@ -63,14 +63,21 @@ pub unsafe extern "C" fn telora_content_slice(destination: u32, owner: u32, star
 pub(crate) unsafe fn freeze() {
     unsafe { (&mut *core::ptr::addr_of_mut!(CONTENT)).seal_work().unwrap(); }
 }
+pub(crate) unsafe fn reset() {
+    unsafe {
+        (&mut *core::ptr::addr_of_mut!(CONTENT)).reset().unwrap();
+        publish();
+    }
+}
 
 /// Discovery is completed before any copying or payload updates.
-pub(crate) unsafe fn collect(patches: &[u32]) {
+pub(crate) unsafe fn collect(patches: &[u32], initialization: bool) {
     unsafe {
         let source = &*core::ptr::addr_of!(CONTENT);
         let mut ranges = LiveRanges::default();
         for &payload in patches { ranges.observe(source, &read(payload)).unwrap(); }
-        let (next, relocation) = ranges.copy_work(source).unwrap();
+        let (next, relocation) = if initialization { ranges.copy(source) }
+            else { ranges.copy_work(source) }.unwrap();
         for &payload in patches { write(payload, relocation.apply(read(payload)).unwrap()); }
         *core::ptr::addr_of_mut!(CONTENT) = next;
         publish();

@@ -77,11 +77,19 @@ impl Emitter<'_> {
         let zero = self.local(ValType::I32);
         let writer = self.json_write(0, indent, zero);
         let input = self.parameter(0);
-        self.json_call(args[0], writer, input);
+        let status = self.json_call_result(args[0], writer, input);
+        self.extend([I::LocalGet(status), I::I32Eqz, I::If(BlockType::Empty)]);
+        self.json_immediate(11, writer, 0);
+        self.emit(I::End);
+        self.checked(status);
         let span = self.json_write(1, writer, zero);
         self.text_span_value(args[1], span)
     }
     fn json_call(&mut self, ty: TypeId, writer: u32, value: u32) {
+        let result = self.json_call_result(ty, writer, value);
+        self.checked(result);
+    }
+    fn json_call_result(&mut self, ty: TypeId, writer: u32, value: u32) -> u32 {
         let key = Key {
             special: Special::Json(ty),
             callable: true,
@@ -94,7 +102,7 @@ impl Emitter<'_> {
             I::Call(self.plan.functions[&key]),
             I::LocalSet(result),
         ]);
-        self.checked(result);
+        result
     }
     pub fn json_type(&mut self, ty: TypeId) -> Result<(), String> {
         let variants: Vec<_> = self.plan.layouts[ty.index()]

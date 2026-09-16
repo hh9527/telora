@@ -1,4 +1,5 @@
 // Original bytes cross the ABI; Guest owns parsing and Value construction.
+import {heapAccess} from './heap.mjs';
 export function injectBundle(module, manifest, {wasm}) {
   const sections = WebAssembly.Module.customSections(module, 'telora.data');
   if (!sections.length) return;
@@ -23,19 +24,19 @@ export function injectBundle(module, manifest, {wasm}) {
     new Uint8Array(wasm.memory.buffer, ptr, data.length).set(data);
     return ptr;
   };
-  const word = ptr => new DataView(wasm.memory.buffer).getUint32(ptr, true);
+  const {word, address} = heapAccess(wasm);
   for (const {symbol, source, format, text} of bundle.modules) {
-    // The source registry retains this allocation for the instance lifetime.
-    const name = encoder.encode(source.name), namePtr = wasm.telora_alloc(name.length) >>> 0;
-    new Uint8Array(wasm.memory.buffer, namePtr, name.length).set(name);
+    // Registration owns a copy; this Host buffer is borrowed only for the call.
+    const name = encoder.encode(source.name), namePtr = bytes(name);
     if (!wasm.telora_register_source(source.id, namePtr, name.length)) throw Error('数据来源冲突');
+    wasm['mem-free'](namePtr, name.length, 1);
     const input = encoder.encode(text), ptr = bytes(input);
     const packet = wasm.telora_parse_data(ptr, input.length, format, source.id) >>> 0;
     wasm['mem-free'](ptr, input.length, 1);
     const error = word(packet + 12);
     if (error) {
       const start = word(error + 8), length = word(error + 12);
-      throw Error(decoder.decode(new Uint8Array(wasm.memory.buffer, start, length)));
+      throw Error(decoder.decode(new Uint8Array(wasm.memory.buffer, address(start), length)));
     }
     const value = wasm.telora_materialize_data(packet, 0);
     if (!wasm.telora_inject_data(symbol, value)) throw Error('数据注入失败');

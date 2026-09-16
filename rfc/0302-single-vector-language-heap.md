@@ -1,6 +1,6 @@
 # RFC 0302：单 Vec 语言堆与保守初始化根集合
 
-- 状态：实施中
+- 状态：已在独立分支实现并验证，待合入
 - 跟踪：[#211](https://github.com/hh9527/telora/issues/211)
 - 分支：`feat/rfc-0302-single-vector-heap`
 - 日期：2026-09-17
@@ -167,10 +167,10 @@ RT 在执行任何 .telora 代码前，把需要放入语言堆的类型布局�
 计算、顶层值和 service 初始化产生的对象均从 static_end 之后分配。
 边界以 word 为单位，满足 `static_end <= work_base <= words.len()`。
 
-当前普通 Session 路径在执行初始化代码前已通过 prepare_collection 分配类型追踪
-描述，但尚未保证所有命令均采用连续前缀及统一分配顺序；这是本 RFC 的实施目标，
-不是对当前内存布局的断言。此处 static_end 是 Vec 内边界，不是现有 RT 中用于判断
-Wasm 静态地址的 STATIC_END。
+落地实现把类型追踪描述与反射镜像统一放入 Wasm 静态数据段，启动函数登记描述地址，
+不再由 Host 的 prepare_collection 分配。所有命令（包括 service）共用此路径。
+因此当前 words 的固定元数据前缀为空，即 static_end 为 0；永久元数据仍全部保留，
+只是无需复制到 words 再保留一份。origin 则是 Wasm 静态镜像末端，与 Vec 边界不同。
 
 固定区始终保留，不逐对象追踪、不进入转发表。成立条件是：
 
@@ -198,6 +198,7 @@ Vec 固定前缀都是永久保留区，但地址域不同。首版保留完整�
 | 顶层初始化值 | 保留当前制品所有 Ready 的顶层值和已实例化泛型值槽，不分析哪些仅用于初始化 |
 | property/check | 保留当前制品所有已求值 property 最终结果、checker 及必要的能力值 |
 | 其他命令的结果 | eval/test 等使用各自已发布值或待执行 Test 根；不硬套 service 入口 |
+| 尚待消费的反馈 | 保留初始化诊断与 debug 事件及其值引用，保持事件顺序和 Host 游标 |
 
 根来自当前制品，不是全 workspace 的所有符号。未求值定义不是堆值，不为其凭空
 分配根；失败初始化不发布 service 或设置可执行基线。
@@ -233,7 +234,7 @@ id, name_ptr, name_len, bols_ptr, bols_len
 ```
 
 来源名称、BOLs 和记录缓冲区由独立所有者保留，不随语言 Vec 搬移或 truncate。
-当前部分来源存储仍使用语言堆分配，实现时须真正分离所有权，不能仅从根列表删除。
+来源存储已与语言堆分离所有权，不能仅从根列表删除而仍使用语言 Vec 分配。
 不改变 Host 只读视图及不可跨 Guest 调用缓存指针的约定。
 
 静态源码与注入 source 的记录在初始化后保留；临时 parse 维持现有无注册来源的语义。
@@ -245,7 +246,9 @@ Regex 等含 Rust 堆分配的资源不能当作普通 word payload 随便复制
 
 ## 初始化后的 copy-collect
 
-1. 完成模块及 service 初始化，在初始化诊断、debug 已被消费且没有外部语言值借用的边界回收。
+1. 完成模块及 service 初始化，在没有外部语言值借用的边界回收。诊断/debug 若尚未
+   消费，则作为根保留，不能因为提前回收而丢失反馈。Host 初始化前构造的输入必须
+   先注入 demand；初始化后重新取得句柄，不能继续使用移动前的 Value 句柄。
 2. 临时创建目标 words/content；原存储保持存活。将 words 的 `[0, static_end)`
    整体复制到相同下标，不扫描其内部。从上述全部值根通过显式工作队列追踪可移动对象。
 3. 使用转发表保留共享与环，根据确定的类型布局修正对象内部引用；保留函数、类型
@@ -347,3 +350,63 @@ load/store/copy 及 RT、Host 值访问均通过逻辑引用转换；来源、�
 Wasm 89、CLI 84、CLI 库 27、共享库 11 项测试通过；release 的 ontology
 `check --lib` 和 world-model 查询通过。本次查询消耗 7,151,969 fuel，线性内存
 1,966,080 字节，仅作阶段观察。初始化回收及正常请求 truncate reset 仍未完成。
+
+初始化回收与正常 reset 已接入并通过验收，ABI 更新为 25：
+
+- GC 描述编译进静态镜像；移除 Host 运行期描述构建及未被 RT 使用的实验 Words 实现。
+- telora_freeze 先枚举所有 Ready demand、service handler 和诊断/debug 根进行移动回收，
+  清空初始化专用 service/source 值句柄，再记录 words/content 和分类表基线。
+- 正常 service reset 在原实例内释放后缀 Regex、恢复表基线并截断两个 Vec；trap
+  或清理失败继续从初始化快照重建实例。保留 Regex 直接转移所有权，不重新编译。
+- JSON 序列化普通失败显式释放 Rust writer，避免连续服务时泄漏堆外资源。
+- 新增物理存储断言：初始化垃圾减少；大请求反复执行后复用两个 Vec 的地址和容量，
+  长度/表项数量恢复基线，冻结前缀逐字节不变，含失败序列化的重复请求内存达到平台。
+- 完整语言测试发现并修复 Unchecked(Struct) 追踪描述缺口：采用已确定的 Record
+  布局，保留其独立 TypeId，不引入运行期类型推断。
+- Node/浏览器示例同步偏移访问与共享 content 布局，不保留旧表索引兼容路径。
+
+### 最终验收与观察（2026-09-17）
+
+验证命令：`cargo test -p telora-wasm -p telora-wasm-shared -p telora --test cli --lib --bins`。
+Wasm 90、CLI 84（含完整独立语言用例）、CLI 库 27、共享库 10 项通过。
+最后新增的 GC 线性内存观测字段另经 release 构建、真实模型和物理存储测试复核。
+Node 的 debug、typed input、aggregate、20,000 次尾调用及来源范围检查通过；
+本轮未另启 Chromium，不把 Node 验证表述为浏览器实测。
+
+| 验收内容 | 实现与证据 |
+| --- | --- |
+| 永久类型元数据、稳定 TypeId | compose/trace_image 与静态反射镜像；初始化前登记，reflection 与确定性制品测试 |
+| 全部语言引用与两种 Vec 扩容 | heap 偏移边界、codegen load/store/copy；content、collection 与 service 大请求测试 |
+| 三偏移切片、内联边界、重复回收 | shared arena 测试与 content-slices.telora；相交/不相交、先窄后宽、UTF-8、0/15/16 字节 |
+| 顶层/property/泛型/类型值根 | 枚举所有 Ready demand，service handler 额外保留；property、reflection、interpreter 及 ontology 实测 |
+| 共享、环、移动后的槽位 | collection.telora、递归闭包和 test 描述用例；Unchecked 顶层候选的独立语言用例 |
+| 来源与堆外资源 | 独立来源所有权测试；Regex 转移/释放，失败 JSON writer 清理，重复请求线性内存平台断言 |
+| 正常 reset 与异常恢复 | 冻结前缀逐字节相同、Vec 地址复用、表长度复原；warning/failure/fuel/memory trap 回归 |
+| ABI 所有权和诊断 | Host buffer、service source、source range 测试；初始化诊断/debug 保活 |
+| 真实项目 | release ontology check --lib、world-model run 及 stdio serve 连续三次相同查询 |
+
+以下为本机 release 单次观察，非统计性性能结论。单位 B 为字节，KiB 为 1024 字节。
+
+| 指标 | ontology check --lib | world-model serve（三次查询） |
+| --- | ---: | ---: |
+| Wasm 制品 | 6,210,074 B | 5,844,547 B |
+| codegen/link | 116.11 ms | 111.59 ms |
+| engine load | 54.96 ms | 53.44 ms |
+| 模块初始化 | 24.99 ms（含回收） | 35.40 ms |
+| service 初始化 | — | 6.64 ms（含回收与快照） |
+| 回收前 → 后逻辑语言堆 | 55,664 → 41,192 B | 378,112 → 75,720 B |
+| 保守 Ready demand 根 | 972 | 962（另保留 handler） |
+| 回收前线性内存 → 回收高水位 | 983,040 → 1,245,184 B | 1,835,008 → 1,835,008 B |
+| reset | — | 59.37 / 5.31 / 3.29 µs |
+| 请求 | — | 20.34 / 1.60 / 1.48 ms |
+| 请求 fuel | — | 7,152,932 / 2,072,112 / 2,074,285 |
+| 全进程最大 RSS | 84,072 KiB | 81,840 KiB |
+
+GC 在 Guest 的初始化调用内部执行，没有单独的时钟 ABI；其 wall time 只记录包含
+它的阶段及上界：上述 check 为 24.99 ms，service 为 6.64 ms，不能把整段都归因于 GC。
+线性内存不缩页，回收高水位包含旧/新 arena、临时追踪结构及其他 Guest 分配，
+不是存活语言堆大小。ontology 的回收确实增加了高水位，不能据存活字节减少声称
+峰值必然下降。首请求与热请求分开列出，不把引擎首次执行/分配成本当作持续服务成本。
+
+偏移转换仍增加了每次访问的指令与 fuel；本 RFC 完成存储和生命周期简化，不承诺
+所有工作负载加速。精确多段字节并集、永久根裁剪、消除 trap 快照仍属于后续优化。

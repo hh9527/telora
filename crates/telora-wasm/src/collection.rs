@@ -1,5 +1,5 @@
 //! Host passes exact roots; the Rust Wasm RT performs traversal and copying.
-use crate::{abi, artifact::Kind, session::Session, transport::Value};
+use crate::{abi, session::Session, transport::Value};
 
 #[derive(Debug)]
 pub struct CollectionStats {
@@ -8,50 +8,26 @@ pub struct CollectionStats {
     pub memory_bytes: usize,
 }
 
+#[derive(Debug)]
+pub struct InitializationStats {
+    pub heap_before: u32,
+    pub heap_after: u32,
+    pub demand_roots: u32,
+    pub memory_before: u32,
+    pub memory_high_water: u32,
+}
+
 impl Session {
-    pub(crate) fn prepare_collection(&mut self) -> Result<(), String> {
-        if self.trace_types != 0 {
-            return Ok(());
-        }
-        let mut image = vec![0u8; self.manifest.types.len() * 20];
-        for (index, ty) in self.manifest.types.iter().enumerate() {
-            let kind: u32 = match ty.kind {
-                Kind::Int | Kind::Float | Kind::Bool | Kind::Unit | Kind::Metadata => 0,
-                Kind::String => 1,
-                Kind::Bytes => 2,
-                Kind::Record | Kind::Tuple => 3,
-                Kind::Array => 4,
-                Kind::Dict => 5,
-                Kind::Enum | Kind::Option | Kind::Value => 6,
-                Kind::Dyn => 7,
-                Kind::Function => 8,
-                Kind::Unsupported if ty.resource_table.is_some() => 9,
-                Kind::Newtype => 10,
-                Kind::Unsupported => u32::MAX,
-            };
-            let variants = u32::try_from(image.len()).map_err(|_| "Wasm: trace image overflow")?;
-            for (offset, word) in [
-                kind,
-                ty.bytes,
-                ty.resource_table.unwrap_or(u32::MAX),
-                ty.variants.len() as u32,
-                variants,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                image[index * 20 + offset * 4..index * 20 + offset * 4 + 4]
-                    .copy_from_slice(&word.to_le_bytes());
-            }
-            for variant in &ty.variants {
-                image.extend_from_slice(&variant.ty.unwrap_or(u32::MAX).to_le_bytes());
-                image.extend_from_slice(&u32::from(variant.boxed).to_le_bytes());
-            }
-        }
-        let pointer = self.allocate(image.len())?;
-        self.write(pointer as usize, &image)?;
-        self.trace_types = pointer;
-        Ok(())
+    pub fn initialization_stats(&mut self) -> Result<InitializationStats, String> {
+        let metric = self.instance.get_typed_func::<u32, u32>(
+            &self.store, "telora_initialization_stat").map_err(|e| e.to_string())?;
+        Ok(InitializationStats {
+            heap_before: metric.call(&mut self.store, 0).map_err(|e| e.to_string())?,
+            heap_after: metric.call(&mut self.store, 1).map_err(|e| e.to_string())?,
+            demand_roots: metric.call(&mut self.store, 2).map_err(|e| e.to_string())?,
+            memory_before: metric.call(&mut self.store, 3).map_err(|e| e.to_string())?,
+            memory_high_water: metric.call(&mut self.store, 4).map_err(|e| e.to_string())?,
+        })
     }
 
     pub fn collect_work(
@@ -79,12 +55,12 @@ impl Session {
         }
         let collect = self
             .instance
-            .get_typed_func::<(i32, i32, i32), i32>(&self.store, "telora_collect")
+            .get_typed_func::<(i32, i32), i32>(&self.store, "telora_collect")
             .map_err(|e| e.to_string())?;
         let relocated = collect
             .call(
                 &mut self.store,
-                (self.trace_types as i32, pointers as i32, roots.len() as i32),
+                (pointers as i32, roots.len() as i32),
             )
             .map_err(|e| e.to_string())? as u32;
         let values = roots

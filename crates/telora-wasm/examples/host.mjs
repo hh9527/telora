@@ -2,22 +2,18 @@
 import { injectBundle } from './bundle.mjs';
 import { debugReader } from './debug.mjs';
 import { location, readLocation } from './location.mjs';
+import { heapAccess } from './heap.mjs';
 export async function load(bytes) {
   const module = await WebAssembly.compile(bytes);
   const sections = WebAssembly.Module.customSections(module, 'telora.manifest');
   if (sections.length !== 1) throw Error('缺少或重复的 Telora manifest');
   const manifest = JSON.parse(new TextDecoder().decode(sections[0]));
-  if (manifest.abi !== 21) throw Error('不支持的产物 ABI');
+  if (manifest.abi !== 25) throw Error('不支持的产物 ABI');
   const { exports: wasm } = await WebAssembly.instantiate(module, {});
-  const view = () => new DataView(wasm.memory.buffer);
-  const word = address => view().getUint32(address, true);
-  const store = (address, value) => view().setUint32(address, value, true);
+  const {view, address, word, store, copy, content} = heapAccess(wasm);
   const allocate = length => wasm.telora_alloc(length) >>> 0;
   const coordinates = range => readLocation(view(), range);
   const origin = pointer => coordinates([word(pointer), word(pointer + 4), word(pointer + 8)]);
-  const copy = (destination, source, length) => {
-    new Uint8Array(wasm.memory.buffer).copyWithin(destination, source, source + length);
-  };
   const push = (table, pointer, length) => wasm.telora_table_push(64 + table * 16, pointer, length) >>> 0;
   const payload = (table, id) => {
     const descriptor = 64 + table * 16;
@@ -25,37 +21,23 @@ export async function load(bytes) {
     const slot = word(descriptor) + id * 8;
     return [word(slot), word(slot + 4)];
   };
-  const text = pointer => {
-    const memory = new Uint8Array(wasm.memory.buffer);
-    let bytes;
-    if (memory[pointer + 16] === 0) {
-      const length = memory[pointer + 17];
-      if (length > 14) throw Error('无效的 inline String');
-      bytes = memory.subarray(pointer + 18, pointer + 18 + length);
-    } else {
-      const [base, length] = payload(0, word(pointer + 20));
-      const start = word(pointer + 24), end = word(pointer + 28);
-      if (start > end || end > length) throw Error('无效的 String slice');
-      bytes = memory.subarray(base + start, base + end);
-    }
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  };
+  const text = pointer => new TextDecoder('utf-8', {fatal: true}).decode(content(pointer));
   const json = (pointer, type, depth = 0) => {
     if (depth > 512) throw Error('输出嵌套过深');
     if (word(pointer + 12) !== type) throw Error('输出类型与封闭签名不同');
     const desc = manifest.types[type];
     switch (desc.kind) {
       case 'Unit': return 'null';
-      case 'Int': return view().getBigInt64(pointer + 16, true).toString();
+      case 'Int': return view().getBigInt64(address(pointer + 16), true).toString();
       case 'Bool': return word(pointer + 16) ? 'true' : 'false';
       case 'Float': {
-        const value = view().getFloat64(pointer + 16, true);
+        const value = view().getFloat64(address(pointer + 16), true);
         if (!Number.isFinite(value)) throw Error('无法输出非有限 Float');
         return JSON.stringify(value);
       }
       case 'String': return JSON.stringify(text(pointer));
       case 'Array': {
-        const [base, bytes] = payload(3, word(pointer + 16));
+        const [base, bytes] = payload(1, word(pointer + 16));
         const start = word(pointer + 20), end = word(pointer + 24);
         const element = desc.arguments[0], stride = manifest.types[element].bytes;
         if (start > end || end * stride > bytes || (!stride && end)) throw Error('无效的 Array slice');
@@ -65,7 +47,7 @@ export async function load(bytes) {
       }
       case 'Tuple':
       case 'Record': {
-        const [base, bytes] = payload(2, word(pointer + 16));
+        const [base, bytes] = payload(0, word(pointer + 16));
         const items = desc.fields.map(field => {
           if (field.offset + manifest.types[field.ty].bytes > bytes) throw Error('字段越界');
           const item = json(base + field.offset, field.ty, depth + 1);
@@ -74,8 +56,8 @@ export async function load(bytes) {
         return desc.kind === 'Tuple' ? '[' + items.join(',') + ']' : '{' + items.join(',') + '}';
       }
       case 'Dict': {
-        const [keys, keyBytes] = payload(3, word(pointer + 16));
-        const [values, valueBytes] = payload(3, word(pointer + 24));
+        const [keys, keyBytes] = payload(1, word(pointer + 16));
+        const [values, valueBytes] = payload(1, word(pointer + 24));
         const length = word(pointer + 20), type = desc.arguments[0], stride = manifest.types[type].bytes;
         if (length * 32 !== keyBytes || length * stride !== valueBytes) throw Error('字典列长度不一致');
         const items = [];
@@ -90,7 +72,7 @@ export async function load(bytes) {
         if (desc.kind === 'Value' && branch.name === 'Bytes') throw Error('Value.Bytes cannot be emitted as semantic JSON');
         let value = null;
         if (branch.ty !== null) {
-          const address = branch.boxed ? payload(4, word(pointer + 24))[0] : pointer + 24;
+          const address = branch.boxed ? payload(2, word(pointer + 24))[0] : pointer + 24;
           value = json(address, branch.ty, depth + 1);
         }
         if (desc.kind === 'Value') {
@@ -106,7 +88,7 @@ export async function load(bytes) {
       case 'Newtype': {
         const field = desc.fields[0];
         if (!field) throw Error('缺少 newtype 布局');
-        return json(payload(6, word(pointer + 16))[0], field.ty, depth + 1);
+        return json(payload(4, word(pointer + 16))[0], field.ty, depth + 1);
       }
       default: throw Error('尚不支持此类型的浏览器输出');
     }
@@ -119,31 +101,25 @@ export async function load(bytes) {
       case 'Bytes': {
         if (!Array.isArray(value) || value.some(n => !Number.isInteger(n) || n < 0 || n > 255)) throw Error('需要 Bytes');
         const data = allocate(value.length);
-        new Uint8Array(wasm.memory.buffer).set(value, data);
-        store(pointer + 16, push(1, data, value.length)); store(pointer + 24, value.length); break;
+        new Uint8Array(wasm.memory.buffer).set(value, address(data));
+        wasm.telora_content_write(pointer + 16, data, value.length); break;
       }
       case 'Unit': if (value !== null) throw Error('需要 Unit'); break;
       case 'Int': {
         if (typeof value !== 'bigint' && !Number.isSafeInteger(value)) throw Error('Int 输入需要安全整数或 BigInt');
         const integer = BigInt(value);
         if (integer < -(1n << 63n) || integer >= (1n << 63n)) throw Error('Int 输入越界');
-        view().setBigInt64(pointer + 16, integer, true); break;
+        view().setBigInt64(address(pointer + 16), integer, true); break;
       }
       case 'Float': if (typeof value !== 'number' || !Number.isFinite(value)) throw Error('需要 Float');
-        view().setFloat64(pointer + 16, value, true); break;
+        view().setFloat64(address(pointer + 16), value, true); break;
       case 'Bool': if (typeof value !== 'boolean') throw Error('需要 Bool'); store(pointer + 16, Number(value)); break;
       case 'String': {
         if (typeof value !== 'string' || !value.isWellFormed()) throw Error('需要有效 Unicode String');
         const bytes = new TextEncoder().encode(value);
-        if (bytes.length <= 14) {
-          const memory = new Uint8Array(wasm.memory.buffer);
-          memory[pointer + 17] = bytes.length; memory.set(bytes, pointer + 18);
-        } else {
-          const data = allocate(bytes.length);
-          new Uint8Array(wasm.memory.buffer).set(bytes, data);
-          const id = push(0, data, bytes.length);
-          store(pointer + 16, 1); store(pointer + 20, id); store(pointer + 28, bytes.length);
-        }
+        const data = allocate(bytes.length);
+        new Uint8Array(wasm.memory.buffer).set(bytes, address(data));
+        wasm.telora_content_write(pointer + 16, data, bytes.length);
         break;
       }
       case 'Array': {
@@ -151,7 +127,7 @@ export async function load(bytes) {
         const type = desc.arguments[0], stride = manifest.types[type].bytes;
         const data = allocate(value.length * stride);
         value.forEach((item, index) => copy(data + index * stride, input(type, item, depth + 1), stride));
-        const id = push(3, data, value.length * stride);
+        const id = push(1, data, value.length * stride);
         store(pointer + 16, id); store(pointer + 24, value.length); break;
       }
       case 'Tuple':
@@ -165,7 +141,7 @@ export async function load(bytes) {
           if (!Object.hasOwn(value, key)) throw Error('缺少输入字段');
           copy(data + field.offset, input(field.ty, value[key], depth + 1), manifest.types[field.ty].bytes);
         });
-        store(pointer + 16, push(2, data, bytes)); break;
+        store(pointer + 16, push(0, data, bytes)); break;
       }
       case 'Dict': {
         if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('需要 Dict');
@@ -181,9 +157,9 @@ export async function load(bytes) {
           copy(keys + i * 32, input(string, key, depth + 1), 32);
           copy(values + i * stride, input(element, value, depth + 1), stride);
         });
-        store(pointer + 16, push(3, keys, entries.length * 32));
+        store(pointer + 16, push(1, keys, entries.length * 32));
         store(pointer + 20, entries.length);
-        store(pointer + 24, push(3, values, entries.length * stride)); break;
+        store(pointer + 24, push(1, values, entries.length * stride)); break;
       }
       case 'Value':
       case 'Option':
@@ -203,14 +179,14 @@ export async function load(bytes) {
         store(pointer + 16, index);
         if (branch.ty !== null) {
           const payload = input(branch.ty, item, depth + 1), width = manifest.types[branch.ty].bytes;
-          if (branch.boxed) store(pointer + 24, push(4, payload, width));
+          if (branch.boxed) store(pointer + 24, push(2, payload, width));
           else copy(pointer + 24, payload, width);
         }
         break;
       }
       case 'Newtype': {
         const ty = desc.fields[0].ty, payload = input(ty, value, depth + 1);
-        store(pointer + 16, push(6, payload, manifest.types[ty].bytes)); break;
+        store(pointer + 16, push(4, payload, manifest.types[ty].bytes)); break;
       }
       default: throw Error('尚不支持此类型的浏览器输入');
     }
@@ -228,9 +204,9 @@ export async function load(bytes) {
   const errorMessage = code => ['执行失败', 'integer arithmetic overflowed', 'integer division by zero', 'initialization dependency cycle', 'OutOfRange: array index out of bounds', 'dictionary key is absent', 'property query failed', 'pattern match failed', 'data module has not been injected before initialization', 'Wasm execution failed', 'function called before its declaration was initialized', 'cannot copy an uninitialized function'][code] ?? '执行失败';
   const diagnostics = () => {
     const result = [];
-    const count = word(64 + 8 * 16 + 4);
+    const count = word(64 + 6 * 16 + 4);
     for (let i = 0; i < count; i++) {
-      const [pointer, bytes] = payload(8, i);
+      const [pointer, bytes] = payload(6, i);
       if (bytes !== 40) throw Error('无效诊断记录');
       const siteOrigin = origin(pointer), code = word(pointer + 12);
       const message = code === 9 ? text(word(pointer + 16)) : errorMessage(code);
@@ -256,7 +232,7 @@ export async function load(bytes) {
     return json(result, desc.arguments.at(-1));
   };
   injectBundle(module, manifest, {allocate, store, copy, push, input, wasm});
-  const debugEvents = debugReader({manifest, word, payload, text, view, coordinates});
+  const debugEvents = debugReader({manifest, word, payload, text, view, address, content, coordinates});
   return {
     diagnostics,
     debugEvents,

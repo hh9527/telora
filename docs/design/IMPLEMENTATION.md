@@ -311,7 +311,11 @@ String/Bytes 共用独立的 `Vec<u8>` 内容池：不足 16 字节时直接内�
 的引用指向永久 Wasm 静态区，其余通过当前 words 基址访问。Host 交换缓冲区和来源
 记录仍使用独立的真实线性内存地址，不能当作语言引用传入。
 只读 words 视图位于 40/44（地址/字节数），origin 位于 56；扩容后必须重新取基址。
-现有工作区回收保留冻结前缀；初始化压缩回收及正常请求 truncate reset 仍在实施中。
+类型追踪描述与反射描述在编译时进入永久静态镜像，Guest 启动时登记；words 中
+无需再分配一份类型描述。成功初始化后先移动回收，再冻结 words/content 前缀。
+保守根为全部 Ready demand、service handler，以及尚待消费的诊断/debug 事件；
+顶层值、property/check、已实例化泛型值通过 demand 保留。初始化专用句柄清空。
+工作区显式回收保留冻结前缀，并返回调用方显式根的替代句柄。
 Dict 使用有序 keys/values，字段操作与构造胶水消费已闭合的布局证据。
 具体尺寸与表示以 `telora-wasm-shared/src/abi.rs` 和生成器为准，不构成发布 ABI。
 
@@ -323,7 +327,7 @@ pattern 使用单独的 member selection 事实，不执行值物化。
 enum 构造器代码按封闭签名和 variant 复用。其函数值的 environment 为 0，invoke
 将函数值地址作为第一个参数交给构造器胶水，用于复制 12 字节 Loc；payload
 仍按原布局搬运，不重写其来源。普通闭包使用非零环境句柄，调用约定不变。
-内部 ABI 版本为 24；旧 Wasm 制品需重新生成，不能混用旧布局或调用约定。
+内部 ABI 版本为 25；旧 Wasm 制品需重新生成，不能混用旧布局或调用约定。
 `interpreter!` 在构造时捕获输入函数，工厂和适配器使用普通值引用环境；
 没有适配器 memo 槽或 raw-parent 环境，回收不再扫描、修补冻结环境中的该类缓存。
 
@@ -375,15 +379,15 @@ codegen 不与运行时共用可变推导状态。
 
 Guest 使用 wasm32-unknown-unknown 标准库默认分配器，不自定义全局分配器。
 mem-alloc/realloc/free 只是把这套分配器暴露给 Host，与 Rust Vec/String 共用。
-语言小对象批量放入稳定的零初始化块，避免每个标量触发一次标准分配；
+语言小对象追加到零初始化 words Vec，引用使用逻辑偏移，避免每个标量触发一次标准分配；
 Host 缓冲区和 Rust 临时对象不经过这层语言对象存储。
-语言堆的 Table 及其对象是普通 Rust 所有权数据；复制回收释放旧 work 对象，
+分类表的 payload 指向 words；Regex 等 Rust 资源独立持有。复制回收释放旧 words/content，
 不覆盖分配器元数据。释放允许分配器复用空间，不意味着 Wasm 线性内存缩页。
 
-服务事件及测试边界进行精确 work copy-collect。根包括跨事件状态、闭包、待执行
-测试描述与必要缓存；遍历依据闭合类型布局，更新所有移动句柄，保留共享与环。
-main 引用保持稳定。线性内存允许保留高水位，但固定存活状态应复用 work 空间，
-不能以重建 session 或丢弃状态实现回收。
+初始化采用保守根集合进行 copy-collect；测试等显式保活边界继续支持 work copy-collect。
+遍历依据闭合类型布局，更新所有移动句柄，保留共享与环。冻结前缀引用保持稳定。
+正常服务请求没有需要延续的临时根，直接 truncate 请求后缀，复用容量而不重建实例。
+线性内存允许保留高水位；只有 trap/poisoned 状态使用初始化快照恢复。
 
 运行期数据的来源记录也参与回收：值、内联 enum payload、闭包及 Blame 的来源
 标记决定哪些记录仍存活。静态/初始化来源固定保留；动态来源从 RT 和 Host manifest
@@ -449,10 +453,13 @@ fixture 仅累计已接受的源文本字节作为粗略输入边界，保留展
 实例由静态 trait 证据选择。Plan 是内部 (sources, initializer)；initializer 返回捕获 Self
 的已类型化 handler，with_diagnostics 包装每次调用。Host 不解码 Self。
 
-当前 reset 复用 wasmi Module，创建新 store/instance，再恢复初始化后的线性内存及
-全部 mutable globals（包括 Rust stack pointer）。函数表由静态链接确定。
-不重复 codegen、数据加载或 init。请求临时值、trap 状态和来源登记随 reset 丢弃。
-该基线复制是首版实现，不是语言规定；后续可优化 reset 成本。
+正常完成请求后，reset-service 先释放请求 Regex 资源，再恢复分类表基线并 truncate
+words/content，保留容量；Host 恢复执行 globals、debug 游标和每次请求的 fuel。
+输出及 Host ABI 缓冲区必须先消费并释放。临时 parse 不登记请求来源，来源表保留
+初始化时的名称/BOLs。JSON writer 在普通语言失败路径也显式释放。
+只有 trap/poisoned 状态或清理本身失败时，才复用 wasmi Module 创建新 store/instance，
+恢复初始化快照及全部 mutable globals（包括 Rust stack pointer）。函数表固定。
+两条恢复路径都不重复 codegen、数据加载或 init；保留快照是异常恢复策略，不是旧值布局。
 
 ## 9. CLI## 9. CLI 与 LSP 的阶段边界
 

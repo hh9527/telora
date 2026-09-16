@@ -20,7 +20,6 @@ pub struct Session {
     pub(crate) memory: wasmi::Memory,
     pub(crate) registered_sources: usize,
     pub(crate) emitted_debug: std::cell::Cell<u32>,
-    pub(crate) trace_types: u32,
 }
 
 /// Engine boundaries and consumption, in raw fuel units and bytes (not RSS).
@@ -94,7 +93,6 @@ impl Session {
             memory,
             registered_sources,
             emitted_debug: std::cell::Cell::new(0),
-            trace_types: 0,
         };
         for module in bundled_data {
             if !session.manifest.sources.iter().any(|source| source.id == module.source.id) {
@@ -114,7 +112,6 @@ impl Session {
         Ok(session)
     }
     pub fn initialize(&mut self) -> Result<(), String> {
-        self.prepare_collection()?;
         self.register_sources()?;
         let initialize = self
             .instance

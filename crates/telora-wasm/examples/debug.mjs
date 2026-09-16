@@ -1,6 +1,6 @@
 // Read-only debug transport; never calls language functions or Display providers.
 import { location } from './location.mjs';
-export function debugReader({manifest, word, payload, text, view, coordinates}) {
+export function debugReader({manifest, word, payload, text, view, address, content, coordinates}) {
   const repr = pointer => {
     let output = '', bytes = 0, truncated = false;
     const encoder = new TextEncoder();
@@ -24,11 +24,11 @@ export function debugReader({manifest, word, payload, text, view, coordinates}) 
     const value = (pointer, depth = 0) => {
       if (truncated) return;
       const desc = manifest.types[word(pointer + 12)];
-      if (!desc || pointer + desc.bytes > view().byteLength) throw Error('无效的 debug 值');
+      if (!desc || address(pointer) + desc.bytes > view().byteLength) throw Error('无效的 debug 值');
       switch (desc.kind) {
-        case 'Int': return push(view().getBigInt64(pointer + 16, true).toString());
+        case 'Int': return push(view().getBigInt64(address(pointer + 16), true).toString());
         case 'Float': {
-          const number = view().getFloat64(pointer + 16, true);
+          const number = view().getFloat64(address(pointer + 16), true);
           return push(Number.isNaN(number) ? 'NaN' : !Number.isFinite(number) ? (number < 0 ? '-inf' : 'inf') : Object.is(number, -0) ? '-0.0' : Number.isInteger(number) ? number + '.0' : String(number));
         }
         case 'Bool': return push(word(pointer + 16) ? "'True" : "'False");
@@ -39,12 +39,10 @@ export function debugReader({manifest, word, payload, text, view, coordinates}) 
         case 'Metadata': return push(`<TypeId:${word(pointer + 16)}>`);
         case 'Unsupported': return push('<opaque>');
         case 'Bytes': {
-          const [base, bytes] = payload(1, word(pointer + 16));
-          const start = word(pointer + 20), end = word(pointer + 24);
-          if (start > end || end > bytes) throw Error('无效的 debug Bytes');
+          const bytes = content(pointer);
           push('b"');
-          for (let index = start; index < Math.min(end, start + 32); index++) push('\\x' + view().getUint8(base + index).toString(16).padStart(2, '0'));
-          if (end - start > 32) push('...');
+          for (const byte of bytes.subarray(0, 32)) push('\\x' + byte.toString(16).padStart(2, '0'));
+          if (bytes.length > 32) push('...');
           return push('"');
         }
       }
@@ -54,20 +52,20 @@ export function debugReader({manifest, word, payload, text, view, coordinates}) 
         if (!variant) throw Error('无效的 debug variant');
         push("'"); push(variant.name);
         if (variant.ty !== null) {
-          push('('); value(variant.boxed ? payload(4, word(pointer + 24))[0] : pointer + 24, depth + 1); push(')');
+          push('('); value(variant.boxed ? payload(2, word(pointer + 24))[0] : pointer + 24, depth + 1); push(')');
         }
         return;
       }
       if (desc.kind === 'Newtype') {
-        push('('); value(payload(6, word(pointer + 16))[0], depth + 1); return push(')');
+        push('('); value(payload(4, word(pointer + 16))[0], depth + 1); return push(')');
       }
       if (desc.kind === 'Array' || desc.kind === 'Dict') {
         const dict = desc.kind === 'Dict';
-        const [base, bytes] = payload(3, word(pointer + (dict ? 24 : 16)));
+        const [base, bytes] = payload(1, word(pointer + (dict ? 24 : 16)));
         const start = dict ? 0 : word(pointer + 20), end = word(pointer + (dict ? 20 : 24));
         const stride = manifest.types[desc.arguments[0]].bytes;
         if (start > end || end * stride > bytes || (!stride && end)) throw Error('无效的 debug sequence');
-        const keys = dict ? payload(3, word(pointer + 16)) : [0, 0];
+        const keys = dict ? payload(1, word(pointer + 16)) : [0, 0];
         if (dict && end * 32 > keys[1]) throw Error('无效的 debug Dict keys');
         push(dict ? '{' : '[');
         for (let index = start; index < Math.min(end, start + 32) && !truncated; index++) {
@@ -79,7 +77,7 @@ export function debugReader({manifest, word, payload, text, view, coordinates}) 
         return push(dict ? '}' : ']');
       }
       if (desc.kind === 'Tuple' || desc.kind === 'Record') {
-        const record = desc.kind === 'Record', [base, bytes] = payload(2, word(pointer + 16));
+        const record = desc.kind === 'Record', [base, bytes] = payload(0, word(pointer + 16));
         push(record ? '{' : '(');
         for (const [index, field] of desc.fields.slice(0, 32).entries()) {
           if (truncated) break;
@@ -98,9 +96,9 @@ export function debugReader({manifest, word, payload, text, view, coordinates}) 
   };
   let cursor = 0;
   return () => {
-    const count = word(64 + 13 * 16 + 4), events = [];
+    const count = word(64 + 11 * 16 + 4), events = [];
     for (let index = cursor; index < count; index++) {
-      const [pointer, bytes] = payload(13, index);
+      const [pointer, bytes] = payload(11, index);
       if (bytes !== 8) throw Error('无效的 debug event');
       const site = manifest.debug_sites.find(site => site.node === word(pointer));
       if (!site) throw Error('未知的 debug site');

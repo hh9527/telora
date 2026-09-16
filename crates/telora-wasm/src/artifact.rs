@@ -172,6 +172,9 @@ impl Manifest {
                         T::Dyn => Kind::Dyn,
                         T::Tuple => Kind::Tuple,
                         T::Record(_) => Kind::Record,
+                        // Unchecked only admits named structs. It keeps its own
+                        // TypeId but uses the owner's closed record layout.
+                        T::Unchecked => Kind::Record,
                         T::Nominal(symbol) => match executable
                             .sealed_mir()
                             .types()

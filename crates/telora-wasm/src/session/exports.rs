@@ -9,6 +9,7 @@ pub(crate) struct Exports {
     pub source_name: TypedFunc<(u32, u32), ()>,
     pub set_source: TypedFunc<(u32, u32, u32, u32), ()>,
     pub create_service: TypedFunc<(), i32>,
+    pub reset_service: TypedFunc<(), ()>,
     pub diagnostics: TypedFunc<(u32, u32, u32), ()>,
     pub run_service: TypedFunc<(u32, u32, u32, u32, u32), ()>,
 }
@@ -24,6 +25,7 @@ impl Exports {
                 source_name: instance.get_typed_func(store, "get-data-source-name")?,
                 set_source: instance.get_typed_func(store, "set-data-source")?,
                 create_service: instance.get_typed_func(store, "create-service")?,
+                reset_service: instance.get_typed_func(store, "reset-service")?,
                 diagnostics: instance.get_typed_func(store, "get-service-diagnostics")?,
                 run_service: instance.get_typed_func(store, "run-service")?,
             })

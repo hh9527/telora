@@ -330,6 +330,7 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
     let service = if matches!(mode, Mode::Service) {
         Some(crate::service_abi::contract(&manifest, initialize - FIRST_FUNCTION)?)
     } else { None };
-    crate::compose::link(&module.finish(), heap_start, &manifest.sources, service,
+    crate::compose::link(&module.finish(), heap_start, &manifest.sources, &manifest.types,
+        u32::try_from(plan.demands.len()).map_err(|_| "Wasm: demand count overflow")?, service,
         &helpers.iter().enumerate().map(|(i, (name, _))| (*name, initialize - FIRST_FUNCTION + i as u32)).collect::<Vec<_>>())
 }

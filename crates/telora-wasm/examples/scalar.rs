@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(2)
         .map(std::fs::read_to_string)
         .transpose()?
-        .unwrap_or_else(|| "export def answer = 42;".into());
+        .unwrap_or_else(|| "export def answer: Int = 42;".into());
     let inventory = std::iter::once("@src/main")
         .chain(static_sources::BUILTINS.iter().map(|(name, _)| *name))
         .map(|name| ModuleSpec {
