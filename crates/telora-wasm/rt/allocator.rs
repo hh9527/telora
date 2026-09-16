@@ -8,10 +8,10 @@ unsafe impl GlobalAlloc for ArenaAllocator {
         let align = layout.align();
         let bytes = layout
             .size()
-            .checked_add(align - 1)
+            .checked_add(align.saturating_sub(8))
             .and_then(|bytes| u32::try_from(bytes).ok())
             .unwrap_or_else(|| core::arch::wasm32::unreachable());
-        let raw = unsafe { crate::telora_alloc(bytes) } as usize;
+        let raw = unsafe { crate::arena_alloc(bytes) } as usize;
         ((raw + align - 1) & !(align - 1)) as *mut u8
     }
 

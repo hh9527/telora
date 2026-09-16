@@ -48,8 +48,8 @@ pub unsafe extern "C" fn telora_toml_parse(input: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_parse_data(pointer: u32, length: u32, format: u32, source: u32) -> u32 {
     unsafe {
+        assert!((1..=3).contains(&format), "unknown data format");
         assert_ne!(pointer, 0);
-        assert_eq!(pointer & 7, 0);
         let end = pointer.checked_add(length).expect("input range overflow");
         assert!(end <= crate::telora_heap_end());
         let bytes = core::slice::from_raw_parts(pointer as *const u8, length as usize);

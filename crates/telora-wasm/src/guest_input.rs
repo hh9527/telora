@@ -25,22 +25,22 @@ impl Session {
             return Err("Wasm: input source is not registered".into());
         }
         let length = u32::try_from(input.len()).map_err(|_| "Wasm: input size exceeds wasm32")?;
-        let cap = length.checked_add(7).ok_or("Wasm: input capacity overflow")? & !7;
-        let alloc = self.instance.get_typed_func::<u32, u32>(&self.store, "mem-alloc")
+        let cap = length;
+        let alloc = self.instance.get_typed_func::<(u32, u32), u32>(&self.store, "mem-alloc")
             .map_err(|e| e.to_string())?;
-        let free = self.instance.get_typed_func::<(u32, u32), ()>(&self.store, "mem-free")
+        let free = self.instance.get_typed_func::<(u32, u32, u32), ()>(&self.store, "mem-free")
             .map_err(|e| e.to_string())?;
         let parse = self.instance.get_typed_func::<(u32, u32, u32, u32), u32>(&self.store, "telora_parse_data")
             .map_err(|e| e.to_string())?;
         let materialize = self.instance.get_typed_func::<(u32, u32), u32>(&self.store, "telora_materialize_data")
             .map_err(|e| e.to_string())?;
-        let pointer = alloc.call(&mut self.store, cap).map_err(|e| e.to_string())?;
+        let pointer = alloc.call(&mut self.store, (cap, 1)).map_err(|e| e.to_string())?;
         self.write(pointer as usize, input.as_bytes())?;
         let format = match format { Format::Json => 1, Format::Yaml => 2, Format::Toml => 3 };
         let packet = parse.call(&mut self.store, (pointer, length, format, source))
             .map_err(|e| e.to_string())?;
         // The parser now owns its text spans. It cannot retain the transfer buffer.
-        free.call(&mut self.store, (pointer, cap)).map_err(|e| e.to_string())?;
+        free.call(&mut self.store, (pointer, cap, 1)).map_err(|e| e.to_string())?;
         let output = self.output();
         let error = output.word(packet as u64 + 12)?;
         if error != 0 {

@@ -29,9 +29,9 @@
 Guest exports：
 
 ```text
-mem-alloc(cap: u32) -> ptr: u32;
-mem-free(ptr: u32, cap: u32);
-mem-realloc(ptr: u32, old_cap: u32, new_cap: u32) -> ptr: u32;
+mem-alloc(cap: u32, align: u32) -> ptr: u32;
+mem-free(ptr: u32, cap: u32, align: u32);
+mem-realloc(ptr: u32, old_cap: u32, new_cap: u32, align: u32) -> ptr: u32;
 
 get-data-source-count() -> u32;
 get-data-source-name(i: u32) -> (id: u32, name: u32, name_len: u32);
@@ -53,30 +53,36 @@ fmt 使用固定编号：1=JSON、2=YAML、3=TOML；数据均为 UTF-8。
 
 ### 指针、容量与长度
 
-所有 ABI 缓冲区指针非零并按 8 字节对齐；容量必须满足 `cap % 8 == 0`。
-len 表示有效字节数，无需对齐，但不能超过所属分配容量。
+缓冲区指针非零；align 为非零的 2 的幂，使用 Rust Layout 可表示的 size/alignment。
+cap、len 均以字节为单位，cap 无需为 align 的整数倍，len 不超过所属分配容量。
 名称、输入数据均为指针/长度描述的字节序列，不要求 NUL 结尾。
 
-唯一的零容量空缓冲区表示为 `(ptr = 8, cap = 0)`。地址 8 是对齐的哨兵，
-零容量时不可解引用；它不要求 Guest 在该地址保留实际分配。
-非零容量分配的合法性由分配器决定，不能仅凭 ptr 非零就认为可读写。
-有效长度为 0 的缓冲区仍可保留非零容量，以便复用。
+零容量空缓冲区统一为 (ptr=align, cap=0)。这是非零、满足对齐的哨兵，不可解引用，
+无需在该地址保留分配。字节缓冲区使用 align=1，空缓冲区即 (1,0)；
+align=8 时仍为 (8,0)。有效长度为 0 的缓冲区也可保留非零容量。
 
-Host 负责以检查溢出的方式计算对齐容量。Guest 不隐式将错误容量取整。
-Host/Guest 边界检查范围加法溢出和线性内存边界；错误容量、非法范围、非法调用状态
-属于 ABI 违约，trap。内存分配失败也 trap，不用 null 表示失败。
+Host 必须传递真实分配的容量及对齐。Guest 检查 Layout、指针对齐、范围加法溢出
+和线性内存边界；非法参数、非法状态及分配失败 trap。范围检查不证明分配所有权：
+精确容量、原始对齐以及禁止重复释放仍是调用者义务，不额外维护分配映射表。
 
 ### 内存函数
 
-- `mem-alloc(cap)` 返回容量为 cap、对齐为 8 的分配；`mem-alloc(0) = 8`。
-- `mem-free(ptr, cap)` 消费分配所有权；`mem-free(8, 0)` 是空操作。
-- `mem-realloc(ptr, old_cap, new_cap)` 消费旧分配，返回新分配所有权，
-  保留前 `min(old_cap, new_cap)` 字节。调用后不能再通过旧所有权访问或释放。
-- `mem-realloc(8, 0, new_cap)` 等价于分配；new_cap 为 0 时释放旧分配并返回 8。
+- mem-alloc(cap, align) 使用 Rust 全局分配器分配未初始化内存；cap=0 返回 align。
+- mem-free(ptr, cap, align) 消费所有权，按原始 Layout 释放；零容量为空操作。
+- mem-realloc(ptr, old_cap, new_cap, align) 消费旧所有权并返回新所有权，
+  保留前 min(old_cap,new_cap) 字节，新增字节未初始化；对齐保持不变。
+- 从零容量扩容等价于分配；收缩到零容量释放原分配并返回 align。
+  如需改变对齐，调用者显式分配、复制和释放。
 
-调用方必须传递准确的原容量，不能以有效长度代替。无需为此 ABI 额外建立
-指针到容量的映射；Guest 可用容量和固定对齐重建分配布局。
-`free` 结束逻辑所有权，具体如何回收物理空间由分配器决定。
+这些函数和 Guest 的 Vec/String 使用同一套 Rust 全局分配器。底层 arena 分配原语
+只供全局分配器调用；不建立另一套 Host 专用分配器。free 是否立即回收物理空间
+取决于全局分配器策略，现阶段仍按 arena 生命周期整体回收。
+
+只有明确 move 的接口才允许接收方重建拥有所有权的 Rust 容器。重建 Vec<T> 时，
+实际分配布局须与 T 的对齐和元素容量一致，所有有效元素均已初始化；
+例如 Vec<u8> 使用 align=1，字节 cap 就是元素容量。不能仅因地址碰巧按 8 对齐，
+就把按 Layout(cap,8) 分配的内存当成默认 Vec<u8>。
+借用接口不转移所有权，不能据此使用 Vec::from_raw_parts 接管输入。
 
 ### 服务输入和输出
 
@@ -85,8 +91,8 @@ out/out_cap 则是完整的 move：调用时 Host 交出所有权，Guest 可复
 正常返回时 Host 获得返回的 out/out_cap 所有权，out_len 不超过 out_cap。
 输入借用不能与转移所有权的输出分配重叠。
 
-首次输出传 `(8, 0)`；后续可将返回缓冲区再次 move 给 Guest。使用结束后调用
-`mem-free(out, out_cap)`。返回指针是否与原指针相同不影响所有权语义。
+服务输出是 align=1 的字节缓冲区，首次输出传 `(1, 0)`；后续可将返回缓冲区再次 move 给 Guest。使用结束后调用
+`mem-free(out, out_cap, 1)`。返回指针是否与原指针相同不影响所有权语义。
 trap 时没有所有权返回，Host 不能释放或重用旧输出指针。
 草案采用 trap 后丢弃实例的恢复边界；是否优化成可恢复实例不在本次范围。
 
@@ -101,7 +107,7 @@ Host 不跨 Guest 调用保存依赖旧 memory.buffer 的视图：Guest 调用�
 2. Host 按逻辑名称取得输入内容，绑定到预定的 id；不动态注册来源身份或位置表。
 3. Host 调用 mem-alloc，将内容写入 Guest 线性内存。
 4. Host 调用 set-data-source，Guest 同步解析并构建数据，在自己的 Locs 表中登记 key/value 的位置。
-5. 返回后 Host 释放输入分配；Guest 不保留对该传输缓冲区的借用。
+5. 返回后 Host 可重写同一传输缓冲区以注入下一个来源，最后统一释放；Guest 不保留对该传输缓冲区的借用。
 6. 所有必要来源注入成功后 create-service 完成初始化，返回 0 表示成功，非 0 表示失败。
 7. 初始化成功后 Host 多次调用 run-service，复用输出缓冲区。
 
@@ -109,10 +115,12 @@ Host 不跨 Guest 调用保存依赖旧 memory.buffer 的视图：Guest 调用�
 Host 不接收 TypeId、实例 ID 或服务句柄；多个服务由多个 Guest 实例承载。
 错误码只表达初始化状态，详细诊断通过诊断协议获取，Wasm trap 由 Host 单独捕获。
 初始化失败不能进入查询阶段；成功后重复创建属于非法调用状态。
-失败后的重试策略须在失败协议中明确，不能默认可重试。
+初始化失败后不支持重试或替换数据来恢复；再次读取失败状态返回 1，重新初始化需要新实例。
 服务随 Guest 实例销毁，不另设服务句柄表或逐服务销毁接口。
 
-TransformService 声明哪些 source 可注入；编译器将槽位 ID、逻辑名称及注入信息生成到 Wasm。
+TransformService 声明哪些 source 可注入；相应 property 求值及注入信息生成到 Wasm。
+模块初始化后，Guest 从该封闭 entry 的 property 结果建立来源清单并分配槽位 ID，
+不要求编译器把普通 property 计算简化为语法常量；Host 不分配这些 ID。
 来源清单遵循 RFC 0299 的稳定名称排序。静态模块来源与外部来源使用不冲突的
 SourceId 空间；set-data-source 的 id 直接标识预定槽位，Host 只根据清单填充内容。
 预定的是来源身份及注入槽位，不是未知输入中每个 key/value 的具体位置；后者在 Guest 解析时产生。
@@ -249,7 +257,7 @@ Wasm trap 不保证产生响应，由 Host 捕获并丢弃本次实例状态。
 - set-data-source 的解析诊断及 create-service 的初始化诊断如何读取。
   二者可能失败，不能因为 set-data-source 没有返回值就忽略失败或继续初始化。
   应复用现有诊断捕获语义，但必须确定显式获取入口或结果协议。
-- create-service 非零错误码的分类及初始化失败后的重试策略；0 成功、非 0 失败已确定。
+- create-service 返回 0 成功、1 初始化失败，不允许失败后重试；详细失败由诊断表达。
 - ABI 版本协商及来源名称表的具体编码；不需要独立位置旁文件的配对协议。
 
 ABI 违约和 Wasm trap 与可收集的语言诊断不同。配额继续以可停机为目标，
@@ -282,7 +290,7 @@ LocId 不保证所有场景总内存减少：大数据树每个位置仅引用�
 
 ## 可执行的验收条件
 
-- 内存 ABI 覆盖空哨兵、8 字节指针/容量对齐、零长度但非零容量、扩缩容内容保留、
+- 内存 ABI 覆盖对齐对应的空哨兵、合法/非法 Layout、零长度但非零容量、扩缩容内容保留、
   容量溢出、错误范围、move 后所有权及 trap 后实例废弃；memory.grow 后 Host 正确更新视图。
 - Wasm 自带静态 Locs、来源名称和注入清单；不依赖 set-locs 或 add-source-loc，
   Guest 的 with_diagnostic 可以独立输出包含逻辑来源名称及完整行列的结构化诊断。

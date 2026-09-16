@@ -155,3 +155,14 @@ unsafe fn number_text(prefix: &[u8], mut number: u32, suffix: &[u8]) -> u32 {
         result
     }
 }
+
+/// Allocate from the Guest registry, after the deterministic static source list.
+pub(crate) unsafe fn next_id() -> u32 {
+    unsafe {
+        let mut highest = 0;
+        for index in 0..LENGTH {
+            highest = highest.max((BUFFER as *const Source).add(index as usize).read().id);
+        }
+        highest.checked_add(1).expect("source identity overflow")
+    }
+}

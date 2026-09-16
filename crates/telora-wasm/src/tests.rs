@@ -7,6 +7,7 @@ use telora_core::{
 mod data;
 mod location_tables;
 mod host_memory;
+mod service_sources;
 mod debug;
 mod dynamic;
 mod equality;

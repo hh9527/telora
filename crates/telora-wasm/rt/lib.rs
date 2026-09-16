@@ -20,6 +20,7 @@ mod format_nodes;
 mod path;
 mod sort;
 mod sources;
+mod service_sources;
 mod tables;
 mod template;
 mod text;
@@ -35,9 +36,9 @@ unsafe extern "C" {
 }
 static mut NEXT: u64 = 0;
 
-/// wasm32 addresses; the linker places heap after static data and Rust stack.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn telora_alloc(bytes: u32) -> u32 {
+/// Primitive used only by the Rust global allocator. No call back into alloc.
+/// The linker places the arena after static data and the Rust stack.
+pub(crate) unsafe fn arena_alloc(bytes: u32) -> u32 {
     unsafe {
         let start = if NEXT == 0 {
             core::ptr::addr_of!(__heap_base) as u64
@@ -54,7 +55,6 @@ pub unsafe extern "C" fn telora_alloc(bytes: u32) -> u32 {
             core::arch::wasm32::unreachable();
         }
         NEXT = end;
-        core::ptr::write_bytes(start as *mut u8, 0, bytes as usize);
         start as u32
     }
 }
@@ -69,4 +69,13 @@ pub unsafe extern "C" fn telora_reserve_static(end: u32) {
         assert!(NEXT == 0 && end as usize >= core::ptr::addr_of!(__heap_base) as usize);
         NEXT = end as u64;
     }
+}
+
+/// Generated values require zeroed storage; use the same allocator as Vec/String.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_alloc(bytes: u32) -> u32 {
+    let layout = core::alloc::Layout::from_size_align(bytes.max(1) as usize, 8).unwrap();
+    let pointer = unsafe { alloc::alloc::alloc_zeroed(layout) };
+    if pointer.is_null() { alloc::alloc::handle_alloc_error(layout); }
+    pointer as u32
 }

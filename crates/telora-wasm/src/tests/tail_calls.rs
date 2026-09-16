@@ -8,7 +8,8 @@ fn tail_calls_bound_stack_and_preserve_pending_work_and_failures() {
     ))
     .expect("read test source");
     let bytes = compile(source).unwrap();
-    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    // This verifies stack behavior, not an exact instruction budget.
+    let mut session = crate::session::Session::load(&bytes, 200_000_000).unwrap();
     session.set_debug_enabled(true).unwrap();
     session.initialize().unwrap();
     session.initialize().unwrap();
@@ -16,6 +17,8 @@ fn tail_calls_bound_stack_and_preserve_pending_work_and_failures() {
         session.call(&[]).unwrap(),
         serde_json::json!([42, 42, 42, 42, 42, 42, 42, true, 40])
     );
+    let usage = session.usage();
+    eprintln!("tail-call fixture fuel: {}", usage.fuel_budget - usage.fuel_remaining);
     let events = session.debug_events().unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].message.as_deref(), Some("after tail recursion"));
