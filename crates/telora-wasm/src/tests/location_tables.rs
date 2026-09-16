@@ -1,5 +1,16 @@
 use telora_wasm_shared::locations::{LocationRecord, RECORD_BYTES, STATIC_BIT};
 
+fn register_input(session: &mut crate::session::Session) -> u32 {
+    let id = session.manifest.sources.iter().map(|source| source.id).max().unwrap() + 1;
+    let name = b"@test/input";
+    let pointer = session.allocate(name.len()).unwrap();
+    session.write(pointer as usize, name).unwrap();
+    let register = session.instance.get_typed_func::<(u32, u32, u32), u32>(
+        &session.store, "telora_register_source").unwrap();
+    assert_eq!(register.call(&mut session.store, (id, pointer, name.len() as u32)).unwrap(), 1);
+    id
+}
+
 #[test]
 fn guest_location_tables_are_embedded_and_initialization_ids_survive_growth() {
     let source = std::fs::read_to_string(concat!(
@@ -88,7 +99,7 @@ fn guest_parsers_register_initialization_spans_but_not_request_spans() {
         (3, "a = 42\r\n", 0, 4),
     ] {
         let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
-        let source = session.manifest.sources[0].id;
+        let source = register_input(&mut session);
         let parse = session.instance
             .get_typed_func::<(u32, u32, u32, u32), u32>(&session.store, "telora_parse_data")
             .unwrap();
@@ -147,7 +158,7 @@ fn guest_input_materialization_owns_text_after_transfer_buffer_is_reused() {
     let input = r#"{"long key outside inline storage": ["original long string é🦀", "escaped\ntext", 9223372036854775807]}"#;
     let pointer = session.allocate(input.len()).unwrap();
     session.write(pointer as usize, input.as_bytes()).unwrap();
-    let source_id = session.manifest.sources[0].id;
+    let source_id = register_input(&mut session);
     let packet = parse.call(&mut session.store, (pointer, input.len() as u32, 1, source_id)).unwrap();
     let value = materialize.call(&mut session.store, (packet, 0)).unwrap();
     session.write(pointer as usize, &vec![b'x'; input.len()]).unwrap();

@@ -2,11 +2,10 @@
 //! for service ABI consumers. Neither path registers request locations.
 use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
-use telora_data::source::{Diagnostic, LineIndex, Severity};
+use telora_data::source::{Diagnostic, Severity};
 use super::{Origins, put};
 
-pub(super) unsafe fn export(errors: Vec<Diagnostic>, input: &str, origins: &Origins, name: &str) -> u32 {
-    let lines = LineIndex::new(input).expect("parser input coordinates");
+pub(super) unsafe fn export(errors: Vec<Diagnostic>, origins: &Origins, name: &str) -> u32 {
     let mut json = String::new();
     let mut summary = String::from(name);
     if !name.is_empty() { summary.push_str(": "); }
@@ -26,9 +25,9 @@ pub(super) unsafe fn export(errors: Vec<Diagnostic>, input: &str, origins: &Orig
                 };
                 json.push_str("{\"location\":{\"source\":");
                 crate::json_text::quoted(&mut json, source).unwrap();
-                let start = lines.point(label.location.start);
-                let end = lines.point(label.location.end);
-                write!(&mut json, ",\"start\":{{\"line\":{},\"offset\":{}}},\"end\":{{\"line\":{},\"offset\":{}}}}},\"message\":", start >> 32, start as u32, end >> 32, end as u32).unwrap();
+                let start = unsafe { crate::sources::position(*id, label.location.start) };
+                let end = unsafe { crate::sources::position(*id, label.location.end) };
+                write!(&mut json, ",\"start\":{{\"line\":{},\"offset\":{}}},\"end\":{{\"line\":{},\"offset\":{}}}}},\"message\":", start.0, start.1, end.0, end.1).unwrap();
                 crate::json_text::quoted(&mut json, &label.message).unwrap();
                 write!(&mut json, ",\"primary\":{}}}", label.primary).unwrap();
             }
@@ -37,9 +36,7 @@ pub(super) unsafe fn export(errors: Vec<Diagnostic>, input: &str, origins: &Orig
         let mut notes = error.notes.clone();
         if matches!(origins, Origins::Inherit(_)) {
             for label in &error.labels {
-                let start = lines.point(label.location.start);
-                let end = lines.point(label.location.end);
-                notes.push(alloc::format!("input range (zero-based line/UTF-8 offset): {}:{}..{}:{}; {}", start >> 32, start as u32, end >> 32, end as u32, label.message));
+                notes.push(alloc::format!("input range (UTF-8 bytes): {}..{}; {}", label.location.start, label.location.end, label.message));
             }
         }
         for (index, note) in notes.iter().enumerate() {

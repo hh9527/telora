@@ -112,6 +112,7 @@ impl Session {
             let source = &self.manifest.sources[self.registered_sources];
             let id = source.id;
             let name = source.name.as_bytes().to_vec();
+            let lines = source.lines.iter().flatten().flat_map(|word| word.to_le_bytes()).collect::<Vec<_>>();
             let pointer = self.allocate(name.len())?;
             self.write(pointer as usize, &name)?;
             let register = self
@@ -128,6 +129,12 @@ impl Session {
             {
                 return Err("Wasm: source identity was registered with a different name".into());
             }
+            let pointer = self.allocate(lines.len())?;
+            self.write(pointer as usize, &lines)?;
+            self.instance.get_typed_func::<(u32, u32, u32), ()>(&self.store, "telora_source_index")
+                .map_err(|e| e.to_string())?
+                .call(&mut self.store, (id, pointer, (lines.len() / 8) as u32))
+                .map_err(|e| e.to_string())?;
             self.registered_sources += 1;
         }
         Ok(())

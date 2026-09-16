@@ -7,7 +7,10 @@ struct Source {
     id: u32,
     pointer: u32,
     length: u32,
+    lines: u32,
+    line_count: u32,
 }
+const SOURCE_BYTES: u32 = core::mem::size_of::<Source>() as u32;
 static mut BUFFER: u32 = 0;
 static mut LENGTH: u32 = 0;
 static mut CAPACITY: u32 = 0;
@@ -41,7 +44,7 @@ pub(crate) unsafe fn collect(gc: &mut crate::collect::Collector) {
                         .contains(&(BUFFER as *const Source).add(index as usize).read().id)
             })
             .count() as u32;
-        let at = gc.reserve(retained * 12);
+        let at = gc.reserve(retained * SOURCE_BYTES);
         let mut next = 0;
         for index in 0..LENGTH {
             let source = (BUFFER as *const Source).add(index as usize).read();
@@ -54,9 +57,14 @@ pub(crate) unsafe fn collect(gc: &mut crate::collect::Collector) {
                 let offset = gc.copy_bytes(source.pointer, source.length);
                 gc.base + offset
             };
-            gc.put(at + next * 12, source.id);
-            gc.put(at + next * 12 + 4, pointer);
-            gc.put(at + next * 12 + 8, source.length);
+            let lines = if source.lines < gc.base { source.lines } else {
+                gc.base + gc.copy_bytes(source.lines, source.line_count.checked_mul(8).unwrap())
+            };
+            gc.put(at + next * SOURCE_BYTES, source.id);
+            gc.put(at + next * SOURCE_BYTES + 4, pointer);
+            gc.put(at + next * SOURCE_BYTES + 8, source.length);
+            gc.put(at + next * SOURCE_BYTES + 12, lines);
+            gc.put(at + next * SOURCE_BYTES + 16, source.line_count);
             next += 1;
         }
         BUFFER = gc.base + at;
@@ -85,7 +93,7 @@ pub unsafe extern "C" fn telora_register_source(id: u32, pointer: u32, length: u
         }
         if LENGTH == CAPACITY {
             let capacity = CAPACITY.checked_mul(2).unwrap().max(8);
-            let buffer = telora_alloc(capacity.checked_mul(12).unwrap());
+            let buffer = telora_alloc(capacity.checked_mul(SOURCE_BYTES).unwrap());
             if LENGTH != 0 {
                 core::ptr::copy_nonoverlapping(
                     BUFFER as *const Source,
@@ -100,9 +108,83 @@ pub unsafe extern "C" fn telora_register_source(id: u32, pointer: u32, length: u
             id,
             pointer,
             length,
+            lines: 0,
+            line_count: 0,
         });
         LENGTH += 1;
         1
+    }
+}
+
+/// Borrow an index during registration; retain our own immutable copy.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_source_index(id: u32, pointer: u32, count: u32) {
+    unsafe { register_index(id, pointer, count, false); }
+}
+
+/// Internal linker bootstrap: the index lives in the artifact's static segment.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_static_source_index(id: u32, pointer: u32, count: u32) {
+    unsafe { register_index(id, pointer, count, true); }
+}
+
+unsafe fn register_index(id: u32, pointer: u32, count: u32, static_storage: bool) {
+    unsafe {
+        assert_ne!(count, 0);
+        let bytes = count.checked_mul(8).unwrap();
+        assert!(pointer.checked_add(bytes).unwrap() <= crate::telora_heap_end());
+        let mut previous_end = 0;
+        for index in 0..count {
+            let start = crate::values::word(pointer + index * 8, 0);
+            let end = crate::values::word(pointer + index * 8, 4);
+            assert!(start <= end);
+            if index == 0 { assert_eq!(start, 0); }
+            else { assert!(start > previous_end && start - previous_end <= 2); }
+            previous_end = end;
+        }
+        for index in 0..LENGTH {
+            let source = &mut *(BUFFER as *mut Source).add(index as usize);
+            if source.id != id { continue; }
+            if source.line_count != 0 {
+                assert_eq!(source.line_count, count, "source index changed");
+                let old = core::slice::from_raw_parts(source.lines as *const u8, bytes as usize);
+                let new = core::slice::from_raw_parts(pointer as *const u8, bytes as usize);
+                assert_eq!(old, new, "source index changed");
+                return;
+            }
+            source.lines = if static_storage { pointer } else {
+                let owned = telora_alloc(bytes);
+                core::ptr::copy_nonoverlapping(pointer as *const u8, owned as *mut u8, bytes as usize);
+                owned
+            };
+            source.line_count = count;
+            return;
+        }
+        panic!("unregistered source index");
+    }
+}
+
+/// Expand only when emitting diagnostics; ordinary values carry byte offsets.
+pub(crate) unsafe fn position(id: u32, byte: u32) -> (u32, u32) {
+    unsafe {
+        for index in 0..LENGTH {
+            let source = (BUFFER as *const Source).add(index as usize).read();
+            if source.id != id { continue; }
+            assert_ne!(source.line_count, 0, "source lacks index");
+            assert!(byte <= crate::values::word(source.lines + (source.line_count - 1) * 8, 4));
+            let mut lo = 0;
+            let mut hi = source.line_count;
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if crate::values::word(source.lines + mid * 8, 0) <= byte { lo = mid + 1; }
+                else { hi = mid; }
+            }
+            let line = lo - 1;
+            let start = crate::values::word(source.lines + line * 8, 0);
+            let end = crate::values::word(source.lines + line * 8, 4);
+            return (line, byte.min(end) - start);
+        }
+        panic!("unregistered source");
     }
 }
 

@@ -53,7 +53,7 @@ fn parser_diagnostics_preserve_individual_errors_and_relative_coordinates() {
     for error in errors {
         assert!(error["labels"].as_array().unwrap().is_empty());
         assert!(error["notes"].as_array().unwrap().iter().any(|note|
-            note.as_str().unwrap().contains("input range")));
+            note.as_str().unwrap().contains("input range (UTF-8 bytes):")));
     }
     assert_eq!(service.transform(b"7").unwrap()["ok"], serde_json::json!([42, 7]));
 }

@@ -99,6 +99,7 @@ pub enum Kind {
 pub struct Source {
     pub id: u32,
     pub name: String,
+    pub lines: Vec<[u32; 2]>,
 }
 
 impl Source {
@@ -106,6 +107,7 @@ impl Source {
         Self {
             id: file.id().get(),
             name: file.name.to_string(),
+            lines: file.line_index().ranges().collect(),
         }
     }
 

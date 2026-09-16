@@ -73,8 +73,15 @@ pub(crate) fn link(
             .checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: source name image overflow")?)
             .ok_or("Wasm: source name address overflow")?;
         let length = u32::try_from(source.name.len()).map_err(|_| "Wasm: source name too long")?;
-        source_names.push((source.id, pointer, length));
         data.extend_from_slice(source.name.as_bytes());
+        while data.len() % 4 != 0 { data.push(0); }
+        let index_pointer = image_base.checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: source index overflow")?)
+            .ok_or("Wasm: source index address overflow")?;
+        let count = u32::try_from(source.lines.len()).map_err(|_| "Wasm: too many source lines")?;
+        for range in &source.lines {
+            for word in range { data.extend_from_slice(&word.to_le_bytes()); }
+        }
+        source_names.push((source.id, pointer, length, index_pointer, count));
     }
     let service_base = if let Some(mut contract) = service {
         while data.len() % 4 != 0 { data.push(0); }
@@ -249,7 +256,7 @@ pub(crate) fn link(
                 .get("telora_locations_bootstrap")
                 .ok_or("Wasm: missing location bootstrap")?,
         ));
-    for (id, pointer, length) in source_names {
+    for (id, pointer, length, index_pointer, count) in source_names {
         boot.instruction(&Instruction::I32Const(id as i32))
             .instruction(&Instruction::I32Const(pointer as i32))
             .instruction(&Instruction::I32Const(length as i32))
@@ -259,6 +266,11 @@ pub(crate) fn link(
                     .ok_or("Wasm: missing source registry")?,
             ))
             .instruction(&Instruction::Drop);
+        boot.instruction(&Instruction::I32Const(id as i32))
+            .instruction(&Instruction::I32Const(index_pointer as i32))
+            .instruction(&Instruction::I32Const(count as i32))
+            .instruction(&Instruction::Call(*rt.exports.get("telora_static_source_index")
+                .ok_or("Wasm: missing source index registration")?));
     }
     if let Some(base) = service_base {
         boot.instruction(&Instruction::I32Const(base as i32))

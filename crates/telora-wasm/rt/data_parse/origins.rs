@@ -12,7 +12,10 @@ impl Origins {
         if source == 0 {
             Self::Inherit(0)
         } else {
-            Self::Source { id: source, lines: LineIndex::new(input).unwrap() }
+            let lines = LineIndex::new(input).unwrap();
+            let ranges = lines.ranges().collect::<alloc::vec::Vec<_>>();
+            unsafe { crate::sources::telora_source_index(source, ranges.as_ptr() as u32, ranges.len() as u32); }
+            Self::Source { id: source, lines }
         }
     }
 

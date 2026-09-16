@@ -26,6 +26,11 @@ pub struct LineIndex {
 }
 
 impl LineIndex {
+    /// Per-source diagnostic index: line start and end excluding its EOL.
+    pub fn ranges(&self) -> impl ExactSizeIterator<Item = [u32; 2]> + '_ {
+        self.starts.iter().zip(&self.ends).map(|(&start, &end)| [start, end])
+    }
+
     pub fn new(text: &str) -> Result<Self, LocationError> {
         if text.len() > u32::MAX as usize {
             return Err(LocationError::SourceTooLarge);

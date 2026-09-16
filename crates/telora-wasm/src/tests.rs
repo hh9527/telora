@@ -64,7 +64,7 @@ fn engine_stops_unbounded_loops_and_allocation() {
 }
 
 #[test]
-fn packed_sources_are_eol_independent_without_artifact_line_tables() {
+fn source_indexes_preserve_original_eol_byte_ranges() {
     for eol in ["\n", "\r\n", "\r"] {
         let text = format!("中文🙂x{eol}next{eol}");
         let mut database = telora_core::SourceDatabase::default();
@@ -76,29 +76,40 @@ fn packed_sources_are_eol_independent_without_artifact_line_tables() {
         assert_eq!(source.position(packed.start()), (1, 7));
         assert_eq!(source.position(packed.end()), (2, 5));
         assert_eq!(file.byte_location(packed), Some(loc));
-        assert_eq!(serde_json::to_value(source).unwrap(), serde_json::json!({"id": 1, "name": "test"}));
+        assert_eq!(source.lines, vec![
+            [0, "中文🙂x".len() as u32],
+            [text.find("next").unwrap() as u32, (text.len() - eol.len()) as u32],
+            [text.len() as u32, text.len() as u32],
+        ]);
     }
 }
 
 #[test]
-fn compiled_artifact_is_identical_across_line_endings() {
+fn diagnostics_are_equivalent_across_line_endings() {
     let source = "# comment\nexport def answer: Fn() -> Never = fn() {\n    let value = dbg!((\n        42\n    ));\n    fail!(\"same failure\", value)\n};\n";
-    let expected = compile(source).unwrap();
-    for eol in ["\r\n", "\r"] {
-        assert!(compile(&source.replace('\n', eol)).unwrap() == expected, "artifact differs for {eol:?}");
+    let mut expected = None;
+    for eol in ["\n", "\r\n", "\r"] {
+        let text = source.replace('\n', eol);
+        let bytes = compile(&text).unwrap();
+        assert_eq!(bytes, compile(&text).unwrap(), "same input must remain deterministic");
+        let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
+        session.initialize().unwrap();
+        assert!(session.call(&[]).is_err());
+        let diagnostic = session.diagnostics().unwrap().remove(0);
+        let rendered = diagnostic.render(&session.manifest);
+        if let Some(expected) = &expected { assert_eq!(&rendered, expected); }
+        else { expected = Some(rendered); }
     }
 }
 
 #[test]
-fn multiline_string_values_and_artifacts_ignore_source_eol() {
+fn multiline_string_values_ignore_source_eol() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"),
         "/../../tests/language/src/test/string-eol/values.telora")).unwrap()
         .replace("\r\n", "\n");
     for name in ["physical_newlines", "explicit_carriage_returns", "continuations"] {
-        let expected = compile_export(&source, name).unwrap();
         for eol in ["\n", "\r\n", "\r"] {
             let bytes = compile_export(&source.replace('\n', eol), name).unwrap();
-            assert!(bytes == expected, "{name}: artifact differs for {eol:?}");
             let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
             session.initialize().unwrap();
             assert_eq!(session.call(&[]).unwrap(), serde_json::json!(true));

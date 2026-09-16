@@ -28,7 +28,7 @@ pub(super) unsafe fn parse(input: &str, origins: &Origins) -> u32 {
         Ok(plan) => plan,
         Err(errors) => {
             return unsafe {
-                super::errors::export(errors, input, origins, "<yaml string>")
+                super::errors::export(errors, origins, "<yaml string>")
             };
         }
     };

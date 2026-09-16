@@ -26,7 +26,7 @@ unsafe fn export_error(message: String) -> u32 {
         severity: telora_data::source::Severity::Error, message,
         labels: alloc::vec::Vec::new(), notes: alloc::vec::Vec::new(),
     };
-    unsafe { errors::export(alloc::vec![diagnostic], "", &Origins::Inherit(0), "") }
+    unsafe { errors::export(alloc::vec![diagnostic], &Origins::Inherit(0), "") }
 }
 
 pub(crate) unsafe fn error_text(span: u32) -> &'static str {
