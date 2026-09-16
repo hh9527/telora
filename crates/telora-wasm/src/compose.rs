@@ -256,9 +256,10 @@ pub(crate) fn link(
     output.sections.insert(8, start);
     let mut exports = ExportSection::new();
     for (name, index) in [
-        ("telora_initialize", generated - 3),
-        ("telora_entry", generated - 2),
-        ("telora_inject_data", generated - 1),
+        ("telora_initialize", generated - 4),
+        ("telora_entry", generated - 3),
+        ("telora_inject_data", generated - 2),
+        ("telora_materialize_data", generated - 1),
     ] {
         exports.export(name, ExportKind::Func, rt.functions + index);
     }

@@ -10,15 +10,23 @@ use wasm_encoder::*;
 
 /// Generate a self-contained Wasm module from already sealed execution evidence.
 pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, String> {
-    compile(executable, false)
+    compile(executable, Mode::Value)
 }
 
 /// Check continues independent initialization demands, never a failed function body.
 pub fn compile_check(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, String> {
-    compile(executable, true)
+    compile(executable, Mode::Check)
 }
 
-fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, String> {
+/// A service has an additional initialization phase after module evaluation.
+pub fn compile_service(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, String> {
+    compile(executable, Mode::Service)
+}
+
+#[derive(Clone, Copy)]
+enum Mode { Value, Check, Service }
+
+fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, String> {
     let plan = Plan::new(executable)?;
     let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts, &plan.locations)?;
     for (&symbol, &key) in &plan.globals {
@@ -123,7 +131,7 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
     }
     let initialize = FIRST_FUNCTION + plan.functions.len() as u32;
     let entry = initialize + 1;
-    functions.function(2).function(2).function(CALL_TYPE);
+    functions.function(2).function(2).function(CALL_TYPE).function(CALL_TYPE);
     module.section(&functions);
     let heap_start = crate::compose::static_base()?
         .checked_add(
@@ -149,7 +157,7 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
         Elements::Functions(Cow::Owned((FIRST_FUNCTION..initialize).collect())),
     );
     module.section(&elements);
-    let count = entry + 2;
+    let count = entry + 3;
     let mut code = ObjectCode::default();
     for &key in plan.functions.keys() {
         code.function(emit::compile(executable.sealed_mir().mir(), &plan, key)?);
@@ -185,7 +193,7 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
         ] {
             init.instruction(&instruction);
         }
-        if check {
+        if matches!(mode, Mode::Check) {
             init.instruction(&Instruction::Drop);
             continue;
         }
@@ -210,9 +218,10 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
         Instruction::Return,
         Instruction::End,
     ] { init.instruction(&instruction); }
-    init.instruction(&Instruction::Call(FREEZE))
-        .instruction(&Instruction::Drop)
-        .instruction(&Instruction::I32Const(2))
+    if !matches!(mode, Mode::Service) {
+        init.instruction(&Instruction::Call(FREEZE)).instruction(&Instruction::Drop);
+    }
+    init.instruction(&Instruction::I32Const(2))
         .instruction(&Instruction::GlobalSet(PHASE_GLOBAL))
         .instruction(&Instruction::I32Const(1))
         .instruction(&Instruction::End);
@@ -238,6 +247,9 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
         &crate::data_input::injector(&plan, &manifest),
         count,
     )?);
+    code.function(crate::data_parse_ops::materializer(
+        executable.sealed_mir().mir(), &plan, manifest.value_type,
+    )?);
     let (code, relocations) = code.finish(5);
     module.section(&code);
     if !plan.reflection.is_empty() {
@@ -257,6 +269,7 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
             n if n == initialize => "telora_initialize".to_owned(),
             n if n == entry => "telora_entry".to_owned(),
             n if n == entry + 1 => "telora_inject_data".to_owned(),
+            n if n == entry + 2 => "telora_materialize_data".to_owned(),
             n => names.name(function_keys[(n - FIRST_FUNCTION) as usize], n),
         };
         symbols.function(0, index, Some(&name));

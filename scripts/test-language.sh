@@ -202,8 +202,10 @@ jaq -s 'from_entries' "$entries" >"$observations"
 
 check_stdout="$build_root/check.stdout.json"
 check_stderr="$build_root/check.stderr.jsonl"
+# The aggregate checker parses every observation inside Guest (about 1.25 MB).
+# This is a test-runner budget, independent of the cases and product defaults.
 set +e
-"$telora_bin" -C "$workspace" run "@src/generated/check-all" \
+"$telora_bin" --with-fuel 1000 -C "$workspace" run "@src/generated/check-all" \
     <"$observations" >"$check_stdout" 2>"$check_stderr"
 check_exit=$?
 set -e

@@ -62,7 +62,7 @@ fn main() {
         telora_duplicate_key_message telora_text_query telora_text_build telora_text_split
         telora_path telora_format_render telora_format_message telora_format_join
         telora_template_prepare telora_member_message telora_regex telora_hash
-        telora_json_write telora_json_parse telora_toml_parse telora_yaml_parse
+        telora_parse_data telora_json_write telora_json_parse telora_toml_parse telora_yaml_parse
         telora_float_remainder telora_register_source telora_source_retained telora_collect telora_heap_end
         telora_reserve_static telora_locations_bootstrap telora_location_get telora_location_add __heap_base __indirect_function_table";
     let status = Command::new(&linker)

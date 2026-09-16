@@ -36,6 +36,12 @@ pub unsafe extern "C" fn telora_location_add(pointer: u32) -> u32 {
     unsafe {
         let bytes = core::slice::from_raw_parts(pointer as *const u8, 20);
         let record = LocationRecord::decode(bytes).unwrap();
+        append(record)
+    }
+}
+
+pub unsafe fn append(record: LocationRecord) -> u32 {
+    unsafe {
         assert!(record.source != 0);
         assert!((record.start_line, record.start_offset) <= (record.end_line, record.end_offset));
         let tables = (&mut *core::ptr::addr_of_mut!(TABLES)).as_mut().unwrap();

@@ -29,6 +29,7 @@ mod codegen;
 pub mod collection;
 mod function_names;
 mod data_input;
+mod guest_input;
 pub mod data_packet;
 mod data_parse_ops;
 mod data_view;
@@ -94,7 +95,7 @@ mod template_ops;
 mod test_description;
 pub mod testing;
 
-pub use codegen::{compile_check, compile_executable};
+pub use codegen::{compile_check, compile_executable, compile_service};
 
 #[cfg(test)]
 mod tests;

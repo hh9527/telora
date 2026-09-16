@@ -64,6 +64,12 @@ impl Emitter<'_> {
         let blame = self.codec_blame(results[1], message, input)?;
         let rejected = self.enum_value(node, args[2], 0, Some(blame))?;
         self.extend([I::LocalGet(rejected), I::Return, I::End]);
+        let value = self.materialize_data_plan(target, packet)?;
+        self.enum_value(node, args[2], 1, Some(value))
+    }
+
+    pub(crate) fn materialize_data_plan(&mut self, target: TypeId, packet: u32) -> Result<u32, String> {
+        let node = self.key.node;
         let rows = self.read32(packet, 0);
         let count = self.read32(packet, 4);
         let values = self.parse_buffer(count, 4);
@@ -133,7 +139,7 @@ impl Emitter<'_> {
                         ]);
                         self.text_span_value(ty, span)?
                     }
-                    6 | 7 => self.parse_collection(ty, target, row, values, input, code == 7)?,
+                    6 | 7 => self.parse_collection(ty, target, row, values, code == 7)?,
                     12 => {
                         let pointer = self.read32(row, 8);
                         let count = self.read32(row, 12);
@@ -159,13 +165,23 @@ impl Emitter<'_> {
                     }
                     _ => return Err("Wasm: unexpected payload in Value contract".into()),
                 };
-                self.copy(payload, 0, input, LOC_BYTES);
+                self.extend([
+                    I::LocalGet(payload),
+                    I::LocalGet(row),
+                    I::I32Load(memory(4, 2)),
+                    I::I32Store(memory(SOURCE, 2)),
+                ]);
                 Some(payload)
             } else {
                 None
             };
             let item = self.enum_value(node, target, variant as u32, payload)?;
-            self.copy(item, 0, input, LOC_BYTES);
+            self.extend([
+                I::LocalGet(item),
+                I::LocalGet(row),
+                I::I32Load(memory(4, 2)),
+                I::I32Store(memory(SOURCE, 2)),
+            ]);
             self.extend([I::LocalGet(item), I::LocalSet(value), I::End]);
         }
         let slot = self.parse_address(values, index, 4);
@@ -183,8 +199,7 @@ impl Emitter<'_> {
         ]);
         let root = self.read32(packet, 8);
         let slot = self.parse_address(values, root, 4);
-        let value = self.read32(slot, 0);
-        self.enum_value(node, args[2], 1, Some(value))
+        Ok(self.read32(slot, 0))
     }
     fn parse_collection(
         &mut self,
@@ -192,7 +207,6 @@ impl Emitter<'_> {
         target: TypeId,
         row: u32,
         values: u32,
-        input: u32,
         object: bool,
     ) -> Result<u32, String> {
         let count = self.read32(row, 12);
@@ -215,7 +229,7 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
-        let entry = self.parse_address(entries, index, if object { 12 } else { 4 });
+        let entry = self.parse_address(entries, index, if object { 16 } else { 4 });
         let child = self.read32(entry, if object { 8 } else { 0 });
         let slot = self.parse_address(values, child, 4);
         let value = self.read32(slot, 0);
@@ -223,7 +237,12 @@ impl Emitter<'_> {
         self.copy(destination, 0, value, width);
         if let Some(keys) = keys {
             let key = self.text_span_value(self.string_type()?, entry)?;
-            self.copy(key, 0, input, LOC_BYTES);
+            self.extend([
+                I::LocalGet(key),
+                I::LocalGet(entry),
+                I::I32Load(memory(12, 2)),
+                I::I32Store(memory(SOURCE, 2)),
+            ]);
             let destination = self.parse_address(keys, index, STRING_BYTES);
             self.copy(destination, 0, key, STRING_BYTES);
         }
@@ -261,4 +280,24 @@ impl Emitter<'_> {
         self.store32(output, DATA + 12, 0);
         Ok(output)
     }
+}
+
+
+/// The same sealed Value construction used by std parsers and external inputs.
+/// Parameters are (parse packet, reserved); no runtime type selection occurs.
+pub(crate) fn materializer(
+    mir: &telora_core::mir::Mir,
+    plan: &crate::plan::Plan,
+    target: Option<u32>,
+) -> Result<crate::object::ObjectFunction, String> {
+    let mut emit = Emitter::new(mir, plan, crate::plan::Key { callable: true, ..plan.root });
+    if let Some(target) = target {
+        let error = emit.read32(0, 12);
+        emit.extend([I::LocalGet(error), I::If(BlockType::Empty), I::Unreachable, I::End]);
+        let value = emit.materialize_data_plan(plan.layouts[target as usize].id(), 0)?;
+        emit.emit(I::LocalGet(value));
+    } else {
+        emit.emit(I::Unreachable);
+    }
+    Ok(emit.finish())
 }

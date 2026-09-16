@@ -1,6 +1,6 @@
 //! JSON publishes spans directly. Original text remains in the VM arena; all
 //! escaped strings share a single decoded allocation with the same lifetime.
-use super::{put, string_bytes};
+use super::{origins::Origins, put, string_bytes};
 use alloc::{format, string::String};
 use telora_data::{
     DataLimits, SourceDatabase,
@@ -15,7 +15,7 @@ fn span_bits(span: TextSpan, source: u32, decoded: u32) -> u64 {
     u64::from(base + range.start as u32) | ((range.len() as u64) << 32)
 }
 
-pub(super) unsafe fn parse(input: &str) -> u32 {
+pub(super) unsafe fn parse(input: &str, origins: &Origins) -> u32 {
     let mut sources = SourceDatabase::default();
     // Dynamic parser errors carry messages; no source indexing is needed here.
     let source = sources.try_add_data("<json string>", String::new()).expect("empty source");
@@ -48,7 +48,7 @@ pub(super) unsafe fn parse(input: &str) -> u32 {
         put(result, 12, 0);
         for (index, node) in plan.nodes.into_iter().enumerate() {
             let row = rows + index as u32 * 16;
-            put(row, 4, 0);
+            put(row, 4, origins.at(node.location));
             let (kind, payload) = match node.kind {
                 JsonKind::Null => (0, 0),
                 JsonKind::Bool(value) => (if value { 1 } else { 2 }, 0),
@@ -65,13 +65,14 @@ pub(super) unsafe fn parse(input: &str) -> u32 {
                 }
                 JsonKind::Object(fields) => {
                     let count = fields.len() as u32;
-                    let entries = crate::telora_alloc(count.checked_mul(12).unwrap());
+                    let entries = crate::telora_alloc(count.checked_mul(16).unwrap());
                     for (index, (key, field)) in fields.into_iter().enumerate() {
-                        let entry = entries + index as u32 * 12;
+                        let entry = entries + index as u32 * 16;
                         let bits = span_bits(key, source_pointer, decoded_pointer);
                         put(entry, 0, bits as u32);
                         put(entry, 4, (bits >> 32) as u32);
                         put(entry, 8, field.value.index() as u32);
+                        put(entry, 12, origins.at(field.key_location));
                     }
                     (7, u64::from(entries) | (u64::from(count) << 32))
                 }

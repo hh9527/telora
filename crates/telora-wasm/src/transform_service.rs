@@ -66,6 +66,13 @@ impl TransformSession {
     pub fn seal_initialization(&mut self) -> Result<(), String> {
         if self.baseline.is_some() { return Err("service initialization is already sealed".into()); }
         let handler = self.handler.ok_or("service is not initialized")?;
+        // Module evaluation is not the end of service initialization. Freeze
+        // injected source records together with the completed service graph,
+        // before any collector can reuse their arena storage.
+        let freeze = self.session.instance
+            .get_typed_func::<(), u32>(&self.session.store, "telora_freeze")
+            .map_err(|e| e.to_string())?;
+        freeze.call(&mut self.session.store, ()).map_err(|e| e.to_string())?;
         let (roots, _) = self.session.collect_work(&[handler])?;
         self.handler = Some(roots[0]);
         let globals = self.session.instance.exports(&self.session.store)

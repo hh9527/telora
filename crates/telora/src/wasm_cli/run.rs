@@ -1,8 +1,8 @@
 //! One static service entry, driven once or by a JSONL input stream.
 use super::*;
 use std::{collections::BTreeMap, io::{BufRead, Write}};
-use telora_core::{SourceDatabase, SourceId, data_plan::{self, Format}};
-use telora_wasm::{transform_service::TransformSession, transport::Value};
+use telora_core::data_plan::Format;
+use telora_wasm::transform_service::TransformSession;
 
 pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve: bool) -> Result<i32, String> {
     let frontend = PhaseTimer::new("frontend");
@@ -19,7 +19,14 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
         .ok_or("missing static service plan")?;
     let executable = sealed.seal_export(symbol).map_err(|ds| ds.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
     drop(frontend);
-    let mut session = compile(&executable, inventory.runtime_options())?;
+    let bytes = {
+        let _timer = PhaseTimer::new("codegen_link");
+        telora_wasm::compile_service(&executable)?
+    };
+    let mut session = {
+        let _timer = PhaseTimer::new("engine_load");
+        load_session(&bytes, inventory.runtime_options())?
+    };
     let result = initialize(&mut session, &inventory, &mut mir.sources);
     diagnostics::finish(&session, &mir.sources, 0, result)?;
     let service_init = PhaseTimer::new("service_initialize");
@@ -38,7 +45,7 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
             telora_core::SystemDataFormat::Yaml => Format::Yaml,
             telora_core::SystemDataFormat::Toml => Format::Toml,
         };
-        let value = materialize(&mut service, &mir.sources, id, format)?;
+        let value = service.session_mut().parse_data_source(mir.sources.get(id), format)?;
         values.insert(name, value);
     }
     let result = service.initialize(&values);
@@ -46,12 +53,11 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
     service.seal_initialization()?;
     drop(service_init);
     let usage_reporter = service.session_mut().usage_reporter.take();
-    let request = mir.sources.try_add_data("@request", String::new()).map_err(|e| e.to_string())?;
     let stdin = std::io::stdin();
     if !serve {
         let input = crate::source_arg::read_limited(stdin.lock(), limits.file_size, "query input")?;
         let input = String::from_utf8(input).map_err(|e| e.to_string())?;
-        let response = transform(&mut service, &mut mir.sources, request, input);
+        let response = transform(&mut service, input);
         if let Some(report) = usage_reporter { report(service.usage()); }
         for diagnostic in response["diagnostics"].as_array().into_iter().flatten() {
             crate::emit_stderr(serde_json::json!({"schema":"telora.execution/v1", "record":"diagnostic",
@@ -82,7 +88,7 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
             failure("request exceeds file_size limit")
         } else { match String::from_utf8(bytes) {
             Ok(input) => {
-                let response = transform(&mut service, &mut mir.sources, request, input);
+                let response = transform(&mut service, input);
                 if let Some(report) = usage_reporter { report(service.usage()); }
                 response
             },
@@ -94,23 +100,14 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
     Ok(0)
 }
 
-fn materialize(service: &mut TransformSession, sources: &SourceDatabase, source: SourceId,
-    format: Format) -> Result<Value, String> {
-    let plan = data_plan::parse_registered_with_limits(sources, source, format, crate::execution_config().data_limits)
-        .map_err(|ds| ds.iter().map(|d| sources.render(d)).collect::<Vec<_>>().join("\n"))?;
-    service.session_mut().register_data_sources(sources, &plan)?;
-    service.session_mut().materialize_value(&plan, sources)
-}
-
-fn transform(service: &mut TransformSession, sources: &mut SourceDatabase, request: SourceId, input: String) -> serde_json::Value {
+fn transform(service: &mut TransformSession, input: String) -> serde_json::Value {
     let result = (|| {
         {
             let _timer = PhaseTimer::new("request_reset");
             service.reset()?;
         }
         let _timer = PhaseTimer::new("request_transform");
-        sources.replace_unreferenced_data(request, "@request", input).map_err(|e| e.to_string())?;
-        let input = materialize(service, sources, request, Format::Json)?;
+        let input = service.session_mut().parse_data_text(&input, Format::Json, 0)?;
         let result = service.transform(input);
         for event in service.session().take_debug_events()? {
             crate::emit_stderr(serde_json::to_value(event).map_err(|e| e.to_string())?)?;
