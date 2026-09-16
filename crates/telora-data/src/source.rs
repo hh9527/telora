@@ -6,6 +6,8 @@ use core::num::NonZeroU32;
 use core::ops::Range;
 
 pub mod compact;
+mod text;
+pub use text::SourceText;
 pub use compact::{CompactLoc, LineIndex};
 
 #[repr(transparent)]
@@ -207,7 +209,7 @@ pub struct Position {
 pub struct SourceFile {
     id: SourceId,
     pub name: Arc<str>,
-    text: crate::document::DocumentText,
+    text: SourceText,
     lines: Arc<LineIndex>,
 }
 
@@ -218,7 +220,7 @@ impl SourceFile {
         text: impl AsRef<str>,
     ) -> Result<Self, LocationError> {
         let lines = Arc::new(LineIndex::new(text.as_ref())?);
-        let text = crate::document::DocumentText::new(text);
+        let text = SourceText::Document(crate::document::DocumentText::new(text));
         if text.byte_len() > u32::MAX as usize {
             return Err(LocationError::SourceTooLarge);
         }
@@ -242,7 +244,7 @@ impl SourceFile {
         Ok(Self {
             id,
             name: name.into(),
-            text,
+            text: SourceText::Document(text),
             lines,
         })
     }
@@ -265,7 +267,7 @@ impl SourceFile {
         Some(Loc { source: self.id, start: self.lines.byte(location.start())?, end: self.lines.byte(location.end())? })
     }
 
-    pub const fn text(&self) -> &crate::document::DocumentText {
+    pub const fn text(&self) -> &SourceText {
         &self.text
     }
 
@@ -293,8 +295,20 @@ impl SourceFile {
     }
 
     pub fn offset(&self, line: usize, column: usize) -> Option<u32> {
-        self.text
-            .scalar_offset(line.checked_sub(1)?, column.checked_sub(1)?)
+        let line = line.checked_sub(1)?;
+        let column = column.checked_sub(1)?;
+        match &self.text {
+            SourceText::Document(text) => text.scalar_offset(line, column),
+            SourceText::Contiguous(text) => {
+                let start = self.lines.byte((line as u64) << 24)?;
+                let tail = &text[start as usize..];
+                let end = tail.find(['\r', '\n']).unwrap_or(tail.len());
+                let line = &tail[..end];
+                let relative = line.char_indices().map(|(at, _)| at)
+                    .chain(core::iter::once(line.len())).nth(column)?;
+                Some(start + relative as u32)
+            }
+        }
     }
 }
 
@@ -304,6 +318,18 @@ pub struct SourceDatabase {
 }
 
 impl SourceDatabase {
+    /// Register data without copying the input into an editor Rope.
+    pub fn try_add_data(
+        &mut self,
+        name: impl Into<Arc<str>>,
+        text: String,
+    ) -> Result<SourceId, LocationError> {
+        let id = self.next_id()?;
+        let lines = Arc::new(LineIndex::new(&text)?);
+        self.files.push(SourceFile { id, name: name.into(), text: SourceText::Contiguous(text), lines });
+        Ok(id)
+    }
+
     fn next_id(&self) -> Result<SourceId, LocationError> {
         if self.files.len() >= u16::MAX as usize { return Err(LocationError::CompactCapacity); }
         let raw = u32::try_from(self.files.len())
@@ -362,6 +388,19 @@ impl SourceDatabase {
     ) -> Result<(), LocationError> {
         let file = SourceFile::new(id, name, text)?;
         self.files[id.index() as usize] = file;
+        Ok(())
+    }
+
+    pub fn replace_unreferenced_data(
+        &mut self,
+        id: SourceId,
+        name: impl Into<Arc<str>>,
+        text: String,
+    ) -> Result<(), LocationError> {
+        let lines = Arc::new(LineIndex::new(&text)?);
+        self.files[id.index() as usize] = SourceFile {
+            id, name: name.into(), text: SourceText::Contiguous(text), lines,
+        };
         Ok(())
     }
 

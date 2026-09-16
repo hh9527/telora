@@ -1,6 +1,7 @@
 use super::*;
 use alloc::{string::ToString, vec::Vec};
 mod machine;
+mod phases;
 
 fn parse(source: &str) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
     let mut sources = SourceDatabase::default();

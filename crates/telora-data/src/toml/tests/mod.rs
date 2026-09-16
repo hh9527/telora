@@ -21,7 +21,7 @@ fn parse(text: &str, limits: DataLimits) -> Result<ValidatedDataPlan, Vec<Diagno
         id,
         crate::data_plan::Format::Toml,
         limits,
-    )
+    ).map(crate::data_plan::ParsedData::owned)
 }
 
 #[test]

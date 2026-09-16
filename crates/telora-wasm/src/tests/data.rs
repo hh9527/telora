@@ -29,7 +29,7 @@ fn portable_data_roundtrip_preserves_integer_bits_and_rejects_bad_edges() {
         telora_core::data_plan::Format::Yaml,
     )
     .unwrap();
-    let packet = DataPacket::from_plan(&plan).unwrap();
+    let packet = DataPacket::from_plan(&plan, &sources).unwrap();
     let serialized = serde_json::to_vec(&packet).unwrap();
     let packet: DataPacket = serde_json::from_slice(&serialized).unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
@@ -72,9 +72,9 @@ fn data_packet_coordinates_are_identical_across_line_endings() {
     let mut packets = vec![];
     for eol in ["\n", "\r\n", "\r"] {
         let mut sources = telora_core::SourceDatabase::default();
-        let id = sources.add("data.json", text.replace('\n', eol));
+        let id = sources.try_add_data("data.json", text.replace('\n', eol)).unwrap();
         let plan = telora_core::data_plan::parse_registered(&sources, id, telora_core::data_plan::Format::Json).unwrap();
-        packets.push(serde_json::to_value(crate::data_packet::DataPacket::from_plan(&plan).unwrap()).unwrap());
+        packets.push(serde_json::to_value(crate::data_packet::DataPacket::from_plan(&plan, &sources).unwrap()).unwrap());
     }
     assert_eq!(packets[0], packets[1]);
     assert_eq!(packets[0], packets[2]);

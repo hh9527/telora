@@ -57,8 +57,11 @@ core 的 `syntax/telora/tree_sitter/` 负责分块输入、token 分类与验证
 `tree_sitter.rs` 迭代投影到独立的 `cst.rs` 平坦语义 CST。节点分类使用数值 ID 映射，
 遍历携带父上下文，避免反复从根查找父节点。补全直接消费已保存的 CST token。
 
-JSON 使用 `telora-data/src/json/` 中的 Logos 局部词法识别与显式状态栈，直接构建
-带位置的 DataPlan；不生成 token 数组或 CST，跨输入块保留状态而不重扫前缀。
+JSON 使用 `telora-data/src/json/` 中的 Logos 局部词法识别与显式状态栈，分为
+parse-0 / parse-1：前者建立只有原文范围的扁平结构并检查资源配额，后者验证数字、
+解码转义并按实际文本排序、检查重复 key。两个阶段复用等宽节点数组，不构造 CST
+或递归 Owned AST。普通文本仍指向原文，所有需要解码的文本共用一个缓冲区；
+节点以 Source / Decoded Span 区分两者，不持有 String 或 Arc。
 YAML 使用 `telora-data/src/yaml/` 中的 Logos 局部词法识别、行索引、block任务栈与flow容器栈
 直接构建DataPlan，不构造CST，不支持anchor、alias和merge。行索引跨chunk识别LF/CRLF/CR，
 不重扫pending前缀。mapping/注释/flow边界与字符串解码共用外置引号状态；
@@ -173,12 +176,21 @@ export { data };
 
 Host 的数据模块导入与 Wasm RT 的 `json.parse`、`toml.parse`、`yaml.parse` 共用
 `telora-data`。共享库使用 `no_std + alloc`，输出带来源位置的扁平数据图。
-JSON 的词法模式、容器栈、字符串解码和配额计数显式保存；字符串按
-QStart/QEnd/Text/EscChar/EscUtf16 消费，不接受 `\x`。深度、节点、容器、解码字符串
-和累计 payload 限制在构建时检查，成功后不再遍历检查配额。YAML同样在构建时检查这些限制，
+JSON 的词法模式、容器栈与配额计数显式保存；字符串按
+QStart/QEnd/Text/EscChar/EscUtf16 消费，不接受 `\x`。parse-0 只计量解码长度，
+不分配解码文本；文件大小、深度、节点数、容器宽度、解码字符串长度与累计 payload
+在构建时准入，资源超限立即停止。可恢复的多余逗号、重复 key 和数字范围问题
+可以产生多条带原文位置的诊断；错误输入不发布值计划。parse-1 只在需要转换时
+向单个解码缓冲区追加文本。YAML同样在构建时检查这些限制，
 并在base64解码过程中检查Bytes长度；block scalar在folding/chomping后按实际载荷计数。
 JSON/YAML节点天然子节点优先，RT导出不需重排；TOML保留原有解析及重排。
 运行时产生的 Telora 值沿用输入字符串的来源位置。
+
+代码来源保留可编辑的 Rope；数据来源直接接管读入的连续 String。JSON 的数据计划
+通过 SourceId / Span 引用来源库，并持有一个解码缓冲区；Host materializer 直接消费
+这些引用，直到写入 Wasm Heap 或发布数据包时才复制文本。内置 `json.parse` 借用 VM
+中的输入字符串并直接导出 Span，所有解码文本共用一份 VM 生命周期的缓冲区，
+不创建临时 Rope 或逐字符串的 owned-plan。
 
 Host 配置、产物元数据和 EES 协议的 JSON 文本也先由同一 JSON 状态机校验，再由可选的
 `json_serde` 适配器转换为 Rust 结构。Serde 不参与这些入口的文本解析；JSON 输出仍可

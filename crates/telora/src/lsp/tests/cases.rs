@@ -610,7 +610,7 @@ export def output: String = render(1);"#;
             .expect("main source")
             .text()
             .clone();
-        let cursor = document
+        let cursor = document.document().expect("code source")
             .position(source.len() as u32, PositionEncoding::Utf16)
             .expect("UTF-16 cursor");
         let list = completion_response(

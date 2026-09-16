@@ -58,7 +58,7 @@ fn parse(text: &str, limits: DataLimits) -> Result<ValidatedDataPlan, Vec<Diagno
         id,
         crate::data_plan::Format::Yaml,
         limits,
-    )
+    ).map(crate::data_plan::ParsedData::owned)
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn eol_and_chunk_boundaries_preserve_values_and_positions() {
         let mut sources = SourceDatabase::default();
         let id = sources.add("core.yaml", &text);
         let plan = crate::data_plan::parse_registered(&sources, id, crate::data_plan::Format::Yaml)
-            .unwrap();
+            .unwrap().owned();
         snapshots.push((
             crate::data_plan_test::render(&plan),
             plan.nodes()

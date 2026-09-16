@@ -1,6 +1,7 @@
 //! Portable data graph. No source text, parser handles, or host addresses.
 use serde::{Deserialize, Serialize};
-use telora_core::data_plan::{DataPlanNodeKind as K, DataScalar as S, ValidatedDataPlan};
+use telora_core::{SourceDatabase, data_plan::ParsedData};
+use crate::data_view::{Graph, Value as V};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DataPacket {
@@ -54,54 +55,24 @@ impl Value {
 }
 
 impl DataPacket {
-    pub fn from_plan(plan: &ValidatedDataPlan) -> Result<Self, String> {
-        let id =
-            |index: usize| u32::try_from(index).map_err(|_| "Wasm: data index overflow".to_owned());
-        let nodes = plan
-            .nodes()
-            .iter()
-            .map(|node| {
-                Ok(Node {
-                    origin: plan.compact(node.location).0,
-                    value: match &node.kind {
-                        K::Scalar(scalar) => match scalar {
-                            S::Int(value) => Value::Int(value.to_string()),
-                            S::Float(value) => Value::Float(*value),
-                            S::String(value) => Value::String(value.clone()),
-                            S::Bytes(value) => Value::Bytes(value.clone()),
-                            S::Null => Value::Null,
-                            S::Bool(value) => Value::Bool(*value),
-                            S::Temporal { kind, value } => Value::Temporal {
-                                variant: kind.variant().into(),
-                                value: value.clone(),
-                            },
-                        },
-                        K::Array(items) => Value::Array(
-                            items
-                                .iter()
-                                .map(|item| id(item.index()))
-                                .collect::<Result<_, _>>()?,
-                        ),
-                        K::Object(fields) => Value::Object(
-                            fields
-                                .iter()
-                                .map(|(name, field)| {
-                                    Ok(Field {
-                                        name: name.clone(),
-                                        origin: plan.compact(field.key_location).0,
-                                        value: id(field.value.index())?,
-                                    })
-                                })
-                                .collect::<Result<_, String>>()?,
-                        ),
-                    },
-                })
-            })
-            .collect::<Result<_, String>>()?;
-        Ok(Self {
-            root: id(plan.root_node().ok_or("Wasm: missing data root")?.index())?,
-            nodes,
-        })
+    pub fn from_plan(plan: &ParsedData, sources: &SourceDatabase) -> Result<Self, String> {
+        let graph = Graph::parsed(plan, sources)?;
+        let id = |index: usize| u32::try_from(index).map_err(|_| "Wasm: data index overflow".to_owned());
+        let nodes = (0..graph.len()).map(|index| {
+            let node = graph.node(index)?;
+            let value = match node.value {
+                V::Int(n) => Value::Int(n.to_string()), V::Float(n) => Value::Float(n),
+                V::String(s) => Value::String(s.into()), V::Bytes(b) => Value::Bytes(b.into()),
+                V::Null => Value::Null, V::Bool(b) => Value::Bool(b),
+                V::Temporal { variant, value } => Value::Temporal { variant: variant.into(), value: value.into() },
+                V::Array(items) => Value::Array(items.map(id).collect::<Result<_, _>>()?),
+                V::Object(fields) => Value::Object(fields.map(|field| Ok(Field {
+                    name: field.name.into(), origin: field.origin, value: id(field.value)?,
+                })).collect::<Result<_, String>>()?),
+            };
+            Ok(Node { origin: node.origin, value })
+        }).collect::<Result<_, String>>()?;
+        Ok(Self { root: id(graph.root()?)?, nodes })
     }
 
     /// Validate before materialization, including unreachable nodes. Deserializing

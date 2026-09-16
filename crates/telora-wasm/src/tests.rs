@@ -571,7 +571,7 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
             .contains("not been injected")
     );
     let mut sources = mir.sources;
-    let source = sources.add("input.json", "{\"number\":42}");
+    let source = sources.try_add_data("input.json", "{\"number\":42}".into()).unwrap();
     let plan = telora_core::data_plan::parse_registered(
         &sources,
         source,
@@ -580,13 +580,13 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     let symbol = session.manifest.data_modules[0].symbol;
-    assert!(missing.inject_data(symbol, &plan).is_err());
+    assert!(missing.inject_data(symbol, &plan, &sources).is_err());
     let mut conflicting = telora_core::SourceDatabase::default();
     conflicting.add("different source using the same id", "");
     assert!(session.register_data_sources(&conflicting, &plan).is_err());
     session.register_data_sources(&sources, &plan).unwrap();
-    session.inject_data(symbol, &plan).unwrap();
-    assert!(session.inject_data(symbol, &plan).is_err());
+    session.inject_data(symbol, &plan, &sources).unwrap();
+    assert!(session.inject_data(symbol, &plan, &sources).is_err());
     session.initialize().unwrap();
     let lookup = session
         .instance
@@ -606,7 +606,7 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
         session.eval().unwrap(),
         serde_json::json!([{"number":42},42])
     );
-    assert!(session.inject_data(symbol, &plan).is_err());
+    assert!(session.inject_data(symbol, &plan, &sources).is_err());
 }
 
 fn compile(source: &str) -> Result<Vec<u8>, String> {

@@ -252,7 +252,7 @@ fn position_range(
     let ModuleState::Source { source, .. } = mir.modules[module].state else {
         return Err("selected module has no source".into());
     };
-    let text = mir.sources.get(source).text();
+    let text = mir.sources.get(source).text().document().ok_or("selected module is not code")?;
     let line = u32::try_from(at.line - 1).map_err(|_| "line is outside module")?;
     let (start, end) = if let Some(column) = at.column {
         let column = u32::try_from(column).map_err(|_| "column is outside module")?;

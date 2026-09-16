@@ -2,7 +2,7 @@
 //! merge expansion, and resource admission before decoded payload allocation.
 use crate::{
     DataLimits,
-    document::DocumentText,
+    source::SourceText,
     json::{DataField, DataNodeId, DataScalar, ValidatedDataPlan},
     source::{Diagnostic, Location, SourceDatabase, SourceId, TextRange},
 };
@@ -51,7 +51,7 @@ enum Task {
 }
 
 struct Parser<'a> {
-    source: &'a DocumentText,
+    source: &'a SourceText,
     lines: Vec<Line>,
     position: usize,
     build: Build,
@@ -60,7 +60,7 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(id: SourceId, source: &'a DocumentText, limits: DataLimits) -> Result<Self, Diagnostic> {
+    fn new(id: SourceId, source: &'a SourceText, limits: DataLimits) -> Result<Self, Diagnostic> {
         let build = Build::new(id, limits);
         build.check(
             build.loc(0..source.byte_len()),

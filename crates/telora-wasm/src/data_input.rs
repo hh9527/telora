@@ -7,7 +7,7 @@ use crate::{
     plan::Plan,
     session::Session,
 };
-use telora_core::data_plan::ValidatedDataPlan;
+use telora_core::data_plan::ParsedData;
 use wasm_encoder::{BlockType, Function, Instruction as I};
 
 pub(crate) fn injector(plan: &Plan, manifest: &Manifest) -> Function {
@@ -69,13 +69,20 @@ impl Manifest {
     pub fn register_data_sources(
         &mut self,
         sources: &telora_core::SourceDatabase,
-        plan: &ValidatedDataPlan,
+        plan: &ParsedData,
     ) -> Result<(), String> {
         let mut ids = std::collections::BTreeSet::new();
-        for node in plan.nodes() {
-            ids.insert(node.location.source);
-            if let telora_core::data_plan::DataPlanNodeKind::Object(fields) = &node.kind {
-                ids.extend(fields.values().map(|field| field.key_location.source));
+        match plan {
+            ParsedData::Json { plan, .. } => {
+                ids.extend(plan.nodes.iter().map(|node| node.location.source));
+            }
+            ParsedData::Owned(plan) => {
+                for node in plan.nodes() {
+                    ids.insert(node.location.source);
+                    if let telora_core::data_plan::DataPlanNodeKind::Object(fields) = &node.kind {
+                        ids.extend(fields.values().map(|field| field.key_location.source));
+                    }
+                }
             }
         }
         for id in ids {
@@ -106,13 +113,13 @@ impl Session {
     pub fn register_data_sources(
         &mut self,
         sources: &telora_core::SourceDatabase,
-        plan: &ValidatedDataPlan,
+        plan: &ParsedData,
     ) -> Result<(), String> {
         self.manifest.register_data_sources(sources, plan)?;
         self.register_sources()
     }
-    pub fn inject_data(&mut self, symbol: u32, plan: &ValidatedDataPlan) -> Result<(), String> {
-        self.inject_graph(symbol, Graph::Parsed(plan))
+    pub fn inject_data(&mut self, symbol: u32, plan: &ParsedData, sources: &telora_core::SourceDatabase) -> Result<(), String> {
+        self.inject_graph(symbol, Graph::parsed(plan, sources)?)
     }
     pub fn inject_data_packet(&mut self, symbol: u32, plan: &DataPacket) -> Result<(), String> {
         plan.validate(&self.manifest)?;
@@ -143,12 +150,12 @@ impl Session {
         }
         Ok(())
     }
-    pub(crate) fn materialize_data(&mut self, plan: &ValidatedDataPlan) -> Result<u32, String> {
-        self.materialize_graph(Graph::Parsed(plan))
+    pub(crate) fn materialize_data(&mut self, plan: &ParsedData, sources: &telora_core::SourceDatabase) -> Result<u32, String> {
+        self.materialize_graph(Graph::parsed(plan, sources)?)
     }
-    pub fn materialize_value(&mut self, plan: &ValidatedDataPlan) -> Result<crate::transport::Value, String> {
+    pub fn materialize_value(&mut self, plan: &ParsedData, sources: &telora_core::SourceDatabase) -> Result<crate::transport::Value, String> {
         let ty = self.manifest.value_type.ok_or("Wasm: missing semantic Value type")?;
-        Ok(crate::transport::Value {pointer: self.materialize_data(plan)?, ty})
+        Ok(crate::transport::Value {pointer: self.materialize_data(plan, sources)?, ty})
     }
     fn materialize_graph(&mut self, plan: Graph<'_>) -> Result<u32, String> {
         self.data_node(

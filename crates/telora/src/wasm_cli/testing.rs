@@ -2,7 +2,7 @@
 use super::test_fixtures::{Fixtures, diagnostic, location};
 use telora_core::{
     DataLimits, Diagnostic, Loc, SourceDatabase, TestContext,
-    data_plan::ValidatedDataPlan,
+    data_plan::ParsedData,
     source::Severity,
     test_plan::{TestNotice, TestPlan, TestReport, TestResult},
 };
@@ -20,7 +20,7 @@ enum Work {
         origin: Option<Loc>,
     },
     Fixture {
-        plan: Result<ValidatedDataPlan, Vec<Diagnostic>>,
+        plan: Result<ParsedData, Vec<Diagnostic>>,
         factory: Value,
         result: TestResult,
         depth: usize,
@@ -131,7 +131,7 @@ pub(crate) fn run(
                 let input = testing
                     .session_mut()
                     .register_data_sources(fixtures.sources, &plan)
-                    .and_then(|()| testing.session_mut().materialize_value(&plan));
+                    .and_then(|()| testing.session_mut().materialize_value(&plan, fixtures.sources));
                 let input = match input {
                     Ok(input) => input,
                     Err(message) => {

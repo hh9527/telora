@@ -12,9 +12,11 @@ use telora_data::{
     source::SourceDatabase,
 };
 
+mod json;
+
 fn parse(input: &str, format: Format) -> Result<Plan, String> {
     let mut sources = SourceDatabase::default();
-    let source = sources.try_add("<string>", input).map_err(|error| error.to_string())?;
+    let source = sources.try_add_data("<string>", input.into()).map_err(|error| error.to_string())?;
     let plan = data_plan::parse_registered(&sources, source, format).map_err(|diagnostics| {
         diagnostics
             .into_iter()
@@ -22,7 +24,10 @@ fn parse(input: &str, format: Format) -> Result<Plan, String> {
             .expect("parse diagnostic")
             .message
     })?;
-    Ok(plan)
+    match plan {
+        data_plan::ParsedData::Owned(plan) => Ok(plan),
+        data_plan::ParsedData::Json { .. } => unreachable!("JSON has a direct span ABI"),
+    }
 }
 
 unsafe fn put(pointer: u32, offset: u32, value: u32) {
@@ -41,10 +46,7 @@ fn string_bytes(value: String) -> (u32, u32) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_json_parse(input: u32) -> u32 {
     unsafe {
-        export_plan(
-            parse(crate::text::text(input), Format::Json)
-                .map_err(|error| format!("<json string>: {error}")),
-        )
+        json::parse(crate::text::text(input))
     }
 }
 

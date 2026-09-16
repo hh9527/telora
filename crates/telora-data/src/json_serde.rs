@@ -2,11 +2,11 @@
 //! Serde maps the validated nodes to Rust types; it does not parse text here.
 use crate::{
     SourceDatabase,
-    data_plan::{self, DataNodeId, DataPlanNodeKind, DataScalar, Format, ValidatedDataPlan},
+    data_plan::DataNodeId,
+    json::{self, JsonKind as DataPlanNodeKind, JsonPlan, text::ParseCtx},
 };
 use alloc::{
     string::{String, ToString},
-    vec::Vec,
 };
 use core::fmt;
 use serde::de::{
@@ -36,26 +36,27 @@ pub fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Error> {
 pub fn from_str<T: DeserializeOwned>(input: &str) -> Result<T, Error> {
     let mut sources = SourceDatabase::default();
     let source = sources
-        .try_add("<json>", input)
+        .try_add_data("<json>", String::new())
         .map_err(|e| Error(e.to_string()))?;
-    let plan = data_plan::parse_registered(&sources, source, Format::Json).map_err(|errors| {
-        Error(
-            errors
-                .iter()
-                .map(|e| sources.render(e))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
+    let (plan, ctx) = json::parse_structure(source, input, crate::DataLimits::default())
+        .and_then(json::JsonStructure::validate).map_err(|errors| {
+        // Source indexing is needed only when rendering a diagnostic.
+        match sources.replace_unreferenced_data(source, "<json>", input.into()) {
+            Ok(()) => Error(errors.iter().map(|error| sources.render(error)).collect::<alloc::vec::Vec<_>>().join("\n")),
+            Err(location) => Error(location.to_string()),
+        }
     })?;
     T::deserialize(Node {
         plan: &plan,
-        id: plan.root_node().expect("parsed root"),
+        ctx: &ctx,
+        id: plan.root,
     })
 }
 
 #[derive(Clone, Copy)]
 struct Node<'a> {
-    plan: &'a ValidatedDataPlan,
+    plan: &'a JsonPlan,
+    ctx: &'a ParseCtx<'a>,
     id: DataNodeId,
 }
 
@@ -63,11 +64,12 @@ impl<'a> Node<'a> {
     fn child(self, id: DataNodeId) -> Self {
         Self {
             plan: self.plan,
+            ctx: self.ctx,
             id,
         }
     }
     fn kind(self) -> &'a DataPlanNodeKind {
-        &self.plan.nodes()[self.id.index()].kind
+        &self.plan.nodes[self.id.index()].kind
     }
 }
 
@@ -83,14 +85,11 @@ impl<'de> de::Deserializer<'de> for Node<'_> {
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.kind() {
-            DataPlanNodeKind::Scalar(value) => match value {
-                DataScalar::Null => visitor.visit_unit(),
-                DataScalar::Bool(value) => visitor.visit_bool(*value),
-                DataScalar::Int(value) => visitor.visit_i64(*value),
-                DataScalar::Float(value) => visitor.visit_f64(*value),
-                DataScalar::String(value) => visitor.visit_str(value),
-                _ => Err(Error("non-JSON scalar in JSON document".into())),
-            },
+            DataPlanNodeKind::Null => visitor.visit_unit(),
+            DataPlanNodeKind::Bool(value) => visitor.visit_bool(*value),
+            DataPlanNodeKind::Int(value) => visitor.visit_i64(*value),
+            DataPlanNodeKind::Float(value) => visitor.visit_f64(*value),
+            DataPlanNodeKind::String(value) => visitor.visit_str(self.ctx.text(value)),
             DataPlanNodeKind::Array(items) => de::Deserializer::deserialize_any(
                 SeqDeserializer::new(items.iter().map(|id| self.child(*id))),
                 visitor,
@@ -99,7 +98,7 @@ impl<'de> de::Deserializer<'de> for Node<'_> {
                 MapDeserializer::new(
                     fields
                         .iter()
-                        .map(|(key, field)| (key.as_str(), self.child(field.value))),
+                        .map(|(key, field)| (self.ctx.text(key), self.child(field.value))),
                 ),
                 visitor,
             ),
@@ -107,7 +106,7 @@ impl<'de> de::Deserializer<'de> for Node<'_> {
     }
 
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
-        if matches!(self.kind(), DataPlanNodeKind::Scalar(DataScalar::Null)) {
+        if matches!(self.kind(), DataPlanNodeKind::Null) {
             visitor.visit_none()
         } else {
             visitor.visit_some(self)
@@ -129,14 +128,14 @@ impl<'de> de::Deserializer<'de> for Node<'_> {
         visitor: V,
     ) -> Result<V::Value, Error> {
         match self.kind() {
-            DataPlanNodeKind::Scalar(DataScalar::String(value)) => {
-                visitor.visit_enum(value.as_str().into_deserializer())
+            DataPlanNodeKind::String(value) => {
+                visitor.visit_enum(self.ctx.text(value).into_deserializer())
             }
             DataPlanNodeKind::Object(fields) if fields.len() == 1 => {
                 visitor.visit_enum(de::value::MapAccessDeserializer::new(MapDeserializer::new(
                     fields
                         .iter()
-                        .map(|(key, field)| (key.as_str(), self.child(field.value))),
+                        .map(|(key, field)| (self.ctx.text(key), self.child(field.value))),
                 )))
             }
             _ => Err(Error(
@@ -158,6 +157,7 @@ impl<'de> de::Deserializer<'de> for Node<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[test]
     fn host_contracts_use_llw_numbers_strings_and_container_boundaries() {

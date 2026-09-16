@@ -2,7 +2,7 @@
 use crate::{artifact::Manifest, data_packet::DataPacket};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use telora_core::{SourceDatabase, data_plan::ValidatedDataPlan};
+use telora_core::{SourceDatabase, data_plan::ParsedData};
 
 const SECTION: &str = "telora.data";
 
@@ -40,7 +40,7 @@ fn validate(modules: &[ModuleData], manifest: &Manifest) -> Result<(), String> {
 pub fn build(
     bytes: &[u8],
     sources: &SourceDatabase,
-    plans: &[(u32, ValidatedDataPlan)],
+    plans: &[(u32, ParsedData)],
 ) -> Result<Vec<u8>, String> {
     let mut manifest = Manifest::read(bytes)?;
     let mut modules = Vec::with_capacity(plans.len());
@@ -48,7 +48,7 @@ pub fn build(
         manifest.register_data_sources(sources, plan)?;
         modules.push(ModuleData {
             symbol: *symbol,
-            packet: DataPacket::from_plan(plan)?,
+            packet: DataPacket::from_plan(plan, sources)?,
         });
     }
     modules.sort_by_key(|module| module.symbol);

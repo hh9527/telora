@@ -44,8 +44,10 @@ enum Atom {
     False,
     #[token("null")]
     Null,
-    #[regex(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?")]
-    Number,
+    #[regex(r"-?(0|[1-9][0-9]*)")]
+    Integer,
+    #[regex(r"-?(0|[1-9][0-9]*)(\.[0-9]+([eE][+-]?[0-9]+)?|[eE][+-]?[0-9]+)")]
+    Float,
 }
 
 #[derive(Debug)]
@@ -64,7 +66,7 @@ pub(super) enum Kind<'a> {
     True,
     False,
     Null,
-    Number(Cow<'a, str>),
+    Number { float: bool },
     Eof,
 }
 
@@ -73,6 +75,7 @@ pub(super) struct Token<'a> {
     pub span: Range<usize>,
 }
 
+#[derive(Debug)]
 pub(super) struct Error {
     pub message: &'static str,
     pub span: Range<usize>,
@@ -219,7 +222,8 @@ impl<'a, I: Iterator<Item = &'a str>> Scanner<'a, I> {
             Some(Ok(Atom::True)) => Kind::True,
             Some(Ok(Atom::False)) => Kind::False,
             Some(Ok(Atom::Null)) => Kind::Null,
-            Some(Ok(Atom::Number)) => Kind::Number(text),
+            Some(Ok(Atom::Integer)) => Kind::Number { float: false },
+            Some(Ok(Atom::Float)) => Kind::Number { float: true },
             _ => return Err(self.error(start, "invalid JSON literal or number")),
         })
     }

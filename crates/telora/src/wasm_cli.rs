@@ -128,7 +128,7 @@ pub(crate) fn initialize_diagnostics(
             Err(message) => { diagnostics.push(error(message)); continue; }
         };
         let source = sources
-            .try_add(module.name, &text)
+            .try_add_data(module.name, text)
             .map_err(|e| vec![error(e.to_string())])?;
         let plan = match telora_core::data_plan::parse_registered_with_limits(
             sources, source, format, crate::execution_config().data_limits,
@@ -141,7 +141,7 @@ pub(crate) fn initialize_diagnostics(
     if !diagnostics.is_empty() { return Err(diagnostics); }
     for (symbol, plan) in prepared {
         session.register_data_sources(sources, &plan).map_err(|e| vec![error(e)])?;
-        session.inject_data(symbol, &plan).map_err(|e| vec![error(e)])?;
+        session.inject_data(symbol, &plan, sources).map_err(|e| vec![error(e)])?;
     }
     drop(timer);
     let _timer = PhaseTimer::new("initialize");

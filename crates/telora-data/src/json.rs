@@ -1,4 +1,6 @@
-use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
+use crate::source::{Diagnostic, Location, SourceId};
+#[cfg(test)]
+use crate::source::SourceDatabase;
 use alloc::collections::BTreeMap;
 use alloc::{string::String, vec::Vec};
 use core::fmt;
@@ -372,6 +374,10 @@ impl fmt::Display for DataLimitError {
 
 mod lexer;
 mod parse;
+mod structure;
+mod validate;
+pub mod text;
+pub use structure::{JsonKind, JsonNode, JsonPlan};
 
 #[cfg(test)]
 pub(crate) fn validate_json_registered(
@@ -381,14 +387,80 @@ pub(crate) fn validate_json_registered(
     parse_with_limits(sources, source, crate::DataLimits::default())
 }
 
+#[cfg(test)]
 pub(crate) fn parse_with_limits(
     sources: &SourceDatabase,
     source: SourceId,
     limits: crate::DataLimits,
 ) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
     let text = sources.get(source).text();
-    parse::Parser::new(source, text.chunks(), limits).parse(text.byte_len())
-        .map_err(|diagnostic| vec![diagnostic])
+    // Admit before flattening an existing code-document/Rope source.
+    if text.byte_len() > limits.file_size {
+        return Err(vec![Diagnostic::error(
+            format!("data source exceeds file_size limit ({} > {})", text.byte_len(), limits.file_size),
+            Location::from_usize(source, 0..text.byte_len()).expect("source range"),
+        )]);
+    }
+    let range = crate::source::TextRange::new(0, text.byte_len() as u32).expect("source range");
+    let input = text.slice(range).expect("whole source");
+    let (parsed, ctx) = parse_structure(source, &input, limits)?.validate()?;
+    Ok(parsed.into_owned(&ctx))
+}
+
+/// Structurally parsed input, still borrowing its original contiguous source.
+/// Text and numeric payloads remain spans until validation.
+#[derive(Debug)]
+pub struct JsonStructure<'a> {
+    src: &'a str,
+    raw: structure::RawPlan,
+}
+
+/// Parse-0: structural admission and syntax, without allocating decoded text.
+/// Resource failure stops immediately; recoverable syntax diagnostics are
+/// retained for parse-1 to combine with independent semantic diagnostics.
+pub fn parse_structure(
+    source: SourceId,
+    input: &str,
+    limits: crate::DataLimits,
+) -> Result<JsonStructure<'_>, Vec<Diagnostic>> {
+    let raw = parse::Parser::new(source, core::iter::once(input), limits).parse(input.len())
+        .map_err(|diagnostic| vec![diagnostic])?;
+    Ok(JsonStructure { src: input, raw })
+}
+
+impl<'a> JsonStructure<'a> {
+    /// Parse-1 owns exactly one decoded buffer. An erroneous input publishes
+    /// diagnostics only, never a partial value plan or decoding context.
+    pub fn validate(self) -> Result<(JsonPlan, text::ParseCtx<'a>), Vec<Diagnostic>> {
+        let mut ctx = text::ParseCtx::new(self.src);
+        let plan = validate::validate(self.raw, &mut ctx)?;
+        Ok((plan, ctx))
+    }
+}
+
+#[cfg(test)]
+impl JsonPlan {
+    /// Publish into the shared owned data-plan interface. Consumers that can
+    /// borrow the parse context should consume JsonPlan directly instead.
+    pub fn into_owned(self, ctx: &text::ParseCtx<'_>) -> ValidatedDataPlan {
+        let mut plan = ValidatedDataPlan::default();
+        for node in self.nodes {
+            match node.kind {
+                JsonKind::String(span) => { plan.scalar(DataScalar::String(ctx.text(&span).into()), node.location); }
+                JsonKind::Int(n) => { plan.scalar(DataScalar::Int(n), node.location); }
+                JsonKind::Float(n) => { plan.scalar(DataScalar::Float(n), node.location); }
+                JsonKind::Bool(b) => { plan.scalar(DataScalar::Bool(b), node.location); }
+                JsonKind::Null => { plan.scalar(DataScalar::Null, node.location); }
+                JsonKind::Array(items) => { plan.array(items, node.location); }
+                JsonKind::Object(fields) => {
+                    plan.object(fields.into_iter().map(|(key, field)| (ctx.text(&key).into(), field)).collect(), node.location);
+                }
+            }
+        }
+        plan.set_root(self.root);
+        plan.postordered = true;
+        plan
+    }
 }
 
 #[cfg(test)]

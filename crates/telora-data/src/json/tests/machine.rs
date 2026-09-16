@@ -16,7 +16,13 @@ fn fixture(name: &str) -> String {
 fn snapshot<'a>(source: SourceId, text: &str, chunks: impl Iterator<Item = &'a str>) -> String {
     match super::super::parse::Parser::new(source, chunks, DataLimits::default()).parse(text.len())
     {
-        Ok(plan) => format!("{:?}", plan.nodes()),
+        Ok(plan) => {
+            let mut ctx = super::super::text::ParseCtx::new(text);
+            match super::super::validate::validate(plan, &mut ctx) {
+                Ok(plan) => format!("{:?}", plan.into_owned(&ctx).nodes()),
+                Err(error) => format!("{error:?}"),
+            }
+        }
         Err(error) => format!("{error:?}"),
     }
 }

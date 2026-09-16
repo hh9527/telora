@@ -410,7 +410,7 @@ fn json_parse_error_blames_the_original_text() {
     );
     assert_eq!(
         result["message"],
-        "<json string>: expected a JSON value"
+        "<json string>: trailing JSON comma is not allowed"
     );
     assert!(session.diagnostics().unwrap().is_empty());
 }

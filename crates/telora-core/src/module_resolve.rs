@@ -123,7 +123,7 @@ pub fn resolve_with_requests_cancellable(
         };
         if cancelled() { return None; }
         let parsed = crate::syntax::telora::parse_document_cancellable(
-            source, mir.sources.get(source).text(), cancelled,
+            source, mir.sources.get(source).text().document().expect("code source"), cancelled,
         )?;
         if cancelled() { return None; }
         let lowered = hir_lower::lower_module(&mut mir, id, source, &parsed.syntax);

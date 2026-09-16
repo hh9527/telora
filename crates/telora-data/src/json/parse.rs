@@ -1,12 +1,13 @@
 //! A bounded, nonrecursive JSON machine. A completed container is attached to
 //! its parent by ID; all output nodes are already in child-before-parent order.
 use super::lexer::{Kind, Scanner, Token};
-use super::{DataField, DataNodeId, DataScalar, ValidatedDataPlan};
+use super::structure::{RawKind, RawPlan, StringSpan};
+use super::{DataField, DataNodeId};
 use crate::{
     DataLimits,
     source::{Diagnostic, Location, SourceId},
 };
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use core::ops::Range;
 
 #[derive(Clone, Copy)]
@@ -22,8 +23,8 @@ enum Expect {
 enum Container {
     Array(Vec<DataNodeId>),
     Object {
-        fields: BTreeMap<String, DataField>,
-        key: Option<(String, Location)>,
+        fields: Vec<(StringSpan, DataField)>,
+        key: Option<(StringSpan, Location)>,
     },
 }
 
@@ -31,13 +32,15 @@ struct Frame {
     start: usize,
     expect: Expect,
     container: Container,
+    separator: Option<Range<usize>>,
+    skipped: usize,
 }
 
 pub(super) struct Parser<'a, I> {
     source: SourceId,
     scanner: Scanner<'a, I>,
     frames: Vec<Frame>,
-    plan: ValidatedDataPlan,
+    plan: RawPlan,
     root: Option<DataNodeId>,
     limits: DataLimits,
     nodes: usize,
@@ -50,7 +53,7 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
             source,
             scanner: Scanner::new(chunks),
             frames: Vec::new(),
-            plan: ValidatedDataPlan::default(),
+            plan: RawPlan::default(),
             root: None,
             limits,
             nodes: 0,
@@ -91,7 +94,12 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
                 Container::Array(items) => items.len(),
                 Container::Object { fields, .. } => fields.len(),
             };
-            self.limit(span, "container_size", len + 1, self.limits.container_size)?;
+            self.limit(
+                span,
+                "container_size",
+                len + frame.skipped + 1,
+                self.limits.container_size,
+            )?;
         }
         Ok(())
     }
@@ -108,7 +116,7 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
         Ok(())
     }
 
-    pub fn parse(mut self, bytes: usize) -> Result<ValidatedDataPlan, Diagnostic> {
+    pub fn parse(mut self, bytes: usize) -> Result<RawPlan, Diagnostic> {
         self.limit(0..bytes, "file_size", bytes, self.limits.file_size)?;
         loop {
             let token = self.next()?;
@@ -116,23 +124,39 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
                 if !matches!(token.kind, Kind::Eof) {
                     return Err(self.error(token.span, "expected end of JSON input"));
                 }
-                self.plan.set_root(self.root.unwrap());
-                self.plan.postordered = true;
+                self.plan.root = self.root;
                 return Ok(self.plan);
             }
             let expected = self.frames.last().map_or(Expect::Value, |f| f.expect);
             match expected {
                 Expect::Value | Expect::ValueOrEnd => {
-                    if matches!(expected, Expect::ValueOrEnd)
-                        && matches!(token.kind, Kind::RBracket)
+                    if matches!(token.kind, Kind::Comma) && !self.frames.is_empty() {
+                        self.skip_comma(token.span)?;
+                        continue;
+                    }
+                    if matches!(token.kind, Kind::RBracket)
+                        && self
+                            .frames
+                            .last()
+                            .is_some_and(|frame| matches!(frame.container, Container::Array(_)))
                     {
+                        if matches!(expected, Expect::Value) {
+                            self.trailing_comma();
+                        }
                         self.close(token.span)?;
                     } else {
                         self.value(token)?;
                     }
                 }
                 Expect::Key | Expect::KeyOrEnd => {
-                    if matches!(expected, Expect::KeyOrEnd) && matches!(token.kind, Kind::RBrace) {
+                    if matches!(token.kind, Kind::Comma) {
+                        self.skip_comma(token.span)?;
+                        continue;
+                    }
+                    if matches!(token.kind, Kind::RBrace) {
+                        if matches!(expected, Expect::Key) {
+                            self.trailing_comma();
+                        }
                         self.close(token.span)?;
                         continue;
                     }
@@ -142,20 +166,9 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
                     self.container_slot(token.span.clone())?;
                     let (key, location) = self.string(token.span.start)?;
                     let frame = self.frames.last_mut().unwrap();
-                    let Container::Object {
-                        fields,
-                        key: pending,
-                    } = &mut frame.container
-                    else {
+                    let Container::Object { key: pending, .. } = &mut frame.container else {
                         unreachable!()
                     };
-                    if let Some(previous) = fields.get(&key) {
-                        return Err(Diagnostic::error(
-                            format!("duplicate JSON object key {key:?}"),
-                            location,
-                        )
-                        .with_secondary("first defined here", previous.key_location));
-                    }
                     *pending = Some((key, location));
                     frame.expect = Expect::Colon;
                 }
@@ -168,6 +181,7 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
                 Expect::Separator => {
                     if matches!(token.kind, Kind::Comma) {
                         let frame = self.frames.last_mut().unwrap();
+                        frame.separator = Some(token.span);
                         frame.expect = match frame.container {
                             Container::Array(_) => Expect::Value,
                             Container::Object { .. } => Expect::Key,
@@ -189,6 +203,32 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
         }
     }
 
+    #[cold]
+    fn skip_comma(&mut self, span: Range<usize>) -> Result<(), Diagnostic> {
+        // Recovery slots consume structural budget too: an invalid comma-only
+        // container must not bypass admission and allocate unlimited diagnostics.
+        self.reserve_value(span.clone())?;
+        self.frames.last_mut().unwrap().skipped += 1;
+        self.plan
+            .diagnostics
+            .push(self.error(span, "unexpected extra JSON comma"));
+        Ok(())
+    }
+
+    #[cold]
+    fn trailing_comma(&mut self) {
+        let span = self
+            .frames
+            .last()
+            .unwrap()
+            .separator
+            .clone()
+            .expect("separator");
+        self.plan
+            .diagnostics
+            .push(self.error(span, "trailing JSON comma is not allowed"));
+    }
+
     fn value(&mut self, token: Token<'a>) -> Result<(), Diagnostic> {
         let scalar = match token.kind {
             Kind::LBracket | Kind::LBrace => {
@@ -198,7 +238,7 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
                 } else {
                     (
                         Container::Object {
-                            fields: BTreeMap::new(),
+                            fields: Vec::new(),
                             key: None,
                         },
                         Expect::KeyOrEnd,
@@ -208,38 +248,29 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
                     start: token.span.start,
                     expect,
                     container,
+                    separator: None,
+                    skipped: 0,
                 });
                 return Ok(());
             }
             Kind::QStart => {
                 self.reserve_value(token.span.clone())?;
                 let (text, location) = self.string(token.span.start)?;
-                let id = self.plan.scalar(DataScalar::String(text), location);
+                let id = self.plan.push(RawKind::String(text), location);
                 self.attach(id);
                 return Ok(());
             }
-            Kind::Null => DataScalar::Null,
-            Kind::True => DataScalar::Bool(true),
-            Kind::False => DataScalar::Bool(false),
-            Kind::Number(text) => {
-                if text.contains(['.', 'e', 'E']) {
-                    let value = text
-                        .parse::<f64>()
-                        .map_err(|_| self.error(token.span.clone(), "invalid Float value"))?;
-                    if !value.is_finite() {
-                        return Err(self.error(token.span, "JSON Float must be finite"));
-                    }
-                    DataScalar::Float(value)
-                } else {
-                    DataScalar::Int(text.parse().map_err(|_| {
-                        self.error(token.span.clone(), "JSON integer is outside the i64 range")
-                    })?)
-                }
-            }
+            Kind::Null => RawKind::Null,
+            Kind::True => RawKind::Bool(true),
+            Kind::False => RawKind::Bool(false),
+            Kind::Number { float } => RawKind::Number {
+                range: token.span.clone(),
+                float,
+            },
             _ => return Err(self.error(token.span, "expected a JSON value")),
         };
         self.reserve_value(token.span.clone())?;
-        let id = self.plan.scalar(scalar, self.location(token.span));
+        let id = self.plan.push(scalar, self.location(token.span));
         self.attach(id);
         Ok(())
     }
@@ -248,8 +279,8 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
         let frame = self.frames.pop().unwrap();
         let location = self.location(frame.start..span.end);
         let id = match frame.container {
-            Container::Array(items) => self.plan.array(items, location),
-            Container::Object { fields, .. } => self.plan.object(fields, location),
+            Container::Array(items) => self.plan.push(RawKind::Array(items), location),
+            Container::Object { fields, .. } => self.plan.push(RawKind::Object(fields), location),
         };
         self.attach(id);
         Ok(())
@@ -260,13 +291,13 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
                 Container::Array(items) => items.push(id),
                 Container::Object { fields, key } => {
                     let (name, key_location) = key.take().unwrap();
-                    fields.insert(
+                    fields.push((
                         name,
                         DataField {
                             key_location,
                             value: id,
                         },
-                    );
+                    ));
                 }
             }
             frame.expect = Expect::Separator;
@@ -277,13 +308,12 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
 
     fn append(
         &mut self,
-        output: &mut String,
+        output: &mut usize,
         text: &str,
         span: Range<usize>,
     ) -> Result<(), Diagnostic> {
         // Registered input fits u32 and each decoded byte is admitted once.
         let length = output
-            .len()
             .checked_add(text.len())
             .ok_or_else(|| self.error(span.clone(), "JSON string length overflow"))?;
         let payload = self
@@ -293,16 +323,18 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
         self.limit(span.clone(), "string_len", length, self.limits.string_len)?;
         self.limit(span, "payloads_bytes", payload, self.limits.payloads_bytes)?;
         self.payload = payload;
-        output.push_str(text);
+        *output = length;
         Ok(())
     }
 
-    fn string(&mut self, start: usize) -> Result<(String, Location), Diagnostic> {
-        let mut output = String::new();
+    fn string(&mut self, start: usize) -> Result<(StringSpan, Location), Diagnostic> {
+        let mut output = 0;
+        let mut escaped = false;
         let mut high: Option<(u16, Range<usize>)> = None;
         loop {
             let token = self.next()?;
             let mut utf8 = [0; 4];
+            escaped |= matches!(token.kind, Kind::EscChar(_) | Kind::EscUtf16(_));
             if let Some((first, origin)) = high.take() {
                 let Kind::EscUtf16(second @ 0xdc00..=0xdfff) = token.kind else {
                     return Err(self.error(origin, "high surrogate requires a low surrogate"));
@@ -319,7 +351,15 @@ impl<'a, I: Iterator<Item = &'a str>> Parser<'a, I> {
                 continue;
             }
             let text = match token.kind {
-                Kind::QEnd => return Ok((output, self.location(start..token.span.end))),
+                Kind::QEnd => {
+                    return Ok((
+                        StringSpan {
+                            range: start + 1..token.span.start,
+                            escaped,
+                        },
+                        self.location(start..token.span.end),
+                    ));
+                }
                 Kind::Text(text) => text,
                 Kind::EscChar(ch) => ch.encode_utf8(&mut utf8),
                 Kind::EscUtf16(first @ 0xd800..=0xdbff) => {

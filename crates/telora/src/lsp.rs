@@ -624,6 +624,7 @@ fn request_location(
         .sources()
         .get(source)
         .text()
+        .document().ok_or_else(content_modified)?
         .offset(from_position(params.position), encoding)
         .map_err(|error| protocol_error(ErrorCode::INVALID_PARAMS, error))?;
     Ok(Location::new(source, TextRange::at(offset)))
@@ -646,7 +647,7 @@ fn to_lsp_range(
     location: Location,
     encoding: PositionEncoding,
 ) -> Option<lsp::Range> {
-    let text = snapshot.sources().get(location.source).text();
+    let text = snapshot.sources().get(location.source).text().document()?;
     Some(lsp::Range::new(
         to_position(text.position(location.start, encoding).ok()?),
         to_position(text.position(location.end, encoding).ok()?),

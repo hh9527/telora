@@ -25,11 +25,26 @@ pub fn enforce_limits(
         .map_err(|error| error.to_string())
 }
 
+/// Original JSON input belongs to the source database. Its plan owns only
+/// flat nodes and one decoded buffer, never an allocation per text value.
+#[derive(Clone, Debug)]
+pub enum ParsedData {
+    Json { plan: crate::json::JsonPlan, decoded: String },
+    Owned(ValidatedDataPlan),
+}
+
+#[cfg(test)]
+impl ParsedData {
+    pub(crate) fn owned(self) -> ValidatedDataPlan {
+        match self { Self::Owned(plan) => plan, Self::Json { .. } => panic!("expected non-JSON plan") }
+    }
+}
+
 pub fn parse_registered(
     sources: &SourceDatabase,
     source: SourceId,
     format: Format,
-) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
+) -> Result<ParsedData, Vec<Diagnostic>> {
     parse_registered_with_limits(sources, source, format, crate::DataLimits::default())
 }
 
@@ -39,14 +54,21 @@ pub fn parse_registered_with_limits(
     source: SourceId,
     format: Format,
     limits: crate::DataLimits,
-) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
+) -> Result<ParsedData, Vec<Diagnostic>> {
+    if matches!(format, Format::Json) {
+        let text = sources.get(source).text().contiguous().ok_or_else(|| vec![
+            Diagnostic::error("JSON data requires a contiguous source", crate::source::Location::from_usize(source, 0..0).unwrap())
+        ])?;
+        let (plan, ctx) = crate::json::parse_structure(source, text, limits)?.validate()?;
+        return Ok(ParsedData::Json { plan, decoded: ctx.into_decoded() });
+    }
     let mut plan = match format {
-        Format::Json => crate::json::parse_with_limits(sources, source, limits),
+        Format::Json => unreachable!(),
         Format::Yaml => crate::yaml::parse_with_limits(sources, source, limits),
         Format::Toml => crate::toml::parse_with_limits(sources, source, limits),
     }?;
     plan.source_index = Some((source, sources.get(source).line_index().clone()));
-    Ok(plan)
+    Ok(ParsedData::Owned(plan))
 }
 
 #[cfg(test)]
@@ -113,7 +135,7 @@ mod tests {
         let mut sources = SourceDatabase::default();
         let text = "base: [1, 2]\ncopy: [1, 2]\n";
         let source = sources.add("limits.yaml", text);
-        let plan = parse_registered(&sources, source, Format::Yaml).unwrap();
+        let ParsedData::Owned(plan) = parse_registered(&sources, source, Format::Yaml).unwrap() else { panic!("YAML plan") };
         let mut limits = crate::DataLimits::default();
         limits.nodes = 6;
         assert!(
@@ -131,7 +153,7 @@ mod tests {
         );
         let text = r#"["\u4e2d"]"#;
         let source = sources.add("limits.json", text);
-        let plan = parse_registered(&sources, source, Format::Json).unwrap();
+        let plan = crate::json::validate_json_registered(&sources, source).unwrap();
         limits = crate::DataLimits::default();
         limits.string_len = 2;
         assert!(
@@ -149,3 +171,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod borrowed_tests;

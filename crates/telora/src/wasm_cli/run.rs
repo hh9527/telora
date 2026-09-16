@@ -32,7 +32,7 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
     let limits = crate::execution_config_for(inventory.runtime_options())?.data_limits;
     let mut values = BTreeMap::new();
     for (name, input) in crate::source_arg::collect_service_sources(arguments.sources, limits.file_size)? {
-        let id = mir.sources.try_add(input.source_name, &input.text).map_err(|e| e.to_string())?;
+        let id = mir.sources.try_add_data(input.source_name, input.text).map_err(|e| e.to_string())?;
         let format = match input.format {
             telora_core::SystemDataFormat::Json => Format::Json,
             telora_core::SystemDataFormat::Yaml => Format::Yaml,
@@ -46,12 +46,12 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
     service.seal_initialization()?;
     drop(service_init);
     let usage_reporter = service.session_mut().usage_reporter.take();
-    let request = mir.sources.try_add("@request", "").map_err(|e| e.to_string())?;
+    let request = mir.sources.try_add_data("@request", String::new()).map_err(|e| e.to_string())?;
     let stdin = std::io::stdin();
     if !serve {
         let input = crate::source_arg::read_limited(stdin.lock(), limits.file_size, "query input")?;
         let input = String::from_utf8(input).map_err(|e| e.to_string())?;
-        let response = transform(&mut service, &mut mir.sources, request, &input);
+        let response = transform(&mut service, &mut mir.sources, request, input);
         if let Some(report) = usage_reporter { report(service.usage()); }
         for diagnostic in response["diagnostics"].as_array().into_iter().flatten() {
             crate::emit_stderr(serde_json::json!({"schema":"telora.execution/v1", "record":"diagnostic",
@@ -80,7 +80,7 @@ pub(crate) fn execute(context: PathBuf, arguments: crate::ApplicationArgs, serve
         if bytes.is_empty() && !oversized { break; }
         let response = if oversized {
             failure("request exceeds file_size limit")
-        } else { match std::str::from_utf8(&bytes) {
+        } else { match String::from_utf8(bytes) {
             Ok(input) => {
                 let response = transform(&mut service, &mut mir.sources, request, input);
                 if let Some(report) = usage_reporter { report(service.usage()); }
@@ -99,17 +99,17 @@ fn materialize(service: &mut TransformSession, sources: &SourceDatabase, source:
     let plan = data_plan::parse_registered_with_limits(sources, source, format, crate::execution_config().data_limits)
         .map_err(|ds| ds.iter().map(|d| sources.render(d)).collect::<Vec<_>>().join("\n"))?;
     service.session_mut().register_data_sources(sources, &plan)?;
-    service.session_mut().materialize_value(&plan)
+    service.session_mut().materialize_value(&plan, sources)
 }
 
-fn transform(service: &mut TransformSession, sources: &mut SourceDatabase, request: SourceId, input: &str) -> serde_json::Value {
+fn transform(service: &mut TransformSession, sources: &mut SourceDatabase, request: SourceId, input: String) -> serde_json::Value {
     let result = (|| {
         {
             let _timer = PhaseTimer::new("request_reset");
             service.reset()?;
         }
         let _timer = PhaseTimer::new("request_transform");
-        sources.replace_unreferenced(request, "@request", input).map_err(|e| e.to_string())?;
+        sources.replace_unreferenced_data(request, "@request", input).map_err(|e| e.to_string())?;
         let input = materialize(service, sources, request, Format::Json)?;
         let result = service.transform(input);
         for event in service.session().take_debug_events()? {
