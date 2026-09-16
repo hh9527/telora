@@ -1122,6 +1122,9 @@ Int 和 String 时，在 functions.rs 的闭包捕获表查找发生 panic。
 
 ## Interpreter 适配与观察性调试
 
+> 后续修订：本节 interpreter! 的缓存身份与 operand 延迟求值规则由
+> [RFC 0301](0301-interpreter-ordinary-closures.md) 覆盖。下文保留历史实施记录。
+
 interpreter! 已消费 InterpreterPlan 生成专门化工厂与适配器。已封闭
 签名决定全部 witness 身份，每个词法工厂环境用一个缓存槽保持适配器
 身份，不需要运行时 TypeId 映射表。返回函数每次调用才求值 operand，
