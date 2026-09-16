@@ -3,7 +3,7 @@
 pub struct DataLimits {
     /// Maximum raw source bytes read before parsing.
     pub file_size: usize,
-    /// Maximum logical Value occurrences after alias and merge expansion.
+    /// Maximum Value node count (object keys are not nodes).
     pub nodes: usize,
     /// Maximum logical graph depth, with the root at depth one.
     pub depth: usize,

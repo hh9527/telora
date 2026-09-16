@@ -1182,17 +1182,18 @@ type ScalarValue = enum {
 后端的物理参数类型。
 
 每个递归子节点都携带同一个 canonical `Value` TypeId，因此可以用闭合 `match`
-穷尽处理。它是规范化后的语义数据，不是 lossless AST：不保留注释、anchor/alias
-身份、原始标量拼写或 table 拼写，也不暴露 VM 的 meta/runtime layout。
+穷尽处理。它是规范化后的语义数据，不是 lossless AST：不保留注释、
+原始标量拼写或 table 拼写，也不暴露 VM 的 meta/runtime layout。
 
 当前格式行为包括：
 
 - JSON 严格解析数字、字符串和重复 key；Int 越界或非有限 Float 失败；
 - TOML 支持 1.0 的核心值与表结构，四种 date/time 类别规范化为独立 Value variant；
 - YAML 使用固定的保守 schema：mapping key 必须是 String，拒绝 custom tag 和非有限
-  Float；标准 `!!binary` 经过 canonical base64 校验后成为 Bytes；alias 有深度与总
-  展开量限制；merge 只接受 mapping 或 mapping sequence，显式字段覆盖 merged 字段，
-  未被显式覆盖的重复 effective key 失败；旧式隐式 bool 和时间戳按 String 处理。
+  Float；标准 `!!binary` 经过 canonical base64 校验后成为 Bytes；不支持anchor（`&name`）、
+  alias（`*name`）和merge，遇到相关语法直接报错。未加引号的`<<` mapping key被拒绝，
+  加引号的`"<<"`是普通字符串key；字符串或注释中的`&`、`*`、`<<`不作为引用或merge。
+  旧式隐式 bool 和时间戳按 String 处理。
 
 运行时文本解析使用同一边界：
 
@@ -1620,21 +1621,21 @@ TOML table 冲突、非法数字/时间值，以及不受支持或有歧义的 Y
 
 验证阶段不构造递归 Owned 数据树。实现以一个
 扁平 arena 表达 validated plan：节点只保存 source span、已验证的节点种类，以及指向
-arena 节点的轻量边；JSON 由显式词法状态和容器栈直接构建节点，保留 token 的来源位置，
-无需 CST；TOML 节点来自对应 CST node，YAML 节点来自行级 CST span。
-字符串、规范化时间、binary 等必须在物化前验证的解码结果，以及重复键检测、YAML
-graph 解引用、TOML table 组装所需的索引，进入必要的 side table。plan
+arena 节点的轻量边；JSON/YAML由显式解析状态直接构建节点并保留来源位置，
+无需 CST；TOML 节点来自对应 CST node。
+字符串、规范化时间、binary 等必须在物化前验证的解码结果，以及重复键检测、
+TOML table 组装所需的索引，进入必要的 side table。plan
 不会包含递归 Owned payload graph，也不会分配运行时对象；目标 Heap materializer 在
 验证和结构限制预检全部成功后单次消费它。
 
 数据源不消耗也不依赖引擎的执行 fuel 或内存增长上限。Host 在完整分配 source
-字符串前以有界读取检查原始 `file_size`；JSON 在构建时、TOML/YAML 在验证计划建成后检查 `nodes`（YAML alias/merge
-按最终每次出现计数）、`depth`（根为 1）、单个 `container_size`、单个 `bytes_len`、单个
+字符串前以有界读取检查原始 `file_size`；JSON/YAML在构建时、TOML在验证计划建成后检查 `nodes`、
+`depth`（根为 1）、单个 `container_size`、单个 `bytes_len`、单个
 UTF-8 `string_len`，以及所有 String、对象键、时间字符串和 Bytes 解码后长度之和
 `payloads_bytes`。对象键不是节点。全部计数使用 checked arithmetic，任何溢出均视为
 超限；只有所有检查通过后才物化。每个节点直接携带本次运行共享 source registry 分配的
 `SourceId + range`，后续诊断可以稳定地把该节点作为 source 位置。MainWorld 和 Entry
-WorkWorld 仅是不同 target，CST、格式验证、location、data limits 和 `Value` 构造逻辑相同。
+WorkWorld 仅是不同 target，格式验证、location、data limits 和 `Value` 构造逻辑相同。
 
 每次服务请求在独立执行边界内处理，结果发布后或请求失败后 reset。
 

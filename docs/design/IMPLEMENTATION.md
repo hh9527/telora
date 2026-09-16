@@ -59,8 +59,10 @@ core 的 `syntax/telora/tree_sitter/` 负责分块输入、token 分类与验证
 
 JSON 使用 `telora-data/src/json/` 中的 Logos 局部词法识别与显式状态栈，直接构建
 带位置的 DataPlan；不生成 token 数组或 CST，跨输入块保留状态而不重扫前缀。
-TOML/YAML 仍使用 `telora-data/src/syntax/` 中的 Lelwel parser，手写 callback
-位于各自的 `parser/support.rs`。修改这些 `grammar.llw` 后运行
+YAML 使用 `telora-data/src/yaml/` 中的行索引、block任务栈与flow容器栈直接构建DataPlan，
+不构造CST，不支持anchor、alias和merge。行索引跨chunk识别LF/CRLF/CR，不重扫pending前缀。
+TOML 仍使用 `telora-data/src/syntax/` 中的 Lelwel parser，手写 callback
+位于 `parser/support.rs`。修改其 `grammar.llw` 后运行
 `cargo run -p telora-parser-gen`，同时提交 grammar 与生成代码。
 正常 Cargo 构建不生成或改写上述 parser 源码。
 生成的状态机不受手写源文件大小限制，手写逻辑和测试使用正常子模块划分。
@@ -170,8 +172,10 @@ Host 的数据模块导入与 Wasm RT 的 `json.parse`、`toml.parse`、`yaml.pa
 `telora-data`。共享库使用 `no_std + alloc`，输出带来源位置的扁平数据图。
 JSON 的词法模式、容器栈、字符串解码和配额计数显式保存；字符串按
 QStart/QEnd/Text/EscChar/EscUtf16 消费，不接受 `\x`。深度、节点、容器、解码字符串
-和累计 payload 限制在构建时检查，成功后不再遍历检查配额。JSON 节点天然子节点优先，
-RT 导出不需重排；TOML/YAML 保留原有解析及共享图重排。运行时产生的 Telora 值沿用输入字符串的来源位置。
+和累计 payload 限制在构建时检查，成功后不再遍历检查配额。YAML同样在构建时检查这些限制，
+并在base64解码过程中检查Bytes长度；block scalar在folding/chomping后按实际载荷计数。
+JSON/YAML节点天然子节点优先，RT导出不需重排；TOML保留原有解析及重排。
+运行时产生的 Telora 值沿用输入字符串的来源位置。
 
 Host 配置、产物元数据和 EES 协议的 JSON 文本也先由同一 JSON 状态机校验，再由可选的
 `json_serde` 适配器转换为 Rust 结构。Serde 不参与这些入口的文本解析；JSON 输出仍可

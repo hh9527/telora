@@ -2,7 +2,7 @@ use super::*;
 use crate::data_packet::{DataPacket, Value};
 
 #[test]
-fn portable_data_roundtrip_preserves_integer_bits_aliases_and_rejects_bad_edges() {
+fn portable_data_roundtrip_preserves_integer_bits_and_rejects_bad_edges() {
     let mir = graph(
         &std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -21,7 +21,7 @@ fn portable_data_roundtrip_preserves_integer_bits_aliases_and_rejects_bad_edges(
     let mut sources = mir.sources;
     let id = sources.add(
         "bundled.yaml",
-        "number: 42\nmax: 9223372036854775807\nbase: &a [1, 2]\ncopy: *a\n",
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/portable-values.yaml")).unwrap(),
     );
     let plan = telora_core::data_plan::parse_registered(
         &sources,

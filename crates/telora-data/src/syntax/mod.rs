@@ -1,6 +1,5 @@
 use alloc::vec::Vec;
 pub mod toml;
-pub mod yaml;
 
 use crate::source::Diagnostic;
 

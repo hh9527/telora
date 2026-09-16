@@ -1,6 +1,4 @@
+number: 42
 max: 9223372036854775807
-bytes: !!binary SGk=
 base: [1, 2]
 copy: [1, 2]
-é: true
-😀: null

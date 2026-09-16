@@ -175,11 +175,6 @@ impl ValidatedDataPlan {
         &mut self.nodes[id.0]
     }
 
-    pub(crate) fn clone_root_at(&mut self, id: DataNodeId, location: Location) -> DataNodeId {
-        let kind = self.node(id).kind.clone();
-        self.push(kind, location)
-    }
-
     fn push(&mut self, kind: DataPlanNodeKind, location: Location) -> DataNodeId {
         let id = DataNodeId(self.nodes.len());
         self.nodes.push(DataPlanNode { kind, location });

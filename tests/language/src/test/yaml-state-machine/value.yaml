@@ -1,0 +1,21 @@
+---
+name: Telora
+enabled: true
+legacy: yes
+when: 2026-08-04
+items:
+  - one
+  - name: two
+    ok: false
+    nested:
+      - [1, 2]
+literal: |-
+  a
+  b
+folded: >
+  hello
+  world
+bytes: !!binary SGk=
+empty:
+quoted: 'it''s # literal'
+"<<": '*value &name'

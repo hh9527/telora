@@ -14,7 +14,7 @@ fn generate(
     root: &std::path::Path,
     temporary: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for language in ["toml", "yaml"] {
+    for language in ["toml"] {
         let root = root.join("telora-data/src/syntax");
         let grammar = root.join(language).join("grammar.llw");
         let success = lelwel::compile(
