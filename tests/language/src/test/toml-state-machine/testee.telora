@@ -1,0 +1,103 @@
+import "std/test" as test;
+import "std/toml" as toml;
+import "std/value" {Value};
+import "std/string" as string;
+import "std/array" as array;
+import "@src/test-support" {expect};
+import "./value.toml" {data};
+
+export def host_and_runtime: test.Test = test.should_ok(fn() {
+    let text = r#"title = "Telora"
+when = 1979-05-27 07:32:00+00:00
+local = 1979-05-27T07:32:00
+dates = [1979-05-27, 07:32:00.1200]
+point = { x = 1, y = 2 }
+[owner.details]
+age = 42
+[owner]
+name = 'Ada'
+[[products]]
+name = "one"
+[[products.parts]]
+id = 1
+[[products.parts]]
+id = 2
+[[products]]
+name = "two"
+[products.details]
+ok = true
+"#;
+    let expected = Value.Object({
+        title: Value.String("Telora"), when: Value.OffsetDateTime("1979-05-27T07:32:00Z"),
+        local: Value.LocalDateTime("1979-05-27T07:32:00"),
+        dates: Value.Array([Value.LocalDate("1979-05-27"), Value.LocalTime("07:32:00.1200")]),
+        point: Value.Object({x: Value.Int(1), y: Value.Int(2)}),
+        owner: Value.Object({name: Value.String("Ada"), details: Value.Object({age: Value.Int(42)})}),
+        products: Value.Array([
+            Value.Object({name: Value.String("one"), parts: Value.Array([Value.Object({id: Value.Int(1)}), Value.Object({id: Value.Int(2)})])}),
+            Value.Object({name: Value.String("two"), details: Value.Object({ok: Value.True})}),
+        ]),
+    });
+    expect(data == expected && toml.parse(text) == Ok(expected)
+        && toml.parse(string.replace(text, "\n", "\r\n")) == Ok(expected)
+        && toml.parse(string.replace(text, "\n", "\r")) == Ok(expected))
+});
+
+export def strings_and_keys: test.Test = test.should_ok(fn() {
+    let text = r#"escaped = "line\n\u5F62\U0001f600"
+folded = """
+first\
+  second"""
+literal = 'C:\path'
+raw = '''
+one
+two'''
+four = """one""""
+five = '''two'''''
+empty = ""
+quoted.key = 1
+"quoted.key" = 2
+"" = 3
+"#;
+    let expected = Value.Object({
+        escaped: Value.String("line\n形😀"), folded: Value.String("firstsecond"),
+        literal: Value.String("C:\\path"), raw: Value.String("one\ntwo"),
+        four: Value.String("one\""), five: Value.String("two''"), empty: Value.String(""),
+        quoted: Value.Object({key: Value.Int(1)}), "quoted.key": Value.Int(2), "": Value.Int(3),
+    });
+    expect(toml.parse(text) == Ok(expected)
+        && toml.parse(string.replace(text, "\n", "\r\n")) == Ok(expected)
+        && toml.parse(string.replace(text, "\n", "\r")) == Ok(expected)
+        && toml.parse(r#"x="\r\n""#) == Ok(Value.Object({x:Value.String("\r\n")})))
+});
+
+export def arrays_numbers_and_comments: test.Test = test.should_ok(fn() {
+    expect(toml.parse("# comment\na=[\n0xDEAD_BEEF, # comment\n-42, 1_000.50, 0o17, 0b11, true, false,]\nb={x=[1,2],y={z='ok'}}\n")
+        == Ok(Value.Object({a: Value.Array([Value.Int(3735928559), Value.Int(-42), Value.Float(1000.5), Value.Int(15), Value.Int(3), Value.True, Value.False]),
+            b: Value.Object({x: Value.Array([Value.Int(1),Value.Int(2)]), y: Value.Object({z: Value.String("ok")})})})))
+});
+
+export def table_conflicts: test.Test = test.should_ok(fn() {
+    let bad = ["a=1\na=2", "a={b=1}\na.c=2", "a={b={c=1}}\n[a.b]\nx=2", "a=1\n[a]\nb=2",
+        "[a]\nb=1\n[a]\nc=2", "a=[]\n[[a]]\nb=1", "a.b=1\n[a]\nc=2", "[[a]]\nx=1\n[a]\ny=2",
+        "a={b=1,b=2}", "a={b.c=1,b.c=2}", "a={b={c=1},b.d=2}", "a={b=1,}", "a=[1,,2]",
+        "a={\nb=1}", "a=[", "[a", "[[a]", "a=", "=1", "a..b=1", "'''key'''=1"];
+    expect(array.all(bad, fn(text) {match toml.parse(text) {Err(_) => True, Ok(_) => False}}))
+});
+
+export def invalid_scalars: test.Test = test.should_ok(fn() {
+    let bad = ["x=1__0", "x=01", "x=+0x1", "x=-0o7", "x=--1", "x=-+1", "x=+-1", "x=++1", "x=1.", "x=1.e2", "x=1e", "x=1e+",
+        "x=inf", "x=-inf", "x=nan", "x=1.0e9999", "x=9223372036854775808", "x=2025-02-29",
+        "x=2024-13-01", "x=24:00:00", "x=00:60:00", "x=1979-05-27T07:32:00+24:00",
+        "x='unclosed", r#"x="\q""#, r#"x="\uD800""#, r#"x="\U00110000""#];
+    expect(array.all(bad, fn(text) {match toml.parse(text) {Err(_) => True, Ok(_) => False}}))
+});
+
+export def depth_is_a_diagnostic: test.Test = test.should_fail_with(fn() {
+    let a = "[[[[[[[[[[[[[[[[";
+    let b = string.join([a, a], "");
+    let c = string.join([b, b], "");
+    let d = string.join([c, c], "");
+    let e = string.join([d, d], "");
+    match toml.parse(string.join(["x=", e, "[0]", string.replace(e, "[", "]")], "")) {Err(error) => raise!(error), Ok(_) => 0}
+}, "depth limit");

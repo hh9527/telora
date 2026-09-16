@@ -33,8 +33,7 @@ pub fn parse_registered(
     parse_registered_with_limits(sources, source, format, crate::DataLimits::default())
 }
 
-/// JSON/YAML admit resources during construction. TOML retains post-parse
-/// validation until its separate parser migration.
+/// All formats admit resources during construction, before allocating payloads.
 pub fn parse_registered_with_limits(
     sources: &SourceDatabase,
     source: SourceId,
@@ -44,12 +43,8 @@ pub fn parse_registered_with_limits(
     let mut plan = match format {
         Format::Json => crate::json::parse_with_limits(sources, source, limits),
         Format::Yaml => crate::yaml::parse_with_limits(sources, source, limits),
-        Format::Toml => crate::toml::validate_toml_registered(sources, source),
+        Format::Toml => crate::toml::parse_with_limits(sources, source, limits),
     }?;
-    if matches!(format, Format::Toml) {
-        enforce_limits(&plan, limits, sources.get(source).text().byte_len())
-            .map_err(|message| vec![Diagnostic::error(message, plan.node(plan.root()).location)])?;
-    }
     plan.source_index = Some((source, sources.get(source).line_index().clone()));
     Ok(plan)
 }
@@ -62,7 +57,18 @@ mod tests {
     fn postorder_moves_payloads_and_closes_child_ids() {
         let mut sources = SourceDatabase::default();
         let source = sources.add("values.toml", "base = ['hello']\ncopy = ['hello']\n");
-        let plan = parse_registered(&sources, source, Format::Toml).unwrap();
+        // Build parent before children so this exercises the actual reorder,
+        // rather than a parser's already-postordered fast path.
+        let mut plan = ValidatedDataPlan::default();
+        let loc = crate::source::Location::from_usize(source, 0..32).unwrap();
+        let root = plan.object(Default::default(), loc);
+        let value = plan.scalar(DataScalar::String("hello".into()), loc);
+        let base = plan.array(vec![value], loc);
+        let copy = plan.array(vec![value], loc);
+        let DataPlanNodeKind::Object(fields) = &mut plan.node_mut(root).kind else { panic!("root") };
+        fields.insert("base".into(), DataField { key_location: loc, value: base });
+        fields.insert("copy".into(), DataField { key_location: loc, value: copy });
+        plan.set_root(root);
         let (pointer, location) = plan
             .nodes()
             .iter()

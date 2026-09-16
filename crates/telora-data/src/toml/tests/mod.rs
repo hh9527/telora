@@ -1,121 +1,124 @@
+extern crate std;
 use super::*;
-use alloc::vec::Vec;
+use crate::json::{DataPlanNodeKind, DataScalar};
+use alloc::string::String;
 
-fn parse(source: &str) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
+mod machine;
+
+fn fixture(name: &str) -> String {
+    std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/toml")
+            .join(name),
+    )
+    .unwrap()
+}
+fn parse(text: &str, limits: DataLimits) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
     let mut sources = SourceDatabase::default();
-    let id = sources.add("test.toml", source);
-    validate_toml_registered(&sources, id)
+    let id = sources.add("test.toml", text);
+    crate::data_plan::parse_registered_with_limits(
+        &sources,
+        id,
+        crate::data_plan::Format::Toml,
+        limits,
+    )
 }
 
 #[test]
-fn lowers_tables_arrays_inline_values_and_temporal_tags() {
-    let parsed = parse(
-        r#"title = "Telora"
-when = 1979-05-27 07:32:00+00:00
-local = 1979-05-27T07:32:00
-dates = [1979-05-27, 07:32:00.1200]
-point = { x = 1, y = 2 }
-[owner]
-name = 'Ada'
-[[products]]
-name = "one"
-[[products]]
-name = "two"
-"#,
-    );
-    assert!(parsed.is_ok(), "{parsed:?}");
-    assert_eq!(
-        crate::data_plan_test::render(&parsed.unwrap()),
-        "{dates: ['LocalDate(\"1979-05-27\"), 'LocalTime(\"07:32:00.1200\")], local: 'LocalDateTime(\"1979-05-27T07:32:00\"), owner: {name: \"Ada\"}, point: {x: 1, y: 2}, products: [{name: \"one\"}, {name: \"two\"}], title: \"Telora\", when: 'OffsetDateTime(\"1979-05-27T07:32:00Z\")}"
-    );
-}
-
-#[test]
-fn rejects_invalid_dates_and_duplicate_keys() {
-    let date = parse("when = 2025-02-29\n");
-    assert!(date.is_err());
-    assert!(date.as_ref().unwrap_err()[0].message.contains("day"));
-
-    let duplicate = parse("a = 1\na = 2\n");
-    assert!(duplicate.is_err());
-    assert_eq!(duplicate.as_ref().unwrap_err()[0].labels.len(), 2);
-}
-
-#[test]
-fn decodes_toml_strings_numbers_and_rejects_table_conflicts() {
-    let parsed = parse(
-        "escaped = \"line\\n\\u5F62\"\nfolded = \"\"\"\nfirst\\\n  second\"\"\"\nhex = 0xDEAD_BEEF\nfloat = 1_000.50\n",
-    );
-    assert!(parsed.is_ok(), "{parsed:?}");
-    assert_eq!(
-        crate::data_plan_test::render(&parsed.unwrap()),
-        "{escaped: \"line\\n形\", float: 1000.5, folded: \"firstsecond\", hex: 3735928559}"
-    );
-
-    for source in [
-        "value = 1__0\n",
-        "value = 01\n",
-        "a = {b = 1}\na.c = 2\n",
-        "a = 1\n[a]\nb = 2\n",
-        "[a]\nb = 1\n[a]\nc = 2\n",
-        "a = []\n[[a]]\nb = 1\n",
-        "a.b = 1\n[a]\nc = 2\n",
-    ] {
-        let parsed = parse(source);
-        assert!(parsed.is_err(), "accepted invalid TOML: {source}");
-        assert!(!parsed.as_ref().unwrap_err().is_empty(), "{source}");
-    }
-
-    let implicit_header = parse("[a.b]\nvalue = 1\n[a]\nname = \"ok\"\n");
-    assert!(implicit_header.is_ok(), "{:?}", implicit_header);
-}
-
-#[test]
-fn covers_toml_1_0_string_and_numeric_boundaries() {
-    let parsed = parse(
-        "four = \"\"\"one\"\"\"\"\nfive = '''two'''''\r\nlines = \"\"\"a\r\nb\"\"\"\r\nempty = \"\"\nquoted.key = 1\n\"quoted.key\" = 2\n",
-    );
-    assert!(parsed.is_ok(), "{parsed:?}");
-    assert_eq!(
-        crate::data_plan_test::render(&parsed.unwrap()),
-        "{empty: \"\", five: \"two''\", four: \"one\\\"\", lines: \"a\\nb\", quoted: {key: 1}, quoted.key: 2}"
-    );
-
-    for source in [
-        "value = +0x1\n",
-        "value = -0o7\n",
-        "value = 1.\n",
-        "value = 1.e2\n",
-        "value = 1e\n",
-        "value = 1e+\n",
-    ] {
-        let parsed = parse(source);
-        assert!(parsed.is_err(), "accepted invalid TOML: {source}");
-    }
-}
-
-#[test]
-fn rejects_non_finite_float_values() {
-    for source in [
-        "value = inf\n",
-        "value = -inf\n",
-        "value = nan\n",
-        "value = 1.0e9999\n",
-    ] {
-        let parsed = parse(source);
-        assert!(parsed.is_err(), "accepted {source}");
-        assert!(
-            parsed.as_ref().unwrap_err()[0]
-                .message
-                .contains("must be finite")
+fn chunks_eol_and_positions_are_stable() {
+    let mut snapshots = Vec::new();
+    for eol in ["\n", "\r\n", "\r"] {
+        let text = fixture("core.toml").replace('\n', eol);
+        let mut sources = SourceDatabase::default();
+        let source = sources.add("core.toml", &text);
+        let expected = parse(&text, DataLimits::default()).unwrap();
+        snapshots.push((
+            crate::data_plan_test::render(&expected),
+            expected
+                .nodes()
+                .iter()
+                .map(|n| expected.compact(n.location).0)
+                .collect::<Vec<_>>(),
+        ));
+        for at in text
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(core::iter::once(text.len()))
+        {
+            let plan = super::parse::parse_chunks(
+                source,
+                [&text[..at], "", &text[at..]].into_iter(),
+                text.len(),
+                DataLimits::default(),
+            )
+            .unwrap();
+            assert_eq!(
+                format!("{:?}", plan.nodes()),
+                format!("{:?}", expected.nodes()),
+                "split {at}"
+            );
+        }
+        let plan = super::parse::parse_chunks(
+            source,
+            text.char_indices()
+                .map(|(i, ch)| &text[i..i + ch.len_utf8()]),
+            text.len(),
+            DataLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            format!("{:?}", plan.nodes()),
+            format!("{:?}", expected.nodes())
         );
     }
+    assert_eq!(snapshots[0], snapshots[1]);
+    assert_eq!(snapshots[0], snapshots[2]);
+}
 
-    let overflow = parse("value = 9223372036854775808\n");
-    assert!(overflow.is_err());
-    assert!(
-        overflow.as_ref().unwrap_err()[0]
-            .message
-            .contains("outside the i64 range")
-    );
+#[test]
+fn duplicate_and_unicode_spans_and_chunked_errors() {
+    let text = fixture("locations.toml");
+    let errors = parse(&text, DataLimits::default()).unwrap_err();
+    let first = text.find("name").unwrap();
+    let second = text.rfind("name").unwrap();
+    assert_eq!(errors[0].labels[0].location.range(), second..second + 4);
+    assert_eq!(errors[0].labels[1].location.range(), first..first + 4);
+    let plan = parse(&text[..second], DataLimits::default()).unwrap();
+    let DataPlanNodeKind::Object(fields) = &plan.node(plan.root()).kind else {
+        panic!()
+    };
+    let field = &fields["é"];
+    assert_eq!(field.key_location.range(), 0..4);
+    assert_eq!(plan.node(field.value).location.range(), 7..13);
+    for text in [
+        text.as_str(),
+        "a = \"unclosed",
+        "a = \"\\uD800\"",
+        "a = [1,,2]",
+        "a={b=1,}",
+    ] {
+        let mut sources = SourceDatabase::default();
+        let source = sources.add("error.toml", text);
+        let expected = super::parse::parse_chunks(
+            source,
+            core::iter::once(text),
+            text.len(),
+            DataLimits::default(),
+        )
+        .unwrap_err();
+        for at in text
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(core::iter::once(text.len()))
+        {
+            let error = super::parse::parse_chunks(
+                source,
+                [&text[..at], &text[at..]].into_iter(),
+                text.len(),
+                DataLimits::default(),
+            )
+            .unwrap_err();
+            assert_eq!(error, expected, "split {at}: {text}");
+        }
+    }
 }

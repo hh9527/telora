@@ -88,47 +88,43 @@ impl ValidatedDataPlan {
     /// aliases and all source locations. Payloads are moved, never deep-copied.
     pub fn into_postorder(self) -> Self {
         if self.postordered { return self; }
-        fn visit(
-            id: DataNodeId,
-            pending: &mut [Option<DataPlanNode>],
-            mapped: &mut [Option<DataNodeId>],
-            output: &mut Vec<DataPlanNode>,
-        ) -> DataNodeId {
-            if let Some(id) = mapped[id.index()] {
-                return id;
-            }
-            let mut node = pending[id.index()]
-                .take()
-                .expect("validated data is acyclic");
-            match &mut node.kind {
-                DataPlanNodeKind::Array(items) => {
-                    for child in items {
-                        *child = visit(*child, pending, mapped, output);
-                    }
-                }
-                DataPlanNodeKind::Object(fields) => {
-                    for field in fields.values_mut() {
-                        field.value = visit(field.value, pending, mapped, output);
-                    }
-                }
-                DataPlanNodeKind::Scalar(_) => {}
-            }
-            let next = DataNodeId(output.len());
-            output.push(node);
-            mapped[id.index()] = Some(next);
-            next
-        }
-        let Some(root) = self.root else {
-            return self;
-        };
+        let Some(root) = self.root else { return self; };
         let mut mapped = vec![None; self.nodes.len()];
         let mut pending = self.nodes.into_iter().map(Some).collect::<Vec<_>>();
         let mut nodes = Vec::with_capacity(pending.len());
-        let root = visit(root, &mut pending, &mut mapped, &mut nodes);
+        let mut tasks = vec![(root, false)];
+        while let Some((id, finish)) = tasks.pop() {
+            if mapped[id.index()].is_some() { continue; }
+            if !finish {
+                tasks.push((id, true));
+                match &pending[id.index()].as_ref().expect("acyclic data").kind {
+                    DataPlanNodeKind::Array(items) => {
+                        tasks.extend(items.iter().rev().map(|id| (*id, false)));
+                    }
+                    DataPlanNodeKind::Object(fields) => {
+                        tasks.extend(fields.values().rev().map(|field| (field.value, false)));
+                    }
+                    DataPlanNodeKind::Scalar(_) => {}
+                }
+            } else {
+                let mut node = pending[id.index()].take().expect("acyclic data");
+                match &mut node.kind {
+                    DataPlanNodeKind::Array(items) => {
+                        for child in items { *child = mapped[child.index()].expect("completed child"); }
+                    }
+                    DataPlanNodeKind::Object(fields) => {
+                        for field in fields.values_mut() { field.value = mapped[field.value.index()].expect("completed child"); }
+                    }
+                    DataPlanNodeKind::Scalar(_) => {}
+                }
+                mapped[id.index()] = Some(DataNodeId(nodes.len()));
+                nodes.push(node);
+            }
+        }
         Self {
             postordered: true,
             nodes,
-            root: Some(root),
+            root: mapped[root.index()],
             source_index: self.source_index,
         }
     }
@@ -209,19 +205,15 @@ impl ValidatedDataPlan {
             Ok(())
         }
 
-        fn visit(
-            plan: &ValidatedDataPlan,
-            id: DataNodeId,
-            depth: usize,
-            limits: crate::DataLimits,
-            stats: &mut DataStats,
-        ) -> Result<(), DataLimitError> {
+        let mut stats = DataStats { file_size, ..DataStats::default() };
+        let mut pending = vec![(self.root(), 1usize)];
+        while let Some((id, depth)) = pending.pop() {
             if depth > limits.depth {
                 return Err(DataLimitError::new("depth", depth, limits.depth));
             }
             stats.depth = stats.depth.max(depth);
             add(&mut stats.nodes, 1, "nodes", limits.nodes)?;
-            match &plan.node(id).kind {
+            match &self.node(id).kind {
                 DataPlanNodeKind::Scalar(DataScalar::String(value)) => {
                     stats.string_len = stats.string_len.max(value.len());
                     if value.len() > limits.string_len {
@@ -284,7 +276,7 @@ impl ValidatedDataPlan {
                         .checked_add(1)
                         .ok_or_else(|| DataLimitError::overflow("depth", limits.depth))?;
                     for item in items {
-                        visit(plan, *item, child_depth, limits, stats)?;
+                        pending.push((*item, child_depth));
                     }
                 }
                 DataPlanNodeKind::Object(fields) => {
@@ -314,18 +306,11 @@ impl ValidatedDataPlan {
                             "payloads_bytes",
                             limits.payloads_bytes,
                         )?;
-                        visit(plan, field.value, child_depth, limits, stats)?;
+                        pending.push((field.value, child_depth));
                     }
                 }
             }
-            Ok(())
         }
-
-        let mut stats = DataStats {
-            file_size,
-            ..DataStats::default()
-        };
-        visit(self, self.root(), 1, limits, &mut stats)?;
         Ok(stats)
     }
 }

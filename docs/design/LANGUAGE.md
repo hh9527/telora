@@ -1621,19 +1621,20 @@ TOML table 冲突、非法数字/时间值，以及不受支持或有歧义的 Y
 
 验证阶段不构造递归 Owned 数据树。实现以一个
 扁平 arena 表达 validated plan：节点只保存 source span、已验证的节点种类，以及指向
-arena 节点的轻量边；JSON/YAML由显式解析状态直接构建节点并保留来源位置，
-无需 CST；TOML 节点来自对应 CST node。
+arena 节点的轻量边；JSON/YAML/TOML 由显式解析状态直接构建节点并保留来源位置，
+无需 CST。TOML 允许后续声明补充已有表，以稳定 NodeId 组装，文档完成后迭代整理后序节点。
 字符串、规范化时间、binary 等必须在物化前验证的解码结果，以及重复键检测、
 TOML table 组装所需的索引，进入必要的 side table。plan
 不会包含递归 Owned payload graph，也不会分配运行时对象；目标 Heap materializer 在
 验证和结构限制预检全部成功后单次消费它。
 
 数据源不消耗也不依赖引擎的执行 fuel 或内存增长上限。Host 在完整分配 source
-字符串前以有界读取检查原始 `file_size`；JSON/YAML在构建时、TOML在验证计划建成后检查 `nodes`、
+字符串前以有界读取检查原始 `file_size`；JSON/YAML/TOML 均在构建时检查 `nodes`、
 `depth`（根为 1）、单个 `container_size`、单个 `bytes_len`、单个
 UTF-8 `string_len`，以及所有 String、对象键、时间字符串和 Bytes 解码后长度之和
 `payloads_bytes`。对象键不是节点。全部计数使用 checked arithmetic，任何溢出均视为
-超限；只有所有检查通过后才物化。每个节点直接携带本次运行共享 source registry 分配的
+超限；只有所有检查通过后才物化。TOML 的 dotted key 隐式表与数组表的数组层同样计入深度，
+重复引用已有表路径不重复计入对象键 payload。每个节点直接携带本次运行共享 source registry 分配的
 `SourceId + range`，后续诊断可以稳定地把该节点作为 source 位置。MainWorld 和 Entry
 WorkWorld 仅是不同 target，格式验证、location、data limits 和 `Value` 构造逻辑相同。
 

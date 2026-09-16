@@ -1,8 +1,0 @@
-[package]
-name = "telora-parser-gen"
-version.workspace = true
-edition.workspace = true
-publish = false
-
-[dependencies]
-lelwel = "=0.10.4"

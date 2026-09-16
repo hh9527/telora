@@ -1,5 +1,4 @@
 use alloc::vec::Vec;
-pub mod toml;
 
 use crate::source::Diagnostic;
 

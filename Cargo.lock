@@ -896,17 +896,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
-name = "lelwel"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02f137b31922f1bbf9be8f857ef72dad2fe7b69fec11de207a0ae64a936ceec9"
-dependencies = [
- "codespan-reporting",
- "logos",
- "rustc-hash",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1737,13 +1726,6 @@ dependencies = [
  "telora-data",
  "tempfile",
  "tokio",
-]
-
-[[package]]
-name = "telora-parser-gen"
-version = "0.1.0"
-dependencies = [
- "lelwel",
 ]
 
 [[package]]

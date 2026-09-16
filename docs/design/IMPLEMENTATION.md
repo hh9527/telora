@@ -61,13 +61,14 @@ JSON 使用 `telora-data/src/json/` 中的 Logos 局部词法识别与显式状�
 带位置的 DataPlan；不生成 token 数组或 CST，跨输入块保留状态而不重扫前缀。
 YAML 使用 `telora-data/src/yaml/` 中的行索引、block任务栈与flow容器栈直接构建DataPlan，
 不构造CST，不支持anchor、alias和merge。行索引跨chunk识别LF/CRLF/CR，不重扫pending前缀。
-TOML 仍使用 `telora-data/src/syntax/` 中的 Lelwel parser，手写 callback
-位于 `parser/support.rs`。修改其 `grammar.llw` 后运行
-`cargo run -p telora-parser-gen`，同时提交 grammar 与生成代码。
-正常 Cargo 构建不生成或改写上述 parser 源码。
+TOML 使用 `telora-data/src/toml/` 中的 Logos 局部词法识别与显式容器任务栈。
+四种字符串模式和分块游标外置，解码过程中检查配额。表以稳定 NodeId 组装，
+当前表直接保存 NodeId；dotted key 和数组表按最终数据结构的深度准入。
+文档完成后迭代整理为后序 DataPlan，移动 payload 而不深复制；不构造 CST。
+数据解析不再依赖 Lelwel 或 parser 生成器。
 生成的状态机不受手写源文件大小限制，手写逻辑和测试使用正常子模块划分。
 
-parser 保留 lossless CST、恢复后的语法和诊断。module Pass 将可达源码挂入 MIR，
+源码 parser 保留 lossless CST、恢复后的语法和诊断。module Pass 将可达源码挂入 MIR，
 记录源码有效性，并分配扁平 HIR 节点及相应 resolve/type 槽。源码不完整也能产生可查询图，
 但不能因此获得执行资格。
 

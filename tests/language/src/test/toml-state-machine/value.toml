@@ -1,0 +1,19 @@
+title = "Telora"
+when = 1979-05-27 07:32:00+00:00
+local = 1979-05-27T07:32:00
+dates = [1979-05-27, 07:32:00.1200]
+point = { x = 1, y = 2 }
+[owner.details]
+age = 42
+[owner]
+name = 'Ada'
+[[products]]
+name = "one"
+[[products.parts]]
+id = 1
+[[products.parts]]
+id = 2
+[[products]]
+name = "two"
+[products.details]
+ok = true

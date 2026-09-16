@@ -1,0 +1,30 @@
+# Four strings, escapes, dotted keys, tables and table arrays.
+basic = "中\u6587\U0001f600\n\r"
+literal = 'C:\path'
+multiline = """
+one\
+  two
+three"""
+raw = '''
+one
+two'''
+four = """one""""
+five = '''two'''''
+numbers = [0xDEAD_BEEF, -42, 1_000.5, true,]
+when = 1979-05-27 07:32:00+00:00
+local = 1979-05-27t07:32:00
+time = 07:32:00.1200
+date = 1979-05-27
+inline = { "é".nested = ["😀", {x = 1}] }
+[a.b]
+x = 'child'
+[a]
+y = 'parent'
+[[products]]
+name = 'first'
+[[products.parts]]
+id = 1
+[[products]]
+name = 'second'
+[products.extra]
+enabled = false
