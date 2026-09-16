@@ -25,14 +25,14 @@ pub(super) unsafe fn parse(input: &str) -> u32 {
         Ok(plan) => plan,
         Err(errors) => {
             return unsafe {
-                super::export_plan(Err(format!(
+                super::export_error(format!(
                     "<json string>: {}",
                     errors
                         .into_iter()
                         .map(|error| error.message)
                         .collect::<alloc::vec::Vec<_>>()
                         .join("\n")
-                )))
+                ))
             };
         }
     };

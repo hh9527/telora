@@ -1,11 +1,11 @@
-//! YAML publishes spans directly. Original text remains in the VM arena; all
+//! TOML publishes spans directly. Original text remains in the VM arena; all
 //! escaped strings share a single decoded allocation with the same lifetime.
 use super::{put, string_bytes};
 use alloc::{format, string::String};
 use telora_data::{
     DataLimits, SourceDatabase,
-    json::text::TextSpan,
-    yaml::{self, YamlKind},
+    json::{TemporalKind, text::TextSpan},
+    toml::{self, TomlKind},
 };
 
 fn span_bits(span: TextSpan, source: u32, decoded: u32) -> u64 {
@@ -20,16 +20,16 @@ pub(super) unsafe fn parse(input: &str) -> u32 {
     let mut sources = SourceDatabase::default();
     // Dynamic parser errors carry messages; no source indexing is needed here.
     let source = sources
-        .try_add_data("<yaml string>", String::new())
+        .try_add_data("<toml string>", String::new())
         .expect("empty source");
-    let (plan, ctx) = match yaml::parse_structure(source, input, DataLimits::default())
-        .and_then(yaml::YamlStructure::validate)
+    let (plan, ctx) = match toml::parse_structure(source, input, DataLimits::default())
+        .and_then(toml::TomlStructure::validate)
     {
         Ok(plan) => plan,
         Err(errors) => {
             return unsafe {
                 super::export_error(format!(
-                    "<yaml string>: {}",
+                    "<toml string>: {}",
                     errors
                         .into_iter()
                         .map(|error| error.message)
@@ -40,9 +40,7 @@ pub(super) unsafe fn parse(input: &str) -> u32 {
         }
     };
     let source_pointer = input.as_ptr() as u32;
-    let (decoded, bytes) = ctx.into_decoded();
-    let decoded_pointer = string_bytes(decoded).0;
-    let bytes_pointer = alloc::boxed::Box::leak(bytes.into_boxed_slice()).as_ptr() as u32;
+    let decoded_pointer = string_bytes(ctx.into_decoded()).0;
     unsafe {
         let result = crate::telora_alloc(16);
         let count = u32::try_from(plan.nodes.len()).unwrap();
@@ -55,16 +53,20 @@ pub(super) unsafe fn parse(input: &str) -> u32 {
             let row = rows + index as u32 * 16;
             put(row, 4, 0);
             let (kind, payload) = match node.kind {
-                YamlKind::Null => (0, 0),
-                YamlKind::Bool(value) => (if value { 1 } else { 2 }, 0),
-                YamlKind::Int(value) => (3, value as u64),
-                YamlKind::Float(value) => (4, value.to_bits()),
-                YamlKind::Bytes(range) => (
-                    12,
-                    u64::from(bytes_pointer + range.start as u32) | ((range.len() as u64) << 32),
-                ),
-                YamlKind::String(span) => (5, span_bits(span, source_pointer, decoded_pointer)),
-                YamlKind::Array(items) => {
+                TomlKind::Bool(value) => (if value { 1 } else { 2 }, 0),
+                TomlKind::Int(value) => (3, value as u64),
+                TomlKind::Float(value) => (4, value.to_bits()),
+                TomlKind::Temporal { kind, value } => {
+                    let kind = match kind {
+                        TemporalKind::LocalDate => 8,
+                        TemporalKind::LocalTime => 9,
+                        TemporalKind::LocalDateTime => 10,
+                        TemporalKind::OffsetDateTime => 11,
+                    };
+                    (kind, span_bits(value, source_pointer, decoded_pointer))
+                }
+                TomlKind::String(span) => (5, span_bits(span, source_pointer, decoded_pointer)),
+                TomlKind::Array(items) => {
                     let count = items.len() as u32;
                     let entries = crate::telora_alloc(count.checked_mul(4).unwrap());
                     for (index, id) in items.into_iter().enumerate() {
@@ -72,7 +74,7 @@ pub(super) unsafe fn parse(input: &str) -> u32 {
                     }
                     (6, u64::from(entries) | (u64::from(count) << 32))
                 }
-                YamlKind::Object(fields) => {
+                TomlKind::Object(fields) => {
                     let count = fields.len() as u32;
                     let entries = crate::telora_alloc(count.checked_mul(12).unwrap());
                     for (index, (key, field)) in fields.into_iter().enumerate() {

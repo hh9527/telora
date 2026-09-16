@@ -101,3 +101,28 @@ export def depth_is_a_diagnostic: test.Test = test.should_fail_with(fn() {
     let e = string.join([d, d], "");
     match toml.parse(string.join(["x=", e, "[0]", string.replace(e, "[", "]")], "")) {Err(error) => raise!(error), Ok(_) => 0}
 }, "depth limit");
+
+export def escaped_header_identity: test.Test = test.should_ok(fn() {
+    expect(toml.parse(r#"["\u0061".b]
+x = "one"
+[a]
+y = "two"
+[[products]]
+name = "first"
+[["\u0070roducts"]]
+name = "second"
+"#) == Ok(Value.Object({a: Value.Object({b: Value.Object({x: Value.String("one")}), y: Value.String("two")}),
+        products: Value.Array([Value.Object({name: Value.String("first")}), Value.Object({name: Value.String("second")})])})))
+});
+
+export def multiple_semantic_errors: test.Test = test.should_fail_with(fn() {
+    toml.parse(r#"a = 9223372036854775808
+"\u0061" = 1e999
+when = 2025-02-29
+nested = { x = 0xZZ, x = 1 }
+"#).unwrap!()
+}, "TOML integer is outside the i64 range\nduplicate TOML key \"a\"\nTOML Float must be finite\ninvalid TOML day\ninvalid TOML integer\nduplicate TOML key \"x\"");
+
+export def extra_commas_keep_independent_errors: test.Test = test.should_fail_with(fn() {
+    toml.parse("a=[,1e999,,9223372036854775808]").unwrap!()
+}, "unexpected TOML comma\nTOML Float must be finite\nunexpected TOML comma\nTOML integer is outside the i64 range");

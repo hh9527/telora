@@ -2,12 +2,12 @@
 use crate::data_packet::{self, DataPacket};
 use telora_data::{SourceDatabase, source::SourceFile, json::{JsonPlan, JsonKind, text::TextSpan}, data_plan::ParsedData};
 use telora_core::data_plan::{
-    DataField, DataNodeId, DataPlanNodeKind as K, DataScalar as S, ValidatedDataPlan,
+    DataField, DataNodeId,
 };
 
 #[derive(Clone, Copy)]
 pub(crate) enum Graph<'a> {
-    Parsed(&'a ValidatedDataPlan),
+    Toml(&'a telora_data::toml::TomlPlan, &'a str, &'a str, &'a SourceFile),
     Json(&'a JsonPlan, &'a str, &'a str, &'a SourceFile),
     Yaml(&'a telora_data::yaml::YamlPlan, &'a str, &'a str, &'a [u8], &'a SourceFile),
     Packet(&'a DataPacket),
@@ -53,7 +53,6 @@ impl Iterator for Children<'_> {
 impl ExactSizeIterator for Children<'_> {}
 
 pub(crate) enum Fields<'a> {
-    Parsed(std::collections::btree_map::Iter<'a, String, DataField>, &'a ValidatedDataPlan),
     Packet(std::slice::Iter<'a, data_packet::Field>),
     Spans(std::slice::Iter<'a, (TextSpan, DataField)>, &'a str, &'a str, &'a SourceFile),
 }
@@ -66,11 +65,6 @@ impl<'a> Iterator for Fields<'a> {
     type Item = Field<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Parsed(iter, plan) => iter.next().map(|(name, field)| Field {
-                name,
-                origin: plan.compact(field.key_location).0,
-                value: field.value.index(),
-            }),
             Self::Spans(iter, source, decoded, file) => iter.next().map(|(name, field)| Field {
                 name: name.resolve(source, decoded), origin: file.compact(field.key_location).0, value: field.value.index(),
             }),
@@ -86,7 +80,11 @@ impl<'a> Iterator for Fields<'a> {
 impl<'a> Graph<'a> {
     pub fn parsed(plan: &'a ParsedData, sources: &'a SourceDatabase) -> Result<Self, String> {
         Ok(match plan {
-            ParsedData::Owned(plan) => Self::Parsed(plan),
+            ParsedData::Toml { plan, decoded } => {
+                let file = sources.get(plan.nodes[plan.root.index()].location.source);
+                let source = file.text().contiguous().ok_or("Wasm: TOML source must be contiguous")?;
+                Self::Toml(plan, source, decoded, file)
+            }
             ParsedData::Yaml { plan, decoded, bytes } => {
                 let file = sources.get(plan.nodes[plan.root.index()].location.source);
                 let source = file.text().contiguous().ok_or("Wasm: YAML source must be contiguous")?;
@@ -101,7 +99,7 @@ impl<'a> Graph<'a> {
     }
     pub fn len(self) -> usize {
         match self {
-            Self::Parsed(plan) => plan.nodes().len(),
+            Self::Toml(plan, ..) => plan.nodes.len(),
             Self::Json(plan, ..) => plan.nodes.len(),
             Self::Yaml(plan, ..) => plan.nodes.len(),
             Self::Packet(plan) => plan.nodes.len(),
@@ -109,10 +107,7 @@ impl<'a> Graph<'a> {
     }
     pub fn root(self) -> Result<usize, String> {
         match self {
-            Self::Parsed(plan) => plan
-                .root_node()
-                .map(|id| id.index())
-                .ok_or("Wasm: missing data root".into()),
+            Self::Toml(plan, ..) => Ok(plan.root.index()),
             Self::Packet(plan) => Ok(plan.root as usize),
             Self::Json(plan, ..) => Ok(plan.root.index()),
             Self::Yaml(plan, ..) => Ok(plan.root.index()),
@@ -120,25 +115,17 @@ impl<'a> Graph<'a> {
     }
     pub fn node(self, id: usize) -> Result<Node<'a>, String> {
         Ok(match self {
-            Self::Parsed(plan) => {
-                let node = plan.nodes().get(id).ok_or("Wasm: invalid data edge")?;
+            Self::Toml(plan, source, decoded, file) => {
+                use telora_data::toml::TomlKind as T;
+                let node = plan.nodes.get(id).ok_or("Wasm: invalid data edge")?;
                 Node {
-                    origin: plan.compact(node.location).0,
+                    origin: file.compact(node.location).0,
                     value: match &node.kind {
-                        K::Scalar(scalar) => match scalar {
-                            S::Int(n) => Value::Int(*n),
-                            S::Float(n) => Value::Float(*n),
-                            S::String(s) => Value::String(s),
-                            S::Bytes(b) => Value::Bytes(b),
-                            S::Null => Value::Null,
-                            S::Bool(b) => Value::Bool(*b),
-                            S::Temporal { kind, value } => Value::Temporal {
-                                variant: kind.variant(),
-                                value,
-                            },
-                        },
-                        K::Array(items) => Value::Array(Children::Parsed(items.iter())),
-                        K::Object(fields) => Value::Object(Fields::Parsed(fields.iter(), plan)),
+                        T::Int(n) => Value::Int(*n), T::Float(n) => Value::Float(*n), T::Bool(b) => Value::Bool(*b),
+                        T::String(span) => Value::String(span.resolve(source, decoded)),
+                        T::Temporal { kind, value } => Value::Temporal { variant: kind.variant(), value: value.resolve(source, decoded) },
+                        T::Array(items) => Value::Array(Children::Parsed(items.iter())),
+                        T::Object(fields) => Value::Object(Fields::Spans(fields.iter(), source, decoded, file)),
                     },
                 }
             }

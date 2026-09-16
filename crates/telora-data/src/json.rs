@@ -1,8 +1,10 @@
 use crate::source::{Diagnostic, Location, SourceId};
 #[cfg(test)]
 use crate::source::SourceDatabase;
+#[cfg(test)]
 use alloc::collections::BTreeMap;
 use alloc::{string::String, vec::Vec};
+#[cfg(test)]
 use core::fmt;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -13,6 +15,7 @@ pub enum ValuePathSegment {
 
 pub type ValuePath = Vec<ValuePathSegment>;
 
+#[cfg(test)]
 #[derive(Clone, Debug)]
 pub enum DataScalar {
     Int(i64),
@@ -57,6 +60,7 @@ pub struct DataField {
     pub value: DataNodeId,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug)]
 pub enum DataPlanNodeKind {
     Scalar(DataScalar),
@@ -64,6 +68,7 @@ pub enum DataPlanNodeKind {
     Object(BTreeMap<String, DataField>),
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug)]
 pub struct DataPlanNode {
     pub kind: DataPlanNodeKind,
@@ -72,6 +77,7 @@ pub struct DataPlanNode {
 
 /// A validated, flat arena over source-backed nodes. Edges are node ids, so
 /// parsers never construct a second recursive data tree before Heap allocation.
+#[cfg(test)]
 #[derive(Clone, Debug, Default)]
 pub struct ValidatedDataPlan {
     pub(crate) postordered: bool,
@@ -80,6 +86,7 @@ pub struct ValidatedDataPlan {
     pub(crate) source_index: Option<(crate::source::SourceId, alloc::sync::Arc<crate::source::LineIndex>)>,
 }
 
+#[cfg(test)]
 impl ValidatedDataPlan {
     pub fn compact(&self, loc: Location) -> crate::source::CompactLoc {
         let (source, lines) = self.source_index.as_ref().expect("registered data source");
@@ -317,6 +324,7 @@ impl ValidatedDataPlan {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DataStats {
     pub(crate) file_size: usize,
@@ -328,6 +336,7 @@ pub(crate) struct DataStats {
     pub(crate) payloads_bytes: usize,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DataLimitError {
     name: &'static str,
@@ -335,6 +344,7 @@ pub(crate) struct DataLimitError {
     limit: usize,
 }
 
+#[cfg(test)]
 impl DataLimitError {
     fn new(name: &'static str, actual: usize, limit: usize) -> Self {
         Self {
@@ -353,6 +363,7 @@ impl DataLimitError {
     }
 }
 
+#[cfg(test)]
 impl fmt::Display for DataLimitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.actual {

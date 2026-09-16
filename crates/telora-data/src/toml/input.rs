@@ -1,49 +1,33 @@
-//! A forward-only chunk cursor. String text is consumed in bounded borrowed runs;
-//! quote/escape state survives chunk boundaries without a growing pending buffer.
-use super::build::Build;
+//! Contiguous borrowed cursor; quote/escape state is explicit, runs are bounded.
 use super::lexer::{self, Normal};
+use super::structure::Text;
 use crate::source::{Diagnostic, Location, SourceId};
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 
 pub(super) struct Input<'a> {
-    chunks: Vec<&'a str>,
-    chunk: usize,
-    local: usize,
+    text: &'a str,
     pub offset: usize,
     source: SourceId,
 }
-
 impl<'a> Input<'a> {
-    pub fn new(source: SourceId, chunks: impl Iterator<Item = &'a str>) -> Self {
+    pub fn new(source: SourceId, text: &'a str) -> Self {
         Self {
             source,
-            chunks: chunks.filter(|s| !s.is_empty()).collect(),
-            chunk: 0,
-            local: 0,
+            text,
             offset: 0,
         }
     }
     pub fn peek(&self) -> Option<u8> {
         self.nth(0)
     }
-    pub fn nth(&self, mut n: usize) -> Option<u8> {
-        let mut chunk = self.chunk;
-        let mut local = self.local;
-        while let Some(text) = self.chunks.get(chunk) {
-            let remaining = text.len() - local;
-            if n < remaining {
-                return Some(text.as_bytes()[local + n]);
-            }
-            n -= remaining;
-            chunk += 1;
-            local = 0;
-        }
-        None
+    pub fn nth(&self, n: usize) -> Option<u8> {
+        self.text.as_bytes().get(self.offset + n).copied()
     }
     pub fn rest(&self) -> &'a str {
-        self.chunks
-            .get(self.chunk)
-            .map_or("", |text| &text[self.local..])
+        &self.text[self.offset..]
+    }
+    pub fn slice(&self, start: usize) -> &'a str {
+        &self.text[start..self.offset]
     }
     pub fn run(&self) -> &'a str {
         let text = self.rest();
@@ -63,18 +47,9 @@ impl<'a> Input<'a> {
         }
     }
     pub fn take(&mut self, bytes: usize) -> &'a str {
-        let text = &self.rest()[..bytes];
-        self.local += bytes;
+        let start = self.offset;
         self.offset += bytes;
-        if self
-            .chunks
-            .get(self.chunk)
-            .is_some_and(|s| self.local == s.len())
-        {
-            self.chunk += 1;
-            self.local = 0;
-        }
-        text
+        &self.text[start..self.offset]
     }
     pub fn bump(&mut self) -> Option<char> {
         let ch = self.rest().chars().next()?;
@@ -127,17 +102,23 @@ impl<'a> Input<'a> {
     }
     fn append(
         &self,
-        build: &Build,
-        out: &mut String,
+        length: &mut usize,
         text: &str,
         start: usize,
-        value: bool,
+        emit: &mut impl FnMut(&str, usize, Location) -> Result<(), Diagnostic>,
     ) -> Result<(), Diagnostic> {
-        build.string_size(out.len() + text.len(), self.loc(start), value)?;
-        out.push_str(text);
+        let next = length
+            .checked_add(text.len())
+            .ok_or_else(|| self.error(start, "data string length overflow"))?;
+        emit(text, next, self.loc(start))?;
+        *length = next;
         Ok(())
     }
-    pub fn string(&mut self, build: &Build, value: bool) -> Result<String, Diagnostic> {
+    pub fn string(
+        &mut self,
+        value: bool,
+        mut emit: impl FnMut(&str, usize, Location) -> Result<(), Diagnostic>,
+    ) -> Result<Text, Diagnostic> {
         let start = self.offset;
         let quote = self.peek().expect("quote");
         self.take(1);
@@ -151,7 +132,9 @@ impl<'a> Input<'a> {
             self.newline();
         }
         let basic = quote == b'"';
-        let mut output = String::new();
+        let body_start = self.offset;
+        let mut output = 0;
+        let mut transformed = false;
         loop {
             let Some(byte) = self.peek() else {
                 return Err(self.error(start, "unclosed TOML string"));
@@ -159,7 +142,15 @@ impl<'a> Input<'a> {
             if byte == quote {
                 if !multiline {
                     self.take(1);
-                    return Ok(output);
+                    return Ok(Text {
+                        range: if transformed {
+                            start..self.offset
+                        } else {
+                            body_start..self.offset - if multiline { 3 } else { 1 }
+                        },
+                        decoded_len: output,
+                        escaped: transformed,
+                    });
                 }
                 let mut count = 0;
                 while self.peek() == Some(quote) && count < 5 {
@@ -169,31 +160,39 @@ impl<'a> Input<'a> {
                 if count >= 3 {
                     for _ in 3..count {
                         self.append(
-                            build,
                             &mut output,
                             if basic { "\"" } else { "'" },
                             start,
-                            value,
+                            &mut emit,
                         )?;
                     }
-                    return Ok(output);
+                    return Ok(Text {
+                        range: if transformed {
+                            start..self.offset
+                        } else {
+                            body_start..self.offset - if multiline { 3 } else { 1 }
+                        },
+                        decoded_len: output,
+                        escaped: transformed,
+                    });
                 }
                 for _ in 0..count {
                     self.append(
-                        build,
                         &mut output,
                         if basic { "\"" } else { "'" },
                         start,
-                        value,
+                        &mut emit,
                     )?;
                 }
             } else if matches!(byte, b'\r' | b'\n') {
                 if !multiline {
                     return Err(self.error(start, "newline in single-line TOML string"));
                 }
+                transformed |= byte == b'\r';
                 self.newline();
-                self.append(build, &mut output, "\n", start, value)?;
+                self.append(&mut output, "\n", start, &mut emit)?;
             } else if basic && byte == b'\\' {
+                transformed = true;
                 self.take(1);
                 if multiline && matches!(self.peek(), Some(b' ' | b'\t' | b'\r' | b'\n')) {
                     self.space(false);
@@ -228,13 +227,7 @@ impl<'a> Input<'a> {
                     None => return Err(self.error(start, "unterminated TOML escape")),
                     _ => return Err(self.error(start, "unknown TOML escape")),
                 };
-                self.append(
-                    build,
-                    &mut output,
-                    ch.encode_utf8(&mut [0; 4]),
-                    start,
-                    value,
-                )?;
+                self.append(&mut output, ch.encode_utf8(&mut [0; 4]), start, &mut emit)?;
             } else {
                 let end = lexer::text(self.run(), basic);
                 if end == 0
@@ -247,7 +240,7 @@ impl<'a> Input<'a> {
                     );
                 }
                 let text = self.take(end);
-                self.append(build, &mut output, text, start, value)?;
+                self.append(&mut output, text, start, &mut emit)?;
             }
         }
     }

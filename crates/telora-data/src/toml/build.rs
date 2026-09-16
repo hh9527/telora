@@ -1,9 +1,14 @@
+use super::{
+    ParseCtx,
+    plan::{Kind as DataPlanNodeKind, Plan, Scalar},
+};
+use crate::json::text::TextSpan;
 use crate::{
     DataLimits,
-    json::{DataField, DataNodeId, DataPlanNodeKind, ValidatedDataPlan},
+    json::{DataField, DataNodeId},
     source::{Diagnostic, Location},
 };
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use alloc::{collections::BTreeMap, vec::Vec};
 
 #[derive(Default)]
 pub(super) struct Meta {
@@ -11,19 +16,26 @@ pub(super) struct Meta {
     pub explicit: bool,
     pub sealed: bool,
     pub table_array: bool,
+    pub slots: usize,
 }
 
-pub(super) struct Build {
-    pub plan: ValidatedDataPlan,
+pub(super) struct Build<'a> {
+    keys: &'a [TextSpan],
+    ctx: &'a ParseCtx<'a>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub plan: Plan,
     pub meta: Vec<Meta>,
     pub limits: DataLimits,
     pub payload: usize,
 }
 
-impl Build {
-    pub fn new(limits: DataLimits) -> Self {
+impl<'a> Build<'a> {
+    pub fn new(keys: &'a [TextSpan], ctx: &'a ParseCtx<'a>, limits: DataLimits) -> Self {
         Self {
-            plan: ValidatedDataPlan::default(),
+            keys,
+            ctx,
+            diagnostics: Vec::new(),
+            plan: Plan::default(),
             meta: Vec::new(),
             limits,
             payload: 0,
@@ -59,11 +71,13 @@ impl Build {
         loc: Location,
     ) -> Result<DataNodeId, Diagnostic> {
         self.reserve(depth, loc)?;
-        let id = match kind {
-            DataPlanNodeKind::Scalar(value) => self.plan.scalar(value, loc),
-            DataPlanNodeKind::Array(values) => self.plan.array(values, loc),
-            DataPlanNodeKind::Object(fields) => self.plan.object(fields, loc),
-        };
+        if let DataPlanNodeKind::Scalar(
+            Scalar::String(text) | Scalar::Temporal { value: text, .. },
+        ) = &kind
+        {
+            self.payload(self.ctx.text(text).len(), loc)?;
+        }
+        let id = self.plan.push(kind, loc);
         self.meta.push(Meta {
             depth,
             ..Meta::default()
@@ -80,36 +94,49 @@ impl Build {
         self.meta[id.index()].explicit = explicit;
         Ok(id)
     }
-    pub fn fields(&self, id: DataNodeId) -> &BTreeMap<String, DataField> {
+    pub fn fields(&self, id: DataNodeId) -> &BTreeMap<usize, DataField> {
         let DataPlanNodeKind::Object(fields) = &self.plan.node(id).kind else {
             unreachable!("table id")
         };
         fields
     }
-    pub fn fields_mut(&mut self, id: DataNodeId) -> &mut BTreeMap<String, DataField> {
+    pub fn fields_mut(&mut self, id: DataNodeId) -> &mut BTreeMap<usize, DataField> {
         let DataPlanNodeKind::Object(fields) = &mut self.plan.node_mut(id).kind else {
             unreachable!("table id")
         };
         fields
     }
     pub fn conflict(
-        &self,
-        message: impl Into<String>,
+        &mut self,
+        message: &'static str,
+        key: Option<usize>,
         loc: Location,
         previous: Location,
-    ) -> Diagnostic {
-        Diagnostic::error(message, loc).with_secondary("first defined here", previous)
+    ) {
+        let message = match key {
+            Some(key) => {
+                let key = self.ctx.text(&self.keys[key]);
+                match message {
+                    "duplicate TOML key" => format!("duplicate TOML key {key:?}"),
+                    "TOML key is not a table" => format!("TOML key {key:?} is not a table"),
+                    _ => format!("TOML table {key:?} is already defined or has a conflicting type"),
+                }
+            }
+            None => message.into(),
+        };
+        self.diagnostics
+            .push(Diagnostic::error(message, loc).with_secondary("first defined here", previous));
     }
-    pub fn mutable(&self, id: DataNodeId, loc: Location) -> Result<(), Diagnostic> {
+    pub fn mutable(&mut self, id: DataNodeId, loc: Location) -> Result<(), Diagnostic> {
         if self.meta[id.index()].sealed {
-            Err(self.conflict(
+            self.conflict(
                 "cannot extend an inline TOML table",
+                None,
                 loc,
                 self.plan.node(id).location,
-            ))
-        } else {
-            Ok(())
+            );
         }
+        Ok(())
     }
     pub fn payload(&mut self, size: usize, loc: Location) -> Result<(), Diagnostic> {
         let total = self
@@ -120,47 +147,31 @@ impl Build {
         self.payload = total;
         Ok(())
     }
-    pub fn string_size(&self, size: usize, loc: Location, value: bool) -> Result<(), Diagnostic> {
-        self.check(loc, "string_len", size, self.limits.string_len)?;
-        if value {
-            let total = self
-                .payload
-                .checked_add(size)
-                .ok_or_else(|| Diagnostic::error("data payload accounting overflow", loc))?;
-            self.check(loc, "payloads_bytes", total, self.limits.payloads_bytes)?;
-        }
-        Ok(())
-    }
     pub fn field_slot(
         &mut self,
         id: DataNodeId,
-        key: &str,
+        key: &usize,
         loc: Location,
     ) -> Result<(), Diagnostic> {
         self.mutable(id, loc)?;
         if let Some(field) = self.fields(id).get(key) {
-            return Err(self.conflict(
-                format!("duplicate TOML key {key:?}"),
-                loc,
-                field.key_location,
-            ));
+            let previous = field.key_location;
+            self.conflict("duplicate TOML key", Some(*key), loc, previous);
         }
         self.check(
             loc,
             "container_size",
-            self.fields(id).len() + 1,
+            self.meta[id.index()].slots + 1,
             self.limits.container_size,
         )?;
-        self.payload(key.len(), loc)
+        self.meta[id.index()].slots += 1;
+        self.payload(self.ctx.text(&self.keys[*key]).len(), loc)
     }
-    pub fn insert(&mut self, id: DataNodeId, key: String, loc: Location, value: DataNodeId) {
-        self.fields_mut(id).insert(
-            key,
-            DataField {
-                value,
-                key_location: loc,
-            },
-        );
+    pub fn insert(&mut self, id: DataNodeId, key: usize, loc: Location, value: DataNodeId) {
+        self.fields_mut(id).entry(key).or_insert(DataField {
+            value,
+            key_location: loc,
+        });
     }
     pub fn array_slot(&self, id: DataNodeId, loc: Location) -> Result<(), Diagnostic> {
         let DataPlanNodeKind::Array(items) = &self.plan.node(id).kind else {
@@ -183,7 +194,7 @@ impl Build {
     pub fn path(
         &mut self,
         mut id: DataNodeId,
-        path: Vec<(String, Location)>,
+        path: Vec<(usize, Location)>,
         dotted: bool,
     ) -> Result<DataNodeId, Diagnostic> {
         for (key, loc) in path {
@@ -196,11 +207,9 @@ impl Build {
                         *items.last().expect("nonempty table array")
                     }
                     _ => {
-                        return Err(self.conflict(
-                            format!("TOML key {key:?} is not a table"),
-                            loc,
-                            field.key_location,
-                        ));
+                        let previous = field.key_location;
+                        self.conflict("TOML key is not a table", Some(key), loc, previous);
+                        self.table(self.depth(id) + 1, loc, dotted)?
                     }
                 };
             } else {
@@ -215,7 +224,7 @@ impl Build {
     pub fn header(
         &mut self,
         root: DataNodeId,
-        mut path: Vec<(String, Location)>,
+        mut path: Vec<(usize, Location)>,
         array: bool,
         loc: Location,
     ) -> Result<DataNodeId, Diagnostic> {
@@ -238,11 +247,14 @@ impl Build {
                 self.meta[id.index()].explicit = true;
                 return Ok(id);
             }
-            return Err(self.conflict(
-                format!("TOML table {key:?} is already defined or has a conflicting type"),
+            let previous = field.key_location;
+            self.conflict(
+                "TOML table is already defined or has a conflicting type",
+                Some(key),
                 loc,
-                field.key_location,
-            ));
+                previous,
+            );
+            return self.table(self.depth(parent) + 1 + usize::from(array), loc, true);
         }
         self.field_slot(parent, &key, key_loc)?;
         if array {

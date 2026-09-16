@@ -1,5 +1,6 @@
-use crate::json::{DataScalar, TemporalKind};
-use alloc::{borrow::ToOwned, string::String};
+use super::plan::Scalar as DataScalar;
+use crate::json::TemporalKind;
+use alloc::borrow::Cow;
 
 pub(super) fn parse_number(text: &str) -> Result<DataScalar, &'static str> {
     if text
@@ -9,8 +10,12 @@ pub(super) fn parse_number(text: &str) -> Result<DataScalar, &'static str> {
         return Err("invalid sign in TOML number");
     }
     validate_numeric_underscores(text)?;
-    let normalized = text.replace('_', "");
-    match normalized.as_str() {
+    let normalized = if text.contains('_') {
+        Cow::Owned(text.replace('_', ""))
+    } else {
+        Cow::Borrowed(text)
+    };
+    match normalized.as_ref() {
         "inf" | "+inf" | "-inf" | "nan" | "+nan" | "-nan" => {
             return Err("TOML Float must be finite");
         }
@@ -38,7 +43,7 @@ pub(super) fn parse_number(text: &str) -> Result<DataScalar, &'static str> {
     }
     let (negative, unsigned) = normalized
         .strip_prefix('-')
-        .map_or((false, normalized.as_str()), |value| (true, value));
+        .map_or((false, normalized.as_ref()), |value| (true, value));
     let unsigned = unsigned.strip_prefix('+').unwrap_or(unsigned);
     let (radix, digits) = if let Some(digits) = unsigned.strip_prefix("0x") {
         (16, digits)
@@ -127,7 +132,13 @@ fn invalid_leading_zero(value: &str) -> bool {
         && value.as_bytes().get(1).is_some_and(u8::is_ascii_digit)
 }
 
-pub(super) fn parse_temporal(text: &str) -> Option<Result<(TemporalKind, String), &'static str>> {
+pub(super) fn is_temporal(text: &str) -> bool {
+    (text.len() >= 10 && text.as_bytes()[4] == b'-' && text.as_bytes()[7] == b'-')
+        || (text.len() >= 8 && text.as_bytes()[2] == b':' && text.as_bytes()[5] == b':')
+}
+pub(super) fn parse_temporal(
+    text: &str,
+) -> Option<Result<(TemporalKind, [&str; 4]), &'static str>> {
     if text.len() >= 10
         && text.as_bytes().get(4) == Some(&b'-')
         && text.as_bytes().get(7) == Some(&b'-')
@@ -138,16 +149,16 @@ pub(super) fn parse_temporal(text: &str) -> Option<Result<(TemporalKind, String)
         && text.as_bytes().get(2) == Some(&b':')
         && text.as_bytes().get(5) == Some(&b':')
     {
-        return Some(parse_time(text).map(|time| (TemporalKind::LocalTime, time)));
+        return Some(parse_time(text).map(|time| (TemporalKind::LocalTime, [time, "", "", ""])));
     }
     None
 }
 
-fn parse_date_time(text: &str) -> Result<(TemporalKind, String), &'static str> {
+fn parse_date_time(text: &str) -> Result<(TemporalKind, [&str; 4]), &'static str> {
     let date = &text[..10];
     validate_date(date)?;
     if text.len() == 10 {
-        return Ok((TemporalKind::LocalDate, date.to_owned()));
+        return Ok((TemporalKind::LocalDate, [date, "", "", ""]));
     }
     let separator = text.as_bytes()[10];
     if !matches!(separator, b'T' | b't' | b' ') {
@@ -158,12 +169,9 @@ fn parse_date_time(text: &str) -> Result<(TemporalKind, String), &'static str> {
     let time = parse_time(time)?;
     if let Some(offset) = offset {
         let offset = canonical_offset(offset)?;
-        Ok((
-            TemporalKind::OffsetDateTime,
-            format!("{date}T{time}{offset}"),
-        ))
+        Ok((TemporalKind::OffsetDateTime, [date, "T", time, offset]))
     } else {
-        Ok((TemporalKind::LocalDateTime, format!("{date}T{time}")))
+        Ok((TemporalKind::LocalDateTime, [date, "T", time, ""]))
     }
 }
 
@@ -200,7 +208,7 @@ fn validate_date(date: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn parse_time(time: &str) -> Result<String, &'static str> {
+fn parse_time(time: &str) -> Result<&str, &'static str> {
     if time.len() < 8
         || time.as_bytes().get(2) != Some(&b':')
         || time.as_bytes().get(5) != Some(&b':')
@@ -222,12 +230,12 @@ fn parse_time(time: &str) -> Result<String, &'static str> {
             return Err("invalid TOML fractional second");
         }
     }
-    Ok(time.to_owned())
+    Ok(time)
 }
 
-fn canonical_offset(offset: &str) -> Result<String, &'static str> {
+fn canonical_offset(offset: &str) -> Result<&str, &'static str> {
     if matches!(offset, "Z" | "z") {
-        return Ok("Z".into());
+        return Ok("Z");
     }
     if offset.len() != 6 || offset.as_bytes().get(3) != Some(&b':') {
         return Err("invalid TOML date-time offset");
@@ -238,9 +246,9 @@ fn canonical_offset(offset: &str) -> Result<String, &'static str> {
         return Err("TOML date-time offset is outside its valid range");
     }
     if hour == 0 && minute == 0 {
-        Ok("Z".into())
+        Ok("Z")
     } else {
-        Ok(offset.to_owned())
+        Ok(offset)
     }
 }
 

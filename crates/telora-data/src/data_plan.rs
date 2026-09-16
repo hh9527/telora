@@ -1,11 +1,12 @@
 //! Pure, source-backed data parsing shared by execution backends. No VM or
 //! heap is created by this interface; callers materialize the validated plan.
-pub use crate::json::{
-    DataField, DataNodeId, DataPlanNode, DataPlanNodeKind, DataScalar, TemporalKind,
-    ValidatedDataPlan,
-};
+pub use crate::json::{DataField, DataNodeId, TemporalKind};
+#[cfg(test)]
+pub use crate::json::{DataPlanNodeKind, DataScalar, ValidatedDataPlan};
 use crate::source::{Diagnostic, SourceDatabase, SourceId};
-use alloc::{string::String, string::ToString, vec::Vec};
+use alloc::{string::String, vec::Vec};
+#[cfg(test)]
+use alloc::string::ToString;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Format {
@@ -15,6 +16,7 @@ pub enum Format {
 }
 
 /// Inspect a plan's data limits before any execution backend allocates objects.
+#[cfg(test)]
 pub fn enforce_limits(
     plan: &ValidatedDataPlan,
     limits: crate::DataLimits,
@@ -25,20 +27,13 @@ pub fn enforce_limits(
         .map_err(|error| error.to_string())
 }
 
-/// JSON/YAML inputs belong to the source database. Plans own flat nodes and
+/// JSON/YAML/TOML inputs belong to the source database. Plans own flat nodes and
 /// shared decoded buffers, never an allocation per text value.
 #[derive(Clone, Debug)]
 pub enum ParsedData {
     Json { plan: crate::json::JsonPlan, decoded: String },
     Yaml { plan: crate::yaml::YamlPlan, decoded: String, bytes: Vec<u8> },
-    Owned(ValidatedDataPlan),
-}
-
-#[cfg(test)]
-impl ParsedData {
-    pub(crate) fn owned(self) -> ValidatedDataPlan {
-        match self { Self::Owned(plan) => plan, Self::Json { .. } | Self::Yaml { .. } => panic!("expected owned plan") }
-    }
+    Toml { plan: crate::toml::TomlPlan, decoded: String },
 }
 
 pub fn parse_registered(
@@ -71,9 +66,11 @@ pub fn parse_registered_with_limits(
         let (decoded, bytes) = ctx.into_decoded();
         return Ok(ParsedData::Yaml { plan, decoded, bytes });
     }
-    let mut plan = crate::toml::parse_with_limits(sources, source, limits)?;
-    plan.source_index = Some((source, sources.get(source).line_index().clone()));
-    Ok(ParsedData::Owned(plan))
+    let text = sources.get(source).text().contiguous().ok_or_else(|| vec![
+        Diagnostic::error("TOML data requires a contiguous source", crate::source::Location::from_usize(source, 0..0).unwrap())
+    ])?;
+    let (plan, ctx) = crate::toml::parse_structure(source, text, limits)?.validate()?;
+    Ok(ParsedData::Toml { plan, decoded: ctx.into_decoded() })
 }
 
 #[cfg(test)]

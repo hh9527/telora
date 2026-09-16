@@ -79,13 +79,8 @@ impl Manifest {
             ParsedData::Yaml { plan, .. } => {
                 ids.extend(plan.nodes.iter().map(|node| node.location.source));
             }
-            ParsedData::Owned(plan) => {
-                for node in plan.nodes() {
-                    ids.insert(node.location.source);
-                    if let telora_core::data_plan::DataPlanNodeKind::Object(fields) = &node.kind {
-                        ids.extend(fields.values().map(|field| field.key_location.source));
-                    }
-                }
+            ParsedData::Toml { plan, .. } => {
+                ids.extend(plan.nodes.iter().map(|node| node.location.source));
             }
         }
         for id in ids {

@@ -69,10 +69,15 @@ parse-0 只保留源码 span、扁平节点及块字符串的折叠/chomping 片
 累积重复 key 和数值错误；两个阶段复用等宽节点数组。普通文本及无转义的引号字符串
 直接引用源码，转换文本共用一个 String，二进制共用一个 Vec<u8>，节点只保存范围。
 行索引识别 LF/CRLF/CR；mapping、注释、flow 边界与字符串扫描共用外置引号状态。
-TOML 使用 `telora-data/src/toml/` 中的 Logos 局部词法识别与显式容器任务栈。
-四种字符串模式和分块游标外置，解码过程中检查配额。表以稳定 NodeId 组装，
-当前表直接保存 NodeId；dotted key 和数组表按最终数据结构的深度准入。
-文档完成后迭代整理为后序 DataPlan，移动 payload 而不深复制；不构造 CST。
+TOML 使用 `telora-data/src/toml/` 中的 Logos 局部词法识别与显式任务栈，也采用两阶段。
+parse-0 保留 `Table { header, items }` 语法段：表头是名称 span 列表，数组表有独立标记，
+顶层赋值属于隐式段；dotted key 保留路径，不在此阶段合并表或判定重定义。四种字符串
+模式外置，字符串、数字与日期时间仅保存原文范围，计量载荷但不分配解码文本。
+parse-1 将转换文本写入同一缓冲区，冻结文本后以借用的键建立身份并组装数据树；
+处理 dotted key、隐式/显式表、inline table 封闭与数组表，累积重复定义和标量诊断。
+源码大小、语法嵌套、原始值数量和字面量长度在 parse-0 限制；最终节点数、深度、
+容器大小及 key/value 累计载荷在 parse-1 构建时检查，任一资源超限立即停止。
+成功的数据树以迭代方式计算后序编号并原地置换、重连边，不复制文本或递归遍历。
 数据解析不再依赖 Lelwel 或 parser 生成器。
 生成的状态机不受手写源文件大小限制，手写逻辑和测试使用正常子模块划分。
 
@@ -187,12 +192,12 @@ QStart/QEnd/Text/EscChar/EscUtf16 消费，不接受 `\x`。parse-0 只计量解
 向单个解码缓冲区追加文本。YAML 同样在 parse-0 检查这些限制，
 base64 只计量 Bytes 长度，block scalar 按 folding/chomping 后的实际载荷计数；
 可恢复的 flow 多余逗号、重复 key 与数值错误可一起报告，资源错误仍立即停止。
-JSON/YAML节点天然子节点优先，RT导出不需重排；TOML保留原有解析及重排。
+JSON/YAML 节点天然子节点优先；TOML 在 parse-1 完成后序整理。三个格式的 RT 导出均直接消费 span。
 运行时产生的 Telora 值沿用输入字符串的来源位置。
 
-代码来源保留可编辑的 Rope；数据来源直接接管读入的连续 String。JSON/YAML 的数据计划
+代码来源保留可编辑的 Rope；数据来源直接接管读入的连续 String。JSON/YAML/TOML 的数据计划
 通过 SourceId / Span 引用来源库，并持有共享解码缓冲区（文本与 Bytes 分开）；Host materializer 直接消费
-这些引用，直到写入 Wasm Heap 或发布数据包时才复制文本。内置 `json.parse` / `yaml.parse` 借用 VM
+这些引用，直到写入 Wasm Heap 或发布数据包时才复制文本。内置 `json.parse` / `yaml.parse` / `toml.parse` 借用 VM
 中的输入字符串并直接导出 Span，所有解码文本共用一份 VM 生命周期的缓冲区，
 不创建临时 Rope 或逐字符串的 owned-plan。
 

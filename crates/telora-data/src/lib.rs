@@ -11,7 +11,7 @@ pub mod json_serde;
 mod limits;
 pub mod source;
 pub mod syntax;
-mod toml;
+pub mod toml;
 pub mod yaml;
 
 pub use document::DocumentText;
