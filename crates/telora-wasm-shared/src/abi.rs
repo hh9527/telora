@@ -1,5 +1,5 @@
 //! Shared physical layout; consumed by both codegen and Rust-compiled RT.
-pub const VERSION: u32 = 23;
+pub const VERSION: u32 = 24;
 pub const HEADER_BYTES: u32 = 16;
 pub const SCALAR_BYTES: u32 = 24;
 pub const FUNCTION_BYTES: u32 = 24;
@@ -36,6 +36,8 @@ pub const DEBUG_ENABLED: u32 = 16;
 pub const SOURCE_REGISTRY: u32 = 32;
 // Read-only content base/length. Re-read after every Guest call.
 pub const CONTENT_VIEW: u32 = 48;
+pub const WORDS_VIEW: u32 = 40;
+pub const WORDS_ORIGIN: u32 = 56;
 pub const DIAGNOSTIC_BYTES: u32 = 40;
 pub const DEMAND_BYTES: u32 = 8;
 

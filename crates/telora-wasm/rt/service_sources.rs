@@ -1,6 +1,6 @@
 //! Guest-owned initialization slots. Names come from the sealed entry's property
 //! result; Host supplies bytes, never identities or materialized language values.
-use alloc::{format, vec::Vec};
+use alloc::{boxed::Box, format, string::String, vec::Vec};
 pub(crate) mod context;
 use crate::{abi::*, tables::telora_table_get, values::{string_span, word}};
 
@@ -12,6 +12,7 @@ struct Slot {
     key: u32,
     value: u32,
     supplied: bool,
+    _name: Box<[u8]>,
 }
 
 struct Sources {
@@ -36,22 +37,19 @@ pub unsafe extern "C" fn telora_service_sources_prepare(names: u32) -> u32 {
         let end = word(names, DATA + 8);
         assert!(start <= end);
         let mut slots = Vec::new();
-        let mut previous = None;
+        let mut previous: Option<String> = None;
         for index in start..end {
             let key = base.checked_add(index.checked_mul(STRING_BYTES).unwrap()).unwrap();
             let (pointer, length) = string_span(key);
-            let text = core::str::from_utf8(core::slice::from_raw_parts(pointer as *const u8, length as usize)).unwrap();
-            if let Some(previous) = previous { assert!(previous < text); }
-            previous = Some(text);
-            // Inline String bytes are not necessarily aligned. Public names are.
-            let name = if length == 0 { 8 } else { crate::telora_alloc(length) };
-            core::ptr::copy_nonoverlapping(pointer as *const u8, name as *mut u8, length as usize);
+            let text = String::from(core::str::from_utf8(core::slice::from_raw_parts(pointer as *const u8, length as usize)).unwrap());
+            if let Some(previous) = &previous { assert!(previous < &text); }
+            let owned = text.as_bytes().to_vec().into_boxed_slice();
+            let name = owned.as_ptr() as u32;
             let diagnostic_name = format!("@service/{text}");
-            let diagnostic_pointer = crate::telora_alloc(diagnostic_name.len().try_into().unwrap());
-            core::ptr::copy_nonoverlapping(diagnostic_name.as_ptr(), diagnostic_pointer as *mut u8, diagnostic_name.len());
             let id = crate::sources::next_id();
-            assert_eq!(crate::sources::telora_register_source(id, diagnostic_pointer, diagnostic_name.len().try_into().unwrap()), 1);
-            slots.push(Slot { id, name, length, key, value: 0, supplied: false });
+            assert_eq!(crate::sources::telora_register_source(id, diagnostic_name.as_ptr() as u32, diagnostic_name.len().try_into().unwrap()), 1);
+            previous = Some(text);
+            slots.push(Slot { id, name, length, key, value: 0, supplied: false, _name: owned });
         }
         *core::ptr::addr_of_mut!(SOURCES) = Some(Sources { slots, failed: false, sealed: false });
         1

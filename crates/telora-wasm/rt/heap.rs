@@ -1,75 +1,102 @@
-//! Ownership of language blocks, allocated by std like every other Rust object.
-//! This is not a global allocator. Host buffers and Rust temporaries are ordinary
-//! allocations and never enter these main/work ownership lists.
-use std::{boxed::Box, vec::Vec};
+//! Single word arena. Language references are byte offsets biased above the
+//! immutable Wasm image, never allocation addresses. Host buffers are separate.
+use std::vec::Vec;
+use crate::abi::{WORDS_VIEW, WORDS_ORIGIN};
+static mut WORDS: Vec<u64> = Vec::new();
+static mut ORIGIN: u32 = 0;
+static mut WORK_BASE: Option<usize> = None;
 
-pub(crate) struct Block {
-    words: Box<[u64]>,
-    used: usize,
+unsafe fn publish() {
+    unsafe {
+        let words = &*core::ptr::addr_of!(WORDS);
+        (WORDS_VIEW as *mut u32).write(words.as_ptr() as u32);
+        ((WORDS_VIEW + 4) as *mut u32).write((words.len() * 8) as u32);
+    }
 }
-static mut MAIN: Vec<Block> = Vec::new();
-static mut WORK: Vec<Block> = Vec::new();
-static mut STATIC_END: u32 = 0;
-static mut FROZEN: bool = false;
-
 pub unsafe fn set_static_end(end: u32) {
     unsafe {
-        assert_eq!(*core::ptr::addr_of!(STATIC_END), 0);
-        STATIC_END = end;
+        assert_eq!(*core::ptr::addr_of!(ORIGIN), 0);
+        ORIGIN = end;
+        (WORDS_ORIGIN as *mut u32).write(end);
+        publish();
     }
 }
-
 pub unsafe fn allocate(bytes: u32) -> u32 {
-    let words = (bytes.max(1) as usize).div_ceil(8);
     unsafe {
-        let work = &mut *core::ptr::addr_of_mut!(WORK);
-        if work.last().is_none_or(|block| block.words.len() - block.used < words) {
-            // Small values share stable zeroed storage. Large payloads get an
-            // exact block; neither case changes the Rust global allocator.
-            let capacity = if words <= 1024 { 4096 } else { words };
-            work.push(Block { words: vec![0; capacity].into_boxed_slice(), used: 0 });
-        }
-        let block = work.last_mut().unwrap();
-        let pointer = block.words.as_mut_ptr().add(block.used) as u32;
-        block.used += words;
-        pointer
+        let words = &mut *core::ptr::addr_of_mut!(WORDS);
+        let start = words.len();
+        let end = start.checked_add((bytes.max(1) as usize).div_ceil(8)).unwrap();
+        let offset = u32::try_from(end.checked_mul(8).unwrap()).unwrap();
+        ORIGIN.checked_add(offset).expect("language heap exceeds wasm32");
+        words.resize(end, 0);
+        publish();
+        ORIGIN + (start * 8) as u32
     }
 }
-
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_heap_address(reference: u32) -> u32 {
+    unsafe {
+        if reference < ORIGIN { return reference; }
+        let offset = reference - ORIGIN;
+        let words = &*core::ptr::addr_of!(WORDS);
+        assert!((offset as usize) <= words.len() * 8);
+        (words.as_ptr() as u32).checked_add(offset).unwrap()
+    }
+}
+pub unsafe fn ptr<T>(reference: u32) -> *mut T {
+    unsafe { telora_heap_address(reference) as *mut T }
+}
+pub unsafe fn read<T: Copy>(reference: u32) -> T {
+    unsafe { ptr::<T>(reference).read_unaligned() }
+}
+pub unsafe fn write<T>(reference: u32, value: T) {
+    unsafe { ptr::<T>(reference).write_unaligned(value); }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_heap_copy(to: u32, from: u32, bytes: u32) -> u32 {
+    unsafe {
+        if bytes != 0 { core::ptr::copy(ptr::<u8>(from), ptr::<u8>(to), bytes as usize); }
+        to
+    }
+}
 pub unsafe fn freeze() {
     unsafe {
-        let main = &mut *core::ptr::addr_of_mut!(MAIN);
-        main.append(&mut *core::ptr::addr_of_mut!(WORK));
-        main.sort_unstable_by_key(|block| block.words.as_ptr() as usize);
-        FROZEN = true;
+        assert!((*core::ptr::addr_of!(WORK_BASE)).is_none());
+        WORK_BASE = Some((&*core::ptr::addr_of!(WORDS)).len());
     }
 }
-
-pub unsafe fn is_frozen(pointer: u32) -> bool {
+pub unsafe fn is_frozen(reference: u32) -> bool {
     unsafe {
-        if pointer < STATIC_END { return true; }
-        let main = &*core::ptr::addr_of!(MAIN);
-        let index = main.partition_point(|block| (block.words.as_ptr() as u32) <= pointer);
-        index != 0 && {
-            let block = &main[index - 1];
-            (pointer as u64) < block.words.as_ptr() as u64 + (block.used as u64 * 8)
-        }
+        reference < ORIGIN || (*core::ptr::addr_of!(WORK_BASE))
+            .is_some_and(|base| ((reference - ORIGIN) as usize) < base * 8)
     }
 }
-
-pub unsafe fn take_work() -> Vec<Block> {
+pub(crate) struct OldWords { words: Vec<u64>, origin: u32 }
+impl OldWords {
+    pub fn ptr<T>(&self, reference: u32) -> *const T {
+        if reference < self.origin { return reference as *const T; }
+        let offset = (reference - self.origin) as usize;
+        assert!(offset < self.words.len() * 8);
+        unsafe { self.words.as_ptr().cast::<u8>().add(offset).cast() }
+    }
+    pub unsafe fn read<T: Copy>(&self, reference: u32) -> T {
+        unsafe { self.ptr::<T>(reference).read_unaligned() }
+    }
+}
+pub unsafe fn take_work() -> OldWords {
     unsafe {
-        assert!(*core::ptr::addr_of!(FROZEN));
-        core::mem::take(&mut *core::ptr::addr_of_mut!(WORK))
+        let base = (*core::ptr::addr_of!(WORK_BASE)).expect("heap not frozen");
+        let words = &mut *core::ptr::addr_of_mut!(WORDS);
+        let prefix = words[..base].to_vec();
+        let old = OldWords { words: core::mem::replace(words, prefix), origin: ORIGIN };
+        publish();
+        old
     }
 }
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_heap_bytes() -> u32 {
     unsafe {
-        (&*core::ptr::addr_of!(MAIN)).iter()
-            .chain((&*core::ptr::addr_of!(WORK)).iter())
-            .map(|block| block.used as u64 * 8).sum::<u64>()
-            .checked_add(crate::content::len() as u64).unwrap().try_into().unwrap()
+        ((&*core::ptr::addr_of!(WORDS)).len() * 8)
+            .checked_add(crate::content::len()).unwrap().try_into().unwrap()
     }
 }

@@ -26,27 +26,27 @@ impl Output<'_> {
         let mut index = None;
         for i in 0..count {
             let record = registry + u64::from(i) * 20;
-            if self.word(record)? == id {
-                index = Some((self.word(record + 12)? as u64, self.word(record + 16)?));
+            if self.raw_word(record)? == id {
+                index = Some((self.raw_word(record + 12)? as u64, self.raw_word(record + 16)?));
                 break;
             }
         }
         let (lines, count) = index.ok_or("Wasm: missing source metadata")?;
         if count == 0 { return Err("Wasm: missing source index".into()); }
-        self.bytes(lines, u64::from(count) * 8)?;
+        self.raw_bytes(lines, u64::from(count) * 8)?;
         let point = |byte: u32| -> Result<(u32, u32), String> {
-            if byte > self.word(lines + u64::from(count - 1) * 8 + 4)? {
+            if byte > self.raw_word(lines + u64::from(count - 1) * 8 + 4)? {
                 return Err("Wasm: source offset out of range".into());
             }
             let (mut lo, mut hi) = (0, count);
             while lo < hi {
                 let mid = lo + (hi - lo) / 2;
-                if self.word(lines + u64::from(mid) * 8)? <= byte { lo = mid + 1; }
+                if self.raw_word(lines + u64::from(mid) * 8)? <= byte { lo = mid + 1; }
                 else { hi = mid; }
             }
             let line = lo.checked_sub(1).ok_or("Wasm: invalid source index")?;
-            let start = self.word(lines + u64::from(line) * 8)?;
-            let end = self.word(lines + u64::from(line) * 8 + 4)?;
+            let start = self.raw_word(lines + u64::from(line) * 8)?;
+            let end = self.raw_word(lines + u64::from(line) * 8 + 4)?;
             Ok((line, byte.min(end) - start))
         };
         let (sl, so) = point(start)?;
@@ -82,6 +82,23 @@ impl Output<'_> {
         ))
     }
     pub(crate) fn bytes(&self, address: u64, length: u64) -> Result<&[u8], String> {
+        self.raw_bytes(self.address(address, length)?, length)
+    }
+    pub(crate) fn address(&self, reference: u64, length: u64) -> Result<u64, String> {
+        let origin = u64::from(self.raw_word(u64::from(WORDS_ORIGIN))?);
+        if reference < origin { return Ok(reference); }
+        let offset = reference - origin;
+        let end = offset.checked_add(length).ok_or("Wasm: heap range overflow")?;
+        if end > u64::from(self.raw_word(u64::from(WORDS_VIEW + 4))?) {
+            return Err("Wasm: reference exceeds language heap".into());
+        }
+        u64::from(self.raw_word(u64::from(WORDS_VIEW))?).checked_add(offset)
+            .ok_or_else(|| "Wasm: heap address overflow".into())
+    }
+    pub(crate) fn raw_word(&self, address: u64) -> Result<u32, String> {
+        Ok(u32::from_le_bytes(self.raw_bytes(address, 4)?.try_into().unwrap()))
+    }
+    pub(crate) fn raw_bytes(&self, address: u64, length: u64) -> Result<&[u8], String> {
         let end = address
             .checked_add(length)
             .ok_or("Wasm: output range overflow")?;
@@ -287,7 +304,7 @@ impl Output<'_> {
                 if raw > start || start > end || end > length || end - start < 16 || header[12..15] != [0; 3] {
                     return Err("Wasm: invalid content slice".into());
                 }
-                self.bytes(base + start, end - start)
+                self.raw_bytes(base + start, end - start)
             }
             _ => Err("Wasm: invalid content representation".into()),
         }

@@ -72,7 +72,7 @@ pub unsafe extern "C" fn telora_regex(operation: u32, a: u32, b: u32) -> u32 {
     unsafe {
         match operation {
             0 => {
-                let packet = crate::telora_alloc(8) as *mut u32;
+                let packet = crate::telora_alloc(8);
                 let (id, error) = match compile(crate::text::text(a)) {
                     Ok(compiled) => {
                         let pointer = Box::into_raw(Box::new(compiled)) as u32;
@@ -87,9 +87,9 @@ pub unsafe extern "C" fn telora_regex(operation: u32, a: u32, b: u32) -> u32 {
                     }
                     Err(message) => (0, crate::format::render(format_args!("{message}"))),
                 };
-                packet.write(id);
-                packet.add(1).write(error);
-                packet as u32
+                crate::heap::write(packet, id);
+                crate::heap::write(packet + 4, error);
+                packet
             }
             1 => {
                 let compiled = &mut *get(a);
@@ -126,11 +126,11 @@ pub unsafe extern "C" fn telora_regex(operation: u32, a: u32, b: u32) -> u32 {
                     .engine
                     .captures(&mut compiled.engine.create_cache(), input, &mut captures);
                 let output = crate::telora_alloc(4 + count * 12);
-                (output as *mut u32).write(captures.is_match() as u32);
+                crate::heap::write(output, captures.is_match() as u32);
                 for index in 0..count {
                     let name = crate::text::text(word(b, 8 + u64::from(index) * 4));
                     let capture = captures.get_group_by_name(name);
-                    let row = (output + 4 + index * 12) as *mut u32;
+                    let row = crate::heap::ptr::<u32>(output + 4 + index * 12);
                     match capture {
                         Some(span) => {
                             row.write(span.start as u32);

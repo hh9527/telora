@@ -37,18 +37,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     module.section(&elements);
     let mut code = ObjectCode::default();
-    let mut answer = ObjectFunction::new(Function::new([]));
+    let mut answer = ObjectFunction::new(Function::new([]), 0);
     answer.instruction(&Instruction::I64Const(21));
     answer.call(0);
     answer.instruction(&Instruction::End);
     code.function(answer);
-    let mut callback = ObjectFunction::new(Function::new([]));
+    let mut callback = ObjectFunction::new(Function::new([]), 0);
     callback.instruction(&Instruction::LocalGet(0));
     callback.instruction(&Instruction::I64Const(2));
     callback.instruction(&Instruction::I64Mul);
     callback.instruction(&Instruction::End);
     code.function(callback);
-    let mut array = ObjectFunction::new(Function::new([]));
+    let mut array = ObjectFunction::new(Function::new([]), 0);
     array
         .function_pointer(2)
         .call(3)

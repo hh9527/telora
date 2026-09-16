@@ -110,8 +110,9 @@ pub unsafe extern "C" fn create() -> i32 {
         let context = inputs::context::telora_service_context(contract.context_type,
             contract.dict_type, contract.value_bytes, contract.sources_offset);
         if context == 0 { return 1; }
-        let args = [context, 0];
-        let handler = telora_invoke(service().initializer, args.as_ptr() as u32);
+        let args = crate::telora_alloc(8);
+        crate::heap::write(args, context);
+        let handler = telora_invoke(service().initializer, args);
         if handler == 0 { return 1; }
         service().handler = handler;
         service().phase = Phase::Ready;

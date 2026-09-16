@@ -2,7 +2,7 @@
 use crate::{abi::*, tables::telora_table_push, telora_alloc};
 
 unsafe fn put(pointer: u32, offset: u64, value: u32) {
-    unsafe { ((pointer + offset as u32) as *mut u32).write_unaligned(value) };
+    unsafe { crate::heap::write(pointer + offset as u32, value) };
 }
 
 #[unsafe(no_mangle)]
@@ -17,10 +17,8 @@ pub unsafe extern "C" fn telora_service_context(ctx_ty: u32, dict_ty: u32, strid
         let keys = telora_alloc(key_bytes);
         let values = telora_alloc(value_bytes);
         for (index, slot) in slots.iter().enumerate() {
-            core::ptr::copy_nonoverlapping(slot.key as *const u8,
-                (keys + index as u32 * STRING_BYTES) as *mut u8, STRING_BYTES as usize);
-            core::ptr::copy_nonoverlapping(slot.value as *const u8,
-                (values + index as u32 * stride) as *mut u8, stride as usize);
+            crate::heap::telora_heap_copy(keys + index as u32 * STRING_BYTES, slot.key, STRING_BYTES);
+            crate::heap::telora_heap_copy(values + index as u32 * stride, slot.value, stride);
         }
         let keys = telora_table_push(table_address(ARRAYS), keys, key_bytes);
         let values = telora_table_push(table_address(ARRAYS), values, value_bytes);

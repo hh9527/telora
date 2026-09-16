@@ -28,12 +28,12 @@ unsafe fn render(value: u32, output: &mut dyn Write, depth: u32) -> fmt::Result 
             2 => write!(
                 output,
                 "{}",
-                ((first + DATA as u32) as *const i64).read_unaligned()
+                crate::heap::read::<i64>(first + DATA as u32)
             ),
             3 => write!(
                 output,
                 "{}",
-                ((first + DATA as u32) as *const f64).read_unaligned()
+                crate::heap::read::<f64>(first + DATA as u32)
             ),
             4 => {
                 let items = word(node, 8);

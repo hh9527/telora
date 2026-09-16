@@ -35,7 +35,7 @@ impl Session {
         let materialize = self.instance.get_typed_func::<(u32, u32), u32>(&self.store, "telora_materialize_data")
             .map_err(|e| e.to_string())?;
         let pointer = alloc.call(&mut self.store, (cap, 1)).map_err(|e| e.to_string())?;
-        self.write(pointer as usize, input.as_bytes())?;
+        self.memory.write(&mut self.store, pointer as usize, input.as_bytes()).map_err(|e| e.to_string())?;
         let format = match format { Format::Json => 1, Format::Yaml => 2, Format::Toml => 3 };
         let packet = parse.call(&mut self.store, (pointer, length, format, source))
             .map_err(|e| e.to_string())?;

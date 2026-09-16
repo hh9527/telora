@@ -24,12 +24,12 @@ fn prepare(bytes: &[u8]) -> (Session, Vec<u32>) {
         session.instance.get_typed_func::<(u32, u32), ()>(&session.store, "get-data-source-name")
             .unwrap().call(&mut session.store, (index as u32, result)).unwrap();
         let output = session.output();
-        let id = output.word(result as u64).unwrap();
-        let pointer = output.word(result as u64 + 4).unwrap();
-        let length = output.word(result as u64 + 8).unwrap();
+        let id = output.raw_word(result as u64).unwrap();
+        let pointer = output.raw_word(result as u64 + 4).unwrap();
+        let length = output.raw_word(result as u64 + 8).unwrap();
         assert_ne!(pointer, 0);
         assert_eq!(pointer % 8, 0);
-        assert_eq!(output.bytes(pointer as u64, length as u64).unwrap(), expected.as_bytes());
+        assert_eq!(output.raw_bytes(pointer as u64, length as u64).unwrap(), expected.as_bytes());
         assert!(!session.manifest.sources.iter().any(|source| source.id == id));
         ids.push(id);
     }
@@ -145,12 +145,12 @@ fn public_source_injection_materializes_values_without_host_type_access() {
     for request in ["1", "null", "{", r#""bytes""#, "2"] {
         session.memory.write(&mut session.store, input as usize, request.as_bytes()).unwrap();
         run.call(&mut session.store, (input, request.len() as u32, output, cap, result)).unwrap();
-        output = session.output().word(result as u64).unwrap();
-        let length = session.output().word(result as u64 + 4).unwrap();
-        cap = session.output().word(result as u64 + 8).unwrap();
+        output = session.output().raw_word(result as u64).unwrap();
+        let length = session.output().raw_word(result as u64 + 4).unwrap();
+        cap = session.output().raw_word(result as u64 + 8).unwrap();
         assert!(length <= cap);
         let reply: serde_json::Value = serde_json::from_slice(
-            session.output().bytes(output as u64, length as u64).unwrap()).unwrap();
+            session.output().raw_bytes(output as u64, length as u64).unwrap()).unwrap();
         assert_eq!(reply["schema"], "telora.service/v1");
         if request == "null" || request == "{" || request == r#""bytes""# {
             assert_eq!(reply["error"], true);
@@ -188,10 +188,10 @@ fn diagnostic_output_moves_capacity_and_rejects_overlapping_descriptors() {
         }
         for _ in 0..2 {
             get.call(&mut session.store, (output, 32, result)).unwrap();
-            assert_eq!(session.output().word(result as u64).unwrap(), output);
-            assert_eq!(session.output().word(result as u64 + 4).unwrap(), 2);
-            assert_eq!(session.output().word(result as u64 + 8).unwrap(), 32);
-            assert_eq!(session.output().bytes(output as u64, 2).unwrap(), b"[]");
+            assert_eq!(session.output().raw_word(result as u64).unwrap(), output);
+            assert_eq!(session.output().raw_word(result as u64 + 4).unwrap(), 2);
+            assert_eq!(session.output().raw_word(result as u64 + 8).unwrap(), 32);
+            assert_eq!(session.output().raw_bytes(output as u64, 2).unwrap(), b"[]");
         }
         free.call(&mut session.store, (output, 32, 1)).unwrap();
         free.call(&mut session.store, (result, 12, 4)).unwrap();

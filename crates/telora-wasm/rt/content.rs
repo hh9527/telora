@@ -5,11 +5,11 @@ use telora_wasm_shared::arena::content::{Bytes, Content, LiveRanges};
 static mut CONTENT: Content = Content::new();
 
 pub(crate) unsafe fn read(payload: u32) -> Bytes {
-    unsafe { Bytes::decode((payload as *const [u8; 16]).read_unaligned()).unwrap() }
+    unsafe { Bytes::decode(crate::heap::read(payload)).unwrap() }
 }
 
 pub(crate) unsafe fn write(payload: u32, bytes: Bytes) {
-    unsafe { (payload as *mut [u8; 16]).write_unaligned(bytes.encode().unwrap()); }
+    unsafe { crate::heap::write(payload, bytes.encode().unwrap()); }
 }
 
 unsafe fn publish() {
@@ -24,7 +24,7 @@ unsafe fn publish() {
 pub(crate) unsafe fn span(payload: u32) -> (u32, u32) {
     unsafe {
         match read(payload) {
-            Bytes::Inline { len, .. } => (payload, u32::from(len)),
+            Bytes::Inline { len, .. } => (crate::heap::telora_heap_address(payload), u32::from(len)),
             value @ Bytes::Slice(_) => {
                 let view = (&*core::ptr::addr_of!(CONTENT)).view(&value).unwrap();
                 (view.as_ptr() as u32, view.len() as u32)
@@ -37,6 +37,7 @@ pub(crate) unsafe fn span(payload: u32) -> (u32, u32) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_content_write(destination: u32, pointer: u32, length: u32) -> u32 {
     unsafe {
+        let pointer = crate::heap::telora_heap_address(pointer);
         // Appending must not invalidate the input borrow.
         let bytes = (&*core::ptr::addr_of!(CONTENT)).bytes();
         let base = bytes.as_ptr() as usize;

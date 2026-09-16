@@ -33,6 +33,7 @@ impl Session {
             .map_err(|e| e.to_string())? as u32)
     }
     pub(crate) fn write(&mut self, address: usize, bytes: &[u8]) -> Result<(), String> {
+        let address = self.output().address(address as u64, bytes.len() as u64)? as usize;
         self.memory
             .write(&mut self.store, address, bytes)
             .map_err(|e| e.to_string())
@@ -55,12 +56,14 @@ impl Session {
             .map_err(|e| e.to_string())? as u32)
     }
     pub(crate) fn copy_input(&mut self, to: u32, from: u32, bytes: usize) -> Result<(), String> {
+        let to = self.output().address(to.into(), bytes as u64)? as usize;
+        let from = self.output().address(from.into(), bytes as u64)? as usize;
         let memory = self.memory.data_mut(&mut self.store);
-        let source = from as usize..from as usize + bytes;
-        if source.end > memory.len() || to as usize + bytes > memory.len() {
+        let source = from..from + bytes;
+        if source.end > memory.len() || to + bytes > memory.len() {
             return Err("Wasm: input copy out of bounds".into());
         }
-        memory.copy_within(source, to as usize);
+        memory.copy_within(source, to);
         Ok(())
     }
     pub(crate) fn input(&mut self, ty: u32, value: &Value, depth: usize) -> Result<u32, String> {

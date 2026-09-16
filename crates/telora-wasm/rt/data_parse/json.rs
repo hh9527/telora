@@ -62,7 +62,7 @@ pub(super) unsafe fn parse(input: &str, origins: &Origins) -> u32 {
                 }
             };
             put(row, 0, kind);
-            ((row + 16) as *mut u64).write_unaligned(payload);
+            crate::heap::write(row + 16, payload);
         }
         result
     }

@@ -35,7 +35,7 @@ pub unsafe extern "C" fn telora_text_query(operation: u32, a: u32, b: u32) -> u3
                         .map(f64::to_bits)
                 };
                 if let Some(bits) = bits {
-                    (b as *mut u64).write_unaligned(bits);
+                    crate::heap::write(b, bits);
                     1
                 } else {
                     0
@@ -129,15 +129,19 @@ pub unsafe extern "C" fn telora_text_build(operation: u32, a: u32, b: u32, c: u3
 
 unsafe fn spans(source: &str, pieces: impl Iterator<Item = &'static str> + Clone) -> u32 {
     unsafe {
-        let count = pieces.clone().count();
+        let pieces = pieces.map(|piece| (
+            (piece.as_ptr() as usize).checked_sub(source.as_ptr() as usize).unwrap() as u32,
+            piece.len() as u32,
+        )).collect::<alloc::vec::Vec<_>>();
+        let count = pieces.len();
         let bytes = count.checked_mul(8).and_then(|n| n.checked_add(8)).unwrap();
         let result = crate::telora_alloc(u32::try_from(bytes).unwrap());
-        (result as *mut u32).write(result + 8);
-        ((result + 4) as *mut u32).write(count as u32);
-        for (index, piece) in pieces.enumerate() {
-            let row = (result + 8 + index as u32 * 8) as *mut u32;
-            row.write((piece.as_ptr() as usize).checked_sub(source.as_ptr() as usize).unwrap() as u32);
-            row.add(1).write(piece.len() as u32);
+        crate::heap::write(result, result + 8);
+        crate::heap::write(result + 4, count as u32);
+        for (index, (offset, length)) in pieces.into_iter().enumerate() {
+            let row = crate::heap::ptr::<u32>(result + 8 + index as u32 * 8);
+            row.write(offset);
+            row.add(1).write(length);
         }
         result
     }

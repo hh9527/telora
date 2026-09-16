@@ -24,7 +24,7 @@ impl Origins {
             Self::Inherit(range) => *range,
             Self::Source { id } => SourceRange { source: *id, start: location.start, end: location.end },
         };
-        unsafe { core::ptr::copy_nonoverlapping(range.encode().as_ptr(), pointer as *mut u8, 12); }
+        unsafe { core::ptr::copy_nonoverlapping(range.encode().as_ptr(), crate::heap::ptr::<u8>(pointer), 12); }
     }
 
     pub unsafe fn inherit(pointer: u32) -> Self {

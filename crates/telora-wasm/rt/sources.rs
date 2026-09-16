@@ -1,6 +1,9 @@
 //! Source names are input metadata, not language values or type information.
 use crate::telora_alloc;
 mod registry;
+unsafe fn raw_word(pointer: u32, offset: u32) -> u32 {
+    unsafe { ((pointer + offset) as *const u32).read_unaligned() }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -63,8 +66,8 @@ unsafe fn register_index(id: u32, pointer: u32, count: u32, static_storage: bool
         assert!(pointer.checked_add(bytes).unwrap() <= crate::telora_heap_end());
         let mut previous_end = 0;
         for index in 0..count {
-            let start = crate::values::word(pointer + index * 8, 0);
-            let end = crate::values::word(pointer + index * 8, 4);
+            let start = raw_word(pointer + index * 8, 0);
+            let end = raw_word(pointer + index * 8, 4);
             assert!(start <= end);
             if index == 0 { assert_eq!(start, 0); }
             else { assert!(start > previous_end && start - previous_end <= 2); }
@@ -80,17 +83,17 @@ pub(crate) unsafe fn position(id: u32, byte: u32) -> (u32, u32) {
         for source in registry::records() {
             if source.id != id { continue; }
             assert_ne!(source.line_count, 0, "source lacks index");
-            assert!(byte <= crate::values::word(source.lines + (source.line_count - 1) * 8, 4));
+            assert!(byte <= raw_word(source.lines + (source.line_count - 1) * 8, 4));
             let mut lo = 0;
             let mut hi = source.line_count;
             while lo < hi {
                 let mid = lo + (hi - lo) / 2;
-                if crate::values::word(source.lines + mid * 8, 0) <= byte { lo = mid + 1; }
+                if raw_word(source.lines + mid * 8, 0) <= byte { lo = mid + 1; }
                 else { hi = mid; }
             }
             let line = lo - 1;
-            let start = crate::values::word(source.lines + line * 8, 0);
-            let end = crate::values::word(source.lines + line * 8, 4);
+            let start = raw_word(source.lines + line * 8, 0);
+            let end = raw_word(source.lines + line * 8, 4);
             return (line, byte.min(end) - start);
         }
         panic!("unregistered source");
@@ -113,7 +116,7 @@ pub unsafe extern "C" fn telora_source_range(range: u32) -> u32 {
         let end = position(id, end);
         let result = telora_alloc(20);
         for (index, word) in [id, start.0, start.1, end.0, end.1].into_iter().enumerate() {
-            ((result + index as u32 * 4) as *mut u32).write_unaligned(word);
+            crate::heap::write(result + index as u32 * 4, word);
         }
         result
     }
@@ -125,7 +128,11 @@ pub unsafe extern "C" fn telora_source_name(id: u32) -> u32 {
     unsafe {
         for item in registry::records() {
             if item.id == id {
-                return item as *const Source as u32 + 4;
+                let result = telora_alloc(8 + item.length);
+                crate::heap::write(result, result + 8);
+                crate::heap::write(result + 4, item.length);
+                core::ptr::copy_nonoverlapping(item.pointer as *const u8, crate::heap::ptr::<u8>(result + 8), item.length as usize);
+                return result;
             }
         }
         panic!("unregistered source");
@@ -151,17 +158,17 @@ unsafe fn number_text(prefix: &[u8], mut number: u32, suffix: &[u8]) -> u32 {
         }
         let length = (prefix.len() + digits.len() - at + suffix.len()) as u32;
         let result = telora_alloc(8 + length);
-        (result as *mut u32).write(result + 8);
-        ((result + 4) as *mut u32).write(length);
-        core::ptr::copy_nonoverlapping(prefix.as_ptr(), (result + 8) as *mut u8, prefix.len());
+        crate::heap::write(result, result + 8);
+        crate::heap::write(result + 4, length);
+        core::ptr::copy_nonoverlapping(prefix.as_ptr(), crate::heap::ptr::<u8>(result + 8), prefix.len());
         core::ptr::copy_nonoverlapping(
             digits[at..].as_ptr(),
-            (result + 8 + prefix.len() as u32) as *mut u8,
+            crate::heap::ptr::<u8>(result + 8 + prefix.len() as u32),
             digits.len() - at,
         );
         core::ptr::copy_nonoverlapping(
             suffix.as_ptr(),
-            (result + 8 + prefix.len() as u32 + (digits.len() - at) as u32) as *mut u8,
+            crate::heap::ptr::<u8>(result + 8 + prefix.len() as u32 + (digits.len() - at) as u32),
             suffix.len(),
         );
         result

@@ -54,8 +54,8 @@ fn scan<'a>(source: &'a str, mut emit: impl FnMut(Piece<'a>)) -> Result<(), Erro
 
 unsafe fn span(destination: u32, pointer: u32, length: u32) {
     unsafe {
-        (destination as *mut u32).write(pointer);
-        ((destination + 4) as *mut u32).write(length);
+        crate::heap::write(destination, pointer);
+        crate::heap::write(destination + 4, length);
     }
 }
 
@@ -63,11 +63,10 @@ unsafe fn span(destination: u32, pointer: u32, length: u32) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_template_prepare(value: u32) -> u32 {
     unsafe {
-        let source = text(value);
+        let source = alloc::string::String::from(text(value));
         let result = telora_alloc(20);
-        core::ptr::write_bytes(result as *mut u8, 0, 20);
         let mut count = 0u32;
-        if let Err(error) = scan(source, |piece| {
+        if let Err(error) = scan(&source, |piece| {
             if matches!(piece, Piece::Field(_)) {
                 count = count.checked_add(1).unwrap();
             }
@@ -78,7 +77,7 @@ pub unsafe extern "C" fn telora_template_prepare(value: u32) -> u32 {
                 Error::Unmatched => output.write_str("unmatched '}' in Display template"),
                 Error::Field(field) => write!(output, "invalid Display template field {field:?}"),
             });
-            ((result + 16) as *mut u32).write(message);
+            crate::heap::write(result + 16, message);
             return result;
         }
         let strings = telora_alloc(count.checked_add(1).unwrap().checked_mul(8).unwrap());
@@ -87,11 +86,11 @@ pub unsafe extern "C" fn telora_template_prepare(value: u32) -> u32 {
         let mut offset = 0u32;
         let mut start = 0u32;
         let mut index = 0u32;
-        let scanned = scan(source, |piece| match piece {
+        let scanned = scan(&source, |piece| match piece {
             Piece::Text(text) => {
                 core::ptr::copy_nonoverlapping(
                     text.as_ptr(),
-                    (buffer + offset) as *mut u8,
+                    crate::heap::ptr::<u8>(buffer + offset),
                     text.len(),
                 );
                 offset += text.len() as u32;
@@ -99,7 +98,7 @@ pub unsafe extern "C" fn telora_template_prepare(value: u32) -> u32 {
             Piece::Field(field) => {
                 span(strings + index * 8, buffer + start, offset - start);
                 let owned = telora_alloc(field.len() as u32);
-                core::ptr::copy_nonoverlapping(field.as_ptr(), owned as *mut u8, field.len());
+                core::ptr::copy_nonoverlapping(field.as_ptr(), crate::heap::ptr::<u8>(owned), field.len());
                 span(
                     fields + index * 8,
                     owned,

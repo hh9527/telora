@@ -1,7 +1,7 @@
 //! Platform-independent lexical paths. Results are raw UTF-8 spans, not Options.
 use crate::{abi::*, tables::telora_table_get, text::text, values::word};
 
-unsafe fn join(array: u32) -> &'static str {
+unsafe fn join(array: u32) -> alloc::string::String {
     unsafe {
         let base = word(
             telora_table_get(table_address(ARRAYS), word(array, DATA)),
@@ -32,18 +32,17 @@ unsafe fn join(array: u32) -> &'static str {
             Ok(())
         });
         core::str::from_utf8(core::slice::from_raw_parts(
-            word(span, 0) as *const u8,
+            crate::heap::ptr::<u8>(word(span, 0)),
             word(span, 4) as usize,
         ))
-        .unwrap()
+        .unwrap().into()
     }
 }
 
-unsafe fn normalize(input: &str) -> &'static str {
+unsafe fn normalize(input: &str) -> alloc::string::String {
     unsafe {
         let capacity = input.len().checked_add(1).unwrap();
-        let pointer = crate::telora_alloc(u32::try_from(capacity).unwrap());
-        let output = core::slice::from_raw_parts_mut(pointer as *mut u8, capacity);
+        let mut output = alloc::vec![0; capacity];
         let absolute = input.starts_with('/');
         let mut length = usize::from(absolute);
         if absolute {
@@ -78,7 +77,8 @@ unsafe fn normalize(input: &str) -> &'static str {
             output[0] = b'.';
             length = 1;
         }
-        core::str::from_utf8(&output[..length]).unwrap()
+        output.truncate(length);
+        alloc::string::String::from_utf8(output).unwrap()
     }
 }
 
@@ -87,11 +87,8 @@ unsafe fn normalize(input: &str) -> &'static str {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_path(operation: u32, input: u32) -> u32 {
     unsafe {
-        let value = normalize(if operation == 0 {
-            join(input)
-        } else {
-            text(input)
-        });
+        let value = if operation == 0 { normalize(&join(input)) } else { normalize(text(input)) };
+        let value = value.as_str();
         let result = match operation {
             0 | 1 => Some(value),
             2 => match value {
@@ -109,9 +106,10 @@ pub unsafe extern "C" fn telora_path(operation: u32, input: u32) -> u32 {
             _ => core::arch::wasm32::unreachable(),
         };
         let Some(result) = result else { return 0 };
-        let span = crate::telora_alloc(8);
-        (span as *mut u32).write(result.as_ptr() as u32);
-        ((span + 4) as *mut u32).write(result.len() as u32);
+        let span = crate::telora_alloc(8 + result.len() as u32);
+        crate::heap::write(span, span + 8);
+        crate::heap::write(span + 4, result.len() as u32);
+        core::ptr::copy_nonoverlapping(result.as_ptr(), crate::heap::ptr::<u8>(span + 8), result.len());
         span
     }
 }

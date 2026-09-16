@@ -26,7 +26,7 @@ fn span_bits(span: telora_data::json::text::TextSpan, source: u32, decoded: u32)
     if copy && length != 0 {
         unsafe {
             let owned = crate::telora_alloc(length);
-            core::ptr::copy_nonoverlapping(pointer as *const u8, owned as *mut u8, length as usize);
+            core::ptr::copy_nonoverlapping(pointer as *const u8, crate::heap::ptr::<u8>(owned), length as usize);
             pointer = owned;
         }
     } else if length == 0 {
@@ -37,7 +37,7 @@ fn span_bits(span: telora_data::json::text::TextSpan, source: u32, decoded: u32)
 
 unsafe fn put(pointer: u32, offset: u32, value: u32) {
     unsafe {
-        ((pointer + offset) as *mut u32).write_unaligned(value);
+        crate::heap::write(pointer + offset, value);
     }
 }
 fn string_bytes(value: String) -> (u32, u32) {
@@ -49,7 +49,7 @@ fn retained_bytes(bytes: &[u8]) -> (u32, u32) {
     if length == 0 { return (1, 0); }
     unsafe {
         let pointer = crate::telora_alloc(length);
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer as *mut u8, bytes.len());
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), crate::heap::ptr::<u8>(pointer), bytes.len());
         (pointer, length)
     }
 }
@@ -63,21 +63,21 @@ unsafe fn export_error(message: String) -> u32 {
 
 pub(crate) unsafe fn error_text(span: u32) -> &'static str {
     unsafe { core::str::from_utf8(core::slice::from_raw_parts(
-        crate::values::word(span, 0) as *const u8,
+        crate::heap::ptr::<u8>(crate::values::word(span, 0)),
         crate::values::word(span, 4) as usize)).unwrap() }
 }
 /// Generated callers supply final language type identities and layouts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_json_parse(input: u32) -> u32 {
-    unsafe { json::parse(crate::text::text(input), &Origins::inherit(input)) }
+    unsafe { json::parse(&alloc::string::String::from(crate::text::text(input)), &Origins::inherit(input)) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_yaml_parse(input: u32) -> u32 {
-    unsafe { yaml::parse(crate::text::text(input), &Origins::inherit(input)) }
+    unsafe { yaml::parse(&alloc::string::String::from(crate::text::text(input)), &Origins::inherit(input)) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_toml_parse(input: u32) -> u32 {
-    unsafe { toml::parse(crate::text::text(input), &Origins::inherit(input)) }
+    unsafe { toml::parse(&alloc::string::String::from(crate::text::text(input)), &Origins::inherit(input)) }
 }
 
 /// Internal plan producer. Retain published text spans and the source index,

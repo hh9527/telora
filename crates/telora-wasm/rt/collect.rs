@@ -15,6 +15,7 @@ pub(crate) unsafe fn freeze() {
 }
 
 pub(crate) struct Collector {
+    pub heap: crate::heap::OldWords,
     pub types: u32,
     pub old: [Table; TABLE_COUNT as usize],
     pub slots: Vec<Vec<Slot>>,
@@ -26,6 +27,9 @@ pub(crate) struct Collector {
 }
 
 impl Collector {
+    pub unsafe fn old_word(&self, reference: u32, offset: u64) -> u32 {
+        unsafe { self.heap.read(reference + offset as u32) }
+    }
     pub fn reserve(&mut self, bytes: u32) -> u32 {
         unsafe { crate::telora_alloc(bytes) }
     }
@@ -33,15 +37,15 @@ impl Collector {
         let at = self.reserve(bytes);
         unsafe {
             core::ptr::copy_nonoverlapping(
-                pointer as *const u8,
-                at as *mut u8,
+                self.heap.ptr::<u8>(pointer),
+                crate::heap::ptr::<u8>(at),
                 bytes as usize,
             );
         }
         at
     }
     pub fn put(&mut self, at: u32, value: u32) {
-        unsafe { (at as *mut u32).write_unaligned(value); }
+        unsafe { crate::heap::write(at, value); }
     }
     pub unsafe fn value(&mut self, pointer: u32) -> u32 {
         unsafe {
@@ -51,8 +55,8 @@ impl Collector {
             if let Some(&at) = self.values.get(&pointer) {
                 return at;
             }
-            let ty = word(pointer, TYPE);
-            self.trace_location(word(pointer, SOURCE));
+            let ty = self.old_word(pointer, TYPE);
+            self.trace_location(self.old_word(pointer, SOURCE));
             let bytes = word(self.types + ty * 20, 4);
             assert!(bytes >= HEADER_BYTES);
             let at = self.copy_bytes(pointer, bytes);
@@ -71,7 +75,7 @@ impl Collector {
             if let Some(&next) = self.objects.get(&(table, id)) {
                 return next;
             }
-            let slot = (old.buffer as *const Slot).add(id as usize).read();
+            let slot: Slot = self.heap.read(old.buffer + id * 8);
             let next = self.slots[table as usize].len() as u32;
             self.objects.insert((table, id), next);
             // Publish forwarding before traversal, including cyclic environments.
@@ -81,7 +85,9 @@ impl Collector {
             });
             let at = if table == REGEXES {
                 let pattern = crate::regex::pattern(slot.payload);
-                self.copy_bytes(pattern.as_ptr() as u32, pattern.len() as u32)
+                let at = self.reserve(pattern.len() as u32);
+                core::ptr::copy_nonoverlapping(pattern.as_ptr(), crate::heap::ptr::<u8>(at), pattern.len());
+                at
             } else {
                 self.copy_bytes(slot.payload, slot.bytes)
             };
@@ -125,14 +131,14 @@ impl Collector {
             }
             let old_regex = self.old[REGEXES as usize];
             for id in old_regex.frozen..old_regex.length {
-                let slot = (old_regex.buffer as *const Slot).add(id as usize).read();
+                let slot: Slot = self.heap.read(old_regex.buffer + id * 8);
                 crate::regex::release(slot.payload);
             }
             let regex = tables[REGEXES as usize];
             for id in regex.frozen..regex.length {
-                let slot = (regex.buffer as *mut Slot).add(id as usize);
+                let slot = crate::heap::ptr::<Slot>(regex.buffer + id * 8);
                 let text = core::str::from_utf8(core::slice::from_raw_parts(
-                    (*slot).payload as *const u8,
+                    crate::heap::ptr::<u8>((*slot).payload),
                     (*slot).bytes as usize,
                 ))
                 .unwrap();
@@ -154,12 +160,13 @@ pub unsafe extern "C" fn telora_collect(types: u32, roots: u32, count: u32) -> u
                 if table.frozen == 0 {
                     vec![]
                 } else {
-                    core::slice::from_raw_parts(table.buffer as *const Slot, table.frozen as usize)
+                    core::slice::from_raw_parts(old_work.ptr::<Slot>(table.buffer), table.frozen as usize)
                         .to_vec()
                 }
             })
             .collect();
         let mut gc = Collector {
+            heap: old_work,
             types,
             old,
             slots,
@@ -171,11 +178,10 @@ pub unsafe extern "C" fn telora_collect(types: u32, roots: u32, count: u32) -> u
         };
         let result = gc.reserve(count * 4);
         for index in 0..count {
-            let pointer = gc.value(word(roots, index as u64 * 4));
+            let pointer = gc.value(gc.old_word(roots, index as u64 * 4));
             gc.put(result + index * 4, pointer);
         }
         gc.finish();
-        drop(old_work);
         result
     }
 }

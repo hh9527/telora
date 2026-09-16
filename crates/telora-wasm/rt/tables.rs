@@ -19,7 +19,7 @@ pub(crate) struct Slot {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_table_push(address: u32, payload: u32, bytes: u32) -> u32 {
     unsafe {
-        let table = &mut *(address as *mut Table);
+        let mut table = crate::heap::read::<Table>(address);
         let id = table.length;
         if id == table.capacity {
             if table.capacity > 0x0fff_ffff {
@@ -33,18 +33,19 @@ pub unsafe extern "C" fn telora_table_push(address: u32, payload: u32, bytes: u3
             let buffer = telora_alloc(capacity * 8);
             if id != 0 {
                 core::ptr::copy_nonoverlapping(
-                    table.buffer as *const Slot,
-                    buffer as *mut Slot,
+                    crate::heap::ptr::<Slot>(table.buffer),
+                    crate::heap::ptr::<Slot>(buffer),
                     id as usize,
                 );
             }
             table.buffer = buffer;
             table.capacity = capacity;
         }
-        (table.buffer as *mut Slot)
+        crate::heap::ptr::<Slot>(table.buffer)
             .add(id as usize)
             .write(Slot { payload, bytes });
         table.length = id + 1;
+        crate::heap::write(address, table);
         id
     }
 }
@@ -52,7 +53,7 @@ pub unsafe extern "C" fn telora_table_push(address: u32, payload: u32, bytes: u3
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_table_get(address: u32, id: u32) -> u32 {
     unsafe {
-        let table = &*(address as *const Table);
+        let table = crate::heap::read::<Table>(address);
         if id >= table.length {
             core::arch::wasm32::unreachable();
         }

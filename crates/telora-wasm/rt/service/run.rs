@@ -23,8 +23,9 @@ pub unsafe extern "C" fn run(input: u32, length: u32, output: u32, cap: u32, res
                 core::mem::transmute(super::service().contract.materialize);
             let value = materialize(packet, 0);
             assert_ne!(value, 0, "validated request failed materialization");
-            let args = [value, 0];
-            let reply = telora_invoke(super::service().handler, args.as_ptr() as u32);
+            let args = crate::telora_alloc(8);
+            crate::heap::write(args, value);
+            let reply = telora_invoke(super::service().handler, args);
             assert_ne!(reply, 0, "closed service entry failed to serialize diagnostics");
             output.extend_from_slice(crate::text::text(reply).as_bytes());
         }

@@ -1,36 +1,6 @@
 //! Fixed text formatting into a raw UTF-8 span; no language type construction.
 use core::fmt::{self, Write};
 
-struct Counter(usize);
-impl Write for Counter {
-    fn write_str(&mut self, text: &str) -> fmt::Result {
-        self.0 = self.0.checked_add(text.len()).ok_or(fmt::Error)?;
-        Ok(())
-    }
-}
-struct Output {
-    pointer: *mut u8,
-    offset: usize,
-    capacity: usize,
-}
-impl Write for Output {
-    fn write_str(&mut self, text: &str) -> fmt::Result {
-        let end = self
-            .offset
-            .checked_add(text.len())
-            .filter(|&end| end <= self.capacity)
-            .ok_or(fmt::Error)?;
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                text.as_ptr(),
-                self.pointer.add(self.offset),
-                text.len(),
-            );
-        }
-        self.offset = end;
-        Ok(())
-    }
-}
 pub(crate) unsafe fn render(arguments: fmt::Arguments<'_>) -> u32 {
     unsafe { render_with(|writer| fmt::write(writer, arguments)) }
 }
@@ -42,21 +12,17 @@ pub(crate) unsafe fn render_with(mut write: impl FnMut(&mut dyn Write) -> fmt::R
 }
 
 pub(crate) unsafe fn try_render_with(mut write: impl FnMut(&mut dyn Write) -> fmt::Result) -> u32 {
-    let mut size = Counter(0);
-    if write(&mut size).is_err() {
+    // Finish reading all language values before appending to the word arena.
+    let mut text = alloc::string::String::new();
+    if write(&mut text).is_err() {
         return 0;
     }
-    let bytes = u32::try_from(size.0).unwrap();
+    let bytes = u32::try_from(text.len()).unwrap();
     unsafe {
         let span = crate::telora_alloc(bytes.checked_add(8).unwrap());
-        (span as *mut u32).write(span + 8);
-        ((span + 4) as *mut u32).write(bytes);
-        write(&mut Output {
-            pointer: (span + 8) as *mut u8,
-            offset: 0,
-            capacity: size.0,
-        })
-        .unwrap();
+        crate::heap::write(span, span + 8);
+        crate::heap::write(span + 4, bytes);
+        core::ptr::copy_nonoverlapping(text.as_ptr(), crate::heap::ptr::<u8>(span + 8), text.len());
         span
     }
 }

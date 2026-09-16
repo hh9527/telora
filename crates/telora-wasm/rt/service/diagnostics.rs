@@ -5,7 +5,7 @@ use crate::{abi::*, json_text::quoted, tables::telora_table_get, values::word};
 
 unsafe fn span(pointer: u32) -> &'static str {
     unsafe { core::str::from_utf8(core::slice::from_raw_parts(
-        word(pointer, 0) as *const u8, word(pointer, 4) as usize)).unwrap() }
+        crate::heap::ptr::<u8>(word(pointer, 0)), word(pointer, 4) as usize)).unwrap() }
 }
 
 unsafe fn label(output: &mut String, id: u32, message: &str, primary: bool) {
@@ -26,14 +26,14 @@ unsafe fn event(output: &mut String, pointer: u32) {
         output.push_str(if warning { "{\"severity\":\"Warning\",\"message\":" }
             else { "{\"severity\":\"Error\",\"message\":" });
         let code = word(pointer, DIAG_CODE);
-        let message = if code == 9 { crate::text::text(word(pointer, DIAG_MESSAGE)) }
-            else { telora_wasm_shared::diagnostics::error_message(code) };
-        quoted(output, message).unwrap();
+        let message = String::from(if code == 9 { crate::text::text(word(pointer, DIAG_MESSAGE)) }
+            else { telora_wasm_shared::diagnostics::error_message(code) });
+        quoted(output, &message).unwrap();
         output.push_str(",\"labels\":[");
         let origin = [word(pointer, 0), word(pointer, 4), word(pointer, 8)];
         let mut seen = Vec::new();
         if origin[0] != 0 {
-            label(output, pointer, message, true);
+            label(output, pointer, &message, true);
             seen.push(origin);
         }
         let subjects = word(pointer, DIAG_SUBJECTS);

@@ -66,7 +66,8 @@ fn main() {
         telora_service_source_parse telora_service_source_store telora_service_sources_seal
         telora_parse_data telora_json_write telora_json_parse telora_toml_parse telora_yaml_parse
         telora_float_remainder telora_register_source telora_source_index telora_static_source_index telora_source_retained telora_collect telora_heap_end telora_heap_bytes
-        telora_reserve_static telora_source_range telora_content_write telora_content_slice __heap_base __indirect_function_table";
+        telora_reserve_static telora_source_range telora_content_write telora_content_slice
+        telora_heap_address telora_heap_copy __heap_base __indirect_function_table";
     let status = Command::new(&linker)
         .args([
             "--no-entry",

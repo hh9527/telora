@@ -7,7 +7,7 @@ use crate::{
 use telora_sha256::Context;
 
 unsafe fn state(id: u32) -> &'static Context {
-    unsafe { &*(word(telora_table_get(table_address(HASHES), id), 0) as *const Context) }
+    unsafe { &*crate::heap::ptr::<Context>(word(telora_table_get(table_address(HASHES), id), 0)) }
 }
 
 #[unsafe(no_mangle)]
@@ -44,19 +44,19 @@ pub unsafe extern "C" fn telora_hash(operation: u32, a: u32, b: u32) -> u32 {
                 next.update(bytes);
             }
             4 => {
-                let bits = ((b + DATA as u32) as *const u64).read_unaligned();
+                let bits: u64 = crate::heap::read(b + DATA as u32);
                 next.update(&[3]);
                 next.update(&bits.to_be_bytes());
             }
             5 => {
                 let data = crate::telora_alloc(32);
-                core::ptr::copy_nonoverlapping(next.finish().as_ptr(), data as *mut u8, 32);
+                core::ptr::copy_nonoverlapping(next.finish().as_ptr(), crate::heap::ptr::<u8>(data), 32);
                 return data;
             }
             _ => core::arch::wasm32::unreachable(),
         }
         let pointer = crate::telora_alloc(core::mem::size_of::<Context>() as u32);
-        (pointer as *mut Context).write(next);
+        crate::heap::write(pointer, next);
         telora_table_push(
             table_address(HASHES),
             pointer,

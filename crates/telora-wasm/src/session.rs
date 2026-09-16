@@ -136,6 +136,7 @@ impl Session {
             let lines = source.lines.iter().flatten().flat_map(|word| word.to_le_bytes()).collect::<Vec<_>>();
             let pointer = self.allocate(name.len())?;
             self.write(pointer as usize, &name)?;
+            let pointer = self.output().address(pointer.into(), name.len() as u64)? as u32;
             let register = self
                 .instance
                 .get_typed_func::<(i32, i32, i32), i32>(&self.store, "telora_register_source")
@@ -153,6 +154,7 @@ impl Session {
             if !lines.is_empty() {
             let pointer = self.allocate(lines.len())?;
             self.write(pointer as usize, &lines)?;
+            let pointer = self.output().address(pointer.into(), lines.len() as u64)? as u32;
             self.instance.get_typed_func::<(u32, u32, u32), ()>(&self.store, "telora_source_index")
                 .map_err(|e| e.to_string())?
                 .call(&mut self.store, (id, pointer, (lines.len() / 8) as u32))

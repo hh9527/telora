@@ -609,10 +609,10 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
         (source.get(), "input.json"),
     ] {
         let span = lookup.call(&mut session.store, id as i32).unwrap() as usize;
-        let memory = session.memory.data(&session.store);
-        let pointer = u32::from_le_bytes(memory[span..span + 4].try_into().unwrap()) as usize;
-        let length = u32::from_le_bytes(memory[span + 4..span + 8].try_into().unwrap()) as usize;
-        assert_eq!(&memory[pointer..pointer + length], expected.as_bytes());
+        let output = session.output();
+        let pointer = u64::from(output.word(span as u64).unwrap());
+        let length = u64::from(output.word(span as u64 + 4).unwrap());
+        assert_eq!(output.bytes(pointer, length).unwrap(), expected.as_bytes());
     }
     assert_eq!(
         session.eval().unwrap(),
@@ -758,6 +758,8 @@ fn sealed_export_runs_without_mir_or_host_imports() {
         .get_typed_func::<(), i32>(&store, "telora_entry")
         .unwrap();
     let pointer = entry.call(&mut store, ()).unwrap() as usize;
+    let pointer = instance.get_typed_func::<u32, u32>(&store, "telora_heap_address").unwrap()
+        .call(&mut store, pointer as u32).unwrap() as usize;
     let memory = instance.get_memory(&store, "memory").unwrap();
     let bytes = memory.data(&store);
     assert_eq!(
@@ -839,7 +841,8 @@ fn typed_input_and_post_initialization_calls_keep_main_ids() {
         );
     }
     let after = session.memory.data(&session.store);
-    assert_eq!(&after[allocation..allocation + marker.len()], &marker);
+    assert!(session.output().bytes(allocation as u64, marker.len() as u64).unwrap() == marker,
+        "logical allocation must survive arena relocation");
     for table in 0..crate::abi::TABLE_COUNT as usize {
         let offset = table * crate::abi::TABLE_BYTES as usize + 12;
         assert_eq!(
@@ -886,6 +889,8 @@ fn language_functions_and_control_flow() {
         let pointer = entry.call(&mut store, ()).unwrap() as usize;
         assert_ne!(pointer, 0, "{source}");
         assert_eq!(entry.call(&mut store, ()).unwrap() as usize, pointer);
+        let pointer = instance.get_typed_func::<u32, u32>(&store, "telora_heap_address").unwrap()
+            .call(&mut store, pointer as u32).unwrap() as usize;
         let memory = instance.get_memory(&store, "memory").unwrap();
         let bytes = memory.data(&store);
         assert_eq!(
