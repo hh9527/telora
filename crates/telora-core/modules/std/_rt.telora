@@ -19,4 +19,6 @@ def with_diagnostics:
         -> Fn(A) -> Result(Tuple([R, Array(Diagnostic)]), Array(Diagnostic)) =
     fn(callable) { fn(argument) { call_with_diagnostics(callable, argument, (Diagnostic).type, (Severity).type, (Label).type, (SourceRange).type) } };
 
-export {Severity, SourcePoint, SourceRange, Label, Diagnostic, with_diagnostics};
+native service_reply: Fn(String, Bool, Array(Diagnostic)) -> String;
+
+export {Severity, SourcePoint, SourceRange, Label, Diagnostic, with_diagnostics, service_reply};

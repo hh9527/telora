@@ -16,6 +16,14 @@ static mut LENGTH: u32 = 0;
 static mut CAPACITY: u32 = 0;
 static mut FROZEN: u32 = 0;
 
+unsafe fn publish() {
+    unsafe {
+        let descriptor = crate::abi::SOURCE_REGISTRY as *mut u32;
+        descriptor.write(BUFFER);
+        descriptor.add(1).write(LENGTH);
+    }
+}
+
 pub(crate) unsafe fn freeze() {
     unsafe {
         FROZEN = LENGTH;
@@ -51,14 +59,13 @@ pub(crate) unsafe fn collect(gc: &mut crate::collect::Collector) {
             if index >= FROZEN && !gc.sources.contains(&source.id) {
                 continue;
             }
-            let pointer = if source.pointer < gc.base {
+            let pointer = if crate::heap::is_frozen(source.pointer) {
                 source.pointer
             } else {
-                let offset = gc.copy_bytes(source.pointer, source.length);
-                gc.base + offset
+                gc.copy_bytes(source.pointer, source.length)
             };
-            let lines = if source.lines < gc.base { source.lines } else {
-                gc.base + gc.copy_bytes(source.lines, source.line_count.checked_mul(8).unwrap())
+            let lines = if crate::heap::is_frozen(source.lines) { source.lines } else {
+                gc.copy_bytes(source.lines, source.line_count.checked_mul(8).unwrap())
             };
             gc.put(at + next * SOURCE_BYTES, source.id);
             gc.put(at + next * SOURCE_BYTES + 4, pointer);
@@ -67,9 +74,10 @@ pub(crate) unsafe fn collect(gc: &mut crate::collect::Collector) {
             gc.put(at + next * SOURCE_BYTES + 16, source.line_count);
             next += 1;
         }
-        BUFFER = gc.base + at;
+        BUFFER = at;
         LENGTH = retained;
         CAPACITY = retained;
+        publish();
     }
 }
 
@@ -113,6 +121,7 @@ pub unsafe extern "C" fn telora_register_source(id: u32, pointer: u32, length: u
             line_count: 0,
         });
         LENGTH += 1;
+        publish();
         1
     }
 }

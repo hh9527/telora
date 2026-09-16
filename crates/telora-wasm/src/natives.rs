@@ -45,6 +45,7 @@ impl Emitter<'_> {
             Some((24, "parse_raw")) => self.data_parse_native(YAML_PARSE),
             Some((20, name)) => self.format_native(name),
             Some((26, "call_with_diagnostics")) => self.capture_diagnostics(),
+            Some((26, "service_reply")) => self.service_reply_native(),
             Some((33, name)) => self.test_native(name),
             Some((18, "property")) => self.property_factory(),
             Some((

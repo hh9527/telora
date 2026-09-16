@@ -1,21 +1,12 @@
-//! JSON publishes spans directly. Original text remains in the VM arena; all
-//! escaped strings share a single decoded allocation with the same lifetime.
-use super::{origins::Origins, put, string_bytes};
+//! Publish retained text spans; external input buffers may be overwritten.
+use super::{origins::Origins, put, string_bytes, span_bits};
 use alloc::string::String;
 use telora_data::{
     DataLimits, SourceDatabase,
-    json::{self, JsonKind, text::TextSpan},
+    json::{self, JsonKind},
 };
 
-fn span_bits(span: TextSpan, source: u32, decoded: u32) -> u64 {
-    let (base, range) = match span {
-        TextSpan::Source(range) => (source, range),
-        TextSpan::Decoded(range) => (decoded, range),
-    };
-    u64::from(base + range.start as u32) | ((range.len() as u64) << 32)
-}
-
-pub(super) unsafe fn parse(input: &str, origins: &Origins) -> u32 {
+pub(super) unsafe fn parse(input: &str, origins: &Origins, borrowed: bool) -> u32 {
     let mut sources = SourceDatabase::default();
     // Dynamic parser errors carry messages; no source indexing is needed here.
     let source = sources.try_add_data("<json string>", String::new()).expect("empty source");
@@ -47,7 +38,7 @@ pub(super) unsafe fn parse(input: &str, origins: &Origins) -> u32 {
                 JsonKind::Bool(value) => (if value { 1 } else { 2 }, 0),
                 JsonKind::Int(value) => (3, value as u64),
                 JsonKind::Float(value) => (4, value.to_bits()),
-                JsonKind::String(span) => (5, span_bits(span, source_pointer, decoded_pointer)),
+                JsonKind::String(span) => (5, span_bits(span, source_pointer, decoded_pointer, borrowed)),
                 JsonKind::Array(items) => {
                     let count = items.len() as u32;
                     let entries = crate::telora_alloc(count.checked_mul(4).unwrap());
@@ -61,7 +52,7 @@ pub(super) unsafe fn parse(input: &str, origins: &Origins) -> u32 {
                     let entries = crate::telora_alloc(count.checked_mul(24).unwrap());
                     for (index, (key, field)) in fields.into_iter().enumerate() {
                         let entry = entries + index as u32 * 24;
-                        let bits = span_bits(key, source_pointer, decoded_pointer);
+                        let bits = span_bits(key, source_pointer, decoded_pointer, borrowed);
                         put(entry, 0, bits as u32);
                         put(entry, 4, (bits >> 32) as u32);
                         put(entry, 8, field.value.index() as u32);

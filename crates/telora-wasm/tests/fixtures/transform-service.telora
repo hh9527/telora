@@ -16,6 +16,10 @@ impl service.TransformService for Model {
             fail!("missing query", input)
         } else if input == Value.String("bytes") {
             Value.Bytes(b"unsupported")
+        } else if input == Value.String("warnings") {
+            let first: Option(Int) = warn!(blame!("first\nwarning é", input, self.prefix));
+            let second: Option(Int) = warn!(blame!("second warning", input, self.prefix));
+            Value.Bytes(b"unsupported")
         } else if input == Value.String("loop") {
             Value.Int(spin(0))
         } else if input == Value.String("grow") {

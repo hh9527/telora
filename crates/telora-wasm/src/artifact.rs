@@ -99,6 +99,7 @@ pub enum Kind {
 pub struct Source {
     pub id: u32,
     pub name: String,
+    #[serde(skip)]
     pub lines: Vec<[u32; 2]>,
 }
 

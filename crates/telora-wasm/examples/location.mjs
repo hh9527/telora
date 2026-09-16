@@ -11,7 +11,7 @@ export function location(words) {
   };
 }
 
-export function readLocation(sources, range) {
+export function readLocation(memory, range) {
   if (!Array.isArray(range) || range.length !== 3 ||
       range.some(n => !Number.isInteger(n) || n < 0 || n > 0xffffffff)) throw Error('无效的来源范围');
   const [id, start, end] = range;
@@ -19,16 +19,22 @@ export function readLocation(sources, range) {
     if (start || end) throw Error('无效的空来源');
     return [0, 0, 0, 0, 0];
   }
-  const source = sources.find(source => source.id === id);
-  if (!source?.lines?.length || start > end || end > source.lines.at(-1)[1]) throw Error('来源范围越界');
+  const word = address => memory.getUint32(address, true);
+  const registry = word(32), entries = word(36);
+  let lines = 0, count = 0;
+  for (let i = 0; i < entries; i++) {
+    const record = registry + i * 20;
+    if (word(record) === id) { lines = word(record + 12); count = word(record + 16); break; }
+  }
+  if (!count || start > end || end > word(lines + (count - 1) * 8 + 4)) throw Error('来源范围越界');
   const point = byte => {
-    let lo = 0, hi = source.lines.length;
+    let lo = 0, hi = count;
     while (lo < hi) {
       const mid = lo + Math.floor((hi - lo) / 2);
-      if (source.lines[mid][0] <= byte) lo = mid + 1; else hi = mid;
+      if (word(lines + mid * 8) <= byte) lo = mid + 1; else hi = mid;
     }
     if (!lo) throw Error('无效的来源索引');
-    const [start, end] = source.lines[lo - 1];
+    const start = word(lines + (lo - 1) * 8), end = word(lines + (lo - 1) * 8 + 4);
     return [lo - 1, Math.min(byte, end) - start];
   };
   return [id, ...point(start), ...point(end)];

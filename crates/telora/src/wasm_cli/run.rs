@@ -1,8 +1,7 @@
 //! One static service entry, driven once or by a JSONL input stream.
 use super::*;
 use std::io::{BufRead, Write};
-use telora_core::data_plan::Format;
-use telora_wasm::transform_service::{SourceInput, TransformSession};
+use telora_wasm::transform_service::TransformSession;
 
 pub(crate) fn execute(
     context: PathBuf,
@@ -68,20 +67,8 @@ pub(crate) fn execute(
     }
     crate::source_arg::reject_stdin_sources(&arguments.sources)?;
     let limits = crate::execution_config_for(inventory.runtime_options())?.data_limits;
-    let sources = crate::source_arg::collect_service_sources(arguments.sources, limits.file_size)?;
-    let inputs = sources
-        .iter()
-        .map(|(name, input)| SourceInput {
-            name,
-            data: input.text.as_bytes(),
-            format: match input.format {
-                telora_core::SystemDataFormat::Json => Format::Json,
-                telora_core::SystemDataFormat::Yaml => Format::Yaml,
-                telora_core::SystemDataFormat::Toml => Format::Toml,
-            },
-        })
-        .collect::<Vec<_>>();
-    let initialization = service.initialize(&inputs)?;
+    let sources = crate::source_arg::service_source_readers(arguments.sources);
+    let initialization = service.initialize_readers(sources, limits.file_size)?;
     for diagnostic in initialization.diagnostics.as_array().into_iter().flatten() {
         emit_diagnostic(diagnostic)?;
     }
@@ -101,13 +88,15 @@ pub(crate) fn execute(
         if let Some(report) = usage_reporter {
             report(service.usage());
         }
-        for diagnostic in response["diagnostics"].as_array().into_iter().flatten() {
+        let reply: Reply<'_> = serde_json::from_slice(&response).map_err(|e| e.to_string())?;
+        if reply.schema != "telora.service/v1" { return Err("invalid service response schema".into()); }
+        for diagnostic in &reply.diagnostics {
             emit_diagnostic(diagnostic)?;
         }
-        if response["error"] == true {
+        if reply.error {
             return Ok(1);
         }
-        crate::emit(response["ok"].clone())?;
+        write_json(reply.ok.get().as_bytes())?;
         return Ok(0);
     }
     let mut reader = stdin.lock();
@@ -135,7 +124,7 @@ pub(crate) fn execute(
             break;
         }
         let response = if oversized {
-            failure("request exceeds file_size limit")
+            failure_bytes("request exceeds file_size limit")
         } else {
             let response = transform(&mut service, &bytes);
             if let Some(report) = usage_reporter {
@@ -143,13 +132,27 @@ pub(crate) fn execute(
             }
             response
         };
-        crate::emit(response)?;
+        write_json(&response)?;
         std::io::stdout().flush().map_err(|e| e.to_string())?;
     }
     Ok(0)
 }
 
-fn transform(service: &mut TransformSession, input: &[u8]) -> serde_json::Value {
+#[derive(serde::Deserialize)]
+struct Reply<'a> {
+    schema: &'a str,
+    #[serde(borrow)]
+    ok: &'a serde_json::value::RawValue,
+    error: bool,
+    diagnostics: Vec<serde_json::Value>,
+}
+
+fn write_json(bytes: &[u8]) -> Result<(), String> {
+    let mut out = std::io::stdout().lock();
+    out.write_all(bytes).and_then(|_| out.write_all(b"\n")).map_err(|e| e.to_string())
+}
+
+fn transform(service: &mut TransformSession, input: &[u8]) -> Vec<u8> {
     let result = (|| {
         {
             let _timer = PhaseTimer::new("request_reset");
@@ -164,14 +167,14 @@ fn transform(service: &mut TransformSession, input: &[u8]) -> serde_json::Value 
     })();
     match result {
         Ok(response) => response,
-        Err(error) => failure(&error),
+        Err(error) => failure_bytes(&error),
     }
 }
 
-fn failure(message: &str) -> serde_json::Value {
-    serde_json::json!({"schema":"telora.service/v1","ok":null,"error":true,"diagnostics":[{
+fn failure_bytes(message: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({"schema":"telora.service/v1","ok":null,"error":true,"diagnostics":[{
         "severity":"Error", "message":message, "labels":[], "notes":[]
-    }]})
+    }]})).expect("serializable service failure")
 }
 
 fn emit_diagnostic(diagnostic: &serde_json::Value) -> Result<(), String> {

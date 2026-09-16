@@ -42,11 +42,41 @@ fn initialize(service: &mut TransformSession) {
 }
 
 #[test]
+fn source_readers_grow_reuse_and_enforce_exact_byte_limit() {
+    use crate::transform_service::SourceReader;
+    use std::io::Cursor;
+    let bytes = artifact();
+    // a survives overwrite by a larger b; b forces more than one realloc.
+    let first = br#"{"plain":"retained","escaped":"a\nb"}"#;
+    let mut second = vec![b' '; 32768];
+    second.extend_from_slice(b"null");
+    for limit in [second.len(), second.len() - 1] {
+        let mut service = TransformSession::new(Session::load(&bytes, 100_000_000).unwrap()).unwrap();
+        let result = service.initialize_readers([
+            Ok(SourceReader { name: "a".into(), reader: Box::new(Cursor::new(first)), format: Format::Json }),
+            Ok(SourceReader { name: "b".into(), reader: Box::new(Cursor::new(&second)), format: Format::Json }),
+        ], limit);
+        if limit < second.len() {
+            assert!(result.err().unwrap().contains("file_size limit"));
+            assert!(service.seal_initialization().is_err());
+        } else {
+            assert!(result.unwrap().success);
+            service.seal_initialization().unwrap();
+            service.reset().unwrap();
+            let reply = transform(&mut service, b"7").unwrap();
+            assert_eq!(reply["ok"], serde_json::json!([
+                {"plain":"retained","escaped":"a\nb"}, 7
+            ]));
+        }
+    }
+}
+
+#[test]
 fn parser_diagnostics_preserve_individual_errors_and_relative_coordinates() {
     let bytes = artifact();
     let mut service = TransformSession::new(Session::load(&bytes, 10_000_000).unwrap()).unwrap();
     initialize(&mut service);
-    let output = service.transform(br#"{"x":1,"x":2,"y":1,"y":2}"#).unwrap();
+    let output = transform(&mut service, br#"{"x":1,"x":2,"y":1,"y":2}"#).unwrap();
     assert_eq!(output["error"], true);
     let errors = output["diagnostics"].as_array().unwrap();
     assert_eq!(errors.len(), 2, "{output}");
@@ -55,7 +85,7 @@ fn parser_diagnostics_preserve_individual_errors_and_relative_coordinates() {
         assert!(error["notes"].as_array().unwrap().iter().any(|note|
             note.as_str().unwrap().contains("input range (UTF-8 bytes):")));
     }
-    assert_eq!(service.transform(b"7").unwrap()["ok"], serde_json::json!([42, 7]));
+    assert_eq!(transform(&mut service, b"7").unwrap()["ok"], serde_json::json!([42, 7]));
 }
 
 #[test]
@@ -89,11 +119,22 @@ fn static_service_initializes_and_captures_each_request() {
     let mut service = TransformSession::new(Session::load(&bytes, 10_000_000).unwrap()).unwrap();
     assert_eq!(service.sources(), ["a", "b"]);
     initialize(&mut service);
-    for input in ["1", "null", "2"] {
+    for input in ["1", "null", "\"warnings\"", "2"] {
         service.reset().unwrap();
-        let output = service.transform(input.as_bytes()).unwrap();
+        let output = transform(&mut service, input.as_bytes()).unwrap();
         assert_eq!(output["schema"], "telora.service/v1");
-        if input == "null" {
+        if input == "\"warnings\"" {
+            assert_eq!(output["error"], true);
+            let diagnostics = output["diagnostics"].as_array().unwrap();
+            assert_eq!(diagnostics.len(), 3);
+            assert_eq!(diagnostics[0]["message"], "first\nwarning é");
+            assert_eq!(diagnostics[1]["message"], "second warning");
+            for diagnostic in &diagnostics[..2] {
+                assert_eq!(diagnostic["severity"], "Warning");
+                assert!(diagnostic["labels"].as_array().unwrap().len() >= 2);
+            }
+            assert_eq!(diagnostics[2]["severity"], "Error");
+        } else if input == "null" {
             assert_eq!(output["diagnostics"][0]["message"], "missing query");
             assert!(
                 !output["diagnostics"][0]["labels"]
@@ -122,7 +163,7 @@ fn reset_restores_initialized_service_after_fuel_and_memory_traps() {
         if input == "loop" {
             service.session_mut().store.set_fuel(100_000).unwrap();
         }
-        let result = service.transform(format!("\"{input}\"").as_bytes());
+        let result = transform(&mut service, format!("\"{input}\"").as_bytes());
         match input {
             "loop" => assert!(result.unwrap_err().contains("fuel")),
             "grow" => assert!(result.unwrap_err().contains("growth")),
@@ -138,7 +179,7 @@ fn reset_restores_initialized_service_after_fuel_and_memory_traps() {
         }
         size = Some(current);
         assert_eq!(
-            service.transform(b"42").unwrap()["ok"],
+            transform(&mut service, b"42").unwrap()["ok"],
             serde_json::json!([42, 42])
         );
     }
@@ -165,5 +206,10 @@ fn source_parse_failure_returns_guest_diagnostics_and_cannot_publish_a_baseline(
     assert!(!result.success);
     assert!(result.diagnostics.to_string().contains("@service/a"));
     assert!(service.seal_initialization().is_err());
-    assert!(service.transform(b"42").is_err());
+    assert!(transform(&mut service, b"42").is_err());
+}
+
+fn transform(service: &mut TransformSession, input: &[u8]) -> Result<serde_json::Value, String> {
+    let bytes = service.transform(input)?;
+    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
 }

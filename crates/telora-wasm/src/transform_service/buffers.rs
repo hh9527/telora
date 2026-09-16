@@ -2,10 +2,7 @@
 use crate::session::Session;
 
 pub(super) fn alloc(session: &mut Session, cap: u32, align: u32) -> Result<u32, String> {
-    session
-        .instance
-        .get_typed_func::<(u32, u32), u32>(&session.store, "mem-alloc")
-        .map_err(|e| e.to_string())?
+    session.exports.alloc
         .call(&mut session.store, (cap, align))
         .map_err(|e| e.to_string())
 }
@@ -16,10 +13,7 @@ pub(super) fn free(
     cap: u32,
     align: u32,
 ) -> Result<(), String> {
-    session
-        .instance
-        .get_typed_func::<(u32, u32, u32), ()>(&session.store, "mem-free")
-        .map_err(|e| e.to_string())?
+    session.exports.free
         .call(&mut session.store, (pointer, cap, align))
         .map_err(|e| e.to_string())
 }
@@ -49,7 +43,7 @@ pub(super) fn bytes(session: &Session, pointer: u32, length: u32) -> Result<Vec<
 }
 
 /// Consume returned ownership before any reset can reclaim the allocation.
-pub(super) fn response(session: &mut Session, result: u32) -> Result<serde_json::Value, String> {
+pub(super) fn response(session: &mut Session, result: u32) -> Result<Vec<u8>, String> {
     let [pointer, length, cap] = words(session, result)?;
     if length > cap {
         return Err("service output length exceeds capacity".into());
@@ -57,5 +51,5 @@ pub(super) fn response(session: &mut Session, result: u32) -> Result<serde_json:
     let bytes = bytes(session, pointer, length)?;
     free(session, pointer, cap, 1)?;
     free(session, result, 12, 4)?;
-    serde_json::from_slice(&bytes).map_err(|e| format!("invalid service JSON response: {e}"))
+    Ok(bytes)
 }

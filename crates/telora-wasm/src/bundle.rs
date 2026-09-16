@@ -36,14 +36,9 @@ fn validate(modules: &[ModuleData], manifest: &Manifest) -> Result<(), String> {
         if module.source.id == 0 || !(1..=3).contains(&module.format) {
             return Err("Wasm: invalid bundled source or format".into());
         }
-        let lines = telora_core::source::LineIndex::new(&module.text)
-            .map_err(|error| format!("Wasm: invalid bundled source: {error}"))?;
-        if !lines.ranges().eq(module.source.lines.iter().copied()) {
-            return Err("Wasm: bundled source index does not match input bytes".into());
-        }
         if manifest.sources.iter().chain(modules.iter().map(|item| &item.source))
             .any(|source| source.id == module.source.id
-                && (source.name != module.source.name || source.lines != module.source.lines)) {
+                && source.name != module.source.name) {
             return Err("Wasm: bundled source identity conflict".into());
         }
     }
@@ -63,7 +58,7 @@ pub fn build(
             .ok_or("Wasm: bundle source is not registered")?;
         modules.push(ModuleData {
             symbol: *symbol,
-            source: Source::from_file(file),
+            source: Source { id: file.id().get(), name: file.name.to_string(), lines: Vec::new() },
             format: match format { Format::Json => 1, Format::Yaml => 2, Format::Toml => 3 },
             text: file.text().contiguous().ok_or("Wasm: bundle input requires contiguous text")?.to_owned(),
         });

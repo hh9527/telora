@@ -71,6 +71,8 @@ fn source_indexes_preserve_original_eol_byte_ranges() {
         let id = database.add("test", &text);
         let file = database.get(id);
         let source = crate::artifact::Source::from_file(file);
+        assert!(serde_json::to_value(&source).unwrap().get("lines").is_none(),
+            "BOLs belong only to Guest storage, not the serialized manifest");
         let loc = telora_core::Loc::from_usize(id, "中文".len()..text.find("next").unwrap() + 4).unwrap();
         let packed = file.coordinates(loc);
         assert_eq!(source.position(packed.start()), (1, 7));

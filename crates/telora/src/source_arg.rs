@@ -1,7 +1,5 @@
-use std::collections::BTreeMap;
 use std::fs;
-use std::io;
-use telora_core::{ServiceSource, SystemDataFormat, SystemDataSource};
+use telora_core::{SystemDataFormat, SystemDataSource};
 
 #[derive(Clone)]
 pub(crate) struct NamedSource {
@@ -86,51 +84,27 @@ pub(crate) fn parse_named_source(value: &str) -> Result<NamedSource, String> {
     })
 }
 
-pub(crate) fn collect_service_sources(
-    sources: Vec<NamedSource>,
-    max_bytes: usize,
-) -> Result<BTreeMap<String, ServiceSource>, String> {
-    let mut collected = BTreeMap::new();
-    let mut read_stdin = false;
-    for source in sources {
-        if collected.contains_key(&source.name) {
-            return Err(format!(
-                "source {:?} was provided more than once",
-                source.name
-            ));
+pub(crate) fn service_source_readers(
+    mut sources: Vec<NamedSource>,
+) -> impl Iterator<Item = Result<telora_wasm::transform_service::SourceReader<'static>, String>> {
+    sources.sort_by(|a, b| a.name.cmp(&b.name));
+    sources.into_iter().map(|source| {
+        if is_stdin_source(&source.source.src) {
+            return Err("service reserves stdin for request input".into());
         }
-        let public_name = service_source_name(&source.name);
-        let description = format!("service source {public_name:?}");
         let locator = source.source.src.as_str();
-        let bytes = if let Some((scheme, location)) = locator.split_once("://") {
-            if scheme.starts_with("stdin+") {
-                if read_stdin {
-                    return Err("standard input can provide at most one named source".into());
-                }
-                read_stdin = true;
-                read_limited(io::stdin().lock(), max_bytes, &description)?
-            } else {
-                let file = fs::File::open(location)
-                    .map_err(|error| format!("cannot read {description}: {error}"))?;
-                read_limited(file, max_bytes, &description)?
-            }
-        } else {
-            let file = fs::File::open(locator)
-                .map_err(|error| format!("cannot read {description}: {error}"))?;
-            read_limited(file, max_bytes, &description)?
+        let path = locator.split_once("://").map_or(locator, |(_, path)| path);
+        let file = fs::File::open(path)
+            .map_err(|error| format!("cannot read service source {:?}: {error}", source.name))?;
+        let format = match source.source.format {
+            SystemDataFormat::Json => telora_core::data_plan::Format::Json,
+            SystemDataFormat::Yaml => telora_core::data_plan::Format::Yaml,
+            SystemDataFormat::Toml => telora_core::data_plan::Format::Toml,
         };
-        let text = String::from_utf8(bytes)
-            .map_err(|error| format!("service source is not UTF-8: {error}"))?;
-        collected.insert(
-            source.name,
-            ServiceSource {
-                source_name: public_name,
-                format: source.source.format,
-                text,
-            },
-        );
-    }
-    Ok(collected)
+        Ok(telora_wasm::transform_service::SourceReader {
+            name: source.name, reader: Box::new(file), format,
+        })
+    })
 }
 
 pub(crate) use telora::static_input::read_limited;
@@ -145,17 +119,4 @@ pub(crate) fn service_source_names(sources: &[NamedSource]) -> Result<Vec<String
         return Err("an service source name was provided more than once".into());
     }
     Ok(names)
-}
-
-fn service_source_name(key: &str) -> String {
-    let mut encoded = String::with_capacity(key.len());
-    for byte in key.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
-            encoded.push(char::from(byte));
-        } else {
-            use std::fmt::Write;
-            write!(encoded, "%{byte:02X}").expect("writing to String cannot fail");
-        }
-    }
-    format!("@service/{encoded}")
 }

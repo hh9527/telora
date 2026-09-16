@@ -2,6 +2,7 @@
 use crate::{artifact::Manifest, session::Session};
 use telora_core::data_plan::Format;
 mod buffers;
+mod input;
 
 struct Baseline {
     memory: Vec<u8>,
@@ -14,6 +15,13 @@ struct Baseline {
 pub struct SourceInput<'a> {
     pub name: &'a str,
     pub data: &'a [u8],
+    pub format: Format,
+}
+
+/// Opened lazily by the Host; bytes are read directly into Guest memory.
+pub struct SourceReader<'a> {
+    pub name: String,
+    pub reader: Box<dyn std::io::Read + 'a>,
     pub format: Format,
 }
 
@@ -33,17 +41,11 @@ pub struct TransformSession {
 
 impl TransformSession {
     pub fn new(mut session: Session) -> Result<Self, String> {
-        let count = session
-            .instance
-            .get_typed_func::<(), u32>(&session.store, "get-data-source-count")
-            .map_err(|e| e.to_string())?
+        let count = session.exports.source_count
             .call(&mut session.store, ())
             .map_err(|e| e.to_string())?;
         let result = buffers::alloc(&mut session, 12, 4)?;
-        let get = session
-            .instance
-            .get_typed_func::<(u32, u32), ()>(&session.store, "get-data-source-name")
-            .map_err(|e| e.to_string())?;
+        let get = session.exports.source_name;
         let mut sources = Vec::new();
         let mut source_ids = Vec::new();
         for index in 0..count {
@@ -86,37 +88,33 @@ impl TransformSession {
     }
 
     pub fn initialize(&mut self, sources: &[SourceInput<'_>]) -> Result<Initialization, String> {
+        self.initialize_readers(sources.iter().map(|source| Ok(SourceReader {
+            name: source.name.to_owned(),
+            reader: Box::new(std::io::Cursor::new(source.data)),
+            format: source.format,
+        })), u32::MAX as usize)
+    }
+
+    pub fn initialize_readers<'a>(
+        &mut self,
+        sources: impl IntoIterator<Item = Result<SourceReader<'a>, String>>,
+        max_bytes: usize,
+    ) -> Result<Initialization, String> {
         if self.poisoned || self.ready {
             return Err("service initialization cannot be repeated".into());
         }
-        if self
-            .sources
-            .iter()
-            .map(String::as_str)
-            .ne(sources.iter().map(|source| source.name))
-        {
-            return Err("service sources do not match declared sources".into());
-        }
         self.poisoned = true;
-        let cap = u32::try_from(
-            sources
-                .iter()
-                .map(|source| source.data.len())
-                .max()
-                .unwrap_or(0),
-        )
-        .map_err(|_| "service source exceeds wasm32")?;
-        let pointer = buffers::alloc(&mut self.session, cap, 1)?;
-        let set = self
-            .session
-            .instance
-            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.session.store, "set-data-source")
-            .map_err(|e| e.to_string())?;
-        for (source, &id) in sources.iter().zip(&self.source_ids) {
-            self.session
-                .memory
-                .write(&mut self.session.store, pointer as usize, source.data)
-                .map_err(|e| e.to_string())?;
+        let mut buffer = input::TransferBuffer::new();
+        let set = self.session.exports.set_source;
+        let mut supplied = 0;
+        for source in sources {
+            let mut source = source?;
+            if self.sources.get(supplied) != Some(&source.name) {
+                return Err("service sources do not match declared sources".into());
+            }
+            let id = self.source_ids[supplied];
+            let length = buffer.read(&mut self.session, &mut source.reader, max_bytes)
+                .map_err(|error| format!("service source {:?}: {error}", source.name))?;
             let format = match source.format {
                 Format::Json => 1,
                 Format::Yaml => 2,
@@ -124,16 +122,16 @@ impl TransformSession {
             };
             set.call(
                 &mut self.session.store,
-                (id, pointer, source.data.len() as u32, format),
+                (id, buffer.pointer, length, format),
             )
             .map_err(|e| e.to_string())?;
+            supplied += 1;
         }
-        buffers::free(&mut self.session, pointer, cap, 1)?;
-        let status = self
-            .session
-            .instance
-            .get_typed_func::<(), i32>(&self.session.store, "create-service")
-            .map_err(|e| e.to_string())?
+        buffer.free(&mut self.session)?;
+        if supplied != self.sources.len() {
+            return Err("service sources do not match declared sources".into());
+        }
+        let status = self.session.exports.create_service
             .call(&mut self.session.store, ())
             .map_err(|e| e.to_string())?;
         let diagnostics = self.initialization_diagnostics()?;
@@ -148,13 +146,12 @@ impl TransformSession {
 
     fn initialization_diagnostics(&mut self) -> Result<serde_json::Value, String> {
         let result = buffers::alloc(&mut self.session, 12, 4)?;
-        self.session
-            .instance
-            .get_typed_func::<(u32, u32, u32), ()>(&self.session.store, "get-service-diagnostics")
-            .map_err(|e| e.to_string())?
+        self.session.exports.diagnostics
             .call(&mut self.session.store, (1, 0, result))
             .map_err(|e| e.to_string())?;
-        let diagnostics = buffers::response(&mut self.session, result)?;
+        let bytes = buffers::response(&mut self.session, result)?;
+        let diagnostics: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("invalid initialization diagnostics: {e}"))?;
         if !diagnostics.is_array() {
             return Err("invalid initialization diagnostic response".into());
         }
@@ -244,6 +241,8 @@ impl TransformSession {
         store
             .set_fuel(self.session.fuel_budget)
             .map_err(|e| e.to_string())?;
+        let exports = crate::session::exports::Exports::bind(instance, &store)?;
+        self.session.exports = exports;
         self.session.store = store;
         self.session.instance = instance;
         self.session.memory = memory;
@@ -254,7 +253,7 @@ impl TransformSession {
         Ok(())
     }
 
-    pub fn transform(&mut self, input: &[u8]) -> Result<serde_json::Value, String> {
+    pub fn transform(&mut self, input: &[u8]) -> Result<Vec<u8>, String> {
         if !self.ready || self.poisoned {
             return Err("service requires initialization or reset".into());
         }
@@ -266,10 +265,7 @@ impl TransformSession {
             .write(&mut self.session.store, pointer as usize, input)
             .map_err(|e| e.to_string())?;
         let result = buffers::alloc(&mut self.session, 12, 4)?;
-        self.session
-            .instance
-            .get_typed_func::<(u32, u32, u32, u32, u32), ()>(&self.session.store, "run-service")
-            .map_err(|e| e.to_string())?
+        self.session.exports.run_service
             .call(&mut self.session.store, (pointer, length, 1, 0, result))
             .map_err(|e| e.to_string())?;
         // No free after a trap: the next reset discards the entire failed instance.

@@ -4,7 +4,9 @@ use telora_core::data_plan::Format;
 
 impl Session {
     pub fn parse_data_source(&mut self, file: &telora_core::source::SourceFile, format: Format) -> Result<Result<Value, serde_json::Value>, String> {
-        let source = crate::artifact::Source::from_file(file);
+        let source = crate::artifact::Source {
+            id: file.id().get(), name: file.name.to_string(), lines: Vec::new(),
+        };
         if let Some(existing) = self.manifest.sources.iter().find(|item| item.id == source.id) {
             if existing.name != source.name {
                 return Err("Wasm: input source identity conflict".into());
@@ -26,10 +28,8 @@ impl Session {
         }
         let length = u32::try_from(input.len()).map_err(|_| "Wasm: input size exceeds wasm32")?;
         let cap = length;
-        let alloc = self.instance.get_typed_func::<(u32, u32), u32>(&self.store, "mem-alloc")
-            .map_err(|e| e.to_string())?;
-        let free = self.instance.get_typed_func::<(u32, u32, u32), ()>(&self.store, "mem-free")
-            .map_err(|e| e.to_string())?;
+        let alloc = self.exports.alloc;
+        let free = self.exports.free;
         let parse = self.instance.get_typed_func::<(u32, u32, u32, u32), u32>(&self.store, "telora_parse_data")
             .map_err(|e| e.to_string())?;
         let materialize = self.instance.get_typed_func::<(u32, u32), u32>(&self.store, "telora_materialize_data")

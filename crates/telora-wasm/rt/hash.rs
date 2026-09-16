@@ -4,7 +4,6 @@ use crate::{
     tables::{telora_table_get, telora_table_push},
     values::word,
 };
-use alloc::boxed::Box;
 use telora_sha256::Context;
 
 unsafe fn state(id: u32) -> &'static Context {
@@ -58,7 +57,8 @@ pub unsafe extern "C" fn telora_hash(operation: u32, a: u32, b: u32) -> u32 {
             }
             _ => core::arch::wasm32::unreachable(),
         }
-        let pointer = Box::into_raw(Box::new(next)) as u32;
+        let pointer = crate::telora_alloc(core::mem::size_of::<Context>() as u32);
+        (pointer as *mut Context).write(next);
         telora_table_push(
             table_address(HASHES),
             pointer,

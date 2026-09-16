@@ -8,7 +8,7 @@ use telora_core::mir::TypeId;
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
-    fn json_write(&mut self, op: i32, writer: u32, argument: u32) -> u32 {
+    pub(crate) fn json_write(&mut self, op: i32, writer: u32, argument: u32) -> u32 {
         let result = self.local(ValType::I32);
         self.extend([
             I::I32Const(op),
@@ -19,7 +19,7 @@ impl Emitter<'_> {
         ]);
         result
     }
-    fn json_immediate(&mut self, op: i32, writer: u32, argument: i32) {
+    pub(crate) fn json_immediate(&mut self, op: i32, writer: u32, argument: i32) {
         self.extend([
             I::I32Const(op),
             I::LocalGet(writer),

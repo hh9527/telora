@@ -21,16 +21,33 @@ impl Output<'_> {
             return if start == 0 && end == 0 { Ok(None) } else { Err("Wasm: invalid empty origin".into()) };
         }
         if start > end { return Err("Wasm: invalid source range".into()); }
-        let source = self.manifest.sources.iter().find(|source| source.id == id)
-            .ok_or("Wasm: missing source metadata")?;
+        let registry = self.word(SOURCE_REGISTRY as u64)? as u64;
+        let count = self.word(SOURCE_REGISTRY as u64 + 4)?;
+        let mut index = None;
+        for i in 0..count {
+            let record = registry + u64::from(i) * 20;
+            if self.word(record)? == id {
+                index = Some((self.word(record + 12)? as u64, self.word(record + 16)?));
+                break;
+            }
+        }
+        let (lines, count) = index.ok_or("Wasm: missing source metadata")?;
+        if count == 0 { return Err("Wasm: missing source index".into()); }
+        self.bytes(lines, u64::from(count) * 8)?;
         let point = |byte: u32| -> Result<(u32, u32), String> {
-            if byte > source.lines.last().ok_or("Wasm: missing source index")?[1] {
+            if byte > self.word(lines + u64::from(count - 1) * 8 + 4)? {
                 return Err("Wasm: source offset out of range".into());
             }
-            let line = source.lines.partition_point(|range| range[0] <= byte)
-                .checked_sub(1).ok_or("Wasm: invalid source index")?;
-            let [start, end] = source.lines[line];
-            Ok((line as u32, byte.min(end) - start))
+            let (mut lo, mut hi) = (0, count);
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if self.word(lines + u64::from(mid) * 8)? <= byte { lo = mid + 1; }
+                else { hi = mid; }
+            }
+            let line = lo.checked_sub(1).ok_or("Wasm: invalid source index")?;
+            let start = self.word(lines + u64::from(line) * 8)?;
+            let end = self.word(lines + u64::from(line) * 8 + 4)?;
+            Ok((line, byte.min(end) - start))
         };
         let (sl, so) = point(start)?;
         let (el, eo) = point(end)?;

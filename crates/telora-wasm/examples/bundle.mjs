@@ -15,7 +15,7 @@ export function injectBundle(module, manifest, {wasm}) {
         || typeof source.name !== 'string' || !source.name.isWellFormed()
         || ![1,2,3].includes(format) || typeof text !== 'string' || !text.isWellFormed()) throw Error('无效数据来源或格式');
     const previous = sources.get(source.id);
-    if (previous && (previous.name !== source.name || JSON.stringify(previous.lines) !== JSON.stringify(source.lines))) throw Error('数据来源冲突');
+    if (previous && previous.name !== source.name) throw Error('数据来源冲突');
     sources.set(source.id, source);
   }
   const bytes = data => {

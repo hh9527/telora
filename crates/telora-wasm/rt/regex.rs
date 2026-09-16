@@ -52,6 +52,10 @@ pub(crate) unsafe fn pattern(pointer: u32) -> &'static str {
     unsafe { &(*(pointer as *const Compiled)).pattern }
 }
 
+pub(crate) unsafe fn release(pointer: u32) {
+    unsafe { drop(Box::from_raw(pointer as *mut Compiled)); }
+}
+
 pub(crate) fn restore(pattern: &str) -> crate::tables::Slot {
     let compiled = compile(pattern).expect("previously validated regex");
     crate::tables::Slot { payload: Box::into_raw(Box::new(compiled)) as u32,

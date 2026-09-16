@@ -62,6 +62,7 @@ mod input_heap;
 mod input_types;
 mod interpreters;
 mod json_ops;
+mod service_reply;
 mod compose;
 mod template;
 mod local_instances;

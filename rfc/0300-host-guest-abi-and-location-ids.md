@@ -87,9 +87,13 @@ Host 必须传递真实分配的容量及对齐。Guest 检查 Layout、指针�
 - 从零容量扩容等价于分配；收缩到零容量释放原分配并返回 align。
   如需改变对齐，调用者显式分配、复制和释放。
 
-这些函数和 Guest 的 Vec/String 使用同一套 Rust 全局分配器。底层 arena 分配原语
-只供全局分配器调用；不建立另一套 Host 专用分配器。free 是否立即回收物理空间
-取决于全局分配器策略，现阶段仍按 arena 生命周期整体回收。
+这些函数只是把 wasm32-unknown-unknown 标准库默认分配器暴露给 Host，
+和 Guest 的 Vec/String 使用同一套分配器；不自定义全局分配器，也不建立 Host
+专用分配器。free 将块交还分配器供后续分配复用，但不意味着 Wasm 线性内存缩页。
+语言堆独立记录 main/work 块的所有权，复制回收后释放旧 work 块，
+不再通过地址大小推断归属或直接覆盖分配器管理的空间。
+语言小对象共用 std 分配的 32 KiB 零初始化块；需要新块时，大于 8 KiB 的请求按需分配，
+避免每个标量都调用全局分配器；main/work 所有权和 Host 分配互不混用。
 
 只有明确 move 的接口才允许接收方重建拥有所有权的 Rust 容器。重建 Vec<T> 时，
 实际分配布局须与 T 的对齐和元素容量一致，所有有效元素均已初始化；
@@ -121,6 +125,10 @@ Host 不跨 Guest 调用保存依赖旧 memory.buffer 的视图：Guest 调用�
 3. Host 调用 mem-alloc，将内容写入 Guest 线性内存。
 4. Host 调用 set-data-source，Guest 同步解析并构建数据，把 src/start/end 直接写入 key/value 的来源字段。
 5. 返回后 Host 可重写同一传输缓冲区以注入下一个来源，最后统一释放；Guest 不保留对该传输缓冲区的借用。
+   CLI 逐个打开文件，直接读入 Guest 线性内存中的同一缓冲区；容量不足时通过
+   mem-realloc 扩容，每次 Guest 调用后重新取得内存视图。不先在 Host 累积文件全文。
+   解析阶段借用输入；发布时仅保留最终字符串/key、解码文本和 BOL 索引，
+   不复制或保留完整源码。普通语言字符串解析可以继续引用 Guest 已持有的输入。
 6. 所有必要来源注入成功后 create-service 完成初始化，返回 0 表示成功，非 0 表示失败。
 7. 初始化成功后 Host 多次调用 run-service，复用输出缓冲区。
 
@@ -183,6 +191,10 @@ Test 构造按产生值处理，不维护全局调用位置。
 
 只保留按 SourceId 索引的来源名称、文本长度及换行索引，不保留逐位置 Locs 表。
 静态源码的名称和 BOLs 随 Wasm 生成，来源记录直接引用静态区，不复制到动态堆。
+ABI 21 不再在 JSON manifest 中重复存储 BOLs。Host 的诊断/debug 读取 Guest
+来源记录的只读视图：线性内存 32/36 为记录数组地址/长度，每条记录为
+id、名称地址、名称长度、行索引地址、行数五个 u32；记录数组可因回收而移动，
+因此不能跨 Guest 调用缓存指针。行索引仍只有 Guest 中的一份。
 data-source 在 Guest 解析输入时建立 BOLs，保存在与 data-source-index 关联的来源记录中；
 动态索引由 Guest 持有，生命周期随数据源，不借用 Host 的传输缓冲区。
 转换规则识别 LF、CRLF、单独 CR 为一次换行，CRLF 内部边界映射到前一行末尾。
@@ -234,8 +246,10 @@ run-service 输入是 UTF-8 JSON，表示一个 std/value.Value；输出也是 U
 诊断遵循 std/_rt.Diagnostic 的封闭结构，包含完整 SourcePoint，不传递打包坐标。
 返回长度界定 JSON 文本，不附加 NUL 或 JSONL 换行；流式 Host 自行添加行分隔。
 
-内置语言 entry 使用 with_diagnostics 捕获转换诊断，并通过已封闭类型的 codec 和
-json.stringify 生成响应。Host 只解析协议文本，不读取服务值、拆解 Result 或重建诊断。
+内置语言 entry 使用 with_diagnostics 同时捕获转换及 json.stringify 的诊断。
+结果只编码一次；响应写入器按已封闭的诊断布局直接生成协议 JSON，
+不再构造 Reply 再经 codec 转换为 Value。serve 直接转发响应字节；run 只解析
+协议外壳与诊断，原样输出 ok 的 JSON 片段，不重建结果树。
 Wasm trap 不保证产生响应，由 Host 捕获并丢弃本次实例状态。
 输入解析失败和结果无法 JSON 编码时也形成失败响应，不能把普通语言错误当成 ABI 违约。
 输入解析失败保留多条独立诊断。注入来源的标签包含来源名称及完整坐标；
@@ -362,3 +376,38 @@ hyperfine 预热 2 次、各测 7 次：端到端均值为 742.2 ± 18.2 ms → 
 查询 fuel 为 4,393,078 → 4,243,111；查询后线性内存均为 1,310,720 字节。
 单次阶段观察 transform 为 13.21 → 12.81 ms，仅作观察，不作为稳定加速结论。
 修正首先保证来源语义并删除不必要的分配，前端仍占端到端耗时的大部分。
+
+### ABI 21：来源索引、响应输出与小对象分配
+
+完成三项优化：manifest 不再重复编码 BOLs；响应直接写出封闭诊断结构，
+serve 转发字节、run 只解析外壳；语言小对象批量使用稳定存储块。
+Guest 仍使用 std 默认全局分配器，mem API 与语言堆的所有权分离，
+reset 仍恢复初始化内存快照，本轮不引入 truncate reset。
+
+2026-09-16 同机 release 测量，以三项优化前、已接入 std 分配器的版本为基线。
+每种场景预热 2 次，交替测量各 7 次，下表为中位数。
+world-model 使用 make-query 的 Asia 查询，并校验 SQL 与绑定值；
+padding/strings 各注入两个约 2 MiB 的 JSON 文件，校验服务结果为 true。
+
+| 指标 | 优化前 | 优化后 |
+| --- | ---: | ---: |
+| world-model 端到端 | 738.17 ms | 725.13 ms |
+| 前端 | 541.54 ms | 537.91 ms |
+| codegen/link | 91.42 ms | 92.28 ms |
+| 引擎加载 | 47.46 ms | 41.23 ms |
+| 初始化 / 服务初始化 | 24.51 / 4.30 ms | 23.14 / 1.90 ms |
+| 请求 reset / transform | 2.76 / 13.33 ms | 2.53 / 12.75 ms |
+| Wasm 制品 | 4,619,012 B | 4,427,154 B |
+| Guest 线性内存 | 1,638,400 B | 1,376,256 B |
+| Host 峰值 RSS | 75,668 KiB | 74,952 KiB |
+| padding 端到端 | 155.54 ms | 152.99 ms |
+| strings 端到端 | 179.63 ms | 176.10 ms |
+
+优化后的 world-model 加载细分：metadata 13.58 ms、module 26.55 ms、
+instance 0.87 ms。大输入场景的线性内存保持不变，分别为 9,306,112 B
+和 11,468,800 B。整体时间变化较小；本轮更明确的变化是制品缩小和
+world-model 线性内存减少，不据此声称所有输入均有显著加速。
+
+验证覆盖 Wasm 单元测试、CLI 全集、Node 位置与 debug transport，
+包含多条警告后序列化失败的诊断、注入缓冲区复用、回收后的来源索引、
+共享图及循环图回收、Host 分配的独立生命周期。

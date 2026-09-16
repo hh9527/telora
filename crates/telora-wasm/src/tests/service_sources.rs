@@ -60,7 +60,11 @@ fn parse(session: &mut Session, id: u32, text: &[u8], format: u32) -> Result<u32
 fn guest_slots_own_names_inputs_and_location_identity() {
     let bytes = artifact();
     let mut expected_ids = None;
-    for (format, input) in [(1, "{\"value\":42}"), (2, "value: 42\n"), (3, "value = 42\n")] {
+    for (format, input) in [
+        (1, "{\r\n\"value\":\"retained\",\"escaped\\u006b\":\"a\\nb\"\r\n}"),
+        (2, "value: retained\r\nescapedk: \"a\\nb\"\r\n"),
+        (3, "value = \"retained\"\r\nescapedk = \"a\\nb\"\r\n"),
+    ] {
         let (mut session, ids) = prepare(&bytes);
         if let Some(expected) = &expected_ids { assert_eq!(&ids, expected); }
         expected_ids = Some(ids.clone());
@@ -76,12 +80,15 @@ fn guest_slots_own_names_inputs_and_location_identity() {
             let value = session.instance.get_typed_func::<(u32, u32), u32>(&session.store, "telora_materialize_data")
                 .unwrap().call(&mut session.store, (packet, 0)).unwrap();
             assert_eq!(session.output_value(Value { pointer: value, ty: session.manifest.value_type.unwrap() }).unwrap(),
-                serde_json::json!({"value":42}));
+                serde_json::json!({"value":"retained", "escapedk":"a\nb"}));
             retained.push(value);
             assert_eq!(session.output().word(value as u64).unwrap(), id);
             let record = session.instance.get_typed_func::<u32, u32>(&session.store, "telora_source_range")
                 .unwrap().call(&mut session.store, value).unwrap();
             assert_eq!(session.output().word(record as u64).unwrap(), id);
+            // BOLs survive buffer overwrite, including CRLF interpretation.
+            assert_eq!(session.output().word(record as u64 + 4).unwrap(), 0);
+            assert!(session.output().word(record as u64 + 12).unwrap() >= 1);
             session.instance.get_typed_func::<(u32, u32), u32>(&session.store, "telora_service_source_store")
                 .unwrap().call(&mut session.store, (id, value)).unwrap();
         }
@@ -89,7 +96,7 @@ fn guest_slots_own_names_inputs_and_location_identity() {
             .unwrap().call(&mut session.store, (pointer, 64, 1)).unwrap();
         for pointer in retained {
             assert_eq!(session.output_value(Value { pointer, ty: session.manifest.value_type.unwrap() }).unwrap(),
-                serde_json::json!({"value":42}));
+                serde_json::json!({"value":"retained", "escapedk":"a\nb"}));
         }
         let seal = session.instance.get_typed_func::<(), u32>(&session.store, "telora_service_sources_seal").unwrap();
         assert_eq!(seal.call(&mut session.store, ()).unwrap(), 0);

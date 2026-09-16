@@ -1,5 +1,7 @@
 //! Thin execution host: Wasm owns language operations, values, and initialization.
 use crate::{abi, artifact::Manifest};
+pub(crate) mod exports;
+mod timing;
 
 // Generous execution boundaries, not an allocation accounting model. The engine
 // refuses growth before allocating; its ordinary stack limits remain in force.
@@ -7,6 +9,7 @@ const MEMORY_BOUND: usize = 1024 * 1024 * 1024;
 const TABLE_BOUND: usize = 1_000_000;
 
 pub struct Session {
+    pub(crate) exports: exports::Exports,
     pub(crate) fuel_budget: u64,
     pub(crate) memory_limit: usize,
     pub(crate) module: wasmi::Module,
@@ -51,12 +54,17 @@ impl Session {
     }
 
     pub fn load_with_limits(bytes: &[u8], fuel: u64, memory_limit: usize) -> Result<Self, String> {
+        let metadata_timer = timing::Timer::new("load_metadata");
         let manifest = Manifest::read(bytes)?;
         let bundled_data = crate::bundle::read(bytes, &manifest)?;
+        drop(metadata_timer);
+        let module_timer = timing::Timer::new("load_module");
         let mut config = wasmi::Config::default();
         config.consume_fuel(true);
         let engine = wasmi::Engine::new(&config);
         let module = wasmi::Module::new(&engine, bytes).map_err(|e| e.to_string())?;
+        drop(module_timer);
+        let instance_timer = timing::Timer::new("load_instance");
         let limits = wasmi::StoreLimitsBuilder::new()
             .memory_size(memory_limit)
             .table_elements(TABLE_BOUND)
@@ -72,7 +80,10 @@ impl Session {
             .get_memory(&store, "memory")
             .ok_or("Wasm: missing memory export")?;
         let registered_sources = manifest.sources.len();
+        let exports = exports::Exports::bind(instance, &store)?;
+        drop(instance_timer);
         let mut session = Self {
+            exports,
             module,
             fuel_budget: fuel,
             memory_limit,
@@ -139,12 +150,15 @@ impl Session {
             {
                 return Err("Wasm: source identity was registered with a different name".into());
             }
+            if !lines.is_empty() {
             let pointer = self.allocate(lines.len())?;
             self.write(pointer as usize, &lines)?;
             self.instance.get_typed_func::<(u32, u32, u32), ()>(&self.store, "telora_source_index")
                 .map_err(|e| e.to_string())?
                 .call(&mut self.store, (id, pointer, (lines.len() / 8) as u32))
                 .map_err(|e| e.to_string())?;
+            }
+            self.manifest.sources[self.registered_sources].lines.clear();
             self.registered_sources += 1;
         }
         Ok(())

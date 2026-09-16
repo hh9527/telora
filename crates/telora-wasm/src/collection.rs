@@ -63,7 +63,7 @@ impl Session {
         }
         let heap_end = self
             .instance
-            .get_typed_func::<(), i32>(&self.store, "telora_heap_end")
+            .get_typed_func::<(), i32>(&self.store, "telora_heap_bytes")
             .map_err(|e| e.to_string())?;
         let before = heap_end
             .call(&mut self.store, ())
