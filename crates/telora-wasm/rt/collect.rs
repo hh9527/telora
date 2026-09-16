@@ -19,9 +19,7 @@ pub(crate) struct Collector {
     pub slots: Vec<Vec<Slot>>,
     pub objects: BTreeMap<(u32, u32), u32>,
     pub values: BTreeMap<u32, u32>,
-    pub environments: BTreeMap<u32, u32>,
     pub pending: Vec<(u32, u32, u32, u32)>, // table, old pointer, destination offset, bytes
-    pub patches: Vec<(u32, u32)>,
     pub sources: alloc::collections::BTreeSet<u32>,
 }
 
@@ -79,12 +77,11 @@ impl Collector {
                 payload: 0,
                 bytes: slot.bytes,
             });
-            let bytes = slot.bytes & !ENV_RAW_PARENT;
             let at = if table == REGEXES {
                 let pattern = crate::regex::pattern(slot.payload);
                 self.copy_bytes(pattern.as_ptr() as u32, pattern.len() as u32)
             } else {
-                self.copy_bytes(slot.payload, bytes)
+                self.copy_bytes(slot.payload, slot.bytes)
             };
             self.slots[table as usize][next as usize] = Slot {
                 payload: at,
@@ -98,16 +95,6 @@ impl Collector {
                 self.pending.push((table, slot.payload, at, slot.bytes));
             }
             next
-        }
-    }
-    pub unsafe fn environment_pointer(&mut self, pointer: u32) -> u32 {
-        unsafe {
-            let id = *self
-                .environments
-                .get(&pointer)
-                .expect("registered parent environment");
-            let next = self.object(ENVIRONMENTS, id);
-            self.slots[ENVIRONMENTS as usize][next as usize].payload
         }
     }
     pub unsafe fn finish(mut self) {
@@ -129,9 +116,6 @@ impl Collector {
                 tables[i].buffer = at;
                 tables[i].length = count;
                 tables[i].capacity = count;
-            }
-            for &(pointer, value) in &self.patches {
-                (pointer as *mut u32).write_unaligned(value);
             }
             for i in 0..TABLE_COUNT {
                 (table_address(i) as *mut Table).write(tables[i as usize]);
@@ -178,37 +162,13 @@ pub unsafe extern "C" fn telora_collect(types: u32, roots: u32, count: u32) -> u
             slots,
             objects: BTreeMap::new(),
             values: BTreeMap::new(),
-            environments: BTreeMap::new(),
             pending: vec![],
-            patches: vec![],
             sources: alloc::collections::BTreeSet::new(),
         };
         let result = gc.reserve(count * 4);
-        let env = old[ENVIRONMENTS as usize];
-        for id in 0..env.length {
-            let slot = (env.buffer as *const Slot).add(id as usize).read();
-            gc.environments.insert(slot.payload, id);
-        }
         for index in 0..count {
             let pointer = gc.value(word(roots, index as u64 * 4));
             gc.put(result + index * 4, pointer);
-        }
-        // Interpreter memo cells in main environments may refer to work values.
-        // Their immutable captures stay put; only these exact pointer cells patch.
-        for id in 0..env.frozen {
-            let slot = (env.buffer as *const Slot).add(id as usize).read();
-            for index in 0..(slot.bytes & !ENV_RAW_PARENT) / 4 {
-                let cell = slot.payload + index * 4;
-                let old = word(cell, 0);
-                let next = if slot.bytes & ENV_RAW_PARENT != 0 {
-                    gc.environment_pointer(old)
-                } else {
-                    gc.value(old)
-                };
-                if next != old {
-                    gc.patches.push((cell, next));
-                }
-            }
         }
         gc.finish();
         drop(old_work);

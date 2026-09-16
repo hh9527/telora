@@ -141,6 +141,9 @@ environment:
 Tj -> outer parameter containing TypeOf(Tj)
 ```
 
+> 后续修订：本节展开中的 operand 求值时机由
+> [RFC 0301](0301-interpreter-ordinary-closures.md) 覆盖；下文保留历史记录。
+
 It classifies every inner parameter, derives the erased operand Function type,
 checks the operand against that type, and elaborates an adapter equivalent to:
 

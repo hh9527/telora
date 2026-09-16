@@ -14,6 +14,14 @@ impl Emitter<'_> {
             callable: true,
             special: Special::Normal,
         };
+        if matches!(
+            self.mir.hir[node.index()].kind,
+            telora_core::mir::HirKind::Interpreter
+        ) {
+            // A trusted higher-order adapter captures its input function now.
+            let operand = self.expression(child(self.mir, node, Role::Operand)?)?;
+            return self.function_value(node, key, self.effective_ty(node)?, &[operand]);
+        }
         let captures = self
             .plan
             .captures
@@ -34,14 +42,6 @@ impl Emitter<'_> {
             values.push(*self.local_instances.get(instance).ok_or_else(|| {
                 format!("Wasm: missing local instance capture {instance:?} for {key:?}")
             })?);
-        }
-        if matches!(
-            self.mir.hir[node.index()].kind,
-            telora_core::mir::HirKind::Interpreter
-        ) {
-            let cache = self.local(ValType::I32);
-            self.extend([I::I32Const(0), I::LocalSet(cache)]);
-            values.push(cache);
         }
         self.function_value(node, key, self.effective_ty(node)?, &values)
     }
@@ -79,12 +79,7 @@ impl Emitter<'_> {
         self.function_pointer(function);
         self.emit(I::I32Store(memory(DATA, 2)));
         // Even an empty environment gives each evaluated closure an identity.
-        let raw_parent = key.special == Special::Configured
-            && matches!(
-                self.mir.hir[node.index()].kind,
-                telora_core::mir::HirKind::Interpreter
-            );
-        let bytes = captures.len() as u32 * 4 | if raw_parent { ENV_RAW_PARENT } else { 0 };
+        let bytes = captures.len() as u32 * 4;
         let id = self.table_push(ENVIRONMENTS, environment, bytes);
         self.extend([
             I::LocalGet(result),

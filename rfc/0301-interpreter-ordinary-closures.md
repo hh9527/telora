@@ -1,6 +1,6 @@
 # RFC 0301：interpreter! 使用普通高阶函数与闭包语义
 
-- 状态：实施中
+- 状态：独立分支已实现并验证，待合入
 - 跟踪：[#210](https://github.com/hh9527/telora/issues/210)
 - 分支：`feat/210-interpreter-ordinary-closures`
 - 日期：2026-09-17
@@ -67,3 +67,20 @@ operand 的诊断和失败发生在构造适配器时，即使返回函数从未
 - 提前构造全部 wrapper：没有必要；采用普通闭包分配，后续根据测量再优化。
 - 保留 operand 的延迟求值：与传入函数的高阶模型不一致，拒绝；需要延迟的用户逻辑
   可以显式放在输入函数体内。
+
+## 实施结果（2026-09-17）
+
+- 工厂和适配器均捕获已求值的普通输入函数；移除缓存、raw-parent 环境、父环境
+  地址映射及冻结环境缓存修补，内部 ABI 更新为 22。
+- 独立 .telora 用例覆盖构造期一次性求值、未调用也产生诊断、构造期失败、
+  普通闭包身份、多 witness、透传及局部捕获。Rust 只保留执行、内存边界和 GC 驱动。
+- 87/87 Wasm 测试通过；增加初始化环境逐字节不变断言后，相关测试再次通过。
+  84/84 CLI 测试（含完整语言套件）、27/27 库/LSP 测试通过。
+- release 构建成功；ontology `check --lib` 通过，world-model
+  `run @src/bin/make-query` 返回预期 Asia 参数及 SQL，无需修改 lab-ontology。
+  该项目当前未直接使用 interpreter!；它验证整体兼容性，专门语义由语言用例覆盖。
+- 单次并行 smoke 观察：check 约 0.78 秒，query 约 0.72 秒；query fuel 4,426,101，
+  Guest 线性内存 1,376,256 字节。未做交替基准，不据此宣称性能收益。
+
+后续单 Vec RFC 还须核实 codegen 的顶层/property demand 状态槽及其引用根，
+本次只证明 interpreter! 不再回写初始化环境，不宣称现有整个运行时已实现 service 唯一根。

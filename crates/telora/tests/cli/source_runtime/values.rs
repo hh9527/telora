@@ -206,7 +206,7 @@ fn source_structural_equality_preserves_identity_across_worlds() {
 }
 
 #[test]
-fn source_interpreter_preserves_adapter_identity_across_initialization_and_entry() {
+fn source_interpreter_uses_ordinary_closures_across_initialization_and_entry() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),

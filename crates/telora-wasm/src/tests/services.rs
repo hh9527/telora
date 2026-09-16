@@ -56,7 +56,7 @@ fn collection_keeps_initialization_locations_without_registering_request_sources
 }
 
 #[test]
-fn collection_preserves_shared_graphs_resources_and_interpreter_cycles() {
+fn collection_preserves_shared_graphs_resources_and_interpreter_captures() {
     let bytes = super::compile(
         &std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),

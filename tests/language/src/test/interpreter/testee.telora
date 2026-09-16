@@ -32,7 +32,7 @@ export def verified_case: test.Test = test.should_ok(fn() {
     let verified = equal@[Int]((Int).type)(1, 1)
         && !equal@[Int]((Int).type)(1, 2)
         && equal((Int).type)(2, 2)
-        && first_int == repeated_int
+        && first_int != repeated_int
         && !first_int(1)
         && first_string("text")
         && first_int != second_int;

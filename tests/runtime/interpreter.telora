@@ -19,7 +19,7 @@ def unused: for(T) Fn(TypeOf(T)) -> Fn(Int) -> Int = interpreter!(fn(value) {val
 def checks: Fn() -> Value = fn() {
     let repeated = factory(Int.type);
     encode(Value.type, [
-        initialized == repeated,
+        initialized != repeated,
         initialized != other(Int.type),
         repeated(42) == 42,
         captured("unused") == 42,

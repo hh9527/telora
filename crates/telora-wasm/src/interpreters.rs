@@ -1,11 +1,11 @@
-//! Type-bound interpreter adapters. The operand remains deferred until invocation.
+//! Type-bound higher-order adapters capturing an already evaluated function.
 use crate::{
     abi::*,
     emit::Emitter,
     plan::{Key, Special, child},
 };
 use telora_core::mir::{Role, TypeConstructor as T};
-use wasm_encoder::{BlockType, Instruction as I, ValType};
+use wasm_encoder::{Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub fn interpreter(&mut self) -> Result<u32, String> {
@@ -47,64 +47,23 @@ impl Emitter<'_> {
                 return Err("Wasm: interpreter passthrough type mismatch".into());
             }
         }
+        let callee = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(0),
+            I::I32Load(memory(0, 2)),
+            I::LocalSet(callee),
+        ]);
         if self.key.special == Special::Normal {
-            // Each closed factory signature fixes all witness identities. A
-            // single per-activation cache therefore suffices without a type map.
-            let offset = (self.plan.captures[&factory].len()
-                + self.plan.instance_captures[&factory].len()) as u64
-                * 4;
-            let cached = self.local(ValType::I32);
-            self.extend([
-                I::LocalGet(0),
-                I::I32Load(memory(offset, 2)),
-                I::LocalTee(cached),
-                I::If(BlockType::Empty),
-                I::LocalGet(cached),
-                I::Return,
-                I::End,
-            ]);
-            let result = self.function_value(
+            return self.function_value(
                 node,
                 Key {
                     special: Special::Configured,
                     ..factory
                 },
                 inner_ty,
-                &[0],
-            )?;
-            self.extend([
-                I::LocalGet(0),
-                I::LocalGet(result),
-                I::I32Store(memory(offset, 2)),
-            ]);
-            return Ok(result);
+                &[callee],
+            );
         }
-        let environment = self.local(ValType::I32);
-        self.extend([
-            I::LocalGet(0),
-            I::I32Load(memory(0, 2)),
-            I::LocalSet(environment),
-        ]);
-        for (index, symbol) in self.plan.captures[&factory].iter().enumerate() {
-            let local = self.local(ValType::I32);
-            self.extend([
-                I::LocalGet(environment),
-                I::I32Load(memory(index as u64 * 4, 2)),
-                I::LocalSet(local),
-            ]);
-            self.bindings.insert(*symbol, local);
-        }
-        let offset = self.plan.captures[&factory].len();
-        for (index, instance) in self.plan.instance_captures[&factory].iter().enumerate() {
-            let local = self.local(ValType::I32);
-            self.extend([
-                I::LocalGet(environment),
-                I::I32Load(memory((index + offset) as u64 * 4, 2)),
-                I::LocalSet(local),
-            ]);
-            self.local_instances.insert(*instance, local);
-        }
-        let callee = self.expression(operand)?;
         let mut inputs = Vec::new();
         for (index, witness) in plan.parameters.iter().enumerate() {
             let input = self.parameter(index as u32);

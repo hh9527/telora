@@ -25,6 +25,6 @@ export def answer: Fn(Int) -> Fn() -> (Bool, Bool, Bool, Bool, String, Bool, Int
          fmt.render(format), hash.finish(digest) == hash.finish(hash.update_string(hash.new(), item.label)),
          match wrapped {Count(n) => n},
          match tree {Tree.More(pair) => pair.0, Tree.Empty => 0},
-         adapted("x"), interpreted(String.type) == adapted)
+         adapted("x"), interpreted(String.type) != adapted)
     }
 };

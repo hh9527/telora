@@ -371,9 +371,9 @@ Interpreter、静态 trait implementation 和未来的 quote/codegen 都可以�
 的普通 closure，并把 closure 作为 typed property payload 发布。运行期消费该 payload
 不需要重新查询 property registry。
 
-`interpreter!` 的 typed lifting 以外层 closure identity 和 canonical `TypeId` witness
-tuple memoize 成功生成的 wrapper。该缓存不执行 operand，也不定义 codegen；跨 World 的
-identity 由普通闭包图随 property root 的原子 publication 保持。
+`interpreter!` 是受信任的高阶适配器：构造时求值并捕获输入函数，以封闭类型生成参数
+包装。工厂每次调用产生普通闭包，不缓存 wrapper、不回写原环境；函数身份及环境共享
+遵循普通闭包规则。见 RFC 0301。
 
 ## Stage 与 Execution
 

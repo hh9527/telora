@@ -31,13 +31,9 @@ impl Collector {
                     }
                 }
                 ENVIRONMENTS => {
-                    for index in 0..(bytes & !ENV_RAW_PARENT) / 4 {
+                    for index in 0..bytes / 4 {
                         let pointer = word(old, index as u64 * 4);
-                        let next = if bytes & ENV_RAW_PARENT != 0 {
-                            self.environment_pointer(pointer)
-                        } else {
-                            self.value(pointer)
-                        };
+                        let next = self.value(pointer);
                         self.put(at + index * 4, next);
                     }
                 }

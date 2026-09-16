@@ -1,5 +1,8 @@
 # RFC 0093: Contextual `interpreter` lifting
 
+> 后续修订：operand 求值时机由 [RFC 0301](0301-interpreter-ordinary-closures.md)
+> 覆盖；本文件保留历史设计记录。
+
 - Status: Implemented
 - Depends on: RFC 0089 through RFC 0092
 - Tracking issue: https://github.com/hh9527/forma/issues/4

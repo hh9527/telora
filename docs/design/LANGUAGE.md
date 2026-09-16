@@ -960,16 +960,14 @@ def show:
 该 lifting 的可观察语义等价于构造普通 closure，并使用相应 witness 将直接 A 参数
 安全打包为 Dyn。它不是 macro system、代码生成器、trait derivation 或动态 cast。
 
-同一 WorkWorld 中，`interpreter!` 产生的同一个外层 closure 使用相同 canonical
-`TypeId` witness tuple 调用时，复用同一个成功生成的 inner closure identity。key 是
-`(interpreter closure identity, TypeId tuple)`；不同 interpreter identity 或 TypeId
-不会共享。命中仍计一次函数调用 fuel，但不重复分配 inner closure。非 Type Host 参数
-在运行时边界拒绝，失败结果不进入缓存。跨 World 稳定性来自普通 closure publication：
-发布后的 property/evidence root 被 import、reexport 和重复读取时保持同一函数 identity。
+`interpreter!(operand)` 在构造时求值 operand 并捕获所得函数；即使适配后的函数未被
+调用，operand 的诊断或失败也在构造时发生。每次调用外层工厂产生普通的新闭包，
+捕获同一个输入函数；调用内层闭包不会重新求值 operand，也不会修改外层环境。
+不缓存 wrapper，不保证相同工厂和 witness 的重复调用产生相等的函数。
+同一个已生成函数值的赋值、传递和引用保持普通闭包身份。
 
-memoization 只缓存 lifting 所构造的 wrapper；它不会提前执行 inner operand。读取类型
-metadata、解析 eDSL 并产生领域 closure 的准备逻辑仍由普通 tool-stage/property 代码
-显式定义，如 `DisplayBy.display`。
+类型参数在 MIR 中封闭，codegen 机械生成参数包装；捕获输入函数不会深复制其环境。
+需要延迟执行的准备逻辑应显式放在输入函数体内。语义修订见 RFC 0301。
 
 ### 7.5 静态约束与 Dyn 投影
 
