@@ -188,6 +188,25 @@ pub(crate) unsafe fn position(id: u32, byte: u32) -> (u32, u32) {
     }
 }
 
+/// Diagnostic-only expansion of an inline range into five coordinate words.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_source_range(range: u32) -> u32 {
+    unsafe {
+        let id = crate::values::word(range, 0);
+        if id == 0 { return 0; }
+        let start = crate::values::word(range, 4);
+        let end = crate::values::word(range, 8);
+        assert!(start <= end);
+        let start = position(id, start);
+        let end = position(id, end);
+        let result = telora_alloc(20);
+        for (index, word) in [id, start.0, start.1, end.0, end.1].into_iter().enumerate() {
+            ((result + index as u32 * 4) as *mut u32).write_unaligned(word);
+        }
+        result
+    }
+}
+
 /// Returns an address of two u32 words: UTF-8 pointer and byte length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_source_name(id: u32) -> u32 {

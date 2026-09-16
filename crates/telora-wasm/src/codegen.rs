@@ -31,7 +31,7 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
     let helpers = vec![("telora_initialize", 2), ("telora_entry", 2),
         ("telora_inject_data", CALL_TYPE), ("telora_materialize_data", CALL_TYPE)];
     plan.generated_helpers = helpers.len() as u32;
-    let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts, &plan.locations)?;
+    let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
     for (&symbol, &key) in &plan.globals {
         let mir = executable.sealed_mir().mir();
         let definition = &mir.symbols[symbol.index()];
@@ -101,7 +101,7 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         ("telora_toml_parse", 0),
         ("telora_yaml_parse", 0),
         ("telora_float_remainder", 5),
-        ("telora_location_get", 0),
+        ("telora_source_range", 0),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }
@@ -323,6 +323,6 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
     let service = if matches!(mode, Mode::Service) {
         Some(crate::service_abi::contract(&manifest, initialize - FIRST_FUNCTION)?)
     } else { None };
-    crate::compose::link(&module.finish(), heap_start, &plan.locations.bytes, &manifest.sources, service,
+    crate::compose::link(&module.finish(), heap_start, &manifest.sources, service,
         &helpers.iter().enumerate().map(|(i, (name, _))| (*name, initialize - FIRST_FUNCTION + i as u32)).collect::<Vec<_>>())
 }

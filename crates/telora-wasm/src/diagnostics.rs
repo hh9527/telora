@@ -25,9 +25,8 @@ impl Emitter<'_> {
     pub fn report(&mut self, node: HirId, message: u32, subjects: u32, count: u32, warning: bool) {
         let packet = self.alloc(DIAGNOSTIC_BYTES);
         let loc = self.mir.hir[node.index()].location;
-        let loc_id = self.plan.locations.id(loc).bits();
+        self.store_location(packet, loc);
         for (offset, word) in [
-            (0, loc_id),
             (DIAG_CODE, ERROR_USER),
             (DIAG_WARNING, u32::from(warning)),
         ] {

@@ -67,7 +67,6 @@ pub unsafe extern "C" fn telora_freeze() -> u32 {
             let table = &mut *(table_address(index) as *mut Table);
             table.frozen = table.length;
         }
-        crate::locations::freeze();
         crate::collect::freeze();
         1
     }

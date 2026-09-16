@@ -61,8 +61,11 @@ impl Emitter<'_> {
         Ok(value)
     }
     fn same_origin(&mut self, a: u32, b: u32) {
-        self.extend([I::LocalGet(a), I::I32Load(memory(0, 2)),
-            I::LocalGet(b), I::I32Load(memory(0, 2)), I::I32Eq]);
+        for offset in [0, 4, 8] {
+            self.extend([I::LocalGet(a), I::I32Load(memory(offset, 2)),
+                I::LocalGet(b), I::I32Load(memory(offset, 2)), I::I32Eq]);
+            if offset != 0 { self.emit(I::I32And); }
+        }
     }
     fn append_label(
         &mut self,
@@ -83,7 +86,7 @@ impl Emitter<'_> {
         let coordinates = self.local(ValType::I32);
         let span = self.local(ValType::I32);
         self.extend([
-            I::LocalGet(origin), I::I32Load(memory(0, 2)), I::Call(LOCATION_GET),
+            I::LocalGet(origin), I::Call(SOURCE_RANGE),
             I::LocalTee(coordinates), I::I32Load(memory(0, 2)),
             I::Call(SOURCE_NAME), I::LocalSet(span),
         ]);

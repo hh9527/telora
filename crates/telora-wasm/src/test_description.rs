@@ -85,8 +85,12 @@ impl Emitter<'_> {
         }
         let id = self.table_push(TESTS, description, bytes);
         let result = self.value_as(self.key.node, output, SCALAR_BYTES)?;
-        self.extend([I::LocalGet(result), I::GlobalGet(CALL_SOURCE_GLOBAL),
-            I::I32Store(memory(SOURCE, 2))]);
+        self.extend([I::GlobalGet(CALL_SOURCE_GLOBAL), I::If(wasm_encoder::BlockType::Empty)]);
+        for offset in [0, 4, 8] {
+            self.extend([I::LocalGet(result), I::GlobalGet(CALL_SOURCE_GLOBAL),
+                I::I32Load(memory(offset, 2)), I::I32Store(memory(offset, 2))]);
+        }
+        self.emit(I::End);
         self.extend([
             I::LocalGet(result),
             I::LocalGet(id),

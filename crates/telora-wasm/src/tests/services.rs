@@ -25,7 +25,6 @@ fn collection_keeps_initialization_locations_without_registering_request_sources
     session.register_data_sources(&sources, &plan).unwrap();
     let value = session.materialize_value(&plan, &sources).unwrap();
     session.initialize().unwrap();
-    let location_count = session.output().word(crate::abi::INITIALIZATION_LOCS as u64 + 4).unwrap();
     let factory = crate::transport::Value {
         pointer: session.entry().unwrap(),
         ty: session.manifest.entry_type,
@@ -33,11 +32,10 @@ fn collection_keeps_initialization_locations_without_registering_request_sources
     let mut closure = session.invoke_values(factory, &[value]).unwrap();
     let mut plateau = None;
     for n in 0..256 {
-        let _discarded = session.input_value(value.ty, &n.into()).unwrap();
-        assert_eq!(
-            session.output().word(crate::abi::INITIALIZATION_LOCS as u64 + 4).unwrap(),
-            location_count,
-        );
+        let discarded = session.input_value(value.ty, &n.into()).unwrap();
+        for offset in [0, 4, 8] {
+            assert_eq!(session.output().word(discarded.pointer as u64 + offset).unwrap(), 0);
+        }
         let (roots, stats) = session.collect_work(&[closure]).unwrap();
         closure = roots[0];
         assert_eq!(session.manifest.sources.len(), baseline + 1);

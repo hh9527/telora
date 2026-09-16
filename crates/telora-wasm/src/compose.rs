@@ -12,7 +12,6 @@ pub(crate) fn static_base() -> Result<u32, String> {
 pub(crate) fn link(
     object: &[u8],
     reserved_bytes: u32,
-    locations: &[u8],
     sources: &[crate::artifact::Source],
     service: Option<telora_wasm_shared::service::Contract>,
     generated_exports: &[(&str, u32)],
@@ -58,12 +57,6 @@ pub(crate) fn link(
             _ => {}
         }
     }
-    let locations_base = image_base
-        .checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: static image too large")?)
-        .ok_or("Wasm: location base overflow")?;
-    let locations_len =
-        u32::try_from(locations.len()).map_err(|_| "Wasm: location table too large")?;
-    data.extend_from_slice(locations);
     let mut source_names = Vec::new();
     for source in sources {
         while data.len() % 8 != 0 {
@@ -248,13 +241,6 @@ pub(crate) fn link(
             *rt.exports
                 .get("telora_reserve_static")
                 .ok_or("Wasm: template lacks heap initializer")?,
-        ))
-        .instruction(&Instruction::I32Const(locations_base as i32))
-        .instruction(&Instruction::I32Const(locations_len as i32))
-        .instruction(&Instruction::Call(
-            *rt.exports
-                .get("telora_locations_bootstrap")
-                .ok_or("Wasm: missing location bootstrap")?,
         ));
     for (id, pointer, length, index_pointer, count) in source_names {
         boot.instruction(&Instruction::I32Const(id as i32))

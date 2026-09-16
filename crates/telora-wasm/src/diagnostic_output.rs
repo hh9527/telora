@@ -63,7 +63,7 @@ impl Session {
                 return Err("Wasm: invalid diagnostic record size".into());
             }
             output.bytes(pointer, bytes)?;
-            let origin = output.location_words(output.word(pointer)?)?;
+            let origin = output.location_words(pointer)?;
             let code = output.word(pointer + DIAG_CODE)?;
             let message = if code == ERROR_USER {
                 output.text(output.word(pointer + DIAG_MESSAGE)? as u64)?
@@ -90,7 +90,7 @@ impl Session {
             output.bytes(base, count * u64::from(LOC_BYTES))?;
             for index in 0..count {
                 let offset = base + index * u64::from(LOC_BYTES);
-                let subject = output.location_words(output.word(offset)?)?;
+                let subject = output.location_words(offset)?;
                 if subject[0] != 0 && !subjects.contains(&subject) {
                     subjects.push(subject);
                 }

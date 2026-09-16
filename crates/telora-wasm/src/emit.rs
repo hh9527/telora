@@ -140,6 +140,11 @@ impl<'a> Emitter<'a> {
             I::I32Store(memory(offset, 2)),
         ]);
     }
+    pub fn store_location(&mut self, pointer: u32, loc: telora_core::Loc) {
+        self.store32(pointer, SOURCE, loc.source.get());
+        self.store32(pointer, START, loc.start);
+        self.store32(pointer, END, loc.end);
+    }
     pub fn value(&mut self, node: HirId, bytes: u32) -> Result<u32, String> {
         let ty = self.effective_ty(node)?;
         self.value_as(node, ty, bytes)
@@ -150,8 +155,7 @@ impl<'a> Emitter<'a> {
         }
         let result = self.alloc(bytes);
         let loc = self.mir.hir[node.index()].location;
-        let loc_id = self.plan.locations.id(loc).bits();
-        self.store32(result, SOURCE, loc_id);
+        self.store_location(result, loc);
         self.store32(result, TYPE, ty.index() as u32);
         Ok(result)
     }
@@ -182,9 +186,8 @@ impl<'a> Emitter<'a> {
     }
     pub fn failure(&mut self, node: HirId, code: u32) {
         let location = self.mir.hir[node.index()].location;
-        let loc_id = self.plan.locations.id(location).bits();
         let pointer = self.alloc(DIAGNOSTIC_BYTES);
-        self.store32(pointer, 0, loc_id);
+        self.store_location(pointer, location);
         self.store32(pointer, DIAG_CODE, code);
         self.extend([
             I::LocalGet(pointer),

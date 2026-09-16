@@ -34,14 +34,14 @@ pub(super) unsafe fn parse(input: &str, origins: &Origins) -> u32 {
     unsafe {
         let result = crate::telora_alloc(16);
         let count = u32::try_from(plan.nodes.len()).unwrap();
-        let rows = crate::telora_alloc(count.checked_mul(16).unwrap());
+        let rows = crate::telora_alloc(count.checked_mul(24).unwrap());
         put(result, 0, rows);
         put(result, 4, count);
         put(result, 8, plan.root.index() as u32);
         put(result, 12, 0);
         for (index, node) in plan.nodes.into_iter().enumerate() {
-            let row = rows + index as u32 * 16;
-            put(row, 4, origins.at(node.location));
+            let row = rows + index as u32 * 24;
+            origins.write(row + 4, node.location);
             let (kind, payload) = match node.kind {
                 JsonKind::Null => (0, 0),
                 JsonKind::Bool(value) => (if value { 1 } else { 2 }, 0),
@@ -58,20 +58,20 @@ pub(super) unsafe fn parse(input: &str, origins: &Origins) -> u32 {
                 }
                 JsonKind::Object(fields) => {
                     let count = fields.len() as u32;
-                    let entries = crate::telora_alloc(count.checked_mul(16).unwrap());
+                    let entries = crate::telora_alloc(count.checked_mul(24).unwrap());
                     for (index, (key, field)) in fields.into_iter().enumerate() {
-                        let entry = entries + index as u32 * 16;
+                        let entry = entries + index as u32 * 24;
                         let bits = span_bits(key, source_pointer, decoded_pointer);
                         put(entry, 0, bits as u32);
                         put(entry, 4, (bits >> 32) as u32);
                         put(entry, 8, field.value.index() as u32);
-                        put(entry, 12, origins.at(field.key_location));
+                        origins.write(entry + 12, field.key_location);
                     }
                     (7, u64::from(entries) | (u64::from(count) << 32))
                 }
             };
             put(row, 0, kind);
-            ((row + 8) as *mut u64).write_unaligned(payload);
+            ((row + 16) as *mut u64).write_unaligned(payload);
         }
         result
     }

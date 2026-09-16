@@ -4,7 +4,7 @@ use crate::{abi::*, collect::Collector, values::word};
 impl Collector {
     pub unsafe fn trace_location(&mut self, id: u32) {
         if id != 0 {
-            unsafe { self.sources.insert(word(crate::locations::telora_location_get(id), 0)); }
+            self.sources.insert(id);
         }
     }
 

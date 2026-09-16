@@ -103,7 +103,7 @@ impl TestSession {
             _ => unreachable!(),
         };
         Ok(TestDescription {
-            origin: output.location_words(output.word(value.pointer as u64)?)?,
+            origin: output.location_words(value.pointer as u64)?,
             kind,
         })
     }

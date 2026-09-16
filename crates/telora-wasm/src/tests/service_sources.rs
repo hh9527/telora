@@ -78,10 +78,9 @@ fn guest_slots_own_names_inputs_and_location_identity() {
             assert_eq!(session.output_value(Value { pointer: value, ty: session.manifest.value_type.unwrap() }).unwrap(),
                 serde_json::json!({"value":42}));
             retained.push(value);
-            let loc = session.output().word(value as u64).unwrap();
-            assert!(loc > 0 && loc < 0x8000_0000);
-            let record = session.instance.get_typed_func::<u32, u32>(&session.store, "telora_location_get")
-                .unwrap().call(&mut session.store, loc).unwrap();
+            assert_eq!(session.output().word(value as u64).unwrap(), id);
+            let record = session.instance.get_typed_func::<u32, u32>(&session.store, "telora_source_range")
+                .unwrap().call(&mut session.store, value).unwrap();
             assert_eq!(session.output().word(record as u64).unwrap(), id);
             session.instance.get_typed_func::<(u32, u32), u32>(&session.store, "telora_service_source_store")
                 .unwrap().call(&mut session.store, (id, value)).unwrap();
@@ -130,7 +129,6 @@ fn public_source_injection_materializes_values_without_host_type_access() {
         .unwrap().call(&mut session.store, (pointer, 64, 1)).unwrap();
     let create = session.instance.get_typed_func::<(), i32>(&session.store, "create-service").unwrap();
     assert_eq!(create.call(&mut session.store, ()).unwrap(), 0);
-    let initial_locs = session.output().word(crate::abi::INITIALIZATION_LOCS as u64 + 4).unwrap();
     let alloc = session.instance.get_typed_func::<(u32, u32), u32>(&session.store, "mem-alloc").unwrap();
     let free = session.instance.get_typed_func::<(u32, u32, u32), ()>(&session.store, "mem-free").unwrap();
     let input = alloc.call(&mut session.store, (64, 1)).unwrap();
@@ -155,7 +153,6 @@ fn public_source_injection_materializes_values_without_host_type_access() {
             assert_eq!(reply["ok"][0], serde_json::json!({"value":42}));
             assert_eq!(reply["ok"][1], request.parse::<i64>().unwrap());
         }
-        assert_eq!(session.output().word(crate::abi::INITIALIZATION_LOCS as u64 + 4).unwrap(), initial_locs);
     }
     free.call(&mut session.store, (output, cap, 1)).unwrap();
     free.call(&mut session.store, (input, 64, 1)).unwrap();

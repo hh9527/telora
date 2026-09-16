@@ -4,8 +4,6 @@ extern crate alloc;
 
 pub mod abi;
 pub mod json_text;
-pub mod location_tables;
-pub mod locations;
 pub mod source_range;
 
 pub mod service;

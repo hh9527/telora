@@ -268,17 +268,20 @@ impl Session {
         Ok(result)
     }
     fn input_location(&mut self, pointer: u32, location: [u32; 5]) -> Result<(), String> {
-        let id = if let Some(&id) = self.location_ids.get(&location) { id } else {
-            let record = self.allocate(20)?;
-            for (index, word) in location.into_iter().enumerate() {
-                self.write(record as usize + index * 4, &word.to_le_bytes())?;
-            }
-            let add = self.instance.get_typed_func::<u32, u32>(&self.store, "telora_location_add")
-                .map_err(|e| e.to_string())?;
-            let id = add.call(&mut self.store, record).map_err(|e| e.to_string())?;
-            self.location_ids.insert(location, id);
-            id
+        let [source, sl, so, el, eo] = location;
+        let bytes = if source == 0 { [0; 3] } else {
+            let file = self.manifest.sources.iter().find(|file| file.id == source)
+                .ok_or("Wasm: missing input source")?;
+            let offset = |line: u32, column: u32| -> Result<u32, String> {
+                let [start, end] = *file.lines.get(line as usize).ok_or("Wasm: input line out of bounds")?;
+                if column > end - start { return Err("Wasm: input column out of bounds".into()); }
+                Ok(start + column)
+            };
+            [source, offset(sl, so)?, offset(el, eo)?]
         };
-        self.write(pointer as usize, &id.to_le_bytes())
+        for (index, word) in bytes.into_iter().enumerate() {
+            self.write(pointer as usize + index * 4, &word.to_le_bytes())?;
+        }
+        Ok(())
     }
 }

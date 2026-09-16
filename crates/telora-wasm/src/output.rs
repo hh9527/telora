@@ -11,21 +11,30 @@ pub(crate) struct Output<'a> {
 }
 
 impl Output<'_> {
-    pub(crate) fn location_words(&self, id: u32) -> Result<[u32; 5], String> {
-        Ok(self.location(id)?.map(|r| [r.source, r.start_line, r.start_offset, r.end_line, r.end_offset]).unwrap_or([0; 5]))
+    pub(crate) fn location_words(&self, pointer: u64) -> Result<[u32; 5], String> {
+        Ok(self.location([self.word(pointer)?, self.word(pointer + 4)?, self.word(pointer + 8)?])?.unwrap_or([0; 5]))
     }
 
-    pub(crate) fn location(&self, id: u32) -> Result<Option<telora_wasm_shared::locations::LocationRecord>, String> {
-        use telora_wasm_shared::locations::{LocId, LocationIndex, LocationRecord, RECORD_BYTES, record_address};
-        let (descriptor, index) = match LocId::from_bits(id).index() {
-            LocationIndex::None => return Ok(None),
-            LocationIndex::Static(index) => (STATIC_LOCS, index),
-            LocationIndex::Initialization(index) => (INITIALIZATION_LOCS, index),
+    pub(crate) fn location(&self, range: [u32; 3]) -> Result<Option<[u32; 5]>, String> {
+        let [id, start, end] = range;
+        if id == 0 {
+            return if start == 0 && end == 0 { Ok(None) } else { Err("Wasm: invalid empty origin".into()) };
+        }
+        if start > end { return Err("Wasm: invalid source range".into()); }
+        let source = self.manifest.sources.iter().find(|source| source.id == id)
+            .ok_or("Wasm: missing source metadata")?;
+        let point = |byte: u32| -> Result<(u32, u32), String> {
+            if byte > source.lines.last().ok_or("Wasm: missing source index")?[1] {
+                return Err("Wasm: source offset out of range".into());
+            }
+            let line = source.lines.partition_point(|range| range[0] <= byte)
+                .checked_sub(1).ok_or("Wasm: invalid source index")?;
+            let [start, end] = source.lines[line];
+            Ok((line as u32, byte.min(end) - start))
         };
-        let address = record_address(self.word(descriptor as u64)?, self.word(descriptor as u64 + 4)?,
-            index, self.memory.len() as u64).ok_or("Wasm: invalid LocId")?;
-        LocationRecord::decode(self.bytes(address as u64, RECORD_BYTES as u64)?)
-            .map(Some).ok_or_else(|| "Wasm: invalid location record".into())
+        let (sl, so) = point(start)?;
+        let (el, eo) = point(end)?;
+        Ok(Some([id, sl, so, el, eo]))
     }
 
     pub(crate) fn field(&self, pointer: u64, ty: u32, name: &str) -> Result<(u32, u32), String> {

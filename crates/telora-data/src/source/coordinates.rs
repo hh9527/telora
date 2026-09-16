@@ -2,7 +2,7 @@
 use super::{Loc, LocationError};
 use alloc::vec::Vec;
 
-/// Five u32 coordinates for host transport; values carry a separate LocId.
+/// Five u32 coordinates for diagnostic transport; runtime values carry byte ranges.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SourceCoordinates(pub [u32; 5]);

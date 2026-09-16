@@ -82,7 +82,7 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
-        let row = self.parse_address(rows, index, 16);
+        let row = self.parse_address(rows, index, 24);
         let kind = self.read32(row, 0);
         let value = self.local(ValType::I32);
         for (code, name) in [
@@ -124,7 +124,7 @@ impl Emitter<'_> {
                         self.extend([
                             I::LocalGet(p),
                             I::LocalGet(row),
-                            I::I64Load(memory(8, 3)),
+                            I::I64Load(memory(16, 3)),
                             I::I64Store(memory(DATA, 3)),
                         ]);
                         p
@@ -133,7 +133,7 @@ impl Emitter<'_> {
                         let span = self.local(ValType::I32);
                         self.extend([
                             I::LocalGet(row),
-                            I::I32Const(8),
+                            I::I32Const(16),
                             I::I32Add,
                             I::LocalSet(span),
                         ]);
@@ -141,8 +141,8 @@ impl Emitter<'_> {
                     }
                     6 | 7 => self.parse_collection(ty, target, row, values, code == 7)?,
                     12 => {
-                        let pointer = self.read32(row, 8);
-                        let count = self.read32(row, 12);
+                        let pointer = self.read32(row, 16);
+                        let count = self.read32(row, 20);
                         let id = self.local(ValType::I32);
                         self.extend([
                             I::I32Const(table_address(BYTES) as i32),
@@ -165,23 +165,13 @@ impl Emitter<'_> {
                     }
                     _ => return Err("Wasm: unexpected payload in Value contract".into()),
                 };
-                self.extend([
-                    I::LocalGet(payload),
-                    I::LocalGet(row),
-                    I::I32Load(memory(4, 2)),
-                    I::I32Store(memory(SOURCE, 2)),
-                ]);
+                self.parse_location(payload, row, 4);
                 Some(payload)
             } else {
                 None
             };
             let item = self.enum_value(node, target, variant as u32, payload)?;
-            self.extend([
-                I::LocalGet(item),
-                I::LocalGet(row),
-                I::I32Load(memory(4, 2)),
-                I::I32Store(memory(SOURCE, 2)),
-            ]);
+            self.parse_location(item, row, 4);
             self.extend([I::LocalGet(item), I::LocalSet(value), I::End]);
         }
         let slot = self.parse_address(values, index, 4);
@@ -201,6 +191,12 @@ impl Emitter<'_> {
         let slot = self.parse_address(values, root, 4);
         Ok(self.read32(slot, 0))
     }
+    fn parse_location(&mut self, value: u32, record: u32, offset: u64) {
+        for field in [0, 4, 8] {
+            self.extend([I::LocalGet(value), I::LocalGet(record),
+                I::I32Load(memory(offset + field, 2)), I::I32Store(memory(field, 2))]);
+        }
+    }
     fn parse_collection(
         &mut self,
         ty: TypeId,
@@ -209,8 +205,8 @@ impl Emitter<'_> {
         values: u32,
         object: bool,
     ) -> Result<u32, String> {
-        let count = self.read32(row, 12);
-        let entries = self.read32(row, 8);
+        let count = self.read32(row, 20);
+        let entries = self.read32(row, 16);
         let width = self.width(target)?;
         let data = self.parse_buffer(count, width);
         let keys = if object {
@@ -229,7 +225,7 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
-        let entry = self.parse_address(entries, index, if object { 16 } else { 4 });
+        let entry = self.parse_address(entries, index, if object { 24 } else { 4 });
         let child = self.read32(entry, if object { 8 } else { 0 });
         let slot = self.parse_address(values, child, 4);
         let value = self.read32(slot, 0);
@@ -237,12 +233,7 @@ impl Emitter<'_> {
         self.copy(destination, 0, value, width);
         if let Some(keys) = keys {
             let key = self.text_span_value(self.string_type()?, entry)?;
-            self.extend([
-                I::LocalGet(key),
-                I::LocalGet(entry),
-                I::I32Load(memory(12, 2)),
-                I::I32Store(memory(SOURCE, 2)),
-            ]);
+            self.parse_location(key, entry, 12);
             let destination = self.parse_address(keys, index, STRING_BYTES);
             self.copy(destination, 0, key, STRING_BYTES);
         }

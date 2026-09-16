@@ -1,38 +1,37 @@
-//! Initialization registers exact spans; ordinary parsing only inherits an ID.
+//! Source-backed parsing stores byte spans; ordinary parsing inherits its input.
 use telora_data::source::{LineIndex, Location};
-use telora_wasm_shared::locations::LocationRecord;
+use telora_wasm_shared::source_range::SourceRange;
 
 pub(super) enum Origins {
-    Inherit(u32),
-    Source { id: u32, lines: LineIndex },
+    Inherit(SourceRange),
+    Source { id: u32 },
 }
 
 impl Origins {
     pub fn new(source: u32, input: &str) -> Self {
         if source == 0 {
-            Self::Inherit(0)
+            Self::Inherit(SourceRange::NONE)
         } else {
             let lines = LineIndex::new(input).unwrap();
             let ranges = lines.ranges().collect::<alloc::vec::Vec<_>>();
             unsafe { crate::sources::telora_source_index(source, ranges.as_ptr() as u32, ranges.len() as u32); }
-            Self::Source { id: source, lines }
+            Self::Source { id: source }
         }
     }
 
-    pub unsafe fn at(&self, location: Location) -> u32 {
-        match self {
-            Self::Inherit(id) => *id,
-            Self::Source { id, lines } => {
-                let start = lines.point(location.start);
-                let end = lines.point(location.end);
-                unsafe { crate::locations::append(LocationRecord {
-                    source: *id,
-                    start_line: (start >> 32) as u32,
-                    start_offset: start as u32,
-                    end_line: (end >> 32) as u32,
-                    end_offset: end as u32,
-                }) }
-            }
-        }
+    pub unsafe fn write(&self, pointer: u32, location: Location) {
+        let range = match self {
+            Self::Inherit(range) => *range,
+            Self::Source { id } => SourceRange { source: *id, start: location.start, end: location.end },
+        };
+        unsafe { core::ptr::copy_nonoverlapping(range.encode().as_ptr(), pointer as *mut u8, 12); }
+    }
+
+    pub unsafe fn inherit(pointer: u32) -> Self {
+        unsafe { Self::Inherit(SourceRange {
+            source: crate::values::word(pointer, 0),
+            start: crate::values::word(pointer, 4),
+            end: crate::values::word(pointer, 8),
+        }) }
     }
 }

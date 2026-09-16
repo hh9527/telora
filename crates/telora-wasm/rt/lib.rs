@@ -2,7 +2,6 @@
 #![no_std]
 extern crate alloc;
 mod allocator;
-mod locations;
 mod host_memory;
 mod collect;
 mod collect_trace;

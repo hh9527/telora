@@ -1,4 +1,4 @@
-//! Initialization diagnostics are serialized in Guest, including LocId expansion.
+//! Initialization diagnostics expand inline byte ranges inside Guest.
 use alloc::{format, string::String, vec::Vec};
 use core::fmt::Write;
 use crate::{abi::*, json_text::quoted, tables::telora_table_get, values::word};
@@ -10,7 +10,7 @@ unsafe fn span(pointer: u32) -> &'static str {
 
 unsafe fn label(output: &mut String, id: u32, message: &str, primary: bool) {
     unsafe {
-        let record = crate::locations::telora_location_get(id);
+        let record = crate::sources::telora_source_range(id);
         output.push_str("{\"location\":{\"source\":");
         quoted(output, span(crate::sources::telora_source_name(word(record, 0)))).unwrap();
         write!(output, ",\"start\":{{\"line\":{},\"offset\":{}}},\"end\":{{\"line\":{},\"offset\":{}}}}},\"message\":",
@@ -30,18 +30,19 @@ unsafe fn event(output: &mut String, pointer: u32) {
             else { telora_wasm_shared::diagnostics::error_message(code) };
         quoted(output, message).unwrap();
         output.push_str(",\"labels\":[");
-        let origin = word(pointer, 0);
+        let origin = [word(pointer, 0), word(pointer, 4), word(pointer, 8)];
         let mut seen = Vec::new();
-        if origin != 0 {
-            label(output, origin, message, true);
+        if origin[0] != 0 {
+            label(output, pointer, message, true);
             seen.push(origin);
         }
         let subjects = word(pointer, DIAG_SUBJECTS);
         for index in 0..word(pointer, DIAG_COUNT) {
-            let id = word(subjects, u64::from(index) * u64::from(LOC_BYTES));
-            if id == 0 || seen.contains(&id) { continue; }
+            let pointer = subjects + index * LOC_BYTES;
+            let id = [word(pointer, 0), word(pointer, 4), word(pointer, 8)];
+            if id[0] == 0 || seen.contains(&id) { continue; }
             if !seen.is_empty() { output.push(','); }
-            label(output, id, &format!("subject {} originated here", index + 1), false);
+            label(output, pointer, &format!("subject {} originated here", index + 1), false);
             seen.push(id);
         }
         output.push_str("],\"notes\":[]}");

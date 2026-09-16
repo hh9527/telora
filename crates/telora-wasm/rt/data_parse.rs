@@ -2,7 +2,7 @@
 //! Result: {rows, count, root, error_descriptor}, four u32 words.
 //! Error descriptor: {text_ptr, text_len, diagnostics_ptr, diagnostics_len}.
 //! Diagnostics are comma-separated JSON records; text serves language Result.
-//! Row (16 bytes): {kind:u32, loc:LocId, payload:u64}.
+//! Row (24 bytes): {kind:u32, src:u32, start:u32, end:u32, payload:u64}.
 //! Text payloads point directly into input or a shared decoded buffer.
 use alloc::{boxed::Box, string::String};
 mod json;
@@ -26,7 +26,7 @@ unsafe fn export_error(message: String) -> u32 {
         severity: telora_data::source::Severity::Error, message,
         labels: alloc::vec::Vec::new(), notes: alloc::vec::Vec::new(),
     };
-    unsafe { errors::export(alloc::vec![diagnostic], &Origins::Inherit(0), "") }
+    unsafe { errors::export(alloc::vec![diagnostic], &Origins::Inherit(telora_wasm_shared::source_range::SourceRange::NONE), "") }
 }
 
 pub(crate) unsafe fn error_text(span: u32) -> &'static str {
@@ -37,15 +37,15 @@ pub(crate) unsafe fn error_text(span: u32) -> &'static str {
 /// Generated callers supply final language type identities and layouts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_json_parse(input: u32) -> u32 {
-    unsafe { json::parse(crate::text::text(input), &Origins::Inherit(crate::values::word(input, crate::abi::SOURCE))) }
+    unsafe { json::parse(crate::text::text(input), &Origins::inherit(input)) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_yaml_parse(input: u32) -> u32 {
-    unsafe { yaml::parse(crate::text::text(input), &Origins::Inherit(crate::values::word(input, crate::abi::SOURCE))) }
+    unsafe { yaml::parse(crate::text::text(input), &Origins::inherit(input)) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_toml_parse(input: u32) -> u32 {
-    unsafe { toml::parse(crate::text::text(input), &Origins::Inherit(crate::values::word(input, crate::abi::SOURCE))) }
+    unsafe { toml::parse(crate::text::text(input), &Origins::inherit(input)) }
 }
 
 /// Internal plan producer used by generated input glue. Retain one Guest-owned

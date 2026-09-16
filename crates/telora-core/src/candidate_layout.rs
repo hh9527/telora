@@ -182,7 +182,7 @@ fn shape(
         shape: Shape {
             data_bytes: bytes,
             data_alignment: alignment,
-            value_bytes: add(8, align(bytes, 8)?)?,
+            value_bytes: add(16, align(bytes, 8)?)?,
             value_alignment: 8,
             table,
             encoding,
@@ -744,7 +744,7 @@ mod tests {
     use super::*;
     #[test]
     fn checked_sizes() {
-        for (data, a, expected) in [(0, 1, 8), (8, 8, 16), (12, 4, 24)] {
+        for (data, a, expected) in [(0, 1, 16), (8, 8, 24), (12, 4, 32)] {
             let State::Known { shape } = shape(data, a, None, "test").unwrap() else {
                 unreachable!()
             };

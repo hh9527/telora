@@ -137,8 +137,7 @@ impl Emitter<'_> {
         self.emit(I::End);
         let value = self.text_span_value(string, span)?;
         let loc = self.mir.hir[node.index()].location;
-        let loc_id = self.plan.locations.id(loc).bits();
-        self.store32(value, SOURCE, loc_id);
+        self.store_location(value, loc);
         Ok(value)
     }
 
