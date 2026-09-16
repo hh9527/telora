@@ -133,6 +133,14 @@ impl Session {
             return Err("Wasm: data module is not in the executable".into());
         }
         let pointer = self.materialize_graph(plan)?;
+        let ty = self.manifest.value_type.ok_or("Wasm: missing semantic Value type")?;
+        self.inject_data_value(symbol, crate::transport::Value { pointer, ty })
+    }
+    pub fn inject_data_value(&mut self, symbol: u32, value: crate::transport::Value) -> Result<(), String> {
+        let ty = self.manifest.data_modules.iter().find(|module| module.symbol == symbol)
+            .ok_or("Wasm: data module is not in the executable")?.ty;
+        self.expect_value(value, ty)?;
+        let pointer = value.pointer;
         let inject = self
             .instance
             .get_typed_func::<(i32, i32), i32>(&self.store, "telora_inject_data")
