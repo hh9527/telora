@@ -42,6 +42,47 @@ fn initialize(service: &mut TransformSession) {
 }
 
 #[test]
+fn parser_diagnostics_preserve_individual_errors_and_relative_coordinates() {
+    let bytes = artifact();
+    let mut service = TransformSession::new(Session::load(&bytes, 10_000_000).unwrap()).unwrap();
+    initialize(&mut service);
+    let output = service.transform(br#"{"x":1,"x":2,"y":1,"y":2}"#).unwrap();
+    assert_eq!(output["error"], true);
+    let errors = output["diagnostics"].as_array().unwrap();
+    assert_eq!(errors.len(), 2, "{output}");
+    for error in errors {
+        assert!(error["labels"].as_array().unwrap().is_empty());
+        assert!(error["notes"].as_array().unwrap().iter().any(|note|
+            note.as_str().unwrap().contains("input range")));
+    }
+    assert_eq!(service.transform(b"7").unwrap()["ok"], serde_json::json!([42, 7]));
+}
+
+#[test]
+fn source_parser_diagnostics_keep_registered_source_ranges() {
+    let bytes = artifact();
+    for (format, input) in [
+        (Format::Json, "{\n \"x\": 1, \"x\": 2\n}"),
+        (Format::Yaml, "x: 1\nx: 2\n"),
+        (Format::Toml, "x = 1\nx = 2\n"),
+    ] {
+        let mut service = TransformSession::new(Session::load(&bytes, 10_000_000).unwrap()).unwrap();
+        let result = service.initialize(&[
+            SourceInput { name: "a", data: input.as_bytes(), format },
+            SourceInput { name: "b", data: b"null", format: Format::Json },
+        ]).unwrap();
+        assert!(!result.success);
+        let errors = result.diagnostics.as_array().unwrap();
+        assert!(!errors.is_empty());
+        let labels = errors[0]["labels"].as_array().unwrap();
+        assert!(!labels.is_empty(), "{}", result.diagnostics);
+        assert!(labels.iter().all(|label| label["location"]["source"] == "@service/a"));
+        assert!(labels.iter().any(|label| label["location"]["start"]["line"] == 1));
+        assert!(service.seal_initialization().is_err());
+    }
+}
+
+#[test]
 fn static_service_initializes_and_captures_each_request() {
     let bytes = artifact();
     assert_eq!(bytes, artifact(), "entry codegen must be deterministic");

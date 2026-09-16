@@ -1,7 +1,7 @@
 //! JSON publishes spans directly. Original text remains in the VM arena; all
 //! escaped strings share a single decoded allocation with the same lifetime.
 use super::{origins::Origins, put, string_bytes};
-use alloc::{format, string::String};
+use alloc::string::String;
 use telora_data::{
     DataLimits, SourceDatabase,
     json::{self, JsonKind, text::TextSpan},
@@ -25,14 +25,7 @@ pub(super) unsafe fn parse(input: &str, origins: &Origins) -> u32 {
         Ok(plan) => plan,
         Err(errors) => {
             return unsafe {
-                super::export_error(format!(
-                    "<json string>: {}",
-                    errors
-                        .into_iter()
-                        .map(|error| error.message)
-                        .collect::<alloc::vec::Vec<_>>()
-                        .join("\n")
-                ))
+                super::errors::export(errors, input, origins, "<json string>")
             };
         }
     };

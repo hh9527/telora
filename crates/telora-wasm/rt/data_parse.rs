@@ -1,9 +1,12 @@
 //! Fixed parse-plan ABI. Node IDs are postorder indices, never TypeIds.
-//! Result: {rows, count, root, error_span}, four u32 words.
+//! Result: {rows, count, root, error_descriptor}, four u32 words.
+//! Error descriptor: {text_ptr, text_len, diagnostics_ptr, diagnostics_len}.
+//! Diagnostics are comma-separated JSON records; text serves language Result.
 //! Row (16 bytes): {kind:u32, loc:LocId, payload:u64}.
 //! Text payloads point directly into input or a shared decoded buffer.
 use alloc::{boxed::Box, string::String};
 mod json;
+mod errors;
 mod origins;
 use origins::Origins;
 mod toml;
@@ -19,15 +22,17 @@ fn string_bytes(value: String) -> (u32, u32) {
     (bytes.as_mut_ptr() as u32, bytes.len() as u32)
 }
 unsafe fn export_error(message: String) -> u32 {
-    unsafe {
-        let result = crate::telora_alloc(16);
-        for offset in [0, 4, 8] {
-            put(result, offset, 0);
-        }
-        let span = crate::format::render_with(|out| out.write_str(&message));
-        put(result, 12, span);
-        result
-    }
+    let diagnostic = telora_data::source::Diagnostic {
+        severity: telora_data::source::Severity::Error, message,
+        labels: alloc::vec::Vec::new(), notes: alloc::vec::Vec::new(),
+    };
+    unsafe { errors::export(alloc::vec![diagnostic], "", &Origins::Inherit(0), "") }
+}
+
+pub(crate) unsafe fn error_text(span: u32) -> &'static str {
+    unsafe { core::str::from_utf8(core::slice::from_raw_parts(
+        crate::values::word(span, 0) as *const u8,
+        crate::values::word(span, 4) as usize)).unwrap() }
 }
 /// Generated callers supply final language type identities and layouts.
 #[unsafe(no_mangle)]

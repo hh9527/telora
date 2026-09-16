@@ -15,6 +15,7 @@ struct Service {
     initializer: u32,
     handler: u32,
     errors: alloc::vec::Vec<alloc::string::String>,
+    parse_errors: alloc::vec::Vec<alloc::string::String>,
 }
 static mut SERVICE: Option<Service> = None;
 
@@ -28,7 +29,8 @@ pub unsafe extern "C" fn telora_service_bootstrap(pointer: u32) {
         assert!((&*core::ptr::addr_of!(SERVICE)).is_none());
         let contract = (pointer as *const Contract).read_unaligned();
         *core::ptr::addr_of_mut!(SERVICE) = Some(Service {
-            contract, phase: Phase::Unprepared, initializer: 0, handler: 0, errors: alloc::vec::Vec::new(),
+            contract, phase: Phase::Unprepared, initializer: 0, handler: 0,
+            errors: alloc::vec::Vec::new(), parse_errors: alloc::vec::Vec::new(),
         });
     }
 }
@@ -80,8 +82,8 @@ pub unsafe extern "C" fn set_source(id: u32, pointer: u32, length: u32, format: 
         let packet = inputs::telora_service_source_parse(id, pointer, length, format);
         let error = word(packet, 12);
         if error != 0 {
-            let message = diagnostics::source_error(id, error);
-            service().errors.push(message);
+            let diagnostics = crate::data_parse::error_text(error + 8);
+            service().parse_errors.push(alloc::string::String::from(diagnostics));
             service().phase = Phase::Failed;
             return;
         }

@@ -66,12 +66,13 @@ pub unsafe extern "C" fn get(output: u32, cap: u32, result: u32) {
             quoted(&mut json, message).unwrap();
             json.push_str(",\"labels\":[],\"notes\":[]}");
         }
+        let has_errors = count != 0 || !super::service().errors.is_empty();
+        for (index, diagnostics) in super::service().parse_errors.iter().enumerate() {
+            if has_errors || index != 0 { json.push(','); }
+            json.push_str(diagnostics);
+        }
         json.push(']');
         buffer.extend_from_slice(json.as_bytes());
         super::buffers::give(buffer, result);
     }
-}
-
-pub(super) unsafe fn source_error(source: u32, error: u32) -> String {
-    unsafe { format!("{}: {}", span(crate::sources::telora_source_name(source)), span(error)) }
 }

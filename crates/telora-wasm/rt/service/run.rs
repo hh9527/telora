@@ -1,10 +1,10 @@
 use alloc::{string::String, vec::Vec};
 use crate::{data_parse::telora_parse_data, values::{word, telora_invoke}};
 
-fn failure(message: &str, output: &mut Vec<u8>) {
-    let mut json = String::from("{\"schema\":\"telora.service/v1\",\"ok\":null,\"error\":true,\"diagnostics\":[{\"severity\":\"Error\",\"message\":");
-    crate::json_text::quoted(&mut json, message).unwrap();
-    json.push_str(",\"labels\":[],\"notes\":[]}]}");
+fn failure(diagnostics: &str, output: &mut Vec<u8>) {
+    let mut json = String::from("{\"schema\":\"telora.service/v1\",\"ok\":null,\"error\":true,\"diagnostics\":[");
+    json.push_str(diagnostics);
+    json.push_str("]}");
     output.extend_from_slice(json.as_bytes());
 }
 
@@ -16,8 +16,7 @@ pub unsafe extern "C" fn run(input: u32, length: u32, output: u32, cap: u32, res
         let packet = telora_parse_data(input, length, 1, 0);
         let error = word(packet, 12);
         if error != 0 {
-            let message = core::str::from_utf8(core::slice::from_raw_parts(
-                word(error, 0) as *const u8, word(error, 4) as usize)).unwrap();
+            let message = crate::data_parse::error_text(error + 8);
             failure(message, &mut output);
         } else {
             let materialize: unsafe extern "C" fn(u32, u32) -> u32 =

@@ -222,7 +222,7 @@ LocId 仅在所属 Guest 实例内有意义；连续请求及临时 parse 不增
 ### Guest 诊断生成
 
 with_diagnostic 在 Guest 内捕获诊断、查询 LocId 对应的完整坐标和来源名称，
-生成结构化诊断结果，再通过既有/待定的结果协议交给 Host。不需要逐位置 Host 回调，
+生成结构化诊断结果，再通过服务响应或初始化诊断接口交给 Host。不需要逐位置 Host 回调，
 也没有“发生错误后再安装表”的时序要求。
 
 语言诊断的 `SourceRange` 使用 `{source: String, start: SourcePoint, end: SourcePoint}`，
@@ -257,7 +257,9 @@ run-service 输入是 UTF-8 JSON，表示一个 std/value.Value；输出也是 U
 json.stringify 生成响应。Host 只解析协议文本，不读取服务值、拆解 Result 或重建诊断。
 Wasm trap 不保证产生响应，由 Host 捕获并丢弃本次实例状态。
 输入解析失败和结果无法 JSON 编码时也形成失败响应，不能把普通语言错误当成 ABI 违约。
-当前输入解析失败已接通文本诊断；保留多条解析诊断及请求内相对坐标仍须完善。
+输入解析失败保留多条独立诊断。注入来源的标签包含来源名称及完整坐标；
+临时请求的输入内相对坐标放入 notes，以零基行号及 UTF-8 字节偏移表达，
+不冒充持久来源，不新增来源或 LocId。
 
 ## 初始化诊断与失败协议
 
