@@ -65,7 +65,7 @@ impl Emitter<'_> {
         let message = self.text_as(node, string, b"Dyn field access expects Struct")?;
         let error = self.enum_value(node, result_ty, 0, Some(message))?;
         self.extend([I::LocalGet(error), I::Return, I::End]);
-        let value = self.table_data(VALUES, input, 24);
+        let value = self.table_data(VALUES, input, DATA + 8);
         let count = self.local(ValType::I32);
         let data = self.local(ValType::I32);
         let keys = self.local(ValType::I32);
@@ -77,9 +77,9 @@ impl Emitter<'_> {
             I::I32Eq,
             I::If(BlockType::Empty),
         ]);
-        let n = self.read32(value, 20);
+        let n = self.read32(value, DATA + 4);
         let k = self.table_data(ARRAYS, value, DATA);
-        let d = self.table_data(ARRAYS, value, 24);
+        let d = self.table_data(ARRAYS, value, DATA + 8);
         let children = self.read32(row, 8);
         self.extend([
             I::LocalGet(base),
@@ -134,7 +134,7 @@ impl Emitter<'_> {
             I::I32Eq,
             I::If(BlockType::Empty),
         ]);
-        let k = self.array_item(keys, index, 32);
+        let k = self.array_item(keys, index, STRING_BYTES);
         self.extend([
             I::LocalGet(k),
             I::LocalSet(key),

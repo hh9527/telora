@@ -92,7 +92,7 @@ impl Emitter<'_> {
             I::End,
         ]);
         let result = self.array_result(output, data, count, width)?;
-        self.copy(result, 0, input, 12);
+        self.copy(result, 0, input, LOC_BYTES);
         Ok(result)
     }
     fn reflected_member(
@@ -165,11 +165,11 @@ impl Emitter<'_> {
             self.extend([I::LocalGet(some), I::LocalSet(result), I::Else]);
             let none = self.enum_value(self.key.node, types[2], 0, None)?;
             self.extend([I::LocalGet(none), I::LocalSet(result), I::End]);
-            self.copy(result, 0, input, 12);
+            self.copy(result, 0, input, LOC_BYTES);
             result
         };
         let value = self.packed_tuple(ty, &[number, name, value])?;
-        self.copy(value, 0, input, 12);
+        self.copy(value, 0, input, LOC_BYTES);
         Ok(value)
     }
 }

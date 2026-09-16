@@ -62,7 +62,7 @@ fn contiguous_source_preserves_coordinates_and_reusable_slot() {
     assert_eq!(file.offset(3, 1), Some(9));
     assert_eq!(file.position(9).line, 3);
     let loc = Location::from_usize(id, 3..7).unwrap();
-    assert_eq!(file.byte_location(file.compact(loc)), Some(loc));
+    assert_eq!(file.byte_location(file.coordinates(loc)), Some(loc));
     let text = String::from("[true]");
     let pointer = text.as_ptr();
     sources

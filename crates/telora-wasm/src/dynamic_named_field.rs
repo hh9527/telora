@@ -52,7 +52,7 @@ impl Emitter<'_> {
         let message = self.text_as(node, string, b"Dyn field access expects Struct")?;
         let error = self.enum_value(node, args[2], 0, Some(message))?;
         self.extend([I::LocalGet(error), I::Return, I::End]);
-        let value = self.table_data(VALUES, input, 24);
+        let value = self.table_data(VALUES, input, DATA + 8);
         let child = self.local(ValType::I32);
         let child_ty = self.local(ValType::I32);
         let width = self.local(ValType::I32);

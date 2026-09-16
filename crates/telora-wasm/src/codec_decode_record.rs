@@ -45,8 +45,8 @@ impl Emitter<'_> {
         let path = self.read32(0, 24);
         let width = self.width(source)?;
         let keys = self.table_data(ARRAYS, collection, DATA);
-        let values = self.table_data(ARRAYS, collection, 24);
-        let count = self.read32(collection, 20);
+        let values = self.table_data(ARRAYS, collection, DATA + 8);
+        let count = self.read32(collection, DATA + 4);
         let mut fields = Vec::with_capacity(members.len());
         for ((_, ty), name) in members.iter().zip(&names) {
             let key = self.text_as(self.key.node, self.string_type()?, name.as_bytes())?;
@@ -72,7 +72,7 @@ impl Emitter<'_> {
         self.extend([
             I::LocalGet(keys),
             I::LocalGet(cursor),
-            I::I32Const(32),
+            I::I32Const(STRING_BYTES as i32),
             I::I32Mul,
             I::I32Add,
             I::LocalSet(key),
@@ -141,7 +141,7 @@ impl Emitter<'_> {
             decoded.push(value);
         }
         let value = self.packed_tuple(target, &decoded)?;
-        self.copy(value, 0, input, 12);
+        self.copy(value, 0, input, LOC_BYTES);
         let error = self.read32(0, 28);
         self.construction_check_with_rejection(
             self.key.node,

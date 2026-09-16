@@ -37,8 +37,8 @@ impl Session {
         let width = self.manifest.types[ty as usize].bytes;
         let output = self.output();
         let (base, bytes) = output.payload(ARRAYS, output.word(value.pointer as u64 + DATA)?)?;
-        let start = output.word(value.pointer as u64 + 20)?;
-        let end = output.word(value.pointer as u64 + 24)?;
+        let start = output.word(value.pointer as u64 + (DATA + 4))?;
+        let end = output.word(value.pointer as u64 + (DATA + 8))?;
         if start > end || width == 0 || end as u64 * width as u64 > bytes {
             return Err("Wasm: invalid protocol array".into());
         }
@@ -63,15 +63,15 @@ impl Session {
         let (keys, key_bytes) =
             output.payload(ARRAYS, output.word(value.pointer as u64 + DATA)?)?;
         let (values, value_bytes) =
-            output.payload(ARRAYS, output.word(value.pointer as u64 + 24)?)?;
-        let count = output.word(value.pointer as u64 + 20)?;
-        if count as u64 * 32 != key_bytes || count as u64 * width as u64 != value_bytes {
+            output.payload(ARRAYS, output.word(value.pointer as u64 + (DATA + 8))?)?;
+        let count = output.word(value.pointer as u64 + (DATA + 4))?;
+        if count as u64 * u64::from(STRING_BYTES) != key_bytes || count as u64 * width as u64 != value_bytes {
             return Err("Wasm: invalid protocol dictionary".into());
         }
         (0..count)
             .map(|i| {
                 Ok((
-                    output.text(keys + i as u64 * 32)?,
+                    output.text(keys + i as u64 * u64::from(STRING_BYTES))?,
                     Value {
                         pointer: u32::try_from(values + i as u64 * width as u64)
                             .map_err(|_| "Wasm: dictionary offset overflow")?,
@@ -96,14 +96,14 @@ impl Session {
                 let pointer = if variant.boxed {
                     u32::try_from(
                         output
-                            .payload(VALUES, output.word(value.pointer as u64 + 24)?)?
+                            .payload(VALUES, output.word(value.pointer as u64 + (DATA + 8))?)?
                             .0,
                     )
                     .map_err(|_| "Wasm: variant offset overflow")?
                 } else {
                     value
                         .pointer
-                        .checked_add(24)
+                        .checked_add((DATA + 8) as u32)
                         .ok_or("Wasm: variant overflow")?
                 };
                 Ok(Value { pointer, ty })

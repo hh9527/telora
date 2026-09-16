@@ -298,8 +298,8 @@ codegen 的公开编译入口接受 SealedExecutable。表达式类型、泛型�
 普通构造拒绝产生运行时失败，codec 解码拒绝返回 Err。读取或复制已完成的值不会重新
 执行构造校验；新构造与 `<~` 更新会检查其结果。
 
-运行时值头包含 12 字节的紧凑 Loc 和 4 字节 TypeId（共 16 字节），后接由静态布局
-决定的 payload。标量值为 24 字节；函数保存函数表索引与闭包环境。
+运行时值头包含 4 字节 LocId 和 4 字节 TypeId（共 8 字节），后接由静态布局
+决定的 payload。标量值为 16 字节；函数保存函数表索引与闭包环境。
 String、Array、Record 等对象位于各自 typed table；Tuple/Record 共用 Record table。
 Dict 使用有序 keys/values，字段操作与构造胶水消费已闭合的布局证据。
 具体尺寸与表示以 `telora-wasm-shared/src/abi.rs` 和生成器为准，不构成发布 ABI。
@@ -310,16 +310,19 @@ codegen 不沿 def/let initializer 追溯构造器。类型域别名不作为初
 pattern 使用单独的 member selection 事实，不执行值物化。
 
 enum 构造器代码按封闭签名和 variant 复用。其函数值的 environment 为 0，invoke
-将函数值地址作为第一个参数交给构造器胶水，用于复制 12 字节来源头；payload
+将函数值地址作为第一个参数交给构造器胶水，用于复制 4 字节 LocId；payload
 仍按原布局搬运，不重写其来源。普通闭包使用非零环境句柄，调用约定不变。
-内部 ABI 版本为 15（此前为 14）；旧 Wasm 制品需重新生成，值布局未改变。
+内部 ABI 版本为 17；旧 Wasm 制品需重新生成，不能混用旧值布局。
 
-Loc 使用 `src_id:u16`，起止位置各为 `line:u16 + UTF-8 offset:u24`。
+LocId 0 表示无来源；最高位为 1 时，低 31 位索引静态表；其余非零值减 1 后
+索引初始化表。两张表都在 Guest 线性内存内，每项是五个小端 u32：
+SourceId、起止行号与行内 UTF-8 字节偏移。初始化表可以扩容，已有 LocId 不变，
+冻结后不得追加；普通字符串解析仅继承输入的 LocId。
 行和偏移从 0 开始，范围为 `[start,end)`；CRLF、LF、CR 都计作一次换行。
-源码和数据注册时检查容量，编译器/Host 将原始字节范围转换为该坐标。
-Wasm 来源表仅保存 ID 和名称，不携带 bols。诊断可以直接显示行列；
+Wasm 静态位置表及来源名称随制品生成，不携带 bols。
+`with_diagnostics` 在 Guest 内查表，生成 `SourcePoint {line, offset}`。
 原始文本片段、UTF-16 列和终端宽度的转换由 Host 负责。
-三个 u32 的精确打包方式见 [RFC 0293](../../rfc/0293-packed-source-coordinates.md)。
+详细布局见 [RFC 0300](../../rfc/0300-host-guest-abi-and-location-ids.md)。
 
 类型元数据复用静态 TypeId，不递归重建类型描述符。语言值和闭包留在 Wasm 内存，
 Host 通过带类型的 session 句柄传递根；仅输入、输出、资源和诊断跨 Host 边界。

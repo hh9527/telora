@@ -9,16 +9,16 @@ impl Session {
             let mut inline = [0u8; 16];
             inline[1] = bytes.len() as u8;
             inline[2..2 + bytes.len()].copy_from_slice(bytes);
-            self.write(pointer as usize + 16, &inline)?;
+            self.write(pointer as usize + (DATA as usize), &inline)?;
         } else {
             let data = self.allocate(bytes.len())?;
             self.write(data as usize, bytes)?;
             let length =
                 u32::try_from(bytes.len()).map_err(|_| "Wasm: string input size overflow")?;
             let id = self.push_input(STRINGS, data, length)?;
-            self.write(pointer as usize + 16, &1u32.to_le_bytes())?;
-            self.write(pointer as usize + 20, &id.to_le_bytes())?;
-            self.write(pointer as usize + 28, &length.to_le_bytes())?;
+            self.write(pointer as usize + (DATA as usize), &1u32.to_le_bytes())?;
+            self.write(pointer as usize + (DATA + 4) as usize, &id.to_le_bytes())?;
+            self.write(pointer as usize + (DATA + 12) as usize, &length.to_le_bytes())?;
         }
         Ok(())
     }
@@ -85,21 +85,21 @@ impl Session {
                 }
             }
             Kind::Int => self.write(
-                pointer as usize + 16,
+                pointer as usize + (DATA as usize),
                 &value
                     .as_i64()
                     .ok_or("Wasm: expected Int input")?
                     .to_le_bytes(),
             )?,
             Kind::Float => self.write(
-                pointer as usize + 16,
+                pointer as usize + (DATA as usize),
                 &value
                     .as_f64()
                     .ok_or("Wasm: expected Float input")?
                     .to_le_bytes(),
             )?,
             Kind::Bool => self.write(
-                pointer as usize + 16,
+                pointer as usize + (DATA as usize),
                 &u64::from(value.as_bool().ok_or("Wasm: expected Bool input")?).to_le_bytes(),
             )?,
             Kind::String => self.write_input_text(
@@ -124,8 +124,8 @@ impl Session {
                     self.copy_input(data + index as u32 * stride, value, stride as usize)?;
                 }
                 let id = self.push_input(ARRAYS, data, bytes)?;
-                self.write(pointer as usize + 16, &id.to_le_bytes())?;
-                self.write(pointer as usize + 24, &length.to_le_bytes())?;
+                self.write(pointer as usize + (DATA as usize), &id.to_le_bytes())?;
+                self.write(pointer as usize + (DATA + 8) as usize, &length.to_le_bytes())?;
             }
             Kind::Record | Kind::Tuple => {
                 let valid = match descriptor.kind {
@@ -158,7 +158,7 @@ impl Session {
                     self.copy_input(data + field.offset, value, width as usize)?;
                 }
                 let id = self.push_input(RECORDS, data, bytes)?;
-                self.write(pointer as usize + 16, &id.to_le_bytes())?;
+                self.write(pointer as usize + (DATA as usize), &id.to_le_bytes())?;
             }
             Kind::Dict => self.input_dict(pointer, &descriptor, value, depth)?,
             Kind::Option | Kind::Enum | Kind::Value => {
@@ -175,7 +175,7 @@ impl Session {
                     payload,
                     self.manifest.types[field.ty as usize].bytes,
                 )?;
-                self.write(pointer as usize + 16, &id.to_le_bytes())?;
+                self.write(pointer as usize + (DATA as usize), &id.to_le_bytes())?;
             }
             _ => return Err("Wasm: input encoding is not implemented for this type".into()),
         }

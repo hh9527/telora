@@ -48,14 +48,14 @@ impl Emitter<'_> {
                 return Ok(input);
             }
             let id = self.table_push(VALUES, input, width);
-            let result = self.value_as(node, output, 40)?;
+            let result = self.value_as(node, output, DYN_BYTES)?;
             self.store32(result, DATA, args[1].index() as u32);
-            self.store32(result, 20, 1);
+            self.store32(result, DATA + 4, 1);
             self.extend([
                 I::LocalGet(result),
                 I::LocalGet(id),
                 I::I64ExtendI32U,
-                I::I64Store(memory(24, 3)),
+                I::I64Store(memory(DATA + 8, 3)),
             ]);
             return Ok(result);
         }
@@ -109,7 +109,7 @@ impl Emitter<'_> {
             I::I32Eq,
             I::If(BlockType::Empty),
         ]);
-        let value = self.table_data(VALUES, input, 24);
+        let value = self.table_data(VALUES, input, DATA + 8);
         let some = self.enum_value(node, output, 1, Some(value))?;
         self.extend([I::LocalGet(some), I::LocalSet(result), I::Else]);
         let none = self.enum_value(node, output, 0, None)?;

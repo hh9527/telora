@@ -27,7 +27,7 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
     assert_eq!(result[0].as_array().unwrap().len(), 1);
     assert_eq!(result[0][0]["message"], "positive required");
     assert_eq!(
-        result[0][0]["labels"][1]["location"]["start"],
+        diagnostic_point(&result[0][0]["labels"][1]["location"]["start"]),
         point(source, source.find("\"-7\"").unwrap())
     );
     assert_eq!(result[1], 42);
@@ -36,7 +36,7 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
         "$: regex captures must match struct fields; missing captures [\"number\"], extra captures [\"wrong\"]"
     );
     assert_eq!(
-        result[3]["labels"][1]["location"]["start"],
+        diagnostic_point(&result[3]["labels"][1]["location"]["start"]),
         point(source, source.find("\"\"").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());
@@ -110,7 +110,7 @@ fn string_parse_uses_closed_scalar_and_option_targets() {
     session.initialize().unwrap();
     let report = session.call(&[]).unwrap();
     assert_eq!(
-        report["labels"][1]["location"]["start"],
+        diagnostic_point(&report["labels"][1]["location"]["start"]),
         point(source, source.find("\"12345\"").unwrap())
     );
 }
@@ -141,7 +141,7 @@ fn regex_errors_are_language_diagnostics_and_leave_the_session_usable() {
     );
     assert_eq!(result[3], true);
     assert_eq!(
-        result[0]["labels"][1]["location"]["start"],
+        diagnostic_point(&result[0]["labels"][1]["location"]["start"]),
         point(source, source.find("\"[\"").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());

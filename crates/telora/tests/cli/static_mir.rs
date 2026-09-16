@@ -698,10 +698,10 @@ fn dump_types_layout_is_static_deterministic_and_hidden() {
         let entry = &row["entry"];
         if entry["constructor"] == "Type" || (entry["constructor"] == "TypeOf" && entry["layout"]["status"] != "template") {
             assert_eq!(entry["layout"]["shape"]["data_bytes"], 4);
-            assert_eq!(entry["layout"]["shape"]["value_bytes"], 24);
+            assert_eq!(entry["layout"]["shape"]["value_bytes"], 16);
         }
         if entry["constructor"] == "Bytes" {
-            assert_eq!(entry["layout"]["shape"]["value_bytes"], 32);
+            assert_eq!(entry["layout"]["shape"]["value_bytes"], 24);
             assert_eq!(entry["layout"]["shape"]["table"], "BytesTable");
             assert_eq!(entry["object"]["element_stride"], 1);
         }
@@ -710,17 +710,17 @@ fn dump_types_layout_is_static_deterministic_and_hidden() {
     assert!(first.iter().any(|r| r["entry"]["constructor"] == "Meta"));
     let rec = first.iter().find(|r| r["entry"]["object"]["members"].as_array().is_some_and(|m| m.len() == 2 && m[0]["name"] == "a" && m[1]["name"] == "b")).unwrap();
     assert_eq!(rec["entry"]["object"]["members"][0]["offset"], 0);
-    assert_eq!(rec["entry"]["object"]["members"][1]["offset"], 24);
-    assert_eq!(rec["entry"]["object"]["bytes"], 56);
-    assert!(first.iter().any(|r| r["entry"]["object"]["element_stride"] == 24));
+    assert_eq!(rec["entry"]["object"]["members"][1]["offset"], 16);
+    assert_eq!(rec["entry"]["object"]["bytes"], 40);
+    assert!(first.iter().any(|r| r["entry"]["object"]["element_stride"] == 16));
     let choices = first.iter().find(|r| r["entry"]["variants"].as_array().is_some_and(|v| v.iter().any(|v| v["name"] == "Items"))).unwrap();
-    assert_eq!(choices["entry"]["layout"]["shape"]["value_bytes"], 56);
-    assert_eq!(choices["entry"]["variants"][1]["offset"], 24);
+    assert_eq!(choices["entry"]["layout"]["shape"]["value_bytes"], 40);
+    assert_eq!(choices["entry"]["variants"][1]["offset"], 16);
     assert!(first.iter().any(|r| r["entry"]["layout"]["status"] == "template"));
     let recursive = first.iter().find(|r| r["entry"]["variants"].as_array().is_some_and(|v| v.iter().any(|v| v["name"] == "More"))).unwrap();
     assert_eq!(recursive["entry"]["layout"]["status"], "known");
     assert_eq!(recursive["entry"]["variants"][1]["storage"], "heap_id");
-    assert_eq!(recursive["entry"]["layout"]["shape"]["value_bytes"], 32);
+    assert_eq!(recursive["entry"]["layout"]["shape"]["value_bytes"], 24);
     assert_eq!(report["summary"]["closed"], true);
     assert!(first.iter().all(|r| r["entry"]["layout"]["status"] != "pending"));
     assert!(!telora(&cwd).args(["check", "@src/main"]).output().unwrap().status.success());
@@ -780,27 +780,27 @@ fn concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types() {
     let entries = report["types"].as_array().unwrap();
     for name in ["Left", "Right"] {
         let row = entries.iter().find(|r| r["type_name"] == name && r["entry"]["constructor"] == "Nominal").unwrap();
-        assert_eq!(row["entry"]["layout"]["shape"]["value_bytes"], 32);
+        assert_eq!(row["entry"]["layout"]["shape"]["value_bytes"], 24);
         assert!(row["entry"]["variants"].as_array().unwrap().iter().any(|v| v["storage"] == "heap_id"));
     }
     assert!(entries.iter().any(|r| r["type_name"] == "Dead" && r["entry"]["layout"]["status"] == "uninhabited"));
     let nested = entries.iter().find(|r| r["type_name"] == "Nested" && r["entry"]["constructor"] == "Nominal").unwrap();
-    assert_eq!(nested["entry"]["layout"]["shape"]["value_bytes"], 56);
+    assert_eq!(nested["entry"]["layout"]["shape"]["value_bytes"], 40);
     assert!(nested["entry"]["variants"].as_array().unwrap().iter().all(|v| v["storage"] == "full_value"));
     let wrapped = entries.iter().find(|r| r["type_name"] == "Wrapped" && r["entry"]["constructor"] == "Nominal").unwrap();
-    assert_eq!(wrapped["entry"]["object"]["bytes"], 24);
+    assert_eq!(wrapped["entry"]["object"]["bytes"], 16);
     assert_eq!(wrapped["entry"]["layout"]["shape"]["table"], "NewtypeTable");
-    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Tuple" && r["entry"]["object"]["bytes"] == 56));
-    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Dyn" && r["entry"]["layout"]["shape"]["value_bytes"] == 40));
-    assert!(entries.iter().any(|r| r["type_name"] == "Array(Dyn)" && r["entry"]["object"]["element_stride"] == 40));
+    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Tuple" && r["entry"]["object"]["bytes"] == 40));
+    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Dyn" && r["entry"]["layout"]["shape"]["value_bytes"] == 32));
+    assert!(entries.iter().any(|r| r["type_name"] == "Array(Dyn)" && r["entry"]["object"]["element_stride"] == 32));
     assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Record" && r["entry"]["layout"]["status"] == "compile_time" && r["entry"]["layout"]["reason"].as_str().is_some_and(|s| s.contains("module body"))));
     assert!(!entries.iter().any(|r| r["entry"]["constructor"] == "Quantified"));
     assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Function" && r["entry"]["layout"]["shape"]["table"] == "ClosureEnvTable"));
     assert!(entries.iter().any(|r| r["type_name"] == "Array(Never)" && r["entry"]["object"]["element_stride"] == 0));
     assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Native" && r["entry"]["object"]["bytes"] == 8));
     let dict = entries.iter().find(|r| r["type_name"] == "Dict(Int)").unwrap();
-    assert_eq!(dict["entry"]["object"]["element_stride"], 24);
-    assert_eq!(dict["entry"]["layout"]["shape"]["value_bytes"], 32);
+    assert_eq!(dict["entry"]["object"]["element_stride"], 16);
+    assert_eq!(dict["entry"]["layout"]["shape"]["value_bytes"], 24);
     assert_eq!(dict["entry"]["layout"]["shape"]["table"], "ArrayTable");
     for row in entries {
         if matches!(row["entry"]["constructor"].as_str(), Some("Meta" | "Namespace" | "TypeList" | "PropertyBound" | "TypeFunction" | "Bound")) {

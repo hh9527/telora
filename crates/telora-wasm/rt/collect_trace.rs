@@ -2,6 +2,12 @@
 use crate::{abi::*, collect::Collector, values::word};
 
 impl Collector {
+    pub unsafe fn trace_location(&mut self, id: u32) {
+        if id != 0 {
+            unsafe { self.sources.insert(word(crate::locations::telora_location_get(id), 0)); }
+        }
+    }
+
     unsafe fn handle(&mut self, table: u32, old: u32, at: u32) {
         unsafe {
             let id = self.object(table, word(old, 0));
@@ -17,10 +23,10 @@ impl Collector {
                     let mut offset = 0;
                     while offset < bytes {
                         let ty = word(old + offset, TYPE);
-                        self.sources.insert(word(old + offset, SOURCE) & 0xffff);
+                        self.trace_location(word(old + offset, SOURCE));
                         let width = word(self.types + ty * 20, 4);
                         assert!(width >= HEADER_BYTES && width <= bytes - offset);
-                        self.trace_data(ty, old + offset + 16, at + offset + 16);
+                        self.trace_data(ty, old + offset + DATA as u32, at + offset + DATA as u32);
                         offset += width;
                     }
                 }
@@ -36,11 +42,11 @@ impl Collector {
                     }
                 }
                 BLAMES => {
-                    self.sources.insert(word(old, SOURCE) & 0xffff);
-                    for index in 0..word(old, 32) {
-                        self.sources.insert(word(old, 40 + index as u64 * 12) & 0xffff);
+                    self.trace_location(word(old, SOURCE));
+                    for index in 0..word(old, BLAME_COUNT as u64) {
+                        self.trace_location(word(old, BLAME_SUBJECTS as u64 + index as u64 * LOC_BYTES as u64));
                     }
-                    self.string(old + 16, at + 16);
+                    self.string(old + DATA as u32, at + DATA as u32);
                 }
                 FORMATS => {
                     let count = if word(old, 0) == 4 { 2 } else { 1 };
@@ -90,8 +96,8 @@ impl Collector {
                         if word(variant, 4) != 0 {
                             self.handle(VALUES, old + 8, at + 8);
                         } else {
-                            self.sources.insert(word(old, 8) & 0xffff);
-                            self.trace_data(payload, old + 24, at + 24);
+                            self.trace_location(word(old, 8));
+                            self.trace_data(payload, old + 8 + HEADER_BYTES, at + 8 + HEADER_BYTES);
                         }
                     }
                 }

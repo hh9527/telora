@@ -18,18 +18,18 @@ impl Emitter<'_> {
             ),
             I::LocalSet(count),
         ]);
-        let keys = self.array_storage(count, 32);
+        let keys = self.array_storage(count, STRING_BYTES);
         let values = self.array_storage(count, width);
         for (index, (name, (field, value))) in fields.into_iter().enumerate() {
             let key = self.text_as(field, self.string_type()?, name.as_bytes())?;
-            self.copy(keys, index as u32 * 32, key, 32);
+            self.copy(keys, index as u32 * STRING_BYTES, key, STRING_BYTES);
             self.copy(values, index as u32 * width, value, width);
         }
         self.dict_result_at(node, ty, keys, values, count, width)
     }
 
     fn dict_reheader(&mut self, node: HirId, ty: TypeId, value: u32) -> Result<u32, String> {
-        let result = self.value_as(node, ty, 32)?;
+        let result = self.value_as(node, ty, STRING_BYTES)?;
         self.extend([
             I::LocalGet(result),
             I::I32Const(DATA as i32),
@@ -61,7 +61,7 @@ impl Emitter<'_> {
         let count = self.local(ValType::I32);
         self.extend([
             I::LocalGet(value),
-            I::I32Load(memory(20, 2)),
+            I::I32Load(memory(DATA + 4, 2)),
             I::LocalSet(count),
         ]);
         if self.width(from)? == 0 {
@@ -73,7 +73,7 @@ impl Emitter<'_> {
             ]);
             return self.dict_reheader(node, target, value);
         }
-        let source = self.table_data(ARRAYS, value, 24);
+        let source = self.table_data(ARRAYS, value, DATA + 8);
         let width = self.width(into)?;
         let values = self.array_storage(count, width);
         let keys = self.table_data(ARRAYS, value, DATA);

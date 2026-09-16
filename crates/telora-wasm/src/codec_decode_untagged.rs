@@ -46,7 +46,7 @@ impl Emitter<'_> {
                     I::If(BlockType::Empty),
                 ]);
                 let value = self.enum_value(self.key.node, target, index as u32, None)?;
-                self.copy(value, 0, input, 12);
+                self.copy(value, 0, input, LOC_BYTES);
                 self.extend([
                     I::LocalGet(value),
                     I::LocalSet(selected),
@@ -145,9 +145,9 @@ impl Emitter<'_> {
         let id = self.local(ValType::I32);
         self.extend([
             I::LocalGet(count),
-            I::I32Const(12),
+            I::I32Const(LOC_BYTES as i32),
             I::I32Mul,
-            I::I32Const(40),
+            I::I32Const(BLAME_SUBJECTS as i32),
             I::I32Add,
             I::LocalTee(bytes),
             I::Call(ALLOC),
@@ -160,7 +160,7 @@ impl Emitter<'_> {
                 dst_mem: 0,
             },
         ]);
-        self.copy(object, 0, message, 32);
+        self.copy(object, 0, message, STRING_BYTES);
         self.extend([
             I::I32Const(table_address(BLAMES) as i32),
             I::LocalGet(object),
@@ -168,8 +168,8 @@ impl Emitter<'_> {
             I::Call(TABLE_PUSH),
             I::LocalSet(id),
         ]);
-        let result = self.alloc(24);
-        self.copy(result, 0, original, 24);
+        let result = self.alloc(SCALAR_BYTES);
+        self.copy(result, 0, original, SCALAR_BYTES);
         self.extend([
             I::LocalGet(result),
             I::LocalGet(id),

@@ -14,7 +14,7 @@ pub(crate) enum Graph<'a> {
 }
 
 pub(crate) struct Node<'a> {
-    pub origin: [u32; 3],
+    pub origin: [u32; 5],
     pub value: Value<'a>,
 }
 
@@ -58,7 +58,7 @@ pub(crate) enum Fields<'a> {
 }
 pub(crate) struct Field<'a> {
     pub name: &'a str,
-    pub origin: [u32; 3],
+    pub origin: [u32; 5],
     pub value: usize,
 }
 impl<'a> Iterator for Fields<'a> {
@@ -66,7 +66,7 @@ impl<'a> Iterator for Fields<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Spans(iter, source, decoded, file) => iter.next().map(|(name, field)| Field {
-                name: name.resolve(source, decoded), origin: file.compact(field.key_location).0, value: field.value.index(),
+                name: name.resolve(source, decoded), origin: file.coordinates(field.key_location).0, value: field.value.index(),
             }),
             Self::Packet(iter) => iter.next().map(|field| Field {
                 name: &field.name,
@@ -119,7 +119,7 @@ impl<'a> Graph<'a> {
                 use telora_data::toml::TomlKind as T;
                 let node = plan.nodes.get(id).ok_or("Wasm: invalid data edge")?;
                 Node {
-                    origin: file.compact(node.location).0,
+                    origin: file.coordinates(node.location).0,
                     value: match &node.kind {
                         T::Int(n) => Value::Int(*n), T::Float(n) => Value::Float(*n), T::Bool(b) => Value::Bool(*b),
                         T::String(span) => Value::String(span.resolve(source, decoded)),
@@ -132,7 +132,7 @@ impl<'a> Graph<'a> {
             Self::Json(plan, source, decoded, file) => {
                 let node = plan.nodes.get(id).ok_or("Wasm: invalid data edge")?;
                 Node {
-                    origin: file.compact(node.location).0,
+                    origin: file.coordinates(node.location).0,
                     value: match &node.kind {
                         JsonKind::Int(n) => Value::Int(*n),
                         JsonKind::Float(n) => Value::Float(*n),
@@ -148,7 +148,7 @@ impl<'a> Graph<'a> {
                 use telora_data::yaml::YamlKind as Y;
                 let node = plan.nodes.get(id).ok_or("Wasm: invalid data edge")?;
                 Node {
-                    origin: file.compact(node.location).0,
+                    origin: file.coordinates(node.location).0,
                     value: match &node.kind {
                         Y::Int(n) => Value::Int(*n), Y::Float(n) => Value::Float(*n),
                         Y::String(span) => Value::String(span.resolve(source, decoded)),

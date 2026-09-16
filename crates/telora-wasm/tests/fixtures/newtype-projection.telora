@@ -7,7 +7,7 @@ type Row = struct {value: Int};
 type Wrapped = struct(Row);
 def boxed: for(T) Fn(T) -> Box(T) = fn(value) { Box(value) };
 def original: Int = 42;
-export def answer: Fn() -> (Array(Bool), Int) = fn() {
+export def answer: Fn() -> (Array(Bool), rt.SourcePoint) = fn() {
     let number = Id(original);
     let nested = boxed(number);
     let row = Wrapped({value: 19});
@@ -18,5 +18,5 @@ export def answer: Fn() -> (Array(Bool), Int) = fn() {
       match dyn.project_with((Fn(Int) -> Id).type, factory) {
         Some(make) => make(7).0 == 7, None => False,
       }],
-      match origin { Err(reports) => reports[0].labels[1].location.start, Ok(_) => -1 })
+      match origin { Err(reports) => reports[0].labels[1].location.start, Ok(_) => {line: 0, offset: 0} })
 };

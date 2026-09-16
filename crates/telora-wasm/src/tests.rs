@@ -71,7 +71,7 @@ fn packed_sources_are_eol_independent_without_artifact_line_tables() {
         let file = database.get(id);
         let source = crate::artifact::Source::from_file(file);
         let loc = telora_core::Loc::from_usize(id, "中文".len()..text.find("next").unwrap() + 4).unwrap();
-        let packed = file.compact(loc);
+        let packed = file.coordinates(loc);
         assert_eq!(source.position(packed.start()), (1, 7));
         assert_eq!(source.position(packed.end()), (2, 5));
         assert_eq!(file.byte_location(packed), Some(loc));
@@ -113,8 +113,8 @@ fn runtime_diagnostics_preserve_high_line_bits() {
     session.initialize().unwrap();
     assert!(session.call(&[]).is_err());
     let diagnostics = session.diagnostics().unwrap();
-    let loc = telora_core::source::CompactLoc(diagnostics[0].origin);
-    assert_eq!(loc.start() >> 24, 300);
+    let loc = telora_core::source::SourceCoordinates(diagnostics[0].origin);
+    assert_eq!(loc.start() >> 32, 300);
     let name = &session.manifest.sources.iter().find(|file| file.id == loc.source()).unwrap().name;
     assert!(diagnostics[0].render(&session.manifest).starts_with(&format!("{name}:301:")));
 }
@@ -188,11 +188,11 @@ fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {
     );
     assert!(diagnostics.iter().all(|d| d.warning));
     assert_eq!(
-        result[2]["labels"][1]["location"]["start"],
+        diagnostic_point(&result[2]["labels"][1]["location"]["start"]),
         point(source, source.find("42").unwrap())
     );
     assert_eq!(
-        result[3]["labels"][1]["location"]["start"],
+        diagnostic_point(&result[3]["labels"][1]["location"]["start"]),
         point(source, source.find("(...original, 3)").unwrap())
     );
 }
@@ -750,7 +750,7 @@ fn sealed_export_runs_without_mir_or_host_imports() {
     let memory = instance.get_memory(&store, "memory").unwrap();
     let bytes = memory.data(&store);
     assert_eq!(
-        i64::from_le_bytes(bytes[pointer + 16..pointer + 24].try_into().unwrap()),
+        i64::from_le_bytes(bytes[pointer + crate::abi::DATA as usize..pointer + crate::abi::DATA as usize + 8].try_into().unwrap()),
         42
     );
 }
@@ -878,7 +878,7 @@ fn language_functions_and_control_flow() {
         let memory = instance.get_memory(&store, "memory").unwrap();
         let bytes = memory.data(&store);
         assert_eq!(
-            i64::from_le_bytes(bytes[pointer + 16..pointer + 24].try_into().unwrap()),
+            i64::from_le_bytes(bytes[pointer + crate::abi::DATA as usize..pointer + crate::abi::DATA as usize + 8].try_into().unwrap()),
             42,
             "{source}"
         );
@@ -889,11 +889,15 @@ fn point(source: &str, byte: usize) -> u64 {
     let prefix = &source[..byte];
     let line = prefix.bytes().filter(|&byte| byte == b'\n').count();
     let column = prefix.rsplit('\n').next().unwrap().len();
-    ((line as u64) << 24) | column as u64
+    ((line as u64) << 32) | column as u64
 }
 
-fn source_slice(source: &str, words: [u32; 3]) -> &str {
+fn source_slice(source: &str, words: [u32; 5]) -> &str {
     let index = telora_core::source::LineIndex::new(source).unwrap();
-    let loc = telora_core::source::CompactLoc(words);
+    let loc = telora_core::source::SourceCoordinates(words);
     &source[index.byte(loc.start()).unwrap() as usize..index.byte(loc.end()).unwrap() as usize]
+}
+
+fn diagnostic_point(value: &serde_json::Value) -> u64 {
+    (value["line"].as_u64().unwrap() << 32) | value["offset"].as_u64().unwrap()
 }

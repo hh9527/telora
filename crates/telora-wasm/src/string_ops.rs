@@ -17,7 +17,7 @@ impl Emitter<'_> {
             return Err("Wasm: text span list result is not Array(String)".into());
         }
         let string = shape.arguments[0];
-        let data = self.array_storage(count, 32);
+        let data = self.array_storage(count, STRING_BYTES);
         let index = self.local(ValType::I32);
         self.extend([
             I::Block(BlockType::Empty),
@@ -29,8 +29,8 @@ impl Emitter<'_> {
         ]);
         let span = self.array_item(base, index, 8);
         let value = self.text_span_value(string, span)?;
-        let destination = self.array_item(data, index, 32);
-        self.copy(destination, 0, value, 32);
+        let destination = self.array_item(data, index, STRING_BYTES);
+        self.copy(destination, 0, value, STRING_BYTES);
         self.extend([
             I::LocalGet(index),
             I::I32Const(1),
@@ -40,7 +40,7 @@ impl Emitter<'_> {
             I::End,
             I::End,
         ]);
-        self.array_result(ty, data, count, 32)
+        self.array_result(ty, data, count, STRING_BYTES)
     }
     pub fn string_native(&mut self, name: &str) -> Result<u32, String> {
         if name == "parse_with" {

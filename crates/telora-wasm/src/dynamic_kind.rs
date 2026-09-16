@@ -64,7 +64,7 @@ impl Emitter<'_> {
             I::I32Eq,
             I::If(BlockType::Empty),
         ]);
-        let value = self.table_data(VALUES, input, 24);
+        let value = self.table_data(VALUES, input, DATA + 8);
         let tag = self.read32(value, DATA);
         let members = self.read32(row, 16);
         self.extend([
@@ -106,7 +106,7 @@ impl Emitter<'_> {
             .position(|v| v.name == name && v.type_id.is_none())
             .ok_or("Wasm: Dyn ValueKind variant missing")?;
         let result = self.enum_value(self.key.node, output, index as u32, None)?;
-        self.copy(result, 0, input, 12);
+        self.copy(result, 0, input, LOC_BYTES);
         Ok(result)
     }
 }

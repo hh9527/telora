@@ -330,13 +330,13 @@ mod tests {
     }
 
     #[test]
-    fn oversized_source_is_an_unavailable_module_diagnostic() {
+    fn source_line_count_is_not_limited_to_u16() {
         let mir = super::resolve(vec![super::ModuleSpec {
             native: None, name: "@src/main".into(),
             kind: super::ModuleKind::Source, implicit_imports: vec![],
         }], &["@src/main".into()], |_, _| Ok("\n".repeat(65536)));
-        assert!(matches!(mir.modules[0].state, super::ModuleState::Unavailable(_)));
-        assert!(mir.diagnostics[0].message.contains("location capacity"));
+        assert!(!matches!(mir.modules[0].state, super::ModuleState::Unavailable(_)));
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     }
 
     use super::*;

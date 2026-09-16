@@ -117,9 +117,9 @@ impl Emitter<'_> {
             T::Dyn => {
                 self.extend([
                     I::LocalGet(0),
-                    I::I64Load(memory(24, 3)),
+                    I::I64Load(memory(DATA + 8, 3)),
                     I::LocalGet(1),
-                    I::I64Load(memory(24, 3)),
+                    I::I64Load(memory(DATA + 8, 3)),
                     I::I64Eq,
                 ]);
                 return Ok(());
@@ -257,8 +257,8 @@ impl Emitter<'_> {
             I::BrIf(1),
         ]);
         if let Some((left, right)) = keys {
-            let left = self.array_item(left, index, 32);
-            let right = self.array_item(right, index, 32);
+            let left = self.array_item(left, index, STRING_BYTES);
+            let right = self.array_item(right, index, STRING_BYTES);
             self.extend([
                 I::LocalGet(left),
                 I::LocalGet(right),
@@ -299,27 +299,27 @@ impl Emitter<'_> {
         let data = self.table_data(
             if bytes { BYTES } else { ARRAYS },
             value,
-            if dict { 24 } else { DATA },
+            if dict { DATA + 8 } else { DATA },
         );
         let count = self.local(ValType::I32);
         if bytes {
             self.extend([
                 I::LocalGet(data),
                 I::LocalGet(value),
-                I::I32Load(memory(20, 2)),
+                I::I32Load(memory(DATA + 4, 2)),
                 I::I32Add,
                 I::LocalSet(data),
                 I::LocalGet(value),
-                I::I32Load(memory(24, 2)),
+                I::I32Load(memory(DATA + 8, 2)),
                 I::LocalGet(value),
-                I::I32Load(memory(20, 2)),
+                I::I32Load(memory(DATA + 4, 2)),
                 I::I32Sub,
                 I::LocalSet(count),
             ]);
         } else {
             self.extend([
                 I::LocalGet(value),
-                I::I32Load(memory(20, 2)),
+                I::I32Load(memory(DATA + 4, 2)),
                 I::LocalSet(count),
             ]);
         }

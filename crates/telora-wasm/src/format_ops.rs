@@ -67,9 +67,9 @@ impl Emitter<'_> {
             for (value, count) in [(first, strings), (second, items)] {
                 self.extend([
                     I::LocalGet(value),
-                    I::I32Load(memory(24, 2)),
+                    I::I32Load(memory(DATA + 8, 2)),
                     I::LocalGet(value),
-                    I::I32Load(memory(20, 2)),
+                    I::I32Load(memory(DATA + 4, 2)),
                     I::I32Sub,
                     I::LocalSet(count),
                 ]);
@@ -137,10 +137,8 @@ impl Emitter<'_> {
         self.emit(I::End);
         let value = self.text_span_value(string, span)?;
         let loc = self.mir.hir[node.index()].location;
-        let loc_words = self.mir.sources.get(loc.source).compact(loc).0;
-        self.store32(value, SOURCE, loc_words[0]);
-        self.store32(value, START, loc_words[1]);
-        self.store32(value, END, loc_words[2]);
+        let loc_id = self.plan.locations.id(loc).bits();
+        self.store32(value, SOURCE, loc_id);
         Ok(value)
     }
 

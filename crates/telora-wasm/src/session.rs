@@ -18,6 +18,7 @@ pub struct Session {
     pub(crate) registered_sources: usize,
     pub(crate) emitted_debug: std::cell::Cell<u32>,
     pub(crate) trace_types: u32,
+    pub(crate) location_ids: std::collections::BTreeMap<[u32; 5], u32>,
 }
 
 /// Engine boundaries and consumption, in raw fuel units and bytes (not RSS).
@@ -84,6 +85,7 @@ impl Session {
             registered_sources,
             emitted_debug: std::cell::Cell::new(0),
             trace_types: 0,
+            location_ids: std::collections::BTreeMap::new(),
         };
         for module in bundled_data {
             session.inject_data_packet(module.symbol, &module.packet)?;

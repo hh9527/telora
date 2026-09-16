@@ -123,13 +123,13 @@ impl Emitter<'_> {
                 I::If(BlockType::Empty),
             ]);
             let none = self.enum_value(self.key.node, target, 0, None)?;
-            self.copy(none, 0, input, 12);
+            self.copy(none, 0, input, LOC_BYTES);
             self.extend([I::LocalGet(none), I::Return, I::End]);
             let inner = self.mir.types[target.index()].arguments[0];
             let decoded = self.codec_decode_call(source, inner, input, 0)?;
             self.checked(decoded);
             let some = self.enum_value(self.key.node, target, 1, Some(decoded))?;
-            self.copy(some, 0, input, 12);
+            self.copy(some, 0, input, LOC_BYTES);
             return Ok(some);
         }
         if matches!(
@@ -166,10 +166,10 @@ impl Emitter<'_> {
                 I::If(BlockType::Empty),
             ]);
             let value = if expected == "Bool" {
-                let value = self.value_as(self.key.node, target, 24)?;
+                let value = self.value_as(self.key.node, target, SCALAR_BYTES)?;
                 self.store32(value, DATA, u32::from(name == "True"));
-                self.store32(value, 20, 0);
-                self.copy(value, 0, input, 12);
+                self.store32(value, DATA + 4, 0);
+                self.copy(value, 0, input, LOC_BYTES);
                 value
             } else {
                 if payload_ty != Some(target.index()) {
@@ -215,13 +215,13 @@ impl Emitter<'_> {
         message: u32,
         input: u32,
     ) -> Result<u32, String> {
-        let object = self.alloc(56);
-        self.copy(object, 0, message, 32);
-        self.store32(object, 32, 1);
-        self.store32(object, 36, 0);
-        self.copy(object, 40, input, 12);
-        let id = self.table_push(BLAMES, object, 56);
-        let blame = self.value_as(self.key.node, ty, 24)?;
+        let object = self.alloc(BLAME_SUBJECTS + LOC_BYTES);
+        self.copy(object, 0, message, STRING_BYTES);
+        self.store32(object, BLAME_COUNT as u64, 1);
+        self.store32(object, BLAME_COUNT as u64 + 4, 0);
+        self.copy(object, BLAME_SUBJECTS, input, LOC_BYTES);
+        let id = self.table_push(BLAMES, object, BLAME_SUBJECTS + LOC_BYTES);
+        let blame = self.value_as(self.key.node, ty, SCALAR_BYTES)?;
         self.extend([
             I::LocalGet(blame),
             I::LocalGet(id),

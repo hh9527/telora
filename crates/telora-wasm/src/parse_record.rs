@@ -112,7 +112,7 @@ impl Emitter<'_> {
                 let present = self.read32(span, 8);
                 self.extend([I::LocalGet(present), I::If(BlockType::Empty)]);
                 let text = self.text_span_value(self.string_type()?, span)?;
-                self.copy(text, 0, 1, 12);
+                self.copy(text, 0, 1, LOC_BYTES);
                 self.extend([I::LocalGet(text), I::LocalSet(input), I::End]);
                 let path = self.parse_text(7, path, names[index])?;
                 let context = self.parse_context(path);
@@ -124,7 +124,7 @@ impl Emitter<'_> {
                 fields.push(value);
             }
             let value = self.packed_tuple(target, &fields)?;
-            self.copy(value, 0, 1, 12);
+            self.copy(value, 0, 1, LOC_BYTES);
             let rejection = self.read32(0, 20);
             self.construction_check_with_rejection(
                 node,

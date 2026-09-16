@@ -23,11 +23,11 @@ pub(super) fn convert(
     events: Vec<telora_wasm::diagnostic_output::Diagnostic>,
     sources: &SourceDatabase,
 ) -> Vec<Diagnostic> {
-    let location = |words: [u32; 3]| {
+    let location = |words: [u32; 5]| {
         sources
             .files()
-            .find(|file| file.id().get() == (words[0] & 0xffff))
-            .and_then(|file| file.byte_location(telora_core::source::CompactLoc(words)))
+            .find(|file| file.id().get() == words[0])
+            .and_then(|file| file.byte_location(telora_core::source::SourceCoordinates(words)))
     };
     events
         .into_iter()

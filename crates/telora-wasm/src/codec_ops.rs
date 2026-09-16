@@ -21,7 +21,7 @@ impl Emitter<'_> {
             .position(|v| v.name == name)
             .ok_or_else(|| format!("Wasm: codec Value lacks {name}"))?;
         let value = self.enum_value(self.key.node, target, index as u32, payload)?;
-        self.copy(value, 0, input, 12);
+        self.copy(value, 0, input, LOC_BYTES);
         Ok(value)
     }
 

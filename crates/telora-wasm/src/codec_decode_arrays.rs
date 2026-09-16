@@ -37,13 +37,13 @@ impl Emitter<'_> {
         let inner = self.mir.types[target.index()].arguments[0];
         let stride = self.width(source)?;
         let width = self.width(inner)?;
-        let base = self.table_data(ARRAYS, collection, if dict { 24 } else { DATA });
+        let base = self.table_data(ARRAYS, collection, if dict { DATA + 8 } else { DATA });
         let start = if dict {
             self.local(ValType::I32)
         } else {
-            self.read32(collection, 20)
+            self.read32(collection, DATA + 4)
         };
-        let end = self.read32(collection, if dict { 20 } else { 24 });
+        let end = self.read32(collection, if dict { DATA + 4 } else { DATA + 8 });
         let bytes = self.local(ValType::I32);
         let data = self.local(ValType::I32);
         let cursor = self.local(ValType::I32);
@@ -118,11 +118,11 @@ impl Emitter<'_> {
             I::Call(TABLE_PUSH),
             I::LocalSet(id),
         ]);
-        let value = self.value_as(self.key.node, target, 32)?;
-        self.copy(value, 0, input, 12);
+        let value = self.value_as(self.key.node, target, STRING_BYTES)?;
+        self.copy(value, 0, input, LOC_BYTES);
         if dict {
             let keys = self.read32(collection, DATA);
-            for (offset, local) in [(16, keys), (20, end), (24, id)] {
+            for (offset, local) in [(DATA, keys), (DATA + 4, end), (DATA + 8, id)] {
                 self.extend([
                     I::LocalGet(value),
                     I::LocalGet(local),
@@ -138,11 +138,11 @@ impl Emitter<'_> {
                 I::LocalGet(end),
                 I::LocalGet(start),
                 I::I32Sub,
-                I::I32Store(memory(24, 2)),
+                I::I32Store(memory(DATA + 8, 2)),
             ]);
-            self.store32(value, 20, 0);
+            self.store32(value, DATA + 4, 0);
         }
-        self.store32(value, 28, 0);
+        self.store32(value, DATA + 12, 0);
         Ok(value)
     }
 }

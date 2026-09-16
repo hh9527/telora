@@ -54,12 +54,12 @@ pub unsafe extern "C" fn telora_text_build(operation: u32, a: u32, b: u32, c: u3
                 0 | 1 => {
                     let separator = if operation == 0 { text(b) } else { "\n" };
                     let base = word(telora_table_get(table_address(ARRAYS), word(a, DATA)), 0);
-                    let start = word(a, 20);
-                    for index in start..word(a, 24) {
+                    let start = word(a, DATA + 4);
+                    for index in start..word(a, DATA + 8) {
                         if index != start {
                             output.write_str(separator)?;
                         }
-                        output.write_str(text(base + index * 32))?;
+                        output.write_str(text(base + index * STRING_BYTES))?;
                     }
                 }
                 2 => {

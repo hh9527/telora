@@ -28,7 +28,7 @@ impl Emitter<'_> {
             Some(error),
         )?;
         let value = self.enum_value_unchecked(self.key.node, target, index, Some(decoded))?;
-        self.copy(value, 0, 1, 12);
+        self.copy(value, 0, 1, LOC_BYTES);
         Ok(value)
     }
 
@@ -110,7 +110,7 @@ impl Emitter<'_> {
             if kind == "Object" {
                 self.extend([
                     I::LocalGet(payload),
-                    I::I32Load(memory(20, 2)),
+                    I::I32Load(memory(DATA + 4, 2)),
                     I::I32Const(1),
                     I::I32Ne,
                     I::If(BlockType::Empty),
@@ -154,7 +154,7 @@ impl Emitter<'_> {
                 } else {
                     self.enum_value(self.key.node, target, index as u32, None)?
                 };
-                self.copy(value, 0, input, 12);
+                self.copy(value, 0, input, LOC_BYTES);
                 self.extend([I::LocalGet(value), I::Return, I::End]);
             }
             self.emit(I::End);

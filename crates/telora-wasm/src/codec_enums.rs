@@ -93,7 +93,7 @@ impl Emitter<'_> {
                 I::If(BlockType::Empty),
             ]);
             let key = self.text_as(self.key.node, self.string_type()?, name.as_bytes())?;
-            self.copy(key, 0, input, 12);
+            self.copy(key, 0, input, LOC_BYTES);
             let result = if let Some(ty) = ty {
                 let payload = self.enum_payload(source, index as u32, input)?;
                 let value =
@@ -113,7 +113,7 @@ impl Emitter<'_> {
                     count,
                     self.width(target)?,
                 )?;
-                self.copy(dict, 0, input, 12);
+                self.copy(dict, 0, input, LOC_BYTES);
                 self.codec_variant(target, "Object", Some(dict), input)?
             } else {
                 self.codec_variant(target, "String", Some(key), input)?

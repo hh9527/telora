@@ -23,8 +23,8 @@ impl Emitter<'_> {
             I::Call(TABLE_PUSH),
             I::LocalSet(id),
         ]);
-        let result = self.value_as(self.key.node, ty, 40)?;
-        self.copy(result, 0, data, 12);
+        let result = self.value_as(self.key.node, ty, DYN_BYTES)?;
+        self.copy(result, 0, data, LOC_BYTES);
         self.extend([
             I::LocalGet(result),
             I::LocalGet(concrete),
@@ -32,9 +32,9 @@ impl Emitter<'_> {
             I::LocalGet(result),
             I::LocalGet(id),
             I::I64ExtendI32U,
-            I::I64Store(memory(24, 3)),
+            I::I64Store(memory(DATA + 8, 3)),
         ]);
-        self.store32(result, 20, 1);
+        self.store32(result, DATA + 4, 1);
         Ok(result)
     }
     pub fn dynamic_variant(&mut self, name: &str) -> Result<u32, String> {
@@ -121,7 +121,7 @@ impl Emitter<'_> {
             self.reflection_failure(input, "Dyn variant access expects Enum")?;
         }
         self.emit(I::End);
-        let value = self.table_data(VALUES, input, 24);
+        let value = self.table_data(VALUES, input, DATA + 8);
         let tag = self.read32(value, DATA);
         if !payload && !checked {
             return self.reflected_scalar(output, tag, value);
@@ -177,7 +177,7 @@ impl Emitter<'_> {
             I::I32Eq,
             I::If(BlockType::Empty),
         ]);
-        let boxed = self.table_data(VALUES, value, 24);
+        let boxed = self.table_data(VALUES, value, DATA + 8);
         self.extend([
             I::LocalGet(boxed),
             I::LocalSet(child),
@@ -189,7 +189,7 @@ impl Emitter<'_> {
             I::Unreachable,
             I::End,
             I::LocalGet(value),
-            I::I32Const(24),
+            I::I32Const((DATA + 8) as i32),
             I::I32Add,
             I::LocalSet(child),
             I::End,

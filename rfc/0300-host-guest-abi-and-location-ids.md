@@ -1,6 +1,6 @@
 # RFC 0300：Host/Guest 服务 ABI 与 Guest 位置表
 
-- 状态：实施中，运行时尚未切换
+- 状态：实施中，LocId 值布局已切换；服务 ABI 尚未接通
 - 跟踪：[#209](https://github.com/hh9527/telora/issues/209)
 - 分支：`feat/rfc-0300-guest-abi`
 - 日期：2026-09-16
@@ -18,7 +18,7 @@
 同时定义 Guest 内存、数据源注入、服务创建和查询 ABI，使动态输入也能使用相同的
 位置身份传播机制。解析及数据树构建仍在 Guest 内，不把数据树来回复制到 Host。
 
-本次是设计规约，不实施运行时改造，不决定 Wasm 发布容器或旁文件格式，
+本 RFC 在独立分支实施运行时改造，不决定 Wasm 发布容器或旁文件格式，
 不增加用户态 I/O，不改变 TransformService 的语言契约。Rope 是否保留是独立决策。
 
 ## ABI 总览
@@ -205,6 +205,11 @@ LocId 仅在所属 Guest 实例内有意义；连续请求及临时 parse 不增
 with_diagnostic 在 Guest 内捕获诊断、查询 LocId 对应的完整坐标和来源名称，
 生成结构化诊断结果，再通过既有/待定的结果协议交给 Host。不需要逐位置 Host 回调，
 也没有“发生错误后再安装表”的时序要求。
+
+语言诊断的 `SourceRange` 使用 `{source: String, start: SourcePoint, end: SourcePoint}`，
+其中 `SourcePoint = {line: Int, offset: Int}`，各分量的有效范围为 u32。
+不再暴露打包后的整数端点，不保留旧端点编码的兼容解码；
+这也确保 JSON/JavaScript 在最大坐标下仍能精确表示两个分量。
 
 Host 负责终端或 Web 展示。源码摘录、终端宽度和 UTF-16 转换如有需要，
 由 Host 根据其保留的原文处理；Guest 的规范坐标始终是行号和行内 UTF-8 字节偏移。

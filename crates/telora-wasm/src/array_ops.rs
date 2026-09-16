@@ -10,15 +10,15 @@ impl Emitter<'_> {
         self.extend([
             I::LocalGet(base),
             I::LocalGet(value),
-            I::I32Load(memory(20, 2)),
+            I::I32Load(memory(DATA + 4, 2)),
             I::I32Const(width as i32),
             I::I32Mul,
             I::I32Add,
             I::LocalSet(base),
             I::LocalGet(value),
-            I::I32Load(memory(24, 2)),
+            I::I32Load(memory(DATA + 8, 2)),
             I::LocalGet(value),
-            I::I32Load(memory(20, 2)),
+            I::I32Load(memory(DATA + 4, 2)),
             I::I32Sub,
             I::LocalSet(count),
         ]);
@@ -77,10 +77,10 @@ impl Emitter<'_> {
             I::I32Store(memory(DATA, 2)),
             I::LocalGet(result),
             I::LocalGet(count),
-            I::I32Store(memory(24, 2)),
+            I::I32Store(memory(DATA + 8, 2)),
         ]);
-        self.store32(result, 20, 0);
-        self.store32(result, 28, 0);
+        self.store32(result, DATA + 4, 0);
+        self.store32(result, DATA + 12, 0);
         Ok(result)
     }
     pub fn array_item(&mut self, base: u32, index: u32, width: u32) -> u32 {

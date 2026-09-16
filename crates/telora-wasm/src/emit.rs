@@ -150,10 +150,8 @@ impl<'a> Emitter<'a> {
         }
         let result = self.alloc(bytes);
         let loc = self.mir.hir[node.index()].location;
-        let loc_words = self.mir.sources.get(loc.source).compact(loc).0;
-        self.store32(result, SOURCE, loc_words[0]);
-        self.store32(result, START, loc_words[1]);
-        self.store32(result, END, loc_words[2]);
+        let loc_id = self.plan.locations.id(loc).bits();
+        self.store32(result, SOURCE, loc_id);
         self.store32(result, TYPE, ty.index() as u32);
         Ok(result)
     }
@@ -184,16 +182,14 @@ impl<'a> Emitter<'a> {
     }
     pub fn failure(&mut self, node: HirId, code: u32) {
         let location = self.mir.hir[node.index()].location;
-        let location_words = self.mir.sources.get(location.source).compact(location).0;
+        let loc_id = self.plan.locations.id(location).bits();
         let pointer = self.alloc(DIAGNOSTIC_BYTES);
-        self.store32(pointer, 0, location_words[0]);
-        self.store32(pointer, 4, location_words[1]);
-        self.store32(pointer, 8, location_words[2]);
-        self.store32(pointer, 12, code);
+        self.store32(pointer, 0, loc_id);
+        self.store32(pointer, DIAG_CODE, code);
         self.extend([
             I::LocalGet(pointer),
             I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
-            I::I32Store(memory(32, 2)),
+            I::I32Store(memory(DIAG_ROOT, 2)),
         ]);
         self.table_push(DIAGNOSTICS, pointer, DIAGNOSTIC_BYTES);
         self.extend([

@@ -88,7 +88,7 @@ pub struct ValidatedDataPlan {
 
 #[cfg(test)]
 impl ValidatedDataPlan {
-    pub fn compact(&self, loc: Location) -> crate::source::CompactLoc {
+    pub fn coordinates(&self, loc: Location) -> crate::source::SourceCoordinates {
         let (source, lines) = self.source_index.as_ref().expect("registered data source");
         assert_eq!(*source, loc.source);
         lines.pack(loc)

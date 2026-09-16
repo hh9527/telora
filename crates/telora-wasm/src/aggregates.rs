@@ -195,9 +195,9 @@ impl Emitter<'_> {
         self.extend([
             I::LocalGet(bits),
             I::LocalGet(receiver),
-            I::I32Load(memory(24, 2)),
+            I::I32Load(memory(DATA + 8, 2)),
             I::LocalGet(receiver),
-            I::I32Load(memory(20, 2)),
+            I::I32Load(memory(DATA + 4, 2)),
             I::I32Sub,
             I::I64ExtendI32U,
             I::I64GeU,
@@ -210,7 +210,7 @@ impl Emitter<'_> {
             I::LocalGet(bits),
             I::I32WrapI64,
             I::LocalGet(receiver),
-            I::I32Load(memory(20, 2)),
+            I::I32Load(memory(DATA + 4, 2)),
             I::I32Add,
             I::I32Const(width as i32),
             I::I32Mul,
@@ -233,19 +233,19 @@ impl Emitter<'_> {
             ]);
         }
         let id = self.table_push(BYTES, data, length);
-        let result = self.value(node, 32)?;
+        let result = self.value(node, STRING_BYTES)?;
         self.extend([
             I::LocalGet(result),
             I::LocalGet(id),
             I::I32Store(memory(DATA, 2)),
         ]);
-        self.store32(result, 20, 0);
-        self.store32(result, 24, length);
-        self.store32(result, 28, 0);
+        self.store32(result, DATA + 4, 0);
+        self.store32(result, DATA + 8, length);
+        self.store32(result, DATA + 12, 0);
         Ok(result)
     }
     pub fn text_as(&mut self, node: HirId, ty: TypeId, bytes: &[u8]) -> Result<u32, String> {
-        let result = self.value_as(node, ty, 32)?;
+        let result = self.value_as(node, ty, STRING_BYTES)?;
         if bytes.len() <= 14 {
             let mut inline = [0u8; 16];
             inline[1] = bytes.len() as u8;
@@ -267,14 +267,14 @@ impl Emitter<'_> {
                 ]);
             }
             let id = self.table_push(STRINGS, data, bytes.len() as u32);
-            self.store32(result, 16, 1);
+            self.store32(result, DATA, 1);
             self.extend([
                 I::LocalGet(result),
                 I::LocalGet(id),
-                I::I32Store(memory(20, 2)),
+                I::I32Store(memory(DATA + 4, 2)),
             ]);
-            self.store32(result, 24, 0);
-            self.store32(result, 28, bytes.len() as u32);
+            self.store32(result, DATA + 8, 0);
+            self.store32(result, DATA + 12, bytes.len() as u32);
         }
         Ok(result)
     }

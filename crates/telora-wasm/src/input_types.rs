@@ -28,7 +28,7 @@ impl Session {
         let length = u32::try_from(items.len()).map_err(|_| "Wasm: Dict length overflow")?;
         let stride = self.manifest.types[element as usize].bytes;
         let key_bytes = length
-            .checked_mul(32)
+            .checked_mul(STRING_BYTES)
             .ok_or("Wasm: Dict key size overflow")?;
         let value_bytes = length
             .checked_mul(stride)
@@ -40,14 +40,14 @@ impl Session {
         for (index, (key, value)) in items.into_iter().enumerate() {
             let key = self.input(string, &Value::String(key.clone()), depth + 1)?;
             let value = self.input(element, value, depth + 1)?;
-            self.copy_input(keys + index as u32 * 32, key, 32)?;
+            self.copy_input(keys + index as u32 * STRING_BYTES, key, STRING_BYTES as usize)?;
             self.copy_input(values + index as u32 * stride, value, stride as usize)?;
         }
         let keys = self.push_input(ARRAYS, keys, key_bytes)?;
         let values = self.push_input(ARRAYS, values, value_bytes)?;
-        self.write(pointer as usize + 16, &keys.to_le_bytes())?;
-        self.write(pointer as usize + 20, &length.to_le_bytes())?;
-        self.write(pointer as usize + 24, &values.to_le_bytes())
+        self.write(pointer as usize + (DATA as usize), &keys.to_le_bytes())?;
+        self.write(pointer as usize + (DATA + 4) as usize, &length.to_le_bytes())?;
+        self.write(pointer as usize + (DATA + 8) as usize, &values.to_le_bytes())
     }
     pub(crate) fn input_enum(
         &mut self,
@@ -89,7 +89,7 @@ impl Session {
         if desc.kind == Kind::Enum && branch.ty.is_some() != payload.is_some() {
             return Err("Wasm: enum input payload arity mismatch".into());
         }
-        self.write(pointer as usize + 16, &(index as u64).to_le_bytes())?;
+        self.write(pointer as usize + (DATA as usize), &(index as u64).to_le_bytes())?;
         if let Some(ty) = branch.ty {
             let payload = self.input(
                 ty,
@@ -99,9 +99,9 @@ impl Session {
             let width = self.manifest.types[ty as usize].bytes;
             if branch.boxed {
                 let id = self.push_input(VALUES, payload, width)?;
-                self.write(pointer as usize + 24, &id.to_le_bytes())?;
+                self.write(pointer as usize + (DATA + 8) as usize, &id.to_le_bytes())?;
             } else {
-                self.copy_input(pointer + 24, payload, width as usize)?;
+                self.copy_input(pointer + (DATA + 8) as u32, payload, width as usize)?;
             }
         }
         Ok(())

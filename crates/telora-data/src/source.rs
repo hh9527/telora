@@ -5,10 +5,10 @@ use core::fmt;
 use core::num::NonZeroU32;
 use core::ops::Range;
 
-pub mod compact;
+pub mod coordinates;
 mod text;
 pub use text::SourceText;
-pub use compact::{CompactLoc, LineIndex};
+pub use coordinates::{SourceCoordinates, LineIndex};
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -92,7 +92,7 @@ pub type Location = Loc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LocationError {
-    CompactCapacity,
+    CoordinateCapacity,
     OffsetTooLarge,
     SourceTooLarge,
     ReversedRange { start: u32, end: u32 },
@@ -101,7 +101,7 @@ pub enum LocationError {
 impl fmt::Display for LocationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CompactCapacity => formatter.write_str("source exceeds location capacity (65535 source IDs, 65536 lines, 16777215 UTF-8 bytes per line)"),
+            Self::CoordinateCapacity => formatter.write_str("source exceeds location capacity (u32 source IDs, lines and UTF-8 byte offsets)"),
             Self::OffsetTooLarge => formatter.write_str("source offset exceeds u32::MAX"),
             Self::SourceTooLarge => formatter.write_str("source text exceeds u32::MAX bytes"),
             Self::ReversedRange { start, end } => {
@@ -255,14 +255,14 @@ impl SourceFile {
             .flatten()
     }
 
-    pub fn compact(&self, location: Loc) -> CompactLoc {
+    pub fn coordinates(&self, location: Loc) -> SourceCoordinates {
         assert_eq!(location.source, self.id);
         self.lines.pack(location)
     }
 
     pub fn line_index(&self) -> &Arc<LineIndex> { &self.lines }
 
-    pub fn byte_location(&self, location: CompactLoc) -> Option<Loc> {
+    pub fn byte_location(&self, location: SourceCoordinates) -> Option<Loc> {
         if location.source() != self.id.get() || location.start() > location.end() { return None; }
         Some(Loc { source: self.id, start: self.lines.byte(location.start())?, end: self.lines.byte(location.end())? })
     }
@@ -278,8 +278,8 @@ impl SourceFile {
     pub fn position(&self, offset: u32) -> Position {
         let offset = offset.min(self.text.byte_len() as u32);
         let point = self.lines.point(offset);
-        let (line, _) = CompactLoc::position(point);
-        let start = self.lines.byte((line as u64) << 24).unwrap();
+        let (line, _) = SourceCoordinates::position(point);
+        let start = self.lines.byte((line as u64) << 32).unwrap();
         let end = self.lines.byte(point).unwrap();
         let column = self.text.slice(TextRange { start, end })
             .expect("registered source offset is valid").chars().count();
@@ -290,7 +290,7 @@ impl SourceFile {
     }
 
     pub fn utf8_position(&self, offset: u32) -> crate::document::TextPosition {
-        let (line, column) = CompactLoc::position(self.lines.point(offset));
+        let (line, column) = SourceCoordinates::position(self.lines.point(offset));
         crate::document::TextPosition::new(line, column)
     }
 
@@ -300,7 +300,7 @@ impl SourceFile {
         match &self.text {
             SourceText::Document(text) => text.scalar_offset(line, column),
             SourceText::Contiguous(text) => {
-                let start = self.lines.byte((line as u64) << 24)?;
+                let start = self.lines.byte((line as u64) << 32)?;
                 let tail = &text[start as usize..];
                 let end = tail.find(['\r', '\n']).unwrap_or(tail.len());
                 let line = &tail[..end];
@@ -331,7 +331,7 @@ impl SourceDatabase {
     }
 
     fn next_id(&self) -> Result<SourceId, LocationError> {
-        if self.files.len() >= u16::MAX as usize { return Err(LocationError::CompactCapacity); }
+        if self.files.len() >= u32::MAX as usize { return Err(LocationError::CoordinateCapacity); }
         let raw = u32::try_from(self.files.len())
             .ok()
             .and_then(|length| length.checked_add(1))
@@ -366,12 +366,12 @@ impl SourceDatabase {
         text: crate::document::DocumentText,
     ) -> SourceId {
         self.try_add_document(name, text)
-            .expect("source fits compact location model")
+            .expect("source fits source coordinate model")
     }
 
     pub fn add(&mut self, name: impl Into<Arc<str>>, text: impl AsRef<str>) -> SourceId {
         self.try_add(name, text)
-            .expect("source fits compact location model")
+            .expect("source fits source coordinate model")
     }
 
     pub fn get(&self, id: SourceId) -> &SourceFile {
@@ -446,4 +446,4 @@ impl core::error::Error for Diagnostic {}
 mod tests;
 
 #[cfg(test)]
-mod compact_tests;
+mod coordinates_tests;

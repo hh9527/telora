@@ -90,6 +90,7 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
         ("telora_toml_parse", 0),
         ("telora_yaml_parse", 0),
         ("telora_float_remainder", 5),
+        ("telora_location_get", 0),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }
@@ -261,7 +262,7 @@ fn compile(executable: &SealedExecutable<'_>, check: bool) -> Result<Vec<u8>, St
         symbols.function(0, index, Some(&name));
         function_names.append(index, &name);
     }
-    for (index, name) in ["telora_error", "telora_phase", "telora_call_source", "telora_call_start", "telora_call_end"].iter().enumerate() {
+    for (index, name) in ["telora_error", "telora_phase", "telora_call_source", "telora_initialization_root"].iter().enumerate() {
         symbols.global(0, index as u32, Some(name));
     }
     symbols.table(SymbolTable::WASM_SYM_UNDEFINED, 0, None);

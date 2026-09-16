@@ -10,10 +10,9 @@ fn newtype_projection_uses_its_own_table_and_preserves_payload_origin() {
     let bytes = compile(source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
-    assert_eq!(
-        session.call(&[]).unwrap(),
-        serde_json::json!([vec![true; 6], point(source, source.find("42;").unwrap())])
-    );
+    let result = session.call(&[]).unwrap();
+    assert_eq!(result[0], serde_json::json!(vec![true; 6]));
+    assert_eq!(diagnostic_point(&result[1]), point(source, source.find("42;").unwrap()));
 }
 
 #[test]
@@ -62,7 +61,7 @@ fn records_project_and_update_closed_fields_while_dicts_merge_sorted_columns() {
         (8, "31"),
     ] {
         assert_eq!(
-            result[index]["labels"][1]["location"]["start"],
+            diagnostic_point(&result[index]["labels"][1]["location"]["start"]),
             point(source, source.find(text).unwrap()),
             "{text}"
         );

@@ -68,7 +68,7 @@ impl Emitter<'_> {
                 I::LocalSet(span),
             ]);
             let text = self.text_span_value(self.string_type()?, span)?;
-            self.copy(text, 0, input, 12);
+            self.copy(text, 0, input, LOC_BYTES);
             let value = self.codec_variant(target, "String", Some(text), input)?;
             self.extend([I::LocalGet(value), I::Return, I::End]);
         }

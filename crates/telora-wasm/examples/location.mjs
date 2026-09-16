@@ -1,13 +1,24 @@
-// Since ABI 14: u16 source + two u40 positions, each line:u16 / UTF-8 column:u24.
+// ABI 17: independent u32 components, never a packed u64 Number.
 export function location(words) {
-  const start = words[1] + ((words[0] >>> 16) & 255) * 2 ** 32;
-  const end = words[2] + (words[0] >>> 24) * 2 ** 32;
   return {
-    source: words[0] & 65535,
-    start, end,
-    line: Math.floor(start / 2 ** 24) + 1,
-    column: start % 2 ** 24 + 1,
-    endLine: Math.floor(end / 2 ** 24) + 1,
-    endColumn: end % 2 ** 24 + 1,
+    source: words[0],
+    start: {line: words[1], offset: words[2]},
+    end: {line: words[3], offset: words[4]},
+    line: words[1] + 1,
+    column: words[2] + 1,
+    endLine: words[3] + 1,
+    endColumn: words[4] + 1,
   };
+}
+
+export function readLocation(word, id) {
+  id >>>= 0;
+  if (id === 0) return [0, 0, 0, 0, 0];
+  const isStatic = (id & 0x80000000) !== 0;
+  const descriptor = isStatic ? 20 : 28;
+  const index = isStatic ? id & 0x7fffffff : id - 1;
+  if (index >= word(descriptor + 4)) throw Error('无效的 LocId');
+  const address = word(descriptor) + index * 20;
+  if (address + 20 > 2 ** 32) throw Error('位置表地址溢出');
+  return Array.from({length: 5}, (_, i) => word(address + i * 4));
 }

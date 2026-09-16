@@ -113,14 +113,14 @@ impl Emitter<'_> {
                 continue;
             }
             let id = self.table_push(VALUES, input, self.width(inner[index])?);
-            let packed = self.value_as(node, erased[index], 40)?;
+            let packed = self.value_as(node, erased[index], DYN_BYTES)?;
             self.store32(packed, DATA, inner[index].index() as u32);
-            self.store32(packed, 20, 1);
+            self.store32(packed, DATA + 4, 1);
             self.extend([
                 I::LocalGet(packed),
                 I::LocalGet(id),
                 I::I64ExtendI32U,
-                I::I64Store(memory(24, 3)),
+                I::I64Store(memory(DATA + 8, 3)),
             ]);
             inputs.push(packed);
         }

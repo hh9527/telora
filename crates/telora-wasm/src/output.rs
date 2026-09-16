@@ -11,6 +11,10 @@ pub(crate) struct Output<'a> {
 }
 
 impl Output<'_> {
+    pub(crate) fn location_words(&self, id: u32) -> Result<[u32; 5], String> {
+        Ok(self.location(id)?.map(|r| [r.source, r.start_line, r.start_offset, r.end_line, r.end_offset]).unwrap_or([0; 5]))
+    }
+
     pub(crate) fn location(&self, id: u32) -> Result<Option<telora_wasm_shared::locations::LocationRecord>, String> {
         use telora_wasm_shared::locations::{LocId, LocationIndex, LocationRecord, RECORD_BYTES, record_address};
         let (descriptor, index) = match LocId::from_bits(id).index() {
@@ -106,8 +110,8 @@ impl Output<'_> {
             Kind::String => self.text(pointer)?.into(),
             Kind::Array => {
                 let (base, bytes) = self.payload(ARRAYS, self.word(pointer + DATA)?)?;
-                let start = self.word(pointer + 20)? as u64;
-                let end = self.word(pointer + 24)? as u64;
+                let start = self.word(pointer + DATA + 4)? as u64;
+                let end = self.word(pointer + DATA + 8)? as u64;
                 let element = *ty
                     .arguments
                     .first()
@@ -156,8 +160,8 @@ impl Output<'_> {
             }
             Kind::Dict => {
                 let (keys, key_bytes) = self.payload(ARRAYS, self.word(pointer + DATA)?)?;
-                let (values, value_bytes) = self.payload(ARRAYS, self.word(pointer + 24)?)?;
-                let length = self.word(pointer + 20)? as u64;
+                let (values, value_bytes) = self.payload(ARRAYS, self.word(pointer + DATA + 8)?)?;
+                let length = self.word(pointer + DATA + 4)? as u64;
                 let element = *ty
                     .arguments
                     .first()
@@ -168,13 +172,13 @@ impl Output<'_> {
                     .get(element as usize)
                     .ok_or("Wasm: invalid dictionary value type")?
                     .bytes as u64;
-                if length * 32 != key_bytes || length * stride != value_bytes {
+                if length * u64::from(STRING_BYTES) != key_bytes || length * stride != value_bytes {
                     return Err("Wasm: invalid dictionary columns".into());
                 }
                 let mut fields = serde_json::Map::new();
                 let mut previous: Option<String> = None;
                 for index in 0..length {
-                    let key = self.text(keys + index * 32)?;
+                    let key = self.text(keys + index * u64::from(STRING_BYTES))?;
                     if previous.as_ref().is_some_and(|p| p >= &key) {
                         return Err("Wasm: dictionary keys are not strictly ordered".into());
                     }
@@ -189,9 +193,9 @@ impl Output<'_> {
                 let payload = match branch.ty {
                     Some(payload_ty) => {
                         let address = if branch.boxed {
-                            self.payload(VALUES, self.word(pointer + 24)?)?.0
+                            self.payload(VALUES, self.word(pointer + DATA + 8)?)?.0
                         } else {
-                            pointer + 24
+                            pointer + DATA + 8
                         };
                         Some(self.json(address, payload_ty, depth + 1)?)
                     }
@@ -251,9 +255,9 @@ impl Output<'_> {
                 &header[2..2 + length]
             }
             1 => {
-                let (base, length) = self.payload(STRINGS, self.word(pointer + 20)?)?;
-                let start = self.word(pointer + 24)? as u64;
-                let end = self.word(pointer + 28)? as u64;
+                let (base, length) = self.payload(STRINGS, self.word(pointer + DATA + 4)?)?;
+                let start = self.word(pointer + DATA + 8)? as u64;
+                let end = self.word(pointer + DATA + 12)? as u64;
                 if start > end || end > length {
                     return Err("Wasm: invalid string slice".into());
                 }

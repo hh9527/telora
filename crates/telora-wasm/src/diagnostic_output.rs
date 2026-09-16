@@ -4,15 +4,15 @@ use crate::{abi::*, artifact::Manifest, output::Output, session::Session};
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
     pub warning: bool,
-    pub origin: [u32; 3],
+    pub origin: [u32; 5],
     pub message: String,
-    pub subjects: Vec<[u32; 3]>,
+    pub subjects: Vec<[u32; 5]>,
     pub initialization: Option<crate::artifact::InitializationRoot>,
 }
 
 impl Diagnostic {
     pub fn render(&self, manifest: &Manifest) -> String {
-        let loc = telora_core::source::CompactLoc(self.origin);
+        let loc = telora_core::source::SourceCoordinates(self.origin);
         let (source, start, end) = (loc.source(), loc.start(), loc.end());
         let file = manifest.sources.iter().find(|s| s.id == source);
         match file {
@@ -77,14 +77,10 @@ impl Session {
                 return Err("Wasm: invalid diagnostic record size".into());
             }
             output.bytes(pointer, bytes)?;
-            let origin = [
-                output.word(pointer)?,
-                output.word(pointer + 4)?,
-                output.word(pointer + 8)?,
-            ];
-            let code = output.word(pointer + 12)?;
+            let origin = output.location_words(output.word(pointer)?)?;
+            let code = output.word(pointer + DIAG_CODE)?;
             let message = if code == ERROR_USER {
-                output.text(output.word(pointer + 16)? as u64)?
+                output.text(output.word(pointer + DIAG_MESSAGE)? as u64)?
             } else if code == ERROR_CYCLE {
                 let mut affected = vec![];
                 for global in &self.manifest.globals {
@@ -98,26 +94,22 @@ impl Session {
                 error_message(code).into()
             };
             let mut subjects = vec![];
-            let base = output.word(pointer + 20)? as u64;
-            let count = output.word(pointer + 24)? as u64;
-            output.bytes(base, count * 12)?;
+            let base = output.word(pointer + DIAG_SUBJECTS)? as u64;
+            let count = output.word(pointer + DIAG_COUNT)? as u64;
+            output.bytes(base, count * u64::from(LOC_BYTES))?;
             for index in 0..count {
-                let offset = base + index * 12;
-                let subject = [
-                    output.word(offset)?,
-                    output.word(offset + 4)?,
-                    output.word(offset + 8)?,
-                ];
+                let offset = base + index * u64::from(LOC_BYTES);
+                let subject = output.location_words(output.word(offset)?)?;
                 if subject[0] != 0 && !subjects.contains(&subject) {
                     subjects.push(subject);
                 }
             }
             diagnostics.push(Diagnostic {
-                warning: output.word(pointer + 28)? != 0,
+                warning: output.word(pointer + DIAG_WARNING)? != 0,
                 origin,
                 message,
                 subjects,
-                initialization: match output.word(pointer + 32)? {
+                initialization: match output.word(pointer + DIAG_ROOT)? {
                     0 => None,
                     index => Some(self.manifest.initialization_roots.get(index as usize - 1)
                         .ok_or("Wasm: invalid initialization root identity")?.clone()),

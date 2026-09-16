@@ -27,7 +27,7 @@ fn tail_calls_bound_stack_and_preserve_pending_work_and_failures() {
     let diagnostics = session.diagnostics().unwrap();
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(
-        telora_core::source::CompactLoc(diagnostics[0].origin).start(),
+        telora_core::source::SourceCoordinates(diagnostics[0].origin).start(),
         point(source, source.find("fail!(").unwrap())
     );
 }

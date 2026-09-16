@@ -80,7 +80,7 @@ impl Emitter<'_> {
         )?;
         let id = self.table_push(NEWTYPES, decoded, self.width(inner)?);
         let value = self.value_as(self.key.node, target, self.width(target)?)?;
-        self.copy(value, 0, input, 12);
+        self.copy(value, 0, input, LOC_BYTES);
         self.extend([
             I::LocalGet(value),
             I::LocalGet(id),
@@ -120,7 +120,7 @@ impl Emitter<'_> {
                 .find(|(_, t)| t.constructor == telora_core::mir::TypeConstructor::Type)
                 .map(|(id, _)| self.plan.layouts[id].id())
                 .ok_or("Wasm: codec property Type identity missing")?,
-            24,
+            SCALAR_BYTES,
         )?;
         self.extend([
             I::LocalGet(property),

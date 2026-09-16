@@ -49,16 +49,16 @@ impl Emitter<'_> {
             .and_then(|v| v.type_id)
             .ok_or("Wasm: codec Array payload missing")?;
         let id = self.table_push(ARRAYS, data, bytes);
-        let payload = self.value_as(self.key.node, self.plan.layouts[payload_ty].id(), 32)?;
-        self.copy(payload, 0, input, 12);
+        let payload = self.value_as(self.key.node, self.plan.layouts[payload_ty].id(), STRING_BYTES)?;
+        self.copy(payload, 0, input, LOC_BYTES);
         self.extend([
             I::LocalGet(payload),
             I::LocalGet(id),
             I::I32Store(memory(DATA, 2)),
         ]);
-        self.store32(payload, 20, 0);
-        self.store32(payload, 24, members.len() as u32);
-        self.store32(payload, 28, 0);
+        self.store32(payload, DATA + 4, 0);
+        self.store32(payload, DATA + 8, members.len() as u32);
+        self.store32(payload, DATA + 12, 0);
         self.codec_variant(target, "Array", Some(payload), input)
     }
     pub(crate) fn codec_encode_array(
@@ -80,13 +80,13 @@ impl Emitter<'_> {
         let payload_ty = self.plan.layouts[payload_ty].id();
         let stride = self.width(inner)?;
         let width = self.width(target)?;
-        let base = self.table_data(ARRAYS, input, if dictionary { 24 } else { DATA });
+        let base = self.table_data(ARRAYS, input, if dictionary { DATA + 8 } else { DATA });
         let start = if dictionary {
             self.local(ValType::I32)
         } else {
-            self.read32(input, 20)
+            self.read32(input, DATA + 4)
         };
-        let end = self.read32(input, if dictionary { 20 } else { 24 });
+        let end = self.read32(input, if dictionary { DATA + 4 } else { DATA + 8 });
         let bytes = self.local(ValType::I32);
         let data = self.local(ValType::I32);
         let cursor = self.local(ValType::I32);
@@ -148,18 +148,18 @@ impl Emitter<'_> {
             I::Call(TABLE_PUSH),
             I::LocalSet(id),
         ]);
-        let payload = self.value_as(self.key.node, payload_ty, 32)?;
-        self.copy(payload, 0, input, 12);
+        let payload = self.value_as(self.key.node, payload_ty, STRING_BYTES)?;
+        self.copy(payload, 0, input, LOC_BYTES);
         if dictionary {
             let keys = self.read32(input, DATA);
-            for (offset, value) in [(16, keys), (20, end), (24, id)] {
+            for (offset, value) in [(DATA, keys), (DATA + 4, end), (DATA + 8, id)] {
                 self.extend([
                     I::LocalGet(payload),
                     I::LocalGet(value),
                     I::I32Store(memory(offset, 2)),
                 ]);
             }
-            self.store32(payload, 28, 0);
+            self.store32(payload, DATA + 12, 0);
             return self.codec_variant(target, "Object", Some(payload), input);
         }
         self.extend([
@@ -170,10 +170,10 @@ impl Emitter<'_> {
             I::LocalGet(end),
             I::LocalGet(start),
             I::I32Sub,
-            I::I32Store(memory(24, 2)),
+            I::I32Store(memory(DATA + 8, 2)),
         ]);
-        self.store32(payload, 20, 0);
-        self.store32(payload, 28, 0);
+        self.store32(payload, DATA + 4, 0);
+        self.store32(payload, DATA + 12, 0);
         self.codec_variant(target, "Array", Some(payload), input)
     }
 }

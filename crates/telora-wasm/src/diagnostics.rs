@@ -13,11 +13,11 @@ impl Emitter<'_> {
         let count = self.local(ValType::I32);
         self.extend([
             I::LocalGet(message),
-            I::I32Const(40),
+            I::I32Const(BLAME_SUBJECTS as i32),
             I::I32Add,
             I::LocalSet(subjects),
             I::LocalGet(message),
-            I::I32Load(memory(32, 2)),
+            I::I32Load(memory(BLAME_COUNT as u64, 2)),
             I::LocalSet(count),
         ]);
         (message, subjects, count)
@@ -25,17 +25,15 @@ impl Emitter<'_> {
     pub fn report(&mut self, node: HirId, message: u32, subjects: u32, count: u32, warning: bool) {
         let packet = self.alloc(DIAGNOSTIC_BYTES);
         let loc = self.mir.hir[node.index()].location;
-        let loc_words = self.mir.sources.get(loc.source).compact(loc).0;
+        let loc_id = self.plan.locations.id(loc).bits();
         for (offset, word) in [
-            (0, loc_words[0]),
-            (4, loc_words[1]),
-            (8, loc_words[2]),
-            (12, ERROR_USER),
-            (28, u32::from(warning)),
+            (0, loc_id),
+            (DIAG_CODE, ERROR_USER),
+            (DIAG_WARNING, u32::from(warning)),
         ] {
             self.store32(packet, offset, word);
         }
-        for (offset, value) in [(16, message), (20, subjects), (24, count)] {
+        for (offset, value) in [(DIAG_MESSAGE, message), (DIAG_SUBJECTS, subjects), (DIAG_COUNT, count)] {
             self.extend([
                 I::LocalGet(packet),
                 I::LocalGet(value),
@@ -45,7 +43,7 @@ impl Emitter<'_> {
         self.extend([
             I::LocalGet(packet),
             I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
-            I::I32Store(memory(32, 2)),
+            I::I32Store(memory(DIAG_ROOT, 2)),
         ]);
         self.table_push(DIAGNOSTICS, packet, DIAGNOSTIC_BYTES);
         if !warning {
@@ -70,9 +68,9 @@ impl Emitter<'_> {
         let message_type = self.ty(message_node)?;
         let (message, subjects, count) =
             if self.mir.types[message_type.index()].constructor == T::String {
-                let subjects = self.alloc(values.len() as u32 * 12);
+                let subjects = self.alloc(values.len() as u32 * LOC_BYTES);
                 for (index, value) in values.iter().enumerate() {
-                    self.copy(subjects, index as u32 * 12, *value, 12);
+                    self.copy(subjects, index as u32 * LOC_BYTES, *value, LOC_BYTES);
                 }
                 let count = self.local(ValType::I32);
                 self.extend([I::I32Const(values.len() as i32), I::LocalSet(count)]);
@@ -86,13 +84,13 @@ impl Emitter<'_> {
                 return Err("Wasm: diagnostic message does not match its sealed contract".into());
             };
         if action == BlameAction::Build {
-            let bytes = 40 + values.len() as u32 * 12;
+            let bytes = BLAME_SUBJECTS + values.len() as u32 * LOC_BYTES;
             let object = self.alloc(bytes);
-            self.copy(object, 0, message, 32);
-            self.store32(object, 32, values.len() as u32);
-            self.copy(object, 40, subjects, values.len() as u32 * 12);
+            self.copy(object, 0, message, STRING_BYTES);
+            self.store32(object, BLAME_COUNT as u64, values.len() as u32);
+            self.copy(object, BLAME_SUBJECTS, subjects, values.len() as u32 * LOC_BYTES);
             let id = self.table_push(BLAMES, object, bytes);
-            let result = self.value(node, 24)?;
+            let result = self.value(node, SCALAR_BYTES)?;
             self.extend([
                 I::LocalGet(result),
                 I::LocalGet(id),

@@ -27,11 +27,11 @@ pub unsafe extern "C" fn telora_invoke(value: u32, args: u32) -> u32 {
 pub(crate) unsafe fn string_span(value: u32) -> (u32, u32) {
     unsafe {
         if *((value + DATA as u32) as *const u8) == 0 {
-            (value + 18, *((value + 17) as *const u8) as u32)
+            (value + DATA as u32 + 2, *((value + DATA as u32 + 1) as *const u8) as u32)
         } else {
-            let start = word(value, 24);
-            let end = word(value, 28);
-            let base = word(telora_table_get(table_address(STRINGS), word(value, 20)), 0);
+            let start = word(value, DATA + 8);
+            let end = word(value, DATA + 12);
+            let base = word(telora_table_get(table_address(STRINGS), word(value, DATA + 4)), 0);
             (base + start, end - start)
         }
     }

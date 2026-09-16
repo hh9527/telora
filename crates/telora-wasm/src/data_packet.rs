@@ -11,14 +11,14 @@ pub struct DataPacket {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Node {
-    pub origin: [u32; 3],
+    pub origin: [u32; 5],
     pub value: Value,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Field {
     pub name: String,
-    pub origin: [u32; 3],
+    pub origin: [u32; 5],
     pub value: u32,
 }
 
@@ -81,8 +81,8 @@ impl DataPacket {
         if self.root as usize >= self.nodes.len() {
             return Err("Wasm: invalid data root".into());
         }
-        let origin = |loc: [u32; 3]| {
-            let loc = telora_core::source::CompactLoc(loc);
+        let origin = |loc: [u32; 5]| {
+            let loc = telora_core::source::SourceCoordinates(loc);
             if loc.start() > loc.end() || !manifest.sources.iter().any(|source| source.id == loc.source()) {
                 Err("Wasm: invalid data origin".to_owned())
             } else {

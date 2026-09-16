@@ -14,8 +14,8 @@ export def answer: Value = match captured {
             labels: Value.Array(array.map(report.labels, fn(label) {
                 Value.Object({
                     source: Value.String(label.location.source),
-                    start: Value.Int(label.location.start),
-                    end: Value.Int(label.location.end),
+                    start: Value.Object({line: Value.Int(label.location.start.line), offset: Value.Int(label.location.start.offset)}),
+                    end: Value.Object({line: Value.Int(label.location.end.line), offset: Value.Int(label.location.end.offset)}),
                     message: Value.String(label.message),
                     primary: if label.primary { Value.True } else { Value.False },
                 })

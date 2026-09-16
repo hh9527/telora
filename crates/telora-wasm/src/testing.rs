@@ -14,7 +14,7 @@ pub enum Description {
 
 #[derive(Debug)]
 pub struct TestDescription {
-    pub origin: [u32; 3],
+    pub origin: [u32; 5],
     pub kind: Description,
 }
 
@@ -103,11 +103,7 @@ impl TestSession {
             _ => unreachable!(),
         };
         Ok(TestDescription {
-            origin: [
-                output.word(value.pointer as u64)?,
-                output.word(value.pointer as u64 + 4)?,
-                output.word(value.pointer as u64 + 8)?,
-            ],
+            origin: output.location_words(output.word(value.pointer as u64)?)?,
             kind,
         })
     }

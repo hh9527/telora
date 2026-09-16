@@ -235,9 +235,9 @@ impl Emitter<'_> {
                 I::If(BlockType::Empty),
             ]);
             let message = self.text_as(node, self.string_type()?, b"NonFiniteFloat")?;
-            let subjects = self.alloc(24);
-            self.copy(subjects, 0, operands[0], 12);
-            self.copy(subjects, 12, operands[1], 12);
+            let subjects = self.alloc(2 * LOC_BYTES);
+            self.copy(subjects, 0, operands[0], LOC_BYTES);
+            self.copy(subjects, LOC_BYTES, operands[1], LOC_BYTES);
             let count = self.local(ValType::I32);
             self.extend([I::I32Const(2), I::LocalSet(count)]);
             self.report(node, message, subjects, count, false);

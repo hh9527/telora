@@ -26,7 +26,7 @@ impl Session {
             return Err("Wasm: input type has no value layout".into());
         }
         let value = self.allocate(bytes as usize)?;
-        self.write(value as usize + 12, &ty.to_le_bytes())?;
+        self.write(value as usize + TYPE as usize, &ty.to_le_bytes())?;
         Ok(value)
     }
     pub(crate) fn input_variant(
@@ -44,14 +44,14 @@ impl Session {
             return Err("Wasm: input variant payload mismatch".into());
         }
         let value = self.input_header(ty)?;
-        self.write(value as usize + 16, &(index as u64).to_le_bytes())?;
+        self.write(value as usize + (DATA as usize), &(index as u64).to_le_bytes())?;
         if let (Some(payload), Some(payload_ty)) = (payload, variant.ty) {
             let bytes = self.manifest.types[payload_ty as usize].bytes;
             if variant.boxed {
                 let id = self.push_input(VALUES, payload, bytes)?;
-                self.write(value as usize + 24, &id.to_le_bytes())?;
+                self.write(value as usize + (DATA + 8) as usize, &id.to_le_bytes())?;
             } else {
-                self.copy_input(value + 24, payload, bytes as usize)?;
+                self.copy_input(value + (DATA + 8) as u32, payload, bytes as usize)?;
             }
         }
         Ok(value)
@@ -72,8 +72,8 @@ impl Session {
         }
         let id = self.push_input(ARRAYS, data, bytes)?;
         let result = self.input_header(ty)?;
-        self.write(result as usize + 16, &id.to_le_bytes())?;
-        self.write(result as usize + 24, &length.to_le_bytes())?;
+        self.write(result as usize + (DATA as usize), &id.to_le_bytes())?;
+        self.write(result as usize + (DATA + 8) as usize, &length.to_le_bytes())?;
         Ok(result)
     }
     /// Caller provides keys in strict UTF-8 order, with their source locations.
@@ -89,7 +89,7 @@ impl Session {
         let stride = self.manifest.types[desc.arguments[0] as usize].bytes;
         let length = u32::try_from(pairs.len()).map_err(|_| "Wasm: dictionary length overflow")?;
         let key_bytes = length
-            .checked_mul(32)
+            .checked_mul(STRING_BYTES)
             .ok_or("Wasm: dictionary keys size overflow")?;
         let value_bytes = length
             .checked_mul(stride)
@@ -97,15 +97,15 @@ impl Session {
         let keys = self.allocate(key_bytes as usize)?;
         let values = self.allocate(value_bytes as usize)?;
         for (index, &(key, value)) in pairs.iter().enumerate() {
-            self.copy_input(keys + index as u32 * 32, key, 32)?;
+            self.copy_input(keys + index as u32 * STRING_BYTES, key, STRING_BYTES as usize)?;
             self.copy_input(values + index as u32 * stride, value, stride as usize)?;
         }
         let keys = self.push_input(ARRAYS, keys, key_bytes)?;
         let values = self.push_input(ARRAYS, values, value_bytes)?;
         let result = self.input_header(ty)?;
-        self.write(result as usize + 16, &keys.to_le_bytes())?;
-        self.write(result as usize + 20, &length.to_le_bytes())?;
-        self.write(result as usize + 24, &values.to_le_bytes())?;
+        self.write(result as usize + (DATA as usize), &keys.to_le_bytes())?;
+        self.write(result as usize + (DATA + 4) as usize, &length.to_le_bytes())?;
+        self.write(result as usize + (DATA + 8) as usize, &values.to_le_bytes())?;
         Ok(result)
     }
     pub(crate) fn input_record_values(
@@ -142,7 +142,7 @@ impl Session {
         }
         let id = self.push_input(RECORDS, data, bytes)?;
         let result = self.input_header(ty)?;
-        self.write(result as usize + 16, &id.to_le_bytes())?;
+        self.write(result as usize + (DATA as usize), &id.to_le_bytes())?;
         Ok(result)
     }
     pub(crate) fn input_bytes(&mut self, ty: u32, bytes: &[u8]) -> Result<u32, String> {
@@ -154,8 +154,8 @@ impl Session {
         self.write(data as usize, bytes)?;
         let id = self.push_input(BYTES, data, length)?;
         let result = self.input_header(ty)?;
-        self.write(result as usize + 16, &id.to_le_bytes())?;
-        self.write(result as usize + 24, &length.to_le_bytes())?;
+        self.write(result as usize + (DATA as usize), &id.to_le_bytes())?;
+        self.write(result as usize + (DATA + 8) as usize, &length.to_le_bytes())?;
         Ok(result)
     }
 }

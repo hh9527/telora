@@ -77,7 +77,7 @@ fn eol_and_lexical_windows_preserve_values_and_positions() {
             crate::data_plan_test::render(&plan),
             plan.nodes()
                 .iter()
-                .map(|n| plan.compact(n.location).0)
+                .map(|n| plan.coordinates(n.location).0)
                 .collect::<Vec<_>>(),
         ));
     }

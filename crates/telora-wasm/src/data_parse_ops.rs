@@ -114,7 +114,7 @@ impl Emitter<'_> {
             let payload = if let Some(ty) = payload_ty {
                 let payload = match code {
                     3 | 4 => {
-                        let p = self.value_as(node, ty, 24)?;
+                        let p = self.value_as(node, ty, SCALAR_BYTES)?;
                         self.extend([
                             I::LocalGet(p),
                             I::LocalGet(row),
@@ -145,27 +145,27 @@ impl Emitter<'_> {
                             I::Call(TABLE_PUSH),
                             I::LocalSet(id),
                         ]);
-                        let value = self.value_as(node, ty, 32)?;
-                        for (offset, local) in [(DATA, id), (24, count)] {
+                        let value = self.value_as(node, ty, STRING_BYTES)?;
+                        for (offset, local) in [(DATA, id), (DATA + 8, count)] {
                             self.extend([
                                 I::LocalGet(value),
                                 I::LocalGet(local),
                                 I::I32Store(memory(offset, 2)),
                             ]);
                         }
-                        self.store32(value, 20, 0);
-                        self.store32(value, 28, 0);
+                        self.store32(value, DATA + 4, 0);
+                        self.store32(value, DATA + 12, 0);
                         value
                     }
                     _ => return Err("Wasm: unexpected payload in Value contract".into()),
                 };
-                self.copy(payload, 0, input, 12);
+                self.copy(payload, 0, input, LOC_BYTES);
                 Some(payload)
             } else {
                 None
             };
             let item = self.enum_value(node, target, variant as u32, payload)?;
-            self.copy(item, 0, input, 12);
+            self.copy(item, 0, input, LOC_BYTES);
             self.extend([I::LocalGet(item), I::LocalSet(value), I::End]);
         }
         let slot = self.parse_address(values, index, 4);
@@ -200,7 +200,7 @@ impl Emitter<'_> {
         let width = self.width(target)?;
         let data = self.parse_buffer(count, width);
         let keys = if object {
-            Some(self.parse_buffer(count, 32))
+            Some(self.parse_buffer(count, STRING_BYTES))
         } else {
             None
         };
@@ -223,9 +223,9 @@ impl Emitter<'_> {
         self.copy(destination, 0, value, width);
         if let Some(keys) = keys {
             let key = self.text_span_value(self.string_type()?, entry)?;
-            self.copy(key, 0, input, 12);
-            let destination = self.parse_address(keys, index, 32);
-            self.copy(destination, 0, key, 32);
+            self.copy(key, 0, input, LOC_BYTES);
+            let destination = self.parse_address(keys, index, STRING_BYTES);
+            self.copy(destination, 0, key, STRING_BYTES);
         }
         self.extend([
             I::LocalGet(index),
@@ -237,10 +237,10 @@ impl Emitter<'_> {
             I::End,
         ]);
         let id = self.parse_column(data, count, width);
-        let output = self.value_as(self.key.node, ty, 32)?;
+        let output = self.value_as(self.key.node, ty, STRING_BYTES)?;
         if let Some(keys) = keys {
-            let key_id = self.parse_column(keys, count, 32);
-            for (offset, local) in [(16, key_id), (20, count), (24, id)] {
+            let key_id = self.parse_column(keys, count, STRING_BYTES);
+            for (offset, local) in [(DATA, key_id), (DATA + 4, count), (DATA + 8, id)] {
                 self.extend([
                     I::LocalGet(output),
                     I::LocalGet(local),
@@ -251,14 +251,14 @@ impl Emitter<'_> {
             self.extend([
                 I::LocalGet(output),
                 I::LocalGet(id),
-                I::I32Store(memory(16, 2)),
+                I::I32Store(memory(DATA, 2)),
                 I::LocalGet(output),
                 I::LocalGet(count),
-                I::I32Store(memory(24, 2)),
+                I::I32Store(memory(DATA + 8, 2)),
             ]);
-            self.store32(output, 20, 0);
+            self.store32(output, DATA + 4, 0);
         }
-        self.store32(output, 28, 0);
+        self.store32(output, DATA + 12, 0);
         Ok(output)
     }
 }

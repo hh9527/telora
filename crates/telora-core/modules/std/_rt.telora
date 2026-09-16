@@ -1,6 +1,7 @@
 type Severity = enum {Error, Warning, Info};
-# start/end: (zero-based line << 24) | UTF-8 byte column; end is exclusive.
-type SourceRange = struct {source: String, start: Int, end: Int};
+# start/end: zero-based line and UTF-8 byte offset; end is exclusive.
+type SourcePoint = struct {line: Int, offset: Int};
+type SourceRange = struct {source: String, start: SourcePoint, end: SourcePoint};
 type Label = struct {location: SourceRange, message: String, primary: Bool};
 type Diagnostic = struct {
     severity: Severity,
@@ -18,4 +19,4 @@ def with_diagnostics:
         -> Fn(A) -> Result(Tuple([R, Array(Diagnostic)]), Array(Diagnostic)) =
     fn(callable) { fn(argument) { call_with_diagnostics(callable, argument, (Diagnostic).type, (Severity).type, (Label).type, (SourceRange).type) } };
 
-export {Severity, SourceRange, Label, Diagnostic, with_diagnostics};
+export {Severity, SourcePoint, SourceRange, Label, Diagnostic, with_diagnostics};

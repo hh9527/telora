@@ -64,8 +64,8 @@ impl Formatter {
             Kind::Metadata => self.push(&format!("<TypeId:{}>", output.word(pointer + DATA)?)),
             Kind::Bytes => {
                 let (base, bytes) = output.payload(BYTES, output.word(pointer + DATA)?)?;
-                let start = output.word(pointer + 20)? as u64;
-                let end = output.word(pointer + 24)? as u64;
+                let start = output.word(pointer + DATA + 4)? as u64;
+                let end = output.word(pointer + DATA + 8)? as u64;
                 if start > end || end > bytes {
                     return Err("Wasm: invalid debug Bytes slice".into());
                 }
@@ -89,9 +89,9 @@ impl Formatter {
                 self.push(&branch.name);
                 if branch.ty.is_some() {
                     let value = if branch.boxed {
-                        output.payload(VALUES, output.word(pointer + 24)?)?.0
+                        output.payload(VALUES, output.word(pointer + DATA + 8)?)?.0
                     } else {
-                        pointer + 24
+                        pointer + DATA + 8
                     };
                     self.push("(");
                     self.value(output, value, depth + 1)?;
@@ -107,13 +107,13 @@ impl Formatter {
             Kind::Array | Kind::Dict => {
                 let dict = desc.kind == Kind::Dict;
                 let (base, bytes) =
-                    output.payload(ARRAYS, output.word(pointer + if dict { 24 } else { DATA })?)?;
+                    output.payload(ARRAYS, output.word(pointer + if dict { DATA + 8 } else { DATA })?)?;
                 let start = if dict {
                     0
                 } else {
-                    output.word(pointer + 20)? as u64
+                    output.word(pointer + DATA + 4)? as u64
                 };
-                let end = output.word(pointer + if dict { 20 } else { 24 })? as u64;
+                let end = output.word(pointer + if dict { DATA + 4 } else { DATA + 8 })? as u64;
                 let element = *desc
                     .arguments
                     .first()
@@ -129,7 +129,7 @@ impl Formatter {
                 }
                 let keys = if dict {
                     let (keys, bytes) = output.payload(ARRAYS, output.word(pointer + DATA)?)?;
-                    if end * 32 > bytes {
+                    if end * u64::from(STRING_BYTES) > bytes {
                         return Err("Wasm: invalid debug Dict keys".into());
                     }
                     keys
@@ -145,7 +145,7 @@ impl Formatter {
                         self.push(", ");
                     }
                     if dict {
-                        self.push(output.text_str(keys + index * 32)?);
+                        self.push(output.text_str(keys + index * u64::from(STRING_BYTES))?);
                         self.push(": ");
                     }
                     self.value(output, base + index * stride, depth + 1)?;

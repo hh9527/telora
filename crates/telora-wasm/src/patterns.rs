@@ -229,7 +229,7 @@ impl Emitter<'_> {
             None
         };
         let failure = self.enum_value(node, output, 0, payload)?;
-        self.copy(failure, 0, value, 12);
+        self.copy(failure, 0, value, LOC_BYTES);
         self.extend([I::LocalGet(failure), I::Return, I::End]);
         self.enum_payload(input, 1, value)
     }

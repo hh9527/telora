@@ -111,7 +111,7 @@ impl Source {
 
     /// One-based line and UTF-8 byte column for diagnostic display.
     pub fn position(&self, point: u64) -> (usize, usize) {
-        let (line, column) = telora_core::source::CompactLoc::position(point);
+        let (line, column) = telora_core::source::SourceCoordinates::position(point);
         (line as usize + 1, column as usize + 1)
     }
 }

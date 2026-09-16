@@ -87,7 +87,7 @@ impl Emitter<'_> {
         self.report(node, message, duplicate, one, false);
         self.emit(I::End);
         let width = self.width(element)?;
-        let keys = self.array_storage(count, 32);
+        let keys = self.array_storage(count, STRING_BYTES);
         let values = self.array_storage(count, width);
         self.extend([
             I::I32Const(0),
@@ -100,7 +100,7 @@ impl Emitter<'_> {
             I::BrIf(1),
         ]);
         let source = self.array_item(pointers, index, 8);
-        for (out, offset, width) in [(keys, 0, 32), (values, 4, width)] {
+        for (out, offset, width) in [(keys, 0, STRING_BYTES), (values, 4, width)] {
             let value = self.local(ValType::I32);
             self.extend([
                 I::LocalGet(source),
@@ -135,10 +135,10 @@ impl Emitter<'_> {
         let capacity = self.local(ValType::I32);
         self.extend([
             I::LocalGet(left),
-            I::I32Load(memory(20, 2)),
+            I::I32Load(memory(DATA + 4, 2)),
             I::LocalSet(left_count),
             I::LocalGet(right),
-            I::I32Load(memory(20, 2)),
+            I::I32Load(memory(DATA + 4, 2)),
             I::LocalSet(right_count),
             I::LocalGet(left_count),
             I::LocalGet(right_count),
@@ -148,12 +148,12 @@ impl Emitter<'_> {
             I::I32LtU,
         ]);
         self.fail_if(node, ERROR_OVERFLOW);
-        let keys = self.array_storage(capacity, 32);
+        let keys = self.array_storage(capacity, STRING_BYTES);
         let values = self.array_storage(capacity, width);
         let lk = self.table_data(ARRAYS, left, DATA);
-        let lv = self.table_data(ARRAYS, left, 24);
+        let lv = self.table_data(ARRAYS, left, DATA + 8);
         let rk = self.table_data(ARRAYS, right, DATA);
-        let rv = self.table_data(ARRAYS, right, 24);
+        let rv = self.table_data(ARRAYS, right, DATA + 8);
         let a = self.local(ValType::I32);
         let b = self.local(ValType::I32);
         let count = self.local(ValType::I32);
@@ -182,8 +182,8 @@ impl Emitter<'_> {
             I::I32And,
             I::If(BlockType::Empty),
         ]);
-        let lkey = self.array_item(lk, a, 32);
-        let rkey = self.array_item(rk, b, 32);
+        let lkey = self.array_item(lk, a, STRING_BYTES);
+        let rkey = self.array_item(rk, b, STRING_BYTES);
         let order = self.local(ValType::I32);
         self.extend([
             I::LocalGet(lkey),
@@ -208,10 +208,10 @@ impl Emitter<'_> {
             if branch == 1 {
                 self.emit(I::Else);
             }
-            let key = self.array_item(key_base, cursor, 32);
+            let key = self.array_item(key_base, cursor, STRING_BYTES);
             let item = self.array_item(value_base, cursor, width);
-            let destination = self.array_item(keys, count, 32);
-            self.copy(destination, 0, key, 32);
+            let destination = self.array_item(keys, count, STRING_BYTES);
+            self.copy(destination, 0, key, STRING_BYTES);
             let destination = self.array_item(values, count, width);
             self.copy(destination, 0, item, width);
             self.extend([

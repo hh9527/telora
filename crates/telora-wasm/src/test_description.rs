@@ -85,10 +85,8 @@ impl Emitter<'_> {
         }
         let id = self.table_push(TESTS, description, bytes);
         let result = self.value_as(self.key.node, output, SCALAR_BYTES)?;
-        for index in 0..3 {
-            self.extend([I::LocalGet(result), I::GlobalGet(CALL_SOURCE_GLOBAL + index),
-                I::I32Store(memory(index as u64 * 4, 2))]);
-        }
+        self.extend([I::LocalGet(result), I::GlobalGet(CALL_SOURCE_GLOBAL),
+            I::I32Store(memory(SOURCE, 2))]);
         self.extend([
             I::LocalGet(result),
             I::LocalGet(id),

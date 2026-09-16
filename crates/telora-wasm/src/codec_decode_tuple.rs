@@ -26,8 +26,8 @@ impl Emitter<'_> {
         self.emit(I::End);
         let collection = self.enum_payload(source, index as u32, input)?;
         let children = self.mir.types[target.index()].arguments.clone();
-        let start = self.read32(collection, 20);
-        let end = self.read32(collection, 24);
+        let start = self.read32(collection, DATA + 4);
+        let end = self.read32(collection, DATA + 8);
         self.extend([
             I::LocalGet(end),
             I::LocalGet(start),
@@ -72,7 +72,7 @@ impl Emitter<'_> {
             }
         }
         let value = self.packed_tuple(target, &fields)?;
-        self.copy(value, 0, input, 12);
+        self.copy(value, 0, input, LOC_BYTES);
         Ok(value)
     }
 }

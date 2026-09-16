@@ -80,7 +80,7 @@ fn eol_and_chunk_boundaries_preserve_values_and_positions() {
             crate::data_plan_test::render(&plan),
             plan.nodes()
                 .iter()
-                .map(|n| plan.compact(n.location).0)
+                .map(|n| plan.coordinates(n.location).0)
                 .collect::<Vec<_>>(),
         ));
         let expected = lines::index(core::iter::once(text.as_str()));

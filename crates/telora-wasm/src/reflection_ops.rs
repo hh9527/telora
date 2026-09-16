@@ -63,7 +63,7 @@ impl Emitter<'_> {
             I::I64ExtendI32U,
             I::I64Store(memory(DATA, 3)),
         ]);
-        self.copy(value, 0, input, 12);
+        self.copy(value, 0, input, LOC_BYTES);
         Ok(value)
     }
     pub(crate) fn reflected_text(
@@ -88,7 +88,7 @@ impl Emitter<'_> {
             I::I32Store(memory(4, 2)),
         ]);
         let value = self.text_span_value(ty, raw)?;
-        self.copy(value, 0, input, 12);
+        self.copy(value, 0, input, LOC_BYTES);
         Ok(value)
     }
     pub(crate) fn reflection_failure(&mut self, input: u32, message: &str) -> Result<(), String> {
@@ -128,7 +128,7 @@ impl Emitter<'_> {
                     I::If(BlockType::Empty),
                 ]);
                 let value = self.enum_value(node, output, index as u32, None)?;
-                self.copy(value, 0, input, 12);
+                self.copy(value, 0, input, LOC_BYTES);
                 self.extend([I::LocalGet(value), I::Return, I::End]);
             }
             self.reflection_failure(input, "unsupported type descriptor kind")?;
@@ -178,13 +178,13 @@ impl Emitter<'_> {
                 string,
                 b"type descriptor is not a recursive reference",
             )?;
-            self.copy(message, 0, input, 12);
+            self.copy(message, 0, input, LOC_BYTES);
             let error = self.enum_value(node, output, 0, Some(message))?;
             self.extend([I::LocalGet(error), I::LocalSet(result), I::End]);
         } else {
             return Err(format!("Wasm: type reflection not implemented: {name}"));
         }
-        self.copy(result, 0, input, 12);
+        self.copy(result, 0, input, LOC_BYTES);
         Ok(result)
     }
 }

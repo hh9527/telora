@@ -78,7 +78,7 @@ impl Emitter<'_> {
         let path = self.read32(0, 4);
         let message = self.parse_text(6, path, message)?;
         let original = self.read32(0, 16);
-        self.copy(message, 0, original, 12);
+        self.copy(message, 0, original, LOC_BYTES);
         let error = self.read32(0, 8);
         self.extend([
             I::LocalGet(error),
@@ -142,7 +142,7 @@ impl Emitter<'_> {
             self.extend([I::LocalGet(1), I::I32Eqz, I::If(BlockType::Empty)]);
             let none = self.enum_value(node, target, 0, None)?;
             let original = self.read32(0, 16);
-            self.copy(none, 0, original, 12);
+            self.copy(none, 0, original, LOC_BYTES);
             self.extend([I::LocalGet(none), I::Return, I::End]);
             let path = self.read32(0, 4);
             let context = self.parse_context(path);
@@ -150,7 +150,7 @@ impl Emitter<'_> {
             let value = self.parse_call(inner, context, 1)?;
             self.parse_propagate(value);
             let some = self.enum_value(node, target, 1, Some(value))?;
-            self.copy(some, 0, 1, 12);
+            self.copy(some, 0, 1, LOC_BYTES);
             return Ok(some);
         }
         self.extend([I::LocalGet(1), I::I32Eqz, I::If(BlockType::Empty)]);
@@ -161,7 +161,7 @@ impl Emitter<'_> {
             T::Int | T::Float => {
                 let integer = self.mir.types[target.index()].constructor == T::Int;
                 let value = self.value_as(node, target, SCALAR_BYTES)?;
-                self.copy(value, 0, 1, 12);
+                self.copy(value, 0, 1, LOC_BYTES);
                 self.extend([
                     I::I32Const(if integer { 4 } else { 5 }),
                     I::LocalGet(1),

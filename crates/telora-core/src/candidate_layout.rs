@@ -81,13 +81,13 @@ impl Storage {
                 if *empty_only && length != 0 {
                     return Err("invalid dictionary extent".into());
                 }
-                mul(add(32, *value_stride)?, length.into())
+                mul(add(24, *value_stride)?, length.into())
             }
             (Self::Captures, Extent::Captures(sizes)) => {
                 let count = u32::try_from(sizes.len()).map_err(|_| "capture count overflow")?;
                 let mut bytes = align(add(8, mul(4, count.into())?)?, 8)?;
                 for &size in sizes {
-                    if size < 16 || size % 8 != 0 {
+                    if size < 8 || size % 8 != 0 {
                         return Err("invalid full captured value size".into());
                     }
                     bytes = add(bytes, size)?;
@@ -95,7 +95,7 @@ impl Storage {
                 u32::try_from(bytes).map_err(|_| "capture object exceeds u32 offset space")?;
                 Ok(bytes)
             }
-            (Self::FullValue, Extent::FullValue(bytes)) if bytes >= 16 && bytes % 8 == 0 => {
+            (Self::FullValue, Extent::FullValue(bytes)) if bytes >= 8 && bytes % 8 == 0 => {
                 Ok(bytes)
             }
             _ => Err("extent does not match object layout".into()),
@@ -182,7 +182,7 @@ fn shape(
         shape: Shape {
             data_bytes: bytes,
             data_alignment: alignment,
-            value_bytes: add(16, align(bytes, 8)?)?,
+            value_bytes: add(8, align(bytes, 8)?)?,
             value_alignment: 8,
             table,
             encoding,
@@ -631,7 +631,7 @@ impl<'a> Builder<'a> {
                     empty_only: stride == 0,
                 };
                 o.storage_rule = format!(
-                    "two whole ArrayTable slots; keys: length * 32 bytes (full String values), strictly increasing UTF-8 byte order; values: length * {stride} bytes; equal column lengths; binary search; no slice offsets; reserved=0; uninhabited values require length=0"
+                    "two whole ArrayTable slots; keys: length * 24 bytes (full String values), strictly increasing UTF-8 byte order; values: length * {stride} bytes; equal column lengths; binary search; no slice offsets; reserved=0; uninhabited values require length=0"
                 );
             }
             "ClosureEnvTable" => {
@@ -706,7 +706,7 @@ fn calculate_image(image: &TypeImage, module_records: Vec<bool>) -> Result<Vec<E
                     Member {
                         name: name.clone(),
                         type_id: p.map(|p| p.index()),
-                        offset: p.filter(|_| live).map(|_| 24),
+                        offset: p.filter(|_| live).map(|_| 16),
                         storage: if !live {
                             "uninhabited_or_template"
                         } else if p.is_none() {
@@ -744,7 +744,7 @@ mod tests {
     use super::*;
     #[test]
     fn checked_sizes() {
-        for (data, a, expected) in [(0, 1, 16), (8, 8, 24), (12, 4, 32)] {
+        for (data, a, expected) in [(0, 1, 8), (8, 8, 16), (12, 4, 24)] {
             let State::Known { shape } = shape(data, a, None, "test").unwrap() else {
                 unreachable!()
             };
@@ -816,7 +816,7 @@ mod tests {
         assert_eq!(
             dict.allocation_bytes(Extent::Dictionary { length: 2 })
                 .unwrap(),
-            112
+            96
         );
         assert!(
             Storage::Dictionary {

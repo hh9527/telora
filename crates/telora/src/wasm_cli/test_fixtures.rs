@@ -13,11 +13,11 @@ pub(super) fn diagnostic(message: impl Into<String>, origin: Option<Loc>) -> Dia
     )
 }
 
-pub(super) fn location(sources: &SourceDatabase, words: [u32; 3]) -> Option<Loc> {
+pub(super) fn location(sources: &SourceDatabase, words: [u32; 5]) -> Option<Loc> {
     sources
         .files()
-        .find(|file| file.id().get() == (words[0] & 0xffff))
-        .and_then(|file| file.byte_location(telora_core::source::CompactLoc(words)))
+        .find(|file| file.id().get() == words[0])
+        .and_then(|file| file.byte_location(telora_core::source::SourceCoordinates(words)))
 }
 
 pub(super) struct Fixtures<'a, 'b> {

@@ -7,10 +7,10 @@ unsafe fn join(array: u32) -> &'static str {
             telora_table_get(table_address(ARRAYS), word(array, DATA)),
             0,
         );
-        let end = word(array, 24);
-        let mut start = word(array, 20);
+        let end = word(array, DATA + 8);
+        let mut start = word(array, DATA + 4);
         for index in start..end {
-            if text(base + index * 32).starts_with('/') {
+            if text(base + index * STRING_BYTES).starts_with('/') {
                 start = index;
             }
         }
@@ -18,7 +18,7 @@ unsafe fn join(array: u32) -> &'static str {
             let mut empty = true;
             let mut slash = false;
             for index in start..end {
-                let part = text(base + index * 32);
+                let part = text(base + index * STRING_BYTES);
                 if !empty && !slash {
                     output.write_char('/')?;
                     slash = true;

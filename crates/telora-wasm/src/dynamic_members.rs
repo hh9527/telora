@@ -83,7 +83,7 @@ impl Emitter<'_> {
         let concrete = self.read32(member, 8);
         let offset = self.read32(member, 12);
         let width = self.read32(member, 16);
-        let record = self.table_data(VALUES, input, 24);
+        let record = self.table_data(VALUES, input, DATA + 8);
         let data = self.table_data(RECORDS, record, DATA);
         self.extend([
             I::LocalGet(data),

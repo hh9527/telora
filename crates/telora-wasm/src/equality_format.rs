@@ -62,8 +62,8 @@ impl Emitter<'_> {
             I::Unreachable,
             I::End,
         ]);
-        let (strings_a, count_a) = self.array_parts(a, 32);
-        let (strings_b, count_b) = self.array_parts(b, 32);
+        let (strings_a, count_a) = self.array_parts(a, STRING_BYTES);
+        let (strings_b, count_b) = self.array_parts(b, STRING_BYTES);
         self.extend([I::LocalGet(count_a), I::LocalGet(count_b), I::I32Ne]);
         self.unequal_if();
         let items_a = self.read32(left, 8);
@@ -85,8 +85,8 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
-        let a = self.array_item(strings_a, index, 32);
-        let b = self.array_item(strings_b, index, 32);
+        let a = self.array_item(strings_a, index, STRING_BYTES);
+        let b = self.array_item(strings_b, index, STRING_BYTES);
         self.extend([I::LocalGet(a), I::LocalGet(b), I::Call(STRING_COMPARE)]);
         self.unequal_if();
         self.extend([

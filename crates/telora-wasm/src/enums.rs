@@ -110,14 +110,14 @@ impl Emitter<'_> {
             (Some(payload_ty), Some(value)) => {
                 let width = self.width(self.plan.layouts[payload_ty].id())?;
                 match branch.storage {
-                    "full_value" => self.copy(result, 24, value, width),
+                    "full_value" => self.copy(result, (DATA + 8) as u32, value, width),
                     "heap_id" => {
                         let id = self.table_push(VALUES, value, width);
                         self.extend([
                             I::LocalGet(result),
                             I::LocalGet(id),
                             I::I64ExtendI32U,
-                            I::I64Store(memory(24, 3)),
+                            I::I64Store(memory(DATA + 8, 3)),
                         ]);
                     }
                     _ => return Err("Wasm: enum payload storage is not materializable".into()),
@@ -146,13 +146,13 @@ impl Emitter<'_> {
                 let result = self.local(ValType::I32);
                 self.extend([
                     I::LocalGet(value),
-                    I::I32Const(24),
+                    I::I32Const((DATA + 8) as i32),
                     I::I32Add,
                     I::LocalSet(result),
                 ]);
                 Ok(result)
             }
-            "heap_id" => Ok(self.table_data(VALUES, value, 24)),
+            "heap_id" => Ok(self.table_data(VALUES, value, DATA + 8)),
             _ => Err("Wasm: enum payload storage is not materializable".into()),
         }
     }
@@ -174,7 +174,7 @@ impl Emitter<'_> {
                 // Zero-environment constructors receive the callable value,
                 // whose source is the actual materialization site. Payload
                 // provenance was copied independently by enum_value.
-                self.copy(result, 0, 0, 12);
+                self.copy(result, 0, 0, LOC_BYTES);
                 Ok(result)
             }
             MemberSelection::NewtypeConstructor => {

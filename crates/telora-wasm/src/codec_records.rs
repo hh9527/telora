@@ -114,7 +114,7 @@ impl Emitter<'_> {
             u32::try_from(members.len()).map_err(|_| "Wasm: codec Record field count overflow")?;
         let keys = self.alloc(
             count
-                .checked_mul(32)
+                .checked_mul(STRING_BYTES)
                 .ok_or("Wasm: codec key size overflow")?,
         );
         let values = self.alloc(
@@ -125,8 +125,8 @@ impl Emitter<'_> {
         let base = self.table_data(RECORDS, input, DATA);
         for (index, (name, ty, offset)) in members.iter().enumerate() {
             let key = self.text_as(self.key.node, self.string_type()?, name.as_bytes())?;
-            self.copy(key, 0, input, 12);
-            self.copy(keys, index as u32 * 32, key, 32);
+            self.copy(key, 0, input, LOC_BYTES);
+            self.copy(keys, index as u32 * STRING_BYTES, key, STRING_BYTES);
             let field = self.local(ValType::I32);
             self.extend([
                 I::LocalGet(base),
@@ -148,7 +148,7 @@ impl Emitter<'_> {
         self.extend([I::I32Const(count as i32), I::LocalSet(len)]);
         let payload =
             self.dict_result(self.plan.layouts[payload_ty].id(), keys, values, len, width)?;
-        self.copy(payload, 0, input, 12);
+        self.copy(payload, 0, input, LOC_BYTES);
         self.codec_variant(target, "Object", Some(payload), input)
     }
 }

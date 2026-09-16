@@ -47,32 +47,22 @@ impl Emitter<'_> {
             I::Call(TABLE_PUSH),
             I::LocalSet(id),
         ]);
-        let value = self.value_as(self.key.node, ty, 32)?;
-        self.store32(value, 16, 1);
+        let value = self.value_as(self.key.node, ty, STRING_BYTES)?;
+        self.store32(value, DATA, 1);
         self.extend([
             I::LocalGet(value),
             I::LocalGet(id),
-            I::I32Store(memory(20, 2)),
+            I::I32Store(memory(DATA + 4, 2)),
             I::LocalGet(value),
             I::LocalGet(span),
             I::I32Load(memory(4, 2)),
-            I::I32Store(memory(28, 2)),
+            I::I32Store(memory(DATA + 12, 2)),
         ]);
         Ok(value)
     }
     fn same_origin(&mut self, a: u32, b: u32) {
-        for offset in [0, 4, 8] {
-            self.extend([
-                I::LocalGet(a),
-                I::I32Load(memory(offset, 2)),
-                I::LocalGet(b),
-                I::I32Load(memory(offset, 2)),
-                I::I32Eq,
-            ]);
-            if offset != 0 {
-                self.emit(I::I32And);
-            }
-        }
+        self.extend([I::LocalGet(a), I::I32Load(memory(0, 2)),
+            I::LocalGet(b), I::I32Load(memory(0, 2)), I::I32Eq]);
     }
     fn append_label(
         &mut self,
@@ -90,44 +80,33 @@ impl Emitter<'_> {
         ]);
         let range = self.diagnostic_field_type(label, "location")?;
         let string = self.diagnostic_field_type(range, "source")?;
+        let coordinates = self.local(ValType::I32);
         let span = self.local(ValType::I32);
         self.extend([
-            I::LocalGet(origin),
-            I::I32Load(memory(0, 2)),
-            I::I32Const(0xffff),
-            I::I32And,
-            I::Call(SOURCE_NAME),
-            I::LocalSet(span),
+            I::LocalGet(origin), I::I32Load(memory(0, 2)), I::Call(LOCATION_GET),
+            I::LocalTee(coordinates), I::I32Load(memory(0, 2)),
+            I::Call(SOURCE_NAME), I::LocalSet(span),
         ]);
         let source = self.text_span_value(string, span)?;
         let start_ty = self.diagnostic_field_type(range, "start")?;
         let end_ty = self.diagnostic_field_type(range, "end")?;
-        if self.mir.types[start_ty.index()].constructor != T::Int
-            || self.mir.types[end_ty.index()].constructor != T::Int
-        {
-            return Err("Wasm: diagnostic range offsets must be Int".into());
+        let mut points = Vec::new();
+        for (ty, base) in [(start_ty, 4), (end_ty, 12)] {
+            let line_ty = self.diagnostic_field_type(ty, "line")?;
+            let offset_ty = self.diagnostic_field_type(ty, "offset")?;
+            if self.mir.types[line_ty.index()].constructor != T::Int
+                || self.mir.types[offset_ty.index()].constructor != T::Int {
+                return Err("Wasm: diagnostic coordinates require Int fields".into());
+            }
+            let line = self.scalar_as(self.key.node, line_ty, 0)?;
+            let offset = self.scalar_as(self.key.node, offset_ty, 0)?;
+            for (value, field) in [(line, base), (offset, base + 4)] {
+                self.extend([I::LocalGet(value), I::LocalGet(coordinates),
+                    I::I32Load(memory(field, 2)), I::I64ExtendI32U, I::I64Store(memory(DATA, 3))]);
+            }
+            points.push(self.diagnostic_record(ty, &[("line", line), ("offset", offset)])?);
         }
-        let start = self.scalar_as(self.key.node, start_ty, 0)?;
-        let end = self.scalar_as(self.key.node, end_ty, 0)?;
-        for (value, offset) in [(start, 4), (end, 8)] {
-            self.extend([
-                I::LocalGet(value),
-                I::LocalGet(origin),
-                I::I32Load(memory(offset, 2)),
-                I::I64ExtendI32U,
-                I::LocalGet(origin),
-                I::I32Load(memory(0, 2)),
-                I::I32Const(if offset == 4 { 16 } else { 24 }),
-                I::I32ShrU,
-                I::I32Const(0xff),
-                I::I32And,
-                I::I64ExtendI32U,
-                I::I64Const(32),
-                I::I64Shl,
-                I::I64Or,
-                I::I64Store(memory(DATA, 3)),
-            ]);
-        }
+        let (start, end) = (points[0], points[1]);
         let location =
             self.diagnostic_record(range, &[("source", source), ("start", start), ("end", end)])?;
         let bool_ty = self.diagnostic_field_type(label, "primary")?;
@@ -161,12 +140,12 @@ impl Emitter<'_> {
         let message = self.local(ValType::I32);
         self.extend([
             I::LocalGet(packet),
-            I::I32Load(memory(12, 2)),
+            I::I32Load(memory(DIAG_CODE, 2)),
             I::I32Const(ERROR_USER as i32),
             I::I32Eq,
             I::If(BlockType::Empty),
             I::LocalGet(packet),
-            I::I32Load(memory(16, 2)),
+            I::I32Load(memory(DIAG_MESSAGE, 2)),
             I::LocalSet(message),
             I::Else,
         ]);
@@ -175,7 +154,7 @@ impl Emitter<'_> {
         for code in (ERROR_OVERFLOW..=ERROR_DATA).chain([ERROR_UNINITIALIZED_CALL, ERROR_UNINITIALIZED_FUNCTION]) {
             self.extend([
                 I::LocalGet(packet),
-                I::I32Load(memory(12, 2)),
+                I::I32Load(memory(DIAG_CODE, 2)),
                 I::I32Const(code as i32),
                 I::I32Eq,
                 I::If(BlockType::Empty),
@@ -196,7 +175,7 @@ impl Emitter<'_> {
         let total = self.local(ValType::I32);
         self.extend([
             I::LocalGet(packet),
-            I::I32Load(memory(24, 2)),
+            I::I32Load(memory(DIAG_COUNT, 2)),
             I::I32Const(1),
             I::I32Add,
             I::LocalSet(total),
@@ -214,16 +193,16 @@ impl Emitter<'_> {
             I::Loop(BlockType::Empty),
             I::LocalGet(index),
             I::LocalGet(packet),
-            I::I32Load(memory(24, 2)),
+            I::I32Load(memory(DIAG_COUNT, 2)),
             I::I32GeU,
             I::BrIf(1),
         ]);
         let subject = self.local(ValType::I32);
         self.extend([
             I::LocalGet(packet),
-            I::I32Load(memory(20, 2)),
+            I::I32Load(memory(DIAG_SUBJECTS, 2)),
             I::LocalGet(index),
-            I::I32Const(12),
+            I::I32Const(LOC_BYTES as i32),
             I::I32Mul,
             I::I32Add,
             I::LocalSet(subject),
@@ -243,9 +222,9 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
             I::LocalGet(packet),
-            I::I32Load(memory(20, 2)),
+            I::I32Load(memory(DIAG_SUBJECTS, 2)),
             I::LocalGet(earlier),
-            I::I32Const(12),
+            I::I32Const(LOC_BYTES as i32),
             I::I32Mul,
             I::I32Add,
             I::LocalSet(prior),
@@ -310,7 +289,7 @@ impl Emitter<'_> {
         self.extend([
             I::LocalGet(severity),
             I::LocalGet(packet),
-            I::I32Load(memory(28, 2)),
+            I::I32Load(memory(DIAG_WARNING, 2)),
             I::If(BlockType::Result(ValType::I64)),
             I::I64Const(warning as i64),
             I::Else,

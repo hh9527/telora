@@ -24,7 +24,7 @@ impl Emitter<'_> {
     ) -> Result<u32, String> {
         let key_id = self.local(ValType::I32);
         let value_id = self.local(ValType::I32);
-        for (data, width, id) in [(keys, 32, key_id), (values, width, value_id)] {
+        for (data, width, id) in [(keys, STRING_BYTES, key_id), (values, width, value_id)] {
             self.extend([
                 I::I32Const(table_address(ARRAYS) as i32),
                 I::LocalGet(data),
@@ -35,15 +35,15 @@ impl Emitter<'_> {
                 I::LocalSet(id),
             ]);
         }
-        let result = self.value_as(node, ty, 32)?;
-        for (offset, value) in [(16, key_id), (20, count), (24, value_id)] {
+        let result = self.value_as(node, ty, STRING_BYTES)?;
+        for (offset, value) in [(DATA, key_id), (DATA + 4, count), (DATA + 8, value_id)] {
             self.extend([
                 I::LocalGet(result),
                 I::LocalGet(value),
                 I::I32Store(memory(offset, 2)),
             ]);
         }
-        self.store32(result, 28, 0);
+        self.store32(result, DATA + 12, 0);
         Ok(result)
     }
     pub fn dict_native(&mut self, name: &str) -> Result<u32, String> {
@@ -62,7 +62,7 @@ impl Emitter<'_> {
         let count = self.local(ValType::I32);
         self.extend([
             I::LocalGet(value),
-            I::I32Load(memory(20, 2)),
+            I::I32Load(memory(DATA + 4, 2)),
             I::LocalSet(count),
         ]);
         if matches!(name, "keys" | "values") {
@@ -79,15 +79,15 @@ impl Emitter<'_> {
             {
                 return Err("Wasm: Dict column type mismatch".into());
             }
-            let result = self.value_as(node, output, 32)?;
+            let result = self.value_as(node, output, STRING_BYTES)?;
             self.extend([
                 I::LocalGet(result),
                 I::LocalGet(value),
-                I::I32Load(memory(if name == "keys" { 16 } else { 24 }, 2)),
-                I::I32Store(memory(16, 2)),
+                I::I32Load(memory(if name == "keys" { DATA } else { DATA + 8 }, 2)),
+                I::I32Store(memory(DATA, 2)),
                 I::LocalGet(result),
                 I::LocalGet(count),
-                I::I32Store(memory(24, 2)),
+                I::I32Store(memory(DATA + 8, 2)),
             ]);
             return Ok(result);
         }
@@ -158,7 +158,7 @@ impl Emitter<'_> {
             _ => return Err(format!("Wasm: unsupported Dict native {name}")),
         }
         let keys = self.table_data(ARRAYS, value, DATA);
-        let values = self.table_data(ARRAYS, value, 24);
+        let values = self.table_data(ARRAYS, value, DATA + 8);
         let output_element = if name == "fold" {
             output
         } else {
@@ -181,7 +181,7 @@ impl Emitter<'_> {
             self.array_storage(count, out_width)
         };
         let out_keys = if name == "filter" {
-            self.array_storage(count, 32)
+            self.array_storage(count, STRING_BYTES)
         } else {
             keys
         };
@@ -195,7 +195,7 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
-        let key = self.array_item(keys, index, 32);
+        let key = self.array_item(keys, index, STRING_BYTES);
         let item = self.array_item(values, index, width);
         let mapped = match name {
             "pairs" => self.packed_tuple(output_element, &[key, item])?,
@@ -206,9 +206,9 @@ impl Emitter<'_> {
         if name == "filter" {
             self.bits(mapped);
             self.extend([I::I64Eqz, I::I32Eqz, I::If(BlockType::Empty)]);
-            let to_key = self.array_item(out_keys, used, 32);
+            let to_key = self.array_item(out_keys, used, STRING_BYTES);
             let to_value = self.array_item(out_values, used, width);
-            self.copy(to_key, 0, key, 32);
+            self.copy(to_key, 0, key, STRING_BYTES);
             self.copy(to_value, 0, item, width);
             self.extend([
                 I::LocalGet(used),

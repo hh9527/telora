@@ -58,7 +58,7 @@ impl Collector {
                 return self.base + at;
             }
             let ty = word(pointer, TYPE);
-            self.sources.insert(word(pointer, SOURCE) & 0xffff);
+            self.trace_location(word(pointer, SOURCE));
             let bytes = word(self.types + ty * 20, 4);
             assert!(bytes >= HEADER_BYTES);
             let at = self.copy_bytes(pointer, bytes);

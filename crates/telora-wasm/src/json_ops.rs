@@ -135,7 +135,7 @@ impl Emitter<'_> {
                 "Array" | "Object" => {
                     let object = branch == "Object";
                     let payload = self.enum_payload(ty, index as u32, 1)?;
-                    let base = self.table_data(ARRAYS, payload, if object { 24 } else { DATA });
+                    let base = self.table_data(ARRAYS, payload, if object { DATA + 8 } else { DATA });
                     let keys = if object {
                         Some(self.table_data(ARRAYS, payload, DATA))
                     } else {
@@ -144,9 +144,9 @@ impl Emitter<'_> {
                     let start = if object {
                         self.local(ValType::I32)
                     } else {
-                        self.read32(payload, 20)
+                        self.read32(payload, DATA + 4)
                     };
-                    let end = self.read32(payload, if object { 20 } else { 24 });
+                    let end = self.read32(payload, if object { DATA + 4 } else { DATA + 8 });
                     let cursor = self.local(ValType::I32);
                     self.extend([I::LocalGet(start), I::LocalSet(cursor)]);
                     self.json_immediate(6, 0, i32::from(object));
@@ -171,7 +171,7 @@ impl Emitter<'_> {
                         self.extend([
                             I::LocalGet(keys),
                             I::LocalGet(cursor),
-                            I::I32Const(32),
+                            I::I32Const(STRING_BYTES as i32),
                             I::I32Mul,
                             I::I32Add,
                             I::LocalSet(key),

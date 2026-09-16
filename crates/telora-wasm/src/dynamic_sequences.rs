@@ -50,10 +50,10 @@ impl Emitter<'_> {
         let child_ty = self.read32(children, 0);
         let (_, child_row) = self.type_row(child_ty);
         let width = self.read32(child_row, 32);
-        let value = self.table_data(VALUES, input, 24);
+        let value = self.table_data(VALUES, input, DATA + 8);
         let data = self.table_data(ARRAYS, value, DATA);
-        let start = self.read32(value, 20);
-        let count = self.read32(value, 24);
+        let start = self.read32(value, DATA + 4);
+        let count = self.read32(value, DATA + 8);
         self.extend([
             I::LocalGet(count),
             I::LocalGet(start),

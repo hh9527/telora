@@ -70,7 +70,7 @@ impl Emitter<'_> {
         let child = self.local(ValType::I32);
         // Unit has no object handle: never inspect storage when there are no children.
         self.extend([I::LocalGet(count), I::If(BlockType::Empty)]);
-        let value = self.table_data(VALUES, input, 24);
+        let value = self.table_data(VALUES, input, DATA + 8);
         self.extend([
             I::LocalGet(kind),
             I::I32Const(11),

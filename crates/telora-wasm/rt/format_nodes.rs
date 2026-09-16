@@ -9,7 +9,7 @@ unsafe fn array_item(value: u32, index: u32, width: u32) -> u32 {
             telora_table_get(table_address(ARRAYS), word(value, DATA)),
             0,
         );
-        base + (word(value, 20) + index) * width
+        base + (word(value, DATA + 4) + index) * width
     }
 }
 
@@ -37,13 +37,13 @@ unsafe fn render(value: u32, output: &mut dyn Write, depth: u32) -> fmt::Result 
             ),
             4 => {
                 let items = word(node, 8);
-                let count = word(items, 24) - word(items, 20);
+                let count = word(items, DATA + 8) - word(items, DATA + 4);
                 // The generated constructor validates lengths before publishing.
                 for index in 0..count {
-                    output.write_str(text(array_item(first, index, 32)))?;
+                    output.write_str(text(array_item(first, index, STRING_BYTES)))?;
                     render(array_item(items, index, SCALAR_BYTES), output, depth + 1)?;
                 }
-                output.write_str(text(array_item(first, count, 32)))
+                output.write_str(text(array_item(first, count, STRING_BYTES)))
             }
             _ => core::arch::wasm32::unreachable(),
         }
