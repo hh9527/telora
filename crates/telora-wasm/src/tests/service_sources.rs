@@ -163,3 +163,30 @@ fn public_source_injection_materializes_values_without_host_type_access() {
     assert_eq!(create.call(&mut session.store, ()).unwrap(), 1);
     assert_eq!(create.call(&mut session.store, ()).unwrap(), 1);
 }
+
+#[test]
+fn diagnostic_output_moves_capacity_and_rejects_overlapping_descriptors() {
+    let bytes = artifact();
+    for invalid in [false, true] {
+        let (mut session, _) = prepare(&bytes);
+        let alloc = session.instance.get_typed_func::<(u32, u32), u32>(&session.store, "mem-alloc").unwrap();
+        let free = session.instance.get_typed_func::<(u32, u32, u32), ()>(&session.store, "mem-free").unwrap();
+        let get = session.instance.get_typed_func::<(u32, u32, u32), ()>(&session.store, "get-service-diagnostics").unwrap();
+        let output = alloc.call(&mut session.store, (32, 1)).unwrap();
+        let result = alloc.call(&mut session.store, (12, 4)).unwrap();
+        if invalid {
+            assert!(get.call(&mut session.store, (result, 12, result)).is_err());
+            // Trap does not return buffer ownership. Discard the instance.
+            continue;
+        }
+        for _ in 0..2 {
+            get.call(&mut session.store, (output, 32, result)).unwrap();
+            assert_eq!(session.output().word(result as u64).unwrap(), output);
+            assert_eq!(session.output().word(result as u64 + 4).unwrap(), 2);
+            assert_eq!(session.output().word(result as u64 + 8).unwrap(), 32);
+            assert_eq!(session.output().bytes(output as u64, 2).unwrap(), b"[]");
+        }
+        free.call(&mut session.store, (output, 32, 1)).unwrap();
+        free.call(&mut session.store, (result, 12, 4)).unwrap();
+    }
+}

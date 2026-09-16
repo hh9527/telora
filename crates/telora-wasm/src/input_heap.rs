@@ -56,26 +56,6 @@ impl Session {
         }
         Ok(value)
     }
-    pub(crate) fn input_array_values(&mut self, ty: u32, items: &[u32]) -> Result<u32, String> {
-        let desc = &self.manifest.types[ty as usize];
-        if desc.kind != Kind::Array {
-            return Err("Wasm: expected array layout".into());
-        }
-        let stride = self.manifest.types[desc.arguments[0] as usize].bytes;
-        let length = u32::try_from(items.len()).map_err(|_| "Wasm: input array length overflow")?;
-        let bytes = length
-            .checked_mul(stride)
-            .ok_or("Wasm: input array size overflow")?;
-        let data = self.allocate(bytes as usize)?;
-        for (index, &value) in items.iter().enumerate() {
-            self.copy_input(data + index as u32 * stride, value, stride as usize)?;
-        }
-        let id = self.push_input(ARRAYS, data, bytes)?;
-        let result = self.input_header(ty)?;
-        self.write(result as usize + (DATA as usize), &id.to_le_bytes())?;
-        self.write(result as usize + (DATA + 8) as usize, &length.to_le_bytes())?;
-        Ok(result)
-    }
     /// Caller provides keys in strict UTF-8 order, with their source locations.
     pub(crate) fn input_dict_values(
         &mut self,
@@ -143,19 +123,6 @@ impl Session {
         let id = self.push_input(RECORDS, data, bytes)?;
         let result = self.input_header(ty)?;
         self.write(result as usize + (DATA as usize), &id.to_le_bytes())?;
-        Ok(result)
-    }
-    pub(crate) fn input_bytes(&mut self, ty: u32, bytes: &[u8]) -> Result<u32, String> {
-        if self.manifest.types[ty as usize].kind != Kind::Bytes {
-            return Err("Wasm: expected Bytes layout".into());
-        }
-        let length = u32::try_from(bytes.len()).map_err(|_| "Wasm: byte input size overflow")?;
-        let data = self.allocate(bytes.len())?;
-        self.write(data as usize, bytes)?;
-        let id = self.push_input(BYTES, data, length)?;
-        let result = self.input_header(ty)?;
-        self.write(result as usize + (DATA as usize), &id.to_le_bytes())?;
-        self.write(result as usize + (DATA + 8) as usize, &length.to_le_bytes())?;
         Ok(result)
     }
 }

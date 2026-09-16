@@ -1,8 +1,7 @@
 //! Test scheduling and reports are Host protocol; callbacks stay in Wasm.
-use super::test_fixtures::{Fixtures, diagnostic, location};
+use super::test_fixtures::{Fixtures, Input, diagnostic, location};
 use telora_core::{
     DataLimits, Diagnostic, Loc, SourceDatabase, TestContext,
-    data_plan::ParsedData,
     source::Severity,
     test_plan::{TestNotice, TestPlan, TestReport, TestResult},
 };
@@ -20,7 +19,7 @@ enum Work {
         origin: Option<Loc>,
     },
     Fixture {
-        plan: Result<ParsedData, Vec<Diagnostic>>,
+        plan: Result<Input, Vec<Diagnostic>>,
         factory: Value,
         result: TestResult,
         depth: usize,
@@ -127,18 +126,23 @@ pub(crate) fn run(
                         continue;
                     }
                 };
-                result.phase = "factory";
                 let input = testing
                     .session_mut()
-                    .register_data_sources(fixtures.sources, &plan)
-                    .and_then(|()| testing.session_mut().materialize_value(&plan, fixtures.sources));
+                    .parse_data_source(fixtures.sources.get(plan.source), plan.format);
                 let input = match input {
-                    Ok(input) => input,
+                    Ok(Ok(input)) => input,
+                    Ok(Err(events)) => {
+                        expanded += 1;
+                        result.diagnostics.extend(super::diagnostics::parsed(events, fixtures.sources)?);
+                        report.cases.push(result);
+                        continue;
+                    }
                     Err(message) => {
                         fail(&mut report, result, message, origin, true);
                         continue;
                     }
                 };
+                result.phase = "factory";
                 let execution = testing.invoke(factory, &[input])?;
                 result.diagnostics.extend(super::diagnostics::convert(
                     execution.diagnostics,

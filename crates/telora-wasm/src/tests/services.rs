@@ -2,7 +2,7 @@ use crate::session::Session;
 
 #[test]
 fn collection_keeps_initialization_locations_without_registering_request_sources() {
-    use telora_core::data_plan::{Format, parse_registered};
+    use telora_core::data_plan::Format;
     let mir = super::graph(
         &std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -21,9 +21,7 @@ fn collection_keeps_initialization_locations_without_registering_request_sources
     let mut session = Session::load(&bytes, 100_000_000).unwrap();
     let baseline = session.manifest.sources.len();
     let retained = sources.try_add_data("retained.json", "42".into()).unwrap();
-    let plan = parse_registered(&sources, retained, Format::Json).unwrap();
-    session.register_data_sources(&sources, &plan).unwrap();
-    let value = session.materialize_value(&plan, &sources).unwrap();
+    let value = session.parse_data_source(sources.get(retained), Format::Json).unwrap().unwrap();
     session.initialize().unwrap();
     let factory = crate::transport::Value {
         pointer: session.entry().unwrap(),

@@ -76,6 +76,7 @@ pub(crate) unsafe fn collect(gc: &mut crate::collect::Collector) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_register_source(id: u32, pointer: u32, length: u32) -> u32 {
     unsafe {
+        assert_ne!(id, 0, "zero is not a source identity");
         for index in 0..LENGTH {
             let old = (BUFFER as *const Source).add(index as usize).read();
             if old.id == id {
@@ -193,9 +194,12 @@ pub(crate) unsafe fn position(id: u32, byte: u32) -> (u32, u32) {
 pub unsafe extern "C" fn telora_source_range(range: u32) -> u32 {
     unsafe {
         let id = crate::values::word(range, 0);
-        if id == 0 { return 0; }
         let start = crate::values::word(range, 4);
         let end = crate::values::word(range, 8);
+        if id == 0 {
+            assert_eq!((start, end), (0, 0), "invalid empty source range");
+            return 0;
+        }
         assert!(start <= end);
         let start = position(id, start);
         let end = position(id, end);
@@ -217,7 +221,7 @@ pub unsafe extern "C" fn telora_source_name(id: u32) -> u32 {
                 return item as u32 + 4;
             }
         }
-        number_text(b"source:", id, b"")
+        panic!("unregistered source");
     }
 }
 

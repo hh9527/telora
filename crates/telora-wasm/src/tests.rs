@@ -119,16 +119,16 @@ fn multiline_string_values_ignore_source_eol() {
 
 #[test]
 fn runtime_diagnostics_preserve_high_line_bits() {
-    let source = format!("{}export def answer: Fn() -> Never = fn() {{ fail!(\"high line\", 42) }};", "\n".repeat(300));
+    let source = format!("{}export def answer: Fn() -> Never = fn() {{ fail!(\"high line\", 42) }};", "\n".repeat(70_000));
     let bytes = compile(&source).unwrap();
-    let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
     assert!(session.call(&[]).is_err());
     let diagnostics = session.diagnostics().unwrap();
     let loc = telora_core::source::SourceCoordinates(diagnostics[0].origin);
-    assert_eq!(loc.start() >> 32, 300);
+    assert_eq!(loc.start() >> 32, 70_000);
     let name = &session.manifest.sources.iter().find(|file| file.id == loc.source()).unwrap().name;
-    assert!(diagnostics[0].render(&session.manifest).starts_with(&format!("{name}:301:")));
+    assert!(diagnostics[0].render(&session.manifest).starts_with(&format!("{name}:70001:")));
 }
 
 #[test]
@@ -586,21 +586,17 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
     );
     let mut sources = mir.sources;
     let source = sources.try_add_data("input.json", "{\"number\":42}".into()).unwrap();
-    let plan = telora_core::data_plan::parse_registered(
-        &sources,
-        source,
-        telora_core::data_plan::Format::Json,
-    )
-    .unwrap();
+    let format = telora_core::data_plan::Format::Json;
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     let symbol = session.manifest.data_modules[0].symbol;
-    assert!(missing.inject_data(symbol, &plan, &sources).is_err());
+    let value = missing.parse_data_source(sources.get(source), format).unwrap().unwrap();
+    assert!(missing.inject_data_value(symbol, value).is_err());
     let mut conflicting = telora_core::SourceDatabase::default();
-    conflicting.add("different source using the same id", "");
-    assert!(session.register_data_sources(&conflicting, &plan).is_err());
-    session.register_data_sources(&sources, &plan).unwrap();
-    session.inject_data(symbol, &plan, &sources).unwrap();
-    assert!(session.inject_data(symbol, &plan, &sources).is_err());
+    let conflict = conflicting.add("different source using the same id", "");
+    assert!(session.parse_data_source(conflicting.get(conflict), format).is_err());
+    let value = session.parse_data_source(sources.get(source), format).unwrap().unwrap();
+    session.inject_data_value(symbol, value).unwrap();
+    assert!(session.inject_data_value(symbol, value).is_err());
     session.initialize().unwrap();
     let lookup = session
         .instance
@@ -608,7 +604,6 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
         .unwrap();
     for (id, expected) in [
         (source.get(), "input.json"),
-        (u32::MAX, "source:4294967295"),
     ] {
         let span = lookup.call(&mut session.store, id as i32).unwrap() as usize;
         let memory = session.memory.data(&session.store);
@@ -620,7 +615,8 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
         session.eval().unwrap(),
         serde_json::json!([{"number":42},42])
     );
-    assert!(session.inject_data(symbol, &plan, &sources).is_err());
+    assert!(session.inject_data_value(symbol, value).is_err());
+    assert!(lookup.call(&mut session.store, -1).is_err());
 }
 
 fn compile(source: &str) -> Result<Vec<u8>, String> {

@@ -1,4 +1,10 @@
 //! Opt-in wall-clock observations; never part of the command result stream.
+pub(super) fn artifact_size(bytes: usize) {
+    if std::env::var_os("TELORA_WASM_TIMINGS").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        eprintln!("{}", serde_json::json!({"wasm_phase": "artifact", "bytes": bytes}));
+    }
+}
+
 pub(super) struct PhaseTimer {
     name: &'static str,
     start: Option<std::time::Instant>,

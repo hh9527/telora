@@ -1,15 +1,17 @@
-//! A single Wasm file carries code and immutable input graphs, not VM snapshots.
-use crate::{artifact::Manifest, data_packet::DataPacket};
+//! A single Wasm file carries code and original input bytes, not Host-built values.
+use crate::artifact::{Manifest, Source};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use telora_core::{SourceDatabase, data_plan::ParsedData};
+use telora_core::{SourceDatabase, SourceId, data_plan::Format};
 
 const SECTION: &str = "telora.data";
 
 #[derive(Serialize, Deserialize)]
 pub struct ModuleData {
     pub symbol: u32,
-    pub packet: DataPacket,
+    pub source: Source,
+    pub format: u32,
+    pub text: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -31,7 +33,19 @@ fn validate(modules: &[ModuleData], manifest: &Manifest) -> Result<(), String> {
         return Err("Wasm: bundle must contain each data module exactly once".into());
     }
     for module in modules {
-        module.packet.validate(manifest)?;
+        if module.source.id == 0 || !(1..=3).contains(&module.format) {
+            return Err("Wasm: invalid bundled source or format".into());
+        }
+        let lines = telora_core::source::LineIndex::new(&module.text)
+            .map_err(|error| format!("Wasm: invalid bundled source: {error}"))?;
+        if !lines.ranges().eq(module.source.lines.iter().copied()) {
+            return Err("Wasm: bundled source index does not match input bytes".into());
+        }
+        if manifest.sources.iter().chain(modules.iter().map(|item| &item.source))
+            .any(|source| source.id == module.source.id
+                && (source.name != module.source.name || source.lines != module.source.lines)) {
+            return Err("Wasm: bundled source identity conflict".into());
+        }
     }
     Ok(())
 }
@@ -40,15 +54,18 @@ fn validate(modules: &[ModuleData], manifest: &Manifest) -> Result<(), String> {
 pub fn build(
     bytes: &[u8],
     sources: &SourceDatabase,
-    plans: &[(u32, ParsedData)],
+    plans: &[(u32, SourceId, Format)],
 ) -> Result<Vec<u8>, String> {
-    let mut manifest = Manifest::read(bytes)?;
+    let manifest = Manifest::read(bytes)?;
     let mut modules = Vec::with_capacity(plans.len());
-    for (symbol, plan) in plans {
-        manifest.register_data_sources(sources, plan)?;
+    for (symbol, id, format) in plans {
+        let file = sources.files().find(|file| file.id() == *id)
+            .ok_or("Wasm: bundle source is not registered")?;
         modules.push(ModuleData {
             symbol: *symbol,
-            packet: DataPacket::from_plan(plan, sources)?,
+            source: Source::from_file(file),
+            format: match format { Format::Json => 1, Format::Yaml => 2, Format::Toml => 3 },
+            text: file.text().contiguous().ok_or("Wasm: bundle input requires contiguous text")?.to_owned(),
         });
     }
     modules.sort_by_key(|module| module.symbol);
@@ -84,7 +101,7 @@ pub fn build(
         name: Cow::Borrowed(SECTION),
         data: Cow::Owned(
             serde_json::to_vec(&Bundle {
-                version: 1,
+                version: 2,
                 modules,
             })
             .map_err(|e| e.to_string())?,
@@ -109,7 +126,7 @@ pub(crate) fn read(bytes: &[u8], manifest: &Manifest) -> Result<Vec<ModuleData>,
     let Some(bundle) = bundle else {
         return Ok(vec![]);
     };
-    if bundle.version != 1 {
+    if bundle.version != 2 {
         return Err("Wasm: unsupported data bundle version".into());
     }
     validate(&bundle.modules, manifest)?;

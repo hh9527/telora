@@ -71,3 +71,34 @@ fn guest_input_owns_text_after_transfer_buffer_is_reused() {
         serde_json::json!({"long key outside inline storage": ["original long string é🦀", "escaped\ntext", i64::MAX]}));
     assert_eq!(session.output().word(value as u64).unwrap(), source);
 }
+
+#[test]
+fn diagnostic_ranges_keep_full_width_columns_and_reject_invalid_origins() {
+    let bytes = artifact();
+    let mut session = Session::load(&bytes, 10_000_000).unwrap();
+    let id = session.manifest.sources.iter().map(|source| source.id).max().unwrap() + 1;
+    // Synthetic metadata exercises wasm32 boundaries without allocating a 4 GiB file.
+    session.manifest.sources.push(crate::artifact::Source {
+        id, name: "wide-input".into(), lines: vec![[0, u32::MAX]],
+    });
+    session.register_sources().unwrap();
+    let pointer = session.allocate(12).unwrap();
+    let expand = session.instance.get_typed_func::<u32, u32>(
+        &session.store, "telora_source_range").unwrap();
+    for (index, word) in [id, u32::MAX - 1, u32::MAX].into_iter().enumerate() {
+        session.write(pointer as usize + index * 4, &word.to_le_bytes()).unwrap();
+    }
+    let result = expand.call(&mut session.store, pointer).unwrap();
+    assert_eq!(session.output().word(result as u64 + 8).unwrap(), u32::MAX - 1);
+    assert_eq!(session.output().word(result as u64 + 16).unwrap(), u32::MAX);
+    for range in [[0u32, 0, 1], [1, 2, 1], [u32::MAX, 0, 0]] {
+        let mut session = Session::load(&bytes, 10_000_000).unwrap();
+        let pointer = session.allocate(12).unwrap();
+        for (index, word) in range.into_iter().enumerate() {
+            session.write(pointer as usize + index * 4, &word.to_le_bytes()).unwrap();
+        }
+        let expand = session.instance.get_typed_func::<u32, u32>(
+            &session.store, "telora_source_range").unwrap();
+        assert!(expand.call(&mut session.store, pointer).is_err());
+    }
+}

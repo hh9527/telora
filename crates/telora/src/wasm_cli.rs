@@ -15,6 +15,7 @@ use telora_core::{
 use timing::PhaseTimer;
 
 fn load_session(bytes: &[u8], runtime: telora_core::RuntimeOptions) -> Result<telora_wasm::session::Session, String> {
+    timing::artifact_size(bytes.len());
     let config = crate::execution_config_for(runtime)?;
     let mut session = telora_wasm::session::Session::load_with_limits(
         bytes, config.fuel, config.memory_limit,

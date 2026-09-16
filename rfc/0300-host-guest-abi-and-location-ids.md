@@ -1,6 +1,6 @@
 # RFC 0300：Host/Guest 服务 ABI 与内联来源范围
 
-- 状态：实施中；服务 ABI 保留，撤销 LocId 方案，待将实现统一迁回内联 src/start/end
+- 状态：已在独立分支实现并验证，待合入
 - 跟踪：[#209](https://github.com/hh9527/telora/issues/209)
 - 分支：`feat/rfc-0300-guest-abi`
 - 日期：2026-09-16
@@ -298,3 +298,41 @@ ABI 违约和 Wasm trap 与可收集的语言诊断不同。配额继续以可�
 - create-service 成功返回 0、失败返回 1 并提供诊断；失败不能查询或重试，
   成功后不能重复创建；不同实例相互隔离。
 - Ontology check --lib 与真实模型服务通过，记录完整性能和内存数据。
+
+## 实现验收记录（2026-09-16）
+
+运行时使用 ABI 19。旧 LocId 表及 Host DataPacket/materializer 已删除；
+内部实验 bundle 改为携带原始文本，由 Guest 解析，不作为正式发布格式。
+CLI fixture 同样在 Guest 解析，语法错误保留 fixture 阶段和独立诊断。
+
+| 验收项 | 证据 |
+| --- | --- |
+| 内存布局、对齐、realloc、move 和描述符不重叠 | `host_memory`、`service_sources` 测试；输出复用容量，trap 后丢弃实例 |
+| 内联范围、无位置表、临时输入无来源 | `source_ranges` 测试；旧位置导出不存在，临时行索引不建立 |
+| 字节范围容量及诊断转换 | `source_range` 共享测试；70,000 行运行时诊断；合成 u32::MAX 单行偏移；非法空来源、倒置范围和缺失来源均拒绝 |
+| EOL、Unicode 和字符串语义 | Wasm EOL/多行字符串测试、data source 测试、LSP 23 项测试、Node location 测试 |
+| 三种数据格式、来源及回收 | `source_ranges`、`service_sources`、`services`、`transform_service`；CLI fixture 与数据模块测试 |
+| 服务生命周期、语言失败及 reset | `transform_service`、`service_sources`；CLI run/serve 和资源限制测试 |
+| Host/JS 数据消费 | Rust 原始数据 bundle 往返；Node bundle 加载及非法协议拒绝；Node debug transport |
+| 完整语言行为 | CLI 84 项全部通过，包含 language acceptance；Wasm 84 项全部通过，另补的输出所有权测试通过；共享布局 6 项通过 |
+
+Release 单次观察如下，不作前后性能增减结论。来源工作区为 lab-ontology，
+world-model 输入为按 country_continent=Asia 查询 country_name 的 list intent。
+命令启用已有 `TELORA_WASM_TIMINGS=1` 和 `--report-usage`，RSS 由 `/usr/bin/time` 记录。
+
+| 指标 | ontology `check --lib` | world-model `run @src/bin/make-query` |
+| --- | ---: | ---: |
+| 端到端 | 0.69 s | 0.75 s |
+| 静态/前端 | 519 ms | 558 ms |
+| codegen + 链接 | 95.6 ms | 92.6 ms |
+| 引擎加载 | 47.9 ms | 48.6 ms |
+| 模块初始化 | 15.2 ms | 22.6 ms |
+| 服务初始化 | — | 2.08 ms |
+| 查询 reset / transform | — | 2.81 / 13.3 ms |
+| Host 进程峰值 RSS | 75,000 KiB | 72,784 KiB |
+| Guest 线性内存 | 917,504 B | 1,310,720 B |
+| 内存中的 Wasm 制品 | 4,774,452 B | 4,627,594 B |
+
+world-model 初始化快照为 1,245,184 字节，查询后的线性内存包含该基线。
+check 无类型冲突、Unknown 或未证明约束；模型服务返回预期 SQL 与绑定 `["Asia"]`。
+后续发布格式、跨 EOL 制品一致性和分配器优化仍按前述范围明确延后。

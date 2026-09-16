@@ -86,7 +86,19 @@ impl Session {
             trace_types: 0,
         };
         for module in bundled_data {
-            session.inject_data_packet(module.symbol, &module.packet)?;
+            if !session.manifest.sources.iter().any(|source| source.id == module.source.id) {
+                session.manifest.sources.push(module.source.clone());
+                session.register_sources()?;
+            }
+            let format = match module.format {
+                1 => telora_core::data_plan::Format::Json,
+                2 => telora_core::data_plan::Format::Yaml,
+                3 => telora_core::data_plan::Format::Toml,
+                _ => unreachable!("validated bundle format"),
+            };
+            let value = session.parse_data_text(&module.text, format, module.source.id)?
+                .map_err(|diagnostics| diagnostics.to_string())?;
+            session.inject_data_value(module.symbol, value)?;
         }
         Ok(session)
     }

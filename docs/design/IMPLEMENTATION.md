@@ -195,9 +195,10 @@ base64 只计量 Bytes 长度，block scalar 按 folding/chomping 后的实际�
 JSON/YAML 节点天然子节点优先；TOML 在 parse-1 完成后序整理。三个格式的 RT 导出均直接消费 span。
 运行时产生的 Telora 值沿用输入字符串的来源位置。
 
-代码来源保留可编辑的 Rope；数据来源直接接管读入的连续 String。JSON/YAML/TOML 的数据计划
-通过 SourceId / Span 引用来源库，并持有共享解码缓冲区（文本与 Bytes 分开）；Host materializer 直接消费
-这些引用，直到写入 Wasm Heap 或发布数据包时才复制文本。内置 `json.parse` / `yaml.parse` / `toml.parse` 借用 VM
+代码来源保留可编辑的 Rope；数据来源直接接管读入的连续 String。Host 将原始数据字节传入 Guest，
+静态数据模块、注入来源及测试 fixture 均在 Guest 完成 JSON/YAML/TOML 解析和语言值构造，
+不在 Host 构造并复制数据树。内部实验数据包携带原始文本及来源元数据，加载时也走同一 Guest 解析路径。
+内置 `json.parse` / `yaml.parse` / `toml.parse` 借用 VM
 中的输入字符串并直接导出 Span，所有解码文本共用一份 VM 生命周期的缓冲区，
 不创建临时 Rope 或逐字符串的 owned-plan。
 
@@ -298,8 +299,8 @@ codegen 的公开编译入口接受 SealedExecutable。表达式类型、泛型�
 普通构造拒绝产生运行时失败，codec 解码拒绝返回 Err。读取或复制已完成的值不会重新
 执行构造校验；新构造与 `<~` 更新会检查其结果。
 
-运行时值头包含 4 字节 LocId 和 4 字节 TypeId（共 8 字节），后接由静态布局
-决定的 payload。标量值为 16 字节；函数保存函数表索引与闭包环境。
+运行时值头包含 12 字节 Loc（src/start/end 三个 u32）和 4 字节 TypeId（共 16 字节），
+后接由静态布局决定的 payload。标量值为 24 字节；函数保存函数表索引与闭包环境。
 String、Array、Record 等对象位于各自 typed table；Tuple/Record 共用 Record table。
 Dict 使用有序 keys/values，字段操作与构造胶水消费已闭合的布局证据。
 具体尺寸与表示以 `telora-wasm-shared/src/abi.rs` 和生成器为准，不构成发布 ABI。
@@ -310,17 +311,16 @@ codegen 不沿 def/let initializer 追溯构造器。类型域别名不作为初
 pattern 使用单独的 member selection 事实，不执行值物化。
 
 enum 构造器代码按封闭签名和 variant 复用。其函数值的 environment 为 0，invoke
-将函数值地址作为第一个参数交给构造器胶水，用于复制 4 字节 LocId；payload
+将函数值地址作为第一个参数交给构造器胶水，用于复制 12 字节 Loc；payload
 仍按原布局搬运，不重写其来源。普通闭包使用非零环境句柄，调用约定不变。
-内部 ABI 版本为 17；旧 Wasm 制品需重新生成，不能混用旧值布局。
+内部 ABI 版本为 19；旧 Wasm 制品需重新生成，不能混用旧值布局。
 
-LocId 0 表示无来源；最高位为 1 时，低 31 位索引静态表；其余非零值减 1 后
-索引初始化表。两张表都在 Guest 线性内存内，每项是五个小端 u32：
-SourceId、起止行号与行内 UTF-8 字节偏移。初始化表可以扩容，已有 LocId 不变，
-冻结后不得追加；普通字符串解析仅继承输入的 LocId。
-行和偏移从 0 开始，范围为 `[start,end)`；CRLF、LF、CR 都计作一次换行。
-Wasm 静态位置表及来源名称随制品生成，不携带 bols。
-`with_diagnostics` 在 Guest 内查表，生成 `SourcePoint {line, offset}`。
+全零 Loc 表示无来源；其余位置直接保存实际输入中的 UTF-8 字节范围 `[start,end)`。
+不维护逐位置登记表。静态源码的来源名称和 BOLs 随 Wasm 生成；data-source 在 Guest
+解析时建立 BOLs，随来源记录保存和回收。CRLF、LF、CR 都计作一次换行。
+`with_diagnostics` 在 Guest 内查询来源行索引，生成 `SourcePoint {line, offset}`。
+普通字符串解析继承输入 Loc；临时解析错误只附加输入内的 start/end 字节范围，
+不建立 BOLs、不计算临时行号。LF/CRLF 制品字节一致性留待未来发布机制处理。
 原始文本片段、UTF-16 列和终端宽度的转换由 Host 负责。
 详细布局见 [RFC 0300](../../rfc/0300-host-guest-abi-and-location-ids.md)。
 
