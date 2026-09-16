@@ -11,28 +11,30 @@ fn artifact() -> Vec<u8> {
 
 fn prepare(bytes: &[u8]) -> (Session, Vec<u32>) {
     let mut session = Session::load(bytes, 100_000_000).unwrap();
-    session.initialize().unwrap();
-    let plan = Value { pointer: session.entry().unwrap(), ty: session.manifest.entry_type };
-    let (names, _) = session.pair(plan).unwrap();
-    session.instance.get_typed_func::<u32, u32>(&session.store, "telora_service_sources_prepare")
-        .unwrap().call(&mut session.store, names.pointer).unwrap();
-    let count = session.instance.get_typed_func::<(), u32>(&session.store, "telora_service_source_count")
+    // Enumeration prepares the sealed entry without exposing its language value.
+    let count = session.instance.get_typed_func::<(), u32>(&session.store, "get-data-source-count")
         .unwrap().call(&mut session.store, ()).unwrap();
+    assert_eq!(session.instance.get_typed_func::<(), u32>(&session.store, "get-data-source-count")
+        .unwrap().call(&mut session.store, ()).unwrap(), count);
     assert_eq!(count, 2);
     let mut ids = Vec::new();
+    let result = session.instance.get_typed_func::<(u32, u32), u32>(&session.store, "mem-alloc")
+        .unwrap().call(&mut session.store, (12, 4)).unwrap();
     for (index, expected) in ["a", "b"].into_iter().enumerate() {
-        let descriptor = session.instance.get_typed_func::<u32, u32>(&session.store, "telora_service_source_name")
-            .unwrap().call(&mut session.store, index as u32).unwrap();
+        session.instance.get_typed_func::<(u32, u32), ()>(&session.store, "get-data-source-name")
+            .unwrap().call(&mut session.store, (index as u32, result)).unwrap();
         let output = session.output();
-        let id = output.word(descriptor as u64).unwrap();
-        let pointer = output.word(descriptor as u64 + 4).unwrap();
-        let length = output.word(descriptor as u64 + 8).unwrap();
+        let id = output.word(result as u64).unwrap();
+        let pointer = output.word(result as u64 + 4).unwrap();
+        let length = output.word(result as u64 + 8).unwrap();
         assert_ne!(pointer, 0);
         assert_eq!(pointer % 8, 0);
         assert_eq!(output.bytes(pointer as u64, length as u64).unwrap(), expected.as_bytes());
         assert!(!session.manifest.sources.iter().any(|source| source.id == id));
         ids.push(id);
     }
+    session.instance.get_typed_func::<(u32, u32, u32), ()>(&session.store, "mem-free")
+        .unwrap().call(&mut session.store, (result, 12, 4)).unwrap();
     assert!(ids[0] < ids[1]);
     (session, ids)
 }
@@ -110,4 +112,57 @@ fn guest_slot_failures_are_terminal_and_bad_format_always_traps() {
     assert_eq!(seal.call(&mut session.store, ()).unwrap(), 1);
     let (mut session, ids) = prepare(&bytes);
     assert!(parse(&mut session, ids[0], &[255], 99).is_err());
+}
+
+#[test]
+fn public_source_injection_materializes_values_without_host_type_access() {
+    let bytes = artifact();
+    let (mut session, ids) = prepare(&bytes);
+    let pointer = session.instance.get_typed_func::<(u32, u32), u32>(&session.store, "mem-alloc")
+        .unwrap().call(&mut session.store, (64, 1)).unwrap();
+    let inject = session.instance.get_typed_func::<(u32, u32, u32, u32), ()>(&session.store, "set-data-source").unwrap();
+    for id in ids {
+        session.memory.write(&mut session.store, pointer as usize, b"{\"value\":42}").unwrap();
+        inject.call(&mut session.store, (id, pointer, 12, 1)).unwrap();
+        session.memory.write(&mut session.store, pointer as usize, &[b'x'; 64]).unwrap();
+    }
+    session.instance.get_typed_func::<(u32, u32, u32), ()>(&session.store, "mem-free")
+        .unwrap().call(&mut session.store, (pointer, 64, 1)).unwrap();
+    let create = session.instance.get_typed_func::<(), i32>(&session.store, "create-service").unwrap();
+    assert_eq!(create.call(&mut session.store, ()).unwrap(), 0);
+    let initial_locs = session.output().word(crate::abi::INITIALIZATION_LOCS as u64 + 4).unwrap();
+    let alloc = session.instance.get_typed_func::<(u32, u32), u32>(&session.store, "mem-alloc").unwrap();
+    let free = session.instance.get_typed_func::<(u32, u32, u32), ()>(&session.store, "mem-free").unwrap();
+    let input = alloc.call(&mut session.store, (64, 1)).unwrap();
+    let result = alloc.call(&mut session.store, (12, 4)).unwrap();
+    let run = session.instance.get_typed_func::<(u32, u32, u32, u32, u32), ()>(&session.store, "run-service").unwrap();
+    let (mut output, mut cap) = (1, 0);
+    for request in ["1", "null", "{", r#""bytes""#, "2"] {
+        session.memory.write(&mut session.store, input as usize, request.as_bytes()).unwrap();
+        run.call(&mut session.store, (input, request.len() as u32, output, cap, result)).unwrap();
+        output = session.output().word(result as u64).unwrap();
+        let length = session.output().word(result as u64 + 4).unwrap();
+        cap = session.output().word(result as u64 + 8).unwrap();
+        assert!(length <= cap);
+        let reply: serde_json::Value = serde_json::from_slice(
+            session.output().bytes(output as u64, length as u64).unwrap()).unwrap();
+        assert_eq!(reply["schema"], "telora.service/v1");
+        if request == "null" || request == "{" || request == r#""bytes""# {
+            assert_eq!(reply["error"], true);
+            assert!(!reply["diagnostics"].as_array().unwrap().is_empty());
+        } else {
+            assert_eq!(reply["error"], false);
+            assert_eq!(reply["ok"][0], serde_json::json!({"value":42}));
+            assert_eq!(reply["ok"][1], request.parse::<i64>().unwrap());
+        }
+        assert_eq!(session.output().word(crate::abi::INITIALIZATION_LOCS as u64 + 4).unwrap(), initial_locs);
+    }
+    free.call(&mut session.store, (output, cap, 1)).unwrap();
+    free.call(&mut session.store, (input, 64, 1)).unwrap();
+    free.call(&mut session.store, (result, 12, 4)).unwrap();
+    assert!(create.call(&mut session.store, ()).is_err());
+    let (mut session, _) = prepare(&bytes);
+    let create = session.instance.get_typed_func::<(), i32>(&session.store, "create-service").unwrap();
+    assert_eq!(create.call(&mut session.store, ()).unwrap(), 1);
+    assert_eq!(create.call(&mut session.store, ()).unwrap(), 1);
 }

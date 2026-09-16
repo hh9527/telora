@@ -1,0 +1,106 @@
+//! Service lifecycle is Rust code. Generated artifacts supply only closed
+//! layouts and callbacks; no Host service handles or runtime type inference.
+use crate::{abi::*, service_sources as inputs, tables, values::{word, telora_invoke}};
+use telora_wasm_shared::service::Contract;
+mod buffers;
+mod run;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Phase { Unprepared, Preparing, Prepared, Failed, Ready }
+
+struct Service {
+    contract: Contract,
+    phase: Phase,
+    initializer: u32,
+    handler: u32,
+}
+static mut SERVICE: Option<Service> = None;
+
+unsafe fn service() -> &'static mut Service {
+    unsafe { (&mut *core::ptr::addr_of_mut!(SERVICE)).as_mut().expect("not a service artifact") }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_service_bootstrap(pointer: u32) {
+    unsafe {
+        assert!((&*core::ptr::addr_of!(SERVICE)).is_none());
+        let contract = (pointer as *const Contract).read_unaligned();
+        *core::ptr::addr_of_mut!(SERVICE) = Some(Service {
+            contract, phase: Phase::Unprepared, initializer: 0, handler: 0,
+        });
+    }
+}
+
+unsafe fn prepare() -> bool {
+    unsafe {
+        match service().phase {
+            Phase::Prepared | Phase::Ready => return true,
+            Phase::Failed => return false,
+            Phase::Preparing => panic!("recursive service preparation"),
+            Phase::Unprepared => {},
+        }
+        service().phase = Phase::Preparing;
+        let contract = service().contract;
+        let initialize: unsafe extern "C" fn() -> u32 = core::mem::transmute(contract.initialize);
+        let entry: unsafe extern "C" fn() -> u32 = core::mem::transmute(contract.entry);
+        if initialize() == 0 { service().phase = Phase::Failed; return false; }
+        let plan = entry();
+        if plan == 0 { service().phase = Phase::Failed; return false; }
+        let fields = word(tables::telora_table_get(table_address(RECORDS), word(plan, DATA)), 0);
+        inputs::telora_service_sources_prepare(fields + contract.names_offset);
+        service().initializer = fields + contract.initializer_offset;
+        service().phase = Phase::Prepared;
+        true
+    }
+}
+
+#[unsafe(export_name = "get-data-source-count")]
+pub unsafe extern "C" fn count() -> u32 {
+    unsafe { if prepare() { inputs::telora_service_source_count() } else { 0 } }
+}
+
+/// Result storage is a borrowed, four-byte-aligned region of three u32 words.
+#[unsafe(export_name = "get-data-source-name")]
+pub unsafe extern "C" fn name(index: u32, result: u32) {
+    unsafe {
+        assert!(prepare());
+        buffers::range(result, 12, 4);
+        let source = inputs::telora_service_source_name(index);
+        core::ptr::copy_nonoverlapping(source as *const u8, result as *mut u8, 12);
+    }
+}
+
+#[unsafe(export_name = "set-data-source")]
+pub unsafe extern "C" fn set_source(id: u32, pointer: u32, length: u32, format: u32) {
+    unsafe {
+        if !prepare() { return; }
+        assert!(service().phase == Phase::Prepared);
+        let packet = inputs::telora_service_source_parse(id, pointer, length, format);
+        if word(packet, 12) != 0 { service().phase = Phase::Failed; return; }
+        let materialize: unsafe extern "C" fn(u32, u32) -> u32 =
+            core::mem::transmute(service().contract.materialize);
+        let value = materialize(packet, 0);
+        inputs::telora_service_source_store(id, value);
+        if value == 0 { service().phase = Phase::Failed; }
+    }
+}
+
+#[unsafe(export_name = "create-service")]
+pub unsafe extern "C" fn create() -> i32 {
+    unsafe {
+        if !prepare() { return 1; }
+        assert!(service().phase == Phase::Prepared, "service already created");
+        service().phase = Phase::Failed;
+        let contract = service().contract;
+        let context = inputs::context::telora_service_context(contract.context_type,
+            contract.dict_type, contract.value_bytes, contract.sources_offset);
+        if context == 0 { return 1; }
+        let args = [context];
+        let handler = telora_invoke(service().initializer, args.as_ptr() as u32);
+        if handler == 0 { return 1; }
+        service().handler = handler;
+        service().phase = Phase::Ready;
+        tables::telora_freeze();
+        0
+    }
+}

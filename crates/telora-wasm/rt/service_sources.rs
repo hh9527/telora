@@ -1,6 +1,7 @@
 //! Guest-owned initialization slots. Names come from the sealed entry's property
 //! result; Host supplies bytes, never identities or materialized language values.
 use alloc::{format, vec::Vec};
+pub(crate) mod context;
 use crate::{abi::*, tables::telora_table_get, values::{string_span, word}};
 
 #[repr(C)]
@@ -62,7 +63,7 @@ pub unsafe extern "C" fn telora_service_source_count() -> u32 {
     unsafe { sources().slots.len().try_into().unwrap() }
 }
 
-/// Internal descriptor; generated wrapper loads three words for Wasm multi-value.
+/// Internal descriptor copied by Rust RT into the caller's result storage.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_service_source_name(index: u32) -> u32 {
     unsafe { &sources().slots[index as usize] as *const Slot as u32 }

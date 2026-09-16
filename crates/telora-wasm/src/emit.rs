@@ -64,7 +64,7 @@ impl<'a> Emitter<'a> {
         let mut function = crate::object::ObjectFunction::new(Function::new(
             self.locals.into_iter().map(|ty| (1, ty)),
         ));
-        let count = FIRST_FUNCTION + self.plan.functions.len() as u32 + 4;
+        let count = FIRST_FUNCTION + self.plan.functions.len() as u32 + self.plan.generated_helpers;
         if demand.is_some() {
             function.instruction(&I::Block(wasm_encoder::BlockType::Result(ValType::I32)));
         }

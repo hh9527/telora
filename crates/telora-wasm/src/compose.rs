@@ -14,6 +14,8 @@ pub(crate) fn link(
     reserved_bytes: u32,
     locations: &[u8],
     sources: &[crate::artifact::Source],
+    service: Option<telora_wasm_shared::service::Contract>,
+    generated_exports: &[(&str, u32)],
 ) -> Result<Vec<u8>, String> {
     let rt = template::runtime()?;
     let mut program = Parts::read(object)?;
@@ -74,6 +76,17 @@ pub(crate) fn link(
         source_names.push((source.id, pointer, length));
         data.extend_from_slice(source.name.as_bytes());
     }
+    let service_base = if let Some(mut contract) = service {
+        while data.len() % 4 != 0 { data.push(0); }
+        let base = image_base.checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: service image too large")?)
+            .ok_or("Wasm: service image overflow")?;
+        for slot in [&mut contract.initialize, &mut contract.entry, &mut contract.materialize] {
+            if *slot >= generated { return Err("Wasm: invalid service callback".into()); }
+            *slot = table_base.checked_add(*slot).ok_or("Wasm: service callback overflow")?;
+        }
+        for word in contract.words() { data.extend_from_slice(&word.to_le_bytes()); }
+        Some(base)
+    } else { None };
     if imports.len() != FIRST_FUNCTION as usize {
         return Err("Wasm: generated RT import contract changed".into());
     }
@@ -247,6 +260,11 @@ pub(crate) fn link(
             ))
             .instruction(&Instruction::Drop);
     }
+    if let Some(base) = service_base {
+        boot.instruction(&Instruction::I32Const(base as i32))
+            .instruction(&Instruction::Call(*rt.exports.get("telora_service_bootstrap")
+                .ok_or("Wasm: missing service bootstrap")?));
+    }
     boot.instruction(&Instruction::End);
     let mut boot_code = CodeSection::new();
     boot_code.function(&boot);
@@ -255,12 +273,8 @@ pub(crate) fn link(
     (rt.functions + generated).encode(&mut start);
     output.sections.insert(8, start);
     let mut exports = ExportSection::new();
-    for (name, index) in [
-        ("telora_initialize", generated - 4),
-        ("telora_entry", generated - 3),
-        ("telora_inject_data", generated - 2),
-        ("telora_materialize_data", generated - 1),
-    ] {
+    for &(name, index) in generated_exports {
+        if index >= generated { return Err("Wasm: invalid generated export index".into()); }
         exports.export(name, ExportKind::Func, rt.functions + index);
     }
     exports.export("telora_error", ExportKind::Global, rt.globals);

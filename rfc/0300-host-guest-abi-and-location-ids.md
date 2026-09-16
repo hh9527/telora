@@ -1,6 +1,6 @@
 # RFC 0300：Host/Guest 服务 ABI 与 Guest 位置表
 
-- 状态：实施中，LocId 值布局已切换；服务 ABI 尚未接通
+- 状态：实施中，LocId 值布局及 Rust 服务 ABI 已接通；CLI 总装及初始化诊断接口待完成
 - 跟踪：[#209](https://github.com/hh9527/telora/issues/209)
 - 分支：`feat/rfc-0300-guest-abi`
 - 日期：2026-09-16
@@ -24,7 +24,7 @@
 ## ABI 总览
 
 以下名称为拟定的 Wasm 导出/导入名称，u32 在 Wasm 中使用 i32 位模式，
-多返回值使用 Wasm multi-value，不隐式变成指向 Rust tuple 的指针。
+多个结果通过调用方提供的可写结果描述符返回，不使用 Wasm multi-value 或 Rust tuple ABI。
 
 Guest exports：
 
@@ -34,14 +34,23 @@ mem-free(ptr: u32, cap: u32, align: u32);
 mem-realloc(ptr: u32, old_cap: u32, new_cap: u32, align: u32) -> ptr: u32;
 
 get-data-source-count() -> u32;
-get-data-source-name(i: u32) -> (id: u32, name: u32, name_len: u32);
+get-data-source-name(i: u32, result: u32); // 写入 [id, name, name_len]
 set-data-source(id: u32, data: u32, data_len: u32, fmt: u32);
 
 create-service() -> error: i32;
 run-service(
-    ptr: u32, len: u32, out: u32, out_cap: u32
-) -> (out: u32, out_len: u32, out_cap: u32);
+    ptr: u32, len: u32, out: u32, out_cap: u32, result: u32
+); // 写入 [out, out_len, out_cap]
 ```
+
+result 指向调用方持有的 12 字节、4 字节对齐的可写区域，由三个小端 u32 构成。
+该区域仅在同步调用期间借用，调用返回后 Host 读取结果；可在后续调用中重复使用。
+它不能与输入借用或 move 的输出分配重叠。trap 时描述符内容不可用，不代表所有权返回。
+名称指针是 Guest 只读借用；run-service 写回的输出指针则将分配所有权交还 Host。
+
+服务生命周期、输入注入、Context 构造和状态管理用 Rust RT 实现并直接导出 C ABI。
+codegen 只根据封闭 MIR 提供布局常量及函数入口，链接器将这份固定描述信息嵌入制品。
+不为服务初始化手写 Wasm 状态机，不为这些接口维护 multi-value 包装层。
 
 本协议不引入位置相关的 Host import，也不提供 set-locs；Locs 由 Guest 自主管理。
 fmt 使用固定编号：1=JSON、2=YAML、3=TOML；数据均为 UTF-8。
@@ -247,8 +256,8 @@ run-service 输入是 UTF-8 JSON，表示一个 std/value.Value；输出也是 U
 内置语言 entry 使用 with_diagnostics 捕获转换诊断，并通过已封闭类型的 codec 和
 json.stringify 生成响应。Host 只解析协议文本，不读取服务值、拆解 Result 或重建诊断。
 Wasm trap 不保证产生响应，由 Host 捕获并丢弃本次实例状态。
-输入解析失败和结果无法 JSON 编码时也必须形成失败响应；这两条边界仍需在
-最终 run-service 包装中接通，不能把普通语言错误当成 ABI 违约。
+输入解析失败和结果无法 JSON 编码时也形成失败响应，不能把普通语言错误当成 ABI 违约。
+当前输入解析失败已接通文本诊断；保留多条解析诊断及请求内相对坐标仍须完善。
 
 ## 失败协议及待定事项
 

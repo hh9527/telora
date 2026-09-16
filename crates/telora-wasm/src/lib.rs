@@ -26,6 +26,7 @@ mod codec_plan;
 mod codec_properties;
 mod codec_records;
 mod codegen;
+mod service_abi;
 pub mod collection;
 mod function_names;
 mod data_input;

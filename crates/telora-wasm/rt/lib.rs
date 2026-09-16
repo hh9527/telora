@@ -21,6 +21,7 @@ mod path;
 mod sort;
 mod sources;
 mod service_sources;
+mod service;
 mod tables;
 mod template;
 mod text;

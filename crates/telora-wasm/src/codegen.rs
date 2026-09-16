@@ -27,7 +27,10 @@ pub fn compile_service(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, Str
 enum Mode { Value, Check, Service }
 
 fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, String> {
-    let plan = Plan::new(executable)?;
+    let mut plan = Plan::new(executable)?;
+    let helpers = vec![("telora_initialize", 2), ("telora_entry", 2),
+        ("telora_inject_data", CALL_TYPE), ("telora_materialize_data", CALL_TYPE)];
+    plan.generated_helpers = helpers.len() as u32;
     let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts, &plan.locations)?;
     for (&symbol, &key) in &plan.globals {
         let mir = executable.sealed_mir().mir();
@@ -130,8 +133,7 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         functions.function(CALL_TYPE);
     }
     let initialize = FIRST_FUNCTION + plan.functions.len() as u32;
-    let entry = initialize + 1;
-    functions.function(2).function(2).function(CALL_TYPE).function(CALL_TYPE);
+    for &(_, ty) in &helpers { functions.function(ty); }
     module.section(&functions);
     let heap_start = crate::compose::static_base()?
         .checked_add(
@@ -157,7 +159,7 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         Elements::Functions(Cow::Owned((FIRST_FUNCTION..initialize).collect())),
     );
     module.section(&elements);
-    let count = entry + 3;
+    let count = initialize + plan.generated_helpers;
     let mut code = ObjectCode::default();
     for &key in plan.functions.keys() {
         code.function(emit::compile(executable.sealed_mir().mir(), &plan, key)?);
@@ -265,12 +267,10 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         symbols.function(SymbolTable::WASM_SYM_UNDEFINED, index, None);
     }
     for index in FIRST_FUNCTION..count {
-        let name = match index {
-            n if n == initialize => "telora_initialize".to_owned(),
-            n if n == entry => "telora_entry".to_owned(),
-            n if n == entry + 1 => "telora_inject_data".to_owned(),
-            n if n == entry + 2 => "telora_materialize_data".to_owned(),
-            n => names.name(function_keys[(n - FIRST_FUNCTION) as usize], n),
+        let name = if index >= initialize {
+            helpers[(index - initialize) as usize].0.to_owned()
+        } else {
+            names.name(function_keys[(index - FIRST_FUNCTION) as usize], index)
         };
         symbols.function(0, index, Some(&name));
         function_names.append(index, &name);
@@ -320,5 +320,9 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         name: Cow::Borrowed("telora.manifest"),
         data: Cow::Owned(serde_json::to_vec(&manifest).map_err(|e| e.to_string())?),
     });
-    crate::compose::link(&module.finish(), heap_start, &plan.locations.bytes, &manifest.sources)
+    let service = if matches!(mode, Mode::Service) {
+        Some(crate::service_abi::contract(&manifest, initialize - FIRST_FUNCTION)?)
+    } else { None };
+    crate::compose::link(&module.finish(), heap_start, &plan.locations.bytes, &manifest.sources, service,
+        &helpers.iter().enumerate().map(|(i, (name, _))| (*name, initialize - FIRST_FUNCTION + i as u32)).collect::<Vec<_>>())
 }

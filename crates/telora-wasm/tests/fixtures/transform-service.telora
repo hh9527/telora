@@ -14,6 +14,8 @@ impl service.TransformService for Model {
     transform: fn(self, input) {
         if input == Value.None {
             fail!("missing query", input)
+        } else if input == Value.String("bytes") {
+            Value.Bytes(b"unsupported")
         } else if input == Value.String("loop") {
             Value.Int(spin(0))
         } else if input == Value.String("grow") {

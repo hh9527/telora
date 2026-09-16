@@ -72,6 +72,7 @@ impl Key {
 }
 
 pub(crate) struct Plan {
+    pub generated_helpers: u32,
     pub locations: crate::locations::StaticLocations,
     pub constructor_aliases: BTreeMap<Key, Key>,
     pub functions: BTreeMap<Key, u32>,
@@ -100,6 +101,7 @@ impl Plan {
             special: Special::Normal,
         };
         let mut plan = Self {
+            generated_helpers: 4,
             locations: crate::locations::StaticLocations::new(mir)?,
             constructor_aliases: BTreeMap::new(),
             functions: BTreeMap::new(),

@@ -33,7 +33,19 @@ def prepare: for(S: TransformService) Fn(TypeOf(S)) -> Plan = fn(target) {
                     schema: "telora.service/v1", ok: Value.None, error: True, diagnostics,
                 },
             };
-            json.stringify(codec.encode(Value.type, reply))
+            let encode = rt.with_diagnostics(fn(value: Reply) {
+                json.stringify(codec.encode(Value.type, value))
+            });
+            match encode(reply) {
+                Ok((text, _)) => text,
+                Err(errors) => {
+                    let failed: Reply = {
+                        schema: "telora.service/v1", ok: Value.None, error: True,
+                        diagnostics: [...reply.diagnostics, ...errors],
+                    };
+                    json.stringify(codec.encode(Value.type, failed))
+                },
+            }
         }
     })
 };
