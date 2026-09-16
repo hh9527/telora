@@ -115,11 +115,7 @@ fn transform(service: &mut TransformSession, input: String) -> serde_json::Value
         result
     })();
     match result {
-        Ok(observed) => if let Some(ok) = observed.get("Ok") {
-            serde_json::json!({"ok":ok[0],"error":false,"diagnostics":ok[1]})
-        } else if let Some(errors) = observed.get("Err") {
-            serde_json::json!({"ok":null,"error":true,"diagnostics":errors})
-        } else { failure("invalid sealed transform result") },
+        Ok(response) => response,
         Err(error) => failure(&error),
     }
 }

@@ -19,7 +19,7 @@ pub struct TransformSession {
 
 impl TransformSession {
     /// Called after normal module initialization. The compiler-owned Plan is
-    /// (source names, Context -> (Value -> Observed)), with all types sealed.
+    /// (source names, Context -> (Value -> String)), with all types sealed.
     pub fn new(mut session: Session) -> Result<Self, String> {
         let plan = Value {pointer: session.entry()?, ty: session.manifest.entry_type};
         let (sources, initializer) = session.pair(plan)?;
@@ -128,11 +128,13 @@ impl TransformSession {
         Ok(())
     }
 
-    /// Input is materialized after reset. Language errors remain Observed.Err;
+    /// Input is materialized after reset. Language errors are serialized by the Guest entry;
     /// engine traps return an outer error and the next reset discards the store.
     pub fn transform(&mut self, input: Value) -> Result<serde_json::Value, String> {
         let handler = self.handler.ok_or("service is not initialized")?;
         let output = self.session.invoke_values(handler, &[input])?;
-        self.session.output_value(output)
+        let text = self.session.output_value(output)?;
+        let text = text.as_str().ok_or("service entry did not return serialized JSON")?;
+        serde_json::from_str(text).map_err(|e| format!("invalid service response: {e}"))
     }
 }

@@ -18,12 +18,14 @@ fn static_service_initializes_and_captures_each_request() {
     for input in [serde_json::json!(1), serde_json::Value::Null, serde_json::json!(2)] {
         let value = session.input_value(input_ty, &input).unwrap();
         let result = session.invoke_values(handler, &[value]).unwrap();
-        let output = session.output_value(result).unwrap();
+        let text = session.output_value(result).unwrap();
+        let output: serde_json::Value = serde_json::from_str(text.as_str().unwrap()).unwrap();
+        assert_eq!(output["schema"], "telora.service/v1");
         if input.is_null() {
-            assert_eq!(output["Err"][0]["message"], "missing query");
-            assert!(!output["Err"][0]["labels"].as_array().unwrap().is_empty());
+            assert_eq!(output["diagnostics"][0]["message"], "missing query");
+            assert!(!output["diagnostics"][0]["labels"].as_array().unwrap().is_empty());
         } else {
-            assert_eq!(output["Ok"][0], serde_json::json!([42, input]));
+            assert_eq!(output["ok"], serde_json::json!([42, input]));
         }
         assert!(session.diagnostics().unwrap().is_empty());
     }
@@ -52,7 +54,7 @@ fn reset_restores_initialized_service_after_fuel_and_memory_traps() {
         match input {
             "loop" => assert!(result.unwrap_err().contains("fuel")),
             "grow" => assert!(result.unwrap_err().contains("growth")),
-            _ => assert_eq!(result.unwrap()["Ok"][0], serde_json::json!([42, "ok"])),
+            _ => assert_eq!(result.unwrap()["ok"], serde_json::json!([42, "ok"])),
         }
     }
     let mut size = None;
@@ -62,6 +64,6 @@ fn reset_restores_initialized_service_after_fuel_and_memory_traps() {
         if let Some(expected) = size { assert_eq!(current, expected); }
         size = Some(current);
         let value = service.session_mut().input_value(ty, &serde_json::json!(42)).unwrap();
-        assert_eq!(service.transform(value).unwrap()["Ok"][0], serde_json::json!([42, 42]));
+        assert_eq!(service.transform(value).unwrap()["ok"], serde_json::json!([42, 42]));
     }
 }

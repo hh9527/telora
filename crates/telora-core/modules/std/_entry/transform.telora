@@ -2,9 +2,16 @@ import "std/transform-service" {Context, TransformService, Sources};
 import "std/type-property" as property;
 import "std/value" {Value};
 import "std/_rt" as rt;
+import "std/codec" as codec;
+import "std/json" as json;
 
-type Observed = Result((Value, Array(rt.Diagnostic)), Array(rt.Diagnostic));
-type Handler = Fn(Value) -> Observed;
+type Reply = struct {
+    schema: String,
+    ok: Value,
+    error: Bool,
+    diagnostics: Array(rt.Diagnostic),
+};
+type Handler = Fn(Value) -> String;
 type Plan = (Array(String), Fn(Context) -> Handler);
 
 def prepare: for(S: TransformService) Fn(TypeOf(S)) -> Plan = fn(target) {
@@ -14,10 +21,21 @@ def prepare: for(S: TransformService) Fn(TypeOf(S)) -> Plan = fn(target) {
     };
     (sources, fn(ctx) {
         let service: S = TransformService(S).init(ctx);
-        rt.with_diagnostics(fn(input: Value) {
+        let observe = rt.with_diagnostics(fn(input: Value) {
             TransformService(S).transform(service, input)
-        })
+        });
+        fn(input: Value) {
+            let reply: Reply = match observe(input) {
+                Ok((value, diagnostics)) => {
+                    schema: "telora.service/v1", ok: value, error: False, diagnostics,
+                },
+                Err(diagnostics) => {
+                    schema: "telora.service/v1", ok: Value.None, error: True, diagnostics,
+                },
+            };
+            json.stringify(codec.encode(Value.type, reply))
+        }
     })
 };
 
-export {Observed, Handler, Plan, prepare};
+export {Handler, Plan, prepare};

@@ -46,7 +46,7 @@ run-service(
 本协议不引入位置相关的 Host import，也不提供 set-locs；Locs 由 Guest 自主管理。
 fmt 使用固定编号：1=JSON、2=YAML、3=TOML；数据均为 UTF-8。
 未知 fmt 是 ABI 违约，trap；合法 fmt 下的非法 UTF-8/语法错误属于输入诊断。
-请求/结果序列化协议见“待定事项”。
+查询请求/结果使用下述 JSON 协议；初始化诊断接口见“待定事项”。
 这些未定项在 ABI 落地前必须补齐；本草案不声明已经可以独立互操作。
 
 ## 内存与所有权
@@ -228,11 +228,24 @@ CRLF、LF、单独 CR 均为一次换行，CRLF 内部边界按既有规则映�
 LocId 0 明确表示无来源，不伪造坐标。静态及初始化位置始终随实例保留，
 输出的结构化诊断不依赖 Host 在之后访问 Guest 请求临时数据。
 
+## 查询序列化协议
+
+run-service 输入是 UTF-8 JSON，表示一个 std/value.Value；输出也是 UTF-8 JSON，
+采用 `{schema: "telora.service/v1", ok: Value, error: Bool, diagnostics: Array(Diagnostic)}`。
+成功时 error=false，ok 是转换结果；语言失败时 error=true，ok=null。
+诊断遵循 std/_rt.Diagnostic 的封闭结构，包含完整 SourcePoint，不传递打包坐标。
+返回长度界定 JSON 文本，不附加 NUL 或 JSONL 换行；流式 Host 自行添加行分隔。
+
+内置语言 entry 使用 with_diagnostics 捕获转换诊断，并通过已封闭类型的 codec 和
+json.stringify 生成响应。Host 只解析协议文本，不读取服务值、拆解 Result 或重建诊断。
+Wasm trap 不保证产生响应，由 Host 捕获并丢弃本次实例状态。
+输入解析失败和结果无法 JSON 编码时也必须形成失败响应；这两条边界仍需在
+最终 run-service 包装中接通，不能把普通语言错误当成 ABI 违约。
+
 ## 失败协议及待定事项
 
 上述服务 ABI 尚未完全规定以下内容，实施前需补充本 RFC，而不是由代码隐式决定：
 
-- run-service 请求/响应的序列化格式与版本；结构化语言诊断如何进入响应。
 - set-data-source 的解析诊断及 create-service 的初始化诊断如何读取。
   二者可能失败，不能因为 set-data-source 没有返回值就忽略失败或继续初始化。
   应复用现有诊断捕获语义，但必须确定显式获取入口或结果协议。
