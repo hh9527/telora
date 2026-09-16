@@ -81,7 +81,7 @@ impl Storage {
                 if *empty_only && length != 0 {
                     return Err("invalid dictionary extent".into());
                 }
-                mul(add(24, *value_stride)?, length.into())
+                mul(add(32, *value_stride)?, length.into())
             }
             (Self::Captures, Extent::Captures(sizes)) => {
                 let count = u32::try_from(sizes.len()).map_err(|_| "capture count overflow")?;
@@ -631,7 +631,7 @@ impl<'a> Builder<'a> {
                     empty_only: stride == 0,
                 };
                 o.storage_rule = format!(
-                    "two whole ArrayTable slots; keys: length * 24 bytes (full String values), strictly increasing UTF-8 byte order; values: length * {stride} bytes; equal column lengths; binary search; no slice offsets; reserved=0; uninhabited values require length=0"
+                    "two whole ArrayTable slots; keys: length * 32 bytes (full String values), strictly increasing UTF-8 byte order; values: length * {stride} bytes; equal column lengths; binary search; no slice offsets; reserved=0; uninhabited values require length=0"
                 );
             }
             "ClosureEnvTable" => {
@@ -706,7 +706,7 @@ fn calculate_image(image: &TypeImage, module_records: Vec<bool>) -> Result<Vec<E
                     Member {
                         name: name.clone(),
                         type_id: p.map(|p| p.index()),
-                        offset: p.filter(|_| live).map(|_| 16),
+                        offset: p.filter(|_| live).map(|_| 24),
                         storage: if !live {
                             "uninhabited_or_template"
                         } else if p.is_none() {
@@ -816,7 +816,7 @@ mod tests {
         assert_eq!(
             dict.allocation_bytes(Extent::Dictionary { length: 2 })
                 .unwrap(),
-            96
+            112
         );
         assert!(
             Storage::Dictionary {

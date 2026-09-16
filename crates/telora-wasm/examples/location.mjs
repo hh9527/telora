@@ -1,4 +1,4 @@
-// ABI 17: independent u32 components, never a packed u64 Number.
+// ABI 19: independent u32 components, never a packed u64 Number.
 export function location(words) {
   return {
     source: words[0],
@@ -11,14 +11,25 @@ export function location(words) {
   };
 }
 
-export function readLocation(word, id) {
-  id >>>= 0;
-  if (id === 0) return [0, 0, 0, 0, 0];
-  const isStatic = (id & 0x80000000) !== 0;
-  const descriptor = isStatic ? 20 : 28;
-  const index = isStatic ? id & 0x7fffffff : id - 1;
-  if (index >= word(descriptor + 4)) throw Error('无效的 LocId');
-  const address = word(descriptor) + index * 20;
-  if (address + 20 > 2 ** 32) throw Error('位置表地址溢出');
-  return Array.from({length: 5}, (_, i) => word(address + i * 4));
+export function readLocation(sources, range) {
+  if (!Array.isArray(range) || range.length !== 3 ||
+      range.some(n => !Number.isInteger(n) || n < 0 || n > 0xffffffff)) throw Error('无效的来源范围');
+  const [id, start, end] = range;
+  if (id === 0) {
+    if (start || end) throw Error('无效的空来源');
+    return [0, 0, 0, 0, 0];
+  }
+  const source = sources.find(source => source.id === id);
+  if (!source?.lines?.length || start > end || end > source.lines.at(-1)[1]) throw Error('来源范围越界');
+  const point = byte => {
+    let lo = 0, hi = source.lines.length;
+    while (lo < hi) {
+      const mid = lo + Math.floor((hi - lo) / 2);
+      if (source.lines[mid][0] <= byte) lo = mid + 1; else hi = mid;
+    }
+    if (!lo) throw Error('无效的来源索引');
+    const [start, end] = source.lines[lo - 1];
+    return [lo - 1, Math.min(byte, end) - start];
+  };
+  return [id, ...point(start), ...point(end)];
 }

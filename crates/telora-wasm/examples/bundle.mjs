@@ -66,19 +66,18 @@ export function injectBundle(module, manifest, rt) {
     };
     packet.nodes.forEach((_,id) => visit(id,0));
   }
-  const locations = new Map();
   const locate = (pointer, loc) => {
-    const key = loc.join(',');
-    let id = locations.get(key);
-    if (id === undefined) {
-      const record = allocate(20);
-      loc.forEach((word, i) => store(record + i * 4, word));
-      id = wasm.telora_location_add(record) >>> 0;
-      locations.set(key, id);
-    }
-    store(pointer, id);
+    const source = manifest.sources.find(source => source.id === loc[0]);
+    const byte = (line, column) => {
+      const range = source?.lines?.[line];
+      if (!range || column > range[1] - range[0]) throw Error('数据位置越界');
+      return range[0] + column;
+    };
+    store(pointer, loc[0]);
+    store(pointer + 4, byte(loc[1], loc[2]));
+    store(pointer + 8, byte(loc[3], loc[4]));
   };
-  const fresh = type => {const pointer=allocate(manifest.types[type].bytes); store(pointer+4,type); return pointer;};
+  const fresh = type => {const pointer=allocate(manifest.types[type].bytes); store(pointer+12,type); return pointer;};
   for (const {symbol, packet} of bundle.modules) {
     const cache = new Map(), valueType = manifest.value_type, desc = manifest.types[valueType];
     const materialize = (id, depth=0) => {
@@ -95,7 +94,7 @@ export function injectBundle(module, manifest, rt) {
           payload=fresh(type);
           const stride=desc.bytes, data=allocate(value.length*stride);
           value.forEach((child,i)=>copy(data+i*stride,materialize(child,depth+1),stride));
-          store(payload+8,push(3,data,value.length*stride)); store(payload+16,value.length);
+          store(payload+16,push(3,data,value.length*stride)); store(payload+24,value.length);
         } else if (kind==='Object') {
           payload=fresh(type);
           const string=manifest.types.findIndex(type=>type.kind==='String'), keyWidth=manifest.types[string].bytes;
@@ -104,15 +103,15 @@ export function injectBundle(module, manifest, rt) {
             const key=input(string,field.name); locate(key,field.origin);
             copy(keys+i*keyWidth,key,keyWidth); copy(values+i*desc.bytes,materialize(field.value,depth+1),desc.bytes);
           });
-          store(payload+8,push(3,keys,value.length*keyWidth)); store(payload+12,value.length);
-          store(payload+16,push(3,values,value.length*desc.bytes));
+          store(payload+16,push(3,keys,value.length*keyWidth)); store(payload+20,value.length);
+          store(payload+24,push(3,values,value.length*desc.bytes));
         } else payload=input(type,kind==='Int'?BigInt(value):kind==='Temporal'?value.value:value);
         locate(payload,node.origin);
       }
-      const pointer=fresh(valueType); locate(pointer,node.origin); store(pointer+8,index);
+      const pointer=fresh(valueType); locate(pointer,node.origin); store(pointer+16,index);
       if (payload !== undefined) {
         const width=manifest.types[branch.ty].bytes;
-        if (branch.boxed) store(pointer+16,push(4,payload,width)); else copy(pointer+16,payload,width);
+        if (branch.boxed) store(pointer+24,push(4,payload,width)); else copy(pointer+24,payload,width);
       }
       cache.set(id,pointer); return pointer;
     };
