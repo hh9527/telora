@@ -1,8 +1,7 @@
 # Telora 标准库指南
 
 本文是公开标准库的模块地图，帮助程序作者找到承载某项能力的模块。语言用法见
-[`TELORA.md`](TELORA.md)，执行模式见 [`EXEC-MODE.md`](EXEC-MODE.md)，外部效果见
-[`EXEC-MODE.md`](EXEC-MODE.md)。
+[`TELORA.md`](TELORA.md)，执行模式见 [`EXEC-MODE.md`](EXEC-MODE.md)。
 
 标准库随 Telora binary 一起发布。接口以当前 binary 的查询结果为准，编写代码时应
 优先使用工具发现类型和公开成员：
@@ -23,7 +22,8 @@ import "std/value" {Value, ScalarValue};
 
 ## 基础与集合
 
-- `std/prelude`：property 声明所需的基础定义。它由运行时预先导入。
+- `std/prelude`：基础类型、enum 成员与 property 定义。每个源码模块在名称解析时
+  隐式引入 `import "std/prelude" *;`，不是运行时导入。
 - `std/array`：不可变 Array 的读取、组合、映射、过滤、折叠和查找。
 - `std/dict`：不可变 Dict 的读取、键值枚举、构造、合并、映射、过滤和折叠。
 - `std/option`：Option 的变换、默认值和状态判断。
@@ -90,14 +90,18 @@ JSON null、boolean、number 和 string。
 - `std/type-property`：按 type、field index 或 variant index 查询 property，并取得静态
   `Property(P)` 约束的 evidence。
 - `std/dyn`：携带类型身份的动态值、安全投射和基于反射 index 的结构访问。
-- `std/eq`：运行时结构相等；静态类型明确的代码使用语言运算符 `==`。
+- `std/eq`：提供相等比较能力；普通代码使用 `==`，两侧须具有同一静态类型。
 
 反射中的 member index 来自 `std/type-desc` 的 `FieldDesc` 或 `VariantDesc`。程序应传递
 这些已验证的 index，而不是根据布局自行猜测。
 
 `type-desc.kind` 描述静态类型；enum 使用 Enum 或具名引用 Ref，并通过 `variants`
-查询其分支。`dyn.kind` 描述底层值表示，所以 enum 值可以返回 Atom 或 Tagged。
+查询其分支。`dyn.kind` 返回反射 API 的 ValueKind 分类，enum 分为 Atom（无载荷）或
+Tagged（有载荷）。这些分类不是独立的源码类型，也不表示可以跳过类型身份比较。
 `dyn.desc` 保留装箱时的 enum 契约，投影使用明确的目标类型身份。
+
+函数类型的 kind 为 Func，但当前 `type-desc.children` 不公开其参数和返回类型。
+完整签名可从编译器查询，不能假设运行时反射支持同样的查询范围。
 
 newtype 的具名类型返回 Ref；解析引用后，kind 为 Newtype，children 包含唯一的
 载荷类型。`dyn.tuple_items` 可读取其单个载荷，并保留载荷自己的类型身份。

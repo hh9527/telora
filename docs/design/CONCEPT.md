@@ -60,7 +60,7 @@ Intent 不是内建语法类别，也不一定来自自然语言。它是普通�
 **Evidence（证据）**是证明某次转换或发布决定成立所需的信息，例如已解析的
 capability、通过校验的值、依赖结果、策略决定或分类后的关系。
 
-Evidence 同时具有值和来源。缺少强制 evidence 会阻止发布；独立 evidence 仍可以
+这里的领域 evidence 是普通值，可携带来源；它与下文编译器的静态 evidence 不同。缺少强制 evidence 会阻止发布；独立 evidence 仍可以
 继续计算，使诊断不必停在第一个无关错误。
 
 ### Lowering
@@ -97,10 +97,8 @@ module semantics、source/provenance 行为、diagnostic 与有界求值机制�
 
 `std/fmt` 的 `Fmt` 是标准库拥有的 opaque、不可变延迟展示树。`Display` evidence
 把一个静态类型的值转换成 `Fmt`，`concat` 组合 fragment，`render` 才产生最终
-String。Fmt 的 Host payload 和最终物化结果都受 allocation quota 约束；最终结果在
-分配前按共享节点 memoize 测量，payload 在复制前预扣，复用 fragment 不会绕过
-展开后的字节核算，也不会让拒绝路径按展开结果做指数计算。它不是通用动态值、
-codec 表示或 Host debug repr。
+String。Fmt 是 Guest 内的不可变格式数据，受 Wasm 执行和内存边界约束。
+它与业务数据交换使用的 codec、诊断观察使用的 debug repr 是不同接口。
 
 ### Domain Library 与 Method Library
 
@@ -135,7 +133,7 @@ Host       -> 从封闭计算之外包围这些层次
 
 任何通用标准库模块都不能依赖 ontology 或其他实验才能解释自己的契约。
 
-## World 与 Authority
+## 封闭世界与 Host 权限
 
 ### Closed World
 
@@ -155,10 +153,11 @@ service、credential 和其他效果的外部环境。只有 Host 与它交互�
 
 Host 是权限边界，不只是 foreign-function interface。
 
-### Main
+### 应用入口
 
-**Application export** 是一次 Host 调用所选择的普通封闭 module graph 中的公开值。除非 Host 在冻结前把信息
-显式准备成输入值或静态数据模块，否则 Main 不能观察 Host facility。
+应用入口来自封闭模块图中的显式导出。普通 eval 选择 Value 导出；服务选择
+实现 TransformService 的具体类型 MainService。没有名为 @main 的特权模块，
+应用只能消费 Host 显式提供的数据。
 
 ### Entry 与 TransformService
 
@@ -184,8 +183,7 @@ fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一�
 
 run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；serve --bind stdio+jsonl:// 读取 JSONL，
 每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
-message、labels、notes；已捕获诊断不重复输出。两者都保留 stdin 给请求，不接受 stdin
-初始化 source。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
+message、labels、notes；已捕获诊断不重复输出。服务不接受 stdin 初始化 source；单次 run/JSONL 使用 stdin，HTTP 使用请求体。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
 初始化来源使用 @service/name，请求来源使用 @request；物理路径不进入来源身份。
 
 服务不获得环境、进程、网络或任意文件能力；需要的业务输入由 Host 显式转成 Value。
@@ -198,8 +196,9 @@ message、labels、notes；已捕获诊断不重复输出。两者都保留 stdi
 
 ### Freeze 与 Publication
 
-**Freeze（冻结）**关闭本次求值的输入和模块世界。**Publication（发布）**使成功
-初始化的值、module export、type graph 或 workspace snapshot 成为权威持久结果。
+**Freeze（冻结）**固定服务初始化后的对象基线。**Publication（发布）**是把完整
+结果交给外部调用者。静态 MIR 的 seal、编辑器快照的版本发布和运行时结果发布
+各有独立条件；类型图不依赖 VM 初始化成功。
 
 临时、失败、取消、过期或超配额的工作不能发布。对外暴露的 artifact 必须原子发布。
 
@@ -213,12 +212,12 @@ message、labels、notes；已捕获诊断不重复输出。两者都保留 stdi
 **Canonical source path（规范来源路径）**是 Source 对语言值和诊断公开的稳定名字。
 它与 Host 用于读取数据的物理 locator 分离，也不必是 module identity。运行上下文中的
 服务初始化来源使用 `@service/<key>`，逐次输入使用 `@request`。
-源码文档。它保留格式特定的 syntax behavior 和字段级 origin。
+数据文件保留格式特定的解析规则和字段级来源。
 
 ### Value
 
-**Value（值）**是不可变 runtime datum。值可以携带用于诊断的隐藏 source location
-与 metadata，而不改变普通语言 equality 或 serialized payload。
+**值**是具有确定类型身份的不可变运行时数据，可携带诊断位置；位置不参与相等比较。
+`std/value.Value` 则是一个具体的递归 enum，不能把它与“所有语言值”混用。
 
 ### Provenance
 
@@ -255,9 +254,9 @@ run/serve 共用静态方法协议，差异仅在单次输入和持续请求流�
 
 ### TypeMetadata
 
-**TypeMetadata** 是类型的规范不可变数据表示。类型声明和 metadata constructor
-在工具阶段计算它。Static checking、runtime validation、codec、schema、formatting
-capability 和用户态 interpreter 可以共享同一份 TypeMetadata。
+**TypeMetadata** 是已静态确定类型的不可变描述。MIR 求解类型声明、类型构造器和
+类型族，形成封闭的 TypeId 与骨架；codegen 把骨架放入运行时可读取的静态镜像。
+codec、构造校验、展示和用户态 interpreter 消费该描述，不参与表达式类型推断。
 
 表面语言用 `T.type` 单向取得元数据数据，结果为 `TypeOf(T)`。类型由声明、结构
 构造器和参数化类型族产生；普通函数计算的元数据不能反向成为静态类型。`let` / `def`
@@ -271,7 +270,8 @@ capability 和用户态 interpreter 可以共享同一份 TypeMetadata。
 ### `TypeOf(A)`
 
 `TypeOf(A)` 是静态 metadata witness：其值描述 `A` 的 instance。它可赋给 `Type`，
-并在运行时擦除；它不是 dependent function type 或 runtime generic parameter。
+其泛型关系在 MIR 中确定，但显式传递的元数据值仍可在运行时读取；
+它不是 dependent function type，也不授权运行时生成新的类型实例。
 
 ### `TypeDesc`
 
@@ -285,31 +285,24 @@ capability 和用户态 interpreter 可以共享同一份 TypeMetadata。
 Bound 身份只在所属 scheme 内有意义，不能按内部编号跨 scheme 比较。模块接口独立
 保留权威 scheme；每次调用从 scheme 新鲜实例化，Bound 的关系在所属 scheme 内保留。
 
-### TypeMetadata Family
+### 参数化类型族
 
-**TypeMetadata family（类型元数据族）**是由参数化 `type` 声明建立的、可命名的
-rank-1 metadata witness 关系。例如 `type Box(A) = ...` 使 `Box(A)` 可以出现在
-contract 中，并通过 `Box(A).type` 取得 `TypeOf(Box(A))`。内部仍保留参数化 witness
-scheme，但不能将类型族作为接收元数据的普通函数。newtype 的值构造器是独立的可调用能力。
+**类型族（type family）**由参数化 `type` 声明建立，是静态类型构造。例如 `type Box(A) = ...` 使 `Box(A)` 可以出现在
+contract 中，并通过 `Box(A).type` 取得 `TypeOf(Box(A))`。它保留形参与实参的静态关系，但不能将类型族作为接收元数据的普通函数。newtype 的值构造器是独立的可调用能力。
 
-Family 声明以刚性 Bound 参数求值一次并发布符号模板；application 只替换模板中的
-Bound，不按 concrete 参数重跑声明 body。这个限制使泛型 contract 与值级结果保持
-一致，也让工具能够发布完整、可诊断的 scheme。符号模板保留规范 TypeMetadata；
-application 产生的规则节点保留 authored call-site provenance。
-Partial recovery 对独立有效的 family 同样发布精确 scheme。
+Family 的参数是静态绑定，应用按声明身份与规范类型实参建立类型节点。
+MIR 先登记身份再补齐成员布局，重复应用复用节点；不执行普通 Telora 函数来决定类型。
+有效的 scheme 可以保留在有诊断的分析图中，但执行图必须满足 seal 条件。
 
-Family 不是任意 metadata function、associated type、trait implementation、
-higher-kinded type parameter 或 nominal constructor。它不参与实例搜索，不能作为 type parameter 传递，
-也不引入新的 runtime kind 或求值语言。
-
-名义 Struct/Enum family 可以在自己的有限符号模板中以完全相同的 Bound 参数建立直接
-回边。参数变换、mutual family recursion 和无生产 alias 不属于该能力；它们需要一般
-递归 type-function 归一化，当前不支持。
+Family 不是普通 metadata function，不能作为 higher-kinded 类型参数传递。
+它可以形成有限的递归名义类型图，包括同参自递归、参数置换和截断参数增长的
+常量替换。无生产 alias 环和持续增长的参数环被拒绝；展开另受编译期深度、
+宽度保护。保护触限不是无限递归证明。
 
 ### `Dyn`
 
 `Dyn` 是狭窄的 existential package，保留值、权威类型关系和 provenance。投影
-需要 type witness，并执行权威校验。`Dyn` 不是 unchecked cast，也不是
+需要 type witness，并比较精确的类型身份。`Dyn` 不是 unchecked cast，也不是
 polymorphism 的通用替代品。
 
 ### `Never`
@@ -335,10 +328,10 @@ property registry 是两个独立的数据域，协议与执行顺序保证目�
 Property carrier 必须是由
 `@property(PropertyTarget.Type)` 这类标记修饰的具体具名类型；参数是具名 enum
 `PropertyTarget` 的值，其成员为 `Type`、`StructType`、`EnumType`、`Member`、
-`Field` 和 `Variant`，多个标记按位合并。参数在工具阶段求值并检查类型身份。
+`Field` 和 `Variant`，多个标记按位合并。声明与表达式类型在静态阶段解析；目标标记的值及 property payload 在工具阶段计算。
 
 系统使用 `Ty(target, property)`、`Field(target, canonical_index, property)` 或
-`Variant(target, canonical_index, property)` 作为键并发布到 MainWorld。相同 key 的
+`Variant(target, canonical_index, property)` 作为键登记运行时需求。相同 key 的
 provider 接受 `Option(previous)` 并按词法顺序 fold。字段/variant provider 先运行，
 type provider 后运行并可查询完整 member-property snapshot。Interpreter 只通过
 TypeId 和 member index 查询，不使用字符串属性名。
@@ -346,7 +339,7 @@ TypeId 和 member index 查询，不使用字符串属性名。
 当前 decorator 只适用于无类型参数的具名 Struct/Enum 声明及其直接 member；alias、
 结构类型和 type family template 不接受 decorator。
 
-Interpreter、静态 trait implementation 和未来的 quote/codegen 都可以把封闭类型
+Interpreter、静态 trait implementation 和 codegen 都可以把封闭类型
 骨架与独立的 typed property registry 作为稳定输入。
 
 ### Trait 与 Static Evidence
@@ -355,12 +348,11 @@ Interpreter、静态 trait implementation 和未来的 quote/codegen 都可以�
 给出以 `Self` 表示接收类型的函数 contract；**impl** 为具体类型或带静态约束的类型
 模式提供完整 dictionary。Coherence 和 orphan boundary 使封闭模块图中的候选唯一。
 
-**Static evidence** 是编译器已经证明某个类型满足 trait 或 `Property(P)` 的事实及其
-实现数据。受约束的 rank-1 scheme 保留 canonical identity，dictionary elaboration
-把 evidence 作为隐藏参数传给普通函数。Evidence 不产生 runtime trait object；VM
-执行普通 closure、Dict 和 property payload，也不进行运行期 implementation search。
+**Static evidence** 是编译器证明某个类型满足 trait 或 `Property(P)` 的事实。
+泛型实例、trait 方法选择和 property 键在 MIR 中封闭，codegen 消费这些证据生成调用。
+运行时执行已选择的方法或读取对应 property 值，不重新搜索 implementation。
 
-`Property(P)` 把成功发布的 `Ty(T, P)` property 提升为静态约束。普通反射仍返回
+`Property(P)` 静态证明 `Ty(T, P)` 的声明关系，不要求先执行 provider。普通反射仍返回
 `Option(P)`；约束只证明 property 存在，不根据 payload 内容选择 implementation。
 
 ### Interpreter
@@ -377,17 +369,22 @@ Interpreter、静态 trait implementation 和未来的 quote/codegen 都可以�
 
 ## Stage 与 Execution
 
+### Static Stage
+
+**静态阶段**建立模块图、符号绑定、类型槽、泛型实例和静态证据。
+三个 Pass 不持有 VM，也不执行 Telora 代码。Unknown 与 Conflicted 是分析结果，
+不是执行异常。Query/LSP 可读取不完整图；执行只能消费封闭的 SealedExecutable。
+
 ### Tool Stage
 
-**Tool stage（工具阶段）**计算发现 type、metadata、contract、decorator、module
-interface 和 semantic fact 所需的闭合计算。它按依赖范围执行，并支持保守 recovery。
+**工具阶段**在静态闭合后执行 property provider 和顶层值初始化。
+这里执行的是普通 Telora 函数，不是另一门类型语言；结果不能反向改变静态类型。
+check 可以在多个独立初始化根之间继续收集错误，但类型检查本身不依赖这些求值。
 
 ### Program Stage
 
-**Program stage（程序阶段）**使用封闭 module graph 和显式 Host input，执行普通
-应用转换。
-
-两个阶段共享求值语义。“工具阶段”不是另一门 type-level language。
+**程序阶段**调用服务 init/transform 或其他选定入口，消费显式 Host 输入。
+工具阶段和程序阶段共用 Wasm、值模型与失败语义；二者均不补做类型推断。
 
 ### Fuel 与 Quota
 
@@ -399,11 +396,15 @@ Fuel 的定位是对抗执行能否收敛的不确定性，防止递归和重复
 计费。它不衡量 CPU 时间、指令条数、复制字节数或 native 实现内部的操作次数。
 内存与输入规模等风险由独立配额约束，不能用 fuel 代替。
 
-### Persistent World 与 Temporary World
+### 初始化基线与请求对象
 
-**Temporary world（临时世界）**保存推测性或调用局部工作；**persistent world
-（持久世界）**保存成功发布的 module value 和 metadata。二者之间的 promotion
-受控且原子；持久值不能引用已丢弃的临时状态。
+**main 区**是成功初始化后保留的不可变对象集合，**work 区**是当前请求产生的对象。
+这是生命周期划分，不代表两套运行时、两个独立堆或逐模块深复制。
+
+当前语言对象存于 words/content 两个 Vec；初始化回收后冻结前缀，正常请求结束
+截断后缀。类型描述位于永久静态镜像。来源记录、Rust 资源和需求状态表也有相应
+保活规则，细节见 IMPLEMENTATION.md。失败不能发布不完整的外部结果，但内部
+分析图和初始化需求表可以保留各自的诊断状态。
 
 ## Feedback
 
@@ -451,7 +452,8 @@ expression。其状态至少区分：
 
 结构化 failure diagnostic 的核心是 `rule + data_sources`。rule 包含拒绝消息与规则
 应用位置；data sources 是显式 subjects 的有序来源位置。函数边界内触发的 contextual
-failure 把 rule 归因到最外层 authored caller，内部 `fail!` 位置只保留为实现 trace。
+failure 的 rule 是实际执行的报告宏位置；宏位于 helper 内时，就指向 helper 内，
+不会自动改成最外层调用者。
 Host 如何把这些位置显示为 primary/secondary 属于呈现策略。失败在初始化依赖之间
 传播时继续引用原 root diagnostic，不增加新的根因。
 
@@ -493,10 +495,10 @@ Telora 只负责其中一次封闭、确定的计算。
 | Validation 与 lowering | 两者概念不同，但经常必须在同一个过程完成。 |
 | `Type` 与 `TypeOf(A)` | 前者证明元数据有效；后者保留它描述什么。 |
 | 类型与 unknown | 类型描述值的契约；unknown 描述分析尚未取得依据的 fact state。 |
-| `Dyn` 与 cast | `Dyn` 保留经过检查的 existential evidence；cast 会绕过它。 |
+| `Dyn` 与 Unknown | Dyn 是明确的静态类型，包内值有精确身份；Unknown 是分析缺口。 |
 | Diagnostic 与 `Result` | Diagnostic 是 Host-observed feedback；`Result` 是普通值协议。 |
 | Recovery 与 success | Recovery 保留信息，绝不自动授权发布。 |
-| Entry 与 Main | Entry 属于 Host 边界；Main 是封闭的纯程序。 |
+| 入口与服务实例 | MainService 是静态选定的类型；init 产生供请求使用的实例。 |
 | Domain library 与 standard library | 领域 vocabulary 可复用，不等于语言通用。 |
 | Experiment 与 product semantics | 实验提供证据，不定义语言核心。 |
 

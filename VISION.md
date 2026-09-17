@@ -67,8 +67,7 @@ A Telora execution operates on an enumerable world:
 
 Ordinary values are immutable and functions are pure. The implementation may
 use unobservable mutation for allocation, interning, caches, and publication,
-but failed work must not leak partially initialized state into the persistent
-world.
+but failed work must not publish an incomplete result outside the session.
 
 Closed does not mean that every value is statically known. It means that the
 code, static data, dependency graph, and explicit inputs that may influence one
@@ -77,14 +76,14 @@ execution are bounded and identifiable.
 ### Deterministic, finitely bounded execution
 
 Telora permits ordinary recursion. It does not require every program to be
-strongly normalizing. Instead, every hosted execution has explicit limits for
-evaluation fuel, stack use, call depth, and allocation. Within those limits an
+strongly normalizing. Instead, hosted execution uses Wasm fuel and memory limits, with an engine stack
+boundary. Within those limits an
 execution deterministically produces a value or a structured failure.
 
-Fuel is charged for operations that can expand the dynamic path, such as calls
-and taken control-flow back edges. It is a termination boundary, not a virtual
-CPU tariff. Harmless compiler lowering changes should not alter whether
-straight-line code fits within a budget.
+The Wasm engine meters fuel as an execution boundary, not a virtual CPU tariff.
+Consumption can change with code generation or engine versions; it is not a stable
+cost model. Compiler expansion has separate depth and width guards, not a complete
+termination proof.
 
 Determinism also includes representation and observation:
 
@@ -119,8 +118,8 @@ Incomplete source is normal during editing and generation. Recoverable syntax,
 HIR, semantic facts, workspace revisions, and the language server should retain
 independent knowledge around damage. The tooling distinguishes checked type
 contracts from facts that are unknown, conflicting, blocked by a dependency,
-or incomputable within the tool-stage budget. Incomplete facts retain their
-status until enough evidence is available.
+or limited by compiler resources. These are static facts, not failed VM
+computations. Incomplete facts retain their status until enough evidence is available.
 
 The same authoritative semantics should drive strict checking, runtime
 validation, command-line inspection, and editor feedback.
@@ -166,44 +165,31 @@ Dedicated static machinery is justified only when ordinary data and tool-stage
 functions cannot provide the required abstraction, safety, diagnostics, or
 analysis. Greater type-system generality is not an objective by itself.
 
-## One Evaluator Across Two Stages
+## Static Solving Before Execution
 
-Telora has a tool stage and a program stage, but both use the same value model,
-function behavior, bytecode VM, quotas, and evaluation semantics.
+The module, symbol, and type passes fill one MIR graph without a VM. A sealed
+executable fixes concrete value types, generic instances, and implementation
+choices. Query and LSP inspect this graph without evaluating user code.
 
-- The tool stage evaluates closed metadata computations for checking, editor
-  information, and derivation.
-- The program stage evaluates ordinary data transformations.
-- Type annotations are erased unless their metadata is explicitly used as a
-  runtime value.
+After sealing, tool execution computes properties and top-level values.
+Application execution consumes the initialized graph and explicit host inputs.
+Both execution stages use Wasm and the same value, failure, and provenance rules.
+Neither can create new static types or resume inference.
 
-There is no separate macro language or unrestricted type-level language.
-Elaboration may reduce surface conveniences to a smaller core, but it must not
-create a second set of domain or stage-specific evaluation rules.
+## A Statically Typed Runtime
 
-## A Small Runtime Data Model
+Scalars, tuples, homogeneous arrays and dictionaries, nominal structs and enums,
+functions, metadata, and opaque library values all have known static identities.
+Value is a declared recursive enum for data exchange. Dyn explicitly packages a
+value with its exact type identity; it is not a hole in static inference.
 
-The dynamic runtime is inspired by Lua's compact VM shape and Erlang's
-immutable term model. Its basic value categories are:
+Record literals need a nominal struct or Dict(T) contract. Runtime representation
+does not permit structural relabeling between nominal types. Bool accepts only
+True and False, with no truthiness coercion.
 
-```text
-Int, Float, String, Bytes, Dict, Array, Atom, Tuple, Func
-```
-
-`Dict` is the sole native string-keyed product representation. Static Structs
-and homogeneous `Dict<T>` values share that runtime form while retaining
-different metadata. Atoms and tagged tuples express symbolic and sum values:
-
-```text
-None
-Some(value)
-Ok(value)
-Err(error)
-```
-
-Boolean conditions accept only `True` and `False`; there is no general
-truthiness coercion. Runtime representation stays small and uniform while
-metadata and ordinary libraries provide richer interpretations.
+The implementation stores language objects in a word arena and string/byte
+content in a separate pool. Immutable type descriptions live in the Wasm image.
+These layouts implement the language rather than define its type system.
 
 ## The Host Boundary
 
@@ -227,14 +213,17 @@ approval. Different hosts define different input and output protocols using
 ordinary Telora types. Possessing a value of a plan type does not itself grant
 the capability to perform that plan.
 
-Modules have no default result. This includes `@main`: its only special status
-is that it is selected by the host and cannot be imported. Host modes choose
-their own named protocol entry, such as `output`, `exec`, or `build`.
+Modules have no default result. The current CLI evaluates a Value export with
+`eval`, or selects a concrete MainService implementing TransformService for
+`run` and `serve`. The service consumes explicit data and returns data; it has
+no filesystem, process, or network authority.
 
-The standard `telora run`, `telora exec`, and `telora build` commands are concrete
-host adapters, not the beginning of a language-level effect system. Domain
-semantics such as execution ordering, retries, transactions, permissions, and
-real-world observation remain permanently owned by the host.
+`telora build` compiles an ordinary Wasm artifact. The wasmi-based `telora-run`
+executes it independently, using single-request stdin, JSONL, or HTTP transport.
+This command is a compiler, not an executor for domain build plans.
+
+Execution ordering, retries, persistence, permissions, and real-world effects
+remain the responsibility of the surrounding application.
 
 ## Agentic Systems
 
@@ -285,8 +274,8 @@ The experiment succeeds when:
 1. non-trivial transformation and validation policies can be ordinary Telora
    functions rather than language-specific rules;
 2. static data and Telora source share one closed, source-aware module graph;
-3. type metadata can be computed and interpreted without a hidden second
-   evaluator;
+3. type identities and layouts close statically, while ordinary code can read
+   their metadata and compute properties without feeding results into inference;
 4. strict checking, runtime validation, CLI queries, and LSP feedback agree on
    authoritative semantic facts;
 5. every execution ends with a value or a source-aware resource failure within

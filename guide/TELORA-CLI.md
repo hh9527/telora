@@ -1,7 +1,6 @@
 # Telora CLI 指南
 
-Telora CLI 及其运行时适配器共同充当运行时宿主（Host）：它们准备输入、执行 Entry
-效果并呈现诊断。
+Telora CLI 及其运行时适配器共同充当运行时宿主（Host）：它们准备输入、执行纯数据入口并呈现诊断。
 
 workspace、crate manifest、模块清单和依赖来源的完整用法见
 [`WORKSPACE.md`](WORKSPACE.md)。
@@ -23,9 +22,8 @@ Telora 从当前目录向上查找最近的 `telora-config.json`，因此命令�
 ```text
 telora -C examples/my-crate eval @src/model:answer
 telora -C examples/my-crate run @src/model < request.json
-telora -C examples/my-crate run @src/app:run
-telora -C examples/my-crate run @src/app:run --source request=stdin+json://
-telora -C examples/my-crate run @src/app:run --ees-var tenant=production
+telora -C examples/my-crate run @src/app < request.json
+telora -C examples/my-crate run @src/app --source knowledge=model.json < request.json
 telora -C examples/my-crate serve @src/app --bind stdio+jsonl://
 telora -C examples/my-crate check @test/compiler
 telora -C examples/my-crate test compiler
@@ -60,7 +58,7 @@ telora -C examples/my-crate check --lib --tests --only-types
 后者为零。`check_seconds` 为这两个阶段之和，`catalog_seconds` 单独记录清单准备。
 
 `check` 的输入是完整模块或批量模块选择，不是任意表达式 scratch。模块顶层使用 `def` 声明
-计算根并至少显式 export 一项；顶层 `let`、裸调用和 final expression 均不合法。
+计算根；需要执行或查询的公开接口显式 export。顶层 `let`、裸调用和 final expression 均不合法。
 需要局部步骤时把它们放进 `do`：
 
 ```telora
@@ -119,7 +117,7 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
 输出对应 case，最后恰好一个 summary。成功组不额外计数，`total == passed + failed`。
 中止设置 `aborted: true`，不伪造未启动用例结果。至少一个用例通过且没有失败才退出 0，
 普通失败退出 1。参数错误沿用 clap；准备失败在 stderr 输出 `telora.error/v1`，
-没有求值 summary。该命令不进入 reducer 或应用 EES 调度。
+没有求值 summary。该命令不调度服务入口。
 
 默认最多展开 10,000 个 Test/失败 fixture 节点，最多嵌套 64 层，fixture 累计保留
 预算为 256 MiB（源码字节、每个逻辑数据节点 64 字节和解码 payload 字节）。每份

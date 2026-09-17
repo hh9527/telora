@@ -1,5 +1,9 @@
 # Rust test migration inventory
 
+> Historical migration evidence. Counts, paths, APIs and retained Rust modules below
+> describe their respective migration dates, not the current implementation.
+> Current contracts are documented in ../../docs/design/ and ../../guide/.
+
 ## Wasm-only runtime follow-up
 
 The runtime follow-up replaces 26 Rust test functions (including the CLI's

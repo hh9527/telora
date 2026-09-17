@@ -46,7 +46,8 @@ seal 的 MIR；执行入口必须通过 seal。后续阶段直接使用静态结
 
 codegen 消费 SealedExecutable，生成 Wasm 指令和类型确定的胶水。Rust RT 在 Cargo
 构建期间预编译、预链接并嵌入 Telora；用户执行期间无需外部 linker，不写临时代码文件。
-旧 bytecode/LIR/VM 与直接 Cranelift 后端已删除，无后端选择开关或产物 CLI。
+执行统一为 Wasm/wasmi；`telora build` 可保存普通 Wasm，`telora-run` 独立执行制品。
+没有运行后端选择开关或持久化 snapshot 功能。
 
 ## 2. Frontend 与静态诊断
 
@@ -182,7 +183,7 @@ export { data };
 
 数据内容在静态阶段不读取、不解析；因此类型检查成功不代表 JSON/YAML/TOML 内容有效。
 
-Host 的数据模块导入与 Wasm RT 的 `json.parse`、`toml.parse`、`yaml.parse` 共用
+数据模块导入与 Wasm RT 的 `json.parse`、`toml.parse`、`yaml.parse` 共用
 `telora-data`。共享库使用 `no_std + alloc`，输出带来源位置的扁平数据图。
 JSON 的词法模式、容器栈与配额计数显式保存；字符串按
 QStart/QEnd/Text/EscChar/EscUtf16 消费，不接受 `\x`。parse-0 只计量解码长度，
@@ -199,13 +200,13 @@ JSON/YAML 节点天然子节点优先；TOML 在 parse-1 完成后序整理。�
 静态数据模块、注入来源及测试 fixture 均在 Guest 完成 JSON/YAML/TOML 解析和语言值构造，
 不在 Host 构造并复制数据树。内部实验数据包携带原始文本及来源元数据，加载时也走同一 Guest 解析路径。
 内置 `json.parse` / `yaml.parse` / `toml.parse` 借用 VM
-中的输入字符串并直接导出 Span，所有解码文本共用一份 VM 生命周期的缓冲区，
+中的输入字符串并直接导出 Span，每次解析的转换文本共用该次解析上下文中的缓冲区，
 不创建临时 Rope 或逐字符串的 owned-plan。
 
-Host 配置、产物元数据和 EES 协议的 JSON 文本也先由同一 JSON 状态机校验，再由可选的
-`json_serde` 适配器转换为 Rust 结构。Serde 不参与这些入口的文本解析；JSON 输出仍可
-使用 serde_json 序列化。LSP 协议保留原有 serde/serde_json 实现。
-实际内容在执行准备阶段接受格式与 DataLimits 检查，全部有效后才注入 Wasm。
+Host 的 workspace/package 配置经共享 JSON 解析及 `json_serde` 适配取得 Rust 结构。
+Guest 中的数据解析使用 telora-data。独立 runner 的制品 envelope、服务响应与 LSP
+协议使用 serde_json；这些 Host 协议与 Telora 的 JSON 数据解析不是同一入口。
+数据字节先传入 Guest，再接受格式与 DataLimits 检查；只有成功解析才安装为语言值。
 
 symbol Pass 先索引模块的声明、导出和作用域，再闭合引用。import * 建立搜索范围，
 具体引用才选择绑定；显式绑定与遮蔽按普通名称解析规则处理。内置类型的特殊身份来自
@@ -348,7 +349,8 @@ Host 直接调用时没有 Telora 调用表达式，隐藏来源为 0，不伪�
 解析时建立 BOLs，随来源记录保存和回收。CRLF、LF、CR 都计作一次换行。
 `with_diagnostics` 在 Guest 内查询来源行索引，生成 `SourcePoint {line, offset}`。
 普通字符串解析继承输入 Loc；临时解析错误只附加输入内的 start/end 字节范围，
-不建立 BOLs、不计算临时行号。LF/CRLF 制品字节一致性留待未来发布机制处理。
+不建立 BOLs、不计算临时行号。`telora build` 在输入端归一化 EOL，使相同文本的 LF/CRLF/CR 构建得到相同制品；
+普通源码执行仍用实际输入的字节位置，不改变原文件。
 原始文本片段、UTF-16 列和终端宽度的转换由 Host 负责。
 详细布局见 [RFC 0300](../../rfc/0300-host-guest-abi-and-location-ids.md)。
 
@@ -358,7 +360,7 @@ Host 通过带类型的 session 句柄传递根；仅输入、输出、资源和
 typed equality 使用类型身份及对应值表示，来源位置不参与相等；Dyn 的投影与 codec
 通过已确定的见证检查契约。动态值检查属于运行时行为，不是重新推断表达式类型。
 
-## 6. Property、MainWorld 与 WorkWorld
+## 6. Property 与初始化/请求生命周期
 
 静态 property 记录说明某个 owner/member 是否具有特定 carrier，以及 provider 的
 签名和来源。判断 HasProperty 不需要执行 provider。property 内容则是运行时值，
@@ -374,7 +376,8 @@ codegen 不与运行时共用可变推导状态。
 
 数据注入后主动完成初始化根，顶层值与 property 的相互依赖由需求求值处理。
 初始化不调用普通函数体，除非某个初始化计算实际调用它。成功后固定语言堆的 main
-对象集合，后续语言对象属于 work；归属不依赖线性内存地址的大小或连续性。
+对象集合，后续语言对象属于 work。words/content 的冻结长度标识保留前缀；语言逻辑引用
+与分配器使用的线性内存地址不同。
 执行阶段不重新启动初始化。
 
 Guest 使用 wasm32-unknown-unknown 标准库默认分配器，不自定义全局分配器。
@@ -502,7 +505,7 @@ LSP 的 `mir_workspace` 把文档覆盖内容和磁盘清单送入同一静态�
 - seal 不隐藏未知、冲突或遗漏的泛型/构造证据，也不重新编号。
 - native 特殊身份来自声明的稳定标识，普通名称受 import、遮蔽和作用域规则约束。
 - 类型骨架不依赖 property 值，数据内容不进入静态求解。
-- 初始化覆盖整图并统一发布；共享和来源跨 World 复制后保持正确。
+- 初始化所选执行图的根并统一发布；移动回收保留共享、封闭类型身份和来源。
 - 构造校验覆盖新的合法值边界，不能用跳过检查换取性能。
 - query/LSP 可观察失败图，执行入口只能接受成功 seal 的图。
 

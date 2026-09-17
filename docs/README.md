@@ -14,7 +14,7 @@
 - [`design/LANGUAGE.md`](design/LANGUAGE.md)：描述当前语言的整体机制与语义边界，
   回答“语言整体如何工作”。
 - [`design/IMPLEMENTATION.md`](design/IMPLEMENTATION.md)：描述上述语义当前如何落到
-  frontend、模块图、类型身份、VM、World 和 Host，回答“当前实现由什么组成”。
+  frontend、模块图、类型身份、Wasm、初始化/请求堆和 Host，回答“当前实现由什么组成”。
 
 未来按实际需要增加专题设计文档，例如 type system、evaluation、module、diagnostic、
 Host 和 tooling。专题文档细化 `LANGUAGE.md` 或 `IMPLEMENTATION.md`，不能建立一套与其
@@ -32,12 +32,21 @@ Host 和 tooling。专题文档细化 `LANGUAGE.md` 或 `IMPLEMENTATION.md`，�
 | `guide/WORKSPACE.md` | workspace、crate、模块清单与依赖锁定 | 是，面向使用者 |
 | `guide/LIBSTD.md` | 当前公开标准库的模块定位与接口发现 | 是，面向使用者 |
 | `guide/TESTING.md` | 行为契约、失败断言、fixtures 与测试组织 | 是，面向使用者 |
-| `guide/EXEC-MODE.md` | eval、run 与 serve 的执行契约 | 是，面向使用者 |
+| `guide/EXEC-MODE.md` | eval、run、serve、build 与独立 runner 的执行契约 | 是，面向使用者 |
 | `guide/TELORA-CLI.md` | CLI、工作区解析和 JSONL 契约 | 是，面向使用者 |
 | `README.md` | 项目导览、快速开始与能力概述 | 仅作概述 |
 | `VISION.md` | 项目愿景与设计方向 | 不覆盖当前设计文档 |
 | `rfc/` | 单项决策的动机、方案、演进与验收证据 | 否，属于历史记录 |
 | 源码与测试 | 当前实现行为及其可执行证据 | 是，实现事实 |
+
+当前模型的共同前提：
+
+- 类型由 MIR 静态求解；.type 只把已确定类型投影为值，不反向推导类型。
+- 类型族和泛型函数模板是静态声明；执行图中的实例必须具体化。
+- Value 是明确的 enum，Dyn 是显式存在封装，二者都不是 Unknown。
+- property 的存在关系在静态阶段确定，payload 与顶层值在执行阶段计算。
+- 来源指向值产生处或转发的原值；报告规则位置属于实际报告宏。
+- 当前执行后端为 Wasm/wasmi，堆生命周期与源码类型语义分别描述。
 
 “SSOT”不表示一份文件包含所有细节，而是每类事实只有一个明确的权威入口。总览与
 专题文档可以形成层次，但不能互相给出不兼容的定义。

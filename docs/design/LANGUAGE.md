@@ -25,7 +25,8 @@ Telora 是一门在封闭世界中进行不可变数据计算的静态类型语�
 
 ```text
 静态模块 + 显式输入
-  -> 类型检查和元数据计算
+  -> 模块、符号与类型静态求解
+  -> codegen、数据注入与顶层值/property 初始化
   -> 有界的纯数据计算
   -> 值、结构化失败或来源化诊断
   -> Host 决定是否发布或解释结果
@@ -97,7 +98,7 @@ let greeting = `hello \{name}`;
 ```
 
 插值中的每个表达式都要求 `T: std/fmt.Display`，并在编译期降低为已选中
-dictionary 的 `display` 成员调用。String、Int、Float 由标准能力提供
+实现的 `display` 成员调用。String、Int、Float 由标准能力提供
 显式实现；插值处需要已确定的类型及其 Display 实现，`Dyn` 必须先显式投影。具名 enum
 不会因运行时使用 Atom 表示而自动获得 `Display`。String 保持原文本，Int 使用
 十进制表示。Float
@@ -125,19 +126,16 @@ property-constrained blanket impl 由此为 `Endpoint` 提供 `Display` evidence
 由常量 String 与字段名 Array 组成。property interpreter
 在发布阶段解析模板、验证字段、把字段名解析为 canonical index，并捕获字段的 Display
 closure。运行期路径只按固定 index 投影并调用已捕获 closure。codec 的 text bridge 通过
-VM continuation 调用同一个 closure，共用当前 session 的执行边界；失败的公开 rule 保持调用者
-位置，data-src 保持 closure 输入的数据来源。它直接支持
+已生成的调用胶水执行同一个 closure，共用当前 session 的执行边界；报告宏使用实际
+执行处的 rule，输入值保留自己的数据来源。它直接支持
 String、Int、Float 以及嵌套的 `DisplayBy` struct；它不动态调用字段类型上的任意
 显式 `Display` impl。
 `Display.display` 返回 opaque `Fmt`，`fmt.display` 也返回 `Fmt`；显式调用使用
 `fmt.render(fmt.Display.display(endpoint))` 得到 String。`fmt.concat(strings, items)`
 按 `strings.len == items.len + 1` 组合常量文本和 `Fmt` fragment。插值使用同一
-`Display -> Fmt` 路径，并只在整个字符串末端物化一次。Fmt 节点及其 Host payload
-在复制前预扣 allocation quota；物化前按共享节点 memoize 测量最终 UTF-8 字节数并
-预扣配额。共享 fragment 的长度只计算一次，但每次出现在结果中都计入最终长度，
-因此配额拒绝不会先展开指数大小的树。`dbg!` 的有界 repr 属于
-Host-only 观察；codec/JSON 则是数据交换协议，三者
-都不能作为彼此的隐式替代。
+`Display -> Fmt` 路径，在 render 时物化字符串。Fmt 是 Guest 内不可变的格式数据，
+不是 Host 对象；其计算受 Wasm fuel 与内存限制。debug repr、codec/JSON 与 Display
+分别服务于诊断观察、数据交换和展示，不能互相隐式替代。
 
 Bool 是闭合的内建 enum，其成员 `True` 和 `False` 由 prelude 提供。
 这些名称直接确定 Bool 类型，条件、guard 和布尔操作符接受 Bool 值。
@@ -150,15 +148,12 @@ Float 是有限的 IEEE 754 binary64 值。字面量可以写成 `digits.digits`
 
 ## 3. 运行时值
 
-用户可观察的普通运行时值由较小的集合构成：
+每个进入执行图的值都有 MIR 确定的静态类型：标量、Tuple、Array(T)、Dict(T)、
+具名 Struct/Enum、函数、元数据、不透明 native 类型或显式 Dyn。
 
-```text
-Int, Float, String, Bytes,
-Atom, Tagged,
-Tuple, Array, Dict,
-Func,
-Type metadata, native opaque value, Dyn
-```
+Bool、Option(T)、Result(T, E) 和 Value 是具有确定身份的 enum。运行时选择哪个
+variant，不改变表达式的静态类型。Atom/Tagged 是反射接口的值分类，不是独立的
+源码类型；底层表示不授权跨类型比较、隐式转换或按形状赋予名义身份。
 
 ### 3.1 集合和积
 
@@ -319,8 +314,8 @@ let success: Result(Int, String) = Ok(1);
 let failure: Result(Int, String) = Err("reason");
 ```
 
-Option、Result、Bool 以及用户 enum 都建立在 Atom/Tagged 表示上。类型元数据决定
-合法 tag、payload 形状及静态穷尽性。
+Option、Result、Bool 以及用户 enum 的成员与 payload 类型在 MIR 中确定，
+静态模式检查据此判断穷尽性；运行时 tag 只标识实际选择的成员。
 
 名称确定 enum 类型族，类型上下文和调用证据补全泛型参数。成员使用
 `Event.Progress` 或模块限定的 `events.Event.Progress`；声明本身只绑定类型名。
@@ -340,7 +335,7 @@ exact nominal identity，另一侧的 dict 字面量获得该具名类型上下�
 dict 字段和值、同 variant 的 payload 递归传播，例如 `[item] == [{value: 42}]`
 中的字段字面量可从 `item` 获得名义类型；不同位置的上下文可分别来自两个操作数。
 构造上下文沿整图槽位传播，包括经局部变量和函数返回值连接的未定构造。
-无标注的声明不会提前冻结一个匿名类型；已确定的具名类型身份不能被更换。
+未完成推断的局部记录构造不会提前冻结为匿名类型；已确定的具名类型身份不能被更换。
 函数调用通过共享的泛型类型变量传播同样的构造上下文。例如 `for(T) Fn(T, T)`
 和 `for(T) Fn(Array(T), T)` 均可从一个参数获得名义类型证据，为另一个参数中的
 字面量提供上下文；回调的返回值也可提供该证据。不同泛型变量不会因为解析后的
@@ -348,8 +343,8 @@ dict 字段和值、同 variant 的 payload 递归传播，例如 `[item] == [{v
 复合值按结构比较，但两个具名值还必须
 具有相同的 canonical TypeId；函数按不透明函数身份比较，而不是比较代码或闭包捕获
 内容。enum 契约允许同一静态类型在运行时携带不同 variant，
-此时不同 meta 或不同名义 identity 返回 False。只有一侧携带 exact nominal witness
-时也返回 False，不会按 raw payload 猜测字面量来源。`!=` 是 `==` 的精确布尔补集。
+同一 enum 的不同 variant 返回 False。不同名义类型不能进入普通相等比较；
+若两侧是 Dyn，则先比较包内类型身份，不同身份返回 False。`!=` 是 `==` 的精确布尔补集。
 
 `<`、`>`、`<=` 和 `>=` 只接受类型相同的 `Int`、`Float` 或 `String` 操作数；数值
 之间没有隐式转换。Int 使用有符号数值顺序。Float 只包含有限 binary64 值，使用
@@ -386,7 +381,7 @@ do { 1; 42 }                # Int，结果为 42
 丢弃结果不免除类型检查、失败传播或执行配额。`return`、`fail!`、`panic!` 等
 `Never` 路径不会因尾分号变成 Unit；只有正常 fallthrough 才产生隐式空 Tuple。
 `return expression;` 保留原有语法，`if` 仍须有 `else`。顶层模块不接受表达式语句；
-有歧义的裸 `{}` 仍表示字典，`do {}` 明确表示 block。
+`{}` 是空记录构造，由上下文确定空 Struct 或 Dict(T) 类型；`do {}` 明确表示 block。
 
 当前表面包括算术、比较、短路布尔运算、field selection、调用、pipeline、条件、
 模式匹配、传播和显式返回。主要运算符包括：
@@ -669,8 +664,8 @@ Impl 是顶层静态声明，必须完整且精确地
 泛型参数可用 `+` 声明多个约束。发布的 rank-1 `TypeScheme` 按 canonical `TraitId`
 保留约束，import、alias、reexport 和 recovery 均复用同一身份。
 
-编译器把 trait 调用 elaboration 为普通 dictionary 函数调用。受约束函数内部接收
-隐藏 evidence 参数，调用方静态选择唯一 impl 并传入 dictionary。VM 不搜索 impl，
+编译器在泛型实例中记录已选 impl 和成员证据，codegen 生成对应函数调用。
+运行时不重新构建类型约束或搜索 impl，
 也没有 trait-object value kind。Coherence 拒绝重复的精确 impl 和无优先级的重叠
 blanket impl；精确 impl 优先于满足约束的 property blanket impl。orphan boundary
 要求 impl module 拥有 trait 或目标最外层 nominal constructor。
@@ -678,7 +673,7 @@ blanket impl；精确 impl 优先于满足约束的 property blanket impl。orph
 `Property(P)` 是内建约束：`T: Property(P)` 根据 provider 的返回类型证明精确的
 `Ty(T, P)` typed property 存在，无需先求出 property 值。它可以驱动 blanket impl，
 而普通反射查询仍返回 `Option(P)`。静态 evidence 引用待生成的 payload binding；
-模块类型检查通过后才计算 property 值，全部成功后才能发布模块。
+类型检查通过后才计算 property 值，初始化成功后才能对外发布 session 结果。
 Implementation selection 不读取 payload 内容。
 
 当前不存在 higher-rank type、用户定义或通用 subtyping、trait object、interface、
@@ -709,9 +704,9 @@ Array(String).type
 Option(String).type
 ```
 
-规范函数元数据的公开 descriptor kind 是 `TypeDescKind.Func`，其 `parameters` 是 TypeMetadata
-Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函数元数据的 kind
-观察分别返回各自 kind enum 的 `Func` 成员。`Function` 不具有语言保留意义，可以作为普通领域标识符使用。
+函数类型的 descriptor kind 是 `TypeDescKind.Func`。当前运行时反射把它视为叶节点，
+`type-desc.children` 返回空数组；完整签名在 MIR 中存在，但此 API 不公开参数和返回类型。`dyn.kind` 对函数值返回 `ValueKind.Func`；
+对装箱的元数据值返回 Type 分类，不能把“函数值”与“描述函数的元数据”混为一谈。`Function` 不具有语言保留意义，可以作为普通领域标识符使用。
 
 `let` / `def` 绑定数据，`type` 绑定类型。类型角色由解析后的声明身份和模块接口决定，
 不依赖大小写或运行时 `TypeOf` 内容。`export { T }` 保留类型身份；导出 `T.type`
@@ -720,8 +715,8 @@ Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函�
 
 普通函数可以传递、返回和组合元数据，但不能用其结果定义类型或类型 annotation。
 `type T = build_type(...)`、`type T = metadata` 和 `type T = Int.type` 都被拒绝。
-结构类型仍可复用工具阶段 VM 的受信任构造机制；必须先验证类型/数据边界，不允许执行
-任意用户 helper 来决定类型骨架。Property 是带外信息，不改变此边界。
+结构类型由静态求解器解析，整个类型求解过程不持有 VM。
+普通 helper 的返回值不能决定类型骨架。Property 是带外信息，不改变此边界。
 
 ### 7.1 Struct、Enum 和 typed property decorator
 
@@ -738,7 +733,8 @@ Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函�
 普通构造的拒绝产生失败诊断，codec 解码的拒绝返回 `Err(BlameError)`。
 校验覆盖泛型函数体、工具阶段、merge-update 和投影中的每次新构造；嵌套值
 先完成自身校验，再校验外层候选值。读取、复制、编码和传递已构造的值不重复
-校验。运行时用类型见证实例化泛型函数体内的构造目标，并保留规则与输入来源。
+校验。泛型函数体的具体构造目标已在 MIR 实例中确定；运行时只执行对应构造和
+校验代码，并保留规则与输入来源。
 
 构造校验适合表达值自身的不变量，merge-update 则复用已有合法值的其余字段：
 
@@ -837,7 +833,8 @@ def display_by: Fn(String) -> Fn(TypeDesc, Option(DisplayBy)) -> DisplayBy = fn(
 type Endpoint = struct { host: String, port: Int };
 ```
 
-`@property` 接收一个工具阶段可求值的 `PropertyTarget` 表达式。
+`@property` 接收 `PropertyTarget` 表达式。其签名和类型由 MIR 检查；
+表达式的值在初始化执行时计算，不用于反向推导类型骨架。
 这个内建具名枚举包括 `Type`、`StructType`、`EnumType`、`Member`、`Field` 和 `Variant`；
 `Type`/`Member` 分别覆盖两类 type/member owner，多个标记按位合并。系统先封闭
 `Endpoint` 的 TypeId、TypeMetadata 和 canonical member index，再执行 provider，并以
@@ -861,8 +858,8 @@ let property: Option(DisplayBy) = type_property.get_type_prop(Endpoint.type, Dis
 
 member 查询分别是 `get_field_prop(Owner.type, index, P.type)` 和
 `get_variant_prop(Owner.type, index, P.type)`，其中 Owner 和 P 是类型声明。
-查询返回 MainWorld 中 property 的廉价引用。
-在 `T: Property(P)` 约束范围内，编译器通过隐藏 evidence 传递同一份已发布 payload；
+查询使用已确定的键读取 property 需求结果，不深复制 payload。
+在 `T: Property(P)` 约束范围内，编译器证明对应声明存在，生成代码读取同一结果；
 约束外的显式查询仍保持上述 `Option(P)` API。
 
 `std/type-desc.fields/variants` 使用相同 canonical index 枚举 member；
@@ -870,12 +867,12 @@ member 查询分别是 `get_field_prop(Owner.type, index, P.type)` 和
 descriptor 安全投影。错误 kind、越界和 variant mismatch 是有来源的运行错误；合法
 unit variant 的 payload 是 `None`。
 
-Interpreter、静态 trait implementation 和后续 quote/codegen 可以读取同一封闭
+Interpreter、静态 trait implementation 和codegen 可以读取同一封闭
 骨架和 property registry，并基于这两个稳定输入赋予 property 行为意义。
 
-### 7.2 参数化 TypeMetadata family
+### 7.2 参数化类型族
 
-参数化 `type` 声明创建可命名的元数据 family：
+参数化 `type` 声明创建可命名的静态类型族：
 
 ```telora
 type Box(Item) = struct {value: Item};
@@ -892,50 +889,37 @@ def wrap: for(Item) Fn(Item) -> Box(Item) = fn(value) {
 元数据    Box(A).type : TypeOf(Box(A))
 ```
 
-声明 body 使用刚性符号参数求值一次，产生规范模板；`Box(String)` 对模板做避免捕获
-的替换，不用 String 重新执行 body。每个完整应用的身份由 provider 声明 head 与
-规范类型实参共同确定；同一应用重复求值返回同一个类型身份。因此 family 不是任意
-type-level function，也不是 higher-kinded constructor。
-
-Family 必须一次提供全部参数，不支持 partial application。无环 family 可以组合本
-模块中的其他 family 和非参数化 concrete type，也可以跨完整、选择性、alias 和 open
-import 保留精确 scheme。Family 可达的本地 TypeMetadata 依赖按语义依赖图求值，声明
-顺序不影响结果。
-
-Family 声明可以捕获已经封闭的非参数化递归 concrete type，但不能依赖同模块的
-普通 helper；可以依赖内建类型构造器和 imported 类型声明/类型族。这一边界
-避免把普通源码求值顺序或尚未 sealing 的 recursive reference 带入符号模板。
-
-名义 Struct/Enum family 可以直接以完全相同、顺序不变的参数自递归：
+类型族的形参与成员契约由静态 Pass 解析，应用以声明身份和规范类型实参为键。
+MIR 先登记 TypeId，再补齐有限的成员图；相同应用复用身份，不求值 Telora helper。
 
 ```telora
 type Expr(A) = enum {
     Leaf(A),
     Call(Array(Expr(A))),
 };
+type Swap(A, B) = struct {next: Swap(B, A)};
 ```
 
-该声明只求值一次，并把 `Expr(A)` 表示为同一 symbolic root 的有限图回边。具体化以
-`(TypeConstructorId, TypeArgs)` 为 canonical key；重复 `Expr(Int)` 是同一类型，
-`Expr(String)` 则是另一类型。严格分析与恢复分析都使用这一闭合规则。
+同参自递归和参数置换都可构成有限图。跨声明的参数替换也可以闭合，例如：
 
-这一能力不是一般递归 type-level function。递归调用必须原样使用当前全部 Bound 参数；
-`F(Array(A))`、`F(B, A)`、mutual family cycle、family/concrete mixed cycle，以及
-`type F(A) = F(A)` 这样的无生产 alias 均在声明处拒绝。具体应用以有限符号模板进行替换。
+```telora
+type Left(A) = struct {next: Right(Array(A))};
+type Right(B) = struct {next: Left(Int)};
+```
 
-### 7.3 递归元数据
+这里常量 Int 截断了持续参数增长。相反，`Grow(A) -> Grow(Array(A))` 这样的
+增长环会被拒绝。实例展开使用编译期深度/宽度保护，没有固定的实例总数上限。
+触限说明本次分析超出边界，不声称已经证明程序无限递归；完整停机性仍不是语言承诺。
 
-递归类型使用有限图和受控 reference 表示，而不是无限展开的树。成功初始化的递归
-root 在冻结后发布；未初始化 reference 不能进入 persistent world。
+### 7.3 递归类型与元数据
 
-严格模块分析与 `check`/`query` 的恢复分析对递归 concrete type 使用相同的 component
-sealing：先为同一递归 component 的全部 root 建立具名 reference，再整体求值并安装
-有限图。第 7.2 节允许的单个名义 family 同样先建立带 Bound 参数的 symbolic root，
-再封闭同参自回边。旁支 binding 的语法、类型或运行时失败不会把这些类型误报为不可
-部分求值。裸 type alias 环、mutual family cycle 和 mixed cycle 仍拒绝。
+递归类型以稳定 TypeId 和有限图回边表示，不构造无限树，也不等待 VM 初始化类型。
+纯 alias 环缺少可建立的类型骨架，不能 seal。符号、类型和执行闭包的封闭条件
+见 IMPLEMENTATION.md；不完整图可以供 query/LSP 观察，但不能成为执行输入。
 
-用户态 descriptor observer 可以识别 Ref 并显式解析。遍历不伴随具体值时，解释器
-必须自行处理循环；遍历有限、无环的运行时数据时，可以让普通值递归提供终止进度。
+TypeDesc 是这些已确定类型的运行时视图。反射可以读取成员和解析名义 Ref，
+不能创建新的静态类型或改变已有骨架。遍历类型图的普通函数必须处理循环，
+或者借助有限运行时值的结构提供递归进度。
 
 ### 7.4 Dyn 和 `interpreter!`
 
@@ -988,9 +972,9 @@ Dyn 中的值需要显式投影为具体类型。
 
 
 `Dyn` 精确投影比较打包 descriptor 与目标的 canonical type identity，不走结构比较或
-assignability。`project@[T]` 只对解析到 `std/dyn` namespace 的 `project` 生效，并等价于
-`project_with(T.type, package)`；它不是所有泛型调用的隐式 witness 规则。当前符号泛型 T
-若没有可物化的运行时 `TypeOf(T)` witness，会在前端拒绝。
+assignability。`dyn.project` 是标准库中的普通泛型函数；`project@[T](package)`
+按其 for(A) 签名实例化，函数体调用 `project_with(A.type, package)`。它不依赖
+namespace 拼写魔法，重命名导入遵循普通名称绑定和泛型实例化规则。
 
 ## 8. 模块和封闭世界
 
@@ -1129,7 +1113,7 @@ builtin vendor 提供 `std`，全部 `std/*` selector 都只在该 crate 内解�
 当前没有 registry、语义版本求解或同名多版本能力；远程 source 是确定的 HTTP(S)
 tarball URL。
 
-resolver 配置只来自 prepared workspace。runtime Context、EES 和执行工具契约由
+resolver 配置只来自 prepared workspace。运行时 Context 和服务输入契约由
 实现 TransformService 的 MainService 类型导出表达。Telora 源文件没有独立的 `option` 声明；`option`
 可以作为普通 identifier 使用。
 
@@ -1141,7 +1125,7 @@ selector 必须保留 `.json`、`.yaml`、`.yml` 或 `.toml`。除这一项已�
 ### 8.2 静态数据模块
 
 JSON、TOML 和 YAML 与 Telora 文件共同进入模块图。它们不是运行时文件读取：Host
-在封闭世界建立时加载并注册源码。每个静态数据文件都是只导出 `data: Value` 的
+在静态阶段仅登记接口，类型闭合后才读取内容并交给 Guest 解析。每个静态数据文件都是只导出 `data: Value` 的
 Module，不是一个 raw root：
 
 ```telora
@@ -1223,12 +1207,12 @@ wrapper 不增加 provenance path segment；数组索引、对象 key 和原始 
 
 ### 8.3 初始化和发布
 
-模块求值区分 persistent main world 与每次操作的 temporary/work world。Import export、
-closure capture、递归 metadata root 和 static data root 只有在完整初始化后才能被
-promotion 到持久世界。
+初始化消费已封闭的执行图；顶层值和 property 通过需求表处理依赖，成功后保留
+初始化对象作为请求基线。类型骨架已由 MIR 确定，不依赖初始化是否成功。
 
-Promotion 保留共享结构、递归引用和来源，并保证目标 heap 自包含。失败、取消、配额
-耗尽或过期 revision 的 work world 被整体丢弃，不得留下半初始化 export。
+check 可在内部保留成功和失败的独立需求结果；失败条目不是语言值。任何初始化
+错误都阻止本次结果对外发布。正常服务请求从同一基线开始，结束后丢弃请求对象；
+发生陷阱时重建实例并恢复内存基线。这里不涉及持久化 snapshot。
 
 ## 9. 来源、失败和诊断
 
@@ -1390,10 +1374,10 @@ check 可以在一个初始化根失败后继续其他根，但不会把 failure
 
 当前工具链使用 lossless CST、扁平 HIR/MIR、全图类型求解、Wasm 和 Wasmi 实现
 语言。各层共同服从本文定义的可观察语义和来源映射，不建立彼此竞争的语言模型。
-各阶段、运行时布局、模块骨架、World 和 promotion 的当前实现见
+各阶段、运行时布局、模块骨架与初始化/请求生命周期的当前实现见
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md)；这些私有结构不是第二套语言语义。
 
-### 10.1 两个阶段，一个求值器
+### 10.1 一个静态阶段，两个执行阶段
 
 模块、符号和类型求解是纯静态阶段，不执行语言代码。Tool stage 在静态闭合后执行
 property provider 和顶层初始化；Program stage 使用显式 Host 输入执行普通应用函数。
@@ -1404,8 +1388,8 @@ property provider 和顶层初始化；Program stage 使用显式 Host 输入执
 - 执行资源约束；
 - runtime failure 与来源规则。
 
-静态 annotation 和 witness 默认从程序执行中擦除；当程序显式把 TypeMetadata 当作
-普通值使用时，该值会保留到运行时。
+静态类型标注不在运行期重新检查。编译器始终保留执行所需类型和布局；
+显式使用 T.type 时还会产生可供普通函数读取的元数据值。
 
 `codec.decode(Target.type, value)` 的首个参数是受检查的 `TypeOf(Target)`；
 解码返回 `Result(Target, codec.BlameError)`。编码直接返回 `Value`，失败产生诊断，
@@ -1506,7 +1490,7 @@ should_fail，should_fail_with 还检查非空、区分大小写的主消息子�
 用例身份是入口模块、导出名、fixture 索引数组。成功要求至少一个通过用例且无失败；
 可恢复失败后继续，中止错误设置 aborted 并停止，不产生未启动用例记录。
 准备错误沿用 stderr 的 `telora.error/v1`，不伪造求值 summary。
-此命令不运行 reducer 或应用 EES，不改变循环初始化
+此命令不调度服务入口，不改变循环初始化
 的拒绝规则。`check @test/...` 与显式测试 query 使用相同清单和模块身份。
 
 其他命令的 `<module>` 是 `@src/...`、`@test/...`、依赖模块 ID，或
@@ -1538,7 +1522,7 @@ Namespace import 的 definition record 以 `target` 给出被导入模块的稳�
 记录定义。Selective import 仍在本地 definition record 中直接携带所选成员的精确
 type/scheme。Namespace 保留模块接口中每个导出项的精确契约。
 
-`check` 用统一 Module 管线的 best-effort 调度策略求值。独立计算可以在失败后继续，以收集
+`check` 先完成静态求解，再对多个初始化根采用 best-effort。独立初始化根可以在失败后继续，以收集
 更多诊断；任何语法、类型、解析或运行时 error 都会令命令失败，即使某个干净的最终根仍可
 算出。内部 Module graph 仍可保留，用于查询健康事实和诊断因果，但不会作为 Host 结果交付。
 没有 error 时，best-effort 与严格模式同属成功且值语义一致；`check` 不再额外重跑一条
@@ -1618,39 +1602,29 @@ fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一�
 
 run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；serve --bind stdio+jsonl:// 读取 JSONL，
 每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
-message、labels、notes；已捕获诊断不重复输出。两者都保留 stdin 给请求，不接受 stdin
-初始化 source。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
+message、labels、notes；已捕获诊断不重复输出。初始化 source 不接受 stdin；JSONL 和单次 run 使用 stdin 作为请求通道，HTTP 使用请求体。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
 初始化来源使用 @service/name，请求来源使用 @request；物理路径不进入来源身份。
 
 服务不获得环境、进程、网络或任意文件能力；需要的业务输入由 Host 显式转成 Value。
 旧 eval-with、entry.Eval/Run/Serve、应用 EES 与 reducer 协议均已删除。
 包管理的 IMOS 能力只在私有 Host 中使用。详细用法见 [执行模式](../../guide/EXEC-MODE.md)。
 
-统一数据源管线严格分成三步：读取物理 source 并注册逻辑 source name；
-在不分配运行时数据对象的前提下完成格式级验证并构建带位置的 DataPlan；只有验证全部成功后，才向目标
-Heap 直接物化通用 `Value`。格式级验证覆盖所有可能使物化失败的数据条件，包括重复键、
-TOML table 冲突、非法数字/时间值，以及不受支持或有歧义的 YAML graph 特性。失败产生
-带 source location 的诊断，不产生部分 `Value`。这一层不检查业务 schema：import 和
-初始化 source 的结果都只是 `Value`，业务数据是否符合某个 struct/enum 属于 codec。
+数据模块、--source 和 fixture 的文件读取由 Host 负责；JSON/YAML/TOML 解析和
+语言 Value 构造在 Guest 内完成。源码类型求解只使用数据模块的固定接口，不读取
+数据内容。普通字符串 parse 同样使用共享数据解析器，但保留输入字符串的来源。
 
-验证阶段不构造递归 Owned 数据树。实现以一个
-扁平 arena 表达 validated plan：节点只保存 source span、已验证的节点种类，以及指向
-arena 节点的轻量边；JSON/YAML/TOML 由显式解析状态直接构建节点并保留来源位置，
-无需 CST。TOML 允许后续声明补充已有表，以稳定 NodeId 组装，文档完成后迭代整理后序节点。
-字符串、规范化时间、binary 等必须在物化前验证的解码结果，以及重复键检测、
-TOML table 组装所需的索引，进入必要的 side table。plan
-不会包含递归 Owned payload graph，也不会分配运行时对象；目标 Heap materializer 在
-验证和结构限制预检全部成功后单次消费它。
+解析分为 parse-0 和 parse-1：前者建立 span 结构并检查资源边界，后者完成必要解码、
+数值校验、重复键检测和数据树整理。原文可借用时只保存范围，需要转换的文本集中
+保存。全部验证成功后才物化 Value；资源超限立即停止，其他可恢复的数据错误可以
+收集多条诊断。实现不构造递归 Owned AST。
 
-数据源不消耗也不依赖引擎的执行 fuel 或内存增长上限。Host 在完整分配 source
-字符串前以有界读取检查原始 `file_size`；JSON/YAML/TOML 均在构建时检查 `nodes`、
-`depth`（根为 1）、单个 `container_size`、单个 `bytes_len`、单个
-UTF-8 `string_len`，以及所有 String、对象键、时间字符串和 Bytes 解码后长度之和
-`payloads_bytes`。对象键不是节点。全部计数使用 checked arithmetic，任何溢出均视为
-超限；只有所有检查通过后才物化。TOML 的 dotted key 隐式表与数组表的数组层同样计入深度，
-重复引用已有表路径不重复计入对象键 payload。每个节点直接携带本次运行共享 source registry 分配的
-`SourceId + range`，后续诊断可以稳定地把该节点作为 source 位置。MainWorld 和 Entry
-WorkWorld 仅是不同 target，格式验证、location、data limits 和 `Value` 构造逻辑相同。
+Host 限量读取原始文件；Guest 的解析和物化同时受 Wasm fuel、线性内存与 DataLimits
+约束。DataLimits 包括原文大小、节点数、结构深度、容器大小、单值字符串/字节长度
+与累计解码载荷。具体计量和两阶段布局见 IMPLEMENTATION.md。
+文件来源登记名称和 BOLs，节点保存 src/start/end；临时字符串解析沿用输入来源，
+附加内容内字节范围，不为每次 parse 建立新的行索引。
+
+
 
 每次服务请求在独立执行边界内处理，结果发布后或请求失败后 reset。
 
@@ -1659,27 +1633,19 @@ WorkWorld 仅是不同 target，格式验证、location、data limits 和 `Value
 `run`：它不选择 application output，也不承诺执行期成功。`query` 和 LSP 可以使用
 recovery snapshot 展示仍有证据的语义事实。
 
-CLI 不提供领域专用的 `exec` 或 `build` adapter。Exec plan、build plan、SQL plan 等
+`telora build` 只编译 Wasm，不是领域 build plan 执行器；CLI 不提供领域专用 exec adapter。Exec plan、build plan、SQL plan 等
 都是普通应用值；是否解释它们以及是否产生现实效果，由显式的外部 Host 决定。
 
 ## 12. Workspace 和语言工具
 
-严格检查与编辑器分析共享 parser、HIR、类型图、工具阶段计算和 semantic snapshot，
-但发布策略不同：严格模式要求完整证据，workspace recovery 保留错误周围仍可证明的
-事实。
+严格检查与编辑器分析共享 parser、HIR、模块/符号/类型 Pass 和 MIR 查询。
+query/LSP 不创建 VM，不求值 property 或顶层导出；可以保留并展示错误周围仍有
+依据的静态事实，不能把分析不完整伪装成成功执行。
 
-语义事实不仅是 `known/unknown` 二值。当前状态包括：
-
-```text
-Known
-Unknown(MissingSyntax | InvalidSyntax | UnresolvedName |
-        BlockedBy | UnavailableDependency)
-Conflicted(DuplicateDefinition | IncompatibleContract)
-Incomputable(QuotaExceeded | RuntimeOnly | UnsupportedOperation |
-             CyclicEvaluation | Cancelled)
-```
-
-Known 携带有依据的类型事实，Unknown 表示分析依据尚不完整。
+符号结果区分 Bound、Unresolved、Conflicted，以及交由类型阶段处理的成员约束。
+类型槽区分 Unknown、ProxyTo、Structure、Known、Conflicted；完成求解后执行
+要求所需槽具有归一化 TypeId。诊断保留冲突证据，Unknown 不等于 Dyn。
+内部槽状态与 CLI/LSP 呈现格式是不同层次，工具不从运行时失败补猜静态类型。
 
 Workspace 使用 copy-on-write document snapshot 和单调 revision。每次 rebuild 绑定到
 一个 revision 和 cancellation token；被取消或因新编辑而过期的工作不得覆盖较新的
@@ -1742,7 +1708,7 @@ Ontology、analytics、build、deployment 或 Agent workflow 目前都不是语�
 此外，下列能力具有明确的当前限制：
 
 - `interpreter!` 只提升直接 A 参数的消费型解释器，不能适配高阶或返回 A 的位置；
-- Func 在公开 Type descriptor 解释中是受限的 opaque leaf；
+- 反射只观察封闭类型，不能在运行时产生新的泛型实例；Func 描述符当前不公开子类型；
 - 普通 CLI 严格失败输出不保证一次展示 recovery 已收集的全部独立诊断；
 - Host-observed diagnostic 具有 severity/message/location/labels，但还没有稳定的领域
   category、cause graph 或 repair schema；
@@ -1758,7 +1724,7 @@ payload 精化均属于当前语义。但推断不保证为任意一组分别构
 
 特别是，当同一个 Array 没有显式 item expected type，而元素同时包含不同
 variant 构造、不同 closure 或记录构造时，仅凭元素字面量可能
-无法主动找到预期的封闭 enum、函数契约或参数化 family。严格模式会报告冲突或未
+无法主动找到预期的封闭 enum、函数契约或参数化 family。无法闭合时报告冲突或未
 解决约束，并要求各元素满足共同类型。使用 `.ty!(Ty)` 或 `@[Ty]` 可以提供完整
 上下文；领域中的多种数据形态通过显式 enum 定义。
 
@@ -1785,8 +1751,8 @@ let entries: Array(IntEntry) = [
 
 ### 14.2 Enum payload 的具名类型要求
 
-Enum variant 的 payload 是一个 TypeMetadata 表达式。`struct { ... }` 只允许作为
-直接 `type` 初始化器，不是普通 TypeMetadata 表达式，因此匿名 Struct 不能直接写在
+Enum variant 的 payload 是静态类型表达式。`struct { ... }` 只允许作为
+直接 `type` 初始化器，不是可嵌入的类型表达式，因此匿名 Struct 不能直接写在
 payload 位置；应先声明具名 Struct：
 
 ```telora
@@ -1806,38 +1772,19 @@ let expr: Expr = Expr.Column({alias: "orders", column: "id"});
 
 ### 14.3 Family 与递归类型
 
-递归 concrete TypeMetadata 在普通 definition contract、参数化 family contract 和
-模块接口中保持声明 identity 与有限图回边。一个递归 component 会先预留全部声明
-身份，再验证并原子封闭；失败的 component 不发布部分类型。契约检查按递归图比较，
-并以已经访问的 reference pair 终止，保留有限回边。
-因此递归表达式类型可以直接进入函数和 family：
+递归类型保持声明身份和有限回边，可以用于函数契约、类型族与模块接口。
+同一声明经不同导入方式仍是同一类型，另一个同结构声明是不同类型。
+具体递归和参数增长边界见第 7.2、7.3 节；普通函数不能计算静态类型。
 
-```telora
-type Expr = enum {Literal(Value), Call(CallExpr)};
-type CallExpr = struct {name: String, args: Array(Expr)};
+### 14.4 泛型声明与函数值
 
-type Dialect(Context) = struct {
-    render: Fn(Context, Expr) -> String,
-};
-```
+具有完整 for 契约的声明可以保留绑定类型参数并接受静态检查。每处模板引用独立
+取得实例化证据；进入 SealedExecutable 的函数值必须具有完整具体签名和实例 ID。
+普通局部别名仅实例化一次，后续调用不能把同一个值重新实例化为另一种类型。
 
-同一个递归声明经 whole-module、selective 或 open import 得到的契约保持原声明身份；
-另一个同结构声明仍是不同类型。私有 identity 不属于显示名称，也不是源码可引用的值。
-
-Family 可以在直接 Struct/Enum initializer 中用原参数自递归；其余循环 family
-component 仍拒绝。Family 也不能调用同模块普通 helper。这里的限制是 family 模板
-闭合与求值依赖的限制，不限制 family 字段引用已经封闭的递归 concrete type。
-
-### 14.4 多态 binding 与外围类型参数
-
-Telora 不提供任意 binding 的无限制 let-polymorphism。一个泛型 callable 经普通
-alias 绑定后，只在该 alias 初始化时实例化一次；需要在多个类型上使用时，应直接
-调用原泛型定义、在调用点使用 `@[...]`，或声明具有完整 `for` 契约的具名定义。
-
-此外，泛型函数 body 内的局部 annotation 当前不能引用由外围模块级 `for` 契约
-引入、但未在该局部定义契约中重新量化的类型参数。需要这种 annotation 时，应把
-相关计算提升为模块级辅助定义，并在其完整 `for(...) Fn(...) -> ...` 契约中显式
-列出所需参数。
+泛型函数体可以使用所属契约绑定的类型参数，包括局部标注：
+`def identity: for(T) Fn(T) -> T = fn(value) { let copy: T = value; copy };`
+类型参数不是 Unknown；执行时使用 MIR 已封闭的具体实例。
 
 ## 15. 规范性总结
 
@@ -1845,7 +1792,7 @@ alias 绑定后，只在该 alias 初始化时实例化一次；需要在多个�
 
 1. 静态解析的 source/module graph；
 2. 对不可变小型值模型的普通函数计算；
-3. 由同一 VM 求值并由类型检查器解释的 TypeMetadata；
+3. MIR 静态求解的类型骨架，以及普通代码可读取的类型元数据与 property；
 4. 明确受限的 `Dyn`、诊断和 Host bridge；
 5. 具有执行终止边界、成功后原子发布的一次执行；
 6. 最终仍需 Host 赋予意义的普通输出值。
