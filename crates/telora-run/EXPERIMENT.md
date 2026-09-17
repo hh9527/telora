@@ -1,3 +1,5 @@
+> 历史实验记录：Wasmtime 和持久化 snapshot 已移除；当前用法见 README.md。
+
 # #212 阶段性验证
 
 2026-09-17，Linux，Rust 1.98.1，release，wasmi 2，Wizer 49.0.0-rc.1。

@@ -3,17 +3,11 @@ name = "telora-run"
 version.workspace = true
 edition.workspace = true
 
-[features]
-default = ["wasmi"]
-wasmi = ["dep:wasmi"]
-wasmtime = ["dep:wasmtime"]
-
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 wasmparser = "0.259"
-wasmi = { version = "2", optional = true }
-wasmtime = { version = "=49.0.0-rc.1", default-features = false, features = ["std", "runtime", "anyhow", "cranelift", "winch", "pulley", "parallel-compilation"], optional = true }
+wasmi = "2"
 telora-wasm-shared = { path = "../telora-wasm-shared" }

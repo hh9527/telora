@@ -1,15 +1,10 @@
 //! Reference artifact runner. No compiler, MIR, codegen, or package dependencies.
-#[cfg(not(any(feature = "wasmi", feature = "wasmtime")))]
-compile_error!("select exactly one of wasmi or wasmtime");
-#[cfg(all(feature = "wasmi", feature = "wasmtime"))]
-compile_error!("wasmi and wasmtime features are mutually exclusive; use --no-default-features");
 mod artifact;
 mod backend;
 mod engine;
 mod input;
 use anyhow::{Result, ensure};
 pub use artifact::Publication;
-pub use backend::Mode;
 
 #[derive(Debug)]
 pub struct InitializationError {
@@ -29,7 +24,6 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, Default)]
 pub struct Options {
-    pub mode: Mode,
     pub fuel: Option<u64>,
     pub memory_limit: Option<usize>,
 }
@@ -58,7 +52,6 @@ struct Baseline {
 }
 
 pub struct Runner {
-    pub mode: Mode,
     guest: Guest,
     pub publication: Publication,
     pub timings: Timings,
@@ -83,23 +76,15 @@ impl Runner {
             fuel > 0 && memory_limit > 0,
             "execution limits must be positive"
         );
-        let load_limit = if artifact.publication.initialized {
-            artifact
-                .memory_bytes
-                .checked_add(memory_limit)
-                .ok_or_else(|| anyhow::anyhow!("memory limit overflow"))?
-        } else {
-            usize::try_from(artifact.publication.memory_limit)?
-        };
+        let load_limit = usize::try_from(artifact.publication.memory_limit)?;
         let now = Instant::now();
-        let module = backend::compile(bytes, options.mode)?;
+        let module = backend::compile(bytes)?;
         let module_ms = now.elapsed().as_secs_f64() * 1000.;
         let now = Instant::now();
         // CLI overrides constrain requests; ordinary initialization retains its build budget.
         let guest = Guest::instantiate(module, artifact.publication.fuel, load_limit)?;
         let instance_ms = now.elapsed().as_secs_f64() * 1000.;
         Ok(Self {
-            mode: options.mode,
             guest,
             publication: artifact.publication,
             modules: artifact.modules,
@@ -117,7 +102,6 @@ impl Runner {
         })
     }
 
-    /// Snapshot artifacts skip initialization; they reject replacement sources.
     /// Call once before requests. Failure never publishes a usable service.
     pub fn initialize(&mut self, sources: &[SourceInput]) -> Result<Vec<serde_json::Value>> {
         ensure!(
@@ -126,22 +110,14 @@ impl Runner {
         );
         self.poisoned = true;
         let now = Instant::now();
-        let mut diagnostics = vec![];
-        if self.publication.initialized {
-            ensure!(
-                sources.is_empty(),
-                "snapshot sources are already fixed; rebuild to replace them"
-            );
-        } else {
-            for module in &self.modules {
-                self.guest.inject_module(module)?;
-            }
-            self.guest.inject_sources(sources)?;
-            let status = self.guest.exports.create.call(&mut self.guest.store, ())?;
-            diagnostics = self.guest.diagnostics()?;
-            if status != 0 {
-                return Err(InitializationError { diagnostics }.into());
-            }
+        for module in &self.modules {
+            self.guest.inject_module(module)?;
+        }
+        self.guest.inject_sources(sources)?;
+        let status = self.guest.exports.create.call(&mut self.guest.store, ())?;
+        let diagnostics = self.guest.diagnostics()?;
+        if status != 0 {
+            return Err(InitializationError { diagnostics }.into());
         }
         self.modules.clear();
         let globals = backend::globals(self.guest.instance, &mut self.guest.store);

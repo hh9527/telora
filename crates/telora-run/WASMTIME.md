@@ -1,3 +1,5 @@
+> 历史实验记录：Wasmtime 和持久化 snapshot 已移除；当前用法见 README.md。
+
 # #212 Wasmtime 模式验证与性能观察
 
 2026-09-17，Linux x86_64，4 个可见 CPU，Rust 1.98.1，release。

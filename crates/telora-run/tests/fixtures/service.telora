@@ -14,7 +14,7 @@ impl service.TransformService for MainService {
     },
     transform: fn(self, input) {
         if input == Value.None {
-            fail!("snapshot diagnostic", self.prefix, input)
+            fail!("service diagnostic", self.prefix, input)
         } else if input == Value.String("loop") {
             Value.Int(spin(0))
         } else if input == Value.String("grow") {

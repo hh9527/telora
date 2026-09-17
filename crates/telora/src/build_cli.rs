@@ -1,14 +1,8 @@
 //! File publication is separate from the existing source run/serve path.
 use clap::Args;
-use std::{
-    io::{Cursor, Write},
-    path::PathBuf,
-};
+use std::{io::Write, path::PathBuf};
 use telora_core::{mir::ModuleTarget, source::Severity};
-use telora_wasm::{
-    artifact::Manifest,
-    transform_service::{SourceReader, TransformSession},
-};
+use telora_wasm::artifact::Manifest;
 
 #[derive(Args)]
 pub struct BuildArgs {
@@ -16,11 +10,6 @@ pub struct BuildArgs {
     module: String,
     #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
-    /// Run initialization and freeze the ready service into the output Wasm.
-    #[arg(long)]
-    snapshot: bool,
-    #[arg(long = "source", requires = "snapshot", value_name = "NAME=SOURCE", value_parser = crate::parse_named_source)]
-    sources: Vec<crate::NamedSource>,
 }
 
 pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
@@ -75,52 +64,8 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
         plans.push((data.symbol, source, format));
     }
     let bytes = telora_wasm::bundle::build(&bytes, &mir.sources, &plans)?;
-    let bytes = if args.snapshot {
-        let (context, instrumented) = telora_wasm::snapshot::instrument(&bytes)?;
-        let session = telora_wasm::session::Session::load_with_limits(
-            &instrumented,
-            config.fuel,
-            config.memory_limit,
-        )?;
-        let mut service = TransformSession::new(session)?;
-        let names = crate::source_arg::service_source_names(&args.sources)?;
-        if names != service.sources() {
-            return Err(format!(
-                "service sources differ: declared {:?}, supplied {names:?}",
-                service.sources()
-            ));
-        }
-        crate::source_arg::reject_stdin_sources(&args.sources)?;
-        let readers = crate::source_arg::service_source_readers(args.sources).map(|source| {
-            let source = source?;
-            let bytes = crate::static_input::read_limited(
-                source.reader,
-                config.data_limits.file_size,
-                &source.name,
-            )?;
-            let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
-            Ok(SourceReader {
-                name: source.name,
-                format: source.format,
-                reader: Box::new(Cursor::new(
-                    crate::static_input::normalize_lf(text).into_bytes(),
-                )),
-            })
-        });
-        let result = service.initialize_readers(readers, config.data_limits.file_size)?;
-        for diagnostic in result.diagnostics.as_array().into_iter().flatten() {
-            crate::emit_stderr(diagnostic.clone())?;
-        }
-        if !result.success {
-            return Ok(1);
-        }
-        service.snapshot(&context)?
-    } else {
-        bytes
-    };
-    let bytes =
-        telora_wasm::publication::finish(&bytes, args.snapshot, config.fuel, config.memory_limit)?;
-    // Do not replace an existing artifact until all compilation/initialization has succeeded.
+    let bytes = telora_wasm::publication::finish(&bytes, config.fuel, config.memory_limit)?;
+    // Publish only after compilation has succeeded.
     let parent = args
         .output
         .parent()
