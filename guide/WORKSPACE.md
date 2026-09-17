@@ -431,5 +431,5 @@ telora -C app query at @src/main
 telora -C app eval @src/model:schema
 telora -C app run @src/compiler < request.json
 telora -C app run @src/service:run
-telora -C app serve @src/service:serve --bind stdio://
+telora -C app serve @src/service --bind stdio+jsonl://
 ```

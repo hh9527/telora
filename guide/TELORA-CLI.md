@@ -17,7 +17,7 @@ canonical crate name、模块清单和直接依赖名称；workspace 根的 `tel
 
 Telora 从当前目录向上查找最近的 `telora-config.json`，因此命令可以从 workspace 内
 任意目录执行。`-C` 可以显式改变查找的起始目录。`telora lock` 是唯一写入 lock 的
-命令；`eval`、`run`、`serve`、`test`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
+命令；`build`、`eval`、`run`、`serve`、`test`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
 命令参数使用稳定逻辑模块 ID，不使用物理文件名：
 
 ```text
@@ -26,7 +26,7 @@ telora -C examples/my-crate run @src/model < request.json
 telora -C examples/my-crate run @src/app:run
 telora -C examples/my-crate run @src/app:run --source request=stdin+json://
 telora -C examples/my-crate run @src/app:run --ees-var tenant=production
-telora -C examples/my-crate serve @src/app:serve --bind stdio://
+telora -C examples/my-crate serve @src/app --bind stdio+jsonl://
 telora -C examples/my-crate check @test/compiler
 telora -C examples/my-crate test compiler
 telora -C examples/my-crate test parser/expressions
@@ -131,7 +131,7 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
 
 - `eval module:name` 读取 Value 导出。
 - `run module` 选择 MainService，读取 stdin JSON，输出一个 JSON Value。
-- `serve module --bind stdio://` 持续处理 JSONL，响应含 ok/error/diagnostics；诊断保留
+- `serve module --bind stdio+jsonl://` 持续处理 JSONL，响应含 ok/error/diagnostics；诊断保留
   severity、message、labels、notes。语言失败和请求配额耗尽不影响下一条请求。
 - `@service.source("name")` 声明初始化来源，--source 的名称集合须精确匹配。
   来源使用文件 JSON/YAML/TOML，stdin 保留给请求。逻辑来源为 @service/name。
@@ -189,3 +189,18 @@ Telora 程序不可感知。Float 的 `repr` 使用 Debug 表示，例如 `3.0` 
 命令退出码为零表示请求成功；非零表示 CLI 或 Telora 拒绝。`query` 的空匹配成功且
 没有输出。记录中的 `authority` 区分 `authoritative`、`recovery` 与 `debug` 事实。
 表达式级记录属于 `debug`；错误恢复记录的 authority 服从其事实和模块状态。
+
+## 构建制品与独立服务
+
+```sh
+telora build @src/app -o app.wasm
+telora-run app.wasm --source knowledge=model.json < request.json
+telora serve @src/app --source knowledge=model.json --bind http://127.0.0.1:8080
+telora-run app.wasm --source knowledge=model.json --bind http+unix:///tmp/telora.sock
+```
+
+build 选择导出 MainService 的模块，输出普通 Wasm；运行时初始化数据通过
+--source 提供。telora-run 不需要 workspace 和编译器，不传 --bind 时处理一个
+stdin JSON。--bind 支持 stdio+jsonl://、http://IP:PORT 和
+http+unix:///absolute/path.sock；HTTP 入口为 POST /transform。
+完整生命周期、响应和配额说明见 [执行模式](EXEC-MODE.md)。

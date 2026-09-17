@@ -6,7 +6,9 @@ Telora 从源码建立封闭 MIR，生成内存中的 Wasm，初始化后执行�
 | --- | --- | --- |
 | `eval MODULE:NAME` | 一个 Value 导出 | 输出初始化后的值 |
 | `run MODULE` | 类型导出 MainService | 读取一个 stdin JSON，返回一个 JSON |
-| `serve MODULE --bind stdio://` | 同一个 MainService | 按 JSONL 连续处理独立请求 |
+| `serve MODULE --bind URI` | 同一个 MainService | 通过 JSONL 或 HTTP 连续处理独立请求 |
+| `build MODULE -o app.wasm` | 同一个 MainService | 编译并保存普通 Wasm，不初始化服务 |
+| `telora-run app.wasm` | 制品中的 MainService | 独立执行；指定 `--bind URI` 时持续服务 |
 
 服务实现 `std/transform-service.TransformService`：
 
@@ -34,7 +36,7 @@ export {MyService as MainService};
 
 ```sh
 printf '{"question":42}\n' | telora run @src/app --source knowledge=model.json
-printf '1\n2\n' | telora serve @src/app --source knowledge=model.json --bind stdio://
+printf '1\n2\n' | telora serve @src/app --source knowledge=model.json --bind stdio+jsonl://
 ```
 
 `init: Fn(Context) -> Self` 消费固定来源，返回初始化实例。
@@ -64,10 +66,10 @@ Context 只有 `sources: Dict(Value)`。没有隐式环境变量、字符串参�
 初始化失败不发布服务实例。普通语言失败由内置 entry 的 with_diagnostics 包装捕获；
 transform 本身仍返回 Value，无需为了执行错误添加 Result。
 
-serve 每条请求恰好输出一行：
+JSONL 服务每条请求恰好输出一行；HTTP 使用相同响应封装：
 
 ```json
-{"ok":42,"error":false,"diagnostics":[]}
+{"schema":"telora.service/v1","ok":42,"error":false,"diagnostics":[]}
 ```
 
 失败时 `error` 为 true、`ok` 为 null。diagnostics 保留 severity、message、labels 和 notes；
@@ -81,6 +83,57 @@ fuel/memoryLimit 只约束单次服务调用，不在整个 serve 生命周期�
 
 run 成功只向 stdout 输出结果；失败非零退出，诊断走 stderr JSONL。serve 使用上面的
 响应封装。dbg! 和 usage 观察仍输出到 stderr，不混入结果。
+
+## 普通 Wasm 制品
+
+```sh
+cargo build --release -p telora -p telora-run
+telora build @src/app -o app.wasm
+telora-run app.wasm --source knowledge=model.json < request.json
+telora-run app.wasm --source knowledge=model.json --bind stdio+jsonl:// < requests.jsonl
+```
+
+build 需要已更新的 workspace lock；从输入端将源码和静态数据模块中的 CRLF/CR
+归一化为 LF，不修改原文件。编译成功后原子发布制品，失败不会覆盖旧文件。
+制品包含程序、运行时和静态数据，不执行服务初始化，也不固化动态 --source。
+
+telora-run 使用 wasmi，不需要源码、workspace 或编译器。启动时注入数据并初始化；
+不传 --bind 则读完 stdin 的一个 JSON（直到 EOF），执行一次并退出。
+制品保留构建时的默认执行预算；runner 的 --with-fuel 和 --with-memory-limit
+覆盖每请求预算，不改变初始化预算。--report-usage 输出使用量诊断，
+--report-timings 输出加载、初始化、reset 和请求等分阶段耗时。
+
+当前不提供持久化 snapshot 或 Wasmtime。制品格式仍是实验版本，跨版本使用时
+可能需要重新 build。独立 runner 暂不渲染 dbg! 事件，普通语言诊断正常保留。
+
+## HTTP 与 Unix socket
+
+两个服务入口共用 --bind 地址格式：
+
+| 地址 | 传输 |
+| --- | --- |
+| `stdio+jsonl://` | stdin/stdout JSONL |
+| `http://127.0.0.1:8080` | TCP HTTP/1 |
+| `http+unix:///tmp/telora.sock` | Unix socket HTTP/1，仅 Unix 平台 |
+
+```sh
+telora serve @src/app --source knowledge=model.json --bind http://127.0.0.1:8080
+# 或执行已构建的制品
+telora-run app.wasm --source knowledge=model.json --bind http+unix:///tmp/telora.sock
+
+curl -H 'Content-Type: application/json' -d '{"question":42}' http://127.0.0.1:8080/transform
+curl --unix-socket /tmp/telora.sock -H 'Content-Type: application/json' \
+  -d '{"question":42}' http://localhost/transform
+```
+
+POST /transform 接收 JSON，返回 telora.service/v1 响应。成功、语言失败和执行
+陷阱都返回 HTTP 200，通过 error 区分；未知路径 404、错误方法 405、过大请求体
+413。协议错误由 HTTP 层处理。服务初始化失败时不开始监听。
+
+执行串行，请求间 reset；每连接处理一次请求后关闭。最多同时接收 64 条连接，
+body 读取超时 30 秒，连接总时限 60 秒，执行本身仍依靠 Wasm 配额保证边界。
+支持明文 HTTP，不提供 TLS。Unix socket 必须使用绝对路径，不覆盖已有文件，
+停机后由部署方清理。旧 stdio 地址和独立 runner 的 --serve 参数已由 --bind 统一替代。
 
 ## 检查与迁移
 

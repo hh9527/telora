@@ -1470,6 +1470,7 @@ Telora 只进行数据求解，业务 Host 负责外部输入输出。模块清�
 telora [-C <context>] check <module>
 telora [-C <context>] test <name>
 telora [-C <context>] eval <module:export>
+telora [-C <context>] build <module> -o <file.wasm>
 telora [-C <context>] run <module> [--source <name>=<source>]...
 telora [-C <context>] serve <module> [--source <name>=<source>]... --bind <URI>
 telora [-C <context>] query|q modules [-p <substring>]
@@ -1482,7 +1483,7 @@ telora lsp
 Clap 拥有 help、version 和命令行参数校验，其输出是面向人的文本。命令通过参数校验后，
 Telora Host 在 stdout 和 stderr 上只产生 JSON 或 JSONL。成功的 `eval` 输出一个 JSON
 Value；`dbg!` 和命令错误在 stderr 输出 JSONL record。`check`、`test`、`query`、`run` 和
-`serve` 输出各自的 JSONL 协议，`lock` 输出生成的 lock path JSON String。进程退出码
+`serve` 使用相应传输的响应协议，`lock` 输出生成的 lock path JSON String。进程退出码
 独立表达命令是否成功。
 
 `eval MODULE:NAME` 要求导出 Value。run/serve 接受 MODULE，选择具体类型 MainService。
@@ -1578,6 +1579,20 @@ property 等其他需求根用 node/module 标识且 symbol/name 为 null。ID �
 
 运行命令不接受 `--best-effort`。需要多根初始化诊断时使用 `check`；只检查静态事实时
 使用 `check --only-types`。运行命令不为诊断而额外预执行用户代码。
+
+### 服务传输与制品
+
+`telora serve --bind URI` 与 `telora-run app.wasm --bind URI` 共用传输层：
+`stdio+jsonl://`、`http://IP:PORT`、`http+unix:///absolute/path.sock`。
+HTTP 使用 `POST /transform`，响应为 `telora.service/v1` envelope；
+语言错误及资源陷阱仍通过 `error` 和诊断表达（HTTP 200）。
+请求之间恢复初始化基线，执行串行。Unix socket 不会覆盖既有路径，
+停机后由部署方清理。独立 runner 不传 `--bind` 时执行单次请求。
+
+`telora build MODULE -o FILE` 在输入端归一化源码与静态数据的 EOL 为 LF，
+编译并原子发布普通 Wasm，不执行初始化。`telora-run FILE` 使用 wasmi，
+启动时注入来源并初始化，不依赖源码与编译器。制品格式为实验版本；不提供
+持久化 snapshot 或 Wasmtime 后端。
 
 ### TransformService 入口
 
@@ -1839,12 +1854,3 @@ Telora 的核心承诺不是“所有错误都能静态发现”，也不是“�
 承诺是：可影响一次执行的世界是明确的；执行在有限边界内产生值或结构化失败；类型、
 来源和诊断尽量共享一个权威语义模型；任何现实效果都位于普通程序之外的 Host 授权
 边界。
-
-### 服务传输地址
-
-`telora serve --bind URI` 与 `telora-run app.wasm --bind URI` 共用传输层：
-`stdio+jsonl://`、`http://IP:PORT`、`http+unix:///absolute/path.sock`。
-HTTP 使用 `POST /transform`，响应为 `telora.service/v1` envelope；
-语言错误及资源陷阱仍通过 `error` 和诊断表达（HTTP 200）。
-请求之间恢复初始化基线，执行串行。Unix socket 不会覆盖既有路径，
-停机后由部署方清理。独立 runner 不传 `--bind` 时执行单次请求。

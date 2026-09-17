@@ -512,4 +512,7 @@ LSP 的 `mir_workspace` 把文档覆盖内容和磁盘清单送入同一静态�
 泛型实例以及构造/解码/更新边界。
 
 完整构建的确定性覆盖静态身份与所选执行闭包；Wasm 测试覆盖生成代码、初始化、
-数据来源和长期服务根。发布缓存、snapshot、引擎替换与进一步减少复制不属于当前路径。
+数据来源和长期服务根。普通 Wasm 制品由 `telora build` 发布；`telora-run` 使用 wasmi 独立加载、注入和初始化。
+两个 CLI 共用 `telora-run::transport` 的 JSONL/TCP HTTP/Unix socket HTTP 传输层，
+执行回调保持串行，各自执行入口负责 reset 和资源配额。HTTP 分帧由 Hyper 处理。
+持久化 snapshot、引擎替换与进一步减少复制不属于当前路径。

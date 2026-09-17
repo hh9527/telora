@@ -23,7 +23,7 @@ Telora 当前仍处于快速演进阶段，不提供语法或 ABI 兼容性承�
 构建命令行工具：
 
 ```bash
-cargo build --release -p telora
+cargo build --release -p telora -p telora-run
 ```
 
 建立最小 crate：
@@ -76,7 +76,7 @@ target/release/telora -C hello query exports @src/app
 
 模块导出具体类型 MainService，实现 `std/transform-service.TransformService` 的 init 与 transform。
 MIR 封闭所有方法实例；Host 准备声明的来源并初始化服务，run 处理一个 stdin JSON，
-serve 处理 JSONL。每次调用从同一初始化状态开始，服务间隙 reset；fuel/memory 配额只
+serve 通过 JSONL 或 HTTP 处理请求。每次调用从同一初始化状态开始，服务间隙 reset；fuel/memory 配额只
 约束单次调用。来源与诊断细节见 [执行模式](guide/EXEC-MODE.md)。
 
 `check --only-types` 和 `query` 已接入新的三个静态 Pass，直接消费 MIR，
@@ -245,7 +245,9 @@ serve 处理 JSONL。每次调用从同一初始化状态开始，服务间隙 r
 ```text
 telora eval <module:name>  求值 module 的一个 Value 导出
 telora run <module>        读取一个 stdin JSON，输出 transform 的结果
-telora serve <module> --bind stdio://  持续处理独立 JSONL 请求
+telora serve <module> --bind <URI>  通过 JSONL 或 HTTP 持续处理独立请求
+telora build <module> -o app.wasm   编译为普通 Wasm 制品
+telora-run app.wasm [--bind <URI>]  独立执行制品，不需要源码和编译器
 telora lock                物化 package source 并原子刷新 workspace lock
 telora check <module-id>   类型闭合后完成可达模块图初始化
 telora check --lib [--tests] [--only-types]  批量检查当前 crate
@@ -257,6 +259,13 @@ telora lsp                 启动语言服务器
 
 包管理在私有 Host 内使用 IMOS 物化依赖，不向程序开放外部 I/O。
 `eval` 读取普通 Value 导出；run/serve 执行 MainService。
+
+`--bind` 支持 `stdio+jsonl://`、`http://127.0.0.1:8080` 和
+`http+unix:///tmp/telora.sock`。HTTP 接口为 `POST /transform`。
+`telora-run` 不传 `--bind` 时从 stdin 读取一个完整 JSON，输出一个结果；
+传入时持续服务。`--source name=file.json` 提供初始化数据，与请求输入分开。
+普通 Wasm 制品不保存初始化状态，每次启动 runner 都进行初始化；
+当前不提供 snapshot 或 Wasmtime 后端。详细示例见 [执行模式](guide/EXEC-MODE.md)。
 
 `query` 包含：
 
