@@ -1,6 +1,6 @@
 # RFC 0302：单 Vec 语言堆与保守初始化根集合
 
-- 状态：已在独立分支实现并验证，待合入
+- 状态：已实现并验证，已合入 main
 - 跟踪：[#211](https://github.com/hh9527/telora/issues/211)
 - 分支：`feat/rfc-0302-single-vector-heap`
 - 日期：2026-09-17
