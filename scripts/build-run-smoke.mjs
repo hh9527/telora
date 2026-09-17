@@ -12,13 +12,15 @@ const service=readFileSync('crates/telora-run/tests/fixtures/service.telora','ut
 const constants='{"constant":\n 42\n}\n';
 const data='{\n"name":"retained source"\n}\n';
 function call(binary,args,input,success=true) {
+  if(binary===runner && process.env.TELORA_RUN_MODE) args=[...args,'--mode',process.env.TELORA_RUN_MODE];
   const result=spawnSync(binary,args,{input,encoding:'utf8',timeout:120000,maxBuffer:8*1024*1024});
   assert.equal(result.error,undefined,String(result.error));
   assert.equal(result.status===0,success,JSON.stringify({args,status:result.status,stderr:result.stderr}));
   return result;
 }
 const originals=[],snapshots=[];
-for (const [label,eol] of [['lf','\n'],['crlf','\r\n'],['cr','\r']]) {
+const eols=process.env.TELORA_SMOKE_SINGLE_EOL ? [['lf','\n']] : [['lf','\n'],['crlf','\r\n'],['cr','\r']];
+for (const [label,eol] of eols) {
   const dir=join(root,label); mkdirSync(join(dir,'src'),{recursive:true});
   writeFileSync(join(dir,'telora-config.json'),JSON.stringify({version:1,members:['.']}));
   writeFileSync(join(dir,'telora-crate.json'),JSON.stringify({name:'snapshot-fixture',modules:['@src/main','@src/constants.json'],dependencies:[]}));
@@ -51,11 +53,11 @@ for (const [label,eol] of [['lf','\n'],['crlf','\r\n'],['cr','\r']]) {
     const memoryResult=call(runner,memoryArgs,'"query"\n"grow"\n"query"\n');
     const memoryReplies=memoryResult.stdout.trim().split('\n').map(JSON.parse);
     assert.deepEqual(memoryReplies.map(r=>r.error),[false,true,false]);
-    assert.ok(JSON.stringify(memoryReplies[1]).includes('growth'));
+    assert.match(JSON.stringify(memoryReplies[1]),/growth|growing memory/);
     assert.deepEqual(memoryReplies[0],memoryReplies[2]);
   }
 }
-for (let i=1;i<3;i++) {
+for (let i=1;i<originals.length;i++) {
   assert.deepEqual(originals[i],originals[0],'ordinary build differs by EOL');
   assert.deepEqual(snapshots[i],snapshots[0],'snapshot differs by EOL');
 }

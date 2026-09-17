@@ -14,7 +14,7 @@ impl Guest {
         let ptr = self.transfer(module.source.name.as_bytes())?;
         let register = self
             .instance
-            .get_typed_func::<(u32, u32, u32), u32>(&self.store, "telora_register_source")?;
+            .get_typed_func::<(u32, u32, u32), u32>(&mut self.store, "telora_register_source")?;
         let ok = register.call(
             &mut self.store,
             (
@@ -28,7 +28,7 @@ impl Guest {
         let ptr = self.transfer(module.text.as_bytes())?;
         let parse = self
             .instance
-            .get_typed_func::<(u32, u32, u32, u32), u32>(&self.store, "telora_parse_data")?;
+            .get_typed_func::<(u32, u32, u32, u32), u32>(&mut self.store, "telora_parse_data")?;
         let packet = parse.call(
             &mut self.store,
             (
@@ -49,12 +49,12 @@ impl Guest {
         }
         let materialize = self
             .instance
-            .get_typed_func::<(u32, u32), u32>(&self.store, "telora_materialize_data")?;
+            .get_typed_func::<(u32, u32), u32>(&mut self.store, "telora_materialize_data")?;
         let value = materialize.call(&mut self.store, (packet, 0))?;
         ensure!(value != 0, "data materialization failed");
         let inject = self
             .instance
-            .get_typed_func::<(u32, u32), u32>(&self.store, "telora_inject_data")?;
+            .get_typed_func::<(u32, u32), u32>(&mut self.store, "telora_inject_data")?;
         ensure!(
             inject.call(&mut self.store, (module.symbol, value))? == 1,
             "data injection failed"

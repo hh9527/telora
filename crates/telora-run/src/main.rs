@@ -16,7 +16,7 @@ fn main() {
                 }
             } else {
                 let _ = cli::diagnostic(
-                    &serde_json::json!({"schema":"telora.error/v1","record":"error","message":error.to_string()}),
+                    &serde_json::json!({"schema":"telora.error/v1","record":"error","message":format!("{error:#}")}),
                 );
             }
             1

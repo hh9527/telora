@@ -14,6 +14,9 @@ const INPUT_LIMIT: usize = 256 * 1024 * 1024;
 )]
 pub struct Cli {
     pub artifact: PathBuf,
+    /// Execution strategy supported by the selected build-time engine.
+    #[arg(long, value_enum, default_value_t = telora_run::Mode::default())]
+    mode: telora_run::Mode,
     /// Process JSONL requests; every request starts from the initialized state.
     #[arg(long)]
     serve: bool,
@@ -92,7 +95,7 @@ fn usage(runner: &Runner) -> Result<()> {
     diagnostic(
         &serde_json::json!({"schema":"telora.execution/v1","record":"diagnostic",
         "severity":"info","code":"execution-usage","message":"Wasm execution resource usage",
-        "labels":[],"notes":[],"usage":{"fuel":{"limit":u.fuel_limit,"consumed":u.fuel_consumed,
+        "labels":[],"notes":[],"mode":runner.mode,"usage":{"fuel":{"limit":u.fuel_limit,"consumed":u.fuel_consumed,
             "remaining":u.fuel_limit.saturating_sub(u.fuel_consumed)},
             "linear_memory":{"bytes":u.memory_bytes,"limit_bytes":u.memory_limit_bytes}}}),
     )
@@ -126,7 +129,7 @@ fn reply(runner: &mut Runner, input: &[u8]) -> Vec<u8> {
     });
     match response {
         Ok(value) => value,
-        Err(error) => failure(&error.to_string()),
+        Err(error) => failure(&error.root_cause().to_string()),
     }
 }
 
@@ -137,6 +140,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
     let mut runner = Runner::load(
         &bytes,
         Options {
+            mode: cli.mode,
             fuel: cli.with_fuel.map(|n| n * 1_000_000),
             memory_limit: cli.with_memory_limit.map(|n| (n as usize) * (1 << 20)),
         },
@@ -229,6 +233,6 @@ fn timings(runner: &Runner, read_ms: f64) -> Result<()> {
     diagnostic(
         &serde_json::json!({"schema":"telora.execution/v1","record":"diagnostic",
         "severity":"info","code":"execution-timings","message":"Standalone Wasm phase timings",
-        "labels":[],"notes":[],"read_ms":read_ms,"timings":runner.timings}),
+        "labels":[],"notes":[],"mode":runner.mode,"read_ms":read_ms,"timings":runner.timings}),
     )
 }

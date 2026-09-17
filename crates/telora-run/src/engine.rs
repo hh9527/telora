@@ -1,6 +1,9 @@
-//! wasmi implementation of the fixed Guest ABI; handles are bound once per instance.
+//! Fixed Guest ABI shared by engines; handles are bound once per instance.
+use crate::backend::{
+    self,
+    runtime::{Instance, Memory, Module, Store, StoreLimits, TypedFunc},
+};
 use anyhow::{Result, ensure};
-use wasmi::{Instance, Memory, Module, Store, StoreLimits, TypedFunc};
 
 pub(crate) struct Exports {
     pub alloc: TypedFunc<(u32, u32), u32>,
@@ -23,7 +26,7 @@ pub(crate) struct Guest {
 }
 
 pub(crate) fn limits(memory: usize) -> StoreLimits {
-    wasmi::StoreLimitsBuilder::new()
+    backend::runtime::StoreLimitsBuilder::new()
         .memory_size(memory)
         .table_elements(1_000_000)
         .trap_on_grow_failure(true)
@@ -35,21 +38,20 @@ impl Guest {
         let mut store = Store::new(module.engine(), limits(memory_limit));
         store.limiter(|limits| limits);
         store.set_fuel(fuel)?;
-        let instance =
-            wasmi::Linker::new(module.engine()).instantiate_and_start(&mut store, &module)?;
+        let instance = backend::instantiate(&module, &mut store)?;
         let memory = instance
-            .get_memory(&store, "memory")
+            .get_memory(&mut store, "memory")
             .ok_or_else(|| anyhow::anyhow!("missing memory"))?;
         let exports = Exports {
-            alloc: instance.get_typed_func(&store, "mem-alloc")?,
-            free: instance.get_typed_func(&store, "mem-free")?,
-            count: instance.get_typed_func(&store, "get-data-source-count")?,
-            name: instance.get_typed_func(&store, "get-data-source-name")?,
-            set: instance.get_typed_func(&store, "set-data-source")?,
-            create: instance.get_typed_func(&store, "create-service")?,
-            run: instance.get_typed_func(&store, "run-service")?,
-            reset: instance.get_typed_func(&store, "reset-service")?,
-            diagnostics: instance.get_typed_func(&store, "get-service-diagnostics")?,
+            alloc: instance.get_typed_func(&mut store, "mem-alloc")?,
+            free: instance.get_typed_func(&mut store, "mem-free")?,
+            count: instance.get_typed_func(&mut store, "get-data-source-count")?,
+            name: instance.get_typed_func(&mut store, "get-data-source-name")?,
+            set: instance.get_typed_func(&mut store, "set-data-source")?,
+            create: instance.get_typed_func(&mut store, "create-service")?,
+            run: instance.get_typed_func(&mut store, "run-service")?,
+            reset: instance.get_typed_func(&mut store, "reset-service")?,
+            diagnostics: instance.get_typed_func(&mut store, "get-service-diagnostics")?,
         };
         Ok(Self {
             module,

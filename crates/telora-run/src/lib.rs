@@ -1,12 +1,15 @@
 //! Reference artifact runner. No compiler, MIR, codegen, or package dependencies.
-#[cfg(not(feature = "wasmi"))]
-compile_error!("select the wasmi feature (the first implemented backend)");
+#[cfg(not(any(feature = "wasmi", feature = "wasmtime")))]
+compile_error!("select exactly one of wasmi or wasmtime");
+#[cfg(all(feature = "wasmi", feature = "wasmtime"))]
+compile_error!("wasmi and wasmtime features are mutually exclusive; use --no-default-features");
 mod artifact;
-#[cfg(feature = "wasmi")]
+mod backend;
 mod engine;
 mod input;
 use anyhow::{Result, ensure};
 pub use artifact::Publication;
+pub use backend::Mode;
 
 #[derive(Debug)]
 pub struct InitializationError {
@@ -26,6 +29,7 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, Default)]
 pub struct Options {
+    pub mode: Mode,
     pub fuel: Option<u64>,
     pub memory_limit: Option<usize>,
 }
@@ -50,10 +54,11 @@ pub struct Usage {
 
 struct Baseline {
     memory: Vec<u8>,
-    globals: Vec<(String, wasmi::Val)>,
+    globals: Vec<(String, backend::runtime::Val)>,
 }
 
 pub struct Runner {
+    pub mode: Mode,
     guest: Guest,
     pub publication: Publication,
     pub timings: Timings,
@@ -87,16 +92,14 @@ impl Runner {
             usize::try_from(artifact.publication.memory_limit)?
         };
         let now = Instant::now();
-        let mut config = wasmi::Config::default();
-        config.consume_fuel(true);
-        let engine = wasmi::Engine::new(&config);
-        let module = wasmi::Module::new(&engine, bytes)?;
+        let module = backend::compile(bytes, options.mode)?;
         let module_ms = now.elapsed().as_secs_f64() * 1000.;
         let now = Instant::now();
         // CLI overrides constrain requests; ordinary initialization retains its build budget.
         let guest = Guest::instantiate(module, artifact.publication.fuel, load_limit)?;
         let instance_ms = now.elapsed().as_secs_f64() * 1000.;
         Ok(Self {
+            mode: options.mode,
             guest,
             publication: artifact.publication,
             modules: artifact.modules,
@@ -141,23 +144,7 @@ impl Runner {
             }
         }
         self.modules.clear();
-        let globals = self
-            .guest
-            .instance
-            .exports(&self.guest.store)
-            .filter_map(|export| {
-                let name = export.name().to_owned();
-                if !name.starts_with("telora_reset_global_") {
-                    return None;
-                }
-                let global = export.into_global()?;
-                global
-                    .ty(&self.guest.store)
-                    .mutability()
-                    .is_mut()
-                    .then(|| (name, global.get(&self.guest.store)))
-            })
-            .collect();
+        let globals = backend::globals(self.guest.instance, &mut self.guest.store);
         self.baseline = Some(Baseline {
             memory: self.guest.memory.data(&self.guest.store).to_vec(),
             globals,
@@ -221,7 +208,7 @@ impl Runner {
         for (name, value) in &baseline.globals {
             self.guest
                 .instance
-                .get_global(&self.guest.store, name)
+                .get_global(&mut self.guest.store, name)
                 .ok_or_else(|| anyhow::anyhow!("missing reset global"))?
                 .set(&mut self.guest.store, value.clone())?;
         }
