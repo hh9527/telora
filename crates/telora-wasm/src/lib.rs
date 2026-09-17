@@ -86,6 +86,9 @@ use telora_wasm_shared::abi as runtime_abi;
 mod scalars;
 mod sequences;
 pub mod session;
+pub mod publication;
+#[cfg(feature = "snapshot")]
+pub mod snapshot;
 pub mod transform_service;
 pub mod transport;
 mod transport_heap;

@@ -19,6 +19,11 @@ enum Source {
     Generated(String),
 }
 
+pub fn normalize_lf(text: String) -> String {
+    if !text.contains('\r') { return text; }
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 pub fn read_limited(reader: impl std::io::Read, max_bytes: usize, description: &str) -> Result<Vec<u8>, String> {
     let max_read = u64::try_from(max_bytes).unwrap_or(u64::MAX).saturating_add(1);
     let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
@@ -43,6 +48,7 @@ pub struct Inventory {
     owner: String,
     compiler: telora_core::CompilerOptions,
     runtime: telora_core::RuntimeOptions,
+    normalize_eol: bool,
 }
 
 fn private(name: &str) -> bool {
@@ -50,6 +56,9 @@ fn private(name: &str) -> bool {
 }
 
 impl Inventory {
+    /// Published artifacts use one textual input representation on every OS.
+    pub fn normalize_eol(&mut self) { self.normalize_eol = true; }
+
     pub fn runtime_options(&self) -> telora_core::RuntimeOptions {
         self.runtime
     }
@@ -127,7 +136,7 @@ impl Inventory {
         let file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let bytes = read_limited(file, max_bytes, &path.display().to_string())?;
         let text = String::from_utf8(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok((format, text))
+        Ok((format, if self.normalize_eol { normalize_lf(text) } else { text }))
     }
     pub fn new(context: &Path, builtin_only: bool) -> Result<Self, String> {
         let workspace = if builtin_only {
@@ -195,6 +204,7 @@ impl Inventory {
             owner,
             compiler,
             runtime,
+            normalize_eol: false,
         })
     }
 
@@ -422,13 +432,19 @@ impl Inventory {
         let mut mir = module_resolve::resolve_with_requests_cancellable(
             specs,
             roots,
-            |_, name| if let Some(text) = overlays.get(name) { Ok(text.to_string()) } else { match &self.entries[name].source {
-                Source::Embedded(text) => Ok((*text).into()),
-                Source::Generated(text) => Ok(text.clone()),
-                Source::File(path) => {
-                    fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
-                }
-            } },
+            |_, name| {
+                let text = if let Some(text) = overlays.get(name) {
+                    Ok(text.to_string())
+                } else {
+                    match &self.entries[name].source {
+                        Source::Embedded(text) => Ok((*text).into()),
+                        Source::Generated(text) => Ok(text.clone()),
+                        Source::File(path) => fs::read_to_string(path)
+                            .map_err(|e| format!("{}: {e}", path.display())),
+                    }
+                };
+                text.map(|text| if self.normalize_eol { normalize_lf(text) } else { text })
+            },
             |owner, request| {
                 // The user selected this application before the compiler-owned
                 // adapter was inserted. Only its exact import gets this edge;

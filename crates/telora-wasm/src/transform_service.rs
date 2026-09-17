@@ -40,6 +40,12 @@ pub struct TransformSession {
 }
 
 impl TransformSession {
+    #[cfg(feature = "snapshot")]
+    pub fn snapshot(&mut self, context: &crate::snapshot::ModuleContext<'_>) -> Result<Vec<u8>, String> {
+        if !self.ready || self.poisoned { return Err("snapshot requires successful initialization".into()); }
+        crate::snapshot::capture(context, &mut self.session)
+    }
+
     pub fn new(mut session: Session) -> Result<Self, String> {
         let count = session.exports.source_count
             .call(&mut session.store, ())

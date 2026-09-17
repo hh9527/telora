@@ -1,0 +1,55 @@
+//! Experimental executable-file envelope. Source execution does not use it.
+use serde::{Deserialize, Serialize};
+
+pub const SECTION: &str = "telora.build";
+
+#[derive(Serialize, Deserialize)]
+pub struct Publication {
+    pub version: u32,
+    pub abi: u32,
+    pub initialized: bool,
+    /// Raw engine fuel and bytes, not CLI display units.
+    pub fuel: u64,
+    pub memory_limit: u64,
+}
+
+pub fn finish(
+    bytes: &[u8],
+    initialized: bool,
+    fuel: u64,
+    memory_limit: usize,
+) -> Result<Vec<u8>, String> {
+    let mut module = wasm_encoder::Module::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        let payload = payload.map_err(|e| e.to_string())?;
+        if let wasmparser::Payload::CustomSection(section) = &payload {
+            if section.name() == SECTION {
+                return Err("artifact already published".into());
+            }
+            // Initialized data lives in memory. Do not inject or retain its source bundle again.
+            if initialized && section.name() == "telora.data" {
+                continue;
+            }
+        }
+        if let Some((id, range)) = payload.as_section() {
+            module.section(&wasm_encoder::RawSection {
+                id,
+                data: &bytes[range.start as usize..range.end as usize],
+            });
+        }
+    }
+    let metadata = Publication {
+        version: 1,
+        abi: crate::runtime_abi::VERSION,
+        initialized,
+        fuel,
+        memory_limit: memory_limit as u64,
+    };
+    module.section(&wasm_encoder::CustomSection {
+        name: SECTION.into(),
+        data: serde_json::to_vec(&metadata)
+            .map_err(|e| e.to_string())?
+            .into(),
+    });
+    Ok(module.finish())
+}
