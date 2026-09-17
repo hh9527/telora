@@ -182,7 +182,7 @@ init 失败不发布实例。内置 with_diagnostics 捕获普通语言 failure 
 fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一基线获得独立预算。
 配额用于可停机，不是精确计费，reset 和页级计量方式不构成语言契约。
 
-run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；serve --bind stdio:// 读取 JSONL，
+run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；serve --bind stdio+jsonl:// 读取 JSONL，
 每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
 message、labels、notes；已捕获诊断不重复输出。两者都保留 stdin 给请求，不接受 stdin
 初始化 source。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。

@@ -1,12 +1,12 @@
-//! One static service entry, driven once or by a JSONL input stream.
+//! One static service entry, driven once or through the shared serving transports.
 use super::*;
-use std::io::{BufRead, Write};
+use std::io::Write;
 use telora_wasm::transform_service::TransformSession;
 
 pub(crate) fn execute(
     context: PathBuf,
     arguments: crate::ApplicationArgs,
-    serve: bool,
+    bind: Option<telora_run::transport::Bind>,
 ) -> Result<i32, String> {
     let frontend = PhaseTimer::new("frontend");
     if arguments.module.contains(':') {
@@ -83,7 +83,7 @@ pub(crate) fn execute(
     drop(service_init);
     let usage_reporter = service.session_mut().usage_reporter.take();
     let stdin = std::io::stdin();
-    if !serve {
+    if bind.is_none() {
         let input = crate::source_arg::read_limited(stdin.lock(), limits.file_size, "query input")?;
         let response = transform(&mut service, &input);
         if let Some(report) = usage_reporter {
@@ -100,42 +100,11 @@ pub(crate) fn execute(
         write_json(reply.ok.get().as_bytes())?;
         return Ok(0);
     }
-    let mut reader = stdin.lock();
-    loop {
-        let mut bytes = Vec::new();
-        let mut oversized = false;
-        loop {
-            let available = reader.fill_buf().map_err(|e| e.to_string())?;
-            if available.is_empty() {
-                break;
-            }
-            let end = available.iter().position(|b| *b == b'\n').map(|n| n + 1);
-            let count = end.unwrap_or(available.len());
-            if bytes.len().saturating_add(count) <= limits.file_size {
-                bytes.extend_from_slice(&available[..count]);
-            } else {
-                oversized = true;
-            }
-            reader.consume(count);
-            if end.is_some() {
-                break;
-            }
-        }
-        if bytes.is_empty() && !oversized {
-            break;
-        }
-        let response = if oversized {
-            failure_bytes("request exceeds file_size limit")
-        } else {
-            let response = transform(&mut service, &bytes);
-            if let Some(report) = usage_reporter {
-                report(service.usage());
-            }
-            response
-        };
-        write_json(&response)?;
-        std::io::stdout().flush().map_err(|e| e.to_string())?;
-    }
+    telora_run::transport::serve(bind.unwrap(), limits.file_size, |input| {
+        let response = transform(&mut service, input);
+        if let Some(report) = usage_reporter { report(service.usage()); }
+        Ok(response)
+    }).map_err(|e| e.to_string())?;
     Ok(0)
 }
 

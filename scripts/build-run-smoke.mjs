@@ -35,14 +35,14 @@ for (const [label,eol] of eols) {
   const diagnostics=call(runner,[original,'--source',`model=${join(dir,'source.json')}`],'null',false);
   assert.ok(diagnostics.stderr.includes('@service/model'));
   assert.ok(diagnostics.stderr.includes('service diagnostic'));
-  const args=[original,'--serve','--with-fuel','1','--with-memory-limit','4'];
+  const args=[original,'--bind','stdio+jsonl://','--with-fuel','1','--with-memory-limit','4'];
   args.push('--source',`model=${join(dir,'source.json')}`);
   const result=call(runner,args,'"query"\n"loop"\n"query"\n"grow"\n"query"\nnull\n"query"\n');
   const replies=result.stdout.trim().split('\n').map(JSON.parse);
   assert.equal(replies.length,7);
   assert.deepEqual(replies.map(r=>r.error),[false,true,false,true,false,true,false]);
   for (const index of [2,4,6]) assert.deepEqual(replies[index],replies[0]);
-  const memoryArgs=[original,'--serve','--with-fuel','1000','--with-memory-limit','2'];
+  const memoryArgs=[original,'--bind','stdio+jsonl://','--with-fuel','1000','--with-memory-limit','2'];
   memoryArgs.push('--source',`model=${join(dir,'source.json')}`);
   const memoryResult=call(runner,memoryArgs,'"query"\n"grow"\n"query"\n');
   const memoryReplies=memoryResult.stdout.trim().split('\n').map(JSON.parse);

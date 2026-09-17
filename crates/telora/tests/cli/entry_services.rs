@@ -16,7 +16,7 @@ fn run_and_serve_share_the_same_static_entry_and_preserve_diagnostics() {
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap(), 42);
     let mut command = telora(&cwd);
-    command.args(["serve", "@src/main", "--bind", "stdio://"]);
+    command.args(["serve", "@src/main", "--bind", "stdio+jsonl://"]);
     let result = input_command(command, b"42\nnull\n43\n{bad}\n44\n");
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     let replies = jsonl(&result.stdout);
@@ -52,7 +52,7 @@ fn service_resets_after_request_resource_exhaustion() {
         ("1000", "8", "42\n\"grow\"\n43\n", "growth"),
     ] {
         let mut command = telora(&cwd);
-        command.args(["--report-usage", "--with-fuel", fuel, "--with-memory-limit", memory, "serve", "@src/main", "--bind", "stdio://"]);
+        command.args(["--report-usage", "--with-fuel", fuel, "--with-memory-limit", memory, "serve", "@src/main", "--bind", "stdio+jsonl://"]);
         let output = input_command(command, payload.as_bytes());
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         let replies = jsonl(&output.stdout);
@@ -99,7 +99,7 @@ fn initialization_sources_are_separate_from_each_transform_input() {
     fs::write(cwd.join("src/base.json"), "{\"loaded\":true}").unwrap();
     fs::write(cwd.join("config.json"), "{\"prefix\":42}").unwrap();
     let mut command = telora(&cwd);
-    command.args(["serve", "@src/main", "--source", "config=config.json", "--bind", "stdio://"]);
+    command.args(["serve", "@src/main", "--source", "config=config.json", "--bind", "stdio+jsonl://"]);
     let output = input_command(command, b"{\"answer\":1,\"endpoint\":\"localhost:42\"}\n{\"answer\":0,\"endpoint\":\"localhost:42\"}\n{\"answer\":2,\"endpoint\":\"localhost:42\"}\n");
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let replies = jsonl(&output.stdout);

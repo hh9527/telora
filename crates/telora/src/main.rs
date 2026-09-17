@@ -122,9 +122,9 @@ struct ApplicationArgs {
 struct ServeArgs {
     #[command(flatten)]
     application: ApplicationArgs,
-    /// Request/response transport. The first version supports stdio:// JSONL.
+    /// Serve stdio+jsonl://, http://IP:PORT or http+unix:///absolute/path.sock.
     #[arg(long, value_name = "URI")]
-    bind: String,
+    bind: telora_run::transport::Bind,
 }
 
 #[derive(Args)]
@@ -301,13 +301,8 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
     match cli.command {
         Command::Build(arguments) => build_cli::execute(context, arguments),
         Command::Eval(arguments) => eval_cli::run(context, arguments),
-        Command::Run(arguments) => wasm_cli::run::execute(context, arguments.application, false),
-        Command::Serve(arguments) => {
-            if arguments.bind != "stdio://" {
-                return Err("serve supports only stdio://".into());
-            }
-            wasm_cli::run::execute(context, arguments.application, true)
-        }
+        Command::Run(arguments) => wasm_cli::run::execute(context, arguments.application, None),
+        Command::Serve(arguments) => wasm_cli::run::execute(context, arguments.application, Some(arguments.bind)),
         Command::Lock => package_host::lock(&context)
             .and_then(|path| emit(json!(display_host_path(&path))).map(|()| 0)),
         Command::Check(arguments) => check_command(context, arguments, "telora.check/v1"),

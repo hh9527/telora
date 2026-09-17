@@ -1471,7 +1471,7 @@ telora [-C <context>] check <module>
 telora [-C <context>] test <name>
 telora [-C <context>] eval <module:export>
 telora [-C <context>] run <module> [--source <name>=<source>]...
-telora [-C <context>] serve <module> [--source <name>=<source>]... --bind stdio://
+telora [-C <context>] serve <module> [--source <name>=<source>]... --bind <URI>
 telora [-C <context>] query|q modules [-p <substring>]
 telora [-C <context>] query|q exports <module> [-p <substring>]
 telora [-C <context>] query|q at <module>[:<line>[:<column>]] [-p <substring>] [-k type,let,def,import]
@@ -1601,7 +1601,7 @@ init 失败不发布实例。内置 with_diagnostics 捕获普通语言 failure 
 fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一基线获得独立预算。
 配额用于可停机，不是精确计费，reset 和页级计量方式不构成语言契约。
 
-run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；serve --bind stdio:// 读取 JSONL，
+run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；serve --bind stdio+jsonl:// 读取 JSONL，
 每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
 message、labels、notes；已捕获诊断不重复输出。两者都保留 stdin 给请求，不接受 stdin
 初始化 source。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
@@ -1839,3 +1839,12 @@ Telora 的核心承诺不是“所有错误都能静态发现”，也不是“�
 承诺是：可影响一次执行的世界是明确的；执行在有限边界内产生值或结构化失败；类型、
 来源和诊断尽量共享一个权威语义模型；任何现实效果都位于普通程序之外的 Host 授权
 边界。
+
+### 服务传输地址
+
+`telora serve --bind URI` 与 `telora-run app.wasm --bind URI` 共用传输层：
+`stdio+jsonl://`、`http://IP:PORT`、`http+unix:///absolute/path.sock`。
+HTTP 使用 `POST /transform`，响应为 `telora.service/v1` envelope；
+语言错误及资源陷阱仍通过 `error` 和诊断表达（HTTP 200）。
+请求之间恢复初始化基线，执行串行。Unix socket 不会覆盖既有路径，
+停机后由部署方清理。独立 runner 不传 `--bind` 时执行单次请求。

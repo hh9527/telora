@@ -1,7 +1,7 @@
 use anyhow::{Result, bail, ensure};
 use clap::Parser;
 use std::{
-    io::{BufRead, Read, Write},
+    io::{Read, Write},
     path::PathBuf,
 };
 use telora_run::{Options, Runner, SourceInput};
@@ -14,9 +14,9 @@ const INPUT_LIMIT: usize = 256 * 1024 * 1024;
 )]
 pub struct Cli {
     pub artifact: PathBuf,
-    /// Process JSONL requests; every request starts from the initialized state.
+    /// Serve stdio+jsonl://, http://IP:PORT or http+unix:///absolute/path.sock.
     #[arg(long)]
-    serve: bool,
+    bind: Option<telora_run::transport::Bind>,
     /// NAME=PATH or NAME=file+json://PATH (also yaml/toml).
     #[arg(long = "source")]
     sources: Vec<String>,
@@ -157,10 +157,10 @@ pub fn execute(cli: Cli) -> Result<i32> {
     }
     drop(sources);
     let stdin = std::io::stdin();
-    let mut stdin = stdin.lock();
+    let stdin = stdin.lock();
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
-    if !cli.serve {
+    if cli.bind.is_none() {
         let input = read_limited(stdin)?;
         let response = reply(&mut runner, &input);
         let response: Reply<'_> = serde_json::from_slice(&response)?;
@@ -180,44 +180,18 @@ pub fn execute(cli: Cli) -> Result<i32> {
         writeln!(stdout)?;
         return Ok(0);
     }
-    loop {
-        let mut input = vec![];
-        let mut oversized = false;
-        loop {
-            let available = stdin.fill_buf()?;
-            if available.is_empty() {
-                break;
-            }
-            let end = available.iter().position(|&b| b == b'\n');
-            let count = end.map_or(available.len(), |n| n + 1);
-            if input.len().saturating_add(count) <= INPUT_LIMIT {
-                input.extend_from_slice(&available[..count]);
-            } else {
-                oversized = true;
-            }
-            stdin.consume(count);
-            if end.is_some() {
-                break;
-            }
-        }
-        if input.is_empty() && !oversized {
-            break;
-        }
-        let response = if oversized {
-            failure("request exceeds input size limit")
-        } else {
-            reply(&mut runner, &input)
-        };
-        stdout.write_all(&response)?;
-        writeln!(stdout)?;
-        stdout.flush()?;
+    drop(stdout);
+    drop(stdin);
+    telora_run::transport::serve(cli.bind.unwrap(), INPUT_LIMIT, |input| {
+        let response = reply(&mut runner, input);
         if cli.report_usage {
             usage(&runner)?;
         }
         if cli.report_timings {
             timings(&runner, read_ms)?;
         }
-    }
+        Ok(response)
+    })?;
     Ok(0)
 }
 

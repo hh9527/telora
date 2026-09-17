@@ -3,6 +3,7 @@ mod artifact;
 mod backend;
 mod engine;
 mod input;
+pub mod transport;
 use anyhow::{Result, ensure};
 pub use artifact::Publication;
 
