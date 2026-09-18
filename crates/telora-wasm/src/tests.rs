@@ -12,6 +12,7 @@ mod service_sources;
 mod debug;
 mod dynamic;
 mod equality;
+mod expression_locals;
 mod format;
 mod interpreters;
 mod json;

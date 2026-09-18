@@ -245,6 +245,7 @@ impl<'a> Emitter<'a> {
         // Prefix and else-if chains have no delimiter nesting limit. Keep
         // continuations on the heap, including each node's value adjustment.
         enum Pending {
+            Release(Option<crate::stack_values::ExpressionBindings>),
             Unary(HirId, telora_core::syntax::kinds::UnaryOperator),
             Binary(HirId, telora_core::syntax::kinds::BinaryOperator),
             If(HirId, u32),
@@ -277,6 +278,8 @@ impl<'a> Emitter<'a> {
         'evaluate: loop {
             let mut prepared = None;
             loop {
+                let saved = self.enter_expression(current);
+                pending.push(Pending::Release(saved));
                 match self.mir.hir[current.index()].kind {
                     HirKind::Raise(_) | HirKind::Panic => {
                         let action = match self.mir.hir[current.index()].kind {
@@ -389,6 +392,10 @@ impl<'a> Emitter<'a> {
             };
             while let Some(frame) = pending.pop() {
                 let node = match frame {
+                    Pending::Release(saved) => {
+                        self.leave_expression(value, saved);
+                        continue;
+                    }
                     Pending::RaiseMessage(node, action) => {
                         let subjects = self.mir.hir[node.index()]
                             .children
