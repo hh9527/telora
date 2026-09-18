@@ -13,7 +13,10 @@ fn stack_array_elements_preserve_captures_branches_and_failure_order() {
     for _ in 0..2 {
         assert_eq!(
             session.call(&[]).unwrap(),
-            serde_json::json!([18, 19, 7, [[3, 4], [5, 6]], [11, 14], [[8, 9], [10, 11]], 2])
+            serde_json::json!([
+                18, 19, 7, [[3, 4], [5, 6]], [11, 14], [[8, 9], [10, 11]], 2,
+                [[1, 2, 3], [4, 5]], 10, 17, [42], [2, 3]
+            ])
         );
         assert!(session.diagnostics().unwrap().is_empty());
         session.collect_work(&[]).unwrap();
