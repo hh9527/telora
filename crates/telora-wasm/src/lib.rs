@@ -85,6 +85,7 @@ mod regex_prepare;
 use telora_wasm_shared::abi as runtime_abi;
 mod scalars;
 mod sequences;
+mod stack_values;
 pub mod session;
 pub mod publication;
 pub mod transform_service;

@@ -1,0 +1,27 @@
+import "std/array" as array;
+import "std/_rt" as rt;
+import "std/codec" as codec;
+import "std/value" {Value};
+
+export def answer: Fn() -> Value = fn() {
+    let outer = 7;
+    let closures: Array(Fn(Int) -> Int) = [
+        do { let captured = outer + 1; fn(x) { captured + x } },
+        do { let captured = outer + 2; fn(x) { captured + x } },
+    ];
+    let nested = [
+        do { let x = 3; [x, x + 1] },
+        do { let x = 5; [x, x + 1] },
+    ];
+    let branches = [if outer == 7 { 11 } else { 12 }, if outer == 8 { 13 } else { 14 }];
+    let mapped = [array.map([1, 2], fn(x) { x + outer }), array.map([3, 4], fn(x) { x + outer })];
+    let failed = rt.with_diagnostics(fn(ignored: Int) {
+        [do { let w: Option(Int) = warn!("first"); 1 },
+         fail!("second"),
+         do { let w: Option(Int) = warn!("unreachable"); 3 }]
+    })(0);
+    codec.encode(Value.type, (
+        closures[0](10), closures[1](10), outer, nested, branches, mapped,
+        match failed { Err(reports) => array.length(reports), Ok(_) => 0 },
+    ))
+};

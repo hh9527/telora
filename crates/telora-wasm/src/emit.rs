@@ -14,6 +14,7 @@ pub(crate) struct Emitter<'a> {
     function_pointers: BTreeMap<usize, u32>,
     static_pointers: BTreeSet<usize>,
     pub locals: Vec<ValType>,
+    pub local_scopes: crate::stack_values::LocalScopes,
     pub bindings: BTreeMap<SymbolId, u32>,
     pub local_instances: BTreeMap<telora_core::mir::GenericInstanceId, u32>,
     pub tail_calls: BTreeSet<HirId>,
@@ -29,14 +30,28 @@ impl<'a> Emitter<'a> {
             function_pointers: BTreeMap::new(),
             static_pointers: BTreeSet::new(),
             locals: vec![],
+            local_scopes: Default::default(),
             bindings: BTreeMap::new(),
             local_instances: BTreeMap::new(),
             tail_calls: BTreeSet::new(),
         }
     }
     pub fn local(&mut self, ty: ValType) -> u32 {
+        if let Some(index) = self.local_scopes.take(&self.locals, ty) {
+            // Existing emitters can rely on Wasm's default-zero local value.
+            // A recycled slot must provide the same starting value.
+            self.emit(match ty {
+                ValType::I32 => I::I32Const(0),
+                ValType::I64 => I::I64Const(0),
+                _ => unreachable!("codegen scratch locals are integer words"),
+            });
+            self.emit(I::LocalSet(index));
+            self.local_scopes.track(index);
+            return index;
+        }
         let index = self.locals.len() as u32 + 2;
         self.locals.push(ty);
+        self.local_scopes.track(index);
         index
     }
     pub fn emit(&mut self, instruction: I<'static>) {
