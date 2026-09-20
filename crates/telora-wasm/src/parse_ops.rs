@@ -154,6 +154,14 @@ impl Emitter<'_> {
         self.extend([I::LocalGet(1), I::I32Eqz, I::If(BlockType::Empty)]);
         self.parse_reject("required capture is absent")?;
         self.emit(I::End);
+        if !matches!(
+            self.mir.types[target.index()].constructor,
+            T::String | T::Int | T::Float | T::Option
+        ) && let Some(&evidence) = self.plan.parser_evidence.get(&target)
+            && !crate::parse_plan::regex_fallback(self.mir, evidence)
+        {
+            return self.parse_from_str(target, evidence);
+        }
         match self.mir.types[target.index()].constructor {
             T::String => Ok(1),
             T::Int | T::Float => {
@@ -180,5 +188,83 @@ impl Emitter<'_> {
             }
             _ => self.parse_record(target),
         }
+    }
+
+    fn parse_from_str(&mut self, target: TypeId, evidence: usize) -> Result<u32, String> {
+        let evidence = &self.mir.evidence[evidence];
+        let implementation = evidence
+            .implementation
+            .ok_or("Wasm: FromStr evidence has no implementation")?;
+        let key = if let Some(instance) = evidence.instance {
+            self.plan.instances.get(&instance)
+        } else {
+            self.plan.globals.get(&implementation)
+        }
+        .copied()
+        .ok_or("Wasm: FromStr implementation is not in the sealed executable")?;
+        let owner = key.ty(self.mir, key.node)?;
+        let field = self.plan.layouts[owner.index()]
+            .object
+            .as_ref()
+            .and_then(|object| object.members.iter().find(|field| field.name == "from_str"))
+            .ok_or("Wasm: FromStr implementation lacks from_str")?;
+        let signature = self.plan.layouts[field
+            .type_id
+            .ok_or("Wasm: FromStr member has no sealed signature")?]
+        .id();
+        let shape = &self.mir.types[signature.index()];
+        if shape.constructor != T::Function || shape.arguments.len() != 2 {
+            return Err("Wasm: FromStr member signature mismatch".into());
+        }
+        let result_ty = shape.arguments[1];
+        let result_shape = &self.mir.types[result_ty.index()];
+        if result_shape.constructor != T::Result
+            || result_shape.arguments.len() != 2
+            || result_shape.arguments[0] != target
+        {
+            return Err("Wasm: FromStr result does not return its subject".into());
+        }
+        let record = self.call_key(key)?;
+        let data = self.table_data(RECORDS, record, DATA);
+        let callback = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(data),
+            I::I32Const(
+                field
+                    .offset
+                    .ok_or("Wasm: FromStr member has no layout offset")? as i32,
+            ),
+            I::I32Add,
+            I::LocalSet(callback),
+        ]);
+        let result = self.invoke(callback, &[1])?;
+        self.extend([
+            I::LocalGet(result),
+            I::I32Load(memory(DATA, 2)),
+            I::I32Eqz,
+            I::If(BlockType::Empty),
+        ]);
+        let error = self.enum_payload(result_ty, 0, result)?;
+        let error_ty = result_shape.arguments[1];
+        let message = self.plan.layouts[error_ty.index()]
+            .object
+            .as_ref()
+            .and_then(|object| object.members.iter().find(|field| field.name == "message"))
+            .ok_or("Wasm: FromStr error lacks message")?;
+        let error_data = self.table_data(RECORDS, error, DATA);
+        let message_value = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(error_data),
+            I::I32Const(
+                message
+                    .offset
+                    .ok_or("Wasm: FromStr error message has no offset")? as i32,
+            ),
+            I::I32Add,
+            I::LocalSet(message_value),
+        ]);
+        self.parse_reject_value(message_value)?;
+        self.emit(I::End);
+        self.enum_payload(result_ty, 1, result)
     }
 }

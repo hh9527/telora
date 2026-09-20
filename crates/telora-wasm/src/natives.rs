@@ -34,6 +34,7 @@ impl Emitter<'_> {
             Some((5, name)) => self.array_native(name),
             Some((6, name)) => self.dict_native(name),
             Some((7, name)) => self.string_native(name),
+            Some((27, "parse_with")) => self.parse_native(),
             Some((8, name)) => self.path_native(name),
             Some((19, name)) => self.regex_native(name),
             Some((16, name)) => self.hash_native(name),

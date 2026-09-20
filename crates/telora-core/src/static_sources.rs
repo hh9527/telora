@@ -5,6 +5,7 @@ macro_rules! sources {
 }
 pub const BUILTINS: &[(&str, &str)] = sources![
     "_codec",
+    "_parse",
     "_rt",
     "_entry/transform",
     "argv",
@@ -88,6 +89,7 @@ pub fn native_module(name: &str) -> Option<crate::mir::NativeModule> {
         "std/yaml" => (24, vec![]),
         "std/type-property" => (25, vec![]),
         "std/_rt" => (26, vec![]),
+        "std/_parse" => (27, vec![]),
         _ => return None,
     };
     Some(NativeModule { id, types })

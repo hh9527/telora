@@ -1,4 +1,5 @@
 import "std/type-desc" { TypeDesc };
+import "std/_parse" { FromStr, parse_target };
 
 native type Regex @0;
 
@@ -8,5 +9,9 @@ type ParseBy = struct { regex: Regex };
 native compile: Fn(String) -> Regex;
 native is_match: Fn(Regex, String) -> Bool;
 native parse_by: Fn(Regex) -> Fn(TypeDesc, Option(ParseBy)) -> ParseBy;
+
+impl(T: Property(ParseBy)) FromStr for T {
+    from_str: fn(input) { parse_target(T.type, input) },
+};
 
 export { Regex, ParseBy, compile, is_match, parse_by };

@@ -2,7 +2,7 @@
 use crate::{abi::*, emit::Emitter};
 use telora_core::{
     candidate_layout::State,
-    mir::{Mir, PropertySite, TypeConstructor as T, TypeId, TypeState},
+    mir::{Mir, TypeConstructor as T, TypeId, TypeState},
 };
 use wasm_encoder::{Instruction as I, ValType};
 
@@ -125,26 +125,11 @@ impl Emitter<'_> {
                 I::I32Store(memory(offset, 2)),
             ]);
             self.store32(packet, offset + 4, u32::from(optional));
-            self.store32(packet, offset + 8, u32::from(self.regex_field_parsable(ty)));
+            if !self.plan.parser_evidence.contains_key(&ty) {
+                return Err("Wasm: regex field lacks sealed FromStr evidence".into());
+            }
+            self.store32(packet, offset + 8, 1);
         }
         Ok(packet)
-    }
-
-    fn regex_field_parsable(&self, ty: TypeId) -> bool {
-        if matches!(
-            self.mir.types[ty.index()].constructor,
-            T::Int | T::Float | T::String
-        ) {
-            return true;
-        }
-        let Some(property) = property_type(self.mir) else {
-            return false;
-        };
-        self.mir.properties.iter().any(|record| {
-            record.owner == ty
-                && record.property == property
-                && record.site == PropertySite::Type
-                && record.concrete
-        })
     }
 }

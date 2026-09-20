@@ -47,6 +47,18 @@ impl Solver<'_> {
         self.mir
             .implementation_instances
             .resize(self.mir.hir.len(), None);
+        for index in 0..self.mir.evidence.len() {
+            let evidence = &self.mir.evidence[index];
+            let Some(symbol) = evidence.implementation else {
+                continue;
+            };
+            if self.mir.symbol_generics[symbol.index()].is_empty() {
+                continue;
+            }
+            let key = (symbol, evidence.arguments.clone());
+            let instance = self.admit_instance(key, &mut indices, &mut canonical);
+            self.mir.evidence[index].instance = instance;
+        }
         for index in 0..self.mir.bound_requirements.len() {
             let requirement = &self.mir.bound_requirements[index];
             let reference = requirement.reference;
@@ -59,15 +71,7 @@ impl Solver<'_> {
             let Some(evidence) = requirement.evidence.map(|id| &self.mir.evidence[id]) else {
                 continue;
             };
-            let Some(symbol) = evidence.implementation else {
-                continue;
-            };
-            if self.mir.symbol_generics[symbol.index()].is_empty() {
-                continue;
-            }
-            let key = (symbol, evidence.arguments.clone());
-            self.mir.implementation_instances[reference.index()] =
-                self.admit_instance(key, &mut indices, &mut canonical);
+            self.mir.implementation_instances[reference.index()] = evidence.instance;
         }
         for index in 0..self.mir.hir.len() {
             if let Some(key) =

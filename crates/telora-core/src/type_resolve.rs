@@ -28,6 +28,7 @@ mod contract_sources;
 mod interpreters;
 mod type_facets;
 mod patterns;
+mod parse_adapters;
 #[cfg(test)]
 mod tests;
 
@@ -261,6 +262,8 @@ pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
     solver.validate_diverging_branches();
     solver.finalize_properties();
     solver.finalize_checks();
+    solver.materialize_layouts();
+    solver.prepare_parse_adapters();
     solver.prove_bounds();
     if !solver.check_type_expansion(None) {
         solver.mir.types_solved = true;

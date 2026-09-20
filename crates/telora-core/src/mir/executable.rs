@@ -61,10 +61,11 @@ impl<'a> SealedMir<'a> {
         let mut roots = vec![ExecutionRoot { node, instance: None }];
         // Metadata initialization retains the session-wide semantics. Only
         // ordinary value exports are pruned by the selected entry at present.
-        let properties = mir.properties.iter().enumerate().filter(|(_, property)| property.concrete).map(|(index, property)| {
+        let properties: Vec<usize> = mir.properties.iter().enumerate().filter(|(_, property)| property.concrete).map(|(index, property)| {
             roots.extend(property.providers.iter().map(|&node| ExecutionRoot { node, instance: property.instance }));
             index
         }).collect();
+        parse_adapter_roots(mir, &properties, &mut roots);
         let checks = mir.construction_checks.iter().enumerate().filter(|(_, check)| check.concrete).map(|(index, check)| {
             roots.push(ExecutionRoot { node: check.checker, instance: check.instance });
             index
@@ -101,11 +102,12 @@ impl<'a> SealedMir<'a> {
                     ExecutionRoot { node, instance: Some(id) }));
             }
         }
-        let properties = mir.properties.iter().enumerate().filter(|(_, property)| property.concrete
+        let properties: Vec<usize> = mir.properties.iter().enumerate().filter(|(_, property)| property.concrete
             && property.providers.iter().any(|node| modules.contains(&mir.hir[node.index()].module))).map(|(index, property)| {
             roots.extend(property.providers.iter().map(|&node| ExecutionRoot { node, instance: property.instance }));
             index
         }).collect();
+        parse_adapter_roots(mir, &properties, &mut roots);
         let checks = mir.construction_checks.iter().enumerate().filter(|(_, check)| check.concrete
             && modules.contains(&mir.hir[check.checker.index()].module)).map(|(index, check)| {
             roots.push(ExecutionRoot { node: check.checker, instance: check.instance });
@@ -134,6 +136,31 @@ impl<'a> SealedMir<'a> {
             }
         }
         Ok(SealedExecutable { sealed: self, root: node, globals: globals.into_iter().collect(), instances, properties, checks, closure })
+    }
+}
+
+fn parse_adapter_roots(mir: &Mir, properties: &[usize], roots: &mut Vec<ExecutionRoot>) {
+    let properties = properties.iter().copied().collect::<BTreeSet<_>>();
+    let mut pending = mir
+        .parse_adapters
+        .iter()
+        .filter(|adapter| properties.contains(&adapter.property))
+        .filter_map(|adapter| mir.bound_requirements[adapter.requirement].evidence)
+        .collect::<Vec<_>>();
+    let mut seen = BTreeSet::new();
+    while let Some(index) = pending.pop() {
+        if !seen.insert(index) {
+            continue;
+        }
+        let evidence = &mir.evidence[index];
+        pending.extend(evidence.dependencies.iter().copied());
+        let Some(symbol) = evidence.implementation else {
+            continue;
+        };
+        roots.extend(mir.symbols[symbol.index()].declarations.iter().map(|&node| ExecutionRoot {
+            node,
+            instance: evidence.instance,
+        }));
     }
 }
 

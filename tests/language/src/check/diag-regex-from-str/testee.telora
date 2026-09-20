@@ -1,0 +1,6 @@
+import "std/regex" as regex;
+
+@regex.parse_by(regex.compile(r"(?P<enabled>.+)"))
+type Bad = struct { enabled: Bool };
+
+export { Bad };

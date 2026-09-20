@@ -454,6 +454,17 @@ pub struct EvidenceNode {
     pub implementation: Option<SymbolId>,
     pub arguments: Vec<(SymbolId, TypeId)>,
     pub dependencies: Vec<usize>,
+    /// Closed generic implementation selected for code generation.
+    pub instance: Option<GenericInstanceId>,
+}
+
+/// A compiler-generated `T: FromStr` obligation required by a sealed builtin
+/// adapter rather than by an authored trait-member expression.
+#[derive(Debug)]
+pub struct ParseAdapter {
+    pub target: TypeId,
+    pub property: usize,
+    pub requirement: usize,
 }
 #[derive(Clone, Debug)]
 pub struct TypeTerm {
@@ -705,6 +716,7 @@ pub struct Mir {
     pub bound_requirements: Vec<BoundRequirement>,
     pub trait_implementations: Vec<TraitImplementation>,
     pub evidence: Vec<EvidenceNode>,
+    pub parse_adapters: Vec<ParseAdapter>,
     pub type_conflicts: Vec<TypeConflict>,
     pub type_unknowns: Vec<TypeSlotId>,
     pub required_types: Vec<bool>,
@@ -852,6 +864,9 @@ impl Mir {
         }
         for (id, evidence) in self.evidence.iter().enumerate() {
             writeln!(out, "evidence {id} {evidence:?}").unwrap();
+        }
+        for (id, adapter) in self.parse_adapters.iter().enumerate() {
+            writeln!(out, "parse-adapter {id} {adapter:?}").unwrap();
         }
         for (id, parameters) in self.symbol_generics.iter().enumerate() {
             if !parameters.is_empty() {

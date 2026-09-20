@@ -20,6 +20,7 @@ impl Solver<'_> {
                     implementation: None,
                     arguments: vec![],
                     dependencies: vec![],
+                    instance: None,
                 });
                 id
             })

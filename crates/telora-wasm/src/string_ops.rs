@@ -50,9 +50,6 @@ impl Emitter<'_> {
         self.array_result(ty, data, count, STRING_BYTES)
     }
     pub fn string_native(&mut self, name: &str) -> Result<u32, String> {
-        if name == "parse_with" {
-            return self.parse_native();
-        }
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
         let output = *args.last().ok_or("Wasm: String native signature missing")?;

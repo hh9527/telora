@@ -1,11 +1,27 @@
 import "std/codec" as codec;
 import "std/string" as string;
+import "std/array" as array;
 import "std/fmt" as fmt;
 import "std/value" { Value };
 @string.decode_by_parse
 @string.encode_by_display
 @fmt.display_by("{host}:{port}")
 type Endpoint = struct {host: String, port: Int};
+impl string.FromStr for Endpoint {
+    from_str: fn(input) {
+        let parts = string.split(input, ":");
+        match array.get(parts, 0) {
+            Some(host) => match array.get(parts, 1) {
+                Some(port) => match string.parse@[Int](port) {
+                    Ok(port) => Ok({host, port}),
+                    Err(error) => Err(error),
+                },
+                None => Err({message: "missing port", value: input}),
+            },
+            None => Err({message: "missing host", value: input}),
+        }
+    },
+};
 export def inspect: Fn() -> Value = fn() {
     let endpoint: Endpoint = {host: "localhost",port: 8080};
     codec.encode(Value.type,endpoint)

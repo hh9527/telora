@@ -10,7 +10,7 @@ native replace: Fn(String, String, String) -> String;
 native indent: Fn(String, Int) -> String;
 native ensure_trailing_newline: Fn(String) -> String;
 native trim_margin: Fn(String, String) -> String;
-import "std/regex" { ParseBy };
+import "std/_parse" { FromStr, ParseError };
 import "std/type-desc" { TypeDesc };
 
 @property(PropertyTarget.Type)
@@ -18,39 +18,6 @@ type DecodeByParse = struct {};
 
 @property(PropertyTarget.Type)
 type EncodeByDisplay = struct {};
-
-type ParseError = struct {message: String, value: String};
-native parse_with: for(A) Fn(TypeOf(A), String) -> Result(A, String);
-def parse_target: for(A) Fn(TypeOf(A), String) -> Result(A, ParseError) = fn(target, input) {
-    match parse_with(target, input) {
-        Ok(value) => Ok(value),
-        Err(message) => Err({message, value: input}),
-    }
-};
-
-trait FromStr {
-    from_str: Fn(String) -> Result(Self, ParseError),
-};
-
-impl FromStr for String {
-    from_str: fn(input) { parse_target(String.type, input) },
-};
-
-impl FromStr for Int {
-    from_str: fn(input) { parse_target(Int.type, input) },
-};
-
-impl FromStr for Float {
-    from_str: fn(input) { parse_target(Float.type, input) },
-};
-
-impl(T: FromStr) FromStr for Option(T) {
-    from_str: fn(input) { parse_target((Option(T)).type, input) },
-};
-
-impl(T: Property(ParseBy)) FromStr for T {
-    from_str: fn(input) { parse_target(T.type, input) },
-};
 
 def parse: for(A: FromStr) Fn(String) -> Result(A, ParseError) = fn(input) {
     FromStr.from_str(input)

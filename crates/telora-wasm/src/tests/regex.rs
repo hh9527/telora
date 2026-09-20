@@ -13,7 +13,7 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
-    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 7]));
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 8]));
     assert!(session.diagnostics().unwrap().is_empty());
     let source = &std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -68,7 +68,6 @@ fn regex_property_initialization_validates_sealed_capture_contracts() {
             "required",
             "regex capture \"x\" is required, but its field is optional",
         ),
-        ("unsupported", "regex field \"x\" is not string-parsable"),
         ("scalar", "std/regex.parse_by requires a struct type"),
     ] {
         let source = std::fs::read_to_string(format!(

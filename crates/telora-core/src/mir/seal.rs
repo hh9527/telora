@@ -34,6 +34,40 @@ impl Mir {
                     .and_then(|slot| self.ty_slots.get(slot.index())) == Some(&TypeState::Known(*target))
             })
     }
+
+    fn valid_parse_adapters(&self) -> bool {
+        self.parse_adapters.iter().all(|adapter| {
+            let Some(property) = self.properties.get(adapter.property) else {
+                return false;
+            };
+            let Some(requirement) = self.bound_requirements.get(adapter.requirement) else {
+                return false;
+            };
+            let (Some(TypeState::Known(subject)), Some(evidence)) = (
+                self.ty_slots.get(requirement.subject.index()),
+                requirement.evidence.and_then(|id| self.evidence.get(id)),
+            ) else {
+                return false;
+            };
+            if !property.concrete
+                || *subject != adapter.target
+                || adapter.target.index() >= self.types.len()
+                || !requirement.state.is_proven()
+                || !evidence.state.is_proven()
+                || evidence.subject != adapter.target
+            {
+                return false;
+            }
+            match (evidence.implementation, evidence.instance) {
+                (_, None) => true,
+                (Some(symbol), Some(instance)) => self
+                    .generic_instances
+                    .get(instance.index())
+                    .is_some_and(|instance| instance.concrete && instance.symbol == symbol),
+                (None, Some(_)) => false,
+            }
+        })
+    }
     pub(crate) fn record_construction_inputs(&self) -> Vec<bool> {
         let mut inputs = vec![false; self.hir.len()];
         let mut pending = Vec::new();
@@ -296,6 +330,7 @@ impl Mir {
             || !self.valid_type_schemes()
             || !self.valid_generic_references()
             || !self.valid_properties()
+            || !self.valid_parse_adapters()
             || !self.valid_check_coverage()
             || !self.valid_property_admissions()
             || self.hir.iter().enumerate().any(|(node, _)| matches!(self.ty_slots.get(node), Some(TypeState::Known(ty))

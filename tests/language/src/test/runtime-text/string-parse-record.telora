@@ -10,6 +10,18 @@ type Outer = struct { inner: Inner, label: Option(String) };
 type Chain = struct { n: Int, next: Option(Chain) };
 @regex.parse_by(regex.compile("^$"))
 type Empty = struct {};
+type Hex = struct { value: Int };
+impl string.FromStr for Hex {
+    from_str: fn(input) {
+        if input == "ff" {
+            Ok({value: 255})
+        } else {
+            Err({message: "expected ff", value: input})
+        }
+    },
+};
+@regex.parse_by(regex.compile("^(?P<hex>.+)$"))
+type Exact = struct { hex: Hex };
 export def checks: Fn() -> Array(Bool) = fn() {
     [match string.parse@[Outer]("42:é🦀") { Ok(value) => value.inner.value == 42 && value.label == Some("é🦀"), Err(_) => False },
      match string.parse@[Outer]("42") { Ok(value) => value.label == None, Err(_) => False },
@@ -18,6 +30,7 @@ export def checks: Fn() -> Array(Bool) = fn() {
          Some(next) => next.n == 2 && match next.next { Some(last) => last.n == 3 && last.next == None, None => False }, None => False }, Err(_) => False },
      match string.parse@[Outer]("bad:label") { Err(error) => error.message == "$.inner.value: input is not a valid Int" && error.value == "bad:label", Ok(_) => False },
      match string.parse@[Chain]("x") { Err(error) => error.message == "$: input does not match regular expression", Ok(_) => False },
-     match string.parse@[Empty]("") { Ok(_) => True, Err(_) => False }]
+     match string.parse@[Empty]("") { Ok(_) => True, Err(_) => False },
+     match string.parse@[Exact]("ff") { Ok(value) => value.hex.value == 255, Err(_) => False }]
 };
 export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
