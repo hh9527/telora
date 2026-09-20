@@ -323,6 +323,11 @@ EntitySource、RelationDef、ColumnMap 等仍是数据 property，不应仅因�
 - section 尺寸中 code 为 22,348,747 bytes、manifest 为 4,594,426 bytes、name 为
   2,277,066 bytes、data 为 3,070,371 bytes。数据仅记录当前结果，不改变本 RFC 的
   静态选择结论。
+- 独立 `telora-run` 从该制品执行真实 browse 请求时，read 为 19.94 ms、Wasm module
+  load 为 180.54 ms、instance 为 5.68 ms、initialize 为 5,577.59 ms、reset 为
+  0.002 ms、首请求为 4.14 ms；请求消耗 1,185,043 fuel。端到端进程时间约 5.84 秒。
+  大型 service 的发布初始化需要显式提高构建预算；该预算现状与本 RFC 的 parser
+  静态选择相互独立。
 
 ## 延后事项
 
