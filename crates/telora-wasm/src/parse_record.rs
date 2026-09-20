@@ -22,23 +22,28 @@ impl Emitter<'_> {
             .as_ref()
             .ok_or("Wasm: parse record layout missing")?
             .members;
-        let property = self.read32(0, 0);
-        for (&index, &key) in &self.plan.properties {
+        let property = crate::regex_property::property_type(self.mir)
+            .ok_or("Wasm: regex parse property type missing")?;
+        if let Some((&index, &key)) = self.plan.properties.iter().find(|(index, _)| {
+            let record = &self.mir.properties[**index];
+            record.owner == target
+                && record.property == property
+                && record.site == PropertySite::Type
+        }) {
             let record = &self.mir.properties[index];
-            if record.owner != target || record.site != PropertySite::Type {
-                continue;
-            }
-            let Some(property_layout) = &self.plan.layouts[record.property.index()].object else {
-                continue;
-            };
-            let Some(regex_field) = property_layout.members.iter().find(|field| field.name == "regex"
-                && field.type_id.is_some_and(|ty| matches!(self.mir.types[ty].constructor, T::Native(id) if (id.module,id.slot)==(19,0)))) else { continue; };
-            self.bits(property);
-            self.extend([
-                I::I64Const(record.property.index() as i64),
-                I::I64Eq,
-                I::If(BlockType::Empty),
-            ]);
+            let property_layout = self.plan.layouts[record.property.index()]
+                .object
+                .as_ref()
+                .ok_or("Wasm: regex property layout missing")?;
+            let regex_field = property_layout
+                .members
+                .iter()
+                .find(|field| {
+                    field.type_id.is_some_and(|ty| {
+                        matches!(self.mir.types[ty].constructor, T::Native(id) if (id.module,id.slot)==(19,0))
+                    })
+                })
+                .ok_or("Wasm: regex property has no Regex field")?;
             let capability = self.call_key(key)?;
             let object = self.table_data(RECORDS, capability, DATA);
             let regex = self.local(ValType::I32);
@@ -53,7 +58,7 @@ impl Emitter<'_> {
                 I::LocalSet(regex),
             ]);
             let regex_id = self.read32(regex, DATA);
-            let contract = self.regex_contract_packet(target, property)?;
+            let contract = self.regex_contract_packet(target)?;
             let error = self.local(ValType::I32);
             self.extend([
                 I::I32Const(3),
@@ -135,7 +140,7 @@ impl Emitter<'_> {
                 value,
                 Some(rejection),
             )?;
-            self.extend([I::LocalGet(value), I::Return, I::End]);
+            self.extend([I::LocalGet(value), I::Return]);
         }
         self.parse_reject("type has no std/string.parse capability")?;
         Ok(1)

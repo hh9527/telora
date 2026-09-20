@@ -82,7 +82,11 @@ impl Emitter<'_> {
                 self.enum_value(provider, optional, u32::from(previous.is_some()), previous)?;
             previous = Some(self.invoke(closure, &[owner, prior])?);
         }
-        previous.ok_or_else(|| "Wasm: empty property chain".into())
+        let value = previous.ok_or_else(|| "Wasm: empty property chain".to_owned())?;
+        if crate::regex_property::property_type(self.mir) == Some(record.property) {
+            self.regex_validate_property(index, value)?;
+        }
+        Ok(value)
     }
     fn property_context(&mut self, node: HirId, index: usize, ty: TypeId) -> Result<u32, String> {
         let record = &self.mir.properties[index];

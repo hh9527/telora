@@ -13,7 +13,7 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
-    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 8]));
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 7]));
     assert!(session.diagnostics().unwrap().is_empty());
     let source = &std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -32,18 +32,14 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
     );
     assert_eq!(result[1], 42);
     assert_eq!(
-        result[2],
-        "$: regex captures must match struct fields; missing captures [\"number\"], extra captures [\"wrong\"]"
-    );
-    assert_eq!(
-        diagnostic_point(&result[3]["labels"][1]["location"]["start"]),
+        diagnostic_point(&result[2]["labels"][1]["location"]["start"]),
         point(source, source.find("\"\"").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());
 }
 
 #[test]
-fn regex_prepare_validates_sealed_capture_contracts() {
+fn regex_property_initialization_validates_sealed_capture_contracts() {
     let bytes = compile_export(
         &std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -59,27 +55,32 @@ fn regex_prepare_validates_sealed_capture_contracts() {
         session.call(&[]).unwrap(),
         serde_json::json!([true, true, true, true, true])
     );
-    let bytes = compile(
-        &std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../crates/telora-wasm/tests/fixtures/regex-prepare-errors.telora"
-        ))
-        .expect("read test source"),
-    )
-    .unwrap();
-    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
-    session.initialize().unwrap();
-    assert_eq!(
-        session.call(&[]).unwrap(),
-        serde_json::json!([
+    for (fixture, message) in [
+        (
+            "missing",
             "regex captures must match struct fields; missing captures [\"x\"], extra captures [\"y\"]",
+        ),
+        (
+            "optional",
             "regex capture \"x\" is optional, but its field is required",
+        ),
+        (
+            "required",
             "regex capture \"x\" is required, but its field is optional",
-            "regex field \"x\" is not string-parsable",
-            "std/regex.parse_by requires a struct type"
-        ])
-    );
-    assert!(session.diagnostics().unwrap().is_empty());
+        ),
+        ("unsupported", "regex field \"x\" is not string-parsable"),
+        ("scalar", "std/regex.parse_by requires a struct type"),
+    ] {
+        let source = std::fs::read_to_string(format!(
+            "{}/tests/fixtures/regex-property-{fixture}.telora",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("read regex property fixture");
+        let bytes = compile(&source).unwrap();
+        let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+        let error = session.initialize().unwrap_err().to_string();
+        assert!(error.contains(message), "{fixture}: {error}");
+    }
 }
 
 #[test]

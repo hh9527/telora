@@ -81,7 +81,7 @@ mod reflection_collections;
 mod reflection_data;
 mod reflection_ops;
 mod regex_ops;
-mod regex_prepare;
+mod regex_property;
 use telora_wasm_shared::abi as runtime_abi;
 mod scalars;
 mod sequences;

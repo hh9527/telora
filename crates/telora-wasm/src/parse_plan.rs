@@ -29,7 +29,7 @@ impl Plan {
             let signature = &mir.types[key.ty(mir, root.node)?.index()];
             let metadata = *signature
                 .arguments
-                .get(1)
+                .first()
                 .ok_or("Wasm: parse signature missing metadata")?;
             pending.push(
                 *mir.types[metadata.index()]

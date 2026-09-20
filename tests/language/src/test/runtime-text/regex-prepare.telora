@@ -6,17 +6,22 @@ import "std/value" { Value };
 type Inner = struct { value: Int };
 @regex.parse_by(regex.compile("^(?P<inner>[0-9]+)(?:-(?P<label>[a-z]+))?$"))
 type Outer = struct { inner: Inner, label: Option(String) };
+@regex.parse_by(regex.compile("^$"))
 type Empty = struct {};
+@regex.parse_by(regex.compile("(?:(?P<x>a)|b)"))
 type Maybe = struct { x: Option(String) };
+@regex.parse_by(regex.compile("(?P<x>a)+"))
 type Many = struct { x: String };
 export def checks: Fn() -> Array(Bool) = fn() {
     let inner = property.get_type_prop(Inner.type, regex.ParseBy.type);
     let outer = property.get_type_prop(Outer.type, regex.ParseBy.type);
-    let empty = regex.parse_by(regex.compile("^$"))(Empty.type, None);
-    let alternative = regex.parse_by(regex.compile("(?:(?P<x>a)|b)"))(Maybe.type, None);
-    let repeated = regex.parse_by(regex.compile("(?P<x>a)+"))(Many.type, None);
+    let empty = property.get_type_prop(Empty.type, regex.ParseBy.type);
+    let alternative = property.get_type_prop(Maybe.type, regex.ParseBy.type);
+    let repeated = property.get_type_prop(Many.type, regex.ParseBy.type);
     [match inner { Some(p) => regex.is_match(p.regex, "123"), None => False },
      match outer { Some(p) => regex.is_match(p.regex, "123-label") && regex.is_match(p.regex, "123"), None => False },
-     regex.is_match(empty.regex, ""), regex.is_match(alternative.regex, "b"), regex.is_match(repeated.regex, "aaa")]
+     match empty { Some(p) => regex.is_match(p.regex, ""), None => False },
+     match alternative { Some(p) => regex.is_match(p.regex, "b"), None => False },
+     match repeated { Some(p) => regex.is_match(p.regex, "aaa"), None => False }]
 };
 export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));

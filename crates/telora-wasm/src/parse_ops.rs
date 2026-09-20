@@ -7,26 +7,24 @@ impl Emitter<'_> {
     pub fn parse_native(&mut self) -> Result<u32, String> {
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
-        if args.len() != 4
-            || self.mir.types[args[0].index()].constructor != T::Type
-            || self.mir.types[args[1].index()].constructor != T::TypeOf
-            || self.mir.types[args[1].index()].arguments.len() != 1
-            || self.mir.types[args[2].index()].constructor != T::String
-            || self.mir.types[args[3].index()].constructor != T::Result
+        if args.len() != 3
+            || self.mir.types[args[0].index()].constructor != T::TypeOf
+            || self.mir.types[args[0].index()].arguments.len() != 1
+            || self.mir.types[args[1].index()].constructor != T::String
+            || self.mir.types[args[2].index()].constructor != T::Result
         {
             return Err("Wasm: parse_with signature mismatch".into());
         }
-        let target = self.mir.types[args[1].index()].arguments[0];
-        if self.mir.types[args[3].index()].arguments != [target, args[2]] {
+        let target = self.mir.types[args[0].index()].arguments[0];
+        if self.mir.types[args[2].index()].arguments != [target, args[1]] {
             return Err("Wasm: parse result mismatch".into());
         }
-        let property = self.parameter(0);
-        let input = self.parameter(2);
-        let path = self.text_as(node, args[2], b"$")?;
+        let input = self.parameter(1);
+        let path = self.text_as(node, args[1], b"$")?;
         let context = self.alloc(24);
         let error = self.alloc(4);
         self.store32(error, 0, 0);
-        for (offset, value) in [(0, property), (4, path), (8, error), (16, input)] {
+        for (offset, value) in [(4, path), (8, error), (16, input)] {
             self.extend([
                 I::LocalGet(context),
                 I::LocalGet(value),
@@ -46,9 +44,9 @@ impl Emitter<'_> {
             I::Return,
             I::End,
         ]);
-        let rejected = self.enum_value(node, args[3], 0, Some(message))?;
+        let rejected = self.enum_value(node, args[2], 0, Some(message))?;
         self.extend([I::LocalGet(rejected), I::Return, I::End]);
-        self.enum_value(node, args[3], 1, Some(value))
+        self.enum_value(node, args[2], 1, Some(value))
     }
     pub(crate) fn parse_call(
         &mut self,

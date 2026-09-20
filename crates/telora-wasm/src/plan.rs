@@ -207,7 +207,7 @@ impl Plan {
                 if matches!(mir.hir[root.node.index()].kind, HirKind::Interpreter)
                     || matches!(
                         crate::natives::identity(mir, root.node),
-                        Some((18, "property") | (17, "stringify_pretty"))
+                        Some((18, "property") | (17, "stringify_pretty") | (19, "parse_by"))
                     )
                 {
                     plan.functions.insert(

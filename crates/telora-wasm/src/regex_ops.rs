@@ -1,15 +1,49 @@
-use crate::{abi::*, emit::Emitter};
+use crate::{
+    abi::*,
+    emit::Emitter,
+    plan::{Key, Special},
+};
 use telora_core::mir::TypeConstructor as T;
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub fn regex_native(&mut self, name: &str) -> Result<u32, String> {
-        if name == "prepare" {
-            return self.regex_prepare();
-        }
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
         let regex = |ty: telora_core::mir::TypeId| matches!(self.mir.types[ty.index()].constructor, T::Native(id) if (id.module,id.slot) == (19,0));
+        if name == "parse_by" {
+            if self.key.special != Special::Configured {
+                if args.len() != 2
+                    || !regex(args[0])
+                    || self.mir.types[args[1].index()].constructor != T::Function
+                {
+                    return Err("Wasm: regex parse_by factory signature mismatch".into());
+                }
+                let pattern = self.parameter(0);
+                return self.function_value(
+                    node,
+                    Key {
+                        special: Special::Configured,
+                        ..self.key
+                    },
+                    args[1],
+                    &[pattern],
+                );
+            }
+            if args.len() != 3
+                || self.mir.types[args[1].index()].constructor != T::Option
+                || self.mir.types[args[1].index()].arguments != [args[2]]
+            {
+                return Err("Wasm: regex parse_by provider signature mismatch".into());
+            }
+            let pattern = self.local(ValType::I32);
+            self.extend([
+                I::LocalGet(0),
+                I::I32Load(memory(0, 2)),
+                I::LocalSet(pattern),
+            ]);
+            return self.packed_tuple(args[2], &[pattern]);
+        }
         if name == "compile"
             && args.len() == 2
             && self.mir.types[args[0].index()].constructor == T::String
