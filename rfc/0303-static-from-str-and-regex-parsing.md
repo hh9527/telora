@@ -12,7 +12,7 @@
 Telora 将字符串到类型值的转换表达为静态 `FromStr` trait。`string.parse` 通过
 `T: FromStr` evidence 选择已经封闭的实现，Wasm 只生成实际需求中的
 `Special::Parse(T)`。String、Int 与 Float 使用直接实现；regex annotation 发布
-`RegexParse` 类型 property，由标准库的 property-constrained blanket impl 提供
+`RegexParse` 类型 property，由标准库的 property-constrained fallback impl 提供
 `FromStr` evidence。
 
 Regex capture contract 在确定 owner 的 property 初始化中生成并验证。实现不再把
@@ -90,7 +90,7 @@ type YearMonth = struct {
 type RegexParse = struct { regex: Regex };
 ```
 
-标准库提供唯一 blanket impl：
+标准库提供唯一 property fallback impl：
 
 ```telora
 impl(T: Property(RegexParse)) FromStr for T {
@@ -105,7 +105,7 @@ Property 是 regex pattern 与配置的声明数据；FromStr 是行为。Trait 
 property evidence 是否发布，不检查 payload 内容。payload 的求值或 contract 验证失败时，
 property 不发布，因而没有 evidence 逃逸。
 
-### 显式实现优先
+### 普通实现优先
 
 用户可以为同一类型提供 exact 实现：
 
@@ -115,8 +115,10 @@ impl string.FromStr for Endpoint {
 };
 ```
 
-它按 RFC 0260 的固定规则优先于 `Property(RegexParse)` blanket impl。两个 exact impl、
-两个适用 blanket impl或重复 regex property 仍是冲突，不按声明顺序选择。
+它按 RFC 0260 的固定规则优先于 `Property(RegexParse)` fallback impl。普通结构 impl 也
+优先，例如 `impl(T: FromStr) FromStr for Option(T)`；否则 Option 与任意 owner 的 property
+fallback 在开放世界下必然发生模式重叠。两个适用的普通 impl、两个适用的 property
+fallback 或重复 regex property 仍是冲突，不按声明顺序选择。
 
 ## Self 与 dyn-compatible
 
@@ -149,7 +151,7 @@ trait DynParser {
 
 ```text
 (TraitId::FromStr, TypeId::YearMonth)
-    -> blanket impl instance
+    -> property fallback impl instance
     -> Property(RegexParse) evidence for YearMonth
 ```
 
@@ -257,7 +259,7 @@ EntitySource、RelationDef、ColumnMap 等仍是数据 property，不应仅因�
 - FromStr 的直接、泛型、跨模块和递归实例均封闭到稳定 implementation ID；
 - 返回 Self 不导致 Unknown，且不产生运行时类型猜测；
 - String、Int、Float 和 regex-derived Record 解析结果及来源正确；
-- explicit impl 优先于 property blanket impl；冲突产生静态诊断；
+- 普通 exact/structural impl 优先于 property fallback impl；同级冲突产生静态诊断；
 - 无效 regex、匿名 capture、字段缺失、多余 capture、required/optional 不符和字段缺少
   FromStr evidence 均有明确诊断；
 - property 失败不发布 evidence，不产生半初始化 parser；

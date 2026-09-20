@@ -1,0 +1,33 @@
+@property(PropertyTarget.Type)
+type Derived = struct {};
+
+def derived: Fn(Type, Option(Derived)) -> Derived = fn(target, previous) { {} };
+
+trait FromStr {
+    from_str: Fn(String) -> Result(Self, String),
+};
+
+type Box(T) = struct { value: T };
+
+impl FromStr for Int {
+    from_str: fn(input) { Ok(42) },
+};
+
+impl(T: FromStr) FromStr for Box(T) {
+    from_str: fn(input) {
+        match FromStr.from_str(input) {
+            Ok(value) => Ok({ value }),
+            Err(message) => Err(message),
+        }
+    },
+};
+
+impl(T: Property(Derived)) FromStr for T {
+    from_str: fn(input) { Err("derived") },
+};
+
+def parse: for(T: FromStr) Fn(TypeOf(T), String) -> Result(T, String) = fn(target, input) {
+    FromStr.from_str(input)
+};
+
+export { Derived, derived, FromStr, Box, parse };

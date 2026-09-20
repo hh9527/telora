@@ -524,3 +524,26 @@ fn exact_impl_wins_over_property_blanket_without_specializing_function_names() {
         assert!(mir.symbol_generics[symbol.index()].is_empty());
     }
 }
+
+#[test]
+fn structural_impl_wins_over_property_blanket() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type) type Tag = struct {};
+        def tag: Fn(Type, Option(Tag)) -> Tag = fn(owner, previous) { {} };
+        trait Label { label: Fn(Self) -> String };
+        type Box(T) = struct { value: T };
+        impl(T: Label) Label for Box(T) { label: fn(value) { "box" } };
+        impl(T: Property(Tag)) Label for T { label: fn(value) { "property" } };
+        impl Label for Int { label: fn(value) { "int" } };
+        @tag type Item = struct { value: Int };
+        def boxed: Box(Int) = { value: 1 };
+        def item: Item = { value: 1 };
+        export def a: String = Label.label(boxed);
+        export def b: String = Label.label(item);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+}

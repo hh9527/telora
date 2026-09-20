@@ -46,16 +46,20 @@ impl Solver<'_> {
         }
         for (index, implementation) in self.mir.trait_implementations.iter().enumerate() {
             for other in &self.mir.trait_implementations[..index] {
-                if !self.exact_property_pair(implementation, other)
+                if !self.property_fallback_pair(implementation, other)
                     && self.overlapping_patterns(implementation.trait_type, other.trait_type)
                 {
                     let here = self.mir.symbols[implementation.symbol.index()].declarations[0];
                     let previous = self.mir.symbols[other.symbol.index()].declarations[0];
                     self.mir.diagnostics.push(
                         Diagnostic::error(
-                            format!("overlapping trait implementations: {} and {}",
-                                self.diagnostic_type(self.mir.symbol_types[implementation.symbol.index()]),
-                                self.diagnostic_type(self.mir.symbol_types[other.symbol.index()])),
+                            format!(
+                                "overlapping trait implementations: {} and {}",
+                                self.diagnostic_type(
+                                    self.mir.symbol_types[implementation.symbol.index()]
+                                ),
+                                self.diagnostic_type(self.mir.symbol_types[other.symbol.index()])
+                            ),
                             self.mir.hir[here.index()].location,
                         )
                         .with_secondary(
@@ -81,7 +85,10 @@ impl Solver<'_> {
                 {
                     self.mir.diagnostics.push(
                         Diagnostic::error(
-                            format!("duplicate generic bound {}", self.diagnostic_bound(bound.ty())),
+                            format!(
+                                "duplicate generic bound {}",
+                                self.diagnostic_bound(bound.ty())
+                            ),
                             self.mir.hir[bound.index()].location,
                         )
                         .with_secondary("previous bound", self.mir.hir[previous.index()].location),
@@ -101,10 +108,16 @@ impl Solver<'_> {
                 )
             })
             .collect::<Canonical>();
-        let requirements = self.mir.bound_requirements.iter().map(|r|
-            self.known(r.subject).zip(self.known(r.bound))).collect::<Vec<_>>();
-        let roots = requirements.into_iter().map(|types|
-            types.map(|(subject, bound)| self.request_evidence(subject, bound))).collect::<Vec<_>>();
+        let requirements = self
+            .mir
+            .bound_requirements
+            .iter()
+            .map(|r| self.known(r.subject).zip(self.known(r.bound)))
+            .collect::<Vec<_>>();
+        let roots = requirements
+            .into_iter()
+            .map(|types| types.map(|(subject, bound)| self.request_evidence(subject, bound)))
+            .collect::<Vec<_>>();
         self.solve_pending_evidence(&mut canonical, None);
         for (index, root) in roots.into_iter().enumerate() {
             let state = root.map_or(BoundState::Unresolved, |root| self.mir.evidence[root].state);
@@ -117,21 +130,37 @@ impl Solver<'_> {
                 self.mir.member_selections[reference.index()] =
                     Some(MemberSelection::TraitMember {
                         index,
-                        implementation: root.and_then(|root| self.mir.evidence[root].implementation),
+                        implementation: root
+                            .and_then(|root| self.mir.evidence[root].implementation),
                     });
             }
-            if matches!(state, BoundState::Rejected | BoundState::Unresolved | BoundState::Ambiguous)
-                && !self.expansion_exhausted {
+            if matches!(
+                state,
+                BoundState::Rejected | BoundState::Unresolved | BoundState::Ambiguous
+            ) && !self.expansion_exhausted
+            {
                 let requirement = &self.mir.bound_requirements[index];
                 let subject = self.diagnostic_type(requirement.subject);
                 let bound = self.diagnostic_bound(requirement.bound);
-                let property_bound = self.known(requirement.bound).and_then(|ty| self.meta_type(ty))
-                    .is_some_and(|ty| self.mir.types[ty.index()].constructor == TypeConstructor::PropertyBound);
+                let property_bound = self
+                    .known(requirement.bound)
+                    .and_then(|ty| self.meta_type(ty))
+                    .is_some_and(|ty| {
+                        self.mir.types[ty.index()].constructor == TypeConstructor::PropertyBound
+                    });
                 let message = match state {
-                    BoundState::Rejected if property_bound => format!("{subject} does not satisfy {bound}: no static evidence"),
-                    BoundState::Rejected => format!("{subject} does not implement {bound}: no static evidence"),
-                    BoundState::Unresolved => format!("cannot establish {bound} for {subject}: unresolved type evidence"),
-                    BoundState::Ambiguous => format!("{subject} has overlapping implementations of {bound}"),
+                    BoundState::Rejected if property_bound => {
+                        format!("{subject} does not satisfy {bound}: no static evidence")
+                    }
+                    BoundState::Rejected => {
+                        format!("{subject} does not implement {bound}: no static evidence")
+                    }
+                    BoundState::Unresolved => {
+                        format!("cannot establish {bound} for {subject}: unresolved type evidence")
+                    }
+                    BoundState::Ambiguous => {
+                        format!("{subject} has overlapping implementations of {bound}")
+                    }
                     _ => unreachable!(),
                 };
                 let node = requirement.reference;
@@ -151,19 +180,24 @@ impl Solver<'_> {
         substitutions: &BTreeMap<SymbolId, TypeId>,
         canonical: &mut Canonical,
     ) -> TypeId {
-        self.mir.substitute_resolved_type(ty, substitutions, canonical)
+        self.mir
+            .substitute_resolved_type(ty, substitutions, canonical)
     }
 
     pub(super) fn contains_parameter(&self, ty: TypeId) -> bool {
         let mut pending = vec![(ty, None)];
         let mut seen = BTreeSet::new();
         while let Some((ty, binder)) = pending.pop() {
-            if !seen.insert((ty, binder)) { continue; }
+            if !seen.insert((ty, binder)) {
+                continue;
+            }
             let ty = &self.mir.types[ty.index()];
             let binder = match ty.constructor {
                 TypeConstructor::Parameter(_) => return true,
                 TypeConstructor::Bound(index) => {
-                    if binder.is_none_or(|count| index >= count) { return true; }
+                    if binder.is_none_or(|count| index >= count) {
+                        return true;
+                    }
                     continue;
                 }
                 TypeConstructor::Quantified(count) => Some(count),
@@ -193,9 +227,12 @@ impl Solver<'_> {
             })
     }
 
-    fn exact_property_pair(&self, left: &TraitImplementation, right: &TraitImplementation) -> bool {
-        (self.concrete_implementation(left) && self.property_blanket(right))
-            || (self.concrete_implementation(right) && self.property_blanket(left))
+    fn property_fallback_pair(
+        &self,
+        left: &TraitImplementation,
+        right: &TraitImplementation,
+    ) -> bool {
+        self.property_blanket(left) != self.property_blanket(right)
     }
 
     fn pattern_root(&self, mut ty: TypeId, substitutions: &BTreeMap<SymbolId, TypeId>) -> TypeId {
@@ -218,9 +255,13 @@ impl Solver<'_> {
         let mut seen = BTreeSet::new();
         while let Some(ty) = pending.pop() {
             let ty = self.pattern_root(ty, substitutions);
-            if !seen.insert(ty) { continue; }
+            if !seen.insert(ty) {
+                continue;
+            }
             let ty = &self.mir.types[ty.index()];
-            if ty.constructor == TypeConstructor::Parameter(parameter) { return true; }
+            if ty.constructor == TypeConstructor::Parameter(parameter) {
+                return true;
+            }
             pending.extend(ty.arguments.iter().copied());
         }
         false

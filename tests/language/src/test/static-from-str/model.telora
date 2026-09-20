@@ -1,0 +1,10 @@
+import "./provider" { Derived, derived, FromStr };
+
+@derived
+type Item = struct { value: Int };
+
+impl FromStr for Item {
+    from_str: fn(input) { Ok({ value: 7 }) },
+};
+
+export { Item };
