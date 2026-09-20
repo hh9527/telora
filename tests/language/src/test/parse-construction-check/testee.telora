@@ -37,19 +37,19 @@ export def untagged_ambiguity: test.Test = test.should_fail_with(fn() {
 }, "ambiguously matches multiple");
 
 export def parse_accepted: test.Test = test.should_ok(fn() {
-    expect(match string.parse((Endpoint).type, "local:80") {
+    expect(match string.parse@[Endpoint]("local:80") {
         Ok(value) => value.host == "local" && value.port == 80,
         Err(_) => False,
     })
 });
 export def parse_rejected: test.Test = test.should_fail_with(fn() {
-    string.parse((Endpoint).type, "local:0")
+    string.parse@[Endpoint]("local:0")
 }, "positive port required");
 export def nested_parse_rejected: test.Test = test.should_fail_with(fn() {
-    string.parse((Service).type, "api@local:0")
+    string.parse@[Service]("api@local:0")
 }, "positive port required");
 export def syntax_error: test.Test = test.should_ok(fn() {
-    expect(match string.parse((Endpoint).type, "invalid") {
+    expect(match string.parse@[Endpoint]("invalid") {
         Ok(_) => False, Err(error) => error.value == "invalid",
     })
 });

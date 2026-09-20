@@ -10,10 +10,10 @@ type Invalid = struct { number: Int };
 @regex.parse_by(regex.compile("^(?P<label>x)?$"))
 type Maybe = struct { label: Option(String) };
 export def answer: Fn() -> (Array(rt.Diagnostic), Int, String, rt.Diagnostic) = fn() {
-    let rejected = rt.with_diagnostics(fn(input: String) { string.parse(Positive.type, input) })("-7");
-    let success = string.parse(Positive.type, "42");
-    let invalid = string.parse(Invalid.type, "a");
-    let absent = match string.parse(Maybe.type, "") { Ok(value) => value.label, Err(_) => fail!("optional parse") };
+    let rejected = rt.with_diagnostics(fn(input: String) { string.parse@[Positive](input) })("-7");
+    let success = string.parse@[Positive]("42");
+    let invalid = string.parse@[Invalid]("a");
+    let absent = match string.parse@[Maybe]("") { Ok(value) => value.label, Err(_) => fail!("optional parse") };
     let origin = rt.with_diagnostics(fn(value: Option(String)) { fail!("optional origin", value) })(absent);
     (match rejected { Err(reports) => reports, Ok(_) => fail!("checker was not invoked") },
      match success { Ok(value) => value.number, Err(_) => fail!("valid parse rejected") },

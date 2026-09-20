@@ -4,21 +4,21 @@ import "./provider" { Box, parse };
 import "./model" { Item };
 
 export def direct_self_result: test.Test = test.should_ok(fn() {
-    expect(match parse(Int.type, "ignored") {
+    expect(match parse@[Int]("ignored") {
         Ok(value) => value == 42,
         Err(message) => False,
     })
 });
 
 export def recursive_generic_result: test.Test = test.should_ok(fn() {
-    expect(match parse((Box(Box(Int))).type, "ignored") {
+    expect(match parse@[Box(Box(Int))]("ignored") {
         Ok(value) => value.value.value == 42,
         Err(message) => False,
     })
 });
 
 export def exact_over_property_blanket: test.Test = test.should_ok(fn() {
-    expect(match parse(Item.type, "ignored") {
+    expect(match parse@[Item]("ignored") {
         Ok(value) => value.value == 7,
         Err(message) => False,
     })

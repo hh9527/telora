@@ -57,14 +57,15 @@ trait FromStr {
 
 def parse:
     for(T: FromStr)
-    Fn(TypeOf(T), String) -> Result(T, ParseError) =
-    fn(target, input) {
+    Fn(String) -> Result(T, ParseError) =
+    fn(input) {
         FromStr.from_str(input)
     };
 ```
 
-显式 `TypeOf(T)` 参数保留调用处的类型证据与现有 API 形状；trait member 的静态选择
-由 bound 中的 T 决定，不根据 `target` 的运行时位模式搜索实现。
+调用写作 `string.parse@[T](input)`。显式类型实参直接表达静态实例选择；trait member 由
+bound 中的 T 决定，不接受普通 `Type` 值，也不根据运行时位模式搜索实现。若未来需要动态
+入口，应另行定义 `parse_type(Type, String)` 并返回擦除后的值；本 RFC 不提供该能力。
 
 标准库为 String、Int、Float 提供 exact impl。实现可以返回普通 `Result`，其失败保留
 输入值来源及实现规则来源。
@@ -146,7 +147,7 @@ trait DynParser {
 
 ## MIR 与 evidence
 
-类型求解为 `string.parse(T.type, input)` 建立 FromStr obligation。成功封闭后，调用点
+类型求解为 `string.parse@[T](input)` 建立 FromStr obligation。成功封闭后，调用点
 持有确定的 implementation instance：
 
 ```text

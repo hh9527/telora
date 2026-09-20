@@ -1,0 +1,5 @@
+import "std/string" as string;
+
+type Plain = struct { value: Int };
+
+export def invalid = string.parse@[Plain]("42");

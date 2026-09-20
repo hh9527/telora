@@ -21,11 +21,39 @@ type EncodeByDisplay = struct {};
 
 type ParseError = struct {message: String, value: String};
 native parse_with: for(A) Fn(Type, TypeOf(A), String) -> Result(A, String);
-def parse: for(A) Fn(TypeOf(A), String) -> Result(A, ParseError) = fn(target, input) {
+def parse_target: for(A) Fn(TypeOf(A), String) -> Result(A, ParseError) = fn(target, input) {
     match parse_with(ParseBy.type, target, input) {
         Ok(value) => Ok(value),
         Err(message) => Err({message, value: input}),
     }
+};
+
+trait FromStr {
+    from_str: Fn(String) -> Result(Self, ParseError),
+};
+
+impl FromStr for String {
+    from_str: fn(input) { parse_target(String.type, input) },
+};
+
+impl FromStr for Int {
+    from_str: fn(input) { parse_target(Int.type, input) },
+};
+
+impl FromStr for Float {
+    from_str: fn(input) { parse_target(Float.type, input) },
+};
+
+impl(T: FromStr) FromStr for Option(T) {
+    from_str: fn(input) { parse_target((Option(T)).type, input) },
+};
+
+impl(T: Property(ParseBy)) FromStr for T {
+    from_str: fn(input) { parse_target(T.type, input) },
+};
+
+def parse: for(A: FromStr) Fn(String) -> Result(A, ParseError) = fn(input) {
+    FromStr.from_str(input)
 };
 def decode_by_parse: Fn(TypeDesc, Option(DecodeByParse)) -> DecodeByParse = fn(target, previous) {
     let property: DecodeByParse = {};
@@ -36,4 +64,4 @@ def encode_by_display: Fn(TypeDesc, Option(EncodeByDisplay)) -> EncodeByDisplay 
     property
 };
 
-export { length, join, join_lines, split, lines, starts_with, ends_with, contains, replace, indent, ensure_trailing_newline, trim_margin, parse, ParseError, DecodeByParse, EncodeByDisplay, decode_by_parse, encode_by_display };
+export { length, join, join_lines, split, lines, starts_with, ends_with, contains, replace, indent, ensure_trailing_newline, trim_margin, parse, FromStr, ParseError, DecodeByParse, EncodeByDisplay, decode_by_parse, encode_by_display };

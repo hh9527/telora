@@ -1,7 +1,7 @@
 import "std/string" as string;
 import "std/_rt" as rt;
 export def answer: Fn() -> rt.Diagnostic = fn() {
-    let value = match string.parse(Int.type, "12345") { Ok(value) => value, Err(_) => fail!("parse failed") };
+    let value = match string.parse@[Int]("12345") { Ok(value) => value, Err(_) => fail!("parse failed") };
     match rt.with_diagnostics(fn(value: Int) { fail!("parsed origin", value) })(value) {
         Err(reports) => reports[0], Ok(_) => fail!("missing diagnostic"),
     }

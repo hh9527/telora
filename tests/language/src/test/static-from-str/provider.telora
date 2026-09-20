@@ -26,7 +26,7 @@ impl(T: Property(Derived)) FromStr for T {
     from_str: fn(input) { Err("derived") },
 };
 
-def parse: for(T: FromStr) Fn(TypeOf(T), String) -> Result(T, String) = fn(target, input) {
+def parse: for(T: FromStr) Fn(String) -> Result(T, String) = fn(input) {
     FromStr.from_str(input)
 };
 

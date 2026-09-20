@@ -10,16 +10,14 @@ type Outer = struct { inner: Inner, label: Option(String) };
 type Chain = struct { n: Int, next: Option(Chain) };
 @regex.parse_by(regex.compile("^$"))
 type Empty = struct {};
-type Plain = struct { value: Int };
 export def checks: Fn() -> Array(Bool) = fn() {
-    [match string.parse(Outer.type, "42:é🦀") { Ok(value) => value.inner.value == 42 && value.label == Some("é🦀"), Err(_) => False },
-     match string.parse(Outer.type, "42") { Ok(value) => value.label == None, Err(_) => False },
-     match string.parse(Outer.type, "42:") { Ok(value) => value.label == Some(""), Err(_) => False },
-     match string.parse(Chain.type, "1,2,3") { Ok(value) => value.n == 1 && match value.next {
+    [match string.parse@[Outer]("42:é🦀") { Ok(value) => value.inner.value == 42 && value.label == Some("é🦀"), Err(_) => False },
+     match string.parse@[Outer]("42") { Ok(value) => value.label == None, Err(_) => False },
+     match string.parse@[Outer]("42:") { Ok(value) => value.label == Some(""), Err(_) => False },
+     match string.parse@[Chain]("1,2,3") { Ok(value) => value.n == 1 && match value.next {
          Some(next) => next.n == 2 && match next.next { Some(last) => last.n == 3 && last.next == None, None => False }, None => False }, Err(_) => False },
-     match string.parse(Outer.type, "bad:label") { Err(error) => error.message == "$.inner.value: input is not a valid Int" && error.value == "bad:label", Ok(_) => False },
-     match string.parse(Chain.type, "x") { Err(error) => error.message == "$: input does not match regular expression", Ok(_) => False },
-     match string.parse(Plain.type, "42") { Err(error) => error.message == "$: type has no std/string.parse capability", Ok(_) => False },
-     match string.parse(Empty.type, "") { Ok(_) => True, Err(_) => False }]
+     match string.parse@[Outer]("bad:label") { Err(error) => error.message == "$.inner.value: input is not a valid Int" && error.value == "bad:label", Ok(_) => False },
+     match string.parse@[Chain]("x") { Err(error) => error.message == "$: input does not match regular expression", Ok(_) => False },
+     match string.parse@[Empty]("") { Ok(_) => True, Err(_) => False }]
 };
 export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
