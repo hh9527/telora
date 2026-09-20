@@ -13,7 +13,7 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
-    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 8]));
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 9]));
     assert!(session.diagnostics().unwrap().is_empty());
     let source = &std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -36,6 +36,42 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
         point(source, source.find("\"\"").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
+fn unrelated_records_do_not_expand_static_regex_parsers() {
+    let source = |noise: &str| format!(r#"
+        import "std/regex" as regex;
+        import "std/string" as string;
+        @regex.parse_by(regex.compile("^(?P<value>.+)$"))
+        type Parsed = struct {{ value: Int }};
+        {noise}
+        export def answer: Fn() -> Bool = fn() {{
+            match string.parse@[Parsed]("42") {{
+                Ok(value) => value.value == 42,
+                Err(_) => False,
+            }}
+        }};
+    "#);
+    let analyze = |source: &str| {
+        let mir = graph(source);
+        let export = mir.exports.iter().flatten().copied()
+            .find(|id| mir.symbols[id.index()].name == "answer").unwrap();
+        let executable = mir.seal_export(export).unwrap();
+        let plan = crate::plan::Plan::new(&executable).unwrap();
+        let bytes = crate::compile_executable(&executable).unwrap();
+        let locals = wasmparser::Parser::new(0).parse_all(&bytes).filter_map(|payload| match payload.unwrap() {
+            wasmparser::Payload::CodeSectionEntry(body) => Some(body.get_locals_reader().unwrap()
+                .into_iter().map(|local| local.unwrap().0).sum::<u32>()),
+            _ => None,
+        }).collect::<Vec<_>>();
+        (plan.parsers.len(), locals)
+    };
+    let baseline = analyze(&source(""));
+    let with_noise = analyze(&source(
+        "type Unrelated = struct { a: String, b: Array(Int), c: Option(Float) };",
+    ));
+    assert_eq!(with_noise, baseline);
 }
 
 #[test]
@@ -113,6 +149,30 @@ fn string_parse_uses_closed_scalar_and_option_targets() {
         diagnostic_point(&report["labels"][1]["location"]["start"]),
         point(source, source.find("\"12345\"").unwrap())
     );
+}
+
+#[test]
+fn bounded_generic_from_str_dispatches_statically() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/runtime/string-parse.telora"
+    ))
+    .expect("read static parsing fixture");
+    let bytes = compile(&source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 20_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.eval().unwrap(),
+        serde_json::json!([
+            42,
+            -1.5,
+            7,
+            {"name":"api","endpoint":{"host":"localhost","port":80,"label":null}},
+            {"host":"节点","port":81,"label":"标签"},
+            true
+        ])
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
 }
 
 #[test]

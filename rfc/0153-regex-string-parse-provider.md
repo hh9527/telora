@@ -1,6 +1,7 @@
 # RFC 0153: Regex string-parse provider
 
 - Status: Implemented
+- Superseded by [RFC 0303](0303-static-from-str-and-regex-parsing.md): regex publishes a type property used by a static `FromStr` fallback implementation.
 - Parent: RFC 0151
 - Depends on: RFC 0149, RFC 0150, RFC 0152
 

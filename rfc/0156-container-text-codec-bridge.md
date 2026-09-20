@@ -1,6 +1,7 @@
 # RFC 0156: Container text-codec bridge
 
 - Status: Implemented
+- Superseded in its parse-selection mechanism by [RFC 0303](0303-static-from-str-and-regex-parsing.md): codec text bridges consume sealed `FromStr` evidence.
 - Depends on: RFC 0056, RFC 0151, RFC 0154
 
 ## Summary

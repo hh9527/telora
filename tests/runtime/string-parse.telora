@@ -11,18 +11,18 @@ type Endpoint = struct {host: String, port: Int, label: Option(String)};
 @regex.parse_by(regex.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
 type Service = struct {name: String, endpoint: Endpoint};
 
-def read: for(T) Fn(TypeOf(T), String) -> T = fn(target, input) {
-    match string.parse(target, input) {
+def read: for(T: string.FromStr) Fn(String) -> T = fn(input) {
+    match string.parse@[T](input) {
         Ok(value) => value,
         Err(error) => fail!(error.message, error.value),
     }
 };
 
 export def answer: Value = encode(Value.type, (
-    read(Int.type, "42"),
-    read(Float.type, "-1.5"),
-    read(Option(Int).type, "7"),
-    read(Service.type, "api@localhost:80"),
-    read(Endpoint.type, "节点:81#标签"),
-    match string.parse(Float.type, "NaN") { Err(_) => True, Ok(_) => False },
+    read@[Int]("42"),
+    read@[Float]("-1.5"),
+    read@[Option(Int)]("7"),
+    read@[Service]("api@localhost:80"),
+    read@[Endpoint]("节点:81#标签"),
+    match string.parse@[Float]("NaN") { Err(_) => True, Ok(_) => False },
 ));

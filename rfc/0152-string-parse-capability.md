@@ -1,6 +1,7 @@
 # RFC 0152: String parse capability
 
 - Status: Implemented
+- Superseded by [RFC 0303](0303-static-from-str-and-regex-parsing.md): the public entry is `string.parse@[T](text)` with static `T: FromStr` evidence.
 - Parent: RFC 0151
 - Depends on: RFC 0056, RFC 0123
 

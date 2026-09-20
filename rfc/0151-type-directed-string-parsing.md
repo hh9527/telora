@@ -1,6 +1,7 @@
 # RFC 0151: Type-directed string parsing
 
 - Status: Implemented
+- Superseded by [RFC 0303](0303-static-from-str-and-regex-parsing.md): parsing is selected by static `FromStr` evidence rather than runtime type metadata.
 - Partial supersession by [RFC 0269](0269-remove-any.md): Parsing failures return ParseError with the input String.
 - Depends on: RFC 0056, RFC 0123, RFC 0148
 - Child RFCs: RFC 0152 through RFC 0153

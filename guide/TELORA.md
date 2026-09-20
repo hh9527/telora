@@ -674,7 +674,11 @@ Value 施加类型契约。`codec.encode` 的首个参数固定为 canonical `Va
 校验返回 `Err(error)` 时，解码返回 `Err(error)`。untagged 解码将这种拒绝视为
 分支不匹配，要求恰好一个分支成功；校验函数主动 `fail!` 则中止执行。
 编码已经校验的值不会重复执行构造校验。
-`string.parse(T, text)` 将文本解析为 T，语法解析失败返回 `Err(ParseError)`，
+`string.parse@[T](text)` 通过静态 `T: string.FromStr` evidence 将文本解析为 T；
+语法解析失败返回 `Err(ParseError)`。String、Int、Float、Option(T) 和带
+`@regex.parse_by` 的 struct 具有标准实现，用户也可以显式
+`impl string.FromStr for T`。普通 exact/structural impl 优先于 regex property
+fallback；缺少实现会在类型求解阶段诊断，不会在运行时根据 TypeId 搜索 parser。
 成功解析的候选值及其嵌套字段经过构造校验，校验拒绝产生失败诊断。
 使用 `@string.decode_by_parse` 的 codec 文本桥接也执行这些校验，拒绝时返回
 `Err(BlameError)`，可以参与 untagged 分支试探。解析字段的来源是输入字符串。

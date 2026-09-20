@@ -1,6 +1,6 @@
 # RFC 0303：静态 FromStr 与 regex 类型绑定解析
 
-- 状态：草案，分支实施中
+- 状态：已实现
 - 跟踪：[#214](https://github.com/hh9527/telora/issues/214)
 - 分支：`explore/213-binding-lifetimes`
 - 日期：2026-09-20
@@ -302,6 +302,27 @@ EntitySource、RelationDef、ColumnMap 等仍是数据 property，不应仅因�
 - imaster-cloud ask 不再生成全图 std/regex.prepare，完整初始化成功；
 - codec JSON/text 路径与迁移前合法结果一致；
 - 比较 Wasm 大小、最大函数 locals、构建时间、初始化时间和首请求时间，仅据测量报告结果。
+
+### 实施结果（2026-09-20）
+
+- `string.parse@[T](text)`、基础/Option 实现、regex property fallback、用户 exact
+  实现和 codec text bridge 均通过 sealed evidence；活动代码中已无旧公开动态入口。
+- 泛型 regex-decorated owner、递归 Record、跨模块/泛型 trait evidence、构造校验与失败来源
+  均有 `.telora` 或 Wasm 回归覆盖。
+- 回归测试直接比较加入无关 Record 前后的 parser 数量及全部 Wasm 函数 locals 分布，结果
+  完全相同。
+- lab-ontology 的 ontology、world-model、spider-model、dog-model 均通过 `check --lib`
+  类型闭合与完整初始化。
+- imaster-cloud `@src/bin/ask` 在迁移 19 处旧调用后达到 0 conflict、0 unknown、0
+  unproven bound，并完成初始化。以 release 编译器和 1000M fuel 观测：静态阶段约
+  7.12 秒，执行初始化约 2.24 秒，消耗 791,830,712 fuel，Guest 线性内存
+  54,132,736 bytes。
+- ask 制品为 32,334,462 bytes；`wasm-tools validate` 通过。制品含 14,444 个定义函数，
+  最大函数为 2,044 locals；`std/regex.prepare` 函数数为 0，实际封闭的
+  `std/_parse.parse_with` 函数数为 22。
+- section 尺寸中 code 为 22,348,747 bytes、manifest 为 4,594,426 bytes、name 为
+  2,277,066 bytes、data 为 3,070,371 bytes。数据仅记录当前结果，不改变本 RFC 的
+  静态选择结论。
 
 ## 延后事项
 
