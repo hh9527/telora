@@ -218,6 +218,19 @@ property 可以保留。
 
 ### Builtin 边界
 
+Native 不是标准库控制流的默认实现位置。一个能力只有满足下列至少一项时才进入
+Rust/Wasm native 层：
+
+1. native 实现有明确的性能优势，例如 regex engine、数值文本转换和批量文本扫描；
+2. 性能接近，但使用一个 dynamic/isomorphic 原语可以替代大量按类型复制的 Wasm 代码，
+   从而显著减少 code size；
+3. 能力具有普通 `.telora` 代码不可获得的特权，例如 Host ABI、来源注册、诊断出口或
+   Guest 内存边界操作。
+
+第二类 native 只允许复用已经封闭的同构运行时操作。它不得根据名称、开放 TypeId 或
+property 搜索重新选择语义，也不得成为动态类型系统的兼容入口。若一个实现不满足上述
+条件，其策略、Result 组合、错误传播和普通递归控制流应默认位于 builtin `.telora`。
+
 `decode_with` 当前由 Rust codegen 完整实现，因而同时混合了两类职责：
 
 - 根据 Sealed MIR 的布局枚举 record/enum 成员并生成具体递归调用；
