@@ -13,27 +13,25 @@ impl Emitter<'_> {
         target: TypeId,
         input: u32,
     ) -> Result<u32, String> {
-        let decode = self.codec_property_present(target, 1);
-        let encode = self.codec_property_present(target, 2);
-        self.extend([
-            I::LocalGet(decode),
-            I::LocalGet(encode),
-            I::I32Ne,
-            I::If(BlockType::Empty),
-        ]);
-        self.codec_error(
-            input,
-            "std/string.decode_by_parse and std/string.encode_by_display must be used together",
-        )?;
-        self.emit(I::End);
-        self.extend([I::LocalGet(decode), I::If(BlockType::Empty)]);
-        self.codec_property_value(target, 1)?;
-        self.codec_property_value(target, 2)?;
-        let parsed = self.codec_decode_text(source, target, input)?;
-        self.extend([I::LocalGet(parsed), I::Return, I::End]);
+        let decode_property = crate::codec_properties::decode_by_parse_property(self.mir);
+        let encode_property = crate::codec_properties::encode_by_display_property(self.mir);
+        let decode = crate::codec_properties::has_property(self.mir, target, decode_property);
+        let encode = crate::codec_properties::has_property(self.mir, target, encode_property);
+        if decode != encode {
+            self.codec_error(
+                input,
+                "std/string.decode_by_parse and std/string.encode_by_display must be used together",
+            )?;
+            return Ok(self.local(wasm_encoder::ValType::I32));
+        }
+        if decode {
+            self.codec_property_value_exact(target, decode_property.unwrap())?;
+            self.codec_property_value_exact(target, encode_property.unwrap())?;
+            return self.codec_decode_text(source, target, input);
+        }
         // Validate rename metadata even for a newtype, then decode its payload.
         let rename = self.codec_rename(target, input)?;
-        let untagged = self.codec_property_value(target, 5)?;
+        let untagged = self.codec_property_value(target, 2)?;
         let layout = &self.plan.layouts[target.index()];
         if !layout.variants.is_empty() {
             self.extend([I::LocalGet(untagged), I::If(BlockType::Empty)]);
@@ -111,29 +109,10 @@ impl Emitter<'_> {
         self.codec_decode_reject("expected String text representation", input)?;
         self.emit(I::End);
         let text = self.enum_payload(source, index as u32, input)?;
-        let property = self.value_as(
-            self.key.node,
-            self.mir
-                .types
-                .iter()
-                .enumerate()
-                .find(|(_, t)| t.constructor == telora_core::mir::TypeConstructor::Type)
-                .map(|(id, _)| self.plan.layouts[id].id())
-                .ok_or("Wasm: codec property Type identity missing")?,
-            SCALAR_BYTES,
-        )?;
-        self.extend([
-            I::LocalGet(property),
-            I::LocalGet(0),
-            I::I32Load(memory(0, 2)),
-            I::I64ExtendI32U,
-            I::I64Store(memory(DATA, 3)),
-        ]);
         let path = self.read32(0, 24);
         let error = self.read32(0, 28);
         let context = self.alloc(24);
         for (offset, value) in [
-            (0, property),
             (4, path),
             (8, error),
             (16, input),

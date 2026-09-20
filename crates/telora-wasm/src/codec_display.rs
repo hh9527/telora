@@ -37,7 +37,7 @@ impl Emitter<'_> {
                 .ok_or("Wasm: DisplayBy function offset missing")?;
             self.extend([
                 I::LocalGet(0),
-                I::I32Load(memory(12, 2)),
+                I::I32Load(memory(0, 2)),
                 I::I32Const(property.property.index() as i32),
                 I::I32Eq,
                 I::If(BlockType::Empty),

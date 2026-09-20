@@ -1,4 +1,4 @@
-//! Context: six property identities, path, rejection cell.
+//! Context: three property identities, padding, path, rejection cell.
 //! Rejection cell: message, subject, original checker Blame (all pointers).
 use crate::{
     abi::*,
@@ -28,7 +28,7 @@ impl Emitter<'_> {
         let properties = self.parameter(0);
         let properties = self.codec_property_context(args[0], properties)?;
         let context = self.alloc(32);
-        self.copy(context, 0, properties, 24);
+        self.copy(context, 0, properties, 12);
         let path = self.text_as(self.key.node, self.string_type()?, b"$")?;
         let error = self.alloc(12);
         self.store32(error, 0, 0);

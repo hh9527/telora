@@ -4,13 +4,20 @@ use telora_core::mir::{SealedExecutable, TypeConstructor as T};
 impl Plan {
     pub(crate) fn plan_parsers(&mut self, executable: &SealedExecutable<'_>) -> Result<(), String> {
         let mir = executable.sealed_mir().mir();
+        let decode_by_parse = crate::codec_properties::decode_by_parse_property(mir);
         let mut pending = Vec::new();
         pending.extend(self.functions.keys().filter_map(|key| match key.special {
             Special::Decode(_, target)
                 if matches!(
                     mir.types[target.index()].constructor,
                     T::Nominal(_) | T::Record(_)
-                ) =>
+                ) && decode_by_parse.is_some_and(|property| {
+                    mir.properties.iter().any(|record| {
+                        record.owner == target
+                            && record.property == property
+                            && record.site == telora_core::mir::PropertySite::Type
+                    })
+                }) =>
             {
                 Some(target)
             }

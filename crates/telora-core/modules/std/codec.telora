@@ -1,22 +1,14 @@
 import "std/_codec" {RenameCase, JsonRenameAll, JsonUntagged};
 import "std/value" {Value};
 import "std/blame" {BlameError};
-import "std/regex" { ParseBy };
-import "std/string" { DecodeByParse, EncodeByDisplay };
 import "std/fmt" { DisplayBy };
 
 type Properties = struct {
-    parse_by: Type,
-    decode_by_parse: Type,
-    encode_by_display: Type,
     display_by: Type,
     json_rename_all: Type,
     json_untagged: Type,
 };
 def properties: Properties = {
-    parse_by: ParseBy.type,
-    decode_by_parse: DecodeByParse.type,
-    encode_by_display: EncodeByDisplay.type,
     display_by: DisplayBy.type,
     json_rename_all: JsonRenameAll.type,
     json_untagged: JsonUntagged.type,
