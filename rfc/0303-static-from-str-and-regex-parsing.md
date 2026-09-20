@@ -216,6 +216,27 @@ handle 与 contract packet，不理解 Telora 全局类型图。
 完成第二步后，codec 不再用 `parse_by` TypeId 选择行为。其他仍属于纯元数据的 codec
 property 可以保留。
 
+### Builtin 边界
+
+`decode_with` 当前由 Rust codegen 完整实现，因而同时混合了两类职责：
+
+- 根据 Sealed MIR 的布局枚举 record/enum 成员并生成具体递归调用；
+- 组合 Result、路径、诊断、property 和用户可见的解码控制流。
+
+迁移不能把前一类能力伪装成 `.telora` 运行时反射，也不能让 Rust 根据类型名称重新实现
+trait selection。目标分层为：
+
+1. MIR 为每个可达的 `Decode(Source, T)` 生成封闭 adapter 描述；描述包含成员布局、递归
+   decoder，以及每个文本桥接位置已经选定的 `FromStr` 实现；
+2. codegen 机械生成这些 adapter，不再判断某个类型“看起来是否可解析”；
+3. builtin `.telora` 实现拥有 Result 组合、递归调度、错误传播和 property 组合等主体控制流；
+4. Rust/Wasm RT 只保留 Value 表示、文本/regex/data parser 与布局访问等低层原语。
+
+因此 `DecodeByParse` 本身不应成为 Rust native provider。它是 `.telora` property；Rust 只消费
+MIR 已封闭的 owner/property identity。任意用户 exact `FromStr` 实现必须通过 adapter 中的
+已选回调进入 regex 字段和 codec 文本路径，禁止 `regex_field_parsable` 一类按
+Int/Float/String/property 分类的二次猜测。
+
 ## 与 lab-ontology 的关系
 
 lab-ontology 推荐的生命周期是 property 声明、显式根集合、一次 build_root 准备、运行期
