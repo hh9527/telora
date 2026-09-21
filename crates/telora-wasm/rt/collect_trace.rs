@@ -171,6 +171,7 @@ impl Collector {
                     }
                 }
                 8 => {
+                    self.trace_function_demands(self.old_word(old, 0));
                     let environment = self.old_word(old, 4);
                     if environment != 0 {
                         let next = self.object(ENVIRONMENTS, environment, ty);

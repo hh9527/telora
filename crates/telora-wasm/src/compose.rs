@@ -16,6 +16,7 @@ pub(crate) fn link(
     sources: &[crate::artifact::Source],
     types: &[crate::artifact::TypeDesc],
     demands: &[u32],
+    function_demands: &[Vec<u32>],
     service: Option<telora_wasm_shared::service::Contract>,
     generated_exports: &[(&str, u32)],
 ) -> Result<Vec<u8>, String> {
@@ -67,6 +68,36 @@ pub(crate) fn link(
         .checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: trace image overflow")?)
         .ok_or("Wasm: trace address overflow")?;
     data.extend_from_slice(&trace_image::encode(types)?);
+    while data.len() % 4 != 0 {
+        data.push(0);
+    }
+    let function_demands_base = image_base
+        .checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: dependency image overflow")?)
+        .ok_or("Wasm: dependency address overflow")?;
+    let header_bytes = u32::try_from(function_demands.len())
+        .ok()
+        .and_then(|count| count.checked_mul(8))
+        .ok_or("Wasm: dependency header overflow")?;
+    let mut roots_pointer = function_demands_base
+        .checked_add(header_bytes)
+        .ok_or("Wasm: dependency root address overflow")?;
+    for roots in function_demands {
+        data.extend_from_slice(&roots_pointer.to_le_bytes());
+        let count = u32::try_from(roots.len()).map_err(|_| "Wasm: too many function roots")?;
+        data.extend_from_slice(&count.to_le_bytes());
+        roots_pointer = roots_pointer
+            .checked_add(
+                count
+                    .checked_mul(4)
+                    .ok_or("Wasm: dependency roots overflow")?,
+            )
+            .ok_or("Wasm: dependency root address overflow")?;
+    }
+    for roots in function_demands {
+        for root in roots {
+            data.extend_from_slice(&root.to_le_bytes());
+        }
+    }
     let mut source_names = Vec::new();
     for source in sources {
         while data.len() % 8 != 0 {
@@ -279,6 +310,14 @@ pub(crate) fn link(
             *rt.exports
                 .get("telora_collection_bootstrap")
                 .ok_or("Wasm: missing collection bootstrap")?,
+        ));
+    boot.instruction(&Instruction::I32Const(function_demands_base as i32))
+        .instruction(&Instruction::I32Const(table_base as i32))
+        .instruction(&Instruction::I32Const(function_demands.len() as i32))
+        .instruction(&Instruction::Call(
+            *rt.exports
+                .get("telora_function_dependencies_bootstrap")
+                .ok_or("Wasm: missing function dependency bootstrap")?,
         ));
     for (index, ty) in demands.iter().copied().enumerate() {
         let offset = rt.heap_base + index as u32 * crate::abi::DEMAND_BYTES + 8;

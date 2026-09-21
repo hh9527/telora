@@ -689,6 +689,39 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
     assert!(lookup.call(&mut session.store, -1).is_err());
 }
 
+#[test]
+fn function_dependency_roots_use_planned_demand_indices() {
+    let mir = graph(
+        r#"
+        def base: String = "kept";
+        export def answer: Fn() -> String = fn() { base };
+    "#,
+    );
+    let export = mir
+        .exports
+        .iter()
+        .flatten()
+        .copied()
+        .find(|id| mir.symbols[id.index()].name == "answer")
+        .unwrap();
+    let executable = mir.seal_export(export).unwrap();
+    let plan = crate::plan::Plan::new(&executable).unwrap();
+    let base = plan
+        .globals
+        .keys()
+        .copied()
+        .find(|symbol| mir.symbols[symbol.index()].name == "base")
+        .unwrap();
+    let key = plan.globals[&base];
+    let offset = plan.demands[&key];
+    let expected = (offset - crate::compose::static_base().unwrap()) / crate::abi::DEMAND_BYTES;
+    assert!(
+        plan.function_demand_roots
+            .iter()
+            .any(|roots| roots == &[expected])
+    );
+}
+
 fn compile(source: &str) -> Result<Vec<u8>, String> {
     compile_export(source, "answer")
 }

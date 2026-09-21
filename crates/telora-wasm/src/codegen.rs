@@ -381,6 +381,7 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
                     .map(|ty| ty.index() as u32)
             })
             .collect::<Result<Vec<_>, _>>()?,
+        &plan.function_demand_roots,
         service,
         &helpers
             .iter()

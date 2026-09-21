@@ -33,8 +33,7 @@ pub(crate) unsafe fn collect() {
             let slot = demands + index * DEMAND_BYTES;
             if word(slot, 0) == 2 {
                 roots += 1;
-                let value = gc.value(word(slot, 4), word(slot, 8));
-                gc.put(slot + 4, value);
+                gc.demand(index);
             }
         }
         crate::service::collect_initialization(&mut gc);
