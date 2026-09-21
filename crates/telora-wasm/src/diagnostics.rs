@@ -29,6 +29,11 @@ impl Emitter<'_> {
         for (offset, word) in [(DIAG_CODE, ERROR_USER), (DIAG_WARNING, u32::from(warning))] {
             self.store32(packet, offset, word);
         }
+        self.store32(
+            packet,
+            DIAG_MESSAGE_TYPE,
+            self.string_type().expect("sealed String type").index() as u32,
+        );
         for (offset, value) in [
             (DIAG_MESSAGE, message),
             (DIAG_SUBJECTS, subjects),

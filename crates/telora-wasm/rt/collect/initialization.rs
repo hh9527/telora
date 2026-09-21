@@ -33,7 +33,7 @@ pub(crate) unsafe fn collect() {
             let slot = demands + index * DEMAND_BYTES;
             if word(slot, 0) == 2 {
                 roots += 1;
-                let value = gc.value(word(slot, 4));
+                let value = gc.value(word(slot, 4), word(slot, 8));
                 gc.put(slot + 4, value);
             }
         }
@@ -42,7 +42,7 @@ pub(crate) unsafe fn collect() {
         // their order also preserves Host diagnostic/debug cursors.
         for table in [DIAGNOSTICS, DEBUG_EVENTS] {
             for id in 0..gc.old[table as usize].length {
-                assert_eq!(gc.object(table, id), id);
+                assert_eq!(gc.object(table, id, u32::MAX), id);
             }
         }
         gc.finish();

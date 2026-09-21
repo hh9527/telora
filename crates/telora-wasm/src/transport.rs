@@ -1,5 +1,5 @@
 //! Typed host handles into Wasm memory; no host copy of language object graphs.
-use crate::{abi, artifact::Kind, output::Output, session::Session};
+use crate::{artifact::Kind, output::Output, session::Session};
 
 /// A borrowed language handle. Initialization compacts its owned graph: inject
 /// pre-initialization inputs into their demand slots, then acquire fresh handles
@@ -66,7 +66,7 @@ impl Session {
             .types
             .get(ty as usize)
             .ok_or("Wasm: invalid transport type")?;
-        if value.ty != ty || self.output().word(value.pointer as u64 + abi::TYPE)? != ty {
+        if value.ty != ty {
             return Err("Wasm: host value differs from sealed protocol type".into());
         }
         self.output()
@@ -102,7 +102,8 @@ impl Session {
         let args = self.allocate(
             arguments
                 .len()
-                .checked_add(1).ok_or("Wasm: argument count overflow")?
+                .checked_add(1)
+                .ok_or("Wasm: argument count overflow")?
                 .checked_mul(4)
                 .ok_or("Wasm: argument size overflow")?,
         )?;

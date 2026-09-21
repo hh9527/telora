@@ -20,14 +20,15 @@ impl Emitter<'_> {
             I::I32Load(memory(0, 2)),
             I::If(BlockType::Empty),
         ]);
-        let event = self.alloc(8);
+        let event = self.alloc(12);
         self.store32(event, 0, node.index() as u32);
+        self.store32(event, 8, self.effective_ty(node)?.index() as u32);
         self.extend([
             I::LocalGet(event),
             I::LocalGet(input),
             I::I32Store(memory(4, 2)),
         ]);
-        self.table_push(DEBUG_EVENTS, event, 8);
+        self.table_push(DEBUG_EVENTS, event, 12);
         self.emit(I::End);
         Ok(input)
     }
@@ -55,7 +56,7 @@ impl Session {
         let mut events = Vec::new();
         for index in start..count {
             let (pointer, bytes) = output.payload(DEBUG_EVENTS, index)?;
-            if bytes != 8 {
+            if bytes != 12 {
                 return Err("Wasm: invalid debug event size".into());
             }
             let node = output.word(pointer)?;
@@ -66,12 +67,18 @@ impl Session {
                 .find(|site| site.node == node)
                 .ok_or("Wasm: unknown debug site")?;
             let value = output.word(pointer + 4)? as u64;
-            let loc = output.location(site.origin)?.ok_or("Wasm: debug site has no location")?;
-            let source = self.manifest.sources.iter().find(|source| source.id == loc[0])
+            let loc = output
+                .location(site.origin)?
+                .ok_or("Wasm: debug site has no location")?;
+            let source = self
+                .manifest
+                .sources
+                .iter()
+                .find(|source| source.id == loc[0])
                 .ok_or("Wasm: debug site has no source")?;
             events.push(DebugEvent {
                 name: site.name.clone(),
-                repr: output.debug_repr(value)?,
+                repr: output.debug_repr(value, site.ty)?,
                 module: source.name.clone(),
                 line: loc[1].checked_add(1).ok_or("Wasm: debug line overflow")?,
                 message: site.message.clone(),

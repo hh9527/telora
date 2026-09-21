@@ -3,6 +3,11 @@ use crate::artifact::{Kind, TypeDesc};
 use telora_wasm_shared::layout_image as layout;
 
 pub(super) fn encode(types: &[TypeDesc]) -> Result<Vec<u8>, String> {
+    let string = types
+        .iter()
+        .position(|ty| ty.kind == Kind::String)
+        .and_then(|index| u32::try_from(index).ok())
+        .ok_or("Wasm: closed layouts lack String")?;
     let mut image = vec![
         0;
         types
@@ -31,7 +36,15 @@ pub(super) fn encode(types: &[TypeDesc]) -> Result<Vec<u8>, String> {
         let count = match kind {
             layout::Kind::Record => ty.fields.len(),
             layout::Kind::Enum => ty.variants.len(),
-            layout::Kind::Array | layout::Kind::Dict => ty.arguments.len(),
+            layout::Kind::Array => ty.arguments.len(),
+            layout::Kind::Dict => ty.arguments.len() + 1,
+            layout::Kind::Newtype => {
+                if ty.fields.is_empty() {
+                    ty.arguments.len()
+                } else {
+                    ty.fields.len()
+                }
+            }
             _ => 0,
         };
         let count = u32::try_from(count).map_err(|_| "Wasm: layout details overflow")?;
@@ -67,9 +80,26 @@ pub(super) fn encode(types: &[TypeDesc]) -> Result<Vec<u8>, String> {
                     );
                 }
             }
-            layout::Kind::Array | layout::Kind::Dict => {
+            layout::Kind::Array => {
                 for (index, ty) in ty.arguments.iter().copied().enumerate() {
                     detail(&mut image, Some(ty), index as u32, 0);
+                }
+            }
+            layout::Kind::Dict => {
+                detail(&mut image, Some(string), 0, 0);
+                for (index, ty) in ty.arguments.iter().copied().enumerate() {
+                    detail(&mut image, Some(ty), index as u32 + 1, 0);
+                }
+            }
+            layout::Kind::Newtype => {
+                if ty.fields.is_empty() {
+                    for (index, ty) in ty.arguments.iter().copied().enumerate() {
+                        detail(&mut image, Some(ty), index as u32, 0);
+                    }
+                } else {
+                    for field in &ty.fields {
+                        detail(&mut image, Some(field.ty), field.offset, 0);
+                    }
                 }
             }
             _ => {}

@@ -55,7 +55,6 @@ impl Emitter<'_> {
                 }
                 argument_value = self.value_as(node, argument, self.width(argument)?)?;
                 self.copy(argument_value, 0, value, self.width(argument)?);
-                self.store32(argument_value, TYPE, argument.index() as u32);
             }
             let closure = self.call_key(key)?;
             let value = self.invoke(closure, &[argument_value])?;

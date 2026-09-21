@@ -79,6 +79,7 @@ pub(crate) struct Plan {
     pub instances: BTreeMap<GenericInstanceId, Key>,
     pub demands: BTreeMap<Key, u32>,
     pub captures: BTreeMap<Key, Vec<SymbolId>>,
+    pub capture_types: BTreeMap<Key, Vec<TypeId>>,
     pub instance_captures: BTreeMap<Key, Vec<GenericInstanceId>>,
     pub local_instances: BTreeSet<GenericInstanceId>,
     pub layouts: Vec<telora_core::candidate_layout::Entry>,
@@ -110,6 +111,7 @@ impl Plan {
             instances: BTreeMap::new(),
             demands: BTreeMap::new(),
             captures: BTreeMap::new(),
+            capture_types: BTreeMap::new(),
             instance_captures: BTreeMap::new(),
             local_instances: BTreeSet::new(),
             layouts: telora_core::candidate_layout::calculate(executable.sealed_mir())?,
@@ -134,10 +136,15 @@ impl Plan {
             // A monomorphic trait implementation can be reached only through
             // a selected instance. Emit exactly the contexts sealed by MIR;
             // global scope alone does not admit another initializer.
-            if executable.closure().nodes().binary_search(&telora_core::mir::ExecutionRoot {
-                node,
-                instance: None,
-            }).is_err() {
+            if executable
+                .closure()
+                .nodes()
+                .binary_search(&telora_core::mir::ExecutionRoot {
+                    node,
+                    instance: None,
+                })
+                .is_err()
+            {
                 continue;
             }
             let key = Key {
@@ -311,12 +318,20 @@ impl Plan {
         // the expression's source location. Values carry their own source head.
         let mut constructors = BTreeMap::new();
         for key in plan.functions.keys().copied().collect::<Vec<_>>() {
-            if !key.callable || key.special != Special::Normal { continue; }
-            let Some(fact @ telora_core::mir::ValueMaterialization::EnumVariant { .. }) = mir.value_materializations[key.node.index()] else { continue; };
+            if !key.callable || key.special != Special::Normal {
+                continue;
+            }
+            let Some(fact @ telora_core::mir::ValueMaterialization::EnumVariant { .. }) =
+                mir.value_materializations[key.node.index()]
+            else {
+                continue;
+            };
             let identity = (key.ty(mir, key.node)?, fact);
             let canonical = *constructors.entry(identity).or_insert(key);
             plan.constructor_aliases.insert(key, canonical);
-            if canonical != key { plan.functions.remove(&key); }
+            if canonical != key {
+                plan.functions.remove(&key);
+            }
         }
         for (index, function) in plan.functions.values_mut().enumerate() {
             *function = u32::try_from(index)
@@ -346,7 +361,7 @@ impl Plan {
             }
             let mut pending = vec![key.node];
             let mut declared = BTreeSet::new();
-            let mut referenced = BTreeSet::new();
+            let mut referenced = BTreeMap::new();
             let mut instances = BTreeSet::new();
             while let Some(node) = pending.pop() {
                 let syntax = &mir.hir[node.index()];
@@ -393,13 +408,19 @@ impl Plan {
                     {
                         instances.insert(instance);
                     } else if mir.symbol_generics[symbol.index()].is_empty() {
-                        referenced.insert(symbol);
+                        referenced.insert(symbol, key.effective_ty(mir, node)?);
                     }
                 }
                 pending.extend(syntax.children.iter().map(|edge| edge.node));
             }
+            let captures = referenced
+                .into_iter()
+                .filter(|(symbol, _)| !declared.contains(symbol))
+                .collect::<Vec<_>>();
             plan.captures
-                .insert(key, referenced.difference(&declared).copied().collect());
+                .insert(key, captures.iter().map(|(symbol, _)| *symbol).collect());
+            plan.capture_types
+                .insert(key, captures.into_iter().map(|(_, ty)| ty).collect());
             plan.instance_captures.insert(
                 key,
                 instances
@@ -409,8 +430,10 @@ impl Plan {
             );
         }
         for key in plan.functions.keys() {
-            if key.callable && key.special == Special::Normal
-                && crate::natives::identity(mir, key.node).is_some() {
+            if key.callable
+                && key.special == Special::Normal
+                && crate::natives::identity(mir, key.node).is_some()
+            {
                 plan.native_signatures.insert(key.ty(mir, key.node)?);
             }
         }

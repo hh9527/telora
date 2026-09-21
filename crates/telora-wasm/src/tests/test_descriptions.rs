@@ -117,14 +117,15 @@ fn test_descriptions_preserve_identity_and_defer_callbacks() {
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     session.initialize().unwrap();
     let value = session.entry().unwrap() as usize;
-    let word = |output: &crate::output::Output<'_>, offset: usize| output.word(offset as u64).unwrap();
+    let word =
+        |output: &crate::output::Output<'_>, offset: usize| output.word(offset as u64).unwrap();
     let output = session.output();
     let memory = &output;
     let id = word(memory, value + crate::abi::DATA as usize) as usize;
     let table = crate::abi::table_address(crate::abi::TESTS) as usize;
     let slot = word(memory, table) as usize + id * 8;
     let description = word(memory, slot) as usize;
-    assert_eq!(word(memory, slot + 4), 12);
+    assert_eq!(word(memory, slot + 4), 16);
     assert_eq!(word(memory, description), 0);
     assert_eq!(word(memory, description + 4), 1);
     let callback = word(memory, description + 8);
@@ -138,7 +139,10 @@ fn test_descriptions_preserve_identity_and_defer_callbacks() {
     assert_ne!(result, 0);
     assert_eq!(
         i64::from_le_bytes(
-            session.output().bytes(result as u64 + crate::abi::DATA, 8).unwrap()
+            session
+                .output()
+                .bytes(result as u64 + crate::abi::DATA, 8)
+                .unwrap()
                 .try_into()
                 .unwrap()
         ),

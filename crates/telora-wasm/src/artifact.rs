@@ -37,6 +37,7 @@ pub struct Global {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DebugSite {
     pub node: u32,
+    pub ty: u32,
     pub origin: [u32; 3],
     pub name: String,
     pub message: Option<String>,
@@ -246,7 +247,15 @@ impl Manifest {
                     };
                     Some(DebugSite {
                         node: index as u32,
-                        origin: [node.location.source.get(), node.location.start, node.location.end],
+                        ty: match mir.ty_slots[index] {
+                            TypeState::Known(ty) => ty.index() as u32,
+                            _ => return None,
+                        },
+                        origin: [
+                            node.location.source.get(),
+                            node.location.start,
+                            node.location.end,
+                        ],
                         name: expression.replace("\r\n", "\n").replace('\r', "\n"),
                         message: message.clone(),
                     })
@@ -286,7 +295,8 @@ impl Manifest {
                     return Err("Wasm: duplicate manifest".into());
                 }
                 manifest = Some(
-                    telora_data::json_serde::from_slice::<Self>(section.data()).map_err(|e| e.to_string())?,
+                    telora_data::json_serde::from_slice::<Self>(section.data())
+                        .map_err(|e| e.to_string())?,
                 );
             }
         }
@@ -294,9 +304,11 @@ impl Manifest {
         if manifest.abi != crate::abi::VERSION {
             return Err("Wasm: unsupported artifact ABI version".into());
         }
-        if manifest.sources.iter().any(|source| {
-            source.id == 0 || source.id > u16::MAX as u32
-        }) {
+        if manifest
+            .sources
+            .iter()
+            .any(|source| source.id == 0 || source.id > u16::MAX as u32)
+        {
             return Err("Wasm: invalid source position index".into());
         }
         if manifest
@@ -308,8 +320,10 @@ impl Manifest {
                 .into_iter()
                 .any(|ty| ty as usize >= manifest.types.len())
             || manifest.entry_type as usize >= manifest.types.len()
-            || manifest.globals.iter().any(|global| global.ty as usize >= manifest.types.len()
-                || global.demand % crate::abi::DEMAND_BYTES != 0)
+            || manifest
+                .globals
+                .iter()
+                .any(|global| global.ty as usize >= manifest.types.len() || global.demand % 4 != 0)
             || manifest.types.iter().any(|ty| {
                 ty.arguments
                     .iter()

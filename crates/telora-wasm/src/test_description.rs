@@ -72,7 +72,7 @@ impl Emitter<'_> {
             self.report(self.key.node, message, inputs[1], one, false);
             self.emit(I::End);
         }
-        let bytes = 8 + arity as u32 * 4;
+        let bytes = 8 + arity as u32 * 8;
         let description = self.alloc(bytes);
         self.store32(description, 0, operation as u32);
         self.store32(description, 4, arity as u32);
@@ -82,6 +82,11 @@ impl Emitter<'_> {
                 I::LocalGet(input),
                 I::I32Store(memory(8 + index as u64 * 4, 2)),
             ]);
+            self.store32(
+                description,
+                8 + (arity + index) as u64 * 4,
+                args[index].index() as u32,
+            );
         }
         let id = self.table_push(TESTS, description, bytes);
         let result = self.value_as(self.key.node, output, SCALAR_BYTES)?;

@@ -23,7 +23,7 @@ pub(crate) unsafe fn collect_initialization(gc: &mut crate::collect::Collector) 
     unsafe {
         if let Some(service) = (&mut *core::ptr::addr_of_mut!(SERVICE)).as_mut() {
             assert!(service.phase == Phase::Ready);
-            service.handler = gc.value(service.handler);
+            service.handler = gc.value(service.handler, service.contract.handler_type);
             service.initializer = 0;
             inputs::release_initialization_values();
         }

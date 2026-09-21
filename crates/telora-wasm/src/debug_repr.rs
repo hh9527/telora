@@ -32,15 +32,20 @@ impl Formatter {
         }
         self.push("\"");
     }
-    fn value(&mut self, output: &Output<'_>, pointer: u64, depth: usize) -> Result<(), String> {
+    fn value(
+        &mut self,
+        output: &Output<'_>,
+        pointer: u64,
+        ty: u32,
+        depth: usize,
+    ) -> Result<(), String> {
         if self.truncated {
             return Ok(());
         }
-        let ty = output.word(pointer + TYPE)? as usize;
         let desc = output
             .manifest
             .types
-            .get(ty)
+            .get(ty as usize)
             .ok_or("Wasm: invalid debug TypeId")?;
         output.bytes(pointer, desc.bytes as u64)?;
         match desc.kind {
@@ -89,20 +94,22 @@ impl Formatter {
                         pointer + DATA + 8
                     };
                     self.push("(");
-                    self.value(output, value, depth + 1)?;
+                    self.value(output, value, branch.ty.unwrap(), depth + 1)?;
                     self.push(")");
                 }
             }
             Kind::Newtype => {
                 let (value, _) = output.payload(NEWTYPES, output.word(pointer + DATA)?)?;
                 self.push("(");
-                self.value(output, value, depth + 1)?;
+                self.value(output, value, desc.arguments[0], depth + 1)?;
                 self.push(")");
             }
             Kind::Array | Kind::Dict => {
                 let dict = desc.kind == Kind::Dict;
-                let (base, bytes) =
-                    output.payload(ARRAYS, output.word(pointer + if dict { DATA + 8 } else { DATA })?)?;
+                let (base, bytes) = output.payload(
+                    ARRAYS,
+                    output.word(pointer + if dict { DATA + 8 } else { DATA })?,
+                )?;
                 let start = if dict {
                     0
                 } else {
@@ -143,7 +150,7 @@ impl Formatter {
                         self.push(output.text_str(keys + index * u64::from(STRING_BYTES))?);
                         self.push(": ");
                     }
-                    self.value(output, base + index * stride, depth + 1)?;
+                    self.value(output, base + index * stride, element, depth + 1)?;
                 }
                 if end - start > 32 {
                     self.push(", ...");
@@ -174,7 +181,7 @@ impl Formatter {
                         self.push(&field.name);
                         self.push(": ");
                     }
-                    self.value(output, base + field.offset as u64, depth + 1)?;
+                    self.value(output, base + field.offset as u64, field.ty, depth + 1)?;
                 }
                 if desc.fields.len() > 32 {
                     self.push(", ...");
@@ -187,12 +194,12 @@ impl Formatter {
 }
 
 impl Output<'_> {
-    pub(crate) fn debug_repr(&self, pointer: u64) -> Result<String, String> {
+    pub(crate) fn debug_repr(&self, pointer: u64, ty: u32) -> Result<String, String> {
         let mut formatter = Formatter {
             text: String::new(),
             truncated: false,
         };
-        formatter.value(self, pointer, 0)?;
+        formatter.value(self, pointer, ty, 0)?;
         if formatter.truncated {
             formatter.text.push_str("...");
         }

@@ -19,8 +19,14 @@ impl Emitter<'_> {
             telora_core::mir::HirKind::Interpreter
         ) {
             // A trusted higher-order adapter captures its input function now.
-            let operand = self.expression(child(self.mir, node, Role::Operand)?)?;
-            return self.function_value(node, key, self.effective_ty(node)?, &[operand]);
+            let operand_node = child(self.mir, node, Role::Operand)?;
+            let operand = self.expression(operand_node)?;
+            return self.function_value(
+                node,
+                key,
+                self.effective_ty(node)?,
+                &[(operand, self.effective_ty(operand_node)?)],
+            );
         }
         let captures = self
             .plan
@@ -28,7 +34,7 @@ impl Emitter<'_> {
             .get(&key)
             .ok_or_else(|| format!("Wasm: closure absent from sealed plan: {key:?}"))?;
         let mut values = vec![];
-        for symbol in captures {
+        for (symbol, &capture_ty) in captures.iter().zip(&self.plan.capture_types[&key]) {
             let capture = *self.bindings.get(symbol).ok_or_else(|| {
                 format!(
                     "Wasm: unavailable capture {symbol:?} ({}) for {key:?} in {:?}",
@@ -36,12 +42,16 @@ impl Emitter<'_> {
                     self.key
                 )
             })?;
-            values.push(capture);
+            values.push((capture, capture_ty));
         }
         for instance in &self.plan.instance_captures[&key] {
-            values.push(*self.local_instances.get(instance).ok_or_else(|| {
+            let capture = *self.local_instances.get(instance).ok_or_else(|| {
                 format!("Wasm: missing local instance capture {instance:?} for {key:?}")
-            })?);
+            })?;
+            values.push((
+                capture,
+                self.mir.generic_instances[instance.index()].signature,
+            ));
         }
         self.function_value(node, key, self.effective_ty(node)?, &values)
     }
@@ -50,7 +60,7 @@ impl Emitter<'_> {
         node: HirId,
         key: Key,
         ty: telora_core::mir::TypeId,
-        captures: &[u32],
+        captures: &[(u32, telora_core::mir::TypeId)],
     ) -> Result<u32, String> {
         if let Some(canonical) = self.plan.constructor_aliases.get(&key) {
             let function = self.plan.functions[canonical];
@@ -66,20 +76,25 @@ impl Emitter<'_> {
             .functions
             .get(&key)
             .ok_or("Wasm: callable is absent from sealed plan")?;
-        let environment = self.alloc(captures.len() as u32 * 4);
-        for (index, &capture) in captures.iter().enumerate() {
+        let environment = self.alloc(captures.len() as u32 * 8);
+        for (index, &(capture, capture_ty)) in captures.iter().enumerate() {
             self.extend([
                 I::LocalGet(environment),
                 I::LocalGet(capture),
                 I::I32Store(memory(index as u64 * 4, 2)),
             ]);
+            self.store32(
+                environment,
+                (captures.len() + index) as u64 * 4,
+                capture_ty.index() as u32,
+            );
         }
         let result = self.value_as(node, ty, FUNCTION_BYTES)?;
         self.emit(I::LocalGet(result));
         self.function_pointer(function);
         self.emit(I::I32Store(memory(DATA, 2)));
         // Even an empty environment gives each evaluated closure an identity.
-        let bytes = captures.len() as u32 * 4;
+        let bytes = captures.len() as u32 * 8;
         let id = self.table_push(ENVIRONMENTS, environment, bytes);
         self.extend([
             I::LocalGet(result),
@@ -129,7 +144,9 @@ impl Emitter<'_> {
         // user closures ignore it and return their values without relocation.
         let origin = if self.plan.native_signatures.contains(&self.ty(target)?) {
             Some(self.computation_origin(node)?)
-        } else { None };
+        } else {
+            None
+        };
         if self.tail_calls.contains(&node) {
             self.tail_invoke(callee, values, origin)
         } else {
@@ -146,8 +163,11 @@ impl Emitter<'_> {
             ]);
         }
         if let Some(origin) = origin {
-            self.extend([I::LocalGet(args), I::LocalGet(origin),
-                I::I32Store(memory(values.len() as u64 * 4, 2))]);
+            self.extend([
+                I::LocalGet(args),
+                I::LocalGet(origin),
+                I::I32Store(memory(values.len() as u64 * 4, 2)),
+            ]);
         }
         args
     }
@@ -155,7 +175,12 @@ impl Emitter<'_> {
         let origin = self.computation_origin(self.key.node)?;
         self.invoke_at(callee, values, Some(origin))
     }
-    fn invoke_at(&mut self, callee: u32, values: &[u32], origin: Option<u32>) -> Result<u32, String> {
+    fn invoke_at(
+        &mut self,
+        callee: u32,
+        values: &[u32],
+        origin: Option<u32>,
+    ) -> Result<u32, String> {
         let args = self.argument_array(values, origin);
         let result = self.local(ValType::I32);
         self.extend([

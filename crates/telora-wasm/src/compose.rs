@@ -15,7 +15,7 @@ pub(crate) fn link(
     reserved_bytes: u32,
     sources: &[crate::artifact::Source],
     types: &[crate::artifact::TypeDesc],
-    demands: u32,
+    demands: &[u32],
     service: Option<telora_wasm_shared::service::Contract>,
     generated_exports: &[(&str, u32)],
 ) -> Result<Vec<u8>, String> {
@@ -60,9 +60,12 @@ pub(crate) fn link(
             _ => {}
         }
     }
-    while data.len() % 8 != 0 { data.push(0); }
-    let trace_base = image_base.checked_add(u32::try_from(data.len())
-        .map_err(|_| "Wasm: trace image overflow")?).ok_or("Wasm: trace address overflow")?;
+    while data.len() % 8 != 0 {
+        data.push(0);
+    }
+    let trace_base = image_base
+        .checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: trace image overflow")?)
+        .ok_or("Wasm: trace address overflow")?;
     data.extend_from_slice(&trace_image::encode(types)?);
     let mut source_names = Vec::new();
     for source in sources {
@@ -74,26 +77,46 @@ pub(crate) fn link(
             .ok_or("Wasm: source name address overflow")?;
         let length = u32::try_from(source.name.len()).map_err(|_| "Wasm: source name too long")?;
         data.extend_from_slice(source.name.as_bytes());
-        while data.len() % 4 != 0 { data.push(0); }
-        let index_pointer = image_base.checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: source index overflow")?)
+        while data.len() % 4 != 0 {
+            data.push(0);
+        }
+        let index_pointer = image_base
+            .checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: source index overflow")?)
             .ok_or("Wasm: source index address overflow")?;
         let count = u32::try_from(source.lines.len()).map_err(|_| "Wasm: too many source lines")?;
         for range in &source.lines {
-            for word in range { data.extend_from_slice(&word.to_le_bytes()); }
+            for word in range {
+                data.extend_from_slice(&word.to_le_bytes());
+            }
         }
         source_names.push((source.id, pointer, length, index_pointer, count));
     }
     let service_base = if let Some(mut contract) = service {
-        while data.len() % 4 != 0 { data.push(0); }
-        let base = image_base.checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: service image too large")?)
-            .ok_or("Wasm: service image overflow")?;
-        for slot in [&mut contract.initialize, &mut contract.entry, &mut contract.materialize] {
-            if *slot >= generated { return Err("Wasm: invalid service callback".into()); }
-            *slot = table_base.checked_add(*slot).ok_or("Wasm: service callback overflow")?;
+        while data.len() % 4 != 0 {
+            data.push(0);
         }
-        for word in contract.words() { data.extend_from_slice(&word.to_le_bytes()); }
+        let base = image_base
+            .checked_add(u32::try_from(data.len()).map_err(|_| "Wasm: service image too large")?)
+            .ok_or("Wasm: service image overflow")?;
+        for slot in [
+            &mut contract.initialize,
+            &mut contract.entry,
+            &mut contract.materialize,
+        ] {
+            if *slot >= generated {
+                return Err("Wasm: invalid service callback".into());
+            }
+            *slot = table_base
+                .checked_add(*slot)
+                .ok_or("Wasm: service callback overflow")?;
+        }
+        for word in contract.words() {
+            data.extend_from_slice(&word.to_le_bytes());
+        }
         Some(base)
-    } else { None };
+    } else {
+        None
+    };
     if imports.len() != FIRST_FUNCTION as usize {
         return Err("Wasm: generated RT import contract changed".into());
     }
@@ -251,9 +274,22 @@ pub(crate) fn link(
         ));
     boot.instruction(&Instruction::I32Const(trace_base as i32))
         .instruction(&Instruction::I32Const(rt.heap_base as i32))
-        .instruction(&Instruction::I32Const(demands as i32))
-        .instruction(&Instruction::Call(*rt.exports.get("telora_collection_bootstrap")
-            .ok_or("Wasm: missing collection bootstrap")?));
+        .instruction(&Instruction::I32Const(demands.len() as i32))
+        .instruction(&Instruction::Call(
+            *rt.exports
+                .get("telora_collection_bootstrap")
+                .ok_or("Wasm: missing collection bootstrap")?,
+        ));
+    for (index, ty) in demands.iter().copied().enumerate() {
+        let offset = rt.heap_base + index as u32 * crate::abi::DEMAND_BYTES + 8;
+        boot.instruction(&Instruction::I32Const(offset as i32))
+            .instruction(&Instruction::I32Const(ty as i32))
+            .instruction(&Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }));
+    }
     for (id, pointer, length, index_pointer, count) in source_names {
         boot.instruction(&Instruction::I32Const(id as i32))
             .instruction(&Instruction::I32Const(pointer as i32))
@@ -267,13 +303,19 @@ pub(crate) fn link(
         boot.instruction(&Instruction::I32Const(id as i32))
             .instruction(&Instruction::I32Const(index_pointer as i32))
             .instruction(&Instruction::I32Const(count as i32))
-            .instruction(&Instruction::Call(*rt.exports.get("telora_static_source_index")
-                .ok_or("Wasm: missing source index registration")?));
+            .instruction(&Instruction::Call(
+                *rt.exports
+                    .get("telora_static_source_index")
+                    .ok_or("Wasm: missing source index registration")?,
+            ));
     }
     if let Some(base) = service_base {
         boot.instruction(&Instruction::I32Const(base as i32))
-            .instruction(&Instruction::Call(*rt.exports.get("telora_service_bootstrap")
-                .ok_or("Wasm: missing service bootstrap")?));
+            .instruction(&Instruction::Call(
+                *rt.exports
+                    .get("telora_service_bootstrap")
+                    .ok_or("Wasm: missing service bootstrap")?,
+            ));
     }
     boot.instruction(&Instruction::End);
     let mut boot_code = CodeSection::new();
@@ -284,7 +326,9 @@ pub(crate) fn link(
     output.sections.insert(8, start);
     let mut exports = ExportSection::new();
     for &(name, index) in generated_exports {
-        if index >= generated { return Err("Wasm: invalid generated export index".into()); }
+        if index >= generated {
+            return Err("Wasm: invalid generated export index".into());
+        }
         exports.export(name, ExportKind::Func, rt.functions + index);
     }
     exports.export("telora_error", ExportKind::Global, rt.globals);

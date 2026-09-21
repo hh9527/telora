@@ -98,7 +98,7 @@ impl Emitter<'_> {
             self.emit(I::End);
         }
         // Retain stable immutable value pointers, not copies of their heap data.
-        let data = self.alloc(12);
+        let data = self.alloc(20);
         self.store32(data, 0, operation as u32);
         for (offset, value) in [(4, first), (8, second)] {
             self.extend([
@@ -107,7 +107,13 @@ impl Emitter<'_> {
                 I::I32Store(memory(offset, 2)),
             ]);
         }
-        let id = self.table_push(FORMATS, data, 12);
+        self.store32(data, 12, args[0].index() as u32);
+        self.store32(
+            data,
+            16,
+            args.get(1).copied().unwrap_or(args[0]).index() as u32,
+        );
+        let id = self.table_push(FORMATS, data, 20);
         let result = self.value_as(node, output, SCALAR_BYTES)?;
         self.extend([
             I::LocalGet(result),

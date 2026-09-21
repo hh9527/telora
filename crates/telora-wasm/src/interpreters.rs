@@ -61,7 +61,7 @@ impl Emitter<'_> {
                     ..factory
                 },
                 inner_ty,
-                &[callee],
+                &[(callee, self.ty(operand)?)],
             );
         }
         let mut inputs = Vec::new();

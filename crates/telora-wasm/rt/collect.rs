@@ -59,9 +59,10 @@ pub(crate) struct Collector {
     pub types: u32,
     pub old: [Table; TABLE_COUNT as usize],
     pub slots: Vec<Vec<Slot>>,
-    pub objects: BTreeMap<(u32, u32), u32>,
-    pub values: BTreeMap<u32, u32>,
-    pub pending: Vec<(u32, u32, u32, u32)>, // table, old pointer, destination offset, bytes
+    pub objects: BTreeMap<(u32, u32), (u32, u32)>,
+    pub values: BTreeMap<u32, (u32, u32)>,
+    // table, old pointer, destination, bytes, closed payload layout
+    pub pending: Vec<(u32, u32, u32, u32, u32)>,
     pub sources: alloc::collections::BTreeSet<u32>,
     pub content: Vec<u32>,
 }
@@ -94,15 +95,23 @@ impl Collector {
     pub fn put(&mut self, at: u32, value: u32) {
         unsafe { crate::heap::write(at, value); }
     }
-    pub unsafe fn value(&mut self, pointer: u32) -> u32 {
+    pub unsafe fn value(&mut self, pointer: u32, ty: u32) -> u32 {
         unsafe {
             if pointer == 0 || crate::heap::is_frozen(pointer) {
                 return pointer;
             }
-            if let Some(&at) = self.values.get(&pointer) {
+            if let Some(&(at, previous)) = self.values.get(&pointer) {
+                let previous_bytes = word(
+                    self.types + previous * layout::ENTRY_BYTES,
+                    layout::VALUE_BYTES as u64,
+                );
+                let bytes = word(
+                    self.types + ty * layout::ENTRY_BYTES,
+                    layout::VALUE_BYTES as u64,
+                );
+                assert_eq!(previous_bytes, bytes, "value reached through incompatible layouts");
                 return at;
             }
-            let ty = self.old_word(pointer, TYPE);
             self.trace_location(self.old_location(pointer));
             let bytes = word(
                 self.types + ty * layout::ENTRY_BYTES,
@@ -110,24 +119,24 @@ impl Collector {
             );
             assert!(bytes >= HEADER_BYTES);
             let at = self.copy_bytes(pointer, bytes);
-            self.values.insert(pointer, at);
-            self.pending.push((VALUES, pointer, at, bytes));
+            self.values.insert(pointer, (at, ty));
+            self.pending.push((VALUES, pointer, at, bytes, ty));
             at
         }
     }
-    pub unsafe fn object(&mut self, table: u32, id: u32) -> u32 {
+    pub unsafe fn object(&mut self, table: u32, id: u32, layout: u32) -> u32 {
         unsafe {
             let old = self.old[table as usize];
             assert!(id < old.length);
             if id < old.frozen {
                 return id;
             }
-            if let Some(&next) = self.objects.get(&(table, id)) {
+            if let Some(&(next, _)) = self.objects.get(&(table, id)) {
                 return next;
             }
             let slot: Slot = self.heap.read(old.buffer + id * 8);
             let next = self.slots[table as usize].len() as u32;
-            self.objects.insert((table, id), next);
+            self.objects.insert((table, id), (next, layout));
             // Publish forwarding before traversal, including cyclic environments.
             self.slots[table as usize].push(Slot {
                 payload: 0,
@@ -144,15 +153,15 @@ impl Collector {
                 bytes: slot.bytes,
             };
             if table != REGEXES {
-                self.pending.push((table, slot.payload, at, slot.bytes));
+                self.pending.push((table, slot.payload, at, slot.bytes, layout));
             }
             next
         }
     }
     pub unsafe fn finish(mut self) {
         unsafe {
-            while let Some((table, old, at, bytes)) = self.pending.pop() {
-                self.trace_object(table, old, at, bytes);
+            while let Some((table, old, at, bytes, layout)) = self.pending.pop() {
+                self.trace_object(table, old, at, bytes, layout);
             }
             crate::content::collect(&self.content, self.initialization);
             // Sources are Host metadata, but RT may render their names in captures.
@@ -190,7 +199,8 @@ pub unsafe extern "C" fn telora_collect(roots: u32, count: u32) -> u32 {
         let mut gc = Collector::begin(false);
         let result = gc.reserve(count * 4);
         for index in 0..count {
-            let pointer = gc.value(gc.old_word(roots, index as u64 * 4));
+            let root = roots + index * 8;
+            let pointer = gc.value(gc.old_word(root, 0), gc.old_word(root, 4));
             gc.put(result + index * 4, pointer);
         }
         gc.finish();

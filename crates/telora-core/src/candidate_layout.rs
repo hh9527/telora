@@ -5,6 +5,8 @@ use crate::{
 };
 use serde::Serialize;
 
+const VALUE_HEADER_BYTES: u64 = 8;
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Shape {
     pub data_bytes: u64,
@@ -85,17 +87,16 @@ impl Storage {
                 if *empty_only && length != 0 {
                     return Err("invalid dictionary extent".into());
                 }
-                mul(add(32, *value_stride)?, length.into())
+                mul(add(24, *value_stride)?, length.into())
             }
             (Self::Captures, Extent::Captures(sizes)) => {
-                let count = u32::try_from(sizes.len()).map_err(|_| "capture count overflow")?;
-                let mut bytes = align(add(8, mul(4, count.into())?)?, 8)?;
+                let count = u64::try_from(sizes.len()).map_err(|_| "capture count overflow")?;
                 for &size in sizes {
                     if size < 8 || size % 8 != 0 {
                         return Err("invalid full captured value size".into());
                     }
-                    bytes = add(bytes, size)?;
                 }
+                let bytes = mul(8, count)?;
                 u32::try_from(bytes).map_err(|_| "capture object exceeds u32 offset space")?;
                 Ok(bytes)
             }
@@ -186,7 +187,7 @@ fn shape(
         shape: Shape {
             data_bytes: bytes,
             data_alignment: alignment,
-            value_bytes: add(16, align(bytes, 8)?)?,
+            value_bytes: add(VALUE_HEADER_BYTES, align(bytes, 8)?)?,
             value_alignment: 8,
             table,
             encoding,
@@ -619,7 +620,7 @@ impl<'a> Builder<'a> {
                 }
                 o.bytes = Some(offset);
                 o.storage = Storage::Fixed { bytes: offset };
-                o.storage_rule="fixed fields in declaration/canonical MIR order, each with its own full header".into();
+                o.storage_rule="fixed fields in declaration/canonical MIR order, each with its own packed-location header; field types come from the record layout".into();
             }
             "ArrayTable" => {
                 let t = ty.arguments[0];
@@ -636,11 +637,11 @@ impl<'a> Builder<'a> {
             }
             "ClosureEnvTable" => {
                 o.storage = Storage::Captures;
-                o.storage_rule="header 8 bytes: capture_count:u32,total_bytes:u32; offsets[capture_count]:u32 at 8, full captured values start at align8(8+4*capture_count); offsets relative to object start; values packed at 8-byte alignment in stable capture order; total_bytes ends after last full value; empty environment uses id 0".into();
+                o.storage_rule="capture pointers followed by their closed TypeIds; each half contains capture_count u32 words in stable capture order; values remain separately owned; empty environments still receive identity".into();
             }
             "ValueTable" => {
                 o.storage = Storage::FullValue;
-                o.storage_rule="one full concrete value at offset 0; size from its stamped TypeId; Dyn inlines data when data_bytes<=16 and alignment<=8, otherwise payload[0..4] is ValueTable HeapId; outer Dyn retains concrete value origin; inline heap references keep their original table".into();
+                o.storage_rule="one full concrete value at offset 0; size and trace plan come from the enclosing Dyn layout; Dyn inlines data when data_bytes<=16 and alignment<=8, otherwise payload[0..4] is ValueTable HeapId; outer Dyn retains concrete value origin; inline heap references keep their original table".into();
             }
             "NativeResourceTable" => {
                 o.storage = Storage::Fixed { bytes: 8 };
@@ -706,7 +707,7 @@ fn calculate_image(image: &TypeImage, module_records: Vec<bool>) -> Result<Vec<E
                     Member {
                         name: name.clone(),
                         type_id: p.map(|p| p.index()),
-                        offset: p.filter(|_| live).map(|_| 24),
+                        offset: p.filter(|_| live).map(|_| 16),
                         storage: if !live {
                             "uninhabited_or_template"
                         } else if p.is_none() {
@@ -744,7 +745,7 @@ mod tests {
     use super::*;
     #[test]
     fn checked_sizes() {
-        for (data, a, expected) in [(0, 1, 16), (8, 8, 24), (12, 4, 32)] {
+        for (data, a, expected) in [(0, 1, 8), (8, 8, 16), (12, 4, 24)] {
             let State::Known { shape } = shape(data, a, None, "test").unwrap() else {
                 unreachable!()
             };
@@ -810,7 +811,12 @@ mod tests {
     #[test]
     fn storage_extents_are_checked() {
         for (length, bytes) in [(0, 0), (15, 0), (16, 16)] {
-            assert_eq!(Storage::ByteContent.allocation_bytes(Extent::Sequence { length }).unwrap(), bytes);
+            assert_eq!(
+                Storage::ByteContent
+                    .allocation_bytes(Extent::Sequence { length })
+                    .unwrap(),
+                bytes
+            );
         }
         let dict = Storage::Dictionary {
             value_stride: 24,
@@ -819,7 +825,7 @@ mod tests {
         assert_eq!(
             dict.allocation_bytes(Extent::Dictionary { length: 2 })
                 .unwrap(),
-            112
+            96
         );
         assert!(
             Storage::Dictionary {
@@ -833,11 +839,11 @@ mod tests {
             Storage::Captures
                 .allocation_bytes(Extent::Captures(&[24, 32]))
                 .unwrap(),
-            72
+            16
         );
         assert!(
             Storage::Captures
-                .allocation_bytes(Extent::Captures(&[u32::MAX as u64 + 1]))
+                .allocation_bytes(Extent::Captures(&[7]))
                 .is_err()
         );
         assert!(

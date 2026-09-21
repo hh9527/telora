@@ -26,7 +26,6 @@ impl Session {
             return Err("Wasm: input type has no value layout".into());
         }
         let value = self.allocate(bytes as usize)?;
-        self.write(value as usize + TYPE as usize, &ty.to_le_bytes())?;
         Ok(value)
     }
     pub(crate) fn input_variant(
@@ -44,7 +43,10 @@ impl Session {
             return Err("Wasm: input variant payload mismatch".into());
         }
         let value = self.input_header(ty)?;
-        self.write(value as usize + (DATA as usize), &(index as u64).to_le_bytes())?;
+        self.write(
+            value as usize + (DATA as usize),
+            &(index as u64).to_le_bytes(),
+        )?;
         if let (Some(payload), Some(payload_ty)) = (payload, variant.ty) {
             let bytes = self.manifest.types[payload_ty as usize].bytes;
             if variant.boxed {
@@ -77,7 +79,11 @@ impl Session {
         let keys = self.allocate(key_bytes as usize)?;
         let values = self.allocate(value_bytes as usize)?;
         for (index, &(key, value)) in pairs.iter().enumerate() {
-            self.copy_input(keys + index as u32 * STRING_BYTES, key, STRING_BYTES as usize)?;
+            self.copy_input(
+                keys + index as u32 * STRING_BYTES,
+                key,
+                STRING_BYTES as usize,
+            )?;
             self.copy_input(values + index as u32 * stride, value, stride as usize)?;
         }
         let keys = self.push_input(ARRAYS, keys, key_bytes)?;

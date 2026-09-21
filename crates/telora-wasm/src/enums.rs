@@ -33,7 +33,6 @@ impl Emitter<'_> {
         {
             let result = self.value_as(node, expected, self.width(expected)?)?;
             self.copy(result, 0, value, self.width(expected)?);
-            self.store32(result, TYPE, expected.index() as u32);
             return Ok(result);
         }
         Err(format!(
@@ -168,8 +167,10 @@ impl Emitter<'_> {
         match selection(self.mir, node).ok_or("Wasm: missing constructor selection")? {
             MemberSelection::EnumVariant { index } => {
                 let target = self.plan.layouts[output.index()].variants[index as usize]
-                    .type_id.ok_or("Wasm: callable variant has no payload type")?;
-                let payload = self.adapt(node, arguments[0], self.plan.layouts[target].id(), payload)?;
+                    .type_id
+                    .ok_or("Wasm: callable variant has no payload type")?;
+                let payload =
+                    self.adapt(node, arguments[0], self.plan.layouts[target].id(), payload)?;
                 let result = self.enum_value(node, output, index, Some(payload))?;
                 // Zero-environment constructors receive the callable value,
                 // whose source is the actual materialization site. Payload

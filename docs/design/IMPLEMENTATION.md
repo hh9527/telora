@@ -300,8 +300,11 @@ codegen 的公开编译入口接受 SealedExecutable。表达式类型、泛型�
 普通构造拒绝产生运行时失败，codec 解码拒绝返回 Err。读取或复制已完成的值不会重新
 执行构造校验；新构造与 `<~` 更新会检查其结果。
 
-运行时值头包含 12 字节 Loc（src/start/end 三个 u32）和 4 字节 TypeId（共 16 字节），
-后接由静态布局决定的 payload。标量值为 24 字节；函数保存函数表索引与闭包环境。
+运行时值头是一个 8 字节 packed Loc（src-id:14、start/end:25），后接由静态布局
+决定的 payload。普通值不逐值保存 TypeId：函数签名、字段/元素布局、demand 根和 Host
+typed handle 提供封闭类型；Dyn payload 保留具体 TypeId。标量值为 16 字节；函数保存
+函数表索引与闭包环境。闭包环境将捕获指针和对应封闭 TypeId 分列存储，collector 不从
+被捕获值反查类型。
 Array、Record 等对象位于各自 typed table；Tuple/Record 共用 Record table。
 String/Bytes 共用独立的 `Vec<u8>` 内容池：不足 16 字节时直接内联，最后一字节保存
 长度；其余值保存 `start/end/raw_start` 三个绝对偏移，最后一字节为 16。

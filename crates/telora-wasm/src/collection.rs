@@ -19,8 +19,10 @@ pub struct InitializationStats {
 
 impl Session {
     pub fn initialization_stats(&mut self) -> Result<InitializationStats, String> {
-        let metric = self.instance.get_typed_func::<u32, u32>(
-            &self.store, "telora_initialization_stat").map_err(|e| e.to_string())?;
+        let metric = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "telora_initialization_stat")
+            .map_err(|e| e.to_string())?;
         Ok(InitializationStats {
             heap_before: metric.call(&mut self.store, 0).map_err(|e| e.to_string())?,
             heap_after: metric.call(&mut self.store, 1).map_err(|e| e.to_string())?,
@@ -47,21 +49,19 @@ impl Session {
         let pointers = self.allocate(
             roots
                 .len()
-                .checked_mul(4)
+                .checked_mul(8)
                 .ok_or("Wasm: root size overflow")?,
         )?;
         for (index, root) in roots.iter().enumerate() {
-            self.write(pointers as usize + index * 4, &root.pointer.to_le_bytes())?;
+            self.write(pointers as usize + index * 8, &root.pointer.to_le_bytes())?;
+            self.write(pointers as usize + index * 8 + 4, &root.ty.to_le_bytes())?;
         }
         let collect = self
             .instance
             .get_typed_func::<(i32, i32), i32>(&self.store, "telora_collect")
             .map_err(|e| e.to_string())?;
         let relocated = collect
-            .call(
-                &mut self.store,
-                (pointers as i32, roots.len() as i32),
-            )
+            .call(&mut self.store, (pointers as i32, roots.len() as i32))
             .map_err(|e| e.to_string())? as u32;
         let values = roots
             .iter()
@@ -76,16 +76,23 @@ impl Session {
         let after = heap_end
             .call(&mut self.store, ())
             .map_err(|e| e.to_string())? as u32;
-        let retained = self.instance
+        let retained = self
+            .instance
             .get_typed_func::<i32, i32>(&self.store, "telora_source_retained")
             .map_err(|e| e.to_string())?;
         let mut live = std::collections::BTreeSet::new();
         for source in &self.manifest.sources {
-            if retained.call(&mut self.store, source.id as i32).map_err(|e| e.to_string())? != 0 {
+            if retained
+                .call(&mut self.store, source.id as i32)
+                .map_err(|e| e.to_string())?
+                != 0
+            {
                 live.insert(source.id);
             }
         }
-        self.manifest.sources.retain(|source| live.contains(&source.id));
+        self.manifest
+            .sources
+            .retain(|source| live.contains(&source.id));
         self.registered_sources = self.manifest.sources.len();
         self.emitted_debug.set(
             self.output()

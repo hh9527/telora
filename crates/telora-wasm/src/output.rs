@@ -75,9 +75,6 @@ impl Output<'_> {
     }
 
     pub(crate) fn field(&self, pointer: u64, ty: u32, name: &str) -> Result<(u32, u32), String> {
-        if self.word(pointer + TYPE)? != ty {
-            return Err("Wasm: record type differs from sealed contract".into());
-        }
         let desc = self
             .manifest
             .types
@@ -152,12 +149,6 @@ impl Output<'_> {
     pub fn json(&self, pointer: u64, expected: u32, depth: usize) -> Result<Value, String> {
         if depth > 512 {
             return Err("Wasm: JSON output nesting limit".into());
-        }
-        if self.word(pointer + TYPE)? != expected {
-            return Err(format!(
-                "Wasm: output at {pointer} has type {}, expected {expected}",
-                self.word(pointer + TYPE)?
-            ));
         }
         let ty = self
             .manifest

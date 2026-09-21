@@ -25,13 +25,11 @@ pub unsafe extern "C" fn telora_service_context(ctx_ty: u32, dict_ty: u32, strid
         let bytes = field_offset.checked_add(STRING_BYTES).unwrap();
         let fields = telora_alloc(bytes);
         let dict = fields + field_offset;
-        put(dict, TYPE, dict_ty);
         put(dict, DATA, keys);
         put(dict, DATA + 4, length);
         put(dict, DATA + 8, values);
         let object = telora_table_push(table_address(RECORDS), fields, bytes);
         let ctx = telora_alloc(SCALAR_BYTES);
-        put(ctx, TYPE, ctx_ty);
         put(ctx, DATA, object);
         ctx
     }

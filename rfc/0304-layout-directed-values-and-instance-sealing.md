@@ -162,8 +162,10 @@ Rust Guest RT/Host 边界继续使用显式参数、单 status 返回和 Guest �
 6. ABI 升级并删除 ABI 25 兼容代码。
 7. 用真实 service 验证时间、线性内存、RSS、快照尺寸和持续请求 reset。
 
-步骤 1～3 已在 `explore/216-cross-instance-collect` 原型通过 `telora-wasm` 全量测试；
-正式合入仍以步骤 4～7 完成和性能数据为准。
+步骤 1～4 与 ABI 26 的普通值迁移已在 `explore/216-cross-instance-collect` 通过
+`telora-wasm` 全量测试：值头仅含 8 字节 Loc，普通值不再保存 TypeId；demand、service、
+闭包环境和异构运行时容器显式携带所需布局身份。正式合入仍以普通对象 table 迁移、
+workspace/真实模型验证和性能数据完成为准。
 
 ## 验收
 

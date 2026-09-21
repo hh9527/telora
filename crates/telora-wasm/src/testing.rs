@@ -77,13 +77,13 @@ impl TestSession {
         let count = output.word(base + 4)?;
         if operation > 3
             || count != if operation < 2 { 1 } else { 2 }
-            || bytes != 8 + count as u64 * 4
+            || bytes != 8 + count as u64 * 8
         {
             return Err("Wasm: invalid Test description".into());
         }
         let input = |index: u64| -> Result<Value, String> {
             let pointer = output.word(base + 8 + index * 4)?;
-            let ty = output.word(pointer as u64 + abi::TYPE)?;
+            let ty = output.word(base + 8 + u64::from(count) * 4 + index * 4)?;
             let value = Value { pointer, ty };
             session.expect_value(value, ty)?;
             Ok(value)

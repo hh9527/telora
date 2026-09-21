@@ -185,7 +185,6 @@ impl<'a> Emitter<'a> {
         }
         let result = self.alloc(bytes);
         self.produced_origin(result, node)?;
-        self.store32(result, TYPE, ty.index() as u32);
         Ok(result)
     }
     pub fn scalar(&mut self, node: HirId, bits: i64) -> Result<u32, String> {
@@ -218,6 +217,11 @@ impl<'a> Emitter<'a> {
         let pointer = self.alloc(DIAGNOSTIC_BYTES);
         self.store_location(pointer, location);
         self.store32(pointer, DIAG_CODE, code);
+        self.store32(
+            pointer,
+            DIAG_MESSAGE_TYPE,
+            self.string_type().expect("sealed String type").index() as u32,
+        );
         self.extend([
             I::LocalGet(pointer),
             I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
@@ -613,7 +617,6 @@ impl<'a> Emitter<'a> {
             self.construction_check(node, target, telora_core::mir::PropertySite::Type, value)?;
             let result = self.value_as(node, target, self.width(target)?)?;
             self.copy(result, 0, value, self.width(target)?);
-            self.store32(result, TYPE, target.index() as u32);
             return Ok(result);
         }
         Ok(value)

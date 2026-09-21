@@ -73,7 +73,7 @@ impl Emitter<'_> {
                     ..self.key
                 },
                 output,
-                &[target],
+                &[(target, args[0])],
             );
         }
         if args.len() != 3

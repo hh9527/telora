@@ -1,10 +1,5 @@
 //! Source-backed data transport. Materialize once, then inject before initialization.
-use crate::{
-    abi::*,
-    artifact::Manifest,
-    plan::Plan,
-    session::Session,
-};
+use crate::{abi::*, artifact::Manifest, plan::Plan, session::Session};
 use wasm_encoder::{BlockType, Function, Instruction as I};
 
 pub(crate) fn injector(plan: &Plan, manifest: &Manifest) -> Function {
@@ -37,14 +32,6 @@ pub(crate) fn injector(plan: &Plan, manifest: &Manifest) -> Function {
             I::I32Const(0),
             I::Return,
             I::End,
-            I::LocalGet(1),
-            I::I32Load(memory(TYPE, 2)),
-            I::I32Const(module.ty as i32),
-            I::I32Ne,
-            I::If(BlockType::Empty),
-            I::I32Const(0),
-            I::Return,
-            I::End,
             I::I32Const(offset as i32),
             I::LocalGet(1),
             I::I32Store(memory(4, 2)),
@@ -63,9 +50,18 @@ pub(crate) fn injector(plan: &Plan, manifest: &Manifest) -> Function {
 }
 
 impl Session {
-    pub fn inject_data_value(&mut self, symbol: u32, value: crate::transport::Value) -> Result<(), String> {
-        let ty = self.manifest.data_modules.iter().find(|module| module.symbol == symbol)
-            .ok_or("Wasm: data module is not in the executable")?.ty;
+    pub fn inject_data_value(
+        &mut self,
+        symbol: u32,
+        value: crate::transport::Value,
+    ) -> Result<(), String> {
+        let ty = self
+            .manifest
+            .data_modules
+            .iter()
+            .find(|module| module.symbol == symbol)
+            .ok_or("Wasm: data module is not in the executable")?
+            .ty;
         self.expect_value(value, ty)?;
         let pointer = value.pointer;
         let inject = self

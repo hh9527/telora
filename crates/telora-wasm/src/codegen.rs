@@ -24,18 +24,29 @@ pub fn compile_service(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, Str
 }
 
 #[derive(Clone, Copy)]
-enum Mode { Value, Check, Service }
+enum Mode {
+    Value,
+    Check,
+    Service,
+}
 
 fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, String> {
     let mut plan = Plan::new(executable)?;
-    let helpers = vec![("telora_initialize", 2), ("telora_entry", 2),
-        ("telora_inject_data", CALL_TYPE), ("telora_materialize_data", CALL_TYPE)];
+    let helpers = vec![
+        ("telora_initialize", 2),
+        ("telora_entry", 2),
+        ("telora_inject_data", CALL_TYPE),
+        ("telora_materialize_data", CALL_TYPE),
+    ];
     plan.generated_helpers = helpers.len() as u32;
     let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
     for (&symbol, &key) in &plan.globals {
         let mir = executable.sealed_mir().mir();
         let definition = &mir.symbols[symbol.index()];
-        let module = definition.module.map(|id| mir.modules[id.index()].name.as_str()).unwrap_or("");
+        let module = definition
+            .module
+            .map(|id| mir.modules[id.index()].name.as_str())
+            .unwrap_or("");
         manifest.globals.push(crate::artifact::Global {
             symbol: symbol.index() as u32,
             name: format!("{module}::{}", definition.name),
@@ -43,17 +54,24 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
             demand: plan.demands[&key],
         });
     }
-    let global_symbols = plan.globals.iter().map(|(&symbol, &key)| (key, symbol))
+    let global_symbols = plan
+        .globals
+        .iter()
+        .map(|(&symbol, &key)| (key, symbol))
         .collect::<std::collections::BTreeMap<_, _>>();
     for key in plan.demands.keys() {
         let mir = executable.sealed_mir().mir();
         let symbol = global_symbols.get(key).copied();
-        manifest.initialization_roots.push(crate::artifact::InitializationRoot {
-            node: key.node.index() as u32,
-            module: mir.modules[mir.hir[key.node.index()].module.index()].name.clone(),
-            symbol: symbol.map(|id| id.index() as u32),
-            name: symbol.map(|id| mir.symbols[id.index()].name.clone()),
-        });
+        manifest
+            .initialization_roots
+            .push(crate::artifact::InitializationRoot {
+                node: key.node.index() as u32,
+                module: mir.modules[mir.hir[key.node.index()].module.index()]
+                    .name
+                    .clone(),
+                symbol: symbol.map(|id| id.index() as u32),
+                name: symbol.map(|id| mir.symbols[id.index()].name.clone()),
+            });
     }
     let mut module = Module::new();
     let mut types = TypeSection::new();
@@ -137,7 +155,9 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         functions.function(CALL_TYPE);
     }
     let initialize = FIRST_FUNCTION + plan.functions.len() as u32;
-    for &(_, ty) in &helpers { functions.function(ty); }
+    for &(_, ty) in &helpers {
+        functions.function(ty);
+    }
     module.section(&functions);
     let heap_start = crate::compose::static_base()?
         .checked_add(
@@ -223,9 +243,12 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         Instruction::I32Const(0),
         Instruction::Return,
         Instruction::End,
-    ] { init.instruction(&instruction); }
+    ] {
+        init.instruction(&instruction);
+    }
     if !matches!(mode, Mode::Service) {
-        init.instruction(&Instruction::Call(FREEZE)).instruction(&Instruction::Drop);
+        init.instruction(&Instruction::Call(FREEZE))
+            .instruction(&Instruction::Drop);
     }
     init.instruction(&Instruction::I32Const(2))
         .instruction(&Instruction::GlobalSet(PHASE_GLOBAL))
@@ -255,7 +278,9 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         2,
     )?);
     code.function(crate::data_parse_ops::materializer(
-        executable.sealed_mir().mir(), &plan, manifest.value_type,
+        executable.sealed_mir().mir(),
+        &plan,
+        manifest.value_type,
     )?);
     let (code, relocations) = code.finish(5);
     module.section(&code);
@@ -282,7 +307,10 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         symbols.function(0, index, Some(&name));
         function_names.append(index, &name);
     }
-    for (index, name) in ["telora_error", "telora_phase", "telora_initialization_root"].iter().enumerate() {
+    for (index, name) in ["telora_error", "telora_phase", "telora_initialization_root"]
+        .iter()
+        .enumerate()
+    {
         symbols.global(0, index as u32, Some(name));
     }
     symbols.table(SymbolTable::WASM_SYM_UNDEFINED, 0, None);
@@ -328,9 +356,31 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         data: Cow::Owned(serde_json::to_vec(&manifest).map_err(|e| e.to_string())?),
     });
     let service = if matches!(mode, Mode::Service) {
-        Some(crate::service_abi::contract(&manifest, initialize - FIRST_FUNCTION)?)
-    } else { None };
-    crate::compose::link(&module.finish(), heap_start, &manifest.sources, &manifest.types,
-        u32::try_from(plan.demands.len()).map_err(|_| "Wasm: demand count overflow")?, service,
-        &helpers.iter().enumerate().map(|(i, (name, _))| (*name, initialize - FIRST_FUNCTION + i as u32)).collect::<Vec<_>>())
+        Some(crate::service_abi::contract(
+            &manifest,
+            initialize - FIRST_FUNCTION,
+        )?)
+    } else {
+        None
+    };
+    crate::compose::link(
+        &module.finish(),
+        heap_start,
+        &manifest.sources,
+        &manifest.types,
+        &plan
+            .demands
+            .keys()
+            .map(|key| {
+                key.ty(executable.sealed_mir().mir(), key.node)
+                    .map(|ty| ty.index() as u32)
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        service,
+        &helpers
+            .iter()
+            .enumerate()
+            .map(|(i, (name, _))| (*name, initialize - FIRST_FUNCTION + i as u32))
+            .collect::<Vec<_>>(),
+    )
 }
