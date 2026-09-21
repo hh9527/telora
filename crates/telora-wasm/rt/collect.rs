@@ -12,6 +12,30 @@ pub(crate) use initialization::collect as collect_initialization;
 static mut TRACE_TYPES: u32 = 0;
 static mut DEMANDS: (u32, u32) = (0, 0);
 
+pub(crate) unsafe fn snapshot_demands() -> Vec<u8> {
+    unsafe {
+        let (pointer, count) = DEMANDS;
+        core::slice::from_raw_parts(pointer as *const u8, count as usize * DEMAND_BYTES as usize)
+            .to_vec()
+    }
+}
+
+pub(crate) unsafe fn restore_demands(bytes: &[u8]) {
+    unsafe {
+        let (pointer, count) = DEMANDS;
+        assert_eq!(bytes.len(), count as usize * DEMAND_BYTES as usize);
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer as *mut u8, bytes.len());
+    }
+}
+
+pub(crate) unsafe fn snapshot_stats() -> [u32; 5] {
+    unsafe { initialization::snapshot_stats() }
+}
+
+pub(crate) unsafe fn restore_stats(stats: [u32; 5]) {
+    unsafe { initialization::restore_stats(stats); }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_collection_bootstrap(types: u32, demands: u32, count: u32) {
     unsafe {

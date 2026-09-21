@@ -48,6 +48,29 @@ fn compile(pattern: &str) -> Result<Compiled, String> {
     })
 }
 
+pub(crate) unsafe fn snapshot() -> alloc::vec::Vec<alloc::string::String> {
+    unsafe {
+        let table = crate::heap::read::<crate::tables::Table>(table_address(REGEXES));
+        (0..table.length).map(|id| (*get(id)).pattern.clone()).collect()
+    }
+}
+
+pub(crate) unsafe fn restore(patterns: &[alloc::string::String]) {
+    unsafe {
+        let table = crate::heap::read::<crate::tables::Table>(table_address(REGEXES));
+        assert_eq!(table.length as usize, patterns.len());
+        for (id, pattern) in patterns.iter().enumerate() {
+            let compiled = compile(pattern).expect("snapshot contains invalid regex");
+            let pointer = Box::into_raw(Box::new(compiled)) as u32;
+            crate::heap::write(table.buffer + id as u32 * 8, pointer);
+            crate::heap::write(
+                table.buffer + id as u32 * 8 + 4,
+                core::mem::size_of::<Compiled>() as u32,
+            );
+        }
+    }
+}
+
 pub(crate) unsafe fn release(pointer: u32) {
     unsafe { drop(Box::from_raw(pointer as *mut Compiled)); }
 }

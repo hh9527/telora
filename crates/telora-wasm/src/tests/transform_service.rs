@@ -38,57 +38,102 @@ fn initialize(service: &mut TransformSession) {
         .unwrap();
     assert!(result.success, "{}", result.diagnostics);
     assert_eq!(result.diagnostics, serde_json::json!([]));
+    let before = service.session().usage().memory_bytes;
     service.seal_initialization().unwrap();
+    let after = service.session().usage().memory_bytes;
+    assert!(
+        after <= before,
+        "cross-instance sealing must not retain additional initialization pages: {before} -> {after}"
+    );
 }
 
 #[test]
 fn initialization_compacts_and_completed_requests_truncate_in_place() {
     use crate::abi::*;
-    let mut service = TransformSession::new(Session::load(&artifact(), 100_000_000).unwrap()).unwrap();
+    let mut service =
+        TransformSession::new(Session::load(&artifact(), 100_000_000).unwrap()).unwrap();
     initialize(&mut service);
     let session = service.session_mut();
-    let metric = session.instance.get_typed_func::<u32, u32>(
-        &session.store, "telora_initialization_stat").unwrap();
+    let metric = session
+        .instance
+        .get_typed_func::<u32, u32>(&session.store, "telora_initialization_stat")
+        .unwrap();
     let before = metric.call(&mut session.store, 0).unwrap();
     let after = metric.call(&mut session.store, 1).unwrap();
-    assert!(after < before, "initialization garbage must be removed: {before} -> {after}");
+    assert!(
+        after < before,
+        "initialization garbage must be removed: {before} -> {after}"
+    );
     assert!(metric.call(&mut session.store, 2).unwrap() > 0);
     service.reset().unwrap();
-    let word = |service: &TransformSession, address| service.session().output().word(address).unwrap();
+    let word =
+        |service: &TransformSession, address| service.session().output().word(address).unwrap();
     let words_len = word(&service, u64::from(WORDS_VIEW + 4));
     let content_len = word(&service, u64::from(CONTENT_VIEW + 4));
     let origin = word(&service, u64::from(WORDS_ORIGIN));
-    let prefix = service.session().output().bytes(origin.into(), words_len.into()).unwrap().to_vec();
+    let prefix = service
+        .session()
+        .output()
+        .bytes(origin.into(), words_len.into())
+        .unwrap()
+        .to_vec();
     let table_counts: Vec<_> = (0..TABLE_COUNT)
-        .map(|table| word(&service, u64::from(table_address(table) + 4))).collect();
+        .map(|table| word(&service, u64::from(table_address(table) + 4)))
+        .collect();
     let request = serde_json::to_vec(&"request content é🦀".repeat(8192)).unwrap();
     let mut memory_plateau = None;
     for iteration in 0..8 {
         let response = service.transform(&request).unwrap();
         let response: serde_json::Value = serde_json::from_slice(&response).unwrap();
         assert_eq!(response["ok"][0], 42);
-        assert_eq!(response["ok"][1], serde_json::from_slice::<serde_json::Value>(&request).unwrap());
+        assert_eq!(
+            response["ok"][1],
+            serde_json::from_slice::<serde_json::Value>(&request).unwrap()
+        );
         assert!(word(&service, u64::from(WORDS_VIEW + 4)) > words_len);
         assert!(word(&service, u64::from(CONTENT_VIEW + 4)) > content_len);
         let words_pointer = word(&service, u64::from(WORDS_VIEW));
         let content_pointer = word(&service, u64::from(CONTENT_VIEW));
         service.reset().unwrap();
-        assert_eq!(word(&service, u64::from(WORDS_VIEW)), words_pointer, "reuse the word allocation");
-        assert_eq!(word(&service, u64::from(CONTENT_VIEW)), content_pointer, "reuse the content allocation");
+        assert_eq!(
+            word(&service, u64::from(WORDS_VIEW)),
+            words_pointer,
+            "reuse the word allocation"
+        );
+        assert_eq!(
+            word(&service, u64::from(CONTENT_VIEW)),
+            content_pointer,
+            "reuse the content allocation"
+        );
         assert_eq!(word(&service, u64::from(WORDS_VIEW + 4)), words_len);
         assert_eq!(word(&service, u64::from(CONTENT_VIEW + 4)), content_len);
-        assert_eq!(service.session().output().bytes(origin.into(), words_len.into()).unwrap(), prefix);
+        assert_eq!(
+            service
+                .session()
+                .output()
+                .bytes(origin.into(), words_len.into())
+                .unwrap(),
+            prefix
+        );
         for table in 0..TABLE_COUNT {
-            assert_eq!(word(&service, u64::from(table_address(table) + 4)), table_counts[table as usize]);
+            assert_eq!(
+                word(&service, u64::from(table_address(table) + 4)),
+                table_counts[table as usize]
+            );
         }
         // Language serialization failures must also dispose of their Rust
         // writer; only traps may rely on discarding the entire instance.
         let failed = service.transform(br#""warnings""#).unwrap();
-        assert_eq!(serde_json::from_slice::<serde_json::Value>(&failed).unwrap()["error"], true);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&failed).unwrap()["error"],
+            true
+        );
         service.reset().unwrap();
         if iteration >= 2 {
             let bytes = service.session().memory.data_size(&service.session().store);
-            if let Some(plateau) = memory_plateau { assert_eq!(bytes, plateau); }
+            if let Some(plateau) = memory_plateau {
+                assert_eq!(bytes, plateau);
+            }
             memory_plateau = Some(bytes);
         }
     }
@@ -104,11 +149,23 @@ fn source_readers_grow_reuse_and_enforce_exact_byte_limit() {
     let mut second = vec![b' '; 32768];
     second.extend_from_slice(b"null");
     for limit in [second.len(), second.len() - 1] {
-        let mut service = TransformSession::new(Session::load(&bytes, 100_000_000).unwrap()).unwrap();
-        let result = service.initialize_readers([
-            Ok(SourceReader { name: "a".into(), reader: Box::new(Cursor::new(first)), format: Format::Json }),
-            Ok(SourceReader { name: "b".into(), reader: Box::new(Cursor::new(&second)), format: Format::Json }),
-        ], limit);
+        let mut service =
+            TransformSession::new(Session::load(&bytes, 100_000_000).unwrap()).unwrap();
+        let result = service.initialize_readers(
+            [
+                Ok(SourceReader {
+                    name: "a".into(),
+                    reader: Box::new(Cursor::new(first)),
+                    format: Format::Json,
+                }),
+                Ok(SourceReader {
+                    name: "b".into(),
+                    reader: Box::new(Cursor::new(&second)),
+                    format: Format::Json,
+                }),
+            ],
+            limit,
+        );
         if limit < second.len() {
             assert!(result.err().unwrap().contains("file_size limit"));
             assert!(service.seal_initialization().is_err());
@@ -117,9 +174,12 @@ fn source_readers_grow_reuse_and_enforce_exact_byte_limit() {
             service.seal_initialization().unwrap();
             service.reset().unwrap();
             let reply = transform(&mut service, b"7").unwrap();
-            assert_eq!(reply["ok"], serde_json::json!([
-                {"plain":"retained","escaped":"a\nb"}, 7
-            ]));
+            assert_eq!(
+                reply["ok"],
+                serde_json::json!([
+                    {"plain":"retained","escaped":"a\nb"}, 7
+                ])
+            );
         }
     }
 }
@@ -135,10 +195,16 @@ fn parser_diagnostics_preserve_individual_errors_and_relative_coordinates() {
     assert_eq!(errors.len(), 2, "{output}");
     for error in errors {
         assert!(error["labels"].as_array().unwrap().is_empty());
-        assert!(error["notes"].as_array().unwrap().iter().any(|note|
-            note.as_str().unwrap().contains("input range (UTF-8 bytes):")));
+        assert!(error["notes"].as_array().unwrap().iter().any(|note| {
+            note.as_str()
+                .unwrap()
+                .contains("input range (UTF-8 bytes):")
+        }));
     }
-    assert_eq!(transform(&mut service, b"7").unwrap()["ok"], serde_json::json!([42, 7]));
+    assert_eq!(
+        transform(&mut service, b"7").unwrap()["ok"],
+        serde_json::json!([42, 7])
+    );
 }
 
 #[test]
@@ -149,18 +215,37 @@ fn source_parser_diagnostics_keep_registered_source_ranges() {
         (Format::Yaml, "x: 1\nx: 2\n"),
         (Format::Toml, "x = 1\nx = 2\n"),
     ] {
-        let mut service = TransformSession::new(Session::load(&bytes, 10_000_000).unwrap()).unwrap();
-        let result = service.initialize(&[
-            SourceInput { name: "a", data: input.as_bytes(), format },
-            SourceInput { name: "b", data: b"null", format: Format::Json },
-        ]).unwrap();
+        let mut service =
+            TransformSession::new(Session::load(&bytes, 10_000_000).unwrap()).unwrap();
+        let result = service
+            .initialize(&[
+                SourceInput {
+                    name: "a",
+                    data: input.as_bytes(),
+                    format,
+                },
+                SourceInput {
+                    name: "b",
+                    data: b"null",
+                    format: Format::Json,
+                },
+            ])
+            .unwrap();
         assert!(!result.success);
         let errors = result.diagnostics.as_array().unwrap();
         assert!(!errors.is_empty());
         let labels = errors[0]["labels"].as_array().unwrap();
         assert!(!labels.is_empty(), "{}", result.diagnostics);
-        assert!(labels.iter().all(|label| label["location"]["source"] == "@service/a"));
-        assert!(labels.iter().any(|label| label["location"]["start"]["line"] == 1));
+        assert!(
+            labels
+                .iter()
+                .all(|label| label["location"]["source"] == "@service/a")
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|label| label["location"]["start"]["line"] == 1)
+        );
         assert!(service.seal_initialization().is_err());
     }
 }

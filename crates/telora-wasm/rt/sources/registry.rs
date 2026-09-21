@@ -8,6 +8,12 @@ struct Owned {
     lines: Option<Box<[u32]>>,
 }
 
+pub(crate) struct Snapshot {
+    pub id: u32,
+    pub name: Vec<u8>,
+    pub lines: Vec<u32>,
+}
+
 static mut OWNED: Vec<Owned> = Vec::new();
 static mut VIEW: Vec<Source> = Vec::new();
 static mut FROZEN: usize = 0;
@@ -81,5 +87,47 @@ pub(super) unsafe fn collect(live: &BTreeSet<u32>) {
             keep
         });
         publish();
+    }
+}
+
+pub(super) unsafe fn snapshot() -> Vec<Snapshot> {
+    unsafe {
+        (&*core::ptr::addr_of!(OWNED))
+            .iter()
+            .map(|item| Snapshot {
+                id: item.source.id,
+                name: item._name.to_vec(),
+                lines: if item.source.line_count == 0 {
+                    Vec::new()
+                } else {
+                    core::slice::from_raw_parts(
+                        item.source.lines as *const u32,
+                        item.source.line_count as usize * 2,
+                    )
+                    .to_vec()
+                },
+            })
+            .collect()
+    }
+}
+
+pub(super) unsafe fn restore(items: Vec<Snapshot>) {
+    unsafe {
+        (&mut *core::ptr::addr_of_mut!(OWNED)).clear();
+        (&mut *core::ptr::addr_of_mut!(VIEW)).clear();
+        FROZEN = 0;
+        for item in items {
+            assert_eq!(register(item.id, &item.name), 1);
+            if !item.lines.is_empty() {
+                assert_eq!(item.lines.len() % 2, 0);
+                index(
+                    item.id,
+                    item.lines.as_ptr() as u32,
+                    (item.lines.len() / 2) as u32,
+                    false,
+                );
+            }
+        }
+        freeze();
     }
 }

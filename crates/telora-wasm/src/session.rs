@@ -47,6 +47,39 @@ impl Session {
             memory_limit: self.memory_limit,
         }
     }
+
+    pub(crate) fn fresh_instance(&self) -> Result<Self, String> {
+        let limits = wasmi::StoreLimitsBuilder::new()
+            .memory_size(self.memory_limit)
+            .table_elements(TABLE_BOUND)
+            .trap_on_grow_failure(true)
+            .build();
+        let mut store = wasmi::Store::new(self.module.engine(), limits);
+        store.limiter(|limits| limits);
+        store
+            .set_fuel(self.fuel_budget)
+            .map_err(|error| error.to_string())?;
+        let instance = wasmi::Linker::new(self.module.engine())
+            .instantiate_and_start(&mut store, &self.module)
+            .map_err(|error| error.to_string())?;
+        let memory = instance
+            .get_memory(&store, "memory")
+            .ok_or("Wasm: missing memory export")?;
+        let exports = exports::Exports::bind(instance, &store)?;
+        Ok(Self {
+            exports,
+            fuel_budget: self.fuel_budget,
+            memory_limit: self.memory_limit,
+            module: self.module.clone(),
+            usage_reporter: self.usage_reporter,
+            manifest: self.manifest.clone(),
+            store,
+            instance,
+            memory,
+            registered_sources: self.registered_sources,
+            emitted_debug: std::cell::Cell::new(self.emitted_debug.get()),
+        })
+    }
     /// Load a persistent artifact without MIR, a source loader, or a type solver.
     pub fn load(bytes: &[u8], fuel: u64) -> Result<Self, String> {
         Self::load_with_limits(bytes, fuel, MEMORY_BOUND)
@@ -95,7 +128,12 @@ impl Session {
             emitted_debug: std::cell::Cell::new(0),
         };
         for module in bundled_data {
-            if !session.manifest.sources.iter().any(|source| source.id == module.source.id) {
+            if !session
+                .manifest
+                .sources
+                .iter()
+                .any(|source| source.id == module.source.id)
+            {
                 session.manifest.sources.push(module.source.clone());
                 session.register_sources()?;
             }
@@ -105,7 +143,8 @@ impl Session {
                 3 => telora_core::data_plan::Format::Toml,
                 _ => unreachable!("validated bundle format"),
             };
-            let value = session.parse_data_text(&module.text, format, module.source.id)?
+            let value = session
+                .parse_data_text(&module.text, format, module.source.id)?
                 .map_err(|diagnostics| diagnostics.to_string())?;
             session.inject_data_value(module.symbol, value)?;
         }
@@ -130,7 +169,12 @@ impl Session {
             let source = &self.manifest.sources[self.registered_sources];
             let id = source.id;
             let name = source.name.as_bytes().to_vec();
-            let lines = source.lines.iter().flatten().flat_map(|word| word.to_le_bytes()).collect::<Vec<_>>();
+            let lines = source
+                .lines
+                .iter()
+                .flatten()
+                .flat_map(|word| word.to_le_bytes())
+                .collect::<Vec<_>>();
             let pointer = self.allocate(name.len())?;
             self.write(pointer as usize, &name)?;
             let pointer = self.output().address(pointer.into(), name.len() as u64)? as u32;
@@ -149,13 +193,14 @@ impl Session {
                 return Err("Wasm: source identity was registered with a different name".into());
             }
             if !lines.is_empty() {
-            let pointer = self.allocate(lines.len())?;
-            self.write(pointer as usize, &lines)?;
-            let pointer = self.output().address(pointer.into(), lines.len() as u64)? as u32;
-            self.instance.get_typed_func::<(u32, u32, u32), ()>(&self.store, "telora_source_index")
-                .map_err(|e| e.to_string())?
-                .call(&mut self.store, (id, pointer, (lines.len() / 8) as u32))
-                .map_err(|e| e.to_string())?;
+                let pointer = self.allocate(lines.len())?;
+                self.write(pointer as usize, &lines)?;
+                let pointer = self.output().address(pointer.into(), lines.len() as u64)? as u32;
+                self.instance
+                    .get_typed_func::<(u32, u32, u32), ()>(&self.store, "telora_source_index")
+                    .map_err(|e| e.to_string())?
+                    .call(&mut self.store, (id, pointer, (lines.len() / 8) as u32))
+                    .map_err(|e| e.to_string())?;
             }
             self.manifest.sources[self.registered_sources].lines.clear();
             self.registered_sources += 1;
@@ -191,7 +236,8 @@ impl Session {
         let args = self.allocate(
             arguments
                 .len()
-                .checked_add(1).ok_or("Wasm: argument count overflow")?
+                .checked_add(1)
+                .ok_or("Wasm: argument count overflow")?
                 .checked_mul(4)
                 .ok_or("Wasm: argument size overflow")?,
         )?;

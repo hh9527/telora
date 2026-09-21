@@ -110,6 +110,33 @@ pub unsafe fn take_initialization() -> OldWords {
         OldWords { words, origin: ORIGIN }
     }
 }
+
+pub(crate) unsafe fn snapshot() -> (u32, Vec<u8>) {
+    unsafe {
+        let words = &*core::ptr::addr_of!(WORDS);
+        (
+            ORIGIN,
+            core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), words.len() * 8).to_vec(),
+        )
+    }
+}
+
+pub(crate) unsafe fn restore(origin: u32, bytes: &[u8]) {
+    unsafe {
+        assert_eq!(
+            origin,
+            *core::ptr::addr_of!(ORIGIN),
+            "snapshot static image mismatch"
+        );
+        assert_eq!(bytes.len() % 8, 0, "unaligned snapshot heap");
+        assert!((*core::ptr::addr_of!(WORK_BASE)).is_none());
+        let mut words = vec![0u64; bytes.len() / 8];
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr().cast(), bytes.len());
+        *core::ptr::addr_of_mut!(WORDS) = words;
+        WORK_BASE = Some(bytes.len() / 8);
+        publish();
+    }
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_heap_bytes() -> u32 {
     unsafe {

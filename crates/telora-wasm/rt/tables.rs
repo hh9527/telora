@@ -3,10 +3,10 @@ use crate::{abi::*, telora_alloc};
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct Table {
-    pub buffer: u32,
-    pub length: u32,
-    pub capacity: u32,
-    pub frozen: u32,
+    pub(crate) buffer: u32,
+    pub(crate) length: u32,
+    pub(crate) capacity: u32,
+    pub(crate) frozen: u32,
 }
 
 #[repr(C)]
@@ -14,6 +14,21 @@ pub(crate) struct Table {
 pub(crate) struct Slot {
     pub payload: u32,
     pub bytes: u32,
+}
+
+pub(crate) unsafe fn snapshot() -> [Table; TABLE_COUNT as usize] {
+    unsafe { core::array::from_fn(|index| (table_address(index as u32) as *const Table).read()) }
+}
+
+pub(crate) unsafe fn restore(tables: [Table; TABLE_COUNT as usize]) {
+    unsafe {
+        assert!((*core::ptr::addr_of!(BASELINE)).is_none());
+        for (index, table) in tables.into_iter().enumerate() {
+            assert_eq!(table.length, table.frozen, "snapshot table is not frozen");
+            (table_address(index as u32) as *mut Table).write(table);
+        }
+        BASELINE = Some(tables);
+    }
 }
 
 static mut BASELINE: Option<[Table; TABLE_COUNT as usize]> = None;

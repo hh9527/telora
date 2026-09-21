@@ -15,6 +15,10 @@ pub(crate) struct Exports {
     pub run: TypedFunc<(u32, u32, u32, u32, u32), ()>,
     pub reset: TypedFunc<(), ()>,
     pub diagnostics: TypedFunc<(u32, u32, u32), ()>,
+    pub heap_bytes: TypedFunc<(), u32>,
+    pub initialization_stat: TypedFunc<u32, u32>,
+    pub snapshot_export: TypedFunc<u32, ()>,
+    pub snapshot_import: TypedFunc<(u32, u32), ()>,
 }
 
 pub(crate) struct Guest {
@@ -52,6 +56,11 @@ impl Guest {
             run: instance.get_typed_func(&mut store, "run-service")?,
             reset: instance.get_typed_func(&mut store, "reset-service")?,
             diagnostics: instance.get_typed_func(&mut store, "get-service-diagnostics")?,
+            heap_bytes: instance.get_typed_func(&mut store, "telora_heap_bytes")?,
+            initialization_stat: instance
+                .get_typed_func(&mut store, "telora_initialization_stat")?,
+            snapshot_export: instance.get_typed_func(&mut store, "telora_snapshot_export")?,
+            snapshot_import: instance.get_typed_func(&mut store, "telora_snapshot_import")?,
         };
         Ok(Self {
             module,
@@ -137,5 +146,24 @@ impl Guest {
         )?;
         self.free(ptr, bytes.len(), 1)?;
         self.response(result)
+    }
+
+    pub fn export_snapshot(&mut self) -> Result<Vec<u8>> {
+        let result = self.alloc(12, 4)?;
+        self.exports.snapshot_export.call(&mut self.store, result)?;
+        let pointer = self.raw_word(result)?;
+        let length = self.raw_word(result + 4)?;
+        let bytes = self.bytes(pointer, length)?.to_vec();
+        self.free(pointer, length as usize, 1)?;
+        self.free(result, 12, 4)?;
+        Ok(bytes)
+    }
+
+    pub fn import_snapshot(&mut self, snapshot: &[u8]) -> Result<()> {
+        let pointer = self.transfer(snapshot)?;
+        self.exports
+            .snapshot_import
+            .call(&mut self.store, (pointer, u32::try_from(snapshot.len())?))?;
+        self.free(pointer, snapshot.len(), 1)
     }
 }

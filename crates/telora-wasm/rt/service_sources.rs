@@ -21,6 +21,11 @@ struct Sources {
     sealed: bool,
 }
 
+pub(crate) struct Snapshot {
+    pub id: u32,
+    pub name: Vec<u8>,
+}
+
 static mut SOURCES: Option<Sources> = None;
 
 /// Context and the service handler now own any source values they retain.
@@ -31,6 +36,45 @@ pub(crate) unsafe fn release_initialization_values() {
             assert!(state.sealed);
             for slot in &mut state.slots { slot.key = 0; slot.value = 0; }
         }
+    }
+}
+
+pub(crate) unsafe fn snapshot() -> Vec<Snapshot> {
+    unsafe {
+        sources()
+            .slots
+            .iter()
+            .map(|slot| Snapshot {
+                id: slot.id,
+                name: slot._name.to_vec(),
+            })
+            .collect()
+    }
+}
+
+pub(crate) unsafe fn restore(items: Vec<Snapshot>) {
+    unsafe {
+        assert!((&*core::ptr::addr_of!(SOURCES)).is_none());
+        let slots = items
+            .into_iter()
+            .map(|item| {
+                let name = item.name.into_boxed_slice();
+                Slot {
+                    id: item.id,
+                    name: name.as_ptr() as u32,
+                    length: name.len() as u32,
+                    key: 0,
+                    value: 0,
+                    supplied: true,
+                    _name: name,
+                }
+            })
+            .collect();
+        SOURCES = Some(Sources {
+            slots,
+            failed: false,
+            sealed: true,
+        });
     }
 }
 

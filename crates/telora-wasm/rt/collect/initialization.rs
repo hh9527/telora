@@ -4,6 +4,14 @@ use crate::{abi::*, values::word};
 
 static mut STATS: [u32; 5] = [0; 5];
 
+pub(super) unsafe fn snapshot_stats() -> [u32; 5] {
+    unsafe { *core::ptr::addr_of!(STATS) }
+}
+
+pub(super) unsafe fn restore_stats(stats: [u32; 5]) {
+    unsafe { STATS = stats; }
+}
+
 /// Arena bytes before/after, demand roots, and linear memory before/after GC.
 /// Wasm cannot shrink its memory, so the latter includes the collection peak.
 #[unsafe(no_mangle)]

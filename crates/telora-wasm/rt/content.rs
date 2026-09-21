@@ -87,3 +87,14 @@ pub(crate) unsafe fn collect(patches: &[u32], initialization: bool) {
 pub(crate) unsafe fn len() -> usize {
     unsafe { (&*core::ptr::addr_of!(CONTENT)).len() }
 }
+
+pub(crate) unsafe fn snapshot() -> alloc::vec::Vec<u8> {
+    unsafe { (&*core::ptr::addr_of!(CONTENT)).bytes().to_vec() }
+}
+
+pub(crate) unsafe fn restore(bytes: &[u8]) {
+    unsafe {
+        *core::ptr::addr_of_mut!(CONTENT) = Content::from_frozen(bytes);
+        publish();
+    }
+}

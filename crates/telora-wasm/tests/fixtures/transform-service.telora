@@ -8,13 +8,16 @@ def grow: Fn(Array(Int)) -> Int = fn(values) { grow([...values, ...values]) };
 
 @service.source("b")
 @service.source("a")
-type Model = struct {prefix: Value};
+type Model = struct {prefix: Value, pattern: regex.Regex};
 
 impl service.TransformService for Model {
-    init: fn(ctx) { {prefix: ctx.sources["a"]}.ty!(Self) },
+    init: fn(ctx) {
+        {prefix: ctx.sources["a"], pattern: regex.compile("^retained service prefix$")}.ty!(Self)
+    },
     transform: fn(self, input) {
         let temporary_pattern = regex.compile("^retained service prefix$");
-        let matched = regex.is_match(temporary_pattern, "retained service prefix");
+        let matched = regex.is_match(self.pattern, "retained service prefix") &&
+            regex.is_match(temporary_pattern, "retained service prefix");
         if input == Value.None {
             fail!("missing query", input)
         } else if input == Value.String("bytes") {

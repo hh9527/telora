@@ -19,6 +19,12 @@ unsafe fn allocation(pointer: u32, cap: u32, align: u32) -> Layout {
     layout
 }
 
+pub(crate) unsafe fn range(pointer: u32, length: u32, align: u32) {
+    unsafe {
+        allocation(pointer, length, align);
+    }
+}
+
 #[unsafe(export_name = "mem-alloc")]
 pub unsafe extern "C" fn alloc(cap: u32, align: u32) -> u32 {
     let layout = layout(cap, align);

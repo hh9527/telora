@@ -1,6 +1,7 @@
 //! Source names are input metadata, not language values or type information.
 use crate::telora_alloc;
 mod registry;
+pub(crate) use registry::Snapshot;
 unsafe fn raw_word(pointer: u32, offset: u32) -> u32 {
     unsafe { ((pointer + offset) as *const u32).read_unaligned() }
 }
@@ -37,6 +38,14 @@ pub(crate) unsafe fn collect(gc: &mut crate::collect::Collector) {
     unsafe {
         registry::collect(&gc.sources);
     }
+}
+
+pub(crate) unsafe fn snapshot() -> alloc::vec::Vec<Snapshot> {
+    unsafe { registry::snapshot() }
+}
+
+pub(crate) unsafe fn restore(items: alloc::vec::Vec<Snapshot>) {
+    unsafe { registry::restore(items); }
 }
 
 #[unsafe(no_mangle)]

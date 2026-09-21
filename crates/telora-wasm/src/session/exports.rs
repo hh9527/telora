@@ -12,6 +12,8 @@ pub(crate) struct Exports {
     pub reset_service: TypedFunc<(), ()>,
     pub diagnostics: TypedFunc<(u32, u32, u32), ()>,
     pub run_service: TypedFunc<(u32, u32, u32, u32, u32), ()>,
+    pub snapshot_export: TypedFunc<u32, ()>,
+    pub snapshot_import: TypedFunc<(u32, u32), ()>,
 }
 
 impl Exports {
@@ -28,6 +30,8 @@ impl Exports {
                 reset_service: instance.get_typed_func(store, "reset-service")?,
                 diagnostics: instance.get_typed_func(store, "get-service-diagnostics")?,
                 run_service: instance.get_typed_func(store, "run-service")?,
+                snapshot_export: instance.get_typed_func(store, "telora_snapshot_export")?,
+                snapshot_import: instance.get_typed_func(store, "telora_snapshot_import")?,
             })
         };
         bind().map_err(|error| error.to_string())

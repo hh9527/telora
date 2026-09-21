@@ -30,6 +30,26 @@ pub(crate) unsafe fn collect_initialization(gc: &mut crate::collect::Collector) 
     }
 }
 
+pub(crate) unsafe fn snapshot() -> u32 {
+    unsafe {
+        let service = service();
+        assert!(service.phase == Phase::Ready);
+        service.handler
+    }
+}
+
+pub(crate) unsafe fn restore(handler: u32) {
+    unsafe {
+        let service = service();
+        assert!(matches!(service.phase, Phase::Unprepared));
+        service.phase = Phase::Ready;
+        service.initializer = 0;
+        service.handler = handler;
+        service.errors.clear();
+        service.parse_errors.clear();
+    }
+}
+
 unsafe fn service() -> &'static mut Service {
     unsafe { (&mut *core::ptr::addr_of_mut!(SERVICE)).as_mut().expect("not a service artifact") }
 }
