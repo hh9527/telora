@@ -26,13 +26,14 @@ impl Emitter<'_> {
         let packet = self.alloc(DIAGNOSTIC_BYTES);
         let loc = self.mir.hir[node.index()].location;
         self.store_location(packet, loc);
-        for (offset, word) in [
-            (DIAG_CODE, ERROR_USER),
-            (DIAG_WARNING, u32::from(warning)),
-        ] {
+        for (offset, word) in [(DIAG_CODE, ERROR_USER), (DIAG_WARNING, u32::from(warning))] {
             self.store32(packet, offset, word);
         }
-        for (offset, value) in [(DIAG_MESSAGE, message), (DIAG_SUBJECTS, subjects), (DIAG_COUNT, count)] {
+        for (offset, value) in [
+            (DIAG_MESSAGE, message),
+            (DIAG_SUBJECTS, subjects),
+            (DIAG_COUNT, count),
+        ] {
             self.extend([
                 I::LocalGet(packet),
                 I::LocalGet(value),
@@ -87,7 +88,12 @@ impl Emitter<'_> {
             let object = self.alloc(bytes);
             self.copy(object, 0, message, STRING_BYTES);
             self.store32(object, BLAME_COUNT as u64, values.len() as u32);
-            self.copy(object, BLAME_SUBJECTS, subjects, values.len() as u32 * LOC_BYTES);
+            self.copy(
+                object,
+                BLAME_SUBJECTS,
+                subjects,
+                values.len() as u32 * LOC_BYTES,
+            );
             let id = self.table_push(BLAMES, object, bytes);
             let result = self.value(node, SCALAR_BYTES)?;
             self.extend([

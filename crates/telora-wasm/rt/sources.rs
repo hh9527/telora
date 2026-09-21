@@ -113,9 +113,11 @@ pub(crate) unsafe fn position(id: u32, byte: u32) -> (u32, u32) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_source_range(range: u32) -> u32 {
     unsafe {
-        let id = crate::values::word(range, 0);
-        let start = crate::values::word(range, 4);
-        let end = crate::values::word(range, 8);
+        let range = telora_wasm_shared::source_range::SourceRange::unpack(crate::heap::read(range))
+            .expect("invalid packed source range");
+        let id = range.source;
+        let start = range.start;
+        let end = range.end;
         if id == 0 {
             assert_eq!((start, end), (0, 0), "invalid empty source range");
             return 0;

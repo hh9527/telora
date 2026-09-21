@@ -70,6 +70,13 @@ impl Collector {
     pub unsafe fn old_word(&self, reference: u32, offset: u64) -> u32 {
         unsafe { self.heap.read(reference + offset as u32) }
     }
+    pub unsafe fn old_location(&self, reference: u32) -> u32 {
+        unsafe {
+            telora_wasm_shared::source_range::SourceRange::unpack(self.heap.read(reference))
+                .expect("invalid packed source range")
+                .source
+        }
+    }
     pub fn reserve(&mut self, bytes: u32) -> u32 {
         unsafe { crate::telora_alloc(bytes) }
     }
@@ -96,7 +103,7 @@ impl Collector {
                 return at;
             }
             let ty = self.old_word(pointer, TYPE);
-            self.trace_location(self.old_word(pointer, SOURCE));
+            self.trace_location(self.old_location(pointer));
             let bytes = word(
                 self.types + ty * layout::ENTRY_BYTES,
                 layout::VALUE_BYTES as u64,

@@ -30,17 +30,17 @@ unsafe fn event(output: &mut String, pointer: u32) {
             else { telora_wasm_shared::diagnostics::error_message(code) });
         quoted(output, &message).unwrap();
         output.push_str(",\"labels\":[");
-        let origin = [word(pointer, 0), word(pointer, 4), word(pointer, 8)];
+        let origin: u64 = crate::heap::read(pointer);
         let mut seen = Vec::new();
-        if origin[0] != 0 {
+        if origin != 0 {
             label(output, pointer, &message, true);
             seen.push(origin);
         }
         let subjects = word(pointer, DIAG_SUBJECTS);
         for index in 0..word(pointer, DIAG_COUNT) {
             let pointer = subjects + index * LOC_BYTES;
-            let id = [word(pointer, 0), word(pointer, 4), word(pointer, 8)];
-            if id[0] == 0 || seen.contains(&id) { continue; }
+            let id: u64 = crate::heap::read(pointer);
+            if id == 0 || seen.contains(&id) { continue; }
             if !seen.is_empty() { output.push(','); }
             label(output, pointer, &format!("subject {} originated here", index + 1), false);
             seen.push(id);

@@ -24,7 +24,7 @@ impl Collector {
                     let mut offset = 0;
                     while offset < bytes {
                         let ty = self.old_word(old + offset, TYPE);
-                        self.trace_location(self.old_word(old + offset, SOURCE));
+                        self.trace_location(self.old_location(old + offset));
                         let width = word(self.types + ty * layout::ENTRY_BYTES, layout::VALUE_BYTES as u64);
                         assert!(width >= HEADER_BYTES && width <= bytes - offset);
                         self.trace_data(ty, old + offset + DATA as u32, at + offset + DATA as u32);
@@ -39,7 +39,7 @@ impl Collector {
                     }
                 }
                 BLAMES => {
-                    self.trace_location(self.old_word(old, SOURCE));
+                    self.trace_location(self.old_location(old));
                     for index in 0..self.old_word(old, BLAME_COUNT as u64) {
                         self.trace_location(self.old_word(old, BLAME_SUBJECTS as u64 + index as u64 * LOC_BYTES as u64));
                     }
@@ -63,7 +63,7 @@ impl Collector {
                     self.put(at + 4, next);
                 }
                 DIAGNOSTICS => {
-                    self.trace_location(self.old_word(old, SOURCE));
+                        self.trace_location(self.old_location(old));
                     let message = self.value(self.old_word(old, DIAG_MESSAGE));
                     self.put(at + DIAG_MESSAGE as u32, message);
                     let count = self.old_word(old, DIAG_COUNT);
@@ -72,7 +72,7 @@ impl Collector {
                         let next = self.copy_bytes(subjects, count.checked_mul(LOC_BYTES).unwrap());
                         self.put(at + DIAG_SUBJECTS as u32, next);
                         for index in 0..count {
-                            self.trace_location(self.old_word(subjects, index as u64 * LOC_BYTES as u64));
+                            self.trace_location(self.old_location(subjects + index * LOC_BYTES));
                         }
                     } else {
                         self.put(at + DIAG_SUBJECTS as u32, 0);

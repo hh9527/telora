@@ -68,7 +68,11 @@ impl Emitter<'_> {
         self.enum_value(node, args[2], 1, Some(value))
     }
 
-    pub(crate) fn materialize_data_plan(&mut self, target: TypeId, packet: u32) -> Result<u32, String> {
+    pub(crate) fn materialize_data_plan(
+        &mut self,
+        target: TypeId,
+        packet: u32,
+    ) -> Result<u32, String> {
         let node = self.key.node;
         let rows = self.read32(packet, 0);
         let count = self.read32(packet, 4);
@@ -174,10 +178,12 @@ impl Emitter<'_> {
         Ok(self.read32(slot, 0))
     }
     fn parse_location(&mut self, value: u32, record: u32, offset: u64) {
-        for field in [0, 4, 8] {
-            self.extend([I::LocalGet(value), I::LocalGet(record),
-                I::I32Load(memory(offset + field, 2)), I::I32Store(memory(field, 2))]);
-        }
+        self.extend([
+            I::LocalGet(value),
+            I::LocalGet(record),
+            I::I64Load(memory(offset, 3)),
+            I::I64Store(memory(0, 3)),
+        ]);
     }
     fn parse_collection(
         &mut self,
@@ -255,7 +261,6 @@ impl Emitter<'_> {
     }
 }
 
-
 /// The same sealed Value construction used by std parsers and external inputs.
 /// Parameters are (parse packet, reserved); no runtime type selection occurs.
 pub(crate) fn materializer(
@@ -263,10 +268,22 @@ pub(crate) fn materializer(
     plan: &crate::plan::Plan,
     target: Option<u32>,
 ) -> Result<crate::object::ObjectFunction, String> {
-    let mut emit = Emitter::new(mir, plan, crate::plan::Key { callable: true, ..plan.root });
+    let mut emit = Emitter::new(
+        mir,
+        plan,
+        crate::plan::Key {
+            callable: true,
+            ..plan.root
+        },
+    );
     if let Some(target) = target {
         let error = emit.read32(0, 12);
-        emit.extend([I::LocalGet(error), I::If(BlockType::Empty), I::Unreachable, I::End]);
+        emit.extend([
+            I::LocalGet(error),
+            I::If(BlockType::Empty),
+            I::Unreachable,
+            I::End,
+        ]);
         let value = emit.materialize_data_plan(plan.layouts[target as usize].id(), 0)?;
         emit.emit(I::LocalGet(value));
     } else {

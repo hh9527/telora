@@ -7,7 +7,7 @@ use wasm_encoder::{BlockType, Instruction as I, ValType};
 #[derive(Default)]
 pub(crate) struct Constants {
     pub bytes: Vec<u8>,
-    offsets: BTreeMap<[u32; 3], u32>,
+    offsets: BTreeMap<u64, u32>,
 }
 
 pub(crate) type OriginConstants = RefCell<Constants>;
@@ -39,18 +39,23 @@ impl Emitter<'_> {
             return self.native_origin();
         }
         let loc = self.mir.hir[node.index()].location;
-        let words = [loc.source.get(), loc.start, loc.end];
+        let packed = telora_wasm_shared::source_range::SourceRange::checked(
+            loc.source.get(),
+            loc.start,
+            loc.end,
+            telora_wasm_shared::source_range::OFFSET_LIMIT - 1,
+        )
+        .ok_or("Wasm: source location exceeds packed range")?
+        .packed();
         let offset = {
             let mut constants = self.plan.origins.borrow_mut();
-            if let Some(&offset) = constants.offsets.get(&words) {
+            if let Some(&offset) = constants.offsets.get(&packed) {
                 offset
             } else {
                 let offset = u32::try_from(self.plan.reflection.len() + constants.bytes.len())
                     .map_err(|_| "Wasm: source constants exceed wasm32")?;
-                constants
-                    .bytes
-                    .extend(words.into_iter().flat_map(u32::to_le_bytes));
-                constants.offsets.insert(words, offset);
+                constants.bytes.extend_from_slice(&packed.to_le_bytes());
+                constants.offsets.insert(packed, offset);
                 offset
             }
         };
@@ -70,9 +75,7 @@ impl Emitter<'_> {
             self.extend([I::LocalGet(origin), I::If(BlockType::Empty)]);
             self.copy(value, 0, origin, LOC_BYTES);
             self.emit(I::Else);
-            for offset in [SOURCE, START, END] {
-                self.store32(value, offset, 0);
-            }
+            self.store64(value, SOURCE, 0);
             self.emit(I::End);
         } else {
             self.store_location(value, self.mir.hir[node.index()].location);

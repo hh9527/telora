@@ -24,14 +24,15 @@ impl Origins {
             Self::Inherit(range) => *range,
             Self::Source { id } => SourceRange { source: *id, start: location.start, end: location.end },
         };
-        unsafe { core::ptr::copy_nonoverlapping(range.encode().as_ptr(), crate::heap::ptr::<u8>(pointer), 12); }
+        unsafe { core::ptr::copy_nonoverlapping(range.encode().as_ptr(), crate::heap::ptr::<u8>(pointer), 8); }
     }
 
     pub unsafe fn inherit(pointer: u32) -> Self {
-        unsafe { Self::Inherit(SourceRange {
-            source: crate::values::word(pointer, 0),
-            start: crate::values::word(pointer, 4),
-            end: crate::values::word(pointer, 8),
-        }) }
+        unsafe {
+            Self::Inherit(
+                SourceRange::unpack(crate::heap::read(pointer))
+                    .expect("invalid inherited source range"),
+            )
+        }
     }
 }

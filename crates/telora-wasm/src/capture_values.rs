@@ -41,31 +41,53 @@ impl Emitter<'_> {
         let length = self.read32(span, 4);
         self.byte_span_value(ty, pointer, length)
     }
-    pub(crate) fn byte_span_value(&mut self, ty: TypeId, pointer: u32, length: u32) -> Result<u32, String> {
+    pub(crate) fn byte_span_value(
+        &mut self,
+        ty: TypeId,
+        pointer: u32,
+        length: u32,
+    ) -> Result<u32, String> {
         let value = self.value_as(self.key.node, ty, STRING_BYTES)?;
         self.extend([
             I::LocalGet(value),
-            I::I32Const(DATA as i32), I::I32Add,
-            I::LocalGet(pointer), I::LocalGet(length),
+            I::I32Const(DATA as i32),
+            I::I32Add,
+            I::LocalGet(pointer),
+            I::LocalGet(length),
         ]);
         self.extend([I::Call(CONTENT_WRITE), I::Drop]);
         Ok(value)
     }
-    pub(crate) fn byte_slice_value(&mut self, ty: TypeId, owner: u32, start: u32, length: u32) -> Result<u32, String> {
+    pub(crate) fn byte_slice_value(
+        &mut self,
+        ty: TypeId,
+        owner: u32,
+        start: u32,
+        length: u32,
+    ) -> Result<u32, String> {
         let value = self.value_as(self.key.node, ty, STRING_BYTES)?;
         self.extend([
-            I::LocalGet(value), I::I32Const(DATA as i32), I::I32Add,
-            I::LocalGet(owner), I::I32Const(DATA as i32), I::I32Add,
-            I::LocalGet(start), I::LocalGet(length), I::Call(CONTENT_SLICE), I::Drop,
+            I::LocalGet(value),
+            I::I32Const(DATA as i32),
+            I::I32Add,
+            I::LocalGet(owner),
+            I::I32Const(DATA as i32),
+            I::I32Add,
+            I::LocalGet(start),
+            I::LocalGet(length),
+            I::Call(CONTENT_SLICE),
+            I::Drop,
         ]);
         Ok(value)
     }
     fn same_origin(&mut self, a: u32, b: u32) {
-        for offset in [0, 4, 8] {
-            self.extend([I::LocalGet(a), I::I32Load(memory(offset, 2)),
-                I::LocalGet(b), I::I32Load(memory(offset, 2)), I::I32Eq]);
-            if offset != 0 { self.emit(I::I32And); }
-        }
+        self.extend([
+            I::LocalGet(a),
+            I::I64Load(memory(0, 3)),
+            I::LocalGet(b),
+            I::I64Load(memory(0, 3)),
+            I::I64Eq,
+        ]);
     }
     fn append_label(
         &mut self,
@@ -78,7 +100,9 @@ impl Emitter<'_> {
     ) -> Result<(), String> {
         self.extend([
             I::LocalGet(origin),
-            I::I32Load(memory(0, 2)),
+            I::I64Load(memory(0, 3)),
+            I::I64Const(0),
+            I::I64Ne,
             I::If(BlockType::Empty),
         ]);
         let range = self.diagnostic_field_type(label, "location")?;
@@ -86,9 +110,12 @@ impl Emitter<'_> {
         let coordinates = self.local(ValType::I32);
         let span = self.local(ValType::I32);
         self.extend([
-            I::LocalGet(origin), I::Call(SOURCE_RANGE),
-            I::LocalTee(coordinates), I::I32Load(memory(0, 2)),
-            I::Call(SOURCE_NAME), I::LocalSet(span),
+            I::LocalGet(origin),
+            I::Call(SOURCE_RANGE),
+            I::LocalTee(coordinates),
+            I::I32Load(memory(0, 2)),
+            I::Call(SOURCE_NAME),
+            I::LocalSet(span),
         ]);
         let source = self.text_span_value(string, span)?;
         let start_ty = self.diagnostic_field_type(range, "start")?;
@@ -98,14 +125,20 @@ impl Emitter<'_> {
             let line_ty = self.diagnostic_field_type(ty, "line")?;
             let offset_ty = self.diagnostic_field_type(ty, "offset")?;
             if self.mir.types[line_ty.index()].constructor != T::Int
-                || self.mir.types[offset_ty.index()].constructor != T::Int {
+                || self.mir.types[offset_ty.index()].constructor != T::Int
+            {
                 return Err("Wasm: diagnostic coordinates require Int fields".into());
             }
             let line = self.scalar_as(self.key.node, line_ty, 0)?;
             let offset = self.scalar_as(self.key.node, offset_ty, 0)?;
             for (value, field) in [(line, base), (offset, base + 4)] {
-                self.extend([I::LocalGet(value), I::LocalGet(coordinates),
-                    I::I32Load(memory(field, 2)), I::I64ExtendI32U, I::I64Store(memory(DATA, 3))]);
+                self.extend([
+                    I::LocalGet(value),
+                    I::LocalGet(coordinates),
+                    I::I32Load(memory(field, 2)),
+                    I::I64ExtendI32U,
+                    I::I64Store(memory(DATA, 3)),
+                ]);
             }
             points.push(self.diagnostic_record(ty, &[("line", line), ("offset", offset)])?);
         }
@@ -154,7 +187,9 @@ impl Emitter<'_> {
         ]);
         let default = self.text_as(node, string, b"Wasm execution failed")?;
         self.extend([I::LocalGet(default), I::LocalSet(message)]);
-        for code in (ERROR_OVERFLOW..=ERROR_DATA).chain([ERROR_UNINITIALIZED_CALL, ERROR_UNINITIALIZED_FUNCTION]) {
+        for code in (ERROR_OVERFLOW..=ERROR_DATA)
+            .chain([ERROR_UNINITIALIZED_CALL, ERROR_UNINITIALIZED_FUNCTION])
+        {
             self.extend([
                 I::LocalGet(packet),
                 I::I32Load(memory(DIAG_CODE, 2)),

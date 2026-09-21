@@ -7,10 +7,8 @@ pub const STRING_BYTES: u32 = HEADER_BYTES + 16;
 pub const DYN_BYTES: u32 = HEADER_BYTES + 24;
 // A value head contains src/start/end byte offsets and one sealed TypeId.
 pub const SOURCE: u64 = 0;
-pub const LOC_BYTES: u32 = 12;
-pub const START: u64 = 4;
-pub const END: u64 = 8;
-pub const TYPE: u64 = 12;
+pub const LOC_BYTES: u32 = 8;
+pub const TYPE: u64 = 8;
 pub const DATA: u64 = 16;
 pub const ENVIRONMENT: u64 = 20;
 pub const NULL: u32 = 0;

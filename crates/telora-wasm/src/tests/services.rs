@@ -21,9 +21,15 @@ fn collection_keeps_initialization_locations_without_registering_request_sources
     let mut session = Session::load(&bytes, 100_000_000).unwrap();
     let baseline = session.manifest.sources.len();
     let retained = sources.try_add_data("retained.json", "42".into()).unwrap();
-    session.manifest.sources.push(crate::artifact::Source::from_file(sources.get(retained)));
+    session
+        .manifest
+        .sources
+        .push(crate::artifact::Source::from_file(sources.get(retained)));
     session.initialize().unwrap();
-    let value = session.parse_data_source(sources.get(retained), Format::Json).unwrap().unwrap();
+    let value = session
+        .parse_data_source(sources.get(retained), Format::Json)
+        .unwrap()
+        .unwrap();
     let factory = crate::transport::Value {
         pointer: session.entry().unwrap(),
         ty: session.manifest.entry_type,
@@ -32,8 +38,14 @@ fn collection_keeps_initialization_locations_without_registering_request_sources
     let mut plateau = None;
     for n in 0..256 {
         let discarded = session.input_value(value.ty, &n.into()).unwrap();
-        for offset in [0, 4, 8] {
-            assert_eq!(session.output().word(discarded.pointer as u64 + offset).unwrap(), 0);
+        for offset in [0, 4] {
+            assert_eq!(
+                session
+                    .output()
+                    .word(discarded.pointer as u64 + offset)
+                    .unwrap(),
+                0
+            );
         }
         let (roots, stats) = session.collect_work(&[closure]).unwrap();
         closure = roots[0];
