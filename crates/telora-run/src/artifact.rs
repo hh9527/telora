@@ -40,11 +40,12 @@ struct Bundle {
 pub(crate) struct Artifact {
     pub publication: Publication,
     pub modules: Vec<ModuleData>,
+    pub snapshot: Option<telora_wasm_shared::snapshot_artifact::Snapshot>,
 }
 
 impl Artifact {
     pub fn read(bytes: &[u8]) -> Result<Self> {
-        let (mut publication, mut manifest, mut bundle) = (None, None, None);
+        let (mut publication, mut manifest, mut bundle, mut snapshot) = (None, None, None, None);
         for payload in wasmparser::Parser::new(0).parse_all(bytes) {
             match payload? {
                 wasmparser::Payload::CustomSection(s) => match s.name() {
@@ -59,6 +60,13 @@ impl Artifact {
                     "telora.data" => {
                         ensure!(bundle.is_none(), "duplicate data bundle");
                         bundle = Some(serde_json::from_slice::<Bundle>(s.data())?);
+                    }
+                    telora_wasm_shared::snapshot_artifact::SECTION => {
+                        ensure!(snapshot.is_none(), "duplicate service snapshot");
+                        snapshot = Some(
+                            telora_wasm_shared::snapshot_artifact::decode(s.data())
+                                .map_err(anyhow::Error::msg)?,
+                        );
                     }
                     _ => {}
                 },
@@ -113,6 +121,7 @@ impl Artifact {
         Ok(Self {
             publication,
             modules,
+            snapshot,
         })
     }
 }

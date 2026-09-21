@@ -70,6 +70,7 @@ pub struct Runner {
     pub publication: Publication,
     pub timings: Timings,
     modules: Vec<artifact::ModuleData>,
+    artifact_snapshot: Option<telora_wasm_shared::snapshot_artifact::Snapshot>,
     baseline: Option<Baseline>,
     fuel: u64,
     memory_limit: usize,
@@ -104,6 +105,7 @@ impl Runner {
             guest,
             publication: artifact.publication,
             modules: artifact.modules,
+            artifact_snapshot: artifact.snapshot,
             baseline: None,
             timings: Timings {
                 metadata_ms,
@@ -150,6 +152,25 @@ impl Runner {
         let now = Instant::now();
         self.initialization_started = Some(now);
         self.record_phase("instantiated")?;
+        if sources.is_empty()
+            && let Some(snapshot) = self.artifact_snapshot.take()
+        {
+            self.guest.import_snapshot(&snapshot.guest)?;
+            let globals = restore_artifact_globals(&mut self.guest, snapshot.globals)?;
+            self.modules.clear();
+            self.baseline = Some(Baseline {
+                snapshot: snapshot.guest,
+                memory_bytes: self.guest.memory.data_size(&self.guest.store),
+                globals,
+            });
+            self.record_phase("snapshot-imported")?;
+            self.ready = true;
+            self.poisoned = false;
+            self.reset()?;
+            self.timings.initialize_ms = now.elapsed().as_secs_f64() * 1000.;
+            return Ok(vec![]);
+        }
+        self.artifact_snapshot = None;
         for module in &self.modules {
             self.guest.inject_module(module)?;
         }
@@ -271,6 +292,51 @@ impl Runner {
             phases: std::mem::take(&mut self.phases),
         }
     }
+}
+
+fn restore_artifact_globals(
+    guest: &mut Guest,
+    globals: Vec<(String, telora_wasm_shared::snapshot_artifact::GlobalValue)>,
+) -> Result<Vec<(String, backend::runtime::Val)>> {
+    use telora_wasm_shared::snapshot_artifact::GlobalValue;
+    let mut expected = backend::globals(guest.instance, &mut guest.store)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect::<Vec<_>>();
+    let mut actual = globals
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    expected.sort();
+    actual.sort();
+    ensure!(
+        actual == expected && !actual.windows(2).any(|names| names[0] == names[1]),
+        "snapshot globals do not match the module"
+    );
+    let globals = globals
+        .into_iter()
+        .map(|(name, value)| {
+            let value = match value {
+                GlobalValue::I32(value) => backend::runtime::Val::I32(value),
+                GlobalValue::I64(value) => backend::runtime::Val::I64(value),
+                GlobalValue::F32(value) => {
+                    backend::runtime::Val::F32(backend::runtime::F32::from_bits(value))
+                }
+                GlobalValue::F64(value) => {
+                    backend::runtime::Val::F64(backend::runtime::F64::from_bits(value))
+                }
+            };
+            (name, value)
+        })
+        .collect::<Vec<_>>();
+    for (name, value) in &globals {
+        guest
+            .instance
+            .get_global(&guest.store, name)
+            .ok_or_else(|| anyhow::anyhow!("missing snapshot global {name:?}"))?
+            .set(&mut guest.store, value.clone())?;
+    }
+    Ok(globals)
 }
 
 fn current_rss_bytes() -> Option<u64> {

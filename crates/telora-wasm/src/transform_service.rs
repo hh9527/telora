@@ -85,6 +85,32 @@ impl TransformSession {
         self.session.usage()
     }
 
+    pub fn publication_snapshot(
+        &self,
+    ) -> Result<telora_wasm_shared::snapshot_artifact::Snapshot, String> {
+        use telora_wasm_shared::snapshot_artifact::{GlobalValue, Snapshot};
+        let baseline = self
+            .baseline
+            .as_ref()
+            .ok_or("service initialization is not sealed")?;
+        let mut globals = Vec::with_capacity(baseline.globals.len());
+        for (name, value) in &baseline.globals {
+            let value = match value {
+                wasmi::Val::I32(value) => GlobalValue::I32(*value),
+                wasmi::Val::I64(value) => GlobalValue::I64(*value),
+                wasmi::Val::F32(value) => GlobalValue::F32(value.to_bits()),
+                wasmi::Val::F64(value) => GlobalValue::F64(value.to_bits()),
+                _ => return Err("snapshot reset globals must be scalar".into()),
+            };
+            globals.push((name.clone(), value));
+        }
+        globals.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(Snapshot {
+            guest: baseline.snapshot.clone(),
+            globals,
+        })
+    }
+
     pub fn initialize(&mut self, sources: &[SourceInput<'_>]) -> Result<Initialization, String> {
         self.initialize_readers(
             sources.iter().map(|source| {

@@ -9,5 +9,6 @@ pub mod layout_image;
 pub mod source_range;
 
 pub mod service;
+pub mod snapshot_artifact;
 
 pub mod diagnostics;

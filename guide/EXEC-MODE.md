@@ -8,6 +8,7 @@ Telora 从源码建立封闭 MIR，生成内存中的 Wasm，初始化后执行�
 | `run MODULE` | 类型导出 MainService | 读取一个 stdin JSON，返回一个 JSON |
 | `serve MODULE --bind URI` | 同一个 MainService | 通过 JSONL 或 HTTP 连续处理独立请求 |
 | `build MODULE -o app.wasm` | 同一个 MainService | 编译并保存普通 Wasm，不初始化服务 |
+| `build MODULE --snapshot --source NAME=FILE -o app.wasm` | 同一个 MainService | 额外嵌入 ready service 快照 |
 | `telora-run app.wasm` | 制品中的 MainService | 独立执行；指定 `--bind URI` 时持续服务 |
 
 服务实现 `std/transform-service.TransformService`：
@@ -84,26 +85,37 @@ fuel/memoryLimit 只约束单次服务调用，不在整个 serve 生命周期�
 run 成功只向 stdout 输出结果；失败非零退出，诊断走 stderr JSONL。serve 使用上面的
 响应封装。dbg! 和 usage 观察仍输出到 stderr，不混入结果。
 
-## 普通 Wasm 制品
+## Wasm 制品
 
 ```sh
 cargo build --release -p telora -p telora-run
 telora build @src/app -o app.wasm
 telora-run app.wasm --source knowledge=model.json < request.json
 telora-run app.wasm --source knowledge=model.json --bind stdio+jsonl:// < requests.jsonl
+
+telora build @src/app --snapshot --source knowledge=model.json -o app.wasm
+telora-run app.wasm < request.json
+# 显式来源覆盖固化来源，并走普通初始化路径
+telora-run app.wasm --source knowledge=replacement.json < request.json
 ```
 
 build 需要已更新的 workspace lock；从输入端将源码和静态数据模块中的 CRLF/CR
 归一化为 LF，不修改原文件。编译成功后原子发布制品，失败不会覆盖旧文件。
-制品包含程序、运行时和静态数据，不执行服务初始化，也不固化动态 --source。
+普通制品包含程序、运行时和静态数据，不执行服务初始化，也不固化动态 --source。
+`--snapshot` 要求构建时完整提供服务声明的来源，完成初始化与 copy-collect 后，
+把 ready service 状态作为 `telora.snapshot` custom section 嵌入同一个制品。
+原始代码和静态数据 bundle 仍然保留，因此 snapshot 不是另一种不可逆制品格式。
 
-telora-run 使用 wasmi，不需要源码、workspace 或编译器。启动时注入数据并初始化；
+telora-run 使用 wasmi，不需要源码、workspace 或编译器。普通制品启动时注入数据并初始化；
+包含 snapshot 且未传 `--source` 时直接恢复 ready service。只要命令行出现 `--source`，
+runner 就忽略 snapshot，按照声明校验完整来源集合并重新初始化。因此文件名不参与识别，
+普通和 snapshot 制品均可使用 `.wasm` 后缀。
 不传 --bind 则读完 stdin 的一个 JSON（直到 EOF），执行一次并退出。
 制品保留构建时的默认执行预算；runner 的 --with-fuel 和 --with-memory-limit
 覆盖每请求预算，不改变初始化预算。--report-usage 输出使用量诊断，
 --report-timings 输出加载、初始化、reset 和请求等分阶段耗时。
 
-当前不提供持久化 snapshot 或 Wasmtime。制品格式仍是实验版本，跨版本使用时
+当前不提供 Wasmtime。制品与 snapshot 格式仍是实验版本，跨版本使用时
 可能需要重新 build。独立 runner 暂不渲染 dbg! 事件，普通语言诊断正常保留。
 
 ## HTTP 与 Unix socket

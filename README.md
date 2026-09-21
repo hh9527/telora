@@ -248,6 +248,8 @@ telora eval <module:name>  求值 module 的一个 Value 导出
 telora run <module>        读取一个 stdin JSON，输出 transform 的结果
 telora serve <module> --bind <URI>  通过 JSONL 或 HTTP 持续处理独立请求
 telora build <module> -o app.wasm   编译为普通 Wasm 制品
+telora build <module> --snapshot --source name=file.json -o app.wasm
+                                  编译并嵌入可选的初始化快照
 telora-run app.wasm [--bind <URI>]  独立执行制品，不需要源码和编译器
 telora lock                物化 package source 并原子刷新 workspace lock
 telora check <module-id>   类型闭合后完成可达模块图初始化
@@ -265,8 +267,10 @@ telora lsp                 启动语言服务器
 `http+unix:///tmp/telora.sock`。HTTP 接口为 `POST /transform`。
 `telora-run` 不传 `--bind` 时从 stdin 读取一个完整 JSON，输出一个结果；
 传入时持续服务。`--source name=file.json` 提供初始化数据，与请求输入分开。
-普通 Wasm 制品不保存初始化状态，每次启动 runner 都进行初始化；
-当前不提供 snapshot 或 Wasmtime 后端。详细示例见 [执行模式](guide/EXEC-MODE.md)。
+普通 Wasm 制品每次启动 runner 都进行初始化。`build --snapshot` 在同一制品中保留
+普通初始化代码和 ready service：runner 无 `--source` 时直接恢复快照，提供
+`--source` 时忽略快照并以新来源重新初始化。当前不提供 Wasmtime 后端。
+详细示例见 [执行模式](guide/EXEC-MODE.md)。
 
 `query` 包含：
 

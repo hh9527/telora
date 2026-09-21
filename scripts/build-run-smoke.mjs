@@ -11,6 +11,7 @@ const root=mkdtempSync(join(tmpdir(),'telora-build-run-'));
 const service=readFileSync('crates/telora-run/tests/fixtures/service.telora','utf8');
 const constants='{"constant":\n 42\n}\n';
 const data='{\n"name":"retained source"\n}\n';
+const replacement='{\n"name":"replacement source"\n}\n';
 function call(binary,args,input,success=true) {
   const result=spawnSync(binary,args,{input,encoding:'utf8',timeout:120000,maxBuffer:8*1024*1024});
   assert.equal(result.error,undefined,String(result.error));
@@ -18,6 +19,7 @@ function call(binary,args,input,success=true) {
   return result;
 }
 const originals=[];
+const snapshots=[];
 const eols=[['lf','\n'],['crlf','\r\n'],['cr','\r']];
 for (const [label,eol] of eols) {
   const dir=join(root,label); mkdirSync(join(dir,'src'),{recursive:true});
@@ -30,8 +32,16 @@ for (const [label,eol] of eols) {
   const original=join(dir,'original.wasm');
   call(compiler,['-C',dir,'build','@src/main','-o',original]);
   originals.push(readFileSync(original));
+  const snapshot=join(dir,'snapshot.wasm');
+  call(compiler,['-C',dir,'build','@src/main','--snapshot','--source',`model=${join(dir,'source.json')}`,'-o',snapshot]);
+  snapshots.push(readFileSync(snapshot));
   const normal=call(runner,[original,'--source',`model=${join(dir,'source.json')}`],'"query"');
   assert.deepEqual(JSON.parse(normal.stdout),[{name:'retained source'},{constant:42},'query',true,false]);
+  const frozen=call(runner,[snapshot],'"query"');
+  assert.deepEqual(JSON.parse(frozen.stdout),[{name:'retained source'},{constant:42},'query',true,false]);
+  writeFileSync(join(dir,'replacement.json'),replacement.replaceAll('\n',eol));
+  const overridden=call(runner,[snapshot,'--source',`model=${join(dir,'replacement.json')}`],'"query"');
+  assert.deepEqual(JSON.parse(overridden.stdout),[{name:'replacement source'},{constant:42},'query',true,false]);
   const diagnostics=call(runner,[original,'--source',`model=${join(dir,'source.json')}`],'null',false);
   assert.ok(diagnostics.stderr.includes('@service/model'));
   assert.ok(diagnostics.stderr.includes('service diagnostic'));
@@ -52,6 +62,7 @@ for (const [label,eol] of eols) {
 }
 for (let i=1;i<originals.length;i++) {
   assert.deepEqual(originals[i],originals[0],'ordinary build differs by EOL');
+  assert.deepEqual(snapshots[i],snapshots[0],'snapshot build differs by EOL');
 }
 const dir=join(root,'lf');
 writeFileSync(join(dir,'src/main.telora'),readFileSync('crates/telora-run/tests/fixtures/failed-init.telora'));
@@ -59,6 +70,9 @@ call(compiler,['-C',dir,'build','@src/main','-o',join(dir,'failed-ordinary.wasm'
 const failed=call(runner,[join(dir,'failed-ordinary.wasm')],'"query"',false);
 const errors=failed.stderr.trim().split('\n').map(JSON.parse);
 assert.ok(errors.some(e=>Array.isArray(e.labels) && e.labels.length>0),'initialization diagnostic lost its locations');
+const failedSnapshot=join(dir,'failed-snapshot.wasm');
+call(compiler,['-C',dir,'build','@src/main','--snapshot','-o',failedSnapshot],undefined,false);
+assert.equal(existsSync(failedSnapshot),false,'failed snapshot initialization published an artifact');
 const before=readFileSync(join(dir,'original.wasm'));
 writeFileSync(join(dir,'src/main.telora'),readFileSync('crates/telora-run/tests/fixtures/invalid.telora'));
 call(compiler,['-C',dir,'build','@src/main','-o',join(dir,'original.wasm')],undefined,false);
@@ -67,4 +81,4 @@ call(compiler,['-C',dir,'build','@src/main','-o',join(dir,'failed.wasm')],undefi
 assert.equal(existsSync(join(dir,'failed.wasm')),false);
 const invalid=Buffer.from(originals[0]); invalid[0]=1; writeFileSync(join(dir,'invalid.wasm'),invalid);
 call(runner,[join(dir,'invalid.wasm')],'"query"',false);
-console.log(JSON.stringify({passed:true,root,ordinary_bytes:originals[0].length}));
+console.log(JSON.stringify({passed:true,root,ordinary_bytes:originals[0].length,snapshot_bytes:snapshots[0].length}));

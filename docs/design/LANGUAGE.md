@@ -1574,9 +1574,11 @@ HTTP 使用 `POST /transform`，响应为 `telora.service/v1` envelope；
 停机后由部署方清理。独立 runner 不传 `--bind` 时执行单次请求。
 
 `telora build MODULE -o FILE` 在输入端归一化源码与静态数据的 EOL 为 LF，
-编译并原子发布普通 Wasm，不执行初始化。`telora-run FILE` 使用 wasmi，
-启动时注入来源并初始化，不依赖源码与编译器。制品格式为实验版本；不提供
-持久化 snapshot 或 Wasmtime 后端。
+编译并原子发布普通 Wasm，不执行初始化。`telora build MODULE --snapshot
+--source NAME=FILE -o FILE` 还会初始化、压缩 service，并把状态嵌入
+`telora.snapshot` custom section；原始初始化代码与数据 bundle 继续保留。
+`telora-run FILE` 使用 wasmi，不依赖源码与编译器：无显式 source 时优先恢复快照，
+提供 source 时忽略快照并重新初始化。制品格式为实验版本；不提供 Wasmtime 后端。
 
 ### TransformService 入口
 

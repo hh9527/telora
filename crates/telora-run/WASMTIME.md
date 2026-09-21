@@ -1,4 +1,4 @@
-> 历史实验记录：Wasmtime 和持久化 snapshot 已移除；当前用法见 README.md。
+> 历史实验记录：Wasmtime/Wizer 路径已移除；当前 custom-section snapshot 用法见 README.md。
 
 # #212 Wasmtime 模式验证与性能观察
 

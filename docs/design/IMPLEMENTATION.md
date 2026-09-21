@@ -46,8 +46,8 @@ seal 的 MIR；执行入口必须通过 seal。后续阶段直接使用静态结
 
 codegen 消费 SealedExecutable，生成 Wasm 指令和类型确定的胶水。Rust RT 在 Cargo
 构建期间预编译、预链接并嵌入 Telora；用户执行期间无需外部 linker，不写临时代码文件。
-执行统一为 Wasm/wasmi；`telora build` 可保存普通 Wasm，`telora-run` 独立执行制品。
-没有运行后端选择开关或持久化 snapshot 功能。
+执行统一为 Wasm/wasmi；`telora build` 可保存普通 Wasm，也可嵌入初始化 snapshot，
+`telora-run` 独立执行制品。没有运行后端选择开关。
 
 ## 2. Frontend 与静态诊断
 
@@ -518,7 +518,9 @@ LSP 的 `mir_workspace` 把文档覆盖内容和磁盘清单送入同一静态�
 泛型实例以及构造/解码/更新边界。
 
 完整构建的确定性覆盖静态身份与所选执行闭包；Wasm 测试覆盖生成代码、初始化、
-数据来源和长期服务根。普通 Wasm 制品由 `telora build` 发布；`telora-run` 使用 wasmi 独立加载、注入和初始化。
+数据来源和长期服务根。Wasm 制品由 `telora build` 发布；`--snapshot` 可在 custom
+section 中携带 ready service 状态，同时保留原始代码与数据 bundle。`telora-run`
+使用 wasmi 独立加载；无显式 source 时恢复快照，有 source 时忽略快照并重新注入、初始化。
 两个 CLI 共用 `telora-run::transport` 的 JSONL/TCP HTTP/Unix socket HTTP 传输层，
 执行回调保持串行，各自执行入口负责 reset 和资源配额。HTTP 分帧由 Hyper 处理。
-持久化 snapshot、引擎替换与进一步减少复制不属于当前路径。
+引擎替换与进一步减少复制不属于当前路径。
