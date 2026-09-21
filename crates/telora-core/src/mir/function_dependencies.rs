@@ -40,6 +40,50 @@ impl FunctionBodyDependencyGraph {
         self.functions.get(id.index())
     }
 
+    /// Canonical, stable representation for tests and backend diagnostics.
+    pub fn dump(&self) -> String {
+        use std::fmt::Write;
+
+        let mut output = String::new();
+        for function in &self.functions {
+            let _ = writeln!(
+                output,
+                "func {} proto {} root {} instance {}",
+                function.id.index(),
+                function.prototype.index(),
+                function.root.node.index(),
+                function
+                    .root
+                    .instance
+                    .map_or_else(|| "-".to_owned(), |id| id.index().to_string())
+            );
+            for dependency in &function.dependencies {
+                match dependency {
+                    FunctionBodyDependency::Function(id) => {
+                        let _ = writeln!(output, "  function {}", id.index());
+                    }
+                    FunctionBodyDependency::TopLevel(symbol) => {
+                        let _ = writeln!(output, "  top-level {}", symbol.index());
+                    }
+                    FunctionBodyDependency::Property(property) => {
+                        let _ = writeln!(output, "  property {}", property.index());
+                    }
+                    FunctionBodyDependency::Conservative(
+                        FunctionDependencyFallback::Parameter { symbol, signature },
+                    ) => {
+                        let _ = writeln!(
+                            output,
+                            "  conservative parameter {} signature {}",
+                            symbol.index(),
+                            signature.index()
+                        );
+                    }
+                }
+            }
+        }
+        output
+    }
+
     /// Sorted transitive behavioral closure, including `root` itself.
     pub fn reachable_functions(&self, root: FuncId) -> Vec<FuncId> {
         let mut pending = vec![root];

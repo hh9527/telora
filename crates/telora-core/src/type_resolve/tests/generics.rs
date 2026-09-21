@@ -1323,3 +1323,33 @@ fn sealed_generic_functions_share_a_prototype_but_keep_instance_identity() {
     assert_ne!(functions[0].id, functions[1].id);
     assert_eq!(functions[0].prototype, functions[1].prototype);
 }
+
+#[test]
+fn sealed_function_dependency_dump_is_deterministic() {
+    let source = r#"
+        def base: Int = 1;
+        def helper: for(T) Fn(T) -> Int = fn(value) { base };
+        export def answer: (Int, Int) = (helper(base), helper("ok"));
+    "#;
+    let build = || {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+        let export = mir
+            .symbols
+            .iter()
+            .position(|symbol| {
+                symbol.name == "answer" && matches!(symbol.resolution, ResolveState::Bound(_))
+            })
+            .unwrap();
+        mir.seal_export(SymbolId(export as u32))
+            .unwrap()
+            .function_dependencies()
+            .dump()
+    };
+    let first = build();
+    let second = build();
+    assert_eq!(first.as_bytes(), second.as_bytes());
+    assert!(first.contains("top-level"), "{first}");
+    assert!(first.contains("proto"), "{first}");
+}

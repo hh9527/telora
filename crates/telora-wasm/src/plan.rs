@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use telora_core::mir::{
-    GenericInstanceId, HirId, HirKind, Mir, ResolveState, Role, SealedExecutable, SymbolId, TypeId,
-    TypeState,
+    FunctionBodyDependency, GenericInstanceId, HirId, HirKind, Mir, ResolveState, Role,
+    SealedExecutable, SymbolId, TypeId, TypeState,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -314,6 +314,7 @@ impl Plan {
             plan.reflection =
                 crate::reflection_data::build(executable.sealed_mir().types(), &plan.layouts)?;
         }
+        plan.validate_function_dependencies(executable)?;
         // Constructor identity is (closed signature, variant), independent of
         // the expression's source location. Values carry their own source head.
         let mut constructors = BTreeMap::new();
@@ -438,6 +439,60 @@ impl Plan {
             }
         }
         Ok(plan)
+    }
+
+    fn validate_function_dependencies(
+        &self,
+        executable: &SealedExecutable<'_>,
+    ) -> Result<(), String> {
+        let graph = executable.function_dependencies();
+        for function in graph.functions() {
+            let key = Key {
+                node: function.root.node,
+                instance: function.root.instance,
+                callable: true,
+                special: Special::Normal,
+            };
+            if !self.functions.contains_key(&key) {
+                return Err(format!(
+                    "Wasm: sealed function {} has no planned body",
+                    function.id.index()
+                ));
+            }
+            for dependency in &function.dependencies {
+                match dependency {
+                    FunctionBodyDependency::Function(target) => {
+                        if graph.function(*target).is_none() {
+                            return Err(format!(
+                                "Wasm: sealed function {} depends on missing function {}",
+                                function.id.index(),
+                                target.index()
+                            ));
+                        }
+                    }
+                    FunctionBodyDependency::TopLevel(symbol) => {
+                        if !executable.globals().contains(symbol) {
+                            return Err(format!(
+                                "Wasm: sealed function {} depends on unplanned top-level {}",
+                                function.id.index(),
+                                symbol.index()
+                            ));
+                        }
+                    }
+                    FunctionBodyDependency::Property(property) => {
+                        if !self.properties.contains_key(&property.index()) {
+                            return Err(format!(
+                                "Wasm: sealed function {} depends on unplanned property {}",
+                                function.id.index(),
+                                property.index()
+                            ));
+                        }
+                    }
+                    FunctionBodyDependency::Conservative(_) => {}
+                }
+            }
+        }
+        Ok(())
     }
 }
 
