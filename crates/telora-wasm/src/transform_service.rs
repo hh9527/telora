@@ -203,6 +203,7 @@ impl TransformSession {
                 .set(&mut compact.store, value.clone())
                 .map_err(|error| error.to_string())?;
         }
+        compact.usage_reporter = self.session.usage_reporter.take();
         self.session = compact;
         self.baseline = Some(Baseline {
             snapshot,
@@ -272,6 +273,7 @@ impl TransformSession {
         compact.manifest = baseline.manifest.clone();
         compact.registered_sources = baseline.registered_sources;
         compact.emitted_debug.set(baseline.emitted_debug);
+        compact.usage_reporter = self.session.usage_reporter.take();
         self.session = compact;
         self.poisoned = false;
         Ok(())

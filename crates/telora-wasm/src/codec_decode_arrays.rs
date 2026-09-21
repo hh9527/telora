@@ -110,7 +110,9 @@ impl Emitter<'_> {
             I::End,
             I::End,
         ]);
-        let id = self.array_object(data, bytes, inner)?;
+        let count = self.local(ValType::I32);
+        self.extend([I::LocalGet(end), I::LocalGet(start), I::I32Sub, I::LocalSet(count)]);
+        let id = self.array_object(data, count, inner)?;
         let value = self.value_as(self.key.node, target, STRING_BYTES)?;
         self.copy(value, 0, input, LOC_BYTES);
         if dict {

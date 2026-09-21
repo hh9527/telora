@@ -27,10 +27,8 @@ impl Emitter<'_> {
         ]);
         result
     }
-    fn parse_column(&mut self, base: u32, count: u32, stride: u32, ty: TypeId) -> Result<u32, String> {
-        let bytes = self.local(ValType::I32);
-        self.extend([I::LocalGet(count), I::I32Const(stride as i32), I::I32Mul, I::LocalSet(bytes)]);
-        self.array_object(base, bytes, ty)
+    fn parse_column(&mut self, base: u32, count: u32, _stride: u32, ty: TypeId) -> Result<u32, String> {
+        self.array_object(base, count, ty)
     }
     pub fn data_parse_native(&mut self, parser: u32) -> Result<u32, String> {
         let node = self.key.node;

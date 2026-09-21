@@ -58,12 +58,10 @@ impl Emitter<'_> {
         ty: TypeId,
         data: u32,
         count: u32,
-        width: u32,
+        _width: u32,
     ) -> Result<u32, String> {
         let element = self.mir.types[ty.index()].arguments[0];
-        let bytes = self.local(ValType::I32);
-        self.extend([I::LocalGet(count), I::I32Const(width as i32), I::I32Mul, I::LocalSet(bytes)]);
-        let id = self.array_object(data, bytes, element)?;
+        let id = self.array_object(data, count, element)?;
         let result = self.value_as(node, ty, self.width(ty)?)?;
         self.extend([
             I::LocalGet(result),

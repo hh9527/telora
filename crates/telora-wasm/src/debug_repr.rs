@@ -100,8 +100,13 @@ impl Formatter {
             }
             Kind::Newtype => {
                 let (value, _) = output.payload(NEWTYPES, output.word(pointer + DATA)?)?;
+                let inner = desc
+                    .fields
+                    .first()
+                    .ok_or("Wasm: newtype has no payload layout")?
+                    .ty;
                 self.push("(");
-                self.value(output, value, desc.arguments[0], depth + 1)?;
+                self.value(output, value, inner, depth + 1)?;
                 self.push(")");
             }
             Kind::Array | Kind::Dict => {

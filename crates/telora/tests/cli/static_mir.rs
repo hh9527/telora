@@ -8,16 +8,29 @@ fn batch_type_diagnostics_identify_the_producing_module() {
     let destination = cwd.join("src/check/diag-shared-contract");
     fs::create_dir_all(&destination).unwrap();
     for name in ["shared", "good", "bad", "testee"] {
-        fs::copy(source.join(format!("{name}.telora")), destination.join(format!("{name}.telora"))).unwrap();
+        fs::copy(
+            source.join(format!("{name}.telora")),
+            destination.join(format!("{name}.telora")),
+        )
+        .unwrap();
     }
-    let output = telora(&cwd).args(["check", "--lib", "--only-types"]).output().unwrap();
+    let output = telora(&cwd)
+        .args(["check", "--lib", "--only-types"])
+        .output()
+        .unwrap();
     assert!(!output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
-    let diagnostics = text.lines().map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .filter(|record| record["record"] == "diagnostic").collect::<Vec<_>>();
+    let diagnostics = text
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|record| record["record"] == "diagnostic")
+        .collect::<Vec<_>>();
     assert_eq!(diagnostics.len(), 2, "{text}");
     for diagnostic in diagnostics {
-        assert_eq!(diagnostic["module"], "fixture/check/diag-shared-contract/bad");
+        assert_eq!(
+            diagnostic["module"],
+            "fixture/check/diag-shared-contract/bad"
+        );
         assert_eq!(diagnostic["session"], "--lib");
     }
     fs::remove_dir_all(cwd).unwrap();
@@ -28,9 +41,21 @@ fn check_batch_roots_share_a_graph_and_obey_phase_boundaries() {
     let cwd = fixture();
     fs::create_dir_all(cwd.join("tests/nested")).unwrap();
     fs::write(cwd.join("src/main.telora"), "export def answer: Int = 42;").unwrap();
-    fs::write(cwd.join("src/_private.telora"), "export def unused: Int = 1 / 0;").unwrap();
-    fs::write(cwd.join("tests/nested/helper.telora"), "export def answer: Int = 42;").unwrap();
-    fs::write(cwd.join("tests/main.telora"), "import \"./nested/helper\" {answer}; export def result: Int = answer;").unwrap();
+    fs::write(
+        cwd.join("src/_private.telora"),
+        "export def unused: Int = 1 / 0;",
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("tests/nested/helper.telora"),
+        "export def answer: Int = 42;",
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("tests/main.telora"),
+        "import \"./nested/helper\" {answer}; export def result: Int = answer;",
+    )
+    .unwrap();
     for (flags, count, initializes) in [
         (vec!["--lib"], 2, false),
         (vec!["--tests"], 2, true),
@@ -39,26 +64,61 @@ fn check_batch_roots_share_a_graph_and_obey_phase_boundaries() {
         for types_only in [true, false] {
             let mut command = telora(&cwd);
             command.arg("check").args(&flags);
-            if types_only { command.arg("--only-types"); }
+            if types_only {
+                command.arg("--only-types");
+            }
             let output = command.output().unwrap();
             let text = String::from_utf8(output.stdout).unwrap();
-            assert_eq!(output.status.success(), types_only || initializes, "{flags:?}: {text}\n{}", String::from_utf8_lossy(&output.stderr));
-            let records = text.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
-            let summaries = records.iter().filter(|r| r["record"] == "summary").collect::<Vec<_>>();
+            assert_eq!(
+                output.status.success(),
+                types_only || initializes,
+                "{flags:?}: {text}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let records = text
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .collect::<Vec<_>>();
+            let summaries = records
+                .iter()
+                .filter(|r| r["record"] == "summary")
+                .collect::<Vec<_>>();
             assert_eq!(summaries.len(), 1);
             assert_eq!(summaries[0]["roots"].as_array().unwrap().len(), count);
-            if types_only { assert_eq!(summaries[0]["execution_seconds"], 0.0); }
+            if types_only {
+                assert_eq!(summaries[0]["execution_seconds"], 0.0);
+            }
         }
     }
-    fs::write(cwd.join("tests/nested/helper.telora"), "export def answer: Int = \"wrong\";").unwrap();
-    for flags in [vec!["check", "--tests"], vec!["check", "--tests", "--only-types"]] {
+    fs::write(
+        cwd.join("tests/nested/helper.telora"),
+        "export def answer: Int = \"wrong\";",
+    )
+    .unwrap();
+    for flags in [
+        vec!["check", "--tests"],
+        vec!["check", "--tests", "--only-types"],
+    ] {
         let output = telora(&cwd).args(flags).output().unwrap();
         assert!(!output.status.success());
-        let summary: Value = serde_json::from_str(String::from_utf8_lossy(&output.stdout).lines().last().unwrap()).unwrap();
+        let summary: Value = serde_json::from_str(
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .last()
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(summary["execution_seconds"], 0.0);
     }
-    for args in [vec!["check"], vec!["check", "--lib", "@src/main"], vec!["check", "--tests", "@test/main"]] {
-        assert_eq!(telora(&cwd).args(args).output().unwrap().status.code(), Some(2));
+    for args in [
+        vec!["check"],
+        vec!["check", "--lib", "@src/main"],
+        vec!["check", "--tests", "@test/main"],
+    ] {
+        assert_eq!(
+            telora(&cwd).args(args).output().unwrap().status.code(),
+            Some(2)
+        );
     }
     fs::remove_dir_all(cwd).unwrap();
 }
@@ -71,10 +131,23 @@ fn check_empty_batch_is_successful() {
         for types_only in [true, false] {
             let mut command = telora(&cwd);
             command.args(["check", flag]);
-            if types_only { command.arg("--only-types"); }
+            if types_only {
+                command.arg("--only-types");
+            }
             let output = command.output().unwrap();
-            assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-            let summary: Value = serde_json::from_str(String::from_utf8_lossy(&output.stdout).lines().last().unwrap()).unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let summary: Value = serde_json::from_str(
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .last()
+                    .unwrap(),
+            )
+            .unwrap();
             assert_eq!(summary["roots"], serde_json::json!([]));
         }
     }
@@ -84,7 +157,9 @@ fn check_empty_batch_is_successful() {
 #[test]
 fn static_mir_check_injects_data_and_blocks_execution_after_type_errors() {
     let cwd = fixture();
-    fs::write(cwd.join("src/main.telora"), r#"
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
         import "./data.json" { data };
         import "std/value" { Value };
         @property(PropertyTarget.Type) type Mark = struct { value: Int };
@@ -93,22 +168,44 @@ fn static_mir_check_injects_data_and_blocks_execution_after_type_errors() {
         };
         @mark type Item = struct { value: Int };
         export {Item};
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
     for (data, valid) in [("42", true), ("invalid-json", false)] {
         fs::write(cwd.join("src/data.json"), data).unwrap();
         for types_only in [true, false] {
             let mut command = telora(&cwd);
             command.args(["check", "@src/main"]);
-            if types_only { command.arg("--only-types"); }
+            if types_only {
+                command.arg("--only-types");
+            }
             let output = command.output().unwrap();
-            assert_eq!(output.status.success(), types_only || valid, "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            assert_eq!(
+                output.status.success(),
+                types_only || valid,
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
-    fs::write(cwd.join("src/main.telora"), "export def bad: Int = \"wrong\"; def forbidden: Int = fail!(\"must not execute\");").unwrap();
+    fs::write(
+        cwd.join("src/main.telora"),
+        "export def bad: Int = \"wrong\"; def forbidden: Int = fail!(\"must not execute\");",
+    )
+    .unwrap();
     let output = telora(&cwd).args(["check", "@src/main"]).output().unwrap();
-    let records = String::from_utf8(output.stdout).unwrap().lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+    let records = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
     assert!(!output.status.success());
-    assert!(!records.iter().any(|r| r["message"].as_str().is_some_and(|s| s.contains("must not execute"))));
+    assert!(!records.iter().any(|r| {
+        r["message"]
+            .as_str()
+            .is_some_and(|s| s.contains("must not execute"))
+    }));
     assert_eq!(records.last().unwrap()["execution_seconds"], 0.0);
     fs::remove_dir_all(cwd).unwrap();
 }
@@ -117,25 +214,51 @@ fn static_mir_check_injects_data_and_blocks_execution_after_type_errors() {
 fn static_mir_check_executes_session_roots_after_static_solving() {
     let cwd = fixture();
     for (source, expected) in [
-        ("def unused: Int = 1 / 0; export def answer: Int = 42;", Some("division")),
-        ("def unused: Fn() -> Int = fn() { fail!(\"not called\") }; export def answer: Int = 42;", None),
-        ("@property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!(\"check property sentinel\") }; @mark type Item = struct { value: Int }; export {Item};", Some("check property sentinel")),
+        (
+            "def unused: Int = 1 / 0; export def answer: Int = 42;",
+            Some("division"),
+        ),
+        (
+            "def unused: Fn() -> Int = fn() { fail!(\"not called\") }; export def answer: Int = 42;",
+            None,
+        ),
+        (
+            "@property(PropertyTarget.Type) type Mark = struct { value: Int }; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!(\"check property sentinel\") }; @mark type Item = struct { value: Int }; export {Item};",
+            Some("check property sentinel"),
+        ),
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
         for types_only in [true, false] {
             let mut command = telora(&cwd);
             command.args(["check", "@src/main"]);
-            if types_only { command.arg("--only-types"); }
+            if types_only {
+                command.arg("--only-types");
+            }
             let output = command.output().unwrap();
             let text = String::from_utf8(output.stdout).unwrap();
-            let records = text.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+            let records = text
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .collect::<Vec<_>>();
             let summary = records.iter().find(|r| r["record"] == "summary").unwrap();
-            assert_eq!(output.status.success(), types_only || expected.is_none(), "{source}\n{text}\n{}", String::from_utf8_lossy(&output.stderr));
+            assert_eq!(
+                output.status.success(),
+                types_only || expected.is_none(),
+                "{source}\n{text}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             assert_eq!(summary["types_only"], types_only);
             assert!(summary["static_seconds"].is_number());
-            if types_only { assert_eq!(summary["execution_seconds"], 0.0); }
+            if types_only {
+                assert_eq!(summary["execution_seconds"], 0.0);
+            }
             if !types_only && let Some(expected) = expected {
-                assert!(records.iter().any(|r| r["message"].as_str().is_some_and(|s| s.contains(expected))), "{text}");
+                assert!(
+                    records
+                        .iter()
+                        .any(|r| r["message"].as_str().is_some_and(|s| s.contains(expected))),
+                    "{text}"
+                );
             }
         }
     }
@@ -150,7 +273,9 @@ fn static_mir_eval_property_initialization_precedes_both_entry_modes() {
         ("eval", true, "Int", false),
         ("eval", true, "Item", false),
     ] {
-        let body = format!("match query({queried_type}.type, Mark.type) {{ Some(property) => Value.Int(property.value), None => Value.Int(42) }}");
+        let body = format!(
+            "match query({queried_type}.type, Mark.type) {{ Some(property) => Value.Int(property.value), None => Value.Int(42) }}"
+        );
         let entry = if mode == "eval" {
             format!("do {{ {body} }}")
         } else {
@@ -538,11 +663,24 @@ export def bad: Int = "wrong";
     assert_eq!(export("unresolved")["state"], "Conflicted");
     assert_eq!(export("bad")["state"], "Known");
     assert_eq!(export("bad")["type"], "Int");
-    assert_eq!(export("bad")["failed_constraints"].as_array().unwrap().len(), 1);
-    assert_eq!(export("answer")["failed_constraints"], serde_json::json!([]));
+    assert_eq!(
+        export("bad")["failed_constraints"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        export("answer")["failed_constraints"],
+        serde_json::json!([])
+    );
     let failed = export("bad")["failed_constraints"][0].clone();
-    assert!(records.iter().any(|record| record["record"] == "diagnostic"
-        && record["constraint_ids"].as_array().is_some_and(|ids| ids.contains(&failed))));
+    assert!(records.iter().any(|record| {
+        record["record"] == "diagnostic"
+            && record["constraint_ids"]
+                .as_array()
+                .is_some_and(|ids| ids.contains(&failed))
+    }));
     assert!(records.iter().any(|r| {
         r["record"] == "diagnostic"
             && r["message"]
@@ -661,7 +799,9 @@ fn static_mir_query_links_imports_and_source_positions() {
 #[test]
 fn dump_types_layout_is_static_deterministic_and_hidden() {
     let cwd = fixture();
-    fs::write(cwd.join("src/main.telora"), r#"
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
         import "std/prelude" {Int as Number};
         export type Rec = struct { a: Number, b: Array(Int) };
         export type Choices = enum { Empty, Items(Array(Int)) };
@@ -671,16 +811,45 @@ fn dump_types_layout_is_static_deterministic_and_hidden() {
         export def choice: Choices = Choices.Items([1]);
         export def boxed: Box(Int) = {value: 1};
         export def metadata: TypeOf(Int) = Int.type;
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
     let help = telora(&cwd).args(["check", "--help"]).output().unwrap();
     assert!(!String::from_utf8_lossy(&help.stdout).contains("dump-types-layout"));
-    assert!(!telora(&cwd).args(["check", "--new-types-layout", "@src/main"]).output().unwrap().status.success());
-    assert!(!telora(&cwd).args(["check", "@src/main", "--dump-types-layout"]).output().unwrap().status.success());
+    assert!(
+        !telora(&cwd)
+            .args(["check", "--new-types-layout", "@src/main"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        !telora(&cwd)
+            .args(["check", "@src/main", "--dump-types-layout"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
     let run = |flags: &[&str]| {
         let output = telora(&cwd).arg("check").args(flags).output().unwrap();
-        assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-        let records = String::from_utf8(output.stdout).unwrap().lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).collect::<Vec<_>>();
-        assert!(records.iter().all(|r| r["record"] == "diagnostic" || r["record"] == "summary"));
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let records = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            records
+                .iter()
+                .all(|r| r["record"] == "diagnostic" || r["record"] == "summary")
+        );
         assert_eq!(records.last().unwrap()["execution_seconds"], 0.0);
         assert_eq!(records.last().unwrap()["types_only"], true);
         serde_json::from_slice::<Value>(&fs::read(cwd.join("layout.json")).unwrap()).unwrap()
@@ -692,39 +861,91 @@ fn dump_types_layout_is_static_deterministic_and_hidden() {
     let bytes = fs::read(cwd.join("layout.json")).unwrap();
     assert_eq!(report, run(&flags));
     assert_eq!(bytes, fs::read(cwd.join("layout.json")).unwrap());
-    assert_eq!(report, run(&["--dump-types-layout", "layout.json", "--only-types", "@src/main"]));
+    assert_eq!(
+        report,
+        run(&[
+            "--dump-types-layout",
+            "layout.json",
+            "--only-types",
+            "@src/main"
+        ])
+    );
     let first = report["types"].as_array().unwrap();
     for row in first {
         let entry = &row["entry"];
-        if entry["constructor"] == "Type" || (entry["constructor"] == "TypeOf" && entry["layout"]["status"] != "template") {
+        if entry["constructor"] == "Type"
+            || (entry["constructor"] == "TypeOf" && entry["layout"]["status"] != "template")
+        {
             assert_eq!(entry["layout"]["shape"]["data_bytes"], 4);
-            assert_eq!(entry["layout"]["shape"]["value_bytes"], 24);
+            assert_eq!(entry["layout"]["shape"]["value_bytes"], 16);
         }
         if entry["constructor"] == "Bytes" {
-            assert_eq!(entry["layout"]["shape"]["value_bytes"], 32);
+            assert_eq!(entry["layout"]["shape"]["value_bytes"], 24);
             assert_eq!(entry["layout"]["shape"]["table"], "Content");
             assert_eq!(entry["layout"]["shape"]["data_bytes"], 16);
             assert_eq!(entry["object"]["element_stride"], 1);
         }
     }
-    assert!(first.iter().any(|r| r["entry"]["constructor"] == "TypeOf" && r["entry"]["layout"]["status"] == "known"));
+    assert!(first.iter().any(
+        |r| r["entry"]["constructor"] == "TypeOf" && r["entry"]["layout"]["status"] == "known"
+    ));
     assert!(first.iter().any(|r| r["entry"]["constructor"] == "Meta"));
-    let rec = first.iter().find(|r| r["entry"]["object"]["members"].as_array().is_some_and(|m| m.len() == 2 && m[0]["name"] == "a" && m[1]["name"] == "b")).unwrap();
+    let rec = first
+        .iter()
+        .find(|r| {
+            r["entry"]["object"]["members"]
+                .as_array()
+                .is_some_and(|m| m.len() == 2 && m[0]["name"] == "a" && m[1]["name"] == "b")
+        })
+        .unwrap();
     assert_eq!(rec["entry"]["object"]["members"][0]["offset"], 0);
-    assert_eq!(rec["entry"]["object"]["members"][1]["offset"], 24);
-    assert_eq!(rec["entry"]["object"]["bytes"], 56);
-    assert!(first.iter().any(|r| r["entry"]["object"]["element_stride"] == 24));
-    let choices = first.iter().find(|r| r["entry"]["variants"].as_array().is_some_and(|v| v.iter().any(|v| v["name"] == "Items"))).unwrap();
-    assert_eq!(choices["entry"]["layout"]["shape"]["value_bytes"], 56);
-    assert_eq!(choices["entry"]["variants"][1]["offset"], 24);
-    assert!(first.iter().any(|r| r["entry"]["layout"]["status"] == "template"));
-    let recursive = first.iter().find(|r| r["entry"]["variants"].as_array().is_some_and(|v| v.iter().any(|v| v["name"] == "More"))).unwrap();
+    assert_eq!(rec["entry"]["object"]["members"][1]["offset"], 16);
+    assert_eq!(rec["entry"]["object"]["bytes"], 40);
+    assert!(
+        first
+            .iter()
+            .any(|r| r["entry"]["object"]["element_stride"] == 16)
+    );
+    let choices = first
+        .iter()
+        .find(|r| {
+            r["entry"]["variants"]
+                .as_array()
+                .is_some_and(|v| v.iter().any(|v| v["name"] == "Items"))
+        })
+        .unwrap();
+    assert_eq!(choices["entry"]["layout"]["shape"]["value_bytes"], 40);
+    assert_eq!(choices["entry"]["variants"][1]["offset"], 16);
+    assert!(
+        first
+            .iter()
+            .any(|r| r["entry"]["layout"]["status"] == "template")
+    );
+    let recursive = first
+        .iter()
+        .find(|r| {
+            r["entry"]["variants"]
+                .as_array()
+                .is_some_and(|v| v.iter().any(|v| v["name"] == "More"))
+        })
+        .unwrap();
     assert_eq!(recursive["entry"]["layout"]["status"], "known");
     assert_eq!(recursive["entry"]["variants"][1]["storage"], "heap_id");
-    assert_eq!(recursive["entry"]["layout"]["shape"]["value_bytes"], 32);
+    assert_eq!(recursive["entry"]["layout"]["shape"]["value_bytes"], 24);
     assert_eq!(report["summary"]["closed"], true);
-    assert!(first.iter().all(|r| r["entry"]["layout"]["status"] != "pending"));
-    assert!(!telora(&cwd).args(["check", "@src/main"]).output().unwrap().status.success());
+    assert!(
+        first
+            .iter()
+            .all(|r| r["entry"]["layout"]["status"] != "pending")
+    );
+    assert!(
+        !telora(&cwd)
+            .args(["check", "@src/main"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
     for selection in [vec!["--lib"], vec!["--tests"], vec!["--lib", "--tests"]] {
         let mut flags = vec!["--dump-types-layout", "layout.json"];
         flags.extend(selection);
@@ -735,15 +956,36 @@ fn dump_types_layout_is_static_deterministic_and_hidden() {
     let before = fs::read(cwd.join("layout.json")).unwrap();
     fs::create_dir(cwd.join("destination-dir")).unwrap();
     fs::write(cwd.join("destination-dir/keep"), "keep").unwrap();
-    let output = telora(&cwd).args(["check", "@src/main", "--dump-types-layout", "destination-dir"]).output().unwrap();
+    let output = telora(&cwd)
+        .args([
+            "check",
+            "@src/main",
+            "--dump-types-layout",
+            "destination-dir",
+        ])
+        .output()
+        .unwrap();
     assert!(!output.status.success());
-    assert_eq!(fs::read_to_string(cwd.join("destination-dir/keep")).unwrap(), "keep");
-    assert_eq!(fs::read_dir(&cwd).unwrap().filter_map(Result::ok).filter(|e| e.file_name().to_string_lossy().starts_with(".tmp")).count(), 0);
+    assert_eq!(
+        fs::read_to_string(cwd.join("destination-dir/keep")).unwrap(),
+        "keep"
+    );
+    assert_eq!(
+        fs::read_dir(&cwd)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp"))
+            .count(),
+        0
+    );
     fs::write(cwd.join("src/main.telora"), "export def x: Int = \"bad\";").unwrap();
     let output = telora(&cwd).arg("check").args(flags).output().unwrap();
     assert!(!output.status.success());
     assert_eq!(before, fs::read(cwd.join("layout.json")).unwrap());
-    let output = telora(&cwd).args(["check", "@src/main", "--dump-types-layout", "absent.json"]).output().unwrap();
+    let output = telora(&cwd)
+        .args(["check", "@src/main", "--dump-types-layout", "absent.json"])
+        .output()
+        .unwrap();
     assert!(!output.status.success());
     assert!(!cwd.join("absent.json").exists());
     assert!(!String::from_utf8_lossy(&output.stdout).contains("\"record\":\"type_layout\""));
@@ -753,7 +995,9 @@ fn dump_types_layout_is_static_deterministic_and_hidden() {
 #[test]
 fn concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types() {
     let cwd = fixture();
-    fs::write(cwd.join("src/main.telora"), r#"
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
         import "std/regex" as regex;
         import "std/hash" as hash;
         export type Left = enum { Stop, Next(Right) };
@@ -773,42 +1017,117 @@ fn concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types() {
         export def dictionary: Dict(Int) = {x: 1};
         export def accepts_dyn: Fn(Dyn) -> Dyn = fn(value: Dyn) { value };
         export def dynamics: Array(Dyn) = [];
-    "#).unwrap();
-    let output = telora(&cwd).args(["check", "@src/main", "--dump-types-layout", "layout.json"]).output().unwrap();
-    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    let report: Value = serde_json::from_slice(&fs::read(cwd.join("layout.json")).unwrap()).unwrap();
+    "#,
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args(["check", "@src/main", "--dump-types-layout", "layout.json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value =
+        serde_json::from_slice(&fs::read(cwd.join("layout.json")).unwrap()).unwrap();
     assert_eq!(report["summary"]["closed"], true);
     let entries = report["types"].as_array().unwrap();
     for name in ["Left", "Right"] {
-        let row = entries.iter().find(|r| r["type_name"] == name && r["entry"]["constructor"] == "Nominal").unwrap();
-        assert_eq!(row["entry"]["layout"]["shape"]["value_bytes"], 32);
-        assert!(row["entry"]["variants"].as_array().unwrap().iter().any(|v| v["storage"] == "heap_id"));
+        let row = entries
+            .iter()
+            .find(|r| r["type_name"] == name && r["entry"]["constructor"] == "Nominal")
+            .unwrap();
+        assert_eq!(row["entry"]["layout"]["shape"]["value_bytes"], 24);
+        assert!(
+            row["entry"]["variants"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v["storage"] == "heap_id")
+        );
     }
-    assert!(entries.iter().any(|r| r["type_name"] == "Dead" && r["entry"]["layout"]["status"] == "uninhabited"));
-    let nested = entries.iter().find(|r| r["type_name"] == "Nested" && r["entry"]["constructor"] == "Nominal").unwrap();
-    assert_eq!(nested["entry"]["layout"]["shape"]["value_bytes"], 56);
-    assert!(nested["entry"]["variants"].as_array().unwrap().iter().all(|v| v["storage"] == "full_value"));
-    let wrapped = entries.iter().find(|r| r["type_name"] == "Wrapped" && r["entry"]["constructor"] == "Nominal").unwrap();
-    assert_eq!(wrapped["entry"]["object"]["bytes"], 24);
+    assert!(
+        entries
+            .iter()
+            .any(|r| r["type_name"] == "Dead" && r["entry"]["layout"]["status"] == "uninhabited")
+    );
+    let nested = entries
+        .iter()
+        .find(|r| r["type_name"] == "Nested" && r["entry"]["constructor"] == "Nominal")
+        .unwrap();
+    assert_eq!(nested["entry"]["layout"]["shape"]["value_bytes"], 40);
+    assert!(
+        nested["entry"]["variants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["storage"] == "full_value")
+    );
+    let wrapped = entries
+        .iter()
+        .find(|r| r["type_name"] == "Wrapped" && r["entry"]["constructor"] == "Nominal")
+        .unwrap();
+    assert_eq!(wrapped["entry"]["object"]["bytes"], 16);
     assert_eq!(wrapped["entry"]["layout"]["shape"]["table"], "NewtypeTable");
-    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Tuple" && r["entry"]["object"]["bytes"] == 56));
-    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Dyn" && r["entry"]["layout"]["shape"]["value_bytes"] == 40));
-    assert!(entries.iter().any(|r| r["type_name"] == "Array(Dyn)" && r["entry"]["object"]["element_stride"] == 40));
-    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Record" && r["entry"]["layout"]["status"] == "compile_time" && r["entry"]["layout"]["reason"].as_str().is_some_and(|s| s.contains("module body"))));
-    assert!(!entries.iter().any(|r| r["entry"]["constructor"] == "Quantified"));
-    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Function" && r["entry"]["layout"]["shape"]["table"] == "ClosureEnvTable"));
-    assert!(entries.iter().any(|r| r["type_name"] == "Array(Never)" && r["entry"]["object"]["element_stride"] == 0));
-    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Native" && r["entry"]["object"]["bytes"] == 8));
-    let dict = entries.iter().find(|r| r["type_name"] == "Dict(Int)").unwrap();
-    assert_eq!(dict["entry"]["object"]["element_stride"], 24);
-    assert_eq!(dict["entry"]["layout"]["shape"]["value_bytes"], 32);
+    assert!(
+        entries
+            .iter()
+            .any(|r| r["entry"]["constructor"] == "Tuple" && r["entry"]["object"]["bytes"] == 40)
+    );
+    assert!(entries.iter().any(|r| r["entry"]["constructor"] == "Dyn"
+        && r["entry"]["layout"]["shape"]["value_bytes"] == 32));
+    assert!(entries.iter().any(|r| r["type_name"] == "Array(Dyn)" && r["entry"]["object"]["element_stride"] == 32));
+    assert!(entries.iter().any(|r| {
+        r["entry"]["constructor"] == "Record"
+            && r["entry"]["layout"]["status"] == "compile_time"
+            && r["entry"]["layout"]["reason"]
+                .as_str()
+                .is_some_and(|s| s.contains("module body"))
+    }));
+    assert!(
+        !entries
+            .iter()
+            .any(|r| r["entry"]["constructor"] == "Quantified")
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|r| r["entry"]["constructor"] == "Function"
+                && r["entry"]["layout"]["shape"]["table"] == "ClosureEnvTable")
+    );
+    assert!(
+        entries.iter().any(
+            |r| r["type_name"] == "Array(Never)" && r["entry"]["object"]["element_stride"] == 0
+        )
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|r| r["entry"]["constructor"] == "Native" && r["entry"]["object"]["bytes"] == 8)
+    );
+    let dict = entries
+        .iter()
+        .find(|r| r["type_name"] == "Dict(Int)")
+        .unwrap();
+    assert_eq!(dict["entry"]["object"]["element_stride"], 16);
+    assert_eq!(dict["entry"]["layout"]["shape"]["value_bytes"], 24);
     assert_eq!(dict["entry"]["layout"]["shape"]["table"], "ArrayTable");
     for row in entries {
-        if matches!(row["entry"]["constructor"].as_str(), Some("Meta" | "Namespace" | "TypeList" | "PropertyBound" | "TypeFunction" | "Bound")) {
+        if matches!(
+            row["entry"]["constructor"].as_str(),
+            Some("Meta" | "Namespace" | "TypeList" | "PropertyBound" | "TypeFunction" | "Bound")
+        ) {
             assert_eq!(row["entry"]["layout"]["status"], "compile_time");
         }
         if row["entry"]["layout"]["status"] == "template" {
-            assert!(row["entry"]["layout"]["reason"].as_str().unwrap().contains("free type parameter"));
+            assert!(
+                row["entry"]["layout"]["reason"]
+                    .as_str()
+                    .unwrap()
+                    .contains("free type parameter")
+            );
         }
     }
     fs::remove_dir_all(cwd).unwrap();

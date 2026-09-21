@@ -41,7 +41,10 @@ impl Collector {
                 HASHES => {}
                 ARRAYS => {
                     let width = word(self.types + ty * layout::ENTRY_BYTES, layout::VALUE_BYTES as u64);
-                    assert!(width >= HEADER_BYTES && bytes % width == 0);
+                    assert!(
+                        (width == 0 && bytes == 0)
+                            || (width >= HEADER_BYTES && bytes % width == 0)
+                    );
                     let mut offset = 0;
                     while offset < bytes {
                         self.trace_value(ty, old + offset, at + offset);

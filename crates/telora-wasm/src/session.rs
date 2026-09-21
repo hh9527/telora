@@ -49,6 +49,13 @@ impl Session {
     }
 
     pub(crate) fn fresh_instance(&self) -> Result<Self, String> {
+        let debug_enabled: [u8; 4] = self
+            .memory
+            .data(&self.store)
+            .get(abi::DEBUG_ENABLED as usize..abi::DEBUG_ENABLED as usize + 4)
+            .ok_or("Wasm: missing debug protocol word")?
+            .try_into()
+            .unwrap();
         let limits = wasmi::StoreLimitsBuilder::new()
             .memory_size(self.memory_limit)
             .table_elements(TABLE_BOUND)
@@ -65,13 +72,18 @@ impl Session {
         let memory = instance
             .get_memory(&store, "memory")
             .ok_or("Wasm: missing memory export")?;
+        memory
+            .write(&mut store, abi::DEBUG_ENABLED as usize, &debug_enabled)
+            .map_err(|error| error.to_string())?;
         let exports = exports::Exports::bind(instance, &store)?;
         Ok(Self {
             exports,
             fuel_budget: self.fuel_budget,
             memory_limit: self.memory_limit,
             module: self.module.clone(),
-            usage_reporter: self.usage_reporter,
+            // The caller transfers reporting ownership when the fresh instance
+            // replaces this one; internal instance disposal is not an execution.
+            usage_reporter: None,
             manifest: self.manifest.clone(),
             store,
             instance,

@@ -20,14 +20,11 @@ impl Emitter<'_> {
         keys: u32,
         values: u32,
         count: u32,
-        width: u32,
+        _width: u32,
     ) -> Result<u32, String> {
-        let bytes = self.local(ValType::I32);
-        self.extend([I::LocalGet(count), I::I32Const(STRING_BYTES as i32), I::I32Mul, I::LocalSet(bytes)]);
-        let key_id = self.array_object(keys, bytes, self.string_type()?)?;
-        self.extend([I::LocalGet(count), I::I32Const(width as i32), I::I32Mul, I::LocalSet(bytes)]);
+        let key_id = self.array_object(keys, count, self.string_type()?)?;
         let element = self.mir.types[ty.index()].arguments[0];
-        let value_id = self.array_object(values, bytes, element)?;
+        let value_id = self.array_object(values, count, element)?;
         let result = self.value_as(node, ty, STRING_BYTES)?;
         for (offset, value) in [(DATA, key_id), (DATA + 4, count), (DATA + 8, value_id)] {
             self.extend([

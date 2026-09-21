@@ -99,18 +99,15 @@ impl Emitter<'_> {
         self.emit(I::LocalSet(result));
         result
     }
-    pub fn array_object(&mut self, payload: u32, bytes: u32, ty: TypeId) -> Result<u32, String> {
+    pub fn array_object(&mut self, payload: u32, count: u32, ty: TypeId) -> Result<u32, String> {
         let width = self.width(ty)?;
-        if width == 0 {
-            return Err("Wasm: dynamic uninhabited array storage is unsupported".into());
-        }
-        let count = self.local(ValType::I32);
+        let bytes = self.local(ValType::I32);
         let result = self.local(ValType::I32);
         self.extend([
-            I::LocalGet(bytes),
+            I::LocalGet(count),
             I::I32Const(width as i32),
-            I::I32DivU,
-            I::LocalSet(count),
+            I::I32Mul,
+            I::LocalSet(bytes),
             I::LocalGet(bytes),
             I::I32Const(16),
             I::I32Add,
