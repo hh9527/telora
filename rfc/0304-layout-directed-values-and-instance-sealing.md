@@ -162,10 +162,29 @@ Rust Guest RT/Host 边界继续使用显式参数、单 status 返回和 Guest �
 6. ABI 升级并删除 ABI 25 兼容代码。
 7. 用真实 service 验证时间、线性内存、RSS、快照尺寸和持续请求 reset。
 
-步骤 1～4 与 ABI 26 的普通值迁移已在 `explore/216-cross-instance-collect` 通过
-`telora-wasm` 全量测试：值头仅含 8 字节 Loc，普通值不再保存 TypeId；demand、service、
-闭包环境和异构运行时容器显式携带所需布局身份。正式合入仍以普通对象 table 迁移、
-workspace/真实模型验证和性能数据完成为准。
+步骤 1～6 已在 `explore/216-cross-instance-collect` 的 ABI 27 完成：值头仅含 8 字节
+Loc，普通值不再保存 TypeId；Record/Tuple、Array backing、boxed Value、Newtype 和
+闭包环境使用直接对象引用，普通对象种类不再占用 resource table descriptor。demand、
+service 和异构运行时容器显式携带所需布局身份。
+
+2026-09-21 的 release 验证结果如下。数字为单次观察值，只用于判断路线可行，不作为
+性能承诺：
+
+| 项目 | artifact | 初始化临时 heap | compact heap | 初始化线性内存峰值 | compact 线性内存 | compact RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| lab-ontology world-model | 5,393,471 B | 300,712 B | 51,312 B | 2 MiB | 1.3125 MiB | 18.2 MB |
+| imaster-cloud ask | 30,556,221 B | 169,876,938 B | 2,592,747 B | 516.19 MiB | 10 MiB | 97.5 MB |
+
+imaster-cloud 的 binary closure 约 619 ms，service construction 约 4.38 s，跨实例
+compact 约 63 ms，总初始化约 5.06 s；wasmi module load 约 169 ms。空错误请求的首个
+观测约 5.17 ms，随后请求约 0.21 ms。构建约 9.3 s、构建进程 peak RSS 约 459 MB；
+运行进程 peak RSS 约 624 MB，峰值发生在旧初始化实例仍存活时。与迁移前约 2.91 MB
+的 compact language heap 相比，新布局为约 2.59 MB，减少约 11%；artifact 从约
+32.33 MB 降至 30.56 MB，其中 code section 从约 22.35 MB 降至 20.06 MB。
+
+这证明跨实例 sealing 能把稳态实例物理内存恢复到与存活图相称的量级，也证明直接
+对象布局可覆盖真实模型。它不降低初始化临时图本身的峰值；若要继续降低 cold-start
+内存，必须另行减少 service construction 的临时分配或让旧实例更早分段释放。
 
 ## 验收
 
