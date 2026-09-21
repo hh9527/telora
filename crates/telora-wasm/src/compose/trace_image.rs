@@ -1,35 +1,85 @@
 //! Immutable tracing metadata, built before any language value is materialized.
 use crate::artifact::{Kind, TypeDesc};
+use telora_wasm_shared::layout_image as layout;
 
 pub(super) fn encode(types: &[TypeDesc]) -> Result<Vec<u8>, String> {
-    let mut image = vec![0; types.len().checked_mul(20).ok_or("Wasm: trace image overflow")?];
+    let mut image = vec![
+        0;
+        types
+            .len()
+            .checked_mul(layout::ENTRY_BYTES as usize)
+            .ok_or("Wasm: trace image overflow")?
+    ];
     for (index, ty) in types.iter().enumerate() {
         let kind = match ty.kind {
-            Kind::Int | Kind::Float | Kind::Bool | Kind::Unit | Kind::Metadata => 0,
-            Kind::String => 1,
-            Kind::Bytes => 2,
-            Kind::Record | Kind::Tuple => 3,
-            Kind::Array => 4,
-            Kind::Dict => 5,
-            Kind::Enum | Kind::Option | Kind::Value => 6,
-            Kind::Dyn => 7,
-            Kind::Function => 8,
-            Kind::Unsupported if ty.resource_table.is_some() => 9,
-            Kind::Newtype => 10,
-            Kind::Unsupported => u32::MAX,
+            Kind::Int | Kind::Float | Kind::Bool | Kind::Unit | Kind::Metadata => {
+                layout::Kind::Scalar
+            }
+            Kind::String => layout::Kind::String,
+            Kind::Bytes => layout::Kind::Bytes,
+            Kind::Record | Kind::Tuple => layout::Kind::Record,
+            Kind::Array => layout::Kind::Array,
+            Kind::Dict => layout::Kind::Dict,
+            Kind::Enum | Kind::Option | Kind::Value => layout::Kind::Enum,
+            Kind::Dyn => layout::Kind::Dyn,
+            Kind::Function => layout::Kind::Function,
+            Kind::Unsupported if ty.resource_table.is_some() => layout::Kind::Resource,
+            Kind::Newtype => layout::Kind::Newtype,
+            Kind::Unsupported => layout::Kind::CompileTime,
         };
-        let variants = u32::try_from(image.len()).map_err(|_| "Wasm: trace image overflow")?;
-        let count = u32::try_from(ty.variants.len()).map_err(|_| "Wasm: trace variants overflow")?;
-        for (offset, word) in [kind, ty.bytes, ty.resource_table.unwrap_or(u32::MAX), count, variants]
-            .into_iter().enumerate()
+        let details = u32::try_from(image.len()).map_err(|_| "Wasm: layout image overflow")?;
+        let count = match kind {
+            layout::Kind::Record => ty.fields.len(),
+            layout::Kind::Enum => ty.variants.len(),
+            layout::Kind::Array | layout::Kind::Dict => ty.arguments.len(),
+            _ => 0,
+        };
+        let count = u32::try_from(count).map_err(|_| "Wasm: layout details overflow")?;
+        for (offset, word) in [
+            kind as u32,
+            ty.bytes,
+            ty.bytes.saturating_sub(crate::abi::HEADER_BYTES),
+            8,
+            ty.resource_table.unwrap_or(layout::NO_RESOURCE),
+            details,
+            count,
+            0,
+        ]
+        .into_iter()
+        .enumerate()
         {
-            image[index * 20 + offset * 4..index * 20 + offset * 4 + 4]
-                .copy_from_slice(&word.to_le_bytes());
+            let base = index * layout::ENTRY_BYTES as usize;
+            image[base + offset * 4..base + offset * 4 + 4].copy_from_slice(&word.to_le_bytes());
         }
-        for variant in &ty.variants {
-            image.extend_from_slice(&variant.ty.unwrap_or(u32::MAX).to_le_bytes());
-            image.extend_from_slice(&u32::from(variant.boxed).to_le_bytes());
+        match kind {
+            layout::Kind::Record => {
+                for field in &ty.fields {
+                    detail(&mut image, Some(field.ty), field.offset, 0);
+                }
+            }
+            layout::Kind::Enum => {
+                for (tag, variant) in ty.variants.iter().enumerate() {
+                    detail(
+                        &mut image,
+                        variant.ty,
+                        tag as u32,
+                        u32::from(variant.boxed) * layout::DETAIL_BOXED,
+                    );
+                }
+            }
+            layout::Kind::Array | layout::Kind::Dict => {
+                for (index, ty) in ty.arguments.iter().copied().enumerate() {
+                    detail(&mut image, Some(ty), index as u32, 0);
+                }
+            }
+            _ => {}
         }
     }
     Ok(image)
+}
+
+fn detail(image: &mut Vec<u8>, ty: Option<u32>, offset_or_tag: u32, flags: u32) {
+    image.extend_from_slice(&ty.unwrap_or(layout::NO_TYPE).to_le_bytes());
+    image.extend_from_slice(&offset_or_tag.to_le_bytes());
+    image.extend_from_slice(&flags.to_le_bytes());
 }

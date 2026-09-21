@@ -1,5 +1,6 @@
 //! Fixed trace opcodes supplied by codegen's closed type descriptions.
 use crate::{abi::*, collect::Collector, values::word};
+use telora_wasm_shared::layout_image as layout;
 
 impl Collector {
     pub unsafe fn trace_location(&mut self, id: u32) {
@@ -24,7 +25,7 @@ impl Collector {
                     while offset < bytes {
                         let ty = self.old_word(old + offset, TYPE);
                         self.trace_location(self.old_word(old + offset, SOURCE));
-                        let width = word(self.types + ty * 20, 4);
+                        let width = word(self.types + ty * layout::ENTRY_BYTES, layout::VALUE_BYTES as u64);
                         assert!(width >= HEADER_BYTES && width <= bytes - offset);
                         self.trace_data(ty, old + offset + DATA as u32, at + offset + DATA as u32);
                         offset += width;
@@ -88,8 +89,8 @@ impl Collector {
 
     unsafe fn trace_data(&mut self, ty: u32, old: u32, at: u32) {
         unsafe {
-            let desc = self.types + ty * 20;
-            match word(desc, 0) {
+            let desc = self.types + ty * layout::ENTRY_BYTES;
+            match word(desc, layout::KIND as u64) {
                 0 => {}
                 1 | 2 => self.string(old, at),
                 3 => self.handle(RECORDS, old, at),
@@ -100,11 +101,12 @@ impl Collector {
                 }
                 6 => {
                     let tag = self.old_word(old, 0);
-                    assert!(tag < word(desc, 12));
-                    let variant = self.types + word(desc, 16) + tag * 8;
-                    let payload = word(variant, 0);
+                    assert!(tag < word(desc, layout::DETAIL_COUNT as u64));
+                    let variant = self.types + word(desc, layout::DETAIL_OFFSET as u64)
+                        + tag * layout::DETAIL_BYTES;
+                    let payload = word(variant, layout::DETAIL_TYPE as u64);
                     if payload != u32::MAX {
-                        if word(variant, 4) != 0 {
+                        if word(variant, layout::DETAIL_FLAGS as u64) & layout::DETAIL_BOXED != 0 {
                             self.handle(VALUES, old + 8, at + 8);
                         } else {
                             self.trace_location(self.old_word(old, 8));
@@ -127,7 +129,7 @@ impl Collector {
                         self.put(at + 4, next + 1);
                     }
                 }
-                9 => self.handle(word(desc, 8), old, at),
+                9 => self.handle(word(desc, layout::RESOURCE_TABLE as u64), old, at),
                 10 => self.handle(NEWTYPES, old, at),
                 _ => core::arch::wasm32::unreachable(),
             }

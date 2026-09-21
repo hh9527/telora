@@ -5,6 +5,7 @@ use crate::{
     values::word,
 };
 use alloc::{collections::BTreeMap, vec, vec::Vec};
+use telora_wasm_shared::layout_image as layout;
 mod initialization;
 pub(crate) use initialization::collect as collect_initialization;
 
@@ -72,7 +73,10 @@ impl Collector {
             }
             let ty = self.old_word(pointer, TYPE);
             self.trace_location(self.old_word(pointer, SOURCE));
-            let bytes = word(self.types + ty * 20, 4);
+            let bytes = word(
+                self.types + ty * layout::ENTRY_BYTES,
+                layout::VALUE_BYTES as u64,
+            );
             assert!(bytes >= HEADER_BYTES);
             let at = self.copy_bytes(pointer, bytes);
             self.values.insert(pointer, at);

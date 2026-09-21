@@ -5,6 +5,7 @@ extern crate alloc;
 pub mod abi;
 pub mod arena;
 pub mod json_text;
+pub mod layout_image;
 pub mod source_range;
 
 pub mod service;
