@@ -913,6 +913,45 @@ fn generic_templates_are_static_and_value_uses_require_concrete_instances() {
 }
 
 #[test]
+fn executable_admission_ignores_closed_but_unreachable_top_level_values() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        def used: String = "used";
+        def unused: String = "unused";
+        export def answer: String = used;
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    let symbol = |name: &str| {
+        mir.symbols
+            .iter()
+            .enumerate()
+            .find(|(_, symbol)| {
+                symbol.name == name && matches!(symbol.kind, SymbolKind::Declaration(_))
+            })
+            .map(|(index, _)| SymbolId(index as u32))
+            .unwrap()
+    };
+    let unused = symbol("unused");
+    let unused_node = *mir.symbols[unused.index()].declarations.last().unwrap();
+    assert!(matches!(
+        mir.ty_slots[unused_node.index()],
+        TypeState::Known(_)
+    ));
+    let executable = mir.seal_export(symbol("answer")).unwrap();
+    assert!(!executable.globals().contains(&unused));
+    assert!(
+        executable
+            .closure()
+            .nodes()
+            .iter()
+            .all(|root| root.node != unused_node)
+    );
+}
+
+#[test]
 fn recursive_generic_references_close_to_the_same_instance() {
     let mut mir = graph(&[(
         "@src/main",

@@ -1,6 +1,6 @@
 # RFC 0305：封闭函数体依赖图
 
-- 状态：草案
+- 状态：已实现
 - 跟踪：[#219](https://github.com/hh9527/telora/issues/219)
 - 分支：`feat/rfc-0305-function-body-dependencies`
 - 日期：2026-09-21
@@ -30,6 +30,11 @@ Func -> FuncProto -> Dep
 动态 `TypeId`、property 结果和生成 helper；仅靠静态分析不能可靠恢复这些边。首版继续
 把所有 Ready demand 作为初始化 collection 根，函数依赖元数据先作为可观察、可验证的
 制品事实进入后端。顶层状态 tree-shake 需要独立 RFC 和反例驱动的正确性论证。
+
+当前唯一执行裁剪边界是 `ExecutionClosure` admission：全图 MIR 中即使已经得到完整类型，
+但没有从当前 entry/check roots 被接纳的顶层对象，可以不进入 `SealedExecutable`；一旦
+被接纳为 executable demand 并完成初始化，首版就保守保留。类型闭合是可编译条件，
+不是初始化后可删除性的证明。
 
 ## 两类关系
 
@@ -242,8 +247,9 @@ dump 按稳定 ID 排序，同一 Sealed MIR 的全量构建结果必须确定�
 1. 在 MIR/executable 层定义 FuncId、FuncProtoId 和 Dep 的最终归属，复用已有稳定实例
    身份，避免建立第二套互不对应的函数编号。
 2. 提取无需高阶传播的直接依赖，并用 `.telora` fixture 覆盖顶层引用、普通调用、
-   函数物化、泛型实例、property 和生成 helper。
-3. 建立函数参数目标集合与 queue 固定点，覆盖参数转发、返回、分支合流和递归 SCC。
+   函数物化、泛型实例和 property；生成 helper 的完整函数身份延后。
+3. 建立函数参数目标集合与 queue 固定点，覆盖直接物化、别名、分支合流和参数转发；
+   尚未精确表达的返回值与聚合字段流保留结构化保守结果。
 4. 提供确定性 dump 与图不变量检查；比较重复全量构建输出。
 5. 先将 codegen/link reachability 切换到新图，确认行为和测试不变。
 6. 保持所有 Ready demand 为初始化根，验证元数据接入不改变现有运行语义。
@@ -257,12 +263,14 @@ dump 按稳定 ID 排序，同一 Sealed MIR 的全量构建结果必须确定�
 - 相同 FuncProto 的多个泛型 Func 正确实例化为不同具体依赖。
 - 函数作为值被引用但未立即调用时仍进入依赖图。
 - 局部闭包捕获不被错误登记成 TopLevel demand 依赖。
-- 高阶参数转发和递归调用图在有限 work queue 上收敛，无递归调度栈和任意轮数上限。
+- 高阶参数转发在有限 work queue 上收敛，无递归调度栈和任意轮数上限。
 - 所有结果按稳定 ID 确定排序；重复全量构建的 dump 字节一致。
 - 未支持的函数值流产生结构化保守结果，绝不漏边或按名称猜测。
 - 接入 codegen 后现有语言测试行为不变，生成函数集合不增加。
 - Wasm 制品携带按实际函数表身份索引的依赖元数据，collector 可以在函数值追踪时查询；
   初始化 collection 仍保守保留全部 Ready demand。
+- 已闭合但未被 entry 的 `ExecutionClosure` 接纳的普通顶层值不进入 executable；已经接纳
+  的 demand 不在初始化后再次做静态裁剪。
 - 精确状态 tree-shake、生成 helper 的完整依赖身份和缩小初始化根集合不属于本 RFC 的
   验收条件，必须由后续 RFC 单独证明。
 
