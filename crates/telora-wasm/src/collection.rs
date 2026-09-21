@@ -17,7 +17,20 @@ pub struct InitializationStats {
     pub memory_high_water: u32,
 }
 
+#[derive(Debug)]
+pub struct ArenaUsage {
+    pub words: u32,
+    pub content: u32,
+}
+
 impl Session {
+    pub fn arena_usage(&self) -> Result<ArenaUsage, String> {
+        let output = self.output();
+        Ok(ArenaUsage {
+            words: output.word(u64::from(abi::WORDS_VIEW + 4))?,
+            content: output.word(u64::from(abi::CONTENT_VIEW + 4))?,
+        })
+    }
     pub fn initialization_stats(&mut self) -> Result<InitializationStats, String> {
         let metric = self
             .instance

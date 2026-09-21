@@ -333,6 +333,11 @@ pub(crate) fn link(
     }
     exports.export("telora_error", ExportKind::Global, rt.globals);
     exports.export("telora_phase", ExportKind::Global, rt.globals + 1);
+    exports.export(
+        "telora_initialization_root",
+        ExportKind::Global,
+        rt.globals + 2,
+    );
     // Reset restores every global, including the Rust stack pointer. Values
     // live in linear memory; function tables are fixed by this linker.
     for index in 0..rt.globals + crate::abi::GLOBAL_COUNT {

@@ -176,6 +176,28 @@ impl Session {
         }
         Ok(())
     }
+    pub fn active_initialization_root(
+        &self,
+    ) -> Result<Option<crate::artifact::InitializationRoot>, String> {
+        let index = self
+            .instance
+            .get_global(&self.store, "telora_initialization_root")
+            .ok_or("Wasm: missing initialization root global")?
+            .get(&self.store)
+            .i32()
+            .ok_or("Wasm: invalid initialization root global")?;
+        if index == 0 {
+            return Ok(None);
+        }
+        let index = usize::try_from(index - 1)
+            .map_err(|_| "Wasm: invalid initialization root identity")?;
+        self.manifest
+            .initialization_roots
+            .get(index)
+            .cloned()
+            .map(Some)
+            .ok_or_else(|| "Wasm: invalid initialization root identity".into())
+    }
     pub(crate) fn register_sources(&mut self) -> Result<(), String> {
         while self.registered_sources < self.manifest.sources.len() {
             let source = &self.manifest.sources[self.registered_sources];

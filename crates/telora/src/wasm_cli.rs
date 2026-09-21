@@ -192,7 +192,34 @@ pub(crate) fn check_diagnostics(
     };
     if let Err(message) = result {
         if !diagnostics.iter().any(|d| d.severity == Severity::Error) {
-            diagnostics.push(error(message));
+            let mut diagnostic = error(message);
+            if let Ok(Some(root)) = session.active_initialization_root() {
+                let coordinates = telora_core::source::SourceCoordinates(root.origin);
+                if let Some(location) = sources
+                    .files()
+                    .find(|file| file.id().get() == coordinates.source())
+                    .and_then(|file| file.byte_location(coordinates))
+                {
+                    diagnostic.labels.push(telora_core::source::Label {
+                        location,
+                        message: match root.name {
+                            Some(name) => format!("while initializing {name}"),
+                            None => format!("while initializing MIR node {}", root.node),
+                        },
+                        primary: true,
+                    });
+                }
+                diagnostic
+                    .notes
+                    .push(format!("initialization root: {}#{}", root.module, root.node));
+            }
+            if let Ok(usage) = session.arena_usage() {
+                diagnostic.notes.push(format!(
+                    "language arenas: words={} bytes, content={} bytes",
+                    usage.words, usage.content
+                ));
+            }
+            diagnostics.push(diagnostic);
         }
     }
     diagnostics

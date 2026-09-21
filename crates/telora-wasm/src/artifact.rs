@@ -23,6 +23,7 @@ pub struct InitializationRoot {
     pub module: String,
     pub symbol: Option<u32>,
     pub name: Option<String>,
+    pub origin: [u32; 5],
 }
 
 /// Closed global identity and its fixed initialization cell in linear memory.

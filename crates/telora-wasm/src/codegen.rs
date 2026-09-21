@@ -71,6 +71,11 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
                     .clone(),
                 symbol: symbol.map(|id| id.index() as u32),
                 name: symbol.map(|id| mir.symbols[id.index()].name.clone()),
+                origin: mir
+                    .sources
+                    .get(mir.hir[key.node.index()].location.source)
+                    .coordinates(mir.hir[key.node.index()].location)
+                    .0,
             });
     }
     let mut module = Module::new();
