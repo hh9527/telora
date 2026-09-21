@@ -243,19 +243,62 @@ Array(Dyn) 容器：{ container_type, length, storage, ... }
 
 这一方案的主要收益是：类型标签成本按容器数增长，而不是按元素数增长；同时回收器到达容器后可以直接获取布局。小容器的头部成本更明显，大数组的收益通常更有意义，具体字节数必须在对象布局确定后统计。
 
-### 已确认方向：heap 是字节偏移引用
+### 需要重审：heap 直接使用稳定的 Wasm 地址
 
-值中的 `heap: u32` 采用语言堆内的字节偏移引用，不增加用于定位普通对象的额外句柄表。对象按 8 字节对齐，字段访问使用布局给出的字节偏移；该编码不是 Vec<u64> 的元素下标，也不是 Wasm 线性内存的物理地址。
+讨论早期确认过 `heap: u32` 是单一语言 `Vec<u64>` 内的逻辑字节偏移，由当前
+基址换算成物理地址。基于新的生命周期假设，这个物理选择需要重审：阶段内只
+单调分配，service 就绪时只做一次跨实例 compact，请求结束整体 reset，因此普通
+对象可以直接使用稳定 arena 分配得到的 Wasm 线性内存地址。
 
-0 保留为空引用，有效对象不能编码为 0。堆地址换算需明确保留前缀或编码偏置，并检查所有加法和范围，不能直接将 offset 0 的对象当作有效引用。现有静态镜像与动态 words 的编码分界如何延续，需在物理 ABI 中统一规定。
+```text
+heap: u32 = 当前实例线性内存中的对象地址
+```
 
-Vec 扩容后逻辑引用保持有效，实际访问时由当前基址解析；不能跨可能分配的调用保存未经保护的物理指针或 Rust 借用。copy-collect 改变对象偏移时，修补所有存活引用并保持共享和循环关系。u32 约束的是可编码的字节地址空间，保留区域或偏置会进一步减少容量，不能解释为可寻址 2^32 个 u64。
+Wasm `memory.grow` 不改变已有数值地址，只会使 Host 取得的 memory view 失效。
+生成代码可以直接使用 `heap + field_offset`，不再经过 `WORDS_ORIGIN` 和
+`telora_heap_address`。跨实例 compact 或 snapshot restore 时，collector 通过
+`old_address -> new_address` forwarding map 修补全部存活引用；地址从不要求跨
+实例稳定。
 
-RT 资源值的 handle 继续是对应资源表索引，与语言堆引用属于不同身份空间。分类资源管理表、根表和类型布局表不因取消普通对象定位句柄表而一并消失。String/Bytes 的 start/end/raw_start 则仍属于独立 content Vec 的字节偏移空间。
+对象仍按 8 字节对齐，0 保留为空引用。静态 image 地址在同一 module 的不同实例
+中可以保持，动态地址必须重定位。Host 只把地址视为带实例语境的 u32 offset，
+不能转换为跨 Guest 调用长期保存的 Host 裸指针或 memory slice。
+
+候选 allocator 直接管理 Guest 线性内存中的 chunk，并在 chunk 内永远向后排。
+它不要求每个对象进入 Rust global allocator，也不是一个会整体扩容搬迁的 Vec。
+这里的三个名称首先表示生命周期阶段，不要求实现成三个通用 allocator：
+
+```text
+InitializationArena: 单调增长，迁移完成后随旧实例销毁
+FrozenPrefix:        新服务实例中 compact 后的只读地址前缀
+WorkRegion:          frozen 末端 checkpoint 后单调增长，结束时整体 reset/reuse
+```
+
+初始化实例只有一个单调 arena。跨实例 compact 时，存活图直接分配到新实例的
+arena 底部；迁移完成后记录 frontier 作为 frozen checkpoint，随后同一个地址空间
+的尾部就是请求 work region。请求结束只恢复 frontier，并清理相应资源表尾部，
+不遍历普通语言对象，也不逐对象析构。因而“frozen/work”是一个实例中由 checkpoint
+分开的前缀和后缀，不是两套需要相互协调的堆。
+
+chunk 只解决 bump 区域扩展时已有对象地址不能移动的问题。chunk 元数据、空闲尾部
+和跨 chunk 对齐均不可被语言观察；实例销毁或 checkpoint reset 才批量回收。若原型
+证明可直接从线性内存连续增长且永不搬移，则 chunk 甚至可以退化为一个 frontier，
+不应为了抽象完整性预先引入逐对象 allocator。
+
+普通 Record、Tuple、Newtype、closure environment 和 raw container header 可以
+直接用地址引用，不再需要 RECORDS/NEWTYPES/ENVIRONMENTS 等普通对象定位 table。
+Array/String 的 backing buffer 可独立分配，但由稳定 header 间接引用。VALUES 等
+动态装箱能否同样改为直接地址，由 Dyn/enum 的最终布局决定。Regex 等具有 Drop
+或外部状态的 RT 资源仍使用专用 handle table；根表、类型布局表和资源表不会因
+普通对象 table 消失而一并取消。
+
+这是对早期“逻辑 heap offset”物理选择的修订候选，尚未接受为新 ABI。原型必须
+先证明 arena 与 Rust allocator/交换缓冲区的线性内存区域不冲突、reset 后地址不可再达，以及
+跨实例 collector 能完整修补共享和循环关系。
 
 ### 已确认方向：空容器保留有效引用
 
-空 Array、Dict、Record 等仍使用有效的底层容器引用，不将 0 解释为空容器。空数组保存类型和 count=0；空字典的两列分别指向有效的空数组容器；零字段 Record 仍有类型头。头部大小另计，不能因为没有元素而省略解释对象所需的信息。
+空 Array、Dict、Record 等仍使用有效的底层容器引用，不将 0 解释为空容器。空数组保存类型和 `len=0`；空字典的两列分别指向有效的空数组容器；零字段 Record 仍有类型头。头部大小另计，不能因为没有元素而省略解释对象所需的信息。
 
 零长度 slice 保留有效的底层引用，并满足 start=end 及范围约束；回收必须仍能追踪和修补该引用，不能将其当作空指针跳过。是否裁剪不再可见的底层存储属于独立回收优化，不能留下悬空引用。
 
@@ -265,11 +308,12 @@ Unit 是明确的例外：只保存 Loc，不分配空容器。首版不为其�
 
 ```text
 固定形状容器：{ type_id: u32, fields... }
-数组容器：    { type_id: u32, count: u32, elements... }
+数组 raw：     { type_id: u32, data: u32, len: u32, cap: u32 }
+字节 raw：     { data: u32, len: u32, cap: u32 }
 闭包环境：    { environment_layout_id: u32, captures... }
 ```
 
-这些是逻辑字段，具体偏移与 padding 按统一的 8 字节对齐规则生成。固定容器的字段数和大小来自类型布局，不重复存储；数组保存运行时元素总数，分配大小由长度和元素步长计算并检查溢出。
+这些是逻辑字段，具体偏移与 padding 按统一的 8 字节对齐规则生成。固定容器的字段数和大小来自类型布局，不重复存储；raw header 使用稳定地址，data 指向可替换的 backing，分配大小由 cap 和元素步长计算并检查溢出，只有 len 范围已经初始化。
 
 闭包环境使用明确的环境布局 ID，不将其冒充用户态 TypeId；函数身份仍可映射到该布局，并应与实际环境头一致。回收器由进入对象的引用种类区分普通容器和环境，再读取对应身份空间中的布局，不能将两种 u32 ID 无条件混用。
 
@@ -294,7 +338,7 @@ Unit 是明确的例外：只保存 Loc，不分配空容器。首版不为其�
 | Int / Float / Bool | 24 B | 16 B |
 | 16 B 数据描述的 String/Bytes | 32 B | 24 B |
 
-这些仅是单值布局算术，不是整个程序内存收益预测。容器元数据、共享对象、分类表、Rust 资源和容量余量仍占内存。Bool 已确定逻辑数据为 u32，完整值经 8 字节对齐后仍占 16 字节。
+这些仅是单值布局算术，不是整个程序内存收益预测。容器元数据、共享对象、仍需保留的资源表、Rust 资源和容量余量仍占内存。Bool 已确定逻辑数据为 u32，完整值经 8 字节对齐后仍占 16 字节。
 
 每个字段和数组元素仍需自己的来源，容器也保留整体来源。`b = a.field` 转发字段来源；新建容器的整体位置不能覆盖元素来源。无 payload variant 从类型域物化时记录使用位置；`raise!` 的报告位置与被报告值的来源分别保存。
 
@@ -344,9 +388,91 @@ Unit 是明确的例外：只保存 Loc，不分配空容器。首版不为其�
 
 **Rust RT 资源值。** Regex 等采用 `{loc: u64, handle: u32}`，物理大小 16 字节，资源对象本身的内存另计。handle 指向相应资源表，具体表由静态类型确定，不为普通值重复保存 TypeId。复制只复制句柄，不能按语言堆字节复制实际 Rust 对象。copy-collect 保活资源并在句柄重编号时修补全部引用；reset 释放请求期间新增且不再需要的资源，初始化保留资源遵循冻结基线。资源的构造、销毁与可观察身份沿用各自语义，不把有状态资源隐式当成可变的共享冻结对象。进入 Dyn 时保留具体类型及句柄。
 
-**String / Bytes。** 数据描述统一为 16 字节：少于 16 字节的内容内联，最多 15 字节，另保留长度和 inline/heaped 标记；长内容使用 `{start: u32, end: u32, raw_start: u32}` 加标记。偏移指向 content Vec，沿用现有切片身份和 copy-collect 规则。String 的范围必须满足 UTF-8 边界，Bytes 没有该约束；具体标记位编码仍由后续物理布局规定。
+**String / Bytes。** 数据描述统一为 16 字节：少于 16 字节的内容内联，最多 15 字节，另保留长度和 inline/heaped 标记。早期候选的长内容使用 `{start: u32, end: u32, raw_start: u32}` 指向统一 content Vec；在稳定 arena + internal mutable buffer 假设下，应改为与 Array 对称的 `{raw: u32, start: u32, end: u32}`，raw 指向 `{data, len, cap}` 的稳定 RawBytes header。String 路径保证 UTF-8 边界，Bytes 没有该约束；inline 转 raw、String/Bytes 是否允许共享同一 raw，以及标记位编码仍需原型确定。
 
-**Array(T)。** heap 指向底层数组容器，容器保存一次类型和总元素数。start/end 是半开区间的元素索引，满足 `start <= end <= count`；步长由 T 的物理布局确定。slice 共享底层容器，普通元素只保存来源和数据，Dyn 元素额外保存具体类型。
+**Array(T)。** heap 指向底层 RawArray，raw 保存一次类型和已初始化元素数。start/end 是半开区间的元素索引，满足 `start <= end <= raw.len`；步长由 T 的物理布局确定。slice 共享底层 raw，普通元素只保存来源和数据，Dyn 元素额外保存具体类型。
+
+#### 待验证候选：不可变 Array 视图与内部可变 raw storage
+
+语言层的 Array、slice 和所有别名继续是不可变值，但这不要求其底层 raw
+storage 在运行时也完全不可变。一个值得原型验证的表示是：
+
+```text
+ArrayValue = { loc, raw, start, end }
+RawArray   = { type_id, data, len, cap }
+```
+
+其中字段正式沿用头部定义中的 `len/cap`；下例中的 `raw.len` 就是已初始化前缀，
+不是另一个需要同步的 frontier。`start/end` 属于不可变的语言值；`len/cap` 只属于 RT，不参与相等、
+哈希或任何语言观察。RT 只允许在所有既有视图都不可见的尾部写入。于是：
+
+```text
+old = raw#7[0..2]
+new = push(old, x)
+
+old = raw#7[0..2]
+new = raw#7[0..3]
+```
+
+只要 `old.end == raw.len`，写入 `len` 所指向的下一个元素不会改变 old 可见的 `[0, 2)`，
+所以不需要通过引用计数或线性性证明 old 已经没有别名。容量不足时可以分配
+更大的 backing storage、复制已初始化前缀并更新稳定 RawArray header 的 data；
+所有旧视图仍通过同一个 raw 地址读取相同前缀。
+
+从历史视图分叉时必须退化为复制：
+
+```text
+old = raw#7[0..2]
+a   = push(old, 3)  # raw#7.len = 3
+b   = push(old, 4)  # old.end != raw.len，复制 old 的可见范围到 raw#8
+```
+
+该规则也适用于 `start > 0` 的尾 slice：只要 end 等于 raw.len，就可继续共享
+追加；复制分支时只复制 `[start, end)`，新 raw 从零开始。被放弃的尾部暂不
+回退 len，因为没有唯一性或活性证明；它只造成有界于该 raw 历史的空间
+保留，不影响不可变语义。
+
+现有 ABI 25 已具备部分形状但不能直接完成此优化：Array 值的 `DATA` 区已经是
+`array_id/start/end/unused` 四个 u32，ARRAYS table slot 却只有
+`payload/bytes`，其中 payload 直接指向等长元素区，bytes 同时承担分配大小和
+GC 扫描范围。每次 `array_result` 都创建新的 table slot，`array.push` 则分配
+`n + 1` 元素区并完整复制。因此不能只把 unused 字段改名为 cap；cap
+和 len 必须属于共享 raw，而不是属于某个 ArrayValue。
+
+新的稳定容器头正好可以承载 type_id、data、len 和 cap。几何扩容时
+raw 地址保持稳定，只更新其 data；元素访问每次经 raw header 解析当前 backing，
+不能跨可能扩容的调用缓存 backing 地址。header 自身位于单调 arena，不会移动。
+
+生命周期还需要一个严格边界：静态镜像或初始化后 frozen 的 raw 不得在请求
+期间原地扩展。reset 只恢复 work checkpoint，不撤销 frozen header 的
+data/len 变化。因此 push 遇到 frozen raw 时必须先 fork 到 work region；后续
+沿最新尾视图的 push 才可在该 work raw 上追加。初始化 compact 前创建的 raw
+可以使用内部追加；迁移到新服务实例后它们成为只读基线。
+
+copy-collect 应按 raw identity 去重，只扫描并复制 `len` 以内的已初始化元素，
+不读取或追踪 cap 空间。目标 raw 的 cap 是独立策略：可以保留原 cap、
+收缩到 len，或按增长策略重新选择；保留 cap 只分配目标余量，不复制未
+初始化内容。多个 slice 指向同一 raw 时只复制一次 raw，并修补稳定的 raw 引用。
+进入不可再追加的 frozen/发布基线时保留余量通常没有收益，可以收缩；仍处于可变
+work 生命周期且预期继续追加时则可以保留余量。该选择不能改变语言可观察结果。
+元素仍按 `TraceLayout(T)` 追踪，append 写入的是包含元素 Loc 的完整存储布局。
+
+这个候选体现一条更一般的实现原则：HIR/MIR 保持不可变值语义，codegen/RT
+可以使用不会被语言观察到的受约束 mutable instruction。候选指令可区分为：
+
+```text
+raw_array_append_tail(raw, element) -> new_end
+raw_array_fork_append(raw, start, end, element) -> (new_raw, new_end)
+```
+
+普通 `array.push` 的 lowering 或 RT 胶水根据 `end == len` 和 frozen 条件选择路径；
+Mutable raw handle 不暴露为可保存、比较或返回的 Telora 值。分配、quota 和宽度
+检查必须在提交 len 前完成，失败不能发布半初始化元素。
+
+这一方向尚未确认。原型需要验证 table/container 的具体物理头、几何增长策略、
+trap 前后的提交顺序、初始化 collector 与请求 reset，并用历史 slice 分叉、冻结
+数组首次 push、嵌套 Array、Dyn 元素和来源转发覆盖别名语义。它不应作为旧布局
+上的局部 `DATA + 12` 补丁实施。
 
 **Record / Tuple。** 二者共用容器机制，容器保存一次类型，字段按静态布局排列并分别保存来源。Record 字段身份和 Tuple 位置都在 codegen 时转换为偏移，不运行时查名字。复制值只复制引用描述，不深复制字段；字段读取转发其来源。Unit 单独决定，不要求分配空容器。
 
@@ -372,6 +498,31 @@ Unit 是明确的例外：只保存 Loc，不分配空容器。首版不为其�
 
 ## 8. Copy-collect：从自描述对象改为带布局的遍历任务
 
+这里的 copy-collect 不是传统的持续 GC。Telora 的目标生命周期中没有执行期
+周期回收、并发回收或因内存压力触发的 safepoint：一个阶段内的语言内存只会
+单调增加。允许回收或重排的边界只有：
+
+```text
+初始化阶段：单调分配
+service 就绪：一次 copy-collect/跨实例 compact，形成 frozen 基线
+请求阶段：从 work checkpoint 单调分配
+请求结束：整体 reset 到 checkpoint
+```
+
+这个假设带来一个比“选择哪种 GC”更强的简化：普通语言对象没有独立释放操作，
+也不需要 mark bit、free list、写屏障或析构协议。分配器状态原则上只是当前
+frontier（采用 chunk 时再加当前 chunk）；服务实例再保存 frozen checkpoint。
+请求 reset 的正确性来自“任何 work 引用都不得写回 frozen 根或跨请求逃逸”，
+而不是来自一次请求末尾的可达性扫描。codegen/RT 必须在可能写入长期状态的边界
+阻止这种逃逸；如果语言语义以后允许服务状态随请求演化，这个假设必须重新讨论。
+
+因此不要求逐对象 free，也不要求为普通执行点生成活跃根图。Array/String 的
+几何扩容可以遗留旧 backing，连续增长的累计废弃容量仍为 O(最终容量)，在
+service compact 或请求 reset 时统一消失。Regex 等具有析构行为的 RT 资源仍由
+专用资源表在 reset、迁移或实例销毁时处理，不能据此反推普通语言对象需要传统
+GC。跨实例 compact 与 snapshot 导出是同一次根遍历的不同目标，不增加执行期
+回收机制。
+
 当前回收器不能直接应对无类型头部的值。改造后的概念任务应包含：
 
 ```text
@@ -388,9 +539,39 @@ Trace { reference_or_slot, layout, destination }
 
 共享与循环去重继续按存储身份进行；同一对象从不同边到达时应验证布局相容，而不是因传入不同类型身份就随意复制成两个对象。slice 只改变可见范围，底层内容身份仍遵循现有约定。
 
-继续保持 RFC 0302 的保守初始化根集合、固定元数据前缀、work_base 和请求 truncate 策略。此次不同时要求精确裁剪 property 根，也不引入执行中可移动 GC。因此暂不需要为每条 Wasm 指令提供活跃栈根图；若将来允许执行中移动回收，必须另行设计 safepoint 和机器值重定位。
+继续保持 RFC 0302 的保守初始化根集合、固定元数据身份和请求 checkpoint/reset
+语义，但不再把单一 Vec、`work_base` 数值或 table 间接层视为必须保留的物理
+实现。此次不同时要求精确裁剪 property 根，也不引入执行中可移动 GC，因此不
+需要为每条 Wasm 指令提供活跃栈根图；若将来允许执行中回收，必须另行设计
+safepoint 和机器值重定位。
 
-语言引用仍是堆内可重定位标识，不能跨 Vec 扩容持有物理指针。mem-alloc/realloc/free 所管理的 Host 交换缓冲区不因此变成语言堆。Regex 等 Rust 资源也继续有专用保活/释放规则，不能按普通 word payload 盲目复制。
+首选 sealing 路径是 Host 驱动的跨实例 copy-collect。Host 将旧、新 Guest 地址
+分别视为带实例语境的 u32，通过 TraceLayout 从明确根集合遍历，在新实例 arena
+的底部顺序分配，并记录 `old address -> new address`。遍历结束时记录 frontier，
+其下成为 frozen prefix，其上供请求分配。目标换成确定性编码器
+时，同一遍历直接形成 snapshot；不需要先把整个旧线性内存复制到 Host。
+
+普通语言对象按布局复制；Regex 等 Rust 资源按资源种类执行 clone/rebuild 回调，
+例如从旧实例取得 pattern、在新实例重新 compile，并记录 old handle -> new
+handle。service phase、handler、demand/property/top-level 槽、source/BOL 状态和
+少量 mutable globals 必须由显式 InstanceStateDescriptor 列为根或恢复槽，不能
+要求 collector 猜测任意 Rust static。
+
+mem-alloc/realloc/free 所管理的 Host 交换缓冲区不因此变成语言 arena。Host 不
+跨可能 `memory.grow` 的 Guest 调用缓存 memory view；数值地址保持有效，但每次
+访问重新取得对应实例的视图。
+
+因此此方案真正需要追踪的不是每个分配，而是三类边界状态：
+
+```text
+language frontier / frozen checkpoint
+resource table length / frozen resource baseline
+InstanceStateDescriptor 中的显式根与状态槽
+```
+
+普通对象、数组 backing 和字节 backing 都服从前两阶段的批量生命周期；只有
+Regex 等非字节可搬移资源需要按资源种类 rebuild/drop。这里不再建立一套通用
+finalizer 机制。
 
 ## 9. 建议先验证的纵向样例
 
@@ -413,13 +594,21 @@ Int 算术 → 带来源的函数参数/返回值 → Array(Int) 直接构造
 
 对照包含 #213、world-model 真实查询和既有诊断测试。代码尺寸、调用 word 数、引擎内部寄存器压力之间可能有取舍；不能仅凭 locals 更少判定整体更快。
 
+Array 原型还应单独记录连续 `fold + push` 与历史 slice 分叉两条曲线。前者预期
+通过 tail append + 几何扩容将累计复制从 O(n²) 降为摊销 O(n)，后者必须保持值
+语义并在分叉点明确付出复制成本。初始化 freeze 前、请求 work arena、frozen
+基线首次 push 和 copy-collect 后继续 push 都要分别测量。
+
 ## 10. 需要讨论后再决定的事项
 
 1. 在已接受的 14/25/25 边界内，明确无来源和临时来源的保留编号及输入端诊断。
 2. 边界固定返回栈的容量、访问接口和非零状态码如何确定？内部已统一返回 status/Loc/data，0 成功、非零失败；Never 的机器签名需明确。compute_loc 语义已确定，内置能力经过一等函数间接调用时的位置传递机制仍需验证。
-3. 在已确认的值与容器头部逻辑布局上确定物理字段偏移和标记编码。普通容器头保存 TypeId，数组增加 count，闭包环境头保存环境布局 ID；来源和数据首版相邻存储已确认。
+3. 在已确认的值与容器头部逻辑布局上确定物理字段偏移和标记编码。普通容器头保存 TypeId，RawArray/RawBytes 候选头保存 data/len/cap，闭包环境头保存环境布局 ID；来源和数据首版相邻存储已确认。
 4. 哪些值可始终停留在机器栈，哪些必须物化？如何机械地消费 MIR 结果而不再增加类型猜测？
 5. 根表、闭包环境、动态诊断值和 RT 资源如何提供完整 TraceLayout？普通捕获直接保存值已确认，递归闭包的稳定身份和构造期填充如何落实？
 6. 如何为新制品升级 ABI 并明确拒绝不匹配版本，而不长期保留旧布局兼容分支？
+7. Array raw storage 是否采用 append-only len + cap 的内部可变模型？若采用，容器头、frozen 判定、增长因子和失败提交协议如何确定；这一原则是否只用于 Array，还是随后扩展到其他构造期 transient？
+8. 普通对象引用是否从单一 Vec 的逻辑偏移改为稳定 arena 的直接 Wasm 地址？若采用，哪些普通对象 table 可以删除，arena 如何与 Rust allocator/交换缓冲区划分区域，连续 frontier 是否足够，还是确实需要 chunk？
+9. Host 跨实例 collector 的 InstanceStateDescriptor 包含哪些根和恢复槽？资源 clone、确定性 snapshot 编码与 module/ABI 身份如何统一？
 
-当前倾向是先确立静态布局驱动、必要位置传播和少量暂存的原则，以“容器保存一次类型，普通元素不保存，Dyn 元素保留实际类型”作为优先原型；用上述纵向样例确定调用与回收的可行性，再写实施 RFC。位宽压缩、数据分列和字面量静态化均不应成为验证这一原则的强制前置条件。
+当前倾向是先确立静态布局驱动、必要位置传播和少量暂存的原则，以“稳定 arena 直接地址、容器保存一次类型、普通元素不保存 TypeId、Dyn 元素保留实际类型、Host 跨实例 sealing”为联合原型。原型应同时验证 Array/RawBytes header、请求 checkpoint/reset、资源迁移和 snapshot sink，避免分别实现随后互相冲突的堆、collector 与发布格式。位宽压缩、数据分列和字面量静态化均不应成为验证这一原则的强制前置条件。
