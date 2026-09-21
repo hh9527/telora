@@ -1184,3 +1184,142 @@ fn generic_call_conflicts_keep_the_use_site_and_other_instances_stay_independent
         TypeConstructor::Int
     );
 }
+
+#[test]
+fn sealed_function_bodies_record_resolved_behavioral_dependencies() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        def base: Int = 1;
+        def apply: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, value) { f(value) };
+        def helper: Fn(Int) -> Int = fn(value) { value + base };
+        export def answer: Fn(Int) -> Int = fn(value) { apply(helper, value) };
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    let export = mir
+        .symbols
+        .iter()
+        .position(|symbol| {
+            symbol.name == "answer" && matches!(symbol.resolution, ResolveState::Bound(_))
+        })
+        .unwrap();
+    let executable = mir.seal_export(SymbolId(export as u32)).unwrap();
+    let symbol = |name: &str| {
+        SymbolId(
+            mir.symbols
+                .iter()
+                .position(|symbol| {
+                    symbol.name == name && matches!(symbol.kind, SymbolKind::Declaration(_))
+                })
+                .unwrap() as u32,
+        )
+    };
+    let graph = executable.function_dependencies();
+    assert!(graph.functions().iter().any(|function| {
+        function
+            .dependencies
+            .contains(&FunctionBodyDependency::TopLevel(symbol("base")))
+    }));
+    let entry = graph
+        .functions()
+        .iter()
+        .find(|function| {
+            function
+                .dependencies
+                .contains(&FunctionBodyDependency::TopLevel(symbol("apply")))
+                && function
+                    .dependencies
+                    .contains(&FunctionBodyDependency::TopLevel(symbol("helper")))
+        })
+        .unwrap();
+    assert!(graph.reachable_state(entry.id).0.contains(&symbol("base")));
+    assert!(graph.functions().iter().any(|function| {
+        function.dependencies.iter().any(|dependency| {
+            matches!(
+                dependency,
+                FunctionBodyDependency::Conservative(FunctionDependencyFallback::Parameter { .. })
+            )
+        })
+    }));
+}
+
+#[test]
+fn local_closure_captures_remain_data_edges() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        export def answer: Fn(Int) -> Int = fn(value) {
+            let offset: Int = 1;
+            let add: Fn(Int) -> Int = fn(input) { input + offset };
+            add(value)
+        };
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    let export = mir
+        .symbols
+        .iter()
+        .position(|symbol| {
+            symbol.name == "answer" && matches!(symbol.resolution, ResolveState::Bound(_))
+        })
+        .unwrap();
+    let executable = mir.seal_export(SymbolId(export as u32)).unwrap();
+    let graph = executable.function_dependencies();
+    assert_eq!(graph.functions().len(), 2);
+    assert!(graph.functions().iter().all(|function| {
+        function
+            .dependencies
+            .iter()
+            .all(|dependency| !matches!(dependency, FunctionBodyDependency::TopLevel(_)))
+    }));
+    assert!(graph.functions().iter().any(|function| {
+        function
+            .dependencies
+            .iter()
+            .any(|dependency| matches!(dependency, FunctionBodyDependency::Function(_)))
+    }));
+}
+
+#[test]
+fn sealed_generic_functions_share_a_prototype_but_keep_instance_identity() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        def identity: for(T) Fn(T) -> T = fn(value) { value };
+        export def answer: (Int, String) = (identity(1), identity("ok"));
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    let export = mir
+        .symbols
+        .iter()
+        .position(|symbol| {
+            symbol.name == "answer" && matches!(symbol.resolution, ResolveState::Bound(_))
+        })
+        .unwrap();
+    let executable = mir.seal_export(SymbolId(export as u32)).unwrap();
+    let identity = mir
+        .symbols
+        .iter()
+        .position(|symbol| {
+            symbol.name == "identity" && matches!(symbol.kind, SymbolKind::Declaration(_))
+        })
+        .unwrap();
+    let functions = executable
+        .function_dependencies()
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.root.instance.is_some_and(|instance| {
+                mir.generic_instances[instance.index()].symbol.index() == identity
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(functions.len(), 2, "{}", mir.dump());
+    assert_ne!(functions[0].id, functions[1].id);
+    assert_eq!(functions[0].prototype, functions[1].prototype);
+}

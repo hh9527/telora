@@ -9,6 +9,7 @@ use std::fmt::Write;
 mod constraint_outcomes;
 mod declaration_contracts;
 mod executable;
+mod function_dependencies;
 mod materializations;
 mod properties;
 mod record_boundaries;
@@ -18,6 +19,9 @@ mod substitution;
 mod type_schemes;
 pub use declaration_contracts::{DeclarationContract, DeclarationContractState};
 pub use executable::{ExecutionClosure, ExecutionRoot, SealedExecutable};
+pub use function_dependencies::{
+    FunctionBodyDependency, FunctionBodyDependencyGraph, FunctionDependencyFallback, SealedFunction,
+};
 pub use resolution::{ResolutionFacts, ResolveTask};
 pub use seal::SealedMir;
 pub use substitution::TypeSubstitution;
@@ -62,6 +66,7 @@ pub enum SchemeNode {
 id!(TypeTermId, TypeConflictId);
 id!(GenericInstanceId);
 id!(PropertyId);
+id!(FuncId, FuncProtoId);
 
 /// The type pass decides whether a reference publishes a quantified contract
 /// or selects a declaration instance. Consumers must not infer this from names
