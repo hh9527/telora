@@ -88,7 +88,7 @@ impl Emitter<'_> {
                 args[index].index() as u32,
             );
         }
-        let id = self.table_push(TESTS, description, bytes);
+        let id = self.table_push(TESTS, description, bytes, None)?;
         let result = self.value_as(self.key.node, output, SCALAR_BYTES)?;
         self.extend([
             I::LocalGet(result),

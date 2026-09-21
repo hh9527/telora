@@ -5,10 +5,7 @@ use core::fmt::{self, Write};
 
 unsafe fn array_item(value: u32, index: u32, width: u32) -> u32 {
     unsafe {
-        let base = word(
-            telora_table_get(table_address(ARRAYS), word(value, DATA)),
-            0,
-        );
+        let base = word(word(value, DATA), 4);
         base + (word(value, DATA + 4) + index) * width
     }
 }

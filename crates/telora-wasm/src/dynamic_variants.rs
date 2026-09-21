@@ -17,11 +17,23 @@ impl Emitter<'_> {
     ) -> Result<u32, String> {
         let id = self.local(ValType::I32);
         self.extend([
-            I::I32Const(table_address(VALUES) as i32),
+            I::LocalGet(width),
+            I::I32Const(8),
+            I::I32Add,
+            I::Call(ALLOC),
+            I::LocalSet(id),
+            I::LocalGet(id),
+            I::LocalGet(concrete),
+            I::I32Store(memory(0, 2)),
+            I::LocalGet(id),
+            I::LocalGet(width),
+            I::I32Store(memory(4, 2)),
+            I::LocalGet(id),
+            I::I32Const(8),
+            I::I32Add,
             I::LocalGet(data),
             I::LocalGet(width),
-            I::Call(TABLE_PUSH),
-            I::LocalSet(id),
+            I::MemoryCopy { src_mem: 0, dst_mem: 0 },
         ]);
         let result = self.value_as(self.key.node, ty, DYN_BYTES)?;
         self.copy(result, 0, data, LOC_BYTES);

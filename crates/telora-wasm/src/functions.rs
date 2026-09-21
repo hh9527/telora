@@ -76,16 +76,18 @@ impl Emitter<'_> {
             .functions
             .get(&key)
             .ok_or("Wasm: callable is absent from sealed plan")?;
-        let environment = self.alloc(captures.len() as u32 * 8);
+        let environment = self.alloc(8 + captures.len() as u32 * 8);
+        self.store32(environment, 0, captures.len() as u32);
+        self.store32(environment, 4, 0);
         for (index, &(capture, capture_ty)) in captures.iter().enumerate() {
             self.extend([
                 I::LocalGet(environment),
                 I::LocalGet(capture),
-                I::I32Store(memory(index as u64 * 4, 2)),
+                I::I32Store(memory(8 + index as u64 * 4, 2)),
             ]);
             self.store32(
                 environment,
-                (captures.len() + index) as u64 * 4,
+                8 + (captures.len() + index) as u64 * 4,
                 capture_ty.index() as u32,
             );
         }
@@ -94,13 +96,9 @@ impl Emitter<'_> {
         self.function_pointer(function);
         self.emit(I::I32Store(memory(DATA, 2)));
         // Even an empty environment gives each evaluated closure an identity.
-        let bytes = captures.len() as u32 * 8;
-        let id = self.table_push(ENVIRONMENTS, environment, bytes);
         self.extend([
             I::LocalGet(result),
-            I::LocalGet(id),
-            I::I32Const(1),
-            I::I32Add,
+            I::LocalGet(environment),
             I::I32Store(memory(ENVIRONMENT, 2)),
         ]);
         Ok(result)

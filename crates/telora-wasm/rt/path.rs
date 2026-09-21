@@ -1,12 +1,9 @@
 //! Platform-independent lexical paths. Results are raw UTF-8 spans, not Options.
-use crate::{abi::*, tables::telora_table_get, text::text, values::word};
+use crate::{abi::*, text::text, values::word};
 
 unsafe fn join(array: u32) -> alloc::string::String {
     unsafe {
-        let base = word(
-            telora_table_get(table_address(ARRAYS), word(array, DATA)),
-            0,
-        );
+        let base = word(word(array, DATA), 4);
         let end = word(array, DATA + 8);
         let mut start = word(array, DATA + 4);
         for index in start..end {

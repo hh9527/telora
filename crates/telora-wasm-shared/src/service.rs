@@ -13,10 +13,12 @@ pub struct Contract {
     pub handler_type: u32,
     pub value_bytes: u32,
     pub sources_offset: u32,
+    pub string_type: u32,
+    pub value_type: u32,
 }
 
 impl Contract {
-    pub fn words(self) -> [u32; 10] {
+    pub fn words(self) -> [u32; 12] {
         [
             self.initialize,
             self.entry,
@@ -28,6 +30,8 @@ impl Contract {
             self.handler_type,
             self.value_bytes,
             self.sources_offset,
+            self.string_type,
+            self.value_type,
         ]
     }
 }

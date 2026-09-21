@@ -50,7 +50,7 @@ impl Emitter<'_> {
         let callee = self.local(ValType::I32);
         self.extend([
             I::LocalGet(0),
-            I::I32Load(memory(0, 2)),
+            I::I32Load(memory(8, 2)),
             I::LocalSet(callee),
         ]);
         if self.key.special == Special::Normal {
@@ -71,7 +71,12 @@ impl Emitter<'_> {
                 inputs.push(input);
                 continue;
             }
-            let id = self.table_push(VALUES, input, self.width(inner[index])?);
+            let id = self.table_push(
+                VALUES,
+                input,
+                self.width(inner[index])?,
+                Some(inner[index]),
+            )?;
             let packed = self.value_as(node, erased[index], DYN_BYTES)?;
             self.store32(packed, DATA, inner[index].index() as u32);
             self.store32(packed, DATA + 4, 1);

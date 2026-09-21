@@ -139,6 +139,31 @@ impl Output<'_> {
         ))
     }
     pub(crate) fn payload(&self, table: u32, id: u32) -> Result<(u64, u64), String> {
+        if matches!(table, RECORDS | VALUES | NEWTYPES) {
+            let pointer = u64::from(id);
+            let bytes = u64::from(self.word(pointer + 4)?);
+            self.bytes(pointer + 8, bytes)?;
+            return Ok((pointer + 8, bytes));
+        }
+        if table == ARRAYS {
+            let pointer = u64::from(id);
+            let ty = self.word(pointer)?;
+            let data = u64::from(self.word(pointer + 4)?);
+            let length = self.word(pointer + 8)?;
+            let capacity = self.word(pointer + 12)?;
+            if length > capacity {
+                return Err("Wasm: array length exceeds capacity".into());
+            }
+            let width = self
+                .manifest
+                .types
+                .get(ty as usize)
+                .ok_or("Wasm: invalid array element TypeId")?
+                .bytes;
+            let bytes = length.checked_mul(width).ok_or("Wasm: array size overflow")?;
+            self.bytes(data, bytes.into())?;
+            return Ok((data, bytes.into()));
+        }
         let descriptor = table_address(table) as u64;
         if id >= self.word(descriptor + 4)? {
             return Err("Wasm: output has invalid HeapId".into());

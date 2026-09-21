@@ -35,7 +35,7 @@ impl Emitter<'_> {
                 self.width(ty)?,
             );
         }
-        let id = self.table_push(RECORDS, object, bytes);
+        let id = self.table_push(RECORDS, object, bytes, Some(ty))?;
         let result = self.value_as(node, ty, self.width(ty)?)?;
         self.extend([
             I::LocalGet(result),

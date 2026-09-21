@@ -227,7 +227,8 @@ impl<'a> Emitter<'a> {
             I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
             I::I32Store(memory(DIAG_ROOT, 2)),
         ]);
-        self.table_push(DIAGNOSTICS, pointer, DIAGNOSTIC_BYTES);
+        self.table_push(DIAGNOSTICS, pointer, DIAGNOSTIC_BYTES, None)
+            .expect("diagnostic table push");
         self.extend([
             I::LocalGet(pointer),
             I::GlobalSet(ERROR_GLOBAL),
@@ -836,7 +837,7 @@ pub(crate) fn compile(
             let local = emit.local(ValType::I32);
             emit.extend([
                 I::LocalGet(0),
-                I::I32Load(memory(index as u64 * 4, 2)),
+                I::I32Load(memory(8 + index as u64 * 4, 2)),
                 I::LocalSet(local),
             ]);
             emit.bindings.insert(*symbol, local);
@@ -845,7 +846,7 @@ pub(crate) fn compile(
             let local = emit.local(ValType::I32);
             emit.extend([
                 I::LocalGet(0),
-                I::I32Load(memory((index + plan.captures[&key].len()) as u64 * 4, 2)),
+                I::I32Load(memory(8 + (index + plan.captures[&key].len()) as u64 * 4, 2)),
                 I::LocalSet(local),
             ]);
             emit.local_instances.insert(*instance, local);

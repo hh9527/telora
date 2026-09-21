@@ -162,7 +162,7 @@ impl Emitter<'_> {
             };
             self.copy(data, offset, value, self.width(field_ty)?);
         }
-        let id = self.table_push(RECORDS, data, bytes);
+        let id = self.table_push(RECORDS, data, bytes, Some(ty))?;
         let result = self.value_as(node, ty, self.width(ty)?)?;
         self.extend([
             I::LocalGet(result),

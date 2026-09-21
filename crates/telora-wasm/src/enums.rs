@@ -111,7 +111,12 @@ impl Emitter<'_> {
                 match branch.storage {
                     "full_value" => self.copy(result, (DATA + 8) as u32, value, width),
                     "heap_id" => {
-                        let id = self.table_push(VALUES, value, width);
+                        let id = self.table_push(
+                            VALUES,
+                            value,
+                            width,
+                            Some(self.plan.layouts[payload_ty].id()),
+                        )?;
                         self.extend([
                             I::LocalGet(result),
                             I::LocalGet(id),
@@ -185,7 +190,12 @@ impl Emitter<'_> {
                     telora_core::mir::PropertySite::Type,
                     payload,
                 )?;
-                let id = self.table_push(NEWTYPES, payload, self.width(arguments[0])?);
+                let id = self.table_push(
+                    NEWTYPES,
+                    payload,
+                    self.width(arguments[0])?,
+                    Some(output),
+                )?;
                 let result = self.value_as(node, output, self.width(output)?)?;
                 self.extend([
                     I::LocalGet(result),

@@ -48,7 +48,8 @@ impl Collector {
                         offset += width;
                     }
                 }
-                VALUES | NEWTYPES => self.trace_value(ty, old, at),
+                VALUES => self.trace_value(ty, old, at),
+                NEWTYPES => self.trace_value(self.detail_type(ty, 0), old, at),
                 RECORDS => {
                     let desc = self.types + ty * layout::ENTRY_BYTES;
                     for index in 0..word(desc, layout::DETAIL_COUNT as u64) {
@@ -61,13 +62,13 @@ impl Collector {
                     }
                 }
                 ENVIRONMENTS => {
-                    assert_eq!(bytes % 8, 0);
-                    let count = bytes / 8;
+                    let count = self.old_word(old, 0);
+                    assert_eq!(bytes, 8 + count * 8);
                     for index in 0..count {
-                        let pointer = self.old_word(old, index as u64 * 4);
-                        let ty = self.old_word(old, u64::from((count + index) * 4));
+                        let pointer = self.old_word(old, 8 + index as u64 * 4);
+                        let ty = self.old_word(old, 8 + u64::from((count + index) * 4));
                         let next = self.value(pointer, ty);
-                        self.put(at + index * 4, next);
+                        self.put(at + 8 + index * 4, next);
                     }
                 }
                 BLAMES => {
@@ -167,10 +168,10 @@ impl Collector {
                     }
                 }
                 8 => {
-                    let id = self.old_word(old, 4);
-                    if id != 0 {
-                        let next = self.object(ENVIRONMENTS, id - 1, ty);
-                        self.put(at + 4, next + 1);
+                    let environment = self.old_word(old, 4);
+                    if environment != 0 {
+                        let next = self.object(ENVIRONMENTS, environment, ty);
+                        self.put(at + 4, next);
                     }
                 }
                 9 => self.handle(word(desc, layout::RESOURCE_TABLE as u64), old, at, ty),

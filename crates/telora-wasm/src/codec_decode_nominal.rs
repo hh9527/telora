@@ -76,7 +76,7 @@ impl Emitter<'_> {
             decoded,
             Some(error),
         )?;
-        let id = self.table_push(NEWTYPES, decoded, self.width(inner)?);
+        let id = self.table_push(NEWTYPES, decoded, self.width(inner)?, Some(target))?;
         let value = self.value_as(self.key.node, target, self.width(target)?)?;
         self.copy(value, 0, input, LOC_BYTES);
         self.extend([
@@ -112,12 +112,7 @@ impl Emitter<'_> {
         let path = self.read32(0, 24);
         let error = self.read32(0, 28);
         let context = self.alloc(24);
-        for (offset, value) in [
-            (4, path),
-            (8, error),
-            (16, input),
-            (20, error),
-        ] {
+        for (offset, value) in [(4, path), (8, error), (16, input), (20, error)] {
             self.extend([
                 I::LocalGet(context),
                 I::LocalGet(value),

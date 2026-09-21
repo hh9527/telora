@@ -57,5 +57,7 @@ pub(crate) fn contract(manifest: &Manifest, initialize: u32) -> Result<Contract,
         handler_type: signature.arguments[1],
         value_bytes: manifest.types[dict.arguments[0] as usize].bytes,
         sources_offset: sources.offset,
+        string_type: names_type.arguments[0],
+        value_type: dict.arguments[0],
     })
 }

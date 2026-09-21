@@ -99,7 +99,7 @@ impl Emitter<'_> {
         let target = self.local(ValType::I32);
         self.extend([
             I::LocalGet(0),
-            I::I32Load(memory(0, 2)),
+            I::I32Load(memory(8, 2)),
             I::I32Load(memory(DATA, 2)),
             I::LocalSet(target),
         ]);
@@ -140,7 +140,7 @@ impl Emitter<'_> {
             I::LocalGet(bits),
             I::I64Store(memory(DATA, 3)),
         ]);
-        let id = self.table_push(RECORDS, field, self.width(integer)?);
+        let id = self.table_push(RECORDS, field, self.width(integer)?, Some(output))?;
         let result = self.value_as(node, output, self.width(output)?)?;
         self.extend([
             I::LocalGet(result),

@@ -1,7 +1,6 @@
 //! Fixed UTF-8 operations. Type-bound headers are assembled by codegen.
 use crate::{
     abi::*,
-    tables::telora_table_get,
     values::{string_span, word},
 };
 
@@ -53,7 +52,7 @@ pub unsafe extern "C" fn telora_text_build(operation: u32, a: u32, b: u32, c: u3
             match operation {
                 0 | 1 => {
                     let separator = if operation == 0 { text(b) } else { "\n" };
-                    let base = word(telora_table_get(table_address(ARRAYS), word(a, DATA)), 0);
+                    let base = word(word(a, DATA), 4);
                     let start = word(a, DATA + 4);
                     for index in start..word(a, DATA + 8) {
                         if index != start {

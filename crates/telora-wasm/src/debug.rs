@@ -28,7 +28,7 @@ impl Emitter<'_> {
             I::LocalGet(input),
             I::I32Store(memory(4, 2)),
         ]);
-        self.table_push(DEBUG_EVENTS, event, 12);
+        self.table_push(DEBUG_EVENTS, event, 12, None)?;
         self.emit(I::End);
         Ok(input)
     }

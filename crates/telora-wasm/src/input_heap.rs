@@ -50,7 +50,7 @@ impl Session {
         if let (Some(payload), Some(payload_ty)) = (payload, variant.ty) {
             let bytes = self.manifest.types[payload_ty as usize].bytes;
             if variant.boxed {
-                let id = self.push_input(VALUES, payload, bytes)?;
+                let id = self.push_input(VALUES, payload, bytes, Some(payload_ty))?;
                 self.write(value as usize + (DATA + 8) as usize, &id.to_le_bytes())?;
             } else {
                 self.copy_input(value + (DATA + 8) as u32, payload, bytes as usize)?;
@@ -68,7 +68,8 @@ impl Session {
         if desc.kind != Kind::Dict {
             return Err("Wasm: expected dictionary layout".into());
         }
-        let stride = self.manifest.types[desc.arguments[0] as usize].bytes;
+        let element = desc.arguments[0];
+        let stride = self.manifest.types[element as usize].bytes;
         let length = u32::try_from(pairs.len()).map_err(|_| "Wasm: dictionary length overflow")?;
         let key_bytes = length
             .checked_mul(STRING_BYTES)
@@ -86,8 +87,14 @@ impl Session {
             )?;
             self.copy_input(values + index as u32 * stride, value, stride as usize)?;
         }
-        let keys = self.push_input(ARRAYS, keys, key_bytes)?;
-        let values = self.push_input(ARRAYS, values, value_bytes)?;
+        let string = self
+            .manifest
+            .types
+            .iter()
+            .position(|item| item.kind == Kind::String)
+            .ok_or("Wasm: missing String type")? as u32;
+        let keys = self.push_input(ARRAYS, keys, key_bytes, Some(string))?;
+        let values = self.push_input(ARRAYS, values, value_bytes, Some(element))?;
         let result = self.input_header(ty)?;
         self.write(result as usize + (DATA as usize), &keys.to_le_bytes())?;
         self.write(result as usize + (DATA + 4) as usize, &length.to_le_bytes())?;
@@ -126,7 +133,7 @@ impl Session {
                 self.manifest.types[field.ty as usize].bytes as usize,
             )?;
         }
-        let id = self.push_input(RECORDS, data, bytes)?;
+        let id = self.push_input(RECORDS, data, bytes, Some(ty))?;
         let result = self.input_header(ty)?;
         self.write(result as usize + (DATA as usize), &id.to_le_bytes())?;
         Ok(result)

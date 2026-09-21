@@ -27,18 +27,10 @@ impl Emitter<'_> {
         ]);
         result
     }
-    fn parse_column(&mut self, base: u32, count: u32, stride: u32) -> u32 {
-        let id = self.local(ValType::I32);
-        self.extend([
-            I::I32Const(table_address(ARRAYS) as i32),
-            I::LocalGet(base),
-            I::LocalGet(count),
-            I::I32Const(stride as i32),
-            I::I32Mul,
-            I::Call(TABLE_PUSH),
-            I::LocalSet(id),
-        ]);
-        id
+    fn parse_column(&mut self, base: u32, count: u32, stride: u32, ty: TypeId) -> Result<u32, String> {
+        let bytes = self.local(ValType::I32);
+        self.extend([I::LocalGet(count), I::I32Const(stride as i32), I::I32Mul, I::LocalSet(bytes)]);
+        self.array_object(base, bytes, ty)
     }
     pub fn data_parse_native(&mut self, parser: u32) -> Result<u32, String> {
         let node = self.key.node;
@@ -234,10 +226,11 @@ impl Emitter<'_> {
             I::End,
             I::End,
         ]);
-        let id = self.parse_column(data, count, width);
+        let element = self.mir.types[ty.index()].arguments[0];
+        let id = self.parse_column(data, count, width, element)?;
         let output = self.value_as(self.key.node, ty, STRING_BYTES)?;
         if let Some(keys) = keys {
-            let key_id = self.parse_column(keys, count, STRING_BYTES);
+            let key_id = self.parse_column(keys, count, STRING_BYTES, self.string_type()?)?;
             for (offset, local) in [(DATA, key_id), (DATA + 4, count), (DATA + 8, id)] {
                 self.extend([
                     I::LocalGet(output),

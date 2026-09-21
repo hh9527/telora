@@ -1,4 +1,4 @@
-use crate::{abi::*, tables::telora_table_get};
+use crate::abi::*;
 
 pub(crate) unsafe fn word(pointer: u32, offset: u64) -> u32 {
     unsafe { crate::heap::read(pointer.checked_add(offset.try_into().unwrap()).unwrap()) }
@@ -12,12 +12,7 @@ pub unsafe extern "C" fn telora_invoke(value: u32, args: u32) -> u32 {
             // Capture-free constructor literals retain identity in their code
             // pointer while the value head supplies the materialization origin.
             value
-        } else {
-            word(
-                telora_table_get(table_address(ENVIRONMENTS), environment - 1),
-                0,
-            )
-        };
+        } else { environment };
         let callback: unsafe extern "C" fn(u32, u32) -> u32 =
             core::mem::transmute(word(value, DATA));
         callback(environment, args)

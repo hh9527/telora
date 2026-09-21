@@ -67,7 +67,7 @@ impl Emitter<'_> {
         if name == "stringify_pretty" {
             self.extend([
                 I::LocalGet(0),
-                I::I32Load(memory(0, 2)),
+                I::I32Load(memory(8, 2)),
                 I::I32Load(memory(DATA, 2)),
                 I::LocalSet(indent),
             ]);

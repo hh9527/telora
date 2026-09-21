@@ -113,7 +113,7 @@ impl Emitter<'_> {
             16,
             args.get(1).copied().unwrap_or(args[0]).index() as u32,
         );
-        let id = self.table_push(FORMATS, data, 20);
+        let id = self.table_push(FORMATS, data, 20, None)?;
         let result = self.value_as(node, output, SCALAR_BYTES)?;
         self.extend([
             I::LocalGet(result),

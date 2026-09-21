@@ -2,7 +2,7 @@
 //! result; Host supplies bytes, never identities or materialized language values.
 use alloc::{boxed::Box, format, string::String, vec::Vec};
 pub(crate) mod context;
-use crate::{abi::*, tables::telora_table_get, values::{string_span, word}};
+use crate::{abi::*, values::{string_span, word}};
 
 #[repr(C)]
 struct Slot {
@@ -87,7 +87,7 @@ unsafe fn sources() -> &'static mut Sources {
 pub unsafe extern "C" fn telora_service_sources_prepare(names: u32) -> u32 {
     unsafe {
         assert!((&*core::ptr::addr_of!(SOURCES)).is_none());
-        let base = word(telora_table_get(table_address(ARRAYS), word(names, DATA)), 0);
+        let base = word(word(names, DATA), 4);
         let start = word(names, DATA + 4);
         let end = word(names, DATA + 8);
         assert!(start <= end);

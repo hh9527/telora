@@ -50,7 +50,8 @@ impl Emitter<'_> {
             I::GlobalGet(INITIALIZATION_ROOT_GLOBAL),
             I::I32Store(memory(DIAG_ROOT, 2)),
         ]);
-        self.table_push(DIAGNOSTICS, packet, DIAGNOSTIC_BYTES);
+        self.table_push(DIAGNOSTICS, packet, DIAGNOSTIC_BYTES, None)
+            .expect("diagnostic table push");
         if !warning {
             self.extend([
                 I::LocalGet(packet),
@@ -99,7 +100,7 @@ impl Emitter<'_> {
                 subjects,
                 values.len() as u32 * LOC_BYTES,
             );
-            let id = self.table_push(BLAMES, object, bytes);
+            let id = self.table_push(BLAMES, object, bytes, None)?;
             let result = self.value(node, SCALAR_BYTES)?;
             self.extend([
                 I::LocalGet(result),

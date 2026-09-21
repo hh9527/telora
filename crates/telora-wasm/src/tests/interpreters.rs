@@ -14,8 +14,18 @@ fn stack_array_elements_preserve_captures_branches_and_failure_order() {
         assert_eq!(
             session.call(&[]).unwrap(),
             serde_json::json!([
-                18, 19, 7, [[3, 4], [5, 6]], [11, 14], [[8, 9], [10, 11]], 2,
-                [[1, 2, 3], [4, 5]], 10, 17, [42], [2, 3]
+                18,
+                19,
+                7,
+                [[3, 4], [5, 6]],
+                [11, 14],
+                [[8, 9], [10, 11]],
+                2,
+                [[1, 2, 3], [4, 5]],
+                10,
+                17,
+                [42],
+                [2, 3]
             ])
         );
         assert!(session.diagnostics().unwrap().is_empty());
@@ -69,34 +79,29 @@ fn interpreter_adapters_capture_operand_at_construction_without_memoization() {
     session.initialize().unwrap();
     assert_eq!(session.diagnostics().unwrap().len(), 1);
     // Requests must never write memoized work pointers into initialized captures.
-    let environments = |session: &crate::session::Session| {
-        use crate::abi::{ENVIRONMENTS, table_address};
+    let frozen_heap = |session: &crate::session::Session, length: Option<usize>| {
+        use crate::abi::WORDS_VIEW;
         let output = session.output();
-        let table = table_address(ENVIRONMENTS) as u64;
-        let buffer = output.word(table).unwrap() as u64;
-        let frozen = output.word(table + 12).unwrap();
-        (0..frozen)
-            .map(|index| {
-                let slot = buffer + u64::from(index) * 8;
-                let pointer = output.word(slot).unwrap() as u64;
-                let bytes = output.word(slot + 4).unwrap() as u64;
-                output.bytes(pointer, bytes).unwrap().to_vec()
-            })
-            .collect::<Vec<_>>()
+        let pointer = output.word(WORDS_VIEW as u64).unwrap() as u64;
+        let bytes = output.word(WORDS_VIEW as u64 + 4).unwrap() as usize;
+        output
+            .raw_bytes(pointer, length.unwrap_or(bytes) as u64)
+            .unwrap()
+            .to_vec()
     };
-    let baseline = environments(&session);
+    let baseline = frozen_heap(&session, None);
     assert!(!baseline.is_empty());
     assert_eq!(
         session.call(&[]).unwrap(),
         serde_json::json!(vec![true; 12])
     );
     assert_eq!(session.diagnostics().unwrap().len(), 1);
-    assert_eq!(environments(&session), baseline);
+    assert_eq!(frozen_heap(&session, Some(baseline.len())), baseline);
     session.collect_work(&[]).unwrap();
     assert_eq!(
         session.call(&[]).unwrap(),
         serde_json::json!(vec![true; 12])
     );
     assert_eq!(session.diagnostics().unwrap().len(), 1);
-    assert_eq!(environments(&session), baseline);
+    assert_eq!(frozen_heap(&session, Some(baseline.len())), baseline);
 }

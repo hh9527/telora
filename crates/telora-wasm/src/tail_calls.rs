@@ -74,7 +74,12 @@ impl Emitter<'_> {
         Ok(())
     }
 
-    pub fn tail_invoke(&mut self, callee: u32, values: &[u32], origin: Option<u32>) -> Result<u32, String> {
+    pub fn tail_invoke(
+        &mut self,
+        callee: u32,
+        values: &[u32],
+        origin: Option<u32>,
+    ) -> Result<u32, String> {
         let args = self.argument_array(values, origin);
         let environment = self.local(ValType::I32);
         self.extend([
@@ -85,12 +90,7 @@ impl Emitter<'_> {
             I::If(BlockType::Result(ValType::I32)),
             I::I32Const(0),
             I::Else,
-            I::I32Const(table_address(ENVIRONMENTS) as i32),
             I::LocalGet(environment),
-            I::I32Const(1),
-            I::I32Sub,
-            I::Call(TABLE_GET),
-            I::I32Load(memory(0, 2)),
             I::End,
             I::LocalGet(args),
             I::LocalGet(callee),

@@ -126,6 +126,54 @@ impl Collector {
     }
     pub unsafe fn object(&mut self, table: u32, id: u32, layout: u32) -> u32 {
         unsafe {
+            if matches!(table, RECORDS | ARRAYS | VALUES | ENVIRONMENTS | NEWTYPES) {
+                if crate::heap::is_frozen(id) {
+                    return id;
+                }
+                if let Some(&(next, _)) = self.objects.get(&(table, id)) {
+                    return next;
+                }
+                let stored = self.old_word(id, 0);
+                if table == ENVIRONMENTS {
+                    let bytes = 8 + stored.checked_mul(8).unwrap();
+                    let at = self.copy_bytes(id, bytes);
+                    self.objects.insert((table, id), (at, layout));
+                    self.pending.push((table, id, at, bytes, layout));
+                    return at;
+                }
+                let next = if table == ARRAYS {
+                    let width = word(
+                        self.types + stored * layout::ENTRY_BYTES,
+                        layout::VALUE_BYTES as u64,
+                    );
+                    let length = self.old_word(id, 8);
+                    assert_eq!(self.old_word(id, 12), length);
+                    let bytes = length.checked_mul(width).unwrap();
+                    let at = self.reserve(16 + bytes);
+                    self.put(at, stored);
+                    self.put(at + 4, at + 16);
+                    self.put(at + 8, length);
+                    self.put(at + 12, length);
+                    self.objects.insert((table, id), (at, layout));
+                    let old_data = self.old_word(id, 4);
+                    if bytes != 0 {
+                        core::ptr::copy_nonoverlapping(
+                            self.heap.ptr::<u8>(old_data),
+                            crate::heap::ptr::<u8>(at + 16),
+                            bytes as usize,
+                        );
+                    }
+                    self.pending.push((ARRAYS, old_data, at + 16, bytes, stored));
+                    at
+                } else {
+                    let bytes = self.old_word(id, 4);
+                    let at = self.copy_bytes(id, 8 + bytes);
+                    self.objects.insert((table, id), (at, layout));
+                    self.pending.push((table, id + 8, at + 8, bytes, stored));
+                    at
+                };
+                return next;
+            }
             let old = self.old[table as usize];
             assert!(id < old.length);
             if id < old.frozen {
