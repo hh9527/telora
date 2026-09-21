@@ -106,10 +106,13 @@ impl Solver<'_> {
                 return;
             }
             let value_slot = self.value_slots[left.index()] || self.value_slots[right.index()];
+            let changed = self.value_slots[left.index()] != value_slot
+                || self.value_slots[right.index()] != value_slot;
             self.value_slots[left.index()] = value_slot;
             self.value_slots[right.index()] = value_slot;
-            self.inherit_conflict(left, right, id);
-            self.revision += 1;
+            if self.inherit_conflict(left, right, id) || changed {
+                self.revision += 1;
+            }
             return;
         }
         let id = self.record_conflict(left, right, location, message);
@@ -121,12 +124,22 @@ impl Solver<'_> {
         self.revision += 1;
     }
 
-    fn inherit_conflict(&mut self, left: TypeSlotId, right: TypeSlotId, id: TypeConflictId) {
+    fn inherit_conflict(
+        &mut self,
+        left: TypeSlotId,
+        right: TypeSlotId,
+        id: TypeConflictId,
+    ) -> bool {
+        let mut changed = false;
         for slot in [left, right] {
-            if !self.contract_slots[slot.index()] {
+            if !self.contract_slots[slot.index()]
+                && self.mir.ty_slots[slot.index()] != TypeState::Conflicted(id)
+            {
                 self.mir.ty_slots[slot.index()] = TypeState::Conflicted(id);
+                changed = true;
             }
         }
+        changed
     }
 
     /// A failed relation does not invalidate either operand's type identity.
@@ -201,6 +214,8 @@ impl Solver<'_> {
                 continue;
             }
             let value_slot = self.value_slots[left.index()] || self.value_slots[right.index()];
+            let value_changed = self.value_slots[left.index()] != value_slot
+                || self.value_slots[right.index()] != value_slot;
             self.value_slots[left.index()] = value_slot;
             self.value_slots[right.index()] = value_slot;
             let a = self.mir.ty_slots[left.index()];
@@ -210,7 +225,10 @@ impl Solver<'_> {
                     // Inherit the existing failed evidence only into inference
                     // state. A declaration remains inspectable even when its
                     // implementation or a consumer already failed.
-                    self.inherit_conflict(left, right, id);
+                    if self.inherit_conflict(left, right, id) || value_changed {
+                        self.revision += 1;
+                    }
+                    continue;
                 }
                 (TypeState::Unknown, _) => {
                     if self.occurs(left, right) {

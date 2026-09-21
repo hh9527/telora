@@ -345,6 +345,30 @@ fn unresolved_imports_are_inherited_without_new_type_diagnostics() {
 }
 
 #[test]
+fn unresolved_import_in_branch_join_reaches_a_fixed_point() {
+    let mut mir = graph(&[
+        (
+            "@src/main",
+            r#"
+                import "@src/other" {missing};
+                def selected: Option(Int) = if True { Some(1) } else { missing(1) };
+            "#,
+        ),
+        ("@src/other", "export def present: Int = 1;"),
+    ]);
+    let diagnostics = mir.diagnostics.len();
+    resolve(&mut mir);
+    assert_eq!(mir.diagnostics.len(), diagnostics, "{}", mir.dump());
+    assert!(
+        mir.type_conflicts
+            .iter()
+            .any(|failure| matches!(failure.resolve_origin, Some(ResolveFailure::Symbol(_))))
+    );
+    assert!(mir.types_solved, "{}", mir.dump());
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn unresolved_symbols_remain_authoritative_while_other_slots_are_solved() {
     let mut mir = graph(&[(
         "@src/main",
