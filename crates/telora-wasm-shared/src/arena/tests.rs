@@ -94,6 +94,37 @@ fn payload_tag_does_not_steal_the_fifteenth_inline_byte() {
 }
 
 #[test]
+fn content_tail_append_preserves_inline_values_and_forks_historical_views() {
+    let mut content = Content::default();
+    let small = content.insert(b"small").unwrap();
+    let still_inline = content.append(&small, b" value").unwrap();
+    assert!(matches!(still_inline, Bytes::Inline { .. }));
+    assert_eq!(content.view(&still_inline).unwrap(), b"small value");
+
+    let first = content.append(&still_inline, b" grows past inline").unwrap();
+    let second = content.append(&first, b" at the raw tail").unwrap();
+    assert_eq!(content.view(&first).unwrap(), b"small value grows past inline");
+    assert_eq!(
+        content.view(&second).unwrap(),
+        b"small value grows past inline at the raw tail"
+    );
+    let branch = content.append(&first, b" on a branch").unwrap();
+    assert_eq!(
+        content.view(&second).unwrap(),
+        b"small value grows past inline at the raw tail"
+    );
+    assert_eq!(
+        content.view(&branch).unwrap(),
+        b"small value grows past inline on a branch"
+    );
+    let (Bytes::Slice(a), Bytes::Slice(b), Bytes::Slice(c)) = (first, second, branch) else {
+        panic!("large content uses slices");
+    };
+    assert_eq!(a.raw_start, b.raw_start);
+    assert_ne!(a.raw_start, c.raw_start);
+}
+
+#[test]
 fn work_collection_keeps_unobserved_frozen_content_and_relocates_only_suffix() {
     let mut content = Content::default();
     let frozen = content.insert(&[42; 100]).unwrap();

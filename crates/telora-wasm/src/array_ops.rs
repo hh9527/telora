@@ -127,7 +127,7 @@ impl Emitter<'_> {
             return self.enum_value(node, output, 1, Some(item));
         }
         if matches!(name, "push" | "enumerate" | "zip" | "concat" | "flat_map") {
-            return self.array_build(name, args, base, count, width);
+            return self.array_build(name, args, value, base, count, width);
         }
         if !matches!(
             name,

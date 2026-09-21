@@ -107,6 +107,56 @@ impl Content {
         }))
     }
 
+    /// Append behind an immutable view. Only the current raw tail may grow in
+    /// place; historical views fork into a new raw allocation.
+    pub fn append(&mut self, value: &Bytes, suffix: &[u8]) -> Result<Bytes, Error> {
+        if suffix.is_empty() {
+            self.view(value)?;
+            return Ok(*value);
+        }
+        let current_length = self.view(value)?.len();
+        let length = current_length
+            .checked_add(suffix.len())
+            .ok_or(Error::Overflow)?;
+        u32::try_from(length).map_err(|_| Error::Overflow)?;
+        if length < 16 {
+            let mut bytes = [0; 15];
+            bytes[..current_length].copy_from_slice(self.view(value)?);
+            bytes[current_length..length].copy_from_slice(suffix);
+            return Ok(Bytes::Inline {
+                data: bytes,
+                len: length as u8,
+            });
+        }
+        if let Bytes::Slice(slice) = value
+            && slice.end as usize == self.bytes.len()
+        {
+            let end = self
+                .bytes
+                .len()
+                .checked_add(suffix.len())
+                .ok_or(Error::Overflow)?;
+            let end = u32::try_from(end).map_err(|_| Error::Overflow)?;
+            self.bytes.extend_from_slice(suffix);
+            return Ok(Bytes::Slice(Slice {
+                start: slice.start,
+                end,
+                raw_start: slice.raw_start,
+            }));
+        }
+        let current = self.view(value)?.to_vec();
+        let start = self.bytes.len();
+        let end = start.checked_add(length).ok_or(Error::Overflow)?;
+        let end = u32::try_from(end).map_err(|_| Error::Overflow)?;
+        self.bytes.extend_from_slice(&current);
+        self.bytes.extend_from_slice(suffix);
+        Ok(Bytes::Slice(Slice {
+            start: start as u32,
+            end,
+            raw_start: start as u32,
+        }))
+    }
+
     pub fn view<'a>(&'a self, value: &'a Bytes) -> Result<&'a [u8], Error> {
         match value {
             Bytes::Inline { data, len } => data.get(..usize::from(*len)).ok_or(Error::Bounds),

@@ -445,6 +445,24 @@ fn array_callbacks_execute_in_wasm_with_closed_element_types() {
     );
 }
 
+#[test]
+fn array_inner_buffer_preserves_old_versions_and_splits_branches() {
+    let bytes = compile(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/telora-wasm/tests/fixtures/array-inner-buffer.telora"
+        ))
+        .expect("read test source"),
+    )
+    .unwrap();
+    let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.eval().unwrap(),
+        serde_json::json!([[1], [1, 2], [1, 2, 3], [1, 9], [1, 2, 3, 4]])
+    );
+}
+
 fn graph(source: &str) -> Mir {
     let inventory = ["@src/main", "@src/input.json"]
         .into_iter()

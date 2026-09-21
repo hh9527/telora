@@ -49,6 +49,7 @@ impl Emitter<'_> {
         &mut self,
         name: &str,
         args: &[TypeId],
+        value: u32,
         base: u32,
         count: u32,
         width: u32,
@@ -59,31 +60,7 @@ impl Emitter<'_> {
             return self.array_flatten(name, args, base, count, width);
         }
         if name == "push" {
-            let length = self.local(ValType::I32);
-            self.extend([
-                I::LocalGet(count),
-                I::I32Const(1),
-                I::I32Add,
-                I::LocalTee(length),
-                I::I32Eqz,
-            ]);
-            self.fail_if(node, ERROR_OVERFLOW);
-            let data = self.array_storage(length, width);
-            self.extend([
-                I::LocalGet(data),
-                I::LocalGet(base),
-                I::LocalGet(count),
-                I::I32Const(width as i32),
-                I::I32Mul,
-                I::MemoryCopy {
-                    src_mem: 0,
-                    dst_mem: 0,
-                },
-            ]);
-            let last = self.array_item(data, count, width);
-            let value = self.parameter(1);
-            self.copy(last, 0, value, width);
-            return self.array_result(output, data, length, width);
+            return self.array_push(output, value, base, count, width);
         }
         let array_ty = if name == "zip" {
             self.mir.types[output.index()].arguments[0]
@@ -149,6 +126,144 @@ impl Emitter<'_> {
             self.enum_value(node, output, 1, Some(array))
         } else {
             Ok(array)
+        }
+    }
+
+    fn array_push(
+        &mut self,
+        output: TypeId,
+        value: u32,
+        base: u32,
+        count: u32,
+        width: u32,
+    ) -> Result<u32, String> {
+        let node = self.key.node;
+        let length = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(count),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalTee(length),
+            I::I32Eqz,
+        ]);
+        self.fail_if(node, ERROR_OVERFLOW);
+        let object = self.read32(value, DATA);
+        let end = self.read32(value, DATA + 8);
+        self.extend([
+            I::LocalGet(end),
+            I::LocalGet(object),
+            I::I32Load(memory(8, 2)),
+            I::I32Eq,
+            I::If(BlockType::Empty),
+        ]);
+        let capacity = self.read32(object, 12);
+        self.extend([
+            I::LocalGet(length),
+            I::LocalGet(capacity),
+            I::I32GtU,
+            I::If(BlockType::Empty),
+            I::LocalGet(capacity),
+            I::I32Const((u32::MAX / 2) as i32),
+            I::I32GtU,
+        ]);
+        self.fail_if(node, ERROR_OVERFLOW);
+        let next_capacity = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(capacity),
+            I::I32Eqz,
+            I::If(BlockType::Result(wasm_encoder::ValType::I32)),
+            I::I32Const(8),
+            I::Else,
+            I::LocalGet(capacity),
+            I::I32Const(2),
+            I::I32Mul,
+            I::End,
+            I::LocalSet(next_capacity),
+        ]);
+        if width != 0 {
+            self.extend([
+                I::LocalGet(next_capacity),
+                I::I32Const((u32::MAX / width) as i32),
+                I::I32GtU,
+            ]);
+            self.fail_if(node, ERROR_OVERFLOW);
+        }
+        let next_data = self.array_storage(next_capacity, width);
+        self.extend([
+            I::LocalGet(next_data),
+            I::LocalGet(object),
+            I::I32Load(memory(4, 2)),
+            I::LocalGet(end),
+            I::I32Const(width as i32),
+            I::I32Mul,
+            I::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            },
+            I::LocalGet(object),
+            I::LocalGet(next_data),
+            I::I32Store(memory(4, 2)),
+            I::LocalGet(object),
+            I::LocalGet(next_capacity),
+            I::I32Store(memory(12, 2)),
+            I::End,
+        ]);
+        let data = self.read32(object, 4);
+        let last = self.array_item(data, end, width);
+        let item = self.parameter(1);
+        self.copy(last, 0, item, width);
+        self.extend([
+            I::LocalGet(object),
+            I::LocalGet(length),
+            I::I32Store(memory(8, 2)),
+        ]);
+        let result = self.value_as(node, output, self.width(output)?)?;
+        self.extend([
+            I::LocalGet(result),
+            I::LocalGet(object),
+            I::I32Store(memory(DATA, 2)),
+            I::LocalGet(result),
+            I::LocalGet(value),
+            I::I32Load(memory(DATA + 4, 2)),
+            I::I32Store(memory(DATA + 4, 2)),
+            I::LocalGet(result),
+            I::LocalGet(length),
+            I::I32Store(memory(DATA + 8, 2)),
+            I::LocalGet(result),
+            I::I32Const(0),
+            I::I32Store(memory(DATA + 12, 2)),
+            I::LocalGet(result),
+            I::Return,
+            I::End,
+        ]);
+        // A historical slice cannot append into the middle of a shared raw array.
+        // Split it into a fresh contiguous object instead.
+        {
+            let length = self.local(ValType::I32);
+            self.extend([
+                I::LocalGet(count),
+                I::I32Const(1),
+                I::I32Add,
+                I::LocalTee(length),
+                I::I32Eqz,
+            ]);
+            self.fail_if(node, ERROR_OVERFLOW);
+            let data = self.array_storage(length, width);
+            self.extend([
+                I::LocalGet(data),
+                I::LocalGet(base),
+                I::LocalGet(count),
+                I::I32Const(width as i32),
+                I::I32Mul,
+                I::MemoryCopy {
+                    src_mem: 0,
+                    dst_mem: 0,
+                },
+            ]);
+            let last = self.array_item(data, count, width);
+            let value = self.parameter(1);
+            self.copy(last, 0, value, width);
+            self.array_result(output, data, length, width)
         }
     }
     fn array_flatten(

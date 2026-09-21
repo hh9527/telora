@@ -147,7 +147,7 @@ impl Collector {
                         layout::VALUE_BYTES as u64,
                     );
                     let length = self.old_word(id, 8);
-                    assert_eq!(self.old_word(id, 12), length);
+                    assert!(length <= self.old_word(id, 12));
                     assert!(width != 0 || length == 0);
                     let bytes = length.checked_mul(width).unwrap();
                     let at = self.reserve(16 + bytes);
