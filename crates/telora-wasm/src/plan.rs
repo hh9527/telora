@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use telora_core::mir::{
-    GenericInstanceId, HirId, HirKind, Mir, ResolveState, Role, SealedExecutable, SymbolId, TypeId,
-    TypeState,
+    FunctionBodyDependency, GenericInstanceId, HirId, HirKind, Mir, ResolveState, Role,
+    SealedExecutable, SymbolId, TypeId, TypeState,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -92,6 +92,8 @@ pub(crate) struct Plan {
     pub reflection: Vec<u8>,
     pub origins: crate::value_origins::OriginConstants,
     pub native_signatures: BTreeSet<TypeId>,
+    /// Transitive demand roots indexed by generated function-table ordinal.
+    pub function_demand_roots: Vec<Vec<u32>>,
 }
 
 impl Plan {
@@ -124,6 +126,7 @@ impl Plan {
             reflection: vec![],
             origins: Default::default(),
             native_signatures: BTreeSet::new(),
+            function_demand_roots: vec![],
         };
         for &symbol in executable.globals() {
             if !mir.symbol_generics[symbol.index()].is_empty() {
@@ -314,6 +317,7 @@ impl Plan {
             plan.reflection =
                 crate::reflection_data::build(executable.sealed_mir().types(), &plan.layouts)?;
         }
+        plan.validate_function_dependencies(executable)?;
         // Constructor identity is (closed signature, variant), independent of
         // the expression's source location. Values carry their own source head.
         let mut constructors = BTreeMap::new();
@@ -347,6 +351,7 @@ impl Plan {
                 .and_then(|n| n.checked_add(static_base))
                 .ok_or("Wasm: demand offset overflow")?;
         }
+        plan.function_demand_roots = plan.build_function_demand_roots(executable)?;
         for &key in plan.functions.keys().filter(|key| key.callable) {
             if matches!(
                 key.special,
@@ -438,6 +443,111 @@ impl Plan {
             }
         }
         Ok(plan)
+    }
+
+    fn validate_function_dependencies(
+        &self,
+        executable: &SealedExecutable<'_>,
+    ) -> Result<(), String> {
+        let graph = executable.function_dependencies();
+        for function in graph.functions() {
+            let key = Key {
+                node: function.root.node,
+                instance: function.root.instance,
+                callable: true,
+                special: Special::Normal,
+            };
+            if !self.functions.contains_key(&key) {
+                return Err(format!(
+                    "Wasm: sealed function {} has no planned body",
+                    function.id.index()
+                ));
+            }
+            for dependency in &function.dependencies {
+                match dependency {
+                    FunctionBodyDependency::Function(target) => {
+                        if graph.function(*target).is_none() {
+                            return Err(format!(
+                                "Wasm: sealed function {} depends on missing function {}",
+                                function.id.index(),
+                                target.index()
+                            ));
+                        }
+                    }
+                    FunctionBodyDependency::TopLevel(symbol) => {
+                        if !executable.globals().contains(symbol) {
+                            return Err(format!(
+                                "Wasm: sealed function {} depends on unplanned top-level {}",
+                                function.id.index(),
+                                symbol.index()
+                            ));
+                        }
+                    }
+                    FunctionBodyDependency::Property(property) => {
+                        if !self.properties.contains_key(&property.index()) {
+                            return Err(format!(
+                                "Wasm: sealed function {} depends on unplanned property {}",
+                                function.id.index(),
+                                property.index()
+                            ));
+                        }
+                    }
+                    FunctionBodyDependency::Conservative(_) => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn build_function_demand_roots(
+        &self,
+        executable: &SealedExecutable<'_>,
+    ) -> Result<Vec<Vec<u32>>, String> {
+        let static_base = crate::compose::static_base()?;
+        let demand_index = |key: Key| -> Result<Option<u32>, String> {
+            self.demands
+                .get(&key)
+                .map(|offset| {
+                    offset
+                        .checked_sub(static_base)
+                        .filter(|bytes| bytes % crate::abi::DEMAND_BYTES == 0)
+                        .map(|bytes| bytes / crate::abi::DEMAND_BYTES)
+                        .ok_or_else(|| "Wasm: invalid demand offset".to_owned())
+                })
+                .transpose()
+        };
+        let mut result = vec![vec![]; self.functions.len()];
+        let graph = executable.function_dependencies();
+        for function in graph.functions() {
+            let key = Key {
+                node: function.root.node,
+                instance: function.root.instance,
+                callable: true,
+                special: Special::Normal,
+            };
+            let ordinal = self.functions[&key]
+                .checked_sub(crate::abi::FIRST_FUNCTION)
+                .ok_or("Wasm: invalid generated function index")?
+                as usize;
+            let (globals, properties, _) = graph.reachable_state(function.id);
+            let mut roots = BTreeSet::new();
+            for symbol in globals {
+                if let Some(&key) = self.globals.get(&symbol)
+                    && let Some(index) = demand_index(key)?
+                {
+                    roots.insert(index);
+                }
+            }
+            for property in properties {
+                if let Some(&key) = self.properties.get(&property.index())
+                    && let Some(index) = demand_index(key)?
+                {
+                    roots.insert(index);
+                }
+            }
+            result[ordinal] = roots.into_iter().collect();
+        }
+        Ok(result)
     }
 }
 

@@ -11,6 +11,7 @@ pub(crate) use initialization::collect as collect_initialization;
 
 static mut TRACE_TYPES: u32 = 0;
 static mut DEMANDS: (u32, u32) = (0, 0);
+static mut FUNCTION_DEMANDS: (u32, u32, u32) = (0, 0, 0);
 
 pub(crate) unsafe fn snapshot_demands() -> Vec<u8> {
     unsafe {
@@ -45,6 +46,18 @@ pub unsafe extern "C" fn telora_collection_bootstrap(types: u32, demands: u32, c
     }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_function_dependencies_bootstrap(
+    dependencies: u32,
+    table_base: u32,
+    count: u32,
+) {
+    unsafe {
+        assert_eq!(*core::ptr::addr_of!(FUNCTION_DEMANDS), (0, 0, 0));
+        FUNCTION_DEMANDS = (dependencies, table_base, count);
+    }
+}
+
 pub(crate) unsafe fn freeze() {
     unsafe {
         crate::heap::freeze();
@@ -65,9 +78,43 @@ pub(crate) struct Collector {
     pub pending: Vec<(u32, u32, u32, u32, u32)>,
     pub sources: alloc::collections::BTreeSet<u32>,
     pub content: Vec<u32>,
+    pub demands: alloc::collections::BTreeSet<u32>,
 }
 
 impl Collector {
+    pub unsafe fn demand(&mut self, index: u32) {
+        unsafe {
+            let (demands, count) = DEMANDS;
+            assert!(index < count);
+            if !self.demands.insert(index) {
+                return;
+            }
+            let slot = demands + index * DEMAND_BYTES;
+            if word(slot, 0) == 2 {
+                let value = self.value(word(slot, 4), word(slot, 8));
+                self.put(slot + 4, value);
+            }
+        }
+    }
+
+    pub unsafe fn trace_function_demands(&mut self, function: u32) {
+        unsafe {
+            let (dependencies, table_base, count) = FUNCTION_DEMANDS;
+            let Some(index) = function.checked_sub(table_base) else {
+                return;
+            };
+            if index >= count {
+                return;
+            }
+            let header = dependencies + index * 8;
+            let pointer = word(header, 0);
+            let length = word(header, 4);
+            for offset in 0..length {
+                let demand = word(pointer, u64::from(offset * 4));
+                self.demand(demand);
+            }
+        }
+    }
     pub unsafe fn old_word(&self, reference: u32, offset: u64) -> u32 {
         unsafe { self.heap.read(reference + offset as u32) }
     }
@@ -286,6 +333,7 @@ impl Collector {
             pending: vec![],
             sources: alloc::collections::BTreeSet::new(),
             content: vec![],
+            demands: alloc::collections::BTreeSet::new(),
         }
       }
     }

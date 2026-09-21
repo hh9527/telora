@@ -29,6 +29,7 @@ pub struct SealedExecutable<'a> {
     properties: Vec<usize>,
     checks: Vec<usize>,
     closure: ExecutionClosure,
+    function_dependencies: FunctionBodyDependencyGraph,
 }
 
 impl<'a> SealedExecutable<'a> {
@@ -52,6 +53,9 @@ impl<'a> SealedExecutable<'a> {
     }
     pub fn closure(&self) -> &ExecutionClosure {
         &self.closure
+    }
+    pub fn function_dependencies(&self) -> &FunctionBodyDependencyGraph {
+        &self.function_dependencies
     }
 }
 
@@ -278,6 +282,8 @@ impl<'a> SealedMir<'a> {
                 globals.insert(symbol);
             }
         }
+        let function_dependencies =
+            FunctionBodyDependencyGraph::build(mir, &closure, &globals, &properties);
         Ok(SealedExecutable {
             sealed: self,
             root: node,
@@ -286,6 +292,7 @@ impl<'a> SealedMir<'a> {
             properties,
             checks,
             closure,
+            function_dependencies,
         })
     }
 }
