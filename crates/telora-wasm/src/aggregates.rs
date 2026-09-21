@@ -33,10 +33,14 @@ impl Emitter<'_> {
             if table == ARRAYS {
                 let width = self.width(ty)?;
                 let count = if width == 0 {
-                    if bytes != 0 { return Err("Wasm: uninhabited array has storage".into()); }
+                    if bytes != 0 {
+                        return Err("Wasm: uninhabited array has storage".into());
+                    }
                     0
                 } else {
-                    if bytes % width != 0 { return Err("Wasm: array storage is not stride-aligned".into()); }
+                    if bytes % width != 0 {
+                        return Err("Wasm: array storage is not stride-aligned".into());
+                    }
                     bytes / width
                 };
                 self.extend([
@@ -45,7 +49,10 @@ impl Emitter<'_> {
                     I::I32Add,
                     I::LocalGet(payload),
                     I::I32Const(bytes as i32),
-                    I::MemoryCopy { src_mem: 0, dst_mem: 0 },
+                    I::MemoryCopy {
+                        src_mem: 0,
+                        dst_mem: 0,
+                    },
                 ]);
                 self.extend([
                     I::LocalGet(result),
@@ -99,40 +106,29 @@ impl Emitter<'_> {
         self.emit(I::LocalSet(result));
         result
     }
-    pub fn array_object(&mut self, payload: u32, count: u32, ty: TypeId) -> Result<u32, String> {
-        let width = self.width(ty)?;
-        let bytes = self.local(ValType::I32);
+    pub fn array_object(
+        &mut self,
+        payload: u32,
+        count: u32,
+        capacity: u32,
+        ty: TypeId,
+    ) -> Result<u32, String> {
+        // Publish only after the backing store has been initialized. Until this
+        // header exists, a recoverable language failure leaves no reachable
+        // partial Array and the next collection can discard the backing store.
         let result = self.local(ValType::I32);
-        self.extend([
-            I::LocalGet(count),
-            I::I32Const(width as i32),
-            I::I32Mul,
-            I::LocalSet(bytes),
-            I::LocalGet(bytes),
-            I::I32Const(16),
-            I::I32Add,
-            I::Call(ALLOC),
-            I::LocalSet(result),
-        ]);
+        self.extend([I::I32Const(16), I::Call(ALLOC), I::LocalSet(result)]);
         self.store32(result, 0, ty.index() as u32);
         self.extend([
             I::LocalGet(result),
-            I::LocalGet(result),
-            I::I32Const(16),
-            I::I32Add,
+            I::LocalGet(payload),
             I::I32Store(memory(4, 2)),
             I::LocalGet(result),
             I::LocalGet(count),
             I::I32Store(memory(8, 2)),
             I::LocalGet(result),
-            I::LocalGet(count),
+            I::LocalGet(capacity),
             I::I32Store(memory(12, 2)),
-            I::LocalGet(result),
-            I::I32Const(16),
-            I::I32Add,
-            I::LocalGet(payload),
-            I::LocalGet(bytes),
-            I::MemoryCopy { src_mem: 0, dst_mem: 0 },
         ]);
         Ok(result)
     }

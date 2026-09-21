@@ -846,7 +846,10 @@ pub(crate) fn compile(
             let local = emit.local(ValType::I32);
             emit.extend([
                 I::LocalGet(0),
-                I::I32Load(memory(8 + (index + plan.captures[&key].len()) as u64 * 4, 2)),
+                I::I32Load(memory(
+                    8 + (index + plan.captures[&key].len()) as u64 * 4,
+                    2,
+                )),
                 I::LocalSet(local),
             ]);
             emit.local_instances.insert(*instance, local);

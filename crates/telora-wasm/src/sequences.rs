@@ -43,7 +43,7 @@ impl Emitter<'_> {
             }
             let length = self.local(ValType::I32);
             self.extend([I::I32Const(count as i32), I::LocalSet(length)]);
-            return self.array_result_at(node, ty, data, length, width);
+            return self.array_result_at(node, ty, data, length, length, width);
         }
         let total = self.local(ValType::I64);
         let mut parts = Vec::new();
@@ -139,7 +139,7 @@ impl Emitter<'_> {
                 I::LocalSet(cursor),
             ]);
         }
-        self.array_result_at(node, ty, data, count, width)
+        self.array_result_at(node, ty, data, count, count, width)
     }
 
     pub fn tuple_expression(&mut self, node: HirId) -> Result<u32, String> {

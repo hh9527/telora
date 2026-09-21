@@ -209,9 +209,10 @@ pub(crate) fn check_diagnostics(
                         primary: true,
                     });
                 }
-                diagnostic
-                    .notes
-                    .push(format!("initialization root: {}#{}", root.module, root.node));
+                diagnostic.notes.push(format!(
+                    "initialization root: {}#{}",
+                    root.module, root.node
+                ));
             }
             if let Ok(usage) = session.arena_usage() {
                 diagnostic.notes.push(format!(

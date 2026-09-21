@@ -33,7 +33,10 @@ impl Emitter<'_> {
             I::I32Add,
             I::LocalGet(data),
             I::LocalGet(width),
-            I::MemoryCopy { src_mem: 0, dst_mem: 0 },
+            I::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            },
         ]);
         let result = self.value_as(self.key.node, ty, DYN_BYTES)?;
         self.copy(result, 0, data, LOC_BYTES);

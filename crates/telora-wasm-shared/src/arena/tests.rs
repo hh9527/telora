@@ -101,9 +101,14 @@ fn content_tail_append_preserves_inline_values_and_forks_historical_views() {
     assert!(matches!(still_inline, Bytes::Inline { .. }));
     assert_eq!(content.view(&still_inline).unwrap(), b"small value");
 
-    let first = content.append(&still_inline, b" grows past inline").unwrap();
+    let first = content
+        .append(&still_inline, b" grows past inline")
+        .unwrap();
     let second = content.append(&first, b" at the raw tail").unwrap();
-    assert_eq!(content.view(&first).unwrap(), b"small value grows past inline");
+    assert_eq!(
+        content.view(&first).unwrap(),
+        b"small value grows past inline"
+    );
     assert_eq!(
         content.view(&second).unwrap(),
         b"small value grows past inline at the raw tail"

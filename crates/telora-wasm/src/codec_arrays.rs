@@ -22,7 +22,8 @@ impl Emitter<'_> {
                 .collect()
         };
         let width = self.width(target)?;
-        let bytes = (members.len() as u32)
+        let count = members.len() as u32;
+        let bytes = count
             .checked_mul(width)
             .ok_or("Wasm: codec tuple size overflow")?;
         let data = self.alloc(bytes);
@@ -48,7 +49,7 @@ impl Emitter<'_> {
             .find(|v| v.name == "Array")
             .and_then(|v| v.type_id)
             .ok_or("Wasm: codec Array payload missing")?;
-        let id = self.table_push(ARRAYS, data, bytes, Some(target))?;
+        let id = self.array_object(data, count, count, target)?;
         let payload = self.value_as(
             self.key.node,
             self.plan.layouts[payload_ty].id(),
@@ -145,8 +146,13 @@ impl Emitter<'_> {
             I::End,
         ]);
         let count = self.local(ValType::I32);
-        self.extend([I::LocalGet(end), I::LocalGet(start), I::I32Sub, I::LocalSet(count)]);
-        let id = self.array_object(data, count, target)?;
+        self.extend([
+            I::LocalGet(end),
+            I::LocalGet(start),
+            I::I32Sub,
+            I::LocalSet(count),
+        ]);
+        let id = self.array_object(data, count, count, target)?;
         let payload = self.value_as(self.key.node, payload_ty, STRING_BYTES)?;
         self.copy(payload, 0, input, LOC_BYTES);
         if dictionary {

@@ -160,7 +160,9 @@ impl Output<'_> {
                 .get(ty as usize)
                 .ok_or("Wasm: invalid array element TypeId")?
                 .bytes;
-            let bytes = length.checked_mul(width).ok_or("Wasm: array size overflow")?;
+            let bytes = length
+                .checked_mul(width)
+                .ok_or("Wasm: array size overflow")?;
             self.bytes(data, bytes.into())?;
             return Ok((data, bytes.into()));
         }

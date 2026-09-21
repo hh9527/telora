@@ -22,9 +22,9 @@ impl Emitter<'_> {
         count: u32,
         _width: u32,
     ) -> Result<u32, String> {
-        let key_id = self.array_object(keys, count, self.string_type()?)?;
+        let key_id = self.array_object(keys, count, count, self.string_type()?)?;
         let element = self.mir.types[ty.index()].arguments[0];
-        let value_id = self.array_object(values, count, element)?;
+        let value_id = self.array_object(values, count, count, element)?;
         let result = self.value_as(node, ty, STRING_BYTES)?;
         for (offset, value) in [(DATA, key_id), (DATA + 4, count), (DATA + 8, value_id)] {
             self.extend([

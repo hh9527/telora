@@ -190,12 +190,8 @@ impl Emitter<'_> {
                     telora_core::mir::PropertySite::Type,
                     payload,
                 )?;
-                let id = self.table_push(
-                    NEWTYPES,
-                    payload,
-                    self.width(arguments[0])?,
-                    Some(output),
-                )?;
+                let id =
+                    self.table_push(NEWTYPES, payload, self.width(arguments[0])?, Some(output))?;
                 let result = self.value_as(node, output, self.width(output)?)?;
                 self.extend([
                     I::LocalGet(result),

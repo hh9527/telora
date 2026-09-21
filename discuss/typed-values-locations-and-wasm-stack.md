@@ -403,6 +403,13 @@ ArrayValue = { loc, raw, start, end }
 RawArray   = { type_id, data, len, cap }
 ```
 
+这里的“内部可变”严格属于 codegen/RT 的指令实现，不形成 Telora 语言概念，
+也不进入 HIR/MIR 的类型和值域。源码、标准库签名和 Sealed MIR 中始终只有不可变的
+`Array(T)`；不存在可由用户命名、绑定、返回或捕获的 builder 类型。codegen 若识别出
+尚未发布的连续构造过程，可以在 Wasm 栈或 locals 中维护私有构造状态，并生成内部的
+分配、追加和发布指令；发布后得到的仍是普通 `Array(T)`。不能证明构造状态未发布时，
+必须退回语义等价的普通不可变操作。该优化不应成为 MIR 封闭或语言程序正确性的前提。
+
 其中字段正式沿用头部定义中的 `len/cap`；下例中的 `raw.len` 就是已初始化前缀，
 不是另一个需要同步的 frontier。`start/end` 属于不可变的语言值；`len/cap` 只属于 RT，不参与相等、
 哈希或任何语言观察。RT 只允许在所有既有视图都不可见的尾部写入。于是：

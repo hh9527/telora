@@ -189,8 +189,8 @@ impl Session {
         if index == 0 {
             return Ok(None);
         }
-        let index = usize::try_from(index - 1)
-            .map_err(|_| "Wasm: invalid initialization root identity")?;
+        let index =
+            usize::try_from(index - 1).map_err(|_| "Wasm: invalid initialization root identity")?;
         self.manifest
             .initialization_roots
             .get(index)

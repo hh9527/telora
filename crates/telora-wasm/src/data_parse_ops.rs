@@ -27,8 +27,14 @@ impl Emitter<'_> {
         ]);
         result
     }
-    fn parse_column(&mut self, base: u32, count: u32, _stride: u32, ty: TypeId) -> Result<u32, String> {
-        self.array_object(base, count, ty)
+    fn parse_column(
+        &mut self,
+        base: u32,
+        count: u32,
+        _stride: u32,
+        ty: TypeId,
+    ) -> Result<u32, String> {
+        self.array_object(base, count, count, ty)
     }
     pub fn data_parse_native(&mut self, parser: u32) -> Result<u32, String> {
         let node = self.key.node;
