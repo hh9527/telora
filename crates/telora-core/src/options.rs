@@ -11,7 +11,11 @@ pub struct CompilerOptions {
 
 impl Default for CompilerOptions {
     fn default() -> Self {
-        Self { max_type_depth: 256, max_tuple_items: 1024, max_type_arguments: 4096 }
+        Self {
+            max_type_depth: 256,
+            max_tuple_items: 1024,
+            max_type_arguments: 4096,
+        }
     }
 }
 
@@ -22,7 +26,9 @@ impl CompilerOptions {
             ("maxTupleItems", self.max_tuple_items),
             ("maxTypeArguments", self.max_type_arguments),
         ] {
-            if value == 0 { return Err(format!("compiler.{name} must be a positive integer")); }
+            if value == 0 {
+                return Err(format!("compiler.{name} must be a positive integer"));
+            }
         }
         Ok(())
     }
@@ -38,16 +44,28 @@ pub struct RuntimeOptions {
 }
 
 impl Default for RuntimeOptions {
-    fn default() -> Self { Self { fuel: 100, memory_limit: 1024 } }
+    fn default() -> Self {
+        Self {
+            fuel: 100,
+            memory_limit: 1024,
+        }
+    }
 }
 
 impl RuntimeOptions {
     pub fn limits(self) -> Result<(u64, usize), String> {
-        let fuel = self.fuel.checked_mul(1_000_000).filter(|&n| n != 0)
-            .ok_or("runtime.fuel must be a positive integer whose value in fuel units fits u64")?;
-        let memory = self.memory_limit.checked_mul(1 << 20)
-            .and_then(|n| usize::try_from(n).ok()).filter(|&n| n != 0)
-            .ok_or("runtime.memoryLimit must be a positive integer whose value in bytes fits usize")?;
+        let fuel =
+            self.fuel.checked_mul(1_000_000).filter(|&n| n != 0).ok_or(
+                "runtime.fuel must be a positive integer whose value in fuel units fits u64",
+            )?;
+        let memory = self
+            .memory_limit
+            .checked_mul(1 << 20)
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|&n| n != 0)
+            .ok_or(
+                "runtime.memoryLimit must be a positive integer whose value in bytes fits usize",
+            )?;
         Ok((fuel, memory))
     }
 }

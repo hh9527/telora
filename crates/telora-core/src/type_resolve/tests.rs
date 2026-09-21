@@ -1,13 +1,13 @@
 use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
+mod contracts;
+mod convergence;
 mod diagnostics;
 mod generics;
 mod inference;
 mod properties;
 mod shapes;
-mod convergence;
-mod contracts;
 
 fn graph(sources: &[(&str, &str)]) -> Mir {
     let mut sources = sources.to_vec();

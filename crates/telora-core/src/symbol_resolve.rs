@@ -1,7 +1,7 @@
 //! Second MIR pass: syntax-only declaration indexing and reference closure.
-use crate::syntax::kinds::{BindingKind, DeclaredInitializerKind};
 use crate::mir::*;
 use crate::source::Diagnostic;
+use crate::syntax::kinds::{BindingKind, DeclaredInitializerKind};
 use std::collections::BTreeMap;
 mod closure;
 mod queries;
@@ -57,11 +57,21 @@ fn resolve_with_scheduler(mir: &mut Mir, scheduler: Scheduler) {
     }
     pass.link_native_types();
     pass.diagnose_duplicates(false);
-    pass.mir.resolution_facts.namespaces.resize(pass.mir.symbols.len(), None);
-    pass.mir.resolution_facts.constructors.resize(pass.mir.symbols.len(), None);
-    pass.mir.resolution_facts.constructor_namespaces.resize(pass.mir.hir.len(), None);
+    pass.mir
+        .resolution_facts
+        .namespaces
+        .resize(pass.mir.symbols.len(), None);
+    pass.mir
+        .resolution_facts
+        .constructors
+        .resize(pass.mir.symbols.len(), None);
+    pass.mir
+        .resolution_facts
+        .constructor_namespaces
+        .resize(pass.mir.hir.len(), None);
     for id in 0..pass.mir.symbols.len() {
-        pass.scheduler.enqueue(ResolveTask::Symbol(SymbolId(id as u32)));
+        pass.scheduler
+            .enqueue(ResolveTask::Symbol(SymbolId(id as u32)));
     }
     pass.drain();
     for id in 0..pass.mir.symbols.len() {
@@ -74,26 +84,32 @@ fn resolve_with_scheduler(mir: &mut Mir, scheduler: Scheduler) {
             let location = pass.mir.hir[declaration.index()].location;
             let message = if symbol.kind == SymbolKind::Import {
                 let imported = match &pass.mir.hir[declaration.index()].kind {
-                    HirKind::Binding { imported: Some(name), .. } => name,
+                    HirKind::Binding {
+                        imported: Some(name),
+                        ..
+                    } => name,
                     _ => &symbol.name,
                 };
                 match pass.import_edges.get(&declaration) {
-                    Some(edge) => format!("unknown imported binding {imported:?} from {:?}", pass.mir.imports[*edge].request),
+                    Some(edge) => format!(
+                        "unknown imported binding {imported:?} from {:?}",
+                        pass.mir.imports[*edge].request
+                    ),
                     None => format!("unknown imported binding {imported:?}"),
                 }
             } else {
                 format!("unknown exported binding {:?}", symbol.name)
             };
-            pass.mir.diagnostics.push(Diagnostic::error(
-                message,
-                location,
-            ));
+            pass.mir
+                .diagnostics
+                .push(Diagnostic::error(message, location));
         }
     }
     pass.diagnose_duplicates(true);
     for id in 0..pass.mir.hir.len() {
         if pass.mir.hir[id].resolution.is_some() {
-            pass.scheduler.enqueue(ResolveTask::Reference(HirId(id as u32)));
+            pass.scheduler
+                .enqueue(ResolveTask::Reference(HirId(id as u32)));
         }
     }
     pass.drain();
@@ -102,16 +118,23 @@ fn resolve_with_scheduler(mir: &mut Mir, scheduler: Scheduler) {
             assert_ne!(pass.mir.resolve_slots[slot.index()], ResolveState::Pending);
             if pass.mir.resolve_slots[slot.index()] == ResolveState::Unresolved {
                 let name = match &node.kind {
-                    HirKind::Variable(name) | HirKind::PatternName(name) | HirKind::Name(name) => Some(name.as_str()),
-                    HirKind::Field => node.children.iter().find(|edge| edge.role == Role::Name)
+                    HirKind::Variable(name) | HirKind::PatternName(name) | HirKind::Name(name) => {
+                        Some(name.as_str())
+                    }
+                    HirKind::Field => node
+                        .children
+                        .iter()
+                        .find(|edge| edge.role == Role::Name)
                         .and_then(|edge| match &pass.mir.hir[edge.node.index()].kind {
-                            HirKind::Name(name) => Some(name.as_str()), _ => None,
+                            HirKind::Name(name) => Some(name.as_str()),
+                            _ => None,
                         }),
                     _ => None,
                 };
                 if let Some(name) = name {
                     pass.mir.diagnostics.push(Diagnostic::error(
-                        format!("unknown binding {name:?}"), node.location,
+                        format!("unknown binding {name:?}"),
+                        node.location,
                     ));
                 }
             }
@@ -127,7 +150,9 @@ fn resolve_with_scheduler(mir: &mut Mir, scheduler: Scheduler) {
     // Discovery timing is an implementation detail; presentation is ordered
     // by source evidence before the type pass attaches diagnostic indices.
     pass.mir.diagnostics.sort_by(|a, b| {
-        a.labels.first().map(|label| label.location)
+        a.labels
+            .first()
+            .map(|label| label.location)
             .cmp(&b.labels.first().map(|label| label.location))
             .then_with(|| a.message.cmp(&b.message))
     });
@@ -465,8 +490,10 @@ impl Pass<'_> {
                 });
                 let first = self.mir.symbols[definitions[0].index()].declarations[0];
                 let second = self.mir.symbols[definitions[1].index()].declarations[0];
-                let description = if definitions.iter().all(|id|
-                    self.mir.symbols[id.index()].kind == SymbolKind::TypeParameter) {
+                let description = if definitions
+                    .iter()
+                    .all(|id| self.mir.symbols[id.index()].kind == SymbolKind::TypeParameter)
+                {
                     "type parameter"
                 } else if patterns {
                     "pattern binding"

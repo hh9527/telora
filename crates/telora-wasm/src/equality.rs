@@ -280,11 +280,7 @@ impl Emitter<'_> {
         if !dict {
             return self.array_parts(value, width);
         }
-        let data = self.table_data(
-            ARRAYS,
-            value,
-            DATA + 8,
-        );
+        let data = self.table_data(ARRAYS, value, DATA + 8);
         let count = self.local(ValType::I32);
         self.extend([
             I::LocalGet(value),

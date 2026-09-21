@@ -75,8 +75,11 @@ impl Guest {
         self.free(result, 12, 4)?;
         Ok(names)
     }
-    pub fn inject_sources(&mut self, sources: &[SourceInput]) -> Result<()> {
-        let names = self.sources()?;
+    pub fn inject_named_sources(
+        &mut self,
+        names: &[(u32, String)],
+        sources: &[SourceInput],
+    ) -> Result<()> {
         ensure!(
             names.len() == sources.len(),
             "service source count mismatch: expected {:?}",

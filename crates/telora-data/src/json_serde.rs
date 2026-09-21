@@ -5,9 +5,7 @@ use crate::{
     data_plan::DataNodeId,
     json::{self, JsonKind as DataPlanNodeKind, JsonPlan, text::ParseCtx},
 };
-use alloc::{
-    string::{String, ToString},
-};
+use alloc::string::{String, ToString};
 use core::fmt;
 use serde::de::{
     self, DeserializeOwned, IntoDeserializer, Visitor,
@@ -39,13 +37,20 @@ pub fn from_str<T: DeserializeOwned>(input: &str) -> Result<T, Error> {
         .try_add_data("<json>", String::new())
         .map_err(|e| Error(e.to_string()))?;
     let (plan, ctx) = json::parse_structure(source, input, crate::DataLimits::default())
-        .and_then(json::JsonStructure::validate).map_err(|errors| {
-        // Source indexing is needed only when rendering a diagnostic.
-        match sources.replace_unreferenced_data(source, "<json>", input.into()) {
-            Ok(()) => Error(errors.iter().map(|error| sources.render(error)).collect::<alloc::vec::Vec<_>>().join("\n")),
-            Err(location) => Error(location.to_string()),
-        }
-    })?;
+        .and_then(json::JsonStructure::validate)
+        .map_err(|errors| {
+            // Source indexing is needed only when rendering a diagnostic.
+            match sources.replace_unreferenced_data(source, "<json>", input.into()) {
+                Ok(()) => Error(
+                    errors
+                        .iter()
+                        .map(|error| sources.render(error))
+                        .collect::<alloc::vec::Vec<_>>()
+                        .join("\n"),
+                ),
+                Err(location) => Error(location.to_string()),
+            }
+        })?;
     T::deserialize(Node {
         plan: &plan,
         ctx: &ctx,

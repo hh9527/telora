@@ -1,26 +1,26 @@
 //! Session-owned, partially solved IR. No resolver, type checker or VM lives here.
+use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::kinds::{
     BinaryOperator, BindingKind, BlameAction, DeclaredInitializerKind, UnaryOperator,
 };
-use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::telora::cst::{CstData, NodeRef};
 use std::fmt::Write;
 
-mod seal;
-mod record_boundaries;
-mod executable;
-mod type_schemes;
-mod properties;
-mod materializations;
-mod declaration_contracts;
 mod constraint_outcomes;
+mod declaration_contracts;
+mod executable;
+mod materializations;
+mod properties;
+mod record_boundaries;
 mod resolution;
+mod seal;
 mod substitution;
-pub use resolution::{ResolutionFacts, ResolveTask};
-pub use substitution::TypeSubstitution;
+mod type_schemes;
 pub use declaration_contracts::{DeclarationContract, DeclarationContractState};
-pub use seal::SealedMir;
 pub use executable::{ExecutionClosure, ExecutionRoot, SealedExecutable};
+pub use resolution::{ResolutionFacts, ResolveTask};
+pub use seal::SealedMir;
+pub use substitution::TypeSubstitution;
 
 macro_rules! id {
     ($($name:ident),*) => {$(
@@ -54,7 +54,10 @@ pub struct TypeScheme {
 pub enum SchemeNode {
     Known(TypeId),
     Bound(u32),
-    Apply { constructor: TypeConstructor, arguments: Vec<SchemeNodeId> },
+    Apply {
+        constructor: TypeConstructor,
+        arguments: Vec<SchemeNodeId>,
+    },
 }
 id!(TypeTermId, TypeConflictId);
 id!(GenericInstanceId);
@@ -66,7 +69,10 @@ id!(PropertyId);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GenericReference {
     /// A static export of a declaration contract; never an executable value.
-    Scheme { symbol: SymbolId, scheme: TypeSchemeId },
+    Scheme {
+        symbol: SymbolId,
+        scheme: TypeSchemeId,
+    },
     /// The type pass has selected this use's instance before publication.
     Instance(GenericInstanceId),
 }
@@ -98,26 +104,38 @@ pub struct GenericInstance {
 impl Mir {
     /// Stable instance identities paired with their solved records.
     pub fn generic_instances(&self) -> impl Iterator<Item = (GenericInstanceId, &GenericInstance)> {
-        self.generic_instances.iter().enumerate().map(|(index, instance)|
-            (GenericInstanceId(index as u32), instance))
+        self.generic_instances
+            .iter()
+            .enumerate()
+            .map(|(index, instance)| (GenericInstanceId(index as u32), instance))
     }
 }
 
 impl GenericInstance {
     pub fn implementation(&self, node: HirId) -> Option<GenericInstanceId> {
-        self.implementations.binary_search_by_key(&node, |(node, _)| *node).ok().map(|index| self.implementations[index].1)
+        self.implementations
+            .binary_search_by_key(&node, |(node, _)| *node)
+            .ok()
+            .map(|index| self.implementations[index].1)
     }
     pub fn adjustment(&self, node: HirId) -> Option<TypeId> {
-        self.adjustments.binary_search_by_key(&node, |(node, _)| *node).ok().map(|index| self.adjustments[index].1)
+        self.adjustments
+            .binary_search_by_key(&node, |(node, _)| *node)
+            .ok()
+            .map(|index| self.adjustments[index].1)
     }
     pub fn ty(&self, node: HirId) -> Option<TypeId> {
-        self.types.binary_search_by_key(&node, |(node, _)| *node)
-            .ok().map(|index| self.types[index].1)
+        self.types
+            .binary_search_by_key(&node, |(node, _)| *node)
+            .ok()
+            .map(|index| self.types[index].1)
     }
 
     pub fn reference(&self, node: HirId) -> Option<GenericInstanceId> {
-        self.references.binary_search_by_key(&node, |(node, _)| *node)
-            .ok().map(|index| self.references[index].1)
+        self.references
+            .binary_search_by_key(&node, |(node, _)| *node)
+            .ok()
+            .map(|index| self.references[index].1)
     }
 }
 
@@ -164,7 +182,10 @@ pub struct NativeTypeId {
     pub slot: u32,
 }
 impl NativeTypeId {
-    pub const TEST: Self = Self { module: 33, slot: 0 };
+    pub const TEST: Self = Self {
+        module: 33,
+        slot: 0,
+    };
     /// Native ABI identity used by diagnostic syntax and the source inventory.
     pub const BLAME_ERROR: Self = Self {
         module: 34,
@@ -392,7 +413,10 @@ pub struct PropertyRecord {
 pub enum PropertyAdmission {
     /// The admitted native marker bootstraps capability records themselves.
     Capability,
-    Require { capability: PropertyId, targets: i64 },
+    Require {
+        capability: PropertyId,
+        targets: i64,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -601,7 +625,9 @@ pub enum HirKind {
     Decorator {
         configured: bool,
     },
-    ConstructionCheck { configured: bool },
+    ConstructionCheck {
+        configured: bool,
+    },
     Int(i64),
     Float(f64),
     String(String),
@@ -822,13 +848,23 @@ impl Mir {
                 writeln!(out, "constructor {id} => {constructor}").unwrap();
             }
         }
-        for (id, constructor) in self.resolution_facts.constructor_namespaces.iter().enumerate() {
+        for (id, constructor) in self
+            .resolution_facts
+            .constructor_namespaces
+            .iter()
+            .enumerate()
+        {
             if let Some(constructor) = constructor {
                 writeln!(out, "constructor-namespace {id} => {constructor}").unwrap();
             }
         }
         if !self.type_substitution.nodes.is_empty() {
-            writeln!(out, "type-substitution-parameters {:?}", self.type_substitution.parameters).unwrap();
+            writeln!(
+                out,
+                "type-substitution-parameters {:?}",
+                self.type_substitution.parameters
+            )
+            .unwrap();
             for (id, node) in self.type_substitution.nodes.iter().enumerate() {
                 writeln!(out, "type-substitution {id} {node:?}").unwrap();
             }
@@ -846,15 +882,29 @@ impl Mir {
             writeln!(out, "construction-check {id} {check:?}").unwrap();
         }
         for (node, target) in self.value_adjustments.iter().enumerate() {
-            if let Some(target) = target { writeln!(out, "value-adjustment {node} {:?}", self.ty_slots[target.index()]).unwrap(); }
+            if let Some(target) = target {
+                writeln!(
+                    out,
+                    "value-adjustment {node} {:?}",
+                    self.ty_slots[target.index()]
+                )
+                .unwrap();
+            }
         }
         for (node, target) in self.callable_boundaries.iter().enumerate() {
             if let Some(target) = target {
-                writeln!(out, "callable-boundary {node} {target:?} => {:?}", self.ty_slots[target.index()]).unwrap();
+                writeln!(
+                    out,
+                    "callable-boundary {node} {target:?} => {:?}",
+                    self.ty_slots[target.index()]
+                )
+                .unwrap();
             }
         }
         for (node, boundary) in self.propagation_boundaries.iter().enumerate() {
-            if let Some(boundary) = boundary { writeln!(out, "propagation-boundary {node} {boundary:?}").unwrap(); }
+            if let Some(boundary) = boundary {
+                writeln!(out, "propagation-boundary {node} {boundary:?}").unwrap();
+            }
         }
         for (id, bound) in self.bound_requirements.iter().enumerate() {
             writeln!(out, "bound {id} {bound:?}").unwrap();

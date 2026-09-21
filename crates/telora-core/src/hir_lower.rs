@@ -5,8 +5,8 @@
 use crate::mir::{Edge, HirId, HirKind, HirOrigin, Mir, ModuleId, Role};
 use crate::source::{Diagnostic, Location, SourceId, TextRange};
 use crate::syntax::telora::{
-    ast::{AstNode, Expr, SyntaxNode},
     Token,
+    ast::{AstNode, Expr, SyntaxNode},
     cst::{CstData, Node, NodeRef, Rule},
 };
 use std::cell::{Cell, RefCell};

@@ -8,13 +8,29 @@ use alloc::vec::Vec;
 pub struct SourceCoordinates(pub [u32; 5]);
 
 impl SourceCoordinates {
-    pub const fn source(self) -> u32 { self.0[0] }
-    pub const fn start(self) -> u64 { ((self.0[1] as u64) << 32) | self.0[2] as u64 }
-    pub const fn end(self) -> u64 { ((self.0[3] as u64) << 32) | self.0[4] as u64 }
-    pub const fn position(point: u64) -> (u32, u32) { ((point >> 32) as u32, point as u32) }
+    pub const fn source(self) -> u32 {
+        self.0[0]
+    }
+    pub const fn start(self) -> u64 {
+        ((self.0[1] as u64) << 32) | self.0[2] as u64
+    }
+    pub const fn end(self) -> u64 {
+        ((self.0[3] as u64) << 32) | self.0[4] as u64
+    }
+    pub const fn position(point: u64) -> (u32, u32) {
+        ((point >> 32) as u32, point as u32)
+    }
     pub fn new(source: u32, start: u64, end: u64) -> Result<Self, LocationError> {
-        if source == 0 || start > end { return Err(LocationError::CoordinateCapacity); }
-        Ok(Self([source, (start >> 32) as u32, start as u32, (end >> 32) as u32, end as u32]))
+        if source == 0 || start > end {
+            return Err(LocationError::CoordinateCapacity);
+        }
+        Ok(Self([
+            source,
+            (start >> 32) as u32,
+            start as u32,
+            (end >> 32) as u32,
+            end as u32,
+        ]))
     }
 }
 
@@ -28,7 +44,10 @@ pub struct LineIndex {
 impl LineIndex {
     /// Per-source diagnostic index: line start and end excluding its EOL.
     pub fn ranges(&self) -> impl ExactSizeIterator<Item = [u32; 2]> + '_ {
-        self.starts.iter().zip(&self.ends).map(|(&start, &end)| [start, end])
+        self.starts
+            .iter()
+            .zip(&self.ends)
+            .map(|(&start, &end)| [start, end])
     }
 
     pub fn new(text: &str) -> Result<Self, LocationError> {

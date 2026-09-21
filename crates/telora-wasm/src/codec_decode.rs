@@ -220,7 +220,7 @@ impl Emitter<'_> {
         self.store32(object, BLAME_COUNT as u64, 1);
         self.store32(object, BLAME_COUNT as u64 + 4, 0);
         self.copy(object, BLAME_SUBJECTS, input, LOC_BYTES);
-        let id = self.table_push(BLAMES, object, BLAME_SUBJECTS + LOC_BYTES);
+        let id = self.table_push(BLAMES, object, BLAME_SUBJECTS + LOC_BYTES, None)?;
         let blame = self.value_as(self.key.node, ty, SCALAR_BYTES)?;
         self.extend([
             I::LocalGet(blame),

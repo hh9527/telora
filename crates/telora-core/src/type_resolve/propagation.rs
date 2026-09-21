@@ -7,31 +7,62 @@ impl Solver<'_> {
     /// backend can consume an existing TypeId, including generic instances.
     pub(super) fn finalize_callable_adjustments(&mut self) {
         for index in 0..self.mir.hir.len() {
-            let Some(expected) = self.mir.callable_boundaries[index] else { continue; };
-            let (TypeState::Known(source), TypeState::Known(target)) =
-                (self.mir.ty_slots[index], self.mir.ty_slots[expected.index()]) else { continue; };
+            let Some(expected) = self.mir.callable_boundaries[index] else {
+                continue;
+            };
+            let (TypeState::Known(source), TypeState::Known(target)) = (
+                self.mir.ty_slots[index],
+                self.mir.ty_slots[expected.index()],
+            ) else {
+                continue;
+            };
             if source != target && self.mir.never_callable_view(source, target) {
                 self.mir.value_adjustments[index] = Some(expected);
             }
         }
-        let mut canonical = self.mir.types.iter().enumerate().map(|(index, ty)|
-            ((ty.constructor.clone(), ty.arguments.clone()), TypeId(index as u32)))
+        let mut canonical = self
+            .mir
+            .types
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| {
+                (
+                    (ty.constructor.clone(), ty.arguments.clone()),
+                    TypeId(index as u32),
+                )
+            })
             .collect::<std::collections::BTreeMap<_, _>>();
         for index in 0..self.mir.hir.len() {
-            if !matches!(self.mir.hir[index].kind, HirKind::Closure) { continue; }
-            let Some(boundary) = self.child(HirId(index as u32), Role::ReturnType) else { continue; };
-            let Some(slot) = self.mir.value_adjustments[boundary.index()] else { continue; };
+            if !matches!(self.mir.hir[index].kind, HirKind::Closure) {
+                continue;
+            }
+            let Some(boundary) = self.child(HirId(index as u32), Role::ReturnType) else {
+                continue;
+            };
+            let Some(slot) = self.mir.value_adjustments[boundary.index()] else {
+                continue;
+            };
             let (TypeState::Known(target), TypeState::Known(source)) =
-                (self.mir.ty_slots[slot.index()], self.mir.ty_slots[index]) else { continue; };
+                (self.mir.ty_slots[slot.index()], self.mir.ty_slots[index])
+            else {
+                continue;
+            };
             let signature = &self.mir.types[source.index()];
-            if signature.constructor != TypeConstructor::Function { continue; }
+            if signature.constructor != TypeConstructor::Function {
+                continue;
+            }
             let mut arguments = signature.arguments.clone();
-            let Some(result) = arguments.last_mut() else { continue; };
+            let Some(result) = arguments.last_mut() else {
+                continue;
+            };
             *result = target;
             let key = (TypeConstructor::Function, arguments);
             let signature = *canonical.entry(key.clone()).or_insert_with(|| {
                 let ty = TypeId(self.mir.types.len() as u32);
-                self.mir.types.push(ResolvedType { constructor: key.0, arguments: key.1 });
+                self.mir.types.push(ResolvedType {
+                    constructor: key.0,
+                    arguments: key.1,
+                });
                 self.mir.type_layouts.push(None);
                 ty
             });
@@ -43,21 +74,38 @@ impl Solver<'_> {
 
     pub(super) fn propagate(&mut self, node: HirId) -> Option<Task> {
         let operand = self.child(node, Role::Operand).unwrap();
-        let boundary = self.mir.propagation_boundaries[node.index()].expect("lexical propagation boundary");
+        let boundary =
+            self.mir.propagation_boundaries[node.index()].expect("lexical propagation boundary");
         let (result, body) = if matches!(self.mir.hir[boundary.index()].kind, HirKind::Closure) {
-            (self.child(boundary, Role::ReturnType).unwrap(), self.child(boundary, Role::Body).unwrap())
-        } else { (boundary, boundary) };
+            (
+                self.child(boundary, Role::ReturnType).unwrap(),
+                self.child(boundary, Role::Body).unwrap(),
+            )
+        } else {
+            (boundary, boundary)
+        };
         let operand_term = self.term(operand.ty()).cloned();
-        if matches!(self.mir.ty_slots[self.root(operand.ty()).index()], TypeState::Conflicted(_)) {
+        if matches!(
+            self.mir.ty_slots[self.root(operand.ty()).index()],
+            TypeState::Conflicted(_)
+        ) {
             self.same(node, operand.ty());
             return None;
         }
-        let family = operand_term.as_ref().map(|term| term.constructor.clone())
+        let family = operand_term
+            .as_ref()
+            .map(|term| term.constructor.clone())
             .or_else(|| self.term(result.ty()).map(|term| term.constructor.clone()));
-        let Some(family) = family else { return Some(Task::Propagate { node }); };
+        let Some(family) = family else {
+            return Some(Task::Propagate { node });
+        };
         if !matches!(family, TypeConstructor::Option | TypeConstructor::Result) {
-            self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
-                "? requires an Option or Result operand and matching return boundary".into());
+            self.conflict(
+                node.ty(),
+                node.ty(),
+                Some(self.mir.hir[node.index()].location),
+                "? requires an Option or Result operand and matching return boundary".into(),
+            );
             return None;
         }
         let success = self.fresh();
@@ -72,7 +120,11 @@ impl Solver<'_> {
         }
         self.assign(operand, family.clone(), input);
         let output = self.structure(family, output);
-        self.equal(result.ty(), output, Some(self.mir.hir[node.index()].location));
+        self.equal(
+            result.ty(),
+            output,
+            Some(self.mir.hir[node.index()].location),
+        );
         Some(Task::PropagationBottom { body, success })
     }
 }

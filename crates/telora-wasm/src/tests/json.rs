@@ -211,10 +211,16 @@ fn codec_decode_tuple_honors_array_slice_start() {
         .unwrap();
     // Array slicing has no source syntax; exercise a valid ABI slice descriptor.
     session
-        .write(value as usize + crate::abi::DATA as usize + 4, &1u32.to_le_bytes())
+        .write(
+            value as usize + crate::abi::DATA as usize + 4,
+            &1u32.to_le_bytes(),
+        )
         .unwrap();
     session
-        .write(value as usize + crate::abi::DATA as usize + 8, &3u32.to_le_bytes())
+        .write(
+            value as usize + crate::abi::DATA as usize + 8,
+            &3u32.to_le_bytes(),
+        )
         .unwrap();
     let args = session.allocate(4).unwrap();
     session.write(args as usize, &value.to_le_bytes()).unwrap();

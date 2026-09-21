@@ -624,7 +624,8 @@ fn request_location(
         .sources()
         .get(source)
         .text()
-        .document().ok_or_else(content_modified)?
+        .document()
+        .ok_or_else(content_modified)?
         .offset(from_position(params.position), encoding)
         .map_err(|error| protocol_error(ErrorCode::INVALID_PARAMS, error))?;
     Ok(Location::new(source, TextRange::at(offset)))

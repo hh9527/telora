@@ -11,13 +11,30 @@ fn fixture_loop() -> (PathBuf, Rc<RefCell<State>>, async_lsp::MainLoop<Server>) 
     let root = std::env::temp_dir().join(format!("telora-lsp-test-{unique}"));
     std::fs::create_dir_all(&root).expect("create fixture root");
     std::fs::create_dir(root.join("src")).unwrap();
-    std::fs::write(root.join("telora-config.json"), r#"{"version":1,"members":["."]}"#).unwrap();
-    std::fs::write(root.join("telora-crate.json"), r#"{"name":"editor","modules":["@src/main","@src/model","@src/new"],"dependencies":[]}"#).unwrap();
+    std::fs::write(
+        root.join("telora-config.json"),
+        r#"{"version":1,"members":["."]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("telora-crate.json"),
+        r#"{"name":"editor","modules":["@src/main","@src/model","@src/new"],"dependencies":[]}"#,
+    )
+    .unwrap();
     for name in ["main", "model", "new"] {
-        std::fs::write(root.join(format!("src/{name}.telora")), "export def placeholder: Int = 0;").unwrap();
+        std::fs::write(
+            root.join(format!("src/{name}.telora")),
+            "export def placeholder: Int = 0;",
+        )
+        .unwrap();
     }
     let spec = telora_core::WorkspaceSpec::discover(&root).unwrap();
-    spec.write_lock(&spec.generate_lock(&std::collections::BTreeMap::new()).unwrap()).unwrap();
+    spec.write_lock(
+        &spec
+            .generate_lock(&std::collections::BTreeMap::new())
+            .unwrap(),
+    )
+    .unwrap();
     let captured = Rc::new(RefCell::new(None));
     let (main_loop, _) = async_lsp::MainLoop::new_server({
         let root = root.clone();
@@ -103,8 +120,7 @@ async fn disk_semantic_fixture(source: &str) -> (PathBuf, Rc<RefCell<State>>, ls
     let path = root.join("src/main.telora");
     std::fs::write(&path, source).expect("write source");
     initialize_state(&root, &state);
-    let workspace =
-        Rc::new(Workspace::new(&path).expect("create document workspace"));
+    let workspace = Rc::new(Workspace::new(&path).expect("create document workspace"));
     let context = workspace.context();
     workspace.rebuild(&context).await.expect("build snapshot");
     state.borrow_mut().workspace = Some(workspace);

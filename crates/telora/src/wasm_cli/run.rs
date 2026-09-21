@@ -90,7 +90,9 @@ pub(crate) fn execute(
             report(service.usage());
         }
         let reply: Reply<'_> = serde_json::from_slice(&response).map_err(|e| e.to_string())?;
-        if reply.schema != "telora.service/v1" { return Err("invalid service response schema".into()); }
+        if reply.schema != "telora.service/v1" {
+            return Err("invalid service response schema".into());
+        }
         for diagnostic in &reply.diagnostics {
             emit_diagnostic(diagnostic)?;
         }
@@ -102,9 +104,12 @@ pub(crate) fn execute(
     }
     telora_run::transport::serve(bind.unwrap(), limits.file_size, |input| {
         let response = transform(&mut service, input);
-        if let Some(report) = usage_reporter { report(service.usage()); }
+        if let Some(report) = usage_reporter {
+            report(service.usage());
+        }
         Ok(response)
-    }).map_err(|e| e.to_string())?;
+    })
+    .map_err(|e| e.to_string())?;
     Ok(0)
 }
 
@@ -119,7 +124,9 @@ struct Reply<'a> {
 
 fn write_json(bytes: &[u8]) -> Result<(), String> {
     let mut out = std::io::stdout().lock();
-    out.write_all(bytes).and_then(|_| out.write_all(b"\n")).map_err(|e| e.to_string())
+    out.write_all(bytes)
+        .and_then(|_| out.write_all(b"\n"))
+        .map_err(|e| e.to_string())
 }
 
 fn transform(service: &mut TransformSession, input: &[u8]) -> Vec<u8> {
@@ -142,9 +149,12 @@ fn transform(service: &mut TransformSession, input: &[u8]) -> Vec<u8> {
 }
 
 fn failure_bytes(message: &str) -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({"schema":"telora.service/v1","ok":null,"error":true,"diagnostics":[{
-        "severity":"Error", "message":message, "labels":[], "notes":[]
-    }]})).expect("serializable service failure")
+    serde_json::to_vec(
+        &serde_json::json!({"schema":"telora.service/v1","ok":null,"error":true,"diagnostics":[{
+            "severity":"Error", "message":message, "labels":[], "notes":[]
+        }]}),
+    )
+    .expect("serializable service failure")
 }
 
 fn emit_diagnostic(diagnostic: &serde_json::Value) -> Result<(), String> {

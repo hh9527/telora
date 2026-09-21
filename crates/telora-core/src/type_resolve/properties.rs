@@ -34,7 +34,10 @@ impl Solver<'_> {
 
     fn attach_properties(&mut self, syntax: HirId, owner: TypeSlotId, site: PropertySite) {
         for decorator in self.children(syntax, Role::Decorator) {
-            if matches!(self.mir.hir[decorator.index()].kind, HirKind::ConstructionCheck { .. }) {
+            if matches!(
+                self.mir.hir[decorator.index()].kind,
+                HirKind::ConstructionCheck { .. }
+            ) {
                 let previous = self.constraint_origin.replace(decorator);
                 self.attach_check(decorator, owner, site);
                 self.constraint_origin = previous;
@@ -74,27 +77,51 @@ impl Solver<'_> {
     }
 
     fn attach_check(&mut self, decorator: HirId, owner: TypeSlotId, site: PropertySite) {
-        let Some(term) = self.term(owner).cloned() else { return };
-        let TypeConstructor::Nominal(symbol) = term.constructor else { return };
-        let Some((operation, members)) = self.nominal_members(symbol, &term.arguments) else { return };
+        let Some(term) = self.term(owner).cloned() else {
+            return;
+        };
+        let TypeConstructor::Nominal(symbol) = term.constructor else {
+            return;
+        };
+        let Some((operation, members)) = self.nominal_members(symbol, &term.arguments) else {
+            return;
+        };
         let input = match (operation, site) {
-            (TypeOperation::Struct, PropertySite::Type) => self.structure(TypeConstructor::Unchecked, vec![owner]),
+            (TypeOperation::Struct, PropertySite::Type) => {
+                self.structure(TypeConstructor::Unchecked, vec![owner])
+            }
             (TypeOperation::Newtype, PropertySite::Type) => members[0].1.expect("newtype payload"),
             (TypeOperation::Enum, PropertySite::Variant(index)) => {
-                let Some(payload) = members[index as usize].1 else { return }; payload
+                let Some(payload) = members[index as usize].1 else {
+                    return;
+                };
+                payload
             }
             _ => return,
         };
         let arguments = self.children(decorator, Role::Argument);
-        if arguments.len() != 1 { return; }
-        if self.check_declarations.iter().any(|(other, other_site, _)| *other == owner && *other_site == site) {
-            self.mir.diagnostics.push(Diagnostic::error("duplicate @check on the same construction boundary", self.mir.hir[decorator.index()].location));
+        if arguments.len() != 1 {
+            return;
+        }
+        if self
+            .check_declarations
+            .iter()
+            .any(|(other, other_site, _)| *other == owner && *other_site == site)
+        {
+            self.mir.diagnostics.push(Diagnostic::error(
+                "duplicate @check on the same construction boundary",
+                self.mir.hir[decorator.index()].location,
+            ));
         }
         let unit = self.structure(TypeConstructor::Tuple, vec![]);
         let blame = self.structure(TypeConstructor::Native(NativeTypeId::BLAME_ERROR), vec![]);
         let result = self.structure(TypeConstructor::Result, vec![unit, blame]);
         let signature = self.structure(TypeConstructor::Function, vec![input, result]);
-        self.equal(arguments[0].ty(), signature, Some(self.mir.hir[decorator.index()].location));
+        self.equal(
+            arguments[0].ty(),
+            signature,
+            Some(self.mir.hir[decorator.index()].location),
+        );
         self.same(decorator, arguments[0].ty());
         self.check_declarations.push((owner, site, decorator));
     }
@@ -103,25 +130,51 @@ impl Solver<'_> {
         let mut described = std::collections::BTreeSet::new();
         for &(owner, site, decorator) in &self.check_declarations {
             for id in self.mir.type_conflicts_in(decorator) {
-                if !described.insert(id) { continue; }
+                if !described.insert(id) {
+                    continue;
+                }
                 let conflict = &self.mir.type_conflicts[id.index()];
                 // Preserve the diagnostic emitted with the original evidence.
                 // A failed name resolution already has its own explanation.
                 if conflict.resolve_origin.is_none()
-                    && let Some(diagnostic) = conflict.diagnostic.and_then(|index| self.mir.diagnostics.get_mut(index)) {
-                    diagnostic.message = format!("invalid @check function: {}; expected one construction input and Result((), BlameError)", diagnostic.message);
+                    && let Some(diagnostic) = conflict
+                        .diagnostic
+                        .and_then(|index| self.mir.diagnostics.get_mut(index))
+                {
+                    diagnostic.message = format!(
+                        "invalid @check function: {}; expected one construction input and Result((), BlameError)",
+                        diagnostic.message
+                    );
                     let location = self.mir.hir[decorator.index()].location;
-                    if !diagnostic.labels.iter().any(|label| label.location == location) {
+                    if !diagnostic
+                        .labels
+                        .iter()
+                        .any(|label| label.location == location)
+                    {
                         diagnostic.labels.push(crate::source::Label {
-                            location, message: "@check contract required here".into(), primary: false,
+                            location,
+                            message: "@check contract required here".into(),
+                            primary: false,
                         });
                     }
                 }
             }
-            let (Some(owner), Some(signature)) = (self.known(owner), self.known(decorator.ty())) else { continue };
-            let checker = self.child(decorator, Role::Argument).expect("check argument");
+            let (Some(owner), Some(signature)) = (self.known(owner), self.known(decorator.ty()))
+            else {
+                continue;
+            };
+            let checker = self
+                .child(decorator, Role::Argument)
+                .expect("check argument");
             let concrete = !self.contains_parameter(owner) && !self.contains_parameter(signature);
-            self.mir.construction_checks.push(ConstructionCheck { owner, site, checker, signature, concrete, instance: None });
+            self.mir.construction_checks.push(ConstructionCheck {
+                owner,
+                site,
+                checker,
+                signature,
+                concrete,
+                instance: None,
+            });
         }
     }
 
@@ -215,21 +268,34 @@ impl Solver<'_> {
         let mut pending = vec![(template, actual)];
         let mut seen = BTreeSet::new();
         while let Some((template, actual)) = pending.pop() {
-            if !seen.insert((template, actual)) { continue; }
+            if !seen.insert((template, actual)) {
+                continue;
+            }
             let template = &self.mir.types[template.index()];
             if let TypeConstructor::Parameter(parameter) = template.constructor {
                 match substitutions.get(&parameter) {
                     Some(&bound) if bound != actual => return false,
-                    Some(_) => {},
-                    None => { substitutions.insert(parameter, actual); }
+                    Some(_) => {}
+                    None => {
+                        substitutions.insert(parameter, actual);
+                    }
                 }
                 continue;
             }
             let actual = &self.mir.types[actual.index()];
-            if template.constructor != actual.constructor || template.arguments.len() != actual.arguments.len() {
+            if template.constructor != actual.constructor
+                || template.arguments.len() != actual.arguments.len()
+            {
                 return false;
             }
-            pending.extend(template.arguments.iter().copied().zip(actual.arguments.iter().copied()).rev());
+            pending.extend(
+                template
+                    .arguments
+                    .iter()
+                    .copied()
+                    .zip(actual.arguments.iter().copied())
+                    .rev(),
+            );
         }
         true
     }

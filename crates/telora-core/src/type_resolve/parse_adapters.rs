@@ -61,12 +61,8 @@ impl Solver<'_> {
                 TypeConstructor::Nominal(from_str),
                 vec![target],
             );
-            let bound = Self::canonical_type(
-                self.mir,
-                &mut canonical,
-                TypeConstructor::Meta,
-                vec![raw],
-            );
+            let bound =
+                Self::canonical_type(self.mir, &mut canonical, TypeConstructor::Meta, vec![raw]);
             let subject = self.known_slot(target);
             let bound = self.known_slot(bound);
             let reference = self.mir.properties[property].providers[0];
@@ -109,23 +105,22 @@ impl Solver<'_> {
         })
     }
 
-    fn builtin_symbol(
-        &self,
-        module: u32,
-        name: &str,
-        kind: BindingKind,
-    ) -> Option<SymbolId> {
-        self.mir.symbols.iter().enumerate().find_map(|(index, symbol)| {
-            (symbol.name == name
-                && symbol.kind == SymbolKind::Declaration(kind)
-                && symbol.module.is_some_and(|id| {
-                    self.mir.modules[id.index()]
-                        .native
-                        .as_ref()
-                        .is_some_and(|native| native.id == module)
-                }))
-            .then_some(SymbolId(index as u32))
-        })
+    fn builtin_symbol(&self, module: u32, name: &str, kind: BindingKind) -> Option<SymbolId> {
+        self.mir
+            .symbols
+            .iter()
+            .enumerate()
+            .find_map(|(index, symbol)| {
+                (symbol.name == name
+                    && symbol.kind == SymbolKind::Declaration(kind)
+                    && symbol.module.is_some_and(|id| {
+                        self.mir.modules[id.index()]
+                            .native
+                            .as_ref()
+                            .is_some_and(|native| native.id == module)
+                    }))
+                .then_some(SymbolId(index as u32))
+            })
     }
 
     fn provider_property(&self, module: u32, name: &str) -> Option<TypeId> {

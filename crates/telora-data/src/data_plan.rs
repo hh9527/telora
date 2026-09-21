@@ -4,9 +4,9 @@ pub use crate::json::{DataField, DataNodeId, TemporalKind};
 #[cfg(test)]
 pub use crate::json::{DataPlanNodeKind, DataScalar, ValidatedDataPlan};
 use crate::source::{Diagnostic, SourceDatabase, SourceId};
-use alloc::{string::String, vec::Vec};
 #[cfg(test)]
 use alloc::string::ToString;
+use alloc::{string::String, vec::Vec};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Format {
@@ -31,9 +31,19 @@ pub fn enforce_limits(
 /// shared decoded buffers, never an allocation per text value.
 #[derive(Clone, Debug)]
 pub enum ParsedData {
-    Json { plan: crate::json::JsonPlan, decoded: String },
-    Yaml { plan: crate::yaml::YamlPlan, decoded: String, bytes: Vec<u8> },
-    Toml { plan: crate::toml::TomlPlan, decoded: String },
+    Json {
+        plan: crate::json::JsonPlan,
+        decoded: String,
+    },
+    Yaml {
+        plan: crate::yaml::YamlPlan,
+        decoded: String,
+        bytes: Vec<u8>,
+    },
+    Toml {
+        plan: crate::toml::TomlPlan,
+        decoded: String,
+    },
 }
 
 pub fn parse_registered(
@@ -52,25 +62,44 @@ pub fn parse_registered_with_limits(
     limits: crate::DataLimits,
 ) -> Result<ParsedData, Vec<Diagnostic>> {
     if matches!(format, Format::Json) {
-        let text = sources.get(source).text().contiguous().ok_or_else(|| vec![
-            Diagnostic::error("JSON data requires a contiguous source", crate::source::Location::from_usize(source, 0..0).unwrap())
-        ])?;
+        let text = sources.get(source).text().contiguous().ok_or_else(|| {
+            vec![Diagnostic::error(
+                "JSON data requires a contiguous source",
+                crate::source::Location::from_usize(source, 0..0).unwrap(),
+            )]
+        })?;
         let (plan, ctx) = crate::json::parse_structure(source, text, limits)?.validate()?;
-        return Ok(ParsedData::Json { plan, decoded: ctx.into_decoded() });
+        return Ok(ParsedData::Json {
+            plan,
+            decoded: ctx.into_decoded(),
+        });
     }
     if matches!(format, Format::Yaml) {
-        let text = sources.get(source).text().contiguous().ok_or_else(|| vec![
-            Diagnostic::error("YAML data requires a contiguous source", crate::source::Location::from_usize(source, 0..0).unwrap())
-        ])?;
+        let text = sources.get(source).text().contiguous().ok_or_else(|| {
+            vec![Diagnostic::error(
+                "YAML data requires a contiguous source",
+                crate::source::Location::from_usize(source, 0..0).unwrap(),
+            )]
+        })?;
         let (plan, ctx) = crate::yaml::parse_structure(source, text, limits)?.validate()?;
         let (decoded, bytes) = ctx.into_decoded();
-        return Ok(ParsedData::Yaml { plan, decoded, bytes });
+        return Ok(ParsedData::Yaml {
+            plan,
+            decoded,
+            bytes,
+        });
     }
-    let text = sources.get(source).text().contiguous().ok_or_else(|| vec![
-        Diagnostic::error("TOML data requires a contiguous source", crate::source::Location::from_usize(source, 0..0).unwrap())
-    ])?;
+    let text = sources.get(source).text().contiguous().ok_or_else(|| {
+        vec![Diagnostic::error(
+            "TOML data requires a contiguous source",
+            crate::source::Location::from_usize(source, 0..0).unwrap(),
+        )]
+    })?;
     let (plan, ctx) = crate::toml::parse_structure(source, text, limits)?.validate()?;
-    Ok(ParsedData::Toml { plan, decoded: ctx.into_decoded() })
+    Ok(ParsedData::Toml {
+        plan,
+        decoded: ctx.into_decoded(),
+    })
 }
 
 #[cfg(test)]
@@ -89,9 +118,23 @@ mod tests {
         let value = plan.scalar(DataScalar::String("hello".into()), loc);
         let base = plan.array(vec![value], loc);
         let copy = plan.array(vec![value], loc);
-        let DataPlanNodeKind::Object(fields) = &mut plan.node_mut(root).kind else { panic!("root") };
-        fields.insert("base".into(), DataField { key_location: loc, value: base });
-        fields.insert("copy".into(), DataField { key_location: loc, value: copy });
+        let DataPlanNodeKind::Object(fields) = &mut plan.node_mut(root).kind else {
+            panic!("root")
+        };
+        fields.insert(
+            "base".into(),
+            DataField {
+                key_location: loc,
+                value: base,
+            },
+        );
+        fields.insert(
+            "copy".into(),
+            DataField {
+                key_location: loc,
+                value: copy,
+            },
+        );
         plan.set_root(root);
         let (pointer, location) = plan
             .nodes()
@@ -113,7 +156,9 @@ mod tests {
                     assert!(fields.values().all(|field| field.value.index() < index))
                 }
                 DataPlanNodeKind::Scalar(DataScalar::String(value)) => {
-                    if node.location == location { assert_eq!(value.as_ptr(), pointer); }
+                    if node.location == location {
+                        assert_eq!(value.as_ptr(), pointer);
+                    }
                 }
                 _ => {}
             }
@@ -137,7 +182,14 @@ mod tests {
         let mut sources = SourceDatabase::default();
         let text = "base: [1, 2]\ncopy: [1, 2]\n";
         let source = sources.try_add_data("limits.yaml", text.into()).unwrap();
-        let ParsedData::Yaml { plan, decoded, bytes } = parse_registered(&sources, source, Format::Yaml).unwrap() else { panic!("YAML plan") };
+        let ParsedData::Yaml {
+            plan,
+            decoded,
+            bytes,
+        } = parse_registered(&sources, source, Format::Yaml).unwrap()
+        else {
+            panic!("YAML plan")
+        };
         let plan = plan.into_owned(text, &decoded, &bytes);
         let mut limits = crate::DataLimits::default();
         limits.nodes = 6;

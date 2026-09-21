@@ -13,24 +13,34 @@ impl Solver<'_> {
         // A caller/alias's own binders must not create duplicate target instances.
         let mut parents = vec![None; self.mir.hir.len()];
         for (index, node) in self.mir.hir.iter().enumerate() {
-            for edge in &node.children { parents[edge.node.index()] = Some(HirId(index as u32)); }
-        }
-        let enclosing_parameters = self.mir.symbols.iter().map(|symbol| {
-            let mut parameters = vec![];
-            let mut parent = symbol.declarations.last().and_then(|node| parents[node.index()]);
-            while let Some(node) = parent {
-                if let Some(owner) = self.mir.hir_symbols[node.index()] {
-                    for &parameter in &self.mir.symbol_generics[owner.index()] {
-                        if !parameters.contains(&parameter) { parameters.push(parameter); }
-                    }
-                }
-                parent = parents[node.index()];
+            for edge in &node.children {
+                parents[edge.node.index()] = Some(HirId(index as u32));
             }
-            parameters
-        }).collect::<Vec<_>>();
-        self.mir
-            .generic_references
-            .resize(self.mir.hir.len(), None);
+        }
+        let enclosing_parameters = self
+            .mir
+            .symbols
+            .iter()
+            .map(|symbol| {
+                let mut parameters = vec![];
+                let mut parent = symbol
+                    .declarations
+                    .last()
+                    .and_then(|node| parents[node.index()]);
+                while let Some(node) = parent {
+                    if let Some(owner) = self.mir.hir_symbols[node.index()] {
+                        for &parameter in &self.mir.symbol_generics[owner.index()] {
+                            if !parameters.contains(&parameter) {
+                                parameters.push(parameter);
+                            }
+                        }
+                    }
+                    parent = parents[node.index()];
+                }
+                parameters
+            })
+            .collect::<Vec<_>>();
+        self.mir.generic_references.resize(self.mir.hir.len(), None);
         let mut canonical: Canonical = self
             .mir
             .types
@@ -74,11 +84,15 @@ impl Solver<'_> {
             self.mir.implementation_instances[reference.index()] = evidence.instance;
         }
         for index in 0..self.mir.hir.len() {
-            if let Some(key) =
-                self.instance_key(HirId(index as u32), &BTreeMap::new(), &enclosing_parameters, &mut canonical)
-            {
-                self.mir.generic_references[index] =
-                    self.admit_instance(key, &mut indices, &mut canonical).map(GenericReference::Instance);
+            if let Some(key) = self.instance_key(
+                HirId(index as u32),
+                &BTreeMap::new(),
+                &enclosing_parameters,
+                &mut canonical,
+            ) {
+                self.mir.generic_references[index] = self
+                    .admit_instance(key, &mut indices, &mut canonical)
+                    .map(GenericReference::Instance);
             }
         }
         let mut requirements = vec![vec![]; self.mir.hir.len()];
@@ -93,8 +107,13 @@ impl Solver<'_> {
         let mut property_templates = BTreeMap::<SymbolId, Vec<PropertyRecord>>::new();
         for record in &self.mir.properties {
             if !record.concrete
-                && let TypeConstructor::Nominal(symbol) = self.mir.types[record.owner.index()].constructor {
-                property_templates.entry(symbol).or_default().push(record.clone());
+                && let TypeConstructor::Nominal(symbol) =
+                    self.mir.types[record.owner.index()].constructor
+            {
+                property_templates
+                    .entry(symbol)
+                    .or_default()
+                    .push(record.clone());
             }
         }
         for check in &self.mir.construction_checks {
@@ -110,7 +129,9 @@ impl Solver<'_> {
             }
         }
         loop {
-            if !self.check_type_expansion(None) { return; }
+            if !self.check_type_expansion(None) {
+                return;
+            }
             // Applied member skeletons can discover decorated types that do not
             // occur directly in source references (e.g. Envelope(Int).item).
             let previous_types = self.mir.types.len();
@@ -126,14 +147,18 @@ impl Solver<'_> {
                 );
             }
             while next_type < self.mir.types.len() {
-                if !self.check_type_expansion(None) { return; }
+                if !self.check_type_expansion(None) {
+                    return;
+                }
                 let owner = TypeId(next_type as u32);
                 next_type += 1;
                 let TypeConstructor::Nominal(symbol) = self.mir.types[owner.index()].constructor
                 else {
                     continue;
                 };
-                if !check_templates.contains_key(&symbol) && !property_templates.contains_key(&symbol) {
+                if !check_templates.contains_key(&symbol)
+                    && !property_templates.contains_key(&symbol)
+                {
                     continue;
                 }
                 if self.contains_parameter(owner) {
@@ -154,7 +179,8 @@ impl Solver<'_> {
                 };
                 let substitutions = arguments.into_iter().collect();
                 for record in property_templates.get(&symbol).into_iter().flatten() {
-                    let property = self.substitute_resolved(record.property, &substitutions, &mut canonical);
+                    let property =
+                        self.substitute_resolved(record.property, &substitutions, &mut canonical);
                     self.mir.properties.push(PropertyRecord {
                         owner,
                         property,
@@ -184,9 +210,13 @@ impl Solver<'_> {
             }
             while next < self.mir.generic_instances.len() {
                 let symbol = self.mir.generic_instances[next].symbol;
-                let origin = self.mir.symbols[symbol.index()].declarations.first()
+                let origin = self.mir.symbols[symbol.index()]
+                    .declarations
+                    .first()
                     .map(|node| self.mir.hir[node.index()].location);
-                if !self.check_type_expansion(origin) { return; }
+                if !self.check_type_expansion(origin) {
+                    return;
+                }
                 let substitutions = self.mir.generic_instances[next]
                     .arguments
                     .iter()
@@ -209,37 +239,61 @@ impl Solver<'_> {
                     for (position, &template) in requirements[node.index()].iter().enumerate() {
                         let template = &self.mir.evidence[template];
                         let (subject, bound) = (template.subject, template.bound);
-                        let subject = self.substitute_resolved(subject, &substitutions, &mut canonical);
+                        let subject =
+                            self.substitute_resolved(subject, &substitutions, &mut canonical);
                         let bound = self.substitute_resolved(bound, &substitutions, &mut canonical);
                         let evidence = self.request_evidence(subject, bound);
                         let origin = Some(self.mir.hir[node.index()].location);
-                        if !self.solve_pending_evidence(&mut canonical, origin) { return; }
+                        if !self.solve_pending_evidence(&mut canonical, origin) {
+                            return;
+                        }
                         let evidence = &self.mir.evidence[evidence];
                         if !evidence.state.is_proven() {
                             if self.mir.generic_instances[next].concrete {
-                                let message = format!("instantiated generic constraint is not satisfied: {} requires {}",
+                                let message = format!(
+                                    "instantiated generic constraint is not satisfied: {} requires {}",
                                     self.diagnostic_resolved_type(subject),
-                                    self.diagnostic_resolved_type(self.meta_type(bound).unwrap_or(bound)));
+                                    self.diagnostic_resolved_type(
+                                        self.meta_type(bound).unwrap_or(bound)
+                                    )
+                                );
                                 let location = self.mir.hir[node.index()].location;
-                                if !self.mir.diagnostics.iter().any(|d| d.message == message
-                                    && d.labels.iter().any(|label| label.primary && label.location == location)) {
-                                    self.mir.diagnostics.push(Diagnostic::error(message, location));
+                                if !self.mir.diagnostics.iter().any(|d| {
+                                    d.message == message
+                                        && d.labels.iter().any(|label| {
+                                            label.primary && label.location == location
+                                        })
+                                }) {
+                                    self.mir
+                                        .diagnostics
+                                        .push(Diagnostic::error(message, location));
                                 }
                             }
                             continue;
                         }
                         if position == 0
-                            && matches!(self.mir.member_selections[node.index()], Some(MemberSelection::TraitMember { .. }))
-                            && let Some(symbol) = evidence.implementation {
+                            && matches!(
+                                self.mir.member_selections[node.index()],
+                                Some(MemberSelection::TraitMember { .. })
+                            )
+                            && let Some(symbol) = evidence.implementation
+                        {
                             let arguments = evidence.arguments.clone();
-                            if let Some(instance) = self.admit_instance((symbol, arguments), &mut indices, &mut canonical) {
+                            if let Some(instance) = self.admit_instance(
+                                (symbol, arguments),
+                                &mut indices,
+                                &mut canonical,
+                            ) {
                                 implementations.push((node, instance));
                             }
                         }
                     }
                     if let Some(slot) = self.mir.value_adjustments[node.index()] {
                         if let TypeState::Known(ty) = self.mir.ty_slots[slot.index()] {
-                            adjustments.push((node, self.substitute_resolved(ty, &substitutions, &mut canonical)));
+                            adjustments.push((
+                                node,
+                                self.substitute_resolved(ty, &substitutions, &mut canonical),
+                            ));
                         }
                     }
                     if let TypeState::Known(ty) = self.mir.ty_slots[node.ty().index()] {
@@ -248,9 +302,13 @@ impl Solver<'_> {
                         });
                         types.push((node, ty));
                     }
-                    if let Some(key) = self.instance_key(node, &substitutions, &enclosing_parameters, &mut canonical)
-                        && let Some(instance) =
-                            self.admit_instance(key, &mut indices, &mut canonical)
+                    if let Some(key) = self.instance_key(
+                        node,
+                        &substitutions,
+                        &enclosing_parameters,
+                        &mut canonical,
+                    ) && let Some(instance) =
+                        self.admit_instance(key, &mut indices, &mut canonical)
                     {
                         references.push((node, instance));
                     }
@@ -271,7 +329,8 @@ impl Solver<'_> {
         enclosing_parameters: &[Vec<SymbolId>],
         canonical: &mut Canonical,
     ) -> Option<Key> {
-        if self.scheme_references[node.index()] || self.mir.type_instances[node.index()].is_empty() {
+        if self.scheme_references[node.index()] || self.mir.type_instances[node.index()].is_empty()
+        {
             return None;
         }
         let slot = self.mir.hir[node.index()].resolution?;
@@ -289,7 +348,10 @@ impl Solver<'_> {
                 {
                     self.mir.type_unknowns.push(slot);
                     self.mir.diagnostics.push(Diagnostic::error(
-                        format!("unknown generic argument for parameter {:?}", self.mir.symbols[parameter.index()].name),
+                        format!(
+                            "unknown generic argument for parameter {:?}",
+                            self.mir.symbols[parameter.index()].name
+                        ),
                         self.mir.hir[node.index()].location,
                     ));
                 }
@@ -301,14 +363,20 @@ impl Solver<'_> {
                 self.substitute_resolved(ty, substitutions, canonical),
             ));
         }
-        if !complete { return None; }
+        if !complete {
+            return None;
+        }
         let declaration = &self.mir.symbols[symbol.index()];
-        if declaration.module.is_some_and(|module| declaration.scope != self.mir.module_scopes[module.index()]) {
+        if declaration
+            .module
+            .is_some_and(|module| declaration.scope != self.mir.module_scopes[module.index()])
+        {
             // Local instances also close captured enclosing binders. Preserve
             // these substitutions in the static instance key, never in codegen.
             for (&parameter, &ty) in substitutions {
                 if enclosing_parameters[symbol.index()].contains(&parameter)
-                    && !arguments.iter().any(|(existing, _)| *existing == parameter) {
+                    && !arguments.iter().any(|(existing, _)| *existing == parameter)
+                {
                     arguments.push((parameter, ty));
                 }
             }
@@ -330,9 +398,15 @@ impl Solver<'_> {
         // instances. In particular, do not restart an argument-growth cycle
         // already rejected before layout materialization.
         if let Some(definition) = self.nominal_index[key.0.index()]
-            && self.mir.type_definitions[definition].members.iter().any(|member| {
-                member.payload.is_some_and(|slot| !matches!(self.mir.ty_slots[slot.index()], TypeState::Known(_)))
-            }) {
+            && self.mir.type_definitions[definition]
+                .members
+                .iter()
+                .any(|member| {
+                    member.payload.is_some_and(|slot| {
+                        !matches!(self.mir.ty_slots[slot.index()], TypeState::Known(_))
+                    })
+                })
+        {
             return None;
         }
         if let Some(&id) = indices.get(&key) {

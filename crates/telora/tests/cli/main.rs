@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-mod wasm;
 mod backend_surface;
-mod usage;
 mod declaration_shapes;
+mod usage;
+mod wasm;
 
 fn fixture() -> PathBuf {
     let unique = SystemTime::now()
@@ -115,7 +115,12 @@ fn jsonl(bytes: &[u8]) -> Vec<Value> {
 }
 
 fn input_command(mut command: Command, input: &[u8]) -> std::process::Output {
-    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
     child.stdin.take().unwrap().write_all(input).unwrap();
     child.wait_with_output().unwrap()
 }
@@ -127,18 +132,23 @@ fn execute_value(cwd: &Path, mode: &str, selector: &str) -> std::process::Output
 }
 
 fn runtime_source(name: &str) -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/runtime").join(name)).unwrap()
+    fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/runtime")
+            .join(name),
+    )
+    .unwrap()
 }
 
 mod source_runtime;
 
 mod checks;
-mod queries;
+mod codegen_stack_safety;
 mod command_surface;
+mod context;
 mod entry_services;
 mod evaluation;
 mod language;
-mod codegen_stack_safety;
-mod context;
-mod test_command;
+mod queries;
 mod static_mir;
+mod test_command;

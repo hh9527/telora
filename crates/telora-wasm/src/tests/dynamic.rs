@@ -22,10 +22,16 @@ fn dyn_array_observation_honors_the_abi_slice_range() {
         .unwrap();
     // No source syntax currently exposes Array slicing; construct its valid ABI descriptor.
     session
-        .write(value as usize + crate::abi::DATA as usize + 4, &1u32.to_le_bytes())
+        .write(
+            value as usize + crate::abi::DATA as usize + 4,
+            &1u32.to_le_bytes(),
+        )
         .unwrap();
     session
-        .write(value as usize + crate::abi::DATA as usize + 8, &3u32.to_le_bytes())
+        .write(
+            value as usize + crate::abi::DATA as usize + 8,
+            &3u32.to_le_bytes(),
+        )
         .unwrap();
     let args = session.allocate(4).unwrap();
     session.write(args as usize, &value.to_le_bytes()).unwrap();

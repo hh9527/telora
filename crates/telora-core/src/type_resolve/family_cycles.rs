@@ -9,34 +9,65 @@ impl Solver<'_> {
         let mut edges = vec![vec![]; self.mir.symbols.len()];
         let mut growing = vec![];
         for definition in &self.mir.type_definitions {
-            let parameters = definition.parameters.iter().copied().collect::<BTreeSet<_>>();
-            if parameters.is_empty() { continue; }
+            let parameters = definition
+                .parameters
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>();
+            if parameters.is_empty() {
+                continue;
+            }
             for member in &definition.members {
-                let Some(slot) = member.payload else { continue; };
-                let TypeState::Known(root) = self.mir.ty_slots[slot.index()] else { continue; };
+                let Some(slot) = member.payload else {
+                    continue;
+                };
+                let TypeState::Known(root) = self.mir.ty_slots[slot.index()] else {
+                    continue;
+                };
                 let mut pending = vec![root];
                 let mut seen = BTreeSet::new();
                 while let Some(ty) = pending.pop() {
-                    if !seen.insert(ty) { continue; }
+                    if !seen.insert(ty) {
+                        continue;
+                    }
                     let source = &self.mir.types[ty.index()];
                     pending.extend(source.arguments.iter().copied());
-                    let TypeConstructor::Nominal(target) = source.constructor else { continue; };
-                    let Some(target) = self.nominal_index[target.index()] else { continue; };
-                    for (&parameter, &argument) in self.mir.type_definitions[target].parameters.iter().zip(&source.arguments) {
+                    let TypeConstructor::Nominal(target) = source.constructor else {
+                        continue;
+                    };
+                    let Some(target) = self.nominal_index[target.index()] else {
+                        continue;
+                    };
+                    for (&parameter, &argument) in self.mir.type_definitions[target]
+                        .parameters
+                        .iter()
+                        .zip(&source.arguments)
+                    {
                         let mut arguments = vec![(argument, false)];
                         let mut visited = BTreeSet::new();
                         while let Some((argument, grows)) = arguments.pop() {
-                            if !visited.insert((argument, grows)) { continue; }
+                            if !visited.insert((argument, grows)) {
+                                continue;
+                            }
                             let argument = &self.mir.types[argument.index()];
                             if let TypeConstructor::Parameter(origin) = argument.constructor
-                                && parameters.contains(&origin) {
+                                && parameters.contains(&origin)
+                            {
                                 edges[origin.index()].push(parameter.index());
-                                if grows { growing.push((origin.index(), parameter.index(), slot, member.syntax)); }
+                                if grows {
+                                    growing.push((
+                                        origin.index(),
+                                        parameter.index(),
+                                        slot,
+                                        member.syntax,
+                                    ));
+                                }
                             }
                             // Unchecked(Unchecked(T)) normalizes to Unchecked(T),
                             // so that wrapper alone does not grow the graph.
                             let grows = grows || argument.constructor != TypeConstructor::Unchecked;
-                            arguments.extend(argument.arguments.iter().map(|&child| (child, grows)));
+                            arguments
+                                .extend(argument.arguments.iter().map(|&child| (child, grows)));
                         }
                     }
                 }
@@ -56,15 +87,22 @@ impl Solver<'_> {
 pub(super) fn components(edges: &[Vec<usize>]) -> Vec<usize> {
     let mut reverse = vec![vec![]; edges.len()];
     for (from, targets) in edges.iter().enumerate() {
-        for &to in targets { reverse[to].push(from); }
+        for &to in targets {
+            reverse[to].push(from);
+        }
     }
     let mut visited = vec![false; edges.len()];
     let mut order = vec![];
     for root in 0..edges.len() {
         let mut pending = vec![(root, false)];
         while let Some((node, ready)) = pending.pop() {
-            if ready { order.push(node); continue; }
-            if visited[node] { continue; }
+            if ready {
+                order.push(node);
+                continue;
+            }
+            if visited[node] {
+                continue;
+            }
             visited[node] = true;
             pending.push((node, true));
             pending.extend(edges[node].iter().map(|&next| (next, false)));
@@ -72,10 +110,14 @@ pub(super) fn components(edges: &[Vec<usize>]) -> Vec<usize> {
     }
     let mut components = vec![usize::MAX; edges.len()];
     for root in order.into_iter().rev() {
-        if components[root] != usize::MAX { continue; }
+        if components[root] != usize::MAX {
+            continue;
+        }
         let mut pending = vec![root];
         while let Some(node) = pending.pop() {
-            if components[node] != usize::MAX { continue; }
+            if components[node] != usize::MAX {
+                continue;
+            }
             components[node] = root;
             pending.extend(reverse[node].iter().copied());
         }

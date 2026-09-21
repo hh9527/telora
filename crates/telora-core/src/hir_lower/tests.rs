@@ -5,7 +5,14 @@ mod frontend;
 fn parsed(text: &str) -> (Mir, SourceId, CstData, NodeRef) {
     let mut mir = Mir::default();
     let source = mir.sources.add("test", text);
-    let parsed = crate::syntax::telora::parse_document(source, mir.sources.get(source).text().document().expect("code source"));
+    let parsed = crate::syntax::telora::parse_document(
+        source,
+        mir.sources
+            .get(source)
+            .text()
+            .document()
+            .expect("code source"),
+    );
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     let program = crate::syntax::telora::ast::Program::root(&parsed.syntax);
     let root = program
@@ -155,7 +162,14 @@ fn builtin_modules_lower_without_an_owned_ast() {
     for &(name, text) in crate::static_sources::BUILTINS {
         let mut mir = Mir::default();
         let source = mir.sources.add(name, text);
-        let parsed = crate::syntax::telora::parse_document(source, mir.sources.get(source).text().document().expect("code source"));
+        let parsed = crate::syntax::telora::parse_document(
+            source,
+            mir.sources
+                .get(source)
+                .text()
+                .document()
+                .expect("code source"),
+        );
         assert!(
             parsed.diagnostics.is_empty(),
             "{name}: {:?}",

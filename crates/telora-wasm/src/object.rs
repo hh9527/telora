@@ -54,14 +54,16 @@ impl ObjectFunction {
                 self.call(crate::abi::HEAP_ADDRESS).instruction(instruction)
             }
             Instruction::I32Store(_) | Instruction::I32Store8(_) | Instruction::I64Store(_) => {
-                let local = self.scratch + u32::from(matches!(instruction, Instruction::I64Store(_)));
+                let local =
+                    self.scratch + u32::from(matches!(instruction, Instruction::I64Store(_)));
                 self.instruction(&Instruction::LocalSet(local));
                 self.call(crate::abi::HEAP_ADDRESS);
-                self.instruction(&Instruction::LocalGet(local)).instruction(instruction)
+                self.instruction(&Instruction::LocalGet(local))
+                    .instruction(instruction)
             }
-            Instruction::MemoryCopy { .. } => {
-                self.call(crate::abi::HEAP_COPY).instruction(&Instruction::Drop)
-            }
+            Instruction::MemoryCopy { .. } => self
+                .call(crate::abi::HEAP_COPY)
+                .instruction(&Instruction::Drop),
             Instruction::Call(index) => self.call(*index),
             Instruction::GlobalGet(index) => self.reference(0x23, 7, functions + index),
             Instruction::GlobalSet(index) => self.reference(0x24, 7, functions + index),
@@ -92,7 +94,11 @@ impl ObjectFunction {
         }
     }
 
-    pub(crate) fn relocate(function: &Function, functions: u32, parameters: u32) -> Result<Self, String> {
+    pub(crate) fn relocate(
+        function: &Function,
+        functions: u32,
+        parameters: u32,
+    ) -> Result<Self, String> {
         let mut encoded = Vec::new();
         function.encode(&mut encoded);
         let mut size = wasmparser::BinaryReader::new(&encoded, 0);
@@ -111,7 +117,10 @@ impl ObjectFunction {
             locals.push((count, ty));
         }
         let scratch = parameters + locals.iter().map(|(count, _)| *count).sum::<u32>();
-        locals.extend([(1, wasm_encoder::ValType::I32), (1, wasm_encoder::ValType::I64)]);
+        locals.extend([
+            (1, wasm_encoder::ValType::I32),
+            (1, wasm_encoder::ValType::I64),
+        ]);
         let mut output = Self::new(Function::new(locals), scratch);
         let mut reader = body.get_operators_reader().map_err(|e| e.to_string())?;
         while !reader.eof() {
@@ -123,7 +132,9 @@ impl ObjectFunction {
                     let memory = crate::abi::memory(memarg.offset, memarg.align.into());
                     let instruction = if matches!(operator, O::I32Load { .. }) {
                         Instruction::I32Load(memory)
-                    } else { Instruction::I32Store(memory) };
+                    } else {
+                        Instruction::I32Store(memory)
+                    };
                     output.linked_instruction(&instruction, functions);
                 }
                 O::Call { function_index } => {

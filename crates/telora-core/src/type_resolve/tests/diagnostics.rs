@@ -2,29 +2,57 @@ use super::*;
 
 #[test]
 fn never_callable_boundary_requires_sealed_use_site_evidence() {
-    let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/issue-198/src/boundary.telora")).unwrap();
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/issue-198/src/boundary.telora"),
+    )
+    .unwrap();
     let mut mir = graph(&[("@src/main", &source)]);
     resolve(&mut mir);
-    mir.seal().unwrap_or_else(|diagnostics| panic!("{diagnostics:?}"));
-    let (node, target) = mir.callable_boundaries.iter().enumerate().find_map(|(node, target)| {
-        let target = (*target)?;
-        let (TypeState::Known(source), TypeState::Known(expected)) =
-            (mir.ty_slots[node], mir.ty_slots[target.index()]) else { return None; };
-        (source != expected && mir.never_callable_view(source, expected)).then_some((node, target))
-    }).expect("stop argument has a distinct exposed signature");
+    mir.seal()
+        .unwrap_or_else(|diagnostics| panic!("{diagnostics:?}"));
+    let (node, target) = mir
+        .callable_boundaries
+        .iter()
+        .enumerate()
+        .find_map(|(node, target)| {
+            let target = (*target)?;
+            let (TypeState::Known(source), TypeState::Known(expected)) =
+                (mir.ty_slots[node], mir.ty_slots[target.index()])
+            else {
+                return None;
+            };
+            (source != expected && mir.never_callable_view(source, expected))
+                .then_some((node, target))
+        })
+        .expect("stop argument has a distinct exposed signature");
     let original = mir.ty_slots[node];
     assert_eq!(mir.value_adjustments[node], Some(target));
-    let TypeState::Known(stop) = symbol_type(&mir, "stop") else { panic!("closed declaration"); };
+    let TypeState::Known(stop) = symbol_type(&mir, "stop") else {
+        panic!("closed declaration");
+    };
     let result = *mir.types[stop.index()].arguments.last().unwrap();
-    assert_eq!(mir.types[result.index()].constructor, TypeConstructor::Never);
+    assert_eq!(
+        mir.types[result.index()].constructor,
+        TypeConstructor::Never
+    );
     mir.value_adjustments[node] = None;
-    assert!(mir.seal().is_err(), "removing adaptation must not publish an incomplete boundary");
+    assert!(
+        mir.seal().is_err(),
+        "removing adaptation must not publish an incomplete boundary"
+    );
     mir.value_adjustments[node] = Some(TypeSlotId(node as u32));
-    assert!(mir.seal().is_err(), "an identity adjustment does not satisfy the expected signature");
+    assert!(
+        mir.seal().is_err(),
+        "an identity adjustment does not satisfy the expected signature"
+    );
     mir.value_adjustments[node] = Some(target);
-    assert_eq!(mir.ty_slots[node], original, "adaptation must not overwrite the source signature");
-    mir.seal().unwrap_or_else(|diagnostics| panic!("{diagnostics:?}"));
+    assert_eq!(
+        mir.ty_slots[node], original,
+        "adaptation must not overwrite the source signature"
+    );
+    mir.seal()
+        .unwrap_or_else(|diagnostics| panic!("{diagnostics:?}"));
 }
 
 #[test]
@@ -227,9 +255,17 @@ fn syntax_recovery_keeps_independent_type_conflicts_without_a_fake_result_obliga
     resolve(&mut mir);
     assert!(matches!(symbol_type(&mir, "healthy"), TypeState::Known(_)));
     assert!(matches!(symbol_type(&mir, "bad"), TypeState::Known(_)));
-    let bad = mir.symbols.iter().find(|symbol| symbol.name == "bad"
-        && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap().declarations[0];
-    assert_eq!(mir.type_conflicts_in(bad).len(), 1, "failed use must remain queryable");
+    let bad = mir
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "bad" && matches!(symbol.kind, SymbolKind::Declaration(_)))
+        .unwrap()
+        .declarations[0];
+    assert_eq!(
+        mir.type_conflicts_in(bad).len(),
+        1,
+        "failed use must remain queryable"
+    );
     assert!(
         mir.diagnostics
             .iter()
@@ -253,11 +289,20 @@ fn retains_independent_conflicts_and_does_not_poison_intrinsic_types() {
     "#,
     )]);
     resolve(&mut mir);
-    for (name, constructor) in [("first", TypeConstructor::Int), ("second", TypeConstructor::String)] {
-        let TypeState::Known(ty) = symbol_type(&mir, name) else { panic!("contract must survive"); };
+    for (name, constructor) in [
+        ("first", TypeConstructor::Int),
+        ("second", TypeConstructor::String),
+    ] {
+        let TypeState::Known(ty) = symbol_type(&mir, name) else {
+            panic!("contract must survive");
+        };
         assert_eq!(mir.types[ty.index()].constructor, constructor);
-        let declaration = mir.symbols.iter().find(|symbol| symbol.name == name
-            && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap().declarations[0];
+        let declaration = mir
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == name && matches!(symbol.kind, SymbolKind::Declaration(_)))
+            .unwrap()
+            .declarations[0];
         assert_eq!(mir.type_conflicts_in(declaration).len(), 1);
     }
     assert_eq!(mir.type_conflicts.len(), 2, "{}", mir.dump());
@@ -266,7 +311,10 @@ fn retains_independent_conflicts_and_does_not_poison_intrinsic_types() {
     };
     assert_eq!(mir.types[good.index()].constructor, TypeConstructor::Int);
     mir.diagnostics.clear();
-    assert!(mir.seal().is_err(), "failed obligations survive removal of diagnostic text");
+    assert!(
+        mir.seal().is_err(),
+        "failed obligations survive removal of diagnostic text"
+    );
 }
 
 #[test]
@@ -282,7 +330,9 @@ fn unresolved_imports_are_inherited_without_new_type_diagnostics() {
     let diagnostics = mir.diagnostics.len();
     resolve(&mut mir);
     assert_eq!(references, mir.resolve_slots);
-    let TypeState::Known(bad) = symbol_type(&mir, "bad") else { panic!("{}", mir.dump()); };
+    let TypeState::Known(bad) = symbol_type(&mir, "bad") else {
+        panic!("{}", mir.dump());
+    };
     assert_eq!(mir.types[bad.index()].constructor, TypeConstructor::Int);
     assert!(
         mir.type_conflicts
@@ -305,13 +355,26 @@ fn unresolved_symbols_remain_authoritative_while_other_slots_are_solved() {
     resolve(&mut mir);
     assert_eq!(references, mir.resolve_slots);
     assert!(matches!(symbol_type(&mir, "missing"), TypeState::Known(_)));
-    assert!(matches!(symbol_type(&mir, "dependent"), TypeState::Known(_)));
-    assert!(mir.type_conflicts.iter().any(|failure|
-        matches!(failure.resolve_origin, Some(ResolveFailure::Reference(_)))));
-    let unresolved = mir.hir.iter().enumerate().find(|(_, node)|
-        matches!(&node.kind, HirKind::Variable(name) if name == "absent")).unwrap().0;
-    assert!(matches!(mir.ty_slots[unresolved], TypeState::Conflicted(_)),
-        "the unresolved expression keeps the inherited failure, while declarations keep their contracts");
+    assert!(matches!(
+        symbol_type(&mir, "dependent"),
+        TypeState::Known(_)
+    ));
+    assert!(
+        mir.type_conflicts
+            .iter()
+            .any(|failure| matches!(failure.resolve_origin, Some(ResolveFailure::Reference(_))))
+    );
+    let unresolved = mir
+        .hir
+        .iter()
+        .enumerate()
+        .find(|(_, node)| matches!(&node.kind, HirKind::Variable(name) if name == "absent"))
+        .unwrap()
+        .0;
+    assert!(
+        matches!(mir.ty_slots[unresolved], TypeState::Conflicted(_)),
+        "the unresolved expression keeps the inherited failure, while declarations keep their contracts"
+    );
     assert!(matches!(symbol_type(&mir, "good"), TypeState::Known(_)));
     assert_eq!(
         mir.diagnostics.len(),

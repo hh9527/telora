@@ -22,7 +22,11 @@ fn help_lists_the_public_command_surface() {
 #[test]
 fn run_and_check_select_logical_roots_from_cwd() {
     let cwd = fixture();
-    fs::write(cwd.join("src/lib.telora"), "export def output: String = \"42\";").unwrap();
+    fs::write(
+        cwd.join("src/lib.telora"),
+        "export def output: String = \"42\";",
+    )
+    .unwrap();
     fs::write(
         cwd.join("src/app.telora"),
         runtime_source("transform-import.telora"),
@@ -36,10 +40,7 @@ fn run_and_check_select_logical_roots_from_cwd() {
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "\"42\"");
-    let check = telora(&cwd)
-        .args(["check", "@src/lib"])
-        .output()
-        .unwrap();
+    let check = telora(&cwd).args(["check", "@src/lib"]).output().unwrap();
     assert!(
         check.status.success(),
         "{}",
@@ -69,7 +70,11 @@ fn public_cli_rejects_physical_paths_and_missing_manifests() {
 #[test]
 fn test_roots_are_selectable_but_not_importable() {
     let cwd = fixture();
-    fs::write(cwd.join("tests/codec.telora"), "export def output: Int = 7;").unwrap();
+    fs::write(
+        cwd.join("tests/codec.telora"),
+        "export def output: Int = 7;",
+    )
+    .unwrap();
     let run = telora(&cwd)
         .args(["check", "@test/codec"])
         .output()
@@ -84,9 +89,6 @@ fn test_roots_are_selectable_but_not_importable() {
         "import \"@test/codec\" as codec; export def output = codec;",
     )
     .unwrap();
-    let check = telora(&cwd)
-        .args(["check", "@src/lib"])
-        .output()
-        .unwrap();
+    let check = telora(&cwd).args(["check", "@src/lib"]).output().unwrap();
     assert!(!check.status.success());
 }

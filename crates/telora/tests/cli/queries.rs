@@ -196,26 +196,14 @@ fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
     );
 
     let found = telora(&cwd)
-        .args([
-            "query",
-            "at",
-            "query-builder/query-builder",
-            "-p",
-            "Plan",
-        ])
+        .args(["query", "at", "query-builder/query-builder", "-p", "Plan"])
         .output()
         .unwrap();
     assert!(found.status.success());
     assert_eq!(jsonl(&found.stdout).len(), 1);
 
     let no_match = telora(&cwd)
-        .args([
-            "query",
-            "at",
-            "query-builder/query-builder",
-            "-p",
-            "Absent",
-        ])
+        .args(["query", "at", "query-builder/query-builder", "-p", "Absent"])
         .output()
         .unwrap();
     assert!(no_match.status.success());
@@ -228,15 +216,7 @@ fn named_queries_emit_stable_jsonl() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "type Name = String; def hidden: Int = 1; def make: Fn(Int) -> Int = fn(value) { value }; export {Name, make};").unwrap();
     let show = telora(&cwd)
-        .args([
-            "query",
-            "at",
-            "@src/lib",
-            "-p",
-            "a",
-            "-k",
-            "type,def",
-        ])
+        .args(["query", "at", "@src/lib", "-p", "a", "-k", "type,def"])
         .output()
         .unwrap();
     assert!(
@@ -246,9 +226,11 @@ fn named_queries_emit_stable_jsonl() {
     );
     let records = jsonl(&show.stdout);
     assert_eq!(records.len(), 2);
-    assert!(records.iter().all(
-        |record| record["schema"] == "telora.query/v1" && record["module"] == "fixture/lib"
-    ));
+    assert!(
+        records.iter().all(
+            |record| record["schema"] == "telora.query/v1" && record["module"] == "fixture/lib"
+        )
+    );
     assert_eq!(records[0]["name"], "Name");
     assert_eq!(records[1]["name"], "make");
 
@@ -351,10 +333,7 @@ export {Entity, Request};"#,
             .iter()
             .find(|record| record["name"] == entity_name)
             .unwrap();
-        assert_eq!(
-            entity["type"],
-            "for(EntityId) TypeOf(Entity(EntityId))"
-        );
+        assert_eq!(entity["type"], "for(EntityId) TypeOf(Entity(EntityId))");
         let request = records
             .iter()
             .find(|record| record["name"] == "Request")

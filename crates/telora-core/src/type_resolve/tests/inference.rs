@@ -3,69 +3,149 @@ use super::*;
 #[test]
 fn explicit_type_application_reports_contract_arity_and_inherits_resolution_failures() {
     for (declaration, application, expected) in [
-        ("def identity: Fn(Int) -> Int = fn(value) {value};", "identity@[Int](1)", "monomorphic binding"),
-        ("def identity: for(T) Fn(T) -> T = fn(value) {value};", "identity@[Int, String](1)", "expects 1 arguments, found 2"),
-        ("def pair: for(A, B) Fn(A, B) -> A = fn(left, right) {left};", "pair@[Int](1, 2)", "expects 2 arguments, found 1"),
+        (
+            "def identity: Fn(Int) -> Int = fn(value) {value};",
+            "identity@[Int](1)",
+            "monomorphic binding",
+        ),
+        (
+            "def identity: for(T) Fn(T) -> T = fn(value) {value};",
+            "identity@[Int, String](1)",
+            "expects 1 arguments, found 2",
+        ),
+        (
+            "def pair: for(A, B) Fn(A, B) -> A = fn(left, right) {left};",
+            "pair@[Int](1, 2)",
+            "expects 2 arguments, found 1",
+        ),
     ] {
-        let source = format!("{declaration} export def bad: Int = {application}; export def independent: Int = 42;");
+        let source = format!(
+            "{declaration} export def bad: Int = {application}; export def independent: Int = 42;"
+        );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
-        assert!(mir.diagnostics.iter().any(|d| d.message.contains(expected)), "{}", mir.dump());
-        assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+        assert!(
+            mir.diagnostics.iter().any(|d| d.message.contains(expected)),
+            "{}",
+            mir.dump()
+        );
+        assert!(matches!(
+            symbol_type(&mir, "independent"),
+            TypeState::Known(_)
+        ));
         assert!(mir.seal().is_err());
     }
-    let mut mir = graph(&[("@src/main", "export def bad: Int = missing@[Int](1); export def independent: Int = 42;")]);
+    let mut mir = graph(&[(
+        "@src/main",
+        "export def bad: Int = missing@[Int](1); export def independent: Int = 42;",
+    )]);
     resolve(&mut mir);
     assert_eq!(mir.diagnostics.len(), 1, "{}", mir.dump());
     assert!(mir.diagnostics[0].message.contains("unknown binding"));
-    let application = mir.hir.iter().position(|node| matches!(node.kind, HirKind::TypeApply)).unwrap();
-    let TypeState::Conflicted(conflict) = mir.ty_slots[application] else { panic!("{}", mir.dump()) };
-    assert!(mir.type_conflicts[conflict.index()].resolve_origin.is_some());
-    assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+    let application = mir
+        .hir
+        .iter()
+        .position(|node| matches!(node.kind, HirKind::TypeApply))
+        .unwrap();
+    let TypeState::Conflicted(conflict) = mir.ty_slots[application] else {
+        panic!("{}", mir.dump())
+    };
+    assert!(
+        mir.type_conflicts[conflict.index()]
+            .resolve_origin
+            .is_some()
+    );
+    assert!(matches!(
+        symbol_type(&mir, "independent"),
+        TypeState::Known(_)
+    ));
     assert!(mir.seal().is_err());
 }
 
 #[test]
 fn bottom_tails_wait_for_explicit_return_evidence_from_generalized_constructors() {
-    let mut mir = graph(&[("@src/main", r#"
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
         export def answer: Bool = do {
         def choose = fn(flag) {
             if flag { return Ok("hi"); } else { return Err(2); }
         };
         choose(True) == Ok("hi") && choose(False) == Err(2)
         };
-    "#)]);
+    "#,
+    )]);
     resolve(&mut mir);
-    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
-    let TypeState::Known(signature) = symbol_type(&mir, "choose") else { panic!("closed signature") };
+    mir.seal()
+        .unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let TypeState::Known(signature) = symbol_type(&mir, "choose") else {
+        panic!("closed signature")
+    };
     let result = *mir.types[signature.index()].arguments.last().unwrap();
-    assert_eq!(mir.types[result.index()].constructor, TypeConstructor::Result);
+    assert_eq!(
+        mir.types[result.index()].constructor,
+        TypeConstructor::Result
+    );
     let arguments = &mir.types[result.index()].arguments;
-    assert_eq!(mir.types[arguments[0].index()].constructor, TypeConstructor::String);
-    assert_eq!(mir.types[arguments[1].index()].constructor, TypeConstructor::Int);
+    assert_eq!(
+        mir.types[arguments[0].index()].constructor,
+        TypeConstructor::String
+    );
+    assert_eq!(
+        mir.types[arguments[1].index()].constructor,
+        TypeConstructor::Int
+    );
 }
 
 #[test]
 fn let_else_checks_divergence_without_overwriting_the_inferred_branch_type() {
     for branch in ["0", "()", "if flag { 0 } else { fail!(\"stop\") }"] {
-        let source = format!("export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }}; export def independent: Int = 42;");
+        let source = format!(
+            "export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }}; export def independent: Int = 42;"
+        );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
-        assert!(mir.diagnostics.iter().any(|diagnostic| diagnostic.message == "let else branch must have type Never"), "{}", mir.dump());
-        let node = mir.hir.iter().find(|node| matches!(node.kind, HirKind::LetElse)).unwrap();
-        let branch = node.children.iter().find(|edge| edge.role == Role::Else).unwrap().node;
-        let TypeState::Known(ty) = mir.ty_slots[branch.index()] else { panic!("branch retains solved evidence") };
+        assert!(
+            mir.diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message == "let else branch must have type Never"),
+            "{}",
+            mir.dump()
+        );
+        let node = mir
+            .hir
+            .iter()
+            .find(|node| matches!(node.kind, HirKind::LetElse))
+            .unwrap();
+        let branch = node
+            .children
+            .iter()
+            .find(|edge| edge.role == Role::Else)
+            .unwrap()
+            .node;
+        let TypeState::Known(ty) = mir.ty_slots[branch.index()] else {
+            panic!("branch retains solved evidence")
+        };
         assert_ne!(mir.types[ty.index()].constructor, TypeConstructor::Never);
-        let TypeState::Known(ty) = symbol_type(&mir, "independent") else { panic!("independent type") };
+        let TypeState::Known(ty) = symbol_type(&mir, "independent") else {
+            panic!("independent type")
+        };
         assert_eq!(mir.types[ty.index()].constructor, TypeConstructor::Int);
         mir.diagnostics.clear();
         assert!(mir.seal().is_err(), "seal must enforce divergence itself");
     }
-    for branch in ["return 42;", "fail!(\"stop\")", "if flag { return 1; } else { return 2; }"] {
-        let source = format!("export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }};");
+    for branch in [
+        "return 42;",
+        "fail!(\"stop\")",
+        "if flag { return 1; } else { return 2; }",
+    ] {
+        let source = format!(
+            "export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }};"
+        );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
-        mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+        mir.seal()
+            .unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
     }
 }
 
@@ -78,15 +158,29 @@ fn nonreturning_array_items_supply_bottom_only_after_live_element_evidence() {
         ("if True { [stop()] } else { [1] }", TypeConstructor::Int),
         ("if True { [1] } else { [stop()] }", TypeConstructor::Int),
     ] {
-        let source = format!("def stop: Fn() -> Never = fn() {{ fail!(\"stop\") }}; export def checked: Bool = do {{ let answer = {expression}; True }};");
+        let source = format!(
+            "def stop: Fn() -> Never = fn() {{ fail!(\"stop\") }}; export def checked: Bool = do {{ let answer = {expression}; True }};"
+        );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
-        mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
-        let TypeState::Known(ty) = symbol_type(&mir, "answer") else { panic!("closed array") };
+        mir.seal()
+            .unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+        let TypeState::Known(ty) = symbol_type(&mir, "answer") else {
+            panic!("closed array")
+        };
         assert_eq!(mir.types[ty.index()].constructor, TypeConstructor::Array);
-        assert_eq!(mir.types[mir.types[ty.index()].arguments[0].index()].constructor, expected, "{source}");
-        for node in mir.hir.iter().enumerate().filter_map(|(index, node)| (node.module == ModuleId(0) && matches!(node.kind, HirKind::Call)).then_some(HirId(index as u32))) {
-            let TypeState::Known(ty) = mir.ty_slots[node.index()] else { continue; };
+        assert_eq!(
+            mir.types[mir.types[ty.index()].arguments[0].index()].constructor,
+            expected,
+            "{source}"
+        );
+        for node in mir.hir.iter().enumerate().filter_map(|(index, node)| {
+            (node.module == ModuleId(0) && matches!(node.kind, HirKind::Call))
+                .then_some(HirId(index as u32))
+        }) {
+            let TypeState::Known(ty) = mir.ty_slots[node.index()] else {
+                continue;
+            };
             assert_eq!(mir.types[ty.index()].constructor, TypeConstructor::Never);
         }
     }
@@ -94,52 +188,108 @@ fn nonreturning_array_items_supply_bottom_only_after_live_element_evidence() {
 
 #[test]
 fn propagation_keeps_never_tail_error_evidence_and_infers_operand_from_return_context() {
-    let mut mir = graph(&[("@src/main", "export def checked: Bool = do { def stopped = fn(value: Result(Int, String)) { value?; fail!(\"tail\") }; def contextual = fn(value) -> Option(Int) { Some(value? + 1) }; True };")]);
+    let mut mir = graph(&[(
+        "@src/main",
+        "export def checked: Bool = do { def stopped = fn(value: Result(Int, String)) { value?; fail!(\"tail\") }; def contextual = fn(value) -> Option(Int) { Some(value? + 1) }; True };",
+    )]);
     resolve(&mut mir);
-    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
-    let TypeState::Known(stopped) = symbol_type(&mir, "stopped") else { panic!("closed function") };
+    mir.seal()
+        .unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let TypeState::Known(stopped) = symbol_type(&mir, "stopped") else {
+        panic!("closed function")
+    };
     let result = *mir.types[stopped.index()].arguments.last().unwrap();
-    assert_eq!(mir.types[result.index()].constructor, TypeConstructor::Result);
-    assert_eq!(mir.types[mir.types[result.index()].arguments[0].index()].constructor, TypeConstructor::Never);
-    let TypeState::Known(contextual) = symbol_type(&mir, "contextual") else { panic!("closed function") };
+    assert_eq!(
+        mir.types[result.index()].constructor,
+        TypeConstructor::Result
+    );
+    assert_eq!(
+        mir.types[mir.types[result.index()].arguments[0].index()].constructor,
+        TypeConstructor::Never
+    );
+    let TypeState::Known(contextual) = symbol_type(&mir, "contextual") else {
+        panic!("closed function")
+    };
     let input = mir.types[contextual.index()].arguments[0];
-    assert_eq!(mir.types[input.index()].constructor, TypeConstructor::Option);
-    assert_eq!(mir.types[mir.types[input.index()].arguments[0].index()].constructor, TypeConstructor::Int);
+    assert_eq!(
+        mir.types[input.index()].constructor,
+        TypeConstructor::Option
+    );
+    assert_eq!(
+        mir.types[mir.types[input.index()].arguments[0].index()].constructor,
+        TypeConstructor::Int
+    );
 }
 
 #[test]
 fn empty_record_fields_receive_context_before_bottom_and_seal_checks_the_boundary() {
-    let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/issue-202/empty-record-result.telora")).unwrap();
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/issue-202/empty-record-result.telora"),
+    )
+    .unwrap();
     let mut mir = graph(&[("@src/main", &source)]);
     resolve(&mut mir);
     mir.seal().unwrap_or_else(|d| panic!("{d:?}"));
-    let arrays = mir.hir.iter().enumerate()
+    let arrays = mir
+        .hir
+        .iter()
+        .enumerate()
         .filter(|(_, n)| n.module == ModuleId(0) && matches!(n.kind, HirKind::Array))
-        .map(|(index, _)| index).collect::<Vec<_>>();
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
     assert_eq!(arrays.len(), 2);
-    let TypeState::Known(ty) = mir.ty_slots[arrays[0]] else { panic!("array type") };
-    assert!(matches!(mir.types[mir.types[ty.index()].arguments[0].index()].constructor, TypeConstructor::Nominal(_)));
+    let TypeState::Known(ty) = mir.ty_slots[arrays[0]] else {
+        panic!("array type")
+    };
+    assert!(matches!(
+        mir.types[mir.types[ty.index()].arguments[0].index()].constructor,
+        TypeConstructor::Nominal(_)
+    ));
     // A fully known but wrong field type must not reach codegen.
     mir.ty_slots[arrays[0]] = mir.ty_slots[arrays[1]];
-    let errors = mir.seal().err().expect("invalid field boundary must reject seal");
-    assert!(errors.iter().any(|d| d.message.contains("diagnostics")
-        && d.labels.iter().any(|label| label.location == mir.hir[arrays[0]].location)));
+    let errors = mir
+        .seal()
+        .err()
+        .expect("invalid field boundary must reject seal");
+    assert!(errors.iter().any(|d| {
+        d.message.contains("diagnostics")
+            && d.labels
+                .iter()
+                .any(|label| label.location == mir.hir[arrays[0]].location)
+    }));
 }
 
 #[test]
 fn branch_completion_does_not_unify_candidate_and_checked_identity() {
-    for expression in ["if True { candidate } else { good }", "match True { True => good, False => candidate }"] {
-        let source = format!("type Point = struct {{x: Int}}; def candidate: Unchecked(Point) = {{x: 0}}; def good: Point = {{x: 42}}; export def checked: Bool = do {{ let answer = {expression}; True }};");
+    for expression in [
+        "if True { candidate } else { good }",
+        "match True { True => good, False => candidate }",
+    ] {
+        let source = format!(
+            "type Point = struct {{x: Int}}; def candidate: Unchecked(Point) = {{x: 0}}; def good: Point = {{x: 42}}; export def checked: Bool = do {{ let answer = {expression}; True }};"
+        );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
         mir.seal().unwrap();
-        let TypeState::Known(candidate) = symbol_type(&mir, "candidate") else { panic!("candidate"); };
-        let TypeState::Known(answer) = symbol_type(&mir, "answer") else { panic!("answer"); };
-        assert_eq!(mir.types[candidate.index()].constructor, TypeConstructor::Unchecked);
+        let TypeState::Known(candidate) = symbol_type(&mir, "candidate") else {
+            panic!("candidate");
+        };
+        let TypeState::Known(answer) = symbol_type(&mir, "answer") else {
+            panic!("answer");
+        };
+        assert_eq!(
+            mir.types[candidate.index()].constructor,
+            TypeConstructor::Unchecked
+        );
         assert_eq!(mir.types[candidate.index()].arguments, [answer]);
-        assert_eq!(mir.value_adjustments.iter().flatten().count(), 1, "{}", mir.dump());
+        assert_eq!(
+            mir.value_adjustments.iter().flatten().count(),
+            1,
+            "{}",
+            mir.dump()
+        );
     }
 }
 
@@ -150,7 +300,10 @@ fn solves_function_calls_across_modules_in_one_arena() {
             "@src/main",
             "import \"./math\" { inc }; export def answer: Int = inc(41); export def pair: (Int, Int) = (answer, 2);",
         ),
-        ("@src/math", "export def inc: Fn(Int) -> Int = fn(x) { x + 1 };"),
+        (
+            "@src/math",
+            "export def inc: Fn(Int) -> Int = fn(x) { x + 1 };",
+        ),
     ]);
     let hir = mir.hir.as_ptr();
     let references = mir.resolve_slots.clone();

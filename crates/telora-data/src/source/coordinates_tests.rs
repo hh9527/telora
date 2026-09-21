@@ -1,10 +1,14 @@
-use super::coordinates::{SourceCoordinates, LineIndex};
+use super::coordinates::{LineIndex, SourceCoordinates};
 
 #[test]
 fn full_width_coordinates_round_trip_without_bit_partitions() {
     assert_eq!(core::mem::size_of::<SourceCoordinates>(), 20);
     for source in [1, 70_000, u32::MAX] {
-        for (start, end) in [(0, 0), (255u64 << 32, 256u64 << 32), (70_000u64 << 32, u64::MAX)] {
+        for (start, end) in [
+            (0, 0),
+            (255u64 << 32, 256u64 << 32),
+            (70_000u64 << 32, u64::MAX),
+        ] {
             let loc = SourceCoordinates::new(source, start, end).unwrap();
             assert_eq!((loc.source(), loc.start(), loc.end()), (source, start, end));
         }

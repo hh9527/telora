@@ -30,10 +30,13 @@ impl Solver<'_> {
     }
     pub(super) fn prepare_definitions(&mut self) {
         for symbol in &self.mir.symbols {
-            if symbol.kind != SymbolKind::Export { continue; }
+            if symbol.kind != SymbolKind::Export {
+                continue;
+            }
             for &declaration in &symbol.declarations {
                 if matches!(self.mir.hir[declaration.index()].kind, HirKind::DictField)
-                    && let Some(value) = self.child(declaration, Role::Value) {
+                    && let Some(value) = self.child(declaration, Role::Value)
+                {
                     // The synthetic module export record publishes a scheme;
                     // it is not a monomorphic use of the exported function.
                     self.scheme_references[value.index()] = true;
@@ -122,12 +125,18 @@ impl Solver<'_> {
             .modules
             .iter()
             .filter_map(|m| match m.state {
-                ModuleState::Source { body, .. } | ModuleState::Data { body } => Some((body, None, body)),
+                ModuleState::Source { body, .. } | ModuleState::Data { body } => {
+                    Some((body, None, body))
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();
         while let Some((node, inherited, boundary)) = pending.pop() {
-            let boundary = if matches!(self.mir.hir[node.index()].kind, HirKind::Closure) { node } else { boundary };
+            let boundary = if matches!(self.mir.hir[node.index()].kind, HirKind::Closure) {
+                node
+            } else {
+                boundary
+            };
             let target = if matches!(self.mir.hir[node.index()].kind, HirKind::Closure) {
                 self.child(node, Role::ReturnType).map(HirId::ty)
             } else {
@@ -151,27 +160,46 @@ impl Solver<'_> {
             self.same(node, self.mir.symbol_types[symbol.index()]);
             return;
         }
-        if self.generalizations.get(symbol.index()).is_some_and(Option::is_some) {
+        if self
+            .generalizations
+            .get(symbol.index())
+            .is_some_and(Option::is_some)
+        {
             self.tasks.push(Task::Reference { node, symbol });
             return;
         }
         if matches!(self.mir.hir[node.index()].kind, HirKind::PatternName(_))
             && self.mir.symbols[symbol.index()].kind != SymbolKind::Pattern
-            && self.term(self.mir.symbol_types[symbol.index()])
-                .is_some_and(|term| term.constructor == TypeConstructor::Function) {
-            self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
-                "constructor pattern requires a payload pattern".into());
+            && self
+                .term(self.mir.symbol_types[symbol.index()])
+                .is_some_and(|term| term.constructor == TypeConstructor::Function)
+        {
+            self.conflict(
+                node.ty(),
+                node.ty(),
+                Some(self.mir.hir[node.index()].location),
+                "constructor pattern requires a payload pattern".into(),
+            );
             return;
         }
         let parameters = self.mir.symbol_generics[symbol.index()].clone();
         let target = if !self.type_uses[node.index()]
-            && matches!(self.mir.symbols[symbol.index()].kind, SymbolKind::Declaration(BindingKind::Type)) {
+            && matches!(
+                self.mir.symbols[symbol.index()].kind,
+                SymbolKind::Declaration(BindingKind::Type)
+            ) {
             let source = self.fresh();
             self.tasks.push(Task::TypeFacet { node, source });
             source
-        } else { node.ty() };
+        } else {
+            node.ty()
+        };
         if parameters.is_empty() {
-            self.equal(target, self.mir.symbol_types[symbol.index()], Some(self.mir.hir[node.index()].location));
+            self.equal(
+                target,
+                self.mir.symbol_types[symbol.index()],
+                Some(self.mir.hir[node.index()].location),
+            );
             return;
         }
         let arguments = parameters
@@ -304,7 +332,7 @@ impl Solver<'_> {
         }
         let Some(term) = self.term(source).cloned() else {
             return Some(Task::Instantiate {
-            origin: self.constraint_origin,
+                origin: self.constraint_origin,
                 source,
                 target,
                 arguments,
@@ -336,13 +364,25 @@ impl Solver<'_> {
             };
             result.push(next);
         }
-        let provisional = matches!(term.constructor, TypeConstructor::Record(_) | TypeConstructor::ArrayLiteral | TypeConstructor::TupleLiteral);
+        let provisional = matches!(
+            term.constructor,
+            TypeConstructor::Record(_)
+                | TypeConstructor::ArrayLiteral
+                | TypeConstructor::TupleLiteral
+        );
         let constructor = term.constructor;
         let instance = self.structure(constructor.clone(), result);
         self.equal(target, instance, location);
         // An inferred record/array literal can later receive its declared
         // nominal/collection identity. Keep that evidence edge alive: copying
         // only its initial fields loses phantom generic arguments on refinement.
-        provisional.then_some(Task::RefineInstance { source, target, arguments, location, constructor, origin: self.constraint_origin })
+        provisional.then_some(Task::RefineInstance {
+            source,
+            target,
+            arguments,
+            location,
+            constructor,
+            origin: self.constraint_origin,
+        })
     }
 }

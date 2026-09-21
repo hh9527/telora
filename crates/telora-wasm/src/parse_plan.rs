@@ -44,12 +44,10 @@ pub(crate) fn regex_fallback(mir: &Mir, evidence: usize) -> bool {
     };
     implementation.requirements.iter().any(|(_, bound)| {
         let bound = &mir.types[bound.index()];
-        bound.constructor == T::Meta
-            && bound.arguments.len() == 1
-            && {
-                let raw = &mir.types[bound.arguments[0].index()];
-                raw.constructor == T::PropertyBound && raw.arguments == [property]
-            }
+        bound.constructor == T::Meta && bound.arguments.len() == 1 && {
+            let raw = &mir.types[bound.arguments[0].index()];
+            raw.constructor == T::PropertyBound && raw.arguments == [property]
+        }
     })
 }
 

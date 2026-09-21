@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use telora_core::{
-    DataLimits, Diagnostic, Loc, SourceDatabase, SystemDataFormat, TestContext,
-    data_plan,
+    DataLimits, Diagnostic, Loc, SourceDatabase, SystemDataFormat, TestContext, data_plan,
     test_plan::TestResult,
 };
 
@@ -82,7 +81,10 @@ impl Fixtures<'_, '_> {
                 .collect::<Vec<_>>()
                 .join("/")
         );
-        let id = self.sources.try_add_data(name, text.clone()).map_err(|e| error(e.to_string()))?;
+        let id = self
+            .sources
+            .try_add_data(name, text.clone())
+            .map_err(|e| error(e.to_string()))?;
         let format = match source.format {
             SystemDataFormat::Json => data_plan::Format::Json,
             SystemDataFormat::Yaml => data_plan::Format::Yaml,

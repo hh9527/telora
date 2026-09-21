@@ -1,6 +1,6 @@
-use crate::source::{Diagnostic, Location, SourceId};
 #[cfg(test)]
 use crate::source::SourceDatabase;
+use crate::source::{Diagnostic, Location, SourceId};
 #[cfg(test)]
 use alloc::collections::BTreeMap;
 use alloc::{string::String, vec::Vec};
@@ -83,7 +83,10 @@ pub struct ValidatedDataPlan {
     pub(crate) postordered: bool,
     nodes: Vec<DataPlanNode>,
     root: Option<DataNodeId>,
-    pub(crate) source_index: Option<(crate::source::SourceId, alloc::sync::Arc<crate::source::LineIndex>)>,
+    pub(crate) source_index: Option<(
+        crate::source::SourceId,
+        alloc::sync::Arc<crate::source::LineIndex>,
+    )>,
 }
 
 #[cfg(test)]
@@ -96,14 +99,20 @@ impl ValidatedDataPlan {
     /// Move reachable nodes into child-before-parent order, preserving shared
     /// aliases and all source locations. Payloads are moved, never deep-copied.
     pub fn into_postorder(self) -> Self {
-        if self.postordered { return self; }
-        let Some(root) = self.root else { return self; };
+        if self.postordered {
+            return self;
+        }
+        let Some(root) = self.root else {
+            return self;
+        };
         let mut mapped = vec![None; self.nodes.len()];
         let mut pending = self.nodes.into_iter().map(Some).collect::<Vec<_>>();
         let mut nodes = Vec::with_capacity(pending.len());
         let mut tasks = vec![(root, false)];
         while let Some((id, finish)) = tasks.pop() {
-            if mapped[id.index()].is_some() { continue; }
+            if mapped[id.index()].is_some() {
+                continue;
+            }
             if !finish {
                 tasks.push((id, true));
                 match &pending[id.index()].as_ref().expect("acyclic data").kind {
@@ -119,10 +128,14 @@ impl ValidatedDataPlan {
                 let mut node = pending[id.index()].take().expect("acyclic data");
                 match &mut node.kind {
                     DataPlanNodeKind::Array(items) => {
-                        for child in items { *child = mapped[child.index()].expect("completed child"); }
+                        for child in items {
+                            *child = mapped[child.index()].expect("completed child");
+                        }
                     }
                     DataPlanNodeKind::Object(fields) => {
-                        for field in fields.values_mut() { field.value = mapped[field.value.index()].expect("completed child"); }
+                        for field in fields.values_mut() {
+                            field.value = mapped[field.value.index()].expect("completed child");
+                        }
                     }
                     DataPlanNodeKind::Scalar(_) => {}
                 }
@@ -214,7 +227,10 @@ impl ValidatedDataPlan {
             Ok(())
         }
 
-        let mut stats = DataStats { file_size, ..DataStats::default() };
+        let mut stats = DataStats {
+            file_size,
+            ..DataStats::default()
+        };
         let mut pending = vec![(self.root(), 1usize)];
         while let Some((id, depth)) = pending.pop() {
             if depth > limits.depth {
@@ -386,8 +402,8 @@ impl fmt::Display for DataLimitError {
 mod lexer;
 mod parse;
 mod structure;
-mod validate;
 pub mod text;
+mod validate;
 pub use structure::{JsonKind, JsonNode, JsonPlan};
 
 #[cfg(test)]
@@ -408,7 +424,11 @@ pub(crate) fn parse_with_limits(
     // Admit before flattening an existing code-document/Rope source.
     if text.byte_len() > limits.file_size {
         return Err(vec![Diagnostic::error(
-            format!("data source exceeds file_size limit ({} > {})", text.byte_len(), limits.file_size),
+            format!(
+                "data source exceeds file_size limit ({} > {})",
+                text.byte_len(),
+                limits.file_size
+            ),
             Location::from_usize(source, 0..text.byte_len()).expect("source range"),
         )]);
     }
@@ -434,7 +454,8 @@ pub fn parse_structure(
     input: &str,
     limits: crate::DataLimits,
 ) -> Result<JsonStructure<'_>, Vec<Diagnostic>> {
-    let raw = parse::Parser::new(source, core::iter::once(input), limits).parse(input.len())
+    let raw = parse::Parser::new(source, core::iter::once(input), limits)
+        .parse(input.len())
         .map_err(|diagnostic| vec![diagnostic])?;
     Ok(JsonStructure { src: input, raw })
 }
@@ -457,14 +478,32 @@ impl JsonPlan {
         let mut plan = ValidatedDataPlan::default();
         for node in self.nodes {
             match node.kind {
-                JsonKind::String(span) => { plan.scalar(DataScalar::String(ctx.text(&span).into()), node.location); }
-                JsonKind::Int(n) => { plan.scalar(DataScalar::Int(n), node.location); }
-                JsonKind::Float(n) => { plan.scalar(DataScalar::Float(n), node.location); }
-                JsonKind::Bool(b) => { plan.scalar(DataScalar::Bool(b), node.location); }
-                JsonKind::Null => { plan.scalar(DataScalar::Null, node.location); }
-                JsonKind::Array(items) => { plan.array(items, node.location); }
+                JsonKind::String(span) => {
+                    plan.scalar(DataScalar::String(ctx.text(&span).into()), node.location);
+                }
+                JsonKind::Int(n) => {
+                    plan.scalar(DataScalar::Int(n), node.location);
+                }
+                JsonKind::Float(n) => {
+                    plan.scalar(DataScalar::Float(n), node.location);
+                }
+                JsonKind::Bool(b) => {
+                    plan.scalar(DataScalar::Bool(b), node.location);
+                }
+                JsonKind::Null => {
+                    plan.scalar(DataScalar::Null, node.location);
+                }
+                JsonKind::Array(items) => {
+                    plan.array(items, node.location);
+                }
                 JsonKind::Object(fields) => {
-                    plan.object(fields.into_iter().map(|(key, field)| (ctx.text(&key).into(), field)).collect(), node.location);
+                    plan.object(
+                        fields
+                            .into_iter()
+                            .map(|(key, field)| (ctx.text(&key).into(), field))
+                            .collect(),
+                        node.location,
+                    );
                 }
             }
         }

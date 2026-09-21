@@ -36,9 +36,12 @@ fn validate(modules: &[ModuleData], manifest: &Manifest) -> Result<(), String> {
         if module.source.id == 0 || !(1..=3).contains(&module.format) {
             return Err("Wasm: invalid bundled source or format".into());
         }
-        if manifest.sources.iter().chain(modules.iter().map(|item| &item.source))
-            .any(|source| source.id == module.source.id
-                && source.name != module.source.name) {
+        if manifest
+            .sources
+            .iter()
+            .chain(modules.iter().map(|item| &item.source))
+            .any(|source| source.id == module.source.id && source.name != module.source.name)
+        {
             return Err("Wasm: bundled source identity conflict".into());
         }
     }
@@ -54,13 +57,27 @@ pub fn build(
     let manifest = Manifest::read(bytes)?;
     let mut modules = Vec::with_capacity(plans.len());
     for (symbol, id, format) in plans {
-        let file = sources.files().find(|file| file.id() == *id)
+        let file = sources
+            .files()
+            .find(|file| file.id() == *id)
             .ok_or("Wasm: bundle source is not registered")?;
         modules.push(ModuleData {
             symbol: *symbol,
-            source: Source { id: file.id().get(), name: file.name.to_string(), lines: Vec::new() },
-            format: match format { Format::Json => 1, Format::Yaml => 2, Format::Toml => 3 },
-            text: file.text().contiguous().ok_or("Wasm: bundle input requires contiguous text")?.to_owned(),
+            source: Source {
+                id: file.id().get(),
+                name: file.name.to_string(),
+                lines: Vec::new(),
+            },
+            format: match format {
+                Format::Json => 1,
+                Format::Yaml => 2,
+                Format::Toml => 3,
+            },
+            text: file
+                .text()
+                .contiguous()
+                .ok_or("Wasm: bundle input requires contiguous text")?
+                .to_owned(),
         });
     }
     modules.sort_by_key(|module| module.symbol);
@@ -114,8 +131,10 @@ pub(crate) fn read(bytes: &[u8], manifest: &Manifest) -> Result<Vec<ModuleData>,
             if bundle.is_some() {
                 return Err("Wasm: duplicate data bundle".into());
             }
-            bundle =
-                Some(telora_data::json_serde::from_slice::<Bundle>(section.data()).map_err(|e| e.to_string())?);
+            bundle = Some(
+                telora_data::json_serde::from_slice::<Bundle>(section.data())
+                    .map_err(|e| e.to_string())?,
+            );
         }
     }
     let Some(bundle) = bundle else {

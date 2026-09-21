@@ -4,22 +4,22 @@ use telora_core::{
     static_sources, symbol_resolve, type_resolve,
 };
 
-mod data;
 mod content;
-mod source_ranges;
-mod host_memory;
-mod service_sources;
+mod data;
 mod debug;
 mod dynamic;
 mod equality;
 mod expression_locals;
 mod format;
+mod host_memory;
 mod interpreters;
 mod json;
 mod records;
 mod reflection;
 mod regex;
+mod service_sources;
 mod services;
+mod source_ranges;
 mod tail_calls;
 mod test_descriptions;
 mod transform_service;
@@ -73,18 +73,30 @@ fn source_indexes_preserve_original_eol_byte_ranges() {
         let id = database.add("test", &text);
         let file = database.get(id);
         let source = crate::artifact::Source::from_file(file);
-        assert!(serde_json::to_value(&source).unwrap().get("lines").is_none(),
-            "BOLs belong only to Guest storage, not the serialized manifest");
-        let loc = telora_core::Loc::from_usize(id, "中文".len()..text.find("next").unwrap() + 4).unwrap();
+        assert!(
+            serde_json::to_value(&source)
+                .unwrap()
+                .get("lines")
+                .is_none(),
+            "BOLs belong only to Guest storage, not the serialized manifest"
+        );
+        let loc =
+            telora_core::Loc::from_usize(id, "中文".len()..text.find("next").unwrap() + 4).unwrap();
         let packed = file.coordinates(loc);
         assert_eq!(source.position(packed.start()), (1, 7));
         assert_eq!(source.position(packed.end()), (2, 5));
         assert_eq!(file.byte_location(packed), Some(loc));
-        assert_eq!(source.lines, vec![
-            [0, "中文🙂x".len() as u32],
-            [text.find("next").unwrap() as u32, (text.len() - eol.len()) as u32],
-            [text.len() as u32, text.len() as u32],
-        ]);
+        assert_eq!(
+            source.lines,
+            vec![
+                [0, "中文🙂x".len() as u32],
+                [
+                    text.find("next").unwrap() as u32,
+                    (text.len() - eol.len()) as u32
+                ],
+                [text.len() as u32, text.len() as u32],
+            ]
+        );
     }
 }
 
@@ -95,23 +107,37 @@ fn diagnostics_are_equivalent_across_line_endings() {
     for eol in ["\n", "\r\n", "\r"] {
         let text = source.replace('\n', eol);
         let bytes = compile(&text).unwrap();
-        assert_eq!(bytes, compile(&text).unwrap(), "same input must remain deterministic");
+        assert_eq!(
+            bytes,
+            compile(&text).unwrap(),
+            "same input must remain deterministic"
+        );
         let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
         session.initialize().unwrap();
         assert!(session.call(&[]).is_err());
         let diagnostic = session.diagnostics().unwrap().remove(0);
         let rendered = diagnostic.render(&session.manifest);
-        if let Some(expected) = &expected { assert_eq!(&rendered, expected); }
-        else { expected = Some(rendered); }
+        if let Some(expected) = &expected {
+            assert_eq!(&rendered, expected);
+        } else {
+            expected = Some(rendered);
+        }
     }
 }
 
 #[test]
 fn multiline_string_values_ignore_source_eol() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/language/src/test/string-eol/values.telora")).unwrap()
-        .replace("\r\n", "\n");
-    for name in ["physical_newlines", "explicit_carriage_returns", "continuations"] {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/language/src/test/string-eol/values.telora"
+    ))
+    .unwrap()
+    .replace("\r\n", "\n");
+    for name in [
+        "physical_newlines",
+        "explicit_carriage_returns",
+        "continuations",
+    ] {
         for eol in ["\n", "\r\n", "\r"] {
             let bytes = compile_export(&source.replace('\n', eol), name).unwrap();
             let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
@@ -123,7 +149,10 @@ fn multiline_string_values_ignore_source_eol() {
 
 #[test]
 fn runtime_diagnostics_preserve_high_line_bits() {
-    let source = format!("{}export def answer: Fn() -> Never = fn() {{ fail!(\"high line\", 42) }};", "\n".repeat(70_000));
+    let source = format!(
+        "{}export def answer: Fn() -> Never = fn() {{ fail!(\"high line\", 42) }};",
+        "\n".repeat(70_000)
+    );
     let bytes = compile(&source).unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
@@ -131,8 +160,18 @@ fn runtime_diagnostics_preserve_high_line_bits() {
     let diagnostics = session.diagnostics().unwrap();
     let loc = telora_core::source::SourceCoordinates(diagnostics[0].origin);
     assert_eq!(loc.start() >> 32, 70_000);
-    let name = &session.manifest.sources.iter().find(|file| file.id == loc.source()).unwrap().name;
-    assert!(diagnostics[0].render(&session.manifest).starts_with(&format!("{name}:70001:")));
+    let name = &session
+        .manifest
+        .sources
+        .iter()
+        .find(|file| file.id == loc.source())
+        .unwrap()
+        .name;
+    assert!(
+        diagnostics[0]
+            .render(&session.manifest)
+            .starts_with(&format!("{name}:70001:"))
+    );
 }
 
 #[test]
@@ -365,8 +404,10 @@ fn diagnostic_scopes_capture_reports_and_resume_outer_execution() {
             .contains("uncaught afterwards")
     );
     assert_eq!(session.diagnostics().unwrap().len(), 1);
-    assert!(session.diagnostics().unwrap()[0].initialization.is_none(),
-        "initialization scope must end before entry execution");
+    assert!(
+        session.diagnostics().unwrap()[0].initialization.is_none(),
+        "initialization scope must end before entry execution"
+    );
     let bytes = compile_export(source, "exhausted").unwrap();
     let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
     session.initialize().unwrap();
@@ -517,10 +558,7 @@ fn checks_and_macros_record_one_failure_with_rule_and_subject_origins() {
         assert_eq!(ds[0].message, message);
         assert_eq!(ds[0].subjects.len(), 1);
         assert_ne!(ds[0].origin, ds[0].subjects[0]);
-        assert_eq!(
-            source_slice(source, ds[0].subjects[0]),
-            "-7"
-        );
+        assert_eq!(source_slice(source, ds[0].subjects[0]), "-7");
         assert!(session.call(&[]).is_err());
         assert_eq!(session.diagnostics().unwrap().len(), 1);
     }
@@ -589,16 +627,28 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
             .contains("not been injected")
     );
     let mut sources = mir.sources;
-    let source = sources.try_add_data("input.json", "{\"number\":42}".into()).unwrap();
+    let source = sources
+        .try_add_data("input.json", "{\"number\":42}".into())
+        .unwrap();
     let format = telora_core::data_plan::Format::Json;
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     let symbol = session.manifest.data_modules[0].symbol;
-    let value = missing.parse_data_source(sources.get(source), format).unwrap().unwrap();
+    let value = missing
+        .parse_data_source(sources.get(source), format)
+        .unwrap()
+        .unwrap();
     assert!(missing.inject_data_value(symbol, value).is_err());
     let mut conflicting = telora_core::SourceDatabase::default();
     let conflict = conflicting.add("different source using the same id", "");
-    assert!(session.parse_data_source(conflicting.get(conflict), format).is_err());
-    let value = session.parse_data_source(sources.get(source), format).unwrap().unwrap();
+    assert!(
+        session
+            .parse_data_source(conflicting.get(conflict), format)
+            .is_err()
+    );
+    let value = session
+        .parse_data_source(sources.get(source), format)
+        .unwrap()
+        .unwrap();
     session.inject_data_value(symbol, value).unwrap();
     assert!(session.inject_data_value(symbol, value).is_err());
     session.initialize().unwrap();
@@ -606,9 +656,7 @@ fn data_injection_precedes_property_initialization_and_is_single_use() {
         .instance
         .get_typed_func::<i32, i32>(&session.store, "telora_source_name")
         .unwrap();
-    for (id, expected) in [
-        (source.get(), "input.json"),
-    ] {
+    for (id, expected) in [(source.get(), "input.json")] {
         let span = lookup.call(&mut session.store, id as i32).unwrap() as usize;
         let output = session.output();
         let pointer = u64::from(output.word(span as u64).unwrap());
@@ -759,12 +807,19 @@ fn sealed_export_runs_without_mir_or_host_imports() {
         .get_typed_func::<(), i32>(&store, "telora_entry")
         .unwrap();
     let pointer = entry.call(&mut store, ()).unwrap() as usize;
-    let pointer = instance.get_typed_func::<u32, u32>(&store, "telora_heap_address").unwrap()
-        .call(&mut store, pointer as u32).unwrap() as usize;
+    let pointer = instance
+        .get_typed_func::<u32, u32>(&store, "telora_heap_address")
+        .unwrap()
+        .call(&mut store, pointer as u32)
+        .unwrap() as usize;
     let memory = instance.get_memory(&store, "memory").unwrap();
     let bytes = memory.data(&store);
     assert_eq!(
-        i64::from_le_bytes(bytes[pointer + crate::abi::DATA as usize..pointer + crate::abi::DATA as usize + 8].try_into().unwrap()),
+        i64::from_le_bytes(
+            bytes[pointer + crate::abi::DATA as usize..pointer + crate::abi::DATA as usize + 8]
+                .try_into()
+                .unwrap()
+        ),
         42
     );
 }
@@ -842,8 +897,14 @@ fn typed_input_and_post_initialization_calls_keep_main_ids() {
         );
     }
     let after = session.memory.data(&session.store);
-    assert!(session.output().bytes(allocation as u64, marker.len() as u64).unwrap() == marker,
-        "logical allocation must survive arena relocation");
+    assert!(
+        session
+            .output()
+            .bytes(allocation as u64, marker.len() as u64)
+            .unwrap()
+            == marker,
+        "logical allocation must survive arena relocation"
+    );
     for table in 0..crate::abi::TABLE_COUNT as usize {
         let offset = table * crate::abi::TABLE_BYTES as usize + 12;
         assert_eq!(
@@ -890,12 +951,19 @@ fn language_functions_and_control_flow() {
         let pointer = entry.call(&mut store, ()).unwrap() as usize;
         assert_ne!(pointer, 0, "{source}");
         assert_eq!(entry.call(&mut store, ()).unwrap() as usize, pointer);
-        let pointer = instance.get_typed_func::<u32, u32>(&store, "telora_heap_address").unwrap()
-            .call(&mut store, pointer as u32).unwrap() as usize;
+        let pointer = instance
+            .get_typed_func::<u32, u32>(&store, "telora_heap_address")
+            .unwrap()
+            .call(&mut store, pointer as u32)
+            .unwrap() as usize;
         let memory = instance.get_memory(&store, "memory").unwrap();
         let bytes = memory.data(&store);
         assert_eq!(
-            i64::from_le_bytes(bytes[pointer + crate::abi::DATA as usize..pointer + crate::abi::DATA as usize + 8].try_into().unwrap()),
+            i64::from_le_bytes(
+                bytes[pointer + crate::abi::DATA as usize..pointer + crate::abi::DATA as usize + 8]
+                    .try_into()
+                    .unwrap()
+            ),
             42,
             "{source}"
         );

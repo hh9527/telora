@@ -110,7 +110,9 @@ fn variants_materialize_at_use_and_value_forwarding_preserves_origins() {
                     .find(|source| source.name.as_ref() == "origins/main")
                     .unwrap();
                 let location = source
-                    .byte_location(telora_core::source::SourceCoordinates(diagnostics[0].origin))
+                    .byte_location(telora_core::source::SourceCoordinates(
+                        diagnostics[0].origin,
+                    ))
                     .unwrap();
                 assert!(
                     source

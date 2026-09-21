@@ -12,7 +12,10 @@ fn newtype_projection_uses_its_own_table_and_preserves_payload_origin() {
     session.initialize().unwrap();
     let result = session.call(&[]).unwrap();
     assert_eq!(result[0], serde_json::json!(vec![true; 6]));
-    assert_eq!(diagnostic_point(&result[1]), point(source, source.find("42;").unwrap()));
+    assert_eq!(
+        diagnostic_point(&result[1]),
+        point(source, source.find("42;").unwrap())
+    );
 }
 
 #[test]

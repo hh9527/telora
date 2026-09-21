@@ -1,8 +1,8 @@
 //! First MIR pass: inventory identities, reachable source syntax and import edges.
 //! The source reader supplies text only, never resolved symbols or types.
-use crate::syntax::kinds::BindingKind;
-use crate::mir::*;
 use crate::hir_lower;
+use crate::mir::*;
+use crate::syntax::kinds::BindingKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug)]
@@ -43,12 +43,16 @@ pub fn resolve_with_requests_cancellable(
     mut request_name: impl FnMut(&str, &str) -> Option<String>,
     cancelled: &mut dyn FnMut() -> bool,
 ) -> Option<Mir> {
-    if cancelled() { return None; }
+    if cancelled() {
+        return None;
+    }
     inventory.sort_by(|a, b| a.name.cmp(&b.name));
     let mut mir = Mir::default();
     let mut names = BTreeMap::<String, Vec<ModuleId>>::new();
     for spec in &inventory {
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         let id = ModuleId(mir.modules.len().try_into().expect("module capacity"));
         names.entry(spec.name.clone()).or_default().push(id);
         mir.modules.push(Module {
@@ -68,9 +72,13 @@ pub fn resolve_with_requests_cancellable(
             mir.diagnostics.push(crate::source::Diagnostic {
                 severity: crate::source::Severity::Error,
                 message: match root {
-                    ModuleTarget::Unresolved(name) if name.starts_with("std/") => format!("unknown built-in module {name:?}"),
+                    ModuleTarget::Unresolved(name) if name.starts_with("std/") => {
+                        format!("unknown built-in module {name:?}")
+                    }
                     ModuleTarget::Unresolved(name) => format!("module {name:?} not found"),
-                    ModuleTarget::Conflicted(_) => format!("module root has multiple inventory entries: {root:?}"),
+                    ModuleTarget::Conflicted(_) => {
+                        format!("module root has multiple inventory entries: {root:?}")
+                    }
                     ModuleTarget::Bound(_) => unreachable!(),
                 },
                 labels: vec![],
@@ -80,7 +88,9 @@ pub fn resolve_with_requests_cancellable(
     }
     let mut pending = mir.roots.iter().filter_map(bound).collect::<BTreeSet<_>>();
     while let Some(id) = pending.pop_first() {
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         if !matches!(mir.modules[id.index()].state, ModuleState::Unloaded) {
             continue;
         }
@@ -115,19 +125,33 @@ pub fn resolve_with_requests_cancellable(
                 let message = format!("cannot register module {}: {error}", spec.name);
                 mir.diagnostics.push(crate::source::Diagnostic {
                     severity: crate::source::Severity::Error,
-                    message: message.clone(), labels: vec![], notes: vec![],
+                    message: message.clone(),
+                    labels: vec![],
+                    notes: vec![],
                 });
                 mir.modules[id.index()].state = ModuleState::Unavailable(message);
                 continue;
             }
         };
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         let parsed = crate::syntax::telora::parse_document_cancellable(
-            source, mir.sources.get(source).text().document().expect("code source"), cancelled,
+            source,
+            mir.sources
+                .get(source)
+                .text()
+                .document()
+                .expect("code source"),
+            cancelled,
         )?;
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         let lowered = hir_lower::lower_module(&mut mir, id, source, &parsed.syntax);
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         let syntax_valid = parsed.diagnostics.is_empty() && lowered.diagnostics.is_empty();
         mir.diagnostics.extend(parsed.diagnostics);
         mir.diagnostics.extend(lowered.diagnostics);
@@ -206,26 +230,48 @@ pub fn validate_source_modules(mir: &mut Mir, trusted: impl Fn(&str) -> bool) {
     use crate::syntax::telora::ast::{AstNode, Expr, Program};
 
     for module in &mir.modules {
-        let ModuleState::Source { cst, body, syntax_valid, .. } = &module.state else { continue };
+        let ModuleState::Source {
+            cst,
+            body,
+            syntax_valid,
+            ..
+        } = &module.state
+        else {
+            continue;
+        };
         let location = mir.hir[body.index()].location;
         let authored_result = Program::root(cst).body().is_some_and(|body| {
-            body.syntax().children().any(|child| Expr::cast(cst, child.node_ref()).is_some())
+            body.syntax()
+                .children()
+                .any(|child| Expr::cast(cst, child.node_ref()).is_some())
         });
         let mut has_exports = false;
         for edge in &mir.hir[body.index()].children {
-            if edge.role != Role::Binding { continue; }
+            if edge.role != Role::Binding {
+                continue;
+            }
             let node = &mir.hir[edge.node.index()];
-            let HirKind::Binding { kind, .. } = &node.kind else { continue };
+            let HirKind::Binding { kind, .. } = &node.kind else {
+                continue;
+            };
             let hidden = node.children.iter().any(|edge| edge.role == Role::Name
                 && matches!(&mir.hir[edge.node.index()].kind, HirKind::Name(name) if name.starts_with('\0')));
             let message = match kind {
-                BindingKind::Export => { has_exports = true; None }
-                BindingKind::Let if !hidden => Some("module-level let is not supported; use def instead"),
-                BindingKind::Native | BindingKind::NativeType if !trusted(&module.name) => Some("native declarations are only allowed in built-in std modules"),
+                BindingKind::Export => {
+                    has_exports = true;
+                    None
+                }
+                BindingKind::Let if !hidden => {
+                    Some("module-level let is not supported; use def instead")
+                }
+                BindingKind::Native | BindingKind::NativeType if !trusted(&module.name) => {
+                    Some("native declarations are only allowed in built-in std modules")
+                }
                 _ => None,
             };
             if let Some(message) = message {
-                mir.diagnostics.push(Diagnostic::error(message, node.location));
+                mir.diagnostics
+                    .push(Diagnostic::error(message, node.location));
             }
         }
         // Admission checks the authored module shape only after syntax is valid.
@@ -237,7 +283,10 @@ pub fn validate_source_modules(mir: &mut Mir, trusted: impl Fn(&str) -> bool) {
         // Recovery may have dropped an export declaration. Preserve the
         // parser's outcome rather than diagnosing absence from partial HIR.
         if *syntax_valid && !has_exports {
-            mir.diagnostics.push(Diagnostic::error("source module requires at least one explicit export", location));
+            mir.diagnostics.push(Diagnostic::error(
+                "source module requires at least one explicit export",
+                location,
+            ));
         }
     }
 }
@@ -287,8 +336,10 @@ mod tests {
         let mut reads = 0;
         let mir = super::resolve_with_requests_cancellable(
             vec![super::ModuleSpec {
-                native: None, name: "app/main".into(),
-                kind: crate::mir::ModuleKind::Source, implicit_imports: vec![],
+                native: None,
+                name: "app/main".into(),
+                kind: crate::mir::ModuleKind::Source,
+                implicit_imports: vec![],
             }],
             &["app/main".into()],
             |_, _| {
@@ -307,10 +358,18 @@ mod tests {
     fn cname_inventory_needs_no_filesystem_and_ids_ignore_inventory_order() {
         use super::*;
         let build = |reverse: bool| {
-            let mut inventory = ["app/bin/main", "dep/lib", "dep/helper"].into_iter().map(|name| ModuleSpec {
-                native: None, name: name.into(), kind: ModuleKind::Source, implicit_imports: vec![],
-            }).collect::<Vec<_>>();
-            if reverse { inventory.reverse(); }
+            let mut inventory = ["app/bin/main", "dep/lib", "dep/helper"]
+                .into_iter()
+                .map(|name| ModuleSpec {
+                    native: None,
+                    name: name.into(),
+                    kind: ModuleKind::Source,
+                    implicit_imports: vec![],
+                })
+                .collect::<Vec<_>>();
+            if reverse {
+                inventory.reverse();
+            }
             let mut reads = Vec::new();
             let mir = resolve(inventory, &["app/bin/main".into()], |_, cname| {
                 reads.push(cname.to_owned());
@@ -319,23 +378,41 @@ mod tests {
                     "dep/lib" => "import \"./helper\" { value }; export { value };",
                     "dep/helper" => "export def value = 42;",
                     _ => panic!("unexpected source request: {cname}"),
-                }.into())
+                }
+                .into())
             });
             assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
             assert_eq!(reads, ["app/bin/main", "dep/lib", "dep/helper"]);
-            assert!(mir.modules.iter().all(|module| module.imports.iter().all(|edge| matches!(mir.imports[*edge].target, ModuleTarget::Bound(_)))));
-            mir.modules.into_iter().map(|module| module.name).collect::<Vec<_>>()
+            assert!(mir.modules.iter().all(|module| {
+                module
+                    .imports
+                    .iter()
+                    .all(|edge| matches!(mir.imports[*edge].target, ModuleTarget::Bound(_)))
+            }));
+            mir.modules
+                .into_iter()
+                .map(|module| module.name)
+                .collect::<Vec<_>>()
         };
         assert_eq!(build(false), build(true));
     }
 
     #[test]
     fn source_line_count_is_not_limited_to_u16() {
-        let mir = super::resolve(vec![super::ModuleSpec {
-            native: None, name: "@src/main".into(),
-            kind: super::ModuleKind::Source, implicit_imports: vec![],
-        }], &["@src/main".into()], |_, _| Ok("\n".repeat(65536)));
-        assert!(!matches!(mir.modules[0].state, super::ModuleState::Unavailable(_)));
+        let mir = super::resolve(
+            vec![super::ModuleSpec {
+                native: None,
+                name: "@src/main".into(),
+                kind: super::ModuleKind::Source,
+                implicit_imports: vec![],
+            }],
+            &["@src/main".into()],
+            |_, _| Ok("\n".repeat(65536)),
+        );
+        assert!(!matches!(
+            mir.modules[0].state,
+            super::ModuleState::Unavailable(_)
+        ));
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     }
 
@@ -344,26 +421,64 @@ mod tests {
     #[test]
     fn workspace_admission_retains_graph_and_checks_declarations() {
         for (source, expected) in [
-            ("def value = 42; value", "top-level expressions are not supported"),
-            ("let value = 42; export { value };", "module-level let is not supported"),
-            ("native value: Fn() -> Int; export { value };", "only allowed in built-in std modules"),
-            ("native type Value @1; export { Value };", "only allowed in built-in std modules"),
+            (
+                "def value = 42; value",
+                "top-level expressions are not supported",
+            ),
+            (
+                "let value = 42; export { value };",
+                "module-level let is not supported",
+            ),
+            (
+                "native value: Fn() -> Int; export { value };",
+                "only allowed in built-in std modules",
+            ),
+            (
+                "native type Value @1; export { Value };",
+                "only allowed in built-in std modules",
+            ),
             ("def value = 42;", "requires at least one explicit export"),
         ] {
-            let mut mir = resolve(vec![ModuleSpec { native: None, name: "@src/main".into(), kind: ModuleKind::Source, implicit_imports: vec![] }], &["@src/main".into()], |_, _| Ok(source.into()));
+            let mut mir = resolve(
+                vec![ModuleSpec {
+                    native: None,
+                    name: "@src/main".into(),
+                    kind: ModuleKind::Source,
+                    implicit_imports: vec![],
+                }],
+                &["@src/main".into()],
+                |_, _| Ok(source.into()),
+            );
             assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
             let nodes = mir.hir.len();
             validate_source_modules(&mut mir, |_| false);
-            assert!(mir.diagnostics.iter().any(|d| d.message.contains(expected)), "{:?}", mir.diagnostics);
+            assert!(
+                mir.diagnostics.iter().any(|d| d.message.contains(expected)),
+                "{:?}",
+                mir.diagnostics
+            );
             crate::symbol_resolve::resolve(&mut mir);
             crate::type_resolve::resolve(&mut mir);
             assert_eq!(mir.hir.len(), nodes);
         }
-        let mut mir = resolve(vec![ModuleSpec { native: None, name: "std/custom".into(), kind: ModuleKind::Source, implicit_imports: vec![] }], &["std/custom".into()], |_, _| Ok("native value: Fn() -> Int; export { value };".into()));
+        let mut mir = resolve(
+            vec![ModuleSpec {
+                native: None,
+                name: "std/custom".into(),
+                kind: ModuleKind::Source,
+                implicit_imports: vec![],
+            }],
+            &["std/custom".into()],
+            |_, _| Ok("native value: Fn() -> Int; export { value };".into()),
+        );
         validate_source_modules(&mut mir, |_| true);
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
         validate_source_modules(&mut mir, |_| false);
-        assert!(mir.diagnostics.iter().any(|d| d.message.contains("only allowed in built-in std modules")));
+        assert!(
+            mir.diagnostics
+                .iter()
+                .any(|d| d.message.contains("only allowed in built-in std modules"))
+        );
     }
 
     #[test]

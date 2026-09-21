@@ -80,6 +80,10 @@ export def wrong: Fn(Int) -> Value = fn(value) { Value.Int(value) };"#,
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["schema"], "telora.error/v1");
     assert_eq!(records[0]["record"], "error");
-    assert!(records[0]["message"].as_str().unwrap().contains("expected Value"));
-
+    assert!(
+        records[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("expected Value")
+    );
 }

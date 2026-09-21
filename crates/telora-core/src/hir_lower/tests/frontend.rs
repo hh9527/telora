@@ -3,7 +3,14 @@ use super::*;
 fn parse(text: &str) -> (Mir, HirId, CstData) {
     let mut mir = Mir::default();
     let source = mir.sources.add("test", text);
-    let parsed = crate::syntax::telora::parse_document(source, mir.sources.get(source).text().document().expect("code source"));
+    let parsed = crate::syntax::telora::parse_document(
+        source,
+        mir.sources
+            .get(source)
+            .text()
+            .document()
+            .expect("code source"),
+    );
     let lowered = lower_module(&mut mir, ModuleId(0), source, &parsed.syntax);
     mir.diagnostics = parsed.diagnostics;
     mir.diagnostics.extend(lowered.diagnostics);

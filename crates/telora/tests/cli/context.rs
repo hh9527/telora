@@ -11,7 +11,14 @@ fn run_selector_uses_the_manifest_discovery_start() {
     .unwrap();
     refresh_fixture_workspace(&other);
     let run = telora(&cwd)
-        .args(["-C", other.to_str().unwrap(), "serve", "@src/app", "--bind", "stdio+jsonl://"])
+        .args([
+            "-C",
+            other.to_str().unwrap(),
+            "serve",
+            "@src/app",
+            "--bind",
+            "stdio+jsonl://",
+        ])
         .output()
         .unwrap();
     assert!(

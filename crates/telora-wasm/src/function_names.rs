@@ -52,9 +52,7 @@ impl<'a> FunctionNames<'a> {
             Special::Equal(ty) => format!("equal[{}#{}]", query.type_name(ty), ty.index()),
             Special::Parse(ty) => format!("parse[{}#{}]", query.type_name(ty), ty.index()),
             Special::Json(ty) => format!("json[{}#{}]", query.type_name(ty), ty.index()),
-            Special::Encode(a, b)
-            | Special::Decode(a, b)
-            | Special::DecodeVariant(a, b, _) => {
+            Special::Encode(a, b) | Special::Decode(a, b) | Special::DecodeVariant(a, b, _) => {
                 let kind = match key.special {
                     Special::Encode(..) => "encode".to_owned(),
                     Special::Decode(..) => "decode".to_owned(),
@@ -100,8 +98,14 @@ impl<'a> FunctionNames<'a> {
             owner.unwrap_or("<anonymous>"),
             key.node.index(),
             node.location.source.get(),
-            mir.sources.get(node.location.source).coordinates(node.location).start(),
-            mir.sources.get(node.location.source).coordinates(node.location).end()
+            mir.sources
+                .get(node.location.source)
+                .coordinates(node.location)
+                .start(),
+            mir.sources
+                .get(node.location.source)
+                .coordinates(node.location)
+                .end()
         )
     }
 }

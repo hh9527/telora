@@ -12,18 +12,29 @@ fn live_slices_trim_both_ends_keep_gaps_and_share_after_repeated_collection() {
     let distinct = source.insert(&bytes[10..40]).unwrap();
     let mut values = [narrow, left, right, distinct];
     for _ in 0..3 {
-        let expected: vec::Vec<_> = values.iter().map(|v| source.view(v).unwrap().to_vec()).collect();
+        let expected: vec::Vec<_> = values
+            .iter()
+            .map(|v| source.view(v).unwrap().to_vec())
+            .collect();
         let mut live = LiveRanges::default();
-        for value in &values { live.observe(&source, value).unwrap(); }
+        for value in &values {
+            live.observe(&source, value).unwrap();
+        }
         let (next, relocation) = live.copy(&source).unwrap();
-        for value in &mut values { *value = relocation.apply(*value).unwrap(); }
+        for value in &mut values {
+            *value = relocation.apply(*value).unwrap();
+        }
         assert_eq!(next.len(), 140 + 30); // Includes the gap, excludes dead head/tail.
         for (value, expected) in values.iter().zip(expected) {
             assert_eq!(next.view(value).unwrap(), expected);
         }
-        let raws: vec::Vec<_> = values.iter().map(|v| match v {
-            Bytes::Slice(s) => s.raw_start, _ => panic!("non-inline fixture"),
-        }).collect();
+        let raws: vec::Vec<_> = values
+            .iter()
+            .map(|v| match v {
+                Bytes::Slice(s) => s.raw_start,
+                _ => panic!("non-inline fixture"),
+            })
+            .collect();
         assert_eq!(raws[0], raws[1]);
         assert_eq!(raws[1], raws[2]);
         assert_ne!(raws[2], raws[3]);
@@ -35,7 +46,10 @@ fn live_slices_trim_both_ends_keep_gaps_and_share_after_repeated_collection() {
 fn short_views_release_large_allocations_and_content_resets() {
     let mut source = Content::default();
     for size in [0, 15] {
-        assert!(matches!(source.insert(&vec![1; size]).unwrap(), Bytes::Inline { .. }));
+        assert!(matches!(
+            source.insert(&vec![1; size]).unwrap(),
+            Bytes::Inline { .. }
+        ));
         assert_eq!(source.len(), 0);
     }
     let raw = source.insert(&vec![42; 2000]).unwrap();
@@ -44,7 +58,10 @@ fn short_views_release_large_allocations_and_content_resets() {
     live.observe(&source, &short).unwrap();
     let (mut next, relocation) = live.copy(&source).unwrap();
     assert!(next.is_empty());
-    assert_eq!(next.view(&relocation.apply(short).unwrap()).unwrap(), [42; 15]);
+    assert_eq!(
+        next.view(&relocation.apply(short).unwrap()).unwrap(),
+        [42; 15]
+    );
     let sixteen = next.insert(&[3; 16]).unwrap();
     assert!(matches!(sixteen, Bytes::Slice(_)));
     next.seal_work().unwrap();

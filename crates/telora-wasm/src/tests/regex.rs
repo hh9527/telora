@@ -40,7 +40,9 @@ fn string_parse_constructs_nested_and_recursive_sealed_records() {
 
 #[test]
 fn unrelated_records_do_not_expand_static_regex_parsers() {
-    let source = |noise: &str| format!(r#"
+    let source = |noise: &str| {
+        format!(
+            r#"
         import "std/regex" as regex;
         import "std/string" as string;
         @regex.parse_by(regex.compile("^(?P<value>.+)$"))
@@ -52,19 +54,34 @@ fn unrelated_records_do_not_expand_static_regex_parsers() {
                 Err(_) => False,
             }}
         }};
-    "#);
+    "#
+        )
+    };
     let analyze = |source: &str| {
         let mir = graph(source);
-        let export = mir.exports.iter().flatten().copied()
-            .find(|id| mir.symbols[id.index()].name == "answer").unwrap();
+        let export = mir
+            .exports
+            .iter()
+            .flatten()
+            .copied()
+            .find(|id| mir.symbols[id.index()].name == "answer")
+            .unwrap();
         let executable = mir.seal_export(export).unwrap();
         let plan = crate::plan::Plan::new(&executable).unwrap();
         let bytes = crate::compile_executable(&executable).unwrap();
-        let locals = wasmparser::Parser::new(0).parse_all(&bytes).filter_map(|payload| match payload.unwrap() {
-            wasmparser::Payload::CodeSectionEntry(body) => Some(body.get_locals_reader().unwrap()
-                .into_iter().map(|local| local.unwrap().0).sum::<u32>()),
-            _ => None,
-        }).collect::<Vec<_>>();
+        let locals = wasmparser::Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|payload| match payload.unwrap() {
+                wasmparser::Payload::CodeSectionEntry(body) => Some(
+                    body.get_locals_reader()
+                        .unwrap()
+                        .into_iter()
+                        .map(|local| local.unwrap().0)
+                        .sum::<u32>(),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         (plan.parsers.len(), locals)
     };
     let baseline = analyze(&source(""));

@@ -10,13 +10,26 @@ pub(super) fn validate(mir: &Mir, symbol: SymbolId) -> Result<(), String> {
     }
     let message = "eval export: expected Value (std/value.Value)";
     let (module, name) = ("std/value", "Value");
-    let expected = mir.modules.iter().position(|m| m.name == module)
-        .and_then(|module| mir.exports[module].iter().find(|id| mir.symbols[id.index()].name == name))
-        .and_then(|id| match mir.ty_slots[mir.symbol_types[id.index()].index()] {
-            TypeState::Known(meta) if mir.types[meta.index()].constructor == TypeConstructor::Meta =>
-                mir.types[meta.index()].arguments.first().copied(),
-            _ => None,
-        }).ok_or(message)?;
+    let expected = mir
+        .modules
+        .iter()
+        .position(|m| m.name == module)
+        .and_then(|module| {
+            mir.exports[module]
+                .iter()
+                .find(|id| mir.symbols[id.index()].name == name)
+        })
+        .and_then(
+            |id| match mir.ty_slots[mir.symbol_types[id.index()].index()] {
+                TypeState::Known(meta)
+                    if mir.types[meta.index()].constructor == TypeConstructor::Meta =>
+                {
+                    mir.types[meta.index()].arguments.first().copied()
+                }
+                _ => None,
+            },
+        )
+        .ok_or(message)?;
     if mir.ty_slots[mir.symbol_types[target.index()].index()] != TypeState::Known(expected) {
         return Err(message.into());
     }

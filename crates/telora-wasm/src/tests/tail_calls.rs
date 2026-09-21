@@ -18,7 +18,10 @@ fn tail_calls_bound_stack_and_preserve_pending_work_and_failures() {
         serde_json::json!([42, 42, 42, 42, 42, 42, 42, true, 40])
     );
     let usage = session.usage();
-    eprintln!("tail-call fixture fuel: {}", usage.fuel_budget - usage.fuel_remaining);
+    eprintln!(
+        "tail-call fixture fuel: {}",
+        usage.fuel_budget - usage.fuel_remaining
+    );
     let events = session.debug_events().unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].message.as_deref(), Some("after tail recursion"));

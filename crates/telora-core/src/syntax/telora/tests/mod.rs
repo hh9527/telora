@@ -1,6 +1,6 @@
+use super::Token;
 use super::*;
 use ast::{AstNode, Binding, ExpectedSyntax, Program, StringLiteral};
-use super::Token;
 use cst::{Node, NodeRef};
 
 fn reconstruct(cst: &CstData, source: &str, node: NodeRef, output: &mut String) {

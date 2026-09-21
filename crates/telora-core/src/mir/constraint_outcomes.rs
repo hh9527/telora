@@ -8,11 +8,20 @@ impl Mir {
         let mut pending = vec![node];
         let mut nodes = std::collections::BTreeSet::new();
         while let Some(node) = pending.pop() {
-            if !nodes.insert(node) { continue; }
+            if !nodes.insert(node) {
+                continue;
+            }
             pending.extend(self.hir[node.index()].children.iter().map(|edge| edge.node));
         }
-        self.type_conflicts.iter().enumerate().filter_map(|(index, conflict)|
-            conflict.origin.filter(|node| nodes.contains(node)).map(|_| TypeConflictId(index as u32)))
+        self.type_conflicts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, conflict)| {
+                conflict
+                    .origin
+                    .filter(|node| nodes.contains(node))
+                    .map(|_| TypeConflictId(index as u32))
+            })
             .collect()
     }
 }

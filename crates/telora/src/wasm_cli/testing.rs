@@ -133,7 +133,9 @@ pub(crate) fn run(
                     Ok(Ok(input)) => input,
                     Ok(Err(events)) => {
                         expanded += 1;
-                        result.diagnostics.extend(super::diagnostics::parsed(events, fixtures.sources)?);
+                        result
+                            .diagnostics
+                            .extend(super::diagnostics::parsed(events, fixtures.sources)?);
                         report.cases.push(result);
                         continue;
                     }

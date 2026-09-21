@@ -225,5 +225,4 @@ mod tests {
         let errors = TestPlan::from_mir(&mir.seal().unwrap(), module).unwrap_err();
         assert_eq!(errors[0].message, "test module has no direct Test exports");
     }
-
 }

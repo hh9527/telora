@@ -1,9 +1,9 @@
 //! A finite set of type-specialized comparers, including recursive type graphs.
 use crate::plan::{Key, Plan, Special, child};
 use telora_core::{
-    syntax::kinds::BinaryOperator as B,
     candidate_layout::State,
     mir::{HirKind, Role, SealedExecutable, TypeConstructor as T},
+    syntax::kinds::BinaryOperator as B,
 };
 
 impl Plan {

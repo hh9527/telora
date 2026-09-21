@@ -146,13 +146,30 @@ fn records_unused_duplicates_but_only_used_wildcard_ambiguity() {
 #[test]
 fn unresolved_diagnostics_preserve_authored_names_and_import_requests() {
     let mut mir = graph(&[
-        ("@src/main", "import \"./base\" {absent as local}; export def bad = missing; export def good = 42;"),
+        (
+            "@src/main",
+            "import \"./base\" {absent as local}; export def bad = missing; export def good = 42;",
+        ),
         ("@src/base", "export def present = 1;"),
     ]);
     resolve(&mut mir);
-    assert!(mir.diagnostics.iter().any(|d| d.message == "unknown imported binding \"absent\" from \"./base\""), "{:?}", mir.diagnostics);
-    assert!(mir.diagnostics.iter().any(|d| d.message == "unknown binding \"missing\""));
-    assert!(!mir.diagnostics.iter().any(|d| d.message.contains("Variable(")));
+    assert!(
+        mir.diagnostics
+            .iter()
+            .any(|d| d.message == "unknown imported binding \"absent\" from \"./base\""),
+        "{:?}",
+        mir.diagnostics
+    );
+    assert!(
+        mir.diagnostics
+            .iter()
+            .any(|d| d.message == "unknown binding \"missing\"")
+    );
+    assert!(
+        !mir.diagnostics
+            .iter()
+            .any(|d| d.message.contains("Variable("))
+    );
     assert!(mir.symbols_closed);
     assert!(!mir.resolve_slots.contains(&ResolveState::Pending));
     assert!(mir.resolve_slots.contains(&ResolveState::Unresolved));

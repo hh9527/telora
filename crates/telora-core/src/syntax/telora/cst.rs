@@ -97,7 +97,6 @@ impl Iterator for CstChildren<'_> {
 
 pub type Span = core::ops::Range<usize>;
 
-
 #[derive(Debug)]
 pub struct CstData {
     spans: Vec<Span>,

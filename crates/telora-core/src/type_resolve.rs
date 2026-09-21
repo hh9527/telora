@@ -1,52 +1,94 @@
 //! Third MIR pass. All constraints use syntax slots and resolved SymbolIds.
-use crate::syntax::kinds::{BinaryOperator, BindingKind, BlameAction, UnaryOperator};
 use crate::mir::*;
 use crate::source::{Diagnostic, Location};
+use crate::syntax::kinds::{BinaryOperator, BindingKind, BlameAction, UnaryOperator};
 use std::collections::BTreeSet;
 
+mod alias_cycles;
 mod arena;
 mod constraints;
-mod diagnostics;
+mod construction_origins;
+mod contract_sources;
+mod contracts;
 mod definitions;
-mod alias_cycles;
-mod family_cycles;
-mod expansion_limits;
+mod diagnostics;
 mod evidence;
+mod expansion_limits;
+mod family_cycles;
+mod generalization;
 mod instances;
+mod interpreters;
 mod layouts;
-mod members;
 mod materializations;
+mod members;
+mod metadata_joins;
+mod parse_adapters;
+mod patterns;
+mod propagation;
+mod properties;
 mod record_operations;
 mod sequence_spreads;
-mod propagation;
-mod generalization;
-mod metadata_joins;
-mod properties;
-mod construction_origins;
-mod contracts;
-mod contract_sources;
-mod interpreters;
-mod type_facets;
-mod patterns;
-mod parse_adapters;
 #[cfg(test)]
 mod tests;
+mod type_facets;
 
 enum Task {
-    Interpreter { node: HirId, parameters: Vec<SymbolId> },
-    TypeFacet { node: HirId, source: TypeSlotId },
-    ValueEqual { node: HirId, left: TypeSlotId, right: TypeSlotId },
-    Ordered { node: HirId, operand: TypeSlotId },
-    Reference { node: HirId, symbol: SymbolId },
-    TypeApply { node: HirId },
-    Propagate { node: HirId },
-    PropagationBottom { body: HirId, success: TypeSlotId },
-    TupleSpread { node: HirId },
-    RecordSpread { node: HirId },
-    StructUpdate { node: HirId, left: TypeSlotId, right: TypeSlotId },
-    FieldProjection { node: HirId, receiver: TypeSlotId },
-    ShapeEqual { left: TypeSlotId, right: TypeSlotId, location: Option<Location>, origin: Option<HirId> },
-    Unchecked { node: HirId, argument: TypeSlotId },
+    Interpreter {
+        node: HirId,
+        parameters: Vec<SymbolId>,
+    },
+    TypeFacet {
+        node: HirId,
+        source: TypeSlotId,
+    },
+    ValueEqual {
+        node: HirId,
+        left: TypeSlotId,
+        right: TypeSlotId,
+    },
+    Ordered {
+        node: HirId,
+        operand: TypeSlotId,
+    },
+    Reference {
+        node: HirId,
+        symbol: SymbolId,
+    },
+    TypeApply {
+        node: HirId,
+    },
+    Propagate {
+        node: HirId,
+    },
+    PropagationBottom {
+        body: HirId,
+        success: TypeSlotId,
+    },
+    TupleSpread {
+        node: HirId,
+    },
+    RecordSpread {
+        node: HirId,
+    },
+    StructUpdate {
+        node: HirId,
+        left: TypeSlotId,
+        right: TypeSlotId,
+    },
+    FieldProjection {
+        node: HirId,
+        receiver: TypeSlotId,
+    },
+    ShapeEqual {
+        left: TypeSlotId,
+        right: TypeSlotId,
+        location: Option<Location>,
+        origin: Option<HirId>,
+    },
+    Unchecked {
+        node: HirId,
+        argument: TypeSlotId,
+    },
     RefineInstance {
         origin: Option<HirId>,
         source: TypeSlotId,
@@ -167,7 +209,10 @@ pub fn resolve(mir: &mut Mir) {
 pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
     if let Err(message) = options.validate() {
         mir.diagnostics.push(Diagnostic {
-            severity: crate::source::Severity::Error, message, labels: vec![], notes: vec![],
+            severity: crate::source::Severity::Error,
+            message,
+            labels: vec![],
+            notes: vec![],
         });
         return;
     }
@@ -207,8 +252,12 @@ pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
             {
                 solver.equal(slot, solver.mir.symbol_types[target.index()], None)
             }
-            ResolveState::Conflicted(origin) => solver.inherit_resolve_failure(slot, ResolveFailure::Conflict(origin)),
-            ResolveState::Unresolved => solver.inherit_resolve_failure(slot, ResolveFailure::Symbol(SymbolId(index as u32))),
+            ResolveState::Conflicted(origin) => {
+                solver.inherit_resolve_failure(slot, ResolveFailure::Conflict(origin))
+            }
+            ResolveState::Unresolved => {
+                solver.inherit_resolve_failure(slot, ResolveFailure::Symbol(SymbolId(index as u32)))
+            }
             _ => {}
         }
         match kind {
@@ -234,7 +283,9 @@ pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
     let generated = solver.solve_contracts();
     solver.prepare_properties();
     for index in 0..solver.mir.hir.len() {
-        if !generated[index] { solver.generate(HirId(index as u32)); }
+        if !generated[index] {
+            solver.generate(HirId(index as u32));
+        }
     }
     loop {
         let revision = solver.revision;
@@ -245,7 +296,15 @@ pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
             }
         }
         if solver.revision == revision {
-            if !solver.finish_type_facets() && !solver.finish_value_equalities() && !solver.finish_literals() && !solver.finish_bottoms(false) && !solver.finish_unchecked_fits() && !solver.generalize_ready() && !solver.finish_empty_options() && !solver.finish_bottoms(true) {
+            if !solver.finish_type_facets()
+                && !solver.finish_value_equalities()
+                && !solver.finish_literals()
+                && !solver.finish_bottoms(false)
+                && !solver.finish_unchecked_fits()
+                && !solver.generalize_ready()
+                && !solver.finish_empty_options()
+                && !solver.finish_bottoms(true)
+            {
                 break;
             }
         }
@@ -280,17 +339,32 @@ pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
     for index in 0..solver.mir.hir.len() {
         let node = HirId(index as u32);
         if let TypeState::Known(ty) = solver.mir.ty_slots[index]
-            && let Some(message) = solver.mir.value_shape_error(node, ty, &construction_inputs) {
-            solver.mir.diagnostics.push(Diagnostic::error(message, solver.mir.hir[index].location));
+            && let Some(message) = solver.mir.value_shape_error(node, ty, &construction_inputs)
+        {
+            solver
+                .mir
+                .diagnostics
+                .push(Diagnostic::error(message, solver.mir.hir[index].location));
         }
     }
     for instance in &solver.mir.generic_instances {
         for (node, ty) in &instance.types {
-            if let Some(message) = solver.mir.value_shape_error(*node, *ty, &construction_inputs) {
+            if let Some(message) = solver
+                .mir
+                .value_shape_error(*node, *ty, &construction_inputs)
+            {
                 let location = solver.mir.hir[node.index()].location;
-                if !solver.mir.diagnostics.iter().any(|diagnostic| diagnostic.message == message
-                    && diagnostic.labels.iter().any(|label| label.primary && label.location == location)) {
-                    solver.mir.diagnostics.push(Diagnostic::error(message, location));
+                if !solver.mir.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.message == message
+                        && diagnostic
+                            .labels
+                            .iter()
+                            .any(|label| label.primary && label.location == location)
+                }) {
+                    solver
+                        .mir
+                        .diagnostics
+                        .push(Diagnostic::error(message, location));
                 }
             }
         }
@@ -299,11 +373,18 @@ pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
     solver.mir.build_property_admissions();
     solver.mir.build_type_schemes();
     for (index, &publishes_scheme) in solver.scheme_references.iter().enumerate() {
-        if !publishes_scheme { continue; }
-        let Some(slot) = solver.mir.hir[index].resolution else { continue; };
-        let ResolveState::Bound(symbol) = solver.mir.resolve_slots[slot.index()] else { continue; };
+        if !publishes_scheme {
+            continue;
+        }
+        let Some(slot) = solver.mir.hir[index].resolution else {
+            continue;
+        };
+        let ResolveState::Bound(symbol) = solver.mir.resolve_slots[slot.index()] else {
+            continue;
+        };
         if let Some(scheme) = solver.mir.symbol_schemes[symbol.index()] {
-            solver.mir.generic_references[index] = Some(GenericReference::Scheme { symbol, scheme });
+            solver.mir.generic_references[index] =
+                Some(GenericReference::Scheme { symbol, scheme });
         }
     }
     solver.mir.build_declaration_contracts();
@@ -316,9 +397,14 @@ impl Solver<'_> {
         mir.callable_boundaries.resize(mir.hir.len(), None);
         let mut value_spreads = vec![false; mir.hir.len()];
         for field in &mir.hir {
-            if matches!(field.kind, HirKind::DictField | HirKind::Array | HirKind::Tuple) {
+            if matches!(
+                field.kind,
+                HirKind::DictField | HirKind::Array | HirKind::Tuple
+            ) {
                 for edge in &field.children {
-                    if matches!(edge.role, Role::Value | Role::Item) && matches!(mir.hir[edge.node.index()].kind, HirKind::Spread) {
+                    if matches!(edge.role, Role::Value | Role::Item)
+                        && matches!(mir.hir[edge.node.index()].kind, HirKind::Spread)
+                    {
                         value_spreads[edge.node.index()] = true;
                     }
                 }
@@ -417,9 +503,15 @@ impl Solver<'_> {
             match self.mir.resolve_slots[slot.index()].clone() {
                 ResolveState::Bound(symbol) => {
                     let source = &self.mir.symbols[symbol.index()];
-                    if self.type_uses[node.index()] && !matches!(source.kind,
-                        SymbolKind::Declaration(BindingKind::Type | BindingKind::NativeType | BindingKind::Trait)
-                            | SymbolKind::TypeParameter | SymbolKind::Namespace(_)) {
+                    if self.type_uses[node.index()]
+                        && !matches!(
+                            source.kind,
+                            SymbolKind::Declaration(
+                                BindingKind::Type | BindingKind::NativeType | BindingKind::Trait
+                            ) | SymbolKind::TypeParameter
+                                | SymbolKind::Namespace(_)
+                        )
+                    {
                         self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
                             "metadata data cannot become a type; use a type declaration or type parameter".into());
                         return;
@@ -494,7 +586,10 @@ impl Solver<'_> {
                 match operator {
                     UnaryOperator::Not => {
                         self.same(node, operand.ty());
-                        self.tasks.push(Task::Not { node, operand: operand.ty() });
+                        self.tasks.push(Task::Not {
+                            node,
+                            operand: operand.ty(),
+                        });
                     }
                     UnaryOperator::LogicalNot => {
                         self.assign(operand, TypeConstructor::Bool, vec![]);
@@ -641,7 +736,10 @@ impl Solver<'_> {
                 }
                 self.tasks.push(Task::Join {
                     node,
-                    values: arms.into_iter().map(|arm| self.child(arm, Role::Value).unwrap().ty()).collect(),
+                    values: arms
+                        .into_iter()
+                        .map(|arm| self.child(arm, Role::Value).unwrap().ty())
+                        .collect(),
                 });
             }
             HirKind::IfLet | HirKind::LetElse => {
@@ -688,13 +786,20 @@ impl Solver<'_> {
                 self.assign(node, TypeConstructor::ArrayLiteral, items);
             }
             HirKind::FieldProjection => {
-                self.tasks.push(Task::FieldProjection { node, receiver: self.child(node, Role::Receiver).unwrap().ty() });
+                self.tasks.push(Task::FieldProjection {
+                    node,
+                    receiver: self.child(node, Role::Receiver).unwrap().ty(),
+                });
             }
             HirKind::Spread if self.value_spreads[node.index()] => {
                 self.same(node, self.child(node, Role::Operand).unwrap().ty());
             }
             HirKind::Dict => {
-                if self.children(node, Role::Field).iter().any(|&field| self.child(field, Role::Name).is_none()) {
+                if self
+                    .children(node, Role::Field)
+                    .iter()
+                    .any(|&field| self.child(field, Role::Name).is_none())
+                {
                     self.tasks.push(Task::RecordSpread { node });
                     return;
                 }
@@ -723,11 +828,23 @@ impl Solver<'_> {
                     self.pending_blocks[node.index()] = true;
                     self.tasks.push(Task::Block {
                         node,
-                        statements: self.children(node, Role::Binding).into_iter()
-                            .filter(|binding| matches!(self.mir.hir[binding.index()].kind,
-                                HirKind::Binding { kind: BindingKind::Let | BindingKind::Def | BindingKind::Impl, .. }))
+                        statements: self
+                            .children(node, Role::Binding)
+                            .into_iter()
+                            .filter(|binding| {
+                                matches!(
+                                    self.mir.hir[binding.index()].kind,
+                                    HirKind::Binding {
+                                        kind: BindingKind::Let
+                                            | BindingKind::Def
+                                            | BindingKind::Impl,
+                                        ..
+                                    }
+                                )
+                            })
                             .filter_map(|binding| self.child(binding, Role::Value))
-                            .map(HirId::ty).collect(),
+                            .map(HirId::ty)
+                            .collect(),
                         result: value.ty(),
                     });
                 } else {
@@ -814,10 +931,20 @@ impl Solver<'_> {
             }
             HirKind::ConstructionCheck { configured } => {
                 if !*configured || self.children(node, Role::Argument).len() != 1 {
-                    self.mir.diagnostics.push(Diagnostic::error("@check requires exactly one check function", self.mir.hir[node.index()].location));
+                    self.mir.diagnostics.push(Diagnostic::error(
+                        "@check requires exactly one check function",
+                        self.mir.hir[node.index()].location,
+                    ));
                     self.mir.required_types[node.index()] = false;
-                } else if !self.check_declarations.iter().any(|(_, _, check)| *check == node) {
-                    self.mir.diagnostics.push(Diagnostic::error("@check is supported on structs, newtypes and payload variants", self.mir.hir[node.index()].location));
+                } else if !self
+                    .check_declarations
+                    .iter()
+                    .any(|(_, _, check)| *check == node)
+                {
+                    self.mir.diagnostics.push(Diagnostic::error(
+                        "@check is supported on structs, newtypes and payload variants",
+                        self.mir.hir[node.index()].location,
+                    ));
                     self.mir.required_types[node.index()] = false;
                 }
             }
@@ -845,7 +972,11 @@ impl Solver<'_> {
                     .into_iter()
                     .map(HirId::ty)
                     .collect::<Vec<_>>();
-                self.tasks.push(Task::Call { node, callee: callee.ty(), arguments: args });
+                self.tasks.push(Task::Call {
+                    node,
+                    callee: callee.ty(),
+                    arguments: args,
+                });
             }
             HirKind::TypeApply => {
                 self.tasks.push(Task::TypeApply { node });
@@ -862,9 +993,17 @@ impl Solver<'_> {
                 let left = self.child(node, Role::Left).unwrap();
                 let right = self.child(node, Role::Right).unwrap();
                 if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
-                    self.tasks.push(Task::ValueEqual { node, left: left.ty(), right: right.ty() });
+                    self.tasks.push(Task::ValueEqual {
+                        node,
+                        left: left.ty(),
+                        right: right.ty(),
+                    });
                 } else if !matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
-                    self.equal(left.ty(), right.ty(), Some(self.mir.hir[node.index()].location));
+                    self.equal(
+                        left.ty(),
+                        right.ty(),
+                        Some(self.mir.hir[node.index()].location),
+                    );
                 }
                 match operator {
                     BinaryOperator::Add
@@ -883,9 +1022,14 @@ impl Solver<'_> {
                     | BinaryOperator::GreaterThan
                     | BinaryOperator::GreaterThanOrEqual => {
                         self.assign(node, TypeConstructor::Bool, vec![]);
-                        self.tasks.push(Task::Ordered { node, operand: left.ty() });
+                        self.tasks.push(Task::Ordered {
+                            node,
+                            operand: left.ty(),
+                        });
                     }
-                    BinaryOperator::Equal | BinaryOperator::NotEqual => self.assign(node, TypeConstructor::Bool, vec![]),
+                    BinaryOperator::Equal | BinaryOperator::NotEqual => {
+                        self.assign(node, TypeConstructor::Bool, vec![])
+                    }
                     BinaryOperator::And | BinaryOperator::Or => {
                         // Short-circuit operands independently satisfy Bool;
                         // a diverging RHS must not unify the LHS with Never.
@@ -938,21 +1082,38 @@ impl Solver<'_> {
         }
     }
     fn solve_task(&mut self, task: Task) -> Option<Task> {
-        let contract = match &task { Task::Fit { contract, .. } => *contract, _ => None };
+        let contract = match &task {
+            Task::Fit { contract, .. } => *contract,
+            _ => None,
+        };
         let origin = match &task {
-            Task::Interpreter { node, .. } | Task::TypeFacet { node, .. }
-            | Task::ValueEqual { node, .. } | Task::Ordered { node, .. }
-            | Task::Reference { node, .. } | Task::TypeApply { node }
-            | Task::Propagate { node } | Task::TupleSpread { node }
-            | Task::RecordSpread { node } | Task::StructUpdate { node, .. }
-            | Task::FieldProjection { node, .. } | Task::Unchecked { node, .. }
-            | Task::BoundContext { node, .. } | Task::DiagnosticInput { node, .. }
-            | Task::Call { node, .. } | Task::Join { node, .. } | Task::Block { node, .. }
-            | Task::Projection { node, .. } | Task::ConstructorPattern { node, .. }
-            | Task::Fit { node, .. } | Task::Tuple { node, .. } | Task::Member { node, .. }
-            | Task::Not { node, .. } | Task::Numeric { node, .. } => Some(*node),
+            Task::Interpreter { node, .. }
+            | Task::TypeFacet { node, .. }
+            | Task::ValueEqual { node, .. }
+            | Task::Ordered { node, .. }
+            | Task::Reference { node, .. }
+            | Task::TypeApply { node }
+            | Task::Propagate { node }
+            | Task::TupleSpread { node }
+            | Task::RecordSpread { node }
+            | Task::StructUpdate { node, .. }
+            | Task::FieldProjection { node, .. }
+            | Task::Unchecked { node, .. }
+            | Task::BoundContext { node, .. }
+            | Task::DiagnosticInput { node, .. }
+            | Task::Call { node, .. }
+            | Task::Join { node, .. }
+            | Task::Block { node, .. }
+            | Task::Projection { node, .. }
+            | Task::ConstructorPattern { node, .. }
+            | Task::Fit { node, .. }
+            | Task::Tuple { node, .. }
+            | Task::Member { node, .. }
+            | Task::Not { node, .. }
+            | Task::Numeric { node, .. } => Some(*node),
             Task::PropagationBottom { body, .. } => Some(*body),
-            Task::ShapeEqual { origin, .. } | Task::Instantiate { origin, .. }
+            Task::ShapeEqual { origin, .. }
+            | Task::Instantiate { origin, .. }
             | Task::RefineInstance { origin, .. } => *origin,
         };
         let previous = std::mem::replace(&mut self.constraint_origin, origin);
@@ -970,7 +1131,9 @@ impl Solver<'_> {
         let (node, dependencies) = match &task {
             Task::Tuple { node, items } => (*node, items.clone()),
             Task::Member { node, receiver, .. } => (*node, vec![*receiver]),
-            Task::Numeric { node, operand } | Task::Not { node, operand } | Task::Ordered { node, operand } => (*node, vec![*operand]),
+            Task::Numeric { node, operand }
+            | Task::Not { node, operand }
+            | Task::Ordered { node, operand } => (*node, vec![*operand]),
             _ => unreachable!(),
         };
         for dependency in dependencies {
@@ -1020,16 +1183,43 @@ impl Solver<'_> {
                 let Some(term) = self.term(operand) else {
                     return Some(Task::Not { node, operand });
                 };
-                if !matches!(term.constructor, TypeConstructor::Bool | TypeConstructor::Int | TypeConstructor::Never) {
-                    let message = format!("! requires Int or Bool, found {}", self.diagnostic_type(operand));
-                    self.conflict(node.ty(), operand, Some(self.mir.hir[node.index()].location), message);
+                if !matches!(
+                    term.constructor,
+                    TypeConstructor::Bool | TypeConstructor::Int | TypeConstructor::Never
+                ) {
+                    let message = format!(
+                        "! requires Int or Bool, found {}",
+                        self.diagnostic_type(operand)
+                    );
+                    self.conflict(
+                        node.ty(),
+                        operand,
+                        Some(self.mir.hir[node.index()].location),
+                        message,
+                    );
                 }
             }
             Task::Ordered { node, operand } => {
-                let Some(term) = self.term(operand) else { return Some(Task::Ordered { node, operand }); };
-                if !matches!(term.constructor, TypeConstructor::Int | TypeConstructor::Float | TypeConstructor::String | TypeConstructor::Never) {
-                    let message = format!("ordered comparison requires Int, Float, or String, found {}", self.diagnostic_type(operand));
-                    self.conflict(node.ty(), operand, Some(self.mir.hir[node.index()].location), message);
+                let Some(term) = self.term(operand) else {
+                    return Some(Task::Ordered { node, operand });
+                };
+                if !matches!(
+                    term.constructor,
+                    TypeConstructor::Int
+                        | TypeConstructor::Float
+                        | TypeConstructor::String
+                        | TypeConstructor::Never
+                ) {
+                    let message = format!(
+                        "ordered comparison requires Int, Float, or String, found {}",
+                        self.diagnostic_type(operand)
+                    );
+                    self.conflict(
+                        node.ty(),
+                        operand,
+                        Some(self.mir.hir[node.index()].location),
+                        message,
+                    );
                 }
             }
             Task::Numeric { node, operand } => {
@@ -1044,7 +1234,10 @@ impl Solver<'_> {
                         node.ty(),
                         operand,
                         Some(self.mir.hir[node.index()].location),
-                        format!("numeric operand requires Int or Float, found {}", self.diagnostic_type(operand)),
+                        format!(
+                            "numeric operand requires Int or Float, found {}",
+                            self.diagnostic_type(operand)
+                        ),
                     );
                 }
             }

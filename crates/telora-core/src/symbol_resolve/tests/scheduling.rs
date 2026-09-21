@@ -75,7 +75,14 @@ fn long_constructor_alias_chain_uses_mir_query_results() {
     source.push_str("type End = enum { Tag }; def C4000 = End.Tag; export def classify = fn(value) { match value { C0 => 1 } };");
     let mir = small_stack(graph(&[("@src/main", &source)]));
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
-    assert!(mir.resolution_facts.constructors.iter().filter(|value| **value == Some(true)).count() >= 4_001);
+    assert!(
+        mir.resolution_facts
+            .constructors
+            .iter()
+            .filter(|value| **value == Some(true))
+            .count()
+            >= 4_001
+    );
 }
 
 fn fixtures(names: &[&str]) -> Mir {

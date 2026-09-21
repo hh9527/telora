@@ -2,7 +2,9 @@
 use crate::session::Session;
 
 pub(super) fn alloc(session: &mut Session, cap: u32, align: u32) -> Result<u32, String> {
-    session.exports.alloc
+    session
+        .exports
+        .alloc
         .call(&mut session.store, (cap, align))
         .map_err(|e| e.to_string())
 }
@@ -13,7 +15,9 @@ pub(super) fn free(
     cap: u32,
     align: u32,
 ) -> Result<(), String> {
-    session.exports.free
+    session
+        .exports
+        .free
         .call(&mut session.store, (pointer, cap, align))
         .map_err(|e| e.to_string())
 }

@@ -23,7 +23,10 @@ pub(crate) fn is_stdin_source(src: &str) -> bool {
 }
 
 pub(crate) fn reject_stdin_sources(sources: &[NamedSource]) -> Result<(), String> {
-    if sources.iter().any(|source| is_stdin_source(&source.source.src)) {
+    if sources
+        .iter()
+        .any(|source| is_stdin_source(&source.source.src))
+    {
         return Err("service reserves stdin for request input".into());
     }
     Ok(())
@@ -77,10 +80,7 @@ pub(crate) fn parse_named_source(value: &str) -> Result<NamedSource, String> {
     };
     Ok(NamedSource {
         name: name.to_owned(),
-        source: SystemDataSource {
-            src,
-            format,
-        },
+        source: SystemDataSource { src, format },
     })
 }
 
@@ -102,7 +102,9 @@ pub(crate) fn service_source_readers(
             SystemDataFormat::Toml => telora_core::data_plan::Format::Toml,
         };
         Ok(telora_wasm::transform_service::SourceReader {
-            name: source.name, reader: Box::new(file), format,
+            name: source.name,
+            reader: Box::new(file),
+            format,
         })
     })
 }

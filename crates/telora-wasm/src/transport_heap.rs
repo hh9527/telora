@@ -65,7 +65,9 @@ impl Session {
         let (values, value_bytes) =
             output.payload(ARRAYS, output.word(value.pointer as u64 + (DATA + 8))?)?;
         let count = output.word(value.pointer as u64 + (DATA + 4))?;
-        if count as u64 * u64::from(STRING_BYTES) != key_bytes || count as u64 * width as u64 != value_bytes {
+        if count as u64 * u64::from(STRING_BYTES) != key_bytes
+            || count as u64 * width as u64 != value_bytes
+        {
             return Err("Wasm: invalid protocol dictionary".into());
         }
         (0..count)

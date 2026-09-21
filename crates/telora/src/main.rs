@@ -3,18 +3,19 @@ use serde_json::json;
 use std::env;
 use std::path::PathBuf;
 use telora_core::DataLimits;
-mod eval_cli;
 mod build_cli;
-mod wasm_cli;
+mod eval_cli;
 mod source_arg;
 mod static_cli;
+mod wasm_cli;
 use telora::static_input;
 mod test_cli;
 use eval_cli::EvalArgs;
 use source_arg::{NamedSource, parse_named_source};
 use telora::package_host;
 
-static EXECUTION_OPTIONS: std::sync::OnceLock<(Option<u64>, Option<u64>, bool)> = std::sync::OnceLock::new();
+static EXECUTION_OPTIONS: std::sync::OnceLock<(Option<u64>, Option<u64>, bool)> =
+    std::sync::OnceLock::new();
 const QUERY_SCHEMA: &str = "telora.query/v1";
 
 struct ExecutionConfig {
@@ -28,10 +29,16 @@ fn execution_config() -> ExecutionConfig {
     execution_config_for(telora_core::RuntimeOptions::default()).expect("validated CLI limits")
 }
 
-fn execution_config_for(mut runtime: telora_core::RuntimeOptions) -> Result<ExecutionConfig, String> {
+fn execution_config_for(
+    mut runtime: telora_core::RuntimeOptions,
+) -> Result<ExecutionConfig, String> {
     let (fuel, memory, report_usage) = *EXECUTION_OPTIONS.get().unwrap_or(&(None, None, false));
-    if let Some(fuel) = fuel { runtime.fuel = fuel; }
-    if let Some(memory) = memory { runtime.memory_limit = memory; }
+    if let Some(fuel) = fuel {
+        runtime.fuel = fuel;
+    }
+    if let Some(memory) = memory {
+        runtime.memory_limit = memory;
+    }
     let (fuel, memory_limit) = runtime.limits()?;
     Ok(ExecutionConfig {
         fuel,
@@ -43,7 +50,8 @@ fn execution_config_for(mut runtime: telora_core::RuntimeOptions) -> Result<Exec
 
 fn main() {
     let cli = Cli::parse();
-    EXECUTION_OPTIONS.set((cli.with_fuel, cli.with_memory_limit, cli.report_usage))
+    EXECUTION_OPTIONS
+        .set((cli.with_fuel, cli.with_memory_limit, cli.report_usage))
         .expect("execution configuration is initialized once");
     match run_cli(cli) {
         Ok(0) => {}
@@ -115,7 +123,6 @@ struct ApplicationArgs {
     /// Provide a named Value source: NAME=PATH or NAME=(file|stdin)+(json|yaml|toml)://PATH.
     #[arg(long = "source", value_name = "NAME=SOURCE", value_parser = parse_named_source)]
     sources: Vec<NamedSource>,
-
 }
 
 #[derive(Args)]
@@ -302,7 +309,9 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
         Command::Build(arguments) => build_cli::execute(context, arguments),
         Command::Eval(arguments) => eval_cli::run(context, arguments),
         Command::Run(arguments) => wasm_cli::run::execute(context, arguments.application, None),
-        Command::Serve(arguments) => wasm_cli::run::execute(context, arguments.application, Some(arguments.bind)),
+        Command::Serve(arguments) => {
+            wasm_cli::run::execute(context, arguments.application, Some(arguments.bind))
+        }
         Command::Lock => package_host::lock(&context)
             .and_then(|path| emit(json!(display_host_path(&path))).map(|()| 0)),
         Command::Check(arguments) => check_command(context, arguments, "telora.check/v1"),

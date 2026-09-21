@@ -260,13 +260,20 @@ fn validate_plan_name(name: &str) -> Result<()> {
         } else if matches!(byte, b'-' | b'_' | b'.') && !separator {
             separator = true;
         } else {
-            bail!("plan name must use lowercase ASCII letters and digits separated by single '-', '_' or '.'");
+            bail!(
+                "plan name must use lowercase ASCII letters and digits separated by single '-', '_' or '.'"
+            );
         }
     }
-    ensure!(!separator, "plan name must end with an ASCII letter or digit");
+    ensure!(
+        !separator,
+        "plan name must end with an ASCII letter or digit"
+    );
     // Windows reserves device names even when followed by an extension.
     let stem = name.split('.').next().unwrap_or_default();
-    let numbered_device = stem.strip_prefix("com").or_else(|| stem.strip_prefix("lpt"))
+    let numbered_device = stem
+        .strip_prefix("com")
+        .or_else(|| stem.strip_prefix("lpt"))
         .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'));
     ensure!(
         !matches!(stem, "con" | "prn" | "aux" | "nul") && !numbered_device,
@@ -347,10 +354,20 @@ mod tests {
 
     #[test]
     fn accepts_top_level_extensions_and_rejects_unsafe_plan_names() {
-        for name in ["a", "1", "tool-v1_linux.json", "com10.json", &"a".repeat(64)] {
-            assert!(Plan::from_value(json!({
-                "version": 1, "name": name, "key": "tool-v1", "items": []
-            })).is_ok(), "expected valid name: {name}");
+        for name in [
+            "a",
+            "1",
+            "tool-v1_linux.json",
+            "com10.json",
+            &"a".repeat(64),
+        ] {
+            assert!(
+                Plan::from_value(json!({
+                    "version": 1, "name": name, "key": "tool-v1", "items": []
+                }))
+                .is_ok(),
+                "expected valid name: {name}"
+            );
         }
         assert!(validate_plan_name(&"a".repeat(65)).is_err());
         let extended = json!({
@@ -362,9 +379,27 @@ mod tests {
         });
         assert!(Plan::from_value(extended).is_ok());
 
-        for name in [".", "..", "../escape", "dir/file", "bad\0name",
-            "Σ", "ς", "中文", "Tool", "example plan", "tool.", "tool..json",
-            "tool:stream", "-tool", "tool_", "con", "nul.json", "com1.json", "lpt9"] {
+        for name in [
+            ".",
+            "..",
+            "../escape",
+            "dir/file",
+            "bad\0name",
+            "Σ",
+            "ς",
+            "中文",
+            "Tool",
+            "example plan",
+            "tool.",
+            "tool..json",
+            "tool:stream",
+            "-tool",
+            "tool_",
+            "con",
+            "nul.json",
+            "com1.json",
+            "lpt9",
+        ] {
             let value = json!({
                 "version": 1,
                 "name": name,

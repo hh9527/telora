@@ -7,8 +7,8 @@ use core::ops::Range;
 
 pub mod coordinates;
 mod text;
+pub use coordinates::{LineIndex, SourceCoordinates};
 pub use text::SourceText;
-pub use coordinates::{SourceCoordinates, LineIndex};
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -101,7 +101,9 @@ pub enum LocationError {
 impl fmt::Display for LocationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CoordinateCapacity => formatter.write_str("source exceeds location capacity (u32 source IDs, lines and UTF-8 byte offsets)"),
+            Self::CoordinateCapacity => formatter.write_str(
+                "source exceeds location capacity (u32 source IDs, lines and UTF-8 byte offsets)",
+            ),
             Self::OffsetTooLarge => formatter.write_str("source offset exceeds u32::MAX"),
             Self::SourceTooLarge => formatter.write_str("source text exceeds u32::MAX bytes"),
             Self::ReversedRange { start, end } => {
@@ -260,11 +262,19 @@ impl SourceFile {
         self.lines.pack(location)
     }
 
-    pub fn line_index(&self) -> &Arc<LineIndex> { &self.lines }
+    pub fn line_index(&self) -> &Arc<LineIndex> {
+        &self.lines
+    }
 
     pub fn byte_location(&self, location: SourceCoordinates) -> Option<Loc> {
-        if location.source() != self.id.get() || location.start() > location.end() { return None; }
-        Some(Loc { source: self.id, start: self.lines.byte(location.start())?, end: self.lines.byte(location.end())? })
+        if location.source() != self.id.get() || location.start() > location.end() {
+            return None;
+        }
+        Some(Loc {
+            source: self.id,
+            start: self.lines.byte(location.start())?,
+            end: self.lines.byte(location.end())?,
+        })
     }
 
     pub const fn text(&self) -> &SourceText {
@@ -281,8 +291,12 @@ impl SourceFile {
         let (line, _) = SourceCoordinates::position(point);
         let start = self.lines.byte((line as u64) << 32).unwrap();
         let end = self.lines.byte(point).unwrap();
-        let column = self.text.slice(TextRange { start, end })
-            .expect("registered source offset is valid").chars().count();
+        let column = self
+            .text
+            .slice(TextRange { start, end })
+            .expect("registered source offset is valid")
+            .chars()
+            .count();
         Position {
             line: line as usize + 1,
             column: column + 1,
@@ -304,8 +318,11 @@ impl SourceFile {
                 let tail = &text[start as usize..];
                 let end = tail.find(['\r', '\n']).unwrap_or(tail.len());
                 let line = &tail[..end];
-                let relative = line.char_indices().map(|(at, _)| at)
-                    .chain(core::iter::once(line.len())).nth(column)?;
+                let relative = line
+                    .char_indices()
+                    .map(|(at, _)| at)
+                    .chain(core::iter::once(line.len()))
+                    .nth(column)?;
                 Some(start + relative as u32)
             }
         }
@@ -326,12 +343,19 @@ impl SourceDatabase {
     ) -> Result<SourceId, LocationError> {
         let id = self.next_id()?;
         let lines = Arc::new(LineIndex::new(&text)?);
-        self.files.push(SourceFile { id, name: name.into(), text: SourceText::Contiguous(text), lines });
+        self.files.push(SourceFile {
+            id,
+            name: name.into(),
+            text: SourceText::Contiguous(text),
+            lines,
+        });
         Ok(id)
     }
 
     fn next_id(&self) -> Result<SourceId, LocationError> {
-        if self.files.len() >= u32::MAX as usize { return Err(LocationError::CoordinateCapacity); }
+        if self.files.len() >= u32::MAX as usize {
+            return Err(LocationError::CoordinateCapacity);
+        }
         let raw = u32::try_from(self.files.len())
             .ok()
             .and_then(|length| length.checked_add(1))
@@ -399,7 +423,10 @@ impl SourceDatabase {
     ) -> Result<(), LocationError> {
         let lines = Arc::new(LineIndex::new(&text)?);
         self.files[id.index() as usize] = SourceFile {
-            id, name: name.into(), text: SourceText::Contiguous(text), lines,
+            id,
+            name: name.into(),
+            text: SourceText::Contiguous(text),
+            lines,
         };
         Ok(())
     }

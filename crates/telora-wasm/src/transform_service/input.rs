@@ -37,7 +37,9 @@ impl TransferBuffer {
                 self.pointer = if self.cap == 0 {
                     super::buffers::alloc(session, cap, 1)?
                 } else {
-                    session.exports.realloc
+                    session
+                        .exports
+                        .realloc
                         .call(&mut session.store, (self.pointer, self.cap, cap, 1))
                         .map_err(|e| e.to_string())?
                 };

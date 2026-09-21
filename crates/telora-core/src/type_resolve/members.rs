@@ -18,7 +18,13 @@ impl Solver<'_> {
         let mut metadata = false;
         if term.constructor == TypeConstructor::Unchecked {
             ty = term.arguments[0];
-            let Some(raw) = self.term(ty).cloned() else { return Some(Task::Member { node, receiver, name }); };
+            let Some(raw) = self.term(ty).cloned() else {
+                return Some(Task::Member {
+                    node,
+                    receiver,
+                    name,
+                });
+            };
             term = raw;
         }
         if term.constructor == TypeConstructor::Meta {
@@ -112,11 +118,16 @@ impl Solver<'_> {
                 None
             }
             TypeConstructor::PropertyTarget if metadata => {
-                let Some(index) = crate::type_image::PROPERTY_TARGET_VARIANTS.iter().position(|member| *member == name) else {
+                let Some(index) = crate::type_image::PROPERTY_TARGET_VARIANTS
+                    .iter()
+                    .position(|member| *member == name)
+                else {
                     self.bad_member(node, receiver, &name);
                     return None;
                 };
-                self.mir.member_selections[node.index()] = Some(MemberSelection::EnumVariant { index: index as u32 });
+                self.mir.member_selections[node.index()] = Some(MemberSelection::EnumVariant {
+                    index: index as u32,
+                });
                 None
             }
             TypeConstructor::Option if metadata => match name.as_str() {
@@ -193,10 +204,16 @@ impl Solver<'_> {
         }
         let ty = self.diagnostic_type(raw);
         let message = match self.term(raw).map(|term| &term.constructor) {
-            Some(TypeConstructor::Nominal(symbol)) if self.nominal_index[symbol.index()]
-                .is_some_and(|index| self.mir.type_definitions[index].operation == TypeOperation::Enum) =>
-                format!("enum {ty} has no member {name:?}"),
-            Some(TypeConstructor::Record(_)) if !metadata => format!("record {ty} has no field {name:?}"),
+            Some(TypeConstructor::Nominal(symbol))
+                if self.nominal_index[symbol.index()].is_some_and(|index| {
+                    self.mir.type_definitions[index].operation == TypeOperation::Enum
+                }) =>
+            {
+                format!("enum {ty} has no member {name:?}")
+            }
+            Some(TypeConstructor::Record(_)) if !metadata => {
+                format!("record {ty} has no field {name:?}")
+            }
             Some(TypeConstructor::Nominal(_)) if !metadata => format!("{ty} has no field {name:?}"),
             _ if metadata => format!("type {ty} has no member {name:?}"),
             _ => format!("cannot access field {name:?} on {ty}"),

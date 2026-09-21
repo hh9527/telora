@@ -41,7 +41,11 @@ impl<'a> MirQuery<'a> {
     }
 
     pub fn expressions(self) -> impl Iterator<Item = (HirId, &'a HirNode)> {
-        self.mir.hir.iter().enumerate().filter(|(index, _)| self.mir.required_types[*index])
+        self.mir
+            .hir
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.mir.required_types[*index])
             .map(|(index, node)| (HirId(index as u32), node))
     }
 
@@ -226,8 +230,8 @@ impl<'a> MirQuery<'a> {
     }
 
     pub fn completion_at(self, location: Location) -> Option<Completion<'a>> {
-        use crate::syntax::telora::{ast::SyntaxNode, cst::NodeRef};
         use crate::syntax::telora::Token;
+        use crate::syntax::telora::{ast::SyntaxNode, cst::NodeRef};
         if location.start != location.end {
             return None;
         }
@@ -236,10 +240,14 @@ impl<'a> MirQuery<'a> {
         if cursor > file.text().byte_len() {
             return None;
         }
-        let cst = self.mir.modules.iter().find_map(|module| match &module.state {
-            ModuleState::Source { source, cst, .. } if *source == location.source => Some(cst),
-            _ => None,
-        })?;
+        let cst = self
+            .mir
+            .modules
+            .iter()
+            .find_map(|module| match &module.state {
+                ModuleState::Source { source, cst, .. } if *source == location.source => Some(cst),
+                _ => None,
+            })?;
         // Consume the frontend's existing token boundaries, including recovered
         // syntax. Completion must not run a second, potentially different lexer.
         let significant = SyntaxNode::new(cst, NodeRef::ROOT)
@@ -393,10 +401,19 @@ impl<'a> MirQuery<'a> {
             }
             TypeConstructor::Parameter(symbol) => self.mir.symbols[symbol.index()].name.clone(),
             TypeConstructor::Native(native) => {
-                let declaration = self.mir.symbols.iter().find(|symbol| symbol.native_type == Some(*native));
+                let declaration = self
+                    .mir
+                    .symbols
+                    .iter()
+                    .find(|symbol| symbol.native_type == Some(*native));
                 if let Some(symbol) = declaration
-                    && let Some(module) = symbol.module {
-                    format!("opaque({}#{})", self.mir.modules[module.index()].name, symbol.name)
+                    && let Some(module) = symbol.module
+                {
+                    format!(
+                        "opaque({}#{})",
+                        self.mir.modules[module.index()].name,
+                        symbol.name
+                    )
                 } else {
                     // Even incomplete diagnostic graphs retain the admitted
                     // numeric identity; do not expose Rust's debug encoding.
@@ -453,7 +470,13 @@ mod tests {
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
         let query = MirQuery::new(&mir);
         let signature = |name| {
-            let symbol = query.symbols().find(|(_, symbol)| symbol.name == name && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap().0;
+            let symbol = query
+                .symbols()
+                .find(|(_, symbol)| {
+                    symbol.name == name && matches!(symbol.kind, SymbolKind::Declaration(_))
+                })
+                .unwrap()
+                .0;
             query.symbol_signature(symbol).unwrap()
         };
         assert_eq!(signature("deferred"), "opaque(std/test#Test)");
@@ -569,7 +592,9 @@ mod tests {
         let Some(TypeState::Conflicted(failure)) = query.type_at(missing) else {
             panic!("type query must retain the unresolved reference as its failure cause");
         };
-        assert!(matches!(mir.type_conflicts[failure.index()].resolve_origin,
-            Some(crate::mir::ResolveFailure::Reference(_))));
+        assert!(matches!(
+            mir.type_conflicts[failure.index()].resolve_origin,
+            Some(crate::mir::ResolveFailure::Reference(_))
+        ));
     }
 }

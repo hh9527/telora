@@ -11,7 +11,10 @@ fn language_acceptance_fixtures_pass() {
         .arg("-c")
         .arg(script_text)
         .arg(script.to_string_lossy().replace('\\', "/"))
-        .env("TELORA_BIN", env!("CARGO_BIN_EXE_telora").replace('\\', "/"))
+        .env(
+            "TELORA_BIN",
+            env!("CARGO_BIN_EXE_telora").replace('\\', "/"),
+        )
         .output()
         .unwrap();
     assert!(

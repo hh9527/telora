@@ -3,12 +3,19 @@ use super::*;
 impl Solver<'_> {
     pub(super) fn validate_diverging_branches(&mut self) {
         for index in 0..self.mir.hir.len() {
-            if !matches!(self.mir.hir[index].kind, HirKind::LetElse) { continue; }
-            let otherwise = self.child(HirId(index as u32), Role::Else).expect("let else branch");
+            if !matches!(self.mir.hir[index].kind, HirKind::LetElse) {
+                continue;
+            }
+            let otherwise = self
+                .child(HirId(index as u32), Role::Else)
+                .expect("let else branch");
             if let Some(ty) = self.known(otherwise.ty())
-                && self.mir.types[ty.index()].constructor != TypeConstructor::Never {
-                self.mir.diagnostics.push(Diagnostic::error("let else branch must have type Never",
-                    self.mir.hir[otherwise.index()].location));
+                && self.mir.types[ty.index()].constructor != TypeConstructor::Never
+            {
+                self.mir.diagnostics.push(Diagnostic::error(
+                    "let else branch must have type Never",
+                    self.mir.hir[otherwise.index()].location,
+                ));
             }
         }
     }
@@ -17,10 +24,20 @@ impl Solver<'_> {
         let pending = std::mem::take(&mut self.tasks);
         let mut changed = false;
         for task in pending {
-            if let Task::Fit { node, expected, actual, contract } = task
+            if let Task::Fit {
+                node,
+                expected,
+                actual,
+                contract,
+            } = task
                 && self.mir.ty_slots[self.root(expected).index()] == TypeState::Unknown
-                && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
-                && !self.pending_instances.iter().any(|&target| self.root(target) == self.root(expected))
+                && self
+                    .term(actual)
+                    .is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
+                && !self
+                    .pending_instances
+                    .iter()
+                    .any(|&target| self.root(target) == self.root(expected))
             {
                 // No independent contract chose a checked owner. A genuinely
                 // unconstrained parameter (e.g. identity) keeps Unchecked.
@@ -44,8 +61,14 @@ impl Solver<'_> {
             if let Task::ValueEqual { node, left, right } = task {
                 // Let derived expression types settle before comparison
                 // supplies evidence to genuinely unconstrained operands.
-                let metadata = [left, right].into_iter().any(|slot| self.term(slot)
-                    .is_some_and(|term| matches!(term.constructor, TypeConstructor::Type | TypeConstructor::TypeOf)));
+                let metadata = [left, right].into_iter().any(|slot| {
+                    self.term(slot).is_some_and(|term| {
+                        matches!(
+                            term.constructor,
+                            TypeConstructor::Type | TypeConstructor::TypeOf
+                        )
+                    })
+                });
                 if metadata {
                     for slot in [left, right] {
                         if self.mir.ty_slots[self.root(slot).index()] == TypeState::Unknown {
@@ -53,21 +76,30 @@ impl Solver<'_> {
                             self.equal(slot, ty, Some(self.mir.hir[node.index()].location));
                         }
                     }
-                    if let Some(task) = self.value_equal(node, left, right) { self.tasks.push(task); }
+                    if let Some(task) = self.value_equal(node, left, right) {
+                        self.tasks.push(task);
+                    }
                 } else {
                     if self.term(left).is_some() && self.term(right).is_some() {
                         self.value_equal(node, left, right);
-                    } else { self.equal(left, right, Some(self.mir.hir[node.index()].location)); }
+                    } else {
+                        self.equal(left, right, Some(self.mir.hir[node.index()].location));
+                    }
                 }
                 changed = true;
-            } else { self.tasks.push(task); }
+            } else {
+                self.tasks.push(task);
+            }
         }
         changed
     }
 
     fn value_equal(&mut self, node: HirId, left: TypeSlotId, right: TypeSlotId) -> Option<Task> {
         for slot in [left, right] {
-            if matches!(self.mir.ty_slots[self.root(slot).index()], TypeState::Conflicted(_)) {
+            if matches!(
+                self.mir.ty_slots[self.root(slot).index()],
+                TypeState::Conflicted(_)
+            ) {
                 self.same(node, slot);
                 return None;
             }
@@ -75,8 +107,13 @@ impl Solver<'_> {
         let (Some(a), Some(b)) = (self.term(left), self.term(right)) else {
             return Some(Task::ValueEqual { node, left, right });
         };
-        if matches!(a.constructor, TypeConstructor::Type | TypeConstructor::TypeOf)
-            && matches!(b.constructor, TypeConstructor::Type | TypeConstructor::TypeOf) {
+        if matches!(
+            a.constructor,
+            TypeConstructor::Type | TypeConstructor::TypeOf
+        ) && matches!(
+            b.constructor,
+            TypeConstructor::Type | TypeConstructor::TypeOf
+        ) {
             // Metadata values compare represented TypeIds at runtime. Their
             // comparison is not evidence that those TypeIds are identical.
             return None;
@@ -85,17 +122,32 @@ impl Solver<'_> {
         None
     }
 
-    fn comparison_evidence(&mut self, left: TypeSlotId, right: TypeSlotId, location: Option<Location>) {
+    fn comparison_evidence(
+        &mut self,
+        left: TypeSlotId,
+        right: TypeSlotId,
+        location: Option<Location>,
+    ) {
         let mut pending = vec![(left, right)];
         let mut seen = std::collections::BTreeSet::new();
         while let Some((left, right)) = pending.pop() {
             let pair = (self.root(left), self.root(right));
-            if pair.0 == pair.1 || !seen.insert(pair) { continue; }
+            if pair.0 == pair.1 || !seen.insert(pair) {
+                continue;
+            }
             if let (Some(a), Some(b)) = (self.term(left), self.term(right)) {
-                let tuple = |constructor: &TypeConstructor| matches!(constructor, TypeConstructor::Tuple | TypeConstructor::TupleLiteral);
-                if ((a.constructor == b.constructor && a.constructor != TypeConstructor::ArrayLiteral)
-                    || (tuple(&a.constructor) && tuple(&b.constructor))) && a.arguments.len() == b.arguments.len()
-                    && !a.arguments.is_empty() {
+                let tuple = |constructor: &TypeConstructor| {
+                    matches!(
+                        constructor,
+                        TypeConstructor::Tuple | TypeConstructor::TupleLiteral
+                    )
+                };
+                if ((a.constructor == b.constructor
+                    && a.constructor != TypeConstructor::ArrayLiteral)
+                    || (tuple(&a.constructor) && tuple(&b.constructor)))
+                    && a.arguments.len() == b.arguments.len()
+                    && !a.arguments.is_empty()
+                {
                     // Comparison supplies child evidence, not equality of the
                     // parent identities. Canonicalization merges only equal types.
                     pending.extend(a.arguments.iter().copied().zip(b.arguments.iter().copied()));
@@ -111,7 +163,11 @@ impl Solver<'_> {
         // Empty array element defaults must wait for scheme materialization:
         // a generic constructor can carry the annotated record field context.
         // Diverging return defaults, conversely, must precede generalization.
-        let candidates = if literals { &mut self.literal_bottom_candidates } else { &mut self.bottom_candidates };
+        let candidates = if literals {
+            &mut self.literal_bottom_candidates
+        } else {
+            &mut self.bottom_candidates
+        };
         let mut deferred = Vec::new();
         for slot in std::mem::take(candidates) {
             let root = self.root(slot);
@@ -120,13 +176,22 @@ impl Solver<'_> {
                 // Their evidence must arrive before a bottom-only tail can
                 // default the shared result slot to Never.
                 if self.tasks.iter().any(|task| match task {
-                    Task::Fit { expected, actual, .. } => self.unknown_leaves(*expected).contains(&root)
-                        && !self.term(*actual).is_some_and(|term| term.constructor == TypeConstructor::Never),
-                    Task::Call { node, .. } | Task::Member { node, .. }
-                    | Task::Projection { node, .. } | Task::FieldProjection { node, .. }
+                    Task::Fit {
+                        expected, actual, ..
+                    } => {
+                        self.unknown_leaves(*expected).contains(&root)
+                            && !self
+                                .term(*actual)
+                                .is_some_and(|term| term.constructor == TypeConstructor::Never)
+                    }
+                    Task::Call { node, .. }
+                    | Task::Member { node, .. }
+                    | Task::Projection { node, .. }
+                    | Task::FieldProjection { node, .. }
                     | Task::Join { node, .. } => self.unknown_leaves(node.ty()).contains(&root),
-                    Task::Instantiate { target, .. } | Task::RefineInstance { target, .. } =>
-                        self.unknown_leaves(*target).contains(&root),
+                    Task::Instantiate { target, .. } | Task::RefineInstance { target, .. } => {
+                        self.unknown_leaves(*target).contains(&root)
+                    }
                     _ => false,
                 }) {
                     deferred.push(slot);
@@ -137,8 +202,11 @@ impl Solver<'_> {
                 changed = true;
             }
         }
-        if literals { self.literal_bottom_candidates.extend(deferred); }
-        else { self.bottom_candidates.extend(deferred); }
+        if literals {
+            self.literal_bottom_candidates.extend(deferred);
+        } else {
+            self.bottom_candidates.extend(deferred);
+        }
         changed
     }
 
@@ -166,34 +234,62 @@ impl Solver<'_> {
             }
             Task::TypeApply { node } => {
                 let callee = self.child(node, Role::Callee).unwrap();
-                if matches!(self.mir.ty_slots[self.root(callee.ty()).index()], TypeState::Conflicted(_)) {
+                if matches!(
+                    self.mir.ty_slots[self.root(callee.ty()).index()],
+                    TypeState::Conflicted(_)
+                ) {
                     self.same(node, callee.ty());
                     return Ok(None);
                 }
-                if self.tasks.iter().any(|task| matches!(task, Task::Reference { node, .. } if *node == callee)) {
+                if self
+                    .tasks
+                    .iter()
+                    .any(|task| matches!(task, Task::Reference { node, .. } if *node == callee))
+                {
                     return Ok(Some(Task::TypeApply { node }));
                 }
                 if self.mir.hir[callee.index()].resolution.is_some_and(|slot| matches!(self.mir.resolve_slots[slot.index()], ResolveState::Bound(symbol) if self.generalizations[symbol.index()].is_some())) {
                     return Ok(Some(Task::TypeApply { node }));
                 }
-                let mut parameters = self.mir.type_instances[callee.index()].iter().map(|(_, slot)| *slot).collect::<Vec<_>>();
+                let mut parameters = self.mir.type_instances[callee.index()]
+                    .iter()
+                    .map(|(_, slot)| *slot)
+                    .collect::<Vec<_>>();
                 if parameters.is_empty()
                     && let Some(slot) = self.mir.hir[callee.index()].resolution
-                    && let ResolveState::Member { receiver, .. } = self.mir.resolve_slots[slot.index()] {
+                    && let ResolveState::Member { receiver, .. } =
+                        self.mir.resolve_slots[slot.index()]
+                {
                     // A selected constructor retains its receiver's generic
                     // holes. Native constructor families have positional holes
                     // in the selected signature, identified by native rules.
                     let Some(signature) = self.term(callee.ty()).cloned() else {
                         return Ok(Some(Task::TypeApply { node }));
                     };
-                    parameters = self.mir.type_instances[receiver.index()].iter().map(|(_, slot)| *slot).collect();
+                    parameters = self.mir.type_instances[receiver.index()]
+                        .iter()
+                        .map(|(_, slot)| *slot)
+                        .collect();
                     if parameters.is_empty()
-                        && self.term(receiver.ty()).is_some_and(|term| matches!(term.constructor,
-                            TypeConstructor::TypeFunction(TypeFunction::Option | TypeFunction::Result | TypeFunction::FoldControl))) {
+                        && self.term(receiver.ty()).is_some_and(|term| {
+                            matches!(
+                                term.constructor,
+                                TypeConstructor::TypeFunction(
+                                    TypeFunction::Option
+                                        | TypeFunction::Result
+                                        | TypeFunction::FoldControl
+                                )
+                            )
+                        })
+                    {
                         let owner = if signature.constructor == TypeConstructor::Function {
                             *signature.arguments.last().unwrap()
-                        } else { callee.ty() };
-                        if let Some(owner) = self.term(owner) { parameters = owner.arguments.clone(); }
+                        } else {
+                            callee.ty()
+                        };
+                        if let Some(owner) = self.term(owner) {
+                            parameters = owner.arguments.clone();
+                        }
                     }
                 }
                 let arguments = self.children(node, Role::Argument);
@@ -201,10 +297,18 @@ impl Solver<'_> {
                     let message = if parameters.is_empty() {
                         "explicit type application cannot specialize a monomorphic binding".into()
                     } else {
-                        format!("explicit type application expects {} arguments, found {}", parameters.len(), arguments.len())
+                        format!(
+                            "explicit type application expects {} arguments, found {}",
+                            parameters.len(),
+                            arguments.len()
+                        )
                     };
-                    self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
-                        message);
+                    self.conflict(
+                        node.ty(),
+                        node.ty(),
+                        Some(self.mir.hir[node.index()].location),
+                        message,
+                    );
                 } else {
                     for (parameter, argument) in parameters.into_iter().zip(arguments) {
                         self.assign(argument, TypeConstructor::Meta, vec![parameter]);
@@ -218,7 +322,10 @@ impl Solver<'_> {
                 if self.pending_blocks[body.index()] || self.term(body.ty()).is_none() {
                     return Ok(Some(Task::PropagationBottom { body, success }));
                 }
-                if self.term(body.ty()).is_some_and(|term| term.constructor == TypeConstructor::Never) {
+                if self
+                    .term(body.ty())
+                    .is_some_and(|term| term.constructor == TypeConstructor::Never)
+                {
                     self.bottom_candidates.push(success);
                 }
                 None
@@ -227,14 +334,30 @@ impl Solver<'_> {
             Task::RecordSpread { node } => self.record_spread(node),
             Task::StructUpdate { node, left, right } => self.struct_update(node, left, right),
             Task::FieldProjection { node, receiver } => self.field_projection(node, receiver),
-            Task::Block { node, statements, result } => {
-                let bottom = statements.iter().any(|&slot| self.term(slot).is_some_and(|term| term.constructor == TypeConstructor::Never));
+            Task::Block {
+                node,
+                statements,
+                result,
+            } => {
+                let bottom = statements.iter().any(|&slot| {
+                    self.term(slot)
+                        .is_some_and(|term| term.constructor == TypeConstructor::Never)
+                });
                 if bottom {
                     self.assign(node, TypeConstructor::Never, vec![]);
-                } else if let Some(&slot) = statements.iter().find(|&&slot| matches!(self.mir.ty_slots[self.root(slot).index()], TypeState::Conflicted(_))) {
+                } else if let Some(&slot) = statements.iter().find(|&&slot| {
+                    matches!(
+                        self.mir.ty_slots[self.root(slot).index()],
+                        TypeState::Conflicted(_)
+                    )
+                }) {
                     self.same(node, slot);
                 } else if statements.iter().any(|&slot| self.term(slot).is_none()) {
-                    return Ok(Some(Task::Block { node, statements, result }));
+                    return Ok(Some(Task::Block {
+                        node,
+                        statements,
+                        result,
+                    }));
                 } else {
                     self.same(node, result);
                 }
@@ -242,19 +365,54 @@ impl Solver<'_> {
                 self.revision += 1;
                 None
             }
-            Task::ShapeEqual { left, right, location, .. } => { self.equal(left, right, location); None }
+            Task::ShapeEqual {
+                left,
+                right,
+                location,
+                ..
+            } => {
+                self.equal(left, right, location);
+                None
+            }
             Task::Unchecked { node, argument } => {
-                let Some(term) = self.term(argument).cloned() else { return Ok(Some(Task::Unchecked { node, argument })); };
+                let Some(term) = self.term(argument).cloned() else {
+                    return Ok(Some(Task::Unchecked { node, argument }));
+                };
                 match term.constructor {
                     TypeConstructor::Unchecked | TypeConstructor::Parameter(_) => {}
-                    TypeConstructor::Nominal(symbol) if self.nominal_index[symbol.index()].is_some_and(|index| self.mir.type_definitions[index].operation == TypeOperation::Struct) => {}
-                    _ => self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location), "Unchecked requires a named-field struct type".into()),
+                    TypeConstructor::Nominal(symbol)
+                        if self.nominal_index[symbol.index()].is_some_and(|index| {
+                            self.mir.type_definitions[index].operation == TypeOperation::Struct
+                        }) => {}
+                    _ => self.conflict(
+                        node.ty(),
+                        node.ty(),
+                        Some(self.mir.hir[node.index()].location),
+                        "Unchecked requires a named-field struct type".into(),
+                    ),
                 }
                 None
             }
-            Task::RefineInstance { source, target, arguments, location, constructor, origin } => {
-                if self.term(source).is_some_and(|term| term.constructor == constructor) {
-                    Some(Task::RefineInstance { source, target, arguments, location, constructor, origin })
+            Task::RefineInstance {
+                source,
+                target,
+                arguments,
+                location,
+                constructor,
+                origin,
+            } => {
+                if self
+                    .term(source)
+                    .is_some_and(|term| term.constructor == constructor)
+                {
+                    Some(Task::RefineInstance {
+                        source,
+                        target,
+                        arguments,
+                        location,
+                        constructor,
+                        origin,
+                    })
                 } else {
                     self.substitute_term(source, target, arguments, location)
                 }
@@ -348,48 +506,114 @@ impl Solver<'_> {
                 actual,
                 contract,
             } => {
-                if self.pending_blocks.get(actual.index()).copied().unwrap_or(false) {
-                    return Ok(Some(Task::Fit { node, expected, actual, contract }));
+                if self
+                    .pending_blocks
+                    .get(actual.index())
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    return Ok(Some(Task::Fit {
+                        node,
+                        expected,
+                        actual,
+                        contract,
+                    }));
                 }
                 // A type constructor determines this slot. An argument must
                 // wait for that shape rather than become the shared contract.
                 if self.mir.ty_slots[self.root(expected).index()] == TypeState::Unknown
-                    && self.type_results.iter().any(|&result| self.root(result) == self.root(expected)) {
-                    return Ok(Some(Task::Fit { node, expected, actual, contract }));
+                    && self
+                        .type_results
+                        .iter()
+                        .any(|&result| self.root(result) == self.root(expected))
+                {
+                    return Ok(Some(Task::Fit {
+                        node,
+                        expected,
+                        actual,
+                        contract,
+                    }));
                 }
                 // An unresolved instance is not a free inference variable.
                 // Its source may still supply an Unchecked/nominal boundary;
                 // equality now would erase the directional conversion.
-                if [expected, actual].into_iter().any(|slot| self.term(slot).is_none()
-                    && self.pending_instances.iter().any(|&target| self.root(target) == self.root(slot))) {
-                    return Ok(Some(Task::Fit { node, expected, actual, contract }));
+                if [expected, actual].into_iter().any(|slot| {
+                    self.term(slot).is_none()
+                        && self
+                            .pending_instances
+                            .iter()
+                            .any(|&target| self.root(target) == self.root(slot))
+                }) {
+                    return Ok(Some(Task::Fit {
+                        node,
+                        expected,
+                        actual,
+                        contract,
+                    }));
                 }
                 if self.mir.ty_slots[self.root(expected).index()] == TypeState::Unknown
-                    && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Unchecked) {
-                    return Ok(Some(Task::Fit { node, expected, actual, contract }));
+                    && self
+                        .term(actual)
+                        .is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
+                {
+                    return Ok(Some(Task::Fit {
+                        node,
+                        expected,
+                        actual,
+                        contract,
+                    }));
                 }
-                if self.term(expected).is_some_and(|term| matches!(term.constructor, TypeConstructor::Record(_)))
-                    && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Unchecked) {
+                if self
+                    .term(expected)
+                    .is_some_and(|term| matches!(term.constructor, TypeConstructor::Record(_)))
+                    && self
+                        .term(actual)
+                        .is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
+                {
                     // A construction can supply fields before its annotation
                     // supplies nominal identity. Keep the completion edge
                     // directional until that identity arrives.
-                    return Ok(Some(Task::Fit { node, expected, actual, contract }));
+                    return Ok(Some(Task::Fit {
+                        node,
+                        expected,
+                        actual,
+                        contract,
+                    }));
                 }
-                if self.term(expected).is_some_and(|term| term.constructor == TypeConstructor::TypeOf)
-                    && self.term(actual).is_some_and(|term| term.constructor == TypeConstructor::Type) {
-                    self.conflict(expected, actual, Some(self.mir.hir[node.index()].location),
-                        "Type metadata does not establish a specific TypeOf witness".into());
+                if self
+                    .term(expected)
+                    .is_some_and(|term| term.constructor == TypeConstructor::TypeOf)
+                    && self
+                        .term(actual)
+                        .is_some_and(|term| term.constructor == TypeConstructor::Type)
+                {
+                    self.conflict(
+                        expected,
+                        actual,
+                        Some(self.mir.hir[node.index()].location),
+                        "Type metadata does not establish a specific TypeOf witness".into(),
+                    );
                     return Ok(None);
                 }
-                if let (Some(expected_type), Some(actual_type)) = (self.term(expected).cloned(), self.term(actual).cloned())
+                if let (Some(expected_type), Some(actual_type)) =
+                    (self.term(expected).cloned(), self.term(actual).cloned())
                     && matches!(expected_type.constructor, TypeConstructor::Nominal(_))
                     && actual_type.constructor == TypeConstructor::Unchecked
                 {
-                    self.equal(expected, actual_type.arguments[0], Some(self.mir.hir[node.index()].location));
+                    self.equal(
+                        expected,
+                        actual_type.arguments[0],
+                        Some(self.mir.hir[node.index()].location),
+                    );
                     if actual.index() < self.mir.hir.len() {
                         self.mir.value_adjustments[actual.index()] = Some(expected);
                     } else {
-                        self.conflict(expected, actual, Some(self.mir.hir[node.index()].location), "unchecked conversion requires a value boundary".into());
+                        self.conflict(
+                            expected,
+                            actual,
+                            Some(self.mir.hir[node.index()].location),
+                            "unchecked conversion requires a value boundary".into(),
+                        );
                     }
                     None
                 } else if self
@@ -415,8 +639,11 @@ impl Solver<'_> {
                     }
                     let last = expected_type.arguments.len() - 1;
                     self.revision += 1;
-                    for (index, (expected, actual)) in expected_type.arguments.into_iter()
-                        .zip(actual_type.arguments).enumerate()
+                    for (index, (expected, actual)) in expected_type
+                        .arguments
+                        .into_iter()
+                        .zip(actual_type.arguments)
+                        .enumerate()
                     {
                         if index == last {
                             self.fit(node, expected, actual);
@@ -431,22 +658,54 @@ impl Solver<'_> {
                 }
             }
             Task::Join { node, values } => {
-                if values.iter().any(|&value| self.term(value).is_some_and(|term| matches!(term.constructor, TypeConstructor::Type | TypeConstructor::TypeOf))) {
+                if values.iter().any(|&value| {
+                    self.term(value).is_some_and(|term| {
+                        matches!(
+                            term.constructor,
+                            TypeConstructor::Type | TypeConstructor::TypeOf
+                        )
+                    })
+                }) {
                     return Ok(self.metadata_join(node, values));
                 }
                 // Completion is directional, not equality between branch slots.
                 // Prefer a checked branch as the join target, and leave each
                 // unchecked source intact with an explicit value adjustment.
-                if values.iter().any(|&value| self.term(value).is_some_and(|t| t.constructor == TypeConstructor::Unchecked)) {
-                    if values.iter().any(|&value| self.term(value).is_none() && !matches!(self.mir.ty_slots[self.root(value).index()], TypeState::Conflicted(_))) {
+                if values.iter().any(|&value| {
+                    self.term(value)
+                        .is_some_and(|t| t.constructor == TypeConstructor::Unchecked)
+                }) {
+                    if values.iter().any(|&value| {
+                        self.term(value).is_none()
+                            && !matches!(
+                                self.mir.ty_slots[self.root(value).index()],
+                                TypeState::Conflicted(_)
+                            )
+                    }) {
                         return Ok(Some(Task::Join { node, values }));
                     }
                     if self.term(node.ty()).is_none() {
-                        let target = values.iter().copied().find(|&value| self.term(value).is_some_and(|t| matches!(t.constructor, TypeConstructor::Nominal(_))))
-                            .or_else(|| values.iter().copied().find(|&value| self.term(value).is_some_and(|t| t.constructor != TypeConstructor::Never)));
-                        if let Some(target) = target { self.same(node, target); }
+                        let target = values
+                            .iter()
+                            .copied()
+                            .find(|&value| {
+                                self.term(value).is_some_and(|t| {
+                                    matches!(t.constructor, TypeConstructor::Nominal(_))
+                                })
+                            })
+                            .or_else(|| {
+                                values.iter().copied().find(|&value| {
+                                    self.term(value)
+                                        .is_some_and(|t| t.constructor != TypeConstructor::Never)
+                                })
+                            });
+                        if let Some(target) = target {
+                            self.same(node, target);
+                        }
                     }
-                    for value in values { self.fit(node, node.ty(), value); }
+                    for value in values {
+                        self.fit(node, node.ty(), value);
+                    }
                     return Ok(None);
                 }
                 let mut unknown = false;
@@ -506,20 +765,34 @@ impl Solver<'_> {
                             self.same(node, *payload);
                         } else {
                             self.conflict(
-                                node.ty(), node.ty(),
+                                node.ty(),
+                                node.ty(),
                                 Some(self.mir.hir[node.index()].location),
-                                format!("{} has no item at index 0", self.diagnostic_type(receiver)),
+                                format!(
+                                    "{} has no item at index 0",
+                                    self.diagnostic_type(receiver)
+                                ),
                             );
                         }
                     }
-                    (Some(i), TypeConstructor::Tuple | TypeConstructor::TupleLiteral) if i < term.arguments.len() => {
+                    (Some(i), TypeConstructor::Tuple | TypeConstructor::TupleLiteral)
+                        if i < term.arguments.len() =>
+                    {
                         self.same(node, term.arguments[i])
                     }
-                    (None, TypeConstructor::Array | TypeConstructor::ArrayLiteral | TypeConstructor::Dict) => {
+                    (
+                        None,
+                        TypeConstructor::Array
+                        | TypeConstructor::ArrayLiteral
+                        | TypeConstructor::Dict,
+                    ) => {
                         let key = self.child(node, Role::Index).expect("index");
                         self.assign(
                             key,
-                            if matches!(term.constructor, TypeConstructor::Array | TypeConstructor::ArrayLiteral) {
+                            if matches!(
+                                term.constructor,
+                                TypeConstructor::Array | TypeConstructor::ArrayLiteral
+                            ) {
                                 TypeConstructor::Int
                             } else {
                                 TypeConstructor::String
@@ -533,8 +806,14 @@ impl Solver<'_> {
                         node.ty(),
                         Some(self.mir.hir[node.index()].location),
                         match index {
-                            Some(index) => format!("{} has no item at index {index}", self.diagnostic_type(receiver)),
-                            None => format!("indexing requires an Array or Dict, found {}", self.diagnostic_type(receiver)),
+                            Some(index) => format!(
+                                "{} has no item at index {index}",
+                                self.diagnostic_type(receiver)
+                            ),
+                            None => format!(
+                                "indexing requires an Array or Dict, found {}",
+                                self.diagnostic_type(receiver)
+                            ),
                         },
                     ),
                 }
@@ -603,12 +882,22 @@ impl Solver<'_> {
             return None;
         }
         let Some(term) = self.term(callee).cloned() else {
-            if self.term(node.ty()).is_some_and(|term| term.constructor == TypeConstructor::Meta)
-                || arguments.iter().any(|&argument| self.term(argument).is_some_and(|term| term.constructor == TypeConstructor::Meta)) {
+            if self
+                .term(node.ty())
+                .is_some_and(|term| term.constructor == TypeConstructor::Meta)
+                || arguments.iter().any(|&argument| {
+                    self.term(argument)
+                        .is_some_and(|term| term.constructor == TypeConstructor::Meta)
+                })
+            {
                 let raw = self.fresh();
                 let meta = self.structure(TypeConstructor::Meta, vec![raw]);
                 self.equal(callee, meta, Some(self.mir.hir[node.index()].location));
-                return Some(Task::Call { node, callee, arguments });
+                return Some(Task::Call {
+                    node,
+                    callee,
+                    arguments,
+                });
             }
             if self.value_slots[self.root(callee).index()] {
                 let mut signature = arguments;
@@ -630,7 +919,11 @@ impl Solver<'_> {
                         node.ty(),
                         node.ty(),
                         Some(self.mir.hir[node.index()].location),
-                        format!("call expects {} arguments, found {}", term.arguments.len().saturating_sub(1), arguments.len()),
+                        format!(
+                            "call expects {} arguments, found {}",
+                            term.arguments.len().saturating_sub(1),
+                            arguments.len()
+                        ),
                     );
                 } else {
                     for (&expected, &actual) in term.arguments.iter().zip(&arguments) {
@@ -641,10 +934,21 @@ impl Solver<'_> {
             }
             TypeConstructor::TypeFunction(function) => {
                 if matches!(function, TypeFunction::Tuple | TypeFunction::Func) {
-                    let expected = if function == TypeFunction::Tuple { 1 } else { 2 };
+                    let expected = if function == TypeFunction::Tuple {
+                        1
+                    } else {
+                        2
+                    };
                     if arguments.len() != expected {
-                        self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
-                            format!("type constructor expected {expected} arguments, got {}", arguments.len()));
+                        self.conflict(
+                            node.ty(),
+                            node.ty(),
+                            Some(self.mir.hir[node.index()].location),
+                            format!(
+                                "type constructor expected {expected} arguments, got {}",
+                                arguments.len()
+                            ),
+                        );
                         return None;
                     }
                 }
@@ -693,8 +997,12 @@ impl Solver<'_> {
                     return None;
                 }
                 if matches!(function, TypeFunction::Tuple | TypeFunction::Func) {
-                    self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
-                        "type constructor requires a static type list as its first argument".into());
+                    self.conflict(
+                        node.ty(),
+                        node.ty(),
+                        Some(self.mir.hir[node.index()].location),
+                        "type constructor requires a static type list as its first argument".into(),
+                    );
                     return None;
                 }
                 let (cons, arity) = match function {
@@ -706,7 +1014,9 @@ impl Solver<'_> {
                     TypeFunction::TypeOf => (TypeConstructor::TypeOf, 1),
                     TypeFunction::Unchecked => (TypeConstructor::Unchecked, 1),
                     TypeFunction::Property => (TypeConstructor::PropertyBound, 1),
-                    TypeFunction::Tuple | TypeFunction::Func => unreachable!("list constructors handled above"),
+                    TypeFunction::Tuple | TypeFunction::Func => {
+                        unreachable!("list constructors handled above")
+                    }
                 };
                 if arguments.len() != arity {
                     self.conflict(
@@ -724,7 +1034,10 @@ impl Solver<'_> {
                         raw.push(slot);
                     }
                     if function == TypeFunction::Unchecked {
-                        self.tasks.push(Task::Unchecked { node, argument: raw[0] });
+                        self.tasks.push(Task::Unchecked {
+                            node,
+                            argument: raw[0],
+                        });
                     }
                     let ty = self.structure(cons, raw);
                     self.assign(node, TypeConstructor::Meta, vec![ty]);
@@ -733,19 +1046,40 @@ impl Solver<'_> {
             TypeConstructor::Meta => {
                 // A generic alias can expand to any type constructor. Bind
                 // its declared parameter instances, not the shape of its body.
-                let instances = self.child(node, Role::Callee)
+                let instances = self
+                    .child(node, Role::Callee)
                     .map(|syntax| self.mir.type_instances[syntax.index()].clone())
                     .unwrap_or_default();
                 if !instances.is_empty() && arguments.len() != instances.len() {
-                    self.conflict(node.ty(), node.ty(), Some(self.mir.hir[node.index()].location),
-                        format!("type constructor expected {} arguments, got {}", instances.len(), arguments.len()));
+                    self.conflict(
+                        node.ty(),
+                        node.ty(),
+                        Some(self.mir.hir[node.index()].location),
+                        format!(
+                            "type constructor expected {} arguments, got {}",
+                            instances.len(),
+                            arguments.len()
+                        ),
+                    );
                     return None;
                 }
-                if !instances.is_empty() && arguments.iter().any(|&argument| self.term(argument).is_none()) {
-                    return Some(Task::Call { node, callee, arguments });
+                if !instances.is_empty()
+                    && arguments
+                        .iter()
+                        .any(|&argument| self.term(argument).is_none())
+                {
+                    return Some(Task::Call {
+                        node,
+                        callee,
+                        arguments,
+                    });
                 }
-                if !instances.is_empty() && arguments.len() == instances.len()
-                    && arguments.iter().all(|&argument| self.term(argument).is_some_and(|ty| ty.constructor == TypeConstructor::Meta))
+                if !instances.is_empty()
+                    && arguments.len() == instances.len()
+                    && arguments.iter().all(|&argument| {
+                        self.term(argument)
+                            .is_some_and(|ty| ty.constructor == TypeConstructor::Meta)
+                    })
                 {
                     for ((_, parameter), argument) in instances.into_iter().zip(arguments) {
                         let meta = self.structure(TypeConstructor::Meta, vec![parameter]);
@@ -820,17 +1154,25 @@ impl Solver<'_> {
     ) -> bool {
         let a = self.term(left).unwrap().clone();
         let b = self.term(right).unwrap().clone();
-        if (a.constructor == TypeConstructor::Tuple && b.constructor == TypeConstructor::TupleLiteral)
-            || (b.constructor == TypeConstructor::Tuple && a.constructor == TypeConstructor::TupleLiteral)
+        if (a.constructor == TypeConstructor::Tuple
+            && b.constructor == TypeConstructor::TupleLiteral)
+            || (b.constructor == TypeConstructor::Tuple
+                && a.constructor == TypeConstructor::TupleLiteral)
         {
             let (expected, actual, target, items) = if a.constructor == TypeConstructor::Tuple {
                 (left, right, a.arguments, b.arguments)
-            } else { (right, left, b.arguments, a.arguments) };
-            if target.len() != items.len() { return false; }
+            } else {
+                (right, left, b.arguments, a.arguments)
+            };
+            if target.len() != items.len() {
+                return false;
+            }
             for (expected, actual) in target.into_iter().zip(items) {
                 if actual.index() < self.mir.hir.len() {
                     self.fit(HirId(actual.0), expected, actual);
-                } else { pending.push_back((expected, actual)); }
+                } else {
+                    pending.push_back((expected, actual));
+                }
             }
             self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
             self.revision += 1;
@@ -843,9 +1185,14 @@ impl Solver<'_> {
             for items in [a.arguments, b.arguments] {
                 let element = self.fresh();
                 for item in items {
-                    if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Never) {
+                    if self
+                        .term(item)
+                        .is_some_and(|term| term.constructor == TypeConstructor::Never)
+                    {
                         self.bottom_candidates.push(element);
-                    } else { pending.push_back((element, item)); }
+                    } else {
+                        pending.push_back((element, item));
+                    }
                 }
                 elements.push(element);
             }
@@ -870,22 +1217,46 @@ impl Solver<'_> {
             for &item in &items {
                 if item.index() < self.mir.hir.len() {
                     self.fit(HirId(item.0), element, item);
-                } else { pending.push_back((element, item)); }
+                } else {
+                    pending.push_back((element, item));
+                }
             }
             let own_element = self.fresh();
             for item in items {
                 // Fit may still be queued. An explicit checked boundary owns
                 // the resulting element type; the fit task installs its check.
-                let item = if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::TypeOf)
-                    && self.term(element).is_some_and(|term| term.constructor == TypeConstructor::Type) {
+                let item = if self
+                    .term(item)
+                    .is_some_and(|term| term.constructor == TypeConstructor::TypeOf)
+                    && self
+                        .term(element)
+                        .is_some_and(|term| term.constructor == TypeConstructor::Type)
+                {
                     element
-                } else if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
-                    && self.term(element).is_some_and(|term| term.constructor != TypeConstructor::Unchecked) {
+                } else if self
+                    .term(item)
+                    .is_some_and(|term| term.constructor == TypeConstructor::Unchecked)
+                    && self
+                        .term(element)
+                        .is_some_and(|term| term.constructor != TypeConstructor::Unchecked)
+                {
                     element
-                } else { self.mir.value_adjustments.get(item.index()).copied().flatten().unwrap_or(item) };
-                if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Never) {
+                } else {
+                    self.mir
+                        .value_adjustments
+                        .get(item.index())
+                        .copied()
+                        .flatten()
+                        .unwrap_or(item)
+                };
+                if self
+                    .term(item)
+                    .is_some_and(|term| term.constructor == TypeConstructor::Never)
+                {
                     self.bottom_candidates.push(own_element);
-                } else { pending.push_back((own_element, item)); }
+                } else {
+                    pending.push_back((own_element, item));
+                }
             }
             pending.push_back((own_element, element));
             let array = self.structure(TypeConstructor::Array, vec![own_element]);
@@ -915,18 +1286,37 @@ impl Solver<'_> {
         let fields = match nominal.constructor {
             TypeConstructor::Unchecked => {
                 let Some(owner) = self.term(nominal.arguments[0]).cloned() else {
-                    self.tasks.push(Task::ShapeEqual { left, right, location, origin: self.constraint_origin });
+                    self.tasks.push(Task::ShapeEqual {
+                        left,
+                        right,
+                        location,
+                        origin: self.constraint_origin,
+                    });
                     return true;
                 };
                 if matches!(owner.constructor, TypeConstructor::Record(_)) {
                     // Other constructions may have supplied provisional
                     // fields to this owner before its nominal annotation.
-                    self.tasks.push(Task::ShapeEqual { left, right, location, origin: self.constraint_origin });
+                    self.tasks.push(Task::ShapeEqual {
+                        left,
+                        right,
+                        location,
+                        origin: self.constraint_origin,
+                    });
                     return true;
                 }
-                let TypeConstructor::Nominal(symbol) = owner.constructor else { return false; };
-                let Some((TypeOperation::Struct, members)) = self.nominal_members(symbol, &owner.arguments) else { return false; };
-                members.into_iter().map(|(name, ty)| (name, ty.unwrap())).collect::<Vec<_>>()
+                let TypeConstructor::Nominal(symbol) = owner.constructor else {
+                    return false;
+                };
+                let Some((TypeOperation::Struct, members)) =
+                    self.nominal_members(symbol, &owner.arguments)
+                else {
+                    return false;
+                };
+                members
+                    .into_iter()
+                    .map(|(name, ty)| (name, ty.unwrap()))
+                    .collect::<Vec<_>>()
             }
             TypeConstructor::Nominal(symbol) => {
                 let Some((TypeOperation::Struct, members)) =
@@ -953,7 +1343,9 @@ impl Solver<'_> {
             let value = record.arguments[index];
             if value.index() < self.mir.hir.len() {
                 self.fit(HirId(value.0), ty, value);
-            } else { pending.push_back((ty, value)); }
+            } else {
+                pending.push_back((ty, value));
+            }
         }
         self.mir.ty_slots[actual.index()] = TypeState::ProxyTo(expected);
         self.revision += 1;
@@ -998,9 +1390,14 @@ impl Solver<'_> {
                 .find(|(i, _)| self.root(TypeSlotId(*i as u32)) == slot)
                 .map(|(_, n)| n.location);
             for item in term.arguments {
-                if self.term(item).is_some_and(|term| term.constructor == TypeConstructor::Never) {
+                if self
+                    .term(item)
+                    .is_some_and(|term| term.constructor == TypeConstructor::Never)
+                {
                     self.bottom_candidates.push(element);
-                } else { self.equal(element, item, location); }
+                } else {
+                    self.equal(element, item, location);
+                }
             }
             let array = self.structure(TypeConstructor::Array, vec![element]);
             self.mir.ty_slots[index] = TypeState::ProxyTo(array);

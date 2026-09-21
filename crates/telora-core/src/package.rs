@@ -136,8 +136,12 @@ impl WorkspaceSpec {
         let start = absolute(start)?;
         // Workspace containment compares canonical member directories. Use
         // the same identity for discovery, including relative paths with '..'.
-        let start = fs::canonicalize(&start).map_err(|error| PackageError::new(
-            format!("cannot resolve workspace discovery start {}: {error}", start.display())))?;
+        let start = fs::canonicalize(&start).map_err(|error| {
+            PackageError::new(format!(
+                "cannot resolve workspace discovery start {}: {error}",
+                start.display()
+            ))
+        })?;
         let search = if start.is_file() {
             start.parent().unwrap_or(&start)
         } else {
@@ -412,9 +416,13 @@ impl WorkspaceSpec {
 }
 
 impl ResolvedWorkspace {
-    pub fn compiler_options(&self) -> crate::CompilerOptions { self.compiler }
+    pub fn compiler_options(&self) -> crate::CompilerOptions {
+        self.compiler
+    }
 
-    pub fn runtime_options(&self) -> crate::RuntimeOptions { self.runtime }
+    pub fn runtime_options(&self) -> crate::RuntimeOptions {
+        self.runtime
+    }
 
     pub fn root(&self) -> &Path {
         &self.root
@@ -470,15 +478,25 @@ impl ResolvedWorkspace {
                 Ok(path) => break path,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     let Some(name) = ancestor.file_name() else {
-                        return Err(PackageError::new(format!("cannot resolve {}: {error}", ancestor.display())));
+                        return Err(PackageError::new(format!(
+                            "cannot resolve {}: {error}",
+                            ancestor.display()
+                        )));
                     };
                     suffix.push(name);
                     ancestor = ancestor.parent().expect("named path has a parent");
                 }
-                Err(error) => return Err(PackageError::new(format!("cannot resolve {}: {error}", ancestor.display()))),
+                Err(error) => {
+                    return Err(PackageError::new(format!(
+                        "cannot resolve {}: {error}",
+                        ancestor.display()
+                    )));
+                }
             }
         };
-        for name in suffix.into_iter().rev() { path.push(name); }
+        for name in suffix.into_iter().rev() {
+            path.push(name);
+        }
         let mut matches = self
             .crates
             .iter()
@@ -948,7 +966,9 @@ fn validate_crate_name(name: &str) -> Result<(), PackageError> {
     if name.is_empty()
         || name.starts_with(['@', '_'])
         || name.contains(['/', '.', '\\'])
-        || !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
     {
         return Err(PackageError::new(format!(
             "invalid crate name {name:?}; expected ASCII letters, digits, and '-'"

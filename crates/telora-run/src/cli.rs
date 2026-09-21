@@ -87,14 +87,15 @@ pub fn diagnostic(value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-fn usage(runner: &Runner) -> Result<()> {
+fn usage(runner: &mut Runner) -> Result<()> {
     let u = runner.usage();
     diagnostic(
         &serde_json::json!({"schema":"telora.execution/v1","record":"diagnostic",
         "severity":"info","code":"execution-usage","message":"Wasm execution resource usage",
         "labels":[],"notes":[],"usage":{"fuel":{"limit":u.fuel_limit,"consumed":u.fuel_consumed,
             "remaining":u.fuel_limit.saturating_sub(u.fuel_consumed)},
-            "linear_memory":{"bytes":u.memory_bytes,"limit_bytes":u.memory_limit_bytes}}}),
+            "linear_memory":{"bytes":u.memory_bytes,"limit_bytes":u.memory_limit_bytes},
+            "initialization_stats":u.initialization,"phases":u.phases}}),
     )
 }
 
@@ -168,7 +169,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
             diagnostic(d)?;
         }
         if cli.report_usage {
-            usage(&runner)?;
+            usage(&mut runner)?;
         }
         if cli.report_timings {
             timings(&runner, read_ms)?;
@@ -185,7 +186,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
     telora_run::transport::serve(cli.bind.unwrap(), INPUT_LIMIT, |input| {
         let response = reply(&mut runner, input);
         if cli.report_usage {
-            usage(&runner)?;
+            usage(&mut runner)?;
         }
         if cli.report_timings {
             timings(&runner, read_ms)?;

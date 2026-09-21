@@ -9,7 +9,12 @@ use crate::{
 /// Native algebraic families have a fixed representation, independent of their
 /// type parameters. The type pass has already selected the variant index.
 pub(crate) const PROPERTY_TARGET_VARIANTS: [&str; 6] = [
-    "EnumType", "Field", "Member", "StructType", "Type", "Variant",
+    "EnumType",
+    "Field",
+    "Member",
+    "StructType",
+    "Type",
+    "Variant",
 ];
 
 pub(crate) fn builtin_variant(
@@ -70,7 +75,10 @@ pub struct TypeMember {
 impl TypeImage {
     /// Authoritative native ABI name retained by the sealed type image.
     pub fn native_name(&self, id: crate::mir::NativeTypeId) -> Option<&str> {
-        self.native_definitions.iter().find(|(key, _)| *key == id).map(|(_, name)| name.as_str())
+        self.native_definitions
+            .iter()
+            .find(|(key, _)| *key == id)
+            .map(|(_, name)| name.as_str())
     }
     /// Applied member types in canonical member-name order. This is an array lookup,
     /// including for recursive and generic nominal applications.
@@ -79,7 +87,9 @@ impl TypeImage {
         // canonical argument is the already solved owner; share that layout.
         let ty = if self.types.get(ty.index())?.constructor == TypeConstructor::Unchecked {
             *self.types[ty.index()].arguments.first()?
-        } else { ty };
+        } else {
+            ty
+        };
         self.layouts.get(ty.index())?.as_ref()
     }
 
@@ -146,7 +156,9 @@ impl TypeImage {
                 .iter()
                 .filter_map(|symbol| {
                     if symbol.kind
-                        != crate::mir::SymbolKind::Declaration(crate::syntax::kinds::BindingKind::NativeType)
+                        != crate::mir::SymbolKind::Declaration(
+                            crate::syntax::kinds::BindingKind::NativeType,
+                        )
                     {
                         return None;
                     }

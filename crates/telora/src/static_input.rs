@@ -20,16 +20,30 @@ enum Source {
 }
 
 pub fn normalize_lf(text: String) -> String {
-    if !text.contains('\r') { return text; }
+    if !text.contains('\r') {
+        return text;
+    }
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
-pub fn read_limited(reader: impl std::io::Read, max_bytes: usize, description: &str) -> Result<Vec<u8>, String> {
-    let max_read = u64::try_from(max_bytes).unwrap_or(u64::MAX).saturating_add(1);
+pub fn read_limited(
+    reader: impl std::io::Read,
+    max_bytes: usize,
+    description: &str,
+) -> Result<Vec<u8>, String> {
+    let max_read = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
     let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
-    reader.take(max_read).read_to_end(&mut bytes).map_err(|error| format!("cannot read {description}: {error}"))?;
+    reader
+        .take(max_read)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read {description}: {error}"))?;
     if bytes.len() > max_bytes {
-        return Err(format!("{description} exceeds file_size limit ({} > {max_bytes})", bytes.len()));
+        return Err(format!(
+            "{description} exceeds file_size limit ({} > {max_bytes})",
+            bytes.len()
+        ));
     }
     Ok(bytes)
 }
@@ -57,7 +71,9 @@ fn private(name: &str) -> bool {
 
 impl Inventory {
     /// Published artifacts use one textual input representation on every OS.
-    pub fn normalize_eol(&mut self) { self.normalize_eol = true; }
+    pub fn normalize_eol(&mut self) {
+        self.normalize_eol = true;
+    }
 
     pub fn runtime_options(&self) -> telora_core::RuntimeOptions {
         self.runtime
@@ -66,20 +82,41 @@ impl Inventory {
     /// Editor roots may be private modules. Identity still comes exclusively
     /// from the workspace catalog (or its normal test-module inventory).
     pub fn document_name(&mut self, path: &Path) -> Result<String, String> {
-        let matches_path = |entry: &Entry| matches!(&entry.source,
-            Source::File(file) if file == path || file.canonicalize().ok().as_deref() == Some(path));
-        if let Some((name, _)) = self.entries.iter().find(|(_, entry)| matches_path(entry)) { return Ok(name.clone()); }
-        let workspace = self.workspace.as_ref().ok_or("editor documents require a workspace")?;
-        let owner = workspace.crate_for_path(path).map_err(|e| e.to_string())?.to_owned();
-        let test_root = workspace.crate_root(&owner).ok_or("missing declaring crate")?.join("tests");
+        let matches_path = |entry: &Entry| {
+            matches!(&entry.source,
+            Source::File(file) if file == path || file.canonicalize().ok().as_deref() == Some(path))
+        };
+        if let Some((name, _)) = self.entries.iter().find(|(_, entry)| matches_path(entry)) {
+            return Ok(name.clone());
+        }
+        let workspace = self
+            .workspace
+            .as_ref()
+            .ok_or("editor documents require a workspace")?;
+        let owner = workspace
+            .crate_for_path(path)
+            .map_err(|e| e.to_string())?
+            .to_owned();
+        let test_root = workspace
+            .crate_root(&owner)
+            .ok_or("missing declaring crate")?
+            .join("tests");
         if path.starts_with(&test_root) {
             self.scan_tests_for(&owner, &test_root, &test_root)?;
         }
-        self.entries.iter().find(|(_, entry)| matches_path(entry)).map(|(name, _)| name.clone())
+        self.entries
+            .iter()
+            .find(|(_, entry)| matches_path(entry))
+            .map(|(name, _)| name.clone())
             .ok_or_else(|| format!("document {} is not in the module catalog", path.display()))
     }
 
-    pub fn solve_documents(&self, roots: &[String], overlays: &BTreeMap<String, telora_core::DocumentText>, context: &telora_core::QueryContext) -> Result<Mir, telora_core::QueryError> {
+    pub fn solve_documents(
+        &self,
+        roots: &[String],
+        overlays: &BTreeMap<String, telora_core::DocumentText>,
+        context: &telora_core::QueryContext,
+    ) -> Result<Mir, telora_core::QueryError> {
         let mut error = None;
         let mir = self.solve_inputs_cancellable(roots, None, overlays, &mut || {
             error = context.check().err();
@@ -93,10 +130,13 @@ impl Inventory {
     }
 
     pub fn module_paths(&self) -> std::collections::HashMap<String, PathBuf> {
-        self.entries.iter().filter_map(|(name, entry)| match &entry.source {
-            Source::File(path) => Some((name.clone(), path.clone())),
-            _ => None,
-        }).collect()
+        self.entries
+            .iter()
+            .filter_map(|(name, entry)| match &entry.source {
+                Source::File(path) => Some((name.clone(), path.clone())),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn undeclared_warnings(&self) -> Result<Vec<String>, String> {
@@ -117,7 +157,11 @@ impl Inventory {
         Ok(warnings)
     }
     /// Read a catalog data module without depending on an execution linker.
-    pub fn read_data_text(&self, name: &str, max_bytes: usize) -> Result<(telora_core::data_plan::Format, String), String> {
+    pub fn read_data_text(
+        &self,
+        name: &str,
+        max_bytes: usize,
+    ) -> Result<(telora_core::data_plan::Format, String), String> {
         let entry = self
             .entries
             .get(name)
@@ -136,7 +180,14 @@ impl Inventory {
         let file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let bytes = read_limited(file, max_bytes, &path.display().to_string())?;
         let text = String::from_utf8(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok((format, if self.normalize_eol { normalize_lf(text) } else { text }))
+        Ok((
+            format,
+            if self.normalize_eol {
+                normalize_lf(text)
+            } else {
+                text
+            },
+        ))
     }
     pub fn new(context: &Path, builtin_only: bool) -> Result<Self, String> {
         let workspace = if builtin_only {
@@ -146,7 +197,9 @@ impl Inventory {
         };
         let (compiler, runtime) = if let Some(workspace) = &workspace {
             (workspace.compiler_options(), workspace.runtime_options())
-        } else if let Some(config) = telora_core::WorkspaceConfig::discover_optional(context).map_err(|e| e.to_string())? {
+        } else if let Some(config) =
+            telora_core::WorkspaceConfig::discover_optional(context).map_err(|e| e.to_string())?
+        {
             (config.compiler, config.runtime)
         } else {
             Default::default()
@@ -296,7 +349,11 @@ impl Inventory {
                 Entry {
                     visibility: if private(&name) { "private" } else { "public" },
                     name,
-                    origin: if owner == self.owner { "crate" } else { "dependency" },
+                    origin: if owner == self.owner {
+                        "crate"
+                    } else {
+                        "dependency"
+                    },
                     format,
                     source: Source::File(path.to_owned()),
                     test: true,
@@ -365,19 +422,24 @@ impl Inventory {
     /// Batch roots belong to the current crate; dependencies join through imports.
     pub fn check_roots(&mut self, lib: bool, tests: bool) -> Result<Vec<String>, String> {
         if tests {
-            let root = self.workspace.as_ref()
+            let root = self
+                .workspace
+                .as_ref()
                 .and_then(|w| w.crate_root(&self.owner))
                 .ok_or("test selection requires a workspace")?
                 .join("tests");
             match fs::symlink_metadata(&root) {
                 Ok(_) => self.scan_tests(&root, &root)?,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(format!("{}: {error}", root.display())),
             }
         }
-        Ok(self.entries.values()
+        Ok(self
+            .entries
+            .values()
             .filter(|entry| entry.origin == "crate" && if entry.test { tests } else { lib })
-            .map(|entry| entry.name.clone()).collect())
+            .map(|entry| entry.name.clone())
+            .collect())
     }
 
     pub fn solve_roots(&self, roots: &[String]) -> Mir {
@@ -387,12 +449,17 @@ impl Inventory {
     /// Compiler-owned entry sources share the application's graph and passes.
     pub fn solve_transform(&mut self, application: &str) -> Result<Mir, String> {
         let name = "std/_entry/adapter";
-        self.entries.insert(name.into(), Entry {
-            name: name.into(), origin: "builtin", visibility: "private",
-            format: ModuleFormat::Telora,
-            source: Source::Generated(telora_core::entry_plan::transform_adapter(application)?),
-            test: false,
-        });
+        self.entries.insert(
+            name.into(),
+            Entry {
+                name: name.into(),
+                origin: "builtin",
+                visibility: "private",
+                format: ModuleFormat::Telora,
+                source: Source::Generated(telora_core::entry_plan::transform_adapter(application)?),
+                test: false,
+            },
+        );
         Ok(self.solve_with_entry(name, Some(application)))
     }
 
@@ -400,13 +467,26 @@ impl Inventory {
         self.solve_inputs(&[root.to_owned()], application, &BTreeMap::new())
     }
 
-    fn solve_inputs(&self, roots: &[String], application: Option<&str>, overlays: &BTreeMap<String, telora_core::DocumentText>) -> Mir {
+    fn solve_inputs(
+        &self,
+        roots: &[String],
+        application: Option<&str>,
+        overlays: &BTreeMap<String, telora_core::DocumentText>,
+    ) -> Mir {
         self.solve_inputs_cancellable(roots, application, overlays, &mut || false)
             .expect("uncancelled compilation")
     }
 
-    fn solve_inputs_cancellable(&self, roots: &[String], application: Option<&str>, overlays: &BTreeMap<String, telora_core::DocumentText>, cancelled: &mut dyn FnMut() -> bool) -> Option<Mir> {
-        if cancelled() { return None; }
+    fn solve_inputs_cancellable(
+        &self,
+        roots: &[String],
+        application: Option<&str>,
+        overlays: &BTreeMap<String, telora_core::DocumentText>,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Option<Mir> {
+        if cancelled() {
+            return None;
+        }
         let specs = self
             .entries
             .values()
@@ -439,28 +519,43 @@ impl Inventory {
                     match &self.entries[name].source {
                         Source::Embedded(text) => Ok((*text).into()),
                         Source::Generated(text) => Ok(text.clone()),
-                        Source::File(path) => fs::read_to_string(path)
-                            .map_err(|e| format!("{}: {e}", path.display())),
+                        Source::File(path) => {
+                            fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
+                        }
                     }
                 };
-                text.map(|text| if self.normalize_eol { normalize_lf(text) } else { text })
+                text.map(|text| {
+                    if self.normalize_eol {
+                        normalize_lf(text)
+                    } else {
+                        text
+                    }
+                })
             },
             |owner, request| {
                 // The user selected this application before the compiler-owned
                 // adapter was inserted. Only its exact import gets this edge;
                 // ordinary application/dependency imports retain normal policy.
                 if owner == "std/_entry/adapter" && application == Some(request) {
-                    self.entries.contains_key(request).then(|| request.to_owned())
+                    self.entries
+                        .contains_key(request)
+                        .then(|| request.to_owned())
                 } else {
                     self.request(owner, request)
                 }
             },
             cancelled,
         )?;
-        module_resolve::validate_source_modules(&mut mir, |name| self.entries[name].origin == "builtin");
-        if cancelled() { return None; }
+        module_resolve::validate_source_modules(&mut mir, |name| {
+            self.entries[name].origin == "builtin"
+        });
+        if cancelled() {
+            return None;
+        }
         telora_core::symbol_resolve::resolve(&mut mir);
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         telora_core::type_resolve::resolve_with_options(&mut mir, self.compiler);
         if cancelled() { None } else { Some(mir) }
     }

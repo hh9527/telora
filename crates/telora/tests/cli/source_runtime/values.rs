@@ -13,7 +13,11 @@ fn source_debug_events_preserve_order_location_and_result() {
     )
     .unwrap();
     for (command, export) in [("eval", "answer"), ("run", "main")] {
-        let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+        let selector = if command == "run" {
+            "@src/main".into()
+        } else {
+            format!("@src/main:{export}")
+        };
         let observed = execute_value(&cwd, command, &selector);
         {
             let output = &observed;
@@ -69,7 +73,15 @@ fn source_warnings_do_not_block_publication_or_entry_output() {
     assert_eq!(warnings[0]["message"], "initialization warning");
     assert_eq!(warnings[0]["labels"].as_array().unwrap().len(), 2);
     for (command, _export, expected) in [("eval", "answer", 42), ("run", "main", 43)] {
-        let output = execute_value(&cwd, command, if command == "run" { "@src/main" } else { "@src/main:answer" });
+        let output = execute_value(
+            &cwd,
+            command,
+            if command == "run" {
+                "@src/main"
+            } else {
+                "@src/main:answer"
+            },
+        );
         assert!(
             output.status.success(),
             "{}",
@@ -105,7 +117,11 @@ fn source_path_operations_survive_initialization() {
     )
     .unwrap();
     for (command, export) in [("eval", "answer"), ("run", "main")] {
-        let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+        let selector = if command == "run" {
+            "@src/main".into()
+        } else {
+            format!("@src/main:{export}")
+        };
         let observed = execute_value(&cwd, command, &selector);
         assert!(
             observed.status.success(),
@@ -134,7 +150,11 @@ fn source_hash_states_are_persistent_across_initialization_and_entry() {
     )
     .unwrap();
     for (command, export) in [("eval", "answer"), ("run", "main")] {
-        let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+        let selector = if command == "run" {
+            "@src/main".into()
+        } else {
+            format!("@src/main:{export}")
+        };
         let observed = execute_value(&cwd, command, &selector);
         assert!(
             observed.status.success(),
@@ -191,7 +211,11 @@ fn source_structural_equality_preserves_identity_across_worlds() {
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
         for (command, export) in [("eval", "answer"), ("run", "main")] {
-            let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+            let selector = if command == "run" {
+                "@src/main".into()
+            } else {
+                format!("@src/main:{export}")
+            };
             let observed = execute_value(&cwd, command, &selector);
             assert!(
                 observed.status.success(),
@@ -218,7 +242,11 @@ fn source_interpreter_uses_ordinary_closures_across_initialization_and_entry() {
     )
     .unwrap();
     for (command, export) in [("eval", "answer"), ("run", "main")] {
-        let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+        let selector = if command == "run" {
+            "@src/main".into()
+        } else {
+            format!("@src/main:{export}")
+        };
         let observed = execute_value(&cwd, command, &selector);
         {
             let output = &observed;
@@ -261,7 +289,11 @@ fn source_test_descriptions_initialize_without_running_tests_or_fixtures() {
         String::from_utf8_lossy(&check.stderr)
     );
     for (command, export) in [("eval", "answer"), ("run", "main")] {
-        let selector = if command == "run" { "@src/main".into() } else { format!("@src/main:{export}") };
+        let selector = if command == "run" {
+            "@src/main".into()
+        } else {
+            format!("@src/main:{export}")
+        };
         let observed = execute_value(&cwd, command, &selector);
         assert!(
             observed.status.success(),
@@ -300,10 +332,7 @@ fn source_mutual_recursive_closures_survive_initialization_and_entry() {
         .expect("read test source"),
     ] {
         fs::write(cwd.join("src/main.telora"), source).unwrap();
-        for (command, selector) in [
-            ("eval", "@src/main:answer"),
-            ("run", "@src/main"),
-        ] {
+        for (command, selector) in [("eval", "@src/main:answer"), ("run", "@src/main")] {
             {
                 let mut process = telora(&cwd);
                 process.arg(command);

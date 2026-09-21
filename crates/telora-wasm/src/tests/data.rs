@@ -3,16 +3,27 @@ use telora_core::data_plan::Format;
 
 #[test]
 fn portable_data_roundtrip_preserves_original_text_and_integer_bits() {
-    let mir = graph(&std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/entry.telora"
-    )).unwrap());
-    let export = mir.exports.iter().flatten().copied()
-        .find(|id| mir.symbols[id.index()].name == "answer").unwrap();
+    let mir = graph(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/entry.telora"
+        ))
+        .unwrap(),
+    );
+    let export = mir
+        .exports
+        .iter()
+        .flatten()
+        .copied()
+        .find(|id| mir.symbols[id.index()].name == "answer")
+        .unwrap();
     let bytes = crate::compile_executable(&mir.seal_export(export).unwrap()).unwrap();
     let mut sources = mir.sources;
     let text = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/portable-values.yaml"
-    )).unwrap();
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/portable-values.yaml"
+    ))
+    .unwrap();
     let id = sources.try_add_data("bundled.yaml", text.clone()).unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     let symbol = session.manifest.data_modules[0].symbol;
@@ -22,7 +33,10 @@ fn portable_data_roundtrip_preserves_original_text_and_integer_bits() {
     assert!(crate::bundle::build(&bundled, &sources, &modules).is_err());
     let restored = crate::bundle::read(&bundled, &session.manifest).unwrap();
     assert_eq!(restored[0].text, text);
-    let value = session.parse_data_source(sources.get(id), Format::Yaml).unwrap().unwrap();
+    let value = session
+        .parse_data_source(sources.get(id), Format::Yaml)
+        .unwrap()
+        .unwrap();
     session.inject_data_value(symbol, value).unwrap();
     session.initialize().unwrap();
     let expected = serde_json::json!([

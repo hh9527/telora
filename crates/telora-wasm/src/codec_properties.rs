@@ -3,8 +3,7 @@ use crate::{abi::*, emit::Emitter};
 use telora_core::mir::{Mir, PropertySite, TypeConstructor as T, TypeId, TypeState};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
-pub(crate) const PROPERTY_FIELDS: [&str; 3] =
-    ["display_by", "json_rename_all", "json_untagged"];
+pub(crate) const PROPERTY_FIELDS: [&str; 3] = ["display_by", "json_rename_all", "json_untagged"];
 
 pub(crate) fn decode_by_parse_property(mir: &Mir) -> Option<TypeId> {
     provider_property(mir, "decode_by_parse")

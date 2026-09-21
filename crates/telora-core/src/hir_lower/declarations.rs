@@ -145,12 +145,25 @@ impl Lower<'_> {
                 }
                 // Self is a lexical type alias in an implementation body, not
                 // a new generic parameter or a runtime value.
-                let self_name = self.synthetic(Role::Name, *target, HirKind::Name("Self".into()), vec![]);
-                let self_alias = self.synthetic(Role::Binding, *target,
-                    HirKind::Binding {kind: B::Type, initializer: None, imported: None},
-                    vec![self_name, Input::with(Role::Value, *target, Mode::Contract)]);
+                let self_name =
+                    self.synthetic(Role::Name, *target, HirKind::Name("Self".into()), vec![]);
+                let self_alias = self.synthetic(
+                    Role::Binding,
+                    *target,
+                    HirKind::Binding {
+                        kind: B::Type,
+                        initializer: None,
+                        imported: None,
+                    },
+                    vec![self_name, Input::with(Role::Value, *target, Mode::Contract)],
+                );
                 let body = self.synthetic(Role::Result, node, HirKind::Dict, fields);
-                inputs.push(self.synthetic(Role::Value, node, HirKind::Block, vec![self_alias, body]));
+                inputs.push(self.synthetic(
+                    Role::Value,
+                    node,
+                    HirKind::Block,
+                    vec![self_alias, body],
+                ));
                 B::Impl
             }
             _ => return Err(self.error(node, "unexpected binding rule")),

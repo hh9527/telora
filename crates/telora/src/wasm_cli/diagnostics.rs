@@ -2,11 +2,22 @@ use telora_core::{Diagnostic, SourceDatabase, source::Severity};
 use telora_wasm::session::Session;
 
 /// Convert Guest protocol coordinates for the CLI renderer; no data parsing.
-pub(super) fn parsed(events: serde_json::Value, sources: &SourceDatabase) -> Result<Vec<Diagnostic>, String> {
-    let number = |value: &serde_json::Value| value.as_u64()
-        .and_then(|n| u32::try_from(n).ok()).ok_or_else(|| "invalid diagnostic coordinate".to_owned());
-    let text = |value: &serde_json::Value| value.as_str().map(str::to_owned)
-        .ok_or_else(|| "invalid diagnostic text".to_owned());
+pub(super) fn parsed(
+    events: serde_json::Value,
+    sources: &SourceDatabase,
+) -> Result<Vec<Diagnostic>, String> {
+    let number = |value: &serde_json::Value| {
+        value
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(|| "invalid diagnostic coordinate".to_owned())
+    };
+    let text = |value: &serde_json::Value| {
+        value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| "invalid diagnostic text".to_owned())
+    };
     let array = events.as_array().ok_or("invalid diagnostic array")?;
     let mut result = Vec::new();
     for event in array {
@@ -17,22 +28,37 @@ pub(super) fn parsed(events: serde_json::Value, sources: &SourceDatabase) -> Res
             Some("Info") => Severity::Info,
             _ => return Err("invalid diagnostic severity".into()),
         };
-        for label in event["labels"].as_array().ok_or("invalid diagnostic labels")? {
+        for label in event["labels"]
+            .as_array()
+            .ok_or("invalid diagnostic labels")?
+        {
             let range = &label["location"];
             let name = text(&range["source"])?;
-            let file = sources.files().find(|file| file.name.as_ref() == name)
+            let file = sources
+                .files()
+                .find(|file| file.name.as_ref() == name)
                 .ok_or("unknown diagnostic source")?;
             let coordinates = telora_core::source::SourceCoordinates([
-                file.id().get(), number(&range["start"]["line"])?, number(&range["start"]["offset"])?,
-                number(&range["end"]["line"])?, number(&range["end"]["offset"])?,
+                file.id().get(),
+                number(&range["start"]["line"])?,
+                number(&range["start"]["offset"])?,
+                number(&range["end"]["line"])?,
+                number(&range["end"]["offset"])?,
             ]);
             diagnostic.labels.push(telora_core::source::Label {
-                location: file.byte_location(coordinates).ok_or("invalid diagnostic range")?,
+                location: file
+                    .byte_location(coordinates)
+                    .ok_or("invalid diagnostic range")?,
                 message: text(&label["message"])?,
-                primary: label["primary"].as_bool().ok_or("invalid diagnostic label")?,
+                primary: label["primary"]
+                    .as_bool()
+                    .ok_or("invalid diagnostic label")?,
             });
         }
-        for note in event["notes"].as_array().ok_or("invalid diagnostic notes")? {
+        for note in event["notes"]
+            .as_array()
+            .ok_or("invalid diagnostic notes")?
+        {
             diagnostic.notes.push(text(note)?);
         }
         result.push(diagnostic);

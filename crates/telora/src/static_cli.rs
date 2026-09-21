@@ -7,10 +7,10 @@ use serde_json::{Value, json};
 use std::{path::PathBuf, time::Instant};
 use telora_core::{
     Location, PositionEncoding, TextPosition,
-    syntax::kinds::BindingKind,
     mir::{Mir, ModuleState, ResolveState, Symbol, SymbolId, SymbolKind, TypeState},
     mir_query::MirQuery,
     source::{Diagnostic, Severity},
+    syntax::kinds::BindingKind,
 };
 
 fn location(mir: &Mir, loc: Location) -> Value {
@@ -21,11 +21,19 @@ fn location(mir: &Mir, loc: Location) -> Value {
 }
 
 pub(crate) fn diagnostic(mir: &Mir, schema: &str, root: &str, d: &Diagnostic) -> Value {
-    let module = d.labels.iter().filter(|label| label.primary).find_map(|label|
-        mir.modules.iter().find_map(|module| match module.state {
-            ModuleState::Source { source, .. } if source == label.location.source => Some(module.name.as_str()),
-            _ => None,
-        })).unwrap_or(root);
+    let module = d
+        .labels
+        .iter()
+        .filter(|label| label.primary)
+        .find_map(|label| {
+            mir.modules.iter().find_map(|module| match module.state {
+                ModuleState::Source { source, .. } if source == label.location.source => {
+                    Some(module.name.as_str())
+                }
+                _ => None,
+            })
+        })
+        .unwrap_or(root);
     json!({"schema": schema, "module": module, "session": root, "record": "diagnostic",
         "constraint_ids": mir.type_conflicts.iter().enumerate().filter_map(|(id, conflict)|
             conflict.diagnostic.and_then(|index| mir.diagnostics.get(index))
@@ -36,25 +44,29 @@ pub(crate) fn diagnostic(mir: &Mir, schema: &str, root: &str, d: &Diagnostic) ->
             "location": location(mir, l.location), "message": l.message, "primary": l.primary})).collect::<Vec<_>>()})
 }
 
-pub fn check(
-    context: PathBuf,
-    args: crate::CheckArgs,
-    schema: &str,
-) -> Result<i32, String> {
+pub fn check(context: PathBuf, args: crate::CheckArgs, schema: &str) -> Result<i32, String> {
     let types_only = args.types_only || args.dump_types_layout.is_some();
     let started = Instant::now();
-    let mut inventory = Inventory::new(&context, args.module_id.as_deref().is_some_and(|s| s.starts_with("std/")))?;
+    let mut inventory = Inventory::new(
+        &context,
+        args.module_id
+            .as_deref()
+            .is_some_and(|s| s.starts_with("std/")),
+    )?;
     let roots = if let Some(selector) = &args.module_id {
         vec![inventory.select(selector)?]
     } else {
         inventory.check_roots(args.lib, args.tests)?
     };
-    let root = if args.module_id.is_some() { roots[0].clone() } else {
+    let root = if args.module_id.is_some() {
+        roots[0].clone()
+    } else {
         match (args.lib, args.tests) {
             (true, true) => "--lib --tests",
             (true, false) => "--lib",
             _ => "--tests",
-        }.to_owned()
+        }
+        .to_owned()
     };
     for message in inventory.undeclared_warnings()? {
         emit(
@@ -88,7 +100,9 @@ pub fn check(
     let static_failed = static_failed || !seal_diagnostics.is_empty();
     let static_seconds = started.elapsed().as_secs_f64();
     if let (Some(path), Some(sealed)) = (&args.dump_types_layout, &sealed) {
-        let entries = if roots.is_empty() { vec![] } else {
+        let entries = if roots.is_empty() {
+            vec![]
+        } else {
             telora_core::candidate_layout::calculate(sealed)?
         };
         let mut templates = 0;
@@ -100,7 +114,7 @@ pub fn check(
                 telora_core::candidate_layout::State::Template { .. } => templates += 1,
                 telora_core::candidate_layout::State::CompileTime { .. } => compile_time += 1,
                 telora_core::candidate_layout::State::Uninhabited { .. } => uninhabited += 1,
-                _ => {},
+                _ => {}
             }
             let type_name = MirQuery::new(sealed.mir()).type_name(entry.id());
             layouts.push(json!({"type_name": type_name, "entry": entry}));
@@ -121,12 +135,21 @@ pub fn check(
         {
             match crate::wasm_cli::compile_check(sealed, inventory.runtime_options()) {
                 Ok(mut session) => {
-                    execution_diagnostics = match crate::wasm_cli::initialize_diagnostics(&mut session, &inventory, &mut mir.sources) {
-                        Ok(()) => crate::wasm_cli::check_diagnostics(&session, &mir.sources, Ok(())),
+                    execution_diagnostics = match crate::wasm_cli::initialize_diagnostics(
+                        &mut session,
+                        &inventory,
+                        &mut mir.sources,
+                    ) {
+                        Ok(()) => {
+                            crate::wasm_cli::check_diagnostics(&session, &mir.sources, Ok(()))
+                        }
                         Err(diagnostics) => diagnostics,
                     };
-                    initialization_roots = session.diagnostics()?.into_iter()
-                        .map(|event| event.initialization).collect();
+                    initialization_roots = session
+                        .diagnostics()?
+                        .into_iter()
+                        .map(|event| event.initialization)
+                        .collect();
                 }
                 Err(message) => execution_diagnostics.push(crate::wasm_cli::error(message)),
             }
@@ -171,7 +194,10 @@ pub fn check(
 /// Serialization and write failures leave an existing destination untouched.
 fn write_layout_report(path: &std::path::Path, report: &Value) -> Result<(), String> {
     use std::io::Write;
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
     let write = || -> Result<(), Box<dyn std::error::Error>> {
         let mut staged = tempfile::NamedTempFile::new_in(parent)?;
         serde_json::to_writer_pretty(&mut staged, report)?;
@@ -185,7 +211,11 @@ fn write_layout_report(path: &std::path::Path, report: &Value) -> Result<(), Str
 
 fn type_fields(mir: &Mir, state: TypeState) -> (Option<usize>, Option<String>, &'static str) {
     match state {
-        TypeState::Known(id) => (Some(id.index()), Some(MirQuery::new(mir).type_name(id)), "Known"),
+        TypeState::Known(id) => (
+            Some(id.index()),
+            Some(MirQuery::new(mir).type_name(id)),
+            "Known",
+        ),
         TypeState::Unknown => (None, None, "Unknown"),
         TypeState::Conflicted(_) => (None, None, "Conflicted"),
         TypeState::ProxyTo(_) | TypeState::Structure(_) => {
@@ -224,7 +254,10 @@ fn definition(mir: &Mir, root: &str, id: SymbolId, kind: ShowKind) -> Value {
     let (type_id, _, state) = type_fields(mir, MirQuery::new(mir).symbol_type(id));
     let ty = MirQuery::new(mir).symbol_signature(id);
     let (resolution, target_id) = resolve_fields(&symbol.resolution);
-    let loc = MirQuery::new(mir).definition_locations(id).next().map(|loc| location(mir, loc));
+    let loc = MirQuery::new(mir)
+        .definition_locations(id)
+        .next()
+        .map(|loc| location(mir, loc));
     let target = match symbol.kind {
         SymbolKind::Namespace(id) => Some(mir.modules[id.index()].name.as_str()),
         _ => None,
@@ -240,8 +273,14 @@ fn symbol_failures(mir: &Mir, symbol: SymbolId) -> Vec<usize> {
         ResolveState::Bound(target) => target,
         _ => symbol,
     };
-    mir.symbols[target.index()].declarations.iter().flat_map(|&node| mir.type_conflicts_in(node))
-        .map(|id| id.index()).collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+    mir.symbols[target.index()]
+        .declarations
+        .iter()
+        .flat_map(|&node| mir.type_conflicts_in(node))
+        .map(|id| id.index())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn position_range(
@@ -252,7 +291,12 @@ fn position_range(
     let ModuleState::Source { source, .. } = mir.modules[module].state else {
         return Err("selected module has no source".into());
     };
-    let text = mir.sources.get(source).text().document().ok_or("selected module is not code")?;
+    let text = mir
+        .sources
+        .get(source)
+        .text()
+        .document()
+        .ok_or("selected module is not code")?;
     let line = u32::try_from(at.line - 1).map_err(|_| "line is outside module")?;
     let (start, end) = if let Some(column) = at.column {
         let column = u32::try_from(column).map_err(|_| "column is outside module")?;
@@ -289,8 +333,10 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
     let root = match inventory.select(selector) {
         Ok(root) => root,
         Err(message) => {
-            emit(json!({"schema": QUERY_SCHEMA, "module": selector, "record": "diagnostic",
-                "severity": "error", "message": message, "labels": [], "notes": []}))?;
+            emit(
+                json!({"schema": QUERY_SCHEMA, "module": selector, "record": "diagnostic",
+                "severity": "error", "message": message, "labels": [], "notes": []}),
+            )?;
             return Ok(1);
         }
     };
@@ -320,8 +366,7 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
                 {
                     continue;
                 }
-                let (type_id, _, state) =
-                    type_fields(&mir, MirQuery::new(&mir).symbol_type(id));
+                let (type_id, _, state) = type_fields(&mir, MirQuery::new(&mir).symbol_type(id));
                 let ty = MirQuery::new(&mir).symbol_signature(id);
                 let (resolution, target_id) = resolve_fields(&symbol.resolution);
                 emit(
@@ -351,7 +396,8 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
                         }
                 })
             };
-            let mut definitions = MirQuery::new(&mir).symbols()
+            let mut definitions = MirQuery::new(&mir)
+                .symbols()
                 .filter(|(_, s)| s.module.is_some_and(|id| id.index() == module))
                 .filter_map(|(i, s)| kind(s).map(|k| (i, s, k)))
                 .filter(|(_, s, k)| {
@@ -371,21 +417,28 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
                 emit(definition(&mir, &root, i, k))?;
             }
             if range.is_some() {
-                for reference in MirQuery::new(&mir).references().filter(|reference| intersects(reference.location)) {
+                for reference in MirQuery::new(&mir)
+                    .references()
+                    .filter(|reference| intersects(reference.location))
+                {
                     let node = &mir.hir[reference.node.index()];
                     let slot = node.resolution.expect("reference has a resolve slot");
                     let (resolution, target_id) = resolve_fields(reference.resolution);
                     let name = match &node.kind {
-                        telora_core::mir::HirKind::Variable(n) | telora_core::mir::HirKind::PatternName(n) => Some(n.as_str()),
+                        telora_core::mir::HirKind::Variable(n)
+                        | telora_core::mir::HirKind::PatternName(n) => Some(n.as_str()),
                         _ => None,
                     };
-                    emit(json!({"schema": QUERY_SCHEMA, "module": root, "record": "reference", "authority": "authoritative",
+                    emit(
+                        json!({"schema": QUERY_SCHEMA, "module": root, "record": "reference", "authority": "authoritative",
                         "hir_id": reference.node.index(), "resolve_slot": slot.index(), "name": name, "resolved": target_id.is_some(),
                         "resolution": resolution, "target_id": target_id,
                         "failed_constraints": mir.type_conflicts_in(reference.node).iter().map(|id| id.index()).collect::<Vec<_>>(),
-                        "location": location(&mir, reference.location)}))?;
+                        "location": location(&mir, reference.location)}),
+                    )?;
                 }
-                for (id, node) in MirQuery::new(&mir).expressions()
+                for (id, node) in MirQuery::new(&mir)
+                    .expressions()
                     .filter(|(_, n)| n.module.index() == module && intersects(n.location))
                 {
                     let i = id.index();

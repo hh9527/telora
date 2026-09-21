@@ -266,7 +266,11 @@ export def check: test.Test = test.should_ok(fn() -> Bool { if j == y && y == t 
 fn test_command_rejects_invalid_roots_and_source_to_test_imports() {
     let cwd = fixture();
     fs::write(cwd.join("tests/t1.telora"), "export def value: Int = 1;").unwrap();
-    fs::write(cwd.join("tests/_private.telora"), "export def value: Int = 1;").unwrap();
+    fs::write(
+        cwd.join("tests/_private.telora"),
+        "export def value: Int = 1;",
+    )
+    .unwrap();
     for name in [
         "../t1",
         "/t1",
@@ -344,7 +348,11 @@ fn test_command_uses_member_context_and_declared_dependencies() {
         r#"{"name":"dep","modules":["@src/lib"],"dependencies":[]}"#,
     )
     .unwrap();
-    fs::write(cwd.join("dep/src/lib.telora"), "export def value: Int = 42;").unwrap();
+    fs::write(
+        cwd.join("dep/src/lib.telora"),
+        "export def value: Int = 42;",
+    )
+    .unwrap();
     fs::write(
         cwd.join("dep/tests/broken.telora"),
         "not a valid module !!!",
