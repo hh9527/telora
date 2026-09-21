@@ -110,8 +110,11 @@ impl Output<'_> {
         let end = offset
             .checked_add(length)
             .ok_or("Wasm: heap range overflow")?;
-        if end > u64::from(self.raw_word(u64::from(WORDS_VIEW + 4))?) {
-            return Err("Wasm: reference exceeds language heap".into());
+        let heap_length = u64::from(self.raw_word(u64::from(WORDS_VIEW + 4))?);
+        if end > heap_length {
+            return Err(format!(
+                "Wasm: reference {reference}+{length} exceeds language heap origin {origin} length {heap_length}"
+            ));
         }
         u64::from(self.raw_word(u64::from(WORDS_VIEW))?)
             .checked_add(offset)
@@ -163,7 +166,11 @@ impl Output<'_> {
             let bytes = length
                 .checked_mul(width)
                 .ok_or("Wasm: array size overflow")?;
-            self.bytes(data, bytes.into())?;
+            self.bytes(data, bytes.into()).map_err(|error| {
+                format!(
+                    "{error}; array object={id} element_type={ty} data={data} len={length} cap={capacity} width={width}"
+                )
+            })?;
             return Ok((data, bytes.into()));
         }
         let descriptor = table_address(table) as u64;
@@ -197,7 +204,10 @@ impl Output<'_> {
             }
             Kind::String => self.text(pointer)?.into(),
             Kind::Array => {
-                let (base, bytes) = self.payload(ARRAYS, self.word(pointer + DATA)?)?;
+                let object = self.word(pointer + DATA)?;
+                let (base, bytes) = self.payload(ARRAYS, object).map_err(|error| {
+                    format!("{error}; Array value={pointer} type={expected} object={object}")
+                })?;
                 let start = self.word(pointer + DATA + 4)? as u64;
                 let end = self.word(pointer + DATA + 8)? as u64;
                 let element = *ty
