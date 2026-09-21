@@ -1191,9 +1191,12 @@ fn sealed_function_bodies_record_resolved_behavioral_dependencies() {
         "@src/main",
         r#"
         def base: Int = 1;
+        def unrelated_base: Int = 2;
         def apply: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, value) { f(value) };
+        def forward: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, value) { apply(f, value) };
         def helper: Fn(Int) -> Int = fn(value) { value + base };
-        export def answer: Fn(Int) -> Int = fn(value) { apply(helper, value) };
+        def unused: Fn(Int) -> Int = fn(value) { value + unrelated_base };
+        export def answer: Fn(Int) -> Int = fn(value) { forward(helper, value) };
     "#,
     )]);
     resolve(&mut mir);
@@ -1228,16 +1231,22 @@ fn sealed_function_bodies_record_resolved_behavioral_dependencies() {
         .find(|function| {
             function
                 .dependencies
-                .contains(&FunctionBodyDependency::TopLevel(symbol("apply")))
+                .contains(&FunctionBodyDependency::TopLevel(symbol("forward")))
                 && function
                     .dependencies
                     .contains(&FunctionBodyDependency::TopLevel(symbol("helper")))
         })
         .unwrap();
     assert!(graph.reachable_state(entry.id).0.contains(&symbol("base")));
-    assert!(graph.functions().iter().any(|function| {
-        function.dependencies.iter().any(|dependency| {
-            matches!(
+    assert!(
+        !graph
+            .reachable_state(entry.id)
+            .0
+            .contains(&symbol("unrelated_base"))
+    );
+    assert!(graph.functions().iter().all(|function| {
+        function.dependencies.iter().all(|dependency| {
+            !matches!(
                 dependency,
                 FunctionBodyDependency::Conservative(FunctionDependencyFallback::Parameter { .. })
             )
@@ -1352,4 +1361,39 @@ fn sealed_function_dependency_dump_is_deterministic() {
     assert_eq!(first.as_bytes(), second.as_bytes());
     assert!(first.contains("top-level"), "{first}");
     assert!(first.contains("proto"), "{first}");
+}
+
+#[test]
+fn unbound_higher_order_parameters_keep_a_structured_fallback() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        export def apply: Fn(Fn(Int) -> Int, Int) -> Int =
+            fn(f, value) { f(value) };
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    let export = mir
+        .symbols
+        .iter()
+        .position(|symbol| {
+            symbol.name == "apply" && matches!(symbol.resolution, ResolveState::Bound(_))
+        })
+        .unwrap();
+    let executable = mir.seal_export(SymbolId(export as u32)).unwrap();
+    assert!(
+        executable
+            .function_dependencies()
+            .functions()
+            .iter()
+            .any(
+                |function| function.dependencies.iter().any(|dependency| matches!(
+                    dependency,
+                    FunctionBodyDependency::Conservative(
+                        FunctionDependencyFallback::Parameter { .. }
+                    )
+                ))
+            )
+    );
 }

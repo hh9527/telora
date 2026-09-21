@@ -191,6 +191,7 @@ impl FunctionBodyDependencyGraph {
                     .map(|edge| edge.node)
             })
             .collect::<BTreeSet<_>>();
+        let parameter_targets = propagate_parameter_targets(mir, &roots, &ids, &owners);
         let mut functions = Vec::with_capacity(roots.len());
         for (index, root) in roots.iter().copied().enumerate() {
             let mut dependencies = BTreeSet::new();
@@ -221,9 +222,21 @@ impl FunctionBodyDependencyGraph {
                         && let Some(signature) = effective_type(mir, root.instance, node)
                         && mir.types[signature.index()].constructor == TypeConstructor::Function
                     {
-                        dependencies.insert(FunctionBodyDependency::Conservative(
-                            FunctionDependencyFallback::Parameter { symbol, signature },
-                        ));
+                        let targets = parameter_targets
+                            .get(&(FuncId(index as u32), symbol))
+                            .filter(|targets| !targets.is_empty());
+                        if let Some(targets) = targets {
+                            dependencies.extend(
+                                targets
+                                    .iter()
+                                    .copied()
+                                    .map(FunctionBodyDependency::Function),
+                            );
+                        } else {
+                            dependencies.insert(FunctionBodyDependency::Conservative(
+                                FunctionDependencyFallback::Parameter { symbol, signature },
+                            ));
+                        }
                     }
                     let selected = selected_instance(mir, root.instance, node);
                     for (target_root, &target) in &ids {
@@ -263,6 +276,179 @@ impl FunctionBodyDependencyGraph {
         }
         Self { functions }
     }
+}
+
+#[derive(Clone, Debug)]
+struct CallSite {
+    caller: FuncId,
+    context: Option<GenericInstanceId>,
+    callee: HirId,
+    arguments: Vec<HirId>,
+}
+
+fn propagate_parameter_targets(
+    mir: &Mir,
+    roots: &[ExecutionRoot],
+    ids: &BTreeMap<ExecutionRoot, FuncId>,
+    owners: &BTreeMap<ExecutionRoot, SymbolId>,
+) -> BTreeMap<(FuncId, SymbolId), BTreeSet<FuncId>> {
+    let call_sites = roots
+        .iter()
+        .enumerate()
+        .flat_map(|(index, root)| {
+            function_body_nodes(mir, root.node)
+                .into_iter()
+                .filter(|&node| matches!(mir.hir[node.index()].kind, HirKind::Call))
+                .filter_map(move |node| {
+                    let syntax = &mir.hir[node.index()];
+                    let callee = syntax
+                        .children
+                        .iter()
+                        .find(|edge| edge.role == Role::Callee)?
+                        .node;
+                    Some(CallSite {
+                        caller: FuncId(index as u32),
+                        context: root.instance,
+                        callee,
+                        arguments: syntax
+                            .children
+                            .iter()
+                            .filter(|edge| edge.role == Role::Argument)
+                            .map(|edge| edge.node)
+                            .collect(),
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+    let mut targets = BTreeMap::<(FuncId, SymbolId), BTreeSet<FuncId>>::new();
+    let mut pending = (0..call_sites.len()).collect::<BTreeSet<_>>();
+    while let Some(index) = pending.pop_first() {
+        let call = &call_sites[index];
+        let callees = possible_functions(
+            mir,
+            call.caller,
+            call.context,
+            call.callee,
+            ids,
+            owners,
+            &targets,
+        );
+        let mut changed = false;
+        for callee in callees {
+            let Some(function) = roots.get(callee.index()) else {
+                continue;
+            };
+            let parameters = mir.hir[function.node.index()]
+                .children
+                .iter()
+                .filter(|edge| edge.role == Role::Parameter)
+                .filter_map(|edge| mir.hir_symbols[edge.node.index()]);
+            for (parameter, &argument) in parameters.zip(&call.arguments) {
+                let values = possible_functions(
+                    mir,
+                    call.caller,
+                    call.context,
+                    argument,
+                    ids,
+                    owners,
+                    &targets,
+                );
+                let entry = targets.entry((callee, parameter)).or_default();
+                let previous = entry.len();
+                entry.extend(values);
+                changed |= entry.len() != previous;
+            }
+        }
+        if changed {
+            pending.extend(0..call_sites.len());
+        }
+    }
+    targets
+}
+
+fn function_body_nodes(mir: &Mir, root: HirId) -> Vec<HirId> {
+    let mut pending = body_roots(mir, root);
+    let mut seen = BTreeSet::new();
+    while let Some(node) = pending.pop() {
+        if !seen.insert(node) {
+            continue;
+        }
+        if node != root && is_function_body(mir, node) {
+            continue;
+        }
+        pending.extend(runtime_children(mir, node));
+    }
+    seen.into_iter().collect()
+}
+
+fn possible_functions(
+    mir: &Mir,
+    caller: FuncId,
+    context: Option<GenericInstanceId>,
+    source: HirId,
+    ids: &BTreeMap<ExecutionRoot, FuncId>,
+    owners: &BTreeMap<ExecutionRoot, SymbolId>,
+    parameter_targets: &BTreeMap<(FuncId, SymbolId), BTreeSet<FuncId>>,
+) -> BTreeSet<FuncId> {
+    let signature = effective_type(mir, context, source);
+    let mut result = BTreeSet::new();
+    let mut pending = vec![source];
+    let mut seen = BTreeSet::new();
+    while let Some(node) = pending.pop() {
+        if !seen.insert(node) {
+            continue;
+        }
+        if is_function_body(mir, node) {
+            if let Some(&target) = ids.get(&ExecutionRoot {
+                node,
+                instance: context,
+            }) {
+                result.insert(target);
+            }
+            continue;
+        }
+        if let Some(symbol) = resolved_symbol(mir, node) {
+            if matches!(mir.symbols[symbol.index()].kind, SymbolKind::Parameter) {
+                result.extend(
+                    parameter_targets
+                        .get(&(caller, symbol))
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                );
+                continue;
+            }
+            let selected = selected_instance(mir, context, node);
+            let mut found = false;
+            for (target_root, &target) in ids {
+                if owners.get(target_root).copied() == Some(symbol)
+                    && (selected.is_none() || target_root.instance == selected)
+                {
+                    result.insert(target);
+                    found = true;
+                }
+            }
+            if found {
+                continue;
+            }
+            pending.extend(mir.symbols[symbol.index()].declarations.iter().copied());
+        }
+        pending.extend(runtime_children(mir, node));
+    }
+    result.retain(|id| {
+        signature.is_none_or(|signature| {
+            let root = roots_for_id(ids, *id);
+            root.is_some_and(|root| {
+                effective_type(mir, root.instance, root.node) == Some(signature)
+            })
+        })
+    });
+    result
+}
+
+fn roots_for_id(ids: &BTreeMap<ExecutionRoot, FuncId>, id: FuncId) -> Option<ExecutionRoot> {
+    ids.iter()
+        .find_map(|(root, &candidate)| (candidate == id).then_some(*root))
 }
 
 fn is_function_body(mir: &Mir, node: HirId) -> bool {
