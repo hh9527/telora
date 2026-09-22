@@ -73,7 +73,6 @@ fn named_rules(name: &str) -> Option<&'static [Rule]> {
         | "raw_start"
         | "raw_text"
         | "raw_end"
-        | "path_head"
         | "concat_fragment"
         | "comment"
         | "quote_start"

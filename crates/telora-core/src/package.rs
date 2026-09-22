@@ -43,7 +43,8 @@ pub struct PathOverride {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CrateManifest {
     pub name: String,
-    pub modules: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modules: Option<Vec<String>>,
     #[serde(default)]
     pub dependencies: Vec<String>,
 }
@@ -112,6 +113,7 @@ struct ResolvedCrate {
     root: PathBuf,
     manifest: CrateManifest,
     modules: BTreeMap<String, ModuleDeclaration>,
+    declared_module_tree: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -450,6 +452,12 @@ impl ResolvedWorkspace {
         Some(self.crates.get(name)?.modules.values())
     }
 
+    pub fn uses_declared_module_tree(&self, name: &str) -> bool {
+        self.crates
+            .get(name)
+            .is_some_and(|package| package.declared_module_tree)
+    }
+
     pub fn declares_dependency(&self, owner: &str, dependency: &str) -> bool {
         owner == dependency
             || self.crates.get(owner).is_some_and(|package| {
@@ -555,7 +563,8 @@ impl ResolvedWorkspace {
 impl CrateManifest {
     pub fn declarations(&self, root: &Path) -> Result<Vec<ModuleDeclaration>, PackageError> {
         validate_crate_name(&self.name).map_err(|error| PackageError::new(error.to_string()))?;
-        ensure_unique_sorted_set("module", &self.modules)?;
+        let modules = self.modules.as_deref().unwrap_or_default();
+        ensure_unique_sorted_set("module", modules)?;
         ensure_unique_sorted_set("dependency", &self.dependencies)?;
         for dependency in &self.dependencies {
             validate_crate_name(dependency)
@@ -567,7 +576,7 @@ impl CrateManifest {
                 )));
             }
         }
-        self.modules
+        modules
             .iter()
             .map(|selector| parse_module_declaration(root, selector))
             .collect()
@@ -777,9 +786,17 @@ fn validate_dependency_graph(crates: &BTreeMap<String, ResolvedCrate>) -> Result
 fn read_crate(root: &Path) -> Result<ResolvedCrate, PackageError> {
     let manifest_path = root.join(CRATE_FILE);
     let mut manifest: CrateManifest = read_json(&manifest_path)?;
-    manifest.modules.sort();
+    if let Some(modules) = &mut manifest.modules {
+        modules.sort();
+    }
     manifest.dependencies.sort();
-    let declarations = manifest.declarations(root)?;
+    let configured = manifest.declarations(root)?;
+    let declared_module_tree = manifest.modules.is_none();
+    let declarations = if declared_module_tree {
+        discover_declared_modules(root)?
+    } else {
+        configured
+    };
     let modules = declarations
         .into_iter()
         .map(|declaration| (declaration.selector.clone(), declaration))
@@ -788,7 +805,54 @@ fn read_crate(root: &Path) -> Result<ResolvedCrate, PackageError> {
         root: root.to_owned(),
         manifest,
         modules,
+        declared_module_tree,
     })
+}
+
+fn discover_declared_modules(root: &Path) -> Result<Vec<ModuleDeclaration>, PackageError> {
+    use crate::syntax::telora::ast::{Binding, Program};
+
+    let mut pending = BTreeSet::from(["@src/lib".to_owned()]);
+    let mut declarations = BTreeMap::new();
+    while let Some(selector) = pending.pop_first() {
+        if declarations.contains_key(&selector) {
+            continue;
+        }
+        let declaration = parse_module_declaration(root, &selector)?;
+        let text = fs::read_to_string(&declaration.physical_path).map_err(|error| {
+            PackageError::new(format!(
+                "cannot read declared module {}: {error}",
+                declaration.physical_path.display()
+            ))
+        })?;
+        let mut sources = crate::source::SourceDatabase::default();
+        let source = sources.add(selector.clone(), &text);
+        let parsed = crate::syntax::telora::parse(source, &text);
+        let parent = declaration
+            .logical_path
+            .to_string_lossy()
+            .replace('\\', "/");
+        let parent = (parent != "lib").then_some(parent.as_str());
+        if let Some(body) = Program::root(&parsed.syntax).body() {
+            for binding in body.bindings() {
+                let Binding::Module(module) = binding else {
+                    continue;
+                };
+                let Some(name) = module.name() else {
+                    continue;
+                };
+                let range = name.range();
+                let name = &text[range.start as usize..range.end as usize];
+                let child = match parent {
+                    Some(parent) => format!("@src/{parent}/{name}"),
+                    None => format!("@src/{name}"),
+                };
+                pending.insert(child);
+            }
+        }
+        declarations.insert(selector, declaration);
+    }
+    Ok(declarations.into_values().collect())
 }
 
 fn parse_module_declaration(

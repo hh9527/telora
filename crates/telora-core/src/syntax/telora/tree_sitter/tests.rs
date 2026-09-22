@@ -248,6 +248,26 @@ fn static_module_syntax_keeps_declarations_paths_and_data_imports_distinct() {
     assert!(matches!(bindings[2], super::super::ast::Binding::Use(_)));
     assert!(matches!(bindings[3], super::super::ast::Binding::Data(_)));
     assert!(matches!(bindings[4], super::super::ast::Binding::Data(_)));
+
+    let super::super::ast::Binding::Module(module) = bindings[0] else {
+        unreachable!()
+    };
+    let name = module.name().unwrap().range();
+    assert_eq!(&text[name.start as usize..name.end as usize], "query");
+
+    let super::super::ast::Binding::Data(config) = bindings[3] else {
+        unreachable!()
+    };
+    assert!(config.annotation().is_some());
+    let import = config.import().unwrap();
+    assert_eq!(import.format().unwrap().kind(), super::Token::Json);
+    assert!(import.source().is_some());
+
+    let super::super::ast::Binding::Data(defaults) = bindings[4] else {
+        unreachable!()
+    };
+    assert!(defaults.annotation().is_none());
+    assert!(defaults.import().unwrap().format().is_none());
 }
 
 #[test]

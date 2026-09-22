@@ -49,6 +49,40 @@ fn run_and_check_select_logical_roots_from_cwd() {
 }
 
 #[test]
+fn check_discovers_the_fixed_lib_root_module_tree() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("telora-crate.json"),
+        r#"{"name":"fixture","dependencies":[]}"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("telora-lock.json"),
+        r#"{"version":1,"packages":{"fixture":{"source":{"workspace":""},"modules":["@src/lib","@src/query"],"dependencies":[]}}}"#,
+    )
+    .unwrap();
+    fs::write(cwd.join("src/lib.telora"), "mod query; export { query };").unwrap();
+    fs::write(
+        cwd.join("src/query.telora"),
+        "export def answer: Int = 42;",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_telora"))
+        .current_dir(&cwd)
+        .args(["check", "@src/lib", "--only-types"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
 fn public_cli_rejects_physical_paths_and_missing_manifests() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "export def output: Int = 1;").unwrap();

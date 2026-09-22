@@ -16,6 +16,7 @@ impl Lower<'_> {
                 "destructuring let is allowed only inside a local block",
             )),
             Some(Rule::ImportBinding) => self.imports(node),
+            Some(Rule::ModuleDeclaration) => self.module_declaration(node),
             Some(Rule::ExportStatement) if top => self.exports(node),
             Some(Rule::ExportStatement) => Err(self.error(
                 node,
@@ -27,6 +28,26 @@ impl Lower<'_> {
             )),
             _ => Ok(vec![Input::with(Role::Binding, node, Mode::Binding)]),
         }
+    }
+
+    fn module_declaration(&self, node: NodeRef) -> Result<Vec<Input>, ()> {
+        let name = self.required_token(node, Token::Identifier)?;
+        let child = format!(
+            "{}/{}",
+            self.mir.modules[self.module.index()].name,
+            self.text(name)
+        );
+        let value = self.synthetic(Role::Value, node, HirKind::String(child), vec![]);
+        Ok(vec![self.synthetic(
+            Role::Binding,
+            node,
+            HirKind::Binding {
+                kind: B::Import,
+                initializer: None,
+                imported: None,
+            },
+            vec![Input::with(Role::Name, name, Mode::Name), value],
+        )])
     }
 
     fn imports(&self, node: NodeRef) -> Result<Vec<Input>, ()> {

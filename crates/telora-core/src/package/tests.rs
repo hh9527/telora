@@ -147,6 +147,40 @@ fn discovers_workspace_and_authoritative_modules() {
 }
 
 #[test]
+fn discovers_fixed_lib_root_and_only_declared_child_modules() {
+    let root = std::env::temp_dir().join(format!(
+        "telora-declared-modules-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(root.join("src/query")).unwrap();
+    fs::write(root.join(CRATE_FILE), r#"{"name":"app","dependencies":[]}"#).unwrap();
+    fs::write(root.join("src/lib.telora"), "mod query;").unwrap();
+    fs::write(root.join("src/query.telora"), "mod parser;").unwrap();
+    fs::write(root.join("src/query/parser.telora"), "export def x = 1;").unwrap();
+    fs::write(root.join("src/unmounted.telora"), "export def x = 2;").unwrap();
+
+    let package = read_crate(&root).unwrap();
+    assert!(package.declared_module_tree);
+    assert_eq!(
+        package
+            .modules
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["@src/lib", "@src/query", "@src/query/parser"]
+    );
+
+    fs::write(root.join("src/query.telora"), "mod missing;").unwrap();
+    let error = read_crate(&root).unwrap_err().to_string();
+    assert!(error.contains("declared module"), "{error}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rejects_undeclared_or_missing_modules() {
     let root = fixture();
     fs::write(

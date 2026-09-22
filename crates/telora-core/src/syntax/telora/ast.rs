@@ -257,6 +257,37 @@ binding_node!(DataBinding);
 binding_node!(ImportBinding);
 binding_node!(ExportBinding);
 
+impl<'tree> DataBinding<'tree> {
+    pub fn annotation(self) -> Option<SyntaxNode<'tree>> {
+        child_node(self.syntax, Rule::TypeScheme)
+    }
+
+    pub fn import(self) -> Option<DataImport<'tree>> {
+        child_node(self.syntax, Rule::DataImport).map(|syntax| DataImport { syntax })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct DataImport<'tree> {
+    syntax: SyntaxNode<'tree>,
+}
+
+impl<'tree> DataImport<'tree> {
+    pub fn syntax(self) -> SyntaxNode<'tree> {
+        self.syntax
+    }
+
+    pub fn format(self) -> Option<SyntaxToken<'tree>> {
+        child_node(self.syntax, Rule::DataFormat)?
+            .children()
+            .find_map(SyntaxNode::token)
+    }
+
+    pub fn source(self) -> Option<StringLiteral<'tree>> {
+        child_node(self.syntax, Rule::StringLiteral).map(|syntax| StringLiteral { syntax })
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Decorator<'tree> {
     syntax: SyntaxNode<'tree>,
@@ -590,6 +621,9 @@ pub(super) fn validate_cancellable(
                     Some(Token::Semicolon),
                     ExpectedSyntax::BindingValue,
                 )),
+            Binding::Data(node) if node.import().is_none_or(|import| import.source().is_none()) => {
+                issues.push(missing_at(source, node.syntax, ExpectedSyntax::ImportPath))
+            }
             Binding::Import(node)
                 if node.path().is_none()
                     && child_node(node.syntax, Rule::MemberSelector).is_none() =>

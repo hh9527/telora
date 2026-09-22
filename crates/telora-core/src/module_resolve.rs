@@ -398,6 +398,35 @@ mod tests {
     }
 
     #[test]
+    fn module_declarations_create_child_namespace_edges_without_path_imports() {
+        let inventory = ["app", "app/query"]
+            .into_iter()
+            .map(|name| ModuleSpec {
+                native: None,
+                name: name.into(),
+                kind: ModuleKind::Source,
+                implicit_imports: vec![],
+            })
+            .collect();
+        let mut reads = Vec::new();
+        let mut mir = resolve(inventory, &["app".into()], |_, name| {
+            reads.push(name.to_owned());
+            Ok(match name {
+                "app" => "mod query; export { query };",
+                "app/query" => "export def answer = 42;",
+                _ => unreachable!(),
+            }
+            .into())
+        });
+        assert_eq!(reads, ["app", "app/query"]);
+        assert_eq!(mir.imports.len(), 1);
+        assert_eq!(mir.imports[0].request, "app/query");
+        assert!(matches!(mir.imports[0].target, ModuleTarget::Bound(_)));
+        crate::symbol_resolve::resolve(&mut mir);
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    }
+
+    #[test]
     fn source_line_count_is_not_limited_to_u16() {
         let mir = super::resolve(
             vec![super::ModuleSpec {

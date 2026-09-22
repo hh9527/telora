@@ -220,10 +220,16 @@ impl Inventory {
                     continue;
                 }
                 for module in w.modules(name).expect("known crate") {
-                    let cname = format!(
-                        "{name}/{}",
-                        module.logical_path.to_string_lossy().replace('\\', "/")
-                    );
+                    let logical = module.logical_path.to_string_lossy().replace('\\', "/");
+                    let cname = if w.uses_declared_module_tree(name) {
+                        if logical == "lib" {
+                            name.to_owned()
+                        } else {
+                            format!("{name}/{logical}")
+                        }
+                    } else {
+                        format!("{name}/{logical}")
+                    };
                     entries.insert(
                         cname.clone(),
                         Entry {
@@ -269,7 +275,16 @@ impl Inventory {
 
     pub fn select(&mut self, selector: &str) -> Result<String, String> {
         let name = if let Some(path) = selector.strip_prefix("@src/") {
-            format!("{}/{path}", self.owner)
+            if path == "lib"
+                && self
+                    .workspace
+                    .as_ref()
+                    .is_some_and(|workspace| workspace.uses_declared_module_tree(&self.owner))
+            {
+                self.owner.clone()
+            } else {
+                format!("{}/{path}", self.owner)
+            }
         } else if let Some(path) = selector.strip_prefix("@test/") {
             let root = self
                 .workspace
@@ -364,7 +379,9 @@ impl Inventory {
     }
 
     fn request(&self, importer: &str, request: &str) -> Option<String> {
-        let owner = importer.split_once('/')?.0;
+        let owner = importer
+            .split_once('/')
+            .map_or(importer, |(owner, _)| owner);
         let name = if let Some(path) = request.strip_prefix("@src/") {
             format!("{owner}/{path}")
         } else if let Some(path) = request.strip_prefix("@test/") {
@@ -395,7 +412,9 @@ impl Inventory {
         };
         // Inventory lookup is authoritative: no file probing or alternate candidates.
         let entry = self.entries.get(&name)?;
-        let target_owner = name.split_once('/')?.0;
+        let target_owner = name
+            .split_once('/')
+            .map_or(name.as_str(), |(owner, _)| owner);
         if entry.test && !self.entries.get(importer).is_some_and(|e| e.test) {
             return None;
         }
