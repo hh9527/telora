@@ -1,16 +1,16 @@
-import "std/test" as test;
-import "./provider" as provider;
+use std::test as test;
+use self::provider as provider;
 
-export def kept: test.Test = test.should_ok(fn() {
-    fail!("kept", provider.updated.kept)
+pub def kept: test::Test = test::should_ok(fn() {
+    fail!("kept", provider::updated.kept)
 });
-export def spread: test.Test = test.should_ok(fn() {
-    fail!("spread", provider.updated.replaced)
+pub def spread: test::Test = test::should_ok(fn() {
+    fail!("spread", provider::updated.replaced)
 });
-export def literal: test.Test = test.should_ok(fn() {
-    let updated = provider.base <~ {replaced: provider.replacement};
+pub def literal: test::Test = test::should_ok(fn() {
+    let updated = provider::base <~ {replaced: provider::replacement};
     fail!("literal", updated.replaced)
 });
-export def container: test.Test = test.should_ok(fn() {
-    fail!("container", provider.updated)
+pub def container: test::Test = test::should_ok(fn() {
+    fail!("container", provider::updated)
 });

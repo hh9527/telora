@@ -1,2 +1,2 @@
-import "@src/shared" {reject};
-export def answer: Int = 42;
+use crate::shared::{reject};
+pub def answer: Int = 42;

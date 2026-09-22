@@ -1,15 +1,15 @@
-import "std/codec" as codec;
-import "std/json" as json;
-import "std/value" { Value };
-import "std/_rt" as rt;
-@json.untagged
+use std::codec as codec;
+use std::json as json;
+use std::value::{ Value };
+use std::_rt as rt;
+@json::untagged
 type Ambiguous = enum { First, Second };
-@json.untagged
-@json.rename_all(json.RenameCase.CamelCase)
+@json::untagged
+@json::rename_all(json::RenameCase::CamelCase)
 type Both = enum { Empty, Number(Int) };
-export def answer: Fn() -> (rt.Diagnostic, rt.Diagnostic) = fn() {
-    let ambiguous = rt.with_diagnostics(fn(value: Ambiguous) { codec.encode(value) })(Ambiguous.First);
-    let both = rt.with_diagnostics(fn(value: Both) { codec.encode(value) })(Both.Empty);
+pub def answer: Fn() -> (rt::Diagnostic, rt::Diagnostic) = fn() {
+    let ambiguous = rt::with_diagnostics(fn(value: Ambiguous) { codec::encode(value) })(Ambiguous::First);
+    let both = rt::with_diagnostics(fn(value: Both) { codec::encode(value) })(Both::Empty);
     (match ambiguous { Err(reports) => reports[0], Ok(_) => fail!("expected ambiguity") },
      match both { Err(reports) => reports[0], Ok(_) => fail!("expected incompatible properties") })
 };

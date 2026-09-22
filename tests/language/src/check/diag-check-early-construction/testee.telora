@@ -1,10 +1,10 @@
-import "std/array" as array;
+use std::array as array;
 @check(fn(value) {
     if value.x > 0 { Ok(()) } else { Err(blame!("early candidate rejected", value.x)) }
 })
 type Point = struct {x: Int};
-type Chosen = Tuple(array.map([Int], fn(item) {
+type Chosen = Tuple(array::map([Int], fn(item) {
     let candidate: Point = {x: 0};
     if candidate.x == 0 { item } else { item }
 }));
-export def value: Int = 2;
+pub def value: Int = 2;

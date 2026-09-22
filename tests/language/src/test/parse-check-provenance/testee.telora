@@ -1,12 +1,12 @@
-import "std/test" as test;
-import "std/string" as string;
-import "std/json" as json;
-import "../parse-construction-check/testee" {Endpoint};
-import "./provider" as provider;
+use std::test as test;
+use std::string as string;
+use std::json as json;
+use self::model::{ Endpoint };
+use self::provider as provider;
 
-export def parsed: test.Test = test.should_ok(fn() { string.parse@[Endpoint](provider.text) });
-export def decoded: test.Test = test.should_ok(fn() {
-    match json.decode@[(Endpoint)](provider.json_text) {
+pub def parsed: test::Test = test::should_ok(fn() { string::parse@[Endpoint](provider::text) });
+pub def decoded: test::Test = test::should_ok(fn() {
+    match json::decode@[(Endpoint)](provider::json_text) {
         Ok(value) => value, Err(error) => raise!(error),
     }
 });

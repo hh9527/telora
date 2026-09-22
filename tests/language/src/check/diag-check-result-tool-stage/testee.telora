@@ -1,6 +1,6 @@
-import "../check-result-tool-stage/provider" {Count, stamp};
+use self::provider::{ Count, stamp };
 
 @stamp(Count(0))
 type Item = struct {value: Int};
 
-export {Item};
+pub use self::{Item};

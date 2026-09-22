@@ -1,7 +1,7 @@
-import "std/array" as array;
-export def answer: Int = do {
+use std::array as array;
+pub def answer: Int = do {
     decl callback: Fn(Int, Int) -> Int;
-    let result = array.fold([], 0, callback);
+    let result = array::fold([], 0, callback);
     def callback = fn(acc, value) {acc + value};
     result
 };

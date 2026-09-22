@@ -1,2 +1,2 @@
 type Message(T) = enum { Data(T), Empty };
-export def invalid = Message.Empty;
+pub def invalid = Message::Empty;

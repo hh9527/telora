@@ -1,8 +1,8 @@
-import "std/array" as array;
-import "std/dyn" as dyn;
-import "std/type-desc" as type_desc;
-import "std/type-desc" { TypeDesc };
-import "std/type-property" as type_property;
+use std::array as array;
+use std::dyn as dyn;
+use std::type_desc as type_desc;
+use std::type_desc::{ TypeDesc };
+use std::type_property as type_property;
 
 native type Fmt @1;
 
@@ -11,7 +11,7 @@ type DisplayTemplate = struct {
     fields: Array(String),
 };
 
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type DisplayBy = struct {
     template: DisplayTemplate,
     display: Fn(Dyn) -> Fmt,
@@ -25,21 +25,21 @@ native concat: Fn(Array(String), Array(Fmt)) -> Fmt;
 native render: Fn(Fmt) -> String;
 
 def project_string: Fn(Dyn) -> Fmt = fn(value) {
-    match dyn.project_with(String.type, value) {
+    match dyn::project_with(String.type, value) {
         Some(value) => from_string(value),
         None => fail!("prepared Display expected String", value),
     }
 };
 
 def project_int: Fn(Dyn) -> Fmt = fn(value) {
-    match dyn.project_with(Int.type, value) {
+    match dyn::project_with(Int.type, value) {
         Some(value) => from_int(value),
         None => fail!("prepared Display expected Int", value),
     }
 };
 
 def project_float: Fn(Dyn) -> Fmt = fn(value) {
-    match dyn.project_with(Float.type, value) {
+    match dyn::project_with(Float.type, value) {
         Some(value) => from_float(value),
         None => fail!("prepared Display expected Float", value),
     }
@@ -47,20 +47,20 @@ def project_float: Fn(Dyn) -> Fmt = fn(value) {
 
 decl display_for: Fn(Type) -> Fn(Dyn) -> Fmt;
 def display_for = fn(target) {
-    let target_kind = type_desc.kind(target);
+    let target_kind = type_desc::kind(target);
     let resolved = match target_kind {
-        type_desc.TypeDescKind.Ref => match type_desc.resolve(target) {
+        type_desc::TypeDescKind::Ref => match type_desc::resolve(target) {
             Ok(value) => value,
             Err(error) => fail!(error.message, target),
         },
         _ => target,
     };
-    match type_desc.kind(resolved) {
-        type_desc.TypeDescKind.String => project_string,
-        type_desc.TypeDescKind.Int => project_int,
-        type_desc.TypeDescKind.Float => project_float,
+    match type_desc::kind(resolved) {
+        type_desc::TypeDescKind::String => project_string,
+        type_desc::TypeDescKind::Int => project_int,
+        type_desc::TypeDescKind::Float => project_float,
         _ => match target_kind {
-            type_desc.TypeDescKind.Ref => match type_property.get_type_prop(target, DisplayBy.type) {
+            type_desc::TypeDescKind::Ref => match type_property::get_type_prop(target, DisplayBy.type) {
                 Some(property) => property.display,
                 None => fail!("Display template field has no Display capability", target),
             },
@@ -70,19 +70,19 @@ def display_for = fn(target) {
 };
 
 def prepare_display: Fn(Type, DisplayTemplate) -> Fn(Dyn) -> Fmt = fn(target, template) {
-    let fields = type_desc.fields(target);
-    let displays: Array(Fn(Dyn) -> Fmt) = array.map(template.fields, fn(name) {
-        let field = match array.find(fields, fn(field) { field.name == name }) {
+    let fields = type_desc::fields(target);
+    let displays: Array(Fn(Dyn) -> Fmt) = array::map(template.fields, fn(name) {
+        let field = match array::find(fields, fn(field) { field.name == name }) {
             Some(field) => field,
             None => fail!(`Display template references unknown field "\{name}"`, target, name),
         };
         let display = display_for(field.ty);
         fn(value) {
-            display(dyn.get_field_value(value, field.index))
+            display(dyn::get_field_value(value, field.index))
         }
     });
     fn(value) {
-        concat(template.strings, array.map(displays, fn(display) { display(value) }))
+        concat(template.strings, array::map(displays, fn(display) { display(value) }))
     }
 };
 
@@ -99,8 +99,8 @@ def display_by: Fn(String) -> Fn(TypeDesc, Option(DisplayBy)) -> DisplayBy = fn(
 };
 
 def display: for(A: Property(DisplayBy)) Fn(TypeOf(A), A) -> Fmt = fn(target, value) {
-    let property = type_property.evidence(target, DisplayBy.type);
-    property.display(dyn.pack(target, value))
+    let property = type_property::evidence(target, DisplayBy.type);
+    property.display(dyn::pack(target, value))
 };
 
 trait Display {
@@ -116,7 +116,7 @@ impl(T: Property(DisplayBy)) Display for T {
     display: fn(value) { display(T.type, value) },
 };
 
-export {
+pub use self::{
     Display,
     DisplayBy,
     Fmt,

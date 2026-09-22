@@ -1,29 +1,29 @@
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::test as test;
+use crate::test_support::{expect};
 
 type Item = struct {value: Int};
 
-export def empty_positions: test.Test = test.should_ok(fn() {
+pub def empty_positions: test::Test = test::should_ok(fn() {
     let before = [...[], 1];
     let after = [1, ...[]];
     let multiple = [...[], 1, ...[], 2, ...[]];
     expect(before == [1] && after == [1] && multiple == [1, 2])
 });
 
-export def shared_empty: test.Test = test.should_ok(fn() {
+pub def shared_empty: test::Test = test::should_ok(fn() {
     let empty = [];
     let before = [...empty, 1];
     let after = [1, ...empty];
     expect(before == [1] && after == [1] && empty == [].ty!(Array(Int)))
 });
 
-export def nested: test.Test = test.should_ok(fn() {
+pub def nested: test::Test = test::should_ok(fn() {
     let before = [...[[]], [1]];
     let after = [[1], ...[[]]];
     expect(before == [[], [1]] && after == [[1], []])
 });
 
-export def nominal_evidence: test.Test = test.should_ok(fn() {
+pub def nominal_evidence: test::Test = test::should_ok(fn() {
     let item: Item = {value: 1};
     let before = [...[], item];
     let after = [item, ...[]];

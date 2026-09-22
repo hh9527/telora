@@ -1,4 +1,4 @@
-import "std/_rt" as rt;
+use std::_rt as rt;
 
 def notice: Fn(String) -> () = fn(message) {
     let warning: Option(Int) = warn!(message);
@@ -8,21 +8,21 @@ def unit: Fn(String) -> () = fn(message) { notice(message) };
 def array: Fn(String) -> Array(Int) = fn(message) { let ignored = notice(message); [7] };
 def original: (Int,) = (42,);
 
-export def answer: Fn() -> ((Int, Int), Array(Int), rt.Diagnostic, rt.Diagnostic, String, String, String) = fn() {
+pub def answer: Fn() -> ((Int, Int), Array(Int), rt::Diagnostic, rt::Diagnostic, String, String, String) = fn() {
     let tuple = (...pair("first"), ...unit("middle"), ...pair("last"));
     let values = [...array("a"), do { let ignored = notice("b"); 8 }, ...array("c")];
     let copied = (...original, 3);
-    let origin = rt.with_diagnostics(fn(ignored: ()) { fail!("original", copied.0) })(());
-    let container = rt.with_diagnostics(fn(ignored: ()) { fail!("container", copied) })(());
-    let stopped = rt.with_diagnostics(fn(ignored: ()) {
+    let origin = rt::with_diagnostics(fn(ignored: ()) { fail!("original", copied.0) })(());
+    let container = rt::with_diagnostics(fn(ignored: ()) { fail!("container", copied) })(());
+    let stopped = rt::with_diagnostics(fn(ignored: ()) {
         let broken: Fn() -> (Int,) = fn() { fail!("tuple spread failed") };
         (...broken(), ...pair("must not execute"))
     })(());
-    let array_stopped = rt.with_diagnostics(fn(ignored: ()) {
+    let array_stopped = rt::with_diagnostics(fn(ignored: ()) {
         let broken: Fn() -> Array(Int) = fn() { fail!("array spread failed") };
         [...broken(), ...array("must not execute")]
     })(());
-    let never = rt.with_diagnostics(fn(ignored: ()) {
+    let never = rt::with_diagnostics(fn(ignored: ()) {
         (fail!("uninhabited tuple"), ...pair("must not execute"))
     })(());
     (tuple, values,

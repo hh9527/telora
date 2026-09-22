@@ -1,4 +1,4 @@
-export def selected: Option(Int) = do {
+pub def selected: Option(Int) = do {
     let selected = if True { Some(1) } else { None };
     selected
 };

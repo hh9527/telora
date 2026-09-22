@@ -1,1 +1,1 @@
-export def pair: (Int, String) = (11, "hi");
+pub def pair: (Int, String) = (11, "hi");

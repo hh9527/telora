@@ -1,46 +1,46 @@
-import "std/codec" as codec;
-import "std/json" as json;
-import "std/yaml" as yaml;
-import "std/toml" as toml;
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::codec as codec;
+use std::json as json;
+use std::yaml as yaml;
+use std::toml as toml;
+use std::test as test;
+use crate::test_support::{expect};
 
-export def yaml_error_keeps_input: test.Test = test.should_fail_with(fn() {
+pub def yaml_error_keeps_input: test::Test = test::should_fail_with(fn() {
     let input = "a: [";
-    let checked: Result(codec.Value, codec.BlameError) = yaml.parse(input);
+    let checked: Result(codec::Value, codec::BlameError) = yaml::parse(input);
     match checked { Err(error) => raise!(error), Ok(_) => 0 }
 }, "<yaml string>");
 
-export def toml_error_keeps_input: test.Test = test.should_fail_with(fn() {
+pub def toml_error_keeps_input: test::Test = test::should_fail_with(fn() {
     let input = "a = [";
-    let checked: Result(codec.Value, codec.BlameError) = toml.parse(input);
+    let checked: Result(codec::Value, codec::BlameError) = toml::parse(input);
     match checked { Err(error) => raise!(error), Ok(_) => 0 }
 }, "<toml string>");
 
 type Item = struct {count: Int};
 type Items = struct {items: Array(Item)};
-@json.untagged
+@json::untagged
 type NumberOrText = enum {Number(Int), Text(String)};
 
-export def nested_subject: test.Test = test.should_fail_with(fn() {
-    let bad: codec.Value = codec.Value.String("wrong");
-    let input: codec.Value = codec.Value.Object({items: codec.Value.Array([
-        codec.Value.Object({count: codec.Value.Int(1)}),
-        codec.Value.Object({count: bad}),
+pub def nested_subject: test::Test = test::should_fail_with(fn() {
+    let bad: codec::Value = codec::Value::String("wrong");
+    let input: codec::Value = codec::Value::Object({items: codec::Value::Array([
+        codec::Value::Object({count: codec::Value::Int(1)}),
+        codec::Value::Object({count: bad}),
     ])});
-    match codec.decode@[(Items)](input) { Err(error) => raise!(error), Ok(_) => 0 }
+    match codec::decode@[(Items)](input) { Err(error) => raise!(error), Ok(_) => 0 }
 }, "items[1].count");
 
-export def missing_subject: test.Test = test.should_fail_with(fn() {
-    let parent: codec.Value = codec.Value.Object({});
-    match codec.decode@[(Item)](parent) { Err(error) => raise!(error), Ok(_) => 0 }
+pub def missing_subject: test::Test = test::should_fail_with(fn() {
+    let parent: codec::Value = codec::Value::Object({});
+    match codec::decode@[(Item)](parent) { Err(error) => raise!(error), Ok(_) => 0 }
 }, "missing required field");
 
-export def recover_and_compose: test.Test = test.should_ok(fn() {
-    let input: codec.Value = codec.Value.String("hello");
-    let decoded: Result(String, codec.BlameError) = match codec.decode@[(Int)](input) {
+pub def recover_and_compose: test::Test = test::should_ok(fn() {
+    let input: codec::Value = codec::Value::String("hello");
+    let decoded: Result(String, codec::BlameError) = match codec::decode@[(Int)](input) {
         Ok(_) => Ok("number"),
-        Err(_) => codec.decode@[(String)](input),
+        Err(_) => codec::decode@[(String)](input),
     };
     expect(match decoded {
         Ok(value) => value == "hello",
@@ -48,18 +48,18 @@ export def recover_and_compose: test.Test = test.should_ok(fn() {
     })
 });
 
-export def untagged_failure: test.Test = test.should_fail_with(fn() {
-    let input: codec.Value = codec.Value.Array([]);
-    match codec.decode@[(NumberOrText)](input) { Err(error) => raise!(error), Ok(_) => 0 }
+pub def untagged_failure: test::Test = test::should_fail_with(fn() {
+    let input: codec::Value = codec::Value::Array([]);
+    match codec::decode@[(NumberOrText)](input) { Err(error) => raise!(error), Ok(_) => 0 }
 }, "matches no untagged");
 
-export def syntax_subject: test.Test = test.should_fail_with(fn() {
+pub def syntax_subject: test::Test = test::should_fail_with(fn() {
     let text = "{invalid";
-    match json.decode@[(Item)](text) { Err(error) => raise!(error), Ok(_) => 0 }
+    match json::decode@[(Item)](text) { Err(error) => raise!(error), Ok(_) => 0 }
 }, "<json string>");
 
-export def authored_error: test.Test = test.should_fail_with(fn() {
-    let error: codec.BlameError = blame!("custom decoder", codec.Value.Int(42));
-    let result: Result(Int, codec.BlameError) = Err(error);
+pub def authored_error: test::Test = test::should_fail_with(fn() {
+    let error: codec::BlameError = blame!("custom decoder", codec::Value::Int(42));
+    let result: Result(Int, codec::BlameError) = Err(error);
     match result { Err(error) => raise!(error), Ok(_) => 0 }
 }, "custom decoder");

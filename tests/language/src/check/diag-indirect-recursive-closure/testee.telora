@@ -1,4 +1,4 @@
-export def invalid = {
+pub def invalid = {
     def a = fn(value) { b(value) };
     let make = fn() { a };
     def b = fn(value) { make()(value) };

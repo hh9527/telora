@@ -120,7 +120,7 @@ fn check_preserves_property_provider_alias_and_factory_contracts() {
         "def configure: Fn(Int) -> Fn(Type, Option(Tag)) -> Tag = fn(n: Int) { fn(target: Type, previous: Option(Tag)) { Tag(n) } }; def alias: Fn(Type, Option(Tag)) -> Tag = configure(1);",
     ] {
         fs::write(cwd.join("src/provider.telora"), format!(
-            "@property(PropertyTarget.Type) type Tag = struct(Int); {definitions} @alias type Item = struct(Int); def requires: for(T: Property(Tag)) Fn(TypeOf(T)) -> Int = fn(target) {{ 1 }}; trait Named {{ name: Fn(Self) -> Int }}; impl(T: Property(Tag)) Named for T {{ name: fn(value) {{ 42 }} }}; export def output: Int = requires((Item).type); export def named: Int = Named.name(Item(1)); export {{ Item }};"
+            "@property(PropertyTarget.Type) type Tag = struct(Int); {definitions} @alias pub type Item = struct(Int); def requires: for(T: Property(Tag)) Fn(TypeOf(T)) -> Int = fn(target) {{ 1 }}; trait Named {{ name: Fn(Self) -> Int }}; impl(T: Property(Tag)) Named for T {{ name: fn(value) {{ 42 }} }}; pub def output: Int = requires((Item).type); pub def named: Int = Named.name(Item(1));"
         )).unwrap();
         for arguments in [
             vec!["check", "@src/provider"],
@@ -152,7 +152,7 @@ fn types_only_solves_member_provider_contracts_without_execution() {
         };
         def provider: Fn(Context, Option(Tag)) -> Tag = factory(1);
         type Item = struct { @provider value: Int };
-        export { Item };
+        pub use self::{ Item };
     "#,
     )
     .unwrap();
@@ -184,9 +184,9 @@ fn types_only_solves_member_provider_contracts_without_execution() {
 fn check_rejects_concrete_runtime_errors_without_synthetic_finalization() {
     let cwd = fixture();
     let cases = [
-        ("failed", "export def output: Int = fail!(\"boom\", 1);"),
-        ("division", "export def output: Int = 1 / 0;"),
-        ("index", "export def output: Int = [1][2];"),
+        ("failed", "pub def output: Int = fail!(\"boom\", 1);"),
+        ("division", "pub def output: Int = 1 / 0;"),
+        ("index", "pub def output: Int = [1][2];"),
     ];
     for (name, source) in cases {
         fs::write(cwd.join(format!("src/{name}.telora")), source).unwrap();
@@ -224,12 +224,12 @@ fn check_suppresses_parser_recovery_fallout_but_keeps_independent_errors() {
     let cases: &[(&str, &str, &[&str])] = &[
         (
             "one-root",
-            "export def broken: Int = match True { True 1, _ => 2 };",
+            "pub def broken: Int = match True { True 1, _ => 2 };",
             &["invalid syntax, expected one of: '=>', 'if'"],
         ),
         (
             "two-roots",
-            "export def first: Int = (1 + 2; export def second: Int = match True { True 1, _ => 2 };",
+            "pub def first: Int = (1 + 2; pub def second: Int = match True { True 1, _ => 2 };",
             &[
                 "invalid syntax, expected one of: ',', ')'",
                 "invalid syntax, expected one of: '=>', 'if'",
@@ -265,7 +265,7 @@ fn check_accepts_a_complete_module_with_warnings() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/warning.telora"),
-        "def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked: Option(Int) = reject().ok_or_warn!(); export def output: Int = 1;",
+        "def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked: Option(Int) = reject().ok_or_warn!(); pub def output: Int = 1;",
     )
     .unwrap();
     let check = telora(&cwd)
@@ -285,7 +285,7 @@ fn check_accepts_a_complete_module_with_warnings() {
     assert_eq!(records[0]["severity"], "warning");
     assert_eq!(records[1]["record"], "summary");
     assert_eq!(records[1]["status"], "ok");
-    assert_eq!(records[1]["dependencies"], 0);
+    assert_eq!(records[1]["dependencies"], 1);
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn check_keeps_recursive_type_metadata_inside_the_semantic_boundary() {
         r#"type CallExpr = struct { args: Array(Expr) };
 type Expr = enum { Call(CallExpr), Text(String) };
 def identity: Fn(Expr) -> Expr = fn(value) { value };
-export { CallExpr, Expr, identity };"#,
+pub use self::{ CallExpr, Expr, identity };"#,
     )
     .unwrap();
 
@@ -339,7 +339,7 @@ fn types_only_check_skips_execution_but_rejects_type_errors() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/types-only.telora"),
-        "export def answer: Int = 1 / 0;",
+        "pub def answer: Int = 1 / 0;",
     )
     .unwrap();
     let output = telora(&cwd)
@@ -363,7 +363,7 @@ fn types_only_check_skips_execution_but_rejects_type_errors() {
     assert!(!output.status.success());
     fs::write(
         cwd.join("src/types-only.telora"),
-        "export def answer: Int = \"wrong\";",
+        "pub def answer: Int = \"wrong\";",
     )
     .unwrap();
     let output = telora(&cwd)
@@ -385,7 +385,7 @@ fn data_contents_are_checked_after_types_only() {
     ] {
         let module = format!("@src/data.{extension}");
         fs::write(cwd.join("src/data-user.telora"), format!(
-            "import \"std/value\" {{ Value }}; import \"{module}\" {{ data }}; export def result: Value = data;"
+            "use std::value::{{ Value }}; data data = import({extension}) \"./data.{extension}\"; pub def result: Value = data;"
         )).unwrap();
         let path = cwd.join(format!("src/data.{extension}"));
         fs::write(&path, invalid).unwrap();
@@ -427,7 +427,7 @@ fn data_contents_are_checked_after_types_only() {
         );
         fs::write(
             cwd.join("src/data-user.telora"),
-            format!("import \"{module}\" {{ data }}; export def result: Int = data;"),
+            format!("data data = import({extension}) \"./data.{extension}\"; pub def result: Int = data;"),
         )
         .unwrap();
         let output = telora(&cwd)
@@ -444,62 +444,62 @@ fn data_contents_are_checked_after_types_only() {
 }
 
 #[test]
-fn types_only_and_ordinary_check_agree_on_open_import_resolution() {
+fn types_only_and_ordinary_check_agree_on_explicit_use_resolution() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/a.telora"),
         r#"
-        export def shared: Int = 1; export def True: Int = 1;
-        export type Choice = enum { done, pending }; export Choice.{done};
+        pub def shared: Int = 1; pub def True: Int = 1;
+        pub type Choice = enum { done, pending }; pub use Choice::{done};
     "#,
     )
     .unwrap();
     fs::write(
         cwd.join("src/b.telora"),
-        "export def shared: Int = 2; export def done: Int = 0;",
+        "pub def shared: Int = 2; pub def done: Int = 0;",
     )
     .unwrap();
     fs::write(
         cwd.join("src/bridge.telora"),
-        "import \"./a\" *; export { shared, Choice, done };",
+        "pub use crate::a::{ shared, Choice, done };",
     )
     .unwrap();
     for (source, ambiguous) in [
         (
-            "import \"./a\" *; import \"./b\" *; export def result: Int = 0;",
+            "use crate::a::{ shared as left }; use crate::b::{ shared as right }; pub def result: Int = left + right;",
             false,
         ),
         (
-            "import \"./a\" *; import \"./b\" *; export def result: Int = shared;",
+            "use crate::a::{ shared }; use crate::b::{ shared }; pub def result: Int = shared;",
             true,
         ),
         (
-            "import \"./a\" *; import \"./b\" *; def shared: Int = 3; export def result: Int = shared;",
-            false,
-        ),
-        (
-            "import \"./a\" *; import \"./b\" *; export def result: Int = do { let shared = 3; shared };",
-            false,
-        ),
-        (
-            "import \"./a\" { shared }; import \"./b\" *; export def result: Int = shared;",
-            false,
-        ),
-        (
-            "import \"./a\" *; import \"./a\" *; export def result: Int = shared;",
-            false,
-        ),
-        ("import \"./a\" *; export def result: Int = True;", false),
-        (
-            "import \"./a\" *; import \"std/prelude\" *; export def result: Int = True;",
+            "use crate::a::{ shared }; def shared: Int = 3; pub def result: Int = shared;",
             true,
         ),
         (
-            "import \"./a\" *; import \"./b\" *; export def result: Int = match Choice.done { done => 1, _ => 0 };",
-            true,
+            "use crate::a::{ shared }; pub def result: Int = do { let shared = 3; shared };",
+            false,
         ),
         (
-            "import \"./bridge\" *; export def result: Int = match Choice.done { done => shared, Choice.pending => 0 };",
+            "use crate::a::{ shared }; use crate::b::{ shared as other }; pub def result: Int = shared + other;",
+            false,
+        ),
+        (
+            "use crate::a::{ shared }; use crate::a::{ shared }; pub def result: Int = shared;",
+            true,
+        ),
+        ("use crate::a::{ True }; pub def result: Int = True;", false),
+        (
+            "use crate::a::{ True as authored }; pub def result: Int = authored;",
+            false,
+        ),
+        (
+            "use crate::a::{ Choice, done }; use crate::b::{ done as other }; pub def result: Int = match Choice::done { done => 1, _ => other };",
+            false,
+        ),
+        (
+            "use crate::bridge::{ shared, Choice, done }; pub def result: Int = match Choice::done { done => shared, Choice::pending => 0 };",
             false,
         ),
     ] {
@@ -519,7 +519,7 @@ fn types_only_and_ordinary_check_agree_on_open_import_resolution() {
                 String::from_utf8_lossy(&output.stderr)
             );
             if ambiguous {
-                assert!(stdout.contains("ambiguous"), "{stdout}");
+                assert!(stdout.contains("duplicate definition"), "{stdout}");
             }
         }
     }
@@ -527,22 +527,22 @@ fn types_only_and_ordinary_check_agree_on_open_import_resolution() {
 }
 
 #[test]
-fn unused_open_import_with_private_trait_implementation_checks_in_both_modes() {
+fn unused_module_with_private_trait_implementation_checks_in_both_modes() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/implementation.telora"),
         r#"
         trait Score { score: Fn(Self) -> Int };
         impl Score for Int { score: fn(value) { 42 } };
-        export def unused: () = ();
+        pub def unused: () = ();
     "#,
     )
     .unwrap();
     fs::write(
         cwd.join("src/consumer.telora"),
         r#"
-        import "./implementation" *;
-        export def result: Int = 1;
+        use crate::implementation as implementation;
+        pub def result: Int = 1;
     "#,
     )
     .unwrap();

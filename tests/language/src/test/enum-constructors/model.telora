@@ -1,5 +1,5 @@
-export type Event = enum { Progress(Int), Finished };
-export type Message(T) = enum { Data(T), Empty };
-export def progress: Fn(Int) -> Event = Event.Progress;
-export Event.{Progress, Finished as Done};
-export Message.{Data, Empty};
+pub type Event = enum { Progress(Int), Finished };
+pub type Message(T) = enum { Data(T), Empty };
+pub def progress: Fn(Int) -> Event = Event::Progress;
+pub use Event::{Progress, Finished as Done};
+pub use Message::{Data, Empty};

@@ -22,9 +22,9 @@ fn long_reexport_chain_closes_without_recursive_calls() {
             (
                 format!("@src/m{i}"),
                 if i + 1 == count {
-                    "export def value: Int = 1;".into()
+                    "pub def value: Int = 1;".into()
                 } else {
-                    format!("import \"./m{}\" {{ value }}; export {{ value }};", i + 1)
+                    format!("pub use crate::m{}::value;", i + 1)
                 },
             )
         })
@@ -50,10 +50,10 @@ fn long_namespace_alias_chain_uses_mir_query_results() {
     for i in 0..4_000 {
         source.push_str(&format!("def a{i} = a{};\n", i + 1));
     }
-    source.push_str("import \"./base\" as a4000; export def result: Int = a0.value;");
+    source.push_str("use self::base as a4000; pub def result: Int = a0.value;");
     let mir = small_stack(graph(&[
         ("@src/main", &source),
-        ("@src/base", "export def value: Int = 1;"),
+        ("@src/base", "pub def value: Int = 1;"),
     ]));
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     assert!(
@@ -72,7 +72,7 @@ fn long_constructor_alias_chain_uses_mir_query_results() {
     for i in 0..4_000 {
         source.push_str(&format!("def C{i} = C{};\n", i + 1));
     }
-    source.push_str("type End = enum { Tag }; def C4000 = End.Tag; export def classify = fn(value) { match value { C0 => 1 } };");
+    source.push_str("type End = enum { Tag }; def C4000 = End.Tag; pub def classify = fn(value) { match value { C0 => 1 } };");
     let mir = small_stack(graph(&[("@src/main", &source)]));
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     assert!(

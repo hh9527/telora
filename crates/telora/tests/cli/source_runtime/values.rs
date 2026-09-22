@@ -307,7 +307,7 @@ fn source_test_descriptions_initialize_without_running_tests_or_fixtures() {
     }
     fs::write(
         cwd.join("src/main.telora"),
-        "import \"std/test\" as test; export def invalid: test.Test = test.should_fail_with(fn() {42}, \"\");",
+        "use std::test as test; pub def invalid: test.Test = test.should_fail_with(fn() {42}, \"\");",
     )
     .unwrap();
     let check = telora(&cwd).args(["check", "@src/main"]).output().unwrap();

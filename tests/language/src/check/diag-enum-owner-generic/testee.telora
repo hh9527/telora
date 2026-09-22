@@ -1,2 +1,2 @@
 type State = enum {Ready};
-export def make: for(A) Fn() -> A = fn() { State.Ready };
+pub def make: for(A) Fn() -> A = fn() { State::Ready };

@@ -21,14 +21,14 @@ native type Property @19;
 
 native property: Fn(PropertyTarget) -> Fn(Type, Option(PropertyAttr)) -> PropertyAttr;
 
-export { Type, Dyn, Never, Unit, Int, Float, String, Bytes, Bool,
+pub use self::{ Type, Dyn, Never, Unit, Int, Float, String, Bytes, Bool,
     PropertyTarget, Array, Dict, TypeOf, Unchecked, Tuple, Func,
     Option, Result, FoldControl, Property, property };
 
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type PropertyAttr = struct { bits: Int };
 
-export { PropertyAttr };
-export Bool.{True, False};
-export Option.{Some, None};
-export Result.{Ok, Err};
+pub use self::{ PropertyAttr };
+pub use Bool::{True, False};
+pub use Option::{Some, None};
+pub use Result::{Ok, Err};

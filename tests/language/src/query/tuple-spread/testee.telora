@@ -1,2 +1,2 @@
 def pair: (Int, String) = (1, "hi");
-export def result: (Int, String, Bool, Int) = (...pair, True.ty!(Bool), 3);
+pub def result: (Int, String, Bool, Int) = (...pair, True.ty!(Bool), 3);

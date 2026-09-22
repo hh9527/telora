@@ -7,7 +7,7 @@ fn declaration_shapes_are_not_inferred_from_the_first_use() {
         "main",
         "decorated",
         "local",
-        "local-late",
+        "local_late",
         "reversed",
         "empty",
         "batch",
@@ -38,7 +38,7 @@ fn declaration_shapes_are_not_inferred_from_the_first_use() {
             assert_eq!(summary["type_conflicts"], 0);
         }
     }
-    for (root, message) in [("bad-field", "type mismatch"), ("bad-alias", "Missing")] {
+    for (root, message) in [("bad_field", "type mismatch"), ("bad_alias", "Missing")] {
         let output = Command::new(env!("CARGO_BIN_EXE_telora"))
             .current_dir(&cwd)
             .args(["check", "--only-types", &format!("@src/{root}")])

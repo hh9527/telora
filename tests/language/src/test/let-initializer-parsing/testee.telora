@@ -1,14 +1,14 @@
-import "std/test" as test;
+use std::test as test;
 type Pair = struct { left: String, right: String };
 
-export def nested_conditionals: test.Test = test.should_ok(fn() {
+pub def nested_conditionals: test::Test = test::should_ok(fn() {
     let value = if True {
         if True { `\{1}\{2}` } else { "inner" }
     } else { "outer" };
     if value != "12" { fail!("wrong nested initializer result"); } else {};
 });
 
-export def sibling_and_nested_templates: test.Test = test.should_ok(fn() {
+pub def sibling_and_nested_templates: test::Test = test::should_ok(fn() {
     let value: String = if True {
         if False { "unused" } else {
             `\{`\{1}`}\{2}`
@@ -18,7 +18,7 @@ export def sibling_and_nested_templates: test.Test = test.should_ok(fn() {
     if value != "12" || siblings != ("12", "34") { fail!("wrong template result"); } else {};
 });
 
-export def real_let_else: test.Test = test.should_ok(fn() {
+pub def real_let_else: test::Test = test::should_ok(fn() {
     let Some(value) = if True {
         Some(`\{1}\{2}`)
     } else { None } else { fail!("expected Some"); };
@@ -26,13 +26,13 @@ export def real_let_else: test.Test = test.should_ok(fn() {
     if name != "12" { fail!("wrong let-else value"); } else {};
 });
 
-export def else_branch_runs: test.Test = test.should_fail_with(fn() {
+pub def else_branch_runs: test::Test = test::should_fail_with(fn() {
     let Some(value) = if False { Some(`\{1}\{2}`) } else { None }
         else { fail!("missing initializer value"); };
     value
 }, "missing initializer value");
 
-export def destructuring_and_blocks: test.Test = test.should_ok(fn() {
+pub def destructuring_and_blocks: test::Test = test::should_ok(fn() {
     let (first, second) = (`\{1}\{2}`, "34");
     let pair: Pair = {left: first, right: second};
     let {left, right} = pair;

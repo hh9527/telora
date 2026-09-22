@@ -1,8 +1,8 @@
-import "@src/check/module-interfaces/origin" {
+use super::origin::{
     Box as Container,
     Tree,
     Family,
     identity,
 };
 
-export {Container as Box, Tree, Family, identity};
+pub use self::{Container as Box, Tree, Family, identity};

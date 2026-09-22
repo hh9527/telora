@@ -1,32 +1,31 @@
-import "std/test" as test;
-import "std/type-property" as property;
-import "@src/test-support" {expect};
-import "@src/test/static-property-evidence/model" as model;
+use std::test as test;
+use std::type_property as property;
+use crate::test_support::{expect};
 
-def constrained: for(T: Property(model.Label)) Fn(TypeOf(T)) -> Bool = fn(target) { True };
+def constrained: for(T: Property(model::Label)) Fn(TypeOf(T)) -> Bool = fn(target) { True };
 
-@model.link(Second.type)
+@model::link(Second.type)
 type First = struct {value: Int};
-@model.link(First.type)
+@model::link(First.type)
 type Second = struct {value: Int};
 
-export def configured_metadata_contract: test.Test = test.should_ok(fn() {
-    expect(match property.get_type_prop(First.type, model.Link.type) {
+pub def configured_metadata_contract: test::Test = test::should_ok(fn() {
+    expect(match property::get_type_prop(First.type, model::Link.type) {
         Some(link) => link.target == Second.type,
         None => False,
-    } && match property.get_type_prop(Second.type, model.Link.type) {
+    } && match property::get_type_prop(Second.type, model::Link.type) {
         Some(link) => link.target == First.type,
         None => False,
     })
 });
 
-export def constrained_trait: test.Test = test.should_ok(fn() {
-    let item: model.Item = {id: 42};
-    expect(model.name(item) == "named" && constrained((model.Item).type))
+pub def constrained_trait: test::Test = test::should_ok(fn() {
+    let item: model::Item = {id: 42};
+    expect(model::name(item) == "named" && constrained(model::Item.type))
 });
 
-export def materialized_record: test.Test = test.should_ok(fn() {
-    expect(match property.get_type_prop((model.Item).type, (model.Label).type) {
+pub def materialized_record: test::Test = test::should_ok(fn() {
+    expect(match property::get_type_prop(model::Item.type, model::Label.type) {
         Some(label) => label.text == "ready",
         None => False,
     })

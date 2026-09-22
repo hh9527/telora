@@ -1,4 +1,4 @@
-export type Point = struct {
+pub type Point = struct {
     @check(fn(value) { Ok(()) })
     x: Int,
 };

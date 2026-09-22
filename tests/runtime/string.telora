@@ -1,20 +1,20 @@
-import "std/string" as string;
+use std::string as string;
 def source: String = "first long line\n第二行\n";
-def lines: Array(String) = string.lines(source);
-export def answer: (String, String, Array(String), Bool, Bool, Bool, String, String, String, String, Array(String), String, String, String, String) = (
-    string.join(lines, "|"),
-    string.join_lines(["a", "b"]),
-    string.split("你好", ""),
-    string.starts_with(source, "first"),
-    string.ends_with(source, "\n"),
-    string.contains(source, "第二"),
-    string.replace("a-b-a", "a", "值"),
-    string.indent("a\r\n\nb", 2),
-    string.ensure_trailing_newline(""),
-    string.trim_margin("  |a\r\n\t|b\n  c", "|"),
+def lines: Array(String) = string::lines(source);
+pub def answer: (String, String, Array(String), Bool, Bool, Bool, String, String, String, String, Array(String), String, String, String, String) = (
+    string::join(lines, "|"),
+    string::join_lines(["a", "b"]),
+    string::split("你好", ""),
+    string::starts_with(source, "first"),
+    string::ends_with(source, "\n"),
+    string::contains(source, "第二"),
+    string::replace("a-b-a", "a", "值"),
+    string::indent("a\r\n\nb", 2),
+    string::ensure_trailing_newline(""),
+    string::trim_margin("  |a\r\n\t|b\n  c", "|"),
     lines,
-    string.replace("你好", "", "|"),
-    string.replace("aaaa", "aa", "b"),
-    string.replace("", "", "x"),
-    string.join([], "unused long separator"),
+    string::replace("你好", "", "|"),
+    string::replace("aaaa", "aa", "b"),
+    string::replace("", "", "x"),
+    string::join([], "unused long separator"),
 );

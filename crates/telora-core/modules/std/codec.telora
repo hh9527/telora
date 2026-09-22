@@ -1,8 +1,8 @@
-import "std/_codec" {RenameCase, CodecProp};
-import "std/value" {Value};
-import "std/blame" {BlameError};
-import "std/fmt" { Display };
-import "std/string" {DecodeByParse, EncodeByDisplay, FromStr};
+use std::_codec::{RenameCase, CodecProp};
+use std::value::{Value};
+use std::blame::{BlameError};
+use std::fmt::{ Display };
+use std::string::{DecodeByParse, EncodeByDisplay, FromStr};
 
 native decode_with: for(A) Fn(TypeOf(CodecProp), TypeOf(A), Value) -> Result(A, BlameError);
 native encode_with: for(A) Fn(TypeOf(CodecProp), TypeOf(Value), A) -> Value;
@@ -32,12 +32,12 @@ impl(A) Decode for A {
 };
 
 def decode: for(A: Decode) Fn(Value) -> Result(A, BlameError) = fn(value) {
-    Decode.decode(value)
+    Decode::decode(value)
 };
 def encode: for(A: Encode) Fn(A) -> Value = fn(value) {
-    Encode.encode(value)
+    Encode::encode(value)
 };
-export {
+pub use self::{
     Value,
     BlameError,
     RenameCase,

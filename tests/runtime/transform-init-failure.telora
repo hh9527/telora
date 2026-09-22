@@ -1,7 +1,7 @@
-import "std/transform-service" as service;
+use std::transform_service as service;
 type MainService = struct {};
-impl service.TransformService for MainService {
+impl service::TransformService for MainService {
     init: fn(ctx) { fail!("service initialization failed") },
     transform: fn(self, input) { input },
 };
-export {MainService};
+pub use self::{MainService};

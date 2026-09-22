@@ -1,4 +1,4 @@
 type State = enum {Ready};
-export def inspect: for(A) Fn(A) -> Int = fn(value) {
-    match value { State.Ready => 1, _ => 2 }
+pub def inspect: for(A) Fn(A) -> Int = fn(value) {
+    match value { State::Ready => 1, _ => 2 }
 };

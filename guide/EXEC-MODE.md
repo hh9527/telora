@@ -11,42 +11,42 @@ Telora 从源码建立封闭 MIR，生成内存中的 Wasm，初始化后执行�
 | `build MODULE --snapshot --source NAME=FILE -o app.wasm` | 同一个 MainService | 额外嵌入 ready service 快照 |
 | `telora-run app.wasm` | 制品中的 MainService | 独立执行；指定 `--bind URI` 时持续服务 |
 
-服务实现 `std/transform-service.TransformService`：
+服务实现 `std::transform_service::TransformService`：
 
 ```telora
-import "std/transform-service" as service;
-import "std/value" {Value};
+use std::transform_service as service;
+use std::value::{Value};
 
-@service.source("knowledge")
+@service::source("knowledge")
 type MyService = struct {knowledge: Value};
 
-impl service.TransformService for MyService {
+impl service::TransformService for MyService {
     init: fn(ctx) {
         {knowledge: ctx.sources["knowledge"]}.ty!(Self)
     },
     transform: fn(self, input) {
-        Value.Object({knowledge: self.knowledge, request: input})
+        Value::Object({knowledge: self.knowledge, request: input})
     },
 };
 
-export {MyService as MainService};
+pub use self::{MyService as MainService};
 ```
 
 `Self` 是具体实现类型，不是运行时 trait object。MIR 在执行前确定 init 与 transform
 的方法实例。模块可以正常重导出或给类型起别名；入口只要求导出名是 MainService。
 
 ```sh
-printf '{"question":42}\n' | telora run @src/app --source knowledge=model.json
-printf '1\n2\n' | telora serve @src/app --source knowledge=model.json --bind stdio+jsonl://
+printf '{"question":42}\n' | telora run @src/lib --source knowledge=model.json
+printf '1\n2\n' | telora serve @src/lib --source knowledge=model.json --bind stdio+jsonl://
 ```
 
 `init: Fn(Context) -> Self` 消费固定来源，返回初始化实例。
 `transform: Fn(Self, Value) -> Value` 处理一次输入，不修改跨请求状态。
-没有来源时省略 source 装饰器，Context.sources 为空。
+没有来源时省略 source 装饰器，Context::sources 为空。
 
 ## 来源与生命周期
 
-`@service.source("name")` 声明逻辑来源。可以声明多个不同名称，重复声明报错。
+`@service::source("name")` 声明逻辑来源。可以声明多个不同名称，重复声明报错。
 CLI 提供的来源集合必须与声明相同，缺失、多余和重复绑定均失败。
 `--source name=path.json` 按扩展名识别 JSON/YAML/TOML；`file+json://path`
 等形式可显式指定格式。stdin 留给请求，两种服务命令都不接受 stdin 初始化来源。
@@ -89,11 +89,11 @@ run 成功只向 stdout 输出结果；失败非零退出，诊断走 stderr JSO
 
 ```sh
 cargo build --release -p telora -p telora-run
-telora build @src/app -o app.wasm
+telora build @src/lib -o app.wasm
 telora-run app.wasm --source knowledge=model.json < request.json
 telora-run app.wasm --source knowledge=model.json --bind stdio+jsonl:// < requests.jsonl
 
-telora build @src/app --snapshot --source knowledge=model.json -o app.wasm
+telora build @src/lib --snapshot --source knowledge=model.json -o app.wasm
 telora-run app.wasm < request.json
 # 显式来源覆盖固化来源，并走普通初始化路径
 telora-run app.wasm --source knowledge=replacement.json < request.json
@@ -129,7 +129,7 @@ runner 就忽略 snapshot，按照声明校验完整来源集合并重新初始�
 | `http+unix:///tmp/telora.sock` | Unix socket HTTP/1，仅 Unix 平台 |
 
 ```sh
-telora serve @src/app --source knowledge=model.json --bind http://127.0.0.1:8080
+telora serve @src/lib --source knowledge=model.json --bind http://127.0.0.1:8080
 # 或执行已构建的制品
 telora-run app.wasm --source knowledge=model.json --bind http+unix:///tmp/telora.sock
 

@@ -1,2 +1,2 @@
 type Broken(A) = 1;
-export {Broken};
+pub use self::{Broken};

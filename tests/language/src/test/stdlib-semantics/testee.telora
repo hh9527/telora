@@ -1,90 +1,90 @@
-import "std/test" as test;
-import "@src/test-support" {expect};
-import "std/codec" as codec;
-import "std/dict" as dict;
-import "std/fmt" as fmt;
-import "std/option" as option;
-import "std/result" as result;
+use std::test as test;
+use crate::test_support::{expect};
+use std::codec as codec;
+use std::dict as dict;
+use std::fmt as fmt;
+use std::option as option;
+use std::result as result;
 
-@fmt.display_by("{host}:{port}")
+@fmt::display_by("{host}:{port}")
 type Endpoint = struct {host: String, port: Int};
 
-export def option_and_result: test.Test = test.should_ok(fn() {
+pub def option_and_result: test::Test = test::should_ok(fn() {
     expect({
         let ok: Result(Int, String) = Ok(3);
         let err: Result(Int, String) = Err("bad");
-        option.map(Some(2), fn(value) { value + 1 }) == Some(3)
-            && option.map(None, fn(value) { value / 0 }) == None
-            && option.flat_map(Some(2), fn(value) { Some(value + 2) }) == Some(4)
-            && option.flat_map(None, fn(value) { Some(value / 0) }) == None
-            && option.unwrap_or(Some(4), 9) == 4
-            && option.unwrap_or(None, 9) == 9
-            && option.is_some(Some("x"))
-            && !option.is_some(None)
-            && result.map(ok, fn(value) { value + 1 }) == Ok(4)
-            && result.map(err, fn(value) { value / 0 }) == Err("bad")
-            && result.map_err(err, fn(error) { error }) == Err("bad")
-            && result.map_err(ok, fn(error) { error }) == Ok(3)
-            && result.unwrap_or(ok, 9) == 3
-            && result.unwrap_or(err, 9) == 9
-            && result.is_ok(ok)
-            && !result.is_ok(err)
+        option::map(Some(2), fn(value) { value + 1 }) == Some(3)
+            && option::map(None, fn(value) { value / 0 }) == None
+            && option::flat_map(Some(2), fn(value) { Some(value + 2) }) == Some(4)
+            && option::flat_map(None, fn(value) { Some(value / 0) }) == None
+            && option::unwrap_or(Some(4), 9) == 4
+            && option::unwrap_or(None, 9) == 9
+            && option::is_some(Some("x"))
+            && !option::is_some(None)
+            && result::map(ok, fn(value) { value + 1 }) == Ok(4)
+            && result::map(err, fn(value) { value / 0 }) == Err("bad")
+            && result::map_err(err, fn(error) { error }) == Err("bad")
+            && result::map_err(ok, fn(error) { error }) == Ok(3)
+            && result::unwrap_or(ok, 9) == 3
+            && result::unwrap_or(err, 9) == 9
+            && result::is_ok(ok)
+            && !result::is_ok(err)
     })
 });
 
-export def dictionaries: test.Test = test.should_ok(fn() {
+pub def dictionaries: test::Test = test::should_ok(fn() {
     expect({
         let source: Dict(Int) = {z: 3, a: 1, middle: 2};
         let empty: Array(Tuple([String, Int])) = [];
-        let round_trip = dict.from_pairs(dict.pairs(source));
-        let merged = dict.merge(
+        let round_trip = dict::from_pairs(dict::pairs(source));
+        let merged = dict::merge(
             {a: 1, shared: 3},
             {b: 2, shared: 4},
         );
-        dict.keys(source) == ["a", "middle", "z"]
-            && dict.values(source) == [1, 2, 3]
-            && dict.pairs(source) == [("a", 1), ("middle", 2), ("z", 3)]
-            && dict.get(round_trip, "a") == Some(1)
-            && dict.get(round_trip, "middle") == Some(2)
-            && dict.get(round_trip, "z") == Some(3)
-            && dict.get(merged, "a") == Some(1)
-            && dict.get(merged, "b") == Some(2)
-            && dict.get(merged, "shared") == Some(4)
-            && dict.keys(dict.from_pairs(empty)) == []
+        dict::keys(source) == ["a", "middle", "z"]
+            && dict::values(source) == [1, 2, 3]
+            && dict::pairs(source) == [("a", 1), ("middle", 2), ("z", 3)]
+            && dict::get(round_trip, "a") == Some(1)
+            && dict::get(round_trip, "middle") == Some(2)
+            && dict::get(round_trip, "z") == Some(3)
+            && dict::get(merged, "a") == Some(1)
+            && dict::get(merged, "b") == Some(2)
+            && dict::get(merged, "shared") == Some(4)
+            && dict::keys(dict::from_pairs(empty)) == []
     })
 });
 
-export def derived_display: test.Test = test.should_ok(fn() {
+pub def derived_display: test::Test = test::should_ok(fn() {
     let endpoint: Endpoint = {host: "localhost", port: 8080};
     expect(
-        fmt.render(fmt.display((Endpoint).type, endpoint)) == "localhost:8080"
+        fmt::render(fmt::display((Endpoint).type, endpoint)) == "localhost:8080"
     )
 });
 
-export def format_fragments: test.Test = test.should_ok(fn() {
+pub def format_fragments: test::Test = test::should_ok(fn() {
     expect(
-        fmt.render(fmt.from_string("host")) == "host"
-            && fmt.render(fmt.from_int(8080)) == "8080"
-            && fmt.render(fmt.from_float(1.25)) == "1.25"
-            && fmt.render(fmt.concat(
+        fmt::render(fmt::from_string("host")) == "host"
+            && fmt::render(fmt::from_int(8080)) == "8080"
+            && fmt::render(fmt::from_float(1.25)) == "1.25"
+            && fmt::render(fmt::concat(
                 ["[", "]:", ""],
-                [fmt.from_string("api"), fmt.from_int(3)],
+                [fmt::from_string("api"), fmt::from_int(3)],
             )) == "[api]:3"
     )
 });
 
-export def codec_roundtrip: test.Test = test.should_ok(fn() {
+pub def codec_roundtrip: test::Test = test::should_ok(fn() {
     expect({
-        let boolean = codec.decode@[(Bool)](codec.encode(True.ty!(Bool)))
+        let boolean = codec::decode@[(Bool)](codec::encode(True.ty!(Bool)))
             .unwrap!();
-        let none = codec.decode@[(Option(Int))](codec.encode(None.ty!(Option(Int))))
+        let none = codec::decode@[(Option(Int))](codec::encode(None.ty!(Option(Int))))
             .unwrap!();
-        let some = codec.decode@[(Option(Int))](codec.encode(3))
+        let some = codec::decode@[(Option(Int))](codec::encode(3))
             .unwrap!();
-        let encoded = codec.encode(4);
+        let encoded = codec::encode(4);
         boolean
             && none == None
             && some == Some(3)
-            && encoded == codec.Value.Int(4)
+            && encoded == codec::Value::Int(4)
     })
 });

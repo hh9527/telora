@@ -1,6 +1,6 @@
-import "std/codec" {encode, Value};
-import "std/transform-service" as entry;
-import "std/hash" as hash;
+use std::codec::{encode, Value};
+use std::transform_service as entry;
+use std::hash as hash;
 def empty: Bytes = b"";
 def shared: Bytes = b"long byte literal retained across initialization and entry";
 def checks: Fn() -> Value = fn() {
@@ -10,13 +10,13 @@ def checks: Fn() -> Value = fn() {
         b"文本" == b"文本",
         b"a" != b"b",
         shared == b"long byte literal retained across initialization and entry",
-        hash.finish(hash.update_bytes(hash.new(), shared)) == hash.finish(hash.update_bytes(hash.new(), b"long byte literal retained across initialization and entry")),
+        hash::finish(hash::update_bytes(hash::new(), shared)) == hash::finish(hash::update_bytes(hash::new(), b"long byte literal retained across initialization and entry")),
     ])
 };
-export def answer: Value = checks();
+pub def answer: Value = checks();
 type MainService = struct {};
-impl entry.TransformService for MainService {
+impl entry::TransformService for MainService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) { checks() },
 };
-export {MainService};
+pub use self::{MainService};

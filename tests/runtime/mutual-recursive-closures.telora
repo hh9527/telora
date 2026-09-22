@@ -1,6 +1,6 @@
-import "std/value" as value;
-import "std/codec" as codec;
-import "std/transform-service" as entry;
+use std::value as value;
+use std::codec as codec;
+use std::transform_service as entry;
 def functions: (Fn(Int) -> Int, Fn(Int) -> Int) = do {
     let offset = 42;
     def even: Fn(Int) -> Int = fn(n) {
@@ -13,10 +13,10 @@ def functions: (Fn(Int) -> Int, Fn(Int) -> Int) = do {
     let same = alias == even;
     (fn(n) {if same {alias(n)} else {0}}, odd)
 };
-export def answer: value.Value = codec.encode(functions.0(4));
+pub def answer: value::Value = codec::encode(functions.0(4));
 type MainService = struct {};
-impl entry.TransformService for MainService {
+impl entry::TransformService for MainService {
     init: fn(ctx) { {}.ty!(Self) },
-    transform: fn(self, input) {codec.encode(functions.0(4))},
+    transform: fn(self, input) {codec::encode(functions.0(4))},
 };
-export {MainService};
+pub use self::{MainService};

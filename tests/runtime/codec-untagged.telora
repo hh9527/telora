@@ -1,5 +1,5 @@
-import "std/codec" {decode, encode, Decode, Value};
-import "std/_codec" {untagged};
+use std::codec::{decode, encode, Decode, Value};
+use std::_codec::{untagged};
 
 @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive required", value)) } })
 type Positive = struct(Int);
@@ -21,11 +21,11 @@ def read: for(T: Decode) Fn(Value) -> T = fn(input) {
     match decode@[T](input) { Ok(value) => value, Err(error) => raise!(error) }
 };
 
-export def answer: Value = encode((
-    read@[Signed](Value.Int(2)),
-    read@[Signed](Value.Int(-3)),
-    read@[Nullable](Value.None),
-    read@[Container](Value.Object({items: Value.Array([Value.Int(2), Value.Int(-3)])})),
-    read@[VariantChecked](Value.Int(4)),
-    match decode@[VariantChecked](Value.Int(0)) { Err(_) => True, Ok(_) => False },
+pub def answer: Value = encode((
+    read@[Signed](Value::Int(2)),
+    read@[Signed](Value::Int(-3)),
+    read@[Nullable](Value::None),
+    read@[Container](Value::Object({items: Value::Array([Value::Int(2), Value::Int(-3)])})),
+    read@[VariantChecked](Value::Int(4)),
+    match decode@[VariantChecked](Value::Int(0)) { Err(_) => True, Ok(_) => False },
 ));

@@ -1,5 +1,3 @@
-import "@src/test/enum-constructors/model" as model, { Event as Status, Message as Packet };
-export { model, Status, Packet };
-import "@src/test/enum-constructors/model" { Data as Make, Done };
-export { Make, Done };
-export { Done as OpenDone };
+pub use super::model as model;
+pub use super::model::{ Event as Status, Message as Packet };
+pub use super::model::{ Data as Make, Done, Done as OpenDone };

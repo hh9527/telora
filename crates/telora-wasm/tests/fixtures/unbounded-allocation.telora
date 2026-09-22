@@ -1,2 +1,2 @@
 def grow: Fn(Array(Int)) -> Int = fn(values) { grow([...values, ...values]) };
-export def answer: Fn() -> Int = fn() { grow([0]) };
+pub def answer: Fn() -> Int = fn() { grow([0]) };

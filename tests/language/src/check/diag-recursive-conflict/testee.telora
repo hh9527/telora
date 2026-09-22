@@ -2,4 +2,4 @@ def bounce = fn(value) {
     if True { value } else { bounce(value) }
 };
 def number = bounce(1);
-export def invalid = bounce("x");
+pub def invalid = bounce("x");

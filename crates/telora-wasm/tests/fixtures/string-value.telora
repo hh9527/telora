@@ -1,13 +1,13 @@
-import "std/string" as string;
-import "std/array" as array;
-import "std/value" {Value};
-export def answer: Value = Value.Object({
-    length: Value.Int(string.length("aé🦀")),
-    contains: if string.contains("aé🦀", "🦀") { Value.True } else { Value.False },
-    joined: Value.String(string.join(["a", "é", "🦀"], ":")),
-    lines: Value.Array(array.map(string.lines("a\r\nb\n"), fn(s) { Value.String(s) })),
-    split: Value.Array(array.map(string.split("é🦀", ""), fn(s) { Value.String(s) })),
-    replaced: Value.String(string.replace("éé", "", ":")),
-    indented: Value.String(string.indent("a\n\n\r\nb", 2)),
-    trimmed: Value.String(string.trim_margin("  |a\r\n\t|b\n  plain", "|")),
+use std::string as string;
+use std::array as array;
+use std::value::{Value};
+pub def answer: Value = Value::Object({
+    length: Value::Int(string::length("aé🦀")),
+    contains: if string::contains("aé🦀", "🦀") { Value::True } else { Value::False },
+    joined: Value::String(string::join(["a", "é", "🦀"], ":")),
+    lines: Value::Array(array::map(string::lines("a\r\nb\n"), fn(s) { Value::String(s) })),
+    split: Value::Array(array::map(string::split("é🦀", ""), fn(s) { Value::String(s) })),
+    replaced: Value::String(string::replace("éé", "", ":")),
+    indented: Value::String(string::indent("a\n\n\r\nb", 2)),
+    trimmed: Value::String(string::trim_margin("  |a\r\n\t|b\n  plain", "|")),
 });

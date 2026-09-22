@@ -1,8 +1,8 @@
-import "std/codec" as codec;
-import "std/value" { Value };
+use std::codec as codec;
+use std::value::{ Value };
 type Link = struct { value: Int, next: Option(Link) };
-export def answer: Fn(Link) -> Value = fn(link: Link) { codec.encode(link) };
-export def sample: Fn() -> Value = fn() {
+pub def answer: Fn(Link) -> Value = fn(link: Link) { codec::encode(link) };
+pub def sample: Fn() -> Value = fn() {
     let tail: Link = {value: 2, next: None};
     let head: Link = {value: 1, next: Some(tail)};
     answer(head)

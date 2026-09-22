@@ -1,2 +1,2 @@
-import "std/value" {Value};
-export def answer: Value = Value.Float(1e308 * 1e308);
+use std::value::{Value};
+pub def answer: Value = Value::Float(1e308 * 1e308);

@@ -1,6 +1,6 @@
-import "std/blame" {BlameError};
+use std::blame::{BlameError};
 
-export def invalid_min: Int = -7;
+pub def invalid_min: Int = -7;
 
 def nonnegative: Fn(Int) -> Result((), BlameError) = fn(value) {
     if value >= 0 { Ok(()) } else { Err(blame!("nonnegative required", value)) }
@@ -38,4 +38,4 @@ type Stopped = struct(Int);
 })
 type Aborting = struct(Int);
 
-export {Range, Nonnegative, Bounded, Stopped, Aborting};
+pub use self::{Range, Nonnegative, Bounded, Stopped, Aborting};

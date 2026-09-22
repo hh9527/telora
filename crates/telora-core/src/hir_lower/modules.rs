@@ -49,7 +49,6 @@ impl Lower<'_> {
     }
 
     fn finish_module(&mut self, body: HirId, syntax: NodeRef) {
-        let mut fields = vec![];
         let mut public_names = std::collections::HashMap::new();
         for edge in &self.mir.hir[body.index()].children {
             if edge.role != Role::Binding {
@@ -58,7 +57,7 @@ impl Lower<'_> {
             let binding = &self.mir.hir[edge.node.index()];
             let HirKind::Binding {
                 kind: B::Export,
-                imported: Some(local),
+                imported: Some(_),
                 ..
             } = &binding.kind
             else {
@@ -81,30 +80,6 @@ impl Lower<'_> {
                 );
                 continue;
             }
-            let origin = match binding.origin {
-                Some(HirOrigin::Source(node) | HirOrigin::Desugared(node)) => node,
-                _ => syntax,
-            };
-            let key = self.synthetic(Role::Name, origin, HirKind::Name(public.clone()), vec![]);
-            let value = self.synthetic(
-                Role::Value,
-                origin,
-                HirKind::Variable(local.clone()),
-                vec![],
-            );
-            fields.push(self.synthetic(Role::Field, origin, HirKind::DictField, vec![key, value]));
-        }
-        let has_result = self.mir.hir[body.index()]
-            .children
-            .iter()
-            .any(|edge| edge.role == Role::Result);
-        if !has_result {
-            let result = self.synthetic(Role::Result, syntax, HirKind::Dict, fields);
-            let node = self.run(result.node, result.mode);
-            self.mir.hir[body.index()].children.push(Edge {
-                role: Role::Result,
-                node,
-            });
         }
         if self.needs_display.get() {
             let name = self.synthetic(

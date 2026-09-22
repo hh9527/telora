@@ -1,1 +1,1 @@
-export def result: Int = 1;
+pub def result: Int = 1;

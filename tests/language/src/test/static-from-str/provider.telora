@@ -1,4 +1,4 @@
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type Derived = struct {};
 
 def derived: Fn(Type, Option(Derived)) -> Derived = fn(target, previous) { {} };
@@ -15,7 +15,7 @@ impl FromStr for Int {
 
 impl(T: FromStr) FromStr for Box(T) {
     from_str: fn(input) {
-        match FromStr.from_str(input) {
+        match FromStr::from_str(input) {
             Ok(value) => Ok({ value }),
             Err(message) => Err(message),
         }
@@ -27,7 +27,7 @@ impl(T: Property(Derived)) FromStr for T {
 };
 
 def parse: for(T: FromStr) Fn(String) -> Result(T, String) = fn(input) {
-    FromStr.from_str(input)
+    FromStr::from_str(input)
 };
 
-export { Derived, derived, FromStr, Box, parse };
+pub use self::{ Derived, derived, FromStr, Box, parse };

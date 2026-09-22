@@ -1,2 +1,2 @@
 mod method;
-export { method };
+pub use self::{ method };

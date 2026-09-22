@@ -1,22 +1,22 @@
-import "std/test" as test;
-import "std/codec" as codec;
-import "std/dyn" as dyn;
-import "./provider" {Point};
-import "@src/test-support" {expect};
+use std::test as test;
+use std::codec as codec;
+use std::dyn as dyn;
+use self::provider::{Point};
+use crate::test_support::{expect};
 
-export def copies: test.Test = test.should_ok(fn() {
+pub def copies: test::Test = test::should_ok(fn() {
     let point: Point = {x: 1};
     let copy: Point = point;
     let refined: Point = copy;
     let pass: Fn(Point) -> Point = fn(value) { value };
     let values: Array(Point) = [point, refined, pass(copy)];
-    let encoded = codec.encode(point);
+    let encoded = codec::encode(point);
     expect(values[0].x + values[1].x + values[2].x == 3
-        && encoded == codec.Value.Object({x: codec.Value.Int(1)})
-        && dyn.project_with((Point).type, dyn.pack((Point).type, point)) == Some(point))
+        && encoded == codec::Value::Object({x: codec::Value::Int(1)})
+        && dyn::project_with((Point).type, dyn::pack((Point).type, point)) == Some(point))
 });
 
-export def merge_chain: test.Test = test.should_ok(fn() {
+pub def merge_chain: test::Test = test::should_ok(fn() {
     let point: Point = {x: 1};
     let updated = point <~ {x: 2} <~ {x: 3};
     expect(updated.x == 3)

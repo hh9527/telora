@@ -1,8 +1,8 @@
-import "std/type-desc" {TypeDesc};
+use std::type_desc::{TypeDesc};
 type Prop = struct {};
 def deco: Fn(TypeDesc, Option(Prop)) -> Prop = fn(target, previous) {
     let value: Prop = {};
     value
 };
 @deco type Target = struct {};
-export {Prop, Target};
+pub use self::{Prop, Target};

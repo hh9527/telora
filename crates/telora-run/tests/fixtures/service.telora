@@ -1,29 +1,29 @@
-import "std/transform-service" as service;
-import "std/value" {Value};
-import "std/regex" as regex;
-import "@src/constants.json" as constants;
+use std::transform_service as service;
+use std::value::{Value};
+use std::regex as regex;
+data constants = import(json) "@src/constants.json";
 
 def spin: Fn(Int) -> Int = fn(value) { spin(value) };
 def grow: Fn(Array(Int)) -> Int = fn(values) { grow([...values, ...values]) };
 
-@service.source("model")
-type MainService = struct {prefix: Value, pattern: regex.Regex, constant: Value};
-impl service.TransformService for MainService {
+@service::source("model")
+type MainService = struct {prefix: Value, pattern: regex::Regex, constant: Value};
+impl service::TransformService for MainService {
     init: fn(ctx) {
-        {prefix: ctx.sources["model"], pattern: regex.compile("^[a-z]+[0-9]+$"), constant: constants.data}.ty!(Self)
+        {prefix: ctx.sources["model"], pattern: regex::compile("^[a-z]+[0-9]+$"), constant: constants.data}.ty!(Self)
     },
     transform: fn(self, input) {
-        if input == Value.None {
+        if input == Value::None {
             fail!("service diagnostic", self.prefix, input)
-        } else if input == Value.String("loop") {
-            Value.Int(spin(0))
-        } else if input == Value.String("grow") {
-            Value.Int(grow([0]))
+        } else if input == Value::String("loop") {
+            Value::Int(spin(0))
+        } else if input == Value::String("grow") {
+            Value::Int(grow([0]))
         } else {
-            Value.Array([self.prefix, self.constant, input,
-                if regex.is_match(self.pattern, "hello123") { Value.True } else { Value.False },
-                if regex.is_match(self.pattern, "123hello") { Value.True } else { Value.False }])
+            Value::Array([self.prefix, self.constant, input,
+                if regex::is_match(self.pattern, "hello123") { Value::True } else { Value::False },
+                if regex::is_match(self.pattern, "123hello") { Value::True } else { Value::False }])
         }
     },
 };
-export {MainService};
+pub use self::{MainService};

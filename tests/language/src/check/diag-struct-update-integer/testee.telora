@@ -1,1 +1,1 @@
-export def result = 1 <~ 2;
+pub def result = 1 <~ 2;

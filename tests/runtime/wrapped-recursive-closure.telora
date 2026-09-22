@@ -1,4 +1,4 @@
-export def answer: Int = do {
+pub def answer: Int = do {
     let outer = 40;
     def run: Fn(Int) -> Int = ty!(do {
         let inner = 2;

@@ -1,26 +1,26 @@
-import "std/array" as array;
-import "std/string" as string;
+use std::array as array;
+use std::string as string;
 
 def matches_option: Fn(String, String) -> Bool = fn(argument, option) {
-    argument == option || string.starts_with(argument, `\{option}=`)
+    argument == option || string::starts_with(argument, `\{option}=`)
 };
 
 def contains_option: Fn(Array(String), String) -> Bool = fn(arguments, option) {
-    array.any(arguments, fn(argument) { matches_option(argument, option) })
+    array::any(arguments, fn(argument) { matches_option(argument, option) })
 };
 
 def reject_option:
     Fn(Array(String), String) -> Result(Array(String), String) =
     fn(arguments, option) {
-        match array.find(arguments, fn(argument) { matches_option(argument, option) }) {
+        match array::find(arguments, fn(argument) { matches_option(argument, option) }) {
             None => Ok(arguments),
             Some(argument) => Err(`conflicting argument: \{option}`),
         }
     };
 
 def prepend: Fn(Array(String), Array(String)) -> Array(String) = fn(prefix, arguments) {
-    array.concat([prefix, arguments])
+    array::concat([prefix, arguments])
 };
 
-export { matches_option, contains_option, reject_option, prepend };
-import "std/fmt" as fmt;
+pub use self::{ matches_option, contains_option, reject_option, prepend };
+use std::fmt as fmt;

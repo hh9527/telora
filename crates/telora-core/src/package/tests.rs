@@ -98,12 +98,12 @@ fn fixture() -> PathBuf {
     fs::create_dir_all(root.join("model/src")).unwrap();
     fs::write(
         root.join("app/src/lib.telora"),
-        "mod model; export { model };",
+        "mod model; pub use self::{ model };",
     )
     .unwrap();
-    fs::write(root.join("app/src/model.telora"), "export let value = 1;").unwrap();
+    fs::write(root.join("app/src/model.telora"), "pub def value: Int = 1;").unwrap();
     fs::write(root.join("app/src/bin/main.telora"), "0").unwrap();
-    fs::write(root.join("model/src/lib.telora"), "export let value = 1;").unwrap();
+    fs::write(root.join("model/src/lib.telora"), "pub def value: Int = 1;").unwrap();
     fs::write(
         root.join(CONFIG_FILE),
         r#"{"version":1,"members":["app","model"]}"#,
@@ -168,8 +168,8 @@ fn registers_only_the_fixed_root_before_cst_driven_discovery() {
     fs::write(root.join(CRATE_FILE), r#"{"name":"app","dependencies":[]}"#).unwrap();
     fs::write(root.join("src/lib.telora"), "mod query;").unwrap();
     fs::write(root.join("src/query.telora"), "mod parser;").unwrap();
-    fs::write(root.join("src/query/parser.telora"), "export def x = 1;").unwrap();
-    fs::write(root.join("src/unmounted.telora"), "export def x = 2;").unwrap();
+    fs::write(root.join("src/query/parser.telora"), "pub def x = 1;").unwrap();
+    fs::write(root.join("src/unmounted.telora"), "pub def x = 2;").unwrap();
 
     let package = read_crate(&root).unwrap();
     assert_eq!(
@@ -212,7 +212,7 @@ fn rejects_source_and_member_name_collisions() {
 #[test]
 fn ignores_files_absent_from_the_declared_module_tree() {
     let root = fixture();
-    fs::write(root.join("app/src/extra.telora"), "export let extra = 1;").unwrap();
+    fs::write(root.join("app/src/extra.telora"), "pub def extra: Int = 1;").unwrap();
     let workspace = WorkspaceSpec::discover(&root)
         .unwrap()
         .resolve_workspace_only()
@@ -276,11 +276,7 @@ fn accepts_one_common_directory_in_an_imos_install_root() {
     let root = fixture();
     let install = root.join("install");
     fs::create_dir_all(install.join("package/src")).unwrap();
-    fs::write(
-        install.join("package/src/lib.telora"),
-        "export def value = 1;",
-    )
-    .unwrap();
+    fs::write(install.join("package/src/lib.telora"), "pub def value = 1;").unwrap();
     fs::write(
         install.join("package/telora-crate.json"),
         r#"{"name":"remote","dependencies":[]}"#,

@@ -1,2 +1,2 @@
 type Kind = enum {Array, Any};
-export type Removed = {kind: Kind.Array, item: {kind: Kind.Any}};
+pub type Removed = {kind: Kind::Array, item: {kind: Kind::Any}};

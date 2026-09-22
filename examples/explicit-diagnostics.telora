@@ -1,4 +1,4 @@
-import "std/array" as arrays;
+use std::array as arrays;
 
 type Package = struct {
     name: String,
@@ -18,7 +18,7 @@ def require_text:
     Fn(String, String, Diagnostics) -> Diagnostics =
     fn(value, message, diagnostics) {
         if value == "" {
-            arrays.push(diagnostics, {message})
+            arrays::push(diagnostics, {message})
         } else {
             diagnostics
         }
@@ -33,7 +33,7 @@ def check_package:
             diagnostics,
         );
         let diagnostics = if package.version < 1 {
-            arrays.push(
+            arrays::push(
                 diagnostics,
                 {message: "package version must be positive"},
             )
@@ -51,7 +51,7 @@ def validate_project:
             "project name must not be empty",
             diagnostics,
         );
-        let diagnostics = arrays.fold(
+        let diagnostics = arrays::fold(
             project.packages,
             diagnostics,
             check_package,
@@ -59,7 +59,7 @@ def validate_project:
         (project, diagnostics)
     };
 
-export {
+pub use self::{
     DiagnosticRecord,
     Diagnostics,
     Package,

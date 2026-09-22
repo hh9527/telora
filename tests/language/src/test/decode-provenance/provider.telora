@@ -1,13 +1,13 @@
-import "std/json" as json;
-import "std/value" {Value};
+use std::json as json;
+use std::value::{Value};
 
-export def text: String = "[\"wrong\",\"wrong\"]";
-export def parse_value: Fn() -> Value = fn() {
-    match json.parse(text) {
+pub def text: String = "[\"wrong\",\"wrong\"]";
+pub def parse_value: Fn() -> Value = fn() {
+    match json::parse(text) {
         Ok(value) => value,
         Err(error) => raise!(error),
     }
 };
-export def parsed: Value = parse_value();
-export def empty: String = "";
-export def escaped: String = "{\"value\":\"\\u4e2d\"";
+pub def parsed: Value = parse_value();
+pub def empty: String = "";
+pub def escaped: String = "{\"value\":\"\\u4e2d\"";

@@ -1,10 +1,10 @@
-import "std/codec" {decode, encode, Decode, Value};
-import "std/_codec" {rename_all, RenameCase, CodecProp, default_prop};
+use std::codec::{decode, encode, Decode, Value};
+use std::_codec::{rename_all, RenameCase, CodecProp, default_prop};
 
 def rename: Fn(Type, Option(CodecProp)) -> CodecProp = fn(owner, previous) {
     let warning: Option(Int) = warn!("rename property evaluated");
     let property = match previous {Some(property) => property, None => default_prop};
-    property <~ {rename_all: Some(RenameCase.CamelCase)}
+    property <~ {rename_all: Some(RenameCase::CamelCase)}
 };
 
 @rename
@@ -13,15 +13,15 @@ def rename: Fn(Type, Option(CodecProp)) -> CodecProp = fn(owner, previous) {
 })
 type Item = struct {some_field: Int};
 
-@rename_all(RenameCase.CamelCase)
+@rename_all(RenameCase::CamelCase)
 type Choice = enum {EmptyValue, WithValue(Item)};
 
 def read: for(T: Decode) Fn(Value) -> T = fn(value) {
     match decode@[T](value) { Ok(value) => value, Err(error) => raise!(error) }
 };
 
-export def answer: Value = encode((
-    read@[Item](Value.Object({someField: Value.Int(42)})),
-    read@[Choice](Value.Object({withValue: Value.Object({someField: Value.Int(7)})})),
-    read@[Choice](Value.String("emptyValue")),
+pub def answer: Value = encode((
+    read@[Item](Value::Object({someField: Value::Int(42)})),
+    read@[Choice](Value::Object({withValue: Value::Object({someField: Value::Int(7)})})),
+    read@[Choice](Value::String("emptyValue")),
 ));

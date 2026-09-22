@@ -1,6 +1,6 @@
-import "std/codec" {encode, Value};
-import "std/transform-service" as entry;
-import "std/dict" as dict;
+use std::codec::{encode, Value};
+use std::transform_service as entry;
+use std::dict as dict;
 
 type Source = struct {x: Int, y: String, extra: Array(Int)};
 @check(fn(value) { if value.x > 0 { Ok(()) } else { Err(blame!("positive projection required", value.x)) } })
@@ -36,14 +36,14 @@ def checks: Fn() -> Value = fn() {
         copied.x == 3, copied.y == "source", copied.extra == source.extra,
         source.x == 1, first.x == 2, second.x == 4, third.x == 2,
         projected_update == selected, renamed.item == "generic",
-        merged == {a: 1, b: 3, c: 5}, dict.keys(merged) == ["a", "b", "c"],
+        merged == {a: 1, b: 3, c: 5}, dict::keys(merged) == ["a", "b", "c"],
         spread_only == before, before == {a: 1, b: 2},
     ])
 };
-export def answer: Value = checks();
+pub def answer: Value = checks();
 type MainService = struct {};
-impl entry.TransformService for MainService {
+impl entry::TransformService for MainService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) { checks() },
 };
-export {MainService};
+pub use self::{MainService};

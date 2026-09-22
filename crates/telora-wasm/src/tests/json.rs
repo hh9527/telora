@@ -154,7 +154,7 @@ fn codec_decode_untagged_keeps_rejection_evidence_and_propagates_failure() {
     );
     assert_eq!(
         diagnostic_point(&result[0][0]["labels"][1]["location"]["start"]),
-        point(source, source.find("Value.String(\"bad\")").unwrap())
+        point(source, source.find("Value::String(\"bad\")").unwrap())
     );
     assert_eq!(
         result[1][0]["message"],
@@ -264,7 +264,7 @@ fn codec_decode_nested_error_keeps_path_and_leaf_origin() {
     assert_eq!(result["message"], "$[0][1]: expected Int");
     assert_eq!(
         diagnostic_point(&result["labels"][1]["location"]["start"]),
-        point(source, source.find("Value.String(").unwrap())
+        point(source, source.find("Value::String(").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());
 }
@@ -283,7 +283,7 @@ fn codec_decode_mismatch_retains_input_origin() {
     assert_eq!(result["message"], "$: expected Int");
     assert_eq!(
         diagnostic_point(&result["labels"][1]["location"]["start"]),
-        point(source, source.find("Value.String(").unwrap())
+        point(source, source.find("Value::String(").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());
 }
@@ -477,7 +477,7 @@ fn stringify_rejections_are_captured_once_and_preserve_subjects() {
     }
     assert_eq!(
         diagnostic_point(&result[0]["labels"][1]["location"]["start"]),
-        point(source, source.find("Value.Bytes(b").unwrap())
+        point(source, source.find("Value::Bytes(b").unwrap())
     );
     assert_eq!(result[3], "true");
     assert!(session.diagnostics().unwrap().is_empty());

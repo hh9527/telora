@@ -1,5 +1,5 @@
-import "std/blame" {BlameError};
+use std::blame::{BlameError};
 
-export def first: Int = 41;
-export def second: String = "original";
-export def error: BlameError = blame!("candidate rejected", first, second);
+pub def first: Int = 41;
+pub def second: String = "original";
+pub def error: BlameError = blame!("candidate rejected", first, second);

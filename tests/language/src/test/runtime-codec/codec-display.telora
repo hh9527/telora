@@ -1,18 +1,18 @@
-import "std/codec" as codec;
-import "std/string" as string;
-import "std/array" as array;
-import "std/fmt" as fmt;
-import "std/value" { Value };
-@string.decode_by_parse
-@string.encode_by_display
-@fmt.display_by("{host}:{port}")
+use std::codec as codec;
+use std::string as string;
+use std::array as array;
+use std::fmt as fmt;
+use std::value::{ Value };
+@string::decode_by_parse
+@string::encode_by_display
+@fmt::display_by("{host}:{port}")
 type Endpoint = struct {host: String, port: Int};
-impl string.FromStr for Endpoint {
+impl string::FromStr for Endpoint {
     from_str: fn(input) {
-        let parts = string.split(input, ":");
-        match array.get(parts, 0) {
-            Some(host) => match array.get(parts, 1) {
-                Some(port) => match string.parse@[Int](port) {
+        let parts = string::split(input, ":");
+        match array::get(parts, 0) {
+            Some(host) => match array::get(parts, 1) {
+                Some(port) => match string::parse@[Int](port) {
                     Ok(port) => Ok({host, port}),
                     Err(error) => Err(error),
                 },
@@ -22,8 +22,8 @@ impl string.FromStr for Endpoint {
         }
     },
 };
-export def inspect: Fn() -> Value = fn() {
+pub def inspect: Fn() -> Value = fn() {
     let endpoint: Endpoint = {host: "localhost",port: 8080};
-    codec.encode(endpoint)
+    codec::encode(endpoint)
 };
-export def answer: Value = inspect();
+pub def answer: Value = inspect();

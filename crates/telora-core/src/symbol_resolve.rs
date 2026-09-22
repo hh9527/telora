@@ -336,11 +336,6 @@ impl Pass<'_> {
                 unreachable!()
             };
             match kind {
-                BindingKind::OpenImport => {
-                    if let Some(import) = self.import_edges.get(&edge.node) {
-                        self.mir.scopes[scope.index()].open_imports.push(*import);
-                    }
-                }
                 BindingKind::Export => {}
                 kind => {
                     self.declare(
@@ -418,35 +413,27 @@ impl Pass<'_> {
         }
     }
     fn index_exports(&mut self, module: ModuleId, body: HirId) {
-        let has_exports = self.mir.hir[body.index()].children.iter().any(|edge| {
-            edge.role == Role::Binding
-                && matches!(
-                    self.mir.hir[edge.node.index()].kind,
+        let bindings = self.mir.hir[body.index()].children.clone();
+        for binding in bindings {
+            if binding.role != Role::Binding
+                || !matches!(
+                    self.mir.hir[binding.node.index()].kind,
                     HirKind::Binding {
                         kind: BindingKind::Export,
                         ..
                     }
                 )
-        });
-        if !has_exports {
-            return;
-        }
-        let Some(result) = self.child(body, Role::Result) else {
-            return;
-        };
-        if !matches!(self.mir.hir[result.index()].kind, HirKind::Dict) {
-            return;
-        }
-        let fields = self.mir.hir[result.index()].children.clone();
-        for field in fields {
-            let Some(name) = self.child(field.node, Role::Name) else {
+            {
+                continue;
+            }
+            let Some(name) = self.child(binding.node, Role::Name) else {
                 continue;
             };
             let symbol = self.symbol(
                 Some(module),
                 self.name(name),
                 SymbolKind::Export,
-                Some(field.node),
+                Some(binding.node),
                 self.mir.module_scopes[module.index()],
             );
             self.mir.exports[module.index()].push(symbol);

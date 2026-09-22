@@ -122,7 +122,7 @@ fn template_references_instantiate_independently_and_share_only_closed_instances
         .iter()
         .enumerate()
         .filter(|(_, node)| {
-            mir.modules[node.module.index()].name == "@src/main"
+            mir.modules[node.module.index()].name == "@src"
                 && matches!(&node.kind,
             HirKind::Variable(name) if name == "foo")
         })
@@ -184,14 +184,24 @@ fn standard_library_top_level_contracts_are_explicit() {
             .1
             .into())
     });
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     crate::symbol_resolve::resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     resolve(&mut mir);
+    let incomplete = mir
+        .declaration_contracts
+        .iter()
+        .filter(|contract| !matches!(contract.state, DeclarationContractState::Complete(_)))
+        .map(|contract| {
+            (
+                mir.symbols[contract.symbol.index()].name.clone(),
+                contract.state.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
     assert!(
-        mir.declaration_contracts
-            .iter()
-            .all(|contract| matches!(contract.state, DeclarationContractState::Complete(_))),
-        "{}",
-        mir.dump()
+        incomplete.is_empty(),
+        "incomplete standard-library contracts: {incomplete:?}"
     );
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     mir.seal().unwrap();
@@ -314,7 +324,11 @@ fn rejected_uses_preserve_shared_contracts_and_independent_diagnostics() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/language/src/check/diag-shared-contract");
     for (root, reverse) in [("testee", false), ("reversed", true)] {
-        let mut sources = [root, "shared", "good", "bad"].map(|name| {
+        let mut sources = vec![(
+            "@src/check/diag-shared-contract/root".to_owned(),
+            "pub type Root = struct {};".to_owned(),
+        )];
+        sources.extend([root, "shared", "good", "bad"].map(|name| {
             let file = if reverse && name == "bad" {
                 "bad-reversed"
             } else {
@@ -324,9 +338,9 @@ fn rejected_uses_preserve_shared_contracts_and_independent_diagnostics() {
                 format!("@src/check/diag-shared-contract/{name}"),
                 std::fs::read_to_string(directory.join(format!("{file}.telora"))).unwrap(),
             )
-        });
+        }));
         if reverse {
-            sources[1..].reverse();
+            sources[2..].reverse();
         }
         let inventory = sources
             .iter()

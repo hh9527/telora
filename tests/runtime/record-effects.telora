@@ -8,7 +8,7 @@ def mark: for(T) Fn(String, T) -> T = fn(message, value) {
 };
 def source: Source = {x: 1, items: [42]};
 def count: Count = {x: 2};
-export def answer: (Source, Selected, Source) = do {
+pub def answer: (Source, Selected, Source) = do {
     let empty: Empty = mark("projection receiver", source).{};
     let selected: Selected = source.{items};
     let updated = source <~ {x: mark("overwritten field", "wrong type"), ...mark("winning spread", count)};

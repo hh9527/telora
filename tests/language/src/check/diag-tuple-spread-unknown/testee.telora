@@ -1,1 +1,1 @@
-export def result = fn(value) { (...value, 3) };
+pub def result = fn(value) { (...value, 3) };

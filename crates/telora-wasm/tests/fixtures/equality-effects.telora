@@ -1,18 +1,18 @@
-import "std/_rt" as rt;
+use std::_rt as rt;
 def notice: for(T) Fn(String, T) -> T = fn(message, value) {
     let warning: Option(Int) = warn!(message);
     value
 };
-export def answer: Fn() -> (Bool, Array(rt.Diagnostic), Array(rt.Diagnostic), String, String) = fn() {
+pub def answer: Fn() -> (Bool, Array(rt::Diagnostic), Array(rt::Diagnostic), String, String) = fn() {
     let unequal = notice("left", [1]) == notice("right", [2]);
-    let fail_left = rt.with_diagnostics(fn(ignored: ()) {
+    let fail_left = rt::with_diagnostics(fn(ignored: ()) {
         fail!("left failed") == notice("must not execute", [1])
     })(());
-    let fail_right = rt.with_diagnostics(fn(ignored: ()) {
+    let fail_right = rt::with_diagnostics(fn(ignored: ()) {
         notice("evaluated left", [1]) == fail!("right failed")
     })(());
-    let nonfinite = rt.with_diagnostics(fn(n: Float) { n / n })(0.0);
-    let infinity = rt.with_diagnostics(fn(n: Float) { n * n })(1e308);
+    let nonfinite = rt::with_diagnostics(fn(n: Float) { n / n })(0.0);
+    let infinity = rt::with_diagnostics(fn(n: Float) { n * n })(1e308);
     (unequal,
      match fail_left {Err(reports) => reports, Ok(_) => fail!("unexpected success")},
      match fail_right {Err(reports) => reports, Ok(_) => fail!("unexpected success")},

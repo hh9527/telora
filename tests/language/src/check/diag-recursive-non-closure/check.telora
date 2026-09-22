@@ -1,7 +1,7 @@
-import "std/value" {Value};
-import "@src/support" as support;
-import "@src/unknown-support" {unknown_at};
+use std::value::{Value};
+use crate::support as support;
+use crate::unknown_support::{unknown_at};
 
-export def check: Fn(Value) -> Value = fn(actual) {
-    support.bool_value(unknown_at(actual, "language-tests/check/diag-recursive-non-closure/testee", 1))
+pub def check: Fn(Value) -> Value = fn(actual) {
+    support::bool_value(unknown_at(actual, "language-tests/check/diag-recursive-non-closure/testee", 1))
 };

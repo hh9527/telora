@@ -1,2 +1,2 @@
 type A = enum { Ok };
-export A.{Ok};
+pub use A::{Ok};

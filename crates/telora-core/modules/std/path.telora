@@ -2,4 +2,4 @@ native join: Fn(Array(String)) -> String;
 native normalize: Fn(String) -> String;
 native parent: Fn(String) -> Option(String);
 native file_name: Fn(String) -> Option(String);
-export { join, normalize, parent, file_name };
+pub use self::{ join, normalize, parent, file_name };

@@ -1,1 +1,1 @@
-export def value = {answer: 42};
+pub def value = {answer: 42};

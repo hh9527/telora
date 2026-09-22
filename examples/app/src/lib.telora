@@ -1,2 +1,2 @@
 mod main;
-export { main };
+pub use self::{ main };

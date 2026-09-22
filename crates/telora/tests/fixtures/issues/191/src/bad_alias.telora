@@ -1,2 +1,2 @@
 type Text = Missing(String);
-export def bad: Text = {};
+pub def bad: Text = {};

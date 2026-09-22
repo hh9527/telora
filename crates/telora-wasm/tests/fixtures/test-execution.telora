@@ -1,11 +1,11 @@
-import "std/test" as test;
+use std::test as test;
 
 def loop: Fn(Int) -> Int = fn(n: Int) -> Int { loop(n) };
-export def answer: (test.Test, test.Test, test.Test, test.Test) = (
-    test.should_fail_with(fn() { fail!("expected failure") }, "expected failure"),
-    test.should_ok(fn() { 42 }),
-    test.should_fail(fn() { loop(0) }),
-    test.with_fixtures(["first.json", "second.json"], fn(value) {
-        test.should_ok(fn() { value })
+pub def answer: (test::Test, test::Test, test::Test, test::Test) = (
+    test::should_fail_with(fn() { fail!("expected failure") }, "expected failure"),
+    test::should_ok(fn() { 42 }),
+    test::should_fail(fn() { loop(0) }),
+    test::with_fixtures(["first.json", "second.json"], fn(value) {
+        test::should_ok(fn() { value })
     }),
 );

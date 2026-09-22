@@ -1,4 +1,4 @@
-export type Choice = enum {
+pub type Choice = enum {
     @check(fn(value) { Ok(()) })
     Empty,
 };

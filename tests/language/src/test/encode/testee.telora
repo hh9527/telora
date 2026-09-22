@@ -1,38 +1,38 @@
-import "std/codec" as codec;
-import "std/json" as json;
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::codec as codec;
+use std::json as json;
+use std::test as test;
+use crate::test_support::{expect};
 
 type Item = struct {count: Int};
 type Action = struct {run: Fn(Int) -> Int};
-@json.rename_all(json.RenameCase.CamelCase)
+@json::rename_all(json::RenameCase::CamelCase)
 type Collision = struct {foo_bar: Int, fooBar: Int};
 
-export def direct_value: test.Test = test.should_ok(fn() {
+pub def direct_value: test::Test = test::should_ok(fn() {
     let item: Item = {count: 3};
-    let value: codec.Value = codec.encode(item);
-    expect(value == codec.Value.Object({count: codec.Value.Int(3)}))
+    let value: codec::Value = codec::encode(item);
+    expect(value == codec::Value::Object({count: codec::Value::Int(3)}))
 });
 
-export def value_identity: test.Test = test.should_ok(fn() {
-    let input: codec.Value = codec.Value.Array([codec.Value.Int(1), codec.Value.String("two")]);
-    let encoded: codec.Value = codec.encode(input);
-    expect(encoded == input && match codec.decode@[(codec.Value)](encoded) {
+pub def value_identity: test::Test = test::should_ok(fn() {
+    let input: codec::Value = codec::Value::Array([codec::Value::Int(1), codec::Value::String("two")]);
+    let encoded: codec::Value = codec::encode(input);
+    expect(encoded == input && match codec::decode@[(codec::Value)](encoded) {
         Ok(value) => value == input,
         Err(_) => False,
     })
 });
 
-export def unsupported_field: test.Test = test.should_fail_with(fn() {
+pub def unsupported_field: test::Test = test::should_fail_with(fn() {
     let action: Action = {run: fn(value) { value }};
-    codec.encode(action)
+    codec::encode(action)
 }, "Function has no JSON codec");
 
-export def invalid_configuration: test.Test = test.should_fail_with(fn() {
+pub def invalid_configuration: test::Test = test::should_fail_with(fn() {
     let value: Collision = {foo_bar: 1, fooBar: 2};
-    codec.encode(value)
+    codec::encode(value)
 }, "duplicate external field name");
 
-export def unsupported_type_value: test.Test = test.should_fail_with(fn() {
-    codec.encode((Item).type)
+pub def unsupported_type_value: test::Test = test::should_fail_with(fn() {
+    codec::encode((Item).type)
 }, "cannot encode Type");

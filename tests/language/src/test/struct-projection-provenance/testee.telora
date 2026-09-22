@@ -1,23 +1,23 @@
-import "std/test" as test;
-import "./provider" as provider;
+use std::test as test;
+use self::provider as provider;
 type Target = struct {x: Int, Y: String};
-def selected: Target = provider.source.{x, y as Y};
+def selected: Target = provider::source.{x, y as Y};
 
-export def original: test.Test = test.should_ok(fn() { fail!("original", selected.x) });
-export def renamed: test.Test = test.should_ok(fn() { fail!("renamed", selected.Y) });
-export def container: test.Test = test.should_ok(fn() { fail!("container", selected) });
-export def update: test.Test = test.should_ok(fn() {
+pub def original: test::Test = test::should_ok(fn() { fail!("original", selected.x) });
+pub def renamed: test::Test = test::should_ok(fn() { fail!("renamed", selected.Y) });
+pub def container: test::Test = test::should_ok(fn() { fail!("container", selected) });
+pub def update: test::Test = test::should_ok(fn() {
     let base: Target = {x: 0, Y: "base"};
-    let updated = base <~ provider.source.{y as Y};
+    let updated = base <~ provider::source.{y as Y};
     fail!("update", updated.Y)
 });
 
 def notice: Fn() -> Result(Int, String) = fn() { Err("receiver evaluated") };
-def receiver: Fn() -> provider.Source = fn() {
+def receiver: Fn() -> provider::Source = fn() {
     let warning = notice().ok_or_warn!();
-    provider.source
+    provider::source
 };
-export def once: test.Test = test.should_ok(fn() {
+pub def once: test::Test = test::should_ok(fn() {
     let selected: Target = receiver().{x, y as Y};
     selected
 });

@@ -1,1 +1,1 @@
-export type Fixture = struct {};
+pub type Fixture = struct {};

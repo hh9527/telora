@@ -1,5 +1,5 @@
-import "std/test" as test;
-export def missing: test.Test = test.with_fixtures(
+use std::test as test;
+pub def missing: test::Test = test::with_fixtures(
     ["absent.json", "stdin+json://", "https://example.test/a.json", "/tmp/a.json", "../../../../escape.json"],
-    fn(value) { test.should_fail(fn() { value }) },
+    fn(value) { test::should_fail(fn() { value }) },
 );

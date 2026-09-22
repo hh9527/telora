@@ -1,3 +1,3 @@
-import "./b" {b};
+use super::b::{b};
 def a = b;
-export {a};
+pub use self::{a};

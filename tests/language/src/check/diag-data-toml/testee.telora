@@ -1,2 +1,2 @@
-import "./invalid.toml" {data};
-export {data};
+data data = import(toml) "./invalid.toml";
+pub use self::{data};

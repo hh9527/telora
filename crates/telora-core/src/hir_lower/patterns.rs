@@ -62,15 +62,16 @@ impl Lower<'_> {
                 HirKind::String(self.plain_string(self.child(node, Rule::StringLiteral)?)?)
             }
             Node::Rule(Rule::ConstructorPattern, _) => {
+                let path = self.child(node, Rule::StaticPath).unwrap_or(node);
                 let last = self
                     .cst
-                    .children(node)
+                    .children(path)
                     .filter(|child| {
                         matches!(self.cst.get(*child), Node::Token(Token::Identifier, _))
                     })
                     .last()
                     .ok_or(())?;
-                let mut inputs = vec![Input::with(Role::Callee, node, Mode::Path(last))];
+                let mut inputs = vec![Input::with(Role::Callee, path, Mode::Path(last))];
                 if let Some(open) = self.token(node, Token::LParen) {
                     let payload = self
                         .cst

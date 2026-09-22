@@ -1,19 +1,19 @@
-import "std/codec" as codec;
-import "std/value" {Value};
-import "std/array" as array;
+use std::codec as codec;
+use std::value::{Value};
+use std::array as array;
 
-export def inspect: Fn() -> Array(Bool) = fn() {
+pub def inspect: Fn() -> Array(Bool) = fn() {
     let success: Result(Int, String) = Ok(42);
     let failure: Result(Int, String) = Err("no");
-    let continued: FoldControl(Int, String) = FoldControl.Continue(7);
-    let completed: FoldControl(Int, String) = FoldControl.Break("done");
-    [codec.encode(success) == Value.Object({Ok: Value.Int(42)}),
-     codec.decode@[(Result(Int, String))](codec.encode(success)) == Ok(success),
-     codec.decode@[(Result(Int, String))](codec.encode(failure)) == Ok(failure),
-     codec.decode@[(FoldControl(Int, String))](codec.encode(continued)) == Ok(continued),
-     codec.decode@[(FoldControl(Int, String))](codec.encode(completed)) == Ok(completed),
-     codec.encode(PropertyTarget.Type) == Value.String("Type"),
-     codec.decode@[PropertyTarget](Value.String("Type")) == Ok(PropertyTarget.Type),
-     codec.decode@[(Array(Result(Int, String)))](Value.Array([Value.Object({Ok: Value.Int(42)})])) == Ok([success])]
+    let continued: FoldControl(Int, String) = FoldControl::Continue(7);
+    let completed: FoldControl(Int, String) = FoldControl::Break("done");
+    [codec::encode(success) == Value::Object({Ok: Value::Int(42)}),
+     codec::decode@[(Result(Int, String))](codec::encode(success)) == Ok(success),
+     codec::decode@[(Result(Int, String))](codec::encode(failure)) == Ok(failure),
+     codec::decode@[(FoldControl(Int, String))](codec::encode(continued)) == Ok(continued),
+     codec::decode@[(FoldControl(Int, String))](codec::encode(completed)) == Ok(completed),
+     codec::encode(PropertyTarget::Type) == Value::String("Type"),
+     codec::decode@[PropertyTarget](Value::String("Type")) == Ok(PropertyTarget::Type),
+     codec::decode@[(Array(Result(Int, String)))](Value::Array([Value::Object({Ok: Value::Int(42)})])) == Ok([success])]
 };
-export def answer: Value = Value.Array(array.map(inspect(), fn(value) {if value {Value.True} else {Value.False}}));
+pub def answer: Value = Value::Array(array::map(inspect(), fn(value) {if value {Value::True} else {Value::False}}));

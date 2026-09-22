@@ -1,2 +1,2 @@
-import "./provider" {Tree, rebuild};
-export {Tree, rebuild};
+use super::provider::{Tree, rebuild};
+pub use self::{Tree, rebuild};

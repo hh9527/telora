@@ -1,19 +1,19 @@
-import "std/string" as string;
-import "std/array" as array;
-import "std/value" { Value };
-export def checks: Fn() -> Array(Bool) = fn() {
-    [string.parse@[Int]("42") == Ok(42),
-     string.parse@[Int]("-9223372036854775808") == Ok(-9223372036854775807 - 1),
-     string.parse@[Int]("+1") == Ok(1),
-     string.parse@[Float]("-0.0") == Ok(-0.0),
-     string.parse@[Float]("1.25e2") == Ok(125.0),
-     string.parse@[String]("é🦀 original text") == Ok("é🦀 original text"),
-     string.parse@[Option(Int)]("42") == Ok(Some(42)),
-     string.parse@[Option(Option(String))]("") == Ok(Some(Some(""))),
-     match string.parse@[Int]("9223372036854775808") { Err(error) => error.message == "$: input is not a valid Int" && error.value == "9223372036854775808", Ok(_) => False },
-     match string.parse@[Int](" 42") { Err(error) => error.message == "$: input is not a valid Int", Ok(_) => False },
-     match string.parse@[Float]("NaN") { Err(error) => error.message == "$: input is not a finite Float", Ok(_) => False },
-     match string.parse@[Float]("inf") { Err(error) => error.message == "$: input is not a finite Float", Ok(_) => False },
-     match string.parse@[Float]("1e999") { Err(error) => error.message == "$: input is not a finite Float", Ok(_) => False }]
+use std::string as string;
+use std::array as array;
+use std::value::{ Value };
+pub def checks: Fn() -> Array(Bool) = fn() {
+    [string::parse@[Int]("42") == Ok(42),
+     string::parse@[Int]("-9223372036854775808") == Ok(-9223372036854775807 - 1),
+     string::parse@[Int]("+1") == Ok(1),
+     string::parse@[Float]("-0.0") == Ok(-0.0),
+     string::parse@[Float]("1.25e2") == Ok(125.0),
+     string::parse@[String]("é🦀 original text") == Ok("é🦀 original text"),
+     string::parse@[Option(Int)]("42") == Ok(Some(42)),
+     string::parse@[Option(Option(String))]("") == Ok(Some(Some(""))),
+     match string::parse@[Int]("9223372036854775808") { Err(error) => error.message == "$: input is not a valid Int" && error.value == "9223372036854775808", Ok(_) => False },
+     match string::parse@[Int](" 42") { Err(error) => error.message == "$: input is not a valid Int", Ok(_) => False },
+     match string::parse@[Float]("NaN") { Err(error) => error.message == "$: input is not a finite Float", Ok(_) => False },
+     match string::parse@[Float]("inf") { Err(error) => error.message == "$: input is not a finite Float", Ok(_) => False },
+     match string::parse@[Float]("1e999") { Err(error) => error.message == "$: input is not a finite Float", Ok(_) => False }]
 };
-export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+pub def answer: Value = Value::Array(array::map(checks(), fn(value) { if value { Value::True } else { Value::False } }));

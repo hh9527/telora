@@ -1,2 +1,3 @@
-import "@src/test/newtype-constructors/model" as model, { External as Id, Packet as Box };
-export { model, Id, Box };
+use super::model as model;
+use super::model::{ External as Id, Packet as Box };
+pub use self::{ model, Id, Box };

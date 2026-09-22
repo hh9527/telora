@@ -9,6 +9,7 @@ impl Lower<'_> {
                 Ok(Shape::Alias(inner, Mode::TypeTerm))
             }
             Some(Rule::VariableExpr) => self.expr(node),
+            Some(Rule::StaticPathExpr | Rule::StaticPath) => self.expr(node),
             Some(Rule::DotPostfixExpr) => {
                 if self.child(node, Rule::MetadataSuffix).is_ok()
                     || self.child(node, Rule::PostfixIntrinsicSuffix).is_ok()

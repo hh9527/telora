@@ -1,46 +1,46 @@
-import "std/regex" as regex;
-import "std/result" as results;
-import "std/string" as string;
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::regex as regex;
+use std::result as results;
+use std::string as string;
+use std::test as test;
+use crate::test_support::{expect};
 
-def record_pattern: regex.Regex = regex.compile(
+def record_pattern: regex::Regex = regex::compile(
     r"^(?P<name>\w+)=(?P<value>\d+)(?:;(?P<unit>\w+))?$"
 );
 
-@regex.parse_by(record_pattern)
+@regex::parse_by(record_pattern)
 type Record = struct {
     name: String,
     value: Int,
     unit: Option(String),
 };
 
-@regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
+@regex::parse_by(regex::compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
 type Endpoint = struct {host: String, port: Int};
 
-@regex.parse_by(regex.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
+@regex::parse_by(regex::compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
 type Service = struct {name: String, endpoint: Endpoint};
 
-def require_parsed: for(A) Fn(Result(A, string.ParseError)) -> A = fn(result) {
+def require_parsed: for(A) Fn(Result(A, string::ParseError)) -> A = fn(result) {
     match result { Ok(value) => value, Err(error) => raise!(blame!(error.message, error.value)) }
 };
 
-export def verified_case: test.Test = test.should_ok(fn() {
-    let first = string.parse@[Record]("answer=42") |> require_parsed;
-    let second = string.parse@[Record]("size=7;px") |> require_parsed;
-    let service = string.parse@[Service]("api@localhost:8080") |> require_parsed;
-    let verified = regex.is_match(record_pattern, "answer=42")
-        && record_pattern == regex.compile(
+pub def verified_case: test::Test = test::should_ok(fn() {
+    let first = string::parse@[Record]("answer=42") |> require_parsed;
+    let second = string::parse@[Record]("size=7;px") |> require_parsed;
+    let service = string::parse@[Service]("api@localhost:8080") |> require_parsed;
+    let verified = regex::is_match(record_pattern, "answer=42")
+        && record_pattern == regex::compile(
             r"^(?P<name>\w+)=(?P<value>\d+)(?:;(?P<unit>\w+))?$"
         )
-        && (string.parse@[String]("plain") |> require_parsed) == "plain"
-        && (string.parse@[Int]("42") |> require_parsed) == 42
-        && (string.parse@[Float]("1.5") |> require_parsed) == 1.5
+        && (string::parse@[String]("plain") |> require_parsed) == "plain"
+        && (string::parse@[Int]("42") |> require_parsed) == 42
+        && (string::parse@[Float]("1.5") |> require_parsed) == 1.5
         && first == {name: "answer", value: 42, unit: None}
         && second == {name: "size", value: 7, unit: Some("px")}
-        && !results.is_ok(string.parse@[Record]("not a record"))
-        && !results.is_ok(string.parse@[Int]("4x"))
-        && !results.is_ok(string.parse@[Float]("1.5x"))
+        && !results::is_ok(string::parse@[Record]("not a record"))
+        && !results::is_ok(string::parse@[Int]("4x"))
+        && !results::is_ok(string::parse@[Float]("1.5x"))
         && service.name == "api"
         && service.endpoint.host == "localhost"
         && service.endpoint.port == 8080;

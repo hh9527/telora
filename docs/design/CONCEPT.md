@@ -161,7 +161,7 @@ Host 是权限边界，不只是 foreign-function interface。
 
 ### Entry 与 TransformService
 
-服务入口是模块导出的具体类型 MainService，必须实现 std/transform-service.TransformService：
+服务入口是模块公开的具体类型 MainService，必须实现 `std::transform_service::TransformService`：
 
 ```telora
 trait TransformService {
@@ -170,7 +170,7 @@ trait TransformService {
 };
 ```
 
-Context 为 {sources: Dict(Value)}。@service.source("name") 是普通类型 property，
+Context 为 {sources: Dict(Value)}。`@service::source("name")` 是普通类型 property，
 多次声明归并为稳定来源清单，重复声明报错。Host 提供的来源必须与清单一致。
 MainService 可以是正常类型别名或重导出，所有类型参数和方法实例都在 MIR 中确定。
 内置 entry 包装方法调用，无运行时 trait 派发，也不按模块成员 shape 猜测入口。
@@ -217,7 +217,7 @@ message、labels、notes；已捕获诊断不重复输出。服务不接受 stdi
 ### Value
 
 **值**是具有确定类型身份的不可变运行时数据，可携带诊断位置；位置不参与相等比较。
-`std/value.Value` 则是一个具体的递归 enum，不能把它与“所有语言值”混用。
+`std::value::Value` 则是一个具体的递归 enum，不能把它与“所有语言值”混用。
 
 ### Provenance
 
@@ -235,7 +235,7 @@ resolver 按 vendor 顺序注册 crate，并以 crate 为颗粒采用 first-win�
 
 **Workspace config** 为 workspace 中的每个 crate name 选择唯一 source：workspace
 member 或确定的远程 tarball。**Crate manifest** 声明 crate 的 canonical name、权威
-普通 module catalog 和直接 dependency names。**Workspace lock** 固定完整精确 package
+固定 crate 根和直接 dependency names。**Workspace lock** 固定完整精确 package
 graph；除显式 lock 操作外，Host 只验证和消费它。
 
 **Package preparation** 是 resolver 之前的 Host 阶段。它验证 config 与 lock、通过内嵌
@@ -326,7 +326,7 @@ property 的函数。目标的 TypeMetadata、TypeId 和 canonical member index 
 运行前已经封闭；provider 从只读 context 计算并返回 property value。类型骨架和
 property registry 是两个独立的数据域，协议与执行顺序保证目标的结构和身份稳定。
 Property carrier 必须是由
-`@property(PropertyTarget.Type)` 这类标记修饰的具体具名类型；参数是具名 enum
+`@property(PropertyTarget::Type)` 这类标记修饰的具体具名类型；参数是具名 enum
 `PropertyTarget` 的值，其成员为 `Type`、`StructType`、`EnumType`、`Member`、
 `Field` 和 `Variant`，多个标记按位合并。声明与表达式类型在静态阶段解析；目标标记的值及 property payload 在工具阶段计算。
 

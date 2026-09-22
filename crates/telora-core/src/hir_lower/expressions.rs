@@ -48,18 +48,17 @@ impl Lower<'_> {
             Some(Rule::StaticPathExpr) => {
                 Shape::Alias(self.child(node, Rule::StaticPath)?, Mode::Expression)
             }
-            Some(Rule::StaticPath) => Shape::Node(
-                HirKind::StaticPath(
-                    self.cst
-                        .children(node)
-                        .filter(|child| {
-                            matches!(self.cst.get(*child), Node::Token(Token::Identifier, _))
-                        })
-                        .map(|name| self.text(name).into_owned())
-                        .collect(),
-                ),
-                vec![],
-            ),
+            Some(Rule::StaticPath) => {
+                let last = self
+                    .cst
+                    .children(node)
+                    .filter(|child| {
+                        matches!(self.cst.get(*child), Node::Token(Token::Identifier, _))
+                    })
+                    .last()
+                    .ok_or(())?;
+                Shape::Alias(node, Mode::Path(last))
+            }
             Some(Rule::ArrayExpr | Rule::ParenExpr) => {
                 let items = self.expressions(node);
                 let array = self.rule(node) == Some(Rule::ArrayExpr);

@@ -1,29 +1,29 @@
-import "std/fmt" as fmt;
-import "std/type-property" as property;
-import "std/value" { Value };
+use std::fmt as fmt;
+use std::type_property as property;
+use std::value::{ Value };
 
-@fmt.display_by("{host}:{port}")
+@fmt::display_by("{host}:{port}")
 type Endpoint = struct {host: String, port: Int};
-@fmt.display_by("{name}@{endpoint} {{ready}} {ratio} {name}")
+@fmt::display_by("{name}@{endpoint} {{ready}} {ratio} {name}")
 type Service = struct {name: String, endpoint: Endpoint, ratio: Float};
-@fmt.display_by("{host}:{port}")
+@fmt::display_by("{host}:{port}")
 type Explicit = struct {host: String, port: Int};
-impl fmt.Display for Explicit {
-    display: fn(value) { fmt.concat(["explicit(", ":", ")"], [fmt.from_string(value.host), fmt.from_int(value.port)]) },
+impl fmt::Display for Explicit {
+    display: fn(value) { fmt::concat(["explicit(", ":", ")"], [fmt::from_string(value.host), fmt::from_int(value.port)]) },
 };
 type Plain = struct {value: Int};
 
-export def inspect: Fn() -> (String, String, String, String, Array(String), String) = fn() {
+pub def inspect: Fn() -> (String, String, String, String, Array(String), String) = fn() {
     let endpoint: Endpoint = {host: "localhost", port: 8080};
     let explicit: Explicit = {host: "localhost", port: 8080};
     let service: Service = {name: "api", endpoint, ratio: -0.0};
-    (fmt.render(fmt.display(Endpoint.type, endpoint)),
-     fmt.render(fmt.Display.display(endpoint)),
-     fmt.render(fmt.display(Service.type, service)),
+    (fmt::render(fmt::display(Endpoint.type, endpoint)),
+     fmt::render(fmt::Display::display(endpoint)),
+     fmt::render(fmt::display(Service.type, service)),
      `endpoint=\{explicit}`,
-     match property.get_type_prop(Endpoint.type, fmt.DisplayBy.type) { Some(p) => p.template.fields, None => [] },
-     match property.get_type_prop(Plain.type, fmt.DisplayBy.type) { Some(_) => "unexpected", None => "absent" })
+     match property::get_type_prop(Endpoint.type, fmt::DisplayBy.type) { Some(p) => p.template.fields, None => [] },
+     match property::get_type_prop(Plain.type, fmt::DisplayBy.type) { Some(_) => "unexpected", None => "absent" })
 };
 def results: (String, String, String, String, Array(String), String) = inspect();
-export def answer: Value = Value.Array([Value.String(results.0), Value.String(results.1), Value.String(results.2),
-    Value.String(results.3), Value.String(results.5)]);
+pub def answer: Value = Value::Array([Value::String(results.0), Value::String(results.1), Value::String(results.2),
+    Value::String(results.3), Value::String(results.5)]);

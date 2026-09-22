@@ -1,4 +1,4 @@
 type A = enum { Item(Int) };
 type B = enum { Item(Int) };
-import A.{Item};
-export def result = match B.Item(1) { Item(value) => value };
+use A::{Item};
+pub def result = match B::Item(1) { Item(value) => value };

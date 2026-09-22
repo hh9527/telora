@@ -1,2 +1,2 @@
-import "./provider" {Box, Counted, Choice, Countdown, consume};
-export {Box, Counted, Choice, Countdown, consume};
+use super::provider::{Box, Counted, Choice, Countdown, consume};
+pub use self::{Box, Counted, Choice, Countdown, consume};

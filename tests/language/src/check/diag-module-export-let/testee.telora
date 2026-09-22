@@ -1,1 +1,1 @@
-export let value = 42;
+pub let value = 42;

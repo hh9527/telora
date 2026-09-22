@@ -1,5 +1,0 @@
-export def first: AnyObjectFieldRef = { owner: ProbeOwner.type, scalar: String.type, name: "state" };
-export def second: AnyObjectFieldRef = { owner: ProbeOwner.type, scalar: Int.type, name: "state" };
-
-type AnyObjectFieldRef = struct { owner: Type, scalar: Type, name: String };
-type ProbeOwner = enum { ProbeOwner };

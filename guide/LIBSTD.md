@@ -13,17 +13,17 @@ telora query exports std/value -p Scalar
 telora query at std/fmt -p display
 ```
 
-模块使用规范 ID 导入：
+模块使用静态路径绑定：
 
 ```telora
-import "std/array" as array;
-import "std/value" {Value, ScalarValue};
+use std::array as array;
+use std::value::{Value, ScalarValue};
 ```
 
 ## 基础与集合
 
 - `std/prelude`：基础类型、enum 成员与 property 定义。每个源码模块在名称解析时
-  隐式引入 `import "std/prelude" *;`，不是运行时导入。
+  获得可遮蔽的 prelude fallback；这不是运行时导入。
 - `std/array`：不可变 Array 的读取、组合、映射、过滤、折叠和查找。
 - `std/dict`：不可变 Dict 的读取、键值枚举、构造、合并、映射、过滤和折叠。
 - `std/option`：Option 的变换、默认值和状态判断。
@@ -34,14 +34,14 @@ blame 的 failure，具体契约可通过 `telora query exports` 查看。
 
 具名 struct 的局部更新使用语言运算符 `base <~ patch`，结果保持 base 的类型；
 更新字面量支持 `base <~ {field: value, ...patch}`。用法见
-[`Struct 合并更新`](TELORA.md#struct-合并更新)。`std/dict.merge` 则按 `Dict(A)`
+[`Struct 合并更新`](TELORA.md#struct-合并更新)。`std::dict::merge` 则按 `Dict(A)`
 契约合并两个字典，同名键取右侧值。
 
 ## 文本与格式
 
 - `std/string`：String 的拆分、连接、查找、替换、缩进和解析 property。
 - `std/regex`：正则编译、匹配，以及用于类型字符串解析的 `ParseBy` property。
-- `std/fmt`：`Display` trait、`Fmt` 值、基础格式项和 `@fmt.display_by` 模板。
+- `std/fmt`：`Display` trait、`Fmt` 值、基础格式项和 `@fmt::display_by` 模板。
 - `std/path`：纯字符串的路径连接、规范化、父路径和文件名操作，不访问文件系统。
 - `std/hash`：SHA-256 一次性摘要和增量摘要状态。
 - `std/test`：延迟 Test、正常/预期失败断言与 Host fixture 分组，由 `telora test` 执行。
@@ -52,9 +52,9 @@ blame 的 failure，具体契约可通过 `telora query exports` 查看。
 名义 struct 可以用 Display 模板获得统一的格式与插值能力：
 
 ```telora
-import "std/fmt" as fmt;
+use std::fmt as fmt;
 
-@fmt.display_by("{host}:{port}")
+@fmt::display_by("{host}:{port}")
 type Endpoint = struct {host: String, port: Int};
 ```
 
@@ -72,11 +72,11 @@ type Endpoint = struct {host: String, port: Int};
 - `std/yaml`：把 YAML 文本解析为 Value。
 - `std/toml`：把 TOML 文本解析为 Value。
 
-早期实验的 `std/json.schema` 已删除；JSON 文本处理与 codec 不受影响。
+早期实验的 `std::json::schema` 已删除；JSON 文本处理与 codec 不受影响。
 
 `Value` 是 source、服务和 JSON 共享的数据边界。`ScalarValue` 的 untagged codec
-把 `ScalarValue.None`、`ScalarValue.Bool(...)`、`ScalarValue.Int(...)`、
-`ScalarValue.Float(...)`、`ScalarValue.String(...)` 分别编码为普通
+把 `ScalarValue::None`、`ScalarValue::Bool(...)`、`ScalarValue::Int(...)`、
+`ScalarValue::Float(...)`、`ScalarValue::String(...)` 分别编码为普通
 JSON null、boolean、number 和 string。
 
 通常先在格式模块中得到 Value，再用 `codec.decode@[Target](value)` 进入业务名义类型；
@@ -86,13 +86,13 @@ JSON null、boolean、number 和 string。
 
 ## 反射
 
-- `std/type-desc`：查询 Type 的 kind、children、field、variant、opaque name 和引用解析。
-- `std/type-property`：按 type、field index 或 variant index 查询 property，并取得静态
+- `std/type_desc`：查询 Type 的 kind、children、field、variant、opaque name 和引用解析。
+- `std/type_property`：按 type、field index 或 variant index 查询 property，并取得静态
   `Property(P)` 约束的 evidence。
 - `std/dyn`：携带类型身份的动态值、安全投射和基于反射 index 的结构访问。
 - `std/eq`：提供相等比较能力；普通代码使用 `==`，两侧须具有同一静态类型。
 
-反射中的 member index 来自 `std/type-desc` 的 `FieldDesc` 或 `VariantDesc`。程序应传递
+反射中的 member index 来自 `std/type_desc` 的 `FieldDesc` 或 `VariantDesc`。程序应传递
 这些已验证的 index，而不是根据布局自行猜测。
 
 `type-desc.kind` 描述静态类型；enum 使用 Enum 或具名引用 Ref，并通过 `variants`
@@ -109,7 +109,7 @@ newtype 的 JSON 表示使用载荷契约。
 
 ## 服务协议
 
-`std/transform-service` 提供 TransformService、Context、Sources 和 source。
+`std/transform_service` 提供 TransformService、Context、Sources 和 source。
 服务导出具体类型 MainService，实现 init/transform；run/serve 共用该协议。
 来源与请求隔离见 [执行模式](EXEC-MODE.md)。
 
@@ -131,8 +131,8 @@ telora query exports std/codec
 telora query exports std/string -p parse
 
 # 查看模块内相关定义
-telora query at std/type-property -p variant
+telora query at std/type_property -p variant
 ```
 
-查询输出是结构化 JSONL，可供人、编辑器和 Agent 使用。模块清单和精确签名无需在应用
+查询输出是结构化 JSONL，可供人、编辑器和 Agent 使用。模块树和精确签名无需在应用
 文档中复制维护。

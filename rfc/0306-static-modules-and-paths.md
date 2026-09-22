@@ -1,5 +1,7 @@
 # RFC 0306：静态模块挂载与 `::` 路径
 
+> 本 RFC 的模块可见性与迁移语法已由 RFC 0308 修订；本文保留为历史设计记录。
+
 - 状态：草案
 - 跟踪：[#220](https://github.com/hh9527/telora/issues/220)
 - 分支：`feat/rfc-0306-static-modules-paths`

@@ -98,6 +98,7 @@ pub fn resolve_with_discovery_cancellable(
         }
     }
     let mut pending = mir.roots.iter().filter_map(bound).collect::<BTreeSet<_>>();
+    let mut demanded = BTreeSet::<String>::new();
     while let Some(id) = pending.pop_first() {
         if cancelled() {
             return None;
@@ -111,7 +112,7 @@ pub fn resolve_with_discovery_cancellable(
         // Data bytes are not an input to the static phase. This source is a
         // compiler-owned interface, whose Value reference resolves normally.
         let text = match if spec_kind == ModuleKind::Data {
-            Ok("import \"std/value\" { Value }; decl data: Value; export { data };".into())
+            Ok("use std::value::{ Value }; decl data: Value; pub use self::{ data };".into())
         } else {
             read(id, &spec_name)
         } {
@@ -188,19 +189,27 @@ pub fn resolve_with_discovery_cancellable(
             .hir
             .iter()
             .filter(|node| node.module == id)
-            .filter_map(|node| match &node.kind {
+            .flat_map(|node| match &node.kind {
+                HirKind::StaticPath(path) if path.first().is_some_and(|part| part == "std") => {
+                    let mut roots = vec!["std".to_owned()];
+                    if let Some(module) = path.get(1) {
+                        roots.push(format!("std/{module}"));
+                    }
+                    roots
+                }
                 HirKind::StaticPath(path)
                     if !matches!(
                         path.first().map(String::as_str),
                         Some("crate" | "self" | "super")
                     ) =>
                 {
-                    path.first().cloned()
+                    path.first().cloned().into_iter().collect()
                 }
-                _ => None,
+                _ => vec![],
             })
             .collect::<BTreeSet<_>>();
         for root in static_roots {
+            demanded.insert(root.clone());
             if let Some(target) = names
                 .get(&root)
                 .and_then(|targets| (targets.len() == 1).then_some(targets[0]))
@@ -216,7 +225,7 @@ pub fn resolve_with_discovery_cancellable(
             if !matches!(
                 binding.kind,
                 HirKind::Binding {
-                    kind: BindingKind::Import | BindingKind::OpenImport,
+                    kind: BindingKind::Import,
                     ..
                 }
             ) {
@@ -248,8 +257,12 @@ pub fn resolve_with_discovery_cancellable(
                 });
                 inventory.push(spec);
             }
+            let demanded_target = resolved
+                .as_ref()
+                .is_some_and(|name| demanded.contains(name));
             let target = resolved
-                .map(|name| lookup(&names, name))
+                .as_ref()
+                .map(|name| lookup(&names, name.clone()))
                 .unwrap_or_else(|| ModuleTarget::Unresolved(request.clone()));
             if !matches!(target, ModuleTarget::Bound(_)) {
                 let location = mir.hir[syntax.unwrap_or(body).index()].location;
@@ -258,7 +271,20 @@ pub fn resolve_with_discovery_cancellable(
                     location,
                 ));
             }
-            if let Some(target) = bound(&target) {
+            let lazy_std_child = spec_name == "std"
+                && syntax.is_some_and(|binding| {
+                    matches!(
+                        mir.hir[binding.index()].kind,
+                        HirKind::Binding {
+                            kind: BindingKind::Import,
+                            imported: None,
+                            ..
+                        }
+                    )
+                });
+            if let Some(target) = bound(&target)
+                && (!lazy_std_child || demanded_target)
+            {
                 pending.insert(target);
             }
             let edge = mir.imports.len();
@@ -410,7 +436,7 @@ mod tests {
     fn cname_inventory_needs_no_filesystem_and_ids_ignore_inventory_order() {
         use super::*;
         let build = |reverse: bool| {
-            let mut inventory = ["app/bin/main", "dep/lib", "dep/helper"]
+            let mut inventory = ["app/bin/main", "dep", "dep/helper"]
                 .into_iter()
                 .map(|name| ModuleSpec {
                     native: None,
@@ -426,15 +452,15 @@ mod tests {
             let mir = resolve(inventory, &["app/bin/main".into()], |_, cname| {
                 reads.push(cname.to_owned());
                 Ok(match cname {
-                    "app/bin/main" => "import \"dep/lib\" { value }; export { value };",
-                    "dep/lib" => "import \"./helper\" { value }; export { value };",
-                    "dep/helper" => "export def value = 42;",
+                    "app/bin/main" => "use dep::value; pub use self::{ value };",
+                    "dep" => "mod helper; pub use self::helper::value;",
+                    "dep/helper" => "pub def value = 42;",
                     _ => panic!("unexpected source request: {cname}"),
                 }
                 .into())
             });
             assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
-            assert_eq!(reads, ["app/bin/main", "dep/lib", "dep/helper"]);
+            assert_eq!(reads, ["app/bin/main", "dep", "dep/helper"]);
             assert!(mir.modules.iter().all(|module| {
                 module
                     .imports
@@ -464,10 +490,10 @@ mod tests {
         let mut mir = resolve(inventory, &["app".into()], |_, name| {
             reads.push(name.to_owned());
             Ok(match name {
-                "app" => "mod query; export def base = 42; use self::query::answer; use dep::item::{answer as dep_answer}; export { answer, dep_answer };",
-                "app/query" => "export def answer = crate::base;",
-                "dep" => "mod item; export { item };",
-                "dep/item" => "export def answer = 7;",
+                "app" => "mod query; pub def base = 42; use self::query::answer; use dep::item::{answer as dep_answer}; pub use self::{ answer, dep_answer };",
+                "app/query" => "pub def answer = crate::base;",
+                "dep" => "mod item; pub use self::{ item };",
+                "dep/item" => "pub def answer = 7;",
                 _ => unreachable!(),
             }
             .into())
@@ -495,12 +521,12 @@ mod tests {
         let sources = BTreeMap::from([
             (
                 "app",
-                "mod query; data config = import(json) \"config.json\"; export { query, config };",
+                "mod query; data config = import(json) \"config.json\"; pub use self::{ query, config };",
             ),
-            ("app/query", "mod parser; export { parser };"),
-            ("app/query/parser", "export def answer = 42;"),
-            ("app/unmounted", "export def hidden = 0;"),
-            ("std/value", "export type Value = enum { Missing };"),
+            ("app/query", "mod parser; pub use self::{ parser };"),
+            ("app/query/parser", "pub def answer = 42;"),
+            ("app/unmounted", "pub def hidden = 0;"),
+            ("std/value", "pub type Value = enum { Missing };"),
         ]);
         let mut reads = Vec::new();
         let mut discoveries = Vec::new();
@@ -568,6 +594,55 @@ mod tests {
     }
 
     #[test]
+    fn std_root_admits_children_but_reads_only_demanded_modules() {
+        let sources = BTreeMap::from([
+            ("app", "use std::used::{ value }; pub use self::{ value };"),
+            ("std", "pub mod used; pub mod unused;"),
+            ("std/used", "pub def value: Int = 42;"),
+            ("std/unused", "pub def value: Int = 0;"),
+        ]);
+        let mut reads = Vec::new();
+        let mir = resolve_with_discovery_cancellable(
+            vec![
+                ModuleSpec {
+                    native: None,
+                    name: "app".into(),
+                    kind: ModuleKind::Source,
+                    implicit_imports: vec![],
+                },
+                ModuleSpec {
+                    native: None,
+                    name: "std".into(),
+                    kind: ModuleKind::Source,
+                    implicit_imports: vec![],
+                },
+            ],
+            &["app".into()],
+            |_, name| {
+                reads.push(name.to_owned());
+                Ok(sources[name].to_owned())
+            },
+            canonical_request,
+            |_, name| {
+                sources.get(name).map(|_| ModuleSpec {
+                    native: None,
+                    name: name.to_owned(),
+                    kind: ModuleKind::Source,
+                    implicit_imports: vec![],
+                })
+            },
+            &mut || false,
+        )
+        .unwrap();
+
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        assert_eq!(reads, ["app", "std", "std/used"]);
+        assert!(mir.modules.iter().any(|module| {
+            module.name == "std/unused" && matches!(module.state, ModuleState::Unloaded)
+        }));
+    }
+
+    #[test]
     fn source_line_count_is_not_limited_to_u16() {
         let mir = super::resolve(
             vec![super::ModuleSpec {
@@ -596,15 +671,15 @@ mod tests {
                 "top-level expressions are not supported",
             ),
             (
-                "let value = 42; export { value };",
+                "let value = 42; pub use self::{ value };",
                 "module-level let is not supported",
             ),
             (
-                "native value: Fn() -> Int; export { value };",
+                "native value: Fn() -> Int; pub use self::{ value };",
                 "only allowed in built-in std modules",
             ),
             (
-                "native type Value @1; export { Value };",
+                "native type Value @1; pub use self::{ Value };",
                 "only allowed in built-in std modules",
             ),
             ("def value = 42;", "requires at least one explicit export"),
@@ -639,7 +714,7 @@ mod tests {
                 implicit_imports: vec![],
             }],
             &["std/custom".into()],
-            |_, _| Ok("native value: Fn() -> Int; export { value };".into()),
+            |_, _| Ok("native value: Fn() -> Int; pub use self::{ value };".into()),
         );
         validate_source_modules(&mut mir, |_| true);
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
@@ -656,19 +731,19 @@ mod tests {
         let sources = BTreeMap::from([
             (
                 "@src/main",
-                "import \"./left\" *; import \"./right\" *; import \"./data.json\" { data }; export def f = fn(x) { x };",
+                "mod left; mod right; mod shared; data data = import(json) \"./data.json\"; pub def f = fn(x) { x };",
             ),
             (
-                "@src/left",
-                "import \"./shared\" *; export def left = shared;",
+                "@src/main/left",
+                "use super::shared::shared; pub def left = shared;",
             ),
             (
-                "@src/right",
-                "import \"./shared\" *; export def right = shared;",
+                "@src/main/right",
+                "use super::shared::shared; pub def right = shared;",
             ),
-            ("@src/shared", "export def shared = 1;"),
+            ("@src/main/shared", "pub def shared = 1;"),
             ("@src/unused", "invalid unused text"),
-            ("std/value", "export type Value = enum { Missing };"),
+            ("std/value", "pub type Value = enum { Missing };"),
         ]);
         let mut inventory = sources
             .keys()
@@ -694,7 +769,7 @@ mod tests {
         assert_eq!(reads.len(), 5);
         assert!(!reads.contains_key("@src/data.json"));
         assert!(reads.values().all(|count| *count == 1));
-        assert_eq!(mir.imports.len(), 6);
+        assert_eq!(mir.imports.len(), 4);
         assert_eq!(mir.hir.len(), mir.ty_slots.len());
         assert!(mir.ty_slots.iter().all(|slot| *slot == TypeState::Unknown));
         assert!(!mir.resolve_slots.is_empty());
@@ -716,8 +791,8 @@ mod tests {
     }
 
     #[test]
-    fn retains_cycles_missing_targets_and_duplicate_inventory_candidates() {
-        let mut inventory = ["@src/a", "@src/b", "@src/duplicate", "@src/duplicate"]
+    fn retains_missing_targets_and_duplicate_inventory_candidates() {
+        let mut inventory = ["@src/a", "@src/a/b", "@src/a/duplicate", "@src/a/duplicate"]
             .into_iter()
             .map(|name| ModuleSpec {
                 native: None,
@@ -729,12 +804,13 @@ mod tests {
         inventory.reverse();
         let mir = resolve(inventory, &["@src/a".into()], |_, name| {
             Ok(match name {
-            "@src/a" => "import \"./b\" *; import \"./missing\" *; import \"./duplicate\" *; export def a = 1;",
-            "@src/b" => "import \"./a\" *; export def b = 2;",
-            _ => panic!("ambiguous module must not be chosen"),
-        }.into())
+                "@src/a" => "mod b; mod missing; mod duplicate; pub def a = 1;",
+                "@src/a/b" => "pub def b = 2;",
+                _ => panic!("ambiguous module must not be chosen"),
+            }
+            .into())
         });
-        assert_eq!(mir.imports.len(), 4);
+        assert_eq!(mir.imports.len(), 3);
         assert!(
             mir.imports
                 .iter()

@@ -1,2 +1,2 @@
-import "@src/provider" {MainService as Provided};
-export {Provided as MainService};
+use crate::provider::{MainService as Provided};
+pub use self::{Provided as MainService};

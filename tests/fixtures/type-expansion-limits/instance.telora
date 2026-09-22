@@ -1,3 +1,3 @@
 def describe: for(T) Fn(T) -> Type = fn(value) { {{TYPE}}.type };
 type Input = {{INPUT}};
-export def callback: Fn(Input) -> Type = describe@[Input];
+pub def callback: Fn(Input) -> Type = describe@[Input];

@@ -1,4 +1,4 @@
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type Label = struct {text: String};
 
 def label: Fn(Type, Option(Label)) -> Label = fn(target, previous) {
@@ -9,4 +9,4 @@ def label: Fn(Type, Option(Label)) -> Label = fn(target, previous) {
 type Item = struct {id: Int};
 
 def requires: for(T: Property(Label)) Fn(TypeOf(T)) -> Int = fn(target) { 1 };
-export def result: Int = requires((Item).type);
+pub def result: Int = requires((Item).type);

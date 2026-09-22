@@ -1,7 +1,7 @@
-import "std/array" as array;
-export def answer: Int = do {
+use std::array as array;
+pub def answer: Int = do {
     decl callback: Fn(Int) -> Int;
-    let mapped = array.map([], callback);
+    let mapped = array::map([], callback);
     def callback = fn(value) {value};
-    array.length(mapped)
+    array::length(mapped)
 };

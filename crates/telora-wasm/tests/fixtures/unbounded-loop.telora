@@ -1,2 +1,2 @@
 def spin: Fn(Int) -> Int = fn(value) { spin(value) };
-export def answer: Fn() -> Int = fn() { spin(0) };
+pub def answer: Fn() -> Int = fn() { spin(0) };

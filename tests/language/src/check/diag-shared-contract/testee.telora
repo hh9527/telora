@@ -1,3 +1,3 @@
-import "@src/check/diag-shared-contract/bad" as bad;
-import "@src/check/diag-shared-contract/good" as good;
-export def result: Int = good.answer;
+use super::bad as bad;
+use super::good as good;
+pub def result: Int = good::answer;

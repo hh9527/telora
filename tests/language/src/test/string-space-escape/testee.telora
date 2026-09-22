@@ -1,7 +1,7 @@
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::test as test;
+use crate::test_support::{expect};
 
-export def space_escape: test.Test = test.should_ok(fn() {
+pub def space_escape: test::Test = test::should_ok(fn() {
     expect("a\ b" == "ab");
     expect("a\  b" == "ab");
     expect("a\  b" == "ab");

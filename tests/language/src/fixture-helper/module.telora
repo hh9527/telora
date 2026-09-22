@@ -1,10 +1,10 @@
-import "std/test" as test;
-import "std/value" {Value};
+use std::test as test;
+use std::value::{Value};
 
-export def make: Fn() -> test.Test = fn() {
-    test.with_fixtures(["input.json"], fn(value) {
-        test.should_ok(fn() -> Bool {
-            match value { Value.Int(42) => True, _ => fail!("wrong source base", value) }
+pub def make: Fn() -> test::Test = fn() {
+    test::with_fixtures(["input.json"], fn(value) {
+        test::should_ok(fn() -> Bool {
+            match value { Value::Int(42) => True, _ => fail!("wrong source base", value) }
         })
     })
 };

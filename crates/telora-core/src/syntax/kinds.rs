@@ -27,7 +27,6 @@ pub enum BindingKind {
     Trait,
     Impl,
     Import,
-    OpenImport,
     Export,
 }
 

@@ -70,15 +70,14 @@ fn refresh_fixture_workspace(root: &Path) {
             .collect::<Vec<_>>();
         modules.sort();
         let source = if modules.is_empty() {
-            format!("{GENERATED_ROOT}export type Fixture = struct {{}};\n")
+            format!("{GENERATED_ROOT}pub type Fixture = struct {{}};\n")
         } else {
             format!(
-                "{GENERATED_ROOT}{}export {{ {} }};\n",
+                "{GENERATED_ROOT}{}",
                 modules
                     .iter()
-                    .map(|name| format!("mod {name};\n"))
+                    .map(|name| format!("pub mod {name};\n"))
                     .collect::<String>(),
-                modules.join(", ")
             )
         };
         fs::write(&lib, source).unwrap();

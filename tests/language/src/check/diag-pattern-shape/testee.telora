@@ -1,1 +1,1 @@
-export def invalid = match 1 { {} => 0, _ => 1 };
+pub def invalid = match 1 { {} => 0, _ => 1 };

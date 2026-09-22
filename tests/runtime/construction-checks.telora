@@ -19,7 +19,7 @@ type IntWrapped = Wrapped(Int);
 })
 type Box(T) = struct {item: T, valid: Bool};
 
-export def answer: Fn() -> Int = fn() {
+pub def answer: Fn() -> Int = fn() {
     let a: Box(Int) = {item: 40, valid: True};
     let b: Box(String) = {item: "ok", valid: True};
     let c: Item = {number: a.item};

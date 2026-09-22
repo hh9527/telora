@@ -4,7 +4,7 @@ use super::*;
 fn seal_requires_a_record_for_every_construction_check() {
     let mut mir = graph(&[(
         "@src/main",
-        "@check(fn(value) {Ok(())}) type Checked = struct(Int); export {Checked};",
+        "@check(fn(value) {Ok(())}) type Checked = struct(Int); pub use self::{Checked};",
     )]);
     resolve(&mut mir);
     mir.seal()
@@ -20,7 +20,7 @@ fn seal_requires_a_record_for_every_construction_check() {
         r#"
         def verify: Fn(Int) -> Result((), Never) = fn(value) {Ok(())};
         type Choice = enum { @check(verify) Empty };
-        export {Choice};
+        pub use self::{Choice};
     "#,
     )]);
     resolve(&mut mir);
@@ -49,7 +49,7 @@ fn invalid_check_signatures_keep_the_original_conflict_and_contract_context() {
         "fn(value) {None}",
     ] {
         let source = format!(
-            "@check({expression}) type Checked = struct(Int); export def independent: Int = 42;"
+            "@check({expression}) type Checked = struct(Int); pub def independent: Int = 42;"
         );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
@@ -70,7 +70,7 @@ fn invalid_check_signatures_keep_the_original_conflict_and_contract_context() {
     }
     let mut mir = graph(&[(
         "@src/main",
-        "@check(missing) type Checked = struct(Int); export def independent: Int = 42;",
+        "@check(missing) type Checked = struct(Int); pub def independent: Int = 42;",
     )]);
     let count = mir.diagnostics.len();
     resolve(&mut mir);
@@ -124,11 +124,9 @@ fn decorators_on_aliases_are_diagnosed_and_cannot_be_silently_dropped() {
         "type Base = struct {value: Int}; @property(PropertyTarget.Type) type Prop = Base;",
     ] {
         let source = if declaration.starts_with("type Prop") {
-            format!(
-                "@property(PropertyTarget.Type) {declaration} export def independent: Int = 42;"
-            )
+            format!("@property(PropertyTarget.Type) {declaration} pub def independent: Int = 42;")
         } else {
-            format!("{declaration} export def independent: Int = 42;")
+            format!("{declaration} pub def independent: Int = 42;")
         };
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
@@ -151,7 +149,7 @@ fn decorators_on_aliases_are_diagnosed_and_cannot_be_silently_dropped() {
     }
     let mut mir = graph(&[(
         "@src/main",
-        "@property(PropertyTarget.Type) type Mark = struct {value: Int}; export {Mark};",
+        "@property(PropertyTarget.Type) type Mark = struct {value: Int}; pub use self::{Mark};",
     )]);
     resolve(&mut mir);
     mir.seal()
@@ -168,13 +166,13 @@ fn property_admission_links_capabilities_without_evaluating_targets() {
     let mut mir = graph(&[(
         "@src/main",
         r#"
-        import "std/prelude" {property as marker};
+        use std::prelude::{property as marker};
         def attach: Fn(PropertyTarget) -> Fn(Type, Option(PropertyAttr)) -> PropertyAttr = marker;
         def choose: Fn() -> PropertyTarget = fn() { fail!("must not execute in type solving") };
         @attach(choose()) type Mark = struct { value: Int };
         def property: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: 42} };
         @property type Item = struct { value: Int };
-        export def answer: TypeOf(Item) = Item.type;
+        pub def answer: TypeOf(Item) = Item.type;
     "#,
     )]);
     resolve(&mut mir);
@@ -209,11 +207,11 @@ fn property_admission_links_capabilities_without_evaluating_targets() {
 fn property_admission_rejects_missing_and_forged_capability_records() {
     for (source, expected) in [
         (
-            "type Mark = struct {value: Int}; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: 42} }; @mark type Item = struct {value: Int}; export def answer: TypeOf(Item) = Item.type;",
+            "type Mark = struct {value: Int}; def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: 42} }; @mark type Item = struct {value: Int}; pub def answer: TypeOf(Item) = Item.type;",
             "no @property capability declaration",
         ),
         (
-            "def forged: Fn(Type, Option(PropertyAttr)) -> PropertyAttr = fn(owner, previous) { {bits: 63} }; @forged type Mark = struct {value: Int}; export def answer: TypeOf(Mark) = Mark.type;",
+            "def forged: Fn(Type, Option(PropertyAttr)) -> PropertyAttr = fn(owner, previous) { {bits: 63} }; @forged type Mark = struct {value: Int}; pub def answer: TypeOf(Mark) = Mark.type;",
             "reserved for @property capability records",
         ),
     ] {
@@ -241,7 +239,7 @@ fn generic_properties_close_provider_instances_before_sealing() {
         };
         @mark(T.type) type Box(T) = struct { value: T };
         type Outer(T) = struct { value: Box(Array(T)) };
-        export def answer: (TypeOf(Box(Int)), TypeOf(Box(String)), TypeOf(Outer(Int))) = (Box(Int).type, Box(String).type, Outer(Int).type);
+        pub def answer: (TypeOf(Box(Int)), TypeOf(Box(String)), TypeOf(Outer(Int))) = (Box(Int).type, Box(String).type, Outer(Int).type);
     "#,
     )]);
     resolve(&mut mir);
@@ -287,7 +285,7 @@ fn generic_properties_close_provider_instances_before_sealing() {
 fn property_target_members_use_native_identity_and_ordinary_resolution() {
     let mut mir = graph(&[(
         "@src/main",
-        "import \"std/prelude\" {PropertyTarget as Target}; import Target.{Member as Both}; def target: Fn(Bool) -> Target = fn(enabled) { if enabled { Target.StructType } else { Target.EnumType } }; @property(target(True)) type Mark = struct {value: Int}; export def answer: (Target, Target, Target, Target, Target, Target) = (Target.Type, Target.StructType, Target.EnumType, Both, Target.Field, Target.Variant);",
+        "use std::prelude::{PropertyTarget as Target}; use Target::{Member as Both}; def target: Fn(Bool) -> Target = fn(enabled) { if enabled { Target.StructType } else { Target.EnumType } }; @property(target(True)) type Mark = struct {value: Int}; pub def answer: (Target, Target, Target, Target, Target, Target) = (Target.Type, Target.StructType, Target.EnumType, Both, Target.Field, Target.Variant);",
     )]);
     resolve(&mut mir);
     mir.seal()
@@ -303,12 +301,12 @@ fn property_target_members_use_native_identity_and_ordinary_resolution() {
         );
     }
     for source in [
-        "type PropertyTarget = enum {Type}; @property(PropertyTarget.Type) type Mark = struct {value: Int}; export def answer: Int = 42;",
-        "import \"./other\" as property; @property(PropertyTarget.Type) type Mark = struct {value: Int}; export def answer: Int = 42;",
+        "type PropertyTarget = enum {Type}; @property(PropertyTarget.Type) type Mark = struct {value: Int}; pub def answer: Int = 42;",
+        "use self::other as property; @property(PropertyTarget.Type) type Mark = struct {value: Int}; pub def answer: Int = 42;",
     ] {
         let mut mir = graph(&[
             ("@src/main", source),
-            ("@src/other", "export def value: Int = 42;"),
+            ("@src/other", "pub def value: Int = 42;"),
         ]);
         resolve(&mut mir);
         assert!(mir.seal().is_err(), "{source}");
@@ -320,7 +318,7 @@ fn property_target_members_use_native_identity_and_ordinary_resolution() {
 fn checked_return_closes_the_callable_signature_before_instantiation() {
     let mut mir = graph(&[(
         "@src/main",
-        "type Box(T) = struct {value: T}; def finish: for(T) Fn(Unchecked(Box(T))) -> Box(T) = fn(value) { value }; def candidate: Unchecked(Box(Int)) = {value: 42}; export def answer: Box(Int) = finish(candidate);",
+        "type Box(T) = struct {value: T}; def finish: for(T) Fn(Unchecked(Box(T))) -> Box(T) = fn(value) { value }; def candidate: Unchecked(Box(Int)) = {value: 42}; pub def answer: Box(Int) = finish(candidate);",
     )]);
     resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
@@ -365,7 +363,7 @@ fn unchecked_identity_and_conversion_evidence_are_separate() {
         r#"
         type Point = struct {x: Int};
         def candidate: Unchecked(Unchecked(Point)) = {x: 42};
-        export def checked: Point = candidate;
+        pub def checked: Point = candidate;
     "#,
     )]);
     resolve(&mut mir);
@@ -392,11 +390,11 @@ fn unchecked_identity_and_conversion_evidence_are_separate() {
         image.layout(checked).unwrap()
     ));
     for source in [
-        "export type Bad = Unchecked(Int);",
-        "type Item = struct(Int); export type Bad = Unchecked(Item);",
-        "type Item = enum {One}; export type Bad = Unchecked(Item);",
-        "type A = struct {x: Int}; type B = struct {x: Int}; def candidate: Unchecked(A) = {x: 1}; export def wrong: B = candidate;",
-        "type Wrap(T) = Unchecked(T); export type Bad = Wrap(Int);",
+        "pub type Bad = Unchecked(Int);",
+        "type Item = struct(Int); pub type Bad = Unchecked(Item);",
+        "type Item = enum {One}; pub type Bad = Unchecked(Item);",
+        "type A = struct {x: Int}; type B = struct {x: Int}; def candidate: Unchecked(A) = {x: 1}; pub def wrong: B = candidate;",
+        "type Wrap(T) = Unchecked(T); pub type Bad = Wrap(Int);",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -414,8 +412,8 @@ fn generic_construction_checks_close_bodies_and_member_discovered_owners() {
         @check(fn(value) { let copied = identity(value.item); Ok(()) })
         type Item(T) = struct { item: T };
         type Envelope(T) = struct { child: Item(T) };
-        export def first: TypeOf(Envelope(Int)) = Envelope(Int).type;
-        export def second: TypeOf(Envelope(String)) = Envelope(String).type;
+        pub def first: TypeOf(Envelope(Int)) = Envelope(Int).type;
+        pub def second: TypeOf(Envelope(String)) = Envelope(String).type;
     "#,
     )]);
     let hir = mir.hir.as_ptr();
@@ -454,7 +452,7 @@ fn construction_checks_are_separate_closed_contracts_without_execution() {
         type Event = enum { @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive payload", value)) } }) Item(Int), Empty };
         @check(fn(value) { fail!("must not execute during static solving") })
         type Deferred = struct { value: Int };
-        export def answer: TypeOf(Endpoint) = Endpoint.type;
+        pub def answer: TypeOf(Endpoint) = Endpoint.type;
     "#,
     )]);
     resolve(&mut mir);
@@ -521,7 +519,7 @@ fn never_returning_provider_preserves_its_declared_nominal_result() {
         @property(PropertyTarget.Type) type Tag = struct { value: Int };
         def provider: Fn(Type, Option(Tag)) -> Tag = fn(owner, previous) { fail!("deferred") };
         @provider type Item = struct { value: Int };
-        export def answer: TypeOf(Item) = Item.type;
+        pub def answer: TypeOf(Item) = Item.type;
     "#,
     )]);
     resolve(&mut mir);
@@ -554,7 +552,7 @@ fn configured_decorators_use_factory_and_provider_signatures() {
         };
         @make_label("name")
         type Item = struct { value: Int };
-        export def item: Item = { value: 1 };
+        pub def item: Item = { value: 1 };
     "#,
     )]);
     resolve(&mut mir);
@@ -575,7 +573,7 @@ fn property_presence_proves_signature_bounds_without_running_providers() {
         type Item = struct { value: Int };
         native inspect: for(P, T: Property(P)) Fn(TypeOf(T), TypeOf(P)) -> P;
         def read: for(T: Property(Label)) Fn(TypeOf(T)) -> Label = fn(target) { inspect(target, Label.type) };
-        export def answer: Label = read(Item.type);
+        pub def answer: Label = read(Item.type);
     "#,
     )]);
     resolve(&mut mir);
@@ -608,7 +606,7 @@ fn missing_property_bound_is_rejected_with_all_type_slots_known() {
         @property(PropertyTarget.Type)
         type Label = struct { text: String };
         native requires: for(T: Property(Label)) Fn(TypeOf(T)) -> Bool;
-        export def answer: Bool = requires(Int.type);
+        pub def answer: Bool = requires(Int.type);
     "#,
     )]);
     resolve(&mut mir);
@@ -638,7 +636,7 @@ fn trait_implementations_consume_property_evidence_and_lexical_bounds() {
         impl(T: Property(Label)) Named for T { name: fn(value) { "named" } };
         def name: for(T: Named) Fn(T) -> String = fn(value) { Named.name(value) };
         def item: Item = { value: 1 };
-        export def answer: String = name(item);
+        pub def answer: String = name(item);
     "#,
     )]);
     resolve(&mut mir);
@@ -665,19 +663,19 @@ fn trait_implementations_consume_property_evidence_and_lexical_bounds() {
 fn trait_evidence_rejects_missing_cycles_overlap_and_wrong_member_signatures() {
     for (source, message) in [
         (
-            "trait Show { show: Fn(Self) -> String }; export def answer: String = Show.show(1);",
+            "trait Show { show: Fn(Self) -> String }; pub def answer: String = Show.show(1);",
             "no static evidence",
         ),
         (
-            "trait Show { show: Fn(Self) -> String }; impl(T: Show) Show for T { show: fn(x) { \"cycle\" } }; export def answer: String = Show.show(1);",
+            "trait Show { show: Fn(Self) -> String }; impl(T: Show) Show for T { show: fn(x) { \"cycle\" } }; pub def answer: String = Show.show(1);",
             "no static evidence",
         ),
         (
-            "trait Show { show: Fn(Self) -> String }; impl(T) Show for T { show: fn(x) { \"all\" } }; impl Show for Int { show: fn(x) { \"int\" } }; export { Show };",
+            "trait Show { show: Fn(Self) -> String }; impl(T) Show for T { show: fn(x) { \"all\" } }; impl Show for Int { show: fn(x) { \"int\" } }; pub use self::{ Show };",
             "overlapping trait implementations",
         ),
         (
-            "trait Show { show: Fn(Self) -> String }; impl Show for Int { show: fn(x) { 42 } }; export { Show };",
+            "trait Show { show: Fn(Self) -> String }; impl Show for Int { show: fn(x) { 42 } }; pub use self::{ Show };",
             "type mismatch",
         ),
     ] {
@@ -700,7 +698,7 @@ fn member_properties_keep_separate_presence_records_and_structural_contexts() {
         type Ctx = struct { owner: Type, index: Int, name: String, ty: Type };
         def mark: Fn(Ctx, Option(Mark)) -> Mark = fn(ctx, previous) { { value: ctx.index } };
         type Item = struct { @mark first: Int, @mark second: String };
-        export def item: Item = { first: 1, second: "ok" };
+        pub def item: Item = { first: 1, second: "ok" };
     "#,
     )]);
     resolve(&mut mir);
@@ -730,8 +728,8 @@ fn exact_impl_wins_over_property_blanket_without_specializing_function_names() {
         impl Label for Item { label: fn(value) { "exact" } };
         impl Label for Int { label: fn(value) { "primitive" } };
         def item: Item = { value: 1 };
-        export def answer: String = Label.label(item);
-        export def number: String = Label.label(1);
+        pub def answer: String = Label.label(item);
+        pub def number: String = Label.label(1);
     "#,
     )]);
     resolve(&mut mir);
@@ -759,8 +757,8 @@ fn structural_impl_wins_over_property_blanket() {
         @tag type Item = struct { value: Int };
         def boxed: Box(Int) = { value: 1 };
         def item: Item = { value: 1 };
-        export def a: String = Label.label(boxed);
-        export def b: String = Label.label(item);
+        pub def a: String = Label.label(boxed);
+        pub def b: String = Label.label(item);
     "#,
     )]);
     resolve(&mut mir);
@@ -776,8 +774,8 @@ fn optional_property_bounds_close_as_present_or_absent() {
         def tag: Fn(Type, Option(Tag)) -> Tag = fn(owner, previous) { {} };
         @tag type Item = struct {};
         def accepts: for(T: ?Property(Tag)) Fn(TypeOf(T)) -> Bool = fn(target) { True };
-        export def present: Bool = accepts(Item.type);
-        export def absent: Bool = accepts(Int.type);
+        pub def present: Bool = accepts(Item.type);
+        pub def absent: Bool = accepts(Int.type);
     "#,
     )]);
     resolve(&mut mir);
@@ -797,32 +795,32 @@ fn optional_property_bounds_close_as_present_or_absent() {
 #[test]
 fn codec_text_bridge_is_selected_by_property_and_requires_its_trait_capabilities() {
     let source = r#"
-        import "std/codec" as codec;
-        import "std/string" as string;
-        import "std/fmt" as fmt;
-        import "std/value" {Value};
-        @string.decode_by_parse
-        @string.encode_by_display
-        @fmt.display_by("{value}")
+        use std::codec as codec;
+        use std::string as string;
+        use std::fmt as fmt;
+        use std::value::{Value};
+        @string::decode_by_parse
+        @string::encode_by_display
+        @fmt::display_by("{value}")
         type Textual = struct { value: Int };
-        impl string.FromStr for Textual {
+        impl string::FromStr for Textual {
             from_str: fn(input) { Ok({value: 1}.ty!(Textual)) },
         };
-        @string.decode_by_parse
-        @string.encode_by_display
+        @string::decode_by_parse
+        @string::encode_by_display
         type Explicit = struct { value: Int };
-        impl codec.Decode for Explicit {
+        impl codec::Decode for Explicit {
             decode: fn(value) { Ok({value: 3}.ty!(Explicit)) },
         };
-        impl codec.Encode for Explicit {
-            encode: fn(value) { Value.Int(value.value) },
+        impl codec::Encode for Explicit {
+            encode: fn(value) { Value::Int(value.value) },
         };
         type Plain = struct { value: Int };
-        export def textual: Value = codec.encode({value: 1}.ty!(Textual));
-        export def plain: Value = codec.encode({value: 2}.ty!(Plain));
-        export def explicit_encoded: Value = codec.encode({value: 3}.ty!(Explicit));
-        export def explicit_decoded: Result(Explicit, codec.BlameError) =
-            codec.decode@[Explicit](Value.Int(3));
+        pub def textual: Value = codec::encode({value: 1}.ty!(Textual));
+        pub def plain: Value = codec::encode({value: 2}.ty!(Plain));
+        pub def explicit_encoded: Value = codec::encode({value: 3}.ty!(Explicit));
+        pub def explicit_decoded: Result(Explicit, codec::BlameError) =
+            codec::decode@[Explicit](Value::Int(3));
     "#;
     let mut sources = vec![("@src/main", source)];
     sources.extend_from_slice(crate::static_sources::BUILTINS);
@@ -842,13 +840,13 @@ fn codec_text_bridge_is_selected_by_property_and_requires_its_trait_capabilities
     );
 
     let missing = r#"
-        import "std/codec" as codec;
-        import "std/string" as string;
-        import "std/value" {Value};
-        @string.decode_by_parse
+        use std::codec as codec;
+        use std::string as string;
+        use std::value::{Value};
+        @string::decode_by_parse
         type Missing = struct { value: Int };
-        export def answer: Result(Missing, codec.BlameError) =
-            codec.decode@[Missing](Value.String("1"));
+        pub def answer: Result(Missing, codec::BlameError) =
+            codec::decode@[Missing](Value::String("1"));
     "#;
     let mut sources = vec![("@src/main", missing)];
     sources.extend_from_slice(crate::static_sources::BUILTINS);
@@ -872,7 +870,7 @@ fn optional_property_requirement_does_not_reject_a_blanket_impl() {
         @property(PropertyTarget.Type) type Tag = struct {};
         trait Label { label: Fn(Self) -> String };
         impl(T: ?Property(Tag)) Label for T { label: fn(value) { "fallback" } };
-        export def answer: String = Label.label(1);
+        pub def answer: String = Label.label(1);
     "#,
     )]);
     resolve(&mut mir);
@@ -893,7 +891,7 @@ fn optional_property_requirement_does_not_specialize_an_impl() {
         trait Label { label: Fn(Self) -> String };
         impl(T: ?Property(Tag)) Label for T { label: fn(value) { "blanket" } };
         impl Label for Int { label: fn(value) { "exact" } };
-        export def answer: String = Label.label(1);
+        pub def answer: String = Label.label(1);
     "#,
     )]);
     resolve(&mut mir);
@@ -914,7 +912,7 @@ fn different_optional_property_bounds_do_not_disambiguate_blanket_impls() {
         trait Label { label: Fn(Self) -> String };
         impl(T: ?Property(Left)) Label for T { label: fn(value) { "left" } };
         impl(T: ?Property(Right)) Label for T { label: fn(value) { "right" } };
-        export def answer: String = Label.label(1);
+        pub def answer: String = Label.label(1);
     "#,
     )]);
     resolve(&mut mir);

@@ -1,21 +1,21 @@
-import "@src/support" as support;
-import "std/array" as array;
-import "std/value" {Value};
+use crate::support as support;
+use std::array as array;
+use std::value::{Value};
 
-export def check: Fn(Value) -> Value = fn(actual) {
-    match support.record_field(actual, "stdout") {
-        Some(Value.Array(records)) => {
+pub def check: Fn(Value) -> Value = fn(actual) {
+    match support::record_field(actual, "stdout") {
+        Some(Value::Array(records)) => {
             let located: Fn(String, Int, Int) -> Bool = fn(name, line, column) {
-                array.any(records, fn(record) {
-                    support.string_field_equals(record, "record", "diagnostic")
-                        && support.string_field_equals(record, "test", name)
-                        && match support.record_field(record, "labels") {
-                            Some(Value.Array(labels)) => array.any(labels, fn(label) {
-                                support.string_field_contains(label, "source", "struct-update-provenance/provider")
-                                    && support.string_field_equals(label, "message", "subject 1 originated here")
-                                    && match support.record_field(label, "location") {
-                                        Some(location) => support.record_field(location, "line") == Some(Value.Int(line))
-                                            && support.record_field(location, "column") == Some(Value.Int(column)),
+                array::any(records, fn(record) {
+                    support::string_field_equals(record, "record", "diagnostic")
+                        && support::string_field_equals(record, "test", name)
+                        && match support::record_field(record, "labels") {
+                            Some(Value::Array(labels)) => array::any(labels, fn(label) {
+                                support::string_field_contains(label, "source", "struct-update-provenance/testee/provider")
+                                    && support::string_field_equals(label, "message", "subject 1 originated here")
+                                    && match support::record_field(label, "location") {
+                                        Some(location) => support::record_field(location, "line") == Some(Value::Int(line))
+                                            && support::record_field(location, "column") == Some(Value::Int(column)),
                                         _ => False,
                                     }
                             }),
@@ -23,12 +23,12 @@ export def check: Fn(Value) -> Value = fn(actual) {
                         }
                 })
             };
-            support.bool_value(support.exit_code(actual) == Some(1)
-                && located("kept", 3, 31)
-                && located("spread", 4, 37)
-                && located("literal", 5, 30)
-                && located("container", 6, 27))
+            support::bool_value(support::exit_code(actual) == Some(1)
+                && located("kept", 3, 28)
+                && located("spread", 4, 34)
+                && located("literal", 5, 27)
+                && located("container", 6, 24))
         },
-        _ => Value.False,
+        _ => Value::False,
     }
 };

@@ -1,7 +1,7 @@
-import "std/test" as test;
-import "@src/test-support" { expect };
-import "@src/test/prelude-fallback/model" *;
+use std::test as test;
+use crate::test_support::{ expect };
+use self::model::{ Ok, Err };
 
-export def member_candidates: test.Test = test.should_ok(fn() {
+pub def member_candidates: test::Test = test::should_ok(fn() {
     expect(match Ok { Ok => True, Err => False })
 });

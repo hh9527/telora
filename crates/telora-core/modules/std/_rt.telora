@@ -21,4 +21,4 @@ def with_diagnostics:
 
 native service_reply: Fn(String, Bool, Array(Diagnostic)) -> String;
 
-export {Severity, SourcePoint, SourceRange, Label, Diagnostic, with_diagnostics, service_reply};
+pub use self::{Severity, SourcePoint, SourceRange, Label, Diagnostic, with_diagnostics, service_reply};

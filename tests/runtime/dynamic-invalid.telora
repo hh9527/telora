@@ -1,4 +1,4 @@
-import "std/dyn" as dyn;
-export def answer: Option(Dyn) = dyn.get_variant_payload(dyn.pack(Option(Int).type, Some(42)), 0);
-def invalid: Dyn = dyn.get_field_value(dyn.pack(Int.type, 42), 0);
-def negative: Option(Dyn) = dyn.get_variant_payload(dyn.pack(Option(Int).type, Some(42)), -1);
+use std::dyn as dyn;
+pub def answer: Option(Dyn) = dyn::get_variant_payload(dyn::pack(Option(Int).type, Some(42)), 0);
+def invalid: Dyn = dyn::get_field_value(dyn::pack(Int.type, 42), 0);
+def negative: Option(Dyn) = dyn::get_variant_payload(dyn::pack(Option(Int).type, Some(42)), -1);

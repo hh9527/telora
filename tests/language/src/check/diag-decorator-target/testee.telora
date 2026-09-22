@@ -1,2 +1,2 @@
 @f def value = 1;
-export {value};
+pub use self::{value};

@@ -1,13 +1,12 @@
-import "@src/eval/properties/model" as model;
-import "std/fmt" as fmt;
-import "std/type-property" as props;
-import "std/type-property" {FieldPropertyCtx, VariantPropertyCtx};
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::fmt as fmt;
+use std::type_property as props;
+use std::type_property::{FieldPropertyCtx, VariantPropertyCtx};
+use std::test as test;
+use crate::test_support::{expect};
 
-@property(PropertyTarget.Field)
+@property(PropertyTarget::Field)
 type Count = struct {value: Int};
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type Total = struct {value: Int};
 
 def count: Fn(Int) -> Fn(FieldPropertyCtx, Option(Count)) -> Count = fn(value) {
@@ -19,7 +18,7 @@ def count: Fn(Int) -> Fn(FieldPropertyCtx, Option(Count)) -> Count = fn(value) {
 };
 
 def total: Fn(Type, Option(Total)) -> Total = fn(target, previous) {
-    let count_value = match props.get_field_prop(target, 0, (Count).type) {
+    let count_value = match props::get_field_prop(target, 0, (Count).type) {
         Some(item) => item.value,
         None => 0,
     };
@@ -34,9 +33,9 @@ type User = struct {
     name: String,
 };
 
-@property(PropertyTarget.Type)
-@property(PropertyTarget.Field)
-@property(PropertyTarget.Variant)
+@property(PropertyTarget::Type)
+@property(PropertyTarget::Field)
+@property(PropertyTarget::Variant)
 type Mark = struct {value: Int};
 
 def type_mark: Fn(Int) -> Fn(Type, Option(Mark)) -> Mark = fn(value) {
@@ -62,28 +61,28 @@ def variant_mark: Fn(VariantPropertyCtx, Option(Mark)) -> Mark = fn(ctx, previou
 type Marked = struct {@field_mark name: String};
 type Choice = enum {@variant_mark Some(Int), None};
 
-def accepts: for(T: Property(fmt.DisplayBy)) Fn(TypeOf(T)) -> Bool = fn(target) {
+def accepts: for(T: Property(fmt::DisplayBy)) Fn(TypeOf(T)) -> Bool = fn(target) {
     True
 };
 
-export def verified_case: test.Test = test.should_ok(fn() {
-    let endpoint: model.Endpoint = {host: "localhost", port: 8080};
-    let verified = match props.get_field_prop((User).type, 0, (Count).type) {
+pub def verified_case: test::Test = test::should_ok(fn() {
+    let endpoint: model::Endpoint = {host: "localhost", port: 8080};
+    let verified = match props::get_field_prop((User).type, 0, (Count).type) {
         Some(item) => item.value == 5,
         None => False,
-    } && match props.get_type_prop((User).type, (Total).type) {
+    } && match props::get_type_prop((User).type, (Total).type) {
         Some(item) => item.value == 5,
         None => False,
-    } && match props.get_type_prop((Marked).type, (Mark).type) {
+    } && match props::get_type_prop((Marked).type, (Mark).type) {
         Some(item) => item.value == 42,
         None => False,
-    } && match props.get_field_prop((Marked).type, 0, (Mark).type) {
+    } && match props::get_field_prop((Marked).type, 0, (Mark).type) {
         Some(item) => item.value == 10,
         None => False,
-    } && match props.get_variant_prop((Choice).type, 1, (Mark).type) {
+    } && match props::get_variant_prop((Choice).type, 1, (Mark).type) {
         Some(item) => item.value == 21,
         None => False,
-    } && accepts((model.Endpoint).type)
-        && fmt.render(fmt.Display.display(endpoint)) == "localhost:8080";
+    } && accepts(model::Endpoint.type)
+        && fmt::render(fmt::Display::display(endpoint)) == "localhost:8080";
     expect(verified)
 });

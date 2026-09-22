@@ -1,1 +1,1 @@
-export def invalid = { let (left, right) = (1,); left };
+pub def invalid = { let (left, right) = (1,); left };

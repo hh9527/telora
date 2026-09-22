@@ -1,2 +1,2 @@
 type Invalid = Tuple(Int, String);
-export {Invalid};
+pub use self::{Invalid};

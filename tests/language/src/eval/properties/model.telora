@@ -1,6 +1,6 @@
-import "std/fmt" as fmt;
+use std::fmt as fmt;
 
-@fmt.display_by("{host}:{port}")
+@fmt::display_by("{host}:{port}")
 type Endpoint = struct {host: String, port: Int};
 
-export {Endpoint};
+pub use self::{Endpoint};

@@ -48,7 +48,7 @@ def payload: Fn(Dyn) -> Result(Option(Dyn), AccessError) = fn(value) {
 native get_field_value: Fn(Dyn, Int) -> Dyn;
 native get_variant_index: Fn(Dyn) -> Int;
 native get_variant_payload: Fn(Dyn, Int) -> Option(Dyn);
-export {
+pub use self::{
     Dyn,
     AccessError,
     ValueKind,

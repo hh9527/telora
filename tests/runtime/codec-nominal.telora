@@ -1,4 +1,4 @@
-import "std/codec" {decode, encode, Decode, Value};
+use std::codec::{decode, encode, Decode, Value};
 
 type Wrapped(T) = struct(T);
 type Rec = struct {a: Int, note: Option(String)};
@@ -13,14 +13,14 @@ def read: for(T: Decode) Fn(Value) -> T = fn(input) {
     }
 };
 
-export def answer: Value = encode((
-    read@[Wrapped(Int)](Value.Int(42)),
-    read@[Rec](Value.Object({a: Value.Int(1)})),
-    read@[Choice](Value.String("Empty")),
-    read@[Choice](Value.Object({Payload: Value.Int(2)})),
-    read@[Node](Value.Object({
-        value: Value.Int(3),
-        children: Value.Array([Value.Object({value: Value.Int(4), children: Value.Array([])})]),
+pub def answer: Value = encode((
+    read@[Wrapped(Int)](Value::Int(42)),
+    read@[Rec](Value::Object({a: Value::Int(1)})),
+    read@[Choice](Value::String("Empty")),
+    read@[Choice](Value::Object({Payload: Value::Int(2)})),
+    read@[Node](Value::Object({
+        value: Value::Int(3),
+        children: Value::Array([Value::Object({value: Value::Int(4), children: Value::Array([])})]),
     })),
-    read@[Temporal](Value.LocalDate("2026-09-12")),
+    read@[Temporal](Value::LocalDate("2026-09-12")),
 ));

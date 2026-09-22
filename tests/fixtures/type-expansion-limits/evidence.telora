@@ -1,4 +1,4 @@
-import "./provider" { wrap };
-export def first: String = wrap(7);
-export def second: String = wrap("text");
-export def repeated: String = wrap(8);
+use self::provider::{ wrap };
+pub def first: String = wrap(7);
+pub def second: String = wrap("text");
+pub def repeated: String = wrap(8);

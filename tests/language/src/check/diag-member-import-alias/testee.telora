@@ -1,4 +1,4 @@
 type A = enum { Item(Int) };
 def alias = (A).type;
-import alias.{Item};
-export def value = Item(1);
+use alias::{Item};
+pub def value = Item(1);

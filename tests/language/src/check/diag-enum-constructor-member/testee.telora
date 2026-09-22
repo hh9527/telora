@@ -1,2 +1,2 @@
 type Event = enum { Progress(Int), Finished };
-export def invalid = Event.Missing;
+pub def invalid = Event::Missing;

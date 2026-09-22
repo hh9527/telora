@@ -1,2 +1,2 @@
-export def value: Int = 1;
-export {value};
+pub def value: Int = 1;
+pub use self::{value};

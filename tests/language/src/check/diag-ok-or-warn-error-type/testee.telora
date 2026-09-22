@@ -1,2 +1,2 @@
 def value: Result(Int, Int) = Err(42);
-export def invalid = value.ok_or_warn!();
+pub def invalid = value.ok_or_warn!();

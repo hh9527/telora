@@ -8,4 +8,4 @@
 type Positive = struct {number: Int};
 
 def number: Int = -7;
-export def answer: Int = do { let value: Positive = {number}; value.number };
+pub def answer: Int = do { let value: Positive = {number}; value.number };

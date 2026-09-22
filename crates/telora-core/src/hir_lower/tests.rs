@@ -182,6 +182,46 @@ fn builtin_modules_lower_without_an_owned_ast() {
                 .into_iter()
                 .map(|error| format!("{name}: {error:?}")),
         );
+        failures.extend(mir.hir.iter().filter_map(|node| {
+            matches!(node.kind, HirKind::Missing).then(|| {
+                format!(
+                    "{name}: lowering produced Missing for {:?}",
+                    mir.sources.get(node.location.source).slice(node.location)
+                )
+            })
+        }));
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn qualified_trait_bounds_lower_as_static_identity_paths() {
+    let text = "use std::codec as codec; def decode: for(A: codec::Decode) Fn(A) -> A = fn(value) { value };";
+    let mut mir = Mir::default();
+    let source = mir.sources.add("test", text);
+    let parsed = crate::syntax::telora::parse_document(
+        source,
+        mir.sources
+            .get(source)
+            .text()
+            .document()
+            .expect("code source"),
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    mir.modules.push(Module {
+        native: None,
+        name: "test".into(),
+        kind: ModuleKind::Source,
+        state: ModuleState::Unloaded,
+        imports: vec![],
+    });
+    let lowered = lower_module(&mut mir, ModuleId(0), source, &parsed.syntax);
+    assert!(lowered.diagnostics.is_empty(), "{:?}", lowered.diagnostics);
+    assert!(
+        mir.hir
+            .iter()
+            .all(|node| !matches!(node.kind, HirKind::Missing)),
+        "{}",
+        mir.dump()
+    );
 }

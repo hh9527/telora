@@ -1,3 +1,3 @@
 type Source = struct {x: Int};
 def source: Source = {x: 1};
-export def result = source.{x};
+pub def result = source.{x};

@@ -1,1 +1,1 @@
-export def MainService: Int = 42;
+pub def MainService: Int = 42;

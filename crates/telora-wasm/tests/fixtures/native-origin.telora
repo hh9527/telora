@@ -1,2 +1,2 @@
-import "std/string" {length};
-export {length as answer};
+use std::string::{length};
+pub use self::{length as answer};

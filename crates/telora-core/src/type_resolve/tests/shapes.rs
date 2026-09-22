@@ -4,7 +4,7 @@ use super::*;
 fn seal_rejects_record_nodes_with_non_record_skeletons() {
     let mut mir = graph(&[(
         "@src/main",
-        "export def value: Dict(Int) = { item: 42 }; export def scalar: Int = 42;",
+        "pub def value: Dict(Int) = { item: 42 }; pub def scalar: Int = 42;",
     )]);
     resolve(&mut mir);
     mir.seal().unwrap();
@@ -59,7 +59,7 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
             "Struct pattern cannot match Dict",
         ),
     ] {
-        let source = format!("export def read: Fn(Option(Int)) -> Int = fn(value) {{ {body} }};");
+        let source = format!("pub def read: Fn(Option(Int)) -> Int = fn(value) {{ {body} }};");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         assert!(
@@ -76,8 +76,8 @@ fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
 #[test]
 fn static_type_uses_reject_value_metadata_and_ordinary_function_results() {
     for source in [
-        "def metadata: TypeOf(Int) = Int.type; type Invalid = metadata; export def independent: Int = 42;",
-        "def choose: for(A) Fn(A) -> A = fn(value) {value}; type Invalid = choose(Int); export def independent: Int = 42;",
+        "def metadata: TypeOf(Int) = Int.type; type Invalid = metadata; pub def independent: Int = 42;",
+        "def choose: for(A) Fn(A) -> A = fn(value) {value}; type Invalid = choose(Int); pub def independent: Int = 42;",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -97,9 +97,9 @@ fn static_type_uses_reject_value_metadata_and_ordinary_function_results() {
     let mut mir = graph(&[
         (
             "@src/main",
-            "import \"@src/types\" {metadata}; type Invalid = metadata; export def independent: Int = 42;",
+            "use crate::types::{metadata}; type Invalid = metadata; pub def independent: Int = 42;",
         ),
-        ("@src/types", "export def metadata: TypeOf(Int) = Int.type;"),
+        ("@src/types", "pub def metadata: TypeOf(Int) = Int.type;"),
     ]);
     resolve(&mut mir);
     assert!(
@@ -111,9 +111,9 @@ fn static_type_uses_reject_value_metadata_and_ordinary_function_results() {
     let mut mir = graph(&[
         (
             "@src/main",
-            "import \"@src/types\" {Family as Renamed}; type Alias(T) = Renamed(T); export def answer: Alias(Int) = {value: 42};",
+            "use crate::types::{Family as Renamed}; type Alias(T) = Renamed(T); pub def answer: Alias(Int) = {value: 42};",
         ),
-        ("@src/types", "export type Family(T) = struct {value: T};"),
+        ("@src/types", "pub type Family(T) = struct {value: T};"),
     ]);
     resolve(&mut mir);
     mir.seal()
@@ -124,7 +124,7 @@ fn static_type_uses_reject_value_metadata_and_ordinary_function_results() {
 fn newtype_reference_facets_preserve_declarations_and_reject_function_patterns() {
     let mut mir = graph(&[(
         "@src/main",
-        "type Id = struct(Int); def make: Fn(Int) -> Id = Id; export def value: Id = make(42);",
+        "type Id = struct(Int); def make: Fn(Int) -> Id = Id; pub def value: Id = make(42);",
     )]);
     resolve(&mut mir);
     mir.seal()
@@ -152,7 +152,7 @@ fn newtype_reference_facets_preserve_declarations_and_reject_function_patterns()
         "def Make = Id;",
     ] {
         let source = format!(
-            "type Id = struct(Int); {constructor} export def value = do {{ let Make(payload) = Id(42); payload }};"
+            "type Id = struct(Int); {constructor} pub def value = do {{ let Make(payload) = Id(42); payload }};"
         );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
@@ -171,7 +171,7 @@ fn newtype_reference_facets_preserve_declarations_and_reject_function_patterns()
 fn record_construction_uses_whole_graph_context_deterministically() {
     let sources = [(
         "@src/main",
-        "type Item = struct {value: Int}; def item: Item = {value: 42}; export def answer: Bool = do { let raw = {value: 42}; [item] == [{value: 42}] && [raw] != [item] };",
+        "type Item = struct {value: Int}; def item: Item = {value: 42}; pub def answer: Bool = do { let raw = {value: 42}; [item] == [{value: 42}] && [raw] != [item] };",
     )];
     let mut first = graph(&sources);
     resolve(&mut first);
@@ -197,12 +197,12 @@ fn record_construction_uses_whole_graph_context_deterministically() {
 #[test]
 fn metadata_equality_does_not_unify_represented_types_or_narrow_a_join() {
     for source in [
-        "export def answer: Bool = Int.type != String.type;",
-        "export def answer: Bool = do { def chosen = if True { Int.type } else { String.type }; chosen == Int.type };",
-        "type Choice = enum { Selected(Type), Empty }; export def answer: Bool = do { def chosen = match Choice.Selected(Int.type) { Choice.Selected(value) => value, Choice.Empty => String.type }; chosen == Int.type };",
-        "export def answer: Bool = do { def matches = fn(value) { value == Int.type }; matches(String.type) };",
-        "export def answer: Bool = do { def chosen = if True { Int.type } else { Int.type }; chosen == String.type };",
-        "export def answer: Bool = do { def same = fn(left, right) { left == right }; same(1, 1) };",
+        "pub def answer: Bool = Int.type != String.type;",
+        "pub def answer: Bool = do { def chosen = if True { Int.type } else { String.type }; chosen == Int.type };",
+        "type Choice = enum { Selected(Type), Empty }; pub def answer: Bool = do { def chosen = match Choice.Selected(Int.type) { Choice.Selected(value) => value, Choice.Empty => String.type }; chosen == Int.type };",
+        "pub def answer: Bool = do { def matches = fn(value) { value == Int.type }; matches(String.type) };",
+        "pub def answer: Bool = do { def chosen = if True { Int.type } else { Int.type }; chosen == String.type };",
+        "pub def answer: Bool = do { def same = fn(left, right) { left == right }; same(1, 1) };",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -235,10 +235,10 @@ fn metadata_equality_does_not_unify_represented_types_or_narrow_a_join() {
         }
     }
     for source in [
-        "export def answer = Int.type == 1;",
-        "export def answer = 1 == \"1\";",
-        "type A = struct { x: Int }; type B = struct { x: Int }; def a: A = { x: 1 }; def b: B = { x: 1 }; export def answer = a == b;",
-        "export def answer: TypeOf(Int) = if True { Int.type } else { String.type };",
+        "pub def answer = Int.type == 1;",
+        "pub def answer = 1 == \"1\";",
+        "type A = struct { x: Int }; type B = struct { x: Int }; def a: A = { x: 1 }; def b: B = { x: 1 }; pub def answer = a == b;",
+        "pub def answer: TypeOf(Int) = if True { Int.type } else { String.type };",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -271,8 +271,7 @@ fn metadata_joins_preserve_witnesses_or_widen_without_equating_represented_types
             TypeConstructor::Type,
         ),
     ] {
-        let source =
-            format!("export def checked: Bool = do {{ let answer = {expression}; True }};");
+        let source = format!("pub def checked: Bool = do {{ let answer = {expression}; True }};");
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
         mir.seal()
@@ -283,9 +282,9 @@ fn metadata_joins_preserve_witnesses_or_widen_without_equating_represented_types
         assert_eq!(mir.types[ty.index()].constructor, constructor);
     }
     for source in [
-        "export def bad: TypeOf(Int) = if True { Int.type } else { String.type };",
-        "def broad: Type = Int.type; export def bad: TypeOf(Int) = broad;",
-        "export def bad = if True { Int.type } else { 42 };",
+        "pub def bad: TypeOf(Int) = if True { Int.type } else { String.type };",
+        "def broad: Type = Int.type; pub def bad: TypeOf(Int) = broad;",
+        "pub def bad = if True { Int.type } else { 42 };",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -297,11 +296,11 @@ fn metadata_joins_preserve_witnesses_or_widen_without_equating_represented_types
 #[test]
 fn sequence_spreads_reject_wrong_containers_and_conflicting_element_evidence() {
     for source in [
-        "export def bad = [...(1, 2)];",
-        "export def bad = (...[1, 2], 3);",
-        "type Wrapped = struct((Int, String)); export def bad = (...Wrapped((1, \"x\")), 3);",
-        "export def bad = (...(1,), Int);",
-        "def empty = []; def numbers = [...empty, 1]; export def bad = [...empty, \"x\"];",
+        "pub def bad = [...(1, 2)];",
+        "pub def bad = (...[1, 2], 3);",
+        "type Wrapped = struct((Int, String)); pub def bad = (...Wrapped((1, \"x\")), 3);",
+        "pub def bad = (...(1,), Int);",
+        "def empty = []; def numbers = [...empty, 1]; pub def bad = [...empty, \"x\"];",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -314,23 +313,23 @@ fn sequence_spreads_reject_wrong_containers_and_conflicting_element_evidence() {
 fn record_spreads_reject_incompatible_modes_and_duplicate_explicit_fields() {
     for (source, message) in [
         (
-            "type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = base <~ {x: 2, ...base, x: 3};",
+            "type Item = struct {x: Int}; def base: Item = {x: 1}; pub def bad = base <~ {x: 2, ...base, x: 3};",
             "duplicate update field",
         ),
         (
-            "type Item = struct {x: Int}; def base: Item = {x: 1}; def dict: Dict(Int) = {x: 2}; export def bad: Item = {...base, ...dict};",
+            "type Item = struct {x: Int}; def base: Item = {x: 1}; def dict: Dict(Int) = {x: 2}; pub def bad: Item = {...base, ...dict};",
             "cannot mix Dict and named struct spreads",
         ),
         (
-            "type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = {...base};",
+            "type Item = struct {x: Int}; def base: Item = {x: 1}; pub def bad = {...base};",
             "record spread requires a named struct target context",
         ),
         (
-            "def base: Dict(Int) = {x: 1}; export def bad = {...base, y: \"wrong\"};",
+            "def base: Dict(Int) = {x: 1}; pub def bad = {...base, y: \"wrong\"};",
             "type mismatch",
         ),
         (
-            "type Item = struct {x: Int}; def base: Item = {x: 1}; export def bad = base <~ {extra: 1, ...base};",
+            "type Item = struct {x: Int}; def base: Item = {x: 1}; pub def bad = base <~ {extra: 1, ...base};",
             "unknown struct update field",
         ),
     ] {
@@ -349,31 +348,31 @@ fn record_spreads_reject_incompatible_modes_and_duplicate_explicit_fields() {
 fn record_operations_reject_invalid_shapes_without_runtime_inference() {
     for (source, message) in [
         (
-            "type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source.{x};",
+            "type Foo = struct {x: Int}; def source: Foo = {x: 1}; pub def bad = source.{x};",
             "field projection requires a named struct target context",
         ),
         (
-            "type Foo = struct {x: Int}; def source: Dict(Int) = {x: 1}; export def bad: Foo = source.{x};",
+            "type Foo = struct {x: Int}; def source: Dict(Int) = {x: 1}; pub def bad: Foo = source.{x};",
             "field projection requires a named struct source",
         ),
         (
-            "type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad: Foo = source.{missing as x};",
+            "type Foo = struct {x: Int}; def source: Foo = {x: 1}; pub def bad: Foo = source.{missing as x};",
             "unknown projection source field",
         ),
         (
-            "type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad: Foo = source.{x, x};",
+            "type Foo = struct {x: Int}; def source: Foo = {x: 1}; pub def bad: Foo = source.{x, x};",
             "duplicate projection destination",
         ),
         (
-            "type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source <~ {missing: 1};",
+            "type Foo = struct {x: Int}; def source: Foo = {x: 1}; pub def bad = source <~ {missing: 1};",
             "unknown struct update field",
         ),
         (
-            "type Foo = struct {x: Int}; def source: Foo = {x: 1}; export def bad = source <~ {x: \"wrong\"};",
+            "type Foo = struct {x: Int}; def source: Foo = {x: 1}; pub def bad = source <~ {x: \"wrong\"};",
             "type mismatch",
         ),
         (
-            "def source: Dict(Int) = {x: 1}; export def bad = source <~ {x: 2};",
+            "def source: Dict(Int) = {x: 1}; pub def bad = source <~ {x: 2};",
             "struct update requires a named struct operand",
         ),
     ] {
@@ -391,9 +390,9 @@ fn record_operations_reject_invalid_shapes_without_runtime_inference() {
 #[test]
 fn positional_projection_requires_a_tuple_or_the_single_newtype_payload() {
     for source in [
-        "type Count = struct(Int); export def invalid = Count(42).1;",
-        "type Record = struct {value: Int}; def value: Record = {value: 42}; export def invalid = value.0;",
-        "type Choice = enum {Item(Int)}; export def invalid = Choice.Item(42).0;",
+        "type Count = struct(Int); pub def invalid = Count(42).1;",
+        "type Record = struct {value: Int}; def value: Record = {value: 42}; pub def invalid = value.0;",
+        "type Choice = enum {Item(Int)}; pub def invalid = Choice.Item(42).0;",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -415,8 +414,8 @@ fn tuple_completion_normalizes_literal_slots_without_erasing_source_identity() {
         r#"
         type Point = struct {x: Int};
         def candidate: Unchecked(Point) = {x: 42};
-        export def pair: (Point, Int) = (candidate, 0);
-        export def checked: Bool = do { let inferred = (1, "ok"); True };
+        pub def pair: (Point, Int) = (candidate, 0);
+        pub def checked: Bool = do { let inferred = (1, "ok"); True };
     "#,
     )]);
     resolve(&mut mir);
@@ -450,7 +449,7 @@ fn function_tuple_and_unit_type_syntax_are_static_ir_operations() {
         "@src/main",
         r#"
         def pair: Fn(Int, String) -> (Int, String) = fn(x, y) { (x, y) };
-        export def answer: (Int, String) = pair(1, "ok"); export def unit: () = ();
+        pub def answer: (Int, String) = pair(1, "ok"); pub def unit: () = ();
     "#,
     )]);
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);

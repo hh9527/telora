@@ -59,12 +59,12 @@ async fn configured_workspace_rebuild_uses_the_locked_package_graph() {
     let main = app.join("src/main.telora");
     std::fs::write(
         &main,
-        "import \"dependency/lib\" {answer}; export def value: Int = answer;",
+        "use dependency::lib::{answer}; pub def value: Int = answer;",
     )
     .expect("write app module");
     std::fs::write(
         dependency.join("src/lib.telora"),
-        "export def answer: Int = 42;",
+        "pub def answer: Int = 42;",
     )
     .expect("write dependency module");
     std::fs::write(
@@ -74,14 +74,15 @@ async fn configured_workspace_rebuild_uses_the_locked_package_graph() {
     .expect("write workspace config");
     std::fs::write(
         app.join("telora-crate.json"),
-        r#"{"name":"app","modules":["@src/main"],"dependencies":["dependency"]}"#,
+        r#"{"name":"app","dependencies":["dependency"]}"#,
     )
     .expect("write app manifest");
     std::fs::write(
         dependency.join("telora-crate.json"),
-        r#"{"name":"dependency","modules":["@src/lib"],"dependencies":[]}"#,
+        r#"{"name":"dependency","dependencies":[]}"#,
     )
     .expect("write dependency manifest");
+    std::fs::write(app.join("src/lib.telora"), "pub mod main;").expect("write app crate root");
     let spec = telora_core::WorkspaceSpec::discover(&app).expect("discover workspace");
     let lock = spec
         .generate_lock(&std::collections::BTreeMap::new())
@@ -440,7 +441,8 @@ async fn hover_definition_and_references_use_the_published_snapshot() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn hover_reports_an_ordinary_expression_type() {
-    let (_, state, uri) = semantic_fixture("let count = 1 + 2;\nexport { count as output };").await;
+    let (_, state, uri) =
+        semantic_fixture("let count = 1 + 2;\npub use self::{ count as output };").await;
     let hover: Option<lsp::Hover> = serde_json::from_value(
         dispatch_request(
             state,
@@ -466,7 +468,7 @@ async fn hover_reports_an_ordinary_expression_type() {
 #[tokio::test(flavor = "current_thread")]
 async fn language_server_solves_types_without_evaluating_user_initializers() {
     let (_, state, uri) = semantic_fixture(
-            "def crash: Int = panic!(\"LSP must never execute\");\nexport def output: Int = crash + 1 / 0;"
+            "def crash: Int = panic!(\"LSP must never execute\");\npub def output: Int = crash + 1 / 0;"
         ).await;
     let snapshot = state
         .borrow()
@@ -503,7 +505,7 @@ async fn language_server_solves_types_without_evaluating_user_initializers() {
 #[tokio::test(flavor = "current_thread")]
 async fn hover_preserves_the_local_function_principal_signature() {
     let (_, state, uri) = semantic_fixture(
-        "export def output: Int = do { let identity = fn(value) { value };\nidentity(1) };",
+        "pub def output: Int = do { let identity = fn(value) { value };\nidentity(1) };",
     )
     .await;
     let hover: Option<lsp::Hover> = serde_json::from_value(
@@ -538,10 +540,10 @@ async fn hover_preserves_static_trait_constraints() {
 trait Display { display: Fn(Self) -> String };
 impl Marker for Int { mark: fn(value) { value } };
 impl(T: Marker) Display for T { display: fn(value) { `int=\{Marker.mark(value)}` } };
-export def render: for(T: Display) Fn(T) -> String = fn(value) {
+pub def render: for(T: Display) Fn(T) -> String = fn(value) {
     Display.display(value)
 };
-export def output: String = render(1);"#;
+pub def output: String = render(1);"#;
     let (_, state, uri) = semantic_fixture(source).await;
     let hover: Option<lsp::Hover> = serde_json::from_value(
         dispatch_request(
@@ -617,7 +619,7 @@ async fn protocol_encodings_map_unicode_and_crlf_to_the_same_bytes() {
 async fn lsp_completion_maps_struct_fields_and_utf16_text_edits() {
     let source =
         "let face = \"😀\"; let value = {alpha: 1, beta: \"x\"}; let selected = value.alpha";
-    let module_source = format!("{source}; export {{ selected as output }};");
+    let module_source = format!("{source}; pub use self::{{ selected as output }};");
     let (_, state, uri) = disk_semantic_fixture(&module_source).await;
     let document = state
         .borrow()
@@ -668,11 +670,15 @@ async fn lsp_completion_maps_module_exports() {
     let main = root.join("src/main.telora");
     std::fs::write(
         &model,
-        "export def alpha: Int = 1; export def beta: String = \"x\";",
+        "pub def alpha: Int = 1; pub def beta: String = \"x\";",
     )
     .expect("write model");
-    let source = "import \"./model\" as model; model.alpha";
-    std::fs::write(&main, format!("{source}; export {{ model as output }};")).expect("write main");
+    let source = "use crate::model as model; model.alpha";
+    std::fs::write(
+        &main,
+        format!("{source}; pub use self::{{ model as output }};"),
+    )
+    .expect("write main");
     initialize_state(&root, &state);
     let workspace = Rc::new(Workspace::new(&main).expect("create document workspace"));
     let context = workspace.context();
@@ -693,11 +699,15 @@ async fn lsp_completion_supports_an_empty_prefix_in_recovered_source() {
     let main = root.join("src/main.telora");
     std::fs::write(
         &model,
-        "export def alpha: Int = 1; export def beta: String = \"x\";",
+        "pub def alpha: Int = 1; pub def beta: String = \"x\";",
     )
     .expect("write model");
-    let source = "import \"./model\" as model; model.";
-    std::fs::write(&main, format!("{source}\nexport {{ model as output }};")).expect("write main");
+    let source = "use crate::model as model; model.";
+    std::fs::write(
+        &main,
+        format!("{source}\npub use self::{{ model as output }};"),
+    )
+    .expect("write main");
     initialize_state(&root, &state);
     let workspace = Rc::new(Workspace::new(&main).expect("create document workspace"));
     let context = workspace.context();
@@ -820,7 +830,7 @@ async fn diagnostics_publish_current_errors_and_an_empty_clear() {
         .open(
             &path,
             DocumentVersion(1),
-            "def first: Int = \"wrong\"; def second: Bool = 2; export def output: Int = 0;",
+            "def first: Int = \"wrong\"; def second: Bool = 2; pub def output: Int = 0;",
         )
         .expect("open invalid source");
     {
@@ -846,7 +856,7 @@ async fn diagnostics_publish_current_errors_and_an_empty_clear() {
             &path,
             DocumentVersion(1),
             DocumentVersion(2),
-            &[TextEdit::Full("export def output: Int = 1;".to_owned())],
+            &[TextEdit::Full("pub def output: Int = 1;".to_owned())],
         )
         .expect("fix source");
     state.borrow_mut().documents.insert(path, 2);

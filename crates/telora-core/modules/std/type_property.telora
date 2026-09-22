@@ -19,7 +19,7 @@ native evidence: for(P, T: Property(P)) Fn(TypeOf(T), TypeOf(P)) -> P;
 native required: for(P, T: Property(P)) Fn() -> P;
 native optional: for(P, T: ?Property(P)) Fn() -> Option(P);
 
-export {
+pub use self::{
     FieldPropertyCtx,
     VariantPropertyCtx,
     get_type_prop,

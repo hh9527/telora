@@ -3,7 +3,7 @@ trait Show { show: Fn(Self) -> String };
 impl(T) Show for Box(T) {
     show: fn(value) {
         let next: Box(Array(T)) = { item: [value.item] };
-        Show.show(next)
+        Show::show(next)
     },
 };
-export def entry: Fn(Box(Int)) -> String = fn(value: Box(Int)) { Show.show(value) };
+pub def entry: Fn(Box(Int)) -> String = fn(value: Box(Int)) { Show::show(value) };

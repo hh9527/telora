@@ -102,7 +102,7 @@ fn source_indexes_preserve_original_eol_byte_ranges() {
 
 #[test]
 fn diagnostics_are_equivalent_across_line_endings() {
-    let source = "# comment\nexport def answer: Fn() -> Never = fn() {\n    let value = dbg!((\n        42\n    ));\n    fail!(\"same failure\", value)\n};\n";
+    let source = "# comment\npub def answer: Fn() -> Never = fn() {\n    let value = dbg!((\n        42\n    ));\n    fail!(\"same failure\", value)\n};\n";
     let mut expected = None;
     for eol in ["\n", "\r\n", "\r"] {
         let text = source.replace('\n', eol);
@@ -150,7 +150,7 @@ fn multiline_string_values_ignore_source_eol() {
 #[test]
 fn runtime_diagnostics_preserve_high_line_bits() {
     let source = format!(
-        "{}export def answer: Fn() -> Never = fn() {{ fail!(\"high line\", 42) }};",
+        "{}pub def answer: Fn() -> Never = fn() {{ fail!(\"high line\", 42) }};",
         "\n".repeat(70_000)
     );
     let bytes = compile(&source).unwrap();
@@ -720,7 +720,7 @@ fn function_dependency_roots_use_planned_demand_indices() {
     let mir = graph(
         r#"
         def base: String = "kept";
-        export def answer: Fn() -> String = fn() { base };
+        pub def answer: Fn() -> String = fn() { base };
     "#,
     );
     let export = mir
@@ -811,7 +811,7 @@ fn persistent_source_positions_and_terminal_initialization_failure() {
 
 #[test]
 fn failed_demands_keep_failure_identity_instead_of_running_state() {
-    let mir = graph("def broken: Int = 1 / 0; export def answer: Int = broken;");
+    let mir = graph("def broken: Int = 1 / 0; pub def answer: Int = broken;");
     let export = mir
         .exports
         .iter()
@@ -845,7 +845,7 @@ fn failed_demands_keep_failure_identity_instead_of_running_state() {
 #[test]
 fn interpreter_fuel_is_shared_across_initialization_calls() {
     let bytes =
-        compile("def loop: Fn(Int) -> Int = fn(n: Int) -> Int { loop(n + 1) }; export def answer: Int = loop(0);")
+        compile("def loop: Fn(Int) -> Int = fn(n: Int) -> Int { loop(n + 1) }; pub def answer: Int = loop(0);")
             .unwrap();
     let mut session = crate::session::Session::load(&bytes, 100_000).unwrap();
     // Startup work may change; this test constrains the initialization loop.
@@ -863,8 +863,8 @@ fn interpreter_fuel_is_shared_across_initialization_calls() {
 #[test]
 fn sealed_export_runs_without_mir_or_host_imports() {
     // compile() drops the entire source/MIR before the engine sees the bytes.
-    let bytes = compile("export def answer: Int = 42;").unwrap();
-    assert_eq!(bytes, compile("export def answer: Int = 42;").unwrap());
+    let bytes = compile("pub def answer: Int = 42;").unwrap();
+    assert_eq!(bytes, compile("pub def answer: Int = 42;").unwrap());
     assert!(
         bytes
             .windows(b"|owner=answer|role=demand|hir=".len())

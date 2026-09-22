@@ -1,42 +1,42 @@
-import "std/type-desc" as td;
-import "std/dyn" as dyn;
-import "std/_rt" as rt;
+use std::type_desc as td;
+use std::dyn as dyn;
+use std::_rt as rt;
 
 type Item = struct { value: Int };
 def item: Item = { value: 42 };
-def packed: Dyn = dyn.pack(Item.type, item);
+def packed: Dyn = dyn::pack(Item.type, item);
 
-export def answer: Fn() -> (String, String, String, String, String, String, rt.Diagnostic, String, String, String, String, rt.Diagnostic, rt.Diagnostic, rt.Diagnostic, rt.Diagnostic, rt.Diagnostic) = fn() {
-    let fields = rt.with_diagnostics(fn(value: Type) { td.fields(value) })(Int.type);
-    let variants = rt.with_diagnostics(fn(value: Type) { td.variants(value) })(String.type);
-    let invalid = rt.with_diagnostics(fn(value: Dyn) { dyn.get_field_value(value, 0) })(dyn.pack(Int.type, 1));
-    let negative = rt.with_diagnostics(fn(index: Int) { dyn.get_field_value(packed, index) })(-1);
-    let large = rt.with_diagnostics(fn(index: Int) { dyn.get_field_value(packed, index) })(4294967296);
-    let absent = rt.with_diagnostics(fn(index: Int) { dyn.get_field_value(packed, index) })(1);
-    let value = match dyn.project_with(Int.type, dyn.get_field_value(packed, 0)) {
+pub def answer: Fn() -> (String, String, String, String, String, String, rt::Diagnostic, String, String, String, String, rt::Diagnostic, rt::Diagnostic, rt::Diagnostic, rt::Diagnostic, rt::Diagnostic) = fn() {
+    let fields = rt::with_diagnostics(fn(value: Type) { td::fields(value) })(Int.type);
+    let variants = rt::with_diagnostics(fn(value: Type) { td::variants(value) })(String.type);
+    let invalid = rt::with_diagnostics(fn(value: Dyn) { dyn::get_field_value(value, 0) })(dyn::pack(Int.type, 1));
+    let negative = rt::with_diagnostics(fn(index: Int) { dyn::get_field_value(packed, index) })(-1);
+    let large = rt::with_diagnostics(fn(index: Int) { dyn::get_field_value(packed, index) })(4294967296);
+    let absent = rt::with_diagnostics(fn(index: Int) { dyn::get_field_value(packed, index) })(1);
+    let value = match dyn::project_with(Int.type, dyn::get_field_value(packed, 0)) {
         Some(value) => value, None => fail!("field projection failed"),
     };
-    let origin = rt.with_diagnostics(fn(value: Int) { fail!("origin", value) })(value);
-    let wrong_variant = rt.with_diagnostics(fn(value: Dyn) { dyn.get_variant_payload(value, 0) })(dyn.pack(Bool.type, True));
-    let not_enum = rt.with_diagnostics(fn(value: Dyn) { dyn.get_variant_index(value) })(packed);
-    let negative_variant = rt.with_diagnostics(fn(index: Int) { dyn.get_variant_payload(dyn.pack(Bool.type, True), index) })(-1);
-    let large_variant = rt.with_diagnostics(fn(index: Int) { dyn.get_variant_payload(dyn.pack(Bool.type, True), index) })(4294967296);
+    let origin = rt::with_diagnostics(fn(value: Int) { fail!("origin", value) })(value);
+    let wrong_variant = rt::with_diagnostics(fn(value: Dyn) { dyn::get_variant_payload(value, 0) })(dyn::pack(Bool.type, True));
+    let not_enum = rt::with_diagnostics(fn(value: Dyn) { dyn::get_variant_index(value) })(packed);
+    let negative_variant = rt::with_diagnostics(fn(index: Int) { dyn::get_variant_payload(dyn::pack(Bool.type, True), index) })(-1);
+    let large_variant = rt::with_diagnostics(fn(index: Int) { dyn::get_variant_payload(dyn::pack(Bool.type, True), index) })(4294967296);
     let scalar: Option(Int) = Some(12345);
-    let scalar = match dyn.get_variant_payload(dyn.pack(Option(Int).type, scalar), 1) {
-        Some(value) => match dyn.project_with(Int.type, value) { Some(value) => value, None => fail!("wrong payload type") },
+    let scalar = match dyn::get_variant_payload(dyn::pack(Option(Int).type, scalar), 1) {
+        Some(value) => match dyn::project_with(Int.type, value) { Some(value) => value, None => fail!("wrong payload type") },
         None => fail!("missing payload"),
     };
-    let payload_origin = rt.with_diagnostics(fn(value: Int) { fail!("payload origin", value) })(scalar);
-    let array_children = match dyn.array_items(dyn.pack(Array(Int).type, [23456])) { Ok(values) => values, Err(_) => fail!("array observation") };
-    let tuple_children = match dyn.tuple_items(dyn.pack((Int, String).type, (34567, "value"))) { Ok(values) => values, Err(_) => fail!("tuple observation") };
+    let payload_origin = rt::with_diagnostics(fn(value: Int) { fail!("payload origin", value) })(scalar);
+    let array_children = match dyn::array_items(dyn::pack(Array(Int).type, [23456])) { Ok(values) => values, Err(_) => fail!("array observation") };
+    let tuple_children = match dyn::tuple_items(dyn::pack((Int, String).type, (34567, "value"))) { Ok(values) => values, Err(_) => fail!("tuple observation") };
     let observe_origin = fn(value: Dyn) {
-        let value = match dyn.project_with(Int.type, value) { Some(value) => value, None => fail!("projection") };
-        match rt.with_diagnostics(fn(value: Int) { fail!("element origin", value) })(value) {
+        let value = match dyn::project_with(Int.type, value) { Some(value) => value, None => fail!("projection") };
+        match rt::with_diagnostics(fn(value: Int) { fail!("element origin", value) })(value) {
             Err(reports) => reports[0], Ok(_) => fail!("missing element diagnostic"),
         }
     };
-    let named = match dyn.field(packed, "value") { Ok(value) => value, Err(_) => fail!("named field") };
-    let named_fields = match dyn.fields(packed) { Ok(values) => values, Err(_) => fail!("named fields") };
+    let named = match dyn::field(packed, "value") { Ok(value) => value, Err(_) => fail!("named field") };
+    let named_fields = match dyn::fields(packed) { Ok(values) => values, Err(_) => fail!("named fields") };
     (match fields { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match variants { Err(reports) => reports[0].message, Ok(_) => "unexpected" },
      match invalid { Err(reports) => reports[0].message, Ok(_) => "unexpected" },

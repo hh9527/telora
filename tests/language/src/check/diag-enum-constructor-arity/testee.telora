@@ -1,2 +1,2 @@
 type Event = enum { Progress(Int), Finished };
-export def invalid = Event.Progress(1, 2);
+pub def invalid = Event::Progress(1, 2);

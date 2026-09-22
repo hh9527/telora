@@ -1,32 +1,32 @@
-import "std/codec" as codec;
-import "std/value" { Value };
-import "std/dict" as dict;
-import "std/array" as array;
-export def inspect: Fn() -> Array(Bool) = fn() {
-    let existing = Value.String("same");
+use std::codec as codec;
+use std::value::{ Value };
+use std::dict as dict;
+use std::array as array;
+pub def inspect: Fn() -> Array(Bool) = fn() {
+    let existing = Value::String("same");
     let absent: Option(Int) = None;
     let impossible: Option(Never) = None;
     let nested: Option(Option(String)) = Some(Some("nested"));
     let empty: Array(Never) = [];
     let dictionary: Dict(Int) = { z: 2, a: 1 };
-    let no_fields: Dict(Never) = dict.from_pairs([]);
-    [codec.encode(42) == Value.Int(42),
-     codec.encode(1.5) == Value.Float(1.5),
-     codec.encode("中") == Value.String("中"),
-     codec.encode(b"bytes") == Value.Bytes(b"bytes"),
-     codec.encode(True) == Value.True,
-     codec.encode(False) == Value.False,
-     codec.encode(existing) == existing,
-     codec.encode(absent) == Value.None,
-     codec.encode(Some(42)) == Value.Int(42),
-     codec.encode(nested) == Value.String("nested"),
-     codec.encode(impossible) == Value.None,
-     codec.encode([1,2]) == Value.Array([Value.Int(1),Value.Int(2)]),
-     codec.encode([[1],[]]) == Value.Array([Value.Array([Value.Int(1)]),Value.Array([])]),
-     codec.encode(empty) == Value.Array([]),
-     codec.encode(()) == Value.Array([]),
-     codec.encode((42,"x")) == Value.Array([Value.Int(42),Value.String("x")]),
-     codec.encode(dictionary) == Value.Object(dict.from_pairs([("a",Value.Int(1)),("z",Value.Int(2))])),
-     codec.encode(no_fields) == Value.Object(dict.from_pairs([]))]
+    let no_fields: Dict(Never) = dict::from_pairs([]);
+    [codec::encode(42) == Value::Int(42),
+     codec::encode(1.5) == Value::Float(1.5),
+     codec::encode("中") == Value::String("中"),
+     codec::encode(b"bytes") == Value::Bytes(b"bytes"),
+     codec::encode(True) == Value::True,
+     codec::encode(False) == Value::False,
+     codec::encode(existing) == existing,
+     codec::encode(absent) == Value::None,
+     codec::encode(Some(42)) == Value::Int(42),
+     codec::encode(nested) == Value::String("nested"),
+     codec::encode(impossible) == Value::None,
+     codec::encode([1,2]) == Value::Array([Value::Int(1),Value::Int(2)]),
+     codec::encode([[1],[]]) == Value::Array([Value::Array([Value::Int(1)]),Value::Array([])]),
+     codec::encode(empty) == Value::Array([]),
+     codec::encode(()) == Value::Array([]),
+     codec::encode((42,"x")) == Value::Array([Value::Int(42),Value::String("x")]),
+     codec::encode(dictionary) == Value::Object(dict::from_pairs([("a",Value::Int(1)),("z",Value::Int(2))])),
+     codec::encode(no_fields) == Value::Object(dict::from_pairs([]))]
 };
-export def answer: Value = Value.Array(array.map(inspect(), fn(value) { if value { Value.True } else { Value.False } }));
+pub def answer: Value = Value::Array(array::map(inspect(), fn(value) { if value { Value::True } else { Value::False } }));

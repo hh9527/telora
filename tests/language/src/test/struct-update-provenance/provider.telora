@@ -1,6 +1,6 @@
-export type Base = struct {kept: Int, replaced: Int};
-export type Patch = struct {replaced: Int};
-export def base: Base = {kept: 11, replaced: 12};
-export def patch: Patch = {replaced: 21};
-export def replacement: Int = 31;
-export def updated: Base = base <~ {...patch};
+pub type Base = struct {kept: Int, replaced: Int};
+pub type Patch = struct {replaced: Int};
+pub def base: Base = {kept: 11, replaced: 12};
+pub def patch: Patch = {replaced: 21};
+pub def replacement: Int = 31;
+pub def updated: Base = base <~ {...patch};

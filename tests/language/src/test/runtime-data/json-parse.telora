@@ -1,15 +1,15 @@
-import "std/json" as json;
-import "std/value" { Value };
-export def inspect: Fn() -> (String, Bool, Bool, Bool, Bool, Bool) = fn() {
-    let parsed = match json.parse("{\"z\":[],\"a\":[1,1.0,true,null,\"中\",{\"k\":false}]}") {
+use std::json as json;
+use std::value::{ Value };
+pub def inspect: Fn() -> (String, Bool, Bool, Bool, Bool, Bool) = fn() {
+    let parsed = match json::parse("{\"z\":[],\"a\":[1,1.0,true,null,\"中\",{\"k\":false}]}") {
         Ok(value) => value,
         Err(error) => raise!(error),
     };
-    (json.stringify(parsed),
-     match json.parse("9223372036854775808") { Err(_) => True, Ok(_) => False },
-     match json.parse("{\"a\":1,\"a\":2}") { Err(_) => True, Ok(_) => False },
-     match json.parse("[1,]") { Err(_) => True, Ok(_) => False },
-     match json.parse("1.0") { Ok(Value.Float(_)) => True, _ => False },
-     match json.parse("1") { Ok(Value.Int(_)) => True, _ => False })
+    (json::stringify(parsed),
+     match json::parse("9223372036854775808") { Err(_) => True, Ok(_) => False },
+     match json::parse("{\"a\":1,\"a\":2}") { Err(_) => True, Ok(_) => False },
+     match json::parse("[1,]") { Err(_) => True, Ok(_) => False },
+     match json::parse("1.0") { Ok(Value::Float(_)) => True, _ => False },
+     match json::parse("1") { Ok(Value::Int(_)) => True, _ => False })
 };
-export def answer: Value = match json.parse("{\"ok\":true}") { Ok(value) => value, Err(error) => raise!(error) };
+pub def answer: Value = match json::parse("{\"ok\":true}") { Ok(value) => value, Err(error) => raise!(error) };

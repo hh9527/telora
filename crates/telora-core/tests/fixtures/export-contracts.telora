@@ -1,11 +1,11 @@
-export def complete: Int = 42;
-export def identity: for(T) Fn(T) -> T = fn(value) { value };
+pub def complete: Int = 42;
+pub def identity: for(T) Fn(T) -> T = fn(value) { value };
 def private_inferred = identity("healthy");
-export def missing = 42;
-export def alias = complete;
+pub def missing = 42;
+pub def alias = complete;
 decl paired: Fn(Int) -> Int;
 def paired = fn(value) { value };
-export {paired};
+pub use self::{paired};
 def local_inference: Fn() -> String = fn() {
     let local = identity("healthy");
     local

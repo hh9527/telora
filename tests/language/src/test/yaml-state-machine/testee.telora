@@ -1,12 +1,12 @@
-import "std/test" as test;
-import "std/yaml" as yaml;
-import "std/array" as array;
-import "std/string" as string;
-import "std/value" {Value};
-import "@src/test-support" {expect};
-import "./value.yaml" {data};
+use std::test as test;
+use std::yaml as yaml;
+use std::array as array;
+use std::string as string;
+use std::value::{Value};
+use crate::test_support::{expect};
+data data = import(yaml) "./value.yaml";
 
-export def host_and_runtime: test.Test = test.should_ok(fn() {
+pub def host_and_runtime: test::Test = test::should_ok(fn() {
     let text = r#"---
 name: Telora
 enabled: true
@@ -29,21 +29,21 @@ empty:
 quoted: 'it''s # literal'
 "<<": '*value &name'
 "#;
-    let expected = Value.Object({
-        name: Value.String("Telora"), enabled: Value.True,
-        legacy: Value.String("yes"), when: Value.String("2026-08-04"),
-        items: Value.Array([Value.String("one"), Value.Object({name: Value.String("two"), ok: Value.False,
-            nested: Value.Array([Value.Array([Value.Int(1), Value.Int(2)])])})]),
-        literal: Value.String("a\nb"), folded: Value.String("hello world\n"),
-        bytes: Value.Bytes(b"Hi"), empty: Value.None, quoted: Value.String("it's # literal"),
-        "<<": Value.String("*value &name"),
+    let expected = Value::Object({
+        name: Value::String("Telora"), enabled: Value::True,
+        legacy: Value::String("yes"), when: Value::String("2026-08-04"),
+        items: Value::Array([Value::String("one"), Value::Object({name: Value::String("two"), ok: Value::False,
+            nested: Value::Array([Value::Array([Value::Int(1), Value::Int(2)])])})]),
+        literal: Value::String("a\nb"), folded: Value::String("hello world\n"),
+        bytes: Value::Bytes(b"Hi"), empty: Value::None, quoted: Value::String("it's # literal"),
+        "<<": Value::String("*value &name"),
     });
-    expect(data == expected && yaml.parse(text) == Ok(expected)
-        && yaml.parse(string.replace(text, "\n", "\r\n")) == Ok(expected)
-        && yaml.parse(string.replace(text, "\n", "\r")) == Ok(expected))
+    expect(data == expected && yaml::parse(text) == Ok(expected)
+        && yaml::parse(string::replace(text, "\n", "\r\n")) == Ok(expected)
+        && yaml::parse(string::replace(text, "\n", "\r")) == Ok(expected))
 });
 
-export def unsupported_and_invalid: test.Test = test.should_ok(fn() {
+pub def unsupported_and_invalid: test::Test = test::should_ok(fn() {
     let bad = ["&a [1]", "*a", "a: &a 1", "a: *a", "[&a 1]", "[*a]", "{a: &a 1}", "{a: *a}",
         "<<: {a: 1}", "{<<: {a: 1}}", "a:\n  <<: {b: 1}", "[", "{a: [}",
         "a: 1\na: 2", "{a: 1, a: 2}", "{1: a}", "? a: 1", "a: !custom b", "{a: !custom b}",
@@ -51,58 +51,58 @@ export def unsupported_and_invalid: test.Test = test.should_ok(fn() {
         "a: 1.0e9999", "a: 9223372036854775808", "a: !!binary SGk", "a: !!binary SG==",
         "a: !!binary S=AA", "a: !!binary SGk=SGk=", "a: |++\n  x", "a: |22\n  x",
         "a: 'unclosed", r#"a: "\q""#, r#"a: "\uD800""#];
-    expect(array.all(bad, fn(text) {match yaml.parse(text) {Err(_) => True, Ok(_) => False}}))
+    expect(array::all(bad, fn(text) {match yaml::parse(text) {Err(_) => True, Ok(_) => False}}))
 });
 
-export def strings_are_not_references: test.Test = test.should_ok(fn() {
-    expect(yaml.parse(r#"['&a', '*a', '<<', "\" # literal", 'it''s fine'] # &ignored"#)
-        == Ok(Value.Array([Value.String("&a"), Value.String("*a"), Value.String("<<"), Value.String("\" # literal"), Value.String("it's fine")]))
-        && yaml.parse(r#"{"<<": "*a", "&key": "&value", "*key": "*value"}"#)
-        == Ok(Value.Object({"<<": Value.String("*a"), "&key": Value.String("&value"), "*key": Value.String("*value")})))
+pub def strings_are_not_references: test::Test = test::should_ok(fn() {
+    expect(yaml::parse(r#"['&a', '*a', '<<', "\" # literal", 'it''s fine'] # &ignored"#)
+        == Ok(Value::Array([Value::String("&a"), Value::String("*a"), Value::String("<<"), Value::String("\" # literal"), Value::String("it's fine")]))
+        && yaml::parse(r#"{"<<": "*a", "&key": "&value", "*key": "*value"}"#)
+        == Ok(Value::Object({"<<": Value::String("*a"), "&key": Value::String("&value"), "*key": Value::String("*value")})))
 });
 
-export def block_scalars: test.Test = test.should_ok(fn() {
-    expect(yaml.parse("a: |-\n  x\n\n\nb: |\n  y\n\n\nc: |+\n  z\n\n\n")
-        == Ok(Value.Object({a: Value.String("x"), b: Value.String("y\n"), c: Value.String("z\n\n\n")}))
-        && yaml.parse("a: >-\n  x\n  y\n\n  z\nb: |2-\n   indented\n")
-        == Ok(Value.Object({a: Value.String("x y\n\nz"), b: Value.String(" indented")}))
-        && yaml.parse("a: >-\n  x\n    y\n  z\n") == Ok(Value.Object({a: Value.String("x\n  y\nz")})))
+pub def block_scalars: test::Test = test::should_ok(fn() {
+    expect(yaml::parse("a: |-\n  x\n\n\nb: |\n  y\n\n\nc: |+\n  z\n\n\n")
+        == Ok(Value::Object({a: Value::String("x"), b: Value::String("y\n"), c: Value::String("z\n\n\n")}))
+        && yaml::parse("a: >-\n  x\n  y\n\n  z\nb: |2-\n   indented\n")
+        == Ok(Value::Object({a: Value::String("x y\n\nz"), b: Value::String(" indented")}))
+        && yaml::parse("a: >-\n  x\n    y\n  z\n") == Ok(Value::Object({a: Value::String("x\n  y\nz")})))
 });
 
-export def scalars_and_flow: test.Test = test.should_ok(fn() {
-    expect(yaml.parse("[null, ~, TRUE, False, +12, -0x10, 0o17, 1.25, [1,], {a: 2,}, !!binary SGk=]")
-        == Ok(Value.Array([Value.None, Value.None, Value.True, Value.False, Value.Int(12), Value.Int(-16), Value.Int(15),
-            Value.Float(1.25), Value.Array([Value.Int(1)]), Value.Object({a: Value.Int(2)}), Value.Bytes(b"Hi")]))
-        && yaml.parse(r#""\x41\u4e2d\U0001f600""#) == Ok(Value.String("A中😀")))
+pub def scalars_and_flow: test::Test = test::should_ok(fn() {
+    expect(yaml::parse("[null, ~, TRUE, False, +12, -0x10, 0o17, 1.25, [1,], {a: 2,}, !!binary SGk=]")
+        == Ok(Value::Array([Value::None, Value::None, Value::True, Value::False, Value::Int(12), Value::Int(-16), Value::Int(15),
+            Value::Float(1.25), Value::Array([Value::Int(1)]), Value::Object({a: Value::Int(2)}), Value::Bytes(b"Hi")]))
+        && yaml::parse(r#""\x41\u4e2d\U0001f600""#) == Ok(Value::String("A中😀")))
 });
 
-export def quoted_punctuation_and_comments: test.Test = test.should_ok(fn() {
-    expect(yaml.parse(r#"{'a''b: #[]': 'x''y,{}', "c\"d: #[]": "\"\\:#,[]{}"} # ignored"#)
-        == Ok(Value.Object({"a'b: #[]": Value.String("x'y,{}"), "c\"d: #[]": Value.String("\"\\:#,[]{}")}))
-        && yaml.parse("a#b: c#d # ignored\nurl: https://host/path\n")
-        == Ok(Value.Object({"a#b": Value.String("c#d"), url: Value.String("https://host/path")}))
-        && yaml.parse(r#""a\\": 'b''c' # ignored"#) == Ok(Value.Object({"a\\": Value.String("b'c")})))
+pub def quoted_punctuation_and_comments: test::Test = test::should_ok(fn() {
+    expect(yaml::parse(r#"{'a''b: #[]': 'x''y,{}', "c\"d: #[]": "\"\\:#,[]{}"} # ignored"#)
+        == Ok(Value::Object({"a'b: #[]": Value::String("x'y,{}"), "c\"d: #[]": Value::String("\"\\:#,[]{}")}))
+        && yaml::parse("a#b: c#d # ignored\nurl: https://host/path\n")
+        == Ok(Value::Object({"a#b": Value::String("c#d"), url: Value::String("https://host/path")}))
+        && yaml::parse(r#""a\\": 'b''c' # ignored"#) == Ok(Value::Object({"a\\": Value::String("b'c")})))
 });
 
-export def depth_is_a_diagnostic: test.Test = test.should_fail_with(fn() {
+pub def depth_is_a_diagnostic: test::Test = test::should_fail_with(fn() {
     let a = "[[[[[[[[[[[[[[[[";
-    let b = string.join([a, a], "");
-    let c = string.join([b, b], "");
-    let d = string.join([c, c], "");
-    let e = string.join([d, d], "");
-    match yaml.parse(string.join([e, "[0]", string.replace(e, "[", "]")], "")) {Err(error) => raise!(error), Ok(_) => 0}
+    let b = string::join([a, a], "");
+    let c = string::join([b, b], "");
+    let d = string::join([c, c], "");
+    let e = string::join([d, d], "");
+    match yaml::parse(string::join([e, "[0]", string::replace(e, "[", "]")], "")) {Err(error) => raise!(error), Ok(_) => 0}
 }, "depth limit");
 
-export def shared_decoding_and_trimmed_flow: test.Test = test.should_ok(fn() {
-    expect(yaml.parse(r#"{ a : [ 1 , 2.5 , hello , 'world' , "a\nb" , !!binary SGk= ] }"#)
-        == Ok(Value.Object({a: Value.Array([Value.Int(1), Value.Float(2.5), Value.String("hello"),
-            Value.String("world"), Value.String("a\nb"), Value.Bytes(b"Hi")])})))
+pub def shared_decoding_and_trimmed_flow: test::Test = test::should_ok(fn() {
+    expect(yaml::parse(r#"{ a : [ 1 , 2.5 , hello , 'world' , "a\nb" , !!binary SGk= ] }"#)
+        == Ok(Value::Object({a: Value::Array([Value::Int(1), Value::Float(2.5), Value::String("hello"),
+            Value::String("world"), Value::String("a\nb"), Value::Bytes(b"Hi")])})))
 });
 
-export def multiple_semantic_errors: test.Test = test.should_fail_with(fn() {
-    yaml.parse("a: 9223372036854775808\n\"\\u0061\": 1e999\nnested: {x: 0xZZ, 'x': .inf}").unwrap!()
+pub def multiple_semantic_errors: test::Test = test::should_fail_with(fn() {
+    yaml::parse("a: 9223372036854775808\n\"\\u0061\": 1e999\nnested: {x: 0xZZ, 'x': .inf}").unwrap!()
 }, "YAML integer is outside the i64 range\nduplicate YAML key \"a\"\nYAML Float must be finite\ninvalid YAML integer\nduplicate YAML key \"x\"\nYAML Float must be finite");
 
-export def extra_commas_do_not_hide_numeric_errors: test.Test = test.should_fail_with(fn() {
-    yaml.parse("[,1e999,,9223372036854775808]").unwrap!()
+pub def extra_commas_do_not_hide_numeric_errors: test::Test = test::should_fail_with(fn() {
+    yaml::parse("[,1e999,,9223372036854775808]").unwrap!()
 }, "unexpected YAML flow comma\nYAML Float must be finite\nunexpected YAML flow comma\nYAML integer is outside the i64 range");

@@ -1,2 +1,2 @@
 def dyn = {project: fn(value) { value }};
-export def invalid = dyn.project@[Int](1);
+pub def invalid = dyn.project@[Int](1);

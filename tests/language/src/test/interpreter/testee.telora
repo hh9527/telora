@@ -1,10 +1,10 @@
-import "std/dyn" as dyn;
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::dyn as dyn;
+use std::test as test;
+use crate::test_support::{expect};
 
 def int_equal: Fn(Dyn, Dyn) -> Bool = fn(left, right) {
-    match dyn.check_int(left) {
-        Some(left) => match dyn.check_int(right) {
+    match dyn::check_int(left) {
+        Some(left) => match dyn::check_int(right) {
             Some(right) => left == right,
             None => False,
         },
@@ -15,7 +15,7 @@ def int_equal: Fn(Dyn, Dyn) -> Bool = fn(left, right) {
 def equal: for(A) Fn(TypeOf(A)) -> Fn(A, A) -> Bool = interpreter!(int_equal);
 
 def consume_string: Fn(Dyn) -> Bool = fn(value) {
-    match dyn.project_with((String).type, value) {
+    match dyn::project_with((String).type, value) {
         Some(_) => True,
         None => False,
     }
@@ -24,7 +24,7 @@ def consume_string: Fn(Dyn) -> Bool = fn(value) {
 def first: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume_string);
 def second: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume_string);
 
-export def verified_case: test.Test = test.should_ok(fn() {
+pub def verified_case: test::Test = test::should_ok(fn() {
     let first_int = first((Int).type);
     let repeated_int = first((Int).type);
     let first_string = first((String).type);

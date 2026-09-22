@@ -18,7 +18,7 @@ fn graph_order(main: &str, math: &str, order: usize) -> Mir {
             },
         })
         .collect::<Vec<_>>();
-    for name in ["@src/main", "@src/math"] {
+    for name in ["@src/main", "@src/main/math"] {
         inventory.push(crate::module_resolve::ModuleSpec {
             name: name.into(),
             kind: ModuleKind::Source,
@@ -26,6 +26,11 @@ fn graph_order(main: &str, math: &str, order: usize) -> Mir {
             implicit_imports: vec!["std/prelude".into()],
         });
     }
+    let main = if math.is_empty() {
+        main.to_owned()
+    } else {
+        format!("mod math; {main}")
+    };
     if order > 0 {
         inventory.reverse();
         let length = inventory.len();
@@ -33,8 +38,8 @@ fn graph_order(main: &str, math: &str, order: usize) -> Mir {
     }
     let mut mir = crate::module_resolve::resolve(inventory, &["@src/main".into()], |_, name| {
         Ok(if name == "@src/main" {
-            main.into()
-        } else if name == "@src/math" {
+            main.clone()
+        } else if name == "@src/main/math" {
             math.into()
         } else {
             crate::static_sources::BUILTINS
@@ -52,19 +57,19 @@ fn graph_order(main: &str, math: &str, order: usize) -> Mir {
 
 #[test]
 fn sealed_full_build_is_independent_of_inventory_enumeration_order() {
-    let main = "import \"./math\" { identity }; \
-                import \"./math\" { choose }; \
-                import \"std/array\" { map, fold }; \
+    let main = "use self::math::{ identity }; \
+                use self::math::{ choose }; \
+                use std::array::{ map, fold }; \
                 def selected: for(B) Fn(Int, B) -> Int = choose@[Int, _]; \
                 def seed: Int = selected(0, \"seed\"); \
                 def other: Int = selected(0, True); \
-                @property(PropertyTarget.Type) type Mark = struct { value: Int }; \
+                @property(PropertyTarget::Type) type Mark = struct { value: Int }; \
                 def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: seed} }; \
                 @mark \
                 type Tree = enum { Leaf(Int), Branch((Tree, Tree)) }; \
-                export def answer: Int = fold(map([1, 2, 3], fn(x) { identity(x * 7) }), seed + other, fn(a, b) { a + b });";
-    let math = "export def identity: for(T) Fn(T) -> T = fn(x) { x }; \
-                export def choose: for(A, B) Fn(A, B) -> A = fn(a, b) { a };";
+                pub def answer: Int = fold(map([1, 2, 3], fn(x) { identity(x * 7) }), seed + other, fn(a, b) { a + b });";
+    let math = "pub def identity: for(T) Fn(T) -> T = fn(x) { x }; \
+                pub def choose: for(A, B) Fn(A, B) -> A = fn(a, b) { a };";
     let baseline = graph_order(main, math, 0);
     let sealed = baseline.seal().unwrap();
     let expected_image = format!("{:?}", sealed.types());

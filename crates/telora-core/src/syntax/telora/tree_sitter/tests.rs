@@ -231,11 +231,11 @@ fn static_module_syntax_keeps_declarations_paths_and_data_imports_distinct() {
         }
     }
     assert_eq!(counts.get("module_declaration"), Some(&1));
-    assert_eq!(counts.get("use_binding"), Some(&2));
+    assert_eq!(counts.get("use_binding"), Some(&3));
     assert_eq!(counts.get("use_selector"), Some(&1));
     assert_eq!(counts.get("data_binding"), Some(&2));
     assert_eq!(counts.get("data_import"), Some(&2));
-    assert_eq!(counts.get("data_format"), Some(&1));
+    assert_eq!(counts.get("data_format"), Some(&2));
     assert_eq!(counts.get("static_path_expr"), Some(&1));
     assert_eq!(counts.get("static_path"), Some(&3));
 
@@ -246,8 +246,8 @@ fn static_module_syntax_keeps_declarations_paths_and_data_imports_distinct() {
     assert!(matches!(bindings[0], super::super::ast::Binding::Module(_)));
     assert!(matches!(bindings[1], super::super::ast::Binding::Use(_)));
     assert!(matches!(bindings[2], super::super::ast::Binding::Use(_)));
-    assert!(matches!(bindings[3], super::super::ast::Binding::Data(_)));
     assert!(matches!(bindings[4], super::super::ast::Binding::Data(_)));
+    assert!(matches!(bindings[5], super::super::ast::Binding::Data(_)));
 
     let super::super::ast::Binding::Module(module) = bindings[0] else {
         unreachable!()
@@ -255,7 +255,7 @@ fn static_module_syntax_keeps_declarations_paths_and_data_imports_distinct() {
     let name = module.name().unwrap().range();
     assert_eq!(&text[name.start as usize..name.end as usize], "query");
 
-    let super::super::ast::Binding::Data(config) = bindings[3] else {
+    let super::super::ast::Binding::Data(config) = bindings[4] else {
         unreachable!()
     };
     assert!(config.annotation().is_some());
@@ -263,11 +263,23 @@ fn static_module_syntax_keeps_declarations_paths_and_data_imports_distinct() {
     assert_eq!(import.format().unwrap().kind(), super::Token::Json);
     assert!(import.source().is_some());
 
-    let super::super::ast::Binding::Data(defaults) = bindings[4] else {
+    let super::super::ast::Binding::Data(defaults) = bindings[5] else {
         unreachable!()
     };
     assert!(defaults.annotation().is_none());
-    assert!(defaults.import().unwrap().format().is_none());
+    assert_eq!(
+        defaults.import().unwrap().format().unwrap().kind(),
+        super::Token::Json
+    );
+}
+
+#[test]
+fn direct_use_alias_can_precede_another_binding_on_the_same_line() {
+    let text = "use std::test as test; type Box(T) = struct {value: T};";
+    let mut sources = crate::source::SourceDatabase::default();
+    let source = sources.add("use-alias.telora", text);
+    let parsed = super::parse(source, text);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
 }
 
 #[test]

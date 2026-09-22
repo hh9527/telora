@@ -103,7 +103,7 @@ HIR 保留仍有意义的操作和绑定，以 `Missing` 表示没有语法证�
 拼接或替换 parser 的结论。后续静态 Pass 可以继续求解已有信息，但含 `Missing` 的图不能 seal。
 
 模块状态包括 `Unloaded`、`Source`、`Data` 和 `Unavailable`。符号求解结果包括
-`Bound`、`Unresolved` 和 `Conflicted`；冲突区分重复定义、多个 import 候选等。
+`Bound`、`Unresolved` 和 `Conflicted`；冲突区分重复定义、多个 `use` 候选等。
 `ResolveState::Member` 表示已交给类型阶段的成员约束，不是遗留的词法名称查找。
 
 类型求解中的槽状态为：
@@ -158,27 +158,28 @@ CLI 的 `package_host` 先准备 `ResolvedWorkspace`：发现 workspace、校验
 manifest，并完成需要的 package 安装。解析器和 VM 不执行 package acquisition，也不
 隐式重写 lock。package preparation 与业务服务初始化分离。
 
-`static_input::Inventory` 从所有可用模块名称建立清单。module Pass 先排序清单并分配
-ModuleId，再从所选根逐级读取可达源码。共享依赖只读入并解析一次，未到达模块保持
-Unloaded。完整 inventory 的身份分配与源码读取、初始化顺序无关。
+`static_input::Inventory` 保存 package root 和可按 cname 访问的来源。module Pass 从
+固定根开始，解析 CST 后沿 `mod` / `data` 边发现并分配 ModuleId。共享依赖只读入并
+解析一次；未挂载文件不进入 MIR。发现顺序确定，且与源码读取和初始化顺序无关。
 
 源码访问边界以规范化 cname 为键，逻辑路径始终使用 `/`。Host 根据
 `telora-config.json`、`telora-crate.json` 和 `telora-lock.json` 建立资源地图，
-负责物理路径规范化、目录包含性检查和文件读取；传入 module Pass 的只有逻辑模块清单、
-入口 cname 和按 cname 读取文本的回调。物理路径不进入 MIR 的模块身份。
-入口直接从逻辑清单选择，不构造假文件路径或 `<pending>` 模块。内置源码、磁盘源码和
+负责物理路径规范化、目录包含性检查和文件读取；传入 module Pass 的只有入口 cname、
+发现回调和按 cname 读取文本的回调。物理路径不进入 MIR 的模块身份。
+入口直接从固定根或测试访问边界选择，不构造假文件路径或 `<pending>` 模块。内置源码、磁盘源码和
 编辑器文档使用同一逻辑身份边界。旧的基于物理路径的 `ModuleResolver` 已删除。
 
-`telora-crate.json` 的 modules 是源码与静态数据模块的权威清单。未声明文件只能产生
-warning，不能成为隐式 import 候选。测试选择额外递归建立当前 crate 的 `tests/` 清单，
-拒绝 symlink；测试模块可相互导入，普通源码不能反向导入测试。
+`telora-crate.json` 只声明 crate 名和直接依赖。每个 crate 固定从 `src/lib.telora`
+开始，CST 中的 `mod` / `data` 声明驱动按需发现；`use` 不能装载未挂载文件。测试选择
+额外递归建立当前 crate 的 `tests/` 访问边界并拒绝 symlink；测试模块可相互引用，
+普通源码不能反向访问测试。
 
 数据模块在静态阶段只有编译器生成的接口：
 
 ```telora
-import "std/value" { Value };
+use std::value::{ Value };
 decl data: Value;
-export { data };
+pub use self::{ data };
 ```
 
 数据内容在静态阶段不读取、不解析；因此类型检查成功不代表 JSON/YAML/TOML 内容有效。
@@ -208,10 +209,10 @@ Guest 中的数据解析使用 telora-data。独立 runner 的制品 envelope、
 协议使用 serde_json；这些 Host 协议与 Telora 的 JSON 数据解析不是同一入口。
 数据字节先传入 Guest，再接受格式与 DataLimits 检查；只有成功解析才安装为语言值。
 
-symbol Pass 先索引模块的声明、导出和作用域，再闭合引用。import * 建立搜索范围，
-具体引用才选择绑定；显式绑定与遮蔽按普通名称解析规则处理。内置类型的特殊身份来自
+symbol Pass 先索引模块声明、公开项和作用域，再闭合引用。`use` 的 namespace alias
+和选择性绑定都建立普通静态绑定；显式绑定与遮蔽按普通名称解析规则处理。内置类型的特殊身份来自
 native 声明的 NativeTypeId，不能根据 Int、Array 等拼写识别。默认的
-`import "std/prelude" *;` 提供普通名称；`@property` 等装饰器也遵循这些绑定规则。
+`std::prelude` fallback 提供普通名称；`@property` 等装饰器也遵循这些绑定规则。
 
 MIR 的模块、符号和类型身份都是本次完整构建中的索引。不要把旧 module/package API
 的 ID 编码或预留区间套用到 MIR 的 ID，也不承诺源码改变后数字保持不变。
@@ -471,7 +472,7 @@ words/content，保留容量；Host 恢复执行 globals、debug 游标和每次
 
 | 命令 | 消费边界 |
 | --- | --- |
-| query modules | inventory 清单 |
+| query modules | package root 与已发现模块 |
 | query exports / at、LSP 语义查询 | 三个静态 Pass 后的 MIR，可保留错误和未知事实 |
 | check --only-types | 三个 Pass 与 seal，不读取数据内容或执行 Telora 代码 |
 | check | seal、codegen、链接、数据注入及整图初始化 |
@@ -479,10 +480,10 @@ words/content，保留容量；Host 恢复执行 globals、debug 游标和每次
 | test NAME | 初始化后执行该测试模块直接导出的 Test |
 | run / serve | 初始化 MainService，按请求调用 transform，间隙 reset |
 
-`check MODULE_ID` 选择一个根。`check --lib` 选择当前 crate 清单里的全部模块，包括
-私有模块和数据模块；`check --tests` 递归选择当前 crate 的 tests/ 模块。两个开关
-可以组合，与显式 selector 互斥。依赖按导入加入同一张图；不会对每个根重启编译器。
-空集合成功，未声明文件仍不进入图。
+`check MODULE_ID` 选择一个根。`check --lib` 从当前 crate 的 `src/lib.telora` 发现并
+选择整个可达模块树，包括私有模块和数据模块；`check --tests` 递归选择当前 crate 的
+tests/ 模块。两个开关可以组合，与显式 selector 互斥。依赖按静态模块边加入同一张图；
+不会对每个根重启编译器。空集合成功，未挂载文件不进入图。
 
 批量 check 输出一份 `telora.check/v1` summary，roots 列出所选根。独立静态问题可
 一起报告，但任一静态错误都会阻止整图初始化，不提供逐模块独立成功/失败 session。
@@ -506,7 +507,7 @@ LSP 的 `mir_workspace` 把文档覆盖内容和磁盘清单送入同一静态�
 - 名称解析只做一次，类型阶段接受其 Bound/Unresolved/Conflicted 结论。
 - 类型推导只在静态阶段完成；codegen 与 VM 消费完整证据，不补猜类型。
 - seal 不隐藏未知、冲突或遗漏的泛型/构造证据，也不重新编号。
-- native 特殊身份来自声明的稳定标识，普通名称受 import、遮蔽和作用域规则约束。
+- native 特殊身份来自声明的稳定标识，普通名称受 `use`、遮蔽和作用域规则约束。
 - 类型骨架不依赖 property 值，数据内容不进入静态求解。
 - 初始化所选执行图的根并统一发布；移动回收保留共享、封闭类型身份和来源。
 - 构造校验覆盖新的合法值边界，不能用跳过检查换取性能。

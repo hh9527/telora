@@ -1,6 +1,6 @@
-import "./user.json" { data };
-import "std/codec" as codec;
-import "std/blame" {BlameError};
+data data = import(json) "./user.json";
+use std::codec as codec;
+use std::blame::{BlameError};
 
 type User = struct {
     name: String,
@@ -8,5 +8,5 @@ type User = struct {
     nickname: Option(String),
 };
 
-def result: Result(User, BlameError) = codec.decode@[User](data);
-export { result as output };
+def result: Result(User, BlameError) = codec::decode@[User](data);
+pub use self::{ result as output };

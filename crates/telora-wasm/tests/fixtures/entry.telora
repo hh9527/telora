@@ -1,24 +1,24 @@
-import "std/transform-service" as entry;
-import "std/value" {Value};
-import "@src/input.json" {data};
-import "std/type-property" {get_type_prop};
+use std::transform_service as entry;
+use std::value::{Value};
+data data = import(json) "@src/input.json";
+use std::type_property::{get_type_prop};
 
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type SourceInfo = struct {value: Value};
 def source_info: Fn(Type, Option(SourceInfo)) -> SourceInfo = fn(owner, previous) { {value: data} };
 @source_info
 type Loaded = struct {};
 def from_metadata: Value = match get_type_prop(Loaded.type, SourceInfo.type) {
     Some(info) => info.value,
-    None => Value.None,
+    None => Value::None,
 };
 
-export def answer: Value = Value.Array([data, Value.Int(42)]);
+pub def answer: Value = Value::Array([data, Value::Int(42)]);
 
-@entry.source("input")
+@entry::source("input")
 type MainService = struct {input: Value};
-impl entry.TransformService for MainService {
+impl entry::TransformService for MainService {
     init: fn(ctx) { {input: ctx.sources.input}.ty!(Self) },
-    transform: fn(self, input) { Value.Object({loaded: from_metadata, source: self.input, input}) },
+    transform: fn(self, input) { Value::Object({loaded: from_metadata, source: self.input, input}) },
 };
-export {MainService};
+pub use self::{MainService};

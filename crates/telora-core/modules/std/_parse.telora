@@ -29,4 +29,4 @@ impl(T: FromStr) FromStr for Option(T) {
     from_str: fn(input) { parse_target((Option(T)).type, input) },
 };
 
-export { FromStr, ParseError, parse_target };
+pub use self::{ FromStr, ParseError, parse_target };

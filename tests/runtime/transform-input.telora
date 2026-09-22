@@ -1,30 +1,22 @@
-import "std/transform-service" as service;
-import "std/codec" as codec;
-import "std/value" {Value};
-import "std/string" as string;
-import "std/regex" as regex;
-import "std/fmt" as fmt;
-import "./base.json" as base;
+use std::transform_service as service;
+use std::codec as codec;
+use std::value::{Value};
+data base = import(json) "./base.json";
 
 @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive input required", value)) } })
 type Count = struct(Int);
 
-@string.decode_by_parse @string.encode_by_display
-@fmt.display_by("{host}:{port}")
-@regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
-type Endpoint = struct {host: String, port: Int};
+type Input = struct {answer: Count, endpoint: String};
 
-type Input = struct {answer: Count, endpoint: Endpoint};
-
-@service.source("config")
+@service::source("config")
 type MainService = struct {config: Value, base: Value};
-impl service.TransformService for MainService {
+impl service::TransformService for MainService {
     init: fn(ctx) {
-        {config: ctx.sources["config"], base: base.data}.ty!(Self)
+        {config: ctx.sources["config"], base}.ty!(Self)
     },
     transform: fn(self, input) {
-        let decoded: Input = codec.decode@[Input](input).unwrap!();
-        Value.Array([self.config, self.base, codec.encode(decoded)])
+        let decoded: Input = codec::decode@[Input](input).unwrap!();
+        Value::Array([self.config, self.base, codec::encode(decoded)])
     },
 };
-export {MainService};
+pub use self::{MainService};

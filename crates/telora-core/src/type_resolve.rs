@@ -869,7 +869,7 @@ impl Solver<'_> {
                 }
             }
             HirKind::Binding { kind, .. } => {
-                if matches!(kind, BindingKind::OpenImport | BindingKind::Export) {
+                if *kind == BindingKind::Export {
                     self.mir.required_types[node.index()] = false;
                     return;
                 }

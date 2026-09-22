@@ -102,11 +102,15 @@ fn module_inventory_order_preserves_shared_instance_identity() {
         .collect::<Vec<_>>();
     let mut first = graph(&inventory);
     resolve(&mut first);
-    first.seal().unwrap_or_else(|d| panic!("{d:?}"));
+    first
+        .seal()
+        .unwrap_or_else(|d| panic!("{d:?}\n{}", first.dump()));
     inventory[1..].reverse();
     let mut second = graph(&inventory);
     resolve(&mut second);
-    second.seal().unwrap_or_else(|d| panic!("{d:?}"));
+    second
+        .seal()
+        .unwrap_or_else(|d| panic!("{d:?}\n{}", second.dump()));
     let keys = |mir: &Mir| {
         mir.generic_instances
             .iter()

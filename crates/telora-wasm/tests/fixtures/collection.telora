@@ -1,30 +1,30 @@
-import "std/dyn" as dyn;
-import "std/regex" as regex;
-import "std/fmt" as fmt;
-import "std/hash" as hash;
+use std::dyn as dyn;
+use std::regex as regex;
+use std::fmt as fmt;
+use std::hash as hash;
 type Count = struct(Int);
 type Item = struct { label: String, values: Array(Int) };
 type Tree = enum { Empty, More((Int, Tree)) };
 
-export def answer: Fn(Int) -> Fn() -> (Bool, Bool, Bool, Bool, String, Bool, Int, Int, Int, Bool) = fn(number: Int) {
+pub def answer: Fn(Int) -> Fn() -> (Bool, Bool, Bool, Bool, String, Bool, Int, Int, Int, Bool) = fn(number: Int) {
     let item: Item = {label: "a long shared string é🦀", values: [number, number + 1]};
     let alias = item;
     let dictionary: Dict(Item) = {first: item, second: alias};
-    let dynamic = dyn.pack(Item.type, item);
-    let pattern = regex.compile("^a.*string");
-    let format = fmt.concat(["[", "]"], [fmt.from_string(item.label)]);
-    let digest = hash.update_string(hash.new(), item.label);
+    let dynamic = dyn::pack(Item.type, item);
+    let pattern = regex::compile("^a.*string");
+    let format = fmt::concat(["[", "]"], [fmt::from_string(item.label)]);
+    let digest = hash::update_string(hash::new(), item.label);
     let wrapped = Count(number);
-    let tree = Tree.More((number, Tree.More((number + 1, Tree.Empty))));
+    let tree = Tree::More((number, Tree::More((number + 1, Tree::Empty))));
     def interpreted: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(fn(value) {number});
     let adapted = interpreted(String.type);
     fn() {
         (item == alias, dictionary.first == item,
-         dyn.project_with(Item.type, dynamic) == Some(item),
-         regex.is_match(pattern, item.label),
-         fmt.render(format), hash.finish(digest) == hash.finish(hash.update_string(hash.new(), item.label)),
+         dyn::project_with(Item.type, dynamic) == Some(item),
+         regex::is_match(pattern, item.label),
+         fmt::render(format), hash::finish(digest) == hash::finish(hash::update_string(hash::new(), item.label)),
          match wrapped {Count(n) => n},
-         match tree {Tree.More(pair) => pair.0, Tree.Empty => 0},
+         match tree {Tree::More(pair) => pair.0, Tree::Empty => 0},
          adapted("x"), interpreted(String.type) != adapted)
     }
 };

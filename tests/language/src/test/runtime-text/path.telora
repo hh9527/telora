@@ -1,30 +1,30 @@
-import "std/path" as path;
-import "std/array" as array;
-import "std/value" {Value};
+use std::path as path;
+use std::array as array;
+use std::value::{Value};
 
-export def inspect: Fn(String) -> (String, Option(String), Option(String)) = fn(input) {
-    (path.normalize(input), path.parent(input), path.file_name(input))
+pub def inspect: Fn(String) -> (String, Option(String), Option(String)) = fn(input) {
+    (path::normalize(input), path::parent(input), path::file_name(input))
 };
 
 def optional: Fn(Option(String)) -> Value = fn(value: Option(String)) {
-    match value { Some(text) => Value.String(text), None => Value.None }
+    match value { Some(text) => Value::String(text), None => Value::None }
 };
 
-export def answer: Value = Value.Object({
-    paths: Value.Array(array.map([
+pub def answer: Value = Value::Object({
+    paths: Value::Array(array::map([
         "", ".", "/", "..", "../..", "a/..", "a/../..", "/../../a",
         "//a///b/./../c/", "a/b/../../c", "../../a/../b", "/a", "a",
         "a/../../..", "/a/../../..", "目录/🦀/../文件", "a\\b/../c", " a / b ",
     ], fn(input) {
-        Value.Array([
-            Value.String(path.normalize(input)),
-            optional(path.parent(input)),
-            optional(path.file_name(input)),
+        Value::Array([
+            Value::String(path::normalize(input)),
+            optional(path::parent(input)),
+            optional(path::file_name(input)),
         ])
     })),
-    joins: Value.Array(array.map([
+    joins: Value::Array(array::map([
         [], [""], ["", "a", "", "b"], ["a", "..", "b"],
         ["ignored", "/root", "a", "..", "b"], ["/first", "/second", ".."],
         ["..", "a", "..", "b"], ["目录", "🦀", "..", "文件"],
-    ], fn(parts) { Value.String(path.join(parts)) })),
+    ], fn(parts) { Value::String(path::join(parts)) })),
 });

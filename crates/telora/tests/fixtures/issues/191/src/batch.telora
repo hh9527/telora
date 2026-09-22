@@ -1,8 +1,8 @@
 # Select the provider before its consumers; other roots load consumers first.
-import "@src/fields" as fields;
-import "@src/text" as text;
-import "@src/main" as main;
-import "@src/decorated" as decorated;
-import "@src/reversed" as reversed;
-import "@src/local-late" as late;
-export def ok: Bool = True;
+use crate::fields as fields;
+use crate::text as text;
+use crate::main as main;
+use crate::decorated as decorated;
+use crate::reversed as reversed;
+use crate::local_late as late;
+pub def ok: Bool = True;

@@ -1,4 +1,4 @@
 def message: String = "computed message";
 def first: Int = 42;
 def second: String = "subject";
-export def answer: Int = fail!(message, first, second, first);
+pub def answer: Int = fail!(message, first, second, first);

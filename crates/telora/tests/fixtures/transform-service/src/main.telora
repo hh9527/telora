@@ -1,22 +1,22 @@
-import "std/transform-service" as service;
-import "std/value" {Value};
+use std::transform_service as service;
+use std::value::{Value};
 
 def spin: Fn(Int) -> Int = fn(value) { spin(value) };
 def grow: Fn(Array(Int)) -> Int = fn(values) { grow([...values, ...values]) };
 
 type Model = struct {};
-impl service.TransformService for Model {
+impl service::TransformService for Model {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) {
-        if input == Value.None {
+        if input == Value::None {
             fail!("missing input", input)
-        } else if input == Value.String("loop") {
-            Value.Int(spin(0))
-        } else if input == Value.String("grow") {
-            Value.Int(grow([0]))
+        } else if input == Value::String("loop") {
+            Value::Int(spin(0))
+        } else if input == Value::String("grow") {
+            Value::Int(grow([0]))
         } else {
             input
         }
     },
 };
-export {Model as MainService};
+pub use self::{Model as MainService};

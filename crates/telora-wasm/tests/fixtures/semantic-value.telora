@@ -1,8 +1,8 @@
-import "std/value" {Value};
+use std::value::{Value};
 
-export def answer: Value = Value.Object({
-    number: Value.Int(42),
-    nested: Value.Array([Value.None, Value.True, Value.String("hello")]),
+pub def answer: Value = Value::Object({
+    number: Value::Int(42),
+    nested: Value::Array([Value::None, Value::True, Value::String("hello")]),
 });
 
-export def identity: Fn(Value) -> Value = fn(value) { value };
+pub def identity: Fn(Value) -> Value = fn(value) { value };

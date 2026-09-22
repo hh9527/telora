@@ -1,4 +1,4 @@
-export def invalid = fn() {
+pub def invalid = fn() {
     let name = 1 else { fail!("unreachable"); };
     name
 };

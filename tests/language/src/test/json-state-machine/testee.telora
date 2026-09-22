@@ -1,22 +1,22 @@
-import "std/test" as test;
-import "std/json" as json;
-import "std/array" as array;
-import "std/string" as string;
-import "std/value" {Value};
-import "@src/test-support" {expect};
-import "./value.json" {data};
+use std::test as test;
+use std::json as json;
+use std::array as array;
+use std::string as string;
+use std::value::{Value};
+use crate::test_support::{expect};
+data data = import(json) "./value.json";
 
 type Document = struct {text: String, numbers: Array(Int), empty: Array(Int), flag: Bool};
 
-export def shared_host_and_rt: test.Test = test.should_ok(fn() {
+pub def shared_host_and_rt: test::Test = test::should_ok(fn() {
     let text = r#"{"text":"a\n\u0041😀\uD83D\uDE00","numbers":[-2,0,3],"empty":[],"flag":true}"#;
-    let value = json.parse(text).unwrap!();
-    let decoded = json.decode@[Document](text).unwrap!();
+    let value = json::parse(text).unwrap!();
+    let decoded = json::decode@[Document](text).unwrap!();
     expect(value == data && decoded.text == "a\nA😀😀"
         && decoded.numbers == [-2, 0, 3] && decoded.empty == [] && decoded.flag)
 });
 
-export def rejects_invalid_json: test.Test = test.should_ok(fn() {
+pub def rejects_invalid_json: test::Test = test::should_ok(fn() {
     let invalid = [
         "", "[", "{", "[1,]", "{\"a\":1,}", "[1 2]", "[}", "{]",
         "{\"a\" 1}", "{a:1}", "true false", "01", "+1", ".5", "1.", "1e+",
@@ -25,44 +25,44 @@ export def rejects_invalid_json: test.Test = test.should_ok(fn() {
         r#""\uDC00""#, r#""\uD800\u0041""#, r#""unfinished"#,
         "\"raw\nnewline\"", r#"{"a":1,"\u0061":2}"#, "/*comment*/0",
     ];
-    expect(array.all(invalid, fn(text) {
-        match json.parse(text) {Err(_) => True, Ok(_) => False}
+    expect(array::all(invalid, fn(text) {
+        match json::parse(text) {Err(_) => True, Ok(_) => False}
     }))
 });
 
-export def scalars_and_empty_containers: test.Test = test.should_ok(fn() {
-    expect(json.parse("null") == Ok(Value.None)
-        && json.parse(" true \r\n\t") == Ok(Value.True)
-        && json.parse("false") == Ok(Value.False)
-        && json.decode@[Int]("-9223372036854775808") == Ok(-9223372036854775807 - 1)
-        && json.decode@[Int]("9223372036854775807") == Ok(9223372036854775807)
-        && json.decode@[Float]("-12.5e+3") == Ok(-12500.0)
-        && json.decode@[String](r#""\"\\\/\b\f\n\r\t""#) == Ok("\"\\/\u{8}\u{c}\n\r\t")
-        && json.parse("[]") == Ok(Value.Array([]))
-        && json.parse("{}") == Ok(Value.Object({})))
+pub def scalars_and_empty_containers: test::Test = test::should_ok(fn() {
+    expect(json::parse("null") == Ok(Value::None)
+        && json::parse(" true \r\n\t") == Ok(Value::True)
+        && json::parse("false") == Ok(Value::False)
+        && json::decode@[Int]("-9223372036854775808") == Ok(-9223372036854775807 - 1)
+        && json::decode@[Int]("9223372036854775807") == Ok(9223372036854775807)
+        && json::decode@[Float]("-12.5e+3") == Ok(-12500.0)
+        && json::decode@[String](r#""\"\\\/\b\f\n\r\t""#) == Ok("\"\\/\u{8}\u{c}\n\r\t")
+        && json::parse("[]") == Ok(Value::Array([]))
+        && json::parse("{}") == Ok(Value::Object({})))
 });
 
-export def long_string_crosses_chunks: test.Test = test.should_ok(fn() {
+pub def long_string_crosses_chunks: test::Test = test::should_ok(fn() {
     let seed = "abcdefgh😀";
-    let a = string.join([seed, seed], "");
-    let b = string.join([a, a], "");
-    let c = string.join([b, b], "");
-    let d = string.join([c, c], "");
-    let e = string.join([d, d], "");
-    let f = string.join([e, e], "");
-    let g = string.join([f, f], "");
-    let h = string.join([g, g], "");
-    let i = string.join([h, h], "");
-    let value = string.join([i, i], "");
-    expect(json.decode@[String](string.join(["\"", value, r#"\uD83D\uDE00""#], "")) == Ok(string.join([value, "😀"], "")))
+    let a = string::join([seed, seed], "");
+    let b = string::join([a, a], "");
+    let c = string::join([b, b], "");
+    let d = string::join([c, c], "");
+    let e = string::join([d, d], "");
+    let f = string::join([e, e], "");
+    let g = string::join([f, f], "");
+    let h = string::join([g, g], "");
+    let i = string::join([h, h], "");
+    let value = string::join([i, i], "");
+    expect(json::decode@[String](string::join(["\"", value, r#"\uD83D\uDE00""#], "")) == Ok(string::join([value, "😀"], "")))
 });
 
-export def depth_is_a_diagnostic: test.Test = test.should_fail_with(fn() {
+pub def depth_is_a_diagnostic: test::Test = test::should_fail_with(fn() {
     let a = "[[[[[[[[[[[[[[[[";
-    let b = string.join([a, a], "");
-    let c = string.join([b, b], "");
-    let d = string.join([c, c], "");
-    let e = string.join([d, d], "");
-    let input = string.join([e, "[0]", string.replace(e, "[", "]")], "");
-    match json.parse(input) {Err(error) => raise!(error), Ok(_) => 0}
+    let b = string::join([a, a], "");
+    let c = string::join([b, b], "");
+    let d = string::join([c, c], "");
+    let e = string::join([d, d], "");
+    let input = string::join([e, "[0]", string::replace(e, "[", "]")], "");
+    match json::parse(input) {Err(error) => raise!(error), Ok(_) => 0}
 }, "depth limit");

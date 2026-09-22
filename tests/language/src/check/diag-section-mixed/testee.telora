@@ -1,2 +1,2 @@
 def f = fn(a, b) { a };
-export def invalid = f\(_0, _);
+pub def invalid = f\(_0, _);

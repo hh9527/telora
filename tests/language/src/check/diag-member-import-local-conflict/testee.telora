@@ -1,4 +1,4 @@
 type A = enum { Item(Int) };
-import A.{Item};
+use A::{Item};
 def Item = fn(value) { value };
-export def result = Item(1);
+pub def result = Item(1);

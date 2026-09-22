@@ -1,11 +1,11 @@
-import "std/test" as test;
-import "std/array" as array;
-import "@src/test-support" {expect};
+use std::test as test;
+use std::array as array;
+use crate::test_support::{expect};
 def generic_identity: for(A) Fn(A) -> A = fn(value) { value };
 type DeferredItems = struct {items: Array(String)};
 type DeferredOwner = struct {inner: DeferredItems};
 def deferred_wrap: for(T) Fn(T) -> Option(T) = fn(value) { Some(value) };
-export def empty_arm_waits_for_generic_member_evidence: test.Test = test.should_ok(fn() {
+pub def empty_arm_waits_for_generic_member_evidence: test::Test = test::should_ok(fn() {
     let deferred_fields = fn(owner: DeferredOwner, enabled: Bool) {
         match if enabled { deferred_wrap(owner) } else { None } {
             Some(value) => value.inner.items,
@@ -13,8 +13,8 @@ export def empty_arm_waits_for_generic_member_evidence: test.Test = test.should_
         }
     };
     let owner: DeferredOwner = {inner: {items: ["value"]}};
-    expect(array.length(deferred_fields(owner, True)) == 1
-        && array.length(deferred_fields(owner, False)) == 0)
+    expect(array::length(deferred_fields(owner, True)) == 1
+        && array::length(deferred_fields(owner, False)) == 0)
 });
 def generic_apply: for(A, B) Fn(Fn(A) -> B, A) -> B = fn(function, value) {
     function(value)
@@ -48,7 +48,7 @@ type CallExpr = struct {name: String, args: Array(Expr)};
 type Renderer(Context) = struct {render: Fn(Context, Expr) -> String};
 type RenderContext = struct {prefix: String};
 def inspect_expr: Fn(Expr) -> Int = fn(expr) {
-    match expr { Expr.Value(value) => value, Expr.Call(_) => 0 }
+    match expr { Expr::Value(value) => value, Expr::Call(_) => 0 }
 };
 
 def option_apply: for(A, B) Fn(A, Fn(A) -> Option(B)) -> Option(B) = fn(value, f) {
@@ -73,11 +73,11 @@ def collect: for(N, M)
 };
 
 type FamilyTree(A) = enum {Leaf(A), Branch(Array(FamilyTree(A)))};
-def int_leaf: FamilyTree(Int) = FamilyTree.Leaf(1);
-def string_leaf: FamilyTree(String) = FamilyTree.Leaf("x");
-def string_tree: FamilyTree(String) = FamilyTree.Branch([string_leaf]);
+def int_leaf: FamilyTree(Int) = FamilyTree::Leaf(1);
+def string_leaf: FamilyTree(String) = FamilyTree::Leaf("x");
+def string_tree: FamilyTree(String) = FamilyTree::Branch([string_leaf]);
 
-export def generic_calls: test.Test = test.should_ok(fn() {
+pub def generic_calls: test::Test = test::should_ok(fn() {
     expect(
         generic_identity(1) == 1
             && generic_identity("x") == "x"
@@ -85,7 +85,7 @@ export def generic_calls: test.Test = test.should_ok(fn() {
     )
 });
 
-export def forward_type_references: test.Test = test.should_ok(fn() {
+pub def forward_type_references: test::Test = test::should_ok(fn() {
     expect(
         early_builder(1).name == "plan 1"
             && late_builder(2).name == "plan 2"
@@ -94,31 +94,31 @@ export def forward_type_references: test.Test = test.should_ok(fn() {
     )
 });
 
-export def generic_callbacks: test.Test = test.should_ok(fn() {
+pub def generic_callbacks: test::Test = test::should_ok(fn() {
     expect(
         invoke_builder(callback_builder).value.name == "plan:1"
     )
 });
 
-export def recursive_struct: test.Test = test.should_ok(fn() {
+pub def recursive_struct: test::Test = test::should_ok(fn() {
     expect({
         let node: Node = {value: 1, children: []};
         node_value(node) == 1
     })
 });
 
-export def mutually_recursive_types: test.Test = test.should_ok(fn() {
+pub def mutually_recursive_types: test::Test = test::should_ok(fn() {
     expect({
-        let expr: Expr = Expr.Call({name: "sum", args: [Expr.Value(1)]});
+        let expr: Expr = Expr::Call({name: "sum", args: [Expr::Value(1)]});
         let renderer: Renderer(RenderContext) = {
             render: fn(context, expr) { context.prefix },
         };
         inspect_expr(expr) == 0
-            && renderer.render({prefix: "p"}, Expr.Value(1)) == "p"
+            && renderer.render({prefix: "p"}, Expr::Value(1)) == "p"
     })
 });
 
-export def inferred_option_callback: test.Test = test.should_ok(fn() {
+pub def inferred_option_callback: test::Test = test::should_ok(fn() {
     expect({
         let build: Fn(Int) -> Option(String) = fn(value) {
             if value > 0 { Some("ok") } else { None }
@@ -127,15 +127,15 @@ export def inferred_option_callback: test.Test = test.should_ok(fn() {
     })
 });
 
-export def contextual_enum: test.Test = test.should_ok(fn() {
+pub def contextual_enum: test::Test = test::should_ok(fn() {
     expect({
-        let nodes: Array(NodeId) = [NodeId.Other];
-        let selected: NodeId = choose_node(NodeId.Base, nodes);
-        selected == NodeId.Base
+        let nodes: Array(NodeId) = [NodeId::Other];
+        let selected: NodeId = choose_node(NodeId::Base, nodes);
+        selected == NodeId::Base
     })
 });
 
-export def explicit_type_arguments: test.Test = test.should_ok(fn() {
+pub def explicit_type_arguments: test::Test = test::should_ok(fn() {
     expect(
         explicit_pair@[Int, String](1, "x") == (1, "x")
             && explicit_pair@[Int, _](1, "x") == (1, "x")
@@ -144,7 +144,7 @@ export def explicit_type_arguments: test.Test = test.should_ok(fn() {
     )
 });
 
-export def recursive_function_inference: test.Test = test.should_ok(fn() {
+pub def recursive_function_inference: test::Test = test::should_ok(fn() {
     def recursive_countdown = fn(value) {
         if value < 1 { 0 } else { recursive_countdown(value - 1) }
     };
@@ -166,7 +166,7 @@ export def recursive_function_inference: test.Test = test.should_ok(fn() {
     })
 });
 
-export def definition_order_and_shadowing: test.Test = test.should_ok(fn() {
+pub def definition_order_and_shadowing: test::Test = test::should_ok(fn() {
     def ordered_identity = fn(value) { value };
     def ordered_apply = fn(value) { ordered_identity(value) };
     def reverse_apply = fn(value) { reverse_identity(value) };
@@ -187,7 +187,7 @@ export def definition_order_and_shadowing: test.Test = test.should_ok(fn() {
     })
 });
 
-export def local_polymorphism: test.Test = test.should_ok(fn() {
+pub def local_polymorphism: test::Test = test::should_ok(fn() {
     expect({
         let identity = fn(value) { value };
         let wrap = fn(value) { [value] };
@@ -199,14 +199,14 @@ export def local_polymorphism: test.Test = test.should_ok(fn() {
     })
 });
 
-export def partial_annotations: test.Test = test.should_ok(fn() {
+pub def partial_annotations: test::Test = test::should_ok(fn() {
     expect({
         let keep = fn(left: Int, right) { (left, right) };
         keep(1, "x") == (1, "x") && keep(2, 3) == (2, 3)
     })
 });
 
-export def nested_function_contract: test.Test = test.should_ok(fn() {
+pub def nested_function_contract: test::Test = test::should_ok(fn() {
     expect({
         let nested: Fn(Int) -> Fn(Int) -> Int = fn(left) {
             fn(right) { left + right + 1 }
@@ -215,7 +215,7 @@ export def nested_function_contract: test.Test = test.should_ok(fn() {
     })
 });
 
-export def contextual_collections_and_patterns: test.Test = test.should_ok(fn() {
+pub def contextual_collections_and_patterns: test::Test = test::should_ok(fn() {
     expect({
         let values: Array(Int) = if True { [] } else { [1] };
         let selected: Int = match (1, "x") { (number, _) => number };
@@ -223,7 +223,7 @@ export def contextual_collections_and_patterns: test.Test = test.should_ok(fn() 
     })
 });
 
-export def nested_family_contract: test.Test = test.should_ok(fn() {
+pub def nested_family_contract: test::Test = test::should_ok(fn() {
     expect({
         let boxes: Array(FamilyBox(Pair(Int, String))) = [
             {value: {left: 1, right: "x"}},
@@ -232,14 +232,14 @@ export def nested_family_contract: test.Test = test.should_ok(fn() {
     })
 });
 
-export def distinct_family_instances: test.Test = test.should_ok(fn() {
+pub def distinct_family_instances: test::Test = test::should_ok(fn() {
     expect(
-        match int_leaf { FamilyTree.Leaf(value) => value == 1, FamilyTree.Branch(_) => False }
+        match int_leaf { FamilyTree::Leaf(value) => value == 1, FamilyTree::Branch(_) => False }
             && match string_tree {
-                FamilyTree.Leaf(_) => False,
-                FamilyTree.Branch(items) => match items[0] {
-                    FamilyTree.Leaf(value) => value == "x",
-                    FamilyTree.Branch(_) => False,
+                FamilyTree::Leaf(_) => False,
+                FamilyTree::Branch(items) => match items[0] {
+                    FamilyTree::Leaf(value) => value == "x",
+                    FamilyTree::Branch(_) => False,
                 },
             }
     )

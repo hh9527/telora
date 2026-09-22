@@ -1,16 +1,16 @@
-import "std/codec" as codec;
-import "std/value" { Value };
-import "std/array" as array;
-export def inspect: Fn() -> Array(Bool) = fn() {
-    [codec.decode@[()](Value.Array([])) == Ok(()),
-     codec.decode@[(Int,String)](Value.Array([Value.Int(7),Value.String("x")])) == Ok((7,"x")),
-     codec.decode@[(Option(Int),Array(Int))](Value.Array([Value.None,Value.Array([Value.Int(3)])])) == Ok((None,[3])),
-     match codec.decode@[()](Value.None) {Err(_) => True,Ok(_) => False},
-     match codec.decode@[()](Value.Array([Value.Int(1)])) {Err(_) => True,Ok(_) => False},
-     match codec.decode@[(Int,String)](Value.Array([Value.Int(1)])) {Err(_) => True,Ok(_) => False},
-     match codec.decode@[(Int,String)](Value.Array([Value.Int(1),Value.Int(2)])) {Err(_) => True,Ok(_) => False}]
+use std::codec as codec;
+use std::value::{ Value };
+use std::array as array;
+pub def inspect: Fn() -> Array(Bool) = fn() {
+    [codec::decode@[()](Value::Array([])) == Ok(()),
+     codec::decode@[(Int,String)](Value::Array([Value::Int(7),Value::String("x")])) == Ok((7,"x")),
+     codec::decode@[(Option(Int),Array(Int))](Value::Array([Value::None,Value::Array([Value::Int(3)])])) == Ok((None,[3])),
+     match codec::decode@[()](Value::None) {Err(_) => True,Ok(_) => False},
+     match codec::decode@[()](Value::Array([Value::Int(1)])) {Err(_) => True,Ok(_) => False},
+     match codec::decode@[(Int,String)](Value::Array([Value::Int(1)])) {Err(_) => True,Ok(_) => False},
+     match codec::decode@[(Int,String)](Value::Array([Value::Int(1),Value::Int(2)])) {Err(_) => True,Ok(_) => False}]
 };
-export def answer: Value = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));
-export def slice: Fn(Array(Value)) -> Bool = fn(input: Array(Value)) {
-    codec.decode@[(Int,String)](Value.Array(input)) == Ok((7,"x"))
+pub def answer: Value = Value::Array(array::map(inspect(),fn(value) {if value {Value::True} else {Value::False}}));
+pub def slice: Fn(Array(Value)) -> Bool = fn(input: Array(Value)) {
+    codec::decode@[(Int,String)](Value::Array(input)) == Ok((7,"x"))
 };

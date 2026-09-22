@@ -1,9 +1,9 @@
-import "@src/eval/data-modules/user.json" {data as user_data};
-import "@src/eval/data-modules/config.toml" {data as toml_data};
-import "@src/eval/data-modules/config.yaml" {data as yaml_data};
-import "std/codec" as codec;
-import "std/test" as test;
-import "@src/test-support" {expect};
+data user_data = import(json) "@src/eval/data-modules/user.json";
+data toml_data = import(toml) "@src/eval/data-modules/config.toml";
+data yaml_data = import(yaml) "@src/eval/data-modules/config.yaml";
+use std::codec as codec;
+use std::test as test;
+use crate::test_support::{expect};
 
 type User = struct {name: String, age: Int};
 type Date = enum {
@@ -25,23 +25,23 @@ type YamlConfig = struct {
     legacy: String,
 };
 
-export def json_data: test.Test = test.should_ok(fn() {
-    let user = codec.decode@[(User)](user_data).unwrap!();
+pub def json_data: test::Test = test::should_ok(fn() {
+    let user = codec::decode@[(User)](user_data).unwrap!();
     expect(user == {name: "Ada", age: 36})
 });
 
-export def toml_data_case: test.Test = test.should_ok(fn() {
-    let config = codec.decode@[(Config)](toml_data).unwrap!();
+pub def toml_data_case: test::Test = test::should_ok(fn() {
+    let config = codec::decode@[(Config)](toml_data).unwrap!();
     let expected_tools: Array(Tool) = [{name: "telora"}, {name: "rustc"}];
     expect(
-        config.released == Date.LocalDate("2026-08-04")
+        config.released == Date::LocalDate("2026-08-04")
             && config.environment.PATH == "/bin"
             && config.tools == expected_tools
     )
 });
 
-export def yaml_data_case: test.Test = test.should_ok(fn() {
-    let yaml = codec.decode@[(YamlConfig)](yaml_data).unwrap!();
+pub def yaml_data_case: test::Test = test::should_ok(fn() {
+    let yaml = codec::decode@[(YamlConfig)](yaml_data).unwrap!();
     expect(
         yaml.name == "Telora"
             && yaml.features == ["static data", "provenance"]

@@ -1,40 +1,40 @@
-import "std/transform-service" as service;
-import "std/_entry/transform" as entry;
-import "std/value" {Value};
-import "std/regex" as regex;
+use std::transform_service as service;
+use std::_entry::transform as entry;
+use std::value::{Value};
+use std::regex as regex;
 
 def spin: Fn(Int) -> Int = fn(value) { spin(value) };
 def grow: Fn(Array(Int)) -> Int = fn(values) { grow([...values, ...values]) };
 
-@service.source("b")
-@service.source("a")
-type Model = struct {prefix: Value, pattern: regex.Regex};
+@service::source("b")
+@service::source("a")
+type Model = struct {prefix: Value, pattern: regex::Regex};
 
-impl service.TransformService for Model {
+impl service::TransformService for Model {
     init: fn(ctx) {
-        {prefix: ctx.sources["a"], pattern: regex.compile("^retained service prefix$")}.ty!(Self)
+        {prefix: ctx.sources["a"], pattern: regex::compile("^retained service prefix$")}.ty!(Self)
     },
     transform: fn(self, input) {
-        let temporary_pattern = regex.compile("^retained service prefix$");
-        let matched = regex.is_match(self.pattern, "retained service prefix") &&
-            regex.is_match(temporary_pattern, "retained service prefix");
-        if input == Value.None {
+        let temporary_pattern = regex::compile("^retained service prefix$");
+        let matched = regex::is_match(self.pattern, "retained service prefix") &&
+            regex::is_match(temporary_pattern, "retained service prefix");
+        if input == Value::None {
             fail!("missing query", input)
-        } else if input == Value.String("bytes") {
-            Value.Bytes(b"unsupported")
-        } else if input == Value.String("warnings") {
+        } else if input == Value::String("bytes") {
+            Value::Bytes(b"unsupported")
+        } else if input == Value::String("warnings") {
             let first: Option(Int) = warn!(blame!("first\nwarning é", input, self.prefix));
             let second: Option(Int) = warn!(blame!("second warning", input, self.prefix));
-            Value.Bytes(b"unsupported")
-        } else if input == Value.String("loop") {
-            Value.Int(spin(0))
-        } else if input == Value.String("grow") {
-            Value.Int(grow([0]))
+            Value::Bytes(b"unsupported")
+        } else if input == Value::String("loop") {
+            Value::Int(spin(0))
+        } else if input == Value::String("grow") {
+            Value::Int(grow([0]))
         } else {
-            Value.Array([self.prefix, input])
+            Value::Array([self.prefix, input])
         }
     },
 };
 
-export {Model as MainService};
-export def answer: entry.Plan = entry.prepare(Model.type);
+pub use self::{Model as MainService};
+pub def answer: entry::Plan = entry::prepare(Model.type);

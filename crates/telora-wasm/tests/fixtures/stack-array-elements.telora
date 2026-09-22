@@ -1,13 +1,13 @@
-import "std/array" as array;
-import "std/_rt" as rt;
-import "std/codec" as codec;
-import "std/value" {Value};
+use std::array as array;
+use std::_rt as rt;
+use std::codec as codec;
+use std::value::{Value};
 
 def early: Fn(Int) -> Array(Int) = fn(n) {
     [do { if n == 0 { return [42]; } else { () }; n }, n + 1]
 };
 
-export def answer: Fn() -> Value = fn() {
+pub def answer: Fn() -> Value = fn() {
     let outer = 7;
     let closures: Array(Fn(Int) -> Int) = [
         do { let captured = outer + 1; fn(x) { captured + x } },
@@ -18,20 +18,20 @@ export def answer: Fn() -> Value = fn() {
         do { let x = 5; [x, x + 1] },
     ];
     let branches = [if outer == 7 { 11 } else { 12 }, if outer == 8 { 13 } else { 14 }];
-    let mapped = [array.map([1, 2], fn(x) { x + outer }), array.map([3, 4], fn(x) { x + outer })];
+    let mapped = [array::map([1, 2], fn(x) { x + outer }), array::map([3, 4], fn(x) { x + outer })];
     let spreads = [[1, ...[2, 3]], [4, ...[5]]];
     let generic: Array(Fn(Int) -> Int) = [
         do { def id: for(T) Fn(T) -> T = fn(x) { x }; fn(x) { id(x) } },
         do { def id: for(T) Fn(T) -> T = fn(x) { x }; fn(x) { id(x + outer) } },
     ];
-    let failed = rt.with_diagnostics(fn(ignored: Int) {
+    let failed = rt::with_diagnostics(fn(ignored: Int) {
         [do { let w: Option(Int) = warn!("first"); 1 },
          fail!("second"),
          do { let w: Option(Int) = warn!("unreachable"); 3 }]
     })(0);
-    codec.encode((
+    codec::encode((
         closures[0](10), closures[1](10), outer, nested, branches, mapped,
-        match failed { Err(reports) => array.length(reports), Ok(_) => 0 },
+        match failed { Err(reports) => array::length(reports), Ok(_) => 0 },
         spreads, generic[0](10), generic[1](10), early(0), early(2),
     ))
 };

@@ -1,6 +1,6 @@
-import "std/value" {Value};
-import "std/array" as array;
-import "std/dict" as dict;
+use std::value::{Value};
+use std::array as array;
+use std::dict as dict;
 
 type Context = struct {sources: Dict(Value)};
 
@@ -9,7 +9,7 @@ trait TransformService {
     transform: Fn(Self, Value) -> Value,
 };
 
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type Sources = struct {names: Array(String)};
 
 def source: Fn(String) -> Fn(Type, Option(Sources)) -> Sources = fn(name) {
@@ -20,13 +20,13 @@ def source: Fn(String) -> Fn(Type, Option(Sources)) -> Sources = fn(name) {
         };
         if name == "" {
             fail!("service source name must not be empty", name)
-        } else if array.any(names, fn(existing) { existing == name }) {
+        } else if array::any(names, fn(existing) { existing == name }) {
             fail!("duplicate service source declaration", name)
         } else {
-            let sorted = dict.keys(dict.from_pairs(array.map(array.push(names, name), fn(key) { (key, ()) })));
+            let sorted = dict::keys(dict::from_pairs(array::map(array::push(names, name), fn(key) { (key, ()) })));
             {names: sorted}.ty!(Sources)
         }
     }
 };
 
-export {Context, TransformService, Sources, source};
+pub use self::{Context, TransformService, Sources, source};

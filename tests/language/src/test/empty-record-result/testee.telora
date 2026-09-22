@@ -1,5 +1,5 @@
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::test as test;
+use crate::test_support::{expect};
 
 type Diagnostic = struct { message: String };
 type Normalized = struct { diagnostics: Array(Diagnostic) };
@@ -16,7 +16,7 @@ def through_generic: Fn() -> Result(Normalized, String) = fn() {
     wrapped({ diagnostics: [] })
 };
 
-export def contextual_empty_arrays: test.Test = test.should_ok(fn() {
+pub def contextual_empty_arrays: test::Test = test::should_ok(fn() {
     expect(normalize().unwrap!().diagnostics == [].ty!(Array(Diagnostic)));
     expect(through_generic().unwrap!().diagnostics == [].ty!(Array(Diagnostic)));
     expect(nested().unwrap!().rows == [[], []].ty!(Array(Array(Diagnostic))))

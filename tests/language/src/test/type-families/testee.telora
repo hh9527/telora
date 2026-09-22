@@ -1,5 +1,5 @@
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::test as test;
+use crate::test_support::{expect};
 
 type Box(A) = struct {value: A};
 type Other(A) = struct {value: A};
@@ -30,8 +30,8 @@ type StringExpr = Expr(String);
 
 type User = struct {name: String, age: Int};
 
-export def verified_case: test.Test = test.should_ok(fn() {
-    let int_expr: IntExpr = Expr.Call([Expr.Leaf(1)]);
+pub def verified_case: test::Test = test::should_ok(fn() {
+    let int_expr: IntExpr = Expr::Call([Expr::Leaf(1)]);
     let box_int: Type = (Box(Int)).type;
     let same_box_int: Type = (Box(Int)).type;
     let box_string: Type = (Box(String)).type;
@@ -51,10 +51,10 @@ export def verified_case: test.Test = test.should_ok(fn() {
         && unbox({value: 7}) == 7
         && make_nested([(1, 2)]).value == [(1, 2)]
         && match int_expr {
-            Expr.Leaf(_) => False,
-            Expr.Call(items) => match items[0] {
-                Expr.Leaf(value) => value == 1,
-                Expr.Call(_) => False,
+            Expr::Leaf(_) => False,
+            Expr::Call(items) => match items[0] {
+                Expr::Leaf(value) => value == 1,
+                Expr::Call(_) => False,
             },
         }
         && int_expr_type == same_int_expr_type

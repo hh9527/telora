@@ -19,7 +19,7 @@ hello/
   telora-config.json
   telora-crate.json
   telora-lock.json
-  src/app.telora
+  src/lib.telora
 ```
 
 ```json
@@ -27,19 +27,19 @@ hello/
 ```
 
 ```json
-{"name":"hello","modules":["@src/app"],"dependencies":[]}
+{"name":"hello","dependencies":[]}
 ```
 
 ```telora
-# src/app.telora；# 引入行注释
-import "std/transform-service" as service;
-import "std/value" {Value};
+# src/lib.telora；# 引入行注释
+use std::transform_service as service;
+use std::value::{Value};
 type MainService = struct {};
-impl service.TransformService for MainService {
+impl service::TransformService for MainService {
     init: fn(ctx) { {}.ty!(Self) },
-    transform: fn(self, input) { Value.String("hello, telora") },
+    transform: fn(self, input) { Value::String("hello, telora") },
 };
-export {MainService};
+pub use self::{MainService};
 
 ```
 
@@ -47,9 +47,9 @@ export {MainService};
 
 ```bash
 telora lock
-telora check @src/app
-printf 'null\n' | telora run @src/app
-telora query exports @src/app
+telora check --lib
+printf 'null\n' | telora run @src/lib
+telora query exports @src/lib
 ```
 
 `check` 先静态检查，再初始化模块；`check --only-types` 只做静态检查。
@@ -66,7 +66,7 @@ telora query exports @src/app
 1e6                        # 带十进制指数的 Float
 "text"                     # String
 b"bytes"                   # Bytes
-BuildState.Ready           # BuildState 的无 payload variant
+BuildState::Ready           # BuildState 的无 payload variant
 True                       # Bool 的 True variant
 Some(1)                    # Option(Int) 的 Some variant
 (1, "one")                # Tuple 值
@@ -83,8 +83,9 @@ def answer: Int = 40 + 2;
 def increment: Fn(Int) -> Int = fn(value) { value + 1 };
 ```
 
-`let`、`def`、`type`、`for`、`fn`、`match`、`native`、`decl`、`import` 和
-`export` 是语言保留字。`_` 用作模式或显式类型实参占位符；闭包参数使用具名
+`let`、`def`、`type`、`for`、`fn`、`match`、`native`、`decl`、`mod`、`use`、
+`pub`、`data` 和 `import` 是语言保留字。`import` 只用于 `data` 的格式装载语法。
+`_` 用作模式或显式类型实参占位符；闭包参数使用具名
 标识符。
 
 ## 运算符与控制流
@@ -132,7 +133,7 @@ left >= right
 而不是返回 False。普通复合值保持结构相等语义，两个具名 struct/enum 值还要求
 相同的名义类型。dict 字面量可以从另一侧获得具名类型上下文；具名 variant 构造
 可以从另一侧补全泛型参数和 payload 的类型上下文。构造器名称确定 enum 类型族，
-例如 `Wrapper.Box("x")` 始终构造 Wrapper 的 Box 成员。同一 enum 契约内的不同
+例如 `Wrapper::Box("x")` 始终构造 Wrapper 的 Box 成员。同一 enum 契约内的不同
 运行时 variant 可以比较并返回 False。
 有序比较只接受类型相同的
 `Int`、`Float` 或 `String` 操作数；不存在混合数值强制转换。String 按其内部
@@ -213,9 +214,9 @@ def update: Fn(Foo, Source) -> Foo = fn(base, source) {
 
 ```telora
 type Grade = enum {Excellent, Pass, Fail};
-if score >= 90 { Grade.Excellent }
-else if score >= 60 { Grade.Pass }
-else { Grade.Fail }
+if score >= 90 { Grade::Excellent }
+else if score >= 60 { Grade::Pass }
+else { Grade::Fail }
 ```
 
 ```telora
@@ -293,8 +294,8 @@ Result。成员名称确定枚举家族；泛型参数由载荷、完整调用�
 ```telora
 type FoldState = struct {flag: Bool, items: Array(Int)};
 def collect: Fn(Array(Int)) -> FoldState = fn(input) {
-    array.fold(input, {flag: False, items: []}, fn(state, item) {
-        {flag: item > 1 || state.flag, items: array.push(state.items, item)}
+    array::fold(input, {flag: False, items: []}, fn(state, item) {
+        {flag: item > 1 || state.flag, items: array::push(state.items, item)}
     })
 };
 ```
@@ -363,32 +364,32 @@ JSON 编解码使用载荷的表示，成功解码后得到目标 newtype。
 值位置的类型声明名称提供构造器函数：`UserId(1)` 构造 UserId，
 `let make = UserId;` 可将构造器作为函数传递。`Box(1)` 推断载荷类型，
 `Box@[Int](1)` 显式指定类型参数。类型注解使用裸类型名；普通 Type 参数或 Type 值契约
-必须显式取得元数据，例如 `let ty: Type = UserId.type;`。import 和 reexport
+必须显式取得元数据，例如 `let ty: Type = UserId.type;`。`use` 和 `pub use`
 保留声明的这两个用途；普通 Type 变量与返回 Type 的函数保持其值契约。
 
 构造器模式按声明解构 newtype：`let UserId(value) = id;` 读取载荷，
 `match id { UserId(0) => "zero", UserId(value) => "other" }` 按载荷匹配。
 模式可以嵌套，支持泛型和模块限定名称，例如 `Box(UserId(value))` 与
-`model.UserId(value)`。模式中的构造器名称引用类型声明；载荷保留自己的类型。
+`model::UserId(value)`。模式中的构造器名称引用类型声明；载荷保留自己的类型。
 
 元数据计算和 decorator 参数也可以使用构造器。例如
 `type Wrapped = struct(Type); let metadata = Wrapped(Int.type).0;` 得到元数据数据。
 它不能用于 `type Selected = metadata;`；静态类型必须来自声明、结构构造器或类型族。
 
 enum 成员通过类型名称引用：`type Event = enum { Progress(Int), Finished };`
-声明后，`Event.Progress(1)` 构造带载荷的值，`Event.Finished` 表示无载荷的值。
-`Event.Progress` 本身具有 `Fn(Int) -> Event` 契约，可以作为函数传递。
-泛型成员支持上下文推断与显式参数，例如 `Option.Some(1)` 和
-`Result.Ok@[Int, String](1)`；无载荷成员同样需要完整的类型证据，
-例如 `let empty: Option(Int) = Option.None;`。限定名称确定所属 enum，
-import/reexport 的类型别名保持这个身份。
+声明后，`Event::Progress(1)` 构造带载荷的值，`Event::Finished` 表示无载荷的值。
+`Event::Progress` 本身具有 `Fn(Int) -> Event` 契约，可以作为函数传递。
+泛型成员支持上下文推断与显式参数，例如 `Option::Some(1)` 和
+`Result::Ok@[Int, String](1)`；无载荷成员同样需要完整的类型证据，
+例如 `let empty: Option(Int) = Option::None;`。限定名称确定所属 enum，
+`use` / `pub use` 的类型别名保持这个身份。
 
 模式同样可以使用限定成员名称：
 
 ```telora
 match event {
-    Event.Progress(value) => value,
-    Event.Finished => 0,
+    Event::Progress(value) => value,
+    Event::Finished => 0,
 }
 ```
 
@@ -399,8 +400,8 @@ match event {
 选择性成员导入为成员建立本地名称；成员导出同时建立本地名称和公开名称：
 
 ```telora
-import Event.{Progress, Finished as Done};
-export Result.{Ok as Success, Err as Failure};
+use Event::{Progress, Finished as Done};
+pub use Result::{Ok as Success, Err as Failure};
 
 let progress = Progress(1);
 let result = Success@[Int, String](2);
@@ -409,14 +410,14 @@ let result = Success@[Int, String](2);
 成员名称保留所属声明和完整泛型参数。带载荷的成员名称可以用于调用、作为函数
 传递和写在模式中，例如 `Progress(value)`。成员导入产生的名称须与同一作用域
 中的其他绑定不同；重命名可以区分不同 enum 的同名成员。其他模块可以通过
-普通模块导入取得公开的成员名称，后续 reexport 保留其声明身份。
+    普通 `use` 取得公开的成员名称，后续 `pub use` 保留其声明身份。
 类型可以保持模块私有，同时通过成员导出提供构造与模式匹配能力，例如
-`export Status.{Ready};`。调用方通过公开的成员名称引用该声明。
+`pub use Status::{Ready};`。调用方通过公开的成员名称引用该声明。
 
 在 `match`、`if let` 和 `let else` 的模式中，导入的无载荷成员直接写名称：
 
 ```telora
-import Option.{Some, None};
+use Option::{Some, None};
 match result {
     Some(value) => value,
     None => fallback,
@@ -440,27 +441,27 @@ type Requirement = struct {
 ```
 
 Struct 和 enum 都是封闭的具名声明。不同声明即使结构相同也不是同一个类型；alias、
-import 和 reexport 保留原声明身份。字段使用 `.field`；enum 值使用声明提供的
+`use` 和 `pub use` 保留原声明身份。字段使用 `.field`；enum 值使用声明提供的
 成员名称。`struct` 和 `enum` 用于 `type` 的直接初始化。
 
 成员名称确定所属 enum，泛型参数可以从注解、函数参数、返回契约或完整调用中的
 其他实参推断，也可以显式指定：
 
 ```telora
-let entity = Entity.Ticket;
-let explicit = Entity.Agent.ty!(Entity);
+let entity = Entity::Ticket;
+let explicit = Entity::Agent::ty!(Entity);
 let enabled = True;
 let some: Fn(Int) -> Option(Int) = Some;
 let value = some(7);
 ```
 
-尚未确定的泛型参数需要显式证据，例如 `None.ty!(Option(Int))`。
+尚未确定的泛型参数需要显式证据，例如 `None::ty!(Option(Int))`。
 模式中的成员按声明身份和被匹配值的类型检查。
 
 声明上下文中的记录字面量取得预期类型的声明身份。成员构造器的载荷也接收完整
 调用提供的上下文，例如 `Some([{value: 7}])` 可以从另一个 `Option(Array(Item))`
 实参取得内部记录的 `Item` 类型。外部 JSON/TOML/YAML
-数据可以在 `codec.decode` 这类有精确 witness 的解码边界取得
+数据可以在 `codec::decode` 这类有精确 witness 的解码边界取得
 身份。已经产生的 Dict 或另一个声明类型的值，不能只因结构相同而在后续标注、
 参数或返回值边界被重新标记；应在字面量的产生点给出声明契约。
 
@@ -468,16 +469,16 @@ let value = some(7);
 
 ```telora
 let empty = [].ty!(Array(Int));
-let truth = True.ty!(Bool);
+let truth = True::ty!(Bool);
 
-import "std/dyn" as dyn;
-let package = dyn.pack(Int.type, 42);
-let projected: Option(Int) = dyn.project@[Int](package);
+use std::dyn as dyn;
+let package = dyn::pack(Int.type, 42);
+let projected: Option(Int) = dyn::project@[Int](package);
 ```
 
 `ty!` 为表达式提供静态目标类型，无法证明时编译失败。它不是运行时转换。
 Dyn 投影比较打包类型与目标的精确 TypeId，相同才返回 Some，不按结构重标记值。
-外部 Value 到业务类型使用 `codec.decode@[Target](value)`；数值和文本转换
+外部 Value 到业务类型使用 `codec::decode@[Target](value)`；数值和文本转换
 使用各自的显式库函数。语言不提供 `cast!`。
 
 ```telora
@@ -498,25 +499,25 @@ match pair {
 显式导入标准 Array 模块：
 
 ```telora
-import "std/array" as array;
+use std::array as array;
 ```
 
 常用操作包括：
 
 ```telora
-array.length(values)                 # Int
+array::length(values)                 # Int
 values[index]                        # A；以 OutOfRange blame 失败
-array.get(values, index)             # Option(A)
-array.enumerate(values)              # Array(Tuple([Int, A]))
-array.find(values, predicate)        # Option(A)
-array.any(values, predicate)         # Bool
-array.all(values, predicate)         # Bool
-array.map(values, mapper)            # Array(B)
-array.flat_map(values, mapper)       # Array(B)
-array.filter(values, predicate)      # Array(A)
-array.fold(values, initial, folder)  # State
-array.concat([left, right])          # Array(A)
-array.push(values, item)             # 新的 Array(A)
+array::get(values, index)             # Option(A)
+array::enumerate(values)              # Array(Tuple([Int, A]))
+array::find(values, predicate)        # Option(A)
+array::any(values, predicate)         # Bool
+array::all(values, predicate)         # Bool
+array::map(values, mapper)            # Array(B)
+array::flat_map(values, mapper)       # Array(B)
+array::filter(values, predicate)      # Array(A)
+array::fold(values, initial, folder)  # State
+array::concat([left, right])          # Array(A)
+array::push(values, item)             # 新的 Array(A)
 ```
 
 Array 保留顺序。`find` 返回第一个匹配项，`filter` 保留输入顺序，fold 从左到右
@@ -529,17 +530,17 @@ Array 保留顺序。`find` 返回第一个匹配项，`filter` 保留输入顺�
 
 两种索引形式都使用从零开始的 Int 索引。`values[index]` 直接返回元素；索引为
 负数或越界时，以 `fail!("OutOfRange", values, index)` 失败。对于同样的缺失
-位置，`array.get` 返回 `None`。`enumerate` 在保留来源顺序和重复项的同时，
+位置，`array::get` 返回 `None`。`enumerate` 在保留来源顺序和重复项的同时，
 把每一项与其从零开始的 Int 索引配对：
 
 ```telora
-array.get(["a", "b"], 1)       # Some("b")
+array::get(["a", "b"], 1)       # Some("b")
 ["a", "b"][1]                 # "b"
-array.enumerate(["a", "b"])   # [(0, "a"), (1, "b")]
+array::enumerate(["a", "b"])   # [(0, "a"), (1, "b")]
 ```
 
-缺失属于预期控制流时使用 `array.get`；缺失违反不变量时使用直接索引。算法需要
-保留位置时使用 `array.enumerate(values)`。
+缺失属于预期控制流时使用 `array::get`；缺失违反不变量时使用直接索引。算法需要
+保留位置时使用 `array::enumerate(values)`。
 
 图或集合等任何必要的有界结构，都使用有类型的不可变值和普通库函数构建。
 
@@ -582,7 +583,7 @@ spread 分别接受 Array 和 Tuple，不进行动态长度转换。
 
 `A.type` 是描述类型 A 的一等元数据值。`Type` 是任意有效 TypeMetadata 的类型；
 `TypeOf(A)` 是描述 `A` 的元数据的精确证据。裸类型不能进入数据实参。需要静态选择
-解码目标时使用类型参数，例如 `json.decode@[User](text)`。
+解码目标时使用类型参数，例如 `json::decode@[User](text)`。
 
 `let` / `def` 绑定数据，`type` 绑定类型。元数据可以由普通函数传递、返回和组合，
 但不能反向变成静态类型：`let m = Int.type; type Bad = m;` 非法，普通函数返回
@@ -626,7 +627,7 @@ type Swap(A, B) = struct {next: Swap(B, A)};
 
 ## Value、格式与 codec
 
-JSON、YAML 和 TOML 统一归一化为 `std/value.Value`。它是普通的 nominal recursive
+JSON、YAML 和 TOML 统一归一化为 `std::value::Value`。它是普通的 nominal recursive
 enum，表示归一化后的语义数据：
 
 ```telora
@@ -639,48 +640,48 @@ type Value = enum {
 };
 ```
 
-`std/value.ScalarValue` 是带 untagged codec 的标量子集，包含 null、Bool、Int、Float 和
+`std::value::ScalarValue` 是带 untagged codec 的标量子集，包含 null、Bool、Int、Float 和
 String。参数化查询用它表达 bindings，codec 会直接产生对应的 JSON scalar。
 
 `std/json` 负责 JSON 文本，`std/codec` 在 Value 与有类型值之间转换：
 
 ```telora
-import "std/codec" as codec;
-import "std/json" as json;
-import "std/value" { Value };
+use std::codec as codec;
+use std::json as json;
+use std::value::{ Value };
 
 type Query = struct {
     subject: String,
     limit: Int,
 };
 
-let raw = json.parse("{\"subject\":\"orders\",\"limit\":20}").unwrap!();
-let query: Query = codec.decode@[Query](raw).unwrap!();
-let encoded: Value = codec.encode(query);
-let compact: String = json.stringify(encoded);
-let pretty: String = encoded |> json.stringify_pretty(2);
+let raw = json::parse("{\"subject\":\"orders\",\"limit\":20}").unwrap!();
+let query: Query = codec::decode@[Query](raw).unwrap!();
+let encoded: Value = codec::encode(query);
+let compact: String = json::stringify(encoded);
+let pretty: String = encoded |> json::stringify_pretty(2);
 ```
 
-也可以用 `json.decode@[Query](text)` 直接把 JSON 文本解码成 `Query`。两条路径的
-区别是边界位置：`json.parse` 只解析文本并返回 Value；`codec.decode` 对已经存在的
-Value 施加类型契约。`codec.encode` 从实参的静态类型选择 `Encode` 实现并返回 Value；
-只有需要 JSON 文本边界时才调用 `json.stringify` 或
-`json.stringify_pretty`。`yaml.parse` 和 `toml.parse` 同样返回
-`Result(Value, codec.BlameError)`。`codec.decode` 和 `json.decode` 返回
-`Result(A, codec.BlameError)`；错误为不可观察的 native 对象，保留消息和失败值的来源。
+也可以用 `json::decode@[Query](text)` 直接把 JSON 文本解码成 `Query`。两条路径的
+区别是边界位置：`json::parse` 只解析文本并返回 Value；`codec::decode` 对已经存在的
+Value 施加类型契约。`codec::encode` 从实参的静态类型选择 `Encode` 实现并返回 Value；
+只有需要 JSON 文本边界时才调用 `json::stringify` 或
+`json::stringify_pretty`。`yaml.parse` 和 `toml.parse` 同样返回
+`Result(Value, codec::BlameError)`。`codec::decode` 和 `json::decode` 返回
+`Result(A, codec::BlameError)`；错误为不可观察的 native 对象，保留消息和失败值的来源。
 解码试探失败可以作为普通 Result 继续处理。需要产生诊断时使用
 `raise!(error)`，数据位置来自保留的失败 Value；缺失字段使用父对象。
 解码构造带有 `@check` 的类型时，先校验子值，再校验包含它们的候选值。
 校验返回 `Err(error)` 时，解码返回 `Err(error)`。untagged 解码将这种拒绝视为
 分支不匹配，要求恰好一个分支成功；校验函数主动 `fail!` 则中止执行。
 编码已经校验的值不会重复执行构造校验。
-`string.parse@[T](text)` 通过静态 `T: string.FromStr` evidence 将文本解析为 T；
+`string::parse@[T](text)` 通过静态 `T: string::FromStr` evidence 将文本解析为 T；
 语法解析失败返回 `Err(ParseError)`。String、Int、Float、Option(T) 和带
-`@regex.parse_by` 的 struct 具有标准实现，用户也可以显式
-`impl string.FromStr for T`。普通 exact/structural impl 优先于 regex property
+`@regex::parse_by` 的 struct 具有标准实现，用户也可以显式
+`impl string::FromStr for T`。普通 exact/structural impl 优先于 regex property
 fallback；缺少实现会在类型求解阶段诊断，不会在运行时根据 TypeId 搜索 parser。
 成功解析的候选值及其嵌套字段经过构造校验，校验拒绝产生失败诊断。
-使用 `@string.decode_by_parse` 的 codec 文本桥接也执行这些校验，拒绝时返回
+使用 `@string::decode_by_parse` 的 codec 文本桥接也执行这些校验，拒绝时返回
 `Err(BlameError)`，可以参与 untagged 分支试探。解析字段的来源是输入字符串。
 静态数据模块保留每个子节点的位置。字符串解析产生的节点保留输入字符串的来源，
 解析错误可附加输入内容中的字节范围；不会把临时字符串内的偏移当作源码位置。
@@ -696,20 +697,20 @@ Struct 和 enum 从封闭类型信息生成 codec。`std/json`
 目前保留两个类型级 typed-property decorator：
 
 ```telora
-@json.rename_all(json.RenameCase.CamelCase)
+@json::rename_all(json::RenameCase::CamelCase)
 type Details = struct {
     order_id: String,
     note: Option(String),
 };
 
-@json.untagged
+@json::untagged
 type Scalar = enum {
     Text(String),
     Count(Int),
 };
 ```
 
-`rename_all` 接受 `RenameCase` enum，支持 `json.RenameCase.CamelCase`。
+`rename_all` 接受 `RenameCase` enum，支持 `json::RenameCase::CamelCase`。
 `rename_all` 和 `untagged` 产生具名 property，codec 按目标 TypeId 与
 property TypeId 查询同一份已初始化数据。字段和 variant property 按 owner TypeId、
 canonical member index 和 property TypeId 安全存取。当前 JSON API 在类型层提供
@@ -725,22 +726,22 @@ provider 接收 owner context 与同 key 的前一个值。多个同类型 decor
 fold，因此一个 property 可以由多个局部标注逐步构成：
 
 ```telora
-import "std/array" as array;
-import "std/string" as string;
-import "std/type-desc" { TypeDesc };
-import "std/type-property" as type_property;
-import "std/type-property" { FieldPropertyCtx };
+use std::array as array;
+use std::string as string;
+use std::type_desc::{ TypeDesc };
+use std::type_property as type_property;
+use std::type_property::{ FieldPropertyCtx };
 
-@property(PropertyTarget.Field)
+@property(PropertyTarget::Field)
 type Labels = struct { values: Array(String) };
 
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type Summary = struct { first_field_labels: Array(String) };
 
 def label: Fn(String) -> Fn(FieldPropertyCtx, Option(Labels)) -> Labels = fn(value) {
     fn(ctx, previous) {
         let values = match previous {
-            Some(labels) => array.push(labels.values, value),
+            Some(labels) => array::push(labels.values, value),
             None => [value],
         };
         let result: Labels = { values };
@@ -749,7 +750,7 @@ def label: Fn(String) -> Fn(FieldPropertyCtx, Option(Labels)) -> Labels = fn(val
 };
 
 def summarize: Fn(TypeDesc, Option(Summary)) -> Summary = fn(target, previous) {
-    let values = match type_property.get_field_prop(target, 0, Labels.type) {
+    let values = match type_property::get_field_prop(target, 0, Labels.type) {
         Some(labels) => labels.values,
         None => [],
     };
@@ -776,20 +777,20 @@ property 完成后才执行 type provider，所以 `summarize` 可以读取封�
 bound；MIR 证明声明关系，运行时读取对应的 property 结果，不重新选择 impl：
 
 ```telora
-import "std/fmt" as fmt;
+use std::fmt as fmt;
 
 trait Describe {
     describe: Fn(Self) -> String,
 };
 
-impl(T: Property(fmt.DisplayBy)) Describe for T {
+impl(T: Property(fmt::DisplayBy)) Describe for T {
     describe: fn(value) {
-        fmt.render(fmt.display(T.type, value))
+        fmt::render(fmt::display(T.type, value))
     },
 };
 
 def describe: for(T: Describe) Fn(T) -> String = fn(value) {
-    Describe.describe(value)
+    Describe::describe(value)
 };
 ```
 
@@ -802,18 +803,18 @@ Property payload 是普通有类型值，也可以包含普通 closure。closure
 在初始化与回收时作为根保留，保持函数身份、封闭代码引用和完整捕获图。适合把 TypeDesc/member property 的一次性解释结果准备为运行期 closure；
 不要在每次业务调用中重新枚举 metadata 或 property registry。
 
-JSON/TOML/YAML 文件也可以作为静态数据模块 import。静态阶段只建立模块接口；类型闭合后，初始化前才读取并解析内容。
-它们不授予程序文件 IO 能力，并且只导出 `data: Value`：
+JSON/TOML/YAML 文件可以由 `data` 声明挂载。静态阶段只建立 `Value` 接口；类型闭合后、
+初始化前才读取并解析内容。它们不授予程序文件 IO 能力：
 
 ```telora
-import "./request.json" { data as request };
-import "./policy.yaml" { data as policy };
-import "./config.toml" { data as config };
+data request = import(json) "./request.json";
+data policy = import(yaml) "./policy.yaml";
+data config = import(toml) "./config.toml";
 ```
 
 JSON/TOML 拒绝越界 Int 和非有限 Float。YAML 只接受 String mapping key，拒绝
 custom tag、anchor、alias 和 merge；`!!binary`
-经过 canonical base64 校验后成为 `Value.Bytes(...)`。格式归一化保留 array index/object
+经过 canonical base64 校验后成为 `Value::Bytes(...)`。格式归一化保留 array index/object
 key 的来源路径，内部 Value wrapper 不增加路径层级。
 不要为了打印中间值而手写 `*_desc` 函数：公开结果需要稳定 JSON 形状时使用
 codec，需要临时观察任意局部值时使用 `dbg!`：
@@ -860,12 +861,12 @@ type Handler = HandlerDefinition(EventId, Event, Decision);
 
 let handlers: Array(Handler) = [
     {
-        id: EventId.Created,
-        handle: fn(event) { if event.id > 0 { Decision.Accept } else { Decision.Reject } },
+        id: EventId::Created,
+        handle: fn(event) { if event.id > 0 { Decision::Accept } else { Decision::Reject } },
     },
     {
-        id: EventId.Updated,
-        handle: fn(event) { if event.id == 0 { Decision.Reject } else { Decision.Accept } },
+        id: EventId::Updated,
+        handle: fn(event) { if event.id == 0 { Decision::Reject } else { Decision::Accept } },
     },
 ];
 ```
@@ -882,16 +883,16 @@ family 契约。共同类型错误应首先检查是否缺少这个公共期望�
 `if`/`match` 分支以及带函数类型标注的 closure：
 
 ```telora
-def make_expr: Fn() -> Expr = fn() { Expr.Column({alias: "orders", column: "id"}) };
+def make_expr: Fn() -> Expr = fn() { Expr::Column({alias: "orders", column: "id"}) };
 
 def plan: Plan = do {
-    let expr = if use_all { Expr.All } else { Expr.Column({alias: "orders", column: "id"}) };
-    let operators = [Operator.Filter(expr), Operator.Project([expr])];
+    let expr = if use_all { Expr::All } else { Expr::Column({alias: "orders", column: "id"}) };
+    let operators = [Operator::Filter(expr), Operator::Project([expr])];
     {expr, operators}
 };
 ```
 
-prelude 提供 `Bool.{True, False}`、`Option.{Some, None}` 和 `Result.{Ok, Err}`。
+prelude 提供 `Bool::{True, False}`、`Option::{Some, None}` 和 `Result::{Ok, Err}`。
 同一类型族的分支和集合元素合并泛型参数证据，因此
 `match Some("hi") { Some(x) => Ok(x), None => Err(2) }` 得到
 `Result(String, Int)`，交换分支顺序结果相同。`None` 等没有提供全部参数证据的值
@@ -911,7 +912,7 @@ type ColumnRef = struct {alias: String, column: String};
 type Expr = enum {Column(ColumnRef)};
 
 # 记录字面量按 ColumnRef 构造，不产生匿名类型
-let expr: Expr = Expr.Column({alias: "o", column: "id"});
+let expr: Expr = Expr::Column({alias: "o", column: "id"});
 ```
 
 ### Family 与递归具体类型
@@ -928,29 +929,29 @@ type Dialect(Context) = struct {
 };
 ```
 
-递归类型可以经完整、选择性、alias 或 open import 进入其他模块的契约。
+递归类型可以经 namespace、选择性或 alias `use` 进入其他模块的契约。
 同一声明保持同一身份。类型族能否闭合取决于参数流是否形成有限图，并非一律
 禁止互递归或参数置换；具体规则和增长保护见前面的参数化类型族一节。
 
 ### 复杂 family 值的 codec witness
 
-`codec.encode(value)` 从输入的静态类型选择 `Encode` 实现并直接返回 `Value`，失败产生
+`codec::encode(value)` 从输入的静态类型选择 `Encode` 实现并直接返回 `Value`，失败产生
 诊断。codec 从输入
 在 MIR 中确定的具体类型读取编码布局。对于参数很多的 concrete family，
 规范做法仍是在定义模块中建立一次 concrete type alias，并导出 alias 或有类型的
 边界函数：
 
 ```telora
-import "std/codec" as codec;
-import "std/value" { Value };
+use std::codec as codec;
+use std::value::{ Value };
 
 type Snapshot = PipelineSnapshot(Stage, Input, Expr, Plan, Output);
 
 def encode_snapshot: Fn(Snapshot) -> Value = fn(value) {
-    codec.encode(value)
+    codec::encode(value)
 };
 
-export { Snapshot, encode_snapshot };
+pub use self::{ Snapshot, encode_snapshot };
 ```
 
 下游调用 `encode_snapshot(value)`，不重建完整 TypeMetadata。该方式同样覆盖跨模块
@@ -958,8 +959,8 @@ export { Snapshot, encode_snapshot };
 
 ### Bytes 没有默认 JSON 表示
 
-公共 Value 可以显式携带 `Value.Bytes(bytes)`，YAML `!!binary` 也映射到该 variant；但
-JSON 没有原生 Bytes 类别，`json.stringify` 不为 Bytes 选择隐式文本编码。
+公共 Value 可以显式携带 `Value::Bytes(bytes)`，YAML `!!binary` 也映射到该 variant；但
+JSON 没有原生 Bytes 类别，`json::stringify` 不为 Bytes 选择隐式文本编码。
 包含裸 `Bytes` 的类型不能直接作为 JSON 文本边界。设计需要稳定 JSON
 表示的数据模型时，应显式选择 Bytes 的文本编码，或从输出类型中排除 Bytes：
 
@@ -997,15 +998,15 @@ def collect: for(N) Fn(Array(Item(N))) -> Array(Item(N)) = fn(items) {
 String 拆成字符数组。应在模块级编译一次规则并复用，例如 SQL identifier：
 
 ```telora
-import "std/regex" as regex;
+use std::regex as regex;
 
-def sql_identifier: regex.Regex = regex.compile(r"^[A-Za-z_][A-Za-z0-9_]*$");
+def sql_identifier: regex::Regex = regex::compile(r"^[A-Za-z_][A-Za-z0-9_]*$");
 def is_sql_identifier: Fn(String) -> Bool = fn(text) {
-    regex.is_match(sql_identifier, text)
+    regex::is_match(sql_identifier, text)
 };
 ```
 
-不要用 `string.split(text, "")` 模拟字符遍历；它会物化中间数组，并包含首尾空串。
+不要用 `string::split(text, "")` 模拟字符遍历；它会物化中间数组，并包含首尾空串。
 
 普通字符串不进行插值。插值使用反引号：
 
@@ -1019,7 +1020,7 @@ Unicode scalar `\u{...}`；反斜杠后的连续 Unicode 空白被忽略，包�
 代替 `\"`，并额外用 `\{...}` 表达插值。raw String 不处理 escape 或插值；正则、
 SQL 模板等包含大量反斜杠的文本优先使用 raw String，并按需增加 `#` delimiter。
 
-每个插值表达式都必须实现 `std/fmt.Display`；String、Int、Float 的实现
+每个插值表达式都必须实现 `std/fmt::Display`；String、Int、Float 的实现
 由标准能力提供。编译器静态选择 implementation，并把插值降低为对应方法调用。`Dyn` 必须先显式投影，插值处需要已确定的类型及其 Display 实现。Bool 和其他
 具名 enum 不会因运行时使用 Atom 表示而自动获得 `Display`。Float 使用有限
 binary64 的稳定文本表示：最短、可往返、不受
@@ -1027,15 +1028,15 @@ locale 影响；`3.0` 显示为 `3`，`-0.0` 显示为 `-0`，原始小数或指
 
 没有 `Display` implementation 的 Enum、Struct、Array、Dict、Tuple、Dyn 或用户值
 不能插值。enum 值可以先通过 `match` 得到明确文本；Array/Dict
-也可以显式 `array.map` 后使用 `string.join`。不要为了展示而把 Query binding 插入
+也可以显式 `array::map` 后使用 `string::join`。不要为了展示而把 Query binding 插入
 SQL；仍应保持 `{ sql, bindings }` 的参数绑定边界。
 
 `std/fmt` 是独立的显式 TypeMetadata-driven 能力：
 
 ```telora
-import "std/fmt" as fmt;
+use std::fmt as fmt;
 
-@fmt.display_by("{host}:{port}")
+@fmt::display_by("{host}:{port}")
 type Endpoint = struct { host: String, port: Int };
 
 def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
@@ -1048,15 +1049,15 @@ def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
 Display closure 的普通函数；插值路径只投影固定字段并调用这些 closure。
 模板字段支持 String、Int、Float 和嵌套 `DisplayBy` struct；模板解释器不会动态选择
 字段类型的其他显式 `Display` impl。
-`Display.display` 和 `fmt.display`
+`Display::display` 和 `fmt::display`
 返回 opaque `Fmt`；显式物化文本写作
-`fmt.render(fmt.Display.display(endpoint))`。`fmt.concat(strings, items)` 要求
+`fmt::render(fmt::Display::display(endpoint))`。`fmt::concat(strings, items)` 要求
 `strings.len == items.len + 1`，并以延迟 fragment 组合常量文本与展示值。插值在
 整个结果的末端物化。Fmt 及其输出保存在 Guest 内，计算受 Wasm fuel、内存和
 格式渲染深度检查约束；不存在 Host payload 的逐对象预扣计费承诺。
 Display 实现由 MIR 静态选择，模板不会转换成 Telora 源码。
 
-`blame!(message, subjects...)` 构造 `std/blame.BlameError`，保存 String 消息及任意
+`blame!(message, subjects...)` 构造 `std::blame::BlameError`，保存 String 消息及任意
 类型原值的来源，不产生诊断。BlameError 是不透明 native 类型，可以保存和跨模块
 传递，其消息和来源不能作为字段读取。`raise!(error)` 发出失败并返回 Never；
 `warn!(error)` 发出 warning、继续执行并返回 `None`，所属 `Option(T)` 的 T 由上下文
@@ -1072,7 +1073,7 @@ raise!(error)
 
 `dbg!` 的 `repr` 是运行时专用、有界且 cycle-safe 的观察文本，不进入 Telora String；
 codec/JSON 是数据交换协议，也不是展示 API。Float 的 debug repr 会保留 `3.0` 和
-`-0.0`，有意不同于插值及 `fmt.render` 的 `3` 和 `-0`。
+`-0.0`，有意不同于插值及 `fmt::render` 的 `3` 和 `-0`。
 
 ```telora
 def check_capability: Fn(Subject) -> Result(Capability, String) = fn(subject) {
@@ -1149,34 +1150,35 @@ Conflicted 是 MIR 的分析结论，与运行时需求表的 Failed 不同。
 ## 模块
 
 ```telora
-import "std/array" as array;
-import "@src/local" { compile as compile_local };
-import "plan-lib/types" as types;
+pub mod local;
+use std::array as array;
+use crate::local::{ compile as compile_local };
+use plan-lib::types as types;
 
 def defaults: Defaults = do {
     let base = load_defaults();
     normalize(base)
 };
-def compile: Fn(Input) -> Output = fn(input) { compile_local(input) };
-export { Entity, Requirement, compile };
+pub def compile: Fn(Input) -> Output = fn(input) { compile_local(input) };
+pub use self::{Entity, Requirement};
 ```
 
-import 是静态的。模块顶层是声明空间，只接受 import、type、trait、impl、decl、def、
-native 和 export；普通模块值也使用 `def`。`let` 只用于函数或 `do` 等普通 block
-中的顺序计算和局部 shadow。顶层 `let`、`export let`、裸表达式和 final expression
-都不合法。模块只暴露显式 export。库必须导出向调用者承诺的每个类型和函数。
+每个 crate 从 `src/lib.telora` 开始；`mod` / `data` 建立模块图边，`use` 只绑定已挂载
+身份，`pub` 定义公开接口。模块顶层是声明空间；普通模块值使用 `def`。`let` 只用于
+函数或 `do` 等普通 block 中的顺序计算和局部 shadow。顶层 `let`、裸表达式和 final
+expression 都不合法。声明默认私有，库必须用 `pub` 或 `pub use` 公开承诺的接口。
 
 默认 prelude 提供 `PropertyAttr`、`True`、`False`、`Some`、`None`、`Ok` 和 `Err`。
-它相当于可遮蔽的隐式 open import；本模块声明和显式模块导入优先，其他名字由
+它是可遮蔽的 fallback；本模块声明和显式 `use` 优先，其他名字由
 prelude 提供 fallback。这些名字不是保留字，本地 binding 可以正常使用同名；
 仍需访问内建项时使用显式别名，例如
-`import "std/prelude" { PropertyAttr as BuiltinPropertyAttr };`。
+`use std::prelude::{ PropertyAttr as BuiltinPropertyAttr };`。
 
-`src/` 下的文件由 crate module 清单发布；`tests/` 下的入口由 Host 以 `@test/...`
-选择，`telora test NAME` 是对应的测试命令。测试支持子目录，选中入口时 Host 建立
-整个 `tests/` 的临时清单，只预扫描和求值可达模块。测试通过 `@test/...` 或相对路径
-互相导入（包括顶层测试），通过 `@src/...` 导入源码；源码不能反向依赖测试，循环
-import 仍被拒绝。`test` 初始化完成后执行入口直接公开导出的 `std/test.Test`。
+`src/` 下的模块从 `lib.telora` 沿 `mod` 按需发现；`tests/` 下的入口由 Host 以
+`@test/...` 选择，`telora test NAME` 是对应的测试命令。测试支持子目录，选中入口时
+Host 建立 `tests/` 的临时访问边界，只解析和求值可达模块。测试可通过 `@test/...`
+或测试内相对身份互相引用，并通过 crate 的公开树访问源码；源码不能反向依赖测试，
+模块 cycle 仍被拒绝。`test` 初始化完成后执行入口直接公开的 `std::test::Test`。
 `should_ok`、`should_fail`、`should_fail_with` 保存 thunk，`with_fixtures` 保存
 数据源和返回 Test 的 factory；构造时不执行，不读取 fixture。普通导出函数仍是
 helper。测试组织与断言见 [测试最佳实践](TESTING.md)，完整命令规则见
@@ -1184,33 +1186,33 @@ helper。测试组织与断言见 [测试最佳实践](TESTING.md)，完整命�
 模块既可以使用显式源码根路径，也可以使用相对路径：
 
 ```telora
-# src/app.telora
-import "@src/compiler" { compile };
+# src/lib.telora
+pub mod compiler;
+use crate::compiler::{ compile };
 ```
 
 稳定逻辑模块 ID 与 crate 布局一一对应：
 
 ```text
-@src/model       -> <crate>/src/model.telora
+@src/lib         -> <crate>/src/lib.telora
+my-crate/model   -> <crate>/src/model.telora
 @test/compiler   -> <crate>/tests/compiler.telora
 plan-lib/types     -> <plan-lib>/src/types.telora
 ```
 
-模块导出具体类型 MainService，实现 `std/transform-service.TransformService` 的 init 与 transform。
+模块公开具体类型 MainService，实现 `std::transform_service::TransformService` 的 init 与 transform。
 MIR 封闭所有方法实例；Host 准备声明的来源并初始化服务，run 处理一个 stdin JSON，
 serve 通过 JSONL 或 HTTP 处理请求。每次调用从同一初始化状态开始，服务间隙 reset；fuel/memory 配额只
 约束单次调用。来源与诊断细节见 [执行模式](EXEC-MODE.md)。
 
 `check` 不调用 init/transform，不读取服务来源；行为验证使用 run/serve。
 
-测试和源码模块都可使用相对 import，按导入模块的逻辑目录解析；
-测试根不能越出 crate，源码不能反向导入测试。
-`@src/` 始终从导入模块所属 crate 的源码根解析。`plan-lib/types` 等 package 路径只能
-选择当前 crate manifest 声明的直接依赖；`std/...` 选择 Telora 内置模块。CLI 在模块图
-发现前依据 config 与 lock 准备完整的 crate-name 到物理 root 映射；resolver 随后按
-crate 粒度建立清单，builtin crates 在先，当前 crate 和直接 dependencies 随后。已登记的
-crate name 及 source 指向不再改变。
-依赖只公开自身的普通 `src/` 模块。
+源码模块只能沿 `mod` 挂载，静态 `crate` / `self` / `super` 路径只在该树内导航；
+测试根不能越出 crate，源码不能反向访问测试。`plan-lib::types` 等 package 路径只能
+选择当前 crate manifest 声明的直接依赖；`std::...` 选择 Telora 内置模块。CLI 在模块图
+发现前依据 config 与 lock 准备完整的 crate-name 到物理 root 映射；resolver 随后从
+每个 crate 的 `lib.telora` 按需发现。依赖只公开其根模块通过 `pub mod` / `pub use`
+形成的接口。
 
 ## 递归与有界工作
 

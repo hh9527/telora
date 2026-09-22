@@ -1,5 +1,5 @@
-import "std/array" as array;
-import "std/value" {Value};
+use std::array as array;
+use std::value::{Value};
 
 type Item = struct {value: Int};
 def append: for(T) Fn((T, String)) -> (T, String, Int) = fn(value) { (...value, 3) };
@@ -7,7 +7,7 @@ def append_array: for(T) Fn(Array(T), T) -> Array(T) = fn(values, value) { [...v
 def base: (Int, String) = (1, "text");
 def shared: Item = {value: 42};
 def items: Array(Item) = [shared];
-export def answer: Fn() -> ((Int, String, Int), (), ((Int, Int), Int), (Int, String, Int), Array(Int), Array(Int), Array(Int), Array(Array(Int)), Array(Item), Array(Item), Array(Int), (Int, Item, String), Int, Int) = fn() {
+pub def answer: Fn() -> ((Int, String, Int), (), ((Int, Int), Int), (Int, String, Int), Array(Int), Array(Int), Array(Int), Array(Array(Int)), Array(Item), Array(Item), Array(Int), (Int, Item, String), Int, Int) = fn() {
     let empty = [];
     let nominal: (Int, Item, String) = (...(1, {value: 2}), "hi");
     let metadata: (Type, Int) = (...(Int.type,), 42);
@@ -15,17 +15,17 @@ export def answer: Fn() -> ((Int, String, Int), (), ((Int, Int), Int), (Int, Str
     ((...(), ...base, ...(2,), ...()), (...()), (...((1, 2),), 3), append(base),
      [...empty, 1], [1, ...empty], [...[], 1, ...[], 2, ...[]], [...[[]], [1]],
      [...items, shared, ...items], items, append_array([1, 2], 3),
-     nominal, metadata.1, array.length(types))
+     nominal, metadata.1, array::length(types))
 };
 
-export def value: Value = do {
+pub def value: Value = do {
     let result = answer();
-    Value.Object({
-        numbers: Value.Array(array.map(result.6, fn(x) { Value.Int(x) })),
-        items: Value.Array(array.map(result.8, fn(x) { Value.Int(x.value) })),
-        appended: Value.Array(array.map(result.10, fn(x) { Value.Int(x) })),
-        nominal: Value.Int(result.11.1.value),
-        metadata: Value.Int(result.12),
-        type_count: Value.Int(result.13),
+    Value::Object({
+        numbers: Value::Array(array::map(result.6, fn(x) { Value::Int(x) })),
+        items: Value::Array(array::map(result.8, fn(x) { Value::Int(x.value) })),
+        appended: Value::Array(array::map(result.10, fn(x) { Value::Int(x) })),
+        nominal: Value::Int(result.11.1.value),
+        metadata: Value::Int(result.12),
+        type_count: Value::Int(result.13),
     })
 };

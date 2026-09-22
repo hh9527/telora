@@ -1,58 +1,58 @@
-import "std/test" as test;
-import "std/dyn" as dyn;
-import "@src/test-support" {expect};
-import "./provider" as provider;
+use std::test as test;
+use std::dyn as dyn;
+use crate::test_support::{expect};
+use self::provider as provider;
 
 type Point = struct {x: Int, y: Int};
 type Other = struct {x: Int, y: Int};
 type Box(T) = struct {value: T};
 
-export def fields: test.Test = test.should_ok(fn() {
+pub def fields: test::Test = test::should_ok(fn() {
     let candidate: Unchecked(Point) = {x: 1, y: 2};
     expect(candidate.x == 1 && candidate.y == 2)
 });
 
-export def nominal_identity: test.Test = test.should_ok(fn() {
+pub def nominal_identity: test::Test = test::should_ok(fn() {
     let candidate: Unchecked(Point) = {x: 1, y: 2};
-    let packed = dyn.pack((Unchecked(Point)).type, candidate);
-    expect(dyn.project_with((Point).type, packed) == None
-        && dyn.project_with((Unchecked(Other)).type, packed) == None
-        && match dyn.project_with((Unchecked(Point)).type, packed) {
+    let packed = dyn::pack((Unchecked(Point)).type, candidate);
+    expect(dyn::project_with((Point).type, packed) == None
+        && dyn::project_with((Unchecked(Other)).type, packed) == None
+        && match dyn::project_with((Unchecked(Point)).type, packed) {
             Some(value) => value.x == 1,
             None => False,
         })
 });
 
-export def generic_identity: test.Test = test.should_ok(fn() {
+pub def generic_identity: test::Test = test::should_ok(fn() {
     let candidate: Unchecked(Box(Int)) = {value: 3};
-    let packed = dyn.pack((Unchecked(Box(Int))).type, candidate);
+    let packed = dyn::pack((Unchecked(Box(Int))).type, candidate);
     expect(candidate.value == 3
-        && dyn.project_with((Box(Int)).type, packed) == None
-        && dyn.project_with((Unchecked(Box(String))).type, packed) == None)
+        && dyn::project_with((Box(Int)).type, packed) == None
+        && dyn::project_with((Unchecked(Box(String))).type, packed) == None)
 });
 
-export def finish_candidate: test.Test = test.should_ok(fn() {
+pub def finish_candidate: test::Test = test::should_ok(fn() {
     let candidate: Unchecked(Point) = {x: 4, y: 5};
     let point: Point = candidate;
     let accept: Fn(Point) -> Int = fn(point) { point.x + point.y };
     expect(accept(candidate) == 9 && point.x == 4
-        && dyn.project_with((Point).type, dyn.pack((Point).type, point)) == Some(point)
-        && dyn.project_with((Point).type, dyn.pack((Unchecked(Point)).type, candidate)) == None)
+        && dyn::project_with((Point).type, dyn::pack((Point).type, point)) == Some(point)
+        && dyn::project_with((Point).type, dyn::pack((Unchecked(Point)).type, candidate)) == None)
 });
 
-export def imported_generic: test.Test = test.should_ok(fn() {
-    let candidate: Unchecked(provider.Box(String)) = {value: "hi"};
-    let result = provider.finish(candidate);
-    expect(provider.read(candidate) == "hi"
+pub def imported_generic: test::Test = test::should_ok(fn() {
+    let candidate: Unchecked(provider::Box(String)) = {value: "hi"};
+    let result = provider::finish(candidate);
+    expect(provider::read(candidate) == "hi"
         && result.value == "hi"
-        && provider.finish(provider.candidate).value == 7)
+        && provider::finish(provider::candidate).value == 7)
 });
 
-export def idempotent: test.Test = test.should_ok(fn() {
+pub def idempotent: test::Test = test::should_ok(fn() {
     let candidate: Unchecked(Unchecked(Point)) = {x: 8, y: 9};
-    let packed = dyn.pack((Unchecked(Point)).type, candidate);
+    let packed = dyn::pack((Unchecked(Point)).type, candidate);
     expect((Unchecked(Unchecked(Point))).type == (Unchecked(Point)).type
-        && match dyn.project_with((Unchecked(Unchecked(Point))).type, packed) {
+        && match dyn::project_with((Unchecked(Unchecked(Point))).type, packed) {
             Some(value) => value.x == 8 && value.y == 9,
             None => False,
         })

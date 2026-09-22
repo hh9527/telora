@@ -6,7 +6,7 @@ mod scheduling;
 fn deep_expression_symbol_indexing_uses_a_bounded_call_stack() {
     // Parse before entering the small stack: this test measures symbol closure,
     // independently of the parser's own depth limits.
-    let source = format!("export def result: Int = {};", vec!["1"; 4_000].join(" + "));
+    let source = format!("pub def result: Int = {};", vec!["1"; 4_000].join(" + "));
     let mut mir = graph(&[("@src/main", &source)]);
     std::thread::Builder::new()
         .stack_size(256 * 1024)
@@ -22,28 +22,58 @@ fn deep_expression_symbol_indexing_uses_a_bounded_call_stack() {
 }
 
 fn graph(sources: &[(&str, &str)]) -> Mir {
-    let mut sources = sources.to_vec();
-    sources.push(("std/prelude", "native type Int @4; export { Int };"));
-    let inventory = sources
+    let authored_root = sources[0].0;
+    let root = authored_root
+        .rsplit_once('/')
+        .map_or(authored_root, |(parent, _)| parent)
+        .to_owned();
+    let children = sources
+        .iter()
+        .skip(1)
+        .filter(|(name, _)| name.starts_with("@src/") && !name.contains('.'))
+        .map(|(name, _)| name.rsplit('/').next().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let declarations = children
+        .iter()
+        .map(|name| format!("mod {name};"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut owned = sources
+        .iter()
+        .enumerate()
+        .map(|(index, (name, source))| {
+            let name = if index == 0 {
+                root.clone()
+            } else {
+                (*name).to_owned()
+            };
+            let source = if index == 0 {
+                format!("{declarations} {source}")
+            } else {
+                (*source).to_owned()
+            };
+            (name, source)
+        })
+        .collect::<Vec<_>>();
+    owned.push((
+        "std/prelude".into(),
+        "native type Int @4; pub use self::{ Int };".into(),
+    ));
+    let inventory = owned
         .iter()
         .map(|(name, _)| ModuleSpec {
             native: crate::static_sources::native_module(name),
-            name: (*name).into(),
+            name: name.clone(),
             kind: ModuleKind::Source,
-            implicit_imports: if *name == "std/prelude" {
+            implicit_imports: if name == "std/prelude" {
                 vec![]
             } else {
                 vec!["std/prelude".into()]
             },
         })
         .collect();
-    let mir = module_resolve::resolve(inventory, &[sources[0].0.into()], |_, name| {
-        Ok(sources
-            .iter()
-            .find(|(key, _)| *key == name)
-            .unwrap()
-            .1
-            .into())
+    let mir = module_resolve::resolve(inventory, &[root], |_, name| {
+        Ok(owned.iter().find(|(key, _)| key == name).unwrap().1.clone())
     });
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
     mir
@@ -54,15 +84,15 @@ fn closes_aliases_and_lexical_references_without_changing_syntax_or_types() {
     let mut mir = graph(&[
         (
             "@src/main",
-            r#"import "./bridge" { renamed }; import "./base" as ns;
-          export def result = fn(x: Int) { let before = x; let x = x; (x, before, renamed, ns.original) };"#,
+            r#"use self::bridge::{ renamed }; use self::base as ns;
+          pub def result = fn(x: Int) { let before = x; let x = x; (x, before, renamed, ns.original) };"#,
         ),
         (
             "@src/bridge",
-            r#"import "./base" { original }; export { original as renamed };"#,
+            r#"use crate::base::{ original }; pub use self::{ original as renamed };"#,
         ),
         // A type error is irrelevant to symbol closure.
-        ("@src/base", r#"export def original: Int = "wrong";"#),
+        ("@src/base", r#"pub def original: Int = "wrong";"#),
     ]);
     let allocation = mir.hir.as_ptr();
     let slots = mir.ty_slots.len();
@@ -112,17 +142,17 @@ fn closes_aliases_and_lexical_references_without_changing_syntax_or_types() {
 }
 
 #[test]
-fn records_unused_duplicates_but_only_used_wildcard_ambiguity() {
+fn records_duplicate_definitions_and_conflicting_explicit_aliases() {
     let mut mir = graph(&[
         (
             "@src/main",
-            r#"import "./a" *; import "./b" *;
+            r#"use self::a::{ shared }; use self::b::{ shared };
           def duplicate = 1; def duplicate = 2;
-          export def bad = shared;
-          export def safe = do { let shared = 3; shared };"#,
+          pub def bad = shared;
+          pub def safe = do { let shared = 3; shared };"#,
         ),
-        ("@src/a", "export def shared = 1; export def unused = 1;"),
-        ("@src/b", "export def shared = 2; export def unused = 2;"),
+        ("@src/a", "pub def shared = 1; pub def unused = 1;"),
+        ("@src/b", "pub def shared = 2; pub def unused = 2;"),
     ]);
     resolve(&mut mir);
     assert_eq!(
@@ -135,10 +165,11 @@ fn records_unused_duplicates_but_only_used_wildcard_ambiguity() {
         matches!(&mir.resolve_conflicts[0], ResolveConflict::DuplicateDefinition { name, definitions }
         if name == "duplicate" && definitions.len() == 2 && definitions[0] != definitions[1])
     );
-    assert!(
-        matches!(&mir.resolve_conflicts[1], ResolveConflict::AmbiguousImport { name, candidates }
-        if name == "shared" && candidates.len() == 2)
-    );
+    assert!(matches!(
+        &mir.resolve_conflicts[1],
+        ResolveConflict::DuplicateDefinition { name, definitions }
+            if name == "shared" && definitions.len() == 2
+    ));
     assert!(!mir.resolve_slots.contains(&ResolveState::Pending));
     assert!(mir.symbols_closed);
 }
@@ -148,15 +179,15 @@ fn unresolved_diagnostics_preserve_authored_names_and_import_requests() {
     let mut mir = graph(&[
         (
             "@src/main",
-            "import \"./base\" {absent as local}; export def bad = missing; export def good = 42;",
+            "use self::base::{absent as local}; pub def bad = missing; pub def good = 42;",
         ),
-        ("@src/base", "export def present = 1;"),
+        ("@src/base", "pub def present = 1;"),
     ]);
     resolve(&mut mir);
     assert!(
         mir.diagnostics
             .iter()
-            .any(|d| d.message == "unknown imported binding \"absent\" from \"./base\""),
+            .any(|d| d.message == "unknown imported binding \"absent\""),
         "{:?}",
         mir.diagnostics
     );
@@ -180,10 +211,10 @@ fn keeps_unresolved_results_and_explicit_member_constraints() {
     let mut mir = graph(&[(
         "@src/main",
         r#"
-        export def record = { a: 1 };
-        export def field = record.a;
-        export def broken = absent;
-        export def pattern = fn(x) { match x { captured => captured } };
+        pub def record = { a: 1 };
+        pub def field = record.a;
+        pub def broken = absent;
+        pub def pattern = fn(x) { match x { captured => captured } };
     "#,
     )]);
     resolve(&mut mir);
@@ -213,7 +244,7 @@ fn constructor_patterns_use_source_declarations_without_type_evaluation() {
         "@src/main",
         r#"
         type Wrap = struct(Int);
-        export def unwrap = fn(value) { match value { Wrap(payload) => payload } };
+        pub def unwrap = fn(value) { match value { Wrap(payload) => payload } };
     "#,
     )]);
     resolve(&mut mir);

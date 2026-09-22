@@ -1,1 +1,1 @@
-export def result = Ok(1);
+pub def result = Ok(1);

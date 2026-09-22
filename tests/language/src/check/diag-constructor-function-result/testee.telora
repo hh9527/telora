@@ -1,1 +1,1 @@
-export def make: Fn(Int) -> Int = Some;
+pub def make: Fn(Int) -> Int = Some;

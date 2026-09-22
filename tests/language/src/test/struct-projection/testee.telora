@@ -1,6 +1,6 @@
-import "std/test" as test;
-import "std/dyn" as dyn;
-import "@src/test-support" {expect};
+use std::test as test;
+use std::dyn as dyn;
+use crate::test_support::{expect};
 
 type Source = struct {x: Int, y: String, extra: Int};
 type Foo = struct {x: Int, Y: String};
@@ -11,14 +11,14 @@ type Box(A) = struct {value: A};
 type Named(A) = struct {item: A};
 def source: Source = {x: 1, y: "hi", extra: 3};
 
-export def construct: test.Test = test.should_ok(fn() {
+pub def construct: test::Test = test::should_ok(fn() {
     let selected: Foo = source.{x, y as Y,};
     expect(selected.x == 1 && selected.Y == "hi"
-        && dyn.project_with((Foo).type, dyn.pack((Foo).type, selected)) == Some(selected)
-        && dyn.project_with((Twin).type, dyn.pack((Foo).type, selected)) == None)
+        && dyn::project_with((Foo).type, dyn::pack((Foo).type, selected)) == Some(selected)
+        && dyn::project_with((Twin).type, dyn::pack((Foo).type, selected)) == None)
 });
 
-export def update: test.Test = test.should_ok(fn() {
+pub def update: test::Test = test::should_ok(fn() {
     let base: Foo = {x: 9, Y: "base"};
     let updated = base <~ source.{x, y as Y} <~ {x: 2};
     expect(updated.x == 2 && updated.Y == "hi" && base.x == 9)
@@ -28,7 +28,7 @@ def consume: Fn(Foo) -> String = fn(value) { value.Y };
 def select: Fn(Source) -> Foo = fn(value) { value.{x, y as Y} };
 def choose: for(A) Fn(A, A) -> A = fn(first, second) { first };
 
-export def contexts: test.Test = test.should_ok(fn() {
+pub def contexts: test::Test = test::should_ok(fn() {
     let expected: Foo = {x: 1, Y: "hi"};
     expect(consume(source.{x, y as Y}) == "hi"
         && select(source) == expected
@@ -37,7 +37,7 @@ export def contexts: test.Test = test.should_ok(fn() {
         && choose(source.{x, y as Y}, expected) == expected)
 });
 
-export def empty_and_repeated: test.Test = test.should_ok(fn() {
+pub def empty_and_repeated: test::Test = test::should_ok(fn() {
     let empty: Empty = source.{};
     let pair: Pair = source.{x as first, x as second};
     expect(empty == {} && pair.first == 1 && pair.second == 1
@@ -46,7 +46,7 @@ export def empty_and_repeated: test.Test = test.should_ok(fn() {
 
 def rename: for(A) Fn(Box(A)) -> Named(A) = fn(source) { source.{value as item} };
 
-export def generic: test.Test = test.should_ok(fn() {
+pub def generic: test::Test = test::should_ok(fn() {
     let source: Box(String) = {value: "generic"};
     let projected: Named(String) = source.{value as item};
     expect(projected.item == "generic" && rename(source) == projected)

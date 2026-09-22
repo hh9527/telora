@@ -1,2 +1,2 @@
-import "std/eq" as eq;
-export def invalid = eq.equal(1, "1");
+use std::eq as eq;
+pub def invalid = eq::equal(1, "1");

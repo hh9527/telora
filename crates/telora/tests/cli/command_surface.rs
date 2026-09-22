@@ -24,7 +24,7 @@ fn run_and_check_select_logical_roots_from_cwd() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/lib.telora"),
-        "export def output: String = \"42\";",
+        "pub def output: String = \"42\";",
     )
     .unwrap();
     fs::write(
@@ -63,10 +63,10 @@ fn check_discovers_the_fixed_lib_root_module_tree() {
     .unwrap();
     fs::write(
         cwd.join("src/lib.telora"),
-        "mod query; data config = import \"config.json\"; export { query, config };",
+        "mod query; data config = import(json) \"config.json\"; pub use self::{ query, config };",
     )
     .unwrap();
-    fs::write(cwd.join("src/query.telora"), "export def answer: Int = 42;").unwrap();
+    fs::write(cwd.join("src/query.telora"), "pub def answer: Int = 42;").unwrap();
     fs::write(cwd.join("src/config.json"), r#"{"enabled":true}"#).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_telora"))
@@ -97,7 +97,7 @@ fn check_discovers_the_fixed_lib_root_module_tree() {
 
     fs::write(
         cwd.join("src/lib.telora"),
-        "mod query; data config: Value = import \"config.json\"; export { query, config };",
+        "mod query; data config: Value = import(json) \"config.json\"; pub use self::{ query, config };",
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_telora"))
@@ -118,7 +118,7 @@ fn check_discovers_the_fixed_lib_root_module_tree() {
 #[test]
 fn public_cli_rejects_physical_paths_and_missing_manifests() {
     let cwd = fixture();
-    fs::write(cwd.join("src/lib.telora"), "export def output: Int = 1;").unwrap();
+    fs::write(cwd.join("src/lib.telora"), "pub def output: Int = 1;").unwrap();
     let physical = telora(&cwd)
         .args(["run", "src/lib.telora"])
         .output()
@@ -137,11 +137,7 @@ fn public_cli_rejects_physical_paths_and_missing_manifests() {
 #[test]
 fn test_roots_are_selectable_but_not_importable() {
     let cwd = fixture();
-    fs::write(
-        cwd.join("tests/codec.telora"),
-        "export def output: Int = 7;",
-    )
-    .unwrap();
+    fs::write(cwd.join("tests/codec.telora"), "pub def output: Int = 7;").unwrap();
     let run = telora(&cwd)
         .args(["check", "@test/codec"])
         .output()
@@ -153,7 +149,7 @@ fn test_roots_are_selectable_but_not_importable() {
     );
     fs::write(
         cwd.join("src/lib.telora"),
-        "import \"@test/codec\" as codec; export def output = codec;",
+        "use test::codec as codec; pub def output = codec;",
     )
     .unwrap();
     let check = telora(&cwd).args(["check", "@src/lib"]).output().unwrap();

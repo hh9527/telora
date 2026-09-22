@@ -10,6 +10,6 @@ impl Render for Name {
 };
 
 def identity: for(T: Render) Fn(T) -> T = fn(value) { value };
-def render: for(T: Render) Fn(T) -> String = fn(value) { Render.render(value) };
+def render: for(T: Render) Fn(T) -> String = fn(value) { Render::render(value) };
 
-export {Render, Name, identity, render};
+pub use self::{Render, Name, identity, render};

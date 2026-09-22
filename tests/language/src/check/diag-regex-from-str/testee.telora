@@ -1,6 +1,6 @@
-import "std/regex" as regex;
+use std::regex as regex;
 
-@regex.parse_by(regex.compile(r"(?P<enabled>.+)"))
+@regex::parse_by(regex::compile(r"(?P<enabled>.+)"))
 type Bad = struct { enabled: Bool };
 
-export { Bad };
+pub use self::{ Bad };

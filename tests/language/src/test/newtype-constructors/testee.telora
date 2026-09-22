@@ -1,12 +1,10 @@
-import "std/test" as test;
-import "std/codec" as codec;
-import "std/dyn" as dyn;
-import "std/value" { Value };
-import "std/type-desc" as type_desc;
-import "@src/test-support" { expect };
-import "@src/test/newtype-constructors/model" as model;
-import "@src/test/newtype-constructors/model" { External as RemoteId, Packet as RemoteBox };
-import "@src/test/newtype-constructors/bridge" as bridge;
+use std::test as test;
+use std::codec as codec;
+use std::dyn as dyn;
+use std::value::{ Value };
+use std::type_desc as type_desc;
+use crate::test_support::{ expect };
+use self::model::{ External as RemoteId, Packet as RemoteBox };
 
 type UserId = struct(Int);
 type Box(T) = struct(T);
@@ -23,78 +21,78 @@ def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
     payload
 };
 
-export def direct: test.Test = test.should_ok(fn() {
+pub def direct: test::Test = test::should_ok(fn() {
     let id = UserId(7);
-    expect(id.0 == 7 && codec.encode(id) == Value.Int(7))
+    expect(id.0 == 7 && codec::encode(id) == Value::Int(7))
 });
 
-export def first_class: test.Test = test.should_ok(fn() {
+pub def first_class: test::Test = test::should_ok(fn() {
     let make = UserId;
     let typed: Fn(Int) -> UserId = UserId;
     expect(make(8).0 == 8 && typed(9).0 == 9 && apply(UserId, 10).0 == 10)
 });
 
-export def generic: test.Test = test.should_ok(fn() {
+pub def generic: test::Test = test::should_ok(fn() {
     let contextual: Box(Int) = Box(11);
     let inferred = Box("hello");
     let explicit = Box@[Int](12);
     expect(contextual.0 == 11 && inferred.0 == "hello" && explicit.0 == 12)
 });
 
-export def generic_forwarding: test.Test = test.should_ok(fn() {
+pub def generic_forwarding: test::Test = test::should_ok(fn() {
     let id = box(UserId(13));
-    expect(id.0.0 == 13 && codec.encode(id) == Value.Int(13))
+    expect(id.0.0 == 13 && codec::encode(id) == Value::Int(13))
 });
 
-export def type_facet: test.Test = test.should_ok(fn() {
+pub def type_facet: test::Test = test::should_ok(fn() {
     let metadata: Type = UserId.type;
     let boxed: Type = Box(Int).type;
     let family: Fn(Type) -> Type = fn(metadata) { metadata };
-    expect(type_desc.kind(metadata) == type_desc.TypeDescKind.Ref && type_desc.kind(boxed) == type_desc.TypeDescKind.Ref
-        && type_desc.kind(family(boxed)) == type_desc.TypeDescKind.Ref)
+    expect(type_desc::kind(metadata) == type_desc::TypeDescKind::Ref && type_desc::kind(boxed) == type_desc::TypeDescKind::Ref
+        && type_desc::kind(family(boxed)) == type_desc::TypeDescKind::Ref)
 });
 
-export def constructor_dyn: test.Test = test.should_ok(fn() {
-    let packed = dyn.pack((IdConstructor).type, UserId);
-    expect(match dyn.project_with((IdConstructor).type, packed) {
+pub def constructor_dyn: test::Test = test::should_ok(fn() {
+    let packed = dyn::pack((IdConstructor).type, UserId);
+    expect(match dyn::project_with((IdConstructor).type, packed) {
         Some(make) => make(14).0 == 14,
         None => False,
     })
 });
 
-export def imported: test.Test = test.should_ok(fn() {
-    let a = model.External(15);
+pub def imported: test::Test = test::should_ok(fn() {
+    let a = model::External(15);
     let b = RemoteId(16);
-    let c = model.Packet(a);
+    let c = model::Packet(a);
     let d = RemoteBox(b);
     expect(a.0 == 15 && b.0 == 16 && c.0.0 == 15 && d.0.0 == 16
-        && model.create(17).0 == 17 && model.wrap(18).0 == 18
-        && bridge.Id(21).0 == 21 && bridge.Box(22).0 == 22
-        && bridge.model.External(23).0 == 23)
+        && model::create(17).0 == 17 && model::wrap(18).0 == 18
+        && bridge::Id(21).0 == 21 && bridge::Box(22).0 == 22
+        && bridge::model::External(23).0 == 23)
 });
 
-export def ordinary_metadata_function: test.Test = test.should_ok(fn() {
+pub def ordinary_metadata_function: test::Test = test::should_ok(fn() {
     let metadata = metadata_factory(0);
     let local: Fn(Int) -> TypeOf(UserId) = fn(value) { UserId.type };
     let local_metadata = local(1);
     let witness: TypeOf(UserId) = UserId.type;
-    expect(type_desc.kind(identity(metadata)) == type_desc.TypeDescKind.Ref
-        && type_desc.kind(identity(local_metadata)) == type_desc.TypeDescKind.Ref
-        && type_desc.kind(identity(witness)) == type_desc.TypeDescKind.Ref
-        && type_desc.kind(identity(model.metadata)) == type_desc.TypeDescKind.Ref)
+    expect(type_desc::kind(identity(metadata)) == type_desc::TypeDescKind::Ref
+        && type_desc::kind(identity(local_metadata)) == type_desc::TypeDescKind::Ref
+        && type_desc::kind(identity(witness)) == type_desc::TypeDescKind::Ref
+        && type_desc::kind(identity(model::metadata)) == type_desc::TypeDescKind::Ref)
 });
 
-export def contextual_payload: test.Test = test.should_ok(fn() {
+pub def contextual_payload: test::Test = test::should_ok(fn() {
     let item = WrappedItem({value: 19});
     let option = Maybe(Some(20));
     expect(item.0.value == 19 && option.0 == Some(20))
 });
 
-export def constructor_patterns: test.Test = test.should_ok(fn() {
+pub def constructor_patterns: test::Test = test::should_ok(fn() {
     let UserId(id) = UserId(24);
     let Box(UserId(nested)) = Box(UserId(25));
-    let model.External(remote) = model.External(26);
-    let bridge.Id(reexported) = bridge.Id(27);
+    let model::External(remote) = model::External(26);
+    let bridge::Id(reexported) = bridge::Id(27);
     let selected = match UserId(28) {
         UserId(0) => 0,
         UserId(value) => value,
@@ -104,7 +102,7 @@ export def constructor_patterns: test.Test = test.should_ok(fn() {
         && selected == 28 && conditional == 29 && unbox(Box(30)) == 30)
 });
 
-export def pattern_control_flow: test.Test = test.should_ok(fn() {
+pub def pattern_control_flow: test::Test = test::should_ok(fn() {
     let extract: Fn(Maybe) -> Int = fn(value) {
         let Maybe(Some(item)) = value else { return 0; };
         item

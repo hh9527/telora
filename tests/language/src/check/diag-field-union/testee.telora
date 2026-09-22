@@ -1,4 +1,4 @@
-export def invalid = {
+pub def invalid = {
     let value = if True { {present: 1} } else { {other: 2} };
     value.present
 };

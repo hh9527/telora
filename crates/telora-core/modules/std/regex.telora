@@ -1,9 +1,9 @@
-import "std/type-desc" { TypeDesc };
-import "std/_parse" { FromStr, parse_target };
+use std::type_desc::{ TypeDesc };
+use std::_parse::{ FromStr, parse_target };
 
 native type Regex @0;
 
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type ParseBy = struct { regex: Regex };
 
 native compile: Fn(String) -> Regex;
@@ -14,4 +14,4 @@ impl(T: Property(ParseBy)) FromStr for T {
     from_str: fn(input) { parse_target(T.type, input) },
 };
 
-export { Regex, ParseBy, compile, is_match, parse_by };
+pub use self::{ Regex, ParseBy, compile, is_match, parse_by };

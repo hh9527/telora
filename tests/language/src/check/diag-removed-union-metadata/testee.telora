@@ -1,2 +1,2 @@
 type Kind = enum {Union};
-export type Removed = {kind: Kind.Union, variants: [Int, String]};
+pub type Removed = {kind: Kind::Union, variants: [Int, String]};

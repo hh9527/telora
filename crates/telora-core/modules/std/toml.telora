@@ -1,9 +1,9 @@
-import "std/value" { Value };
-import "std/codec" { BlameError };
+use std::value::{ Value };
+use std::codec::{ BlameError };
 
 native parse_raw: Fn(TypeOf(Value), String) -> Result(Value, BlameError);
 def parse: Fn(String) -> Result(Value, BlameError) = fn(text) {
     parse_raw(Value.type, text)
 };
 
-export { parse, BlameError };
+pub use self::{ parse, BlameError };

@@ -1,2 +1,2 @@
-export type Color = enum { Red, Blue, Shade(Int) };
-export type Wrapped = struct(Int);
+pub type Color = enum { Red, Blue, Shade(Int) };
+pub type Wrapped = struct(Int);

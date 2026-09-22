@@ -1,3 +1,3 @@
 type A = enum { Data(Int) };
 type B = enum { Data(Int) };
-export def invalid: B = A.Data(1);
+pub def invalid: B = A::Data(1);

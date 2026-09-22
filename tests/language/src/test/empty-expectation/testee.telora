@@ -1,2 +1,2 @@
-import "std/test" as test;
-export def invalid: test.Test = test.should_fail_with(fn() { 1 }, "");
+use std::test as test;
+pub def invalid: test::Test = test::should_fail_with(fn() { 1 }, "");

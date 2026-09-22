@@ -18,13 +18,18 @@ fn fixture_loop() -> (PathBuf, Rc<RefCell<State>>, async_lsp::MainLoop<Server>) 
     .unwrap();
     std::fs::write(
         root.join("telora-crate.json"),
-        r#"{"name":"editor","modules":["@src/main","@src/model","@src/new"],"dependencies":[]}"#,
+        r#"{"name":"editor","dependencies":[]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/lib.telora"),
+        "pub mod main; pub mod model; pub mod new;",
     )
     .unwrap();
     for name in ["main", "model", "new"] {
         std::fs::write(
             root.join(format!("src/{name}.telora")),
-            "export def placeholder: Int = 0;",
+            "pub def placeholder: Int = 0;",
         )
         .unwrap();
     }

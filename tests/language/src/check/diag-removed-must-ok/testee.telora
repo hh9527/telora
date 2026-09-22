@@ -1,2 +1,2 @@
 def f: Fn() -> Result(Int, String) = fn() { Ok(1) };
-export def value = f.must_ok!();
+pub def value = f.must_ok!();

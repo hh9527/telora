@@ -1,2 +1,2 @@
-export type pair = (Int, String);
-export type Wrapped = struct(Int);
+pub type pair = (Int, String);
+pub type Wrapped = struct(Int);

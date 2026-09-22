@@ -1,23 +1,23 @@
-import "std/test" as test;
-import "@src/test-support" { expect };
-import "./provider" { Box, parse };
-import "./model" { Item };
+use std::test as test;
+use crate::test_support::{ expect };
+use self::provider::{ Box, parse };
+use self::model::{ Item };
 
-export def direct_self_result: test.Test = test.should_ok(fn() {
+pub def direct_self_result: test::Test = test::should_ok(fn() {
     expect(match parse@[Int]("ignored") {
         Ok(value) => value == 42,
         Err(message) => False,
     })
 });
 
-export def recursive_generic_result: test.Test = test.should_ok(fn() {
+pub def recursive_generic_result: test::Test = test::should_ok(fn() {
     expect(match parse@[Box(Box(Int))]("ignored") {
         Ok(value) => value.value.value == 42,
         Err(message) => False,
     })
 });
 
-export def exact_over_property_blanket: test.Test = test.should_ok(fn() {
+pub def exact_over_property_blanket: test::Test = test::should_ok(fn() {
     expect(match parse@[Item]("ignored") {
         Ok(value) => value.value == 7,
         Err(message) => False,

@@ -1,16 +1,16 @@
-import "std/transform-service" as entry; import "std/blame" {BlameError};
-import "std/value" {Value};
+use std::transform_service as entry; use std::blame::{BlameError};
+use std::value::{Value};
 
 def subject: Int = 7;
 def warning: Option(Int) = warn!(blame!("initialization warning", subject));
 def issue: BlameError = blame!("entry warning", subject);
-export def answer: Value = match warning { None => Value.Int(42), Some(value) => fail!("warn returned Some") };
+pub def answer: Value = match warning { None => Value::Int(42), Some(value) => fail!("warn returned Some") };
 type MainService = struct {};
-impl entry.TransformService for MainService {
+impl entry::TransformService for MainService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) {
         let warning: Option(Int) = warn!(issue);
-        match warning { None => Value.Int(43), Some(value) => fail!("warn returned Some") }
+        match warning { None => Value::Int(43), Some(value) => fail!("warn returned Some") }
     },
 };
-export {MainService};
+pub use self::{MainService};

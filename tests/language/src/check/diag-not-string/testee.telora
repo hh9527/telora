@@ -1,1 +1,1 @@
-export def invalid = !"text";
+pub def invalid = !"text";

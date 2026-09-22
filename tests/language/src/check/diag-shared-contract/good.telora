@@ -1,2 +1,2 @@
-import "@src/check/diag-shared-contract/shared" {increment};
-export def answer: Int = increment(41);
+use super::shared::{ increment };
+pub def answer: Int = increment(41);

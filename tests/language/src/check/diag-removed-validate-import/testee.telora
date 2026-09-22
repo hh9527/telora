@@ -1,2 +1,2 @@
-import "std/prelude" {validate};
-export def invalid = validate((Int).type, 1);
+use std::prelude::{validate};
+pub def invalid = validate((Int).type, 1);

@@ -1,4 +1,4 @@
-export def result = {
+pub def result = {
     let values = [...[], 1, "wrong"];
     values
 };

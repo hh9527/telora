@@ -1,1 +1,1 @@
-export def t0317_should_error = fail!();
+pub def t0317_should_error = fail!();

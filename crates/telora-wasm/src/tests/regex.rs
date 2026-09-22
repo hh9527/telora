@@ -43,12 +43,12 @@ fn unrelated_records_do_not_expand_static_regex_parsers() {
     let source = |noise: &str| {
         format!(
             r#"
-        import "std/regex" as regex;
-        import "std/string" as string;
-        @regex.parse_by(regex.compile("^(?P<value>.+)$"))
+        use std::regex as regex;
+        use std::string as string;
+        @regex::parse_by(regex::compile("^(?P<value>.+)$"))
         type Parsed = struct {{ value: Int }};
         {noise}
-        export def answer: Fn() -> Bool = fn() {{
+        pub def answer: Fn() -> Bool = fn() {{
             match string.parse@[Parsed]("42") {{
                 Ok(value) => value.value == 42,
                 Err(_) => False,

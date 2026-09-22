@@ -1,8 +1,8 @@
-import "std/test" as test;
-import "./provider" as provider;
-def copied: (Int, String, Int) = (...provider.pair, 3);
-export def original: test.Test = test.should_ok(fn() { fail!("original", copied.0) });
-export def container: test.Test = test.should_ok(fn() { fail!("container", copied) });
+use std::test as test;
+use self::provider as provider;
+def copied: (Int, String, Int) = (...provider::pair, 3);
+pub def original: test::Test = test::should_ok(fn() { fail!("original", copied.0) });
+pub def container: test::Test = test::should_ok(fn() { fail!("container", copied) });
 
 def notice: Fn(String) -> Result(Int, String) = fn(message) { Err(message) };
 def item: Fn(String) -> Tuple([Int]) = fn(message) {
@@ -13,6 +13,6 @@ def empty: Fn(String) -> Tuple([]) = fn(message) {
     let warning = notice(message).ok_or_warn!();
     ()
 };
-export def order: test.Test = test.should_ok(fn() {
+pub def order: test::Test = test::should_ok(fn() {
     (...item("first"), ...empty("middle"), ...item("last"))
 });

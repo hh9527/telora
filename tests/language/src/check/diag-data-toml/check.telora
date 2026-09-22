@@ -1,6 +1,6 @@
-import "@src/support" as support;
-import "std/value" {Value};
+use crate::support as support;
+use std::value::{Value};
 
-export def check: Fn(Value) -> Value = fn(actual) {
-    support.bool_value(support.failed_with(actual, "duplicate TOML key"))
+pub def check: Fn(Value) -> Value = fn(actual) {
+    support::bool_value(support::failed_with(actual, "duplicate TOML key"))
 };

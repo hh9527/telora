@@ -1,4 +1,4 @@
-import "std/blame" {BlameError};
+use std::blame::{BlameError};
 
 @check(fn(value) {
     if value.number > 0 { Ok(()) }
@@ -11,15 +11,15 @@ type Choice = enum { @check(fn(value) {
 }) Item(Int), Empty };
 
 def subject: Int = -7;
-export def rejected: Fn() -> Int = fn() -> Int { let value: Positive = {number: subject}; value.number };
-export def raised: Fn() -> Int = fn() -> Int { raise!(blame!("raised message", subject)) };
-export def failed: Fn() -> Int = fn() -> Int { fail!("failed message", subject) };
-export def variant: Fn() -> Int = fn() -> Int { let value = Choice.Item(subject); 42 };
-export def unwrapped: Fn() -> Int = fn() -> Int {
+pub def rejected: Fn() -> Int = fn() -> Int { let value: Positive = {number: subject}; value.number };
+pub def raised: Fn() -> Int = fn() -> Int { raise!(blame!("raised message", subject)) };
+pub def failed: Fn() -> Int = fn() -> Int { fail!("failed message", subject) };
+pub def variant: Fn() -> Int = fn() -> Int { let value = Choice::Item(subject); 42 };
+pub def unwrapped: Fn() -> Int = fn() -> Int {
     let result: Result(Int, BlameError) = Err(blame!("unwrap message", subject));
     unwrap!(result)
 };
-export def warned: Fn() -> Int = fn() -> Int {
+pub def warned: Fn() -> Int = fn() -> Int {
     let first: Option(Int) = warn!("string warning");
     let second: Option(Int) = warn!(blame!("blame warning", subject));
     let result: Result(Int, BlameError) = Err(blame!("result warning", subject));

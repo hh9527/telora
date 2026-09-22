@@ -2,7 +2,7 @@ def expect: Fn(Bool) -> Bool = fn(value) {
     if value { True } else { fail!("string EOL mismatch") }
 };
 
-export def physical_newlines: Fn() -> Bool = fn() {
+pub def physical_newlines: Fn() -> Bool = fn() {
     expect("一
 二" == "一\n二"
         && r"一
@@ -16,7 +16,7 @@ b` == "a\n42\nb"
 b" == b"a\nb")
 };
 
-export def explicit_carriage_returns: Fn() -> Bool = fn() {
+pub def explicit_carriage_returns: Fn() -> Bool = fn() {
     expect("\r" == "\x0D" && "\r" == "\u{D}"
         && "\r" != "\n"
         && r"\r" == "\\r"
@@ -28,7 +28,7 @@ x" == "\r\nx"
 x" == b"\r\nx")
 };
 
-export def continuations: Fn() -> Bool = fn() {
+pub def continuations: Fn() -> Bool = fn() {
     expect("a\
     b" == "ab"
         && `a\

@@ -21,7 +21,7 @@ fn source_check_obeys_phase_boundaries_and_preserves_failure_location() {
     );
     fs::write(
         cwd.join("src/main.telora"),
-        "def unused: Never = fail!(\"observed initializer failed\"); export def answer: Int = 42;",
+        "def unused: Never = fail!(\"observed initializer failed\"); pub def answer: Int = 42;",
     )
     .unwrap();
     let output = telora(&cwd)
@@ -117,7 +117,7 @@ fn source_check_injects_data_before_initialization() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/main.telora"),
-        "import \"./input.json\" as input; import \"std/value\" {Value}; export def answer: Value = input.data;",
+        "data input = import(json) \"./input.json\"; use std::value::{Value}; pub def answer: Value = input;",
     )
     .unwrap();
     fs::write(cwd.join("src/input.json"), "{\"answer\":42}").unwrap();
@@ -143,7 +143,7 @@ fn source_check_injects_data_before_initialization() {
     );
     fs::write(
         cwd.join("src/main.telora"),
-        "import \"std/value\" {Value}; export def answer: Value = Value.Int(42);",
+        "use std::value::{Value}; pub def answer: Value = Value.Int(42);",
     )
     .unwrap();
     let output = telora(&cwd)

@@ -1,2 +1,2 @@
 type A = struct {x: Int};
-export def result: A = { let a: A = {x: 1}; let b: A = {...a}; b };
+pub def result: A = { let a: A = {x: 1}; let b: A = {...a}; b };

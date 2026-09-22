@@ -1,2 +1,2 @@
 type Loop(A) = Loop(A);
-export {Loop};
+pub use self::{Loop};

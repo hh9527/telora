@@ -4,7 +4,7 @@ def factorial: Fn(Int) -> Int = fn(n: Int) -> Int {
 def identity: for(T) Fn(T) -> T = fn(value) { value };
 def make_adder: Fn(Int) -> Fn(Int) -> Int = fn(base: Int) { fn(delta: Int) { base + delta } };
 
-export def answer: Int = do {
+pub def answer: Int = do {
     let add = make_adder(20);
     let recursive = factorial(identity(4));
     let floating = identity(1.5) * 2.0;

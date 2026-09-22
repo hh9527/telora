@@ -1,17 +1,17 @@
-import "std/codec" {encode, Value};
-import "std/_rt" as rt;
+use std::codec::{encode, Value};
+use std::_rt as rt;
 type Action = struct {run: Fn(Int) -> Int};
-export def answer: Fn() -> (Int, Array(Float), String, String, String) = fn() {
+pub def answer: Fn() -> (Int, Array(Float), String, String, String) = fn() {
     decl even: Fn(Int) -> Int;
     decl odd: Fn(Int) -> Int;
     def even = fn(n) { if n == 0 { 42 } else { odd(n - 1) } };
     def odd = fn(n) { if n == 0 { 0 } else { even(n - 1) } };
-    let rejected_function = rt.with_diagnostics(fn(ignored: ()) {
+    let rejected_function = rt::with_diagnostics(fn(ignored: ()) {
         let action: Action = {run: fn(value) { value }};
         encode(action)
     })(());
-    let rejected_type = rt.with_diagnostics(fn(ignored: ()) { encode(Int.type) })(());
-    let remainder_zero = rt.with_diagnostics(fn(ignored: ()) { 1.0 % 0.0 })(());
+    let rejected_type = rt::with_diagnostics(fn(ignored: ()) { encode(Int.type) })(());
+    let remainder_zero = rt::with_diagnostics(fn(ignored: ()) { 1.0 % 0.0 })(());
     (even(20), [5.5 % 2.0, -5.5 % 2.0, 5.5 % -2.0, -5.5 % -2.0, 1.0e300 % 3.0],
      match rejected_function { Err(reports) => reports[0].message, Ok(_) => "missing failure" },
      match rejected_type { Err(reports) => reports[0].message, Ok(_) => "missing failure" },

@@ -1,4 +1,4 @@
-import "./helpers/group" { group as first, group as second, make };
-import "std/test" as test;
-export { first, second };
-export def third: test.Test = make();
+use self::helpers::group::{ group as first, group as second, make };
+use std::test as test;
+pub use self::{ first, second };
+pub def third: test::Test = make();

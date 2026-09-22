@@ -1,1 +1,1 @@
-export type Model(T) = enum { Model(T), Empty };
+pub type Model(T) = enum { Model(T), Empty };

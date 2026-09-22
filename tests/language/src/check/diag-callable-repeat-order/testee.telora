@@ -1,4 +1,4 @@
-export def invalid = {
+pub def invalid = {
     let use = fn(callback) { (callback(1), callback("x")) };
     use
 };

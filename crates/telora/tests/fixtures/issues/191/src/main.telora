@@ -1,10 +1,10 @@
-import "@src/fields" { AnyObjectFieldRef };
+use crate::fields::{ AnyObjectFieldRef };
 
 type ProbeOwner = enum { ProbeOwner };
 
-export def field_base: AnyObjectFieldRef = {
+pub def field_base: AnyObjectFieldRef = {
     owner: ProbeOwner.type, scalar: String.type, name: "state",
 };
-export def field_other_scalar: AnyObjectFieldRef = {
+pub def field_other_scalar: AnyObjectFieldRef = {
     owner: ProbeOwner.type, scalar: Int.type, name: "state",
 };

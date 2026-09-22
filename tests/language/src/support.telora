@@ -1,32 +1,32 @@
-import "std/array" as array;
-import "std/dict" as dict;
-import "std/string" as string;
-import "std/value" { Value };
+use std::array as array;
+use std::dict as dict;
+use std::string as string;
+use std::value::{ Value };
 
 def record_field: Fn(Value, String) -> Option(Value) = fn(value, name) {
     match value {
-        Value.Object(fields) => dict.get(fields, name),
+        Value::Object(fields) => dict::get(fields, name),
         _ => None,
     }
 };
 
 def exit_code: Fn(Value) -> Option(Int) = fn(value) {
     match record_field(value, "exit_code") {
-        Some(Value.Int(code)) => Some(code),
+        Some(Value::Int(code)) => Some(code),
         _ => None,
     }
 };
 
 def stream_item: Fn(Value, String, Int) -> Option(Value) = fn(value, stream, index) {
     match record_field(value, stream) {
-        Some(Value.Array(items)) => array.get(items, index),
+        Some(Value::Array(items)) => array::get(items, index),
         _ => None,
     }
 };
 
 def stream_length: Fn(Value, String) -> Option(Int) = fn(value, stream) {
     match record_field(value, stream) {
-        Some(Value.Array(items)) => Some(array.length(items)),
+        Some(Value::Array(items)) => Some(array::length(items)),
         _ => None,
     }
 };
@@ -36,19 +36,19 @@ def succeeded: Fn(Value) -> Bool = fn(value) {
 };
 
 def bool_value: Fn(Bool) -> Value = fn(value) {
-    if value { Value.True } else { Value.False }
+    if value { Value::True } else { Value::False }
 };
 
 def string_field_contains: Fn(Value, String, String) -> Bool = fn(value, field, expected) {
     match record_field(value, field) {
-        Some(Value.String(found)) => string.contains(found, expected),
+        Some(Value::String(found)) => string::contains(found, expected),
         _ => False,
     }
 };
 
 def string_field_equals: Fn(Value, String, String) -> Bool = fn(value, field, expected) {
     match record_field(value, field) {
-        Some(Value.String(found)) => found == expected,
+        Some(Value::String(found)) => found == expected,
         _ => False,
     }
 };
@@ -60,7 +60,7 @@ def stream_contains_string_field: Fn(Value, String, String, String) -> Bool = fn
     expected,
 ) {
     match record_field(value, stream) {
-        Some(Value.Array(items)) => array.fold(items, False, fn(found, item) {
+        Some(Value::Array(items)) => array::fold(items, False, fn(found, item) {
             found || string_field_contains(item, field, expected)
         }),
         _ => False,
@@ -75,7 +75,7 @@ def failed_with: Fn(Value, String) -> Bool = fn(value, expected) {
         )
 };
 
-export {
+pub use self::{
     record_field,
     exit_code,
     stream_item,

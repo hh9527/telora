@@ -1,5 +1,5 @@
 type Record = struct {x: Int};
-export def answer: Fn(Int) -> () = fn(mode) {
+pub def answer: Fn(Int) -> () = fn(mode) {
     if mode == 0 {
         let base: Record = {x: 1};
         let patch: Record = {x: 2};

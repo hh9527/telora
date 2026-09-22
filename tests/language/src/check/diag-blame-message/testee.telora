@@ -1,1 +1,1 @@
-export def value = blame!(1);
+pub def value = blame!(1);

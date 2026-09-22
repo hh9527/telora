@@ -1,1 +1,1 @@
-export def invalid = cast!(1, Int);
+pub def invalid = cast!(1, Int);

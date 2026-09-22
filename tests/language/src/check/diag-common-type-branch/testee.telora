@@ -1,1 +1,1 @@
-export def value = if True { 1 } else { "one" };
+pub def value = if True { 1 } else { "one" };

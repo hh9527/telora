@@ -1,4 +1,4 @@
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type Label = struct {text: String};
 
 def label: Fn(Type, Option(Label)) -> Label = fn(target, previous) {
@@ -14,14 +14,14 @@ impl(T: Property(Label)) Named for T {
 };
 
 def name: for(T: Named) Fn(T) -> String = fn(value) {
-    Named.name(value)
+    Named::name(value)
 };
 
-export {Label, Item, Named, name};
+pub use self::{Label, Item, Named, name};
 
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type Link = struct {target: Type};
 def link: Fn(Type) -> Fn(Type, Option(Link)) -> Link = fn(target) {
     fn(owner, previous) { {target} }
 };
-export {Link, link};
+pub use self::{Link, link};

@@ -3,4 +3,4 @@ def identity: for(N) Fn(N) -> N = fn(value) {
     result
 };
 def unrelated: N = 1;
-export {identity, unrelated};
+pub use self::{identity, unrelated};

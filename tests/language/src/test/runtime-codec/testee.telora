@@ -1,81 +1,81 @@
-import "std/test" as test;
-import "std/codec" as codec;
-import "std/value" {Value};
-import "@src/runtime-support" {equal, all};
-import "./codec-builtins" as p_codec_builtins;
-import "./codec-builtins.expected.json" {data as expected_codec_builtins};
-import "./codec-collections.expected.json" {data as expected_codec_collections};
-import "./codec-decode-enum" as p_codec_decode_enum;
-import "./codec-decode-enum.expected.json" {data as expected_codec_decode_enum};
-import "./codec-decode-nominal" as p_codec_decode_nominal;
-import "./codec-decode-nominal.expected.json" {data as expected_codec_decode_nominal};
-import "./codec-decode-scalars" as p_codec_decode_scalars;
-import "./codec-decode-scalars.expected.json" {data as expected_codec_decode_scalars};
-import "./codec-decode-tuples" as p_codec_decode_tuples;
-import "./codec-decode-tuples.expected.json" {data as expected_codec_decode_tuples};
-import "./codec-display" as p_codec_display;
-import "./codec-display.expected.json" {data as expected_codec_display};
-import "./codec-enum" as p_codec_enum;
-import "./codec-enum-all.expected.json" {data as expected_codec_enum_all};
-import "./codec-enum-rename" as p_codec_enum_rename;
-import "./codec-enum-rename.expected.json" {data as expected_codec_enum_rename};
-import "./codec-enum.expected.json" {data as expected_codec_enum};
-import "./codec-newtype" as p_codec_newtype;
-import "./codec-newtype.expected.json" {data as expected_codec_newtype};
-import "./codec-rename" as p_codec_rename;
-import "./codec-rename.expected.json" {data as expected_codec_rename};
-import "./codec-scalars" as p_codec_scalars;
-import "./codec-untagged" as p_codec_untagged;
-import "./codec-untagged.expected.json" {data as expected_codec_untagged};
+use std::test as test;
+use std::codec as codec;
+use std::value::{Value};
+use crate::runtime_support::{equal, all};
+use self::codec_builtins as p_codec_builtins;
+data expected_codec_builtins = import(json) "./codec-builtins.expected.json";
+data expected_codec_collections = import(json) "./codec-collections.expected.json";
+use self::codec_decode_enum as p_codec_decode_enum;
+data expected_codec_decode_enum = import(json) "./codec-decode-enum.expected.json";
+use self::codec_decode_nominal as p_codec_decode_nominal;
+data expected_codec_decode_nominal = import(json) "./codec-decode-nominal.expected.json";
+use self::codec_decode_scalars as p_codec_decode_scalars;
+data expected_codec_decode_scalars = import(json) "./codec-decode-scalars.expected.json";
+use self::codec_decode_tuples as p_codec_decode_tuples;
+data expected_codec_decode_tuples = import(json) "./codec-decode-tuples.expected.json";
+use self::codec_display as p_codec_display;
+data expected_codec_display = import(json) "./codec-display.expected.json";
+use self::codec_enum as p_codec_enum;
+data expected_codec_enum_all = import(json) "./codec-enum-all.expected.json";
+use self::codec_enum_rename as p_codec_enum_rename;
+data expected_codec_enum_rename = import(json) "./codec-enum-rename.expected.json";
+data expected_codec_enum = import(json) "./codec-enum.expected.json";
+use self::codec_newtype as p_codec_newtype;
+data expected_codec_newtype = import(json) "./codec-newtype.expected.json";
+use self::codec_rename as p_codec_rename;
+data expected_codec_rename = import(json) "./codec-rename.expected.json";
+use self::codec_scalars as p_codec_scalars;
+use self::codec_untagged as p_codec_untagged;
+data expected_codec_untagged = import(json) "./codec-untagged.expected.json";
 
-export def codec_decode_enum: test.Test = test.should_ok(fn() {
+pub def verifies_codec_decode_enum: test::Test = test::should_ok(fn() {
     equal(p_codec_decode_enum.answer, expected_codec_decode_enum)
 });
 
-export def codec_decode_nominal: test.Test = test.should_ok(fn() {
+pub def verifies_codec_decode_nominal: test::Test = test::should_ok(fn() {
     equal(p_codec_decode_nominal.answer, expected_codec_decode_nominal)
 });
 
-export def codec_decode_tuples: test.Test = test.should_ok(fn() {
+pub def verifies_codec_decode_tuples: test::Test = test::should_ok(fn() {
     equal(p_codec_decode_tuples.answer, expected_codec_decode_tuples)
 });
 
-export def codec_decode_scalars: test.Test = test.should_ok(fn() {
+pub def verifies_codec_decode_scalars: test::Test = test::should_ok(fn() {
     equal(p_codec_decode_scalars.answer, expected_codec_decode_scalars)
 });
 
-export def codec_display: test.Test = test.should_ok(fn() {
+pub def verifies_codec_display: test::Test = test::should_ok(fn() {
     equal(p_codec_display.answer, expected_codec_display)
 });
 
-export def codec_untagged: test.Test = test.should_ok(fn() {
+pub def verifies_codec_untagged: test::Test = test::should_ok(fn() {
     equal(p_codec_untagged.answer, expected_codec_untagged)
 });
 
-export def codec_enum_rename: test.Test = test.should_ok(fn() {
+pub def verifies_codec_enum_rename: test::Test = test::should_ok(fn() {
     equal(p_codec_enum_rename.answer, expected_codec_enum_rename)
 });
 
-export def codec_rename: test.Test = test.should_ok(fn() {
+pub def verifies_codec_rename: test::Test = test::should_ok(fn() {
     equal(p_codec_rename.answer, expected_codec_rename)
 });
 
-export def codec_newtype: test.Test = test.should_ok(fn() {
+pub def verifies_codec_newtype: test::Test = test::should_ok(fn() {
     equal(p_codec_newtype.answer, expected_codec_newtype)
 });
 
-export def codec_enum: test.Test = test.should_ok(fn() {
+pub def verifies_codec_enum: test::Test = test::should_ok(fn() {
     equal(p_codec_enum.answer, expected_codec_enum)
 });
 
-export def codec_collections: test.Test = test.should_ok(fn() {
+pub def codec_collections: test::Test = test::should_ok(fn() {
     equal(p_codec_scalars.answer, expected_codec_collections)
 });
 
-export def codec_builtins: test.Test = test.should_ok(fn() {
+pub def verifies_codec_builtins: test::Test = test::should_ok(fn() {
     equal(p_codec_builtins.answer, expected_codec_builtins)
 });
 
-export def codec_enum_all: test.Test = test.should_ok(fn() {
-    equal(codec.encode(p_codec_enum.inspect()), expected_codec_enum_all)
+pub def codec_enum_all: test::Test = test::should_ok(fn() {
+    equal(codec::encode(p_codec_enum.inspect()), expected_codec_enum_all)
 });

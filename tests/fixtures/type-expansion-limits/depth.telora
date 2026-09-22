@@ -1,2 +1,2 @@
 type Deep = {{TYPE}};
-export def metadata: Type = Deep.type;
+pub def metadata: Type = Deep.type;

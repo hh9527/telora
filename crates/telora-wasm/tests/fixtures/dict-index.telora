@@ -1,6 +1,6 @@
-import "std/_rt" as rt;
-export def answer: Fn() -> (Int, Int, rt.Diagnostic) = fn() {
+use std::_rt as rt;
+pub def answer: Fn() -> (Int, Int, rt::Diagnostic) = fn() {
     let values: Dict(Int) = { z: 9, a: 1 };
-    let absent = rt.with_diagnostics(fn(key: String) { values[key] })("missing");
+    let absent = rt::with_diagnostics(fn(key: String) { values[key] })("missing");
     (values["a"], values["z"], match absent { Err(reports) => reports[0], Ok(_) => fail!("expected missing key") })
 };

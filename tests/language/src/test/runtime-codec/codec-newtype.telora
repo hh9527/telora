@@ -1,8 +1,8 @@
-import "std/codec" as codec;
-import "std/value" { Value };
-import "std/json" as json;
-@json.rename_all(json.RenameCase.CamelCase)
+use std::codec as codec;
+use std::value::{ Value };
+use std::json as json;
+@json::rename_all(json::RenameCase::CamelCase)
 type Count = struct(Int);
 type Counts = struct(Array(Count));
-export def inspect: Fn() -> Value = fn() { codec.encode(Counts([Count(1), Count(2)])) };
-export def answer: Value = inspect();
+pub def inspect: Fn() -> Value = fn() { codec::encode(Counts([Count(1), Count(2)])) };
+pub def answer: Value = inspect();

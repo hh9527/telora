@@ -1,47 +1,47 @@
-import "std/test" as test;
-import "std/codec" as codec;
-import "std/value" {Value};
-import "@src/runtime-support" {equal, all};
-import "@src/test-support" {expect};
-import "./display-by" as p_display_by;
-import "./display.expected.json" {data as expected_display};
-import "./dynamic" as p_dynamic;
-import "./dynamic-fields" as p_dynamic_fields;
-import "./dynamic-fields.expected.json" {data as expected_dynamic_fields};
-import "./dynamic-kind" as p_dynamic_kind;
-import "./dynamic-kind.expected.json" {data as expected_dynamic_kind};
-import "./dynamic-sequences" as p_dynamic_sequences;
-import "./dynamic-sequences.expected.json" {data as expected_dynamic_sequences};
-import "./dynamic-variants" as p_dynamic_variants;
-import "./dynamic-variants.expected.json" {data as expected_dynamic_variants};
-import "./dynamic.expected.json" {data as expected_dynamic};
-import "./reflection" as p_reflection;
-import "./reflection.expected.json" {data as expected_reflection};
+use std::test as test;
+use std::codec as codec;
+use std::value::{Value};
+use crate::runtime_support::{equal, all};
+use crate::test_support::{expect};
+use self::display_by as p_display_by;
+data expected_display = import(json) "./display.expected.json";
+use self::dynamic as p_dynamic;
+use self::dynamic_fields as p_dynamic_fields;
+data expected_dynamic_fields = import(json) "./dynamic-fields.expected.json";
+use self::dynamic_kind as p_dynamic_kind;
+data expected_dynamic_kind = import(json) "./dynamic-kind.expected.json";
+use self::dynamic_sequences as p_dynamic_sequences;
+data expected_dynamic_sequences = import(json) "./dynamic-sequences.expected.json";
+use self::dynamic_variants as p_dynamic_variants;
+data expected_dynamic_variants = import(json) "./dynamic-variants.expected.json";
+data expected_dynamic = import(json) "./dynamic.expected.json";
+use self::reflection as p_reflection;
+data expected_reflection = import(json) "./reflection.expected.json";
 
-export def dynamic_fields: test.Test = test.should_ok(fn() {
+pub def verifies_dynamic_fields: test::Test = test::should_ok(fn() {
     equal(p_dynamic_fields.answer, expected_dynamic_fields)
 });
 
-export def dynamic_sequences: test.Test = test.should_ok(fn() {
+pub def verifies_dynamic_sequences: test::Test = test::should_ok(fn() {
     equal(p_dynamic_sequences.answer, expected_dynamic_sequences)
 });
 
-export def dynamic_kind: test.Test = test.should_ok(fn() {
+pub def verifies_dynamic_kind: test::Test = test::should_ok(fn() {
     equal(p_dynamic_kind.answer, expected_dynamic_kind)
 });
 
-export def dynamic_variants: test.Test = test.should_ok(fn() {
+pub def verifies_dynamic_variants: test::Test = test::should_ok(fn() {
     equal(p_dynamic_variants.answer, expected_dynamic_variants)
 });
 
-export def reflection: test.Test = test.should_ok(fn() {
-    equal(p_reflection.answer, expected_reflection)
+pub def verifies_reflection: test::Test = test::should_ok(fn() {
+    equal(p_reflection::answer, expected_reflection)
 });
 
-export def display: test.Test = test.should_ok(fn() {
+pub def display: test::Test = test::should_ok(fn() {
     equal(p_display_by.answer, expected_display)
 });
 
-export def dynamic: test.Test = test.should_ok(fn() {
-    equal(p_dynamic.answer, expected_dynamic)
+pub def verifies_dynamic: test::Test = test::should_ok(fn() {
+    equal(p_dynamic::answer, expected_dynamic)
 });

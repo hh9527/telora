@@ -1,49 +1,49 @@
-import "std/codec" as codec;
-import "std/fmt" as fmt;
-import "std/json" as json;
-import "std/string" as string;
+use std::codec as codec;
+use std::fmt as fmt;
+use std::json as json;
+use std::string as string;
 
-@json.rename_all(json.RenameCase.CamelCase)
+@json::rename_all(json::RenameCase::CamelCase)
 type Item = struct { some_value: Int };
-@string.decode_by_parse
-@string.encode_by_display
+@string::decode_by_parse
+@string::encode_by_display
 type Manual = struct { value: Int };
 
-impl codec.Encode for Manual {
-    encode: fn(value) { codec.Value.String("manual") },
+impl codec::Encode for Manual {
+    encode: fn(value) { codec::Value::String("manual") },
 };
 
-impl codec.Decode for Manual {
+impl codec::Decode for Manual {
     decode: fn(value) {
         match value {
-            codec.Value.String("manual") => Ok({ value: 7 }.ty!(Manual)),
+            codec::Value::String("manual") => Ok({ value: 7 }.ty!(Manual)),
             _ => Err(blame!("expected manual", value)),
         }
     },
 };
 
-@string.encode_by_display
+@string::encode_by_display
 type ExplicitDisplay = struct { value: Int };
 
-impl fmt.Display for ExplicitDisplay {
-    display: fn(value) { fmt.from_int(value.value) },
+impl fmt::Display for ExplicitDisplay {
+    display: fn(value) { fmt::from_int(value.value) },
 };
 
-export def answer: Fn() -> Bool = fn() {
+pub def answer: Fn() -> Bool = fn() {
     let input: Item = { some_value: 42 };
-    let encoded: codec.Value = codec.encode(input);
-    match codec.decode@[Item](encoded) {
+    let encoded: codec::Value = codec::encode(input);
+    match codec::decode@[Item](encoded) {
         Ok(output) => {
             let manual: Manual = { value: 1 };
-            codec.encode(manual) == codec.Value.String("manual")
-                && codec.decode@[Manual](codec.Value.String("manual"))
+            codec::encode(manual) == codec::Value::String("manual")
+                && codec::decode@[Manual](codec::Value::String("manual"))
                     == Ok({ value: 7 }.ty!(Manual))
-                && match codec.decode@[Manual](codec.Value.Int(1)) {
+                && match codec::decode@[Manual](codec::Value::Int(1)) {
                     Err(_) => True,
                     Ok(_) => False,
                 }
-                && codec.encode({ value: 9 }.ty!(ExplicitDisplay))
-                    == codec.Value.String("9")
+                && codec::encode({ value: 9 }.ty!(ExplicitDisplay))
+                    == codec::Value::String("9")
                 && output == input
         },
         Err(_) => False,

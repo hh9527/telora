@@ -1,10 +1,10 @@
-import "std/codec" as codec;
-import "std/value" {Value};
-import "std/json" as json;
+use std::codec as codec;
+use std::value::{Value};
+use std::json as json;
 type Tagged = enum {@check(fn(value) {let ignored:Option(Int) = warn!("tag visited"); Ok(())}) Number(Int)};
-@json.untagged
+@json::untagged
 type Untagged = enum {@check(fn(value) {let ignored:Option(Int) = warn!("untagged visited"); Ok(())}) Number(Int)};
-export def answer: Fn() -> (Bool, Bool) = fn() {
-    (match codec.decode@[Tagged](Value.Object({Number:Value.Int(1)})) {Ok(_) => True,Err(_) => False},
-     match codec.decode@[Untagged](Value.Int(2)) {Ok(_) => True,Err(_) => False})
+pub def answer: Fn() -> (Bool, Bool) = fn() {
+    (match codec::decode@[Tagged](Value::Object({Number:Value::Int(1)})) {Ok(_) => True,Err(_) => False},
+     match codec::decode@[Untagged](Value::Int(2)) {Ok(_) => True,Err(_) => False})
 };

@@ -1,1 +1,1 @@
-module import "missing/module" is not resolved
+unknown binding "module"

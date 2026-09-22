@@ -1,20 +1,20 @@
-import "std/_rt" as rt;
-import "std/codec" {encode, Value};
-import "std/array" as array;
+use std::_rt as rt;
+use std::codec::{encode, Value};
+use std::array as array;
 
-def attempt: Fn(Int) -> Result((Int, Array(rt.Diagnostic)), Array(rt.Diagnostic)) = rt.with_diagnostics(fn(n: Int) {
+def attempt: Fn(Int) -> Result((Int, Array(rt::Diagnostic)), Array(rt::Diagnostic)) = rt::with_diagnostics(fn(n: Int) {
     let warning: Option(Int) = warn!("inside warning");
     if n < 0 { fail!("inside failure") } else { n + 1 }
 });
-def summary: Fn(Result((Int, Array(rt.Diagnostic)), Array(rt.Diagnostic))) -> (Int, Array(String)) = fn(result: Result((Int, Array(rt.Diagnostic)), Array(rt.Diagnostic))) {
+def summary: Fn(Result((Int, Array(rt::Diagnostic)), Array(rt::Diagnostic))) -> (Int, Array(String)) = fn(result: Result((Int, Array(rt::Diagnostic)), Array(rt::Diagnostic))) {
     match result {
-        Ok((value, reports)) => (value, array.map(reports, fn(report) { report.message })),
-        Err(reports) => (-1, array.map(reports, fn(report) { report.message })),
+        Ok((value, reports)) => (value, array::map(reports, fn(report) { report.message })),
+        Err(reports) => (-1, array::map(reports, fn(report) { report.message })),
     }
 };
-export def answer: Value = encode((
+pub def answer: Value = encode((
     summary(attempt(1)),
     summary(attempt(-1)),
     summary(attempt(2)),
-    rt.with_diagnostics(fn(n: Int) { summary(attempt(n)) })(-1),
+    rt::with_diagnostics(fn(n: Int) { summary(attempt(n)) })(-1),
 ));

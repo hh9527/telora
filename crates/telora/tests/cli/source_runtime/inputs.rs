@@ -7,7 +7,7 @@ fn source_data_depth_limit_applies_before_materialization() {
     fs::write(cwd.join("src/deep.json"), &input).unwrap();
     fs::write(
         cwd.join("src/main.telora"),
-        "import \"./deep.json\" as data; import \"std/value\" {Value}; export def answer: Value = data.data;",
+        "data data = import(json) \"./deep.json\"; use std::value::{Value}; pub def answer: Value = data;",
     )
     .unwrap();
     let output = telora(&cwd).args(["check", "@src/main"]).output().unwrap();

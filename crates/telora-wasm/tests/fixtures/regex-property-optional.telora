@@ -1,5 +1,5 @@
-import "std/regex" as regex;
-import "std/type-property" as property;
-@regex.parse_by(regex.compile("(?P<x>a)?"))
+use std::regex as regex;
+use std::type_property as property;
+@regex::parse_by(regex::compile("(?P<x>a)?"))
 type Invalid = struct { x: Int };
-export def answer: Option(regex.ParseBy) = property.get_type_prop(Invalid.type, regex.ParseBy.type);
+pub def answer: Option(regex::ParseBy) = property::get_type_prop(Invalid.type, regex::ParseBy.type);

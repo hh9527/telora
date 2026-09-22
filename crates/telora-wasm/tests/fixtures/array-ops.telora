@@ -1,33 +1,33 @@
-import "std/array" as array;
+use std::array as array;
 
 def input: Array(Int) = [1, 2, 3, 4];
-def mapped: Array(Int) = array.map(input, fn(value) { value + 10 });
-def filtered: Array(Int) = array.filter(mapped, fn(value) { value > 12 });
+def mapped: Array(Int) = array::map(input, fn(value) { value + 10 });
+def filtered: Array(Int) = array::filter(mapped, fn(value) { value > 12 });
 def empty: Array(Int) = [];
 type Control = FoldControl(Int, String);
-export def answer: (Array(Int), Array(Int), Int, Int, Option(Int), Option(Int), Option(Int), Bool, Bool, Bool, Array(Int), Array((Int, String)), Option(Array((Int, String))), Option(Array((Int, Int))), Array(Int), Array(Int), Control, Control) = (
+pub def answer: (Array(Int), Array(Int), Int, Int, Option(Int), Option(Int), Option(Int), Bool, Bool, Bool, Array(Int), Array((Int, String)), Option(Array((Int, String))), Option(Array((Int, Int))), Array(Int), Array(Int), Control, Control) = (
     mapped,
     filtered,
-    array.fold(filtered, 0, fn(total, value) { total + value }),
-    array.length(filtered),
-    array.get(input, -1),
-    array.get(input, 2),
-    array.find(input, fn(value) { value > 2 }),
-    array.any(input, fn(value) { if value == 1 { True } else { fail!("any did not short-circuit") } }),
-    array.all(input, fn(value) { if value == 1 { False } else { fail!("all did not short-circuit") } }),
-    array.all(empty, fn(value) { fail!("empty all called predicate") }),
-    array.push(input, 5),
-    array.enumerate(["a", "b"]),
-    array.zip([1, 2], ["a", "b"]),
-    array.zip(input, empty),
-    array.concat([empty, [1], [2, 3], empty]),
-    array.flat_map([1, 2], fn(value) {
+    array::fold(filtered, 0, fn(total, value) { total + value }),
+    array::length(filtered),
+    array::get(input, -1),
+    array::get(input, 2),
+    array::find(input, fn(value) { value > 2 }),
+    array::any(input, fn(value) { if value == 1 { True } else { fail!("any did not short-circuit") } }),
+    array::all(input, fn(value) { if value == 1 { False } else { fail!("all did not short-circuit") } }),
+    array::all(empty, fn(value) { fail!("empty all called predicate") }),
+    array::push(input, 5),
+    array::enumerate(["a", "b"]),
+    array::zip([1, 2], ["a", "b"]),
+    array::zip(input, empty),
+    array::concat([empty, [1], [2, 3], empty]),
+    array::flat_map([1, 2], fn(value) {
         let warning: Option(Int) = warn!("flat_map once");
         [value, value + 10]
     }),
-    array.fold_control([1, 2, 99], 0, fn(state, value) -> Control {
+    array::fold_control([1, 2, 99], 0, fn(state, value) -> Control {
         if value == 99 { fail!("fold_control did not stop") }
-        else { if value == 2 { Control.Break("done") } else { Control.Continue(state + value) } }
+        else { if value == 2 { Control::Break("done") } else { Control::Continue(state + value) } }
     }),
-    array.fold_control(empty, 42, fn(state, value) -> Control { fail!("empty fold_control called") }),
+    array::fold_control(empty, 42, fn(state, value) -> Control { fail!("empty fold_control called") }),
 );

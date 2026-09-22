@@ -1,2 +1,2 @@
-import Result.{Ok};
-export def value = Ok(1);
+use Result::{Ok};
+pub def value = Ok(1);

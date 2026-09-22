@@ -1,29 +1,29 @@
-import "std/test" as test;
-import "std/codec" as codec;
-import "std/value" {Value};
-import "@src/runtime-support" {equal, all};
-import "@src/test-support" {expect};
-import "./json-parse" as p_json_parse;
-import "./json-parse.expected.json" {data as expected_json_parse};
-import "./json-stringify" as p_json_stringify;
-import "./json-stringify.expected.json" {data as expected_json_stringify};
-import "./toml-parse" as p_toml_parse;
-import "./toml-parse.expected.json" {data as expected_toml_parse};
-import "./yaml-parse" as p_yaml_parse;
-import "./yaml-parse.expected.json" {data as expected_yaml_parse};
+use std::test as test;
+use std::codec as codec;
+use std::value::{Value};
+use crate::runtime_support::{equal, all};
+use crate::test_support::{expect};
+use self::json_parse as p_json_parse;
+data expected_json_parse = import(json) "./json-parse.expected.json";
+use self::json_stringify as p_json_stringify;
+data expected_json_stringify = import(json) "./json-stringify.expected.json";
+use self::toml_parse as p_toml_parse;
+data expected_toml_parse = import(json) "./toml-parse.expected.json";
+use self::yaml_parse as p_yaml_parse;
+data expected_yaml_parse = import(json) "./yaml-parse.expected.json";
 
-export def yaml_parse: test.Test = test.should_ok(fn() {
+pub def verifies_yaml_parse: test::Test = test::should_ok(fn() {
     equal(p_yaml_parse.answer, expected_yaml_parse)
 });
 
-export def toml_parse: test.Test = test.should_ok(fn() {
+pub def verifies_toml_parse: test::Test = test::should_ok(fn() {
     equal(p_toml_parse.answer, expected_toml_parse)
 });
 
-export def json_parse: test.Test = test.should_ok(fn() {
+pub def verifies_json_parse: test::Test = test::should_ok(fn() {
     equal(p_json_parse.answer, expected_json_parse)
 });
 
-export def json_stringify: test.Test = test.should_ok(fn() {
+pub def verifies_json_stringify: test::Test = test::should_ok(fn() {
     equal(p_json_stringify.answer, expected_json_stringify)
 });

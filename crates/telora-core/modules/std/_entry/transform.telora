@@ -1,29 +1,29 @@
-import "std/transform-service" {Context, TransformService, Sources};
-import "std/type-property" as property;
-import "std/value" {Value};
-import "std/_rt" as rt;
-import "std/json" as json;
+use std::transform_service::{Context, TransformService, Sources};
+use std::type_property as property;
+use std::value::{Value};
+use std::_rt as rt;
+use std::json as json;
 
 type Handler = Fn(Value) -> String;
 type Plan = (Array(String), Fn(Context) -> Handler);
 
 def prepare: for(S: TransformService) Fn(TypeOf(S)) -> Plan = fn(target) {
-    let sources = match property.get_type_prop(target, Sources.type) {
+    let sources = match property::get_type_prop(target, Sources.type) {
         Some(sources) => sources.names,
         None => [],
     };
     (sources, fn(ctx) {
         let service: S = TransformService(S).init(ctx);
-        let observe = rt.with_diagnostics(fn(input: Value) {
-            json.stringify(TransformService(S).transform(service, input))
+        let observe = rt::with_diagnostics(fn(input: Value) {
+            json::stringify(TransformService(S).transform(service, input))
         });
         fn(input: Value) {
             match observe(input) {
-                Ok((text, diagnostics)) => rt.service_reply(text, False, diagnostics),
-                Err(diagnostics) => rt.service_reply("null", True, diagnostics),
+                Ok((text, diagnostics)) => rt::service_reply(text, False, diagnostics),
+                Err(diagnostics) => rt::service_reply("null", True, diagnostics),
             }
         }
     })
 };
 
-export {Handler, Plan, prepare};
+pub use self::{Handler, Plan, prepare};

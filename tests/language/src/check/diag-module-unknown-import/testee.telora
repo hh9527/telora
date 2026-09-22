@@ -1,2 +1,2 @@
-import "missing/module" as missing;
-export {missing};
+use missing::module as missing;
+pub use self::{missing};

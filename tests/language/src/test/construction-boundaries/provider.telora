@@ -31,4 +31,4 @@ def consume: for(T) Fn(T) -> Int = fn(value) {
     candidate.count
 };
 
-export {Box, Counted, Choice, Countdown, consume};
+pub use self::{Box, Counted, Choice, Countdown, consume};

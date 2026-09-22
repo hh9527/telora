@@ -1,7 +1,7 @@
-import "./abc.json" {data};
-import "./User" as User;
-import "std/json" as json;
+data data = import(json) "./abc.json";
+use self::User as User;
+use std::json as json;
 
-def user: User.Type = (data |> User.decode).unwrap!();
-def text: String = user |> User.encode |> json.stringify_pretty(2);
-export { text as output };
+def user: User::Type = (data |> User::decode).unwrap!();
+def text: String = user |> User::encode |> json::stringify_pretty(2);
+pub use self::{ text as output };

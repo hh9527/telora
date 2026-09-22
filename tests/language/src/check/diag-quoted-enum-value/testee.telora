@@ -1,1 +1,1 @@
-export def value: Option(Int) = 'Some(1);
+pub def value: Option(Int) = 'Some(1);

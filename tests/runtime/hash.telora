@@ -1,26 +1,26 @@
-import "std/hash" as hash;
-import "std/codec" {encode, Value};
-import "std/transform-service" as entry;
+use std::hash as hash;
+use std::codec::{encode, Value};
+use std::transform_service as entry;
 
-def initial: hash.HashState = hash.new();
-def base: hash.HashState = hash.update_string(initial, "shared prefix");
-def left: hash.HashState = hash.update_int(base, -42);
-def right: hash.HashState = hash.update_int(base, 42);
+def initial: hash::HashState = hash::new();
+def base: hash::HashState = hash::update_string(initial, "shared prefix");
+def left: hash::HashState = hash::update_int(base, -42);
+def right: hash::HashState = hash::update_int(base, 42);
 def checks: Fn() -> Value = fn() {
     encode((
-        hash.sha256(""), hash.sha256("abc"), hash.sha256("文本"),
-        hash.finish(base) == hash.finish(hash.update_string(initial, "shared prefix")),
-        hash.finish(left) == hash.finish(hash.update_int(base, -42)),
-        hash.finish(left) != hash.finish(right),
-        hash.finish(hash.update_string(hash.update_string(initial, "a"), "b")) != hash.finish(hash.update_string(initial, "ab")),
-        hash.finish(hash.update_bytes(base, hash.finish(left))) == hash.finish(hash.update_bytes(base, hash.finish(left))),
-        hash.finish(initial) != hash.finish(base),
+        hash::sha256(""), hash::sha256("abc"), hash::sha256("文本"),
+        hash::finish(base) == hash::finish(hash::update_string(initial, "shared prefix")),
+        hash::finish(left) == hash::finish(hash::update_int(base, -42)),
+        hash::finish(left) != hash::finish(right),
+        hash::finish(hash::update_string(hash::update_string(initial, "a"), "b")) != hash::finish(hash::update_string(initial, "ab")),
+        hash::finish(hash::update_bytes(base, hash::finish(left))) == hash::finish(hash::update_bytes(base, hash::finish(left))),
+        hash::finish(initial) != hash::finish(base),
     ))
 };
-export def answer: Value = checks();
+pub def answer: Value = checks();
 type MainService = struct {};
-impl entry.TransformService for MainService {
+impl entry::TransformService for MainService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) { checks() },
 };
-export {MainService};
+pub use self::{MainService};

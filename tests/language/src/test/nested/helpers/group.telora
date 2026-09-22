@@ -1,17 +1,17 @@
-import "std/test" as test;
-import "std/value" {Value};
+use std::test as test;
+use std::value::{Value};
 
-export def make: Fn() -> test.Test = fn() {
-    test.with_fixtures(["input.json", "input.json"], fn(outer) {
-        test.with_fixtures(["file+json://input.json"], fn(inner) {
-            test.should_ok(fn() {
+pub def make: Fn() -> test::Test = fn() {
+    test::with_fixtures(["input.json", "input.json"], fn(outer) {
+        test::with_fixtures(["file+json://input.json"], fn(inner) {
+            test::should_ok(fn() {
                 match inner {
-                    Value.Object(fields) => fail!("field failure", fields.n),
+                    Value::Object(fields) => fail!("field failure", fields.n),
                     _ => fail!("wrong shape", outer),
                 }
             })
         })
     })
 };
-export def group: test.Test = make();
-export def unselected: test.Test = test.should_fail(fn() { 1 });
+pub def group: test::Test = make();
+pub def unselected: test::Test = test::should_fail(fn() { 1 });

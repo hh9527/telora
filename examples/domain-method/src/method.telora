@@ -1,17 +1,17 @@
-import "std/array" as array;
+use std::array as array;
 
 # Cross-industry orchestration only. Domain capability records, policies, and
 # diagnostic messages remain owned by their industry libraries.
 def lower_independent:
     for(A, B) Fn(Array(A), Fn(A) -> Option(B)) -> Array(Option(B)) =
     fn(inputs, lower) {
-        array.map(inputs, lower)
+        array::map(inputs, lower)
     };
 
 def completed:
     for(A) Fn(Array(Option(A))) -> Array(A) =
     fn(results) {
-        array.flat_map(results, fn(result) {
+        array::flat_map(results, fn(result) {
             match result { Some(value) => [value], None => [] }
         })
     };
@@ -20,7 +20,7 @@ def collect_complete:
     for(A) Fn(Array(Option(A))) -> Option(Array(A)) =
     fn(results) {
         let values = completed(results);
-        if array.length(values) == array.length(results) {
+        if array::length(values) == array::length(results) {
             Some(values)
         } else {
             None
@@ -48,4 +48,4 @@ def finalize:
         if complete { Some(value) } else { None }
     };
 
-export { lower_independent, completed, collect_complete, compose, or_else, finalize };
+pub use self::{ lower_independent, completed, collect_complete, compose, or_else, finalize };

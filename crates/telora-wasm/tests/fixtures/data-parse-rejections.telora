@@ -1,16 +1,16 @@
-import "std/toml" as toml;
-import "std/yaml" as yaml;
-import "std/_rt" as rt;
-export def toml_rejected: Fn() -> rt.Diagnostic = fn() {
+use std::toml as toml;
+use std::yaml as yaml;
+use std::_rt as rt;
+pub def toml_rejected: Fn() -> rt::Diagnostic = fn() {
     let input = "duplicate=1\nduplicate=2\n";
-    match rt.with_diagnostics(fn(text:String) {unwrap!(toml.parse(text))})(input) {
+    match rt::with_diagnostics(fn(text:String) {unwrap!(toml::parse(text))})(input) {
         Err(reports) => reports[0],
         Ok(_) => fail!("expected TOML rejection"),
     }
 };
-export def yaml_rejected: Fn() -> rt.Diagnostic = fn() {
+pub def yaml_rejected: Fn() -> rt::Diagnostic = fn() {
     let input = "duplicate: 1\nduplicate: 2\n";
-    match rt.with_diagnostics(fn(text:String) {unwrap!(yaml.parse(text))})(input) {
+    match rt::with_diagnostics(fn(text:String) {unwrap!(yaml::parse(text))})(input) {
         Err(reports) => reports[0],
         Ok(_) => fail!("expected YAML rejection"),
     }

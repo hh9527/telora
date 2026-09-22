@@ -1,5 +1,5 @@
-import "std/value" {Value};
-import "std/dyn" as dyn;
+use std::value::{Value};
+use std::dyn as dyn;
 def apply: for(A, B) Fn(Fn(A) -> B, A) -> B = fn(callback, value) { callback(value) };
 
 def select: for(A) Fn(Bool, A) -> A = fn(condition, value) {
@@ -15,27 +15,27 @@ def invert_bool: Fn(Bool) -> Bool = fn(value) { !value };
 def invert_int: Fn(Int) -> Int = fn(value) { !value };
 
 type Scalar = enum {Integer(Int), Text(String)};
-def branch_left: Scalar = if True { Scalar.Integer(1) } else { Scalar.Text("x") };
-def branch_right: Scalar = if True { Scalar.Text("x") } else { Scalar.Integer(1) };
-def branch_nested: Scalar = (if True { if False { Scalar.Integer(1) } else { Scalar.Text("x") } } else { Scalar.Integer(1) }).ty!(Scalar);
-def branch_three: Scalar = (if True { if False { Scalar.Integer(1) } else { Scalar.Text("x") } } else { Scalar.Integer(2) }).ty!(Scalar);
+def branch_left: Scalar = if True { Scalar::Integer(1) } else { Scalar::Text("x") };
+def branch_right: Scalar = if True { Scalar::Text("x") } else { Scalar::Integer(1) };
+def branch_nested: Scalar = (if True { if False { Scalar::Integer(1) } else { Scalar::Text("x") } } else { Scalar::Integer(1) }).ty!(Scalar);
+def branch_three: Scalar = (if True { if False { Scalar::Integer(1) } else { Scalar::Text("x") } } else { Scalar::Integer(2) }).ty!(Scalar);
 def metadata_branch: Type = if True { (Int).type } else { (String).type };
 
 type RecordKind = enum {Full, Empty, First, Second, Third, Ints, Strings};
 type Record = struct {kind: RecordKind, path: Array(Int)};
 def choose_record: Fn(Bool) -> Record = fn(flag) {
     if flag {
-        {kind: RecordKind.Full, path: [1]}
+        {kind: RecordKind::Full, path: [1]}
     } else {
-        {kind: RecordKind.Empty, path: []}
+        {kind: RecordKind::Empty, path: []}
     }
 };
 
 def choose_match: Fn(Int) -> Record = fn(value) {
     match value {
-        0 => {kind: RecordKind.First, path: []},
-        1 => {kind: RecordKind.Second, path: [1]},
-        2 => {kind: RecordKind.Third, path: []},
+        0 => {kind: RecordKind::First, path: []},
+        1 => {kind: RecordKind::Second, path: [1]},
+        2 => {kind: RecordKind::Third, path: []},
     }
 };
 
@@ -46,9 +46,9 @@ def choose_nested: Fn(Bool) -> Option(Tuple([Path])) = fn(flag) {
 
 def choose_conflict: Fn(Int) -> Record = fn(value) {
     match value {
-        0 => {kind: RecordKind.Empty, path: []},
-        1 => {kind: RecordKind.Ints, path: [1]},
-        2 => {kind: RecordKind.Strings, path: [2]},
+        0 => {kind: RecordKind::Empty, path: []},
+        1 => {kind: RecordKind::Ints, path: [1]},
+        2 => {kind: RecordKind::Strings, path: [2]},
     }
 };
 
@@ -79,18 +79,18 @@ def polymorphic_identity: for(A) Fn(A) -> A = fn(value) { value };
 def polymorphic_keep: for(A) Fn(Int, A) -> (Int, A) = fn(left: Int, right) { (left, right) };
 def nested_constraints: Fn(Int) -> Fn(Int) -> Int = fn(left) { fn(right) { left + right + 1 } };
 
-def array_union: Array(Scalar) = [Scalar.Integer(1), Scalar.Text("x")];
-def array_dynamic: Array(Value) = [Value.Int(1), Value.String("x")];
+def array_union: Array(Scalar) = [Scalar::Integer(1), Scalar::Text("x")];
+def array_dynamic: Array(Value) = [Value::Int(1), Value::String("x")];
 def dict_union: Dict(Scalar) = {
-    let ints: Dict(Scalar) = {a: Scalar.Integer(1)};
-    let strings: Dict(Scalar) = {b: Scalar.Text("x")};
+    let ints: Dict(Scalar) = {a: Scalar::Integer(1)};
+    let strings: Dict(Scalar) = {b: Scalar::Text("x")};
     {...ints, ...strings}
 };
 def field_projection: (Int, String, Int, Dyn) = {
     let record: Dict(Int) = {value: 1};
     let dictionary: Dict(String) = {value: "x"};
     let alternative: Dict(Int) = if True { {value: 1} } else { {value: 2} };
-    let dynamic = dyn.pack((Int).type, record.value);
+    let dynamic = dyn::pack((Int).type, record.value);
     (record.value, dictionary.value, alternative.value, dynamic)
 };
 
@@ -108,7 +108,7 @@ def metadata_values: (TypeOf(Type), TypeOf(Int), TypeOf(Array(Int))) = ((Type).t
 type Function = Int;
 def domain_function: Function = 1;
 
-export {
+pub use self::{
     apply,
     select,
     add_left,

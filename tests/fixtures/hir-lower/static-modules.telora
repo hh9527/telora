@@ -1,8 +1,9 @@
 mod query;
 use crate::query::Query;
 use crate::query::{Intent, Rule};
+use std::test as test;
 
 data config: crate::model::Config = import(json) "config.data";
-data defaults = import "defaults.json";
+data defaults = import(json) "defaults.json";
 
 def answer: crate::model::Answer = crate::query::answer;

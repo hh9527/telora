@@ -1,11 +1,11 @@
-export type Box(T) = struct { item: T };
-export trait Show { show: Fn(Self) -> String };
+pub type Box(T) = struct { item: T };
+pub trait Show { show: Fn(Self) -> String };
 impl Show for Int { show: fn(value) { "int" } };
 impl Show for String { show: fn(value) { value } };
-impl(T: Show) Show for Box(T) { show: fn(value) { Show.show(value.item) } };
+impl(T: Show) Show for Box(T) { show: fn(value) { Show::show(value.item) } };
 
-def show: for(T: Show) Fn(T) -> String = fn(value) { Show.show(value) };
-export def wrap: for(T: Show) Fn(T) -> String = fn(value) {
+def show: for(T: Show) Fn(T) -> String = fn(value) { Show::show(value) };
+pub def wrap: for(T: Show) Fn(T) -> String = fn(value) {
     let inner: Box(T) = { item: value };
     let outer: Box(Box(T)) = { item: inner };
     show(outer)

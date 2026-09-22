@@ -1,1 +1,1 @@
-export def metadata: TypeOf(Int) = Int.type;
+pub def metadata: TypeOf(Int) = Int.type;

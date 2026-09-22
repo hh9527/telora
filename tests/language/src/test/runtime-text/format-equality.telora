@@ -1,26 +1,26 @@
-import "std/fmt" as fmt;
-import "std/array" as array;
-import "std/value" { Value };
-def nested: Fn(Int, fmt.Fmt) -> fmt.Fmt = fn(depth: Int, value: fmt.Fmt) {
-    if depth == 0 { value } else { fmt.concat(["", ""], [nested(depth - 1, value)]) }
+use std::fmt as fmt;
+use std::array as array;
+use std::value::{ Value };
+def nested: Fn(Int, fmt::Fmt) -> fmt::Fmt = fn(depth: Int, value: fmt::Fmt) {
+    if depth == 0 { value } else { fmt::concat(["", ""], [nested(depth - 1, value)]) }
 };
-export def checks: Fn() -> Array(Bool) = fn() {
-    let number = fmt.from_int(42);
-    let text = fmt.from_string("42");
-    let concat = fmt.concat(["a", "b"], [number]);
-    [number == fmt.from_int(42), number != fmt.from_int(43), number != text,
-     fmt.render(number) == fmt.render(text),
-     text == fmt.from_string("42"), text != fmt.from_string("43"),
-     fmt.from_float(0.0) != fmt.from_float(-0.0),
-     fmt.from_float(-0.0) == fmt.from_float(-0.0),
-     concat == fmt.concat(["a", "b"], [fmt.from_int(42)]),
-     concat != fmt.concat(["a", "c"], [number]),
-     concat != fmt.concat(["a", "b"], [text]),
-     fmt.concat(["42"], []) != text,
-     [concat] == [fmt.concat(["a", "b"], [number])]]
+pub def checks: Fn() -> Array(Bool) = fn() {
+    let number = fmt::from_int(42);
+    let text = fmt::from_string("42");
+    let concat = fmt::concat(["a", "b"], [number]);
+    [number == fmt::from_int(42), number != fmt::from_int(43), number != text,
+     fmt::render(number) == fmt::render(text),
+     text == fmt::from_string("42"), text != fmt::from_string("43"),
+     fmt::from_float(0.0) != fmt::from_float(-0.0),
+     fmt::from_float(-0.0) == fmt::from_float(-0.0),
+     concat == fmt::concat(["a", "b"], [fmt::from_int(42)]),
+     concat != fmt::concat(["a", "c"], [number]),
+     concat != fmt::concat(["a", "b"], [text]),
+     fmt::concat(["42"], []) != text,
+     [concat] == [fmt::concat(["a", "b"], [number])]]
 };
-export def deep_checks: Fn() -> Array(Bool) = fn() {
-    [nested(140, fmt.from_int(42)) == nested(140, fmt.from_int(42)),
-     nested(140, fmt.from_int(42)) != nested(140, fmt.from_int(43))]
+pub def deep_checks: Fn() -> Array(Bool) = fn() {
+    [nested(140, fmt::from_int(42)) == nested(140, fmt::from_int(42)),
+     nested(140, fmt::from_int(42)) != nested(140, fmt::from_int(43))]
 };
-export def answer: Value = Value.Array(array.map(checks(), fn(value) { if value { Value.True } else { Value.False } }));
+pub def answer: Value = Value::Array(array::map(checks(), fn(value) { if value { Value::True } else { Value::False } }));

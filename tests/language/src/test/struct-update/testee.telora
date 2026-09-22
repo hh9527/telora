@@ -1,6 +1,6 @@
-import "std/test" as test;
-import "std/dyn" as dyn;
-import "@src/test-support" {expect};
+use std::test as test;
+use std::dyn as dyn;
+use crate::test_support::{expect};
 
 type Full = struct {x: Int, label: String};
 type Label = struct {label: String};
@@ -11,7 +11,7 @@ type Child = struct {value: Int};
 type Parent = struct {child: Child, values: Array(Int)};
 type Box(A) = struct {value: A};
 
-export def nominal_chain: test.Test = test.should_ok(fn() {
+pub def nominal_chain: test::Test = test::should_ok(fn() {
     let base: Full = {x: 1, label: "base"};
     let label: Label = {label: "patch"};
     let count: Count = {x: 2};
@@ -19,11 +19,11 @@ export def nominal_chain: test.Test = test.should_ok(fn() {
     let checked: Full = updated;
     expect(checked.x == 3 && checked.label == "patch"
         && base.x == 1 && base.label == "base"
-        && dyn.project_with((SameShape).type, dyn.pack((Full).type, updated)) == None
-        && dyn.project_with((Full).type, dyn.pack((Full).type, updated)) == Some(checked))
+        && dyn::project_with((SameShape).type, dyn::pack((Full).type, updated)) == None
+        && dyn::project_with((Full).type, dyn::pack((Full).type, updated)) == Some(checked))
 });
 
-export def spread_order: test.Test = test.should_ok(fn() {
+pub def spread_order: test::Test = test::should_ok(fn() {
     let base: Full = {x: 1, label: "base"};
     let count: Count = {x: 2};
     let wrong: WrongCount = {x: "overwritten"};
@@ -34,7 +34,7 @@ export def spread_order: test.Test = test.should_ok(fn() {
         && (base <~ {}).label == "base")
 });
 
-export def contextual_fields: test.Test = test.should_ok(fn() {
+pub def contextual_fields: test::Test = test::should_ok(fn() {
     let base: Parent = {child: {value: 1}, values: [1]};
     let updated = base <~ {child: {value: 2}, values: []};
     let child: Child = updated.child;
@@ -44,24 +44,24 @@ export def contextual_fields: test.Test = test.should_ok(fn() {
 decl replace: for(A) Fn(Box(A), A) -> Box(A);
 def replace = fn(base, value) { base <~ {value: value} };
 
-export def generic_identity: test.Test = test.should_ok(fn() {
+pub def generic_identity: test::Test = test::should_ok(fn() {
     let base: Box(String) = {value: "base"};
     let updated = replace(base, "updated");
     let checked: Box(String) = updated;
     expect(checked.value == "updated")
 });
 
-export def integer_and: test.Test = test.should_ok(fn() {
+pub def integer_and: test::Test = test::should_ok(fn() {
     expect((7 & 3 & 1) == 1 && (7 & 2) == 2)
 });
 
-export def update_precedence: test.Test = test.should_ok(fn() {
+pub def update_precedence: test::Test = test::should_ok(fn() {
     let base: Full = {x: 1, label: "base"};
     let expected: Full = {x: 3, label: "base"};
     expect(base<~{x: 7 & 3}<~{} == expected)
 });
 
-export def overwritten_failure: test.Test = test.should_fail_with(fn() {
+pub def overwritten_failure: test::Test = test::should_fail_with(fn() {
     let base: Full = {x: 1, label: "base"};
     let count: Count = {x: 2};
     base <~ {x: fail!("update evaluated"), ...count}

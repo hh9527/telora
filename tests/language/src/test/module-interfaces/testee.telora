@@ -1,16 +1,15 @@
-import "std/test" as test;
-import "@src/test-support" {expect};
-import "@src/check/module-interfaces/origin" as origin;
-import "@src/check/module-interfaces/origin" {accepts, identity as direct, use};
-import "@src/check/module-interfaces/facade" {Box, Tree, Family, identity};
-import "@src/check/module-interfaces/local-alias" {LocalBox as ImportedLocalBox, Local};
-import "@src/check/module-interfaces/namespace" {model};
-import "@src/check/module-interfaces/namespace" as nested;
-import "@src/check/module-interfaces/open-namespace" as opened;
-import "@src/check/module-interfaces/second" {answer, identity as relayed};
-import "@src/check/module-interfaces/opaque-facade" {State};
-import "std/type-desc" as type_desc;
-import "std/array" as array;
+use std::test as test;
+use crate::test_support::{expect};
+use self::origin::{accepts, identity as direct, use};
+use self::facade::{Box, Tree, Family, identity};
+use self::local_alias::{LocalBox as ImportedLocalBox, Local};
+use self::namespace::{model};
+use self::namespace as nested;
+use self::open_namespace as opened;
+use self::second::{answer, identity as relayed};
+use self::opaque_facade::{State};
+use std::type_desc as type_desc;
+use std::array as array;
 
 type StringBox = Box(String);
 type TreeBox = Box(Tree);
@@ -29,110 +28,110 @@ type EvalBranch = struct {children: Array(EvalExpr)};
 type EvalExpr = enum {Leaf(Int), Branch(EvalBranch)};
 def eval_expr: Fn(EvalExpr) -> Int = fn(expr) {
     match expr {
-        EvalExpr.Leaf(value) => value,
-        EvalExpr.Branch(branch) => array.fold(branch.children, 0, fn(total, child) {
+        EvalExpr::Leaf(value) => value,
+        EvalExpr::Branch(branch) => array::fold(branch.children, 0, fn(total, child) {
             total + eval_expr(child)
         }),
     }
 };
 
-export def namespace_generics: test.Test = test.should_ok(fn() {
+pub def namespace_generics: test::Test = test::should_ok(fn() {
     expect(
-        origin.identity(1) == 1
-            && origin.identity("x") == "x"
-            && origin.identity@[_](2) == 2
+        origin::identity(1) == 1
+            && origin::identity("x") == "x"
+            && origin::identity@[_](2) == 2
     )
 });
 
-export def imported_family_alias: test.Test = test.should_ok(fn() {
+pub def imported_family_alias: test::Test = test::should_ok(fn() {
     expect({
         let value: StringBox = {value: "ready"};
         value.value == "ready"
     })
 });
 
-export def local_family_alias: test.Test = test.should_ok(fn() {
+pub def local_family_alias: test::Test = test::should_ok(fn() {
     expect({
         let value: LocalStringBox = {value: "ready"};
         value.value == "ready"
     })
 });
 
-export def recursive_local_families: test.Test = test.should_ok(fn() {
+pub def recursive_local_families: test::Test = test::should_ok(fn() {
     expect({
         let boxed: LocalBox(String) = {value: "ready"};
-        let maybe: LocalMaybe(Int) = LocalMaybe.Some(3);
+        let maybe: LocalMaybe(Int) = LocalMaybe::Some(3);
         let node: LocalNode = {value: 1, children: [{value: 2, children: []}]};
-        let tree: LocalTree = LocalTree.Branch({children: [LocalTree.Leaf(2)]});
+        let tree: LocalTree = LocalTree::Branch({children: [LocalTree::Leaf(2)]});
         boxed.value == "ready"
-            && maybe == LocalMaybe.Some(3)
+            && maybe == LocalMaybe::Some(3)
             && node.children[0].value == 2
             && match tree {
-                LocalTree.Leaf(value) => value == 2,
-                LocalTree.Branch(branch) => match branch.children[0] {
-                    LocalTree.Leaf(value) => value == 2,
-                    LocalTree.Branch(_) => False,
+                LocalTree::Leaf(value) => value == 2,
+                LocalTree::Branch(branch) => match branch.children[0] {
+                    LocalTree::Leaf(value) => value == 2,
+                    LocalTree::Branch(_) => False,
                 },
             }
     })
 });
 
-export def imported_nominal_values: test.Test = test.should_ok(fn() {
+pub def imported_nominal_values: test::Test = test::should_ok(fn() {
     expect({
-        let wrapper: origin.Wrapper = origin.Wrapper.Box("x");
-        let expected: origin.Wrapper = origin.Wrapper.Box("x");
-        let status: origin.Status = origin.Status.Ready;
-        let point: origin.Point = {x: 1};
+        let wrapper: origin::Wrapper = origin::Wrapper::Box("x");
+        let expected: origin::Wrapper = origin::Wrapper::Box("x");
+        let status: origin::Status = origin::Status::Ready;
+        let point: origin::Point = {x: 1};
         wrapper == expected
-            && wrapper == origin.Wrapper.Box("x")
-            && origin.Wrapper.Box("x") == wrapper
-            && status == origin.Status.Ready
-            && origin.Status.Ready == status
+            && wrapper == origin::Wrapper::Box("x")
+            && origin::Wrapper::Box("x") == wrapper
+            && status == origin::Status::Ready
+            && origin::Status::Ready == status
             && point == {x: 1}
             && {x: 1} == point
     })
 });
 
-export def imported_parameter_context: test.Test = test.should_ok(fn() {
-    expect(accepts({statuses: [origin.PrivateReady]}))
+pub def imported_parameter_context: test::Test = test::should_ok(fn() {
+    expect(accepts({statuses: [origin::PrivateReady]}))
 });
 
-export def recursive_imported_family: test.Test = test.should_ok(fn() {
+pub def recursive_imported_family: test::Test = test::should_ok(fn() {
     expect({
-        let value: TreeBox = {value: Tree.Branch({children: [Tree.Leaf(1)]})};
+        let value: TreeBox = {value: Tree::Branch({children: [Tree::Leaf(1)]})};
         let same: TreeBox = identity(value);
         match same.value {
-            Tree.Leaf(_) => False,
-            Tree.Branch(branch) => match branch.children[0] {
-                Tree.Leaf(value) => value == 1,
-                Tree.Branch(_) => False,
+            Tree::Leaf(_) => False,
+            Tree::Branch(branch) => match branch.children[0] {
+                Tree::Leaf(value) => value == 1,
+                Tree::Branch(_) => False,
             },
         }
     })
 });
 
-export def imported_result_context: test.Test = test.should_ok(fn() {
+pub def imported_result_context: test::Test = test::should_ok(fn() {
     expect({
-        let value: TreeBox = identity({value: Tree.Leaf(1)});
-        match value.value { Tree.Leaf(item) => item == 1, Tree.Branch(_) => False }
+        let value: TreeBox = identity({value: Tree::Leaf(1)});
+        match value.value { Tree::Leaf(item) => item == 1, Tree::Branch(_) => False }
     })
 });
 
-export def nested_namespace: test.Test = test.should_ok(fn() {
+pub def nested_namespace: test::Test = test::should_ok(fn() {
     expect({
-        let value: model.Box(Int) = model.identity({value: 1});
-        value.value == 1 && model.identity(1) == 1 && model.identity("x") == "x"
+        let value: model::Box(Int) = model::identity({value: 1});
+        value.value == 1 && model::identity(1) == 1 && model::identity("x") == "x"
     })
 });
 
-export def namespace_member_schemes: test.Test = test.should_ok(fn() {
-    expect(nested.model.identity(1) == 1
-        && nested.model.identity("text") == "text"
-        && opened.identity(2) == 2
-        && opened.identity("other") == "other")
+pub def namespace_member_schemes: test::Test = test::should_ok(fn() {
+    expect(nested::model::identity(1) == 1
+        && nested::model::identity("text") == "text"
+        && opened::identity(2) == 2
+        && opened::identity("other") == "other")
 });
 
-export def reexport_identity: test.Test = test.should_ok(fn() {
+pub def reexport_identity: test::Test = test::should_ok(fn() {
     expect(
         answer == 7
             && direct@[Int] == relayed@[Int]
@@ -141,41 +140,41 @@ export def reexport_identity: test.Test = test.should_ok(fn() {
     )
 });
 
-export def opaque_reexport: test.Test = test.should_ok(fn() {
+pub def opaque_reexport: test::Test = test::should_ok(fn() {
     expect(
-        type_desc.kind((State).type) == type_desc.TypeDescKind.Opaque
-            && type_desc.opaque_name((State).type) == Some("std/hash#HashState")
+        type_desc::kind((State).type) == type_desc::TypeDescKind::Opaque
+            && type_desc::opaque_name((State).type) == Some("std/hash#HashState")
     )
 });
 
-export def imported_generic_callback: test.Test = test.should_ok(fn() {
+pub def imported_generic_callback: test::Test = test::should_ok(fn() {
     expect({
-        let selected: Node = use([{target: Node.B}], target_of);
-        selected == Node.B
+        let selected: Node = use([{target: Node::B}], target_of);
+        selected == Node::B
     })
 });
 
-export def composed_imported_family: test.Test = test.should_ok(fn() {
+pub def composed_imported_family: test::Test = test::should_ok(fn() {
     expect({
-        let value: Family(String) = {expr: origin.Literal(1), value: "ready"};
+        let value: Family(String) = {expr: origin::Literal(1), value: "ready"};
         value.value == "ready"
             && match value.expr {
-                origin.Literal(item) => item == 1,
-                origin.Call(_) => False,
+                origin::Literal(item) => item == 1,
+                origin::Call(_) => False,
             }
     })
 });
 
-export def recursive_enum_evaluation: test.Test = test.should_ok(fn() {
+pub def recursive_enum_evaluation: test::Test = test::should_ok(fn() {
     expect({
-        eval_expr(EvalExpr.Branch({children: [EvalExpr.Leaf(1)]})) == 1
+        eval_expr(EvalExpr::Branch({children: [EvalExpr::Leaf(1)]})) == 1
     })
 });
 
-export def private_nominal_alias: test.Test = test.should_ok(fn() {
+pub def private_nominal_alias: test::Test = test::should_ok(fn() {
     expect({
-        let via_alias: ImportedLocalBox = {value: Local.A};
-        let direct_box: origin.Box(Local) = {value: Local.A};
-        via_alias.value == Local.A && direct_box.value == Local.A
+        let via_alias: ImportedLocalBox = {value: Local::A};
+        let direct_box: origin::Box(Local) = {value: Local::A};
+        via_alias.value == Local::A && direct_box.value == Local::A
     })
 });

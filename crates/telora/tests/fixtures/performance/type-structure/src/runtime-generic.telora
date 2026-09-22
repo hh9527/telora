@@ -1,4 +1,4 @@
-import "std/value" {Value};
+use std::value::{Value};
 type Box(T) = struct {value: T};
 def make: for(T) Fn(T) -> Box(T) = fn(value) { {value} };
 def run: Fn(Int, Int) -> Int = fn(n, total) {
@@ -7,4 +7,4 @@ def run: Fn(Int, Int) -> Int = fn(n, total) {
         run(n - 1, total + item.value)
     }
 };
-export def result: Value = Value.Int(run(2000, 0));
+pub def result: Value = Value::Int(run(2000, 0));

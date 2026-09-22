@@ -1,1 +1,1 @@
-export def foo: for(T) Fn(T) -> T = fn(value) { value };
+pub def foo: for(T) Fn(T) -> T = fn(value) { value };

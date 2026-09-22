@@ -1,16 +1,16 @@
-import "std/test" as test;
-import "std/eq" as eq;
-import "std/codec" {encode, Value};
-import "std/transform-service" as entry;
+use std::test as test;
+use std::eq as eq;
+use std::codec::{encode, Value};
+use std::transform_service as entry;
 
-export def passing: test.Test = test.should_ok(fn() { fail!("must not execute during initialization") });
-export def failing: test.Test = test.should_fail(fn() { 42 });
-export def matching: test.Test = test.should_fail_with(fn() { fail!("expected message") }, "expected");
-export def fixtures: test.Test = test.with_fixtures(["missing.json", "missing.json"], fn(value) { fail!("must not load fixture or invoke factory") });
-export def answer: Value = encode([eq.equal(passing, passing), !eq.equal(failing, test.should_fail(fn() {42}))]);
+pub def passing: test::Test = test::should_ok(fn() { fail!("must not execute during initialization") });
+pub def failing: test::Test = test::should_fail(fn() { 42 });
+pub def matching: test::Test = test::should_fail_with(fn() { fail!("expected message") }, "expected");
+pub def fixtures: test::Test = test::with_fixtures(["missing.json", "missing.json"], fn(value) { fail!("must not load fixture or invoke factory") });
+pub def answer: Value = encode([eq::equal(passing, passing), !eq::equal(failing, test::should_fail(fn() {42}))]);
 type MainService = struct {};
-impl entry.TransformService for MainService {
+impl entry::TransformService for MainService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) { answer },
 };
-export {MainService};
+pub use self::{MainService};

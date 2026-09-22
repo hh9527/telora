@@ -1,5 +1,5 @@
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::test as test;
+use crate::test_support::{expect};
 
 type Empty = ();
 type Old = Tuple([]);
@@ -7,13 +7,13 @@ def zero: Fn() -> () = fn() {};
 def one: Fn(()) -> Unit = fn(value: ()) -> () { value };
 def early: Fn() -> Int = fn() { 1; return 42; };
 
-export def identity: test.Test = test.should_ok(fn() {
+pub def identity: test::Test = test::should_ok(fn() {
     let a: Empty = zero();
     let b: Old = one(a);
     expect(a == () && b == () && (Unit).type == (Empty).type && (Empty).type == (Old).type);
 });
 
-export def tails: test.Test = test.should_ok(fn() {
+pub def tails: test::Test = test::should_ok(fn() {
     let empty = do {};
     let bindings = do { let a = 42; };
     let discarded = do { 42; };
@@ -22,17 +22,17 @@ export def tails: test.Test = test.should_ok(fn() {
     expect(early() == 42);
 });
 
-export def branches: test.Test = test.should_ok(fn() {
+pub def branches: test::Test = test::should_ok(fn() {
     let unit = if True { 1; } else {};
     let value = if False { fail!("unreachable"); } else { 42 };
     let other = if True { 42 } else { fail!("unreachable"); };
     expect(unit == () && value == 42 && other == 42);
 });
 
-export def failure: test.Test = test.should_fail_with(fn() {
+pub def failure: test::Test = test::should_fail_with(fn() {
     fail!("discarded failure");
 }, "discarded failure");
 
-export def bound_failure: test.Test = test.should_fail_with(fn() {
+pub def bound_failure: test::Test = test::should_fail_with(fn() {
     let value = fail!("bound failure");
 }, "bound failure");

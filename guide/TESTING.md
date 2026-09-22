@@ -8,7 +8,7 @@
 
 `telora check MODULE` 解析、检查并初始化模块，适合发现语法、类型、导入和初始化
 问题。`telora test NAME` 在这些步骤成功后，执行 `tests/NAME.telora` 直接导出的
-`std/test.Test`。`check` 成功不代表行为断言通过。
+`std/test::Test`。`check` 成功不代表行为断言通过。
 
 `check --lib` 检查当前 crate 清单中的全部模块；`check --tests` 检查 tests/ 下全部
 模块，也可组合使用。多个根共用一张图并输出一份 summary，不逐模块独立运行。
@@ -17,9 +17,9 @@
 
 | 要验证的契约 | 合适的验证方式 |
 | --- | --- |
-| 普通计算的结果、转换、边界条件 | `test.should_ok` 内显式断言 |
+| 普通计算的结果、转换、边界条件 | `test::should_ok` 内显式断言 |
 | 函数返回 `Err` 或 `None` | 在 thunk 内匹配并检查返回值 |
-| 可恢复的执行失败及其消息 | `test.should_fail` / `test.should_fail_with` |
+| 可恢复的执行失败及其消息 | `test::should_fail` / `test::should_fail_with` |
 | 语法、类型、导入或模块初始化失败 | 独立运行 `check`，检查退出码与诊断 |
 | 导出签名和语义查询结果 | 运行 `query`，检查对应输出 |
 | 服务初始化、请求隔离和 Host 协议 | run/serve 集成验证 |
@@ -32,16 +32,16 @@
 下面是完整的 `tests/arithmetic.telora`：
 
 ```telora
-import "std/test" as test;
+use std::test as test;
 
 def twice: Fn(Int) -> Int = fn(value) { value * 2 };
 
-export def doubles_positive: test.Test = test.should_ok(fn() {
+pub def doubles_positive: test::Test = test::should_ok(fn() {
     let actual = twice(3);
     if actual == 6 { True } else { fail!("unexpected doubled value", actual) }
 });
 
-export def doubles_zero: test.Test = test.should_ok(fn() {
+pub def doubles_zero: test::Test = test::should_ok(fn() {
     let actual = twice(0);
     if actual == 0 { True } else { fail!("zero must stay zero", actual) }
 });
@@ -65,18 +65,18 @@ export def doubles_zero: test.Test = test.should_ok(fn() {
 下面是完整的 `tests/results.telora`：
 
 ```telora
-import "std/test" as test;
+use std::test as test;
 
 def positive: Fn(Int) -> Result(Int, String) = fn(value) {
     if value > 0 { Ok(value) } else { Err("expected positive") }
 };
 
-export def accepts_positive: test.Test = test.should_ok(fn() {
+pub def accepts_positive: test::Test = test::should_ok(fn() {
     let actual = positive(3).unwrap!();
     if actual == 3 { True } else { fail!("wrong payload", actual) }
 });
 
-export def returns_rejection: test.Test = test.should_ok(fn() {
+pub def returns_rejection: test::Test = test::should_ok(fn() {
     match positive(0) {
         Err(message) => if message == "expected positive" { True }
             else { fail!("wrong rejection", message) },
@@ -84,7 +84,7 @@ export def returns_rejection: test.Test = test.should_ok(fn() {
     }
 });
 
-export def raises_rejection: test.Test = test.should_fail_with(fn() {
+pub def raises_rejection: test::Test = test::should_fail_with(fn() {
     positive(0).unwrap!()
 }, "expected positive");
 ```
@@ -124,22 +124,22 @@ Never。`fail!(message, subjects...)` 仍是受支持的写法，等价于在该
 级别或 rule/数据引用时，应检查带诊断的公开观测接口或 Host 的结构化输出，单靠
 `should_fail_with` 不足以验证这些内容。
 
-旧的函数专用 `should_ok!` / `must_ok!`、`try_unwrap!` 和 `std/result.unwrap` 已删除。
-普通测试构造器 `test.should_ok` 仍然存在，与函数结果解包不是同一职责。
+旧的函数专用 `should_ok!` / `must_ok!`、`try_unwrap!` 和 `std::result::unwrap` 已删除。
+普通测试构造器 `test::should_ok` 仍然存在，与函数结果解包不是同一职责。
 
 ## 类型约束与 codec 边界分别测试
 
 类型声明 `T` 与元数据 `T.type` 不可混用。codec 通过静态类型参数选择解码目标，例如
-`codec.decode@[T](input)`。对于带 `@check` 的类型，要分别验证合法构造、非法
+`codec::decode@[T](input)`。对于带 `@check` 的类型，要分别验证合法构造、非法
 构造和解码失败：普通构造拒绝产生执行失败，codec 拒绝返回 `Err(BlameError)`。
 
 下面是完整的 `tests/checked.telora`：
 
 ```telora
-import "std/test" as test;
-import "std/blame" { BlameError };
-import "std/codec" as codec;
-import "std/value" { Value };
+use std::test as test;
+use std::blame::{ BlameError };
+use std::codec as codec;
+use std::value::{ Value };
 
 def check_positive: Fn(Int) -> Result((), BlameError) = fn(value) {
     if value > 0 { Ok(()) } else { Err(blame!("expected positive", value)) }
@@ -148,17 +148,17 @@ def check_positive: Fn(Int) -> Result((), BlameError) = fn(value) {
 @check(check_positive)
 type Positive = struct(Int);
 
-export def constructs: test.Test = test.should_ok(fn() {
+pub def constructs: test::Test = test::should_ok(fn() {
     let value = Positive(2);
     if value.0 == 2 { True } else { fail!("wrong positive value", value) }
 });
 
-export def rejects_construction: test.Test = test.should_fail_with(fn() {
+pub def rejects_construction: test::Test = test::should_fail_with(fn() {
     Positive(0)
 }, "expected positive");
 
-export def rejects_decode: test.Test = test.should_ok(fn() {
-    match codec.decode@[Positive](Value.Int(0)) {
+pub def rejects_decode: test::Test = test::should_ok(fn() {
+    match codec::decode@[Positive](Value::Int(0)) {
         Err(_) => True,
         Ok(value) => fail!("decoder accepted zero", value),
     }
@@ -179,15 +179,15 @@ export def rejects_decode: test.Test = test.should_ok(fn() {
 和 `tests/fixtures/two.json` 中分别保存 `1` 与 `2`，然后创建 `tests/fixtures.telora`：
 
 ```telora
-import "std/test" as test;
-import "std/codec" as codec;
-import "std/value" { Value };
+use std::test as test;
+use std::codec as codec;
+use std::value::{ Value };
 
-export def positive_integers: test.Test = test.with_fixtures([
+pub def positive_integers: test::Test = test::with_fixtures([
     "fixtures/one.json", "fixtures/two.json",
 ], fn(input) {
-    test.should_ok(fn() {
-        let value = codec.decode@[Int](input).unwrap!();
+    test::should_ok(fn() {
+        let value = codec::decode@[Int](input).unwrap!();
         if value > 0 { True } else { fail!("expected positive fixture", input) }
     })
 });

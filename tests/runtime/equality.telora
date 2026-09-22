@@ -1,10 +1,10 @@
-import "std/eq" as eq;
-import "std/codec" {encode, Value};
-import "std/transform-service" as entry; import "std/blame" {BlameError};
-import "std/dyn" as dynamic;
-import "std/hash" as hash;
-import "std/regex" as regex;
-import "std/fmt" as fmt;
+use std::eq as eq;
+use std::codec::{encode, Value};
+use std::transform_service as entry; use std::blame::{BlameError};
+use std::dyn as dynamic;
+use std::hash as hash;
+use std::regex as regex;
+use std::fmt as fmt;
 type Node = struct {value: Int, children: Array(Node)};
 type Count = struct(Int);
 type Choice = enum {Empty, Item(Node)};
@@ -20,14 +20,14 @@ def first: Node = {value: 1, children: [{value: 2, children: []}]};
 def second: Node = {value: 1, children: [{value: 2, children: []}]};
 def dictionary: Dict(Int) = {a: 1, b: 2};
 def reversed: Dict(Int) = {b: 2, a: 1};
-def packed: Dyn = dynamic.pack(Int.type, 1);
+def packed: Dyn = dynamic::pack(Int.type, 1);
 def empty_factory: Fn() -> Fn(Int) -> Int = fn() { fn(n: Int) { n + 1 } };
 def captured_factory: Fn(Int) -> Fn(Int) -> Int = fn(base: Int) { fn(n: Int) { n + base } };
 def empty: Fn(Int) -> Int = empty_factory();
 def captured: Fn(Int) -> Int = captured_factory(1);
-def pattern: regex.Regex = regex.compile("a+");
-def formatted: fmt.Fmt = fmt.concat(["before", "after"], [fmt.from_int(42)]);
-def state: hash.HashState = hash.update_string(hash.new(), "prefix");
+def pattern: regex::Regex = regex::compile("a+");
+def formatted: fmt::Fmt = fmt::concat(["before", "after"], [fmt::from_int(42)]);
+def state: hash::HashState = hash::update_string(hash::new(), "prefix");
 def error: BlameError = blame!("same message");
 def option_text: Fn(Option(Int)) -> Option(String) = fn(value) { let number = value?; Some("success") };
 def result_text: Fn(Result(Int, String)) -> Result(String, String) = fn(value) { let number = value?; Ok("success") };
@@ -59,42 +59,42 @@ def checks: Fn() -> Value = fn() {
         finished == checked, early == checked,
         metadata[0] == Int.type, metadata[1] == String.type,
         tuple_metadata.0 == Int.type, option_metadata == Some(Int.type),
-        dynamic.project_with(Box(Int).type, dynamic.pack(Box(Int).type, checked)) == Some(checked),
+        dynamic::project_with(Box(Int).type, dynamic::pack(Box(Int).type, checked)) == Some(checked),
         updated.value == 42, updated.label == "after", base.value == 1, base.label == "before",
         (positive <~ {number: 2}).number == 2,
         (first <~ {children: []}).children == [],
-        eq.equal(first, second), first == second,
+        eq::equal(first, second), first == second,
         first != {value: 1, children: []},
         dictionary == reversed,
         dictionary != {a: 1, b: 3},
-        eq.equal((), ()), eq.equal((1, "text"), (1, "text")),
-        Choice.Item(first) == Choice.Item(second),
-        Choice.Item(first) != Choice.Empty,
+        eq::equal((), ()), eq::equal((1, "text"), (1, "text")),
+        Choice::Item(first) == Choice::Item(second),
+        Choice::Item(first) != Choice::Empty,
         Count(1) == Count(1), Count(1) != Count(2),
-        eq.equal(Int.type, Int.type),
-        eq.equal(0.0, -0.0),
-        eq.equal([1, 2], [1, 2]), [1, 2] != [1, 3],
-        eq.equal(packed, packed), !eq.equal(packed, dynamic.pack(Int.type, 1)),
-        eq.equal(empty, empty), !eq.equal(empty, empty_factory()),
-        eq.equal(captured, captured), !eq.equal(captured, captured_factory(1)),
-        eq.equal(empty_factory, empty_factory),
-        eq.equal(hash.sha256, hash.sha256),
-        eq.equal(pattern, regex.compile("a+")), !eq.equal(pattern, regex.compile("aa*")),
-        eq.equal(formatted, fmt.concat(["before", "after"], [fmt.from_int(42)])),
-        !eq.equal(formatted, fmt.from_string("before42after")),
-        !eq.equal(fmt.from_int(1), fmt.from_string("1")),
-        !eq.equal(fmt.from_float(0.0), fmt.from_float(-0.0)),
-        eq.equal(state, hash.update_string(hash.new(), "prefix")),
-        !eq.equal(state, hash.update_string(hash.new(), "different")),
-        eq.equal(hash.update_int(state, -42), hash.update_int(state, -42)),
-        !eq.equal(hash.update_int(state, -42), hash.update_int(state, 42)),
-        eq.equal(error, error), !eq.equal(error, blame!("same message")),
+        eq::equal(Int.type, Int.type),
+        eq::equal(0.0, -0.0),
+        eq::equal([1, 2], [1, 2]), [1, 2] != [1, 3],
+        eq::equal(packed, packed), !eq::equal(packed, dynamic::pack(Int.type, 1)),
+        eq::equal(empty, empty), !eq::equal(empty, empty_factory()),
+        eq::equal(captured, captured), !eq::equal(captured, captured_factory(1)),
+        eq::equal(empty_factory, empty_factory),
+        eq::equal(hash::sha256, hash::sha256),
+        eq::equal(pattern, regex::compile("a+")), !eq::equal(pattern, regex::compile("aa*")),
+        eq::equal(formatted, fmt::concat(["before", "after"], [fmt::from_int(42)])),
+        !eq::equal(formatted, fmt::from_string("before42after")),
+        !eq::equal(fmt::from_int(1), fmt::from_string("1")),
+        !eq::equal(fmt::from_float(0.0), fmt::from_float(-0.0)),
+        eq::equal(state, hash::update_string(hash::new(), "prefix")),
+        !eq::equal(state, hash::update_string(hash::new(), "different")),
+        eq::equal(hash::update_int(state, -42), hash::update_int(state, -42)),
+        !eq::equal(hash::update_int(state, -42), hash::update_int(state, 42)),
+        eq::equal(error, error), !eq::equal(error, blame!("same message")),
     ])
 };
-export def answer: Value = checks();
+pub def answer: Value = checks();
 type MainService = struct {};
-impl entry.TransformService for MainService {
+impl entry::TransformService for MainService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) { checks() },
 };
-export {MainService};
+pub use self::{MainService};

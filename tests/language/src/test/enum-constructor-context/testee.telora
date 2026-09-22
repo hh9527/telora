@@ -1,8 +1,8 @@
-import "std/test" as test;
-import "std/dyn" as dyn;
-import "std/eq" as eq;
-import "std/type-desc" as type_desc;
-import "@src/test-support" {expect};
+use std::test as test;
+use std::dyn as dyn;
+use std::eq as eq;
+use std::type_desc as type_desc;
+use crate::test_support::{expect};
 
 type Status = enum { Ready, Failed(String) };
 type Make = Fn(String) -> Status;
@@ -11,7 +11,7 @@ type Wrapped(A) = enum {Item(A)};
 def pair: for(A) Fn(A, A) -> Tuple([A, A]) = fn(a, b) { (a, b) };
 def identity: for(A) Fn(A) -> A = fn(value) { value };
 
-export def builtin_context: test.Test = test.should_ok(fn() {
+pub def builtin_context: test::Test = test::should_ok(fn() {
     let some: Option(Int) = Some(7);
     let none: Option(Int) = None;
     let ok: Result(Int, String) = Ok(7);
@@ -20,31 +20,31 @@ export def builtin_context: test.Test = test.should_ok(fn() {
         && ok == Ok(7) && err == Err("reason"))
 });
 
-export def constructor_function: test.Test = test.should_ok(fn() {
+pub def constructor_function: test::Test = test::should_ok(fn() {
     let some: Fn(Int) -> Option(Int) = Some;
-    let failed: Fn(String) -> Status = Status.Failed;
+    let failed: Fn(String) -> Status = Status::Failed;
     expect(identity(some)(7) == Some(7)
-        && failed("reason") == Status.Failed("reason")
-        && dyn.project_with((Status).type, dyn.pack((Status).type, failed("reason")))
-            == Some(Status.Failed("reason")))
+        && failed("reason") == Status::Failed("reason")
+        && dyn::project_with((Status).type, dyn::pack((Status).type, failed("reason")))
+            == Some(Status::Failed("reason")))
 });
 
-export def sibling_evidence: test.Test = test.should_ok(fn() {
-    let ready: Status = Status.Ready;
-    let first = pair(ready, Status.Failed("reason"));
-    let last = pair(Status.Failed("reason"), ready);
+pub def sibling_evidence: test::Test = test::should_ok(fn() {
+    let ready: Status = Status::Ready;
+    let first = pair(ready, Status::Failed("reason"));
+    let last = pair(Status::Failed("reason"), ready);
     expect(first.0 == last.1 && first.1 == last.0)
 });
 
-export def reflection: test.Test = test.should_ok(fn() {
+pub def reflection: test::Test = test::should_ok(fn() {
     let value: Option(Int) = Some(7);
-    let packed = dyn.pack((Option(Int)).type, value);
-    expect(type_desc.kind(dyn.desc(packed)) == type_desc.TypeDescKind.Enum
-        && dyn.kind(packed) == dyn.ValueKind.Tagged
-        && dyn.project_with((Option(Int)).type, packed) == Some(value))
+    let packed = dyn::pack((Option(Int)).type, value);
+    expect(type_desc::kind(dyn::desc(packed)) == type_desc::TypeDescKind::Enum
+        && dyn::kind(packed) == dyn::ValueKind::Tagged
+        && dyn::project_with((Option(Int)).type, packed) == Some(value))
 });
 
-export def late_payload_context: test.Test = test.should_ok(fn() {
+pub def late_payload_context: test::Test = test::should_ok(fn() {
     let item: Item = {value: 7};
     let option: Option(Array(Item)) = Some([item]);
     let left = pair(Some([{value: 7}]), option);
@@ -53,7 +53,7 @@ export def late_payload_context: test.Test = test.should_ok(fn() {
         && Some([{value: 7}]) == option)
 });
 
-export def propagation_context: test.Test = test.should_ok(fn() {
+pub def propagation_context: test::Test = test::should_ok(fn() {
     let step = fn(value: Result(Int, String)) {
         let item = value?;
         Ok(item + 1)
@@ -61,39 +61,39 @@ export def propagation_context: test.Test = test.should_ok(fn() {
     expect(step(Ok(1)) == Ok(2) && step(Err("reason")) == Err("reason"))
 });
 
-export def constructor_witness: test.Test = test.should_ok(fn() {
-    let make: Make = Status.Failed;
-    let packed = dyn.pack((Make).type, make);
-    expect(match dyn.project_with((Make).type, packed) {
-        Some(restored) => restored("reason") == Status.Failed("reason"),
+pub def constructor_witness: test::Test = test::should_ok(fn() {
+    let make: Make = Status::Failed;
+    let packed = dyn::pack((Make).type, make);
+    expect(match dyn::project_with((Make).type, packed) {
+        Some(restored) => restored("reason") == Status::Failed("reason"),
         None => False,
     })
 });
 
-export def generic_constructor_alias: test.Test = test.should_ok(fn() {
+pub def generic_constructor_alias: test::Test = test::should_ok(fn() {
     let make = Some;
     let value: Option(Int) = make(7);
     expect(value == Some(7))
 });
 
-export def nested_payload_context: test.Test = test.should_ok(fn() {
+pub def nested_payload_context: test::Test = test::should_ok(fn() {
     let item: Item = {value: 7};
     let expected: Result(Option(Array(Item)), String) = Ok(Some([item]));
     let values = pair(Ok(Some([{value: 7}])), expected);
     expect(values.0 == values.1
-        && eq.equal(Ok(Some([{value: 7}])), expected)
-        && eq.equal(expected, Ok(Some([{value: 7}]))))
+        && eq::equal(Ok(Some([{value: 7}])), expected)
+        && eq::equal(expected, Ok(Some([{value: 7}]))))
 });
 
-export def declared_payload_context: test.Test = test.should_ok(fn() {
+pub def declared_payload_context: test::Test = test::should_ok(fn() {
     let item: Item = {value: 7};
-    let expected: Wrapped(Array(Item)) = Wrapped.Item([item]);
-    let values = pair(Wrapped.Item([{value: 7}]), expected);
+    let expected: Wrapped(Array(Item)) = Wrapped::Item([item]);
+    let values = pair(Wrapped::Item([{value: 7}]), expected);
     expect(values.0 == values.1
-        && Wrapped.Item([{value: 7}]) == expected)
+        && Wrapped::Item([{value: 7}]) == expected)
 });
 
-export def existing_payload_identity: test.Test = test.should_ok(fn() {
+pub def existing_payload_identity: test::Test = test::should_ok(fn() {
     let item: Item = {value: 7};
     let raw = {value: 7};
     let expected: Option(Array(Item)) = Some([item]);

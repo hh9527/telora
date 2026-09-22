@@ -1,2 +1,2 @@
-export def text: String = "local:0";
-export def json_text: String = "\"local:0\"";
+pub def text: String = "local:0";
+pub def json_text: String = "\"local:0\"";

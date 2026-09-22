@@ -1,16 +1,16 @@
-import "std/transform-service" as service;
-import "std/test" as test;
-import "std/value" {Value};
-import "@src/test-support" {expect};
+use std::transform_service as service;
+use std::test as test;
+use std::value::{Value};
+use crate::test_support::{expect};
 
 type Model(T) = struct {value: T};
-impl service.TransformService for Model(Value) {
+impl service::TransformService for Model(Value) {
     init: fn(ctx) { {value: ctx.sources["value"]}.ty!(Self) },
-    transform: fn(self, input) { Value.Array([self.value, input]) },
+    transform: fn(self, input) { Value::Array([self.value, input]) },
 };
 
-export def concrete_self: test.Test = test.should_ok(fn() {
-    let model: Model(Value) = service.TransformService(Model(Value)).init({sources: {value: Value.Int(42)}});
-    expect(service.TransformService(Model(Value)).transform(model, Value.Int(1)) == Value.Array([Value.Int(42), Value.Int(1)]));
-    expect(service.TransformService(Model(Value)).transform(model, Value.Int(2)) == Value.Array([Value.Int(42), Value.Int(2)]))
+pub def concrete_self: test::Test = test::should_ok(fn() {
+    let model: Model(Value) = service::TransformService(Model(Value)).init({sources: {value: Value::Int(42)}});
+    expect(service::TransformService(Model(Value)).transform(model, Value::Int(1)) == Value::Array([Value::Int(42), Value::Int(1)]));
+    expect(service::TransformService(Model(Value)).transform(model, Value::Int(2)) == Value::Array([Value::Int(42), Value::Int(2)]))
 });

@@ -1,6 +1,6 @@
-import "./provider" {Count, stamp};
+use self::provider::{Count, stamp};
 
 @stamp(Count(1))
 type Item = struct {value: Int};
 
-export {Item};
+pub use self::{Item};

@@ -1,4 +1,4 @@
-export def result: (Int, String) = {
+pub def result: (Int, String) = {
     let identity = fn(value) { value };
     let alias = identity;
     (alias(1), identity("text"))

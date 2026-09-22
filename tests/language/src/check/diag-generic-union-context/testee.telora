@@ -1,2 +1,2 @@
 def choose: for(T) Fn(T, T) -> T = fn(left, right) { left };
-export def should_error = choose([1, "one"], [1]);
+pub def should_error = choose([1, "one"], [1]);

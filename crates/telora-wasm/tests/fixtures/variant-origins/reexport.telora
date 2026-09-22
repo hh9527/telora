@@ -1,2 +1,2 @@
-import "origins/alias" { Make, Empty, Yes, Absent, Present, disabled, saved, wrap };
-export { Make, Empty, Yes, Absent, Present, disabled, saved, wrap };
+use super::alias::{ Make, Empty, Yes, Absent, Present, disabled, saved, wrap };
+pub use self::{ Make, Empty, Yes, Absent, Present, disabled, saved, wrap };

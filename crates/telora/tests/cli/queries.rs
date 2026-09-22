@@ -84,7 +84,7 @@ fn query_modules_lists_the_crate_view_as_stable_jsonl() {
     fs::write(dependency.join("src/bin/tool.telora"), "0").unwrap();
     fs::write(
         dependency.join("src/lib.telora"),
-        "mod public; export { public };",
+        "mod public; pub use self::{ public };",
     )
     .unwrap();
     fs::write(
@@ -158,12 +158,12 @@ fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
     .unwrap();
     fs::write(
         dependency.join("src/query-builder.telora"),
-        "type Plan = struct {sql: String}; export {Plan};",
+        "type Plan = struct {sql: String}; pub use self::{Plan};",
     )
     .unwrap();
     fs::write(
         dependency.join("src/lib.telora"),
-        "export type Root = struct {};",
+        "pub type Root = struct {};",
     )
     .unwrap();
     fs::write(
@@ -223,7 +223,7 @@ fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
 #[test]
 fn named_queries_emit_stable_jsonl() {
     let cwd = fixture();
-    fs::write(cwd.join("src/lib.telora"), "type Name = String; def hidden: Int = 1; def make: Fn(Int) -> Int = fn(value) { value }; export {Name, make};").unwrap();
+    fs::write(cwd.join("src/lib.telora"), "type Name = String; def hidden: Int = 1; def make: Fn(Int) -> Int = fn(value) { value }; pub use self::{Name, make};").unwrap();
     let show = telora(&cwd)
         .args(["query", "at", "@src/lib", "-p", "a", "-k", "type,def"])
         .output()
@@ -258,21 +258,21 @@ fn named_queries_emit_stable_jsonl() {
 }
 
 #[test]
-fn query_namespace_imports_reference_exact_module_interfaces() {
+fn query_namespace_uses_reference_exact_module_interfaces() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/types.telora"),
-        "type CallExpr = struct {args: Array(Expr)};\ntype Expr = enum {Text(String), Call(CallExpr)};\ntype Box(A) = struct {value: A};\nexport {CallExpr, Expr, Box};\n",
+        "pub type CallExpr = struct {args: Array(Expr)};\npub type Expr = enum {Text(String), Call(CallExpr)};\npub type Box(A) = struct {value: A};\n",
     )
     .unwrap();
     fs::write(
         cwd.join("src/lib.telora"),
-        "import \"@src/types\" as types;\nimport \"@src/types\" { Expr };\nexport {types, Expr};\n",
+        "pub mod types;\npub use self::types::{ Expr };\n",
     )
     .unwrap();
 
     let show = telora(&cwd)
-        .args(["query", "at", "@src/lib", "-k", "import"])
+        .args(["query", "at", "@src/lib", "-k", "use"])
         .output()
         .unwrap();
     assert!(
@@ -305,20 +305,19 @@ fn query_exports_preserves_type_family_binders_across_reexports() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/model.telora"),
-        r#"export type Entity(EntityId) = struct {id: EntityId, label: String};
-export type Request(Id, Subject, Input) = struct {id: Id, subject: Subject, input: Input};"#,
+        r#"pub type Entity(EntityId) = struct {id: EntityId, label: String};
+pub type Request(Id, Subject, Input) = struct {id: Id, subject: Subject, input: Input};"#,
     )
     .unwrap();
     fs::write(
         cwd.join("src/selective.telora"),
-        r#"import "@src/model" {Entity, Request};
-export {Entity as PublicEntity, Request};"#,
+        r#"use crate::model::{Entity, Request};
+pub use self::{Entity as PublicEntity, Request};"#,
     )
     .unwrap();
     fs::write(
         cwd.join("src/open.telora"),
-        r#"import "@src/model" *;
-export {Entity, Request};"#,
+        r#"pub use crate::model::{Entity, Request};"#,
     )
     .unwrap();
 
@@ -359,11 +358,7 @@ export {Entity, Request};"#,
 #[test]
 fn query_position_and_conflicts_are_structured() {
     let cwd = fixture();
-    fs::write(
-        cwd.join("src/lib.telora"),
-        "def answer = 42;\nexport {answer};\n",
-    )
-    .unwrap();
+    fs::write(cwd.join("src/lib.telora"), "pub def answer: Int = 42;\n").unwrap();
     let at = telora(&cwd)
         .args(["query", "at", "@src/lib:1:4"])
         .output()
@@ -395,7 +390,7 @@ fn query_and_cli_jsonl_use_one_based_lines_and_zero_based_utf8_columns() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/lib.telora"),
-        "def other: Int = 42;\ndef value: (String, Int) = (\"中\", other);\nexport {value};\n",
+        "def other: Int = 42;\npub def value: (String, Int) = (\"中\", other);\n",
     )
     .unwrap();
 
@@ -407,11 +402,11 @@ fn query_and_cli_jsonl_use_one_based_lines_and_zero_based_utf8_columns() {
     let records = jsonl(&named.stdout);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["location"]["line"], 2);
-    assert_eq!(records[0]["location"]["column"], 4);
+    assert_eq!(records[0]["location"]["column"], 8);
     assert_eq!(records[0]["location"]["end_line"], 2);
-    assert_eq!(records[0]["location"]["end_column"], 9);
+    assert_eq!(records[0]["location"]["end_column"], 13);
 
-    for selector in ["@src/lib:2:0", "@src/lib:2:35"] {
+    for selector in ["@src/lib:2:0", "@src/lib:2:39"] {
         let output = telora(&cwd)
             .args(["query", "at", selector])
             .output()
@@ -421,26 +416,26 @@ fn query_and_cli_jsonl_use_one_based_lines_and_zero_based_utf8_columns() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        if selector.ends_with(":35") {
+        if selector.ends_with(":39") {
             let records = jsonl(&output.stdout);
             let reference = records
                 .iter()
                 .find(|record| record["record"] == "reference" && record["name"] == "other")
                 .unwrap();
             assert_eq!(reference["location"]["line"], 2);
-            assert_eq!(reference["location"]["column"], 35);
-            assert_eq!(reference["location"]["end_column"], 40);
+            assert_eq!(reference["location"]["column"], 39);
+            assert_eq!(reference["location"]["end_column"], 44);
         }
     }
     let inside_scalar = telora(&cwd)
-        .args(["query", "at", "@src/lib:2:30"])
+        .args(["query", "at", "@src/lib:2:34"])
         .output()
         .unwrap();
     assert!(!inside_scalar.status.success());
     assert!(String::from_utf8_lossy(&inside_scalar.stderr).contains("outside"));
 
     let at_end = telora(&cwd)
-        .args(["query", "at", "@src/lib:2:40"])
+        .args(["query", "at", "@src/lib:2:44"])
         .output()
         .unwrap();
     assert!(at_end.status.success());

@@ -1,1 +1,1 @@
-export def result: Tuple([Int, Int]) = (...(1, 2), 3);
+pub def result: Tuple([Int, Int]) = (...(1, 2), 3);

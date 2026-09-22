@@ -1,15 +1,15 @@
-import "std/array" as array;
+use std::array as array;
 
-export def answer: (Array(String), Array(String), Array((Int, String)), Array(String), Option(Array((String, Int))), Option(Array((String, String))), Option(Array((String, String)))) = do {
+pub def answer: (Array(String), Array(String), Array((Int, String)), Array(String), Option(Array((String, Int))), Option(Array((String, String))), Option(Array((String, String)))) = do {
     let input = ["long heap-backed array source"];
     let empty: Array(String) = [];
     (
         input,
-        array.push(input, "tail"),
-        array.enumerate(input),
-        array.concat([empty, input, empty, input]),
-        array.zip(input, [42]),
-        array.zip(input, empty),
-        array.zip(empty, empty),
+        array::push(input, "tail"),
+        array::enumerate(input),
+        array::concat([empty, input, empty, input]),
+        array::zip(input, [42]),
+        array::zip(input, empty),
+        array::zip(empty, empty),
     )
 };

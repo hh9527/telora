@@ -1,3 +1,3 @@
 type Box(A) = Array(A);
 type Broken = Box(Int, String);
-export {Broken};
+pub use self::{Broken};

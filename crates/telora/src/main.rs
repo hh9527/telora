@@ -220,7 +220,7 @@ struct QueryAtArgs {
     /// Filter local symbol names by a literal substring; invalid with a position.
     #[arg(short = 'p', long = "pattern", value_name = "SUBSTRING", value_parser = non_empty)]
     pattern: Option<String>,
-    /// Query only these definition kinds: type, let, def, import.
+    /// Query only these definition kinds: type, let, def, use.
     #[arg(short = 'k', long = "kind", value_name = "KINDS", value_parser = parse_kinds)]
     kinds: Option<KindSet>,
 }
@@ -230,7 +230,7 @@ enum ShowKind {
     Type,
     Let,
     Def,
-    Import,
+    Use,
 }
 
 #[derive(Clone)]
@@ -261,7 +261,7 @@ fn parse_kinds(value: &str) -> Result<KindSet, String> {
             "type" => Ok(ShowKind::Type),
             "let" => Ok(ShowKind::Let),
             "def" => Ok(ShowKind::Def),
-            "import" => Ok(ShowKind::Import),
+            "use" => Ok(ShowKind::Use),
             _ => Err(format!("unknown definition kind {item:?}")),
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -355,7 +355,7 @@ fn kind_name(kind: ShowKind) -> &'static str {
         ShowKind::Type => "type",
         ShowKind::Let => "let",
         ShowKind::Def => "def",
-        ShowKind::Import => "import",
+        ShowKind::Use => "use",
     }
 }
 fn emit(record: serde_json::Value) -> Result<(), String> {

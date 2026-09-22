@@ -1,3 +1,3 @@
 def identity: for(T) Fn(T) -> T = fn(value) { value };
 
-export { identity };
+pub use self::{ identity };

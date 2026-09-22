@@ -20,7 +20,7 @@ fn explicit_type_application_reports_contract_arity_and_inherits_resolution_fail
         ),
     ] {
         let source = format!(
-            "{declaration} export def bad: Int = {application}; export def independent: Int = 42;"
+            "{declaration} pub def bad: Int = {application}; pub def independent: Int = 42;"
         );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
@@ -37,7 +37,7 @@ fn explicit_type_application_reports_contract_arity_and_inherits_resolution_fail
     }
     let mut mir = graph(&[(
         "@src/main",
-        "export def bad: Int = missing@[Int](1); export def independent: Int = 42;",
+        "pub def bad: Int = missing@[Int](1); pub def independent: Int = 42;",
     )]);
     resolve(&mut mir);
     assert_eq!(mir.diagnostics.len(), 1, "{}", mir.dump());
@@ -67,7 +67,7 @@ fn bottom_tails_wait_for_explicit_return_evidence_from_generalized_constructors(
     let mut mir = graph(&[(
         "@src/main",
         r#"
-        export def answer: Bool = do {
+        pub def answer: Bool = do {
         def choose = fn(flag) {
             if flag { return Ok("hi"); } else { return Err(2); }
         };
@@ -101,7 +101,7 @@ fn bottom_tails_wait_for_explicit_return_evidence_from_generalized_constructors(
 fn let_else_checks_divergence_without_overwriting_the_inferred_branch_type() {
     for branch in ["0", "()", "if flag { 0 } else { fail!(\"stop\") }"] {
         let source = format!(
-            "export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }}; export def independent: Int = 42;"
+            "pub def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }}; pub def independent: Int = 42;"
         );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
@@ -140,7 +140,7 @@ fn let_else_checks_divergence_without_overwriting_the_inferred_branch_type() {
         "if flag { return 1; } else { return 2; }",
     ] {
         let source = format!(
-            "export def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }};"
+            "pub def read: Fn(Option(Int), Bool) -> Int = fn(value, flag) {{ let Some(item) = value else {{ {branch} }}; item }};"
         );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
@@ -159,7 +159,7 @@ fn nonreturning_array_items_supply_bottom_only_after_live_element_evidence() {
         ("if True { [1] } else { [stop()] }", TypeConstructor::Int),
     ] {
         let source = format!(
-            "def stop: Fn() -> Never = fn() {{ fail!(\"stop\") }}; export def checked: Bool = do {{ let answer = {expression}; True }};"
+            "def stop: Fn() -> Never = fn() {{ fail!(\"stop\") }}; pub def checked: Bool = do {{ let answer = {expression}; True }};"
         );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
@@ -190,7 +190,7 @@ fn nonreturning_array_items_supply_bottom_only_after_live_element_evidence() {
 fn propagation_keeps_never_tail_error_evidence_and_infers_operand_from_return_context() {
     let mut mir = graph(&[(
         "@src/main",
-        "export def checked: Bool = do { def stopped = fn(value: Result(Int, String)) { value?; fail!(\"tail\") }; def contextual = fn(value) -> Option(Int) { Some(value? + 1) }; True };",
+        "pub def checked: Bool = do { def stopped = fn(value: Result(Int, String)) { value?; fail!(\"tail\") }; def contextual = fn(value) -> Option(Int) { Some(value? + 1) }; True };",
     )]);
     resolve(&mut mir);
     mir.seal()
@@ -267,7 +267,7 @@ fn branch_completion_does_not_unify_candidate_and_checked_identity() {
         "match True { True => good, False => candidate }",
     ] {
         let source = format!(
-            "type Point = struct {{x: Int}}; def candidate: Unchecked(Point) = {{x: 0}}; def good: Point = {{x: 42}}; export def checked: Bool = do {{ let answer = {expression}; True }};"
+            "type Point = struct {{x: Int}}; def candidate: Unchecked(Point) = {{x: 0}}; def good: Point = {{x: 42}}; pub def checked: Bool = do {{ let answer = {expression}; True }};"
         );
         let mut mir = graph(&[("@src/main", &source)]);
         resolve(&mut mir);
@@ -298,11 +298,11 @@ fn solves_function_calls_across_modules_in_one_arena() {
     let mut mir = graph(&[
         (
             "@src/main",
-            "import \"./math\" { inc }; export def answer: Int = inc(41); export def pair: (Int, Int) = (answer, 2);",
+            "use self::math::{ inc }; pub def answer: Int = inc(41); pub def pair: (Int, Int) = (answer, 2);",
         ),
         (
             "@src/math",
-            "export def inc: Fn(Int) -> Int = fn(x) { x + 1 };",
+            "pub def inc: Fn(Int) -> Int = fn(x) { x + 1 };",
         ),
     ]);
     let hir = mir.hir.as_ptr();
@@ -362,8 +362,8 @@ fn solves_match_boolean_and_never_branches() {
                 Choice.Missing => fail!("missing"),
             }
         };
-        export def answer: Int = read(Choice.Number(3));
-        export def projection: Int = (1, "ok").0;
+        pub def answer: Int = read(Choice.Number(3));
+        pub def projection: Int = (1, "ok").0;
     "#,
     )]);
     resolve(&mut mir);
@@ -374,10 +374,10 @@ fn solves_match_boolean_and_never_branches() {
 #[test]
 fn native_slot_identity_does_not_depend_on_the_declared_name() {
     let mut mir = graph(&[
-        ("@src/main", "export def answer: Quantity = 42;"),
+        ("@src/main", "pub def answer: Quantity = 42;"),
         (
             "std/prelude",
-            "native type Quantity @4; export { Quantity };",
+            "native type Quantity @4; pub use self::{ Quantity };",
         ),
     ]);
     resolve(&mut mir);
@@ -391,8 +391,8 @@ fn native_slot_identity_does_not_depend_on_the_declared_name() {
 #[test]
 fn unregistered_native_slots_cannot_create_intrinsic_types() {
     for source in [
-        "native type Forged @4; export def value: Forged = 1;",
-        "native type Int @999; export def value: Int = 1;",
+        "native type Forged @4; pub def value: Forged = 1;",
+        "native type Int @999; pub def value: Int = 1;",
     ] {
         let mut mir = graph(&[("@src/main", source)]);
         resolve(&mut mir);
@@ -407,7 +407,7 @@ fn unregistered_native_slots_cannot_create_intrinsic_types() {
                 .filter(
                     |s| s.kind == SymbolKind::Declaration(BindingKind::NativeType)
                         && s.module
-                            .is_some_and(|id| mir.modules[id.index()].name == "@src/main")
+                            .is_some_and(|id| mir.modules[id.index()].name == "@src")
                 )
                 .all(|s| s.native_type.is_none())
         );
@@ -419,10 +419,10 @@ fn data_contract_resolves_the_exported_value_type_without_reading_data() {
     let mut mir = graph(&[
         (
             "@src/main",
-            "import \"./payload.json\" { data }; import \"std/value\" {Value}; export def answer: Value = data;",
+            "data data = import(json) \"./payload.json\"; use std::value::{Value}; pub def answer: Value = data;",
         ),
         ("@src/payload.json", "THIS IS NOT JSON OR TELORA"),
-        ("std/value", "export type Value = Int;"),
+        ("std/value", "pub type Value = Int;"),
     ]);
     resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);

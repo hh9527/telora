@@ -1,5 +1,5 @@
-import "std/result" as result;
-export def invalid = {
-    let mapped = result.map(Err("bad"), fn(value) { value });
+use std::result as result;
+pub def invalid = {
+    let mapped = result::map(Err("bad"), fn(value) { value });
     mapped
 };

@@ -1,2 +1,2 @@
 type Duplicate = enum {Value, Value(Int)};
-export {Duplicate};
+pub use self::{Duplicate};

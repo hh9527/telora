@@ -1,9 +1,9 @@
-import "std/blame" {BlameError};
-import "std/array" as array;
+use std::blame::{BlameError};
+use std::array as array;
 
 @check(validate)
 type Point = struct {x: Int};
-def early: Array(TypeOf(Int)) = array.map([Int.type], fn(item) {
+def early: Array(TypeOf(Int)) = array::map([Int.type], fn(item) {
     let candidate: Point = {x: 2};
     if candidate.x == 2 { item } else { item }
 });
@@ -16,4 +16,4 @@ def validate: Fn(Unchecked(Point)) -> Result((), BlameError) = fn(value) {
     if value.x >= minimum { Ok(()) } else { Err(blame!("below minimum", value.x)) }
 };
 def minimum: Int = 1;
-export {chosen, early};
+pub use self::{chosen, early};

@@ -1,1 +1,1 @@
-export def value = raise!(42);
+pub def value = raise!(42);

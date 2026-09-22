@@ -52,6 +52,39 @@ impl Pass<'_> {
                 Some(ModuleTarget::Conflicted(candidates)) => {
                     self.conflict(ResolveConflict::ModuleCandidates { candidates })
                 }
+                None => {
+                    let Some(value) = self.child(node, Role::Value) else {
+                        return Ok(ResolveState::Unresolved);
+                    };
+                    let state = self
+                        .reference_value(value)?
+                        .unwrap_or(ResolveState::Unresolved);
+                    match state {
+                        ResolveState::Bound(target)
+                            if let SymbolKind::Namespace(module) =
+                                self.mir.symbols[target.index()].kind =>
+                        {
+                            self.mir.symbols[id.index()].kind = SymbolKind::Namespace(module);
+                            ResolveState::Bound(id)
+                        }
+                        ResolveState::Member { .. } => {
+                            // A qualified `use` can cross a module boundary and
+                            // then select from a type domain. Module discovery
+                            // cannot classify that boundary before symbols close;
+                            // once known, retain the binding as a typed alias.
+                            let HirKind::Binding { kind, .. } =
+                                &mut self.mir.hir[node.index()].kind
+                            else {
+                                unreachable!()
+                            };
+                            *kind = BindingKind::Def;
+                            self.mir.symbols[id.index()].kind =
+                                SymbolKind::Declaration(BindingKind::Def);
+                            ResolveState::Bound(id)
+                        }
+                        state => state,
+                    }
+                }
                 _ => ResolveState::Unresolved,
             },
             SymbolKind::Pattern => {

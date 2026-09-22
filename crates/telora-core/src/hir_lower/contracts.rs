@@ -13,10 +13,31 @@ impl Lower<'_> {
                 Ok(Shape::Alias(inner, Mode::Contract))
             }
             Some(Rule::FunctionContract | Rule::UnitContract) => Ok(Shape::Alias(node, Mode::Type)),
+            Some(Rule::StaticPath) => {
+                let last = self
+                    .cst
+                    .children(node)
+                    .filter(|child| {
+                        matches!(self.cst.get(*child), Node::Token(Token::Identifier, _))
+                    })
+                    .last()
+                    .ok_or(())?;
+                Ok(Shape::Alias(node, Mode::Path(last)))
+            }
+            Some(Rule::ContractPath) => {
+                if let Ok(path) = self.child(node, Rule::StaticPath) {
+                    return Ok(Shape::Alias(path, Mode::Contract));
+                }
+                let last = self.required_token(node, Token::Identifier)?;
+                Ok(Shape::Alias(node, Mode::Path(last)))
+            }
             Some(Rule::ContractExpr) => {
-                let path = self
-                    .child(node, Rule::StaticPath)
-                    .or_else(|_| self.child(node, Rule::ContractPath))?;
+                let path = if let Ok(path) = self.child(node, Rule::StaticPath) {
+                    path
+                } else {
+                    let wrapper = self.child(node, Rule::ContractPath)?;
+                    self.child(wrapper, Rule::StaticPath).unwrap_or(wrapper)
+                };
                 let last = self
                     .cst
                     .children(path)
@@ -50,18 +71,27 @@ impl Lower<'_> {
 
     pub(super) fn path(&self, node: NodeRef, last: NodeRef) -> Result<Shape, ()> {
         if self.rule(node) == Some(Rule::StaticPath) {
-            return Ok(Shape::Node(
-                HirKind::StaticPath(
-                    self.cst
-                        .children(node)
-                        .filter(|child| {
-                            matches!(self.cst.get(*child), Node::Token(Token::Identifier, _))
-                        })
-                        .map(|name| self.text(name).into_owned())
-                        .collect(),
-                ),
-                vec![],
-            ));
+            let names = self
+                .cst
+                .children(node)
+                .filter(|child| matches!(self.cst.get(*child), Node::Token(Token::Identifier, _)))
+                .collect::<Vec<_>>();
+            let first = names.first().ok_or(())?;
+            let root = self.text(*first);
+            let module_root = matches!(root.as_ref(), "crate" | "self" | "super")
+                || self.mir.modules.iter().any(|module| module.name == root);
+            if module_root {
+                let end = names.iter().position(|name| *name == last).ok_or(())?;
+                return Ok(Shape::Node(
+                    HirKind::StaticPath(
+                        names[..=end]
+                            .iter()
+                            .map(|name| self.text(*name).into_owned())
+                            .collect(),
+                    ),
+                    vec![],
+                ));
+            }
         }
         let previous = self
             .cst

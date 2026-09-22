@@ -1,2 +1,2 @@
 type Grow(A) = struct {next: Grow(Array(A))};
-export {Grow};
+pub use self::{Grow};

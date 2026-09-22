@@ -1,1 +1,1 @@
-export def t0507_should_error: Fn(Int) -> Int = fn(value) { value + "x" };
+pub def t0507_should_error: Fn(Int) -> Int = fn(value) { value + "x" };

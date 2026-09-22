@@ -1,9 +1,9 @@
-export type Foo = enum { A(Int), B };
-export Foo.{A, B};
-export Bool.{True as Yes};
-export Option.{None as Absent, Some as Present};
-export def disabled: Bool = False; # origin:disabled:False
-export def saved: Foo = Foo.B; # origin:saved:Foo.B
-export def wrap: Fn(Int) -> Foo = Foo.A; # origin:wrap:Foo.A
-export def optional: for(T) Fn(T) -> Option(T) = Some; # origin:optional:Some
-export def forward: for(T) Fn(T) -> T = fn(value) { value };
+pub type Foo = enum { A(Int), B };
+pub use Foo::{A, B};
+pub use Bool::{True as Yes};
+pub use Option::{None as Absent, Some as Present};
+pub def disabled: Bool = False; # origin:disabled:False
+pub def saved: Foo = Foo::B; # origin:saved:Foo::B
+pub def wrap: Fn(Int) -> Foo = Foo::A; # origin:wrap:Foo::A
+pub def optional: for(T) Fn(T) -> Option(T) = Some; # origin:optional:Some
+pub def forward: for(T) Fn(T) -> T = fn(value) { value };

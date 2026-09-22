@@ -1,2 +1,2 @@
 def value: Result(Int, String) = Ok(1);
-export def invalid = value.try_unwrap!();
+pub def invalid = value.try_unwrap!();

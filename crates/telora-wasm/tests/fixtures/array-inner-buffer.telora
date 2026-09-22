@@ -1,4 +1,4 @@
-import "std/array" { push };
+use std::array::{ push };
 
 def one: Array(Int) = [1];
 def two: Array(Int) = push(one, 2);
@@ -6,5 +6,5 @@ def three: Array(Int) = push(two, 3);
 def branch: Array(Int) = push(one, 9);
 def four: Array(Int) = push(three, 4);
 
-export def answer: (Array(Int), Array(Int), Array(Int), Array(Int), Array(Int)) =
+pub def answer: (Array(Int), Array(Int), Array(Int), Array(Int), Array(Int)) =
     (one, two, three, branch, four);

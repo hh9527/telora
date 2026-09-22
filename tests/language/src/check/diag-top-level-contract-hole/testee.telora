@@ -2,4 +2,4 @@ type Items = Array(_);
 def aliased: Items = [1];
 def direct: Array(_) = [1];
 def function: Fn(_) -> Int = fn(value) { value + 1 };
-export def result: Int = function(1);
+pub def result: Int = function(1);

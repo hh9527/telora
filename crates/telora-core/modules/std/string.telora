@@ -10,17 +10,17 @@ native replace: Fn(String, String, String) -> String;
 native indent: Fn(String, Int) -> String;
 native ensure_trailing_newline: Fn(String) -> String;
 native trim_margin: Fn(String, String) -> String;
-import "std/_parse" { FromStr, ParseError };
-import "std/type-desc" { TypeDesc };
+use std::_parse::{ FromStr, ParseError };
+use std::type_desc::{ TypeDesc };
 
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type DecodeByParse = struct {};
 
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type EncodeByDisplay = struct {};
 
 def parse: for(A: FromStr) Fn(String) -> Result(A, ParseError) = fn(input) {
-    FromStr.from_str(input)
+    FromStr::from_str(input)
 };
 def decode_by_parse: Fn(TypeDesc, Option(DecodeByParse)) -> DecodeByParse = fn(target, previous) {
     let property: DecodeByParse = {};
@@ -31,4 +31,4 @@ def encode_by_display: Fn(TypeDesc, Option(EncodeByDisplay)) -> EncodeByDisplay 
     property
 };
 
-export { length, join, join_lines, split, lines, starts_with, ends_with, contains, replace, indent, ensure_trailing_newline, trim_margin, parse, FromStr, ParseError, DecodeByParse, EncodeByDisplay, decode_by_parse, encode_by_display };
+pub use self::{ length, join, join_lines, split, lines, starts_with, ends_with, contains, replace, indent, ensure_trailing_newline, trim_margin, parse, FromStr, ParseError, DecodeByParse, EncodeByDisplay, decode_by_parse, encode_by_display };

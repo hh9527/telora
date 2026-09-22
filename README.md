@@ -33,7 +33,7 @@ hello/
   telora-config.json
   telora-crate.json
   telora-lock.json
-  src/app.telora
+  src/lib.telora
 ```
 
 `hello/telora-config.json`：
@@ -45,20 +45,20 @@ hello/
 `hello/telora-crate.json`：
 
 ```json
-{"name":"hello","modules":["@src/app"],"dependencies":[]}
+{"name":"hello","dependencies":[]}
 ```
 
-`hello/src/app.telora`：
+`hello/src/lib.telora`：
 
 ```telora
-import "std/transform-service" as service;
-import "std/value" {Value};
+use std::transform_service as service;
+use std::value::{Value};
 type MainService = struct {};
-impl service.TransformService for MainService {
+impl service::TransformService for MainService {
     init: fn(ctx) { {}.ty!(Self) },
-    transform: fn(self, input) { Value.String("hello, telora") },
+    transform: fn(self, input) { Value::String("hello, telora") },
 };
-export {MainService};
+pub use self::{MainService};
 
 ```
 
@@ -66,15 +66,15 @@ export {MainService};
 
 ```bash
 target/release/telora -C hello lock
-target/release/telora -C hello check @src/app
-target/release/telora -C hello check --only-types @src/app
+target/release/telora -C hello check @src/lib
+target/release/telora -C hello check --only-types @src/lib
 target/release/telora -C hello check --lib
 target/release/telora -C hello check --tests --only-types
-printf 'null\n' | target/release/telora -C hello run @src/app
-target/release/telora -C hello query exports @src/app
+printf 'null\n' | target/release/telora -C hello run @src/lib
+target/release/telora -C hello query exports @src/lib
 ```
 
-模块导出具体类型 MainService，实现 `std/transform-service.TransformService` 的 init 与 transform。
+模块公开具体类型 MainService，实现 `std::transform_service::TransformService` 的 init 与 transform。
 MIR 封闭所有方法实例；Host 准备声明的来源并初始化服务，run 处理一个 stdin JSON，
 serve 通过 JSONL 或 HTTP 处理请求。每次调用从同一初始化状态开始，服务间隙 reset；fuel/memory 配额只
 约束单次调用。来源与诊断细节见 [执行模式](guide/EXEC-MODE.md)。
@@ -92,7 +92,8 @@ serve 通过 JSONL 或 HTTP 处理请求。每次调用从同一初始化状态�
 两种模式共用 MIR 类型闭合阶段；`static_seconds` 包含类型闭合，
 `execution_seconds` 包含 codegen、链接和 VM 初始化（`--only-types` 时为零）。
 
-`check --lib` 一次检查当前 crate 清单中的全部模块（包含私有模块和数据模块）；
+`check --lib` 一次检查从当前 crate 的 `src/lib.telora` 挂载的模块树（包含私有模块和
+数据模块）；
 `check --tests` 递归检查当前 crate 的 `tests/` 下全部模块，包含辅助模块，
 但不执行 Test 用例。两个开关可以组合使用，与显式模块选择器互斥。
 所选模块作为多个根进入同一张 MIR 图，共享依赖只求解和初始化一次。
@@ -118,15 +119,16 @@ Some(1)
 ```
 
 Bool 只接受 `True` 和 `False`，不进行 truthiness 转换。用户 enum 的构造使用
-声明限定名，例如 `Status.Ready`；不使用带单引号的旧 tag 语法。
+声明限定名，例如 `Status::Ready`；不使用带单引号的旧 tag 语法。
 Array 是有序同质序列；Tuple 是固定长度异质积；具名 Struct 的字段由声明确定，Dict(T) 的键可变化而值类型固定。
 记录字面量必须得到具名 Struct 或 Dict(T) 的完整类型，不能留下匿名 Record 值。
 
-模块顶层是声明空间，只接受 `import`、`type`、`trait`、`impl`、`decl`、`def`、`native`
-和 `export`。局部顺序计算使用 `let`；复杂模块值通过 `do` 表达：
+模块顶层是声明空间，只接受 `mod`、`use`、`data`、`type`、`trait`、`impl`、`decl`、
+`def` 和 `native`；公开声明使用 `pub`。局部顺序计算使用 `let`；复杂模块值通过
+`do` 表达：
 
 ```telora
-export def total: Int = do {
+pub def total: Int = do {
     let base = 40;
     base + 2
 };
@@ -149,7 +151,7 @@ type Maybe(A) = enum {
 ```
 
 Struct 和 enum 是封闭的具名类型。即使结构相同，不同声明也不是同一类型；alias、
-import 和 reexport 保留声明身份。参数化声明定义静态类型族；同一声明
+`use` 和 `pub use` 保留声明身份。参数化声明定义静态类型族；同一声明
 使用相同类型实参时得到相同的 canonical 类型。
 
 `T` 是静态类型，`T.type` 将其投影为精确的 `TypeOf(T)` 元数据，可作为 `Type`
@@ -159,7 +161,9 @@ import 和 reexport 保留声明身份。参数化声明定义静态类型族；
 
 ### 模块与静态数据
 
-模块依赖在执行前封闭，不支持动态 import 或 `eval`。稳定模块 ID 与 crate 布局对应：
+模块依赖在执行前封闭，不支持动态加载模块或语言内 `eval`。每个 crate 从
+`src/lib.telora` 开始，由 `mod` 声明显式挂载代码子模块；`use` 只建立名字绑定。
+稳定模块 ID 与 crate 布局对应：
 
 ```text
 @src/model       -> <crate>/src/model.telora
@@ -170,34 +174,34 @@ dep/types               -> <dependency>/src/types.telora
 resolver 在发现模块图前按 crate 粒度冻结 first-win 来源清单：builtin crates 在先，
 当前 crate 和 manifest dependencies 随后；后序同名来源不能补充或改写既有 crate。
 
-JSON、YAML 和 TOML 文件也是静态模块，并统一导出 `std/value.Value`：
+JSON、YAML 和 TOML 通过 `data` 声明挂载，并得到 `std::value::Value`：
 
 ```telora
-import "./request.json" { data as request };
+data request = import(json) "./request.json";
 ```
 
-静态阶段只登记其 data: Value 接口；类型闭合后才加载和解析内容。
+静态阶段只登记其 `Value` 接口；类型闭合后才加载和解析内容。
 程序本身不能读取任意文件。
 
 ### Codec 与展示
 
 ```telora
-import "std/codec" as codec;
-import "std/json" as json;
-import "std/value" { Value };
+use std::codec as codec;
+use std::json as json;
+use std::value::{ Value };
 
 type Request = struct { subject: String, limit: Int };
 
 def raw_text: String = "{\"subject\":\"orders\",\"limit\":20}";
-def request: Request = json.decode@[Request](raw_text).unwrap!();
-export def encoded: Value = codec.encode(request);
+def request: Request = json::decode@[Request](raw_text).unwrap!();
+pub def encoded: Value = codec::encode(request);
 ```
 
 `std/codec` 在 `Value` 与有类型值之间转换；`std/json` 负责 JSON 文本。
 Decorator provider 计算 typed property，codec 消费对应的类型元数据和 property。
 
-字符串插值要求每个表达式具有静态选定的 std/fmt.Display 实现。
-String、Int、Float 有标准实现；具名类型可以实现 Display 或使用 fmt.display_by。稳定的数据交换使用 codec；临时观察使用
+字符串插值要求每个表达式具有静态选定的 `std::fmt::Display` 实现。
+String、Int、Float 有标准实现；具名类型可以实现 Display 或使用 `fmt::display_by`。稳定的数据交换使用 codec；临时观察使用
 `dbg!`；显式的面向人展示可以使用 `std/fmt`。
 
 ## 诊断与 best-effort
@@ -234,7 +238,7 @@ value.dbg!("message")     # 返回原值，向 Host 发送 JSONL 观察
 
 ## Host 与 Entry
 
-模块导出具体类型 MainService，实现 `std/transform-service.TransformService` 的 init 与 transform。
+模块公开具体类型 MainService，实现 `std::transform_service::TransformService` 的 init 与 transform。
 MIR 封闭所有方法实例；Host 准备声明的来源并初始化服务，run 处理一个 stdin JSON，
 serve 处理 JSONL。每次调用从同一初始化状态开始，服务间隙 reset；fuel/memory 配额只
 约束单次调用。来源与诊断细节见 [执行模式](guide/EXEC-MODE.md)。
@@ -286,8 +290,8 @@ JSONL 位置默认使用 1-based line 和 0-based UTF-8 byte column；LSP 按协
 `check --only-types` 获取静态阶段的 JSONL 诊断。
 
 `test parser/expressions` 支持嵌套测试入口。Host 为当前 crate 的整个 `tests/` 建立
-临时模块清单，测试模块可以互相 import，但只求值从选中入口可达的模块。源码不能
-反向 import 测试。入口直接导出 `std/test.should_ok(fn() { ... })`、`should_fail`
+临时来源访问边界，测试模块可以互相 `use`，但只求值从选中入口可达的模块。源码不能
+反向引用测试。入口直接公开 `std::test::should_ok(fn() { ... })`、`should_fail`
 或 `should_fail_with` 构造的 Test，支持 `with_fixtures` 批量生成用例。结果以
 `telora.test/v2` JSONL 输出逐用例结果和汇总；`check` 不执行 Test。详见
 [测试最佳实践](guide/TESTING.md)和 [CLI 指南](guide/TELORA-CLI.md)。
@@ -301,7 +305,7 @@ fuel 当作正常终止条件。
 ## 文档
 
 - [guide/TELORA.md](guide/TELORA.md)：语言使用教程与当前限制。
-- [guide/WORKSPACE.md](guide/WORKSPACE.md)：workspace、crate、模块清单与依赖锁定。
+- [guide/WORKSPACE.md](guide/WORKSPACE.md)：workspace、crate、模块树与依赖锁定。
 - [guide/LIBSTD.md](guide/LIBSTD.md)：标准库模块定位与接口发现。
 - [guide/TESTING.md](guide/TESTING.md)：契约断言、预期失败、fixtures 与测试分层。
 - [guide/EXEC-MODE.md](guide/EXEC-MODE.md)：eval、run 与 serve 执行模式。

@@ -1,2 +1,2 @@
 type Kind = enum {Atom};
-export type Removed = {kind: Kind.Atom};
+pub type Removed = {kind: Kind::Atom};

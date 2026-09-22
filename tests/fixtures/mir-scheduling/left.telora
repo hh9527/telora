@@ -1,2 +1,1 @@
-import "./base" { value };
-export { value };
+pub use crate::base::value;

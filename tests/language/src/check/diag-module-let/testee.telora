@@ -1,2 +1,2 @@
 let value = 42;
-export {value};
+pub use self::{value};

@@ -1,13 +1,13 @@
-import "std/dict" as dict;
-import "std/array" as array;
-import "std/value" {Value};
+use std::dict as dict;
+use std::array as array;
+use std::value::{Value};
 
-def input: Dict(Int) = dict.from_pairs([("z", 3), ("a", 1), ("é", 4), ("m", 2)]);
-def merged: Dict(Int) = dict.merge(input, {a: 10, b: 20});
-export def answer: Value = Value.Object({
-    keys: Value.Array(array.map(dict.keys(input), fn(key) { Value.String(key) })),
-    merged: Value.Object(dict.map_values(merged, fn(n) { Value.Int(n) })),
-    filtered: Value.Object(dict.map_values(dict.filter(input, fn(n) { n > 2 }), fn(n) { Value.Int(n) })),
-    folded: Value.Int(dict.fold(input, 0, fn(acc, key, n) { acc * 10 + n })),
-    missing: match dict.get(input, "missing") { Some(n) => Value.Int(n), None => Value.None },
+def input: Dict(Int) = dict::from_pairs([("z", 3), ("a", 1), ("é", 4), ("m", 2)]);
+def merged: Dict(Int) = dict::merge(input, {a: 10, b: 20});
+pub def answer: Value = Value::Object({
+    keys: Value::Array(array::map(dict::keys(input), fn(key) { Value::String(key) })),
+    merged: Value::Object(dict::map_values(merged, fn(n) { Value::Int(n) })),
+    filtered: Value::Object(dict::map_values(dict::filter(input, fn(n) { n > 2 }), fn(n) { Value::Int(n) })),
+    folded: Value::Int(dict::fold(input, 0, fn(acc, key, n) { acc * 10 + n })),
+    missing: match dict::get(input, "missing") { Some(n) => Value::Int(n), None => Value::None },
 });

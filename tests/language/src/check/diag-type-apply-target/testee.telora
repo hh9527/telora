@@ -1,2 +1,2 @@
 def identity: Fn(Int) -> Int = fn(value) { value };
-export def invalid = identity@[Int](1);
+pub def invalid = identity@[Int](1);

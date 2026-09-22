@@ -1,6 +1,6 @@
 type RenameCase = enum {CamelCase};
 
-@property(PropertyTarget.Type)
+@property(PropertyTarget::Type)
 type CodecProp = struct {
     rename_all: Option(RenameCase),
     untagged: Bool,
@@ -13,14 +13,14 @@ def default_prop: CodecProp = {
 
 def rename_all: Fn(RenameCase) -> Fn(Type, Option(CodecProp)) -> CodecProp = fn(case) {
     fn(target, previous) {
-        if case == RenameCase.CamelCase {
+        if case == RenameCase::CamelCase {
             let property = match previous {
                 Some(property) => property,
                 None => default_prop,
             };
             property <~ {rename_all: Some(case)}
         } else {
-            fail!("std/json.rename_all expects RenameCase.CamelCase")
+            fail!("std/json.rename_all expects RenameCase::CamelCase")
         }
     }
 };
@@ -33,4 +33,4 @@ def untagged: Fn(Type, Option(CodecProp)) -> CodecProp = fn(target, previous) {
     property <~ {untagged: True}
 };
 
-export {RenameCase, CodecProp, default_prop, rename_all, untagged};
+pub use self::{RenameCase, CodecProp, default_prop, rename_all, untagged};

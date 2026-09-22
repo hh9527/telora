@@ -1,6 +1,6 @@
-import "std/test" as test;
-import "./values" as values;
+use std::test as test;
+use self::values as values;
 
-export def physical_newlines: test.Test = test.should_ok(values.physical_newlines);
-export def explicit_carriage_returns: test.Test = test.should_ok(values.explicit_carriage_returns);
-export def continuations: test.Test = test.should_ok(values.continuations);
+pub def physical_newlines: test::Test = test::should_ok(values::physical_newlines);
+pub def explicit_carriage_returns: test::Test = test::should_ok(values::explicit_carriage_returns);
+pub def continuations: test::Test = test::should_ok(values::continuations);

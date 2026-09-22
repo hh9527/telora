@@ -1,12 +1,12 @@
-import "std/json" as json;
-import "std/value" { Value };
-import "std/_rt" as rt;
-export def answer: Fn() -> (rt.Diagnostic, rt.Diagnostic, rt.Diagnostic, String) = fn() {
-    let bytes = rt.with_diagnostics(json.stringify)(Value.Bytes(b"bad"));
-    let temporal = rt.with_diagnostics(json.stringify)(Value.LocalDate("2026-09-13"));
-    let indent = rt.with_diagnostics(json.stringify_pretty)(-1);
+use std::json as json;
+use std::value::{ Value };
+use std::_rt as rt;
+pub def answer: Fn() -> (rt::Diagnostic, rt::Diagnostic, rt::Diagnostic, String) = fn() {
+    let bytes = rt::with_diagnostics(json::stringify)(Value::Bytes(b"bad"));
+    let temporal = rt::with_diagnostics(json::stringify)(Value::LocalDate("2026-09-13"));
+    let indent = rt::with_diagnostics(json::stringify_pretty)(-1);
     (match bytes { Err(reports) => reports[0], Ok(_) => fail!("expected Bytes rejection") },
      match temporal { Err(reports) => reports[0], Ok(_) => fail!("expected temporal rejection") },
      match indent { Err(reports) => reports[0], Ok(_) => fail!("expected indent rejection") },
-     json.stringify(Value.True))
+     json::stringify(Value::True))
 };

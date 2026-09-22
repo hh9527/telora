@@ -171,11 +171,11 @@ fn preserves_independent_recovery_diagnostics() {
 #[test]
 fn lowering_preserves_parser_diagnostics_without_reinterpreting_recovery() {
     let cases = [
-        "export def broken = (1 + 2;",
-        "export def broken = match A { A 1, _ => 2 };",
-        "type Broken = enum { @bad(\"name\") }; export {Broken};",
-        "type Broken = enum { @bad(\"name\", Bad }; export {Broken};",
-        "export def broken = match A { @ => 1, _ => 2 };",
+        "pub def broken = (1 + 2;",
+        "pub def broken = match A { A 1, _ => 2 };",
+        "type Broken = enum { @bad(\"name\") }; pub use self::{Broken};",
+        "type Broken = enum { @bad(\"name\", Bad }; pub use self::{Broken};",
+        "pub def broken = match A { @ => 1, _ => 2 };",
     ];
     for text in cases {
         let mut sources = crate::source::SourceDatabase::default();
@@ -204,14 +204,14 @@ fn lowering_preserves_parser_diagnostics_without_reinterpreting_recovery() {
 fn keeps_separate_syntax_roots_independently_actionable() {
     let cases: &[(&str, &[&str])] = &[
         (
-            "export def first = (1 + 2; export def second = match A { A 1, _ => 2 };",
+            "pub def first = (1 + 2; pub def second = match A { A 1, _ => 2 };",
             &[
                 "invalid syntax, expected one of: ',', ')'",
                 "invalid syntax, expected one of: '=>', 'if'",
             ],
         ),
         (
-            "export def broken = match A { A 1, B 2, _ => 3 };",
+            "pub def broken = match A { A 1, B 2, _ => 3 };",
             &[
                 "invalid syntax, expected one of: '=>', 'if'",
                 "invalid syntax, expected one of: '=>', 'if'",

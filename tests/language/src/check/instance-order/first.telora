@@ -1,2 +1,2 @@
-import "@src/check/instance-order/shared" {identity};
-export def first: Fn(Int) -> Int = identity@[Int];
+use super::shared::{ identity };
+pub def first: Fn(Int) -> Int = identity@[Int];

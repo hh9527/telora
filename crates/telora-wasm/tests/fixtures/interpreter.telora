@@ -1,8 +1,8 @@
-import "std/dyn" as dyn;
-import "std/codec" {encode, Value};
-import "std/array" as array;
-import "std/_rt" as rt;
-def erased: Fn(Dyn) -> Int = fn(value) { match dyn.check_int(value) { Some(value) => value, None => 0 } };
+use std::dyn as dyn;
+use std::codec::{encode, Value};
+use std::array as array;
+use std::_rt as rt;
+def erased: Fn(Dyn) -> Int = fn(value) { match dyn::check_int(value) { Some(value) => value, None => 0 } };
 def factory: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(do {
     let warning: Option(Int) = warn!("operand");
     erased
@@ -16,10 +16,10 @@ def make: Fn(Int) -> Fn(String) -> Int = fn(offset) {
 def captured: Fn(String) -> Int = make(42);
 def unused: for(T) Fn(TypeOf(T)) -> Fn(Int) -> Int = interpreter!(fn(value) {value});
 def mixed: for(A, B) Fn(TypeOf(A), TypeOf(B)) -> Fn(A, Int, B) -> Int = interpreter!(fn(a, n, b) { n });
-export def answer: Fn() -> Value = fn() {
+pub def answer: Fn() -> Value = fn() {
     let repeated = factory(Int.type);
     let alias = repeated;
-    let observed = rt.with_diagnostics(fn(offset: Int) {
+    let observed = rt::with_diagnostics(fn(offset: Int) {
         def local: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(do {
             let warning: Option(Int) = warn!("construct input function");
             fn(value) { offset }
@@ -28,7 +28,7 @@ export def answer: Fn() -> Value = fn() {
         let second = local(Int.type);
         first(1) + second(2) + first(3)
     })(14);
-    let never_called = rt.with_diagnostics(fn(offset: Int) {
+    let never_called = rt::with_diagnostics(fn(offset: Int) {
         def local: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(do {
             let warning: Option(Int) = warn!("unused input function");
             fn(value) { offset }
@@ -36,7 +36,7 @@ export def answer: Fn() -> Value = fn() {
         let ignored = local(Int.type);
         42
     })(1);
-    let failed = rt.with_diagnostics(fn(offset: Int) {
+    let failed = rt::with_diagnostics(fn(offset: Int) {
         def local: for(T) Fn(TypeOf(T)) -> Fn(T) -> Int = interpreter!(do {
             if offset == 0 { fail!("input construction failed", offset) } else { erased }
         });
@@ -53,8 +53,8 @@ export def answer: Fn() -> Value = fn() {
         unused(String.type)(42) == 42,
         mixed(Int.type, String.type)(1, 42, "unused") == 42,
         alias == repeated,
-        match observed { Ok(pair) => pair.0 == 42 && array.length(pair.1) == 1, Err(_) => False },
-        match never_called { Ok(pair) => pair.0 == 42 && array.length(pair.1) == 1, Err(_) => False },
-        match failed { Err(reports) => array.length(reports) == 1, Ok(_) => False },
+        match observed { Ok(pair) => pair.0 == 42 && array::length(pair.1) == 1, Err(_) => False },
+        match never_called { Ok(pair) => pair.0 == 42 && array::length(pair.1) == 1, Err(_) => False },
+        match failed { Err(reports) => array::length(reports) == 1, Ok(_) => False },
     ])
 };

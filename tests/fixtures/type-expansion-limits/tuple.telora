@@ -1,2 +1,2 @@
 type Wide = ({{ITEMS}});
-export def metadata: Type = Wide.type;
+pub def metadata: Type = Wide.type;

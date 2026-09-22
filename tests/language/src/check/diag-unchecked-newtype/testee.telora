@@ -1,2 +1,2 @@
 type Id = struct(Int);
-export type Candidate = Unchecked(Id);
+pub type Candidate = Unchecked(Id);

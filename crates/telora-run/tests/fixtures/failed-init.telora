@@ -1,9 +1,9 @@
-import "std/transform-service" as service;
-import "std/value" {Value};
-import "std/regex" as regex;
-type MainService = struct {pattern: regex.Regex};
-impl service.TransformService for MainService {
-    init: fn(ctx) { {pattern: regex.compile("(")}.ty!(Self) },
+use std::transform_service as service;
+use std::value::{Value};
+use std::regex as regex;
+type MainService = struct {pattern: regex::Regex};
+impl service::TransformService for MainService {
+    init: fn(ctx) { {pattern: regex::compile("(")}.ty!(Self) },
     transform: fn(self, input) { input },
 };
-export {MainService};
+pub use self::{MainService};

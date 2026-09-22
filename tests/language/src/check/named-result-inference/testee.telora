@@ -1,8 +1,8 @@
-export def value: Result(String, Int) = do { let value = match Some("hi") {
+pub def value: Result(String, Int) = do { let value = match Some("hi") {
     Some(x) => Ok(x),
     None => Err(2),
 }; value };
-export def reversed: Result(String, Int) = do { let value = match Some("hi") {
+pub def reversed: Result(String, Int) = do { let value = match Some("hi") {
     None => Err(2),
     Some(x) => Ok(x),
 }; value };

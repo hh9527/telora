@@ -1,4 +1,4 @@
-import "std/value" {Value};
+use std::value::{Value};
 
 type Captured = Fn() -> ((Int, Int), (Int, String));
 def factory: Fn(Int) -> Captured = fn(number: Int) {
@@ -19,10 +19,10 @@ def mutual: (Int, String) = do {
     def right: for(T) Fn(T, Int) -> T = fn(value, count) {if count == 0 {value} else {left(value, count - 1)}};
     (left(42, 3), right("done", 2))
 };
-export def answer: Value = Value.Array([
-    if first() == ((7,1),(7,"text")) {Value.True} else {Value.False},
-    if second() == ((9,1),(9,"text")) {Value.True} else {Value.False},
-    if first() == ((7,1),(7,"text")) {Value.True} else {Value.False},
-    if recursive == (42,"done") {Value.True} else {Value.False},
-    if mutual == (42,"done") {Value.True} else {Value.False},
+pub def answer: Value = Value::Array([
+    if first() == ((7,1),(7,"text")) {Value::True} else {Value::False},
+    if second() == ((9,1),(9,"text")) {Value::True} else {Value::False},
+    if first() == ((7,1),(7,"text")) {Value::True} else {Value::False},
+    if recursive == (42,"done") {Value::True} else {Value::False},
+    if mutual == (42,"done") {Value::True} else {Value::False},
 ]);

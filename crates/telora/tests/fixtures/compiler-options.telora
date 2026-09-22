@@ -1,5 +1,5 @@
-export type Wide = (
+pub type Wide = (
     Int, Int, Int, Int, Int, Int, Int, Int, Int,
     Int, Int, Int, Int, Int, Int, Int, Int, Int
 );
-export def answer: Int = 42;
+pub def answer: Int = 42;

@@ -1,2 +1,2 @@
-import "std/dyn" as dyn;
-export def invalid = dyn.pack@[Int]((Int).type, "wrong");
+use std::dyn as dyn;
+pub def invalid = dyn::pack@[Int]((Int).type, "wrong");

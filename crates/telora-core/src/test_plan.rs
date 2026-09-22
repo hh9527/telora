@@ -159,12 +159,12 @@ mod tests {
     fn discovers_native_test_exports_without_running_initializers_or_thunks() {
         let mir = crate::test_graph::graph(
             r#"
-            import "std/test" as testing;
+            use std::test as testing;
             type Test = struct {value: Int};
-            export def imitation: Test = {value: 1};
-            export def factory: Fn() -> testing.Test = fn() { testing.should_ok(fn() { 42 }) };
-            export def z_case: testing.Test = testing.should_fail(fn() { fail!("deferred thunk") });
-            export def a_case: testing.Test = fail!("must not initialize while planning");
+            pub def imitation: Test = {value: 1};
+            pub def factory: Fn() -> testing.Test = fn() { testing.should_ok(fn() { 42 }) };
+            pub def z_case: testing.Test = testing.should_fail(fn() { fail!("deferred thunk") });
+            pub def a_case: testing.Test = fail!("must not initialize while planning");
         "#,
             "",
         );
@@ -195,8 +195,8 @@ mod tests {
     #[test]
     fn reexports_keep_their_resolved_target() {
         let mir = crate::test_graph::graph(
-            r#"import "./math" {forwarded}; export {forwarded};"#,
-            r#"import "std/test" as testing; export def forwarded: testing.Test = testing.should_ok(fn() {42});"#,
+            r#"use self::math::{forwarded}; pub use self::{forwarded};"#,
+            r#"use std::test as testing; pub def forwarded: testing.Test = testing.should_ok(fn() {42});"#,
         );
         assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
         let ModuleTarget::Bound(module) = mir.roots[0] else {
@@ -213,9 +213,9 @@ mod tests {
     fn rejects_modules_without_direct_test_values() {
         let mir = crate::test_graph::graph(
             r#"
-            import "std/test" as testing;
-            export def factory: Fn() -> testing.Test = fn() { testing.should_ok(fn() { 42 }) };
-            export def ordinary: Int = 42;
+            use std::test as testing;
+            pub def factory: Fn() -> testing.Test = fn() { testing.should_ok(fn() { 42 }) };
+            pub def ordinary: Int = 42;
         "#,
             "",
         );

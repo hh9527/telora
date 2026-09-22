@@ -1,9 +1,9 @@
-import "std/test" as test;
-import "std/dyn" as dyn;
-import "std/eq" as eq;
-import "std/eq" {equal as same};
-import "@src/test-support" {expect};
-import "@src/test/nominal-equality/provider" {Item};
+use std::test as test;
+use std::dyn as dyn;
+use std::eq as eq;
+use std::eq::{equal as same};
+use crate::test_support::{expect};
+use self::provider::{ Item };
 
 def item: Item = {value: 42};
 type Wrapped = enum {Some(Array(Item)), None};
@@ -13,90 +13,90 @@ def choose_array: for(T) Fn(Array(T), T) -> Array(T) = fn(left, right) { left };
 def choose_independent: for(A, B) Fn(A, B) -> A = fn(left, right) { left };
 def choose_with_factory: for(T) Fn(Array(T), Fn() -> T) -> Array(T) = fn(left, factory) { left };
 
-export def direct: test.Test = test.should_ok(fn() {
+pub def direct: test::Test = test::should_ok(fn() {
     expect(item == {value: 42} && {value: 42} == item)
 });
-export def array_literal: test.Test = test.should_ok(fn() {
+pub def array_literal: test::Test = test::should_ok(fn() {
     expect([item] == [{value: 42}] && [{value: 42}] == [item])
 });
-export def array_annotated: test.Test = test.should_ok(fn() {
+pub def array_annotated: test::Test = test::should_ok(fn() {
     let expected: Array(Item) = [{value: 42}];
     expect([item] == expected && expected == [item])
 });
-export def tuple_literal: test.Test = test.should_ok(fn() {
+pub def tuple_literal: test::Test = test::should_ok(fn() {
     expect((item, 1) == ({value: 42}, 1) && ({value: 42}, 1) == (item, 1))
 });
-export def array_function: test.Test = test.should_ok(fn() {
-    expect(eq.equal([item], [{value: 42}]) && eq.equal([{value: 42}], [item]))
+pub def array_function: test::Test = test::should_ok(fn() {
+    expect(eq::equal([item], [{value: 42}]) && eq::equal([{value: 42}], [item]))
 });
-export def inequality: test.Test = test.should_ok(fn() {
+pub def inequality: test::Test = test::should_ok(fn() {
     expect(!([item] != [{value: 42}]) && !([{value: 42}] != [item])
         && [item] != [{value: 43}] && [{value: 43}] != [item])
 });
-export def nested: test.Test = test.should_ok(fn() {
+pub def nested: test::Test = test::should_ok(fn() {
     expect([(item, [item])] == [({value: 42}, [{value: 42}])]
         && [({value: 42}, [{value: 42}])] == [(item, [item])])
 });
-export def bidirectional: test.Test = test.should_ok(fn() {
+pub def bidirectional: test::Test = test::should_ok(fn() {
     expect((item, {value: 42}) == ({value: 42}, item)
         && ({value: 42}, item) == (item, {value: 42}))
 });
-export def fields: test.Test = test.should_ok(fn() {
+pub def fields: test::Test = test::should_ok(fn() {
     expect({entry: [item]}.ty!(Fields) == {entry: [{value: 42}]}
         && {entry: [{value: 42}]} == {entry: [item]}.ty!(Fields))
 });
-export def dictionaries: test.Test = test.should_ok(fn() {
+pub def dictionaries: test::Test = test::should_ok(fn() {
     let values: Dict(Item) = {entry: item};
     expect(values == {entry: {value: 42}} && {entry: {value: 42}} == values)
 });
-export def tagged_payload: test.Test = test.should_ok(fn() {
+pub def tagged_payload: test::Test = test::should_ok(fn() {
     expect(Some([item]).ty!(Option(Array(Item))) == Some([{value: 42}])
         && Some([{value: 42}]) == Some([item]).ty!(Option(Array(Item))))
 });
-export def context_through_binding: test.Test = test.should_ok(fn() {
+pub def context_through_binding: test::Test = test::should_ok(fn() {
     let raw = {value: 42};
     expect([item] == [raw] && [raw] == [item]
         && (item, 1) == (raw, 1) && (raw, 1) == (item, 1))
 });
-export def dynamic_boundary: test.Test = test.should_ok(fn() {
-    let dynamic = dyn.pack((Item).type, item);
-    expect(match dyn.project_with((Item).type, dynamic) {
+pub def dynamic_boundary: test::Test = test::should_ok(fn() {
+    let dynamic = dyn::pack((Item).type, item);
+    expect(match dyn::project_with((Item).type, dynamic) {
         Some(value) => value == item,
         None => False,
     })
 });
-export def spreads: test.Test = test.should_ok(fn() {
+pub def spreads: test::Test = test::should_ok(fn() {
     let raw = [{value: 42}];
     expect([item] == [...[{value: 42}]] && [...[{value: 42}]] == [item]
         && [item] == [...raw] && [...raw] == [item])
 });
-export def enum_payload: test.Test = test.should_ok(fn() {
-    let wrapped: Wrapped = Wrapped.Some([item]);
-    expect([wrapped] == [Wrapped.Some([{value: 42}])]
-        && [Wrapped.Some([{value: 42}])] == [wrapped])
+pub def enum_payload: test::Test = test::should_ok(fn() {
+    let wrapped: Wrapped = Wrapped::Some([item]);
+    expect([wrapped] == [Wrapped::Some([{value: 42}])]
+        && [Wrapped::Some([{value: 42}])] == [wrapped])
 });
-export def renamed_equality: test.Test = test.should_ok(fn() {
+pub def renamed_equality: test::Test = test::should_ok(fn() {
     expect(same([{value: 42}], [item]) && same([item], [{value: 42}]))
 });
-export def generic_shared_parameter: test.Test = test.should_ok(fn() {
+pub def generic_shared_parameter: test::Test = test::should_ok(fn() {
     expect(choose([{value: 42}], [item]) == [item]
         && choose([item], [{value: 42}]) == [item])
 });
-export def generic_nested_parameter: test.Test = test.should_ok(fn() {
+pub def generic_nested_parameter: test::Test = test::should_ok(fn() {
     expect(choose_array([{value: 42}], item) == [item]
         && choose_array([item], {value: 42}) == [item])
 });
-export def generic_independent_parameters: test.Test = test.should_ok(fn() {
+pub def generic_independent_parameters: test::Test = test::should_ok(fn() {
     expect(choose_independent([{value: 42}], [item]) == [item])
 });
-export def generic_existing_value: test.Test = test.should_ok(fn() {
+pub def generic_existing_value: test::Test = test::should_ok(fn() {
     let raw = [{value: 42}];
     expect(choose(raw, [item]) == [item]
         && choose_array(raw, item) == [item])
 });
-export def generic_callback_evidence: test.Test = test.should_ok(fn() {
+pub def generic_callback_evidence: test::Test = test::should_ok(fn() {
     expect(choose_with_factory([{value: 42}], fn() { item }) == [item])
 });
-export def generic_nested_tuple: test.Test = test.should_ok(fn() {
+pub def generic_nested_tuple: test::Test = test::should_ok(fn() {
     expect(choose((item, {value: 42}), ({value: 42}, item)) == (item, item))
 });

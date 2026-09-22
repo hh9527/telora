@@ -1,9 +1,9 @@
-import "std/codec" as codec;
-import "std/json" as json;
-import "std/value" { Value };
-@json.untagged
+use std::codec as codec;
+use std::json as json;
+use std::value::{ Value };
+@json::untagged
 type Choice = enum { Empty, Number(Int), Text(String) };
-export def inspect: Fn() -> (Value, Value, Value) = fn() {
-    (codec.encode(Choice.Empty),codec.encode(Choice.Number(7)),codec.encode(Choice.Text("x")))
+pub def inspect: Fn() -> (Value, Value, Value) = fn() {
+    (codec::encode(Choice::Empty),codec::encode(Choice::Number(7)),codec::encode(Choice::Text("x")))
 };
-export def answer: Value = codec.encode(inspect());
+pub def answer: Value = codec::encode(inspect());

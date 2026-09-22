@@ -34,27 +34,45 @@ impl Solver<'_> {
                 continue;
             }
             for &declaration in &symbol.declarations {
-                if matches!(self.mir.hir[declaration.index()].kind, HirKind::DictField)
-                    && let Some(value) = self.child(declaration, Role::Value)
-                {
-                    // The synthetic module export record publishes a scheme;
-                    // it is not a monomorphic use of the exported function.
+                if let Some(value) = self.child(declaration, Role::Value) {
+                    // A public alias publishes a scheme; it is not a
+                    // monomorphic use of the exported function.
                     self.scheme_references[value.index()] = true;
                 }
             }
         }
         for index in 0..self.mir.hir.len() {
-            if matches!(
-                self.mir.hir[index].kind,
+            let administrative = match &self.mir.hir[index].kind {
                 HirKind::Binding {
-                    kind: BindingKind::Export | BindingKind::OpenImport,
+                    kind: BindingKind::Export,
                     ..
-                }
-            ) {
-                let mut pending = vec![HirId(index as u32)];
+                } => true,
+                HirKind::Binding {
+                    kind: BindingKind::Import,
+                    imported,
+                    ..
+                } => imported.as_deref() != Some("data"),
+                _ => false,
+            };
+            if administrative {
+                let root = HirId(index as u32);
+                let export = matches!(
+                    self.mir.hir[index].kind,
+                    HirKind::Binding {
+                        kind: BindingKind::Export,
+                        ..
+                    }
+                );
+                let mut pending = vec![root];
                 while let Some(node) = pending.pop() {
                     self.administrative[node.index()] = true;
-                    pending.extend(self.mir.hir[node.index()].children.iter().map(|e| e.node));
+                    pending.extend(
+                        self.mir.hir[node.index()]
+                            .children
+                            .iter()
+                            .filter(|edge| !(export && node == root && edge.role == Role::Value))
+                            .map(|edge| edge.node),
+                    );
                 }
             }
         }

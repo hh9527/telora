@@ -1,0 +1,2 @@
+use crate::fields::{ AnyObjectFieldRef };
+pub def bad: AnyObjectFieldRef = { owner: Int.type, scalar: String.type, name: 42 };

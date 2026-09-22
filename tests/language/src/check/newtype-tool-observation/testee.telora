@@ -3,4 +3,4 @@ def observed: Type = do {
     let value: Wrapped = dbg!(Wrapped(Int.type), "newtype metadata");
     value.0
 };
-export def value: Int = 42;
+pub def value: Int = 42;

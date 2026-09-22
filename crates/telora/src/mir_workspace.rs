@@ -227,20 +227,29 @@ mod tests {
             r#"{"version":1,"members":["."]}"#,
         )
         .unwrap();
-        std::fs::write(dir.path().join("telora-crate.json"), r#"{"name":"editor","modules":["@src/main","@src/model","@src/other"],"dependencies":[]}"#).unwrap();
+        std::fs::write(
+            dir.path().join("telora-crate.json"),
+            r#"{"name":"editor","dependencies":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("src/lib.telora"),
+            "pub mod main; pub mod model; pub mod other;",
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join("src/main.telora"),
-            "import \"./model\" {value}; export {value};",
+            "use crate::model::{value}; pub use self::{value};",
         )
         .unwrap();
         std::fs::write(
             dir.path().join("src/model.telora"),
-            "export def value: Int = 42;",
+            "pub def value: Int = 42;",
         )
         .unwrap();
         std::fs::write(
             dir.path().join("src/other.telora"),
-            "export def other: Int = 1;",
+            "pub def other: Int = 1;",
         )
         .unwrap();
         let spec = telora_core::WorkspaceSpec::discover(dir.path()).unwrap();
@@ -298,14 +307,14 @@ mod tests {
             .open(
                 &model,
                 DocumentVersion(1),
-                "export def value: String = \"overlay\";",
+                "pub def value: String = \"overlay\";",
             )
             .unwrap();
         workspace
             .open(
                 dir.path().join("src/other.telora"),
                 DocumentVersion(1),
-                "export def other = missing;",
+                "pub def other = missing;",
             )
             .unwrap();
         let snapshot = workspace.rebuild(&workspace.context()).await.unwrap();
@@ -356,7 +365,7 @@ mod tests {
             .open(
                 &main,
                 DocumentVersion(1),
-                "export def value: Never = panic!(\"must never execute\");",
+                "pub def value: Never = panic!(\"must never execute\");",
             )
             .unwrap();
         assert!(matches!(
@@ -389,14 +398,14 @@ mod tests {
         std::fs::create_dir(&tests).unwrap();
         let first = tests.join("_first.telora");
         let second = tests.join("second.telora");
-        std::fs::write(&first, "export def first: Int = 1;").unwrap();
-        std::fs::write(&second, "export def second: Int = 2;").unwrap();
+        std::fs::write(&first, "pub def first: Int = 1;").unwrap();
+        std::fs::write(&second, "pub def second: Int = 2;").unwrap();
         let workspace = Workspace::new(&first).unwrap();
         workspace
-            .open(&first, DocumentVersion(1), "export def first: Int = 1;")
+            .open(&first, DocumentVersion(1), "pub def first: Int = 1;")
             .unwrap();
         workspace
-            .open(&second, DocumentVersion(1), "export def second: Int = 2;")
+            .open(&second, DocumentVersion(1), "pub def second: Int = 2;")
             .unwrap();
         let revision = workspace.revision();
         assert!(
@@ -412,7 +421,7 @@ mod tests {
         assert_eq!(workspace.revision(), revision);
         assert_eq!(
             workspace.document(&first).unwrap().text().to_string(),
-            "export def first: Int = 1;"
+            "pub def first: Int = 1;"
         );
         let old_document = workspace.document(&first).unwrap();
         workspace
@@ -420,14 +429,11 @@ mod tests {
                 &first,
                 DocumentVersion(1),
                 DocumentVersion(2),
-                &[TextEdit::Full("export def first: String = \"new\";".into())],
+                &[TextEdit::Full("pub def first: String = \"new\";".into())],
             )
             .unwrap();
         let snapshot = workspace.rebuild(&workspace.context()).await.unwrap();
-        assert_eq!(
-            old_document.text().to_string(),
-            "export def first: Int = 1;"
-        );
+        assert_eq!(old_document.text().to_string(), "pub def first: Int = 1;");
         assert!(
             snapshot.mir.diagnostics.is_empty(),
             "{:?}",

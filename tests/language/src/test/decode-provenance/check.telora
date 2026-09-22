@@ -1,21 +1,21 @@
-import "@src/support" as support;
-import "std/array" as array;
-import "std/value" {Value};
+use crate::support as support;
+use std::array as array;
+use std::value::{Value};
 
-export def check: Fn(Value) -> Value = fn(actual) {
-    match support.record_field(actual, "stdout") {
-        Some(Value.Array(records)) => {
+pub def check: Fn(Value) -> Value = fn(actual) {
+    match support::record_field(actual, "stdout") {
+        Some(Value::Array(records)) => {
             let located: Fn(String, String, Int, Int) -> Bool = fn(name, source, line, column) {
-                array.any(records, fn(record) {
-                    support.string_field_equals(record, "record", "diagnostic")
-                        && support.string_field_equals(record, "test", name)
-                        && match support.record_field(record, "labels") {
-                            Some(Value.Array(labels)) => array.any(labels, fn(label) {
-                                support.string_field_contains(label, "source", source)
-                                    && support.string_field_equals(label, "message", "subject 1 originated here")
-                                    && match support.record_field(label, "location") {
-                                        Some(location) => support.record_field(location, "line") == Some(Value.Int(line))
-                                            && support.record_field(location, "column") == Some(Value.Int(column)),
+                array::any(records, fn(record) {
+                    support::string_field_equals(record, "record", "diagnostic")
+                        && support::string_field_equals(record, "test", name)
+                        && match support::record_field(record, "labels") {
+                            Some(Value::Array(labels)) => array::any(labels, fn(label) {
+                                support::string_field_contains(label, "source", source)
+                                    && support::string_field_equals(label, "message", "subject 1 originated here")
+                                    && match support::record_field(label, "location") {
+                                        Some(location) => support::record_field(location, "line") == Some(Value::Int(line))
+                                            && support::record_field(location, "column") == Some(Value::Int(column)),
                                         _ => False,
                                     }
                             }),
@@ -23,7 +23,7 @@ export def check: Fn(Value) -> Value = fn(actual) {
                         }
                 })
             };
-            support.bool_value(support.exit_code(actual) == Some(1)
+            support::bool_value(support::exit_code(actual) == Some(1)
                 && located("repeated_static", "input.json", 3, 2)
                 && located("missing", "input.json", 4, 2)
                 && located("unicode", "input.json", 5, 2)
@@ -31,11 +31,11 @@ export def check: Fn(Value) -> Value = fn(actual) {
                 && located("renamed", "input.json", 7, 15)
                 && located("flattened", "input.json", 6, 11)
                 && located("defaulted", "input.json", 6, 11)
-                && located("parsed_function", "decode-provenance/provider", 4, 26)
-                && located("parsed_module", "decode-provenance/provider", 4, 26)
-                && located("empty", "decode-provenance/provider", 12, 27)
-                && located("escaped", "decode-provenance/provider", 13, 29))
+                && located("parsed_function", "decode-provenance/testee/provider", 4, 23)
+                && located("parsed_module", "decode-provenance/testee/provider", 4, 23)
+                && located("empty", "decode-provenance/testee/provider", 12, 24)
+                && located("escaped", "decode-provenance/testee/provider", 13, 26))
         },
-        _ => Value.False,
+        _ => Value::False,
     }
 };

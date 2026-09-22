@@ -19,8 +19,8 @@ def initialized: Int = direct(20000);
 def stopped: Fn(Int) -> Int = fn(n) {
     if n == 0 { fail!("tail failure") } else { stopped(n - 1) }
 };
-export def failing: Fn() -> Int = fn() { stopped(20000) };
-export def answer: Fn() -> (Int, Int, Int, Int, Int, Int, Int, Bool, Int) = fn() {
+pub def failing: Fn() -> Int = fn() { stopped(20000) };
+pub def answer: Fn() -> (Int, Int, Int, Int, Int, Int, Int, Bool, Int) = fn() {
     (initialized + 2, direct(20000) + 2, even(20000), matched(20000), early(20000),
      iterate(fn(value) { value + 42 }, 20000), make(42)(20000),
      widened() == Int.type, dbg!(direct(20000), "after tail recursion"))

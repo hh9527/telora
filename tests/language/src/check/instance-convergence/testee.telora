@@ -10,17 +10,17 @@ def right: for(T) Fn(Array(T)) -> Int = fn(values) { left(values[0]) };
 def grow_once: for(T) Fn(T) -> Int = fn(value) { reset_other([value]) };
 def reset_other: for(T) Fn(T) -> Int = fn(value) { grow_once(0) };
 
-export def self_loop: Fn(Int) -> Int = same@[Int];
-export def mutual_loop: Fn(Int) -> Int = mutual_a@[Int];
+pub def self_loop: Fn(Int) -> Int = same@[Int];
+pub def mutual_loop: Fn(Int) -> Int = mutual_a@[Int];
 type Alias = Int;
-export def self_loop_again: Fn(Alias) -> Int = same@[Alias];
-export def permutation: Fn(Int, String) -> Int = swap@[Int, String];
-export def constant_reset: Fn(String) -> Int = reset@[String];
-export def wrapping_then_unwrapping: Fn(Int) -> Int = left@[Int];
-export def wrapping_then_reset: Fn(String) -> Int = grow_once@[String];
+pub def self_loop_again: Fn(Alias) -> Int = same@[Alias];
+pub def permutation: Fn(Int, String) -> Int = swap@[Int, String];
+pub def constant_reset: Fn(String) -> Int = reset@[String];
+pub def wrapping_then_unwrapping: Fn(Int) -> Int = left@[Int];
+pub def wrapping_then_reset: Fn(String) -> Int = grow_once@[String];
 
 type Box(T) = struct { item: T };
 trait Show { show: Fn(Self) -> String };
 impl Show for Int { show: fn(value) { "int" } };
-impl(T: Show) Show for Box(T) { show: fn(value) { Show.show(value.item) } };
-export def decreasing_trait: Fn(Box(Box(Int))) -> String = fn(value: Box(Box(Int))) { Show.show(value) };
+impl(T: Show) Show for Box(T) { show: fn(value) { Show::show(value.item) } };
+pub def decreasing_trait: Fn(Box(Box(Int))) -> String = fn(value: Box(Box(Int))) { Show::show(value) };

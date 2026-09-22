@@ -1,1 +1,1 @@
-export type Candidate = Unchecked(Int);
+pub type Candidate = Unchecked(Int);

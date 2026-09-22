@@ -1,84 +1,84 @@
-import "std/test" as test;
-import "std/json" as json;
-import "std/codec" as codec;
-import "std/dyn" as dyn;
-import "std/array" as array;
-import "./reexport" {Box, Counted, Choice, Countdown, consume};
-import "@src/test-support" {expect};
+use std::test as test;
+use std::json as json;
+use std::codec as codec;
+use std::dyn as dyn;
+use std::array as array;
+use self::reexport::{Box, Counted, Choice, Countdown, consume};
+use crate::test_support::{expect};
 
 type Plain = struct {value: String, count: Int};
-export def generic_body_rejection: test.Test = test.should_fail_with(fn() { consume("hi") }, "count below minimum");
-export def inferred_body_rejection: test.Test = test.should_fail_with(fn() {
+pub def generic_body_rejection: test::Test = test::should_fail_with(fn() { consume("hi") }, "count below minimum");
+pub def inferred_body_rejection: test::Test = test::should_fail_with(fn() {
     let inferred_consume = fn(value) { consume(value) };
     inferred_consume("hi")
 }, "count below minimum");
-export def local_body_rejection: test.Test = test.should_fail_with(fn() {
+pub def local_body_rejection: test::Test = test::should_fail_with(fn() {
     let run = fn(value) { consume(value) };
     run("hi")
 }, "count below minimum");
-export def local_construction_rejection: test.Test = test.should_fail_with(fn() {
+pub def local_construction_rejection: test::Test = test::should_fail_with(fn() {
     let run = fn(value) { Counted({value, count: 0}).0.count };
     run("hi")
 }, "count below minimum");
 def read: for(T) Fn(Box(T)) -> T = fn(value) { value.value };
 def identity: for(T) Fn(T) -> T = fn(value) { value };
 
-export def inferred_candidate: test.Test = test.should_ok(fn() {
+pub def inferred_candidate: test::Test = test::should_ok(fn() {
     let candidate: Unchecked(Box(String)) = {value: "hi", count: 2};
     let value = read(candidate);
     expect(value == "hi")
 });
-export def inferred_candidate_rejected: test.Test = test.should_fail_with(fn() {
+pub def inferred_candidate_rejected: test::Test = test::should_fail_with(fn() {
     let candidate: Unchecked(Box(String)) = {value: "hi", count: 0};
     read(candidate)
 }, "count below minimum");
-export def unconstrained_identity: test.Test = test.should_ok(fn() {
+pub def unconstrained_identity: test::Test = test::should_ok(fn() {
     let candidate: Unchecked(Box(String)) = {value: "hi", count: 0};
     let copy = identity(candidate);
-    expect(dyn.project_with((Box(String)).type, dyn.pack((Unchecked(Box(String))).type, copy)) == None)
+    expect(dyn::project_with((Box(String)).type, dyn::pack((Unchecked(Box(String))).type, copy)) == None)
 });
 
-export def wire_contract: test.Test = test.should_ok(fn() {
+pub def wire_contract: test::Test = test::should_ok(fn() {
     let checked: Box(String) = {value: "hi", count: 2};
     let plain: Plain = {value: "hi", count: 2};
-    expect(codec.encode(checked) == codec.encode(plain))
+    expect(codec::encode(checked) == codec::encode(plain))
 });
 
-export def imported_generic: test.Test = test.should_ok(fn() {
+pub def imported_generic: test::Test = test::should_ok(fn() {
     let value: Box(String) = {value: "hi", count: 2};
     let wrapped = Counted(value);
-    let selected = Choice.Item(value);
+    let selected = Choice::Item(value);
     expect(wrapped.0.value == "hi" && match selected {
-        Choice.Item(boxed) => boxed.count == 2, Choice.Empty => False,
+        Choice::Item(boxed) => boxed.count == 2, Choice::Empty => False,
     })
 });
-export def first_class_generic: test.Test = test.should_fail_with(fn() {
+pub def first_class_generic: test::Test = test::should_fail_with(fn() {
     let make = Counted@[String];
     let value: Box(String) = {value: "hi", count: 5};
     make(value)
 }, "count too large");
-export def generic_variant: test.Test = test.should_fail_with(fn() {
+pub def generic_variant: test::Test = test::should_fail_with(fn() {
     let value: Box(Int) = {value: 3, count: 5};
-    Choice.Item(value)
+    Choice::Item(value)
 }, "variant count too large");
-export def callback: test.Test = test.should_fail_with(fn() {
+pub def callback: test::Test = test::should_fail_with(fn() {
     let make: Fn(Int) -> Box(String) = fn(count) { {value: "hi", count} };
-    array.map([2, 0], make)
+    array::map([2, 0], make)
 }, "count below minimum");
-export def codec_generic: test.Test = test.should_fail_with(fn() {
-    match json.decode@[(Box(String))]("{\"value\":\"hi\",\"count\":0}") {
+pub def codec_generic: test::Test = test::should_fail_with(fn() {
+    match json::decode@[(Box(String))]("{\"value\":\"hi\",\"count\":0}") {
         Ok(value) => value, Err(error) => raise!(error),
     }
 }, "count below minimum");
-export def dyn_candidate: test.Test = test.should_ok(fn() {
+pub def dyn_candidate: test::Test = test::should_ok(fn() {
     let value: Unchecked(Box(String)) = {value: "hi", count: 0};
-    let packed = dyn.pack((Unchecked(Box(String))).type, value);
-    expect(dyn.project_with((Box(String)).type, packed) == None)
+    let packed = dyn::pack((Unchecked(Box(String))).type, value);
+    expect(dyn::project_with((Box(String)).type, packed) == None)
 });
-export def dyn_pack_checks: test.Test = test.should_fail_with(fn() {
+pub def dyn_pack_checks: test::Test = test::should_fail_with(fn() {
     let value: Unchecked(Box(String)) = {value: "hi", count: 0};
-    dyn.pack((Box(String)).type, value)
+    dyn::pack((Box(String)).type, value)
 }, "count below minimum");
-export def recursive_check: test.Test = test.should_ok(fn() {
+pub def recursive_check: test::Test = test::should_ok(fn() {
     expect(Countdown(100).0 == 100)
 });

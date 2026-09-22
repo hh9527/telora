@@ -5,10 +5,10 @@ fn eval_writes_contextual_debug_as_stderr_jsonl() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/debug.telora"),
-        r#"import "std/value" {Value};
+        r#"use std::value::{Value};
 def var: Int = 3;
 def observed: Int = var.dbg!("observed");
-export def answer: Value = Value.Int(observed);"#,
+pub def answer: Value = Value.Int(observed);"#,
     )
     .unwrap();
     refresh_fixture_workspace(&cwd);
@@ -38,8 +38,8 @@ fn eval_reads_a_value_export_without_an_entry() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/pure.telora"),
-        r#"import "std/value" {Value};
-export def answer: Value = Value.Object({"kind": Value.String("pure"), "value": Value.Int(42)});"#,
+        r#"use std::value::{Value};
+pub def answer: Value = Value.Object({"kind": Value.String("pure"), "value": Value.Int(42)});"#,
     )
     .unwrap();
     refresh_fixture_workspace(&cwd);
@@ -64,9 +64,9 @@ fn eval_contracts_require_value_results() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/pure.telora"),
-        r#"import "std/value" {Value};
-export def raw: Int = 42;
-export def wrong: Fn(Int) -> Value = fn(value) { Value.Int(value) };"#,
+        r#"use std::value::{Value};
+pub def raw: Int = 42;
+pub def wrong: Fn(Int) -> Value = fn(value) { Value.Int(value) };"#,
     )
     .unwrap();
     refresh_fixture_workspace(&cwd);

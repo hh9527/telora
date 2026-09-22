@@ -1,2 +1,2 @@
 type Duplicate = struct {value: Int, value: String};
-export {Duplicate};
+pub use self::{Duplicate};

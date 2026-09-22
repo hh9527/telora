@@ -1,2 +1,2 @@
 def render = fn(value) { `value=\{value}` };
-export def t0322_should_error = render([1]);
+pub def t0322_should_error = render([1]);

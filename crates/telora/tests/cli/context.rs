@@ -35,7 +35,7 @@ fn check_and_query_context_select_the_manifest_discovery_start() {
     let other = fixture();
     fs::write(
         other.join("src/lib.telora"),
-        "type Answer = Int; export {Answer};",
+        "type Answer = Int; pub use self::{Answer};",
     )
     .unwrap();
     refresh_fixture_workspace(&other);

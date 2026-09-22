@@ -2,4 +2,4 @@ def a = fn(value) { b(value) };
 def tmp = a;
 def b = fn(value) { tmp(value) };
 def number = a(1);
-export def invalid = a("x");
+pub def invalid = a("x");

@@ -1,12 +1,12 @@
-import "std/blame" {BlameError};
+use std::blame::{BlameError};
 
-export def message: String = "rejected";
-export def subject: Int = 42;
-export def error: BlameError = blame!(message, subject, subject);
-export def string_error: Fn() -> Result(Int, String) = fn() { Err(message) };
-export def blame_error: Fn() -> Result(Int, BlameError) = fn() { Err(error) };
-export def success: Fn() -> Result(Int, BlameError) = fn() { Ok(7) };
-export def nested_raise: Fn() -> Never = fn() { raise!(message) };
-export def nested_unwrap: Fn() -> Int = fn() { string_error().unwrap!() };
-export def nested_warn: Fn() -> Option(Int) = fn() { warn!(error) };
-export def nested_optional: Fn() -> Option(Int) = fn() { blame_error().ok_or_warn!() };
+pub def message: String = "rejected";
+pub def subject: Int = 42;
+pub def error: BlameError = blame!(message, subject, subject);
+pub def string_error: Fn() -> Result(Int, String) = fn() { Err(message) };
+pub def blame_error: Fn() -> Result(Int, BlameError) = fn() { Err(error) };
+pub def success: Fn() -> Result(Int, BlameError) = fn() { Ok(7) };
+pub def nested_raise: Fn() -> Never = fn() { raise!(message) };
+pub def nested_unwrap: Fn() -> Int = fn() { string_error().unwrap!() };
+pub def nested_warn: Fn() -> Option(Int) = fn() { warn!(error) };
+pub def nested_optional: Fn() -> Option(Int) = fn() { blame_error().ok_or_warn!() };

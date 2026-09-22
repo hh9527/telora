@@ -1,3 +1,3 @@
-import "@src/check/module-interfaces/first" {answer, identity as relay};
+use super::first::{answer, identity as relay};
 
-export {answer, relay as identity};
+pub use self::{answer, relay as identity};

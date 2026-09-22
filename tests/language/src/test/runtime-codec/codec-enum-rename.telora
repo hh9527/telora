@@ -1,7 +1,7 @@
-import "std/codec" as codec;
-import "std/json" as json;
-import "std/value" { Value };
-@json.rename_all(json.RenameCase.CamelCase)
+use std::codec as codec;
+use std::json as json;
+use std::value::{ Value };
+@json::rename_all(json::RenameCase::CamelCase)
 type Choice = enum { No_value, Has_value(Int) };
-export def inspect: Fn() -> (Value, Value) = fn() { (codec.encode(Choice.No_value),codec.encode(Choice.Has_value(42))) };
-export def answer: Value = codec.encode(inspect());
+pub def inspect: Fn() -> (Value, Value) = fn() { (codec::encode(Choice::No_value),codec::encode(Choice::Has_value(42))) };
+pub def answer: Value = codec::encode(inspect());

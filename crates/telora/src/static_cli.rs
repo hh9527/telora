@@ -213,7 +213,7 @@ fn write_layout_report(path: &std::path::Path, report: &Value) -> Result<(), Str
         staged.persist(path)?;
         Ok(())
     };
-    write().map_err(|e| format!("cannot export type layouts to {}: {e}", path.display()))
+    write().map_err(|e| format!("cannot pub type layouts to {}: {e}", path.display()))
 }
 
 fn type_fields(mir: &Mir, state: TypeState) -> (Option<usize>, Option<String>, &'static str) {
@@ -240,7 +240,7 @@ fn kind(symbol: &Symbol) -> Option<ShowKind> {
         SymbolKind::Declaration(BindingKind::Def | BindingKind::Decl | BindingKind::Native) => {
             Some(ShowKind::Def)
         }
-        SymbolKind::Import | SymbolKind::Namespace(_) => Some(ShowKind::Import),
+        SymbolKind::Import | SymbolKind::Namespace(_) => Some(ShowKind::Use),
         _ => None,
     }
 }

@@ -13,7 +13,7 @@ def unwrap_or: for(A, E) Fn(Result(A, E), A) -> A = fn(result, fallback) {
 def is_ok: for(A, E) Fn(Result(A, E)) -> Bool = fn(result) {
     match result { Ok(_) => True, Err(_) => False }
 };
-export {
+pub use self::{
     map,
     flat_map,
     map_err,

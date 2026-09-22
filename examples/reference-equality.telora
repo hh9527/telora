@@ -1,8 +1,8 @@
-import "std/array" as arrays;
-import "std/type-desc" as desc;
-import "std/dyn" as dyn;
+use std::array as arrays;
+use std::type_desc as desc;
+use std::dyn as dyn;
 
-type TypeDescKind = desc.TypeDescKind;
+type TypeDescKind = desc::TypeDescKind;
 type EqualityResult = Result(Bool, String);
 type DynPair = Tuple([Dyn, Dyn]);
 type Field = Tuple([String, Dyn]);
@@ -13,10 +13,10 @@ def reject: Fn(Dyn, String) -> EqualityResult = fn(value, message) {
 };
 
 def logical_kind: Fn(Type) -> TypeDescKind = fn(ty) {
-    match desc.kind(ty) {
-        TypeDescKind.Ref => match desc.resolve(ty) {
+    match desc::kind(ty) {
+        TypeDescKind::Ref => match desc::resolve(ty) {
             Ok(target) => logical_kind(target),
-            Err(_) => TypeDescKind.Ref,
+            Err(_) => TypeDescKind::Ref,
         },
         kind => kind,
     }
@@ -35,24 +35,24 @@ def equal_options: Fn(Option(Dyn), Option(Dyn)) -> EqualityResult =
 
 def equal_items: Fn(Array(Dyn), Array(Dyn)) -> EqualityResult =
     fn(left, right) {
-        match arrays.zip(left, right) {
+        match arrays::zip(left, right) {
             None => Ok(False),
-            Some(pairs) => match arrays.fold_control@[DynPair, EqualityResult, EqualityResult](pairs, Ok(True), fn(state, pair) {
+            Some(pairs) => match arrays::fold_control@[DynPair, EqualityResult, EqualityResult](pairs, Ok(True), fn(state, pair) {
                 match state {
-                    Err(error) => FoldControl.Break(Err(error)),
+                    Err(error) => FoldControl::Break(Err(error)),
                     Ok(equal) => match equal {
-                        False => FoldControl.Break(Ok(False)),
+                        False => FoldControl::Break(Ok(False)),
                         True => match pair {
                             (left_value, right_value) => match equal_dyn(left_value, right_value) {
-                                Ok(True) => FoldControl.Continue(Ok(True)),
-                                result => FoldControl.Break(result),
+                                Ok(True) => FoldControl::Continue(Ok(True)),
+                                result => FoldControl::Break(result),
                             },
                         },
                     },
                 }
             }) {
-                FoldControl.Continue(result) => result,
-                FoldControl.Break(result) => result,
+                FoldControl::Continue(result) => result,
+                FoldControl::Break(result) => result,
             },
         }
     };
@@ -60,43 +60,43 @@ def equal_items: Fn(Array(Dyn), Array(Dyn)) -> EqualityResult =
 def equal_fields:
     Fn(Array(Tuple([String, Dyn])), Array(Tuple([String, Dyn]))) -> EqualityResult =
     fn(left, right) {
-        match arrays.zip(left, right) {
+        match arrays::zip(left, right) {
             None => Ok(False),
-            Some(pairs) => match arrays.fold_control@[FieldPair, EqualityResult, EqualityResult](pairs, Ok(True), fn(state, pair) {
+            Some(pairs) => match arrays::fold_control@[FieldPair, EqualityResult, EqualityResult](pairs, Ok(True), fn(state, pair) {
                 match state {
-                    Err(error) => FoldControl.Break(Err(error)),
+                    Err(error) => FoldControl::Break(Err(error)),
                     Ok(equal) => match equal {
-                        False => FoldControl.Break(Ok(False)),
+                        False => FoldControl::Break(Ok(False)),
                         True => match pair {
                             ((left_name, left_value), (right_name, right_value)) => {
                                 if left_name == right_name {
                                     match equal_dyn(left_value, right_value) {
-                                        Ok(True) => FoldControl.Continue(Ok(True)),
-                                        result => FoldControl.Break(result),
+                                        Ok(True) => FoldControl::Continue(Ok(True)),
+                                        result => FoldControl::Break(result),
                                     }
                                 } else {
-                                    FoldControl.Break(Ok(False))
+                                    FoldControl::Break(Ok(False))
                                 }
                             },
                         },
                     },
                 }
             }) {
-                FoldControl.Continue(result) => result,
-                FoldControl.Break(result) => result,
+                FoldControl::Continue(result) => result,
+                FoldControl::Break(result) => result,
             },
         }
     };
 
 def equal_tagged: Fn(Dyn, Dyn) -> EqualityResult = fn(left, right) {
-    match dyn.tag(left) {
+    match dyn::tag(left) {
         Err(error) => Err(error.message),
-        Ok(left_tag) => match dyn.tag(right) {
+        Ok(left_tag) => match dyn::tag(right) {
             Err(error) => Err(error.message),
             Ok(right_tag) => if left_tag == right_tag {
-                match dyn.payload(left) {
+                match dyn::payload(left) {
                     Err(error) => Err(error.message),
-                    Ok(left_payload) => match dyn.payload(right) {
+                    Ok(left_payload) => match dyn::payload(right) {
                         Err(error) => Err(error.message),
                         Ok(right_payload) => equal_options(left_payload, right_payload),
                     },
@@ -109,67 +109,67 @@ def equal_tagged: Fn(Dyn, Dyn) -> EqualityResult = fn(left, right) {
 };
 
 def equal_dyn: Fn(Dyn, Dyn) -> EqualityResult = fn(left, right) {
-    let left_kind = logical_kind(dyn.desc(left));
-    let right_kind = logical_kind(dyn.desc(right));
+    let left_kind = logical_kind(dyn::desc(left));
+    let right_kind = logical_kind(dyn::desc(right));
     if left_kind == right_kind {
         match left_kind {
-            TypeDescKind.Int => match dyn.check_int(left) {
+            TypeDescKind::Int => match dyn::check_int(left) {
                 None => reject(left, "invalid Int package"),
-                Some(a) => match dyn.check_int(right) {
+                Some(a) => match dyn::check_int(right) {
                     None => reject(right, "invalid Int package"),
                     Some(b) => Ok(a == b),
                 },
             },
-            TypeDescKind.Float => match dyn.check_float(left) {
+            TypeDescKind::Float => match dyn::check_float(left) {
                 None => reject(left, "invalid Float package"),
-                Some(a) => match dyn.check_float(right) {
+                Some(a) => match dyn::check_float(right) {
                     None => reject(right, "invalid Float package"),
                     Some(b) => Ok(a == b),
                 },
             },
-            TypeDescKind.String => match dyn.check_string(left) {
+            TypeDescKind::String => match dyn::check_string(left) {
                 None => reject(left, "invalid String package"),
-                Some(a) => match dyn.check_string(right) {
+                Some(a) => match dyn::check_string(right) {
                     None => reject(right, "invalid String package"),
                     Some(b) => Ok(a == b),
                 },
             },
-            TypeDescKind.Bytes => match dyn.check_bytes(left) {
+            TypeDescKind::Bytes => match dyn::check_bytes(left) {
                 None => reject(left, "invalid Bytes package"),
-                Some(a) => match dyn.check_bytes(right) {
+                Some(a) => match dyn::check_bytes(right) {
                     None => reject(right, "invalid Bytes package"),
                     Some(b) => Ok(a == b),
                 },
             },
-            TypeDescKind.Array => match dyn.array_items(left) {
+            TypeDescKind::Array => match dyn::array_items(left) {
                 Err(error) => Err(error.message),
-                Ok(left_items) => match dyn.array_items(right) {
+                Ok(left_items) => match dyn::array_items(right) {
                     Err(error) => Err(error.message),
                     Ok(right_items) => equal_items(left_items, right_items),
                 },
             },
-            TypeDescKind.Tuple => match dyn.tuple_items(left) {
+            TypeDescKind::Tuple => match dyn::tuple_items(left) {
                 Err(error) => Err(error.message),
-                Ok(left_items) => match dyn.tuple_items(right) {
+                Ok(left_items) => match dyn::tuple_items(right) {
                     Err(error) => Err(error.message),
                     Ok(right_items) => equal_items(left_items, right_items),
                 },
             },
-            TypeDescKind.Struct => match dyn.fields(left) {
+            TypeDescKind::Struct => match dyn::fields(left) {
                 Err(error) => Err(error.message),
-                Ok(left_fields) => match dyn.fields(right) {
+                Ok(left_fields) => match dyn::fields(right) {
                     Err(error) => Err(error.message),
                     Ok(right_fields) => equal_fields(left_fields, right_fields),
                 },
             },
-            TypeDescKind.Dict => match dyn.fields(left) {
+            TypeDescKind::Dict => match dyn::fields(left) {
                 Err(error) => Err(error.message),
-                Ok(left_fields) => match dyn.fields(right) {
+                Ok(left_fields) => match dyn::fields(right) {
                     Err(error) => Err(error.message),
                     Ok(right_fields) => equal_fields(left_fields, right_fields),
                 },
             },
-            TypeDescKind.Enum => equal_tagged(left, right),
+            TypeDescKind::Enum => equal_tagged(left, right),
             kind => reject(left, "unsupported equality descriptor"),
         }
     } else {
@@ -181,4 +181,4 @@ def equal:
     for(A) Fn(TypeOf(A)) -> Fn(A, A) -> EqualityResult =
     interpreter!(equal_dyn);
 
-export { equal, equal_dyn };
+pub use self::{ equal, equal_dyn };

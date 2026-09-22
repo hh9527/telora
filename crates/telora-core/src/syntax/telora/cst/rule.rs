@@ -38,9 +38,6 @@ pub enum Rule {
     EnumInitializer,
     EnumInitializerVariant,
     Error,
-    ExportItem,
-    ExportItems,
-    ExportStatement,
     Expression,
     FieldProjectionEntry,
     FieldProjectionSuffix,
@@ -52,10 +49,6 @@ pub enum Rule {
     IfLetExpr,
     ImplBinding,
     ImplMember,
-    ImportBinding,
-    ImportItem,
-    ImportItems,
-    ImportSelector,
     IndexExpr,
     IntExpr,
     IntPattern,
@@ -67,7 +60,6 @@ pub enum Rule {
     LetPatternBinding,
     MatchArm,
     MatchExpr,
-    MemberSelector,
     MetadataSuffix,
     ModuleBody,
     ModuleDeclaration,
@@ -120,6 +112,7 @@ pub enum Rule {
     UsePath,
     UseSelector,
     VariableExpr,
+    Visibility,
 }
 
 impl std::fmt::Debug for Rule {
@@ -161,9 +154,6 @@ impl std::fmt::Debug for Rule {
             Rule::EnumInitializer => write!(f, "enum_initializer"),
             Rule::EnumInitializerVariant => write!(f, "enum_initializer_variant"),
             Rule::Error => write!(f, "error"),
-            Rule::ExportItem => write!(f, "export_item"),
-            Rule::ExportItems => write!(f, "export_items"),
-            Rule::ExportStatement => write!(f, "export_statement"),
             Rule::Expression => write!(f, "expression"),
             Rule::FieldProjectionEntry => write!(f, "field_projection_entry"),
             Rule::FieldProjectionSuffix => write!(f, "field_projection_suffix"),
@@ -175,10 +165,6 @@ impl std::fmt::Debug for Rule {
             Rule::IfLetExpr => write!(f, "if_let_expr"),
             Rule::ImplBinding => write!(f, "impl_binding"),
             Rule::ImplMember => write!(f, "impl_member"),
-            Rule::ImportBinding => write!(f, "import_binding"),
-            Rule::ImportItem => write!(f, "import_item"),
-            Rule::ImportItems => write!(f, "import_items"),
-            Rule::ImportSelector => write!(f, "import_selector"),
             Rule::IndexExpr => write!(f, "index_expr"),
             Rule::IntExpr => write!(f, "int_expr"),
             Rule::IntPattern => write!(f, "int_pattern"),
@@ -190,7 +176,6 @@ impl std::fmt::Debug for Rule {
             Rule::LetPatternBinding => write!(f, "let_pattern_binding"),
             Rule::MatchArm => write!(f, "match_arm"),
             Rule::MatchExpr => write!(f, "match_expr"),
-            Rule::MemberSelector => write!(f, "member_selector"),
             Rule::MetadataSuffix => write!(f, "metadata_suffix"),
             Rule::ModuleBody => write!(f, "module_body"),
             Rule::ModuleDeclaration => write!(f, "module_declaration"),
@@ -243,6 +228,7 @@ impl std::fmt::Debug for Rule {
             Rule::UsePath => write!(f, "use_path"),
             Rule::UseSelector => write!(f, "use_selector"),
             Rule::VariableExpr => write!(f, "variable_expr"),
+            Rule::Visibility => write!(f, "visibility"),
         }
     }
 }

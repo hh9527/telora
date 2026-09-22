@@ -1,5 +1,5 @@
-export type External = struct(Int);
-export type Packet(T) = struct(T);
-export def create: Fn(Int) -> External = External;
-export def wrap: for(T) Fn(T) -> Packet(T) = Packet;
-export def metadata: TypeOf(External) = External.type;
+pub type External = struct(Int);
+pub type Packet(T) = struct(T);
+pub def create: Fn(Int) -> External = External;
+pub def wrap: for(T) Fn(T) -> Packet(T) = Packet;
+pub def metadata: TypeOf(External) = External.type;

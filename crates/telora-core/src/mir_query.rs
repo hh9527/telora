@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn opaque_names_and_generic_arguments_come_from_the_solved_graph() {
         let mir = crate::test_graph::graph(
-            "import \"std/test\" as test; type Box(T) = struct {value: T}; export def deferred: test.Test = test.should_ok(fn() { 42 }); export def pair: Box((Int, String)) = {value: (1, \"x\")};",
+            "use std::test as test; type Box(T) = struct {value: T}; pub def deferred: test.Test = test.should_ok(fn() { 42 }); pub def pair: Box((Int, String)) = {value: (1, \"x\")};",
             "",
         );
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
@@ -487,8 +487,8 @@ mod tests {
     #[test]
     fn references_and_hover_use_the_resolved_cross_module_identity() {
         let mir = crate::test_graph::graph(
-            "import \"./math\" {value as renamed}; export def answer: Int = renamed + renamed;",
-            "export def value: Int = 42;",
+            "use self::math::{value as renamed}; pub def answer: Int = renamed + renamed;",
+            "pub def value: Int = 42;",
         );
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
         let query = MirQuery::new(&mir);
@@ -498,7 +498,7 @@ mod tests {
         let declaration = query.definition_locations(target).next().unwrap();
         assert_eq!(
             mir.sources.get(declaration.source).name.as_ref(),
-            "@src/math"
+            "@src/main/math"
         );
         let TypeState::Known(ty) = query.type_at(usage).unwrap() else {
             panic!("known");
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn shadowed_locals_keep_distinct_symbol_ids() {
         let mir = crate::test_graph::graph(
-            "def x: Int = 1; export def answer: String = do { let x = \"inner\"; x }; export def outer: Int = x;",
+            "def x: Int = 1; pub def answer: String = do { let x = \"inner\"; x }; pub def outer: Int = x;",
             "",
         );
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
@@ -530,8 +530,8 @@ mod tests {
     #[test]
     fn member_queries_use_export_ids_and_precomputed_generic_layouts() {
         let mir = crate::test_graph::graph(
-            "import \"./math\" as math; type Box(T) = struct { item: T }; def box: Box(Int) = {item: 42}; export def answer: (Int, Int) = (math.value, box.item);",
-            "export def value: Int = 7; def private_value: Int = 9;",
+            "use self::math as math; type Box(T) = struct { item: T }; def box: Box(Int) = {item: 42}; pub def answer: (Int, Int) = (math.value, box.item);",
+            "pub def value: Int = 7; def private_value: Int = 9;",
         );
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
         let query = MirQuery::new(&mir);
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn invalid_program_queries_do_not_recover_or_guess_names() {
         let mir = crate::test_graph::graph(
-            "def duplicated = 1; def duplicated = 2; export def first = duplicated; export def second = missing; export def bad: Int = \"wrong\";",
+            "def duplicated = 1; def duplicated = 2; pub def first = duplicated; pub def second = missing; pub def bad: Int = \"wrong\";",
             "",
         );
         assert!(!mir.diagnostics.is_empty());

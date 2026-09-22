@@ -1,7 +1,7 @@
-import "std/codec" {decode, encode, Value};
+use std::codec::{decode, encode, Value};
 
 @check(fn(value) {
-    let value = match decode@[Int](Value.Int(value)) {
+    let value = match decode@[Int](Value::Int(value)) {
         Ok(value) => value,
         Err(error) => raise!(error),
     };
@@ -29,13 +29,13 @@ def identity: for(T) Fn(T) -> T = fn(value) { value };
 })
 type Box(T) = struct {item: T, valid: Bool};
 
-export def answer: Value = encode((
-    match decode@[Positive](Value.Int(42)) { Ok(value) => value.0, Err(error) => raise!(error) },
-    match decode@[Positive](Value.Int(0)) { Err(_) => True, Ok(_) => False },
-    match decode@[Parent](Value.Object({item: Value.Int(0)})) { Err(_) => True, Ok(_) => False },
-    match decode@[Parent](Value.Object({item: Value.Int(2)})) { Ok(value) => value.item.0, Err(error) => raise!(error) },
-    match decode@[Choice](Value.Object({Full: Value.Int(0)})) { Err(_) => True, Ok(_) => False },
-    match decode@[Choice](Value.Object({Full: Value.Int(3)})) { Ok(Choice.Full(value)) => value, _ => 0 },
-    match decode@[Box(String)](Value.Object({item: Value.String("ok"), valid: Value.True})) { Ok(value) => value.item, Err(error) => raise!(error) },
-    match decode@[Box(Int)](Value.Object({item: Value.Int(1), valid: Value.False})) { Err(_) => True, Ok(_) => False },
+pub def answer: Value = encode((
+    match decode@[Positive](Value::Int(42)) { Ok(value) => value.0, Err(error) => raise!(error) },
+    match decode@[Positive](Value::Int(0)) { Err(_) => True, Ok(_) => False },
+    match decode@[Parent](Value::Object({item: Value::Int(0)})) { Err(_) => True, Ok(_) => False },
+    match decode@[Parent](Value::Object({item: Value::Int(2)})) { Ok(value) => value.item.0, Err(error) => raise!(error) },
+    match decode@[Choice](Value::Object({Full: Value::Int(0)})) { Err(_) => True, Ok(_) => False },
+    match decode@[Choice](Value::Object({Full: Value::Int(3)})) { Ok(Choice::Full(value)) => value, _ => 0 },
+    match decode@[Box(String)](Value::Object({item: Value::String("ok"), valid: Value::True})) { Ok(value) => value.item, Err(error) => raise!(error) },
+    match decode@[Box(Int)](Value::Object({item: Value::Int(1), valid: Value::False})) { Err(_) => True, Ok(_) => False },
 ));

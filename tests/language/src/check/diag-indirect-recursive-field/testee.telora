@@ -2,4 +2,4 @@ def a = fn(value) { b(value) };
 def holder = {call: a};
 def b = fn(value) { holder.call(value) };
 def number = a(1);
-export def invalid = a("x");
+pub def invalid = a("x");

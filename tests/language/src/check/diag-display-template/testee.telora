@@ -1,4 +1,4 @@
-import "std/fmt" as fmt;
-@fmt.display_by("{value")
+use std::fmt as fmt;
+@fmt::display_by("{value")
 type Bad = struct {value: Int};
-export {Bad};
+pub use self::{Bad};

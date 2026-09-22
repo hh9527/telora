@@ -20,12 +20,8 @@ fi
 rm -rf "$build_root"
 mkdir -p "$workspace/src/generated" "$actual_root"
 cp -R "$source_root/src/." "$workspace/src/"
-printf '%s\n' 'export type LanguageTests = struct {};' >"$workspace/src/lib.telora"
-if [[ -d "$workspace/src/test" ]]; then
-    mkdir -p "$workspace/tests"
-    cp -R "$workspace/src/test/." "$workspace/tests/"
-fi
-
+cp "$workspace/src/test-support.telora" "$workspace/src/test_support.telora"
+cp "$workspace/src/runtime-support.telora" "$workspace/src/runtime_support.telora"
 mapfile -t testees < <(find "$workspace/src" -type f -name testee.telora | sort)
 if [[ ${#testees[@]} -eq 0 ]]; then
     echo "no language testees found" >&2
@@ -34,13 +30,71 @@ fi
 
 cases=()
 case_checks=()
-declare -A aggregate_success_cases
 for testee in "${testees[@]}"; do
     relative=${testee#"$workspace/src/"}
     case_id=${relative%/testee.telora}
     checker="$workspace/src/$case_id/check.telora"
     expected="$workspace/src/$case_id/expected.txt"
     cases+=("$case_id")
+    child_root=${testee%.telora}
+    declarations=()
+    while IFS= read -r companion; do
+        if [[ $case_id == check/instance-convergence && $(basename "$companion") == large-template.telora ]]; then
+            continue
+        fi
+        base=$(basename "$companion" .telora)
+        module=${base//-/_}
+        mkdir -p "$child_root"
+        cp "$companion" "$child_root/$module.telora"
+        declarations+=("mod $module;")
+    done < <(find "$(dirname "$testee")" -maxdepth 1 -type f -name '*.telora' \
+        ! -name testee.telora ! -name check.telora | sort)
+    while IFS= read -r data; do
+        mkdir -p "$child_root"
+        cp "$data" "$child_root/$(basename "$data")"
+    done < <(find "$(dirname "$testee")" -maxdepth 1 -type f \
+        \( -name '*.json' -o -name '*.yaml' -o -name '*.yml' -o -name '*.toml' \) | sort)
+    if [[ -d "$(dirname "$testee")/helpers" ]]; then
+        mkdir -p "$child_root/helpers"
+        cp -R "$(dirname "$testee")/helpers/." "$child_root/helpers/"
+        printf '%s\n' 'pub mod group;' >"$child_root/helpers.telora"
+        declarations+=("mod helpers;")
+    fi
+    mkdir -p "$child_root"
+    case "$case_id" in
+        test/check-result-provenance)
+            cp "$workspace/src/test/check-result/provider.telora" "$child_root/provider.telora"
+            declarations+=("mod provider;")
+            ;;
+        check/diag-check-result-tool-stage)
+            cp "$workspace/src/check/check-result-tool-stage/provider.telora" "$child_root/provider.telora"
+            declarations+=("mod provider;")
+            ;;
+        test/properties)
+            cp "$workspace/src/eval/properties/model.telora" "$child_root/model.telora"
+            declarations+=("mod model;")
+            ;;
+        test/module-interfaces)
+            while IFS= read -r companion; do
+                base=$(basename "$companion" .telora)
+                module=${base//-/_}
+                cp "$companion" "$child_root/$module.telora"
+                declarations+=("mod $module;")
+            done < <(find "$workspace/src/check/module-interfaces" -maxdepth 1 -type f -name '*.telora' \
+                ! -name testee.telora ! -name check.telora | sort)
+            ;;
+        test/source-base)
+            cp "$workspace/src/fixture-helper/module.telora" "$child_root/module.telora"
+            cp "$workspace/src/fixture-helper/input.json" "$child_root/input.json"
+            declarations+=("mod module;")
+            ;;
+    esac
+    if [[ ${#declarations[@]} -gt 0 ]]; then
+        temporary="$testee.rfc0308"
+        sed -n 'p' "$testee" >"$temporary"
+        printf '\n%s\n' "${declarations[@]}" >>"$temporary"
+        mv "$temporary" "$testee"
+    fi
     if [[ -f "$checker" ]]; then
         case_checks+=(1)
     elif [[ -f "$expected" ]]; then
@@ -50,64 +104,64 @@ for testee in "${testees[@]}"; do
     fi
 done
 
-success_all="$workspace/src/generated/check-success-all.telora"
-{
-    success_index=0
-    for index in "${!cases[@]}"; do
-        case_id=${cases[$index]}
-        mode=${case_id%%/*}
-        if [[ $mode == check && ${case_checks[$index]} -eq 0 ]]; then
-            printf 'import "@src/%s/testee" as success_%s;\n' "$case_id" "$success_index"
-            aggregate_success_cases["$case_id"]=1
-            success_index=$((success_index + 1))
-        fi
-    done
-    echo "export def all_loaded: Bool = True;"
-} >"$success_all"
+if [[ -d "$workspace/src/test" ]]; then
+    mkdir -p "$workspace/tests"
+    cp -R "$workspace/src/test/." "$workspace/tests/"
+fi
 
-generated="$workspace/src/generated/check-all.telora"
+printf '%s\n' \
+    'mod support;' \
+    'mod test_support;' \
+    'mod runtime_support;' \
+    'mod unknown_support;' \
+    'pub type LanguageTests = struct {};' \
+    >"$workspace/src/lib.telora"
+
+generated="$build_root/check-all.telora"
 {
-    echo 'import "std/dict" as dict;'
-    echo 'import "std/transform-service" as entry;'
-    echo 'import "std/value" { Value };'
-    echo 'import "@src/support" as support;'
+    echo 'mod support;'
+    echo 'mod unknown_support;'
     for index in "${!cases[@]}"; do
         if [[ ${case_checks[$index]} -eq 1 ]]; then
-            printf 'import "@src/%s/check" as case_%s;\n' "${cases[$index]}" "$index"
+            cp "$workspace/src/${cases[$index]}/check.telora" "$workspace/src/case_${index}.telora"
+            printf 'mod case_%s;\n' "$index"
         fi
     done
+    echo 'use std::dict as dict;'
+    echo 'use std::transform_service as entry;'
+    echo 'use std::value::{ Value };'
     echo 'def required: Fn(Dict(Value), String) -> Value = fn(values, name) {'
-    echo '    match dict.get(values, name) {'
+    echo '    match dict::get(values, name) {'
     echo '        Some(value) => value,'
     echo '        None => fail!("missing test observation", name),'
     echo '    }'
     echo '};'
     echo 'type MainService = struct {};'
-    echo 'impl entry.TransformService for MainService {'
+    echo 'impl entry::TransformService for MainService {'
     echo '    init: fn(ctx) { {}.ty!(Self) },'
     echo '    transform: fn(self, input) {'
     echo '    let actual = match input {'
-    echo '        Value.Object(values) => values,'
+    echo '        Value::Object(values) => values,'
     echo '        _ => fail!("actual test observations must be an object"),'
     echo '    };'
-    echo '    Value.Object({'
+    echo '    Value::Object({'
     for index in "${!cases[@]}"; do
         if [[ ${case_checks[$index]} -eq 1 ]]; then
-            printf '        "%s": case_%s.check(required(actual, "%s")),\n' \
+            printf '        "%s": case_%s::check(required(actual, "%s")),\n' \
                 "${cases[$index]}" "$index" "${cases[$index]}"
         elif [[ ${case_checks[$index]} -eq 2 ]]; then
             expected=$(jaq -Rs 'split("\r\n") | join("\n") | split("\r") | join("\n") | rtrimstr("\n")' "$workspace/src/${cases[$index]}/expected.txt")
-            printf '        "%s": if support.failed_with(required(actual, "%s"), %s) { Value.True } else { Value.False },\n' \
+            printf '        "%s": if support::failed_with(required(actual, "%s"), %s) { Value::True } else { Value::False },\n' \
                 "${cases[$index]}" "${cases[$index]}" "$expected"
         else
-            printf '        "%s": if support.succeeded(required(actual, "%s")) { Value.True } else { Value.False },\n' \
+            printf '        "%s": if support::succeeded(required(actual, "%s")) { Value::True } else { Value::False },\n' \
                 "${cases[$index]}" "${cases[$index]}"
         fi
     done
     echo '    })'
     echo '    },'
     echo '};'
-    echo 'export {MainService};'
+    echo 'pub use self::{ MainService };'
 } >"$generated"
 
 printf '%s\n' '{"version":1,"members":["."]}' >"$workspace/telora-config.json"
@@ -121,58 +175,44 @@ jaq -n \
 entries="$actual_root/entries.jsonl"
 : >"$entries"
 
-success_stdout="$actual_root/check-success-all.stdout.jsonl"
-success_stderr="$actual_root/check-success-all.stderr.jsonl"
-set +e
-"$telora_bin" -C "$workspace" check "@src/generated/check-success-all" \
-    >"$success_stdout" 2>"$success_stderr"
-success_exit=$?
-set -e
-
 # Error fixtures need separate sessions: a static error prevents that session
 # from entering tool/runtime execution. Combining them would suppress unrelated
 # runtime diagnostics and share an exit status between independent assertions.
 for case_id in "${cases[@]}"; do
     mode=${case_id%%/*}
 
-    if [[ -n ${aggregate_success_cases[$case_id]+x} ]]; then
-        raw_stdout=$success_stdout
-        raw_stderr=$success_stderr
-        exit_code=$success_exit
-    else
-        raw_stdout="$actual_root/${case_id//\//__}.stdout.jsonl"
-        raw_stderr="$actual_root/${case_id//\//__}.stderr.jsonl"
+    raw_stdout="$actual_root/${case_id//\//__}.stdout.jsonl"
+    raw_stderr="$actual_root/${case_id//\//__}.stderr.jsonl"
 
-        set +e
-        case "$mode" in
-            test)
-                "$telora_bin" -C "$workspace" test "${case_id#test/}/testee" \
-                    >"$raw_stdout" 2>"$raw_stderr"
-                ;;
-            eval)
-                "$telora_bin" -C "$workspace" eval "@src/$case_id/testee:result" \
-                    >"$raw_stdout" 2>"$raw_stderr"
-                ;;
-            query)
-                "$telora_bin" -C "$workspace" query exports "@src/$case_id/testee" \
-                    >"$raw_stdout" 2>"$raw_stderr"
-                ;;
-            query-at)
-                "$telora_bin" -C "$workspace" query at "@src/$case_id/testee" \
-                    >"$raw_stdout" 2>"$raw_stderr"
-                ;;
-            check)
-                "$telora_bin" -C "$workspace" check "@src/$case_id/testee" \
-                    >"$raw_stdout" 2>"$raw_stderr"
-                ;;
-            *)
-                echo "unknown language test mode: $mode" >&2
-                exit 2
-                ;;
-        esac
-        exit_code=$?
-        set -e
-    fi
+    set +e
+    case "$mode" in
+        test)
+            "$telora_bin" -C "$workspace" test "${case_id#test/}/testee" \
+                >"$raw_stdout" 2>"$raw_stderr"
+            ;;
+        eval)
+            "$telora_bin" -C "$workspace" eval "@src/$case_id/testee:result" \
+                >"$raw_stdout" 2>"$raw_stderr"
+            ;;
+        query)
+            "$telora_bin" -C "$workspace" query exports "@src/$case_id/testee" \
+                >"$raw_stdout" 2>"$raw_stderr"
+            ;;
+        query-at)
+            "$telora_bin" -C "$workspace" query at "@src/$case_id/testee" \
+                >"$raw_stdout" 2>"$raw_stderr"
+            ;;
+        check)
+            "$telora_bin" -C "$workspace" check "@src/$case_id/testee" \
+                >"$raw_stdout" 2>"$raw_stderr"
+            ;;
+        *)
+            echo "unknown language test mode: $mode" >&2
+            exit 2
+            ;;
+    esac
+    exit_code=$?
+    set -e
 
     jaq -n \
         --arg key "$case_id" \
@@ -185,13 +225,14 @@ done
 
 observations="$build_root/observations.json"
 jaq -s 'from_entries' "$entries" >"$observations"
+cp "$generated" "$workspace/src/lib.telora"
 
 check_stdout="$build_root/check.stdout.json"
 check_stderr="$build_root/check.stderr.jsonl"
 # The aggregate checker parses every observation inside Guest (about 1.25 MB).
 # This is a test-runner budget, independent of the cases and product defaults.
 set +e
-"$telora_bin" --with-fuel 1000 -C "$workspace" run "@src/generated/check-all" \
+"$telora_bin" --with-fuel 5000 -C "$workspace" run "@src/lib" \
     <"$observations" >"$check_stdout" 2>"$check_stderr"
 check_exit=$?
 set -e

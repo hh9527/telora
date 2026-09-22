@@ -1,10 +1,10 @@
-import "std/codec" as codec;
-import "std/json" as json;
-import "std/value" { Value };
-@json.rename_all(json.RenameCase.CamelCase)
+use std::codec as codec;
+use std::json as json;
+use std::value::{ Value };
+@json::rename_all(json::RenameCase::CamelCase)
 type Record = struct { z_value: Int, a_value: String };
-export def inspect: Fn() -> Value = fn() {
+pub def inspect: Fn() -> Value = fn() {
     let record: Record = {z_value: 7, a_value: "text"};
-    codec.encode(record)
+    codec::encode(record)
 };
-export def answer: Value = inspect();
+pub def answer: Value = inspect();

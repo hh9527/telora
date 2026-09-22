@@ -1,6 +1,6 @@
 def grow: for(T) Fn(T) -> Int = fn(value) { grow([value]) };
-export def entry: Fn(Int) -> Int = grow@[Int];
-export def independent: Int = 42;
-export def wrong: Int = "independent type error";
+pub def entry: Fn(Int) -> Int = grow@[Int];
+pub def independent: Int = 42;
+pub def wrong: Int = "independent type error";
 trait Missing { value: Fn(Self) -> Int };
-export def missing: Int = Missing.value(42);
+pub def missing: Int = Missing::value(42);

@@ -1,82 +1,82 @@
-import "std/codec" as codec;
-import "std/json" as json;
-import "std/result" as results;
-import "std/value" {ScalarValue};
-import "std/test" as test;
-import "@src/test-support" {expect};
+use std::codec as codec;
+use std::json as json;
+use std::result as results;
+use std::value::{ScalarValue};
+use std::test as test;
+use crate::test_support::{expect};
 
-@json.rename_all(json.RenameCase.CamelCase)
+@json::rename_all(json::RenameCase::CamelCase)
 type FixtureEvent = enum {
     Idle,
     UserJoined(FixtureUser),
     FatalError(String),
 };
 type FixtureUser = struct {name: String};
-@json.untagged
+@json::untagged
 type FixtureScalar = enum {Text(String), Count(Int)};
-@json.untagged
+@json::untagged
 type NullableScalar = enum {Null, Text(String), Count(Int), Flag(Bool)};
 type FixtureEnvelope = struct {event: FixtureEvent};
 type Choice = enum {None, Number(Int)};
 type WrongUnit = enum {Other, Number};
 type WrongPayload = enum {None(Int), Number(String)};
-@json.untagged
+@json::untagged
 type Ambiguous = enum {OtherText(String), Text(String)};
-@json.rename_all(json.RenameCase.CamelCase)
+@json::rename_all(json::RenameCase::CamelCase)
 type FixtureModel = struct {
     user_id: Int,
     event: FixtureEvent,
     scalar: FixtureScalar,
 };
 
-export def verified_case: test.Test = test.should_ok(fn() {
+pub def verified_case: test::Test = test::should_ok(fn() {
     let verified = {
-        let fatal: FixtureEvent = FixtureEvent.FatalError("boom");
-        let nested: FixtureEnvelope = {event: FixtureEvent.UserJoined({name: "Lin"})};
-        let count: FixtureScalar = FixtureScalar.Count(3);
-        let encoded_fatal = codec.encode(fatal);
-        let encoded_nested = codec.encode(nested);
-        let encoded_count = codec.encode(count);
-        let encoded_null = codec.encode(NullableScalar.Null);
-        let decoded_null = codec.decode@[(NullableScalar)](codec.Value.None).unwrap!();
-        let encoded_flag = codec.encode(NullableScalar.Flag(True));
+        let fatal: FixtureEvent = FixtureEvent::FatalError("boom");
+        let nested: FixtureEnvelope = {event: FixtureEvent::UserJoined({name: "Lin"})};
+        let count: FixtureScalar = FixtureScalar::Count(3);
+        let encoded_fatal = codec::encode(fatal);
+        let encoded_nested = codec::encode(nested);
+        let encoded_count = codec::encode(count);
+        let encoded_null = codec::encode(NullableScalar::Null);
+        let decoded_null = codec::decode@[(NullableScalar)](codec::Value::None).unwrap!();
+        let encoded_flag = codec::encode(NullableScalar::Flag(True));
         let standard_scalars: Array(ScalarValue) = [
-            ScalarValue.None,
-            ScalarValue.Bool(True),
-            ScalarValue.Int(3),
-            ScalarValue.Float(3.5),
-            ScalarValue.String("abc"),
+            ScalarValue::None,
+            ScalarValue::Bool(True),
+            ScalarValue::Int(3),
+            ScalarValue::Float(3.5),
+            ScalarValue::String("abc"),
         ];
-        let encoded_standard = codec.encode(standard_scalars);
-        let no_match = codec.decode@[(FixtureScalar)](codec.encode([]),
+        let encoded_standard = codec::encode(standard_scalars);
+        let no_match = codec::decode@[(FixtureScalar)](codec::encode([]),
         );
-        let ambiguous = codec.decode@[(Ambiguous)](codec.encode("text"),
+        let ambiguous = codec::decode@[(Ambiguous)](codec::encode("text"),
         );
-        let idle = codec.decode@[(FixtureEvent)](codec.encode("idle"),
+        let idle = codec::decode@[(FixtureEvent)](codec::encode("idle"),
         ).unwrap!();
-        let joined = codec.decode@[(FixtureEvent)](codec.encode({userJoined: {name: "Ada"}}.ty!(Dict(Dict(String)))),
+        let joined = codec::decode@[(FixtureEvent)](codec::encode({userJoined: {name: "Ada"}}.ty!(Dict(Dict(String)))),
         ).unwrap!();
-        let text = codec.decode@[(FixtureScalar)](codec.encode("hello"),
+        let text = codec::decode@[(FixtureScalar)](codec::encode("hello"),
         ).unwrap!();
         let checks = [
-            expect(!results.is_ok(no_match)),
-            expect(!results.is_ok(ambiguous)),
-            expect(idle == FixtureEvent.Idle),
-            expect(joined == FixtureEvent.UserJoined({name: "Ada"})),
-            expect(encoded_fatal == codec.Value.Object({fatalError: codec.Value.String("boom")})),
-            expect(encoded_nested == codec.Value.Object({event: codec.Value.Object({userJoined: codec.Value.Object({name: codec.Value.String("Lin")})})})),
-            expect(text == FixtureScalar.Text("hello")),
-            expect(encoded_count == codec.Value.Int(3)),
-            expect(encoded_null == codec.Value.None),
-            expect(decoded_null == NullableScalar.Null),
-            expect(encoded_flag == codec.Value.True),
+            expect(!results::is_ok(no_match)),
+            expect(!results::is_ok(ambiguous)),
+            expect(idle == FixtureEvent::Idle),
+            expect(joined == FixtureEvent::UserJoined({name: "Ada"})),
+            expect(encoded_fatal == codec::Value::Object({fatalError: codec::Value::String("boom")})),
+            expect(encoded_nested == codec::Value::Object({event: codec::Value::Object({userJoined: codec::Value::Object({name: codec::Value::String("Lin")})})})),
+            expect(text == FixtureScalar::Text("hello")),
+            expect(encoded_count == codec::Value::Int(3)),
+            expect(encoded_null == codec::Value::None),
+            expect(decoded_null == NullableScalar::Null),
+            expect(encoded_flag == codec::Value::True),
         ];
-        encoded_standard == codec.Value.Array([
-                codec.Value.None,
-                codec.Value.True,
-                codec.Value.Int(3),
-                codec.Value.Float(3.5),
-                codec.Value.String("abc"),
+        encoded_standard == codec::Value::Array([
+                codec::Value::None,
+                codec::Value::True,
+                codec::Value::Int(3),
+                codec::Value::Float(3.5),
+                codec::Value::String("abc"),
             ])
     };
     expect(verified)

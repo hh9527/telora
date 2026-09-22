@@ -21,7 +21,7 @@ def resolve: Fn(Type) -> Result(Type, ResolveError) = fn(value) {
     }
 };
 
-export {
+pub use self::{
     Type as TypeDesc,
     TypeDescKind,
     ResolveError,

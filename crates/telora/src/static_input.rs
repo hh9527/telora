@@ -94,6 +94,7 @@ impl Inventory {
         let workspace = self
             .workspace
             .as_ref()
+            .cloned()
             .ok_or("editor documents require a workspace")?;
         let owner = workspace
             .crate_for_path(path)
@@ -105,6 +106,40 @@ impl Inventory {
             .join("tests");
         if path.starts_with(&test_root) {
             self.scan_tests_for(&owner, &test_root, &test_root)?;
+        }
+        let source_root = workspace
+            .crate_root(&owner)
+            .ok_or("missing declaring crate")?
+            .join("src");
+        if let Ok(relative) = path.strip_prefix(&source_root) {
+            let mut logical = relative.to_path_buf();
+            if logical.extension().and_then(|value| value.to_str()) == Some("telora") {
+                logical.set_extension("");
+                let logical = logical.to_string_lossy().replace('\\', "/");
+                let name = if logical == "lib" {
+                    owner.clone()
+                } else {
+                    format!("{owner}/{logical}")
+                };
+                if !self.entries.contains_key(&name) {
+                    if let Some(declaration) = workspace
+                        .discover_module(&owner, &name)
+                        .map_err(|error| error.to_string())?
+                    {
+                        self.entries.insert(
+                            name.clone(),
+                            Entry {
+                                name: name.clone(),
+                                origin: "crate",
+                                visibility: if private(&name) { "private" } else { "public" },
+                                format: declaration.format,
+                                source: Source::File(declaration.physical_path),
+                                test: false,
+                            },
+                        );
+                    }
+                }
+            }
         }
         self.entries
             .iter()
@@ -517,9 +552,24 @@ impl Inventory {
         if cancelled() {
             return None;
         }
+        let mut graph_roots = roots.to_vec();
+        if !roots.is_empty()
+            && self.entries.contains_key(&self.owner)
+            && !graph_roots.contains(&self.owner)
+        {
+            graph_roots.push(self.owner.clone());
+        }
         let specs = self
             .entries
             .values()
+            // Embedded sources are a packaging inventory, not a semantic
+            // module catalog. `std/lib.telora` is the sole std root; its
+            // `mod` declarations discover the remaining embedded modules.
+            .filter(|entry| {
+                entry.origin != "builtin"
+                    || entry.name == "std"
+                    || graph_roots.contains(&entry.name)
+            })
             .map(|e| ModuleSpec {
                 native: if e.origin == "builtin" {
                     native_module(&e.name)
@@ -545,7 +595,7 @@ impl Inventory {
         let entries = RefCell::new(&mut self.entries);
         let mut mir = module_resolve::resolve_with_discovery_cancellable(
             specs,
-            roots,
+            &graph_roots,
             |_, name| {
                 let text = if let Some(text) = overlays.get(name) {
                     Ok(text.to_string())
@@ -567,10 +617,14 @@ impl Inventory {
                 })
             },
             |owner, request| {
-                // The user selected this application before the compiler-owned
-                // adapter was inserted. Only its exact import gets this edge;
-                // ordinary application/dependency imports retain normal policy.
-                if owner == "std/_entry/adapter" && application == Some(request) {
+                // The compiler-owned adapter exposes the selected application
+                // through one fixed private module declaration. The authored
+                // crate name never has to be representable as an identifier.
+                if owner == "std/_entry/adapter"
+                    && request == "std/_entry/adapter/application"
+                    && application.is_some()
+                {
+                    let request = application.unwrap();
                     entries
                         .borrow()
                         .contains_key(request)
@@ -580,6 +634,22 @@ impl Inventory {
                 }
             },
             |_, name| {
+                if entries
+                    .borrow()
+                    .get(name)
+                    .is_some_and(|entry| entry.origin == "builtin")
+                {
+                    return Some(ModuleSpec {
+                        native: native_module(name),
+                        name: name.to_owned(),
+                        kind: ModuleKind::Source,
+                        implicit_imports: if name == "std/prelude" {
+                            vec![]
+                        } else {
+                            vec!["std/prelude".into()]
+                        },
+                    });
+                }
                 let target_owner = name.split_once('/').map_or(name, |(owner, _)| owner);
                 let declaration = workspace
                     .as_ref()?
@@ -629,6 +699,21 @@ impl Inventory {
                     telora_core::mir::ModuleTarget::Bound(telora_core::mir::ModuleId::from_index(
                         index,
                     ))
+                })
+                .collect();
+        } else {
+            mir.roots = roots
+                .iter()
+                .map(|root| {
+                    mir.modules
+                        .iter()
+                        .position(|module| module.name == *root)
+                        .map(|index| {
+                            telora_core::mir::ModuleTarget::Bound(
+                                telora_core::mir::ModuleId::from_index(index),
+                            )
+                        })
+                        .unwrap_or_else(|| telora_core::mir::ModuleTarget::Unresolved(root.clone()))
                 })
                 .collect();
         }

@@ -2,4 +2,4 @@ type Left = struct {value: Int};
 type Right = struct {value: Int};
 def left: Left = {value: 42};
 def right: Right = {value: 42};
-export def should_error = [left] == [right];
+pub def should_error = [left] == [right];

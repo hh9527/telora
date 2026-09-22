@@ -1,25 +1,25 @@
-import "@src/support" as support;
-import "std/array" as array;
-import "std/value" {Value};
+use crate::support as support;
+use std::array as array;
+use std::value::{Value};
 
 def find_export: Fn(Value, String) -> Value = fn(actual, name) {
-    match support.record_field(actual, "stdout") {
-        Some(Value.Array(items)) => match array.find(items, fn(item) {
-            support.string_field_equals(item, "name", name)
+    match support::record_field(actual, "stdout") {
+        Some(Value::Array(items)) => match array::find(items, fn(item) {
+            support::string_field_equals(item, "name", name)
         }) {
             Some(item) => item,
-            None => Value.None,
+            None => Value::None,
         },
-        _ => Value.None,
+        _ => Value::None,
     }
 };
 
 def has_type: Fn(Value, String, String) -> Bool = fn(actual, name, expected) {
-    support.string_field_equals(find_export(actual, name), "type", expected)
+    support::string_field_equals(find_export(actual, name), "type", expected)
 };
 
-export def check: Fn(Value) -> Value = fn(actual) {
-    if support.exit_code(actual) == Some(0)
+pub def check: Fn(Value) -> Value = fn(actual) {
+    if support::exit_code(actual) == Some(0)
         && has_type(actual, "Box", "for(A) TypeOf(Box(A))")
         && has_type(actual, "Tree", "for(A) TypeOf(Tree(A))")
         && has_type(actual, "IntTree", "TypeOf(Tree(Int))")
@@ -28,9 +28,9 @@ export def check: Fn(Value) -> Value = fn(actual) {
         && has_type(actual, "keep", "for(A) Fn(Int, A) -> (Int, A)")
         && has_type(actual, "nested", "Fn(Int) -> Fn(Int) -> Int")
         && has_type(actual, "recursive", "Fn(Int) -> Int")
-        && support.stream_length(actual, "stderr") == Some(0) {
-        Value.True
+        && support::stream_length(actual, "stderr") == Some(0) {
+        Value::True
     } else {
-        Value.False
+        Value::False
     }
 };

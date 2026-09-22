@@ -1,1 +1,1 @@
-export def invalid = "bad\q";
+pub def invalid = "bad\q";

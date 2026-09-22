@@ -1,9 +1,9 @@
-import "@src/lib" {output};
-import "std/transform-service" as service;
-import "std/value" {Value};
+use crate::{output};
+use std::transform_service as service;
+use std::value::{Value};
 type MainService = struct {output: String};
-impl service.TransformService for MainService {
+impl service::TransformService for MainService {
     init: fn(ctx) { {output}.ty!(Self) },
-    transform: fn(self, input) { Value.String(self.output) },
+    transform: fn(self, input) { Value::String(self.output) },
 };
-export {MainService};
+pub use self::{MainService};

@@ -1,20 +1,20 @@
-import "std/codec" as codec;
-import "std/string" as string;
-import "std/fmt" as fmt;
-import "std/value" { Value };
-@string.decode_by_parse
+use std::codec as codec;
+use std::string as string;
+use std::fmt as fmt;
+use std::value::{ Value };
+@string::decode_by_parse
 type DecodeOnly = struct { value: Int };
-impl string.FromStr for DecodeOnly {
+impl string::FromStr for DecodeOnly {
     from_str: fn(input) { Ok({value: 7}.ty!(DecodeOnly)) },
 };
-@string.encode_by_display
-@fmt.display_by("{value}")
+@string::encode_by_display
+@fmt::display_by("{value}")
 type EncodeOnly = struct { value: Int };
-export def answer: Fn() -> (Bool, Bool, Bool, Bool) = fn() {
+pub def answer: Fn() -> (Bool, Bool, Bool, Bool) = fn() {
     let decode: DecodeOnly = {value: 1};
     let encode: EncodeOnly = {value: 2};
-    (codec.decode@[DecodeOnly](Value.String("7")) == Ok({value: 7}.ty!(DecodeOnly)),
-     codec.encode(decode) == Value.Object({value: Value.Int(1)}),
-     codec.encode(encode) == Value.String("2"),
-     codec.decode@[EncodeOnly](Value.Object({value: Value.Int(2)})) == Ok(encode))
+    (codec::decode@[DecodeOnly](Value::String("7")) == Ok({value: 7}.ty!(DecodeOnly)),
+     codec::encode(decode) == Value::Object({value: Value::Int(1)}),
+     codec::encode(encode) == Value::String("2"),
+     codec::decode@[EncodeOnly](Value::Object({value: Value::Int(2)})) == Ok(encode))
 };

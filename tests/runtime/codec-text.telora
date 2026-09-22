@@ -1,20 +1,20 @@
-import "std/codec" {decode, encode, Decode, Value};
-import "std/string" as string;
-import "std/regex" as regex;
-import "std/fmt" as fmt;
-import "std/_codec" {untagged};
+use std::codec::{decode, encode, Decode, Value};
+use std::string as string;
+use std::regex as regex;
+use std::fmt as fmt;
+use std::_codec::{untagged};
 
-@string.decode_by_parse @string.encode_by_display
-@fmt.display_by("{host}:{port}")
-@regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
+@string::decode_by_parse @string::encode_by_display
+@fmt::display_by("{host}:{port}")
+@regex::parse_by(regex::compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
 @check(fn(value) {
     if value.port > 0 { Ok(()) } else { Err(blame!("positive port required", value.port)) }
 })
 type Endpoint = struct {host: String, port: Int};
 
-@string.decode_by_parse @string.encode_by_display
-@fmt.display_by("{name}@{endpoint}")
-@regex.parse_by(regex.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
+@string::decode_by_parse @string::encode_by_display
+@fmt::display_by("{name}@{endpoint}")
+@regex::parse_by(regex::compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
 type Service = struct {name: String, endpoint: Endpoint};
 
 @untagged
@@ -24,10 +24,10 @@ def read: for(T: Decode) Fn(Value) -> T = fn(input) {
     match decode@[T](input) { Ok(value) => value, Err(error) => raise!(error) }
 };
 
-export def answer: Value = encode((
-    read@[Service](Value.String("api@local:42")),
-    read@[Choice](Value.String("unstructured")),
-    match decode@[Choice](Value.String("local:42")) { Err(_) => True, Ok(_) => False },
-    match decode@[Endpoint](Value.String("local:0")) { Err(_) => True, Ok(_) => False },
-    match decode@[Endpoint](Value.Int(42)) { Err(_) => True, Ok(_) => False },
+pub def answer: Value = encode((
+    read@[Service](Value::String("api@local:42")),
+    read@[Choice](Value::String("unstructured")),
+    match decode@[Choice](Value::String("local:42")) { Err(_) => True, Ok(_) => False },
+    match decode@[Endpoint](Value::String("local:0")) { Err(_) => True, Ok(_) => False },
+    match decode@[Endpoint](Value::Int(42)) { Err(_) => True, Ok(_) => False },
 ));

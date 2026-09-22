@@ -1,2 +1,2 @@
 type State = enum {Ready};
-export def value = Ready;
+pub def value = Ready;

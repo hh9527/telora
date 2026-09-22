@@ -1,15 +1,15 @@
 # QueryBuilder
 #
 # Domain-neutral standard Plan operators, PlanProfile capability validation,
-# and deterministic SQLite concreteization: Plan -> Query.
+# and deterministic SQLite concreteization: Plan -> Query::
 #
 # This package knows nothing about ontologies, enterprise entities, metrics,
 # dimensions, or query questions. It exposes a closed, enumerable operator
 # vocabulary, a pure capability profile, and a pure SQLite lowering.
 
-import "std/array" as array;
-import "std/regex" as regex;
-import "std/string" as string;
+use std::array as array;
+use std::regex as regex;
+use std::string as string;
 
 # ---------------------------------------------------------------- Values
 
@@ -123,7 +123,7 @@ type Query = struct {
 
 # ---------------------------------------------------------------- Identifiers
 
-def sql_identifier_re: regex.Regex = regex.compile(r"^[A-Za-z_][A-Za-z0-9_]*$");
+def sql_identifier_re: regex::Regex = regex::compile(r"^[A-Za-z_][A-Za-z0-9_]*$");
 
 def reserved_words: Array(String) = [
   "select", "from", "where", "group", "by", "order", "limit", "as", "join",
@@ -137,11 +137,11 @@ def reserved_words: Array(String) = [
 ];
 
 def is_reserved: Fn(String) -> Bool = fn(name) {
-  array.any(reserved_words, fn(word) { word == name })
+  array::any(reserved_words, fn(word) { word == name })
 };
 
 def valid_identifier: Fn(SqlIdentifier) -> Bool = fn(ident) {
-  regex.is_match(sql_identifier_re, ident.name) && !is_reserved(ident.name)
+  regex::is_match(sql_identifier_re, ident.name) && !is_reserved(ident.name)
 };
 
 # ---------------------------------------------------------------- Construction helpers
@@ -150,7 +150,7 @@ def make_table_ref: Fn(String, String, Array(String)) -> TableRef = fn(table_nam
   {
     table: { name: table_name },
     alias: { name: alias },
-    columns: array.map(column_names, fn(name) { { name: name } }),
+    columns: array::map(column_names, fn(name) { { name: name } }),
   }
 };
 
@@ -173,14 +173,14 @@ def make_join: Fn(JoinKind, TableRef, ColumnRef, ColumnRef) -> Join = fn(kind, r
 # ---------------------------------------------------------------- Profile vocabulary
 
 def all_operators: Array(Operator) = [
-  Operator.Scan, Operator.Column, Operator.Binding, Operator.Scalar, Operator.Aggregate, Operator.Project, Operator.Filter, Operator.EquiJoin, Operator.Group, Operator.Order, Operator.Limit,
+  Operator::Scan, Operator::Column, Operator::Binding, Operator::Scalar, Operator::Aggregate, Operator::Project, Operator::Filter, Operator::EquiJoin, Operator::Group, Operator::Order, Operator::Limit,
 ];
 
-def all_join_kinds: Array(JoinKind) = [JoinKind.Inner, JoinKind.Left];
+def all_join_kinds: Array(JoinKind) = [JoinKind::Inner, JoinKind::Left];
 
-def all_scalar_functions: Array(ScalarFunction) = [ScalarFunction.Lower, ScalarFunction.Upper, ScalarFunction.Abs, ScalarFunction.Length, ScalarFunction.Coalesce, ScalarFunction.Substr];
+def all_scalar_functions: Array(ScalarFunction) = [ScalarFunction::Lower, ScalarFunction::Upper, ScalarFunction::Abs, ScalarFunction::Length, ScalarFunction::Coalesce, ScalarFunction::Substr];
 
-def all_aggregate_functions: Array(AggregateFunction) = [AggregateFunction.Count, AggregateFunction.Sum, AggregateFunction.Avg, AggregateFunction.Min, AggregateFunction.Max];
+def all_aggregate_functions: Array(AggregateFunction) = [AggregateFunction::Count, AggregateFunction::Sum, AggregateFunction::Avg, AggregateFunction::Min, AggregateFunction::Max];
 
 def full_profile: PlanProfile = {
   operators: all_operators,
@@ -191,49 +191,49 @@ def full_profile: PlanProfile = {
 
 # ---------------------------------------------------------------- Example plans
 
-def example_lower_expr: Expr = Expr.Scalar({ function: ScalarFunction.Lower, args: [Expr.Column(make_column_ref("c", "name"))] });
+def example_lower_expr: Expr = Expr::Scalar({ function: ScalarFunction::Lower, args: [Expr::Column(make_column_ref("c", "name"))] });
 
-def example_total_sum_expr: Expr = Expr.Aggregate({ function: AggregateFunction.Sum, argument: Some(Expr.Column(make_column_ref("o", "total"))) });
+def example_total_sum_expr: Expr = Expr::Aggregate({ function: AggregateFunction::Sum, argument: Some(Expr::Column(make_column_ref("o", "total"))) });
 
-def example_filter_expr: Expr = Expr.And({ items: [
-  Expr.Compare({ op: CompareOp.Gt, left: Expr.Column(make_column_ref("o", "total")), right: Expr.Value(Val.Float(100.0)) }),
-  Expr.Compare({ op: CompareOp.Eq, left: Expr.Column(make_column_ref("c", "tier")), right: Expr.Value(Val.String("gold")) }),
+def example_filter_expr: Expr = Expr::And({ items: [
+  Expr::Compare({ op: CompareOp::Gt, left: Expr::Column(make_column_ref("o", "total")), right: Expr::Value(Val::Float(100.0)) }),
+  Expr::Compare({ op: CompareOp::Eq, left: Expr::Column(make_column_ref("c", "tier")), right: Expr::Value(Val::String("gold")) }),
 ] });
 
 def example_full_plan: Plan = {
   revision: "v7",
   source: make_table_ref("orders", "o", ["id", "customer_id", "total", "status", "created_at"]),
   projections: [
-    make_projection(Expr.Column(make_column_ref("o", "id")), "order_id"),
-    make_projection(Expr.Column(make_column_ref("c", "name")), "customer_name"),
+    make_projection(Expr::Column(make_column_ref("o", "id")), "order_id"),
+    make_projection(Expr::Column(make_column_ref("c", "name")), "customer_name"),
     make_projection(example_lower_expr, "customer_lower"),
     make_projection(example_total_sum_expr, "total_sum"),
   ],
   filter: Some(example_filter_expr),
   joins: [
-    make_join(JoinKind.Inner, make_table_ref("customers", "c", ["id", "name", "tier"]), make_column_ref("o", "customer_id"), make_column_ref("c", "id")),
+    make_join(JoinKind::Inner, make_table_ref("customers", "c", ["id", "name", "tier"]), make_column_ref("o", "customer_id"), make_column_ref("c", "id")),
   ],
-  grouping: [Expr.Column(make_column_ref("o", "id")), Expr.Column(make_column_ref("c", "name"))],
-  ordering: [make_ordering(make_column_ref("o", "id"), OrderDirection.Asc)],
+  grouping: [Expr::Column(make_column_ref("o", "id")), Expr::Column(make_column_ref("c", "name"))],
+  ordering: [make_ordering(make_column_ref("o", "id"), OrderDirection::Asc)],
   limit: Some(50),
 };
 
-def example_count_expr: Expr = Expr.Aggregate({ function: AggregateFunction.Count, argument: None });
+def example_count_expr: Expr = Expr::Aggregate({ function: AggregateFunction::Count, argument: None });
 
-def example_amount_sum_expr: Expr = Expr.Aggregate({ function: AggregateFunction.Sum, argument: Some(Expr.Column(make_column_ref("s", "amount"))) });
+def example_amount_sum_expr: Expr = Expr::Aggregate({ function: AggregateFunction::Sum, argument: Some(Expr::Column(make_column_ref("s", "amount"))) });
 
 def example_grouped_plan: Plan = {
   revision: "v2",
   source: make_table_ref("sales", "s", ["region", "amount"]),
   projections: [
-    make_projection(Expr.Column(make_column_ref("s", "region")), "region"),
+    make_projection(Expr::Column(make_column_ref("s", "region")), "region"),
     make_projection(example_count_expr, "order_count"),
     make_projection(example_amount_sum_expr, "amount_sum"),
   ],
   filter: None,
   joins: [],
-  grouping: [Expr.Column(make_column_ref("s", "region"))],
-  ordering: [make_ordering(make_column_ref("s", "region"), OrderDirection.Asc)],
+  grouping: [Expr::Column(make_column_ref("s", "region"))],
+  ordering: [make_ordering(make_column_ref("s", "region"), OrderDirection::Asc)],
   limit: Some(10),
 };
 
@@ -241,8 +241,8 @@ def example_simple_plan: Plan = {
   revision: "v1",
   source: make_table_ref("items", "i", ["id", "name", "price"]),
   projections: [
-    make_projection(Expr.Column(make_column_ref("i", "id")), "item_id"),
-    make_projection(Expr.Column(make_column_ref("i", "name")), "item_name"),
+    make_projection(Expr::Column(make_column_ref("i", "id")), "item_id"),
+    make_projection(Expr::Column(make_column_ref("i", "name")), "item_name"),
   ],
   filter: None,
   joins: [],
@@ -255,12 +255,12 @@ def example_simple_plan: Plan = {
 # expression (substr(orders.created_at, 1, 7)). Later joins reference aliases
 # introduced by earlier joins, and grouping accepts scalar expressions.
 
-def example_orders_count_expr: Expr = Expr.Aggregate({ function: AggregateFunction.Count, argument: Some(Expr.Column(make_column_ref("o", "id"))) });
+def example_orders_count_expr: Expr = Expr::Aggregate({ function: AggregateFunction::Count, argument: Some(Expr::Column(make_column_ref("o", "id"))) });
 
-def example_order_month_expr: Expr = Expr.Scalar({ function: ScalarFunction.Substr, args: [
-  Expr.Column(make_column_ref("o", "created_at")),
-  Expr.Value(Val.Int(1)),
-  Expr.Value(Val.Int(7)),
+def example_order_month_expr: Expr = Expr::Scalar({ function: ScalarFunction::Substr, args: [
+  Expr::Column(make_column_ref("o", "created_at")),
+  Expr::Value(Val::Int(1)),
+  Expr::Value(Val::Int(7)),
 ] });
 
 def example_multi_hop_plan: Plan = {
@@ -268,25 +268,25 @@ def example_multi_hop_plan: Plan = {
   source: make_table_ref("orders", "o", ["id", "created_at", "customer_id", "warehouse_id", "carrier_id", "service_level_id"]),
   projections: [
     make_projection(example_orders_count_expr, "orders_created"),
-    make_projection(Expr.Column(make_column_ref("c", "tier")), "customer_tier"),
-    make_projection(Expr.Column(make_column_ref("r", "name")), "origin_region"),
-    make_projection(Expr.Column(make_column_ref("car", "name")), "carrier_name"),
-    make_projection(Expr.Column(make_column_ref("sl", "name")), "service_name"),
+    make_projection(Expr::Column(make_column_ref("c", "tier")), "customer_tier"),
+    make_projection(Expr::Column(make_column_ref("r", "name")), "origin_region"),
+    make_projection(Expr::Column(make_column_ref("car", "name")), "carrier_name"),
+    make_projection(Expr::Column(make_column_ref("sl", "name")), "service_name"),
     make_projection(example_order_month_expr, "order_month"),
   ],
   filter: None,
   joins: [
-    make_join(JoinKind.Inner, make_table_ref("customers", "c", ["id", "tier"]), make_column_ref("o", "customer_id"), make_column_ref("c", "id")),
-    make_join(JoinKind.Inner, make_table_ref("warehouses", "w", ["id", "region_id"]), make_column_ref("o", "warehouse_id"), make_column_ref("w", "id")),
-    make_join(JoinKind.Inner, make_table_ref("regions", "r", ["id", "name"]), make_column_ref("w", "region_id"), make_column_ref("r", "id")),
-    make_join(JoinKind.Inner, make_table_ref("carriers", "car", ["id", "name"]), make_column_ref("o", "carrier_id"), make_column_ref("car", "id")),
-    make_join(JoinKind.Inner, make_table_ref("service_levels", "sl", ["id", "name"]), make_column_ref("o", "service_level_id"), make_column_ref("sl", "id")),
+    make_join(JoinKind::Inner, make_table_ref("customers", "c", ["id", "tier"]), make_column_ref("o", "customer_id"), make_column_ref("c", "id")),
+    make_join(JoinKind::Inner, make_table_ref("warehouses", "w", ["id", "region_id"]), make_column_ref("o", "warehouse_id"), make_column_ref("w", "id")),
+    make_join(JoinKind::Inner, make_table_ref("regions", "r", ["id", "name"]), make_column_ref("w", "region_id"), make_column_ref("r", "id")),
+    make_join(JoinKind::Inner, make_table_ref("carriers", "car", ["id", "name"]), make_column_ref("o", "carrier_id"), make_column_ref("car", "id")),
+    make_join(JoinKind::Inner, make_table_ref("service_levels", "sl", ["id", "name"]), make_column_ref("o", "service_level_id"), make_column_ref("sl", "id")),
   ],
   grouping: [
-    Expr.Column(make_column_ref("c", "tier")),
-    Expr.Column(make_column_ref("r", "name")),
-    Expr.Column(make_column_ref("car", "name")),
-    Expr.Column(make_column_ref("sl", "name")),
+    Expr::Column(make_column_ref("c", "tier")),
+    Expr::Column(make_column_ref("r", "name")),
+    Expr::Column(make_column_ref("car", "name")),
+    Expr::Column(make_column_ref("sl", "name")),
     example_order_month_expr,
   ],
   ordering: [],
@@ -298,83 +298,83 @@ def example_multi_hop_plan: Plan = {
 def expr_flatten: Fn(Expr) -> Array(Expr) = fn(expr) {
   let self: Array(Expr) = [expr];
   let children = match expr {
-    Expr.Column(_) => {
+    Expr::Column(_) => {
       let none: Array(Expr) = [];
       none
     },
-    Expr.Value(_) => {
+    Expr::Value(_) => {
       let none: Array(Expr) = [];
       none
     },
-    Expr.Scalar(call) => array.flat_map(call.args, expr_flatten),
-    Expr.Aggregate(call) => match call.argument {
+    Expr::Scalar(call) => array::flat_map(call.args, expr_flatten),
+    Expr::Aggregate(call) => match call.argument {
       Some(arg) => expr_flatten(arg),
       None => {
         let none: Array(Expr) = [];
         none
       },
     },
-    Expr.Compare(call) => array.concat([expr_flatten(call.left), expr_flatten(call.right)]),
-    Expr.And(call) => array.flat_map(call.items, expr_flatten),
+    Expr::Compare(call) => array::concat([expr_flatten(call.left), expr_flatten(call.right)]),
+    Expr::And(call) => array::flat_map(call.items, expr_flatten),
   };
-  array.concat([self, children])
+  array::concat([self, children])
 };
 
 def expr_has_column: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    Expr.Column(_) => True,
-    Expr.Value(_) => False,
-    Expr.Scalar(call) => array.any(call.args, expr_has_column),
-    Expr.Aggregate(call) => match call.argument {
+    Expr::Column(_) => True,
+    Expr::Value(_) => False,
+    Expr::Scalar(call) => array::any(call.args, expr_has_column),
+    Expr::Aggregate(call) => match call.argument {
       Some(arg) => expr_has_column(arg),
       None => False,
     },
-    Expr.Compare(call) => expr_has_column(call.left) || expr_has_column(call.right),
-    Expr.And(call) => array.any(call.items, expr_has_column),
+    Expr::Compare(call) => expr_has_column(call.left) || expr_has_column(call.right),
+    Expr::And(call) => array::any(call.items, expr_has_column),
   }
 };
 
 def expr_has_value: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    Expr.Value(_) => True,
-    Expr.Column(_) => False,
-    Expr.Scalar(call) => array.any(call.args, expr_has_value),
-    Expr.Aggregate(call) => match call.argument {
+    Expr::Value(_) => True,
+    Expr::Column(_) => False,
+    Expr::Scalar(call) => array::any(call.args, expr_has_value),
+    Expr::Aggregate(call) => match call.argument {
       Some(arg) => expr_has_value(arg),
       None => False,
     },
-    Expr.Compare(call) => expr_has_value(call.left) || expr_has_value(call.right),
-    Expr.And(call) => array.any(call.items, expr_has_value),
+    Expr::Compare(call) => expr_has_value(call.left) || expr_has_value(call.right),
+    Expr::And(call) => array::any(call.items, expr_has_value),
   }
 };
 
 def expr_has_scalar: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    Expr.Scalar(_) => True,
-    Expr.Column(_) => False,
-    Expr.Value(_) => False,
-    Expr.Aggregate(call) => match call.argument {
+    Expr::Scalar(_) => True,
+    Expr::Column(_) => False,
+    Expr::Value(_) => False,
+    Expr::Aggregate(call) => match call.argument {
       Some(arg) => expr_has_scalar(arg),
       None => False,
     },
-    Expr.Compare(call) => expr_has_scalar(call.left) || expr_has_scalar(call.right),
-    Expr.And(call) => array.any(call.items, expr_has_scalar),
+    Expr::Compare(call) => expr_has_scalar(call.left) || expr_has_scalar(call.right),
+    Expr::And(call) => array::any(call.items, expr_has_scalar),
   }
 };
 
 def expr_has_aggregate: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    Expr.Aggregate(_) => True,
-    Expr.Column(_) => False,
-    Expr.Value(_) => False,
-    Expr.Scalar(call) => array.any(call.args, expr_has_aggregate),
-    Expr.Compare(call) => expr_has_aggregate(call.left) || expr_has_aggregate(call.right),
-    Expr.And(call) => array.any(call.items, expr_has_aggregate),
+    Expr::Aggregate(_) => True,
+    Expr::Column(_) => False,
+    Expr::Value(_) => False,
+    Expr::Scalar(call) => array::any(call.args, expr_has_aggregate),
+    Expr::Compare(call) => expr_has_aggregate(call.left) || expr_has_aggregate(call.right),
+    Expr::And(call) => array::any(call.items, expr_has_aggregate),
   }
 };
 
 def all_exprs: Fn(Plan) -> Array(Expr) = fn(plan) {
-  let projected = array.flat_map(plan.projections, fn(item) { expr_flatten(item.expr) });
+  let projected = array::flat_map(plan.projections, fn(item) { expr_flatten(item.expr) });
   let filtered = match plan.filter {
     Some(expr) => expr_flatten(expr),
     None => {
@@ -382,34 +382,34 @@ def all_exprs: Fn(Plan) -> Array(Expr) = fn(plan) {
       none
     },
   };
-  let joined = array.flat_map(plan.joins, fn(join) {
-    array.concat([
-      expr_flatten(Expr.Column(join.condition.left)),
-      expr_flatten(Expr.Column(join.condition.right)),
+  let joined = array::flat_map(plan.joins, fn(join) {
+    array::concat([
+      expr_flatten(Expr::Column(join.condition.left)),
+      expr_flatten(Expr::Column(join.condition.right)),
     ])
   });
-  let grouped = array.flat_map(plan.grouping, expr_flatten);
-  array.concat([projected, filtered, joined, grouped])
+  let grouped = array::flat_map(plan.grouping, expr_flatten);
+  array::concat([projected, filtered, joined, grouped])
 };
 
 # ---------------------------------------------------------------- Operator usage
 
 def plan_uses: Fn(Plan, Operator) -> Bool = fn(plan, op) {
   match op {
-    Operator.Scan => True,
-    Operator.Project => True,
-    Operator.Column => array.any(all_exprs(plan), expr_has_column),
-    Operator.Binding => array.any(all_exprs(plan), expr_has_value),
-    Operator.Scalar => array.any(all_exprs(plan), expr_has_scalar),
-    Operator.Aggregate => array.any(all_exprs(plan), expr_has_aggregate),
-    Operator.Filter => match plan.filter {
+    Operator::Scan => True,
+    Operator::Project => True,
+    Operator::Column => array::any(all_exprs(plan), expr_has_column),
+    Operator::Binding => array::any(all_exprs(plan), expr_has_value),
+    Operator::Scalar => array::any(all_exprs(plan), expr_has_scalar),
+    Operator::Aggregate => array::any(all_exprs(plan), expr_has_aggregate),
+    Operator::Filter => match plan.filter {
       Some(_) => True,
       None => False,
     },
-    Operator.EquiJoin => array.length(plan.joins) > 0,
-    Operator.Group => array.length(plan.grouping) > 0,
-    Operator.Order => array.length(plan.ordering) > 0,
-    Operator.Limit => match plan.limit {
+    Operator::EquiJoin => array::length(plan.joins) > 0,
+    Operator::Group => array::length(plan.grouping) > 0,
+    Operator::Order => array::length(plan.ordering) > 0,
+    Operator::Limit => match plan.limit {
       Some(_) => True,
       None => False,
     },
@@ -417,12 +417,12 @@ def plan_uses: Fn(Plan, Operator) -> Bool = fn(plan, op) {
 };
 
 def operators: Fn(Plan) -> Array(Operator) = fn(plan) {
-  array.filter(all_operators, fn(op) { plan_uses(plan, op) })
+  array::filter(all_operators, fn(op) { plan_uses(plan, op) })
 };
 
 def scalar_of: Fn(Expr) -> Array(ScalarFunction) = fn(expr) {
   match expr {
-    Expr.Scalar(call) => {
+    Expr::Scalar(call) => {
       let one: Array(ScalarFunction) = [call.function];
       one
     },
@@ -434,12 +434,12 @@ def scalar_of: Fn(Expr) -> Array(ScalarFunction) = fn(expr) {
 };
 
 def used_scalar_functions: Fn(Plan) -> Array(ScalarFunction) = fn(plan) {
-  array.flat_map(all_exprs(plan), scalar_of)
+  array::flat_map(all_exprs(plan), scalar_of)
 };
 
 def aggregate_of: Fn(Expr) -> Array(AggregateFunction) = fn(expr) {
   match expr {
-    Expr.Aggregate(call) => {
+    Expr::Aggregate(call) => {
       let one: Array(AggregateFunction) = [call.function];
       one
     },
@@ -451,29 +451,29 @@ def aggregate_of: Fn(Expr) -> Array(AggregateFunction) = fn(expr) {
 };
 
 def used_aggregate_functions: Fn(Plan) -> Array(AggregateFunction) = fn(plan) {
-  array.flat_map(all_exprs(plan), aggregate_of)
+  array::flat_map(all_exprs(plan), aggregate_of)
 };
 
 def used_join_kinds: Fn(Plan) -> Array(JoinKind) = fn(plan) {
-  array.map(plan.joins, fn(join) { join.kind })
+  array::map(plan.joins, fn(join) { join.kind })
 };
 
 # ---------------------------------------------------------------- Subset checks
 
 def operator_subset: Fn(Array(Operator), Array(Operator)) -> Bool = fn(left, right) {
-  array.all(left, fn(item) { array.any(right, fn(candidate) { candidate == item }) })
+  array::all(left, fn(item) { array::any(right, fn(candidate) { candidate == item }) })
 };
 
 def join_kind_subset: Fn(Array(JoinKind), Array(JoinKind)) -> Bool = fn(left, right) {
-  array.all(left, fn(item) { array.any(right, fn(candidate) { candidate == item }) })
+  array::all(left, fn(item) { array::any(right, fn(candidate) { candidate == item }) })
 };
 
 def scalar_function_subset: Fn(Array(ScalarFunction), Array(ScalarFunction)) -> Bool = fn(left, right) {
-  array.all(left, fn(item) { array.any(right, fn(candidate) { candidate == item }) })
+  array::all(left, fn(item) { array::any(right, fn(candidate) { candidate == item }) })
 };
 
 def aggregate_function_subset: Fn(Array(AggregateFunction), Array(AggregateFunction)) -> Bool = fn(left, right) {
-  array.all(left, fn(item) { array.any(right, fn(candidate) { candidate == item }) })
+  array::all(left, fn(item) { array::any(right, fn(candidate) { candidate == item }) })
 };
 
 def profile_allows: Fn(PlanProfile, Plan) -> Bool = fn(profile, plan) {
@@ -490,16 +490,16 @@ def require_true: Fn(Bool, String) -> Bool = fn(condition, message) {
 };
 
 def unique_identifiers: Fn(Array(SqlIdentifier)) -> Bool = fn(items) {
-  array.all(items, fn(item) {
-    array.length(array.filter(items, fn(other) { other.name == item.name })) == 1
+  array::all(items, fn(item) {
+    array::length(array::filter(items, fn(other) { other.name == item.name })) == 1
   })
 };
 
 def valid_table: Fn(TableRef) -> Bool = fn(table) {
   valid_identifier(table.table)
     && valid_identifier(table.alias)
-    && array.length(table.columns) > 0
-    && array.all(table.columns, valid_identifier)
+    && array::length(table.columns) > 0
+    && array::all(table.columns, valid_identifier)
     && unique_identifiers(table.columns)
 };
 
@@ -508,12 +508,12 @@ def valid_column_ref: Fn(ColumnRef) -> Bool = fn(ref) {
 };
 
 def table_has_column: Fn(TableRef, SqlIdentifier) -> Bool = fn(table, column) {
-  array.any(table.columns, fn(candidate) { candidate.name == column.name })
+  array::any(table.columns, fn(candidate) { candidate.name == column.name })
 };
 
 def ref_resolves: Fn(Plan, ColumnRef) -> Bool = fn(plan, ref) {
   let from_source = plan.source.alias.name == ref.alias.name && table_has_column(plan.source, ref.column);
-  let from_join = array.any(plan.joins, fn(join) {
+  let from_join = array::any(plan.joins, fn(join) {
     join.right.alias.name == ref.alias.name && table_has_column(join.right, ref.column)
   });
   from_source || from_join
@@ -521,38 +521,38 @@ def ref_resolves: Fn(Plan, ColumnRef) -> Bool = fn(plan, ref) {
 
 def expr_bound: Fn(Plan, Expr) -> Bool = fn(plan, expr) {
   match expr {
-    Expr.Column(ref) => ref_resolves(plan, ref),
-    Expr.Value(_) => True,
-    Expr.Scalar(call) => exprs_bound(plan, call.args),
-    Expr.Aggregate(call) => match call.argument {
+    Expr::Column(ref) => ref_resolves(plan, ref),
+    Expr::Value(_) => True,
+    Expr::Scalar(call) => exprs_bound(plan, call.args),
+    Expr::Aggregate(call) => match call.argument {
       Some(arg) => expr_bound(plan, arg),
       None => True,
     },
-    Expr.Compare(call) => expr_bound(plan, call.left) && expr_bound(plan, call.right),
-    Expr.And(call) => exprs_bound(plan, call.items),
+    Expr::Compare(call) => expr_bound(plan, call.left) && expr_bound(plan, call.right),
+    Expr::And(call) => exprs_bound(plan, call.items),
   }
 };
 
 def exprs_bound: Fn(Plan, Array(Expr)) -> Bool = fn(plan, exprs) {
-  array.all(exprs, fn(expr) { expr_bound(plan, expr) })
+  array::all(exprs, fn(expr) { expr_bound(plan, expr) })
 };
 
 def expr_identifiers_valid: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    Expr.Column(ref) => valid_column_ref(ref),
-    Expr.Value(_) => True,
-    Expr.Scalar(call) => array.all(call.args, expr_identifiers_valid),
-    Expr.Aggregate(call) => match call.argument {
+    Expr::Column(ref) => valid_column_ref(ref),
+    Expr::Value(_) => True,
+    Expr::Scalar(call) => array::all(call.args, expr_identifiers_valid),
+    Expr::Aggregate(call) => match call.argument {
       Some(arg) => expr_identifiers_valid(arg),
       None => True,
     },
-    Expr.Compare(call) => expr_identifiers_valid(call.left) && expr_identifiers_valid(call.right),
-    Expr.And(call) => array.all(call.items, expr_identifiers_valid),
+    Expr::Compare(call) => expr_identifiers_valid(call.left) && expr_identifiers_valid(call.right),
+    Expr::And(call) => array::all(call.items, expr_identifiers_valid),
   }
 };
 
 def projections_bound: Fn(Plan) -> Bool = fn(plan) {
-  array.all(plan.projections, fn(item) { expr_bound(plan, item.expr) })
+  array::all(plan.projections, fn(item) { expr_bound(plan, item.expr) })
 };
 
 def filter_valid: Fn(Plan) -> Bool = fn(plan) {
@@ -563,7 +563,7 @@ def filter_valid: Fn(Plan) -> Bool = fn(plan) {
 };
 
 def joins_valid: Fn(Plan) -> Bool = fn(plan) {
-  array.all(plan.joins, fn(join) {
+  array::all(plan.joins, fn(join) {
     valid_table(join.right)
       && valid_column_ref(join.condition.left)
       && valid_column_ref(join.condition.right)
@@ -574,20 +574,20 @@ def joins_valid: Fn(Plan) -> Bool = fn(plan) {
 
 def grouping_expr_ok: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    Expr.Column(_) => True,
-    Expr.Scalar(call) => !expr_has_aggregate(expr),
+    Expr::Column(_) => True,
+    Expr::Scalar(call) => !expr_has_aggregate(expr),
     _ => False,
   }
 };
 
 def grouping_valid: Fn(Plan) -> Bool = fn(plan) {
-  array.all(plan.grouping, fn(expr) {
+  array::all(plan.grouping, fn(expr) {
     expr_identifiers_valid(expr) && expr_bound(plan, expr) && grouping_expr_ok(expr)
   })
 };
 
 def ordering_valid: Fn(Plan) -> Bool = fn(plan) {
-  array.all(plan.ordering, fn(item) { valid_column_ref(item.column) && ref_resolves(plan, item.column) })
+  array::all(plan.ordering, fn(item) { valid_column_ref(item.column) && ref_resolves(plan, item.column) })
 };
 
 def limit_valid: Fn(Plan) -> Bool = fn(plan) {
@@ -599,17 +599,17 @@ def limit_valid: Fn(Plan) -> Bool = fn(plan) {
 
 def plan_aliases: Fn(Plan) -> Array(SqlIdentifier) = fn(plan) {
   let source_aliases: Array(SqlIdentifier) = [plan.source.alias];
-  let join_aliases = array.map(plan.joins, fn(join) { join.right.alias });
-  array.concat([source_aliases, join_aliases])
+  let join_aliases = array::map(plan.joins, fn(join) { join.right.alias });
+  array::concat([source_aliases, join_aliases])
 };
 
 def validate_structure: Fn(Plan) -> Plan = fn(plan) {
   let checks: Array(Bool) = [
-    require_true(string.length(plan.revision) > 0, "plan-structure: revision must be a non-empty string"),
+    require_true(string::length(plan.revision) > 0, "plan-structure: revision must be a non-empty string"),
     require_true(valid_table(plan.source), "plan-structure: source table must be a valid table reference"),
     require_true(unique_identifiers(plan_aliases(plan)), "plan-structure: table aliases must be unique"),
-    require_true(array.length(plan.projections) > 0, "plan-structure: projections must not be empty"),
-    require_true(array.all(plan.projections, fn(item) { valid_identifier(item.alias) && expr_identifiers_valid(item.expr) }), "plan-structure: invalid projection item"),
+    require_true(array::length(plan.projections) > 0, "plan-structure: projections must not be empty"),
+    require_true(array::all(plan.projections, fn(item) { valid_identifier(item.alias) && expr_identifiers_valid(item.expr) }), "plan-structure: invalid projection item"),
     require_true(projections_bound(plan), "plan-structure: unbound column reference in projections"),
     require_true(filter_valid(plan), "plan-structure: invalid filter expression"),
     require_true(joins_valid(plan), "plan-structure: invalid join"),
@@ -617,7 +617,7 @@ def validate_structure: Fn(Plan) -> Plan = fn(plan) {
     require_true(ordering_valid(plan), "plan-structure: invalid ordering column"),
     require_true(limit_valid(plan), "plan-structure: limit must be a non-negative integer"),
   ];
-  let ok = array.all(checks, fn(check) { check });
+  let ok = array::all(checks, fn(check) { check });
   if ok { plan } else { fail!("plan-structure: invalid plan") }
 };
 
@@ -636,38 +636,38 @@ def validate_plan: Fn(PlanProfile, Plan) -> Plan = fn(profile, plan) {
 
 def scalar_sql_name: Fn(ScalarFunction) -> String = fn(fn_name) {
   match fn_name {
-    ScalarFunction.Lower => "LOWER",
-    ScalarFunction.Upper => "UPPER",
-    ScalarFunction.Abs => "ABS",
-    ScalarFunction.Length => "LENGTH",
-    ScalarFunction.Coalesce => "COALESCE",
-    ScalarFunction.Substr => "SUBSTR",
+    ScalarFunction::Lower => "LOWER",
+    ScalarFunction::Upper => "UPPER",
+    ScalarFunction::Abs => "ABS",
+    ScalarFunction::Length => "LENGTH",
+    ScalarFunction::Coalesce => "COALESCE",
+    ScalarFunction::Substr => "SUBSTR",
   }
 };
 
 def aggregate_sql_name: Fn(AggregateFunction) -> String = fn(fn_name) {
   match fn_name {
-    AggregateFunction.Count => "COUNT",
-    AggregateFunction.Sum => "SUM",
-    AggregateFunction.Avg => "AVG",
-    AggregateFunction.Min => "MIN",
-    AggregateFunction.Max => "MAX",
+    AggregateFunction::Count => "COUNT",
+    AggregateFunction::Sum => "SUM",
+    AggregateFunction::Avg => "AVG",
+    AggregateFunction::Min => "MIN",
+    AggregateFunction::Max => "MAX",
   }
 };
 
 def compare_sql_op: Fn(CompareOp) -> String = fn(op) {
   match op {
-    CompareOp.Eq => "=",
-    CompareOp.Ne => "<>",
-    CompareOp.Lt => "<",
-    CompareOp.Le => "<=",
-    CompareOp.Gt => ">",
-    CompareOp.Ge => ">=",
+    CompareOp::Eq => "=",
+    CompareOp::Ne => "<>",
+    CompareOp::Lt => "<",
+    CompareOp::Le => "<=",
+    CompareOp::Gt => ">",
+    CompareOp::Ge => ">=",
   }
 };
 
 def render_column_ref: Fn(ColumnRef) -> String = fn(ref) {
-  string.join([ref.alias.name, ref.column.name], ".")
+  string::join([ref.alias.name, ref.column.name], ".")
 };
 
 def render_table_ref: Fn(TableRef) -> String = fn(table) {
@@ -676,32 +676,32 @@ def render_table_ref: Fn(TableRef) -> String = fn(table) {
 
 def render_expr: Fn(Expr) -> Tuple([String, Array(Val)]) = fn(expr) {
   match expr {
-    Expr.Column(ref) => (render_column_ref(ref), []),
-    Expr.Value(value) => ("?", [value]),
-    Expr.Scalar(call) => render_scalar(call),
-    Expr.Aggregate(call) => render_aggregate(call),
-    Expr.Compare(call) => render_compare(call),
-    Expr.And(call) => render_conjunction(call),
+    Expr::Column(ref) => (render_column_ref(ref), []),
+    Expr::Value(value) => ("?", [value]),
+    Expr::Scalar(call) => render_scalar(call),
+    Expr::Aggregate(call) => render_aggregate(call),
+    Expr::Compare(call) => render_compare(call),
+    Expr::And(call) => render_conjunction(call),
   }
 };
 
 def render_exprs: Fn(Array(Expr)) -> Tuple([Array(String), Array(Val)]) = fn(exprs) {
-  let rendered = array.map(exprs, render_expr);
-  let parts = array.map(rendered, fn(pair) { pair.0 });
-  let bindings = array.concat(array.map(rendered, fn(pair) { pair.1 }));
+  let rendered = array::map(exprs, render_expr);
+  let parts = array::map(rendered, fn(pair) { pair.0 });
+  let bindings = array::concat(array::map(rendered, fn(pair) { pair.1 }));
   (parts, bindings)
 };
 
 def render_scalar: Fn(ScalarCall) -> Tuple([String, Array(Val)]) = fn(call) {
   let rendered = render_exprs(call.args);
   let name = scalar_sql_name(call.function);
-  let sql = `\{name}(\{string.join(rendered.0, ", ")})`;
+  let sql = `\{name}(\{string::join(rendered.0, ", ")})`;
   (sql, rendered.1)
 };
 
 def render_conjunction: Fn(Conjunction) -> Tuple([String, Array(Val)]) = fn(call) {
   let rendered = render_exprs(call.items);
-  let sql = `(\{string.join(rendered.0, " AND ")})`;
+  let sql = `(\{string::join(rendered.0, " AND ")})`;
   (sql, rendered.1)
 };
 
@@ -710,7 +710,7 @@ def render_compare: Fn(CompareCall) -> Tuple([String, Array(Val)]) = fn(call) {
   let right = render_expr(call.right);
   let op = compare_sql_op(call.op);
   let sql = `(\{left.0} \{op} \{right.0})`;
-  (sql, array.concat([left.1, right.1]))
+  (sql, array::concat([left.1, right.1]))
 };
 
 def render_aggregate: Fn(AggregateCall) -> Tuple([String, Array(Val)]) = fn(call) {
@@ -722,7 +722,7 @@ def render_aggregate: Fn(AggregateCall) -> Tuple([String, Array(Val)]) = fn(call
       (sql, rendered.1)
     },
     None => {
-      if call.function == AggregateFunction.Count {
+      if call.function == AggregateFunction::Count {
         ("COUNT(*)", [])
       } else {
         fail!(`transform-reject: aggregate \{name} requires an argument`, call)
@@ -738,9 +738,9 @@ def render_projection_item: Fn(ProjectionItem) -> Tuple([String, Array(Val)]) = 
 };
 
 def render_projection_items: Fn(Array(ProjectionItem)) -> Tuple([Array(String), Array(Val)]) = fn(items) {
-  let rendered = array.map(items, render_projection_item);
-  let parts = array.map(rendered, fn(pair) { pair.0 });
-  let bindings = array.concat(array.map(rendered, fn(pair) { pair.1 }));
+  let rendered = array::map(items, render_projection_item);
+  let parts = array::map(rendered, fn(pair) { pair.0 });
+  let bindings = array::concat(array::map(rendered, fn(pair) { pair.1 }));
   (parts, bindings)
 };
 
@@ -755,17 +755,17 @@ def render_filter: Fn(Option(Expr)) -> Tuple([Option(String), Array(Val)]) = fn(
 };
 
 def render_grouping: Fn(Array(Expr)) -> Tuple([Array(String), Array(Val)]) = fn(grouping) {
-  let rendered = array.map(grouping, render_expr);
-  let parts = array.map(rendered, fn(pair) { pair.0 });
-  let bindings = array.concat(array.map(rendered, fn(pair) { pair.1 }));
+  let rendered = array::map(grouping, render_expr);
+  let parts = array::map(rendered, fn(pair) { pair.0 });
+  let bindings = array::concat(array::map(rendered, fn(pair) { pair.1 }));
   (parts, bindings)
 };
 
 def render_ordering: Fn(Array(OrderingItem)) -> Array(String) = fn(ordering) {
-  array.map(ordering, fn(item) {
+  array::map(ordering, fn(item) {
     let direction = match item.direction {
-      OrderDirection.Asc => "ASC",
-      OrderDirection.Desc => "DESC",
+      OrderDirection::Asc => "ASC",
+      OrderDirection::Desc => "DESC",
     };
     `\{render_column_ref(item.column)} \{direction}`
   })
@@ -774,7 +774,7 @@ def render_ordering: Fn(Array(OrderingItem)) -> Array(String) = fn(ordering) {
 def render_limit: Fn(Option(Int)) -> Array(Val) = fn(limit) {
   match limit {
     Some(value) => {
-      let one: Array(Val) = [Val.Int(value)];
+      let one: Array(Val) = [Val::Int(value)];
       one
     },
     None => {
@@ -786,8 +786,8 @@ def render_limit: Fn(Option(Int)) -> Array(Val) = fn(limit) {
 
 def render_join: Fn(Join) -> Tuple([String, Array(Val)]) = fn(join) {
   let kind_sql = match join.kind {
-    JoinKind.Inner => "INNER JOIN",
-    JoinKind.Left => "LEFT JOIN",
+    JoinKind::Inner => "INNER JOIN",
+    JoinKind::Left => "LEFT JOIN",
   };
   let left = render_column_ref(join.condition.left);
   let right = render_column_ref(join.condition.right);
@@ -796,14 +796,14 @@ def render_join: Fn(Join) -> Tuple([String, Array(Val)]) = fn(join) {
 };
 
 def scalar_arity_ok: Fn(ScalarCall) -> Bool = fn(call) {
-  let arg_count = array.length(call.args);
+  let arg_count = array::length(call.args);
   match call.function {
-    ScalarFunction.Lower => arg_count == 1,
-    ScalarFunction.Upper => arg_count == 1,
-    ScalarFunction.Abs => arg_count == 1,
-    ScalarFunction.Length => arg_count == 1,
-    ScalarFunction.Coalesce => arg_count >= 1,
-    ScalarFunction.Substr => arg_count == 3,
+    ScalarFunction::Lower => arg_count == 1,
+    ScalarFunction::Upper => arg_count == 1,
+    ScalarFunction::Abs => arg_count == 1,
+    ScalarFunction::Length => arg_count == 1,
+    ScalarFunction::Coalesce => arg_count >= 1,
+    ScalarFunction::Substr => arg_count == 3,
   }
 };
 
@@ -812,18 +812,18 @@ def transform_checks: Fn(Plan) -> Bool = fn(plan) {
     Some(expr) => !expr_has_aggregate(expr),
     None => True,
   };
-  let aggregates_ok = array.all(all_exprs(plan), fn(expr) {
+  let aggregates_ok = array::all(all_exprs(plan), fn(expr) {
     match expr {
-      Expr.Aggregate(call) => match call.argument {
+      Expr::Aggregate(call) => match call.argument {
         Some(arg) => !expr_has_aggregate(arg),
-        None => call.function == AggregateFunction.Count,
+        None => call.function == AggregateFunction::Count,
       },
       _ => True,
     }
   });
-  let scalars_ok = array.all(all_exprs(plan), fn(expr) {
+  let scalars_ok = array::all(all_exprs(plan), fn(expr) {
     match expr {
-      Expr.Scalar(call) => scalar_arity_ok(call),
+      Expr::Scalar(call) => scalar_arity_ok(call),
       _ => True,
     }
   });
@@ -833,38 +833,38 @@ def transform_checks: Fn(Plan) -> Bool = fn(plan) {
 def build_sqlite_query: Fn(Plan) -> Query = fn(plan) {
   let projections = render_projection_items(plan.projections);
   let filter = render_filter(plan.filter);
-  let joins = array.map(plan.joins, render_join);
+  let joins = array::map(plan.joins, render_join);
   let grouping = render_grouping(plan.grouping);
   let ordering = render_ordering(plan.ordering);
   let limit_bindings = render_limit(plan.limit);
 
-  let select_sql = `SELECT \{string.join(projections.0, ", ")}`;
+  let select_sql = `SELECT \{string::join(projections.0, ", ")}`;
   let from_sql = `FROM \{render_table_ref(plan.source)}`;
-  let join_sqls = array.map(joins, fn(pair) { pair.0 });
-  let join_bindings = array.concat(array.map(joins, fn(pair) { pair.1 }));
+  let join_sqls = array::map(joins, fn(pair) { pair.0 });
+  let join_bindings = array::concat(array::map(joins, fn(pair) { pair.1 }));
 
   let clauses0: Array(String) = [select_sql, from_sql];
-  let with_joins = array.fold(join_sqls, clauses0, fn(acc, clause) { array.push(acc, clause) });
+  let with_joins = array::fold(join_sqls, clauses0, fn(acc, clause) { array::push(acc, clause) });
   let with_where = match filter.0 {
-    Some(clause) => array.push(with_joins, `WHERE \{clause}`),
+    Some(clause) => array::push(with_joins, `WHERE \{clause}`),
     None => with_joins,
   };
-  let with_group = if array.length(grouping.0) > 0 {
-    array.push(with_where, `GROUP BY \{string.join(grouping.0, ", ")}`)
+  let with_group = if array::length(grouping.0) > 0 {
+    array::push(with_where, `GROUP BY \{string::join(grouping.0, ", ")}`)
   } else {
     with_where
   };
-  let with_order = if array.length(ordering) > 0 {
-    array.push(with_group, `ORDER BY \{string.join(ordering, ", ")}`)
+  let with_order = if array::length(ordering) > 0 {
+    array::push(with_group, `ORDER BY \{string::join(ordering, ", ")}`)
   } else {
     with_group
   };
   let with_limit = match plan.limit {
-    Some(_) => array.push(with_order, "LIMIT ?"),
+    Some(_) => array::push(with_order, "LIMIT ?"),
     None => with_order,
   };
-  let sql = string.join(with_limit, " ");
-  let bindings = array.concat([projections.1, filter.1, join_bindings, grouping.1, limit_bindings]);
+  let sql = string::join(with_limit, " ");
+  let bindings = array::concat([projections.1, filter.1, join_bindings, grouping.1, limit_bindings]);
   { sql: sql, bindings: bindings }
 };
 
@@ -885,41 +885,41 @@ def compile: Fn(PlanProfile, Plan) -> Query = fn(profile, plan) {
 
 def operator_display: Fn(Operator) -> String = fn(op) {
   match op {
-    Operator.Scan => "Scan",
-    Operator.Column => "Column",
-    Operator.Binding => "Binding",
-    Operator.Scalar => "Scalar",
-    Operator.Aggregate => "Aggregate",
-    Operator.Project => "Project",
-    Operator.Filter => "Filter",
-    Operator.EquiJoin => "EquiJoin",
-    Operator.Group => "Group",
-    Operator.Order => "Order",
-    Operator.Limit => "Limit",
+    Operator::Scan => "Scan",
+    Operator::Column => "Column",
+    Operator::Binding => "Binding",
+    Operator::Scalar => "Scalar",
+    Operator::Aggregate => "Aggregate",
+    Operator::Project => "Project",
+    Operator::Filter => "Filter",
+    Operator::EquiJoin => "EquiJoin",
+    Operator::Group => "Group",
+    Operator::Order => "Order",
+    Operator::Limit => "Limit",
   }
 };
 
 def val_display: Fn(Val) -> String = fn(value) {
   match value {
-    Val.String(text) => `"\{text}"`,
-    Val.Int(number) => `\{number}`,
-    Val.Float(number) => `\{number}`,
-    Val.Bool(flag) => if flag { "true" } else { "false" },
+    Val::String(text) => `"\{text}"`,
+    Val::Int(number) => `\{number}`,
+    Val::Float(number) => `\{number}`,
+    Val::Bool(flag) => if flag { "true" } else { "false" },
   }
 };
 
 def query_display: Fn(Query) -> String = fn(query) {
-  let bindings_sql = string.join(array.map(query.bindings, val_display), ", ");
+  let bindings_sql = string::join(array::map(query.bindings, val_display), ", ");
   let lines: Array(String) = [
     `sql: \{query.sql}`,
     `bindings: [\{bindings_sql}]`,
   ];
-  string.join_lines(lines)
+  string::join_lines(lines)
 };
 
 # ---------------------------------------------------------------- Public surface
 
-export {
+pub use self::{
   Val, SqlIdentifier, JoinKind, CompareOp, ScalarFunction, AggregateFunction,
   OrderDirection, ColumnRef, ScalarCall, AggregateCall, CompareCall, Conjunction,
   Expr, TableRef, EquiCondition, Join, ProjectionItem, OrderingItem, Plan, Operator,

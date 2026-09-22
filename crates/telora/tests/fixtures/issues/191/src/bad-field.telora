@@ -1,2 +1,0 @@
-import "@src/fields" { AnyObjectFieldRef };
-export def bad: AnyObjectFieldRef = { owner: Int.type, scalar: String.type, name: 42 };

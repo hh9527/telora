@@ -1,26 +1,26 @@
-import "std/blame" {BlameError};
-import "std/dyn" as dyn;
-import "std/test" as test;
-import "@src/test-support" {expect};
-import "./provider" as provider;
+use std::blame::{BlameError};
+use std::dyn as dyn;
+use std::test as test;
+use crate::test_support::{expect};
+use self::provider as provider;
 
-export def identity: test.Test = test.should_ok(fn() {
-    let error: BlameError = provider.error;
-    expect(dyn.project_with((BlameError).type, dyn.pack((BlameError).type, error)) == Some(provider.error))
+pub def identity: test::Test = test::should_ok(fn() {
+    let error: BlameError = provider::error;
+    expect(dyn::project_with((BlameError).type, dyn::pack((BlameError).type, error)) == Some(provider::error))
 });
 
-export def empty: test.Test = test.should_ok(fn() {
+pub def empty: test::Test = test::should_ok(fn() {
     let error: BlameError = blame!("no subjects");
     let result: Option(Int) = warn!(error);
     expect(result == None)
 });
 
-export def warning: test.Test = test.should_ok(fn() {
-    let result: Option(String) = warn!(provider.error);
+pub def warning: test::Test = test::should_ok(fn() {
+    let result: Option(String) = warn!(provider::error);
     expect(result == None)
 });
 
-export def source: test.Test = test.should_ok(fn() {
-    let error = provider.error;
+pub def source: test::Test = test::should_ok(fn() {
+    let error = provider::error;
     raise!(error)
 });

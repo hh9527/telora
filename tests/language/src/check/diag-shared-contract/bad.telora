@@ -1,4 +1,4 @@
-import "@src/check/diag-shared-contract/shared" {increment};
-export def input: String = "bad";
-export def wrong: Int = increment(input);
-export def also_wrong: Int = increment(False);
+use super::shared::{ increment };
+pub def input: String = "bad";
+pub def wrong: Int = increment(input);
+pub def also_wrong: Int = increment(False);

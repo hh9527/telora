@@ -1,7 +1,7 @@
-import "std/test" as test;
-import "@src/test-support" { expect };
-import "./provider" { wrap };
+use std::test as test;
+use crate::test_support::{ expect };
+use self::provider::{ wrap };
 
-export def concrete_dependencies: test.Test = test.should_ok(fn() {
+pub def concrete_dependencies: test::Test = test::should_ok(fn() {
     expect(wrap(7) == "int" && wrap("text") == "text" && wrap(8) == "int")
 });
