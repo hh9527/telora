@@ -157,6 +157,9 @@ pub enum Binding<'tree> {
     Type(TypeBinding<'tree>),
     Trait(TraitBinding<'tree>),
     Impl(ImplBinding<'tree>),
+    Module(ModuleDeclaration<'tree>),
+    Use(UseBinding<'tree>),
+    Data(DataBinding<'tree>),
     Import(ImportBinding<'tree>),
     Export(ExportBinding<'tree>),
 }
@@ -175,6 +178,9 @@ impl<'tree> Binding<'tree> {
             Rule::TypeBinding => Some(Self::Type(TypeBinding { syntax })),
             Rule::TraitBinding => Some(Self::Trait(TraitBinding { syntax })),
             Rule::ImplBinding => Some(Self::Impl(ImplBinding { syntax })),
+            Rule::ModuleDeclaration => Some(Self::Module(ModuleDeclaration { syntax })),
+            Rule::UseBinding => Some(Self::Use(UseBinding { syntax })),
+            Rule::DataBinding => Some(Self::Data(DataBinding { syntax })),
             Rule::ImportBinding => Some(Self::Import(ImportBinding { syntax })),
             Rule::ExportStatement => Some(Self::Export(ExportBinding { syntax })),
             _ => None,
@@ -191,6 +197,9 @@ impl<'tree> Binding<'tree> {
             Self::Type(node) => node.syntax,
             Self::Trait(node) => node.syntax,
             Self::Impl(node) => node.syntax,
+            Self::Module(node) => node.syntax,
+            Self::Use(node) => node.syntax,
+            Self::Data(node) => node.syntax,
             Self::Import(node) => node.syntax,
             Self::Export(node) => node.syntax,
         }
@@ -206,6 +215,9 @@ impl<'tree> Binding<'tree> {
             Self::Type(node) => node.name(),
             Self::Trait(node) => node.name(),
             Self::Impl(_) => None,
+            Self::Module(node) => node.name(),
+            Self::Use(_) => None,
+            Self::Data(node) => node.name(),
             Self::Import(node) => node.name(),
             Self::Export(_) => None,
         }
@@ -239,6 +251,9 @@ binding_node!(NativeTypeBinding);
 binding_node!(TypeBinding);
 binding_node!(TraitBinding);
 binding_node!(ImplBinding);
+binding_node!(ModuleDeclaration);
+binding_node!(UseBinding);
+binding_node!(DataBinding);
 binding_node!(ImportBinding);
 binding_node!(ExportBinding);
 
@@ -540,7 +555,10 @@ pub(super) fn validate_cancellable(
         }
         if binding.name().is_none()
             && !matches!(binding, Binding::Import(import) if import.has_selector())
-            && !matches!(binding, Binding::Export(_) | Binding::Impl(_))
+            && !matches!(
+                binding,
+                Binding::Export(_) | Binding::Impl(_) | Binding::Use(_)
+            )
         {
             issues.push(missing_after_keyword(source, binding));
         }
@@ -642,6 +660,7 @@ fn is_expression_slot(syntax: SyntaxNode<'_>) -> bool {
                 | Rule::ReturnExpr
                 | Rule::SectionExpr
                 | Rule::SpreadExpr
+                | Rule::StaticPathExpr
                 | Rule::StringExpr
                 | Rule::TypeApplyExpr
                 | Rule::UnaryExpr
@@ -685,6 +704,9 @@ fn missing_after_keyword(source: SourceId, binding: Binding<'_>) -> SyntaxIssue 
         Binding::Type(_) => Token::Type,
         Binding::Trait(_) => Token::Trait,
         Binding::Impl(_) => Token::Impl,
+        Binding::Module(_) => Token::Mod,
+        Binding::Use(_) => Token::Use,
+        Binding::Data(_) => Token::Data,
         Binding::Import(_) => Token::Import,
         Binding::Export(_) => Token::Export,
     };

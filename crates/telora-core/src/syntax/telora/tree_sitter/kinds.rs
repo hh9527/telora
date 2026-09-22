@@ -73,6 +73,7 @@ fn named_rules(name: &str) -> Option<&'static [Rule]> {
         | "raw_start"
         | "raw_text"
         | "raw_end"
+        | "path_head"
         | "concat_fragment"
         | "comment"
         | "quote_start"
@@ -97,6 +98,9 @@ fn named_rules(name: &str) -> Option<&'static [Rule]> {
         "contract_array" => &[Rule::ContractArray],
         "contract_expr" => &[Rule::ContractExpr],
         "decl_binding" => &[Rule::DeclBinding],
+        "data_binding" => &[Rule::DataBinding],
+        "data_format" => &[Rule::DataFormat],
+        "data_import" => &[Rule::DataImport],
         "decorator" => &[Rule::Decorator],
         "decorator_path" => &[Rule::DecoratorPath],
         "def_binding" => &[Rule::DefBinding],
@@ -137,6 +141,7 @@ fn named_rules(name: &str) -> Option<&'static [Rule]> {
         "member_selector" => &[Rule::MemberSelector],
         "metadata_suffix" => &[Rule::MetadataSuffix],
         "module_body" => &[Rule::ModuleBody],
+        "module_declaration" => &[Rule::ModuleDeclaration],
         "named_intrinsic" => &[Rule::NamedIntrinsic],
         "native_binding" => &[Rule::NativeBinding],
         "native_type_binding" => &[Rule::NativeTypeBinding],
@@ -154,6 +159,8 @@ fn named_rules(name: &str) -> Option<&'static [Rule]> {
         "string_expr" => &[Rule::StringExpr],
         "string_literal" => &[Rule::StringLiteral],
         "string_pattern" => &[Rule::StringPattern],
+        "static_path" => &[Rule::StaticPath],
+        "static_path_expr" => &[Rule::StaticPathExpr],
         "struct_initializer" => &[Rule::StructInitializer],
         "struct_initializer_field" => &[Rule::StructInitializerField],
         "struct_pattern" => &[Rule::StructPattern],
@@ -171,6 +178,11 @@ fn named_rules(name: &str) -> Option<&'static [Rule]> {
         "type_scheme" => &[Rule::TypeScheme],
         "unary_expr" => &[Rule::UnaryExpr],
         "unit_contract" => &[Rule::UnitContract],
+        "use_binding" => &[Rule::UseBinding],
+        "use_item" => &[Rule::UseItem],
+        "use_items" => &[Rule::UseItems],
+        "use_path" => &[Rule::UsePath],
+        "use_selector" => &[Rule::UseSelector],
         "variable_expr" => &[Rule::VariableExpr],
         _ => return None,
     })
