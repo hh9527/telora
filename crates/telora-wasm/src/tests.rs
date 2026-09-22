@@ -530,7 +530,10 @@ fn properties_reduce_and_query_inside_wasm() {
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
     session.initialize().unwrap();
-    assert_eq!(session.eval().unwrap(), serde_json::json!([42, "amount"]));
+    assert_eq!(
+        session.eval().unwrap(),
+        serde_json::json!([42, "amount", 42, 42, true])
+    );
 }
 
 #[test]

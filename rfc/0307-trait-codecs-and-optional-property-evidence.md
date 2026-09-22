@@ -261,7 +261,7 @@ impl codec.Decode for Endpoint { ... };
 ```telora
 impl(T: Property(CodecProp) + ?Property(JsonExtension)) Encode for T {
     encode: fn(value) {
-        match property.optional@[JsonExtension]() {
+        match property.optional@[JsonExtension, T]() {
             Some(extension) => ...,
             None => ...,
         }
@@ -292,11 +292,12 @@ T: ?Property(P)
 目标接口在概念上类似：
 
 ```telora
-property.required@[P]() -> P
-property.optional@[P]() -> Option(P)
+property.required@[P, T]() -> P
+property.optional@[P, T]() -> Option(P)
 ```
 
-owner T 来自当前 bound environment，而不是值参数。MIR 将调用直接绑定到 required
+P 与 owner T 都是静态类型实参；它们不作为普通 `Type` 值传入。显式写出 T 可以处理同一函数
+同时拥有多个 Property-bound 类型参数的情况。MIR 将调用直接绑定到 required
 PropertyId，或 optional evidence 的 Present/Absent 结果。
 
 这一收口具有两个作用：

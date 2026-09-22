@@ -239,7 +239,12 @@ impl Solver<'_> {
         }
         let raw = self.meta_type(bound)?;
         let ty = &self.mir.types[raw.index()];
-        if ty.constructor != TypeConstructor::PropertyBound || ty.arguments.len() != 1 {
+        let optional = ty.constructor == TypeConstructor::OptionalPropertyBound;
+        if !matches!(
+            ty.constructor,
+            TypeConstructor::PropertyBound | TypeConstructor::OptionalPropertyBound
+        ) || ty.arguments.len() != 1
+        {
             return None;
         }
         let property = ty.arguments[0];
@@ -251,10 +256,18 @@ impl Solver<'_> {
             if self.match_type(fact.owner, subject, &mut substitutions)
                 && self.match_type(fact.property, property, &mut substitutions)
             {
-                return Some(BoundState::Property(index));
+                return Some(if optional {
+                    BoundState::OptionalProperty(index)
+                } else {
+                    BoundState::Property(index)
+                });
             }
         }
-        Some(BoundState::Rejected)
+        Some(if optional {
+            BoundState::OptionalAbsent
+        } else {
+            BoundState::Rejected
+        })
     }
 
     /// Match a declaration skeleton, retaining equality of repeated parameters.

@@ -1,4 +1,4 @@
-import "std/type-property" { get_type_prop, get_field_prop, FieldPropertyCtx };
+import "std/type-property" { get_type_prop, get_field_prop, required, optional, FieldPropertyCtx };
 
 @property(PropertyTarget.Type)
 type Score = struct { value: Int };
@@ -11,13 +11,17 @@ def seed: Int = 20;
 @add(seed)
 @add(22)
 type Measured = struct { amount: Int };
+type Plain = struct { amount: Int };
 
 @property(PropertyTarget.Field)
 type FieldInfo = struct { name: String };
 def field_name: Fn(FieldPropertyCtx, Option(FieldInfo)) -> FieldInfo = fn(ctx: FieldPropertyCtx, previous: Option(FieldInfo)) -> FieldInfo { { name: ctx.name } };
 type Named = struct { @field_name amount: Int };
 
-export def answer: (Int, String) = (
+export def answer: (Int, String, Int, Int, Bool) = (
     match get_type_prop(Measured.type, Score.type) { Some(score) => score.value, None => 0 },
-    match get_field_prop(Named.type, 0, FieldInfo.type) { Some(info) => info.name, None => "missing" }
+    match get_field_prop(Named.type, 0, FieldInfo.type) { Some(info) => info.name, None => "missing" },
+    required@[Score, Measured]().value,
+    match optional@[Score, Measured]() { Some(score) => score.value, None => 0 },
+    match optional@[Score, Plain]() { None => True, Some(_) => False }
 );

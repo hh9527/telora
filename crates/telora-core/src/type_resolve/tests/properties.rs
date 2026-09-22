@@ -766,3 +766,70 @@ fn structural_impl_wins_over_property_blanket() {
     resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
 }
+
+#[test]
+fn optional_property_bounds_close_as_present_or_absent() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type) type Tag = struct {};
+        def tag: Fn(Type, Option(Tag)) -> Tag = fn(owner, previous) { {} };
+        @tag type Item = struct {};
+        def accepts: for(T: ?Property(Tag)) Fn(TypeOf(T)) -> Bool = fn(target) { True };
+        export def present: Bool = accepts(Item.type);
+        export def absent: Bool = accepts(Int.type);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(
+        mir.bound_requirements
+            .iter()
+            .any(|bound| matches!(bound.state, BoundState::OptionalProperty(_)))
+    );
+    assert!(
+        mir.evidence
+            .iter()
+            .any(|evidence| evidence.state == BoundState::OptionalAbsent)
+    );
+}
+
+#[test]
+fn optional_property_requirement_does_not_reject_a_blanket_impl() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type) type Tag = struct {};
+        trait Label { label: Fn(Self) -> String };
+        impl(T: ?Property(Tag)) Label for T { label: fn(value) { "fallback" } };
+        export def answer: String = Label.label(1);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(
+        mir.evidence
+            .iter()
+            .any(|evidence| evidence.state == BoundState::OptionalAbsent)
+    );
+}
+
+#[test]
+fn optional_property_requirement_does_not_specialize_an_impl() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type) type Tag = struct {};
+        trait Label { label: Fn(Self) -> String };
+        impl(T: ?Property(Tag)) Label for T { label: fn(value) { "blanket" } };
+        impl Label for Int { label: fn(value) { "exact" } };
+        export def answer: String = Label.label(1);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("overlapping trait implementations")
+    }));
+}

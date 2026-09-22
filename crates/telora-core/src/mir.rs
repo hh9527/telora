@@ -109,6 +109,7 @@ pub struct GenericInstance {
     pub types: Vec<(HirId, TypeId)>,
     pub references: Vec<(HirId, GenericInstanceId)>,
     pub implementations: Vec<(HirId, GenericInstanceId)>,
+    pub evidence: Vec<(HirId, Vec<usize>)>,
     pub adjustments: Vec<(HirId, TypeId)>,
 }
 
@@ -147,6 +148,13 @@ impl GenericInstance {
             .binary_search_by_key(&node, |(node, _)| *node)
             .ok()
             .map(|index| self.references[index].1)
+    }
+
+    pub fn evidence(&self, node: HirId) -> &[usize] {
+        self.evidence
+            .binary_search_by_key(&node, |(node, _)| *node)
+            .ok()
+            .map_or(&[], |index| self.evidence[index].1.as_slice())
     }
 }
 
@@ -310,6 +318,7 @@ pub enum TypeConstructor {
     FoldControl,
     PropertyTarget,
     PropertyBound,
+    OptionalPropertyBound,
     Unchecked,
     TypeFunction(TypeFunction),
     Nominal(SymbolId),
@@ -447,6 +456,8 @@ pub enum BoundState {
     Pending,
     Assumed(SymbolId),
     Property(usize),
+    OptionalProperty(usize),
+    OptionalAbsent,
     Implementation(SymbolId),
     Ambiguous,
     Unresolved,
@@ -457,7 +468,11 @@ impl BoundState {
     pub fn is_proven(self) -> bool {
         matches!(
             self,
-            Self::Assumed(_) | Self::Property(_) | Self::Implementation(_)
+            Self::Assumed(_)
+                | Self::Property(_)
+                | Self::OptionalProperty(_)
+                | Self::OptionalAbsent
+                | Self::Implementation(_)
         )
     }
 }
@@ -635,6 +650,7 @@ pub enum HirKind {
     Name(String),
     Parameter,
     TypeParameter,
+    OptionalBound,
     ReturnType,
     Decorator {
         configured: bool,

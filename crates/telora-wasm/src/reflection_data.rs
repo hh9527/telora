@@ -25,7 +25,7 @@ fn kind(ty: &T) -> Option<&'static str> {
         T::Enum(_) | T::Bool | T::Option | T::Result | T::FoldControl | T::PropertyTarget => "Enum",
         T::Function => "Func",
         T::Native(_) => "Opaque",
-        T::Parameter(_) | T::PropertyBound => "Bound",
+        T::Parameter(_) | T::PropertyBound | T::OptionalPropertyBound => "Bound",
         T::Dyn => "Dyn",
         T::Nominal(_) | T::Unchecked => "Ref",
         _ => return None,

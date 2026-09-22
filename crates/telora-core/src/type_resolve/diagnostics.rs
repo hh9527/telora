@@ -153,6 +153,9 @@ impl Solver<'_> {
                 format!("TypeOf({})", args.join(", "))
             }
             TypeConstructor::PropertyBound => format!("Property({})", args.join(", ")),
+            TypeConstructor::OptionalPropertyBound => {
+                format!("?Property({})", args.join(", "))
+            }
             TypeConstructor::Nominal(symbol) | TypeConstructor::Parameter(symbol) => {
                 let name = &self.mir.symbols[symbol.index()].name;
                 if args.is_empty() {

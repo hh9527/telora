@@ -147,7 +147,10 @@ impl Solver<'_> {
                     .known(requirement.bound)
                     .and_then(|ty| self.meta_type(ty))
                     .is_some_and(|ty| {
-                        self.mir.types[ty.index()].constructor == TypeConstructor::PropertyBound
+                        matches!(
+                            self.mir.types[ty.index()].constructor,
+                            TypeConstructor::PropertyBound | TypeConstructor::OptionalPropertyBound
+                        )
                     });
                 let message = match state {
                     BoundState::Rejected if property_bound => {
@@ -215,13 +218,23 @@ impl Solver<'_> {
 
     fn property_blanket(&self, implementation: &TraitImplementation) -> bool {
         let ty = &self.mir.types[implementation.trait_type.index()];
+        let required = implementation
+            .requirements
+            .iter()
+            .filter(|(_, bound)| {
+                !self.meta_type(*bound).is_some_and(|raw| {
+                    self.mir.types[raw.index()].constructor
+                        == TypeConstructor::OptionalPropertyBound
+                })
+            })
+            .collect::<Vec<_>>();
         ty.arguments.len() == 1
             && matches!(
                 self.mir.types[ty.arguments[0].index()].constructor,
                 TypeConstructor::Parameter(_)
             )
-            && !implementation.requirements.is_empty()
-            && implementation.requirements.iter().all(|(_, bound)| {
+            && !required.is_empty()
+            && required.into_iter().all(|(_, bound)| {
                 self.meta_type(*bound).is_some_and(|raw| {
                     self.mir.types[raw.index()].constructor == TypeConstructor::PropertyBound
                 })
