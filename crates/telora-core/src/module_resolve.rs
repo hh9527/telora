@@ -172,6 +172,30 @@ pub fn resolve_with_requests_cancellable(
             .cloned()
             .map(|name| (None, name))
             .collect::<Vec<_>>();
+        let static_roots = mir
+            .hir
+            .iter()
+            .filter(|node| node.module == id)
+            .filter_map(|node| match &node.kind {
+                HirKind::StaticPath(path)
+                    if !matches!(
+                        path.first().map(String::as_str),
+                        Some("crate" | "self" | "super")
+                    ) =>
+                {
+                    path.first().cloned()
+                }
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        for root in static_roots {
+            if let Some(target) = names
+                .get(&root)
+                .and_then(|targets| (targets.len() == 1).then_some(targets[0]))
+            {
+                pending.insert(target);
+            }
+        }
         for edge in &mir.hir[body.index()].children {
             if edge.role != Role::Binding {
                 continue;
@@ -399,7 +423,7 @@ mod tests {
 
     #[test]
     fn module_declarations_create_child_namespace_edges_without_path_imports() {
-        let inventory = ["app", "app/query"]
+        let inventory = ["app", "app/query", "dep", "dep/item"]
             .into_iter()
             .map(|name| ModuleSpec {
                 native: None,
@@ -412,14 +436,16 @@ mod tests {
         let mut mir = resolve(inventory, &["app".into()], |_, name| {
             reads.push(name.to_owned());
             Ok(match name {
-                "app" => "mod query; export def base = 42; use query::answer; export { answer };",
+                "app" => "mod query; export def base = 42; use self::query::answer; use dep::item::{answer as dep_answer}; export { answer, dep_answer };",
                 "app/query" => "export def answer = crate::base;",
+                "dep" => "mod item; export { item };",
+                "dep/item" => "export def answer = 7;",
                 _ => unreachable!(),
             }
             .into())
         });
-        assert_eq!(reads, ["app", "app/query"]);
-        assert_eq!(mir.imports.len(), 1);
+        assert_eq!(reads, ["app", "app/query", "dep", "dep/item"]);
+        assert_eq!(mir.imports.len(), 2);
         assert_eq!(mir.imports[0].request, "app/query");
         assert!(matches!(mir.imports[0].target, ModuleTarget::Bound(_)));
         crate::symbol_resolve::resolve(&mut mir);
@@ -429,7 +455,7 @@ mod tests {
             .iter()
             .filter(|node| matches!(node.kind, HirKind::StaticPath(_)))
             .collect();
-        assert_eq!(paths.len(), 2);
+        assert_eq!(paths.len(), 3);
         assert!(paths.iter().all(|node| matches!(
             mir.resolve_slots[node.resolution.unwrap().index()],
             ResolveState::Bound(_)

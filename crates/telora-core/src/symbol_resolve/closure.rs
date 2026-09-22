@@ -234,10 +234,28 @@ impl Pass<'_> {
                 let Some((name, tail)) = rest.split_first() else {
                     return Ok(ResolveState::Unresolved);
                 };
-                let state = self.exported(ModuleId(module as u32), name)?;
+                let module = ModuleId(module as u32);
+                let Some(module_scope) = self.mir.module_scopes[module.index()] else {
+                    return Ok(ResolveState::Unresolved);
+                };
+                let state = self.lookup(module_scope, node, name, false)?;
                 return self.static_path_tail(state, tail);
             }
-            _ => self.lookup(scope, node, first, false)?,
+            _ => {
+                if let Some(module) = self
+                    .mir
+                    .modules
+                    .iter()
+                    .position(|module| module.name == *first)
+                {
+                    let Some((name, tail)) = rest.split_first() else {
+                        return Ok(ResolveState::Unresolved);
+                    };
+                    let state = self.exported(ModuleId(module as u32), name)?;
+                    return self.static_path_tail(state, tail);
+                }
+                self.lookup(scope, node, first, false)?
+            }
         };
         self.static_path_tail(state, rest)
     }
