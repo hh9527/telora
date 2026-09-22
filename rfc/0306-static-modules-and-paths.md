@@ -79,6 +79,15 @@ src/foo/query.telora 中的 mod x;  -> src/foo/query/x.telora
 逻辑身份就是 `crate`。crate manifest 不选择入口文件，也不枚举模块树。package Host 只把
 crate root directory、依赖 crate roots 和源码访问能力交给编译器。
 
+模块也不进入 `telora-lock.json`。lock 只锁定 crate 来源和 crate 依赖闭包；`mod` 或
+`data` 声明的增删不要求刷新 lock。普通编译从每个需要的 crate root 开始，建立 CST 后
+立即提取该模块的挂载声明，再通过 Host 的受控 source accessor 请求确定的子来源。CST
+建立、模块发现和可达图闭合由同一个队列交错推进，每个可达源码只读取、解析一次。
+
+Host 不预扫描目录来构造候选模块 catalog，也不把未挂载文件暴露给编译器。缺失来源在
+对应的 `mod` 或 `data` 声明处诊断；目录中多余的 `.telora` 文件不影响 crate 身份、lock
+或编译结果。
+
 Telora 不因可执行能力引入 `src/main.telora` 或 `src/bin/*.telora` target 规则。一个 crate
 是否可由 `run`、`serve` 或其他命令执行，由 `src/lib.telora` 导出的静态入口契约决定，
 例如导出 `MainService`；文件名不表达运行时入口。
