@@ -5,19 +5,6 @@
       "source": {
         "workspace": ""
       },
-      "modules": [
-        "@src/bad-alias",
-        "@src/bad-field",
-        "@src/batch",
-        "@src/decorated",
-        "@src/empty",
-        "@src/fields",
-        "@src/local",
-        "@src/local-late",
-        "@src/main",
-        "@src/reversed",
-        "@src/text"
-      ],
       "dependencies": []
     }
   }

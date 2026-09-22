@@ -83,23 +83,28 @@ fn query_modules_lists_the_crate_view_as_stable_jsonl() {
     fs::write(dependency.join("src/_hidden.telora"), "0").unwrap();
     fs::write(dependency.join("src/bin/tool.telora"), "0").unwrap();
     fs::write(
+        dependency.join("src/lib.telora"),
+        "mod public; export { public };",
+    )
+    .unwrap();
+    fs::write(
         cwd.join("telora-config.json"),
         r#"{"version":1,"members":[".","dependency"]}"#,
     )
     .unwrap();
     fs::write(
         cwd.join("telora-crate.json"),
-        r#"{"name":"app","modules":["@src/_local","@src/lib","@src/local-native"],"dependencies":["dep"]}"#,
+        r#"{"name":"app","dependencies":["dep"]}"#,
     )
     .unwrap();
     fs::write(
         dependency.join("telora-crate.json"),
-        r#"{"name":"dep","modules":["@src/_hidden","@src/public"],"dependencies":[]}"#,
+        r#"{"name":"dep","dependencies":[]}"#,
     )
     .unwrap();
     fs::write(
         cwd.join("telora-lock.json"),
-        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"modules":["@src/_local","@src/lib","@src/local-native"],"dependencies":["dep"]},"dep":{"source":{"workspace":"dependency"},"modules":["@src/_hidden","@src/public"],"dependencies":[]}}}"#,
+        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"dependencies":["dep"]},"dep":{"source":{"workspace":"dependency"},"dependencies":[]}}}"#,
     )
     .unwrap();
 
@@ -115,9 +120,8 @@ fn query_modules_lists_the_crate_view_as_stable_jsonl() {
         .map(|record| record["module"].as_str().unwrap())
         .collect::<Vec<_>>();
     assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
-    assert!(names.contains(&"app/_local"));
-    assert!(names.contains(&"app/local-native"));
-    assert!(names.contains(&"dep/public"));
+    assert!(names.contains(&"app"));
+    assert!(names.contains(&"dep"));
     assert!(!names.contains(&"dep/_hidden"));
     assert!(!names.contains(&"dep/bin/tool"));
     assert!(records.iter().all(|record| {
@@ -125,12 +129,12 @@ fn query_modules_lists_the_crate_view_as_stable_jsonl() {
             && record["record"] == "module"
             && record["format"] == "telora"
     }));
-    let private = records
+    let root = records
         .iter()
-        .find(|record| record["module"] == "app/_local")
+        .find(|record| record["module"] == "app")
         .unwrap();
-    assert_eq!(private["origin"], "crate");
-    assert_eq!(private["visibility"], "private");
+    assert_eq!(root["origin"], "crate");
+    assert_eq!(root["visibility"], "public");
 
     assert!(
         !telora(&cwd)
@@ -158,18 +162,23 @@ fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
     )
     .unwrap();
     fs::write(
+        dependency.join("src/lib.telora"),
+        "export type Root = struct {};",
+    )
+    .unwrap();
+    fs::write(
         cwd.join("telora-crate.json"),
-        r#"{"name":"app","modules":[],"dependencies":["query-builder"]}"#,
+        r#"{"name":"app","dependencies":["query-builder"]}"#,
     )
     .unwrap();
     fs::write(
         dependency.join("telora-crate.json"),
-        r#"{"name":"query-builder","modules":["@src/query-builder"],"dependencies":[]}"#,
+        r#"{"name":"query-builder","dependencies":[]}"#,
     )
     .unwrap();
     fs::write(
         cwd.join("telora-lock.json"),
-        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"modules":[],"dependencies":["query-builder"]},"query-builder":{"source":{"workspace":"query-builder"},"modules":["@src/query-builder"],"dependencies":[]}}}"#,
+        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"dependencies":["query-builder"]},"query-builder":{"source":{"workspace":"query-builder"},"dependencies":[]}}}"#,
     )
     .unwrap();
 
@@ -227,9 +236,9 @@ fn named_queries_emit_stable_jsonl() {
     let records = jsonl(&show.stdout);
     assert_eq!(records.len(), 2);
     assert!(
-        records.iter().all(
-            |record| record["schema"] == "telora.query/v1" && record["module"] == "fixture/lib"
-        )
+        records
+            .iter()
+            .all(|record| record["schema"] == "telora.query/v1" && record["module"] == "fixture")
     );
     assert_eq!(records[0]["name"], "Name");
     assert_eq!(records[1]["name"], "make");

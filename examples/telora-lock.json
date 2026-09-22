@@ -5,9 +5,6 @@
       "source": {
         "workspace": "app"
       },
-      "modules": [
-        "@src/main"
-      ],
       "dependencies": [
         "domain-method"
       ]
@@ -16,9 +13,6 @@
       "source": {
         "workspace": "domain-method"
       },
-      "modules": [
-        "@src/method"
-      ],
       "dependencies": []
     }
   }

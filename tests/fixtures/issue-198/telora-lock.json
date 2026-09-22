@@ -5,11 +5,6 @@
       "source": {
         "workspace": ""
       },
-      "modules": [
-        "@src/boundary",
-        "@src/capture-control",
-        "@src/enum-payload"
-      ],
       "dependencies": []
     }
   }

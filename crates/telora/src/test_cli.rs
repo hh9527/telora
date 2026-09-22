@@ -78,7 +78,7 @@ pub(crate) fn run(context: PathBuf, name: &str) -> Result<i32, String> {
     if !inventory.entries.contains_key(&root) {
         return Err(format!("unknown test module {root:?}"));
     }
-    let warnings = inventory.undeclared_warnings()?;
+    let warnings = vec![];
     let mut mir = inventory.solve(&root);
     let compiled = mir.seal().and_then(|sealed| {
         let telora_core::mir::ModuleTarget::Bound(module) = mir.roots[0] else {

@@ -58,7 +58,7 @@ fn check_discovers_the_fixed_lib_root_module_tree() {
     .unwrap();
     fs::write(
         cwd.join("telora-lock.json"),
-        r#"{"version":1,"packages":{"fixture":{"source":{"workspace":""},"modules":["@src/config.json","@src/lib","@src/query"],"dependencies":[]}}}"#,
+        r#"{"version":1,"packages":{"fixture":{"source":{"workspace":""},"dependencies":[]}}}"#,
     )
     .unwrap();
     fs::write(

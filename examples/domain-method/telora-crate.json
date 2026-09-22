@@ -1,5 +1,4 @@
 {
   "name": "domain-method",
-  "modules": ["@src/method"],
   "dependencies": []
 }

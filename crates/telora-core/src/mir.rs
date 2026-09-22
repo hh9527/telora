@@ -45,6 +45,12 @@ id!(
 id!(ScopeId);
 id!(TypeSchemeId, SchemeNodeId);
 
+impl ModuleId {
+    pub fn from_index(index: usize) -> Self {
+        Self(index.try_into().expect("module index exceeds u32"))
+    }
+}
+
 /// A normalized quantified type. Scheme identity describes a type contract,
 /// not the runtime identity of a function implementing that contract.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]

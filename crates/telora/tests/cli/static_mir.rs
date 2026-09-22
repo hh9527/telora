@@ -5,15 +5,25 @@ fn batch_type_diagnostics_identify_the_producing_module() {
     let cwd = fixture();
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/language/src/check/diag-shared-contract");
-    let destination = cwd.join("src/check/diag-shared-contract");
+    let destination = cwd.join("src/check/diag_shared_contract");
     fs::create_dir_all(&destination).unwrap();
     for name in ["shared", "good", "bad", "testee"] {
-        fs::copy(
-            source.join(format!("{name}.telora")),
-            destination.join(format!("{name}.telora")),
-        )
-        .unwrap();
+        let text = fs::read_to_string(source.join(format!("{name}.telora")))
+            .unwrap()
+            .replace("diag-shared-contract", "diag_shared_contract");
+        fs::write(destination.join(format!("{name}.telora")), text).unwrap();
     }
+    fs::write(cwd.join("src/lib.telora"), "mod check; export { check };").unwrap();
+    fs::write(
+        cwd.join("src/check.telora"),
+        "mod diag_shared_contract; export { diag_shared_contract };",
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/check/diag_shared_contract.telora"),
+        "mod shared; mod good; mod bad; mod testee; export { shared, good, bad, testee };",
+    )
+    .unwrap();
     let output = telora(&cwd)
         .args(["check", "--lib", "--only-types"])
         .output()
@@ -29,7 +39,7 @@ fn batch_type_diagnostics_identify_the_producing_module() {
     for diagnostic in diagnostics {
         assert_eq!(
             diagnostic["module"],
-            "fixture/check/diag-shared-contract/bad"
+            "fixture/check/diag_shared_contract/bad"
         );
         assert_eq!(diagnostic["session"], "--lib");
     }
@@ -46,6 +56,7 @@ fn check_batch_roots_share_a_graph_and_obey_phase_boundaries() {
         "export def unused: Int = 1 / 0;",
     )
     .unwrap();
+    fs::write(cwd.join("src/lib.telora"), "mod main; export { main };").unwrap();
     fs::write(
         cwd.join("tests/nested/helper.telora"),
         "export def answer: Int = 42;",
@@ -57,9 +68,9 @@ fn check_batch_roots_share_a_graph_and_obey_phase_boundaries() {
     )
     .unwrap();
     for (flags, count, initializes) in [
-        (vec!["--lib"], 2, false),
+        (vec!["--lib"], 2, true),
         (vec!["--tests"], 2, true),
-        (vec!["--lib", "--tests"], 4, false),
+        (vec!["--lib", "--tests"], 4, true),
     ] {
         for types_only in [true, false] {
             let mut command = telora(&cwd);
@@ -84,7 +95,11 @@ fn check_batch_roots_share_a_graph_and_obey_phase_boundaries() {
                 .filter(|r| r["record"] == "summary")
                 .collect::<Vec<_>>();
             assert_eq!(summaries.len(), 1);
-            assert_eq!(summaries[0]["roots"].as_array().unwrap().len(), count);
+            assert_eq!(
+                summaries[0]["roots"].as_array().unwrap().len(),
+                count,
+                "{flags:?}"
+            );
             if types_only {
                 assert_eq!(summaries[0]["execution_seconds"], 0.0);
             }
@@ -148,7 +163,14 @@ fn check_empty_batch_is_successful() {
                     .unwrap(),
             )
             .unwrap();
-            assert_eq!(summary["roots"], serde_json::json!([]));
+            assert_eq!(
+                summary["roots"],
+                if flag == "--lib" {
+                    serde_json::json!(["fixture"])
+                } else {
+                    serde_json::json!([])
+                }
+            );
         }
     }
     fs::remove_dir_all(cwd).unwrap();

@@ -1,0 +1,3 @@
+mod entry;
+data input = import(json) "input.json";
+export { entry, input };

@@ -5,9 +5,6 @@
       "source": {
         "workspace": ""
       },
-      "modules": [
-        "@src/main"
-      ],
       "dependencies": []
     }
   }
