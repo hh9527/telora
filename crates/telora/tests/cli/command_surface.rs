@@ -58,11 +58,16 @@ fn check_discovers_the_fixed_lib_root_module_tree() {
     .unwrap();
     fs::write(
         cwd.join("telora-lock.json"),
-        r#"{"version":1,"packages":{"fixture":{"source":{"workspace":""},"modules":["@src/lib","@src/query"],"dependencies":[]}}}"#,
+        r#"{"version":1,"packages":{"fixture":{"source":{"workspace":""},"modules":["@src/config.json","@src/lib","@src/query"],"dependencies":[]}}}"#,
     )
     .unwrap();
-    fs::write(cwd.join("src/lib.telora"), "mod query; export { query };").unwrap();
+    fs::write(
+        cwd.join("src/lib.telora"),
+        "mod query; data config = import \"config.json\"; export { query, config };",
+    )
+    .unwrap();
     fs::write(cwd.join("src/query.telora"), "export def answer: Int = 42;").unwrap();
+    fs::write(cwd.join("src/config.json"), r#"{"enabled":true}"#).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_telora"))
         .current_dir(&cwd)
@@ -73,6 +78,38 @@ fn check_discovers_the_fixed_lib_root_module_tree() {
         output.status.success(),
         "status={:?}\nstdout={}\nstderr={}",
         output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_telora"))
+        .current_dir(&cwd)
+        .args(["check", "@src/lib"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    fs::write(
+        cwd.join("src/lib.telora"),
+        "mod query; data config: Value = import \"config.json\"; export { query, config };",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_telora"))
+        .current_dir(&cwd)
+        .args(["check", "@src/lib", "--only-types"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("typed data declarations are unsupported yet"),
+        "stdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );

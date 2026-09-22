@@ -18,6 +18,7 @@ impl Lower<'_> {
             Some(Rule::ImportBinding) => self.imports(node),
             Some(Rule::ModuleDeclaration) => self.module_declaration(node),
             Some(Rule::UseBinding) => self.use_binding(node),
+            Some(Rule::DataBinding) => self.data_binding(node),
             Some(Rule::ExportStatement) if top => self.exports(node),
             Some(Rule::ExportStatement) => Err(self.error(
                 node,
@@ -97,6 +98,30 @@ impl Lower<'_> {
         };
         let imported = self.text(local).into_owned();
         Ok(vec![make(node, local, imported, base)])
+    }
+
+    fn data_binding(&self, node: NodeRef) -> Result<Vec<Input>, ()> {
+        if self.child(node, Rule::TypeScheme).is_ok() {
+            return Err(self.error(node, "typed data declarations are unsupported yet"));
+        }
+        let name = self.required_token(node, Token::Identifier)?;
+        let import = self.child(node, Rule::DataImport)?;
+        let source = self.child(import, Rule::StringLiteral)?;
+        let source = self.plain_string(source)?;
+        let module = &self.mir.modules[self.module.index()].name;
+        let request = format!("{module}/{source}");
+        let request = self.synthetic(Role::Value, node, HirKind::String(request), vec![]);
+        let binding = self.synthetic(
+            Role::Binding,
+            node,
+            HirKind::Binding {
+                kind: B::Import,
+                initializer: None,
+                imported: Some("data".into()),
+            },
+            vec![Input::with(Role::Name, name, Mode::Name), request],
+        );
+        Ok(vec![binding])
     }
 
     fn imports(&self, node: NodeRef) -> Result<Vec<Input>, ()> {

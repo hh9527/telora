@@ -810,7 +810,7 @@ fn read_crate(root: &Path) -> Result<ResolvedCrate, PackageError> {
 }
 
 fn discover_declared_modules(root: &Path) -> Result<Vec<ModuleDeclaration>, PackageError> {
-    use crate::syntax::telora::ast::{Binding, Program};
+    use crate::syntax::telora::ast::{AstNode, Binding, Program};
 
     let mut pending = BTreeSet::from(["@src/lib".to_owned()]);
     let mut declarations = BTreeMap::new();
@@ -835,19 +835,83 @@ fn discover_declared_modules(root: &Path) -> Result<Vec<ModuleDeclaration>, Pack
         let parent = (parent != "lib").then_some(parent.as_str());
         if let Some(body) = Program::root(&parsed.syntax).body() {
             for binding in body.bindings() {
-                let Binding::Module(module) = binding else {
-                    continue;
-                };
-                let Some(name) = module.name() else {
-                    continue;
-                };
-                let range = name.range();
-                let name = &text[range.start as usize..range.end as usize];
-                let child = match parent {
-                    Some(parent) => format!("@src/{parent}/{name}"),
-                    None => format!("@src/{name}"),
-                };
-                pending.insert(child);
+                match binding {
+                    Binding::Module(module) => {
+                        let Some(name) = module.name() else {
+                            continue;
+                        };
+                        let range = name.range();
+                        let name = &text[range.start as usize..range.end as usize];
+                        let child = match parent {
+                            Some(parent) => format!("@src/{parent}/{name}"),
+                            None => format!("@src/{name}"),
+                        };
+                        pending.insert(child);
+                    }
+                    Binding::Data(data) => {
+                        let Some(import) = data.import() else {
+                            continue;
+                        };
+                        let Some(source) = import.source() else {
+                            continue;
+                        };
+                        let range = source.syntax().range();
+                        let literal = &text[range.start as usize..range.end as usize];
+                        let source: String = telora_data::json_serde::from_slice(
+                            literal.as_bytes(),
+                        )
+                        .map_err(|_| {
+                            PackageError::new("data import source must be a plain quoted string")
+                        })?;
+                        let mut logical = parent.map(PathBuf::from).unwrap_or_default();
+                        logical.push(&source);
+                        validate_relative_path(&logical, "data import source")?;
+                        let format = if let Some(format) = import.format() {
+                            let range = format.range();
+                            match &text[range.start as usize..range.end as usize] {
+                                "json" => ModuleFormat::Json,
+                                "yaml" => ModuleFormat::Yaml,
+                                "toml" => ModuleFormat::Toml,
+                                _ => unreachable!("grammar restricts data formats"),
+                            }
+                        } else {
+                            ModuleFormat::from_path(&logical).map_err(|error| {
+                                PackageError::new(format!(
+                                    "cannot infer format for data import {source:?}: {error}"
+                                ))
+                            })?
+                        };
+                        let selector =
+                            format!("@src/{}", logical.to_string_lossy().replace('\\', "/"));
+                        let physical_path = fs::canonicalize(root.join("src").join(&logical))
+                            .map_err(|error| {
+                                PackageError::new(format!(
+                                    "cannot resolve data import {source:?}: {error}"
+                                ))
+                            })?;
+                        let canonical_root = fs::canonicalize(root).map_err(|error| {
+                            PackageError::new(format!(
+                                "cannot resolve crate root {}: {error}",
+                                root.display()
+                            ))
+                        })?;
+                        if !physical_path.starts_with(&canonical_root) || !physical_path.is_file() {
+                            return Err(PackageError::new(format!(
+                                "data import {source:?} escapes its crate root"
+                            )));
+                        }
+                        declarations
+                            .entry(selector.clone())
+                            .or_insert(ModuleDeclaration {
+                                selector,
+                                logical_path: logical,
+                                physical_path,
+                                format,
+                                kind: ModuleDeclarationKind::Source,
+                            });
+                    }
+                    _ => {}
+                }
             }
         }
         declarations.insert(selector, declaration);
