@@ -1,0 +1,38 @@
+import "std/codec" as codec;
+import "std/json" as json;
+
+@json.rename_all(json.RenameCase.CamelCase)
+type Item = struct { some_value: Int };
+type Manual = struct { value: Int };
+
+impl codec.Encode for Manual {
+    encode: fn(value) { codec.Value.String("manual") },
+};
+
+impl codec.Decode for Manual {
+    decode: fn(value) {
+        match value {
+            codec.Value.String("manual") => Ok({ value: 7 }.ty!(Manual)),
+            _ => Err(blame!("expected manual", value)),
+        }
+    },
+};
+
+export def answer: Fn() -> Bool = fn() {
+    let input: Item = { some_value: 42 };
+    let encoded: codec.Value = codec.encode_static(input);
+    match codec.decode_static@[Item](encoded) {
+        Ok(output) => {
+            let manual: Manual = { value: 1 };
+            codec.encode_static(manual) == codec.Value.String("manual")
+                && codec.decode_static@[Manual](codec.Value.String("manual"))
+                    == Ok({ value: 7 }.ty!(Manual))
+                && match codec.decode_static@[Manual](codec.Value.Int(1)) {
+                    Err(_) => True,
+                    Ok(_) => False,
+                }
+                && output == input
+        },
+        Err(_) => False,
+    }
+};

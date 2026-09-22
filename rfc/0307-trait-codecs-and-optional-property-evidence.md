@@ -1,6 +1,7 @@
 # RFC 0307：Trait Codec 与可选 Property Evidence
 
 - 状态：草案
+- 跟踪：[#221](https://github.com/hh9527/telora/issues/221)
 - 分支：`feat/rfc-0306-static-modules-paths`
 - 日期：2026-09-22
 - 依赖：RFC 0258、RFC 0259、RFC 0260、RFC 0280、RFC 0303、RFC 0305
@@ -30,7 +31,7 @@ codec.encode(Value.type, user)
 ```
 
 `std/json.decode` 也把 `TypeOf(A)` 作为普通值继续转发。其实现最终已经依赖 Sealed MIR 中
-确定的目标布局、PropertyRecord、FromStr 实例和构造检查，但表面协议仍保留动态类型阶段的
+确定的目标布局、PropertyRecord 和构造检查，但表面协议仍保留动态类型阶段的
 形状。这产生三个问题：
 
 1. 调用者直接把类型物化到值域，行为能力没有通过 trait contract 表达；
@@ -61,6 +62,7 @@ Property 只为选定 impl 提供声明数据。Codec 应采用相同分层。
 - 动态 `decode_type(Type, Value) -> Dyn`；
 - `dyn Decode` 或完整 dyn Trait；
 - JSON/YAML/TOML parser 自身的格式策略；
+- `String <-> T` 转换；该能力属于独立的 `FromStr` / `Display` trait；
 - 允许 optional Property 参与 impl 选择或表达负约束；
 - 立即删除所有 `get_type_prop` 类底层能力；第一阶段允许派生实现继续使用受信任桥接；
 - 立即合并所有历史 Property。迁移允许先通过 optional evidence 消费旧配置。
@@ -117,6 +119,16 @@ YAML text <-> Value <-> T
 TOML text <-> Value <-> T
 ```
 
+这里是两个独立、可单独使用的转换边界，而不是一个同时理解文本格式与目标类型的 codec：
+
+- `json.parse` / `json.stringify`、`yaml.parse`、`toml.parse` 负责 `String <-> Value`；
+- `codec.Decode` / `codec.Encode` 负责 `Value <-> T`；
+- `json.decode@[T]` 等便利接口只能按顺序组合上述两段，不定义额外的转换语义。
+
+因此任意格式 parser 的输出都可以先作为 `Value` 被检查、修改或转交；同一个 `Decode`
+实现也可以复用于 JSON、YAML、TOML 或直接构造的 Value。格式错误由 parser 报告，Value 与
+目标类型的结构失配由 Decode 报告。
+
 因此 `std/json` 的类型化入口变为：
 
 ```telora
@@ -130,6 +142,10 @@ def decode: for(T: codec.Decode) Fn(String) -> Result(T, BlameError) = fn(text) 
 
 JSON 的注释、数字、字符串和深度策略属于 parser，不进入 `CodecProp`。CodecProp 描述的是
 Value 结构映射，例如字段命名和 enum 表示。
+
+这一边界是强制语义。派生 codec 不得因为输入节点是 `Value.String` 就自动调用 FromStr，
+也不得自动调用 Display 产生 `Value.String`。需要字符串 wire shape 的类型必须提供 explicit
+Encode/Decode impl；该 impl 可以像普通代码一样显式复用 FromStr/Display。
 
 ## 共享 CodecProp
 
@@ -190,9 +206,9 @@ CodecProp 容纳普遍参与 `T <-> Value` 结构映射的配置。具有独立�
 或不适合稳定加入共享结构的能力可以继续使用单独 Property，并通过 `?Property(P)` 被派生
 impl 可选消费。
 
-`FromStr`、`Display` 本身仍是行为 trait，不变成 CodecProp 中的 Type 值。若 codec 某个位置
-允许文本桥接，sealed plan 记录已经选择的 trait 实例；可选 Property 只决定是否启用及携带
-声明配置。
+`FromStr`、`Display` 本身仍是独立行为 trait，不变成 CodecProp 字段，也不由派生 codec
+自动调用。现有 `DecodeByParse`、`EncodeByDisplay` 混合了 `String <-> T` 和 `Value <-> T`
+边界，属于待删除的动态阶段遗留，而不是 CodecProp 的候选字段。
 
 ## 派生 impl
 
@@ -387,8 +403,9 @@ ImplementationInstance {
 1. 在 `std/codec` 定义并导出 Encode、Decode；
 2. 为现有 sealed codec planner 提供 compiler-owned derived impl；
 3. 新 API 使用 `codec.encode(value)` 与 `codec.decode@[T](value)`；
-4. `std/json.decode@[T]` 通过 `T: Decode` 调用 codec；
-5. 保持现有 Property 和 runtime plan，验证行为与诊断等价。
+4. 保持各文本模块的 parser 独立返回 Value；
+5. `std/json.decode@[T]` 只组合 `json.parse` 与 `codec.decode@[T]`；
+6. 保持现有 Property 和 runtime plan，验证行为与诊断等价。
 
 ### 阶段二：optional evidence
 
@@ -409,6 +426,8 @@ ImplementationInstance {
 3. 用 optional evidence 兼容尚未合并的扩展 Property；
 4. codegen 只消费一个已封闭 codec 配置视图；
 5. 删除已无消费者的旧 Property 类型和按固定列表查询逻辑。
+6. 将依赖 `DecodeByParse` / `EncodeByDisplay` 的模型迁移为 explicit Encode/Decode impl，随后
+   删除这两个隐式文本桥接 Property。
 
 ### 阶段四：删除旧 API
 
@@ -486,6 +505,7 @@ Trait 化 codec 不要求先解决 Property 值的编译期求值。先建立公
 12. Wasm 中不存在 codec 的全 TypeId/PropertyId 扫描；
 13. 旧 TypeOf codec 入口完成仓库迁移后删除；
 14. language fixtures、codec/regex tests、lab-ontology 和 release 性能基线通过。
+15. 派生 codec 不调用 FromStr/Display；字符串 wire shape 只由 explicit codec impl 提供。
 
 `get_type_prop` 与 bound evidence 的全面连接是后续验收项，不阻塞第一阶段 trait 外壳；但任何
 新增 codec 路径都不得扩大开放 Property 查询面。

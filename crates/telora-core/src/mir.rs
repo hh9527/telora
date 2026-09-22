@@ -468,6 +468,9 @@ pub struct TraitImplementation {
     /// A trait skeleton applied to its target, possibly with rigid parameters.
     pub trait_type: TypeId,
     pub requirements: Vec<(SymbolId, TypeId)>,
+    /// Compiler-owned derivation is the last-resort implementation. Source
+    /// modules cannot declare this flag.
+    pub compiler_fallback: bool,
 }
 
 #[derive(Debug)]

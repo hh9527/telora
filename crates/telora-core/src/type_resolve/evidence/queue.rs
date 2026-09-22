@@ -68,11 +68,12 @@ impl Solver<'_> {
             {
                 candidates
                     .retain(|(implementation, _)| self.concrete_implementation(implementation));
-            } else if candidates
+            } else if let Some(rank) = candidates
                 .iter()
-                .any(|(implementation, _)| !self.property_blanket(implementation))
+                .map(|(implementation, _)| self.fallback_rank(implementation))
+                .max()
             {
-                candidates.retain(|(implementation, _)| !self.property_blanket(implementation));
+                candidates.retain(|(implementation, _)| self.fallback_rank(implementation) == rank);
             }
             if candidates.len() != 1 {
                 self.mir.evidence[index].state = if candidates.is_empty() {

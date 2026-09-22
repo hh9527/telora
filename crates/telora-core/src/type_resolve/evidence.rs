@@ -42,11 +42,12 @@ impl Solver<'_> {
                 symbol: SymbolId(index as u32),
                 trait_type,
                 requirements,
+                compiler_fallback: self.compiler_codec_fallback(SymbolId(index as u32), trait_type),
             });
         }
         for (index, implementation) in self.mir.trait_implementations.iter().enumerate() {
             for other in &self.mir.trait_implementations[..index] {
-                if !self.property_fallback_pair(implementation, other)
+                if self.fallback_rank(implementation) == self.fallback_rank(other)
                     && self.overlapping_patterns(implementation.trait_type, other.trait_type)
                 {
                     let here = self.mir.symbols[implementation.symbol.index()].declarations[0];
@@ -227,12 +228,40 @@ impl Solver<'_> {
             })
     }
 
-    fn property_fallback_pair(
-        &self,
-        left: &TraitImplementation,
-        right: &TraitImplementation,
-    ) -> bool {
-        self.property_blanket(left) != self.property_blanket(right)
+    fn compiler_codec_fallback(&self, symbol: SymbolId, trait_type: TypeId) -> bool {
+        let Some(module) = self.mir.symbols[symbol.index()].module else {
+            return false;
+        };
+        if self.mir.modules[module.index()]
+            .native
+            .as_ref()
+            .map(|native| native.id)
+            != Some(13)
+        {
+            return false;
+        }
+        let ty = &self.mir.types[trait_type.index()];
+        let TypeConstructor::Nominal(trait_symbol) = ty.constructor else {
+            return false;
+        };
+        matches!(
+            self.mir.symbols[trait_symbol.index()].name.as_str(),
+            "Encode" | "Decode"
+        ) && ty.arguments.len() == 1
+            && matches!(
+                self.mir.types[ty.arguments[0].index()].constructor,
+                TypeConstructor::Parameter(_)
+            )
+    }
+
+    fn fallback_rank(&self, implementation: &TraitImplementation) -> u8 {
+        if implementation.compiler_fallback {
+            0
+        } else if self.property_blanket(implementation) {
+            1
+        } else {
+            2
+        }
     }
 
     fn pattern_root(&self, mut ty: TypeId, substitutions: &BTreeMap<SymbolId, TypeId>) -> TypeId {

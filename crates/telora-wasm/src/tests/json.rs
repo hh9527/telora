@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn codec_traits_drive_the_existing_value_plan() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/codec-traits.telora"
+    ))
+    .expect("read test source");
+    let bytes = compile(&source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), true);
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn data_parse_rejection_preserves_original_input_location() {
     let source = &std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

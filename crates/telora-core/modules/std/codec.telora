@@ -15,11 +15,35 @@ def properties: Properties = {
 };
 native decode_with: for(A) Fn(Properties, TypeOf(A), Value) -> Result(A, BlameError);
 native encode_with: for(A) Fn(Properties, TypeOf(Value), A) -> Value;
-def decode: for(A) Fn(TypeOf(A), Value) -> Result(A, BlameError) = fn(target, value) {
-    decode_with(properties, target, value)
+
+trait Encode {
+    encode: Fn(Self) -> Value,
 };
-def encode: for(A) Fn(TypeOf(Value), A) -> Value = fn(target, value) {
-    encode_with(properties, target, value)
+
+trait Decode {
+    decode: Fn(Value) -> Result(Self, BlameError),
+};
+
+impl(A) Encode for A {
+    encode: fn(value) { encode_with(properties, Value.type, value) },
+};
+
+impl(A) Decode for A {
+    decode: fn(value) { decode_with(properties, A.type, value) },
+};
+
+def decode_static: for(A: Decode) Fn(Value) -> Result(A, BlameError) = fn(value) {
+    Decode.decode(value)
+};
+def encode_static: for(A: Encode) Fn(A) -> Value = fn(value) {
+    Encode.encode(value)
+};
+
+def decode: for(A: Decode) Fn(TypeOf(A), Value) -> Result(A, BlameError) = fn(target, value) {
+    Decode.decode(value)
+};
+def encode: for(A: Encode) Fn(TypeOf(Value), A) -> Value = fn(target, value) {
+    Encode.encode(value)
 };
 export {
     Value,
@@ -29,6 +53,10 @@ export {
     JsonUntagged,
     Properties,
     properties,
+    Encode,
+    Decode,
     decode,
     encode,
+    decode_static,
+    encode_static,
 };
