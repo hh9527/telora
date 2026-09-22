@@ -14,7 +14,7 @@ export def answer: Fn() -> (Array(Bool), rt.SourcePoint) = fn() {
     let factory = dyn.pack((Fn(Int) -> Id).type, Id);
     let origin = rt.with_diagnostics(fn(ignored: ()) { fail!("projected", number.0) })(());
     ([number.0 == 42, nested.0.0 == 42, row.0.value == 19,
-      Box("text").0 == "text", encode(Value.type, nested) == Value.Int(42),
+      Box("text").0 == "text", encode(nested) == Value.Int(42),
       match dyn.project_with((Fn(Int) -> Id).type, factory) {
         Some(make) => make(7).0 == 7, None => False,
       }],

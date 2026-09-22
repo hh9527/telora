@@ -75,13 +75,13 @@ export def format_fragments: test.Test = test.should_ok(fn() {
 
 export def codec_roundtrip: test.Test = test.should_ok(fn() {
     expect({
-        let boolean = codec.decode((Bool).type, codec.encode((codec.Value).type, True.ty!(Bool)))
+        let boolean = codec.decode@[(Bool)](codec.encode(True.ty!(Bool)))
             .unwrap!();
-        let none = codec.decode((Option(Int)).type, codec.encode((codec.Value).type, None.ty!(Option(Int))))
+        let none = codec.decode@[(Option(Int))](codec.encode(None.ty!(Option(Int))))
             .unwrap!();
-        let some = codec.decode((Option(Int)).type, codec.encode((codec.Value).type, 3))
+        let some = codec.decode@[(Option(Int))](codec.encode(3))
             .unwrap!();
-        let encoded = codec.encode((codec.Value).type, 4);
+        let encoded = codec.encode(4);
         boolean
             && none == None
             && some == Some(3)

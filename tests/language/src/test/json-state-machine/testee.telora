@@ -11,7 +11,7 @@ type Document = struct {text: String, numbers: Array(Int), empty: Array(Int), fl
 export def shared_host_and_rt: test.Test = test.should_ok(fn() {
     let text = r#"{"text":"a\n\u0041😀\uD83D\uDE00","numbers":[-2,0,3],"empty":[],"flag":true}"#;
     let value = json.parse(text).unwrap!();
-    let decoded = json.decode(Document.type, text).unwrap!();
+    let decoded = json.decode@[Document](text).unwrap!();
     expect(value == data && decoded.text == "a\nA😀😀"
         && decoded.numbers == [-2, 0, 3] && decoded.empty == [] && decoded.flag)
 });
@@ -34,10 +34,10 @@ export def scalars_and_empty_containers: test.Test = test.should_ok(fn() {
     expect(json.parse("null") == Ok(Value.None)
         && json.parse(" true \r\n\t") == Ok(Value.True)
         && json.parse("false") == Ok(Value.False)
-        && json.decode(Int.type, "-9223372036854775808") == Ok(-9223372036854775807 - 1)
-        && json.decode(Int.type, "9223372036854775807") == Ok(9223372036854775807)
-        && json.decode(Float.type, "-12.5e+3") == Ok(-12500.0)
-        && json.decode(String.type, r#""\"\\\/\b\f\n\r\t""#) == Ok("\"\\/\u{8}\u{c}\n\r\t")
+        && json.decode@[Int]("-9223372036854775808") == Ok(-9223372036854775807 - 1)
+        && json.decode@[Int]("9223372036854775807") == Ok(9223372036854775807)
+        && json.decode@[Float]("-12.5e+3") == Ok(-12500.0)
+        && json.decode@[String](r#""\"\\\/\b\f\n\r\t""#) == Ok("\"\\/\u{8}\u{c}\n\r\t")
         && json.parse("[]") == Ok(Value.Array([]))
         && json.parse("{}") == Ok(Value.Object({})))
 });
@@ -54,7 +54,7 @@ export def long_string_crosses_chunks: test.Test = test.should_ok(fn() {
     let h = string.join([g, g], "");
     let i = string.join([h, h], "");
     let value = string.join([i, i], "");
-    expect(json.decode(String.type, string.join(["\"", value, r#"\uD83D\uDE00""#], "")) == Ok(string.join([value, "😀"], "")))
+    expect(json.decode@[String](string.join(["\"", value, r#"\uD83D\uDE00""#], "")) == Ok(string.join([value, "😀"], "")))
 });
 
 export def depth_is_a_diagnostic: test.Test = test.should_fail_with(fn() {

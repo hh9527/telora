@@ -56,10 +56,31 @@ impl Solver<'_> {
                 continue;
             };
             let mut candidates = vec![];
-            for implementation in &self.mir.trait_implementations {
+            let implementations = self.mir.trait_implementations.clone();
+            for implementation in implementations {
                 let mut substitutions = BTreeMap::new();
                 if self.match_type(implementation.trait_type, raw, &mut substitutions) {
-                    candidates.push((implementation.clone(), substitutions));
+                    let requirements = implementation.requirements.clone();
+                    let mut applicable = true;
+                    for (parameter, bound) in &requirements {
+                        let Some(&subject) = substitutions.get(parameter) else {
+                            continue;
+                        };
+                        let bound = self.substitute_resolved(*bound, &substitutions, canonical);
+                        let property = self.meta_type(bound).is_some_and(|raw| {
+                            self.mir.types[raw.index()].constructor
+                                == TypeConstructor::PropertyBound
+                        });
+                        if property
+                            && self.direct_evidence(subject, bound) == Some(BoundState::Rejected)
+                        {
+                            applicable = false;
+                            break;
+                        }
+                    }
+                    if applicable {
+                        candidates.push((implementation, substitutions));
+                    }
                 }
             }
             if candidates

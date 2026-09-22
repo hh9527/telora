@@ -1,20 +1,14 @@
 import "std/value" { Value };
 import "std/codec" as codec;
-import "std/codec" { BlameError, RenameCase, JsonRenameAll as RenameAll, JsonUntagged as Untagged };
+import "std/codec" { BlameError, RenameCase, CodecProp };
 import "std/_codec" {rename_all, untagged};
 
 native parse_raw: Fn(TypeOf(Value), String) -> Result(Value, BlameError);
 native stringify: Fn(Value) -> String;
 native stringify_pretty: Fn(Int) -> Fn(Value) -> String;
-def decode_static: for(A: codec.Decode) Fn(String) -> Result(A, BlameError) = fn(text) {
+def decode: for(A: codec.Decode) Fn(String) -> Result(A, BlameError) = fn(text) {
     match parse(text) {
-        Ok(value) => codec.decode_static@[A](value),
-        Err(error) => Err(error),
-    }
-};
-def decode: for(A: codec.Decode) Fn(TypeOf(A), String) -> Result(A, BlameError) = fn(target, text) {
-    match parse(text) {
-        Ok(value) => codec.decode(target, value),
+        Ok(value) => codec.decode@[A](value),
         Err(error) => Err(error),
     }
 };
@@ -25,12 +19,10 @@ export {
     parse,
     BlameError,
     decode,
-    decode_static,
     stringify,
     stringify_pretty,
-    RenameAll,
     RenameCase,
-    Untagged,
+    CodecProp,
     rename_all,
     untagged,
 };

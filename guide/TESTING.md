@@ -129,8 +129,8 @@ Never。`fail!(message, subjects...)` 仍是受支持的写法，等价于在该
 
 ## 类型约束与 codec 边界分别测试
 
-类型声明 `T` 与元数据 `T.type` 不可混用。codec 接收明确的类型见证，例如
-`codec.decode(T.type, input)`。对于带 `@check` 的类型，要分别验证合法构造、非法
+类型声明 `T` 与元数据 `T.type` 不可混用。codec 通过静态类型参数选择解码目标，例如
+`codec.decode@[T](input)`。对于带 `@check` 的类型，要分别验证合法构造、非法
 构造和解码失败：普通构造拒绝产生执行失败，codec 拒绝返回 `Err(BlameError)`。
 
 下面是完整的 `tests/checked.telora`：
@@ -158,7 +158,7 @@ export def rejects_construction: test.Test = test.should_fail_with(fn() {
 }, "expected positive");
 
 export def rejects_decode: test.Test = test.should_ok(fn() {
-    match codec.decode(Positive.type, Value.Int(0)) {
+    match codec.decode@[Positive](Value.Int(0)) {
         Err(_) => True,
         Ok(value) => fail!("decoder accepted zero", value),
     }
@@ -187,7 +187,7 @@ export def positive_integers: test.Test = test.with_fixtures([
     "fixtures/one.json", "fixtures/two.json",
 ], fn(input) {
     test.should_ok(fn() {
-        let value = codec.decode(Int.type, input).unwrap!();
+        let value = codec.decode@[Int](input).unwrap!();
         if value > 0 { True } else { fail!("expected positive fixture", input) }
     })
 });

@@ -1,4 +1,4 @@
-import "std/codec" {decode, encode, Value};
+import "std/codec" {decode, encode, Decode, Value};
 import "std/string" as string;
 import "std/regex" as regex;
 import "std/fmt" as fmt;
@@ -20,14 +20,14 @@ type Service = struct {name: String, endpoint: Endpoint};
 @untagged
 type Choice = enum {Parsed(Endpoint), Text(String)};
 
-def read: for(T) Fn(TypeOf(T), Value) -> T = fn(target, input) {
-    match decode(target, input) { Ok(value) => value, Err(error) => raise!(error) }
+def read: for(T: Decode) Fn(Value) -> T = fn(input) {
+    match decode@[T](input) { Ok(value) => value, Err(error) => raise!(error) }
 };
 
-export def answer: Value = encode(Value.type, (
-    read(Service.type, Value.String("api@local:42")),
-    read(Choice.type, Value.String("unstructured")),
-    match decode(Choice.type, Value.String("local:42")) { Err(_) => True, Ok(_) => False },
-    match decode(Endpoint.type, Value.String("local:0")) { Err(_) => True, Ok(_) => False },
-    match decode(Endpoint.type, Value.Int(42)) { Err(_) => True, Ok(_) => False },
+export def answer: Value = encode((
+    read@[Service](Value.String("api@local:42")),
+    read@[Choice](Value.String("unstructured")),
+    match decode@[Choice](Value.String("local:42")) { Err(_) => True, Ok(_) => False },
+    match decode@[Endpoint](Value.String("local:0")) { Err(_) => True, Ok(_) => False },
+    match decode@[Endpoint](Value.Int(42)) { Err(_) => True, Ok(_) => False },
 ));

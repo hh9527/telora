@@ -5,6 +5,6 @@ import "std/value" { Value };
 type Record = struct { z_value: Int, a_value: String };
 export def inspect: Fn() -> Value = fn() {
     let record: Record = {z_value: 7, a_value: "text"};
-    codec.encode(Value.type, record)
+    codec.encode(record)
 };
 export def answer: Value = inspect();

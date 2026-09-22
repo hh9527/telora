@@ -26,12 +26,12 @@ export {Endpoint};
 type EndpointOrText = enum {Parsed(Endpoint), Text(String)};
 
 export def untagged_fallback: test.Test = test.should_ok(fn() {
-    expect(match json.decode((EndpointOrText).type, "\"local:0\"") {
+    expect(match json.decode@[(EndpointOrText)]("\"local:0\"") {
         Ok(EndpointOrText.Text(value)) => value == "local:0", _ => False,
     })
 });
 export def untagged_ambiguity: test.Test = test.should_fail_with(fn() {
-    match json.decode((EndpointOrText).type, "\"local:80\"") {
+    match json.decode@[(EndpointOrText)]("\"local:80\"") {
         Ok(value) => value, Err(error) => raise!(error),
     }
 }, "ambiguously matches multiple");
@@ -54,14 +54,14 @@ export def syntax_error: test.Test = test.should_ok(fn() {
     })
 });
 export def codec_rejection_is_a_value: test.Test = test.should_ok(fn() {
-    expect(match json.decode((Endpoint).type, "\"local:0\"") { Ok(_) => False, Err(_) => True })
+    expect(match json.decode@[(Endpoint)]("\"local:0\"") { Ok(_) => False, Err(_) => True })
 });
 export def nested_codec_rejection: test.Test = test.should_fail_with(fn() {
-    match json.decode((Service).type, "\"api@local:0\"") { Ok(value) => value, Err(error) => raise!(error) }
+    match json.decode@[(Service)]("\"api@local:0\"") { Ok(value) => value, Err(error) => raise!(error) }
 }, "positive port required");
 export def codec_roundtrip: test.Test = test.should_ok(fn() {
-    let value = match json.decode((Service).type, "\"api@local:80\"") {
+    let value = match json.decode@[(Service)]("\"api@local:80\"") {
         Ok(value) => value, Err(error) => raise!(error),
     };
-    expect(value.endpoint.port == 80 && codec.encode((codec.Value).type, value) == codec.Value.String("api@local:80"))
+    expect(value.endpoint.port == 80 && codec.encode(value) == codec.Value.String("api@local:80"))
 });

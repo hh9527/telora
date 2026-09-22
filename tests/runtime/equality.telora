@@ -50,7 +50,7 @@ def checks: Fn() -> Value = fn() {
     let metadata: Array(Type) = [Int.type, String.type];
     let tuple_metadata: (Type, Int) = (Int.type, 42);
     let option_metadata: Option(Type) = Some(Int.type);
-    encode(Value.type, [
+    encode([
         option_text(Some(1)) == Some("success"), option_text(None) == None,
         result_text(Ok(1)) == Ok("success"), result_text(Err("failure")) == Err("failure"),
         nested(None) == Some(42),

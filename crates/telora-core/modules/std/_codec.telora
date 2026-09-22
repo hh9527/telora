@@ -1,25 +1,36 @@
 type RenameCase = enum {CamelCase};
 
 @property(PropertyTarget.Type)
-type JsonRenameAll = struct {case: RenameCase};
+type CodecProp = struct {
+    rename_all: Option(RenameCase),
+    untagged: Bool,
+};
 
-@property(PropertyTarget.Type)
-type JsonUntagged = struct {};
+def default_prop: CodecProp = {
+    rename_all: None,
+    untagged: False,
+};
 
-def rename_all: Fn(RenameCase) -> Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(case) {
+def rename_all: Fn(RenameCase) -> Fn(Type, Option(CodecProp)) -> CodecProp = fn(case) {
     fn(target, previous) {
         if case == RenameCase.CamelCase {
-            let property: JsonRenameAll = {case};
-            property
+            let property = match previous {
+                Some(property) => property,
+                None => default_prop,
+            };
+            property <~ {rename_all: Some(case)}
         } else {
             fail!("std/json.rename_all expects RenameCase.CamelCase")
         }
     }
 };
 
-def untagged: Fn(Type, Option(JsonUntagged)) -> JsonUntagged = fn(target, previous) {
-    let property: JsonUntagged = {};
-    property
+def untagged: Fn(Type, Option(CodecProp)) -> CodecProp = fn(target, previous) {
+    let property = match previous {
+        Some(property) => property,
+        None => default_prop,
+    };
+    property <~ {untagged: True}
 };
 
-export {RenameCase, JsonRenameAll, JsonUntagged, rename_all, untagged};
+export {RenameCase, CodecProp, default_prop, rename_all, untagged};

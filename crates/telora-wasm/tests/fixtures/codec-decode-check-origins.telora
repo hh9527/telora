@@ -17,7 +17,7 @@ export def answer: Fn() -> (Array(rt.Diagnostic), Array(rt.Diagnostic), Array(rt
     let count = Value.Int(-7);
     let record = Value.Object({number:Value.Int(-8)});
     let text = Value.String("-9");
-    (capture(fn(value) {match codec.decode(Count.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},count),
-     capture(fn(value) {match codec.decode(Positive.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},record),
-     capture(fn(value) {match codec.decode(Parsed.type,value) {Ok(_) => 0,Err(error) => raise!(error)}},text))
+    (capture(fn(value) {match codec.decode@[Count](value) {Ok(_) => 0,Err(error) => raise!(error)}},count),
+     capture(fn(value) {match codec.decode@[Positive](value) {Ok(_) => 0,Err(error) => raise!(error)}},record),
+     capture(fn(value) {match codec.decode@[Parsed](value) {Ok(_) => 0,Err(error) => raise!(error)}},text))
 };

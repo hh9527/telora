@@ -8,20 +8,15 @@ def broken_display: Fn(Type, Option(DisplayBy)) -> DisplayBy = fn(owner, previou
 };
 @string.decode_by_parse
 @string.encode_by_display
-type Missing = struct { value: Int };
-impl string.FromStr for Missing {
-    from_str: fn(input) { Ok({value: 0}) },
-};
-@string.decode_by_parse
-@string.encode_by_display
 @broken_display
 type Broken = struct { value: Int };
 impl string.FromStr for Broken {
     from_str: fn(input) { Ok({value: 0}) },
 };
-export def answer: Fn() -> (Array(rt.Diagnostic), Array(rt.Diagnostic)) = fn() {
-    let missing: Missing = {value: 1};
+export def answer: Fn() -> Array(rt.Diagnostic) = fn() {
     let broken: Broken = {value: 2};
-    (match rt.with_diagnostics(fn(value: Missing) {codec.encode(Value.type,value)})(missing) {Err(reports) => reports,Ok(_) => fail!("expected missing display")},
-     match rt.with_diagnostics(fn(value: Broken) {codec.encode(Value.type,value)})(broken) {Err(reports) => reports,Ok(_) => fail!("expected display failure")})
+    match rt.with_diagnostics(fn(value: Broken) {codec.encode(value)})(broken) {
+        Err(reports) => reports,
+        Ok(_) => fail!("expected display failure"),
+    }
 };

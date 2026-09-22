@@ -12,7 +12,7 @@ def summary: Fn(Result((Int, Array(rt.Diagnostic)), Array(rt.Diagnostic))) -> (I
         Err(reports) => (-1, array.map(reports, fn(report) { report.message })),
     }
 };
-export def answer: Value = encode(Value.type, (
+export def answer: Value = encode((
     summary(attempt(1)),
     summary(attempt(-1)),
     summary(attempt(2)),

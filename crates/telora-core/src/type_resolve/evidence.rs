@@ -38,11 +38,13 @@ impl Solver<'_> {
                     }
                 }
             }
+            let compiler_fallback =
+                self.compiler_codec_fallback(SymbolId(index as u32), trait_type, &requirements);
             self.mir.trait_implementations.push(TraitImplementation {
                 symbol: SymbolId(index as u32),
                 trait_type,
                 requirements,
-                compiler_fallback: self.compiler_codec_fallback(SymbolId(index as u32), trait_type),
+                compiler_fallback,
             });
         }
         for (index, implementation) in self.mir.trait_implementations.iter().enumerate() {
@@ -234,14 +236,22 @@ impl Solver<'_> {
                 TypeConstructor::Parameter(_)
             )
             && !required.is_empty()
-            && required.into_iter().all(|(_, bound)| {
+            && required.into_iter().any(|(_, bound)| {
                 self.meta_type(*bound).is_some_and(|raw| {
                     self.mir.types[raw.index()].constructor == TypeConstructor::PropertyBound
                 })
             })
     }
 
-    fn compiler_codec_fallback(&self, symbol: SymbolId, trait_type: TypeId) -> bool {
+    fn compiler_codec_fallback(
+        &self,
+        symbol: SymbolId,
+        trait_type: TypeId,
+        requirements: &[(SymbolId, TypeId)],
+    ) -> bool {
+        if !requirements.is_empty() {
+            return false;
+        }
         let Some(module) = self.mir.symbols[symbol.index()].module else {
             return false;
         };

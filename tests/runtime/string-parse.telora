@@ -18,7 +18,7 @@ def read: for(T: string.FromStr) Fn(String) -> T = fn(input) {
     }
 };
 
-export def answer: Value = encode(Value.type, (
+export def answer: Value = encode((
     read@[Int]("42"),
     read@[Float]("-1.5"),
     read@[Option(Int)]("7"),

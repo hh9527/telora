@@ -1,7 +1,7 @@
 import "std/codec" as codec;
 import "std/value" { Value };
 type Link = struct { value: Int, next: Option(Link) };
-export def answer: Fn(Link) -> Value = fn(link: Link) { codec.encode(Value.type, link) };
+export def answer: Fn(Link) -> Value = fn(link: Link) { codec.encode(link) };
 export def sample: Fn() -> Value = fn() {
     let tail: Link = {value: 2, next: None};
     let head: Link = {value: 1, next: Some(tail)};

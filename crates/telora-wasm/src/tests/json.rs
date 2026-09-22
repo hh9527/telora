@@ -75,7 +75,7 @@ fn codec_rename_collision_is_a_captured_evaluation_error() {
 }
 
 #[test]
-fn codec_parse_display_markers_must_be_paired() {
+fn codec_parse_and_display_markers_select_independent_bridges() {
     let bytes = compile(
         &std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -87,12 +87,7 @@ fn codec_parse_display_markers_must_be_paired() {
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
     let result = session.call(&[]).unwrap();
-    for index in 0..2 {
-        assert_eq!(
-            result[index]["message"],
-            "std/string.decode_by_parse and std/string.encode_by_display must be used together"
-        );
-    }
+    assert_eq!(result, serde_json::json!([true, true, true, true]));
     assert!(session.diagnostics().unwrap().is_empty());
 }
 
@@ -306,13 +301,8 @@ fn codec_display_failure_propagates_without_duplicate_diagnostics() {
     let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
     let result = session.call(&[]).unwrap();
-    assert_eq!(result[0].as_array().unwrap().len(), 1);
-    assert_eq!(result[1].as_array().unwrap().len(), 1);
-    assert_eq!(
-        result[0][0]["message"],
-        "text codec requires a DisplayBy property"
-    );
-    assert_eq!(result[1][0]["message"], "display execution failed");
+    assert_eq!(result.as_array().unwrap().len(), 1);
+    assert_eq!(result[0]["message"], "display execution failed");
     assert!(session.diagnostics().unwrap().is_empty());
 }
 

@@ -12,8 +12,7 @@ export def path_lexical: test.Test = test.should_ok(fn() {
 
 export def path_join: test.Test = test.should_ok(fn() {
     match p_path.answer {
-        Value.Object(fields) => equal(fields.joins, codec.encode(Value.type,
-            [".", ".", "a/b", "b", "/root/b", "/", "../b", "目录/文件"])),
+        Value.Object(fields) => equal(fields.joins, codec.encode([".", ".", "a/b", "b", "/root/b", "/", "../b", "目录/文件"])),
         _ => fail!("expected path object")
     }
 });

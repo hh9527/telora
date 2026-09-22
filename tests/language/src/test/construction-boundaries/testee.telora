@@ -41,7 +41,7 @@ export def unconstrained_identity: test.Test = test.should_ok(fn() {
 export def wire_contract: test.Test = test.should_ok(fn() {
     let checked: Box(String) = {value: "hi", count: 2};
     let plain: Plain = {value: "hi", count: 2};
-    expect(codec.encode((codec.Value).type, checked) == codec.encode((codec.Value).type, plain))
+    expect(codec.encode(checked) == codec.encode(plain))
 });
 
 export def imported_generic: test.Test = test.should_ok(fn() {
@@ -66,7 +66,7 @@ export def callback: test.Test = test.should_fail_with(fn() {
     array.map([2, 0], make)
 }, "count below minimum");
 export def codec_generic: test.Test = test.should_fail_with(fn() {
-    match json.decode((Box(String)).type, "{\"value\":\"hi\",\"count\":0}") {
+    match json.decode@[(Box(String))]("{\"value\":\"hi\",\"count\":0}") {
         Ok(value) => value, Err(error) => raise!(error),
     }
 }, "count below minimum");

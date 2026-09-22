@@ -4,7 +4,7 @@ import "std/hash" as hash;
 def empty: Bytes = b"";
 def shared: Bytes = b"long byte literal retained across initialization and entry";
 def checks: Fn() -> Value = fn() {
-    encode(Value.type, [
+    encode([
         empty == b"",
         b"a\nb" == b"a\nb",
         b"文本" == b"文本",

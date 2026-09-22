@@ -43,7 +43,7 @@ export def answer: Fn() -> Value = fn() {
         let ignored = local(Int.type);
         42
     })(0);
-    encode(Value.type, [
+    encode([
         initialized != repeated,
         initialized != other(Int.type),
         repeated(42) == 42 && repeated(7) == 7,

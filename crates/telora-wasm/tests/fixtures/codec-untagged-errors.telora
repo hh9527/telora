@@ -8,8 +8,8 @@ type Ambiguous = enum { First, Second };
 @json.rename_all(json.RenameCase.CamelCase)
 type Both = enum { Empty, Number(Int) };
 export def answer: Fn() -> (rt.Diagnostic, rt.Diagnostic) = fn() {
-    let ambiguous = rt.with_diagnostics(fn(value: Ambiguous) { codec.encode(Value.type,value) })(Ambiguous.First);
-    let both = rt.with_diagnostics(fn(value: Both) { codec.encode(Value.type,value) })(Both.Empty);
+    let ambiguous = rt.with_diagnostics(fn(value: Ambiguous) { codec.encode(value) })(Ambiguous.First);
+    let both = rt.with_diagnostics(fn(value: Both) { codec.encode(value) })(Both.Empty);
     (match ambiguous { Err(reports) => reports[0], Ok(_) => fail!("expected ambiguity") },
      match both { Err(reports) => reports[0], Ok(_) => fail!("expected incompatible properties") })
 };

@@ -23,47 +23,47 @@ export def reflection: test.Test = test.should_ok(fn() {
 });
 
 export def codec_roundtrip: test.Test = test.should_ok(fn() {
-    let id = match json.decode(UserId.type, "7") {
+    let id = match json.decode@[UserId]("7") {
         Ok(value) => value,
         Err(error) => raise!(error),
     };
-    expect(id.0 == 7 && codec.encode((Value).type, id) == Value.Int(7)
+    expect(id.0 == 7 && codec.encode(id) == Value.Int(7)
         && dyn.project_with(OtherId.type, dyn.pack(UserId.type, id)) == None)
 });
 
 export def nested_payload_identity: test.Test = test.should_ok(fn() {
-    let nested = match json.decode(Nested.type, "8") {
+    let nested = match json.decode@[Nested]("8") {
         Ok(value) => value,
         Err(error) => raise!(error),
     };
-    let generic = match json.decode(Box(UserId).type, "9") {
+    let generic = match json.decode@[Box(UserId)]("9") {
         Ok(value) => value,
         Err(error) => raise!(error),
     };
     let nested_id: UserId = nested.0;
     let generic_id: UserId = generic.0;
     expect(nested_id.0 == 8 && generic_id.0 == 9
-        && codec.encode((Value).type, nested) == Value.Int(8)
-        && codec.encode((Value).type, generic) == Value.Int(9))
+        && codec.encode(nested) == Value.Int(8)
+        && codec.encode(generic) == Value.Int(9))
 });
 
 export def recursive_metadata: test.Test = test.should_ok(fn() {
-    let tree = match json.decode(Tree.type, "null") {
+    let tree = match json.decode@[Tree]("null") {
         Ok(value) => value,
         Err(error) => raise!(error),
     };
-    expect(codec.encode((Value).type, tree) == Value.None)
+    expect(codec.encode(tree) == Value.None)
 });
 
 export def decode_failure_input: test.Test = test.should_fail_with(fn() {
-    match json.decode(UserId.type, "\"invalid\"") {
+    match json.decode@[UserId]("\"invalid\"") {
         Ok(_) => 0,
         Err(error) => raise!(error),
     }
 }, "expected Int");
 
 export def dynamic_payload: test.Test = test.should_ok(fn() {
-    let nested = match json.decode(Nested.type, "10") {
+    let nested = match json.decode@[Nested]("10") {
         Ok(value) => value,
         Err(error) => raise!(error),
     };

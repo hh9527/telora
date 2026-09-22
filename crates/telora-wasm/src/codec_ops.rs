@@ -36,9 +36,7 @@ impl Emitter<'_> {
             return Err("Wasm: codec encode signature mismatch".into());
         }
         let input = self.parameter(2);
-        let properties = self.parameter(0);
-        let properties = self.codec_property_context(args[0], properties)?;
-        self.codec_encode_call(args[2], args[3], input, properties)
+        self.codec_encode_call(args[2], args[3], input)
     }
 
     pub(crate) fn codec_encode_scalar(
@@ -47,7 +45,7 @@ impl Emitter<'_> {
         target: TypeId,
         input: u32,
     ) -> Result<u32, String> {
-        self.codec_encode_call(source, target, input, 0)
+        self.codec_encode_call(source, target, input)
     }
 
     fn codec_encode_call(
@@ -55,7 +53,6 @@ impl Emitter<'_> {
         source: TypeId,
         target: TypeId,
         input: u32,
-        properties: u32,
     ) -> Result<u32, String> {
         let key = Key {
             special: Special::Encode(source, target),
@@ -69,7 +66,9 @@ impl Emitter<'_> {
             .ok_or("Wasm: closed encoder was not planned")?;
         let result = self.local(ValType::I32);
         self.extend([
-            I::LocalGet(properties),
+            // Generated codec functions share the two-argument internal ABI.
+            // Encoding needs no context, so its first argument is reserved.
+            I::I32Const(0),
             I::LocalGet(input),
             I::Call(function),
             I::LocalSet(result),

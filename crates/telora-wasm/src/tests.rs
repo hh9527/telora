@@ -537,6 +537,29 @@ fn properties_reduce_and_query_inside_wasm() {
 }
 
 #[test]
+fn sealed_property_evidence_preserves_provider_failures() {
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/property-evidence-failure.telora"
+    ))
+    .expect("read test source");
+
+    for name in ["required_value", "optional_value"] {
+        let bytes = compile_export(source, name).unwrap();
+        let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+        let error = session
+            .initialize()
+            .and_then(|_| session.call(&[]).map(|_| ()))
+            .unwrap_err();
+        assert!(
+            error.contains("property evidence provider failed"),
+            "{error}"
+        );
+        assert!(!error.contains("static evidence"), "{error}");
+    }
+}
+
+#[test]
 fn construction_checks_run_sealed_generic_checkers() {
     let bytes = compile(
         &std::fs::read_to_string(concat!(

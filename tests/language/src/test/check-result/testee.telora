@@ -25,16 +25,16 @@ export def never_tail: test.Test = test.should_fail_with(fn() {
     Aborting(1)
 }, "checker aborted after successful helper");
 export def codec_success: test.Test = test.should_ok(fn() {
-    expect(match json.decode(Range.type, "{\"min\":2,\"max\":9}") {
+    expect(match json.decode@[Range]("{\"min\":2,\"max\":9}") {
         Ok(value) => value.min == 2 && value.max == 9,
         Err(_) => False,
     })
 });
 export def codec_rejection: test.Test = test.should_ok(fn() {
-    expect(match json.decode(Range.type, "{\"min\":-7,\"max\":11}") {
+    expect(match json.decode@[Range]("{\"min\":-7,\"max\":11}") {
         Ok(_) => False, Err(_) => True,
     })
 });
 export def codec_short_circuit: test.Test = test.should_ok(fn() {
-    expect(match json.decode(Stopped.type, "1") { Ok(_) => False, Err(_) => True })
+    expect(match json.decode@[Stopped]("1") { Ok(_) => False, Err(_) => True })
 });

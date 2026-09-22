@@ -8,9 +8,9 @@ export def answer: Fn() -> (Int, Array(Float), String, String, String) = fn() {
     def odd = fn(n) { if n == 0 { 0 } else { even(n - 1) } };
     let rejected_function = rt.with_diagnostics(fn(ignored: ()) {
         let action: Action = {run: fn(value) { value }};
-        encode(Value.type, action)
+        encode(action)
     })(());
-    let rejected_type = rt.with_diagnostics(fn(ignored: ()) { encode(Value.type, Int.type) })(());
+    let rejected_type = rt.with_diagnostics(fn(ignored: ()) { encode(Int.type) })(());
     let remainder_zero = rt.with_diagnostics(fn(ignored: ()) { 1.0 % 0.0 })(());
     (even(20), [5.5 % 2.0, -5.5 % 2.0, 5.5 % -2.0, -5.5 % -2.0, 1.0e300 % 3.0],
      match rejected_function { Err(reports) => reports[0].message, Ok(_) => "missing failure" },

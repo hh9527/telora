@@ -244,7 +244,53 @@ impl<'a> SealedMir<'a> {
         checks: Vec<usize>,
     ) -> Result<SealedExecutable<'a>, Vec<Diagnostic>> {
         let mir = self.mir();
-        let closure = self.execution_closure(&roots)?;
+        let mut roots = roots.into_iter().collect::<BTreeSet<_>>();
+        let closure = loop {
+            let current = roots.iter().copied().collect::<Vec<_>>();
+            let closure = self.execution_closure(&current)?;
+            let mut added = false;
+            for evidence in &mir.evidence {
+                let Some(symbol) = evidence.implementation else {
+                    continue;
+                };
+                let selected = mir.symbols[symbol.index()]
+                    .declarations
+                    .iter()
+                    .any(|&node| {
+                        closure
+                            .nodes()
+                            .binary_search(&ExecutionRoot {
+                                node,
+                                instance: evidence.instance,
+                            })
+                            .is_ok()
+                    });
+                if !selected {
+                    continue;
+                }
+                let mut pending = evidence.dependencies.clone();
+                let mut seen = BTreeSet::new();
+                while let Some(index) = pending.pop() {
+                    if !seen.insert(index) {
+                        continue;
+                    }
+                    let dependency = &mir.evidence[index];
+                    pending.extend(dependency.dependencies.iter().copied());
+                    let Some(symbol) = dependency.implementation else {
+                        continue;
+                    };
+                    for &node in &mir.symbols[symbol.index()].declarations {
+                        added |= roots.insert(ExecutionRoot {
+                            node,
+                            instance: dependency.instance,
+                        });
+                    }
+                }
+            }
+            if !added {
+                break closure;
+            }
+        };
         let mut globals = BTreeSet::new();
         let mut instances = BTreeSet::new();
         for root in closure.nodes() {

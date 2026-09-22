@@ -11,8 +11,8 @@ type FloatItem = struct {count: Float};
 type Choice = enum {First(Item), Second(FloatItem)};
 @json.rename_all(json.RenameCase.CamelCase)
 type Renamed = struct {user_count: Int};
-def fail_decode: for(A) Fn(TypeOf(A), codec.Value) -> A = fn(target, value) {
-    match codec.decode(target, value) {
+def fail_decode: for(A: codec.Decode) Fn(codec.Value) -> A = fn(value) {
+    match codec.decode@[A](value) {
         Ok(value) => value,
         Err(error) => raise!(error),
     }
@@ -23,42 +23,42 @@ def second: Fn(codec.Value) -> codec.Value = fn(value) {
         _ => fail!("expected Array"),
     }
 };
-export def repeated_static: test.Test = test.should_ok(fn() { fail_decode((Int).type, second(data)) });
-export def parsed_function: test.Test = test.should_ok(fn() { fail_decode((Int).type, second(provider.parse_value())) });
-export def parsed_module: test.Test = test.should_ok(fn() { fail_decode((Int).type, second(provider.parsed)) });
+export def repeated_static: test.Test = test.should_ok(fn() { fail_decode@[Int](second(data)) });
+export def parsed_function: test.Test = test.should_ok(fn() { fail_decode@[Int](second(provider.parse_value())) });
+export def parsed_module: test.Test = test.should_ok(fn() { fail_decode@[Int](second(provider.parsed)) });
 export def missing: test.Test = test.should_ok(fn() {
     match data {
-        codec.Value.Array(items) => fail_decode((Item).type, items[2]),
+        codec.Value.Array(items) => fail_decode@[Item](items[2]),
         _ => fail!("expected Array"),
     }
 });
 export def empty: test.Test = test.should_ok(fn() {
-    match json.decode((Item).type, provider.empty) {
+    match json.decode@[(Item)](provider.empty) {
         Ok(value) => value,
         Err(error) => raise!(error),
     }
 });
 export def escaped: test.Test = test.should_ok(fn() {
-    match json.decode((Item).type, provider.escaped) {
+    match json.decode@[(Item)](provider.escaped) {
         Ok(value) => value,
         Err(error) => raise!(error),
     }
 });
 export def unicode: test.Test = test.should_ok(fn() {
     match data {
-        codec.Value.Array(items) => fail_decode((Int).type, items[3]),
+        codec.Value.Array(items) => fail_decode@[Int](items[3]),
         _ => fail!("expected Array"),
     }
 });
 export def untagged: test.Test = test.should_ok(fn() {
     match data {
-        codec.Value.Array(items) => fail_decode((Choice).type, items[4]),
+        codec.Value.Array(items) => fail_decode@[Choice](items[4]),
         _ => fail!("expected Array"),
     }
 });
 export def renamed: test.Test = test.should_ok(fn() {
     match data {
-        codec.Value.Array(items) => fail_decode((Renamed).type, items[5]),
+        codec.Value.Array(items) => fail_decode@[Renamed](items[5]),
         _ => fail!("expected Array"),
     }
 });
@@ -69,7 +69,7 @@ export def flattened: test.Test = test.should_ok(fn() {
         _ => fail!("expected Array"),
     };
     match wrapped {
-        codec.Value.Object(fields) => fail_decode((Item).type, fields.inner),
+        codec.Value.Object(fields) => fail_decode@[Item](fields.inner),
         _ => fail!("expected Object"),
     }
 });
@@ -86,5 +86,5 @@ export def defaulted: test.Test = test.should_ok(fn() {
         },
         _ => fail!("expected Object"),
     };
-    fail_decode((Int).type, count)
+    fail_decode@[Int](count)
 });
