@@ -62,11 +62,7 @@ fn check_discovers_the_fixed_lib_root_module_tree() {
     )
     .unwrap();
     fs::write(cwd.join("src/lib.telora"), "mod query; export { query };").unwrap();
-    fs::write(
-        cwd.join("src/query.telora"),
-        "export def answer: Int = 42;",
-    )
-    .unwrap();
+    fs::write(cwd.join("src/query.telora"), "export def answer: Int = 42;").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_telora"))
         .current_dir(&cwd)

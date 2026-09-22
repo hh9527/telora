@@ -11,7 +11,7 @@ impl Solver<'_> {
     fn non_expansive(&self, mut node: HirId) -> bool {
         loop {
             node = match self.mir.hir[node.index()].kind {
-                HirKind::Closure | HirKind::Variable(_) => return true,
+                HirKind::Closure | HirKind::Variable(_) | HirKind::StaticPath(_) => return true,
                 HirKind::Field => self.child(node, Role::Receiver).unwrap(),
                 HirKind::TypeApply => self.child(node, Role::Callee).unwrap(),
                 _ => return false,

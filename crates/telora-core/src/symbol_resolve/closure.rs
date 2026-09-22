@@ -179,6 +179,10 @@ impl Pass<'_> {
                 let name = name.clone();
                 self.lookup(scope, node, &name, false)?
             }
+            HirKind::StaticPath(path) => {
+                let path = path.clone();
+                self.static_path(scope, node, &path)?
+            }
             HirKind::PatternName(_) => self
                 .resolve_symbol(self.mir.hir_symbols[node.index()].expect("pattern declaration"))?,
             HirKind::Field => {
@@ -201,5 +205,57 @@ impl Pass<'_> {
             }
             _ => unreachable!(),
         })
+    }
+
+    fn static_path(&mut self, scope: ScopeId, node: HirId, path: &[String]) -> Ready<ResolveState> {
+        let Some((first, rest)) = path.split_first() else {
+            return Ok(ResolveState::Unresolved);
+        };
+        let current = self.mir.scopes[scope.index()].module;
+        let state = match first.as_str() {
+            "crate" | "self" | "super" => {
+                let current_name = &self.mir.modules[current.index()].name;
+                let name = match first.as_str() {
+                    "crate" => current_name.split('/').next().unwrap(),
+                    "self" => current_name,
+                    "super" => current_name
+                        .rsplit_once('/')
+                        .map_or("", |(parent, _)| parent),
+                    _ => unreachable!(),
+                };
+                let Some(module) = self
+                    .mir
+                    .modules
+                    .iter()
+                    .position(|module| module.name == name)
+                else {
+                    return Ok(ResolveState::Unresolved);
+                };
+                let Some((name, tail)) = rest.split_first() else {
+                    return Ok(ResolveState::Unresolved);
+                };
+                let state = self.exported(ModuleId(module as u32), name)?;
+                return self.static_path_tail(state, tail);
+            }
+            _ => self.lookup(scope, node, first, false)?,
+        };
+        self.static_path_tail(state, rest)
+    }
+
+    fn static_path_tail(
+        &mut self,
+        mut state: ResolveState,
+        path: &[String],
+    ) -> Ready<ResolveState> {
+        for name in path {
+            let ResolveState::Bound(symbol) = state else {
+                return Ok(state);
+            };
+            let Some(module) = self.namespace(symbol)? else {
+                return Ok(ResolveState::Unresolved);
+            };
+            state = self.exported(module, name)?;
+        }
+        Ok(state)
     }
 }

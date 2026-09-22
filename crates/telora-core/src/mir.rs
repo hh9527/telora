@@ -639,6 +639,7 @@ pub enum HirKind {
     Bytes(Vec<u8>),
     Atom(String),
     Variable(String),
+    StaticPath(Vec<String>),
     InterpolatedString,
     Array,
     Tuple,
@@ -770,7 +771,10 @@ impl Mir {
         );
         let resolution = matches!(
             kind,
-            HirKind::Variable(_) | HirKind::PatternName(_) | HirKind::Field
+            HirKind::Variable(_)
+                | HirKind::StaticPath(_)
+                | HirKind::PatternName(_)
+                | HirKind::Field
         )
         .then(|| {
             let id = ResolveSlotId(

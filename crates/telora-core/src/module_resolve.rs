@@ -412,8 +412,8 @@ mod tests {
         let mut mir = resolve(inventory, &["app".into()], |_, name| {
             reads.push(name.to_owned());
             Ok(match name {
-                "app" => "mod query; export { query };",
-                "app/query" => "export def answer = 42;",
+                "app" => "mod query; export def base = 42; use query::answer; export { answer };",
+                "app/query" => "export def answer = crate::base;",
                 _ => unreachable!(),
             }
             .into())
@@ -424,6 +424,16 @@ mod tests {
         assert!(matches!(mir.imports[0].target, ModuleTarget::Bound(_)));
         crate::symbol_resolve::resolve(&mut mir);
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        let paths: Vec<_> = mir
+            .hir
+            .iter()
+            .filter(|node| matches!(node.kind, HirKind::StaticPath(_)))
+            .collect();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.iter().all(|node| matches!(
+            mir.resolve_slots[node.resolution.unwrap().index()],
+            ResolveState::Bound(_)
+        )));
     }
 
     #[test]
