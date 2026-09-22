@@ -14,7 +14,7 @@ export def answer: Fn() -> Value = fn() {
     let other = dbg!((True, (), b"ab", [1, 2], dict, Some(3), -0.0, dyn.pack(Int.type, number)));
     let observed = rt.with_diagnostics(fn(ignored: ()) { dbg!(number) })(());
     let origin = rt.with_diagnostics(fn(ignored: ()) { fail!("origin", dbg!(original)) })(());
-    encode(Value.type, [number == 42, record == original, function == callback,
+    encode([number == 42, record == original, function == callback,
         match observed { Ok((value, reports)) => value == 42 && reports == [], Err(_) => False },
         match origin { Err(reports) => reports[0].message == "origin", Ok(_) => False }])
 };

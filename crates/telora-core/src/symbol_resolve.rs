@@ -121,6 +121,7 @@ fn resolve_with_scheduler(mir: &mut Mir, scheduler: Scheduler) {
                     HirKind::Variable(name) | HirKind::PatternName(name) | HirKind::Name(name) => {
                         Some(name.as_str())
                     }
+                    HirKind::StaticPath(path) => path.last().map(String::as_str),
                     HirKind::Field => node
                         .children
                         .iter()

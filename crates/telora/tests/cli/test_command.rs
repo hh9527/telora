@@ -340,12 +340,12 @@ fn test_command_uses_member_context_and_declared_dependencies() {
     .unwrap();
     fs::write(
         cwd.join("member/telora-crate.json"),
-        r#"{"name":"app","modules":["@src/lib"],"dependencies":["dep"]}"#,
+        r#"{"name":"app","dependencies":["dep"]}"#,
     )
     .unwrap();
     fs::write(
         cwd.join("dep/telora-crate.json"),
-        r#"{"name":"dep","modules":["@src/lib"],"dependencies":[]}"#,
+        r#"{"name":"dep","dependencies":[]}"#,
     )
     .unwrap();
     fs::write(

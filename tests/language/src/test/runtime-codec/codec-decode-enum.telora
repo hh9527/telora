@@ -14,22 +14,22 @@ type Checked = enum {@check(fn(value) {if value > 0 {Ok(())} else {Err(blame!("p
 @json.untagged
 type Units = enum {First, Second};
 export def inspect: Fn() -> Array(Bool) = fn() {
-    [codec.decode(Choice.type,Value.String("Empty")) == Ok(Choice.Empty),
-     codec.decode(Choice.type,Value.Object({Number:Value.Int(7)})) == Ok(Choice.Number(7)),
-     codec.decode(Choice.type,Value.Object({Child:Value.Object({Number:Value.Int(7)})})) == Ok(Choice.Child(Choice.Number(7))),
-     match codec.decode(Choice.type,Value.String("Number")) {Err(_) => True,Ok(_) => False},
-     match codec.decode(Choice.type,Value.Object({Empty:Value.None})) {Err(_) => True,Ok(_) => False},
-     match codec.decode(Choice.type,Value.Object({Number:Value.Int(-1)})) {Err(_) => True,Ok(_) => False},
-     match codec.decode(Choice.type,Value.Object({Number:Value.Int(1),Child:Value.String("Empty")})) {Err(_) => True,Ok(_) => False},
-     codec.decode(Renamed.type,Value.String("emptyValue")) == Ok(Renamed.EmptyValue),
-     codec.decode(Renamed.type,Value.Object({someValue:Value.Int(3)})) == Ok(Renamed.SomeValue(3)),
-     codec.decode(Wire.type,Value.None) == Ok(Wire.Empty),
-     codec.decode(Wire.type,Value.Int(4)) == Ok(Wire.Number(4)),
-     codec.decode(Wire.type,Value.String("x")) == Ok(Wire.Text("x")),
-     match codec.decode(Wire.type,Value.True) {Err(_) => True,Ok(_) => False},
-     match codec.decode(Ambiguous.type,Value.Int(4)) {Err(_) => True,Ok(_) => False},
-     codec.decode(Checked.type,Value.Int(-1)) == Ok(Checked.AnyInt(-1)),
-     match codec.decode(Checked.type,Value.Int(1)) {Err(_) => True,Ok(_) => False},
-     match codec.decode(Units.type,Value.None) {Err(_) => True,Ok(_) => False}]
+    [codec.decode@[Choice](Value.String("Empty")) == Ok(Choice.Empty),
+     codec.decode@[Choice](Value.Object({Number:Value.Int(7)})) == Ok(Choice.Number(7)),
+     codec.decode@[Choice](Value.Object({Child:Value.Object({Number:Value.Int(7)})})) == Ok(Choice.Child(Choice.Number(7))),
+     match codec.decode@[Choice](Value.String("Number")) {Err(_) => True,Ok(_) => False},
+     match codec.decode@[Choice](Value.Object({Empty:Value.None})) {Err(_) => True,Ok(_) => False},
+     match codec.decode@[Choice](Value.Object({Number:Value.Int(-1)})) {Err(_) => True,Ok(_) => False},
+     match codec.decode@[Choice](Value.Object({Number:Value.Int(1),Child:Value.String("Empty")})) {Err(_) => True,Ok(_) => False},
+     codec.decode@[Renamed](Value.String("emptyValue")) == Ok(Renamed.EmptyValue),
+     codec.decode@[Renamed](Value.Object({someValue:Value.Int(3)})) == Ok(Renamed.SomeValue(3)),
+     codec.decode@[Wire](Value.None) == Ok(Wire.Empty),
+     codec.decode@[Wire](Value.Int(4)) == Ok(Wire.Number(4)),
+     codec.decode@[Wire](Value.String("x")) == Ok(Wire.Text("x")),
+     match codec.decode@[Wire](Value.True) {Err(_) => True,Ok(_) => False},
+     match codec.decode@[Ambiguous](Value.Int(4)) {Err(_) => True,Ok(_) => False},
+     codec.decode@[Checked](Value.Int(-1)) == Ok(Checked.AnyInt(-1)),
+     match codec.decode@[Checked](Value.Int(1)) {Err(_) => True,Ok(_) => False},
+     match codec.decode@[Units](Value.None) {Err(_) => True,Ok(_) => False}]
 };
 export def answer: Value = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));

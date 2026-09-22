@@ -1188,8 +1188,8 @@ toml.parse(text)  # Result(Value, codec.BlameError)
 Typed model 与 Value 之间只通过 codec 重建数据图：
 
 ```telora
-let model = codec.decode(Model.type, request).unwrap!();
-let value = codec.encode(Value.type, model);
+let model = codec.decode@[Model](request).unwrap!();
+let value = codec.encode(model);
 ```
 
 `Dyn` 是带 canonical witness 的存在类型，公共数据交换
@@ -1274,7 +1274,7 @@ rule 指向实际 authored intrinsic 调用位置，即使该调用在嵌套函�
 错误保留当前解码 Value，调用方可以继续试探，或显式使用其来源产生诊断：
 
 ```telora
-match codec.decode(User.type, raw) {
+match codec.decode@[User](raw) {
     Ok(user) => user,
     Err(error) => raise!(error),
 }
@@ -1391,11 +1391,10 @@ property provider 和顶层初始化；Program stage 使用显式 Host 输入执
 静态类型标注不在运行期重新检查。编译器始终保留执行所需类型和布局；
 显式使用 T.type 时还会产生可供普通函数读取的元数据值。
 
-`codec.decode(Target.type, value)` 的首个参数是受检查的 `TypeOf(Target)`；
-解码返回 `Result(Target, codec.BlameError)`。编码直接返回 `Value`，失败产生诊断，
-并保留失败值和编码规则的来源位置。
-`codec.encode(Value.type, model)` 的首个参数固定为 canonical `TypeOf(Value)`，并从 model
-在 MIR 中确定的具体类型选择编码实现。Dyn 中的模型需先投影到具体类型。
+`codec.decode@[Target](value)` 由静态类型参数选择 `Decode` 实现，解码返回
+`Result(Target, codec.BlameError)`。`codec.encode(model)` 从 model 在 MIR 中确定的
+具体类型选择 `Encode` 实现并直接返回 `Value`；失败产生诊断，并保留失败值和编码规则的
+来源位置。Dyn 中的模型需先投影到具体类型。
 复杂 concrete family 的定义模块应拥有一次完整实例化，并导出 concrete
 alias 或 typed boundary function：
 
@@ -1403,7 +1402,7 @@ alias 或 typed boundary function：
 type Rejection = RejectionPayload(Entity, Dimension, Intent, Expr, Plan, Sql);
 
 def encode_rejection: Fn(Rejection) -> Value = fn(value) {
-    codec.encode(Value.type, value)
+    codec.encode(value)
 };
 
 export { Rejection, encode_rejection };

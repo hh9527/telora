@@ -1,5 +1,6 @@
 //! Workspace input for the three MIR passes. No legacy module/symbol/type resolver.
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     fs,
     io::Read,
@@ -63,6 +64,7 @@ pub struct Inventory {
     compiler: telora_core::CompilerOptions,
     runtime: telora_core::RuntimeOptions,
     normalize_eol: bool,
+    check_all_crate_modules: bool,
 }
 
 fn private(name: &str) -> bool {
@@ -112,7 +114,7 @@ impl Inventory {
     }
 
     pub fn solve_documents(
-        &self,
+        &mut self,
         roots: &[String],
         overlays: &BTreeMap<String, telora_core::DocumentText>,
         context: &telora_core::QueryContext,
@@ -139,23 +141,6 @@ impl Inventory {
             .collect()
     }
 
-    pub fn undeclared_warnings(&self) -> Result<Vec<String>, String> {
-        let mut warnings = vec![];
-        if let Some(workspace) = &self.workspace {
-            for (crate_name, _) in workspace.crates() {
-                for module in workspace
-                    .undeclared_modules(crate_name)
-                    .map_err(|e| e.to_string())?
-                {
-                    warnings.push(format!(
-                        "crate {:?} contains undeclared module file {}; add {:?} to telora-crate.json modules",
-                        module.crate_name, module.relative_path.display(), module.selector,
-                    ));
-                }
-            }
-        }
-        Ok(warnings)
-    }
     /// Read a catalog data module without depending on an execution linker.
     pub fn read_data_text(
         &self,
@@ -220,10 +205,12 @@ impl Inventory {
                     continue;
                 }
                 for module in w.modules(name).expect("known crate") {
-                    let cname = format!(
-                        "{name}/{}",
-                        module.logical_path.to_string_lossy().replace('\\', "/")
-                    );
+                    let logical = module.logical_path.to_string_lossy().replace('\\', "/");
+                    let cname = if logical == "lib" {
+                        name.to_owned()
+                    } else {
+                        format!("{name}/{logical}")
+                    };
                     entries.insert(
                         cname.clone(),
                         Entry {
@@ -258,6 +245,7 @@ impl Inventory {
             compiler,
             runtime,
             normalize_eol: false,
+            check_all_crate_modules: false,
         })
     }
 
@@ -269,7 +257,11 @@ impl Inventory {
 
     pub fn select(&mut self, selector: &str) -> Result<String, String> {
         let name = if let Some(path) = selector.strip_prefix("@src/") {
-            format!("{}/{path}", self.owner)
+            if path == "lib" && self.workspace.is_some() {
+                self.owner.clone()
+            } else {
+                format!("{}/{path}", self.owner)
+            }
         } else if let Some(path) = selector.strip_prefix("@test/") {
             let root = self
                 .workspace
@@ -302,6 +294,30 @@ impl Inventory {
                     "crate {:?} does not declare dependency {owner:?}",
                     self.owner
                 ));
+            }
+        }
+        if !self.entries.contains_key(&name)
+            && let Some(workspace) = &self.workspace
+        {
+            let target_owner = name
+                .split_once('/')
+                .map_or(name.as_str(), |(owner, _)| owner);
+            if let Ok(Some(declaration)) = workspace.discover_module(target_owner, &name) {
+                self.entries.insert(
+                    name.clone(),
+                    Entry {
+                        visibility: if private(&name) { "private" } else { "public" },
+                        name: name.clone(),
+                        origin: if target_owner == self.owner {
+                            "crate"
+                        } else {
+                            "dependency"
+                        },
+                        format: declaration.format,
+                        source: Source::File(declaration.physical_path),
+                        test: false,
+                    },
+                );
             }
         }
         Ok(name)
@@ -362,65 +378,79 @@ impl Inventory {
         }
         Ok(())
     }
+}
 
-    fn request(&self, importer: &str, request: &str) -> Option<String> {
-        let owner = importer.split_once('/')?.0;
-        let name = if let Some(path) = request.strip_prefix("@src/") {
-            format!("{owner}/{path}")
-        } else if let Some(path) = request.strip_prefix("@test/") {
-            format!("{owner}/tests/{path}")
-        } else if request.starts_with("./") || request.starts_with("../") {
-            let mut parts = importer.split('/').collect::<Vec<_>>();
-            parts.pop();
-            let floor = if self.entries.get(importer).is_some_and(|e| e.test) {
-                2
-            } else {
-                1
-            };
-            for part in request.split('/') {
-                match part {
-                    "." | "" => {}
-                    ".." => {
-                        if parts.len() <= floor {
-                            return None;
-                        }
-                        parts.pop();
-                    }
-                    part => parts.push(part),
-                }
-            }
-            parts.join("/")
+fn request_name(
+    entries: &BTreeMap<String, Entry>,
+    workspace: Option<&ResolvedWorkspace>,
+    importer: &str,
+    request: &str,
+) -> Option<String> {
+    let owner = importer
+        .split_once('/')
+        .map_or(importer, |(owner, _)| owner);
+    let name = if let Some(path) = request.strip_prefix("@src/") {
+        format!("{owner}/{path}")
+    } else if let Some(path) = request.strip_prefix("@test/") {
+        format!("{owner}/tests/{path}")
+    } else if request.starts_with("./") || request.starts_with("../") {
+        let mut parts = importer.split('/').collect::<Vec<_>>();
+        parts.pop();
+        let floor = if entries.get(importer).is_some_and(|e| e.test) {
+            2
         } else {
-            request.to_owned()
+            1
         };
-        // Inventory lookup is authoritative: no file probing or alternate candidates.
-        let entry = self.entries.get(&name)?;
-        let target_owner = name.split_once('/')?.0;
-        if entry.test && !self.entries.get(importer).is_some_and(|e| e.test) {
+        for part in request.split('/') {
+            match part {
+                "." | "" => {}
+                ".." => {
+                    if parts.len() <= floor {
+                        return None;
+                    }
+                    parts.pop();
+                }
+                part => parts.push(part),
+            }
+        }
+        parts.join("/")
+    } else {
+        request.to_owned()
+    };
+    // Inventory lookup is authoritative: no file probing or alternate candidates.
+    let target_owner = name
+        .split_once('/')
+        .map_or(name.as_str(), |(owner, _)| owner);
+    let entry = entries.get(&name);
+    if entry.is_some_and(|entry| entry.test) && !entries.get(importer).is_some_and(|e| e.test) {
+        return None;
+    }
+    if target_owner != owner {
+        if entry.is_some_and(|entry| entry.visibility == "private" || entry.test) {
             return None;
         }
-        if target_owner != owner {
-            if entry.visibility == "private" || entry.test {
-                return None;
-            }
-            if target_owner != "std"
-                && !self
-                    .workspace
-                    .as_ref()
-                    .is_some_and(|w| w.declares_dependency(owner, target_owner))
-            {
-                return None;
-            }
+        if target_owner != "std"
+            && !workspace.is_some_and(|w| w.declares_dependency(owner, target_owner))
+        {
+            return None;
         }
-        Some(name)
     }
+    if entry.is_none()
+        && !workspace.is_some_and(|workspace| workspace.crate_root(target_owner).is_some())
+    {
+        return None;
+    }
+    Some(name)
+}
 
-    pub fn solve(&self, root: &str) -> Mir {
+impl Inventory {
+    pub fn solve(&mut self, root: &str) -> Mir {
         self.solve_with_entry(root, None)
     }
 
     /// Batch roots belong to the current crate; dependencies join through imports.
     pub fn check_roots(&mut self, lib: bool, tests: bool) -> Result<Vec<String>, String> {
+        self.check_all_crate_modules = lib;
         if tests {
             let root = self
                 .workspace
@@ -442,7 +472,7 @@ impl Inventory {
             .collect())
     }
 
-    pub fn solve_roots(&self, roots: &[String]) -> Mir {
+    pub fn solve_roots(&mut self, roots: &[String]) -> Mir {
         self.solve_inputs(roots, None, &BTreeMap::new())
     }
 
@@ -463,12 +493,12 @@ impl Inventory {
         Ok(self.solve_with_entry(name, Some(application)))
     }
 
-    fn solve_with_entry(&self, root: &str, application: Option<&str>) -> Mir {
+    fn solve_with_entry(&mut self, root: &str, application: Option<&str>) -> Mir {
         self.solve_inputs(&[root.to_owned()], application, &BTreeMap::new())
     }
 
     fn solve_inputs(
-        &self,
+        &mut self,
         roots: &[String],
         application: Option<&str>,
         overlays: &BTreeMap<String, telora_core::DocumentText>,
@@ -478,7 +508,7 @@ impl Inventory {
     }
 
     fn solve_inputs_cancellable(
-        &self,
+        &mut self,
         roots: &[String],
         application: Option<&str>,
         overlays: &BTreeMap<String, telora_core::DocumentText>,
@@ -509,14 +539,18 @@ impl Inventory {
                 },
             })
             .collect();
-        let mut mir = module_resolve::resolve_with_requests_cancellable(
+        let workspace = self.workspace.clone();
+        let owner = self.owner.clone();
+        let normalize_eol = self.normalize_eol;
+        let entries = RefCell::new(&mut self.entries);
+        let mut mir = module_resolve::resolve_with_discovery_cancellable(
             specs,
             roots,
             |_, name| {
                 let text = if let Some(text) = overlays.get(name) {
                     Ok(text.to_string())
                 } else {
-                    match &self.entries[name].source {
+                    match &entries.borrow()[name].source {
                         Source::Embedded(text) => Ok((*text).into()),
                         Source::Generated(text) => Ok(text.clone()),
                         Source::File(path) => {
@@ -525,7 +559,7 @@ impl Inventory {
                     }
                 };
                 text.map(|text| {
-                    if self.normalize_eol {
+                    if normalize_eol {
                         normalize_lf(text)
                     } else {
                         text
@@ -537,17 +571,69 @@ impl Inventory {
                 // adapter was inserted. Only its exact import gets this edge;
                 // ordinary application/dependency imports retain normal policy.
                 if owner == "std/_entry/adapter" && application == Some(request) {
-                    self.entries
+                    entries
+                        .borrow()
                         .contains_key(request)
                         .then(|| request.to_owned())
                 } else {
-                    self.request(owner, request)
+                    request_name(&entries.borrow(), workspace.as_deref(), owner, request)
                 }
+            },
+            |_, name| {
+                let target_owner = name.split_once('/').map_or(name, |(owner, _)| owner);
+                let declaration = workspace
+                    .as_ref()?
+                    .discover_module(target_owner, name)
+                    .ok()??;
+                let kind = if declaration.format == ModuleFormat::Telora {
+                    ModuleKind::Source
+                } else {
+                    ModuleKind::Data
+                };
+                entries.borrow_mut().insert(
+                    name.to_owned(),
+                    Entry {
+                        name: name.to_owned(),
+                        origin: if target_owner == owner {
+                            "crate"
+                        } else {
+                            "dependency"
+                        },
+                        visibility: if private(name) { "private" } else { "public" },
+                        format: declaration.format,
+                        source: Source::File(declaration.physical_path),
+                        test: false,
+                    },
+                );
+                Some(ModuleSpec {
+                    native: None,
+                    name: name.to_owned(),
+                    kind,
+                    implicit_imports: vec!["std/prelude".into()],
+                })
             },
             cancelled,
         )?;
+        if self.check_all_crate_modules {
+            mir.roots = mir
+                .modules
+                .iter()
+                .enumerate()
+                .filter(|(_, module)| {
+                    module.name == owner || module.name.starts_with(&format!("{owner}/"))
+                })
+                .filter(|(_, module)| {
+                    !matches!(module.state, telora_core::mir::ModuleState::Unloaded)
+                })
+                .map(|(index, _)| {
+                    telora_core::mir::ModuleTarget::Bound(telora_core::mir::ModuleId::from_index(
+                        index,
+                    ))
+                })
+                .collect();
+        }
         module_resolve::validate_source_modules(&mut mir, |name| {
-            self.entries[name].origin == "builtin"
+            entries.borrow()[name].origin == "builtin"
         });
         if cancelled() {
             return None;

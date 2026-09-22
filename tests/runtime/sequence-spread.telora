@@ -16,7 +16,7 @@ def checks: Fn() -> Value = fn() {
     let empty_spreads: Array(Int) = [...[], ...[]];
     let nominal: (Int, Item, String) = (...(1, {value: 2}), "hi");
     let metadata: (Type, Int) = (...(Int.type,), 42);
-    encode(Value.type, [
+    encode([
         (...base, True, 3) == (1, "text", True, 3),
         (...(), ...base, ...(2,), ...()) == (1, "text", 2),
         (...base) == base, (...base,) == base, (...()) == (),

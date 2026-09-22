@@ -4,6 +4,6 @@ import "std/_rt" as rt;
 export def answer: Fn() -> rt.Diagnostic = fn() {
     let input = Value.String("wrong type");
     match rt.with_diagnostics(fn(value: Value) {
-        match codec.decode(Int.type,value) {Ok(value) => value,Err(error) => raise!(error)}
+        match codec.decode@[Int](value) {Ok(value) => value,Err(error) => raise!(error)}
     })(input) {Err(reports) => reports[0],Ok(_) => fail!("expected mismatch")}
 };

@@ -2,14 +2,20 @@ import "std/codec" as codec;
 import "std/json" as json;
 import "std/value" { Value };
 import "std/_rt" as rt;
+@property(PropertyTarget.Type)
+type Unrelated = struct { rename_all: Bool, untagged: Int };
+def unrelated: Fn(Type, Option(Unrelated)) -> Unrelated = fn(owner, previous) {
+    {rename_all: True, untagged: 1}
+};
 @json.rename_all(json.RenameCase.CamelCase)
 type Collision = struct { a_b: Int, aB: Int };
+@unrelated
 type Plain = struct { a_b: Int, aB: Int };
 export def answer: Fn() -> (rt.Diagnostic, Value) = fn() {
     let bad: Collision = {a_b: 1, aB: 2};
     let plain: Plain = {a_b: 1, aB: 2};
-    let error = match rt.with_diagnostics(fn(value: Collision) { codec.encode(Value.type, value) })(bad) {
+    let error = match rt.with_diagnostics(fn(value: Collision) { codec.encode(value) })(bad) {
         Err(reports) => reports[0], Ok(_) => fail!("expected duplicate name"),
     };
-    (error,codec.encode(Value.type, plain))
+    (error,codec.encode(plain))
 };

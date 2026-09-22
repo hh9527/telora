@@ -1,5 +1,4 @@
 {
   "name": "issue-198",
-  "modules": ["@src/boundary", "@src/enum-payload", "@src/capture-control"],
   "dependencies": []
 }

@@ -233,21 +233,23 @@ impl Solver<'_> {
                 let mut types = vec![];
                 let mut references = vec![];
                 let mut implementations = vec![];
+                let mut evidence_records = vec![];
                 let mut adjustments = vec![];
                 let mut translated = BTreeMap::new();
                 for node in nodes {
+                    let mut node_evidence = vec![];
                     for (position, &template) in requirements[node.index()].iter().enumerate() {
                         let template = &self.mir.evidence[template];
                         let (subject, bound) = (template.subject, template.bound);
                         let subject =
                             self.substitute_resolved(subject, &substitutions, &mut canonical);
                         let bound = self.substitute_resolved(bound, &substitutions, &mut canonical);
-                        let evidence = self.request_evidence(subject, bound);
+                        let evidence_id = self.request_evidence(subject, bound);
                         let origin = Some(self.mir.hir[node.index()].location);
                         if !self.solve_pending_evidence(&mut canonical, origin) {
                             return;
                         }
-                        let evidence = &self.mir.evidence[evidence];
+                        let evidence = &self.mir.evidence[evidence_id];
                         if !evidence.state.is_proven() {
                             if self.mir.generic_instances[next].concrete {
                                 let message = format!(
@@ -271,6 +273,7 @@ impl Solver<'_> {
                             }
                             continue;
                         }
+                        node_evidence.push(evidence_id);
                         if position == 0
                             && matches!(
                                 self.mir.member_selections[node.index()],
@@ -287,6 +290,9 @@ impl Solver<'_> {
                                 implementations.push((node, instance));
                             }
                         }
+                    }
+                    if !node_evidence.is_empty() {
+                        evidence_records.push((node, node_evidence));
                     }
                     if let Some(slot) = self.mir.value_adjustments[node.index()] {
                         if let TypeState::Known(ty) = self.mir.ty_slots[slot.index()] {
@@ -316,6 +322,7 @@ impl Solver<'_> {
                 self.mir.generic_instances[next].types = types;
                 self.mir.generic_instances[next].references = references;
                 self.mir.generic_instances[next].implementations = implementations;
+                self.mir.generic_instances[next].evidence = evidence_records;
                 self.mir.generic_instances[next].adjustments = adjustments;
                 next += 1;
             }
@@ -429,6 +436,7 @@ impl Solver<'_> {
             types: vec![],
             references: vec![],
             implementations: vec![],
+            evidence: vec![],
             adjustments: vec![],
         });
         indices.insert(key, id);

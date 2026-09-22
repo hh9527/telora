@@ -53,7 +53,7 @@ pub fn check(context: PathBuf, args: crate::CheckArgs, schema: &str) -> Result<i
             .as_deref()
             .is_some_and(|s| s.starts_with("std/")),
     )?;
-    let roots = if let Some(selector) = &args.module_id {
+    let mut roots = if let Some(selector) = &args.module_id {
         vec![inventory.select(selector)?]
     } else {
         inventory.check_roots(args.lib, args.tests)?
@@ -68,15 +68,22 @@ pub fn check(context: PathBuf, args: crate::CheckArgs, schema: &str) -> Result<i
         }
         .to_owned()
     };
-    for message in inventory.undeclared_warnings()? {
-        emit(
-            json!({"schema": schema, "module": root, "record": "diagnostic",
-            "severity": "warning", "message": message, "labels": [], "notes": []}),
-        )?;
-    }
     let catalog_seconds = started.elapsed().as_secs_f64();
     let started = Instant::now();
     let mut mir = inventory.solve_roots(&roots);
+    if args.module_id.is_none() {
+        roots = mir
+            .roots
+            .iter()
+            .filter_map(|target| match target {
+                telora_core::mir::ModuleTarget::Bound(id) => {
+                    Some(mir.modules[id.index()].name.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        roots.sort();
+    }
     let unproven_bounds = mir
         .bound_requirements
         .iter()

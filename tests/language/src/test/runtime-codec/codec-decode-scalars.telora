@@ -2,20 +2,20 @@ import "std/codec" as codec;
 import "std/value" { Value };
 import "std/array" as array;
 export def inspect: Fn() -> Array(Bool) = fn() {
-    [codec.decode(Int.type,Value.Int(42)) == Ok(42),
-     codec.decode(Float.type,Value.Float(1.5)) == Ok(1.5),
-     codec.decode(String.type,Value.String("x")) == Ok("x"),
-     codec.decode(Bytes.type,Value.Bytes(b"x")) == Ok(b"x"),
-     codec.decode(Bool.type,Value.True) == Ok(True),
-     codec.decode(Bool.type,Value.False) == Ok(False),
-     match codec.decode(Int.type,Value.Float(1.0)) {Err(_) => True,Ok(_) => False},
-     codec.decode(Option(Int).type,Value.None) == Ok(None),
-     codec.decode(Option(Int).type,Value.Int(3)) == Ok(Some(3)),
-     codec.decode(Option(Never).type,Value.None) == Ok(None),
-     match codec.decode(Option(Int).type,Value.String("x")) {Err(_) => True,Ok(_) => False},
-     codec.decode(Array(Int).type,Value.Array([Value.Int(1),Value.Int(2)])) == Ok([1,2]),
-     codec.decode(Array(Option(Int)).type,Value.Array([Value.None,Value.Int(2)])) == Ok([None,Some(2)]),
-     codec.decode(Dict(Int).type,Value.Object({a:Value.Int(1)})) == Ok({a:1}),
-     match codec.decode(Array(Int).type,Value.Array([Value.String("x")])) {Err(_) => True,Ok(_) => False}]
+    [codec.decode@[Int](Value.Int(42)) == Ok(42),
+     codec.decode@[Float](Value.Float(1.5)) == Ok(1.5),
+     codec.decode@[String](Value.String("x")) == Ok("x"),
+     codec.decode@[Bytes](Value.Bytes(b"x")) == Ok(b"x"),
+     codec.decode@[Bool](Value.True) == Ok(True),
+     codec.decode@[Bool](Value.False) == Ok(False),
+     match codec.decode@[Int](Value.Float(1.0)) {Err(_) => True,Ok(_) => False},
+     codec.decode@[Option(Int)](Value.None) == Ok(None),
+     codec.decode@[Option(Int)](Value.Int(3)) == Ok(Some(3)),
+     codec.decode@[Option(Never)](Value.None) == Ok(None),
+     match codec.decode@[Option(Int)](Value.String("x")) {Err(_) => True,Ok(_) => False},
+     codec.decode@[Array(Int)](Value.Array([Value.Int(1),Value.Int(2)])) == Ok([1,2]),
+     codec.decode@[Array(Option(Int))](Value.Array([Value.None,Value.Int(2)])) == Ok([None,Some(2)]),
+     codec.decode@[Dict(Int)](Value.Object({a:Value.Int(1)})) == Ok({a:1}),
+     match codec.decode@[Array(Int)](Value.Array([Value.String("x")])) {Err(_) => True,Ok(_) => False}]
 };
 export def answer: Value = Value.Array(array.map(inspect(),fn(value) {if value {Value.True} else {Value.False}}));

@@ -45,6 +45,12 @@ id!(
 id!(ScopeId);
 id!(TypeSchemeId, SchemeNodeId);
 
+impl ModuleId {
+    pub fn from_index(index: usize) -> Self {
+        Self(index.try_into().expect("module index exceeds u32"))
+    }
+}
+
 /// A normalized quantified type. Scheme identity describes a type contract,
 /// not the runtime identity of a function implementing that contract.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -103,6 +109,7 @@ pub struct GenericInstance {
     pub types: Vec<(HirId, TypeId)>,
     pub references: Vec<(HirId, GenericInstanceId)>,
     pub implementations: Vec<(HirId, GenericInstanceId)>,
+    pub evidence: Vec<(HirId, Vec<usize>)>,
     pub adjustments: Vec<(HirId, TypeId)>,
 }
 
@@ -141,6 +148,13 @@ impl GenericInstance {
             .binary_search_by_key(&node, |(node, _)| *node)
             .ok()
             .map(|index| self.references[index].1)
+    }
+
+    pub fn evidence(&self, node: HirId) -> &[usize] {
+        self.evidence
+            .binary_search_by_key(&node, |(node, _)| *node)
+            .ok()
+            .map_or(&[], |index| self.evidence[index].1.as_slice())
     }
 }
 
@@ -304,6 +318,7 @@ pub enum TypeConstructor {
     FoldControl,
     PropertyTarget,
     PropertyBound,
+    OptionalPropertyBound,
     Unchecked,
     TypeFunction(TypeFunction),
     Nominal(SymbolId),
@@ -441,6 +456,8 @@ pub enum BoundState {
     Pending,
     Assumed(SymbolId),
     Property(usize),
+    OptionalProperty(usize),
+    OptionalAbsent,
     Implementation(SymbolId),
     Ambiguous,
     Unresolved,
@@ -451,7 +468,11 @@ impl BoundState {
     pub fn is_proven(self) -> bool {
         matches!(
             self,
-            Self::Assumed(_) | Self::Property(_) | Self::Implementation(_)
+            Self::Assumed(_)
+                | Self::Property(_)
+                | Self::OptionalProperty(_)
+                | Self::OptionalAbsent
+                | Self::Implementation(_)
         )
     }
 }
@@ -462,6 +483,9 @@ pub struct TraitImplementation {
     /// A trait skeleton applied to its target, possibly with rigid parameters.
     pub trait_type: TypeId,
     pub requirements: Vec<(SymbolId, TypeId)>,
+    /// Compiler-owned derivation is the last-resort implementation. Source
+    /// modules cannot declare this flag.
+    pub compiler_fallback: bool,
 }
 
 #[derive(Debug)]
@@ -626,6 +650,7 @@ pub enum HirKind {
     Name(String),
     Parameter,
     TypeParameter,
+    OptionalBound,
     ReturnType,
     Decorator {
         configured: bool,
@@ -639,6 +664,7 @@ pub enum HirKind {
     Bytes(Vec<u8>),
     Atom(String),
     Variable(String),
+    StaticPath(Vec<String>),
     InterpolatedString,
     Array,
     Tuple,
@@ -770,7 +796,10 @@ impl Mir {
         );
         let resolution = matches!(
             kind,
-            HirKind::Variable(_) | HirKind::PatternName(_) | HirKind::Field
+            HirKind::Variable(_)
+                | HirKind::StaticPath(_)
+                | HirKind::PatternName(_)
+                | HirKind::Field
         )
         .then(|| {
             let id = ResolveSlotId(

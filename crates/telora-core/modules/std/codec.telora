@@ -1,34 +1,49 @@
-import "std/_codec" {RenameCase, JsonRenameAll, JsonUntagged};
+import "std/_codec" {RenameCase, CodecProp};
 import "std/value" {Value};
 import "std/blame" {BlameError};
-import "std/fmt" { DisplayBy };
+import "std/fmt" { Display };
+import "std/string" {DecodeByParse, EncodeByDisplay, FromStr};
 
-type Properties = struct {
-    display_by: Type,
-    json_rename_all: Type,
-    json_untagged: Type,
+native decode_with: for(A) Fn(TypeOf(CodecProp), TypeOf(A), Value) -> Result(A, BlameError);
+native encode_with: for(A) Fn(TypeOf(CodecProp), TypeOf(Value), A) -> Value;
+
+trait Encode {
+    encode: Fn(Self) -> Value,
 };
-def properties: Properties = {
-    display_by: DisplayBy.type,
-    json_rename_all: JsonRenameAll.type,
-    json_untagged: JsonUntagged.type,
+
+trait Decode {
+    decode: Fn(Value) -> Result(Self, BlameError),
 };
-native decode_with: for(A) Fn(Properties, TypeOf(A), Value) -> Result(A, BlameError);
-native encode_with: for(A) Fn(Properties, TypeOf(Value), A) -> Value;
-def decode: for(A) Fn(TypeOf(A), Value) -> Result(A, BlameError) = fn(target, value) {
-    decode_with(properties, target, value)
+
+impl(A: Property(EncodeByDisplay) + Display) Encode for A {
+    encode: fn(value) { encode_with(CodecProp.type, Value.type, value) },
 };
-def encode: for(A) Fn(TypeOf(Value), A) -> Value = fn(target, value) {
-    encode_with(properties, target, value)
+
+impl(A) Encode for A {
+    encode: fn(value) { encode_with(CodecProp.type, Value.type, value) },
+};
+
+impl(A: Property(DecodeByParse) + FromStr) Decode for A {
+    decode: fn(value) { decode_with(CodecProp.type, A.type, value) },
+};
+
+impl(A) Decode for A {
+    decode: fn(value) { decode_with(CodecProp.type, A.type, value) },
+};
+
+def decode: for(A: Decode) Fn(Value) -> Result(A, BlameError) = fn(value) {
+    Decode.decode(value)
+};
+def encode: for(A: Encode) Fn(A) -> Value = fn(value) {
+    Encode.encode(value)
 };
 export {
     Value,
     BlameError,
     RenameCase,
-    JsonRenameAll,
-    JsonUntagged,
-    Properties,
-    properties,
+    CodecProp,
+    Encode,
+    Decode,
     decode,
     encode,
 };

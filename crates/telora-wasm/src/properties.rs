@@ -176,6 +176,55 @@ impl Emitter<'_> {
         let node = self.key.node;
         let signature = self.ty(node)?;
         let args = &self.mir.types[signature.index()].arguments;
+        if matches!(name, "required" | "optional") {
+            if args.len() != 1 {
+                return Err("Wasm: sealed property evidence ABI signature mismatch".into());
+            }
+            let instance = self
+                .key
+                .instance
+                .ok_or("Wasm: property evidence requires a sealed generic instance")?;
+            let instance = &self.mir.generic_instances[instance.index()];
+            let parameters = &self.mir.symbol_generics[instance.symbol.index()];
+            if parameters.len() != 2 {
+                return Err("Wasm: property evidence requires P and T parameters".into());
+            }
+            let argument = |parameter| {
+                instance
+                    .arguments
+                    .iter()
+                    .find_map(|(candidate, ty)| (*candidate == parameter).then_some(*ty))
+            };
+            let property = argument(parameters[0])
+                .ok_or("Wasm: sealed property evidence has no P argument")?;
+            let owner = argument(parameters[1])
+                .ok_or("Wasm: sealed property evidence has no T argument")?;
+            let output = args[0];
+            let optional = name == "optional";
+            if (!optional && output != property)
+                || (optional
+                    && (self.mir.types[output.index()].constructor != T::Option
+                        || self.mir.types[output.index()].arguments != [property]))
+            {
+                return Err("Wasm: sealed property evidence result differs from P".into());
+            }
+            let selected = self.plan.properties.iter().find_map(|(&index, &key)| {
+                let record = &self.mir.properties[index];
+                (record.owner == owner
+                    && record.property == property
+                    && record.site == PropertySite::Type)
+                    .then_some(key)
+            });
+            return match (optional, selected) {
+                (false, Some(key)) => self.call_key(key),
+                (false, None) => Err("Wasm: required property evidence has no sealed slot".into()),
+                (true, Some(key)) => {
+                    let value = self.call_key(key)?;
+                    self.enum_value(node, output, 1, Some(value))
+                }
+                (true, None) => self.enum_value(node, output, 0, None),
+            };
+        }
         let evidence = name == "evidence";
         let member = matches!(name, "get_field_prop" | "get_variant_prop");
         let property_argument = if member { 2 } else { 1 };

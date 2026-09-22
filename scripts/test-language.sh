@@ -20,6 +20,7 @@ fi
 rm -rf "$build_root"
 mkdir -p "$workspace/src/generated" "$actual_root"
 cp -R "$source_root/src/." "$workspace/src/"
+printf '%s\n' 'export type LanguageTests = struct {};' >"$workspace/src/lib.telora"
 if [[ -d "$workspace/src/test" ]]; then
     mkdir -p "$workspace/tests"
     cp -R "$workspace/src/test/." "$workspace/tests/"
@@ -109,27 +110,12 @@ generated="$workspace/src/generated/check-all.telora"
     echo 'export {MainService};'
 } >"$generated"
 
-mapfile -t module_files < <(
-    find "$workspace/src" -type f \
-        \( -name '*.telora' -o -name '*.json' -o -name '*.toml' -o -name '*.yaml' -o -name '*.yml' \) \
-        | sort
-)
-modules_json=$(
-    for module_file in "${module_files[@]}"; do
-        relative=${module_file#"$workspace/src/"}
-        if [[ $relative == *.telora ]]; then
-            relative=${relative%.telora}
-        fi
-        printf '@src/%s\n' "$relative"
-    done | jaq -Rsc 'split("\n") | map(select(length > 0)) | sort'
-)
-
 printf '%s\n' '{"version":1,"members":["."]}' >"$workspace/telora-config.json"
-jaq -n --argjson modules "$modules_json" \
-    '{name:"language-tests",modules:$modules,dependencies:[]}' \
+jaq -n \
+    '{name:"language-tests",dependencies:[]}' \
     >"$workspace/telora-crate.json"
-jaq -n --argjson modules "$modules_json" \
-    '{version:1,packages:{"language-tests":{source:{workspace:""},modules:$modules,dependencies:[]}}}' \
+jaq -n \
+    '{version:1,packages:{"language-tests":{source:{workspace:""},dependencies:[]}}}' \
     >"$workspace/telora-lock.json"
 
 entries="$actual_root/entries.jsonl"

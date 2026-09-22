@@ -77,5 +77,5 @@ export def codec_builtins: test.Test = test.should_ok(fn() {
 });
 
 export def codec_enum_all: test.Test = test.should_ok(fn() {
-    equal(codec.encode(Value.type, p_codec_enum.inspect()), expected_codec_enum_all)
+    equal(codec.encode(p_codec_enum.inspect()), expected_codec_enum_all)
 });

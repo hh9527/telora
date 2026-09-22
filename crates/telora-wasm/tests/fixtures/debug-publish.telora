@@ -10,6 +10,6 @@ export def answer: Fn() -> Value = fn() {
     let function = dbg!(callback);
     let dict: Dict(Int) = {b: 2, a: 1};
     let other = dbg!((True, (), b"ab", [1, 2], dict, Some(3), -0.0, dyn.pack(Int.type, number)));
-    encode(Value.type, [number == 42, record == original, function == callback])
+    encode([number == 42, record == original, function == callback])
 };
 export def evaluated: Value = answer();

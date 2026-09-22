@@ -766,3 +766,161 @@ fn structural_impl_wins_over_property_blanket() {
     resolve(&mut mir);
     assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
 }
+
+#[test]
+fn optional_property_bounds_close_as_present_or_absent() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type) type Tag = struct {};
+        def tag: Fn(Type, Option(Tag)) -> Tag = fn(owner, previous) { {} };
+        @tag type Item = struct {};
+        def accepts: for(T: ?Property(Tag)) Fn(TypeOf(T)) -> Bool = fn(target) { True };
+        export def present: Bool = accepts(Item.type);
+        export def absent: Bool = accepts(Int.type);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(
+        mir.bound_requirements
+            .iter()
+            .any(|bound| matches!(bound.state, BoundState::OptionalProperty(_)))
+    );
+    assert!(
+        mir.evidence
+            .iter()
+            .any(|evidence| evidence.state == BoundState::OptionalAbsent)
+    );
+}
+
+#[test]
+fn codec_text_bridge_is_selected_by_property_and_requires_its_trait_capabilities() {
+    let source = r#"
+        import "std/codec" as codec;
+        import "std/string" as string;
+        import "std/fmt" as fmt;
+        import "std/value" {Value};
+        @string.decode_by_parse
+        @string.encode_by_display
+        @fmt.display_by("{value}")
+        type Textual = struct { value: Int };
+        impl string.FromStr for Textual {
+            from_str: fn(input) { Ok({value: 1}.ty!(Textual)) },
+        };
+        @string.decode_by_parse
+        @string.encode_by_display
+        type Explicit = struct { value: Int };
+        impl codec.Decode for Explicit {
+            decode: fn(value) { Ok({value: 3}.ty!(Explicit)) },
+        };
+        impl codec.Encode for Explicit {
+            encode: fn(value) { Value.Int(value.value) },
+        };
+        type Plain = struct { value: Int };
+        export def textual: Value = codec.encode({value: 1}.ty!(Textual));
+        export def plain: Value = codec.encode({value: 2}.ty!(Plain));
+        export def explicit_encoded: Value = codec.encode({value: 3}.ty!(Explicit));
+        export def explicit_decoded: Result(Explicit, codec.BlameError) =
+            codec.decode@[Explicit](Value.Int(3));
+    "#;
+    let mut sources = vec![("@src/main", source)];
+    sources.extend_from_slice(crate::static_sources::BUILTINS);
+    let mut mir = graph(&sources);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+
+    assert!(
+        mir.evidence
+            .iter()
+            .any(|evidence| matches!(evidence.state, BoundState::Property(_)))
+    );
+    assert!(
+        mir.evidence
+            .iter()
+            .any(|evidence| matches!(evidence.state, BoundState::Implementation(_)))
+    );
+
+    let missing = r#"
+        import "std/codec" as codec;
+        import "std/string" as string;
+        import "std/value" {Value};
+        @string.decode_by_parse
+        type Missing = struct { value: Int };
+        export def answer: Result(Missing, codec.BlameError) =
+            codec.decode@[Missing](Value.String("1"));
+    "#;
+    let mut sources = vec![("@src/main", missing)];
+    sources.extend_from_slice(crate::static_sources::BUILTINS);
+    let mut mir = graph(&sources);
+    resolve(&mut mir);
+    assert!(
+        mir.diagnostics.iter().any(|diagnostic| {
+            diagnostic.message.contains("no static evidence")
+                && diagnostic.message.contains("Decode")
+        }),
+        "{}",
+        mir.dump()
+    );
+}
+
+#[test]
+fn optional_property_requirement_does_not_reject_a_blanket_impl() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type) type Tag = struct {};
+        trait Label { label: Fn(Self) -> String };
+        impl(T: ?Property(Tag)) Label for T { label: fn(value) { "fallback" } };
+        export def answer: String = Label.label(1);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    assert!(
+        mir.evidence
+            .iter()
+            .any(|evidence| evidence.state == BoundState::OptionalAbsent)
+    );
+}
+
+#[test]
+fn optional_property_requirement_does_not_specialize_an_impl() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type) type Tag = struct {};
+        trait Label { label: Fn(Self) -> String };
+        impl(T: ?Property(Tag)) Label for T { label: fn(value) { "blanket" } };
+        impl Label for Int { label: fn(value) { "exact" } };
+        export def answer: String = Label.label(1);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("overlapping trait implementations")
+    }));
+}
+
+#[test]
+fn different_optional_property_bounds_do_not_disambiguate_blanket_impls() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        @property(PropertyTarget.Type) type Left = struct {};
+        @property(PropertyTarget.Type) type Right = struct {};
+        trait Label { label: Fn(Self) -> String };
+        impl(T: ?Property(Left)) Label for T { label: fn(value) { "left" } };
+        impl(T: ?Property(Right)) Label for T { label: fn(value) { "right" } };
+        export def answer: String = Label.label(1);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("overlapping trait implementations")
+    }));
+}

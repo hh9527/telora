@@ -14,7 +14,9 @@ impl Lower<'_> {
             }
             Some(Rule::FunctionContract | Rule::UnitContract) => Ok(Shape::Alias(node, Mode::Type)),
             Some(Rule::ContractExpr) => {
-                let path = self.child(node, Rule::ContractPath)?;
+                let path = self
+                    .child(node, Rule::StaticPath)
+                    .or_else(|_| self.child(node, Rule::ContractPath))?;
                 let last = self
                     .cst
                     .children(path)
@@ -47,6 +49,20 @@ impl Lower<'_> {
     }
 
     pub(super) fn path(&self, node: NodeRef, last: NodeRef) -> Result<Shape, ()> {
+        if self.rule(node) == Some(Rule::StaticPath) {
+            return Ok(Shape::Node(
+                HirKind::StaticPath(
+                    self.cst
+                        .children(node)
+                        .filter(|child| {
+                            matches!(self.cst.get(*child), Node::Token(Token::Identifier, _))
+                        })
+                        .map(|name| self.text(name).into_owned())
+                        .collect(),
+                ),
+                vec![],
+            ));
+        }
         let previous = self
             .cst
             .children(node)

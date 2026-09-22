@@ -30,7 +30,7 @@ def checks: Fn() -> Value = fn() {
     let renamed = rename(named);
     let merged: Dict(Int) = {a: 0, ...before, ...after, c: 5};
     let spread_only: Dict(Int) = {...before};
-    encode(Value.type, [
+    encode([
         selected.x == 1, selected.Y == "source",
         pair.first == 1, pair.second == 1, empty == {},
         copied.x == 3, copied.y == "source", copied.extra == source.extra,

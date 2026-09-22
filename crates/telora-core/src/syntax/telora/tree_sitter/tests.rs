@@ -212,6 +212,65 @@ fn trivia_only_module_has_an_empty_body() {
 }
 
 #[test]
+fn static_module_syntax_keeps_declarations_paths_and_data_imports_distinct() {
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/hir-lower/static-modules.telora"
+    ))
+    .unwrap();
+    let mut sources = crate::source::SourceDatabase::default();
+    let source = sources.add("static-modules.telora", &text);
+    let parsed = super::parse(source, &text);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+
+    let root = super::super::ast::SyntaxNode::new(&parsed.syntax, super::super::cst::NodeRef::ROOT);
+    let mut counts = std::collections::BTreeMap::new();
+    for node in root.descendants_and_self() {
+        if let Some(rule) = node.rule() {
+            *counts.entry(format!("{rule:?}")).or_insert(0usize) += 1;
+        }
+    }
+    assert_eq!(counts.get("module_declaration"), Some(&1));
+    assert_eq!(counts.get("use_binding"), Some(&2));
+    assert_eq!(counts.get("use_selector"), Some(&1));
+    assert_eq!(counts.get("data_binding"), Some(&2));
+    assert_eq!(counts.get("data_import"), Some(&2));
+    assert_eq!(counts.get("data_format"), Some(&1));
+    assert_eq!(counts.get("static_path_expr"), Some(&1));
+    assert_eq!(counts.get("static_path"), Some(&3));
+
+    let body = super::super::ast::Program::root(&parsed.syntax)
+        .body()
+        .unwrap();
+    let bindings: Vec<_> = body.bindings().collect();
+    assert!(matches!(bindings[0], super::super::ast::Binding::Module(_)));
+    assert!(matches!(bindings[1], super::super::ast::Binding::Use(_)));
+    assert!(matches!(bindings[2], super::super::ast::Binding::Use(_)));
+    assert!(matches!(bindings[3], super::super::ast::Binding::Data(_)));
+    assert!(matches!(bindings[4], super::super::ast::Binding::Data(_)));
+
+    let super::super::ast::Binding::Module(module) = bindings[0] else {
+        unreachable!()
+    };
+    let name = module.name().unwrap().range();
+    assert_eq!(&text[name.start as usize..name.end as usize], "query");
+
+    let super::super::ast::Binding::Data(config) = bindings[3] else {
+        unreachable!()
+    };
+    assert!(config.annotation().is_some());
+    let import = config.import().unwrap();
+    assert_eq!(import.format().unwrap().kind(), super::Token::Json);
+    assert!(import.source().is_some());
+
+    let super::super::ast::Binding::Data(defaults) = bindings[4] else {
+        unreachable!()
+    };
+    assert!(defaults.annotation().is_none());
+    assert!(defaults.import().unwrap().format().is_none());
+}
+
+#[test]
 fn deep_parse_projection_and_drop_use_a_bounded_native_stack() {
     std::thread::Builder::new()
         .stack_size(1024 * 1024)

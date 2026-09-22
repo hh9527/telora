@@ -8,5 +8,5 @@ type User = struct {
     nickname: Option(String),
 };
 
-def result: Result(User, BlameError) = codec.decode(User.type, data);
+def result: Result(User, BlameError) = codec.decode@[User](data);
 export { result as output };

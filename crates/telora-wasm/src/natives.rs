@@ -51,7 +51,8 @@ impl Emitter<'_> {
             Some((18, "property")) => self.property_factory(),
             Some((
                 25,
-                name @ ("get_type_prop" | "get_field_prop" | "get_variant_prop" | "evidence"),
+                name @ ("get_type_prop" | "get_field_prop" | "get_variant_prop" | "evidence"
+                | "required" | "optional"),
             )) => self.property_query(name),
             other => Err(format!("Wasm: native ABI not implemented: {other:?}")),
         }

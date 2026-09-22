@@ -575,6 +575,15 @@ impl Solver<'_> {
                 let operand = self.child(node, Role::Operand).unwrap();
                 self.same(node, operand.ty());
             }
+            HirKind::OptionalBound => {
+                let operand = self.child(node, Role::Operand).unwrap();
+                let property = self.fresh();
+                let required = self.structure(TypeConstructor::PropertyBound, vec![property]);
+                self.assign(operand, TypeConstructor::Meta, vec![required]);
+                let optional =
+                    self.structure(TypeConstructor::OptionalPropertyBound, vec![property]);
+                self.assign(node, TypeConstructor::Meta, vec![optional]);
+            }
             HirKind::Int(_) => self.assign(node, TypeConstructor::Int, vec![]),
             HirKind::Float(_) => self.assign(node, TypeConstructor::Float, vec![]),
             HirKind::String(_) => self.assign(node, TypeConstructor::String, vec![]),

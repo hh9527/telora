@@ -34,8 +34,8 @@ pub use document::{
 pub use module_format::{ModuleFormat, ModuleFormatError};
 pub use package::{
     CONFIG_FILE, CRATE_FILE, CrateManifest, LOCK_FILE, LockedPackage, LockedSource,
-    ModuleDeclaration, PackageError, RemoteSource, ResolvedWorkspace, UndeclaredModule,
-    WorkspaceConfig, WorkspaceLock, WorkspaceSpec,
+    ModuleDeclaration, PackageError, RemoteSource, ResolvedWorkspace, WorkspaceConfig,
+    WorkspaceLock, WorkspaceSpec,
 };
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
 pub use runtime_host::{DataLimits, ServiceSource, SystemDataFormat, SystemDataSource};

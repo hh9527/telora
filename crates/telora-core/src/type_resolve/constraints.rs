@@ -428,7 +428,8 @@ impl Solver<'_> {
                 {
                     if let Some(raw) = self.term(bound_term.arguments[0]).cloned() {
                         match raw.constructor {
-                            TypeConstructor::PropertyBound => {}
+                            TypeConstructor::PropertyBound
+                            | TypeConstructor::OptionalPropertyBound => {}
                             TypeConstructor::Nominal(symbol)
                                 if self.is_trait(symbol) && raw.arguments.len() == 1 =>
                             {
@@ -442,7 +443,8 @@ impl Solver<'_> {
                                 node.ty(),
                                 node.ty(),
                                 Some(self.mir.hir[node.index()].location),
-                                "generic bound must be a trait or Property(P)".into(),
+                                "generic bound must be a trait, Property(P), or ?Property(P)"
+                                    .into(),
                             ),
                         }
                         None

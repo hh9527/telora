@@ -46,45 +46,47 @@ fn telora(cwd: &Path) -> Command {
 }
 
 fn refresh_fixture_workspace(root: &Path) {
-    fn modules(root: &Path, directory: &Path, found: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(directory) else {
-            return;
+    let lib = root.join("src/lib.telora");
+    const GENERATED_ROOT: &str = "# generated test root\n";
+    let generated = !lib.exists()
+        || fs::read_to_string(&lib).is_ok_and(|source| source.starts_with(GENERATED_ROOT));
+    if generated {
+        let mut modules = fs::read_dir(root.join("src"))
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                (path.is_file() && path.extension().is_some_and(|ext| ext == "telora"))
+                    .then(|| path.file_stem()?.to_str().map(str::to_owned))
+                    .flatten()
+            })
+            .filter(|name| {
+                name != "lib"
+                    && name.chars().enumerate().all(|(index, ch)| {
+                        ch == '_'
+                            || ch.is_ascii_alphanumeric() && (index > 0 || !ch.is_ascii_digit())
+                    })
+            })
+            .collect::<Vec<_>>();
+        modules.sort();
+        let source = if modules.is_empty() {
+            format!("{GENERATED_ROOT}export type Fixture = struct {{}};\n")
+        } else {
+            format!(
+                "{GENERATED_ROOT}{}export {{ {} }};\n",
+                modules
+                    .iter()
+                    .map(|name| format!("mod {name};\n"))
+                    .collect::<String>(),
+                modules.join(", ")
+            )
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if kind.is_dir() {
-                modules(root, &path, found);
-                continue;
-            }
-            if !kind.is_file() {
-                continue;
-            }
-            let extension = path.extension().and_then(|value| value.to_str());
-            if !matches!(extension, Some("telora" | "json" | "yaml" | "yml" | "toml")) {
-                continue;
-            }
-            let mut relative = path.strip_prefix(root).unwrap().to_owned();
-            if extension == Some("telora") {
-                relative.set_extension("");
-            }
-            found.push(format!(
-                "@src/{}",
-                relative.to_string_lossy().replace('\\', "/")
-            ));
-        }
+        fs::write(&lib, source).unwrap();
     }
-
-    let mut declared = Vec::new();
-    modules(&root.join("src"), &root.join("src"), &mut declared);
-    declared.sort();
     fs::write(
         root.join("telora-crate.json"),
         serde_json::to_vec(&serde_json::json!({
             "name": "fixture",
-            "modules": declared,
             "dependencies": [],
         }))
         .unwrap(),
@@ -97,7 +99,6 @@ fn refresh_fixture_workspace(root: &Path) {
             "packages": {
                 "fixture": {
                     "source": {"workspace":""},
-                    "modules": declared,
                     "dependencies": [],
                 }
             }

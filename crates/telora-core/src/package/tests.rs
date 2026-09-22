@@ -96,6 +96,11 @@ fn fixture() -> PathBuf {
     ));
     fs::create_dir_all(root.join("app/src/bin")).unwrap();
     fs::create_dir_all(root.join("model/src")).unwrap();
+    fs::write(
+        root.join("app/src/lib.telora"),
+        "mod model; export { model };",
+    )
+    .unwrap();
     fs::write(root.join("app/src/model.telora"), "export let value = 1;").unwrap();
     fs::write(root.join("app/src/bin/main.telora"), "0").unwrap();
     fs::write(root.join("model/src/lib.telora"), "export let value = 1;").unwrap();
@@ -106,24 +111,24 @@ fn fixture() -> PathBuf {
     .unwrap();
     fs::write(
         root.join("app").join(CRATE_FILE),
-        r#"{"name":"app","modules":["@src/bin/main","@src/model"],"dependencies":["model"]}"#,
+        r#"{"name":"app","dependencies":["model"]}"#,
     )
     .unwrap();
     fs::write(
         root.join("model").join(CRATE_FILE),
-        r#"{"name":"model","modules":["@src/lib"],"dependencies":[]}"#,
+        r#"{"name":"model","dependencies":[]}"#,
     )
     .unwrap();
     fs::write(
         root.join(LOCK_FILE),
-        r#"{"version":1,"packages":{"app":{"source":{"workspace":"app"},"modules":["@src/bin/main","@src/model"],"dependencies":["model"]},"model":{"source":{"workspace":"model"},"modules":["@src/lib"],"dependencies":[]}}}"#,
+        r#"{"version":1,"packages":{"app":{"source":{"workspace":"app"},"dependencies":["model"]},"model":{"source":{"workspace":"model"},"dependencies":[]}}}"#,
     )
     .unwrap();
     root
 }
 
 #[test]
-fn discovers_workspace_and_authoritative_modules() {
+fn discovers_workspace_and_fixed_crate_roots() {
     let root = fixture();
     let spec = WorkspaceSpec::discover(&root.join("app/src/../src")).unwrap();
     let workspace = spec.resolve_workspace_only().unwrap();
@@ -139,7 +144,10 @@ fn discovers_workspace_and_authoritative_modules() {
             .unwrap(),
         "app"
     );
-    let module = workspace.module("app", "@src/model").unwrap();
+    let module = workspace
+        .discover_module("app", "app/model")
+        .unwrap()
+        .unwrap();
     assert_eq!(module.logical_path, Path::new("model"));
     assert_eq!(module.format, ModuleFormat::Telora);
     assert!(workspace.module("app", "@src/missing").is_none());
@@ -147,7 +155,36 @@ fn discovers_workspace_and_authoritative_modules() {
 }
 
 #[test]
-fn rejects_undeclared_or_missing_modules() {
+fn registers_only_the_fixed_root_before_cst_driven_discovery() {
+    let root = std::env::temp_dir().join(format!(
+        "telora-declared-modules-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(root.join("src/query")).unwrap();
+    fs::write(root.join(CRATE_FILE), r#"{"name":"app","dependencies":[]}"#).unwrap();
+    fs::write(root.join("src/lib.telora"), "mod query;").unwrap();
+    fs::write(root.join("src/query.telora"), "mod parser;").unwrap();
+    fs::write(root.join("src/query/parser.telora"), "export def x = 1;").unwrap();
+    fs::write(root.join("src/unmounted.telora"), "export def x = 2;").unwrap();
+
+    let package = read_crate(&root).unwrap();
+    assert_eq!(
+        package
+            .modules
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["@src/lib"]
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rejects_the_removed_manifest_module_catalog() {
     let root = fixture();
     fs::write(
         root.join("app").join(CRATE_FILE),
@@ -155,7 +192,7 @@ fn rejects_undeclared_or_missing_modules() {
     )
     .unwrap();
     let error = WorkspaceSpec::discover(&root).unwrap_err().to_string();
-    assert!(error.contains("declared module"));
+    assert!(error.contains("unknown field `modules`"), "{error}");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -173,24 +210,14 @@ fn rejects_source_and_member_name_collisions() {
 }
 
 #[test]
-fn reports_files_absent_from_the_module_catalog() {
+fn ignores_files_absent_from_the_declared_module_tree() {
     let root = fixture();
     fs::write(root.join("app/src/extra.telora"), "export let extra = 1;").unwrap();
     let workspace = WorkspaceSpec::discover(&root)
         .unwrap()
         .resolve_workspace_only()
         .unwrap();
-    let undeclared = workspace.undeclared_modules("app").unwrap();
-    assert_eq!(undeclared.len(), 1);
-    assert_eq!(undeclared[0].selector, "@src/extra");
-    fs::write(root.join("app/src/bin/extra.telora"), "0").unwrap();
-    assert_eq!(workspace.undeclared_modules("app").unwrap().len(), 2);
-    fs::create_dir_all(root.join("app/tests")).unwrap();
-    fs::write(root.join("app/tests/extra.telora"), "0").unwrap();
-    assert_eq!(workspace.undeclared_modules("app").unwrap().len(), 2);
-    fs::create_dir_all(root.join("app/src/entry")).unwrap();
-    fs::write(root.join("app/src/entry/extra.telora"), "0").unwrap();
-    assert_eq!(workspace.undeclared_modules("app").unwrap().len(), 3);
+    assert!(workspace.module("app", "@src/extra").is_none());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -237,7 +264,7 @@ fn rejects_stale_extra_and_noncanonical_lock_state() {
     assert!(error.contains("telora lock"), "{error}");
 
     let mut lock = spec.generate_lock(&BTreeMap::new()).unwrap();
-    lock.packages.get_mut("app").unwrap().modules = vec!["@src/z".into(), "@src/a".into()];
+    lock.packages.get_mut("app").unwrap().dependencies = vec!["z".into(), "a".into()];
     fs::write(root.join(LOCK_FILE), serde_json::to_vec(&lock).unwrap()).unwrap();
     let error = spec.validate_existing_lock().unwrap_err().to_string();
     assert!(error.contains("must be sorted"), "{error}");
@@ -250,8 +277,13 @@ fn accepts_one_common_directory_in_an_imos_install_root() {
     let install = root.join("install");
     fs::create_dir_all(install.join("package/src")).unwrap();
     fs::write(
+        install.join("package/src/lib.telora"),
+        "export def value = 1;",
+    )
+    .unwrap();
+    fs::write(
         install.join("package/telora-crate.json"),
-        r#"{"name":"remote","modules":[],"dependencies":[]}"#,
+        r#"{"name":"remote","dependencies":[]}"#,
     )
     .unwrap();
     assert_eq!(

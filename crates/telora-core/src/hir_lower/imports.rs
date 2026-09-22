@@ -16,6 +16,9 @@ impl Lower<'_> {
                 "destructuring let is allowed only inside a local block",
             )),
             Some(Rule::ImportBinding) => self.imports(node),
+            Some(Rule::ModuleDeclaration) => self.module_declaration(node),
+            Some(Rule::UseBinding) => self.use_binding(node),
+            Some(Rule::DataBinding) => self.data_binding(node),
             Some(Rule::ExportStatement) if top => self.exports(node),
             Some(Rule::ExportStatement) => Err(self.error(
                 node,
@@ -27,6 +30,98 @@ impl Lower<'_> {
             )),
             _ => Ok(vec![Input::with(Role::Binding, node, Mode::Binding)]),
         }
+    }
+
+    fn module_declaration(&self, node: NodeRef) -> Result<Vec<Input>, ()> {
+        let name = self.required_token(node, Token::Identifier)?;
+        let child = format!(
+            "{}/{}",
+            self.mir.modules[self.module.index()].name,
+            self.text(name)
+        );
+        let value = self.synthetic(Role::Value, node, HirKind::String(child), vec![]);
+        Ok(vec![self.synthetic(
+            Role::Binding,
+            node,
+            HirKind::Binding {
+                kind: B::Import,
+                initializer: None,
+                imported: None,
+            },
+            vec![Input::with(Role::Name, name, Mode::Name), value],
+        )])
+    }
+
+    fn use_binding(&self, node: NodeRef) -> Result<Vec<Input>, ()> {
+        let path = self.child(node, Rule::UsePath)?;
+        let base: Vec<String> = self
+            .cst
+            .children(path)
+            .filter(|child| matches!(self.cst.get(*child), Node::Token(Token::Identifier, _)))
+            .map(|name| self.text(name).into_owned())
+            .collect();
+        let make = |origin, local, imported, segments: Vec<String>| {
+            let value = self.synthetic(Role::Value, origin, HirKind::StaticPath(segments), vec![]);
+            self.synthetic(
+                Role::Binding,
+                origin,
+                HirKind::Binding {
+                    kind: B::Def,
+                    initializer: None,
+                    imported: Some(imported),
+                },
+                vec![Input::with(Role::Name, local, Mode::Name), value],
+            )
+        };
+        if let Ok(selector) = self.child(node, Rule::UseSelector) {
+            let items = self.child(selector, Rule::UseItems)?;
+            return self
+                .cst
+                .children(items)
+                .filter(|child| self.rule(*child) == Some(Rule::UseItem))
+                .map(|item| {
+                    let (imported, local) = self.selector_names(item)?;
+                    let imported_name = self.text(imported).into_owned();
+                    let mut segments = base.clone();
+                    segments.push(imported_name.clone());
+                    Ok(make(item, local, imported_name, segments))
+                })
+                .collect();
+        }
+        let Some(local) = self
+            .cst
+            .children(path)
+            .filter(|child| matches!(self.cst.get(*child), Node::Token(Token::Identifier, _)))
+            .last()
+        else {
+            return Err(self.error(path, "use path requires a binding name"));
+        };
+        let imported = self.text(local).into_owned();
+        Ok(vec![make(node, local, imported, base)])
+    }
+
+    fn data_binding(&self, node: NodeRef) -> Result<Vec<Input>, ()> {
+        if self.child(node, Rule::TypeScheme).is_ok() {
+            return Err(self.error(node, "typed data declarations are unsupported yet"));
+        }
+        let name = self.required_token(node, Token::Identifier)?;
+        let import = self.child(node, Rule::DataImport)?;
+        let source = self.child(import, Rule::StringLiteral)?;
+        let source = self.plain_string(source)?;
+        let module = &self.mir.modules[self.module.index()].name;
+        let request = format!("{module}/{source}");
+        let request = self.synthetic(Role::Value, node, HirKind::String(request), vec![]);
+        let binding = self.synthetic(
+            Role::Binding,
+            node,
+            HirKind::Binding {
+                kind: B::Import,
+                initializer: None,
+                imported: Some("data".into()),
+            },
+            vec![Input::with(Role::Name, name, Mode::Name), request],
+        );
+        Ok(vec![binding])
     }
 
     fn imports(&self, node: NodeRef) -> Result<Vec<Input>, ()> {

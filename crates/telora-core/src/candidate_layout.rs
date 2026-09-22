@@ -138,6 +138,7 @@ fn constructor_name(c: &T) -> &'static str {
         T::FoldControl => "FoldControl",
         T::PropertyTarget => "PropertyTarget",
         T::PropertyBound => "PropertyBound",
+        T::OptionalPropertyBound => "OptionalPropertyBound",
         T::Unchecked => "Unchecked",
         T::TypeFunction(_) => "TypeFunction",
         T::Nominal(_) => "Nominal",
@@ -167,6 +168,7 @@ fn compile_time(c: &T) -> bool {
             | T::TypeFunction(_)
             | T::TypeList
             | T::PropertyBound
+            | T::OptionalPropertyBound
             | T::Bound(_)
     )
 }

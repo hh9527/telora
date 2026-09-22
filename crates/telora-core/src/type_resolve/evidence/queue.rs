@@ -56,10 +56,31 @@ impl Solver<'_> {
                 continue;
             };
             let mut candidates = vec![];
-            for implementation in &self.mir.trait_implementations {
+            let implementations = self.mir.trait_implementations.clone();
+            for implementation in implementations {
                 let mut substitutions = BTreeMap::new();
                 if self.match_type(implementation.trait_type, raw, &mut substitutions) {
-                    candidates.push((implementation.clone(), substitutions));
+                    let requirements = implementation.requirements.clone();
+                    let mut applicable = true;
+                    for (parameter, bound) in &requirements {
+                        let Some(&subject) = substitutions.get(parameter) else {
+                            continue;
+                        };
+                        let bound = self.substitute_resolved(*bound, &substitutions, canonical);
+                        let property = self.meta_type(bound).is_some_and(|raw| {
+                            self.mir.types[raw.index()].constructor
+                                == TypeConstructor::PropertyBound
+                        });
+                        if property
+                            && self.direct_evidence(subject, bound) == Some(BoundState::Rejected)
+                        {
+                            applicable = false;
+                            break;
+                        }
+                    }
+                    if applicable {
+                        candidates.push((implementation, substitutions));
+                    }
                 }
             }
             if candidates
@@ -68,11 +89,12 @@ impl Solver<'_> {
             {
                 candidates
                     .retain(|(implementation, _)| self.concrete_implementation(implementation));
-            } else if candidates
+            } else if let Some(rank) = candidates
                 .iter()
-                .any(|(implementation, _)| !self.property_blanket(implementation))
+                .map(|(implementation, _)| self.fallback_rank(implementation))
+                .max()
             {
-                candidates.retain(|(implementation, _)| !self.property_blanket(implementation));
+                candidates.retain(|(implementation, _)| self.fallback_rank(implementation) == rank);
             }
             if candidates.len() != 1 {
                 self.mir.evidence[index].state = if candidates.is_empty() {

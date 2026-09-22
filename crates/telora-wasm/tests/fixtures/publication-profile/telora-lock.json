@@ -5,10 +5,6 @@
       "source": {
         "workspace": ""
       },
-      "modules": [
-        "@src/entry",
-        "@src/input.json"
-      ],
       "dependencies": []
     }
   }

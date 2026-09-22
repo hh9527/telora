@@ -10,23 +10,23 @@ export def inspect: Fn() -> Array(Bool) = fn() {
     let empty: Array(Never) = [];
     let dictionary: Dict(Int) = { z: 2, a: 1 };
     let no_fields: Dict(Never) = dict.from_pairs([]);
-    [codec.encode(Value.type, 42) == Value.Int(42),
-     codec.encode(Value.type, 1.5) == Value.Float(1.5),
-     codec.encode(Value.type, "中") == Value.String("中"),
-     codec.encode(Value.type, b"bytes") == Value.Bytes(b"bytes"),
-     codec.encode(Value.type, True) == Value.True,
-     codec.encode(Value.type, False) == Value.False,
-     codec.encode(Value.type, existing) == existing,
-     codec.encode(Value.type, absent) == Value.None,
-     codec.encode(Value.type, Some(42)) == Value.Int(42),
-     codec.encode(Value.type, nested) == Value.String("nested"),
-     codec.encode(Value.type, impossible) == Value.None,
-     codec.encode(Value.type, [1,2]) == Value.Array([Value.Int(1),Value.Int(2)]),
-     codec.encode(Value.type, [[1],[]]) == Value.Array([Value.Array([Value.Int(1)]),Value.Array([])]),
-     codec.encode(Value.type, empty) == Value.Array([]),
-     codec.encode(Value.type, ()) == Value.Array([]),
-     codec.encode(Value.type, (42,"x")) == Value.Array([Value.Int(42),Value.String("x")]),
-     codec.encode(Value.type, dictionary) == Value.Object(dict.from_pairs([("a",Value.Int(1)),("z",Value.Int(2))])),
-     codec.encode(Value.type, no_fields) == Value.Object(dict.from_pairs([]))]
+    [codec.encode(42) == Value.Int(42),
+     codec.encode(1.5) == Value.Float(1.5),
+     codec.encode("中") == Value.String("中"),
+     codec.encode(b"bytes") == Value.Bytes(b"bytes"),
+     codec.encode(True) == Value.True,
+     codec.encode(False) == Value.False,
+     codec.encode(existing) == existing,
+     codec.encode(absent) == Value.None,
+     codec.encode(Some(42)) == Value.Int(42),
+     codec.encode(nested) == Value.String("nested"),
+     codec.encode(impossible) == Value.None,
+     codec.encode([1,2]) == Value.Array([Value.Int(1),Value.Int(2)]),
+     codec.encode([[1],[]]) == Value.Array([Value.Array([Value.Int(1)]),Value.Array([])]),
+     codec.encode(empty) == Value.Array([]),
+     codec.encode(()) == Value.Array([]),
+     codec.encode((42,"x")) == Value.Array([Value.Int(42),Value.String("x")]),
+     codec.encode(dictionary) == Value.Object(dict.from_pairs([("a",Value.Int(1)),("z",Value.Int(2))])),
+     codec.encode(no_fields) == Value.Object(dict.from_pairs([]))]
 };
 export def answer: Value = Value.Array(array.map(inspect(), fn(value) { if value { Value.True } else { Value.False } }));

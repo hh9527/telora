@@ -7,7 +7,7 @@ def base: hash.HashState = hash.update_string(initial, "shared prefix");
 def left: hash.HashState = hash.update_int(base, -42);
 def right: hash.HashState = hash.update_int(base, 42);
 def checks: Fn() -> Value = fn() {
-    encode(Value.type, (
+    encode((
         hash.sha256(""), hash.sha256("abc"), hash.sha256("文本"),
         hash.finish(base) == hash.finish(hash.update_string(initial, "shared prefix")),
         hash.finish(left) == hash.finish(hash.update_int(base, -42)),

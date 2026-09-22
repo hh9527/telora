@@ -37,10 +37,21 @@ pub fn resolve_with_requests(
 /// Cancellation discards the in-progress graph. Syntax errors remain ordinary
 /// diagnostics; cancellation is not an unresolved module or a syntax error.
 pub fn resolve_with_requests_cancellable(
+    inventory: Vec<ModuleSpec>,
+    roots: &[String],
+    read: impl FnMut(ModuleId, &str) -> Result<String, String>,
+    request_name: impl FnMut(&str, &str) -> Option<String>,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Option<Mir> {
+    resolve_with_discovery_cancellable(inventory, roots, read, request_name, |_, _| None, cancelled)
+}
+
+pub fn resolve_with_discovery_cancellable(
     mut inventory: Vec<ModuleSpec>,
     roots: &[String],
     mut read: impl FnMut(ModuleId, &str) -> Result<String, String>,
     mut request_name: impl FnMut(&str, &str) -> Option<String>,
+    mut discover: impl FnMut(&str, &str) -> Option<ModuleSpec>,
     cancelled: &mut dyn FnMut() -> bool,
 ) -> Option<Mir> {
     if cancelled() {
@@ -94,19 +105,21 @@ pub fn resolve_with_requests_cancellable(
         if !matches!(mir.modules[id.index()].state, ModuleState::Unloaded) {
             continue;
         }
-        let spec = &inventory[id.index()];
+        let spec_name = inventory[id.index()].name.clone();
+        let spec_kind = inventory[id.index()].kind;
+        let implicit_imports = inventory[id.index()].implicit_imports.clone();
         // Data bytes are not an input to the static phase. This source is a
         // compiler-owned interface, whose Value reference resolves normally.
-        let text = match if spec.kind == ModuleKind::Data {
+        let text = match if spec_kind == ModuleKind::Data {
             Ok("import \"std/value\" { Value }; decl data: Value; export { data };".into())
         } else {
-            read(id, &spec.name)
+            read(id, &spec_name)
         } {
             Ok(text) => text,
             Err(message) => {
                 mir.diagnostics.push(crate::source::Diagnostic {
                     severity: crate::source::Severity::Error,
-                    message: format!("cannot read module {}: {message}", spec.name),
+                    message: format!("cannot read module {spec_name}: {message}"),
                     labels: vec![],
                     notes: vec![],
                 });
@@ -114,15 +127,15 @@ pub fn resolve_with_requests_cancellable(
                 continue;
             }
         };
-        let source_name = if spec.kind == ModuleKind::Data {
-            format!("{} (static contract)", spec.name)
+        let source_name = if spec_kind == ModuleKind::Data {
+            format!("{spec_name} (static contract)")
         } else {
-            spec.name.clone()
+            spec_name.clone()
         };
         let source = match mir.sources.try_add(source_name, text) {
             Ok(source) => source,
             Err(error) => {
-                let message = format!("cannot register module {}: {error}", spec.name);
+                let message = format!("cannot register module {spec_name}: {error}");
                 mir.diagnostics.push(crate::source::Diagnostic {
                     severity: crate::source::Severity::Error,
                     message: message.clone(),
@@ -156,7 +169,7 @@ pub fn resolve_with_requests_cancellable(
         mir.diagnostics.extend(parsed.diagnostics);
         mir.diagnostics.extend(lowered.diagnostics);
         let body = lowered.body;
-        mir.modules[id.index()].state = if spec.kind == ModuleKind::Data {
+        mir.modules[id.index()].state = if spec_kind == ModuleKind::Data {
             ModuleState::Data { body }
         } else {
             ModuleState::Source {
@@ -166,12 +179,35 @@ pub fn resolve_with_requests_cancellable(
                 body,
             }
         };
-        let mut requests = spec
-            .implicit_imports
+        let mut requests = implicit_imports
             .iter()
             .cloned()
             .map(|name| (None, name))
             .collect::<Vec<_>>();
+        let static_roots = mir
+            .hir
+            .iter()
+            .filter(|node| node.module == id)
+            .filter_map(|node| match &node.kind {
+                HirKind::StaticPath(path)
+                    if !matches!(
+                        path.first().map(String::as_str),
+                        Some("crate" | "self" | "super")
+                    ) =>
+                {
+                    path.first().cloned()
+                }
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        for root in static_roots {
+            if let Some(target) = names
+                .get(&root)
+                .and_then(|targets| (targets.len() == 1).then_some(targets[0]))
+            {
+                pending.insert(target);
+            }
+        }
         for edge in &mir.hir[body.index()].children {
             if edge.role != Role::Binding {
                 continue;
@@ -196,7 +232,23 @@ pub fn resolve_with_requests_cancellable(
             }
         }
         for (syntax, request) in requests {
-            let target = request_name(&spec.name, &request)
+            let resolved = request_name(&spec_name, &request);
+            if let Some(name) = &resolved
+                && !names.contains_key(name)
+                && let Some(spec) = discover(&spec_name, name)
+            {
+                let target = ModuleId(mir.modules.len().try_into().expect("module capacity"));
+                names.entry(spec.name.clone()).or_default().push(target);
+                mir.modules.push(Module {
+                    native: spec.native.clone(),
+                    name: spec.name.clone(),
+                    kind: spec.kind,
+                    state: ModuleState::Unloaded,
+                    imports: vec![],
+                });
+                inventory.push(spec);
+            }
+            let target = resolved
                 .map(|name| lookup(&names, name))
                 .unwrap_or_else(|| ModuleTarget::Unresolved(request.clone()));
             if !matches!(target, ModuleTarget::Bound(_)) {
@@ -395,6 +447,124 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(build(false), build(true));
+    }
+
+    #[test]
+    fn module_declarations_create_child_namespace_edges_without_path_imports() {
+        let inventory = ["app", "app/query", "dep", "dep/item"]
+            .into_iter()
+            .map(|name| ModuleSpec {
+                native: None,
+                name: name.into(),
+                kind: ModuleKind::Source,
+                implicit_imports: vec![],
+            })
+            .collect();
+        let mut reads = Vec::new();
+        let mut mir = resolve(inventory, &["app".into()], |_, name| {
+            reads.push(name.to_owned());
+            Ok(match name {
+                "app" => "mod query; export def base = 42; use self::query::answer; use dep::item::{answer as dep_answer}; export { answer, dep_answer };",
+                "app/query" => "export def answer = crate::base;",
+                "dep" => "mod item; export { item };",
+                "dep/item" => "export def answer = 7;",
+                _ => unreachable!(),
+            }
+            .into())
+        });
+        assert_eq!(reads, ["app", "app/query", "dep", "dep/item"]);
+        assert_eq!(mir.imports.len(), 2);
+        assert_eq!(mir.imports[0].request, "app/query");
+        assert!(matches!(mir.imports[0].target, ModuleTarget::Bound(_)));
+        crate::symbol_resolve::resolve(&mut mir);
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        let paths: Vec<_> = mir
+            .hir
+            .iter()
+            .filter(|node| matches!(node.kind, HirKind::StaticPath(_)))
+            .collect();
+        assert_eq!(paths.len(), 3);
+        assert!(paths.iter().all(|node| matches!(
+            mir.resolve_slots[node.resolution.unwrap().index()],
+            ResolveState::Bound(_)
+        )));
+    }
+
+    #[test]
+    fn declarations_discover_only_the_reachable_module_tree() {
+        let sources = BTreeMap::from([
+            (
+                "app",
+                "mod query; data config = import(json) \"config.json\"; export { query, config };",
+            ),
+            ("app/query", "mod parser; export { parser };"),
+            ("app/query/parser", "export def answer = 42;"),
+            ("app/unmounted", "export def hidden = 0;"),
+            ("std/value", "export type Value = enum { Missing };"),
+        ]);
+        let mut reads = Vec::new();
+        let mut discoveries = Vec::new();
+        let mir = resolve_with_discovery_cancellable(
+            vec![
+                ModuleSpec {
+                    native: None,
+                    name: "app".into(),
+                    kind: ModuleKind::Source,
+                    implicit_imports: vec![],
+                },
+                ModuleSpec {
+                    native: None,
+                    name: "std/value".into(),
+                    kind: ModuleKind::Source,
+                    implicit_imports: vec![],
+                },
+            ],
+            &["app".into()],
+            |_, name| {
+                reads.push(name.to_owned());
+                sources
+                    .get(name)
+                    .map(|source| (*source).to_owned())
+                    .ok_or_else(|| format!("unexpected source request: {name}"))
+            },
+            canonical_request,
+            |_, name| {
+                discoveries.push(name.to_owned());
+                Some(ModuleSpec {
+                    native: None,
+                    name: name.to_owned(),
+                    kind: if name.ends_with(".json") {
+                        ModuleKind::Data
+                    } else {
+                        ModuleKind::Source
+                    },
+                    implicit_imports: vec![],
+                })
+            },
+            &mut || false,
+        )
+        .unwrap();
+
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        assert_eq!(
+            mir.modules
+                .iter()
+                .map(|module| module.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "app",
+                "std/value",
+                "app/query",
+                "app/config.json",
+                "app/query/parser"
+            ]
+        );
+        assert_eq!(
+            discoveries,
+            ["app/query", "app/config.json", "app/query/parser"]
+        );
+        assert_eq!(reads, ["app", "app/query", "std/value", "app/query/parser"]);
+        assert!(!reads.iter().any(|name| name == "app/unmounted"));
     }
 
     #[test]

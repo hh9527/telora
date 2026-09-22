@@ -11,8 +11,8 @@ type MainService = struct {};
 impl service.TransformService for MainService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) {
-        let request = codec.decode(Request.type, input).unwrap!();
-        codec.encode(Value.type, request)
+        let request = codec.decode@[Request](input).unwrap!();
+        codec.encode(request)
     },
 };
 export {MainService};

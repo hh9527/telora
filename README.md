@@ -189,8 +189,8 @@ import "std/value" { Value };
 type Request = struct { subject: String, limit: Int };
 
 def raw_text: String = "{\"subject\":\"orders\",\"limit\":20}";
-def request: Request = json.decode(Request.type, raw_text).unwrap!();
-export def encoded: Value = codec.encode(Value.type, request);
+def request: Request = json.decode@[Request](raw_text).unwrap!();
+export def encoded: Value = codec.encode(request);
 ```
 
 `std/codec` 在 `Value` 与有类型值之间转换；`std/json` 负责 JSON 文本。

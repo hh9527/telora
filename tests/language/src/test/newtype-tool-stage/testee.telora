@@ -50,7 +50,7 @@ export def metadata_helpers: test.Test = test.should_ok(fn() {
     let from_selective = ImportedBox@[Type](String.type).0;
     let from_alias = make(Int.type).0;
     let from_generic_alias = make_generic@[Type](String.type).0;
-    let from_codec = if codec.encode(Value.type, Box@[Int](42)) == Value.Int(42) {
+    let from_codec = if codec.encode(Box@[Int](42)) == Value.Int(42) {
         Int.type
     } else { String.type };
     let from_typed = typed_make(Int.type).0;

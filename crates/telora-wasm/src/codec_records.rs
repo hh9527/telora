@@ -11,25 +11,12 @@ impl Emitter<'_> {
     ) -> Result<u32, String> {
         let is_record = matches!(&self.plan.layouts[source.index()].layout, State::Known { shape } if shape.table == Some("RecordTable"));
         let is_enum = !self.plan.layouts[source.index()].variants.is_empty();
-        let decode_property = crate::codec_properties::decode_by_parse_property(self.mir);
-        let encode_property = crate::codec_properties::encode_by_display_property(self.mir);
-        let decode = crate::codec_properties::has_property(self.mir, source, decode_property);
-        let encode = crate::codec_properties::has_property(self.mir, source, encode_property);
-        if decode != encode {
-            self.codec_error(
-                input,
-                "std/string.decode_by_parse and std/string.encode_by_display must be used together",
-            )?;
-            return Ok(self.local(ValType::I32));
-        }
-        if encode {
-            self.codec_property_value_exact(source, decode_property.unwrap())?;
-            self.codec_property_value_exact(source, encode_property.unwrap())?;
+        if self.plan.display_codecs.contains(&source) {
             return self.codec_display(source, target, input);
         }
         // A newtype validates this metadata but has no external field names.
         let rename = self.codec_rename(source, input)?;
-        let untagged = self.codec_property_value(source, 2)?;
+        let untagged = self.codec_untagged(source)?;
         if is_enum {
             self.extend([I::LocalGet(untagged), I::If(BlockType::Empty)]);
             self.extend([I::LocalGet(rename), I::If(BlockType::Empty)]);

@@ -29,7 +29,7 @@ export def answer: Fn() -> Value = fn() {
          fail!("second"),
          do { let w: Option(Int) = warn!("unreachable"); 3 }]
     })(0);
-    codec.encode(Value.type, (
+    codec.encode((
         closures[0](10), closures[1](10), outer, nested, branches, mapped,
         match failed { Err(reports) => array.length(reports), Ok(_) => 0 },
         spreads, generic[0](10), generic[1](10), early(0), early(2),

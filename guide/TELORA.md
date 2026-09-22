@@ -477,7 +477,7 @@ let projected: Option(Int) = dyn.project@[Int](package);
 
 `ty!` 为表达式提供静态目标类型，无法证明时编译失败。它不是运行时转换。
 Dyn 投影比较打包类型与目标的精确 TypeId，相同才返回 Some，不按结构重标记值。
-外部 Value 到业务类型使用 `codec.decode(Target.type, value)`；数值和文本转换
+外部 Value 到业务类型使用 `codec.decode@[Target](value)`；数值和文本转换
 使用各自的显式库函数。语言不提供 `cast!`。
 
 ```telora
@@ -581,8 +581,8 @@ spread 分别接受 Array 和 Tuple，不进行动态长度转换。
 ## 参数化类型族
 
 `A.type` 是描述类型 A 的一等元数据值。`Type` 是任意有效 TypeMetadata 的类型；
-`TypeOf(A)` 是描述 `A` 的元数据的精确证据。裸类型不能进入数据实参；例如
-`json.decode(User.type, text)`，不能写成 `json.decode(User, text)`。
+`TypeOf(A)` 是描述 `A` 的元数据的精确证据。裸类型不能进入数据实参。需要静态选择
+解码目标时使用类型参数，例如 `json.decode@[User](text)`。
 
 `let` / `def` 绑定数据，`type` 绑定类型。元数据可以由普通函数传递、返回和组合，
 但不能反向变成静态类型：`let m = Int.type; type Bad = m;` 非法，普通函数返回
@@ -655,16 +655,16 @@ type Query = struct {
 };
 
 let raw = json.parse("{\"subject\":\"orders\",\"limit\":20}").unwrap!();
-let query: Query = codec.decode(Query.type, raw).unwrap!();
-let encoded: Value = codec.encode(Value.type, query);
+let query: Query = codec.decode@[Query](raw).unwrap!();
+let encoded: Value = codec.encode(query);
 let compact: String = json.stringify(encoded);
 let pretty: String = encoded |> json.stringify_pretty(2);
 ```
 
-也可以用 `json.decode(Query.type, text)` 直接把 JSON 文本解码成 `Query`。两条路径的
+也可以用 `json.decode@[Query](text)` 直接把 JSON 文本解码成 `Query`。两条路径的
 区别是边界位置：`json.parse` 只解析文本并返回 Value；`codec.decode` 对已经存在的
-Value 施加类型契约。`codec.encode` 的首个参数固定为 canonical `Value` witness，
-返回 Value；只有需要 JSON 文本边界时才调用 `json.stringify` 或
+Value 施加类型契约。`codec.encode` 从实参的静态类型选择 `Encode` 实现并返回 Value；
+只有需要 JSON 文本边界时才调用 `json.stringify` 或
 `json.stringify_pretty`。`yaml.parse` 和 `toml.parse` 同样返回
 `Result(Value, codec.BlameError)`。`codec.decode` 和 `json.decode` 返回
 `Result(A, codec.BlameError)`；错误为不可观察的 native 对象，保留消息和失败值的来源。
@@ -934,8 +934,8 @@ type Dialect(Context) = struct {
 
 ### 复杂 family 值的 codec witness
 
-`codec.encode(Value.type, value)` 的首个参数固定为公共 Value witness；编码直接返回
-`Value`，失败产生诊断。codec 从输入
+`codec.encode(value)` 从输入的静态类型选择 `Encode` 实现并直接返回 `Value`，失败产生
+诊断。codec 从输入
 在 MIR 中确定的具体类型读取编码布局。对于参数很多的 concrete family，
 规范做法仍是在定义模块中建立一次 concrete type alias，并导出 alias 或有类型的
 边界函数：
@@ -947,7 +947,7 @@ import "std/value" { Value };
 type Snapshot = PipelineSnapshot(Stage, Input, Expr, Plan, Output);
 
 def encode_snapshot: Fn(Snapshot) -> Value = fn(value) {
-    codec.encode(Value.type, value)
+    codec.encode(value)
 };
 
 export { Snapshot, encode_snapshot };

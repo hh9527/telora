@@ -18,7 +18,7 @@ def nested: Fn(Int) -> Int = make_nested(42);
 def unused: for(T) Fn(TypeOf(T)) -> Fn(Int) -> Int = interpreter!(fn(value) {value});
 def checks: Fn() -> Value = fn() {
     let repeated = factory(Int.type);
-    encode(Value.type, [
+    encode([
         initialized != repeated,
         initialized != other(Int.type),
         repeated(42) == 42,

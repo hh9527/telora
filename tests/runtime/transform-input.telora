@@ -23,8 +23,8 @@ impl service.TransformService for MainService {
         {config: ctx.sources["config"], base: base.data}.ty!(Self)
     },
     transform: fn(self, input) {
-        let decoded: Input = codec.decode(Input.type, input).unwrap!();
-        Value.Array([self.config, self.base, codec.encode(Value.type, decoded)])
+        let decoded: Input = codec.decode@[Input](input).unwrap!();
+        Value.Array([self.config, self.base, codec.encode(decoded)])
     },
 };
 export {MainService};

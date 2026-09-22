@@ -8,15 +8,6 @@ impl Solver<'_> {
             return;
         };
         let regex = self.provider_property(19, "parse_by");
-        let decode = self.provider_property(7, "decode_by_parse");
-        let encode = self.provider_property(7, "encode_by_display");
-        let encoded = self
-            .mir
-            .properties
-            .iter()
-            .filter(|record| Some(record.property) == encode)
-            .map(|record| record.owner)
-            .collect::<BTreeSet<_>>();
         let mut targets = BTreeSet::new();
         for (property, record) in self.mir.properties.iter().enumerate() {
             if !record.concrete {
@@ -38,8 +29,6 @@ impl Solver<'_> {
                         .flatten()
                         .map(|&target| (property, target)),
                 );
-            } else if Some(record.property) == decode && encoded.contains(&record.owner) {
-                targets.insert((property, record.owner));
             }
         }
         let mut canonical = self

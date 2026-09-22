@@ -186,11 +186,17 @@ impl Lower<'_> {
             .children(node)
             .filter(|child| self.rule(*child) == Some(Rule::TraitBound))
         {
-            inputs.push(Input::with(
-                Role::Bound,
-                self.contract_child(bound)?,
-                Mode::Contract,
-            ));
+            let contract = self.contract_child(bound)?;
+            if self.token(bound, Token::Question).is_some() {
+                inputs.push(self.synthetic(
+                    Role::Bound,
+                    bound,
+                    HirKind::OptionalBound,
+                    vec![Input::with(Role::Operand, contract, Mode::Contract)],
+                ));
+            } else {
+                inputs.push(Input::with(Role::Bound, contract, Mode::Contract));
+            }
         }
         Ok(Shape::Node(HirKind::TypeParameter, inputs))
     }

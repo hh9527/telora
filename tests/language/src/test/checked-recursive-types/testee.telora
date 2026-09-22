@@ -20,13 +20,13 @@ export def parent_rejected: test.Test = test.should_fail_with(fn() {
 }, "child rank must decrease");
 export def decoded: test.Test = test.should_ok(fn() {
     let text = "{\"value\":\"root\",\"rank\":2,\"children\":[{\"value\":\"leaf\",\"rank\":1,\"children\":[]}]}";
-    let tree = match json.decode((Tree(String)).type, text) { Ok(value) => value, Err(error) => raise!(error) };
-    expect(rebuild(tree) == tree && codec.encode((codec.Value).type, tree) == match json.parse(text) {
+    let tree = match json.decode@[(Tree(String))](text) { Ok(value) => value, Err(error) => raise!(error) };
+    expect(rebuild(tree) == tree && codec.encode(tree) == match json.parse(text) {
         Ok(value) => value, Err(error) => raise!(error),
     })
 });
 export def decode_rejected: test.Test = test.should_ok(fn() {
-    expect(match json.decode((Tree(String)).type, "{\"value\":\"root\",\"rank\":0,\"children\":[{\"value\":\"leaf\",\"rank\":1,\"children\":[]}]}") {
+    expect(match json.decode@[(Tree(String))]("{\"value\":\"root\",\"rank\":0,\"children\":[{\"value\":\"leaf\",\"rank\":1,\"children\":[]}]}") {
         Ok(_) => False, Err(_) => True,
     })
 });

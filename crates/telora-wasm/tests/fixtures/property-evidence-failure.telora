@@ -1,0 +1,22 @@
+import "std/type-property" { required, optional };
+
+@property(PropertyTarget.Type)
+type Stamp = struct { value: Int };
+
+def broken: Fn(Type, Option(Stamp)) -> Stamp = fn(owner, previous) {
+    fail!("property evidence provider failed", owner)
+};
+
+@broken
+type Marked = struct {};
+
+export def required_value: Fn() -> Int = fn() {
+    required@[Stamp, Marked]().value
+};
+
+export def optional_value: Fn() -> Int = fn() {
+    match optional@[Stamp, Marked]() {
+        Some(stamp) => stamp.value,
+        None => 0,
+    }
+};

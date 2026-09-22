@@ -10,7 +10,7 @@ export def copies: test.Test = test.should_ok(fn() {
     let refined: Point = copy;
     let pass: Fn(Point) -> Point = fn(value) { value };
     let values: Array(Point) = [point, refined, pass(copy)];
-    let encoded = codec.encode((codec.Value).type, point);
+    let encoded = codec.encode(point);
     expect(values[0].x + values[1].x + values[2].x == 3
         && encoded == codec.Value.Object({x: codec.Value.Int(1)})
         && dyn.project_with((Point).type, dyn.pack((Point).type, point)) == Some(point))

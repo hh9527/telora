@@ -169,16 +169,16 @@ impl FunctionBodyDependencyGraph {
             .map(|(index, node)| (node, FuncProtoId(index as u32)))
             .collect::<BTreeMap<_, _>>();
         let admitted_properties = properties.iter().copied().collect::<BTreeSet<_>>();
-        let property_nodes = mir
-            .bound_requirements
-            .iter()
-            .filter_map(|requirement| match requirement.state {
-                BoundState::Property(index) if admitted_properties.contains(&index) => {
-                    Some((requirement.reference, PropertyId(index as u32)))
-                }
-                _ => None,
-            })
-            .collect::<BTreeMap<_, _>>();
+        let mut requirement_evidence = BTreeMap::<HirId, Vec<usize>>::new();
+        for requirement in &mir.bound_requirements {
+            let Some(root) = requirement.evidence else {
+                continue;
+            };
+            requirement_evidence
+                .entry(requirement.reference)
+                .or_default()
+                .push(root);
+        }
         let owners = function_owners(mir, &roots);
         let call_callees = mir
             .hir
@@ -210,9 +210,20 @@ impl FunctionBodyDependencyGraph {
                     }
                     continue;
                 }
-                if let Some(&property) = property_nodes.get(&node) {
-                    dependencies.insert(FunctionBodyDependency::Property(property));
+                let mut evidence = requirement_evidence.get(&node).cloned().unwrap_or_default();
+                if let Some(instance) = root.instance {
+                    evidence.extend(
+                        mir.generic_instances[instance.index()]
+                            .evidence(node)
+                            .iter()
+                            .copied(),
+                    );
                 }
+                dependencies.extend(
+                    evidence_properties(mir, &evidence, &admitted_properties)
+                        .into_iter()
+                        .map(FunctionBodyDependency::Property),
+                );
                 if let Some(symbol) = resolved_symbol(mir, node) {
                     if globals.contains(&symbol) {
                         dependencies.insert(FunctionBodyDependency::TopLevel(symbol));
@@ -276,6 +287,29 @@ impl FunctionBodyDependencyGraph {
         }
         Self { functions }
     }
+}
+
+fn evidence_properties(
+    mir: &Mir,
+    roots: &[usize],
+    admitted: &BTreeSet<usize>,
+) -> BTreeSet<PropertyId> {
+    let mut pending = roots.to_vec();
+    let mut seen = BTreeSet::new();
+    let mut properties = BTreeSet::new();
+    while let Some(index) = pending.pop() {
+        if !seen.insert(index) {
+            continue;
+        }
+        let evidence = &mir.evidence[index];
+        pending.extend(evidence.dependencies.iter().copied());
+        if let BoundState::Property(index) | BoundState::OptionalProperty(index) = evidence.state
+            && admitted.contains(&index)
+        {
+            properties.insert(PropertyId(index as u32));
+        }
+    }
+    properties
 }
 
 #[derive(Clone, Debug)]

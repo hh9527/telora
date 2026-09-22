@@ -24,6 +24,6 @@ impl string.FromStr for Endpoint {
 };
 export def inspect: Fn() -> Value = fn() {
     let endpoint: Endpoint = {host: "localhost",port: 8080};
-    codec.encode(Value.type,endpoint)
+    codec.encode(endpoint)
 };
 export def answer: Value = inspect();

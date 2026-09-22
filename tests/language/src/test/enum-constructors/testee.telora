@@ -129,10 +129,10 @@ export def builtin: test.Test = test.should_ok(fn() {
 
 export def ownership: test.Test = test.should_ok(fn() {
     let make = dyn.pack((EventConstructor).type, Event.Progress);
-    expect(codec.encode((Value).type, Event.Progress(47)) == Value.Object({Progress: Value.Int(47)})
-        && codec.encode((Value).type, Event.Finished) == Value.String("Finished")
+    expect(codec.encode(Event.Progress(47)) == Value.Object({Progress: Value.Int(47)})
+        && codec.encode(Event.Finished) == Value.String("Finished")
         && match dyn.project_with((EventConstructor).type, make) {
-            Option.Some(make) => codec.encode((Value).type, make(48)) == Value.Object({Progress: Value.Int(48)}),
+            Option.Some(make) => codec.encode(make(48)) == Value.Object({Progress: Value.Int(48)}),
             Option.None => Bool.False,
         })
 });
@@ -144,13 +144,13 @@ export def imported: test.Test = test.should_ok(fn() {
     let d = bridge.Status.Finished;
     let e = bridge.Packet.Data(51);
     let f = bridge.model.Event.Progress(52);
-    expect(codec.encode((Value).type, a) == Value.Object({Progress: Value.Int(49)})
-        && codec.encode((Value).type, b) == Value.Object({Progress: Value.Int(50)})
-        && codec.encode((Value).type, c) == Value.Object({Data: Value.String("ok")})
-        && codec.encode((Value).type, d) == Value.String("Finished")
-        && codec.encode((Value).type, e) == Value.Object({Data: Value.Int(51)})
-        && codec.encode((Value).type, f) == Value.Object({Progress: Value.Int(52)})
-        && codec.encode((Value).type, model.progress(53)) == Value.Object({Progress: Value.Int(53)}))
+    expect(codec.encode(a) == Value.Object({Progress: Value.Int(49)})
+        && codec.encode(b) == Value.Object({Progress: Value.Int(50)})
+        && codec.encode(c) == Value.Object({Data: Value.String("ok")})
+        && codec.encode(d) == Value.String("Finished")
+        && codec.encode(e) == Value.Object({Data: Value.Int(51)})
+        && codec.encode(f) == Value.Object({Progress: Value.Int(52)})
+        && codec.encode(model.progress(53)) == Value.Object({Progress: Value.Int(53)}))
 });
 
 export def patterns: test.Test = test.should_ok(fn() {

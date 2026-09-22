@@ -43,7 +43,6 @@ pub struct PathOverride {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CrateManifest {
     pub name: String,
-    pub modules: Vec<String>,
     #[serde(default)]
     pub dependencies: Vec<String>,
 }
@@ -55,13 +54,6 @@ pub struct ModuleDeclaration {
     pub physical_path: PathBuf,
     pub format: ModuleFormat,
     pub kind: ModuleDeclarationKind,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UndeclaredModule {
-    pub crate_name: String,
-    pub selector: String,
-    pub relative_path: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,7 +72,6 @@ pub struct WorkspaceLock {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LockedPackage {
     pub source: LockedSource,
-    pub modules: Vec<String>,
     pub dependencies: Vec<String>,
 }
 
@@ -305,7 +296,6 @@ impl WorkspaceSpec {
                     name.clone(),
                     LockedPackage {
                         source,
-                        modules: package.modules.keys().cloned().collect(),
                         dependencies: package.manifest.dependencies.clone(),
                     },
                 )
@@ -344,9 +334,7 @@ impl WorkspaceSpec {
         for name in self.config.sources.keys() {
             let resolved = &crates[name];
             let locked = &lock.packages[name];
-            if resolved.manifest.dependencies != locked.dependencies
-                || resolved.modules.keys().cloned().collect::<Vec<_>>() != locked.modules
-            {
+            if resolved.manifest.dependencies != locked.dependencies {
                 return Err(PackageError::new(format!(
                     "materialized crate {name:?} does not match {LOCK_FILE}"
                 )));
@@ -467,6 +455,24 @@ impl ResolvedWorkspace {
             .and_then(|package| package.modules.get(selector))
     }
 
+    pub fn discover_module(
+        &self,
+        crate_name: &str,
+        cname: &str,
+    ) -> Result<Option<ModuleDeclaration>, PackageError> {
+        let Some(package) = self.crates.get(crate_name) else {
+            return Ok(None);
+        };
+        let selector = if cname == crate_name {
+            "@src/lib".to_owned()
+        } else if let Some(path) = cname.strip_prefix(&format!("{crate_name}/")) {
+            format!("@src/{path}")
+        } else {
+            return Ok(None);
+        };
+        parse_module_declaration(&package.root, &selector).map(Some)
+    }
+
     pub fn crate_for_path(&self, path: &Path) -> Result<&str, PackageError> {
         let path = absolute(path)?;
         // Editors may ask about a new file before it exists. Canonicalize
@@ -526,36 +532,11 @@ impl ResolvedWorkspace {
                 }),
         )
     }
-
-    pub fn undeclared_modules(&self, name: &str) -> Result<Vec<UndeclaredModule>, PackageError> {
-        let package = self
-            .crates
-            .get(name)
-            .ok_or_else(|| PackageError::new(format!("workspace has no crate named {name:?}")))?;
-        let declared = package
-            .modules
-            .values()
-            .map(|module| module.physical_path.clone())
-            .collect::<BTreeSet<_>>();
-        let mut found = Vec::new();
-        collect_source_modules(
-            &package.root.join("src"),
-            &package.root.join("src"),
-            "@src",
-            true,
-            &declared,
-            name,
-            &mut found,
-        )?;
-        found.sort_by(|left, right| left.selector.cmp(&right.selector));
-        Ok(found)
-    }
 }
 
 impl CrateManifest {
     pub fn declarations(&self, root: &Path) -> Result<Vec<ModuleDeclaration>, PackageError> {
         validate_crate_name(&self.name).map_err(|error| PackageError::new(error.to_string()))?;
-        ensure_unique_sorted_set("module", &self.modules)?;
         ensure_unique_sorted_set("dependency", &self.dependencies)?;
         for dependency in &self.dependencies {
             validate_crate_name(dependency)
@@ -567,10 +548,7 @@ impl CrateManifest {
                 )));
             }
         }
-        self.modules
-            .iter()
-            .map(|selector| parse_module_declaration(root, selector))
-            .collect()
+        Ok(vec![parse_module_declaration(root, "@src/lib")?])
     }
 }
 
@@ -627,7 +605,6 @@ fn validate_lock(lock: &WorkspaceLock, spec: &WorkspaceSpec) -> Result<(), Packa
     }
     for (name, package) in &lock.packages {
         validate_crate_name(name).map_err(|error| PackageError::new(error.to_string()))?;
-        ensure_sorted_set("locked module", &package.modules)?;
         ensure_sorted_set("locked dependency", &package.dependencies)?;
         for dependency in &package.dependencies {
             if !lock.packages.contains_key(dependency) {
@@ -653,10 +630,7 @@ fn validate_lock(lock: &WorkspaceLock, spec: &WorkspaceSpec) -> Result<(), Packa
                         "locked workspace path for {name:?} does not match config"
                     )));
                 }
-                let modules = member.modules.keys().cloned().collect::<Vec<_>>();
-                if package.modules != modules
-                    || package.dependencies != member.manifest.dependencies
-                {
+                if package.dependencies != member.manifest.dependencies {
                     return Err(PackageError::new(format!(
                         "locked workspace crate {name:?} does not match {CRATE_FILE}"
                     )));
@@ -777,7 +751,6 @@ fn validate_dependency_graph(crates: &BTreeMap<String, ResolvedCrate>) -> Result
 fn read_crate(root: &Path) -> Result<ResolvedCrate, PackageError> {
     let manifest_path = root.join(CRATE_FILE);
     let mut manifest: CrateManifest = read_json(&manifest_path)?;
-    manifest.modules.sort();
     manifest.dependencies.sort();
     let declarations = manifest.declarations(root)?;
     let modules = declarations
@@ -845,79 +818,6 @@ fn parse_module_declaration(
         format,
         kind,
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_source_modules(
-    root: &Path,
-    directory: &Path,
-    prefix: &str,
-    recursive: bool,
-    declared: &BTreeSet<PathBuf>,
-    crate_name: &str,
-    found: &mut Vec<UndeclaredModule>,
-) -> Result<(), PackageError> {
-    let entries = match fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(PackageError::new(format!(
-                "cannot scan module directory {}: {error}",
-                directory.display()
-            )));
-        }
-    };
-    for entry in entries {
-        let entry = entry.map_err(|error| {
-            PackageError::new(format!("cannot scan {}: {error}", directory.display()))
-        })?;
-        let path = entry.path();
-        let file_type = entry.file_type().map_err(|error| {
-            PackageError::new(format!("cannot inspect {}: {error}", path.display()))
-        })?;
-        if file_type.is_dir() {
-            if recursive {
-                collect_source_modules(root, &path, prefix, true, declared, crate_name, found)?;
-            }
-            continue;
-        }
-        if !file_type.is_file() {
-            continue;
-        }
-        let Ok(format) = ModuleFormat::from_path(&path) else {
-            continue;
-        };
-        if !recursive && format != ModuleFormat::Telora {
-            continue;
-        }
-        let canonical = fs::canonicalize(&path).map_err(|error| {
-            PackageError::new(format!(
-                "cannot resolve module file {}: {error}",
-                path.display()
-            ))
-        })?;
-        if declared.contains(&canonical) {
-            continue;
-        }
-        let relative = path.strip_prefix(root).expect("scanned path is below root");
-        if !recursive && relative.components().count() != 1 {
-            continue;
-        }
-        let mut logical = relative.to_owned();
-        if format == ModuleFormat::Telora {
-            logical.set_extension("");
-        }
-        let logical = logical.to_string_lossy().replace('\\', "/");
-        found.push(UndeclaredModule {
-            crate_name: crate_name.to_owned(),
-            selector: format!("{prefix}/{logical}"),
-            relative_path: path
-                .strip_prefix(root.parent().unwrap_or(root))
-                .unwrap_or(&path)
-                .to_owned(),
-        });
-    }
-    Ok(())
 }
 
 fn ensure_unique_sorted_set(label: &str, values: &[String]) -> Result<(), PackageError> {
