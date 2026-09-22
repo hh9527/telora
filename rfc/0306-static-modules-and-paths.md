@@ -64,7 +64,7 @@ mod query;
 子模块布局，但只保留一种形式：
 
 ```text
-crate root 中的 mod query;       -> src/query.telora
+src/lib.telora 中的 mod query;    -> src/query.telora
 src/foo.telora 中的 mod query;    -> src/foo/query.telora
 src/foo/query.telora 中的 mod x;  -> src/foo/query/x.telora
 ```
@@ -75,8 +75,16 @@ src/foo/query.telora 中的 mod x;  -> src/foo/query/x.telora
 `mod` 只接受标识符，不接受字符串路径、计算表达式或替代文件属性。模块发现因此是有限、
 确定的图遍历。文件缺失、重复挂载和模块环在模块图阶段诊断。
 
-crate root 由 crate manifest 选择；manifest 不枚举模块树。package Host 只把 crate root、
-依赖 crate roots 和源码访问能力交给编译器。
+普通 crate 的 root 固定为 `src/lib.telora`，其文件名 `lib` 不进入模块 identity；root 的
+逻辑身份就是 `crate`。crate manifest 不选择入口文件，也不枚举模块树。package Host 只把
+crate root directory、依赖 crate roots 和源码访问能力交给编译器。
+
+Telora 不因可执行能力引入 `src/main.telora` 或 `src/bin/*.telora` target 规则。一个 crate
+是否可由 `run`、`serve` 或其他命令执行，由 `src/lib.telora` 导出的静态入口契约决定，
+例如导出 `MainService`；文件名不表达运行时入口。
+
+`std` 和普通依赖 crate 使用相同的 `src/lib.telora` 根规则。`tests/*.telora` 是 CLI 选择的
+独立测试根，可以访问被测 crate，但不成为普通 crate 模块树的隐式子模块。
 
 ## 静态路径 `::`
 
@@ -230,7 +238,7 @@ SymbolId、TypeId 或可重定位的规范身份，而不是保存一段将在�
 
 推荐管线为：
 
-1. 从 crate root 解析足以发现 `mod` 和 `data` 声明的 CST。
+1. 从固定的 `src/lib.telora` crate root 解析足以发现 `mod` 和 `data` 声明的 CST。
 2. 按 `mod` 声明构造完整、排序稳定的 ModuleId 图。
 3. 登记 data source cname，但不读取内容。
 4. 解析并 lowering 所有已挂载代码模块。
@@ -261,6 +269,7 @@ HashMap 迭代顺序。
 ## 验收条件
 
 - 代码模块只有一种文件映射规则。
+- 普通 crate 固定以 `src/lib.telora` 为根；可执行入口只由 root export contract 决定。
 - 未经 `mod` 挂载的代码文件不能通过 `use` 或宏被隐式加载。
 - `::` 在 seal 前全部解析为稳定身份；`.` 不再承担静态名字选择。
 - 同一 crate 在不同绝对目录中构建产生相同 module/symbol identity 和制品字节。
