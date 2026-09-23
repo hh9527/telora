@@ -239,7 +239,7 @@ member 或确定的远程 tarball。**Crate manifest** 声明 crate 的 canonica
 graph；除显式 lock 操作外，Host 只验证和消费它。
 
 **Package preparation** 是 resolver 之前的 Host 阶段。它验证 config 与 lock、通过内嵌
-`telora-ees` 的 IMOS component 物化远程 source、校验物化 manifest，并产生一次命令
+IMOS store 物化远程 source、校验物化 manifest，并产生一次命令
 生命周期内不变的 crate-name 到 root 映射。Package source 和物理 root 不进入 module
 identity。
 

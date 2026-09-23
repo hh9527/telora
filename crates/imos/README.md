@@ -40,7 +40,7 @@ Windows 需要针对大小写和路径别名确定一致的锁范围；不能仅
 别名面收窄到前缀与大小写两类。未来修改锁键需要考虑与旧版本进程同时使用
 同一 store。
 
-运行契约测试：`cargo test -p imos -p telora-ees`。测试覆盖硬链接身份与引用回收、
+运行契约测试：`cargo test -p imos`。测试覆盖硬链接身份与引用回收、
 只读请求替换后旧链接保持有效、锁竞争、完整目录发布，以及 store 的安装和回收。
 
 ## Windows 后端
@@ -52,7 +52,7 @@ Windows 后端为 `fsx/windows.rs`，处理方式如下。
 - FAT/exFAT 的 file index 恒为 0，后端对此显式报错：store 要求本地 NTFS。
 - `PrivateDirectory` 写入受保护、可继承的属主 DACL：属主、SYSTEM 与
   Administrators 全权，对应 Unix 0700。store 根目录接受任意路径，
-  `TELORA_EES_STORE` 还能覆盖位置，不能依赖 profile 默认 ACL；普通
+  `TELORA_IMOS_STORE` 还能覆盖位置，不能依赖 profile 默认 ACL；普通
   目录、文件与可执行策略沿用从私有根继承的默认 ACL。
 - `WriteProtected` 与 `protect_file` 为显式平台取舍的 no-op：只读属性会
   挡住请求文件替换（tempfile persist）与陈旧对象回收；防误写本身不是

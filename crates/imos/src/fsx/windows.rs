@@ -142,7 +142,7 @@ pub(crate) fn set_access(path: &Path, policy: AccessPolicy) -> io::Result<()> {
         // protection is an explicit platform tradeoff, guarded by store
         // locks and identity checks instead.
         AccessPolicy::WriteProtected => Ok(()),
-        // `Store::open` accepts arbitrary roots and `TELORA_EES_STORE` can
+        // `Store::open` accepts arbitrary roots and `TELORA_IMOS_STORE` can
         // relocate the store outside the user profile, so inherited ACLs
         // cannot be assumed to restrict access: write an explicit
         // owner-only DACL, the counterpart of the Unix 0700 policy.

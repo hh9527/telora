@@ -360,6 +360,10 @@ telora lock
 config、manifest 和远程物化结果一致。发现陈旧 lock 时，命令会要求刷新，不会隐式
 改写它。
 
+远程 tarball 由 Host 通过 IMOS store 物化，默认使用 IMOS 的用户缓存目录。
+`TELORA_IMOS_STORE` 可覆盖该目录；空值会报错。包获取只发生在 Host 的
+workspace 准备阶段，不向 Telora 程序提供外部 I/O 能力。
+
 ## Resolver 顺序
 
 resolver 在加载模块前冻结 package graph：
