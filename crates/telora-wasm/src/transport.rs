@@ -115,9 +115,16 @@ impl Session {
             .instance
             .get_typed_func::<(i32, i32), i32>(&self.store, "telora_invoke")
             .map_err(|e| e.to_string())?;
-        let pointer = invoke
-            .call(&mut self.store, (closure.pointer as i32, args as i32))
-            .map_err(|e| e.to_string())? as u32;
+        if self.execution_quota.is_none() {
+            self.start_execution()?;
+        }
+        let called = self.execution_quota.as_mut().unwrap().call(
+            &mut self.store,
+            invoke,
+            (closure.pointer as i32, args as i32),
+        );
+        self.metered_fuel = self.execution_quota.as_ref().map(|quota| quota.consumed());
+        let pointer = called? as u32;
         if pointer == 0 {
             return Ok(None);
         }

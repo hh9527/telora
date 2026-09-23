@@ -137,11 +137,16 @@ impl Guest {
             .call(&mut self.store, (1, 0, record))?;
         Ok(serde_json::from_slice(&self.response(record)?)?)
     }
-    pub fn request(&mut self, bytes: &[u8]) -> Result<Vec<u8>> {
+    pub fn request_with_quota(
+        &mut self,
+        bytes: &[u8],
+        quota: &mut crate::fuel_quota::FuelQuota,
+    ) -> Result<Vec<u8>> {
         let ptr = self.transfer(bytes)?;
         let result = self.alloc(12, 4)?;
-        self.exports.run.call(
+        quota.call(
             &mut self.store,
+            self.exports.run,
             (ptr, u32::try_from(bytes.len())?, 1, 0, result),
         )?;
         self.free(ptr, bytes.len(), 1)?;

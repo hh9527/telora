@@ -33,7 +33,7 @@ pub struct TestSession {
 
 impl TestSession {
     /// Requires a successfully initialized graph. It is never reinitialized per case.
-    pub fn new(session: Session) -> Result<Self, String> {
+    pub fn new(mut session: Session) -> Result<Self, String> {
         let phase = session
             .instance
             .get_global(&session.store, "telora_phase")
@@ -41,6 +41,7 @@ impl TestSession {
         if phase.get(&session.store).i32() != Some(2) {
             return Err("Wasm: test graph is not initialized".into());
         }
+        session.start_execution()?;
         Ok(Self {
             session,
             failed: false,

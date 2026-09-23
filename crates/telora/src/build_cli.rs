@@ -1,4 +1,4 @@
-//! File publication is separate from the existing source run/serve path.
+//! File publication is separate from source execution.
 use clap::Args;
 use std::{
     io::{Cursor, Write},
@@ -80,11 +80,12 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
     drop(mir);
     drop(inventory);
     let bytes = if args.snapshot {
-        let session = telora_wasm::session::Session::load_with_limits(
+        let mut session = telora_wasm::session::Session::load_with_limits(
             &bytes,
-            config.fuel,
+            config.initialization_fuel,
             config.memory_limit,
         )?;
+        session.set_request_fuel(config.request_fuel);
         let mut service = TransformSession::new(session)?;
         let names = crate::source_arg::service_source_names(&args.sources)?;
         if names != service.sources() {
@@ -122,7 +123,12 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
     } else {
         bytes
     };
-    let bytes = telora_wasm::publication::finish(&bytes, config.fuel, config.memory_limit)?;
+    let bytes = telora_wasm::publication::finish(
+        &bytes,
+        config.memory_limit,
+        config.initialization_fuel,
+        config.request_fuel,
+    )?;
     // Publish only after compilation has succeeded.
     let parent = args
         .output

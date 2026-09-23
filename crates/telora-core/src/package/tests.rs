@@ -37,11 +37,21 @@ fn compiler_and_runtime_config_are_validated_and_do_not_enter_the_lock() {
             serde_json::json!({"maxTypeDepth":1.5}),
             "invalid type",
         ),
-        ("runtime", serde_json::json!({"fuel":0}), "runtime.fuel"),
+        ("runtime", serde_json::json!({"fuel":0}), "unknown field"),
         (
             "runtime",
-            serde_json::json!({"fuel":u64::MAX / 1_000_000 + 1}),
-            "runtime.fuel",
+            serde_json::json!({"initializationFuel":0}),
+            "runtime.initializationFuel",
+        ),
+        (
+            "runtime",
+            serde_json::json!({"requestFuel":0}),
+            "runtime.requestFuel",
+        ),
+        (
+            "runtime",
+            serde_json::json!({"requestFuel":20_000_000_000_000u64}),
+            "runtime.requestFuel",
         ),
         (
             "runtime",
@@ -50,7 +60,7 @@ fn compiler_and_runtime_config_are_validated_and_do_not_enter_the_lock() {
         ),
         (
             "runtime",
-            serde_json::json!({"memoryLimit":(usize::MAX as u64) / (1 << 20) + 1}),
+            serde_json::json!({"memoryLimit":1u64 << 44}),
             "runtime.memoryLimit",
         ),
         (
@@ -58,7 +68,6 @@ fn compiler_and_runtime_config_are_validated_and_do_not_enter_the_lock() {
             serde_json::json!({"memory_limit":64}),
             "unknown field",
         ),
-        ("runtime", serde_json::json!({"fuel":-1}), "invalid value"),
     ] {
         let mut config = base.clone();
         config[section] = options;
@@ -68,7 +77,7 @@ fn compiler_and_runtime_config_are_validated_and_do_not_enter_the_lock() {
     }
     let mut config = base;
     config["compiler"] = serde_json::json!({"maxTypeDepth":512});
-    config["runtime"] = serde_json::json!({"fuel":200,"memoryLimit":64});
+    config["runtime"] = serde_json::json!({"requestFuel":200,"memoryLimit":64});
     fs::write(root.join(CONFIG_FILE), serde_json::to_vec(&config).unwrap()).unwrap();
     let spec = WorkspaceSpec::discover(&root).unwrap();
     assert_eq!(before, spec.generate_lock(&BTreeMap::new()).unwrap());
@@ -77,7 +86,7 @@ fn compiler_and_runtime_config_are_validated_and_do_not_enter_the_lock() {
     assert_eq!(workspace.compiler_options().max_tuple_items, 1024);
     assert_eq!(
         workspace.runtime_options().limits().unwrap(),
-        (200_000_000, 64 << 20)
+        (5_000_000_000, 200_000_000, 64 << 20)
     );
     let serialized = serde_json::to_value(spec.config()).unwrap();
     assert_eq!(serialized["compiler"]["maxTypeDepth"], 512);

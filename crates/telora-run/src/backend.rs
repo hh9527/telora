@@ -5,6 +5,12 @@ pub(crate) use wasmi as runtime;
 pub(crate) fn compile(bytes: &[u8]) -> Result<runtime::Module> {
     let mut config = runtime::Config::default();
     config.consume_fuel(true);
+    // Lazy translation cannot be resumed on fuel exhaustion; meter execution only.
+    config.fuel_cost(runtime::CustomFuelCosts {
+        bytes_copied_per_fuel: 64,
+        fuel_per_bytes_translated: 0,
+        fuel_per_bytes_validated: 0,
+    });
     Ok(runtime::Module::new(&runtime::Engine::new(&config), bytes)?)
 }
 

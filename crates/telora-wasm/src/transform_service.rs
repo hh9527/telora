@@ -133,6 +133,9 @@ impl TransformSession {
             return Err("service initialization cannot be repeated".into());
         }
         self.poisoned = true;
+        self.session
+            .initialization_quota
+            .get_or_insert_with(|| crate::fuel_quota::FuelQuota::new(self.session.fuel_budget));
         let mut buffer = input::TransferBuffer::new();
         let set = self.session.exports.set_source;
         let mut supplied = 0;
@@ -150,25 +153,29 @@ impl TransformSession {
                 Format::Yaml => 2,
                 Format::Toml => 3,
             };
-            set.call(
+            self.session.initialization_quota.as_mut().unwrap().call(
                 &mut self.session.store,
+                set,
                 (id, buffer.pointer, length, format),
-            )
-            .map_err(|e| e.to_string())?;
+            )?;
             supplied += 1;
         }
         buffer.free(&mut self.session)?;
         if supplied != self.sources.len() {
             return Err("service sources do not match declared sources".into());
         }
-        let status = self
-            .session
-            .exports
-            .create_service
-            .call(&mut self.session.store, ())
-            .map_err(|e| e.to_string())?;
+        let status = self.session.initialization_quota.as_mut().unwrap().call(
+            &mut self.session.store,
+            self.session.exports.create_service,
+            (),
+        )?;
         let diagnostics = self.initialization_diagnostics()?;
         self.ready = status == 0;
+        self.session.metered_fuel = self
+            .session
+            .initialization_quota
+            .as_ref()
+            .map(|quota| quota.consumed());
         // A failed initialization has no baseline and can never be retried.
         self.poisoned = !self.ready;
         Ok(Initialization {
@@ -201,6 +208,7 @@ impl TransformSession {
         if !self.ready || self.poisoned {
             return Err("service is not initialized".into());
         }
+        self.session.initialization_quota = None;
         let globals: Vec<(String, wasmi::Val)> = self
             .session
             .instance
@@ -238,6 +246,7 @@ impl TransformSession {
             registered_sources: self.session.registered_sources,
             emitted_debug: self.session.emitted_debug.get(),
         });
+        self.session.start_execution()?;
         Ok(())
     }
 
@@ -278,6 +287,7 @@ impl TransformSession {
                     .set_fuel(self.session.fuel_budget)
                     .map_err(|e| e.to_string())?;
                 self.session.emitted_debug.set(baseline.emitted_debug);
+                self.session.metered_fuel = None;
                 return Ok(());
             }
             self.poisoned = true;
@@ -299,6 +309,7 @@ impl TransformSession {
         compact.manifest = baseline.manifest.clone();
         compact.registered_sources = baseline.registered_sources;
         compact.emitted_debug.set(baseline.emitted_debug);
+        compact.metered_fuel = None;
         compact.usage_reporter = self.session.usage_reporter.take();
         self.session = compact;
         self.poisoned = false;
@@ -317,11 +328,14 @@ impl TransformSession {
             .write(&mut self.session.store, pointer as usize, input)
             .map_err(|e| e.to_string())?;
         let result = buffers::alloc(&mut self.session, 12, 4)?;
-        self.session
-            .exports
-            .run_service
-            .call(&mut self.session.store, (pointer, length, 1, 0, result))
-            .map_err(|e| e.to_string())?;
+        let mut quota = crate::fuel_quota::FuelQuota::new(self.session.fuel_budget);
+        let called = quota.call(
+            &mut self.session.store,
+            self.session.exports.run_service,
+            (pointer, length, 1, 0, result),
+        );
+        self.session.metered_fuel = Some(quota.consumed());
+        called?;
         // No free after a trap: the next reset discards the entire failed instance.
         buffers::free(&mut self.session, pointer, length, 1)?;
         let response = buffers::response(&mut self.session, result)?;

@@ -6,10 +6,10 @@ Telora 从源码建立封闭 MIR，生成内存中的 Wasm，初始化后执行�
 | --- | --- | --- |
 | `eval MODULE:NAME` | 一个 Value 导出 | 输出初始化后的值 |
 | `run MODULE` | 类型导出 MainService | 读取一个 stdin JSON，返回一个 JSON |
-| `serve MODULE --bind URI` | 同一个 MainService | 通过 JSONL 或 HTTP 连续处理独立请求 |
+| `run MODULE --serve URI` | 同一个 MainService | 通过 JSONL 或 HTTP 连续处理独立请求 |
 | `build MODULE -o app.wasm` | 同一个 MainService | 编译并保存普通 Wasm，不初始化服务 |
 | `build MODULE --snapshot --source NAME=FILE -o app.wasm` | 同一个 MainService | 额外嵌入 ready service 快照 |
-| `telora-run app.wasm` | 制品中的 MainService | 独立执行；指定 `--bind URI` 时持续服务 |
+| `telora-run app.wasm` | 制品中的 MainService | 独立执行；指定 `--serve URI` 时持续服务 |
 
 服务实现 `std::transform_service::TransformService`：
 
@@ -37,7 +37,7 @@ pub use self::{MyService as MainService};
 
 ```sh
 printf '{"question":42}\n' | telora run @src/lib --source knowledge=model.json
-printf '1\n2\n' | telora serve @src/lib --source knowledge=model.json --bind stdio+jsonl://
+printf '1\n2\n' | telora run @src/lib --source knowledge=model.json --serve stdio+jsonl://
 ```
 
 `init: Fn(Context) -> Self` 消费固定来源，返回初始化实例。
@@ -77,12 +77,13 @@ JSONL 服务每条请求恰好输出一行；HTTP 使用相同响应封装：
 其中来源坐标保留行与 UTF-8 字节偏移信息。业务返回 null 与执行失败由 error 区分。
 请求成功、语言失败或配额耗尽后，下一条请求都获得独立的执行机会。
 
-fuel/memoryLimit 只约束单次服务调用，不在整个 serve 生命周期累计；目的在于可停机，
-不要求精准计费。参数读取 workspace 的 runtime 配置，CLI 可用 --with-fuel 和
---with-memory-limit 覆盖。fuel 单位为一百万，memoryLimit 单位为 MiB。
+初始化和单次服务调用分别拥有 fuel 预算，请求之间不累计；目的在于可停机，
+不要求精准计费。预算读取 workspace 的 runtime 配置，CLI 可用
+--initialization-fuel、--request-fuel 分别覆盖，
+--with-memory-limit 覆盖内存边界。配置中的 fuel 单位为一百万，memoryLimit 单位为 MiB。
 请求之间的 reset 实现与页级计量方式不构成语言语义。
 
-run 成功只向 stdout 输出结果；失败非零退出，诊断走 stderr JSONL。serve 使用上面的
+run 成功只向 stdout 输出结果；失败非零退出，诊断走 stderr JSONL。`run --serve` 使用上面的
 响应封装。dbg! 和 usage 观察仍输出到 stderr，不混入结果。
 
 ## Wasm 制品
@@ -91,7 +92,7 @@ run 成功只向 stdout 输出结果；失败非零退出，诊断走 stderr JSO
 cargo build --release -p telora -p telora-run
 telora build @src/lib -o app.wasm
 telora-run app.wasm --source knowledge=model.json < request.json
-telora-run app.wasm --source knowledge=model.json --bind stdio+jsonl:// < requests.jsonl
+telora-run app.wasm --source knowledge=model.json --serve stdio+jsonl:// < requests.jsonl
 
 telora build @src/lib --snapshot --source knowledge=model.json -o app.wasm
 telora-run app.wasm < request.json
@@ -110,9 +111,10 @@ telora-run 使用 wasmi，不需要源码、workspace 或编译器。普通制�
 包含 snapshot 且未传 `--source` 时直接恢复 ready service。只要命令行出现 `--source`，
 runner 就忽略 snapshot，按照声明校验完整来源集合并重新初始化。因此文件名不参与识别，
 普通和 snapshot 制品均可使用 `.wasm` 后缀。
-不传 --bind 则读完 stdin 的一个 JSON（直到 EOF），执行一次并退出。
-制品保留构建时的默认执行预算；runner 的 --with-fuel 和 --with-memory-limit
-覆盖每请求预算，不改变初始化预算。--report-usage 输出使用量诊断，
+不传 --serve 则读完 stdin 的一个 JSON（直到 EOF），执行一次并退出。
+制品保留构建时的初始化及请求预算；runner 的
+--initialization-fuel 和 --request-fuel 分别覆盖两个阶段，
+--with-memory-limit 覆盖请求内存边界。--report-usage 输出使用量诊断，
 --report-timings 输出加载、初始化、reset 和请求等分阶段耗时。
 
 当前不提供 Wasmtime。制品与 snapshot 格式仍是实验版本，跨版本使用时
@@ -120,7 +122,7 @@ runner 就忽略 snapshot，按照声明校验完整来源集合并重新初始�
 
 ## HTTP 与 Unix socket
 
-两个服务入口共用 --bind 地址格式：
+两个服务入口共用 --serve URI 地址格式：
 
 | 地址 | 传输 |
 | --- | --- |
@@ -129,9 +131,9 @@ runner 就忽略 snapshot，按照声明校验完整来源集合并重新初始�
 | `http+unix:///tmp/telora.sock` | Unix socket HTTP/1，仅 Unix 平台 |
 
 ```sh
-telora serve @src/lib --source knowledge=model.json --bind http://127.0.0.1:8080
+telora run @src/lib --source knowledge=model.json --serve http://127.0.0.1:8080
 # 或执行已构建的制品
-telora-run app.wasm --source knowledge=model.json --bind http+unix:///tmp/telora.sock
+telora-run app.wasm --source knowledge=model.json --serve http+unix:///tmp/telora.sock
 
 curl -H 'Content-Type: application/json' -d '{"question":42}' http://127.0.0.1:8080/transform
 curl --unix-socket /tmp/telora.sock -H 'Content-Type: application/json' \
@@ -145,12 +147,12 @@ POST /transform 接收 JSON，返回 telora.service/v1 响应。成功、语言�
 执行串行，请求间 reset；每连接处理一次请求后关闭。最多同时接收 64 条连接，
 body 读取超时 30 秒，连接总时限 60 秒，执行本身仍依靠 Wasm 配额保证边界。
 支持明文 HTTP，不提供 TLS。Unix socket 必须使用绝对路径，不覆盖已有文件，
-停机后由部署方清理。旧 stdio 地址和独立 runner 的 --serve 参数已由 --bind 统一替代。
+停机后由部署方清理。两个入口均用 `--serve URI` 选择持续服务模式。
 
 ## 检查与迁移
 
 `check --only-types` 不执行代码；普通 check 完成模块初始化，但不调用 init/transform，
-也不获取服务来源。行为验证使用 run/serve 或显式调用方法的 `.telora` 测试。
+也不获取服务来源。行为验证使用 `run`、`run --serve URI` 或显式调用方法的 `.telora` 测试。
 
 旧 eval-with、entry.Eval/Run/Serve、actor reducer 和应用 EES 协议已移除。
 原来承载单次查询的 source 应迁到 transform 参数；固定知识库来源才放进 init。

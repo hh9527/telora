@@ -297,7 +297,13 @@ fn reset_restores_initialized_service_after_fuel_and_memory_traps() {
     let mut service = TransformSession::new(session).unwrap();
     initialize(&mut service);
     for input in ["ok", "loop", "ok", "grow", "ok"] {
+        service.session_mut().fuel_budget = 100_000_000;
         service.reset().unwrap();
+        service.session_mut().fuel_budget = if input == "loop" {
+            100_000
+        } else {
+            100_000_000
+        };
         if input == "loop" {
             service.session_mut().store.set_fuel(100_000).unwrap();
         }

@@ -436,16 +436,19 @@ Wasmi 提供 fuel、内存增长与调用栈限制，Session 管理诊断和终�
 耗尽终止会话，不能伪装为可恢复语言失败，也不重置 fuel 后继续测试。
 
 目标是执行有边界、失控时能停机，不是精确计费或限制进程的实际资源占用。
-直接使用引擎 fuel；CLI 线性内存增长默认上限为 1024 MiB（1 GiB），函数表上限为 100 万项，
+直接使用引擎 fuel；CLI 线性内存增长默认上限为 64 MiB，函数表上限为 100 万项，
 调用栈沿用引擎限制。增长超限直接 trap，不模拟逻辑分配量，也不核算每次复制。
 这些是私有实现阈值；Wasm 内存边界不是进程 RSS 上限。
 
-workspace 配置的 `runtime.fuel` 和 `runtime.memoryLimit` 提供会话默认值，分别为
-100 和 1024，单位为 1,000,000 fuel 和 MiB（`1 << 20` 字节，16 个 Wasm 页）。CLI 正式参数
-`--with-fuel N`、`--with-memory-limit N` 仅在显式传入时逐项覆盖对应配置。
-N 必须为正整数，超出可表示范围的输入在配置或参数解析时拒绝。
+workspace 配置的 `runtime.initializationFuel` 与 `runtime.requestFuel` 默认分别为
+5000 和 1000（单位：百万 fuel）。`telora` CLI 的 `--initialization-fuel N` 与
+`--request-fuel N` 直接覆盖相应配置值；`telora build` 将最终预算写入制品，
+内存中的 Wasm 也采用同一规则。独立 `telora-run` 的同名参数覆盖制品预算。
+`runtime.memoryLimit` 默认 64 MiB（每 MiB 为 `1 << 20` 字节，即 16 个 Wasm 页）。
+`--with-memory-limit N` 覆盖内存边界。N 必须为正整数，超出可表示范围的
+输入在配置或参数解析时拒绝。惰性字节码翻译/验证不扣 Guest fuel。
 参数适用于所有执行命令。`check`/`test` 的批量 roots、初始化与用例在同一会话内共享
-预算，不按模块数量放大，也不在用例之间重置；`run`/`serve` 在每次请求前 reset，每个
+预算，不按模块数量放大，也不在用例之间重置；`run`（含 `--serve URI`）在每次请求前 reset，每个
 请求获得独立预算，初始化不占用请求预算。`check --only-types` 不创建执行会话，因此没有执行用量报告。
 `--report-usage` 在执行会话结束时向 stderr 输出合法的 info 级 JSON 诊断
 （`schema: telora.execution/v1`、`record: diagnostic`、`code: execution-usage`）。
@@ -455,7 +458,7 @@ N 必须为正整数，超出可表示范围的输入在配置或参数解析时
 实例创建前的失败没有可报告的会话。这不是精确计费信息，也不进入命令的结果流。
 
 验收用持续尾递归与持续扩大数组的语言用例，验证分别因 fuel 和内存边界终止。
-测试使用较小内存边界，避免真的分配 1 GiB；不断言精确扣费次数。
+测试使用较小内存边界，避免真实耗尽默认配额；不断言精确扣费次数。
 
 数据入口单独使用 DataLimits 检查文件大小、节点数、深度、单容器成员数和 payload
 大小。通过 admission 后才物化 Value。Wasm 内的 codec/parse 同受引擎终止边界约束。

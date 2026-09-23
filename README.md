@@ -250,11 +250,11 @@ serve 处理 JSONL。每次调用从同一初始化状态开始，服务间隙 r
 ```text
 telora eval <module:name>  求值 module 的一个 Value 导出
 telora run <module>        读取一个 stdin JSON，输出 transform 的结果
-telora serve <module> --bind <URI>  通过 JSONL 或 HTTP 持续处理独立请求
+telora run <module> --serve <URI>  通过 JSONL 或 HTTP 持续处理独立请求
 telora build <module> -o app.wasm   编译为普通 Wasm 制品
 telora build <module> --snapshot --source name=file.json -o app.wasm
                                   编译并嵌入可选的初始化快照
-telora-run app.wasm [--bind <URI>]  独立执行制品，不需要源码和编译器
+telora-run app.wasm [--serve <URI>]  独立执行制品，不需要源码和编译器
 telora lock                物化 package source 并原子刷新 workspace lock
 telora check <module-id>   类型闭合后完成可达模块图初始化
 telora check --lib [--tests] [--only-types]  批量检查当前 crate
@@ -265,11 +265,11 @@ telora lsp                 启动语言服务器
 ```
 
 包管理在私有 Host 内使用 IMOS 物化依赖，不向程序开放外部 I/O。
-`eval` 读取普通 Value 导出；run/serve 执行 MainService。
+`eval` 读取普通 Value 导出；`run` 执行 MainService。
 
-`--bind` 支持 `stdio+jsonl://`、`http://127.0.0.1:8080` 和
+`--serve` 支持 `stdio+jsonl://`、`http://127.0.0.1:8080` 和
 `http+unix:///tmp/telora.sock`。HTTP 接口为 `POST /transform`。
-`telora-run` 不传 `--bind` 时从 stdin 读取一个完整 JSON，输出一个结果；
+`telora-run` 不传 `--serve` 时从 stdin 读取一个完整 JSON，输出一个结果；
 传入时持续服务。`--source name=file.json` 提供初始化数据，与请求输入分开。
 普通 Wasm 制品每次启动 runner 都进行初始化。`build --snapshot` 在同一制品中保留
 普通初始化代码和 ready service：runner 无 `--source` 时直接恢复快照，提供

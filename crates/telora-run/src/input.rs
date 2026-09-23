@@ -1,4 +1,5 @@
 //! Inject source text through Guest parsing; no Host parser or language values.
+use crate::fuel_quota::FuelQuota;
 use crate::{artifact::ModuleData, engine::Guest};
 use anyhow::{Result, ensure};
 
@@ -10,13 +11,14 @@ pub struct SourceInput {
 }
 
 impl Guest {
-    pub fn inject_module(&mut self, module: &ModuleData) -> Result<()> {
+    pub fn inject_module(&mut self, module: &ModuleData, quota: &mut FuelQuota) -> Result<()> {
         let ptr = self.transfer(module.source.name.as_bytes())?;
         let register = self
             .instance
             .get_typed_func::<(u32, u32, u32), u32>(&mut self.store, "telora_register_source")?;
-        let ok = register.call(
+        let ok = quota.call(
             &mut self.store,
+            register,
             (
                 module.source.id,
                 ptr,
@@ -29,8 +31,9 @@ impl Guest {
         let parse = self
             .instance
             .get_typed_func::<(u32, u32, u32, u32), u32>(&mut self.store, "telora_parse_data")?;
-        let packet = parse.call(
+        let packet = quota.call(
             &mut self.store,
+            parse,
             (
                 ptr,
                 u32::try_from(module.text.len())?,
@@ -50,23 +53,23 @@ impl Guest {
         let materialize = self
             .instance
             .get_typed_func::<(u32, u32), u32>(&mut self.store, "telora_materialize_data")?;
-        let value = materialize.call(&mut self.store, (packet, 0))?;
+        let value = quota.call(&mut self.store, materialize, (packet, 0))?;
         ensure!(value != 0, "data materialization failed");
         let inject = self
             .instance
             .get_typed_func::<(u32, u32), u32>(&mut self.store, "telora_inject_data")?;
         ensure!(
-            inject.call(&mut self.store, (module.symbol, value))? == 1,
+            quota.call(&mut self.store, inject, (module.symbol, value))? == 1,
             "data injection failed"
         );
         Ok(())
     }
-    pub fn sources(&mut self) -> Result<Vec<(u32, String)>> {
-        let count = self.exports.count.call(&mut self.store, ())?;
+    pub fn sources(&mut self, quota: &mut FuelQuota) -> Result<Vec<(u32, String)>> {
+        let count = quota.call(&mut self.store, self.exports.count, ())?;
         let result = self.alloc(12, 4)?;
         let mut names = vec![];
         for index in 0..count {
-            self.exports.name.call(&mut self.store, (index, result))?;
+            quota.call(&mut self.store, self.exports.name, (index, result))?;
             let id = self.raw_word(result)?;
             let ptr = self.raw_word(result + 4)?;
             let len = self.raw_word(result + 8)?;
@@ -79,6 +82,7 @@ impl Guest {
         &mut self,
         names: &[(u32, String)],
         sources: &[SourceInput],
+        quota: &mut FuelQuota,
     ) -> Result<()> {
         ensure!(
             names.len() == sources.len(),
@@ -93,8 +97,9 @@ impl Guest {
             );
             ensure!((1..=3).contains(&source.format), "invalid source format");
             let ptr = self.transfer(&source.data)?;
-            self.exports.set.call(
+            quota.call(
                 &mut self.store,
+                self.exports.set,
                 (*id, ptr, u32::try_from(source.data.len())?, source.format),
             )?;
             self.free(ptr, source.data.len(), 1)?;

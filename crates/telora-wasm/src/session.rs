@@ -5,12 +5,16 @@ mod timing;
 
 // Generous execution boundaries, not an allocation accounting model. The engine
 // refuses growth before allocating; its ordinary stack limits remain in force.
-const MEMORY_BOUND: usize = 1024 * 1024 * 1024;
+const MEMORY_BOUND: usize = 64 * 1024 * 1024;
 const TABLE_BOUND: usize = 1_000_000;
 
 pub struct Session {
     pub(crate) exports: exports::Exports,
     pub(crate) fuel_budget: u64,
+    pub(crate) request_fuel: u64,
+    pub(crate) initialization_quota: Option<crate::fuel_quota::FuelQuota>,
+    pub(crate) execution_quota: Option<crate::fuel_quota::FuelQuota>,
+    pub(crate) metered_fuel: Option<u64>,
     pub(crate) memory_limit: usize,
     pub(crate) module: wasmi::Module,
     pub usage_reporter: Option<fn(Usage)>,
@@ -42,7 +46,12 @@ impl Session {
     pub fn usage(&self) -> Usage {
         Usage {
             fuel_budget: self.fuel_budget,
-            fuel_remaining: self.store.get_fuel().unwrap_or(0),
+            fuel_remaining: self
+                .fuel_budget
+                .saturating_sub(self.metered_fuel.unwrap_or_else(|| {
+                    self.fuel_budget
+                        .saturating_sub(self.store.get_fuel().unwrap_or(0))
+                })),
             memory_bytes: self.memory.data_size(&self.store),
             memory_limit: self.memory_limit,
         }
@@ -79,6 +88,10 @@ impl Session {
         Ok(Self {
             exports,
             fuel_budget: self.fuel_budget,
+            request_fuel: self.request_fuel,
+            initialization_quota: None,
+            execution_quota: None,
+            metered_fuel: self.metered_fuel,
             memory_limit: self.memory_limit,
             module: self.module.clone(),
             // The caller transfers reporting ownership when the fresh instance
@@ -105,6 +118,12 @@ impl Session {
         let module_timer = timing::Timer::new("load_module");
         let mut config = wasmi::Config::default();
         config.consume_fuel(true);
+        // Lazy translation cannot be resumed on fuel exhaustion; meter execution only.
+        config.fuel_cost(wasmi::CustomFuelCosts {
+            bytes_copied_per_fuel: 64,
+            fuel_per_bytes_translated: 0,
+            fuel_per_bytes_validated: 0,
+        });
         let engine = wasmi::Engine::new(&config);
         let module = wasmi::Module::new(&engine, bytes).map_err(|e| e.to_string())?;
         drop(module_timer);
@@ -130,6 +149,10 @@ impl Session {
             exports,
             module,
             fuel_budget: fuel,
+            request_fuel: fuel,
+            initialization_quota: None,
+            execution_quota: None,
+            metered_fuel: None,
             memory_limit,
             usage_reporter: None,
             manifest,
@@ -163,17 +186,39 @@ impl Session {
         Ok(session)
     }
     pub fn initialize(&mut self) -> Result<(), String> {
+        self.initialization_quota = Some(crate::fuel_quota::FuelQuota::new(self.fuel_budget));
         self.register_sources()?;
         let initialize = self
             .instance
             .get_typed_func::<(), i32>(&self.store, "telora_initialize")
             .map_err(|e| e.to_string())?;
-        let status = initialize
-            .call(&mut self.store, ())
-            .map_err(|e| e.to_string())?;
+        let status =
+            self.initialization_quota
+                .as_mut()
+                .unwrap()
+                .call(&mut self.store, initialize, ())?;
+        self.metered_fuel = self
+            .initialization_quota
+            .as_ref()
+            .map(|quota| quota.consumed());
         if status == 0 {
             return Err(self.failure());
         }
+        Ok(())
+    }
+
+    pub fn set_request_fuel(&mut self, request_fuel: u64) {
+        self.request_fuel = request_fuel;
+    }
+
+    pub(crate) fn start_execution(&mut self) -> Result<(), String> {
+        self.fuel_budget = self.request_fuel;
+        self.store
+            .set_fuel(self.request_fuel)
+            .map_err(|e| e.to_string())?;
+        self.initialization_quota = None;
+        self.execution_quota = Some(crate::fuel_quota::FuelQuota::new(self.request_fuel));
+        self.metered_fuel = None;
         Ok(())
     }
     pub fn active_initialization_root(
@@ -242,15 +287,25 @@ impl Session {
         Ok(())
     }
     pub fn eval(&mut self) -> Result<serde_json::Value, String> {
+        self.start_execution()?;
         let pointer = self.entry()?;
         self.json(pointer)
     }
     pub(crate) fn entry(&mut self) -> Result<u32, String> {
+        if self.execution_quota.is_none() {
+            self.start_execution()?;
+        }
         let entry = self
             .instance
             .get_typed_func::<(), i32>(&self.store, "telora_entry")
             .map_err(|e| e.to_string())?;
-        let pointer = entry.call(&mut self.store, ()).map_err(|e| e.to_string())? as u32;
+        let result = self
+            .execution_quota
+            .as_mut()
+            .unwrap()
+            .call(&mut self.store, entry, ());
+        self.metered_fuel = self.execution_quota.as_ref().map(|quota| quota.consumed());
+        let pointer = result? as u32;
         if pointer == abi::NULL {
             return Err(self.failure());
         }
@@ -259,6 +314,7 @@ impl Session {
     /// Direct typed invocation for artifact consumers; service calls use their
     /// compiler-owned sealed init/transform contract.
     pub fn call(&mut self, arguments: &[serde_json::Value]) -> Result<serde_json::Value, String> {
+        self.start_execution()?;
         let pointer = self.entry()?;
         let descriptor = &self.manifest.types[self.manifest.entry_type as usize];
         if descriptor.kind != crate::artifact::Kind::Function
@@ -285,9 +341,13 @@ impl Session {
             .instance
             .get_typed_func::<(i32, i32), i32>(&self.store, "telora_invoke")
             .map_err(|e| e.to_string())?;
-        let result = invoke
-            .call(&mut self.store, (pointer as i32, args as i32))
-            .map_err(|e| e.to_string())? as u32;
+        let called = self.execution_quota.as_mut().unwrap().call(
+            &mut self.store,
+            invoke,
+            (pointer as i32, args as i32),
+        );
+        self.metered_fuel = self.execution_quota.as_ref().map(|quota| quota.consumed());
+        let result = called? as u32;
         if result == abi::NULL {
             return Err(self.failure());
         }

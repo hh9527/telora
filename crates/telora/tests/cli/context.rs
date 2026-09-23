@@ -14,9 +14,9 @@ fn run_selector_uses_the_manifest_discovery_start() {
         .args([
             "-C",
             other.to_str().unwrap(),
-            "serve",
+            "run",
             "@src/app",
-            "--bind",
+            "--serve",
             "stdio+jsonl://",
         ])
         .output()

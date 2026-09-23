@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 const root=process.argv[2];
 assert.ok(root,'expected build-run-smoke root');
 const dir=join(root,'crlf');
-const stdio=spawnSync(resolve('target/release/telora'),['-C',dir,'serve','@src/main','--source',`model=${join(dir,'source.json')}`,'--bind','stdio+jsonl://'],{input:'"query"\n"query"\n',encoding:'utf8',timeout:120000});
+const stdio=spawnSync(resolve('target/release/telora'),['-C',dir,'run','@src/main','--source',`model=${join(dir,'source.json')}`,'--serve','stdio+jsonl://'],{input:'"query"\n"query"\n',encoding:'utf8',timeout:120000});
 assert.equal(stdio.status,0,stdio.stderr);
 const lines=stdio.stdout.trim().split('\n').map(JSON.parse);
 assert.equal(lines.length,2); assert.equal(lines[0].error,false); assert.deepEqual(lines[0],lines[1]);
@@ -34,8 +34,8 @@ for(const compiler of [false,true]) for(const unix of [false,true]) {
   const p=await port(), socket=join(root,`serve-${compiler}.sock`);
   const uri=unix?`http+unix://${socket}`:`http://127.0.0.1:${p}`;
   const address=unix?{socketPath:socket}:{host:'127.0.0.1',port:p};
-  const args=compiler?['-C',dir,'--with-fuel','100','serve','@src/main']: [join(dir,'original.wasm'),'--with-fuel','1'];
-  args.push('--source',`model=${join(dir,'source.json')}`,'--bind',uri);
+  const args=compiler?['-C',dir,'--request-fuel','100','run','@src/main']: [join(dir,'original.wasm'),'--request-fuel','1'];
+  args.push('--source',`model=${join(dir,'source.json')}`,'--serve',uri);
   const child=spawn(resolve(`target/release/${compiler?'telora':'telora-run'}`),args,{stdio:['ignore','ignore','pipe']});
   let errors='';child.stderr.on('data',s=>errors+=s);
   try {

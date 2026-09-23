@@ -6,7 +6,8 @@ use serde::Deserialize;
 pub struct Publication {
     pub version: u32,
     pub abi: u32,
-    pub fuel: u64,
+    pub initialization_fuel: u64,
+    pub request_fuel: u64,
     pub memory_limit: u64,
 }
 
@@ -87,13 +88,15 @@ impl Artifact {
             publication.ok_or_else(|| anyhow::anyhow!("not a telora build artifact"))?;
         let manifest = manifest.ok_or_else(|| anyhow::anyhow!("missing manifest"))?;
         ensure!(
-            publication.version == 2
+            publication.version == 3
                 && publication.abi == telora_wasm_shared::abi::VERSION
                 && manifest.abi == publication.abi,
             "unsupported publication/Guest ABI version"
         );
         ensure!(
-            publication.fuel > 0 && publication.memory_limit > 0,
+            publication.memory_limit > 0
+                && publication.initialization_fuel > 0
+                && publication.request_fuel > 0,
             "invalid execution limits"
         );
         let modules = {

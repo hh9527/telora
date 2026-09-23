@@ -110,7 +110,7 @@ newtype 的 JSON 表示使用载荷契约。
 ## 服务协议
 
 `std/transform_service` 提供 TransformService、Context、Sources 和 source。
-服务导出具体类型 MainService，实现 init/transform；run/serve 共用该协议。
+服务导出具体类型 MainService，实现 init/transform；`run` 单次执行和 `run --serve URI` 共用该协议。
 来源与请求隔离见 [执行模式](EXEC-MODE.md)。
 
 ## 工具协议

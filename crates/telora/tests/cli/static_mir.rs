@@ -483,7 +483,7 @@ fn static_mir_eval_imports_data_after_static_solving() {
         String::from_utf8_lossy(&output.stderr)
     );
     let output = telora(&cwd)
-        .args(["serve", "@src/main", "--bind", "stdio+jsonl://"])
+        .args(["run", "@src/main", "--serve", "stdio+jsonl://"])
         .output()
         .unwrap();
     assert!(!output.status.success());

@@ -52,6 +52,7 @@ mod equality;
 mod equality_format;
 mod equality_plan;
 mod format_ops;
+mod fuel_quota;
 mod function_names;
 mod functions;
 mod guest_input;

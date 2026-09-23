@@ -411,7 +411,7 @@ fn diagnostic_scopes_capture_reports_and_resume_outer_execution() {
     let bytes = compile_export(source, "exhausted").unwrap();
     let mut session = crate::session::Session::load(&bytes, 1_000_000).unwrap();
     session.initialize().unwrap();
-    session.store.set_fuel(200_000).unwrap();
+    session.set_request_fuel(200_000);
     assert!(session.call(&[]).unwrap_err().contains("fuel"));
     assert_eq!(
         session.diagnostics().unwrap()[0].message,

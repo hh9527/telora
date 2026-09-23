@@ -81,8 +81,9 @@ Telora 不进行语义版本求解，也不在同一 workspace 中安装同名 c
     "maxTypeArguments": 4096
   },
   "runtime": {
-    "fuel": 100,
-    "memoryLimit": 1024
+    "initializationFuel": 5000,
+    "requestFuel": 1000,
+    "memoryLimit": 64
   },
   "sources": {
     "codec-lib": {
@@ -107,17 +108,20 @@ Telora 不进行语义版本求解，也不在同一 workspace 中安装同名 c
 | `compiler.maxTypeDepth` | 256 | 归一化类型结构深度，叶节点深度为 1；不沿名义类型成员布局递归计数 |
 | `compiler.maxTupleItems` | 1024 | 单个 Tuple 的最大单元数 |
 | `compiler.maxTypeArguments` | 4096 | 单个类型节点的直接子类型数量，包括 Tuple、Record、类型列表和函数签名（含返回类型）；不是实例总数 |
-| `runtime.fuel` | 100 | 会话 fuel，1 表示 1,000,000 fuel |
-| `runtime.memoryLimit` | 1024 | Wasm 线性内存上限，单位 MiB：1 表示 `1 << 20` 字节（16 个 64 KiB 页）；不是进程 RSS |
+| `runtime.initializationFuel` | 5000 | 初始化预算，1 表示 1,000,000 fuel |
+| `runtime.requestFuel` | 1000 | 单次请求预算，1 表示 1,000,000 fuel |
+| `runtime.memoryLimit` | 64 | Wasm 线性内存上限，单位 MiB：1 表示 `1 << 20` 字节（16 个 64 KiB 页）；不是进程 RSS |
 
 编译限制只在此配置，没有对应 CLI 参数。整个静态求解 session 使用 workspace 根的
 配置，依赖 crate 不能覆盖；CLI 和 LSP 共用该设置。直接处理标准库模块时也读取
 当前 workspace 配置，没有 workspace 时才使用内置默认值。
 
-运行时限制按字段分别采用 **CLI 显式参数 > workspace 配置 > 内置默认值**：
-`--with-fuel N` 覆盖 `runtime.fuel`，`--with-memory-limit N` 覆盖 `runtime.memoryLimit`。
-显式传入默认数值也属于覆盖。`check`/`test` 的初始化与用例在同一会话内共享预算，
-`run`/`serve` 每个请求在 reset 后获得独立预算；普通 `check` 使用
+运行时预算按字段采用 **CLI 显式参数 > workspace 配置 > 内置默认值**；CLI 的
+`--initialization-fuel N`、`--request-fuel N` 分别直接覆盖对应预算，
+`--with-memory-limit N` 覆盖 `runtime.memoryLimit`。
+`telora build` 保存最终预算；`telora-run` 同名参数可覆盖制品预算。
+`check`/`test` 的初始化与用例在同一会话内共享预算，
+`run`（含 `--serve URI`）每个请求在 reset 后获得独立预算；普通 `check` 使用
 运行时配置，`check --only-types` 不创建 VM。
 
 这两类配置不写入 `telora-lock.json`，调整限制不需要重新生成 lock。超出编译限制
@@ -356,7 +360,7 @@ workspace config、member manifest 或远程基线发生变化后运行：
 telora lock
 ```
 
-`eval`、`run`、`serve`、`test`、`check`、`query` 和 LSP 都要求 lock 存在且与当前
+`eval`、`run`、`test`、`check`、`query` 和 LSP 都要求 lock 存在且与当前
 config、manifest 和远程物化结果一致。发现陈旧 lock 时，命令会要求刷新，不会隐式
 改写它。
 
@@ -403,5 +407,5 @@ telora -C app query at @src/main
 telora -C app eval @src/model:schema
 telora -C app run @src/compiler < request.json
 telora -C app run @src/service:run
-telora -C app serve @src/service --bind stdio+jsonl://
+telora -C app run @src/service --serve stdio+jsonl://
 ```

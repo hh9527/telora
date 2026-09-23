@@ -181,7 +181,7 @@ init 失败不发布实例。内置 with_diagnostics 捕获普通语言 failure 
 fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一基线获得独立预算。
 配额用于可停机，不是精确计费，reset 和页级计量方式不构成语言契约。
 
-run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；serve --bind stdio+jsonl:// 读取 JSONL，
+run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；`run --serve stdio+jsonl://` 读取 JSONL，
 每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
 message、labels、notes；已捕获诊断不重复输出。服务不接受 stdin 初始化 source；单次 run/JSONL 使用 stdin，HTTP 使用请求体。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
 初始化来源使用 @service/name；逐次请求输入不注册规范来源路径，物理路径不进入来源身份。
@@ -244,7 +244,7 @@ IMOS store 物化远程 source、校验物化 manifest，并产生一次命令
 identity。
 
 包管理 Host 使用私有 IMOS 服务物化依赖；业务 TransformService 不获得外部 effect 能力。
-run/serve 共用静态方法协议，差异仅在单次输入和持续请求流。
+`run` 的单次执行与 `--serve URI` 持续服务共用静态方法协议。
 
 只有模块图节点拥有 module identity 和 `ModuleId`。Telora module 与 static data module
 的 canonical source path 通常等于其 module identity；运行上下文 source 等非模块输入

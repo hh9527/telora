@@ -7,7 +7,6 @@ fn execution_commands_reject_removed_backend_and_artifact_interfaces() {
         ("check", "@src/main"),
         ("eval", "@src/main:answer"),
         ("run", "@src/main:run"),
-        ("serve", "@src/main:serve"),
         ("test", "main"),
     ] {
         for flag in ["--native", "--wasm", "--best-effort"] {

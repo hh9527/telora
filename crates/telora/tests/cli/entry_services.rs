@@ -12,6 +12,54 @@ fn service_fixture() -> PathBuf {
 }
 
 #[test]
+fn build_publishes_final_fuel_budgets_and_runner_can_override_them() {
+    let cwd = service_fixture();
+    fs::write(
+        cwd.join("telora-config.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1, "members": ["."],
+            "runtime": {"initializationFuel": 11, "requestFuel": 13}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args([
+            "--initialization-fuel",
+            "23",
+            "--request-fuel",
+            "31",
+            "build",
+            "@src/main",
+            "-o",
+            "app.wasm",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(cwd.join("app.wasm")).unwrap();
+    let mut runner = telora_run::Runner::load(&bytes, telora_run::Options::default()).unwrap();
+    assert_eq!(runner.publication.initialization_fuel, 23_000_000);
+    assert_eq!(runner.publication.request_fuel, 31_000_000);
+    assert_eq!(runner.usage().fuel_limit, 31_000_000);
+    let mut runner = telora_run::Runner::load(
+        &bytes,
+        telora_run::Options {
+            initialization_fuel: Some(41),
+            request_fuel: Some(43),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(runner.usage().fuel_limit, 43_000_000);
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn run_and_serve_share_the_same_static_entry_and_preserve_diagnostics() {
     let cwd = service_fixture();
     let mut command = telora(&cwd);
@@ -24,7 +72,7 @@ fn run_and_serve_share_the_same_static_entry_and_preserve_diagnostics() {
     );
     assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap(), 42);
     let mut command = telora(&cwd);
-    command.args(["serve", "@src/main", "--bind", "stdio+jsonl://"]);
+    command.args(["run", "@src/main", "--serve", "stdio+jsonl://"]);
     let result = input_command(command, b"42\nnull\n43\n{bad}\n44\n");
     assert!(
         result.status.success(),
@@ -74,20 +122,20 @@ fn service_type_can_be_reexported_across_modules() {
 #[test]
 fn service_resets_after_request_resource_exhaustion() {
     let cwd = service_fixture();
-    for (fuel, memory, payload, reason) in [
-        ("2", "64", "42\n\"loop\"\n43\n", "fuel"),
+    for (request_fuel, memory, payload, reason) in [
+        ("1", "64", "42\n\"loop\"\n43\n", "fuel"),
         ("1000", "8", "42\n\"grow\"\n43\n", "growth"),
     ] {
         let mut command = telora(&cwd);
         command.args([
             "--report-usage",
-            "--with-fuel",
-            fuel,
+            "--request-fuel",
+            request_fuel,
             "--with-memory-limit",
             memory,
-            "serve",
+            "run",
             "@src/main",
-            "--bind",
+            "--serve",
             "stdio+jsonl://",
         ]);
         let output = input_command(command, payload.as_bytes());
@@ -122,6 +170,36 @@ fn service_resets_after_request_resource_exhaustion() {
             reports[2]["usage"]["linear_memory"]
         );
     }
+}
+
+#[test]
+fn request_fuel_limit_stops_loop_without_poisoning_next_request() {
+    let cwd = service_fixture();
+    let mut command = telora(&cwd);
+    command.args([
+        "--request-fuel",
+        "1",
+        "run",
+        "@src/main",
+        "--serve",
+        "stdio+jsonl://",
+    ]);
+    let output = input_command(command, b"42\n\"loop\"\n43\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let replies = jsonl(&output.stdout);
+    assert_eq!(replies[0]["ok"], 42);
+    assert_eq!(replies[1]["error"], true);
+    assert!(
+        replies[1]["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("fuel")
+    );
+    assert_eq!(replies[2]["ok"], 43);
 }
 
 #[test]
@@ -164,11 +242,11 @@ fn initialization_sources_are_separate_from_each_transform_input() {
     fs::write(cwd.join("config.json"), "{\"prefix\":42}").unwrap();
     let mut command = telora(&cwd);
     command.args([
-        "serve",
+        "run",
         "@src/main",
         "--source",
         "config=config.json",
-        "--bind",
+        "--serve",
         "stdio+jsonl://",
     ]);
     let output = input_command(command, b"{\"answer\":1,\"endpoint\":\"localhost:42\"}\n{\"answer\":0,\"endpoint\":\"localhost:42\"}\n{\"answer\":2,\"endpoint\":\"localhost:42\"}\n");

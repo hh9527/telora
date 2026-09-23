@@ -20,8 +20,12 @@ fn load_session(
 ) -> Result<telora_wasm::session::Session, String> {
     timing::artifact_size(bytes.len());
     let config = crate::execution_config_for(runtime)?;
-    let mut session =
-        telora_wasm::session::Session::load_with_limits(bytes, config.fuel, config.memory_limit)?;
+    let mut session = telora_wasm::session::Session::load_with_limits(
+        bytes,
+        config.initialization_fuel,
+        config.memory_limit,
+    )?;
+    session.set_request_fuel(config.request_fuel);
     if config.report_usage {
         session.usage_reporter = Some(|usage| {
             let _ = crate::emit_stderr(serde_json::json!({

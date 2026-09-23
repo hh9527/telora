@@ -20,30 +20,37 @@ fn workspace_runtime_defaults_and_explicit_cli_overrides() {
     )
     .unwrap();
     for (runtime, flags, fuel, memory) in [
-        (serde_json::json!({}), vec![], 100, 1024),
-        (serde_json::json!({"fuel":23}), vec![], 23, 1024),
-        (serde_json::json!({"memoryLimit":64}), vec![], 100, 64),
+        (serde_json::json!({}), vec![], 1000, 64),
+        (serde_json::json!({"requestFuel":23}), vec![], 23, 64),
+        (serde_json::json!({"memoryLimit":64}), vec![], 1000, 64),
         (
-            serde_json::json!({"fuel":23,"memoryLimit":64}),
+            serde_json::json!({"initializationFuel":23,"requestFuel":31,"memoryLimit":64}),
             vec![],
-            23,
+            31,
             64,
         ),
         (
-            serde_json::json!({"fuel":23,"memoryLimit":64}),
-            vec!["--with-fuel", "100"],
+            serde_json::json!({"initializationFuel":23,"requestFuel":40,"memoryLimit":64}),
+            vec!["--request-fuel", "100"],
             100,
             64,
         ),
         (
-            serde_json::json!({"fuel":23,"memoryLimit":64}),
+            serde_json::json!({"requestFuel":23,"memoryLimit":64}),
             vec!["--with-memory-limit", "1024"],
             23,
             1024,
         ),
         (
-            serde_json::json!({"fuel":23,"memoryLimit":64}),
-            vec!["--with-fuel", "100", "--with-memory-limit", "1024"],
+            serde_json::json!({"requestFuel":40,"memoryLimit":64}),
+            vec![
+                "--initialization-fuel",
+                "1500",
+                "--request-fuel",
+                "100",
+                "--with-memory-limit",
+                "1024",
+            ],
             100,
             1024,
         ),
@@ -76,7 +83,7 @@ fn workspace_runtime_defaults_and_explicit_cli_overrides() {
         String::from_utf8_lossy(&check.stderr)
     );
     let diagnostic: Value = serde_json::from_slice(&check.stderr).unwrap();
-    assert_eq!(diagnostic["usage"]["fuel"]["limit"], 23_000_000u64);
+    assert_eq!(diagnostic["usage"]["fuel"]["limit"], 5_000_000_000u64);
     assert_eq!(
         diagnostic["usage"]["linear_memory"]["limit_bytes"],
         64u64 << 20
@@ -165,7 +172,7 @@ fn execution_usage_reports_fuel_and_page_aligned_mib_limits() {
     assert!(plain.stderr.is_empty());
     let reported = telora(&cwd)
         .args([
-            "--with-fuel",
+            "--request-fuel",
             "200",
             "eval",
             "@src/main:answer",
@@ -203,8 +210,9 @@ fn execution_usage_reports_fuel_and_page_aligned_mib_limits() {
     assert!(static_only.status.success());
     assert!(static_only.stderr.is_empty());
     for arguments in [
-        ["--with-fuel", "0"],
-        ["--with-fuel", "18446744073709551615"],
+        ["--request-fuel", "0"],
+        ["--initialization-fuel", "0"],
+        ["--with-fuel", "100"],
         ["--with-memory-limit", "0"],
         ["--with-memory-limit", "18446744073709551615"],
         ["--eval-fuel", "100"],

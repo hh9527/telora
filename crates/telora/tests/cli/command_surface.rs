@@ -9,6 +9,7 @@ fn help_lists_the_public_command_surface() {
     assert!(output.contains("lsp"));
     assert!(!output.contains("ees"));
     assert!(output.contains("query"));
+    assert!(!output.contains("  serve"));
     assert!(output.contains("q"));
     let query_help = telora(&cwd).args(["query", "-h"]).output().unwrap();
     let output = String::from_utf8_lossy(&query_help.stdout);
@@ -17,6 +18,14 @@ fn help_lists_the_public_command_surface() {
     assert!(output.contains("exports"));
     assert!(output.contains("at"));
     assert!(output.contains("telora q modules -p std/"));
+    let run_help = telora(&cwd).args(["run", "--help"]).output().unwrap();
+    let output = String::from_utf8_lossy(&run_help.stdout);
+    assert!(run_help.status.success());
+    assert!(output.contains("--serve <URI>"));
+    assert!(!output.contains("--bind"));
+    let removed = telora(&cwd).args(["serve", "@src/lib"]).output().unwrap();
+    assert_eq!(removed.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&removed.stderr).contains("unrecognized subcommand"));
 }
 
 #[test]

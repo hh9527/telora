@@ -1347,7 +1347,7 @@ Warning 和 failure 诊断属于 evaluation account，而不是普通 Array 返�
 容器不保存可供后续计算使用的失败子节点，也不提供“健康投影”。
 
 静态求解独立收集 Unresolved、Conflicted 和 Unknown 等诊断；类型未闭合不进入求值。
-运行阶段不提供 best-effort。run/serve/eval 初始化失败即停止，不启动入口。
+运行阶段不提供 best-effort。run（含服务模式）和 eval 初始化失败即停止，不启动入口。
 serve 已有的单请求失败恢复属于显式请求边界，不改变普通函数的顺序中断规则。
 资源耗尽等终止性错误中止整个 session，不尝试剩余根。
 
@@ -1404,7 +1404,7 @@ pub use self::{ Rejection, encode_rejection };
 其 canonical witness 随值跨模块传播。该模块/API 方案适用于包含封闭递归参数的
 family，不引入隐式反射或新的表面语法。
 
-### 10.2 Fuel 和配额
+### 10.2 时间检查与配额
 
 资源边界的目的，是让持续循环、持续分配或无法取得进展的执行能够被终止，
 不是精确核算成本或严格约束实际资源占用。阈值可以宽松，不构成 CPU 时间、
@@ -1415,12 +1415,20 @@ Fuel 用于对抗执行能否收敛的不确定性，而不是对执行成本精
 算法的内部操作次数扣减。指令融合、数据复制方式或库内部实现的变化，不应成为
 重新定义 fuel 计费规则的理由。
 
-当前直接使用 Wasm 引擎的 fuel、内存增长和调用栈限制，不另建 Telora 操作、
-逻辑分配或跨边界调用的统一 account。编译到 Wasm 的 Rust RT 与语言代码同受
-引擎限制，超限终止会话，不能作为可恢复语言失败被吞掉。
+初始化与单次服务请求分别采用 fuel 预算：`runtime.initializationFuel` 和
+`runtime.requestFuel`，配置单位为百万 fuel，默认分别为 5000 和 1000。
+`--initialization-fuel`、`--request-fuel` 以相同单位直接覆盖配置值；构建制品
+保存覆盖后的预算。独立的 `telora-run` 可用同名参数覆盖制品内的预算。初始化与请求
+各自获得独立预算，请求之间也独立。fuel 不换算为时间，也不承诺跨编译器版本
+的精确计费。惰性 Wasmi 字节码翻译/验证不扣 Guest fuel，避免缓存状态改变
+可用的执行预算。
+
+同时使用 Wasm 引擎的内存增长和调用栈限制，不另建 Telora 操作、逻辑分配
+或跨边界调用的统一 account。编译到 Wasm 的 Rust RT 与语言代码同受
+引擎限制，超限终止当前执行，不能作为可恢复语言失败被吞掉。
 
 Host 的解析、fixture 展开和外部 IO 不由 Wasm fuel 覆盖，仍需简单的输入规模、
-结构深度、有限展开或超时/取消边界。fuel 不是墙钟超时，不能让任意 Host 调用
+结构深度、有限展开或超时/取消边界。Guest fuel 检查不能让任意 Host 调用
 自动及时返回。验收验证持续循环与持续分配能被拦住，不验证精确扣费次数。
 
 ### 10.3 确定性
@@ -1446,8 +1454,7 @@ telora [-C <context>] check <module>
 telora [-C <context>] test <name>
 telora [-C <context>] eval <module:export>
 telora [-C <context>] build <module> -o <file.wasm>
-telora [-C <context>] run <module> [--source <name>=<source>]...
-telora [-C <context>] serve <module> [--source <name>=<source>]... --bind <URI>
+telora [-C <context>] run <module> [--source <name>=<source>]... [--serve <URI>]
 telora [-C <context>] query|q modules [-p <substring>]
 telora [-C <context>] query|q exports <module> [-p <substring>]
 telora [-C <context>] query|q at <module>[:<line>[:<column>]] [-p <substring>] [-k type,let,def,use]
@@ -1457,11 +1464,11 @@ telora lsp
 
 Clap 拥有 help、version 和命令行参数校验，其输出是面向人的文本。命令通过参数校验后，
 Telora Host 在 stdout 和 stderr 上只产生 JSON 或 JSONL。成功的 `eval` 输出一个 JSON
-Value；`dbg!` 和命令错误在 stderr 输出 JSONL record。`check`、`test`、`query`、`run` 和
-`serve` 使用相应传输的响应协议，`lock` 输出生成的 lock path JSON String。进程退出码
+Value；`dbg!` 和命令错误在 stderr 输出 JSONL record。`check`、`test`、`query` 和 `run`
+使用相应传输的响应协议，`lock` 输出生成的 lock path JSON String。进程退出码
 独立表达命令是否成功。
 
-`eval MODULE:NAME` 要求导出 Value。run/serve 接受 MODULE，选择具体类型 MainService。
+`eval MODULE:NAME` 要求导出 Value。`run MODULE` 选择具体类型 MainService。
 -C 指定 manifest discovery 的起点。服务契约见下文 TransformService 入口。
 
 `test <name>` 选择 `tests/<name>.telora`，名称必须是无后缀的规范相对路径；不接受
@@ -1557,12 +1564,12 @@ property 等其他需求根用 node/module 标识且 symbol/name 为 null。ID �
 
 ### 服务传输与制品
 
-`telora serve --bind URI` 与 `telora-run app.wasm --bind URI` 共用传输层：
+`telora run MODULE --serve URI` 与 `telora-run app.wasm --serve URI` 共用传输层：
 `stdio+jsonl://`、`http://IP:PORT`、`http+unix:///absolute/path.sock`。
 HTTP 使用 `POST /transform`，响应为 `telora.service/v1` envelope；
 语言错误及资源陷阱仍通过 `error` 和诊断表达（HTTP 200）。
 请求之间恢复初始化基线，执行串行。Unix socket 不会覆盖既有路径，
-停机后由部署方清理。独立 runner 不传 `--bind` 时执行单次请求。
+停机后由部署方清理。不传 `--serve` 时执行单次请求。
 
 `telora build MODULE -o FILE` 在输入端归一化源码与静态数据的 EOL 为 LF，
 编译并原子发布普通 Wasm，不执行初始化。`telora build MODULE --snapshot
@@ -1593,7 +1600,7 @@ init 失败不发布实例。内置 with_diagnostics 捕获普通语言 failure 
 fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一基线获得独立预算。
 配额用于可停机，不是精确计费，reset 和页级计量方式不构成语言契约。
 
-run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；serve --bind stdio+jsonl:// 读取 JSONL，
+run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；`run --serve stdio+jsonl://` 读取 JSONL，
 每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
 message、labels、notes；已捕获诊断不重复输出。初始化 source 不接受 stdin；JSONL 和单次 run 使用 stdin 作为请求通道，HTTP 使用请求体。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
 初始化来源使用 @service/name；逐次请求输入不注册规范来源路径，物理路径不进入来源身份。

@@ -2,6 +2,7 @@
 mod artifact;
 mod backend;
 mod engine;
+mod fuel_quota;
 mod input;
 pub mod transport;
 use anyhow::{Result, ensure};
@@ -25,7 +26,8 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, Default)]
 pub struct Options {
-    pub fuel: Option<u64>,
+    pub initialization_fuel: Option<u64>,
+    pub request_fuel: Option<u64>,
     pub memory_limit: Option<usize>,
 }
 
@@ -72,7 +74,10 @@ pub struct Runner {
     modules: Vec<artifact::ModuleData>,
     artifact_snapshot: Option<telora_wasm_shared::snapshot_artifact::Snapshot>,
     baseline: Option<Baseline>,
-    fuel: u64,
+    initialization_fuel: u64,
+    request_fuel: u64,
+    initialization_quota: Option<fuel_quota::FuelQuota>,
+    request_fuel_consumed: u64,
     memory_limit: usize,
     ready: bool,
     poisoned: bool,
@@ -85,21 +90,22 @@ impl Runner {
         let now = Instant::now();
         let artifact = artifact::Artifact::read(bytes)?;
         let metadata_ms = now.elapsed().as_secs_f64() * 1000.;
-        let fuel = options.fuel.unwrap_or(artifact.publication.fuel);
+        let initialization_fuel = fuel_override(
+            artifact.publication.initialization_fuel,
+            options.initialization_fuel,
+        )?;
+        let request_fuel = fuel_override(artifact.publication.request_fuel, options.request_fuel)?;
         let memory_limit = options
             .memory_limit
             .unwrap_or(usize::try_from(artifact.publication.memory_limit)?);
-        ensure!(
-            fuel > 0 && memory_limit > 0,
-            "execution limits must be positive"
-        );
+        ensure!(memory_limit > 0, "execution limits must be positive");
         let load_limit = usize::try_from(artifact.publication.memory_limit)?;
         let now = Instant::now();
         let module = backend::compile(bytes)?;
         let module_ms = now.elapsed().as_secs_f64() * 1000.;
         let now = Instant::now();
         // CLI overrides constrain requests; ordinary initialization retains its build budget.
-        let guest = Guest::instantiate(module, artifact.publication.fuel, load_limit)?;
+        let guest = Guest::instantiate(module, initialization_fuel, load_limit)?;
         let instance_ms = now.elapsed().as_secs_f64() * 1000.;
         Ok(Self {
             guest,
@@ -113,7 +119,10 @@ impl Runner {
                 instance_ms,
                 ..Default::default()
             },
-            fuel,
+            initialization_fuel,
+            request_fuel,
+            initialization_quota: None,
+            request_fuel_consumed: 0,
             memory_limit,
             ready: false,
             poisoned: false,
@@ -128,7 +137,12 @@ impl Runner {
             .exports
             .heap_bytes
             .call(&mut self.guest.store, ())?;
-        let fuel_remaining = self.guest.store.get_fuel()?;
+        let metered = if phase == "instance-compacted" {
+            self.phases.last().map_or(0, |usage| usage.fuel_consumed)
+        } else {
+            self.initialization_fuel
+                .saturating_sub(self.guest.store.get_fuel()?)
+        };
         self.phases.push(PhaseUsage {
             phase,
             elapsed_ms: self
@@ -136,7 +150,7 @@ impl Runner {
                 .map_or(0., |start| start.elapsed().as_secs_f64() * 1000.),
             linear_memory_bytes: self.guest.memory.data_size(&self.guest.store),
             language_heap_bytes,
-            fuel_consumed: self.publication.fuel.saturating_sub(fuel_remaining),
+            fuel_consumed: metered,
             rss_bytes: current_rss_bytes(),
         });
         Ok(())
@@ -151,6 +165,7 @@ impl Runner {
         self.poisoned = true;
         let now = Instant::now();
         self.initialization_started = Some(now);
+        self.initialization_quota = Some(fuel_quota::FuelQuota::new(self.initialization_fuel));
         self.record_phase("instantiated")?;
         if sources.is_empty()
             && let Some(snapshot) = self.artifact_snapshot.take()
@@ -168,18 +183,30 @@ impl Runner {
             self.poisoned = false;
             self.reset()?;
             self.timings.initialize_ms = now.elapsed().as_secs_f64() * 1000.;
+            self.initialization_quota = None;
             return Ok(vec![]);
         }
         self.artifact_snapshot = None;
         for module in &self.modules {
-            self.guest.inject_module(module)?;
+            self.guest
+                .inject_module(module, self.initialization_quota.as_mut().unwrap())?;
         }
         self.record_phase("bundled-modules-injected")?;
-        let names = self.guest.sources()?;
+        let names = self
+            .guest
+            .sources(self.initialization_quota.as_mut().unwrap())?;
         self.record_phase("binary-closed")?;
-        self.guest.inject_named_sources(&names, sources)?;
+        self.guest.inject_named_sources(
+            &names,
+            sources,
+            self.initialization_quota.as_mut().unwrap(),
+        )?;
         self.record_phase("sources-injected")?;
-        let status = self.guest.exports.create.call(&mut self.guest.store, ())?;
+        let status = self.initialization_quota.as_mut().unwrap().call(
+            &mut self.guest.store,
+            self.guest.exports.create,
+            (),
+        )?;
         self.record_phase("service-created")?;
         let diagnostics = self.guest.diagnostics()?;
         if status != 0 {
@@ -190,7 +217,7 @@ impl Runner {
         let snapshot = self.guest.export_snapshot()?;
         let mut compact = Guest::instantiate(
             self.guest.module.clone(),
-            self.publication.fuel,
+            self.initialization_fuel,
             usize::try_from(self.publication.memory_limit)?,
         )?;
         compact.import_snapshot(&snapshot)?;
@@ -212,6 +239,7 @@ impl Runner {
         self.poisoned = false;
         self.reset()?;
         self.timings.initialize_ms = now.elapsed().as_secs_f64() * 1000.;
+        self.initialization_quota = None;
         Ok(diagnostics)
     }
 
@@ -221,9 +249,11 @@ impl Runner {
         self.reset()?;
         self.timings.reset_ms = reset_start.elapsed().as_secs_f64() * 1000.;
         self.poisoned = true;
-        self.guest.store.set_fuel(self.fuel)?;
+        self.guest.store.set_fuel(self.request_fuel)?;
         let now = Instant::now();
-        let result = self.guest.request(input);
+        let mut quota = fuel_quota::FuelQuota::new(self.request_fuel);
+        let result = self.guest.request_with_quota(input, &mut quota);
+        self.request_fuel_consumed = quota.consumed();
         self.timings.request_ms = now.elapsed().as_secs_f64() * 1000.;
         if result.is_ok() {
             self.poisoned = false;
@@ -241,7 +271,7 @@ impl Runner {
             .checked_add(self.memory_limit)
             .ok_or_else(|| anyhow::anyhow!("memory limit overflow"))?;
         // Cleanup/bootstrap is outside the next request's quota.
-        self.guest.store.set_fuel(self.publication.fuel)?;
+        self.guest.store.set_fuel(self.initialization_fuel)?;
         if self.poisoned
             || self
                 .guest
@@ -252,7 +282,7 @@ impl Runner {
         {
             self.poisoned = true;
             let mut guest =
-                Guest::instantiate(self.guest.module.clone(), self.publication.fuel, limit)?;
+                Guest::instantiate(self.guest.module.clone(), self.initialization_fuel, limit)?;
             guest.import_snapshot(&baseline.snapshot)?;
             self.guest = guest;
         }
@@ -264,7 +294,7 @@ impl Runner {
                 .set(&mut self.guest.store, value.clone())?;
         }
         *self.guest.store.data_mut() = engine::limits(limit);
-        self.guest.store.set_fuel(self.fuel)?;
+        self.guest.store.set_fuel(self.request_fuel)?;
         self.poisoned = false;
         Ok(())
     }
@@ -280,10 +310,8 @@ impl Runner {
                 .unwrap_or(0);
         }
         Usage {
-            fuel_limit: self.fuel,
-            fuel_consumed: self
-                .fuel
-                .saturating_sub(self.guest.store.get_fuel().unwrap_or(0)),
+            fuel_limit: self.request_fuel,
+            fuel_consumed: self.request_fuel_consumed,
             memory_bytes: self.guest.memory.data_size(&self.guest.store),
             memory_limit_bytes: self
                 .memory_limit
@@ -347,4 +375,29 @@ fn current_rss_bytes() -> Option<u64> {
         .parse::<u64>()
         .ok()?
         .checked_mul(1024)
+}
+
+fn fuel_override(published: u64, millions: Option<u64>) -> Result<u64> {
+    millions.map_or(Ok(published), |n| {
+        n.checked_mul(1_000_000)
+            .filter(|&fuel| fuel != 0)
+            .ok_or_else(|| anyhow::anyhow!("fuel budget must be positive and fit u64"))
+    })
+}
+
+#[cfg(test)]
+mod fuel_override_tests {
+    #[test]
+    fn overrides_published_fuel_in_millions() {
+        assert_eq!(
+            super::fuel_override(5_000_000_000, None).unwrap(),
+            5_000_000_000
+        );
+        assert_eq!(
+            super::fuel_override(5_000_000_000, Some(2500)).unwrap(),
+            2_500_000_000
+        );
+        assert!(super::fuel_override(1, Some(0)).is_err());
+        assert!(super::fuel_override(1, Some(u64::MAX)).is_err());
+    }
 }

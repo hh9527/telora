@@ -6,9 +6,11 @@ workspace、crate manifest、模块树和依赖来源的完整用法见
 [`WORKSPACE.md`](WORKSPACE.md)。
 
 编译限制通过 workspace 配置的 `compiler` 设置，没有对应 CLI 参数。
-运行时 `runtime.fuel` 和 `runtime.memoryLimit` 分别默认 100 和 1024，单位为
-1,000,000 fuel 和 MiB（`1 << 20` 字节）。显式的 `--with-fuel N`、`--with-memory-limit N`
-逐项覆盖配置；未传入的项保留配置值。`--report-usage` 输出会话实际使用的上限和用量。
+运行时 `runtime.initializationFuel`、`runtime.requestFuel` 默认分别为 5000 和 1000（单位为
+1,000,000 fuel），`runtime.memoryLimit` 默认 64 MiB（每 MiB 为 `1 << 20` 字节）。
+`--initialization-fuel N` 与 `--request-fuel N` 分别直接覆盖对应预算，
+`--with-memory-limit N` 覆盖内存边界。构建时将最终预算写入 Wasm 制品。
+`--report-usage` 输出会话实际使用的上限和用量。
 
 每个 Telora crate 的模块树以 `src/lib.telora` 为根，测试位于 `tests/`。
 `telora-crate.json` 声明 canonical crate name 和直接依赖名称；workspace 根的 `telora-config.json`
@@ -16,7 +18,7 @@ workspace、crate manifest、模块树和依赖来源的完整用法见
 
 Telora 从当前目录向上查找最近的 `telora-config.json`，因此命令可以从 workspace 内
 任意目录执行。`-C` 可以显式改变查找的起始目录。`telora lock` 是唯一写入 lock 的
-命令；`build`、`eval`、`run`、`serve`、`test`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
+命令；`build`、`eval`、`run`、`test`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
 命令参数使用稳定逻辑模块 ID，不使用物理文件名：
 
 ```text
@@ -24,7 +26,7 @@ telora -C examples/my-crate eval @src/model:answer
 telora -C examples/my-crate run @src/model < request.json
 telora -C examples/my-crate run @src/lib < request.json
 telora -C examples/my-crate run @src/lib --source knowledge=model.json < request.json
-telora -C examples/my-crate serve @src/lib --bind stdio+jsonl://
+telora -C examples/my-crate run @src/lib --serve stdio+jsonl://
 telora -C examples/my-crate check @test/compiler
 telora -C examples/my-crate test compiler
 telora -C examples/my-crate test parser/expressions
@@ -129,7 +131,7 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
 
 - `eval module:name` 读取 Value 导出。
 - `run module` 选择 MainService，读取 stdin JSON，输出一个 JSON Value。
-- `serve module --bind stdio+jsonl://` 持续处理 JSONL，响应含 ok/error/diagnostics；诊断保留
+- `run module --serve stdio+jsonl://` 持续处理 JSONL，响应含 ok/error/diagnostics；诊断保留
   severity、message、labels、notes。语言失败和请求配额耗尽不影响下一条请求。
 - `@service::source("name")` 声明初始化来源，--source 的名称集合须精确匹配。
   来源使用文件 JSON/YAML/TOML，stdin 保留给请求。逻辑来源为 @service/name。
@@ -140,7 +142,7 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
   `--best-effort`，初始化失败不启动 Entry，不为诊断额外预执行用户代码。
 - `run`、`check` 和 `query` 的 `-C context` 都从 `context` 开始向上发现 workspace；
   `check` 和 `query` 接受完整稳定模块 ID，`check @test/...` 检查测试入口；`run` 和
-  `serve` 接受 `MODULE`。
+  `run` 接受 `MODULE`。
 - `check` 先完成全图模块、符号和类型求解及 seal，再编译并初始化；静态阶段不执行
   Telora 代码。静态错误阻止整图初始化。初始化可继续独立任务以收集诊断，但最终判定
   仍然严格。stdout 使用 `telora.check/v1` JSONL，先输出诊断，最后输出一份 summary；
@@ -149,7 +151,7 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
   诊断另带 `initialization`：`module`、`node` 标识当时执行的初始化根，具名根还提供
   `symbol` 和 `name`；property 等非具名根的后两项为 null。这些 ID 属于本次封闭图。
   它记录实际触发，不是导入者或所有受影响导出的清单；缓存失败只报告原事件一次。
-  纯导出以 eval 验收；服务以 run/serve 验收。
+  纯导出以 eval 验收；服务以 `run` 或 `run --serve URI` 验收。
 - `query`（可见别名 `q`）输出 `telora.query/v1` JSONL 语义记录。`query modules`
   列出当前 crate 可见的规范模块 ID；`query exports <module>` 查询公共接口；
   `query at <module>` 查询顶层 local definitions，追加 `:<line>` 或 `:<line>:<column>`
@@ -193,12 +195,12 @@ Telora 程序不可感知。Float 的 `repr` 使用 Debug 表示，例如 `3.0` 
 ```sh
 telora build @src/lib -o app.wasm
 telora-run app.wasm --source knowledge=model.json < request.json
-telora serve @src/lib --source knowledge=model.json --bind http://127.0.0.1:8080
-telora-run app.wasm --source knowledge=model.json --bind http+unix:///tmp/telora.sock
+telora run @src/lib --source knowledge=model.json --serve http://127.0.0.1:8080
+telora-run app.wasm --source knowledge=model.json --serve http+unix:///tmp/telora.sock
 ```
 
 build 选择导出 MainService 的模块，输出普通 Wasm；运行时初始化数据通过
---source 提供。telora-run 不需要 workspace 和编译器，不传 --bind 时处理一个
-stdin JSON。--bind 支持 stdio+jsonl://、http://IP:PORT 和
+--source 提供。telora-run 不需要 workspace 和编译器，不传 --serve 时处理一个
+stdin JSON。--serve 支持 stdio+jsonl://、http://IP:PORT 和
 http+unix:///absolute/path.sock；HTTP 入口为 POST /transform。
 完整生命周期、响应和配额说明见 [执行模式](EXEC-MODE.md)。

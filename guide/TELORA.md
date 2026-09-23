@@ -1206,10 +1206,10 @@ plan-lib/types     -> <plan-lib>/src/types.telora
 
 模块公开具体类型 MainService，实现 `std::transform_service::TransformService` 的 init 与 transform。
 MIR 封闭所有方法实例；Host 准备声明的来源并初始化服务，run 处理一个 stdin JSON，
-serve 通过 JSONL 或 HTTP 处理请求。每次调用从同一初始化状态开始，服务间隙 reset；fuel/memory 配额只
+`run --serve URI` 通过 JSONL 或 HTTP 处理请求。每次调用从同一初始化状态开始，服务间隙 reset；fuel/memory 配额只
 约束单次调用。来源与诊断细节见 [执行模式](EXEC-MODE.md)。
 
-`check` 不调用 init/transform，不读取服务来源；行为验证使用 run/serve。
+`check` 不调用 init/transform，不读取服务来源；行为验证使用 `run` 或 `run --serve URI`。
 
 源码模块只能沿 `mod` 挂载，静态 `crate` / `self` / `super` 路径只在该树内导航；
 测试根不能越出 crate，源码不能反向访问测试。`plan-lib::types` 等 package 路径只能

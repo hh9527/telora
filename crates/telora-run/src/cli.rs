@@ -15,14 +15,17 @@ const INPUT_LIMIT: usize = 256 * 1024 * 1024;
 pub struct Cli {
     pub artifact: PathBuf,
     /// Serve stdio+jsonl://, http://IP:PORT or http+unix:///absolute/path.sock.
-    #[arg(long)]
-    bind: Option<telora_run::transport::Bind>,
+    #[arg(long, value_name = "URI")]
+    serve: Option<telora_run::transport::Bind>,
     /// NAME=PATH or NAME=file+json://PATH (also yaml/toml).
     #[arg(long = "source")]
     sources: Vec<String>,
-    /// Per-request fuel in millions, overriding the artifact default.
-    #[arg(long, value_parser = clap::value_parser!(u64).range(1..=u64::MAX/1_000_000))]
-    with_fuel: Option<u64>,
+    /// Initialization fuel budget in millions (overrides the artifact).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..=u64::MAX / 1_000_000))]
+    initialization_fuel: Option<u64>,
+    /// Per-request fuel budget in millions (overrides the artifact).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..=u64::MAX / 1_000_000))]
+    request_fuel: Option<u64>,
     /// Per-request memory allowance in MiB, in addition to the initialized memory.
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..=(usize::MAX as u64)/(1<<20)))]
     with_memory_limit: Option<u64>,
@@ -138,7 +141,8 @@ pub fn execute(cli: Cli) -> Result<i32> {
     let mut runner = Runner::load(
         &bytes,
         Options {
-            fuel: cli.with_fuel.map(|n| n * 1_000_000),
+            initialization_fuel: cli.initialization_fuel,
+            request_fuel: cli.request_fuel,
             memory_limit: cli.with_memory_limit.map(|n| (n as usize) * (1 << 20)),
         },
     )?;
@@ -161,7 +165,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
     let stdin = stdin.lock();
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
-    if cli.bind.is_none() {
+    if cli.serve.is_none() {
         let input = read_limited(stdin)?;
         let response = reply(&mut runner, &input);
         let response: Reply<'_> = serde_json::from_slice(&response)?;
@@ -183,7 +187,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
     }
     drop(stdout);
     drop(stdin);
-    telora_run::transport::serve(cli.bind.unwrap(), INPUT_LIMIT, |input| {
+    telora_run::transport::serve(cli.serve.unwrap(), INPUT_LIMIT, |input| {
         let response = reply(&mut runner, input);
         if cli.report_usage {
             usage(&mut runner)?;
