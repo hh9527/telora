@@ -9,8 +9,8 @@ type Count = struct(Int);
 type Input = struct {answer: Count, endpoint: String};
 
 @service::source("config")
-type MainService = struct {config: Value, base: Value};
-impl service::TransformService for MainService {
+type InputService = struct {config: Value, base: Value};
+impl service::TransformService for InputService {
     init: fn(ctx) {
         {config: ctx.sources["config"], base}.ty!(Self)
     },
@@ -19,4 +19,5 @@ impl service::TransformService for MainService {
         Value::Array([self.config, self.base, codec::encode(decoded)])
     },
 };
-pub use self::{MainService};
+@service::collection
+pub type MainService = struct { @service::slot("transform") service: InputService };

@@ -16,9 +16,10 @@ def from_metadata: Value = match get_type_prop(Loaded.type, SourceInfo.type) {
 pub def answer: Value = Value::Array([data, Value::Int(42)]);
 
 @entry::source("input")
-type MainService = struct {input: Value};
-impl entry::TransformService for MainService {
+type Model = struct {input: Value};
+impl entry::TransformService for Model {
     init: fn(ctx) { {input: ctx.sources.input}.ty!(Self) },
     transform: fn(self, input) { Value::Object({loaded: from_metadata, source: self.input, input}) },
 };
-pub use self::{MainService};
+@entry::collection
+pub type MainService = struct { @entry::slot("transform") service: Model };

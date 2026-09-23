@@ -8,9 +8,10 @@ pub def failing: test::Test = test::should_fail(fn() { 42 });
 pub def matching: test::Test = test::should_fail_with(fn() { fail!("expected message") }, "expected");
 pub def fixtures: test::Test = test::with_fixtures(["missing.json", "missing.json"], fn(value) { fail!("must not load fixture or invoke factory") });
 pub def answer: Value = encode([eq::equal(passing, passing), !eq::equal(failing, test::should_fail(fn() {42}))]);
-type MainService = struct {};
-impl entry::TransformService for MainService {
+type LegacyService = struct {};
+impl entry::TransformService for LegacyService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) { answer },
 };
-pub use self::{MainService};
+@entry::collection
+pub type MainService = struct { @entry::slot("transform") service: LegacyService };

@@ -11,6 +11,7 @@ pub mod dyn;
 pub mod eq;
 pub mod fmt;
 pub mod hash;
+pub mod http;
 pub mod json;
 pub mod option;
 pub mod path;

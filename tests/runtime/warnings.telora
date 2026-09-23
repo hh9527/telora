@@ -5,12 +5,13 @@ def subject: Int = 7;
 def warning: Option(Int) = warn!(blame!("initialization warning", subject));
 def issue: BlameError = blame!("entry warning", subject);
 pub def answer: Value = match warning { None => Value::Int(42), Some(value) => fail!("warn returned Some") };
-type MainService = struct {};
-impl entry::TransformService for MainService {
+type LegacyService = struct {};
+impl entry::TransformService for LegacyService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) {
         let warning: Option(Int) = warn!(issue);
         match warning { None => Value::Int(43), Some(value) => fail!("warn returned Some") }
     },
 };
-pub use self::{MainService};
+@entry::collection
+pub type MainService = struct { @entry::slot("transform") service: LegacyService };

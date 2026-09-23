@@ -1,2 +1,4 @@
-type MainService = struct {};
-pub use self::{MainService};
+use std::transform_service as service;
+type NoImpl = struct {};
+@service::collection
+pub type MainService = struct { @service::slot("transform") service: NoImpl };

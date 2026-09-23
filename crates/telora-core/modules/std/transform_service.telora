@@ -1,12 +1,162 @@
 use std::value::{Value};
 use std::array as array;
 use std::dict as dict;
+use std::http::{Route};
+use std::dyn as dyn;
+use std::string as string;
+use std::type_desc as type_desc;
+use std::type_property::{TypedFieldPropertyCtx, get_field_prop, get_type_prop};
 
 type Context = struct {sources: Dict(Value)};
 
 trait TransformService {
     init: Fn(Context) -> Self,
     transform: Fn(Self, Value) -> Value,
+};
+
+@property(PropertyTarget::Type)
+type ServiceCollectionProp = struct {};
+
+def collection: Fn(Type, Option(ServiceCollectionProp)) -> ServiceCollectionProp = fn(owner, previous) {
+    {}.ty!(ServiceCollectionProp)
+};
+
+trait ServiceCollection {};
+impl(C: Property(ServiceCollectionProp)) ServiceCollection for C {};
+
+type RouteEntry = struct {index: Int, method: String, http: Option(Route)};
+
+def path_parameter: Fn(String) -> Option(String) = fn(segment) {
+    if string::starts_with(segment, "{") && string::ends_with(segment, "}") && string::length(segment) > 2 {
+        let opening = string::split(segment, "{");
+        if array::length(opening) != 2 || opening[0] != "" { None }
+        else {
+            let closing = string::split(opening[1], "}");
+            if array::length(closing) == 2 && closing[0] != "" && closing[1] == "" {
+                Some(closing[0])
+            } else { None }
+        }
+    } else { None }
+};
+
+def validate_path: Fn(String) -> () = fn(path) {
+    if !string::starts_with(path, "/") || string::contains(path, "?") || string::contains(path, "#") {
+        fail!("invalid HTTP service path", path)
+    } else {
+        let names = array::fold(string::split(path, "/"), [].ty!(Array(String)), fn(names, segment) {
+            match path_parameter(segment) {
+                Some(name) => if array::any(names, fn(previous) { previous == name }) {
+                    fail!("duplicate HTTP path parameter", name)
+                } else { array::push(names, name) },
+                None => if string::contains(segment, "{") || string::contains(segment, "}") {
+                    fail!("invalid HTTP path parameter", segment)
+                } else { names },
+            }
+        });
+        if array::all(names, fn(name) { name != "" }) { () }
+        else { fail!("invalid HTTP path parameter", path) }
+    }
+};
+
+def path_matches: Fn(String, String) -> Bool = fn(template, path) {
+    match array::zip(string::split(template, "/"), string::split(path, "/")) {
+        Some(parts) => array::all(parts, fn(pair) {
+            if pair.0 == pair.1 { True }
+            else { match path_parameter(pair.0) { Some(_) => pair.1 != "", None => False } }
+        }),
+        None => False,
+    }
+};
+
+def path_overlaps: Fn(String, String) -> Bool = fn(left, right) {
+    match array::zip(string::split(left, "/"), string::split(right, "/")) {
+        Some(parts) => array::all(parts, fn(pair) {
+            pair.0 == pair.1 ||
+                (match path_parameter(pair.0) { Some(_) => True, None => False }) ||
+                (match path_parameter(pair.1) { Some(_) => True, None => False })
+        }),
+        None => False,
+    }
+};
+
+def path_captures: Fn(String, String) -> Dict(Value) = fn(template, path) {
+    let parts = match array::zip(string::split(template, "/"), string::split(path, "/")) {
+        Some(parts) => parts,
+        None => fail!("HTTP route path length mismatch"),
+    };
+    dict::from_pairs(array::flat_map(parts, fn(pair) {
+        match path_parameter(pair.0) {
+            Some(name) => [(name, Value::String(pair.1))],
+            None => [],
+        }
+    }))
+};
+
+def routing: for(C: ServiceCollection) Fn(TypeOf(C)) -> Array(RouteEntry) = fn(target) {
+    array::fold(type_desc::fields(target), [].ty!(Array(RouteEntry)), fn(entries, field) {
+        let method = match get_field_prop(target, field.index, Slot.type) {
+            Some(value) => value.method,
+            None => fail!("service field has no slot declaration", field.name),
+        };
+        if array::any(entries, fn(existing) { existing.method == method }) {
+            fail!("duplicate service method", method)
+        } else {
+            let http = get_field_prop(target, field.index, Route.type);
+            match http {
+                Some(route) => {
+                    if validate_path(route.path) == () && array::any(entries, fn(existing) {
+                        match existing.http {
+                            Some(other) => other.method == route.method && path_overlaps(other.path, route.path),
+                            None => False,
+                        }
+                    }) {
+                        fail!("duplicate HTTP service route", route.path)
+                    } else {
+                        array::push(entries, {index: field.index, method, http})
+                    }
+                },
+                None => array::push(entries, {index: field.index, method, http}),
+            }
+        }
+    })
+};
+
+@property(PropertyTarget::Field)
+type Slot = struct {
+    method: String,
+    sources: Array(String),
+    init: Fn(Context) -> Dyn,
+    transform: Fn(Dyn, Value) -> Value,
+};
+
+def slot_adapter: for(F: TransformService) Fn(String, TypedFieldPropertyCtx(F), Option(Slot)) -> Slot = fn(name, ctx, previous) {
+    if name == "" { fail!("service method must not be empty", ctx.name) }
+    else {
+        match previous {
+            Some(_) => fail!("duplicate service slot declaration", ctx.name),
+            None => {
+                let target = ctx.ty;
+                {
+                    method: name,
+                    sources: match get_type_prop(target, Sources.type) {
+                        Some(value) => value.names,
+                        None => [],
+                    },
+                    init: fn(context: Context) { dyn::pack(target, TransformService(F).init(context)) },
+                    transform: fn(state: Dyn, input: Value) {
+                        match dyn::project_with(target, state) {
+                            Some(service) => TransformService(F).transform(service, input),
+                            None => fail!("service slot projection failed"),
+                        }
+                    },
+                }.ty!(Slot)
+            },
+        }
+    }
+};
+
+def slot: for(F: TransformService) Fn(String) -> Fn(TypedFieldPropertyCtx(F), Option(Slot)) -> Slot = fn(name) {
+    fn(ctx, previous) { slot_adapter(name, ctx, previous) }
 };
 
 @property(PropertyTarget::Type)
@@ -29,4 +179,4 @@ def source: Fn(String) -> Fn(Type, Option(Sources)) -> Sources = fn(name) {
     }
 };
 
-pub use self::{Context, TransformService, Sources, source};
+pub use self::{Context, TransformService, ServiceCollection, ServiceCollectionProp, RouteEntry, Slot, Sources, collection, path_matches, path_captures, routing, slot, source};

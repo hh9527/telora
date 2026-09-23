@@ -1,0 +1,140 @@
+use std::transform_service::{Context, TransformService, ServiceCollection, Slot, collection, routing, slot, source};
+use std::http::{Route};
+use std::http as http;
+use std::type_property::{get_field_prop, get_type_prop};
+use std::transform_service::{Sources};
+use std::value::{Value};
+use std::dyn as dyn;
+use std::_entry::transform::{Plan};
+use std::_entry::collection as entry;
+use std::_rt as rt;
+
+@source("shared")
+@source("z")
+type First = struct { prefix: String };
+impl TransformService for First {
+    init: fn(ctx) {
+        if ctx.sources["shared"] == Value::String("ready") {
+            { prefix: "first" }.ty!(Self)
+        } else { fail!("wrong shared source") }
+    },
+    transform: fn(self, input) { Value::String(self.prefix) },
+};
+@source("shared")
+@source("a")
+type Second = struct { prefix: String };
+impl TransformService for Second {
+    init: fn(ctx) {
+        if ctx.sources["shared"] == Value::String("ready") {
+            { prefix: "second" }.ty!(Self)
+        } else { fail!("wrong shared source") }
+    },
+    transform: fn(self, input) {
+        match input {
+            Value::Object(fields) => fields["path"],
+            _ => Value::String(self.prefix),
+        }
+    },
+};
+
+@collection
+type Collection = struct {
+    @slot("first") @http::post("/first") first: First,
+    @slot("second") @http::get("/second/{item}") second: Second,
+};
+
+@collection
+type Duplicate = struct {
+    @slot("same") @http::post("/same") first: First,
+    @slot("same") @http::post("/same") second: Second,
+};
+
+@collection
+type Missing = struct { first: First };
+
+@collection
+type Overlap = struct {
+    @slot("one") @http::get("/items/{id}") first: First,
+    @slot("two") @http::get("/items/fixed") second: Second,
+};
+
+@collection
+type InvalidPath = struct { @slot("bad") @http::get("/items/{id}tail") first: First };
+
+@collection
+type RepeatedParameter = struct { @slot("bad") @http::get("/items/{id}/{id}") first: First };
+
+def admits: for(C: ServiceCollection) Fn(TypeOf(C)) -> Bool = fn(target) { True };
+
+pub def inspect_invalid_routes: Fn() -> (Bool, Bool, Bool, Bool, Bool) = fn() {
+    (
+        match rt::with_diagnostics(fn(ignored: ()) { routing(Duplicate.type) })(()) {
+            Err(_) => True, Ok(_) => False,
+        },
+        match rt::with_diagnostics(fn(ignored: ()) { routing(Missing.type) })(()) {
+            Err(_) => True, Ok(_) => False,
+        },
+        match rt::with_diagnostics(fn(ignored: ()) { routing(Overlap.type) })(()) {
+            Err(_) => True, Ok(_) => False,
+        },
+        match rt::with_diagnostics(fn(ignored: ()) { routing(InvalidPath.type) })(()) {
+            Err(_) => True, Ok(_) => False,
+        },
+        match rt::with_diagnostics(fn(ignored: ()) { routing(RepeatedParameter.type) })(()) {
+            Err(_) => True, Ok(_) => False,
+        },
+    )
+};
+
+pub def inspect_sources: Fn() -> (Bool, Bool, Bool) = fn() {
+    (
+        match get_type_prop(First.type, Sources.type) {
+            Some(value) => value.names == ["shared", "z"], None => False,
+        },
+        match get_field_prop(Collection.type, 0, Slot.type) {
+            Some(value) => value.sources == ["shared", "z"], None => False,
+        },
+        match get_field_prop(Collection.type, 1, Slot.type) {
+            Some(value) => value.sources == ["a", "shared"], None => False,
+        },
+    )
+};
+
+pub def inspect: Fn() -> (Bool, Bool, Bool) = fn() {
+    let first = match get_field_prop(Collection.type, 0, Slot.type) {
+        Some(value) => value,
+        None => fail!("missing first slot"),
+    };
+    let second = match get_field_prop(Collection.type, 1, Slot.type) {
+        Some(value) => value,
+        None => fail!("missing second slot"),
+    };
+    let context: Context = { sources: {a: Value::None, shared: Value::String("ready"), z: Value::None} };
+    let first_state = first.init(context);
+    let second_state = second.init(context);
+    let collection = match dyn::construct@[Collection]([first_state, second_state]) {
+        Ok(value) => value,
+        Err(_) => fail!("collection construction failed"),
+    };
+    (
+        admits(Collection.type) &&
+            routing(Collection.type)[0].method == "first" &&
+            routing(Collection.type)[1].method == "second" &&
+            (match get_field_prop(Collection.type, 0, Slot.type) {
+                Some(value) => value.method == "first", None => False,
+            }) &&
+            (match get_field_prop(Collection.type, 1, Route.type) {
+                Some(value) => value.method == "GET" && value.path == "/second/{item}", None => False,
+            }) &&
+            first.transform(dyn::pack(First.type, collection.first), Value::None) == Value::String("first"),
+        second.transform(dyn::pack(Second.type, collection.second), Value::None) == Value::String("second"),
+        match dyn::construct@[Collection]([second_state, first_state]) {
+            Err(dyn::StructFieldError::Field(_)) => True,
+            _ => False,
+        },
+    )
+};
+
+pub def main: Plan = entry::prepare(Collection.type);
+
+pub def inspect_plan_sources: Fn() -> Array(String) = fn() { entry::prepare(Collection.type).0 };

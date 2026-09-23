@@ -1576,7 +1576,7 @@ property 等其他需求根用 node/module 标识且 symbol/name 为 null。ID �
 
 `telora run MODULE --serve URI` 与 `telora-run app.wasm --serve URI` 共用传输层：
 `stdio+jsonl://`、`http://IP:PORT`、`http+unix:///absolute/path.sock`。
-HTTP 使用 `POST /transform`，响应为 `telora.service/v1` envelope；
+HTTP 使用集合字段声明的 `@http::get/post` 路由，响应为 `telora.service/v1` envelope；
 语言错误及资源陷阱仍通过 `error` 和诊断表达（HTTP 200）。
 请求之间恢复初始化基线，执行串行。Unix socket 不会覆盖既有路径，
 停机后由部署方清理。不传 `--serve` 时执行单次请求。
@@ -1590,7 +1590,8 @@ HTTP 使用 `POST /transform`，响应为 `telora.service/v1` envelope；
 
 ### TransformService 入口
 
-服务入口是模块公开的具体类型 MainService，必须实现 `std::transform_service::TransformService`：
+服务入口是模块公开的 `@service::collection` MainService struct；每个字段的具体类型实现
+`std::transform_service::TransformService`：
 
 ```telora
 trait TransformService {
@@ -1599,18 +1600,18 @@ trait TransformService {
 };
 ```
 
-Context 为 {sources: Dict(Value)}。`@service::source("name")` 是普通类型 property，
-多次声明归并为稳定来源清单，重复声明报错。Host 提供的来源必须与清单一致。
-MainService 可以是正常类型别名或重导出，所有类型参数和方法实例都在 MIR 中确定。
-内置 entry 包装方法调用，无运行时 trait 派发，也不按模块成员 shape 猜测入口。
+字段使用 `@service::slot("name")` 绑定静态适配器和请求方法，
+可附加 `@http::get/post("/path")` 声明 HTTP 路由。Context 为 {sources: Dict(Value)}。
+字段服务的 `@service::source("name")` 归并为稳定来源清单；Host 来源必须与清单一致。
+所有类型参数和方法实例都在 MIR 中确定。内置 entry 包装调用，无运行时 trait 派发。
 
-模块顶层值与 property 初始化完成后，Host 准备来源并调用 init；随后每次调用 transform。
+模块顶层值与 property 初始化完成后，Host 准备来源并初始化各字段；随后按路由调用 transform。
 来源只读取一次，服务间隙 reset 到初始化后的确定基线。transform 不产生跨请求状态更新。
 init 失败不发布实例。内置 with_diagnostics 捕获普通语言 failure 并保留完整诊断；
 fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一基线获得独立预算。
 配额用于可停机，不是精确计费，reset 和页级计量方式不构成语言契约。
 
-run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；`run --serve stdio+jsonl://` 读取 JSONL，
+run 从 stdin 读取一个 `{method: String, input: Value}` JSON，成功输出一个 JSON Value；`run --serve stdio+jsonl://` 读取 JSONL，
 每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
 message、labels、notes；已捕获诊断不重复输出。初始化 source 不接受 stdin；JSONL 和单次 run 使用 stdin 作为请求通道，HTTP 使用请求体。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
 初始化来源使用 @service/name；逐次请求输入不注册规范来源路径，物理路径不进入来源身份。

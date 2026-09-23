@@ -1,9 +1,10 @@
 use std::transform_service as service;
 @service::source("a")
 @service::source("a")
-type MainService = struct {};
-impl service::TransformService for MainService {
+type DuplicateSource = struct {};
+impl service::TransformService for DuplicateSource {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) { input },
 };
-pub use self::{MainService};
+@service::collection
+pub type MainService = struct { @service::slot("transform") service: DuplicateSource };

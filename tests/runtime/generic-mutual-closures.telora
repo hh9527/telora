@@ -13,9 +13,10 @@ def functions: (Fn(Int, String) -> Int, Fn(Int, Int) -> Int) = do {
     (even@[String], even@[Int])
 };
 pub def answer: value::Value = codec::encode(functions.0(4, "text"));
-type MainService = struct {};
-impl entry::TransformService for MainService {
+type LegacyService = struct {};
+impl entry::TransformService for LegacyService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) {codec::encode(functions.1(4, 7))},
 };
-pub use self::{MainService};
+@entry::collection
+pub type MainService = struct { @entry::slot("transform") service: LegacyService };

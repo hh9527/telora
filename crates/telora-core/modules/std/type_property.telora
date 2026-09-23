@@ -5,6 +5,13 @@ type FieldPropertyCtx = struct {
     ty: Type,
 };
 
+type TypedFieldPropertyCtx(T) = struct {
+    owner: Type,
+    index: Int,
+    name: String,
+    ty: TypeOf(T),
+};
+
 type VariantPropertyCtx = struct {
     owner: Type,
     index: Int,
@@ -21,6 +28,7 @@ native optional: for(P, T: ?Property(P)) Fn() -> Option(P);
 
 pub use self::{
     FieldPropertyCtx,
+    TypedFieldPropertyCtx,
     VariantPropertyCtx,
     get_type_prop,
     get_field_prop,

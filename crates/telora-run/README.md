@@ -13,7 +13,7 @@ telora -C project build @src/main --snapshot --source model=model.json -o app.wa
 telora-run app.wasm < request.json
 ```
 
-`build` 选择导出 `MainService` 的源码模块。在输入端把源码（包含 builtin）和
+`build` 选择导出 `@service::collection` MainService struct 的源码模块。在输入端把源码（包含 builtin）和
 静态数据模块的 CRLF/CR 归一化为 LF，不改写原文件，反斜杠转义不受影响。
 制品携带静态数据 bundle，不执行初始化。失败构建不会覆盖最终输出。
 
@@ -46,11 +46,11 @@ HTTP 服务：
 ```sh
 telora-run app.wasm --source model=model.json --serve http://127.0.0.1:8080
 telora run @src/main --source model=model.json --serve http+unix:///tmp/telora.sock
-curl -X POST http://127.0.0.1:8080/transform -d '"query"'
-curl --unix-socket /tmp/telora.sock -X POST http://localhost/transform -d '"query"'
+curl -X POST http://127.0.0.1:8080/increment -d '41'
+curl --unix-socket /tmp/telora.sock -X POST http://localhost/increment -d '41'
 ```
 
-HTTP/1 的 `POST /transform` 返回与 JSONL 相同的 envelope；语言诊断和执行陷阱
+HTTP/1 按集合字段声明的 `@http::get/post` 路由，返回与 JSONL 相同的 envelope；语言诊断和执行陷阱
 以 HTTP 200 加 `error: true` 表示。错误路径返回 404，错误方法 405，过大的
 请求体 413。HTTP 分帧错误由协议层处理。每连接处理一次请求后关闭。
 最多同时接收 64 条连接，读取 body 超时 30 秒，连接总时限 60 秒；

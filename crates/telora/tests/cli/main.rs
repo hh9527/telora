@@ -128,7 +128,12 @@ fn input_command(mut command: Command, input: &[u8]) -> std::process::Output {
 fn execute_value(cwd: &Path, mode: &str, selector: &str) -> std::process::Output {
     let mut command = telora(cwd);
     command.args([mode, selector]);
-    input_command(command, b"null")
+    let input: &[u8] = if mode == "run" {
+        br#"{"method":"transform","input":null}"#
+    } else {
+        b"null"
+    };
+    input_command(command, input)
 }
 
 fn runtime_source(name: &str) -> String {

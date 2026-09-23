@@ -7,9 +7,10 @@ def checks: Fn() -> Value = fn() {
     encode([dbg!(shared) == original, data.1 == 1])
 };
 pub def answer: Value = encode(shared);
-type MainService = struct {};
-impl entry::TransformService for MainService {
+type LegacyService = struct {};
+impl entry::TransformService for LegacyService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) { checks() },
 };
-pub use self::{MainService};
+@entry::collection
+pub type MainService = struct { @entry::slot("transform") service: LegacyService };

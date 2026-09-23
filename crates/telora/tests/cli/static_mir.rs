@@ -453,12 +453,13 @@ fn static_mir_eval_imports_data_after_static_solving() {
         use std::transform_service as service;
         use std::value::{Value};
         data data = import(json) "./input.json";
-        type MainService = struct {data: Value};
-        impl service.TransformService for MainService {
+        type Model = struct {data: Value};
+        impl service.TransformService for Model {
             init: fn(ctx) { {data}.ty!(Self) },
             transform: fn(self, input) { self.data },
         };
-        pub use self::{MainService};
+        @service::collection
+        pub type MainService = struct { @service::slot("transform") service: Model };
     "#,
     )
     .unwrap();

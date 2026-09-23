@@ -10,6 +10,7 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
 futures = "0.3"
+form_urlencoded = "1.2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

@@ -1,7 +1,8 @@
 use std::transform_service as service;
-type MainService = struct {};
-impl service::TransformService for MainService {
+type FailedInit = struct {};
+impl service::TransformService for FailedInit {
     init: fn(ctx) { fail!("service initialization failed") },
     transform: fn(self, input) { input },
 };
-pub use self::{MainService};
+@service::collection
+pub type MainService = struct { @service::slot("transform") service: FailedInit };

@@ -1,9 +1,10 @@
 use std::transform_service as service;
 use std::value::{Value};
 use std::regex as regex;
-type MainService = struct {pattern: regex::Regex};
-impl service::TransformService for MainService {
+type FailedInit = struct {pattern: regex::Regex};
+impl service::TransformService for FailedInit {
     init: fn(ctx) { {pattern: regex::compile("(")}.ty!(Self) },
     transform: fn(self, input) { input },
 };
-pub use self::{MainService};
+@service::collection
+pub type MainService = struct { @service::slot("transform") service: FailedInit };

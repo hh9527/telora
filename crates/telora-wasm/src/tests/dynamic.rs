@@ -1,6 +1,127 @@
 use super::*;
 
 #[test]
+fn service_collection_field_witness_initializes_and_dispatches() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/service-collection-witness.telora"
+    ))
+    .unwrap();
+    let bytes = compile_export(&source, "inspect").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!([true, true, true])
+    );
+    let bytes = compile_export(&source, "inspect_invalid_routes").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!([true, true, true, true, true])
+    );
+    let bytes = compile_export(&source, "inspect_sources").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!([true, true, true])
+    );
+    let bytes = compile_export(&source, "inspect_plan_sources").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!(["a", "shared", "z"])
+    );
+}
+
+#[test]
+fn service_collection_survives_initialization_and_request_reset() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/service-collection-witness.telora"
+    ))
+    .unwrap();
+    let mir = super::graph(&source);
+    let export = mir
+        .exports
+        .iter()
+        .flatten()
+        .copied()
+        .find(|id| mir.symbols[id.index()].name == "main")
+        .unwrap();
+    let bytes = crate::compile_service(&mir.seal_export(export).unwrap()).unwrap();
+    let mut service = crate::transform_service::TransformSession::new(
+        crate::session::Session::load(&bytes, 100_000_000).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(service.sources(), &["a", "shared", "z"]);
+    assert!(
+        service
+            .initialize(&[
+                crate::transform_service::SourceInput {
+                    name: "a",
+                    data: b"null",
+                    format: telora_core::data_plan::Format::Json,
+                },
+                crate::transform_service::SourceInput {
+                    name: "shared",
+                    data: br#""ready""#,
+                    format: telora_core::data_plan::Format::Json,
+                },
+                crate::transform_service::SourceInput {
+                    name: "z",
+                    data: b"null",
+                    format: telora_core::data_plan::Format::Json,
+                },
+            ])
+            .unwrap()
+            .success
+    );
+    service.seal_initialization().unwrap();
+    for (method, expected) in [("first", "first"), ("second", "second"), ("first", "first")] {
+        let request = serde_json::json!({"method":method,"input":null});
+        let reply = service.transform(request.to_string().as_bytes()).unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(reply["ok"], expected);
+        assert_eq!(reply["error"], false);
+        service.reset().unwrap();
+    }
+    let unknown = serde_json::json!({"method":"absent","input":null});
+    let reply = service.transform(unknown.to_string().as_bytes()).unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+    assert_eq!(reply["error"], true);
+    assert!(!reply["diagnostics"].as_array().unwrap().is_empty());
+    service.reset().unwrap();
+    let request = serde_json::json!({"method":"second","input":null});
+    let reply = service.transform(request.to_string().as_bytes()).unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+    assert_eq!(reply["ok"], "second");
+    service.reset().unwrap();
+    for (verb, path, expected) in [
+        ("POST", "/first", serde_json::json!("first")),
+        ("GET", "/second/42", serde_json::json!({"item":"42"})),
+    ] {
+        let request = serde_json::json!({"http":{"method":verb,"path":path},"input":null});
+        let reply = service.transform(request.to_string().as_bytes()).unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(reply["ok"], expected);
+        service.reset().unwrap();
+    }
+    for (verb, path, status, allow) in [("GET", "/absent", 404, ""), ("GET", "/first", 405, "POST")]
+    {
+        let request = serde_json::json!({"http":{"method":verb,"path":path},"input":null});
+        let reply = service.transform(request.to_string().as_bytes()).unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(reply["httpStatus"], status);
+        assert_eq!(reply["allow"], allow);
+        service.reset().unwrap();
+    }
+}
+
+#[test]
 fn dyn_fields_construct_closed_structs_and_newtypes() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

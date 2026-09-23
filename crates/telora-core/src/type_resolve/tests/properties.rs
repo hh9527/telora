@@ -594,6 +594,88 @@ fn configured_decorators_use_factory_and_provider_signatures() {
 }
 
 #[test]
+fn service_collection_entry_reads_closed_member_types() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        type First = struct { a: Int };
+        type Second = struct { b: String };
+        pub type MainService = struct { second: Second, first: First };
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    let export = mir
+        .exports
+        .iter()
+        .flatten()
+        .copied()
+        .find(|id| mir.symbols[id.index()].name == "MainService")
+        .unwrap();
+    let fields = crate::entry_plan::collection_fields(&mir, export).unwrap();
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0].0, "first");
+    assert_eq!(fields[1].0, "second");
+    assert_ne!(fields[0].1, fields[1].1);
+}
+
+#[test]
+fn service_collection_entry_resolves_reexport_and_rejects_non_struct() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        type Bundle = struct { item: Int };
+        type Variant = enum { Item(Int) };
+        pub use self::{ Bundle as MainService, Variant as NotCollection };
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    let export = |name: &str| {
+        mir.exports
+            .iter()
+            .flatten()
+            .copied()
+            .find(|id| mir.symbols[id.index()].name == name)
+            .unwrap()
+    };
+    let fields = crate::entry_plan::collection_fields(&mir, export("MainService")).unwrap();
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].0, "item");
+    assert_eq!(
+        crate::entry_plan::collection_fields(&mir, export("NotCollection")).unwrap_err(),
+        "service collection must be a struct"
+    );
+}
+
+#[test]
+fn service_collection_entry_uses_instantiated_field_types() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        type Bundle(T) = struct { item: T };
+        pub type MainService = Bundle(Int);
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+    let export = mir
+        .exports
+        .iter()
+        .flatten()
+        .copied()
+        .find(|id| mir.symbols[id.index()].name == "MainService")
+        .unwrap();
+    let fields = crate::entry_plan::collection_fields(&mir, export).unwrap();
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].0, "item");
+    assert_eq!(
+        mir.types[fields[0].1.index()].constructor,
+        crate::mir::TypeConstructor::Int
+    );
+}
+
+#[test]
 fn property_presence_proves_signature_bounds_without_running_providers() {
     let mut mir = graph(&[(
         "@src/main",

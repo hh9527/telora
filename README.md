@@ -53,12 +53,15 @@ hello/
 ```telora
 use std::transform_service as service;
 use std::value::{Value};
-type MainService = struct {};
-impl service::TransformService for MainService {
+type Greeting = struct {};
+impl service::TransformService for Greeting {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) { Value::String("hello, telora") },
 };
-pub use self::{MainService};
+@service::collection
+pub type MainService = struct {
+    @service::slot("greet") greet: Greeting,
+};
 
 ```
 
@@ -70,12 +73,12 @@ target/release/telora -C hello check @src/lib
 target/release/telora -C hello check --only-types @src/lib
 target/release/telora -C hello check --lib
 target/release/telora -C hello check --tests --only-types
-printf 'null\n' | target/release/telora -C hello run @src/lib
+printf '{"method":"greet","input":null}\n' | target/release/telora -C hello run @src/lib
 target/release/telora -C hello query exports @src/lib
 ```
 
-模块公开具体类型 MainService，实现 `std::transform_service::TransformService` 的 init 与 transform。
-MIR 封闭所有方法实例；Host 准备声明的来源并初始化服务，run 处理一个 stdin JSON，
+模块公开带 `@service::collection` 的 MainService struct，其字段分别实现
+`std::transform_service::TransformService`。MIR 封闭所有方法实例；Host 准备声明的来源并初始化各字段服务，run 处理一个带 method/input 的 stdin JSON，
 serve 通过 JSONL 或 HTTP 处理请求。每次调用从同一初始化状态开始，服务间隙 reset；fuel/memory 配额只
 约束单次调用。来源与诊断细节见 [执行模式](guide/EXEC-MODE.md)。
 
@@ -238,8 +241,8 @@ value.dbg!("message")     # 返回原值，向 Host 发送 JSONL 观察
 
 ## Host 与 Entry
 
-模块公开具体类型 MainService，实现 `std::transform_service::TransformService` 的 init 与 transform。
-MIR 封闭所有方法实例；Host 准备声明的来源并初始化服务，run 处理一个 stdin JSON，
+模块公开带 `@service::collection` 的 MainService struct，其字段分别实现
+`std::transform_service::TransformService`。MIR 封闭所有方法实例；Host 准备声明的来源并初始化各字段服务，run 处理一个带 method/input 的 stdin JSON，
 serve 处理 JSONL。每次调用从同一初始化状态开始，服务间隙 reset；fuel/memory 配额只
 约束单次调用。来源与诊断细节见 [执行模式](guide/EXEC-MODE.md)。
 
@@ -268,7 +271,7 @@ telora lsp                 启动语言服务器
 `eval` 读取普通 Value 导出；`run` 执行 MainService。
 
 `--serve` 支持 `stdio+jsonl://`、`http://127.0.0.1:8080` 和
-`http+unix:///tmp/telora.sock`。HTTP 接口为 `POST /transform`。
+`http+unix:///tmp/telora.sock`。HTTP 路由由字段上的 `@http::get/post` 声明。
 `telora-run` 不传 `--serve` 时从 stdin 读取一个完整 JSON，输出一个结果；
 传入时持续服务。`--source name=file.json` 提供初始化数据，与请求输入分开。
 普通 Wasm 制品每次启动 runner 都进行初始化。`build --snapshot` 在同一制品中保留

@@ -1,10 +1,10 @@
 # RFC 0309：静态 TransformService 集合与传输路由
 
-- 状态：草案，尚未实施
+- 状态：实现中；集合入口、路由和回归已落地
 - 日期：2026-09-23
-- 修订：扩展 RFC 0299 的单个 `MainService` 入口，不引入应用 effect system
+- 修订：取代 RFC 0299 的单个 `MainService` 入口，不引入应用 effect system
 - 前置：RFC 0310（从 Dyn 字段受检查地构造 struct）
-- 推进顺序：先完成 RFC 0310 的独立验收，再启动本 RFC 的实现
+- 推进顺序：RFC 0310 已完成；集合入口、路由及单次/持续服务已实现
 
 ## 动机
 
@@ -19,17 +19,15 @@
 
 ## 声明与身份
 
-设想的公开入口如下（字段装饰器和 `PropertyTarget::Field` 已受支持，
-具体 `http` / `method` property 尚需定义）：
+当前公开入口如下：
 
 ```telora
+@service::collection
 pub type MainService = struct {
-    @http.post("/lower-content")
-    @method("lower-content")
+    @service::slot("lower-content") @http::post("/lower-content")
     lower_intent: LowerIntent,
 
-    @http.get("/svg/{entity}")
-    @method("svg")
+    @service::slot("svg") @http::get("/svg/{entity}")
     svg: SvgRender,
 };
 ```
@@ -37,31 +35,36 @@ pub type MainService = struct {
 `MainService` 是**真实的名义 struct 类型**，初始化后的值包含各字段的
 `TransformService` 实例。每个字段声明一个服务槽位，其字段类型必须是完整
 确定的具体类型，并具有唯一的 `TransformService` 实现。字段名是组合值的
-普通字段名，也是编译期生成调用时的投影依据；`@method` 指定
-对外稳定的、非空且唯一的方法名；`@http.*` 是可选的传输路由。没有 HTTP
+普通字段名，也是编译期生成调用时的投影依据；`@slot("name")` 指定
+对外稳定的、非空且唯一的方法名；`@http::get` / `@http::post` 是可选的传输路由。没有 HTTP
 路由的槽位仍可由 method 协议调用。所有字段在 MIR 封闭时作为入口根，
 不根据请求流量增量实例化模板，也不在运行时做 trait 选择。
 
 入口必须具备一个表示“可对外伺服的静态服务集合”的 trait 证据（暂称
 `ServiceCollection`）。这个 trait 约束的是整个 `MainService` 类型，不取代
 字段上的 `TransformService`；字段 property 只描述路由，不独立授予伺服资格。
-集合 trait 消费字段 property 的构造与路由信息；它可以经
-`type_desc::fields` 和 `get_field_prop` 遍历字段，对每个字段生成携带权威
-类型身份的 `Dyn`，最后通过 RFC 0310 的 `FromDynFields` 受检查地组装
-`MainService`。是否需要显式 `impl ServiceCollection for MainService` 作为
-选择开关，须在原型中验证现有 trait 证据与字段 property 能否配合；
-不能仅凭运行期字段 shape 猜测入口。此规则不要求普遍的 struct `derive`。
+集合 trait 由类型级 `ServiceCollectionProp` 触发 blanket impl，作为显式的
+入口选择开关；字段 property 本身不能使普通 struct 获得伺服资格。字段
+上下文保留 `TypedFieldPropertyCtx(F).ty: TypeOf(F)`，因此 `@slot("name")` 的
+配置工厂返回泛型 provider，后者从声明的字段类型推导 `F: TransformService`，
+同时把配置名称捕获到属性值中；不需要重复填写 `F.type`。
+不能用运行期 `FieldPropertyCtx.ty: Type` 代替静态 trait 选择。
+不能仅凭运行期字段 shape 猜测入口，也不要求普遍的 struct `derive`。
 
-保留现有的 `pub use ... as MainService` / 单个具体 `MainService: TransformService`
-作为单服务入口；它继续使用现有的 `POST /transform` 与原始 JSON 请求协议。
-两种入口形态由静态 trait 证据区分，不用运行时 shape 猜测。集合形态的路由不隐式
-套用单服务默认路由。其他普通 struct 的字段装饰器不因此获得服务语义。
+`MainService` 只接受具备 `ServiceCollection` 证据的集合 struct；原先直接
+导出 `MainService: TransformService` 的单服务入口不再保留。单个服务也声明
+为单字段集合，明确指定 method 和可选 HTTP 路由，不隐式套用 `/transform`。
+不需要同时维护两种入口计划、传输协议和快照形态。其他普通 struct 的
+字段装饰器不因此获得服务语义。
 
-编译时拒绝重复 method、同一 HTTP 方法与路径的冲突、无效的路径模板、
+静态可提取的路由声明在编译时拒绝重复 method、同一 HTTP 方法与路径的冲突、无效的路径模板、
 不支持的 HTTP 动词、缺少 trait 实现或无法封闭的字段类型。不同 HTTP 动词
 可以使用相同路径；具体路由歧义判定须覆盖静态路径与参数路径的重叠，
-而不能仅比较路径字符串。路由及 method 清单作为制品中确定性的元数据，
-runner 无须读取源码。
+而不能仅比较路径字符串。普通 property provider 可延迟到初始化时求值，
+不能把任意 provider 的结果假定为编译期常量：若允许计算得到路由，则在
+发布服务前校验；若要求编译期校验，则应约束路由为可静态提取的声明。
+选定其中一种后，路由及 method 清单作为制品中确定性的元数据，runner
+无须读取源码。source 清单同样必须在 Host 注入之前可得。
 
 ## 初始化、请求与快照
 
@@ -93,16 +96,17 @@ HTTP 路由只负责选择槽位并将外部输入转换为一个 `Value`；语�
 输入过大等传输错误继续与语言诊断区分。`stdio+jsonl://` 无 URL，必须有
 显式 method 标识；无 `--serve` 的单次 `run` 也遵循同一规则。
 
-请求格式还不能直接沿用“每行就是 transform 的 JSON 输入”：需要定义
-method 与业务输入的无歧义边界，同时不把业务对象中的 `method` 键当作
-路由信息。HTTP 的路径参数、query、body（尤其 GET 无 body）如何规范化
-为 `Value`，响应是否只用 JSON、以及是否允许无 HTTP 路由的 method，
-须在实现前以可运行用例确定，并同步定义请求协议版本。不能让 runner
-基于字段名或 URL 猜测请求结构。单服务既有协议不受这些选择影响。
+请求格式不再沿用“每行就是 transform 的 JSON 输入”：单次/JSONL 输入为
+`{"method":"name","input":...}`，业务输入只在 `input` 字段内。HTTP POST 输入为
+JSON body；GET 输入为 `{path: Dict(Value), query: Dict(Value), body: Value}`，
+重复 query 键保留为字符串数组，无 body 为 null。无 HTTP 路由的 method 仍可通过
+单次/JSONL 调用；响应使用 `telora.service/v1` envelope。不能让 runner
+基于字段名或 URL 猜测请求结构。迁移时必须同步更新单服务 fixture、
+文档以及依赖现行入口的应用。
 
 ## 实施范围与验收
 
-1. 复用现有字段 property，验证 `@http.post` 等命名空间调用和静态值
+1. 复用现有字段 property，验证 `@http::post` 等命名空间调用和静态值
    提取；定义 `ServiceCollection` 证据及受限派生的触发条件，完成路由
    冲突校验。字段 property 不等于组合值字段的运行期内容。
 2. 在 RFC 0310 的构造接口上验证字段 property 提供的构造函数能否
@@ -118,4 +122,23 @@ method 与业务输入的无歧义边界，同时不把业务对象中的 `metho
    `telora-run` 对同一制品的行为一致作为验收条件。
 
 现阶段只确立静态集合与生命周期方向；请求编码和 HTTP 参数映射未决，
-在其规约确定前不改变现行单服务传输协议。
+在其规约确定前旧协议仍运行；正式切换时直接替换，不长期保留双入口。
+
+## 原型记录
+
+`crates/telora-wasm/tests/fixtures/service-collection-witness.telora` 验证两个
+异构服务的字段 property、类型级集合资格、初始化、`Dyn` 构造、投影与
+调用；交换字段的 `Dyn` 由 `FromDynFields` 拒绝。内置
+`std/_entry/collection::prepare` 已复用现有 Guest Plan 合约构造真实制品，
+验证共享 source 去重与排序、组合对象在初始化基线及请求 reset 后保活、
+不同字段交替调用、失败请求的诊断与后续恢复。单次及 JSONL 输入均使用
+method/input envelope。CLI 编译器入口由 `entry_plan::transform_adapter`
+生成 `entry::prepare(MainService.type)`；Wasm 的 service ABI 继续接受
+`(sources, Fn(Context) -> Handler)` Plan，组合与分派都在 Guest 内完成。
+字段上下文的静态见证和泛型 provider 支持配置型 `@slot("name")`，
+不需要编译器合成装饰器，也不重复声明 method property。
+标准库已提供 `@collection` / `ServiceCollection`、`@slot("name")` 和
+`@http::get/post` 字段 property；`routing(C.type)` 按封闭字段顺序提取
+路由，检测缺失和重复的 method、无效路径模板及同一 HTTP 动词下
+静态路径与参数路径的交叠。属性值惰性求值，正式入口显式消费
+`routing` 结果，在发布服务前完成校验。

@@ -1,0 +1,31 @@
+use std::transform_service as service;
+use std::http as http;
+use std::value::{Value};
+
+type Increment = struct {step: Int};
+impl service::TransformService for Increment {
+    init: fn(ctx) { {step: 1}.ty!(Self) },
+    transform: fn(self, input) {
+        match input {
+            Value::Int(number) => Value::Int(number + self.step),
+            _ => fail!("increment expects an integer", input),
+        }
+    },
+};
+
+type Detail = struct {};
+impl service::TransformService for Detail {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) {
+        match input {
+            Value::Object(fields) => Value::Object({path: fields["path"], query: fields["query"]}),
+            _ => fail!("detail expects HTTP path arguments", input),
+        }
+    },
+};
+
+@service::collection
+pub type MainService = struct {
+    @service::slot("increment") @http::post("/increment") increment: Increment,
+    @service::slot("detail") @http::get("/details/{id}") detail: Detail,
+};

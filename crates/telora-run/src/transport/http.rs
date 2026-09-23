@@ -27,13 +27,21 @@ async fn request(
     limit: usize,
     handler: Handler<'_>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    if req.uri().path() != "/transform" {
-        return Ok(response(404, failure("unknown endpoint")));
-    }
-    if req.method() != hyper::Method::POST {
-        let mut reply = response(405, failure("expected POST"));
-        reply.headers_mut().insert("allow", "POST".parse().unwrap());
+    if req.method() != hyper::Method::POST && req.method() != hyper::Method::GET {
+        let mut reply = response(405, failure("expected GET or POST"));
+        reply
+            .headers_mut()
+            .insert("allow", "GET, POST".parse().unwrap());
         return Ok(reply);
+    }
+    let method = req.method().as_str().to_owned();
+    let path = req.uri().path().to_owned();
+    let mut query = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for (key, value) in form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes()) {
+        query
+            .entry(key.into_owned())
+            .or_default()
+            .push(value.into_owned());
     }
     if req.body().size_hint().lower() > limit as u64 {
         return Ok(response(413, failure("request exceeds input size limit")));
@@ -59,8 +67,38 @@ async fn request(
         Ok(Ok(body)) => body.to_bytes(),
     };
     // Synchronous execution on one thread: only one request can mutate the Guest.
+    let input: serde_json::Value = if bytes.is_empty() && method == "GET" {
+        serde_json::Value::Null
+    } else {
+        match serde_json::from_slice(&bytes) {
+            Ok(input) => input,
+            Err(_) => return Ok(response(400, failure("request body must be JSON"))),
+        }
+    };
+    let envelope =
+        serde_json::json!({"http":{"method":method,"path":path,"query":query},"input":input});
+    let bytes = serde_json::to_vec(&envelope).expect("HTTP envelope is serializable");
     Ok(match handler.borrow_mut()(&bytes) {
-        Ok(reply) => response(200, reply),
+        Ok(reply) => {
+            let metadata = serde_json::from_slice::<serde_json::Value>(&reply).ok();
+            let status = metadata
+                .as_ref()
+                .and_then(|value| value.get("httpStatus"))
+                .and_then(serde_json::Value::as_u64)
+                .filter(|&status| status == 404 || status == 405)
+                .unwrap_or(200) as u16;
+            let mut result = response(status, reply);
+            if status == 405
+                && let Some(allow) = metadata
+                    .as_ref()
+                    .and_then(|value| value.get("allow"))
+                    .and_then(serde_json::Value::as_str)
+                && let Ok(value) = allow.parse()
+            {
+                result.headers_mut().insert("allow", value);
+            }
+            result
+        }
         Err(error) => response(500, failure(&error.to_string())),
     })
 }

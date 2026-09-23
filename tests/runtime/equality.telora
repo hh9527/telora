@@ -92,9 +92,10 @@ def checks: Fn() -> Value = fn() {
     ])
 };
 pub def answer: Value = checks();
-type MainService = struct {};
-impl entry::TransformService for MainService {
+type LegacyService = struct {};
+impl entry::TransformService for LegacyService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) { checks() },
 };
-pub use self::{MainService};
+@entry::collection
+pub type MainService = struct { @entry::slot("transform") service: LegacyService };

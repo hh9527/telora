@@ -468,9 +468,9 @@ fixture 仅累计已接受的源文本字节作为粗略输入边界，保留展
 
 包管理继续使用私有 IMOS Host。应用不再创建 EES service。
 
-内置 std/_entry/transform 与应用在同一 MIR 中求解，MainService 的 init/transform
-实例由静态 trait 证据选择。Plan 是内部 (sources, initializer)；initializer 返回捕获 Self
-的已类型化 handler，with_diagnostics 包装每次调用。Host 不解码 Self。
+内置 std/_entry/collection 与应用在同一 MIR 中求解，MainService 各字段的 init/transform
+实例由静态 trait 证据选择。Plan 是内部 (sources, initializer)；initializer 构造集合并返回
+按静态路由选择字段服务的 handler，with_diagnostics 包装每次调用。Host 不解码服务状态。
 
 正常完成请求后，reset-service 先释放请求 Regex 资源，再恢复分类表基线并 truncate
 words/content，保留容量；Host 恢复执行 globals、debug 游标和每次请求的 fuel。
@@ -490,7 +490,7 @@ words/content，保留容量；Host 恢复执行 globals、debug 游标和每次
 | check | seal、codegen、链接、数据注入及整图初始化 |
 | eval | 初始化后取得选中 Value 导出 |
 | test NAME | 初始化后执行该测试模块直接导出的 Test |
-| run / serve | 初始化 MainService，按请求调用 transform，间隙 reset |
+| run / serve | 初始化 MainService 集合，按 method 或 HTTP 路由调用字段服务，间隙 reset |
 
 `check MODULE_ID` 选择一个根。`check --lib` 从当前 crate 的 `src/lib.telora` 发现并
 选择整个可达模块树，包括私有模块和数据模块；`check --tests` 递归选择当前 crate 的

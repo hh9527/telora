@@ -199,8 +199,8 @@ telora run @src/lib --source knowledge=model.json --serve http://127.0.0.1:8080
 telora-run app.wasm --source knowledge=model.json --serve http+unix:///tmp/telora.sock
 ```
 
-build 选择导出 MainService 的模块，输出普通 Wasm；运行时初始化数据通过
+build 选择导出 `@service::collection` MainService struct 的模块，输出普通 Wasm；运行时初始化数据通过
 --source 提供。telora-run 不需要 workspace 和编译器，不传 --serve 时处理一个
 stdin JSON。--serve 支持 stdio+jsonl://、http://IP:PORT 和
-http+unix:///absolute/path.sock；HTTP 入口为 POST /transform。
+http+unix:///absolute/path.sock；HTTP 路由由集合字段的 `@http::get/post` 声明。
 完整生命周期、响应和配额说明见 [执行模式](EXEC-MODE.md)。

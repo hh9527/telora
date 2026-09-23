@@ -19,4 +19,7 @@ impl service::TransformService for Model {
         }
     },
 };
-pub use self::{Model as MainService};
+@service::collection
+pub type MainService = struct {
+    @service::slot("transform") model: Model,
+};

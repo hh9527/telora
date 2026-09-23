@@ -156,12 +156,13 @@ Host 是权限边界，不只是 foreign-function interface。
 ### 应用入口
 
 应用入口来自封闭模块图中的显式导出。普通 eval 选择 Value 导出；服务选择
-实现 TransformService 的具体类型 MainService。没有名为 @main 的特权模块，
+标记 `@service::collection` 的具体 MainService struct。没有名为 @main 的特权模块，
 应用只能消费 Host 显式提供的数据。
 
 ### Entry 与 TransformService
 
-服务入口是模块公开的具体类型 MainService，必须实现 `std::transform_service::TransformService`：
+服务入口是模块公开的 `@service::collection` MainService struct；每个字段的具体类型实现
+`std::transform_service::TransformService`：
 
 ```telora
 trait TransformService {
@@ -170,12 +171,12 @@ trait TransformService {
 };
 ```
 
-Context 为 {sources: Dict(Value)}。`@service::source("name")` 是普通类型 property，
-多次声明归并为稳定来源清单，重复声明报错。Host 提供的来源必须与清单一致。
-MainService 可以是正常类型别名或重导出，所有类型参数和方法实例都在 MIR 中确定。
-内置 entry 包装方法调用，无运行时 trait 派发，也不按模块成员 shape 猜测入口。
+集合字段使用 `@service::slot("name")` 声明静态服务适配器和请求方法，
+可附加 `@http::get/post("/path")` 声明 HTTP 路由。Context 为 {sources: Dict(Value)}。
+字段服务的 `@service::source("name")` 声明归并为稳定来源清单；Host 来源必须与清单一致。
+所有类型参数和方法实例都在 MIR 中确定。内置 entry 包装方法调用，无运行时 trait 派发。
 
-模块顶层值与 property 初始化完成后，Host 准备来源并调用 init；随后每次调用 transform。
+模块顶层值与 property 初始化完成后，Host 准备来源并初始化各字段；随后按路由调用 transform。
 来源只读取一次，服务间隙 reset 到初始化后的确定基线。transform 不产生跨请求状态更新。
 init 失败不发布实例。内置 with_diagnostics 捕获普通语言 failure 并保留完整诊断；
 fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一基线获得独立预算。

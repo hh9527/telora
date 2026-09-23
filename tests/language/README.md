@@ -77,13 +77,16 @@ See [MIGRATION.md](MIGRATION.md) for the completed migration and retained scope.
 
 ## Running the suite
 
-Run the suite after building Telora:
+Use the release CLI for this repository's language acceptance suite: debug builds
+make the repeated compilation and execution of fixtures significantly slower.
 
 ```sh
-cargo build -p telora
-scripts/test-language.sh
+cargo build --release -p telora
+TELORA_BIN="$PWD/target/release/telora" bash scripts/test-language.sh
 ```
 
+The equivalent Rust harness invocation is
+`cargo test --release -p telora --test cli language::language_acceptance_fixtures_pass`.
 Set `TELORA_BIN` to exercise another Telora binary. The runner requires `jaq`.
 Do not run this script concurrently with `cargo test`: the Rust acceptance test
 also invokes it, and both use the same generated workspace and output directory.

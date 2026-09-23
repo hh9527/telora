@@ -1,9 +1,10 @@
 use crate::{output};
 use std::transform_service as service;
 use std::value::{Value};
-type MainService = struct {output: String};
-impl service::TransformService for MainService {
+type ImportedService = struct {output: String};
+impl service::TransformService for ImportedService {
     init: fn(ctx) { {output}.ty!(Self) },
     transform: fn(self, input) { Value::String(self.output) },
 };
-pub use self::{MainService};
+@service::collection
+pub type MainService = struct { @service::slot("transform") service: ImportedService };

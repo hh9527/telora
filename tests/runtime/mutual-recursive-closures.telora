@@ -14,9 +14,10 @@ def functions: (Fn(Int) -> Int, Fn(Int) -> Int) = do {
     (fn(n) {if same {alias(n)} else {0}}, odd)
 };
 pub def answer: value::Value = codec::encode(functions.0(4));
-type MainService = struct {};
-impl entry::TransformService for MainService {
+type LegacyService = struct {};
+impl entry::TransformService for LegacyService {
     init: fn(ctx) { {}.ty!(Self) },
     transform: fn(self, input) {codec::encode(functions.0(4))},
 };
-pub use self::{MainService};
+@entry::collection
+pub type MainService = struct { @entry::slot("transform") service: LegacyService };

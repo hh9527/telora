@@ -1,0 +1,27 @@
+use std::type_property::{FieldPropertyCtx};
+
+@property(PropertyTarget::Field)
+type Route = struct {method: String, path: String};
+
+def route: Fn(String, String) -> Fn(FieldPropertyCtx, Option(Route)) -> Route = fn(method, path) {
+    fn(ctx, previous) {
+        if path == "" {
+            fail!("HTTP service path must not be empty", ctx.name)
+        } else {
+            match previous {
+                Some(_) => fail!("duplicate HTTP service route declaration", ctx.name),
+                None => {method, path}.ty!(Route),
+            }
+        }
+    }
+};
+
+def get: Fn(String) -> Fn(FieldPropertyCtx, Option(Route)) -> Route = fn(path) {
+    route("GET", path)
+};
+
+def post: Fn(String) -> Fn(FieldPropertyCtx, Option(Route)) -> Route = fn(path) {
+    route("POST", path)
+};
+
+pub use self::{Route, get, post};

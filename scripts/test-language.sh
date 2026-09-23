@@ -136,8 +136,8 @@ generated="$build_root/check-all.telora"
     echo '        None => fail!("missing test observation", name),'
     echo '    }'
     echo '};'
-    echo 'type MainService = struct {};'
-    echo 'impl entry::TransformService for MainService {'
+    echo 'type CheckerService = struct {};'
+    echo 'impl entry::TransformService for CheckerService {'
     echo '    init: fn(ctx) { {}.ty!(Self) },'
     echo '    transform: fn(self, input) {'
     echo '    let actual = match input {'
@@ -161,7 +161,8 @@ generated="$build_root/check-all.telora"
     echo '    })'
     echo '    },'
     echo '};'
-    echo 'pub use self::{ MainService };'
+    echo '@entry::collection'
+    echo 'pub type MainService = struct { @entry::slot("transform") checker: CheckerService };'
 } >"$generated"
 
 printf '%s\n' '{"version":1,"members":["."]}' >"$workspace/telora-config.json"
@@ -225,6 +226,8 @@ done
 
 observations="$build_root/observations.json"
 jaq -s 'from_entries' "$entries" >"$observations"
+request="$build_root/request.json"
+jaq -n --slurpfile observations "$observations" '{method:"transform",input:$observations[0]}' >"$request"
 cp "$generated" "$workspace/src/lib.telora"
 
 check_stdout="$build_root/check.stdout.json"
@@ -233,7 +236,7 @@ check_stderr="$build_root/check.stderr.jsonl"
 # This is a test-runner budget, independent of the cases and product defaults.
 set +e
 "$telora_bin" --request-fuel 5000 -C "$workspace" run "@src/lib" \
-    <"$observations" >"$check_stdout" 2>"$check_stderr"
+    <"$request" >"$check_stdout" 2>"$check_stderr"
 check_exit=$?
 set -e
 

@@ -1,0 +1,8 @@
+use std::transform_service as service;
+use std::value::{Value};
+
+pub type MainService = struct {};
+impl service::TransformService for MainService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) { Value::String("old entry") },
+};

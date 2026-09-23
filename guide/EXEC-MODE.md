@@ -11,10 +11,11 @@ Telora 从源码建立封闭 MIR，生成内存中的 Wasm，初始化后执行�
 | `build MODULE --snapshot --source NAME=FILE -o app.wasm` | 同一个 MainService | 额外嵌入 ready service 快照 |
 | `telora-run app.wasm` | 制品中的 MainService | 独立执行；指定 `--serve URI` 时持续服务 |
 
-服务实现 `std::transform_service::TransformService`：
+集合中的每个字段类型实现 `std::transform_service::TransformService`：
 
 ```telora
 use std::transform_service as service;
+use std::http as http;
 use std::value::{Value};
 
 @service::source("knowledge")
@@ -29,15 +30,20 @@ impl service::TransformService for MyService {
     },
 };
 
-pub use self::{MyService as MainService};
+@service::collection
+pub type MainService = struct {
+    @service::slot("lookup") @http::post("/lookup") lookup: MyService,
+};
 ```
 
 `Self` 是具体实现类型，不是运行时 trait object。MIR 在执行前确定 init 与 transform
-的方法实例。模块可以正常重导出或给类型起别名；入口只要求导出名是 MainService。
+的方法实例。入口必须导出带 `@service::collection` 的具体 MainService struct；
+`@service::slot("lookup")` 同时绑定字段的静态服务实现和 JSONL 方法名。
+HTTP 路由可用 `@http::get/post` 单独声明。
 
 ```sh
-printf '{"question":42}\n' | telora run @src/lib --source knowledge=model.json
-printf '1\n2\n' | telora run @src/lib --source knowledge=model.json --serve stdio+jsonl://
+printf '{"method":"lookup","input":{"question":42}}\n' | telora run @src/lib --source knowledge=model.json
+printf '{"method":"lookup","input":1}\n{"method":"lookup","input":2}\n' | telora run @src/lib --source knowledge=model.json --serve stdio+jsonl://
 ```
 
 `init: Fn(Context) -> Self` 消费固定来源，返回初始化实例。
@@ -58,7 +64,7 @@ Context 只有 `sources: Dict(Value)`。没有隐式环境变量、字符串参�
 来源诊断使用 `@service/name`；逐次请求输入不注册独立的来源路径。
 物理文件位置只属于 Host，不进入数据来源身份。
 
-顺序为：模块与 property 初始化 → 准备来源 → init → 固定实例 → transform。
+顺序为：模块与 property 初始化 → 准备来源 → 逐字段 init → 固定集合实例 → 按路由 transform。
 每次 transform 都从同一初始化状态开始；服务间隙 reset 执行环境，保证干净、确定的
 起点，不重新读取外部来源。状态在 Wasm 内保留，不转成 Host JSON 再构造回来。
 
@@ -135,12 +141,13 @@ telora run @src/lib --source knowledge=model.json --serve http://127.0.0.1:8080
 # 或执行已构建的制品
 telora-run app.wasm --source knowledge=model.json --serve http+unix:///tmp/telora.sock
 
-curl -H 'Content-Type: application/json' -d '{"question":42}' http://127.0.0.1:8080/transform
+curl -H 'Content-Type: application/json' -d '{"question":42}' http://127.0.0.1:8080/lookup
 curl --unix-socket /tmp/telora.sock -H 'Content-Type: application/json' \
-  -d '{"question":42}' http://localhost/transform
+  -d '{"question":42}' http://localhost/lookup
 ```
 
-POST /transform 接收 JSON，返回 telora.service/v1 响应。成功、语言失败和执行
+HTTP 按字段上的 `@http::get/post` 路由；POST 接收 JSON，GET 输入包含 path、query、body。
+响应使用 telora.service/v1。成功、语言失败和执行
 陷阱都返回 HTTP 200，通过 error 区分；未知路径 404、错误方法 405、过大请求体
 413。协议错误由 HTTP 层处理。服务初始化失败时不开始监听。
 

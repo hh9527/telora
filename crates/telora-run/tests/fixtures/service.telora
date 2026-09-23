@@ -7,8 +7,8 @@ def spin: Fn(Int) -> Int = fn(value) { spin(value) };
 def grow: Fn(Array(Int)) -> Int = fn(values) { grow([...values, ...values]) };
 
 @service::source("model")
-type MainService = struct {prefix: Value, pattern: regex::Regex, constant: Value};
-impl service::TransformService for MainService {
+type Model = struct {prefix: Value, pattern: regex::Regex, constant: Value};
+impl service::TransformService for Model {
     init: fn(ctx) {
         {prefix: ctx.sources["model"], pattern: regex::compile("^[a-z]+[0-9]+$"), constant: constants.data}.ty!(Self)
     },
@@ -26,4 +26,5 @@ impl service::TransformService for MainService {
         }
     },
 };
-pub use self::{MainService};
+@service::collection
+pub type MainService = struct { @service::slot("transform") service: Model };

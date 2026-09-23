@@ -337,7 +337,12 @@ fn source_mutual_recursive_closures_survive_initialization_and_entry() {
                 let mut process = telora(&cwd);
                 process.arg(command);
                 process.arg(selector);
-                let result = input_command(process, b"null");
+                let input: &[u8] = if command == "run" {
+                    br#"{"method":"transform","input":null}"#
+                } else {
+                    b"null"
+                };
+                let result = input_command(process, input);
                 assert!(
                     result.status.success(),
                     "{}",

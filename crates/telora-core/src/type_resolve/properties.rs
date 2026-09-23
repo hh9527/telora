@@ -10,7 +10,7 @@ impl Solver<'_> {
             let members = definition
                 .members
                 .iter()
-                .map(|m| m.syntax)
+                .map(|m| (m.syntax, m.payload))
                 .collect::<Vec<_>>();
             for declaration in self.mir.symbols[symbol.index()].declarations.clone() {
                 let Some(value) = self.child(declaration, Role::Value) else {
@@ -19,20 +19,26 @@ impl Solver<'_> {
                 let Some(owner) = self.term(value.ty()).map(|t| t.arguments[0]) else {
                     continue;
                 };
-                self.attach_properties(declaration, owner, PropertySite::Type);
-                for (index, member) in members.iter().enumerate() {
+                self.attach_properties(declaration, owner, PropertySite::Type, None);
+                for (index, &(member, payload)) in members.iter().enumerate() {
                     let site = if operation == TypeOperation::Enum {
                         PropertySite::Variant(index as u32)
                     } else {
                         PropertySite::Field(index as u32)
                     };
-                    self.attach_properties(*member, owner, site);
+                    self.attach_properties(member, owner, site, payload);
                 }
             }
         }
     }
 
-    fn attach_properties(&mut self, syntax: HirId, owner: TypeSlotId, site: PropertySite) {
+    fn attach_properties(
+        &mut self,
+        syntax: HirId,
+        owner: TypeSlotId,
+        site: PropertySite,
+        payload: Option<TypeSlotId>,
+    ) {
         for decorator in self.children(syntax, Role::Decorator) {
             if matches!(
                 self.mir.hir[decorator.index()].kind,
@@ -54,7 +60,12 @@ impl Solver<'_> {
                     ] {
                         fields.push((name.to_owned(), self.structure(constructor, vec![])));
                     }
-                    let ty = self.structure(TypeConstructor::Type, vec![]);
+                    let ty = match (site, payload) {
+                        (PropertySite::Field(_), Some(payload)) => {
+                            self.structure(TypeConstructor::TypeOf, vec![payload])
+                        }
+                        _ => self.structure(TypeConstructor::Type, vec![]),
+                    };
                     let field = if matches!(site, PropertySite::Variant(_)) {
                         (
                             "payload".to_owned(),

@@ -1,0 +1,149 @@
+use std::array as array;
+use std::dict as dict;
+use std::dyn as dyn;
+use std::json as json;
+use std::_rt as rt;
+use std::_entry::transform::{Plan};
+use std::transform_service::{Context, ServiceCollection, Slot, path_captures, path_matches, routing};
+use std::type_desc as type_desc;
+use std::type_property::{get_field_prop};
+use std::value::{Value};
+
+def http_failure: Fn(Int, String) -> String = fn(status, allow) {
+    json::stringify(Value::Object({
+        schema: Value::String("telora.service/v1"),
+        ok: Value::None,
+        error: Value::True,
+        diagnostics: Value::Array([]),
+        httpStatus: Value::Int(status),
+        allow: Value::String(allow),
+    }))
+};
+
+def prepare: for(C: ServiceCollection + dyn::FromDynFields) Fn(TypeOf(C)) -> Plan = fn(target) {
+    let routes = routing(target);
+    let slots = array::map(type_desc::fields(target), fn(field) {
+        match get_field_prop(target, field.index, Slot.type) {
+            Some(slot) => slot,
+            None => fail!("service field has no static adapter", field.name),
+        }
+    });
+    let names = array::fold(slots, [].ty!(Array(String)), fn(names, slot) {
+        array::fold(slot.sources, names, fn(names, name) {
+            if array::any(names, fn(existing) { existing == name }) {
+                names
+            } else {
+                array::push(names, name)
+            }
+        })
+    });
+    let names = dict::keys(dict::from_pairs(array::map(names, fn(name) { (name, ()) })));
+    (names, fn(ctx: Context) {
+        let fields = array::map(slots, fn(slot) { slot.init(ctx) });
+        let state: C = match dyn::construct@[C](fields) {
+            Ok(value) => value,
+            Err(_) => fail!("service collection fields do not match the declared types"),
+        };
+        let observe = rt::with_diagnostics(fn(input: Value) {
+            match input {
+                Value::Object(request) => {
+                    let payload = request["input"];
+                    let selected = match dict::get(request, "http") {
+                        Some(Value::Object(http)) => {
+                            let verb = http["method"];
+                            let path = http["path"];
+                            array::find(routes, fn(route) {
+                                match route.http {
+                                    Some(endpoint) => verb == Value::String(endpoint.method) &&
+                                        (match path { Value::String(actual) => path_matches(endpoint.path, actual), _ => False }),
+                                    None => False,
+                                }
+                            })
+                        },
+                        Some(_) => fail!("invalid HTTP service request"),
+                        None => {
+                            let method = request["method"];
+                            array::find(routes, fn(route) { method == Value::String(route.method) })
+                        },
+                    };
+                    match selected {
+                        Some(route) => {
+                            let instance = dyn::get_field_value(dyn::pack(target, state), route.index);
+                            let payload = match dict::get(request, "http") {
+                                Some(Value::Object(http)) => match route.http {
+                                    Some(endpoint) => if endpoint.method == "GET" {
+                                        let path = match http["path"] { Value::String(path) => path, _ => fail!("invalid HTTP path") };
+                                        Value::Object({
+                                            path: Value::Object(path_captures(endpoint.path, path)),
+                                            query: match dict::get(http, "query") { Some(query) => query, None => Value::Object({}) },
+                                            body: payload,
+                                        })
+                                    } else { payload },
+                                    None => payload,
+                                },
+                                _ => payload,
+                            };
+                            json::stringify(slots[route.index].transform(instance, payload))
+                        },
+                        None => fail!("unknown service route"),
+                    }
+                },
+                _ => fail!("expected service request object", input),
+            }
+        });
+        fn(input: Value) {
+            let transport = match input {
+                Value::Object(request) => match dict::get(request, "http") {
+                    Some(Value::Object(http)) => {
+                        let verb = http["method"];
+                        let path = http["path"];
+                        let matching_path = array::filter(routes, fn(route) {
+                            match route.http {
+                                Some(endpoint) => match path {
+                                    Value::String(actual) => path_matches(endpoint.path, actual),
+                                    _ => False,
+                                },
+                                None => False,
+                            }
+                        });
+                        if array::any(matching_path, fn(route) {
+                            match route.http {
+                                Some(endpoint) => Value::String(endpoint.method) == verb,
+                                None => False,
+                            }
+                        }) {
+                            None
+                        } else if array::length(matching_path) == 0 {
+                            Some(http_failure(404, ""))
+                        } else {
+                            let get = array::any(matching_path, fn(route) {
+                                match route.http { Some(endpoint) => endpoint.method == "GET", None => False }
+                            });
+                            let post = array::any(matching_path, fn(route) {
+                                match route.http { Some(endpoint) => endpoint.method == "POST", None => False }
+                            });
+                            if get && post {
+                                Some(http_failure(405, "GET, POST"))
+                            } else if get {
+                                Some(http_failure(405, "GET"))
+                            } else {
+                                Some(http_failure(405, "POST"))
+                            }
+                        }
+                    },
+                    _ => None,
+                },
+                _ => None,
+            };
+            match transport {
+                Some(response) => response,
+                None => match observe(input) {
+                    Ok((text, diagnostics)) => rt::service_reply(text, False, diagnostics),
+                    Err(diagnostics) => rt::service_reply("null", True, diagnostics),
+                },
+            }
+        }
+    })
+};
+
+pub use self::{Plan, prepare};
