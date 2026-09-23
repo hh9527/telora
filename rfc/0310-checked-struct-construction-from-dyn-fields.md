@@ -1,14 +1,15 @@
 # RFC 0310：从 Dyn 受检查地构造 struct 与 newtype
 
-- 状态：已实现，待分支验收与合入
+- 状态：已实现并合入 main
 - 日期：2026-09-23
 - 关联：RFC 0309（静态 TransformService 集合）
 - 跟踪：[#223](https://github.com/hh9527/telora/issues/223)
 - 工作分支：`feat/rfc-0310-from-dyn-fields`
 
-实施中：已验证具体具名 struct、新类型、空 struct、泛型已封闭实例、数量与
-类型错误，以及两种名义类型的 `@check`。具名字段实际规范索引按名称排序，
-与 `type_desc::fields` 一致。后续完成 CLI/runner 验收后再更新最终状态。
+验收：已验证具体具名 struct、newtype、空 struct、泛型已封闭实例、数量与
+类型错误、同类型字段交换，以及两种名义类型的 `@check`。具名字段实际规范
+索引按名称排序，与 `type_desc::fields` 一致。核心、Wasm、CLI 全套测试通过；
+`telora run`、独立 runner 和发布快照后的 runner 均通过构造与连续请求回归。
 
 ## 动机
 
