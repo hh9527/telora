@@ -60,6 +60,9 @@ impl Solver<'_> {
             for implementation in implementations {
                 let mut substitutions = BTreeMap::new();
                 if self.match_type(implementation.trait_type, raw, &mut substitutions) {
+                    if self.from_dyn_fields_trait(raw) && !self.from_dyn_fields_subject(subject) {
+                        continue;
+                    }
                     let requirements = implementation.requirements.clone();
                     let mut applicable = true;
                     for (parameter, bound) in &requirements {

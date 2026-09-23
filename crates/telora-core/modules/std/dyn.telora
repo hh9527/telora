@@ -5,6 +5,20 @@ type ValueKind = enum {
 };
 native pack: for(A) Fn(TypeOf(A), A) -> Dyn;
 native project_with: for(A) Fn(TypeOf(A), Dyn) -> Option(A);
+type StructFieldError = enum {
+    Count((Int, Int)),
+    Field((Int, Type, Type)),
+};
+native from_dyn_fields: for(A) Fn(TypeOf(A), Array(Dyn)) -> Result(A, StructFieldError);
+trait FromDynFields {
+    from_dyn_fields: Fn(Array(Dyn)) -> Result(Self, StructFieldError),
+};
+impl(A) FromDynFields for A {
+    from_dyn_fields: fn(fields) { from_dyn_fields(A.type, fields) },
+};
+def construct: for(A: FromDynFields) Fn(Array(Dyn)) -> Result(A, StructFieldError) = fn(fields) {
+    FromDynFields::from_dyn_fields(fields)
+};
 def project: for(A) Fn(Dyn) -> Option(A) = fn(value) {
     project_with(A.type, value)
 };
@@ -55,6 +69,9 @@ pub use self::{
     pack,
     project_with,
     project,
+    StructFieldError,
+    FromDynFields,
+    construct,
     desc,
     kind,
     check_int,

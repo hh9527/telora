@@ -12,6 +12,57 @@ fn service_fixture() -> PathBuf {
 }
 
 #[test]
+fn checked_dyn_construction_runs_in_source_and_published_service() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        runtime_source("transform-dyn-fields.telora"),
+    )
+    .unwrap();
+    let mut command = telora(&cwd);
+    command.args(["run", "@src/main"]);
+    let output = input_command(command, b"null");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), 42);
+    let artifact = telora(&cwd)
+        .args(["build", "@src/main", "-o", "app.wasm"])
+        .output()
+        .unwrap();
+    assert!(
+        artifact.status.success(),
+        "{}",
+        String::from_utf8_lossy(&artifact.stderr)
+    );
+    let bytes = fs::read(cwd.join("app.wasm")).unwrap();
+    let mut runner = telora_run::Runner::load(&bytes, telora_run::Options::default()).unwrap();
+    assert!(runner.initialize(&[]).unwrap().is_empty());
+    let response: Value = serde_json::from_slice(&runner.request(b"null").unwrap()).unwrap();
+    assert_eq!(response["ok"], 42);
+    let response: Value = serde_json::from_slice(&runner.request(b"0").unwrap()).unwrap();
+    assert_eq!(response["ok"], 42);
+    let snapshot = telora(&cwd)
+        .args(["build", "@src/main", "--snapshot", "-o", "snap.wasm"])
+        .output()
+        .unwrap();
+    assert!(
+        snapshot.status.success(),
+        "{}",
+        String::from_utf8_lossy(&snapshot.stderr)
+    );
+    let bytes = fs::read(cwd.join("snap.wasm")).unwrap();
+    let mut runner = telora_run::Runner::load(&bytes, telora_run::Options::default()).unwrap();
+    assert!(runner.initialize(&[]).unwrap().is_empty());
+    let response: Value = serde_json::from_slice(&runner.request(b"null").unwrap()).unwrap();
+    assert_eq!(response["ok"], 42);
+    let response: Value = serde_json::from_slice(&runner.request(b"0").unwrap()).unwrap();
+    assert_eq!(response["ok"], 42);
+}
+
+#[test]
 fn build_publishes_final_fuel_budgets_and_runner_can_override_them() {
     let cwd = service_fixture();
     fs::write(

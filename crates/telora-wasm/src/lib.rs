@@ -38,6 +38,7 @@ mod dict_build;
 mod dict_literals;
 mod dict_ops;
 mod dictionaries;
+mod dynamic_construct;
 mod dynamic_fields;
 mod dynamic_kind;
 mod dynamic_members;

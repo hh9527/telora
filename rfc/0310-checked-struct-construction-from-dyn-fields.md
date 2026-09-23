@@ -1,10 +1,14 @@
 # RFC 0310：从 Dyn 受检查地构造 struct 与 newtype
 
-- 状态：草案，尚未实施
+- 状态：已实现，待分支验收与合入
 - 日期：2026-09-23
 - 关联：RFC 0309（静态 TransformService 集合）
 - 跟踪：[#223](https://github.com/hh9527/telora/issues/223)
 - 工作分支：`feat/rfc-0310-from-dyn-fields`
+
+实施中：已验证具体具名 struct、新类型、空 struct、泛型已封闭实例、数量与
+类型错误，以及两种名义类型的 `@check`。具名字段实际规范索引按名称排序，
+与 `type_desc::fields` 一致。后续完成 CLI/runner 验收后再更新最终状态。
 
 ## 动机
 
@@ -20,31 +24,37 @@ enum 留待后续单独设计，不在首期范围。本 RFC 不引入任意 `Dy
 
 ## 对外接口
 
-标准库暴露内置 trait；下列签名为提议的接口形态，具体错误类型名称可在
-最小原型中确定：
+标准库暴露编译器拥有的 trait、泛型入口和结构化错误：
 
 ```telora
 trait FromDynFields {
     from_dyn_fields: Fn(Array(Dyn)) -> Result(Self, StructFieldError),
 };
 
-let result: Result(A, StructFieldError) =
-    FromDynFields(A).from_dyn_fields([b_dyn, c_dyn]);
+type StructFieldError = enum {
+    Count((Int, Int)),       // expected, actual
+    Field((Int, Type, Type)), // index, expected, actual
+};
+
+let result: Result(A, StructFieldError) = dyn::construct@[A]([b_dyn, c_dyn]);
 ```
 
 `A` 为 `type A = struct { b: B, c: C };` 时，数组索引 0、1 分别对应
-`b`、`c` 的声明索引。泛型 struct 在所有参数确定后按具体实例处理。
+`type_desc::fields(A.type)` 中的 `b`、`c`。具名字段的规范索引按名称排序，
+**不承诺源码声明顺序**；例如 `{number: Int, label: String}` 的索引 0
+对应 `label`。泛型 struct 在所有参数确定后按具体实例处理。
 所有可构造的具体名义 struct 和单载荷 newtype 自动具备该 trait 的内置
 证据；用户不能重写这些实现。结构性 Record、enum 和未闭合模板不自动
 实现。字段类型不要求自身实现 `FromDynFields`：只需匹配 `Dyn` 包含的
 精确类型身份。newtype 的输入固定为长度 1 的数组，索引 0 表示唯一的
 载荷；不要求给载荷人为创建字段名，也不把 newtype 当成一字段 struct。
 
-不以 `A::` 语法是否存在作为实施前提；接口经现有 trait 调用机制暴露。
+`construct@[A]` 在标准库中使用普通的 trait 证据选择，并调用内置的
+受信任构造原语。不引入额外的 `A::` 语法。
 `Array(Dyn)` 是结构构造参数，不是长期稳定的外部序列化格式。调用方可以
 从 `type_desc::fields(A.type)` 按索引生成 struct 的数组，不需要字符串化
-字段名。newtype 通过已知的唯一载荷类型构造；须确认现有
-`type_desc::children` 能提供该载荷类型，不能假定 `fields` 会返回它。
+字段名。newtype 先通过 `type_desc::resolve` 取得名义 `Ref` 的 body，
+再由 `type_desc::children` 读取唯一载荷类型；`fields` 不会返回该载荷。
 
 ## 成功、失败与位置
 
@@ -74,9 +84,9 @@ newtype 则报告载荷，供诊断显示。
 该布局；Guest 不依据 Host 提供的字段名、地址或类型猜测布局。
 `Dyn` 打包和投影仍沿用原有权威描述，不另造第二套类型 ID。
 
-可以先以一个具体实例提供 native/codegen 原型，再接入自动 trait 证据；
-最终不要求用户逐个书写 `impl FromDynFields for A`。内置证据与显式 impl
-不得重叠，避免绕过安全保证。该操作可以消耗请求期资源，但不新增来源
+实现使用受信任 native/codegen 构造器和仅限名义 struct/newtype 的编译器
+拥有的通用 trait 实现，不要求用户逐个书写 `impl FromDynFields for A`。
+显式用户 impl 被静态拒绝，避免绕过安全保证。该操作可以消耗请求期资源，但不新增来源
 注册、IO 或跨请求可变状态。
 
 ## 验收与阶段

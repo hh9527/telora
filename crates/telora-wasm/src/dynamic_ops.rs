@@ -5,6 +5,9 @@ use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub fn dynamic_native(&mut self, name: &str) -> Result<u32, String> {
+        if name == "from_dyn_fields" {
+            return self.dynamic_construct();
+        }
         if name == "field_raw" {
             return self.dynamic_named_field();
         }

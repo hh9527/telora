@@ -976,6 +976,16 @@ assignability。`dyn::project` 是标准库中的普通泛型函数；`project@[
 按其 for(A) 签名实例化，函数体调用 `project_with(A.type, package)`。它不依赖
 namespace 拼写魔法，重命名导入遵循普通名称绑定和泛型实例化规则。
 
+对具体的具名字段 struct 和单载荷 newtype，内置 `std::dyn::FromDynFields` 提供
+从 `Array(Dyn)` 受检查地构造 `Self` 的能力。`dyn::construct@[T](items)`
+通过该 trait 调用：先检查输入数量，再按 `type_desc::fields(T.type)` 的规范索引
+逐项核对 Dyn 的精确类型身份；newtype 固定只有索引 0 的载荷。具名 struct 的
+索引按字段名排序，不是源码声明顺序。数量错误返回 `StructFieldError::Count`，
+类型错误返回携带索引、预期类型和实际类型的 `StructFieldError::Field`。
+全部通过后才构造 `T`，并执行普通构造的 `@check`；检查失败遵循原有诊断语义。
+enum、非名义结构和未封闭类型不能获得该 trait 证据，用户不能覆盖内置实现。
+该位置数组是内部结构接口，不作为跨版本的外部数据格式。
+
 ## 8. 模块和封闭世界
 
 模块通过静态路径组成不可变有向图。每个 crate 以 `src/lib.telora` 为根；`mod` 和

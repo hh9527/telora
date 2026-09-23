@@ -1,0 +1,75 @@
+use std::dyn as dyn;
+use std::_rt as rt;
+use std::type_desc as desc;
+
+type Pair = struct {number: Int, label: String};
+type Wrapped = struct(Int);
+type Empty = struct {};
+type Boxed(T) = struct {item: T};
+type Twins = struct {first: Int, second: Int};
+@check(fn(value) {if value.number > 0 {Ok(())} else {Err(blame!("positive pair", value.number))}})
+type CheckedPair = struct {number: Int};
+@check(fn(value) {if value > 0 {Ok(())} else {Err(blame!("positive wrapped", value))}})
+type CheckedWrapped = struct(Int);
+
+pub def inspect: Fn() -> (Bool, Bool, Bool, Bool, Bool, Bool, Bool, Bool, Bool, Bool) = fn() {
+    let good: Array(Dyn) = [dyn::pack(String.type, "hello"), dyn::pack(Int.type, 7)];
+    let pair = match dyn::construct@[Pair](good) {
+        Ok(value) => value,
+        Err(_) => fail!("expected Pair"),
+    };
+    let wrapped = match dyn::construct@[Wrapped]([dyn::pack(Int.type, 8)]) {
+        Ok(value) => value,
+        Err(_) => fail!("expected Wrapped"),
+    };
+    let empty = match dyn::construct@[Empty]([]) {
+        Ok(value) => value,
+        Err(_) => fail!("expected Empty"),
+    };
+    let boxed = match dyn::construct@[Boxed(Pair)]([dyn::pack(Pair.type, pair)]) {
+        Ok(value) => value,
+        Err(_) => fail!("expected Boxed(Pair)"),
+    };
+    let wrapped_body = match desc::resolve(Wrapped.type) {
+        Ok(body) => body,
+        Err(error) => fail!(error.message),
+    };
+    let twins = match dyn::construct@[Twins]([dyn::pack(Int.type, 2), dyn::pack(Int.type, 1)]) {
+        Ok(value) => value,
+        Err(_) => fail!("expected Twins"),
+    };
+    (
+        pair.number == 7 && pair.label == "hello",
+        match wrapped {Wrapped(value) => value == 8},
+        empty == ({}.ty!(Empty)),
+        match dyn::construct@[Pair]([dyn::pack(Int.type, 7)]) {
+            Err(dyn::StructFieldError::Count((expected, actual))) => expected == 2 && actual == 1,
+            _ => False,
+        },
+        match dyn::construct@[Pair]([dyn::pack(Int.type, 7), dyn::pack(Int.type, 8)]) {
+            Err(dyn::StructFieldError::Field((index, expected, actual))) => index == 0 && expected == String.type && actual == Int.type,
+            _ => False,
+        },
+        match dyn::construct@[Wrapped]([]) {
+            Err(dyn::StructFieldError::Count((expected, actual))) => expected == 1 && actual == 0,
+            _ => False,
+        },
+        boxed.item.number == 7 && boxed.item.label == "hello",
+        desc::fields(Pair.type)[0].name == "label" && desc::fields(Pair.type)[1].name == "number",
+        desc::children(wrapped_body) == [Int.type],
+        twins.first == 2 && twins.second == 1,
+    )
+};
+
+pub def inspect_checks: Fn() -> (Bool, Bool) = fn() {
+    let pair = rt::with_diagnostics(fn(ignored: ()) {
+        dyn::construct@[CheckedPair]([dyn::pack(Int.type, -1)])
+    })(());
+    let wrapped = rt::with_diagnostics(fn(ignored: ()) {
+        dyn::construct@[CheckedWrapped]([dyn::pack(Int.type, -2)])
+    })(());
+    (
+        match pair {Err(_) => True, Ok(_) => False},
+        match wrapped {Err(_) => True, Ok(_) => False},
+    )
+};

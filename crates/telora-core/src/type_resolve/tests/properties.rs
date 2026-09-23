@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn from_dyn_fields_evidence_is_reserved_for_nominal_structs_and_newtypes() {
+    for (target, declaration) in [
+        ("Int", ""),
+        ("Choice", "type Choice = enum {A, B};"),
+        ("Array(Int)", ""),
+    ] {
+        let source = format!(
+            "use std::dyn as dyn; {declaration} pub def bad: Fn() -> Bool = fn() {{ match dyn::construct@[{target}]([]) {{ Ok(_) => True, Err(_) => False }} }};"
+        );
+        let mut mir = graph(&[("@src/main", &source)]);
+        resolve(&mut mir);
+        assert!(
+            mir.diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("does not implement")),
+            "{target}: {}",
+            mir.dump()
+        );
+    }
+    let source = "use std::dyn as dyn; type Item = struct {value: Int}; impl dyn::FromDynFields for Item {from_dyn_fields: fn(fields) {fail!(\"override\")}}; pub def independent: Int = 42;";
+    let mut mir = graph(&[("@src/main", source)]);
+    resolve(&mut mir);
+    assert!(
+        mir.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("compiler-owned trait")),
+        "{}",
+        mir.dump()
+    );
+}
+
+#[test]
 fn seal_requires_a_record_for_every_construction_check() {
     let mut mir = graph(&[(
         "@src/main",

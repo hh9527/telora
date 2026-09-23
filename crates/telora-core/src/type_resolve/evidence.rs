@@ -7,6 +7,34 @@ mod queue;
 mod tests;
 
 impl Solver<'_> {
+    fn from_dyn_fields_trait(&self, trait_type: TypeId) -> bool {
+        let TypeConstructor::Nominal(symbol) = self.mir.types[trait_type.index()].constructor
+        else {
+            return false;
+        };
+        let definition = &self.mir.symbols[symbol.index()];
+        definition.name == "FromDynFields"
+            && definition.module.is_some_and(|module| {
+                self.mir.modules[module.index()]
+                    .native
+                    .as_ref()
+                    .is_some_and(|native| native.id == 2)
+            })
+    }
+
+    fn from_dyn_fields_subject(&self, subject: TypeId) -> bool {
+        let TypeConstructor::Nominal(symbol) = self.mir.types[subject.index()].constructor else {
+            return false;
+        };
+        self.mir.type_definitions.iter().any(|definition| {
+            definition.symbol == symbol
+                && matches!(
+                    definition.operation,
+                    TypeOperation::Struct | TypeOperation::Newtype
+                )
+        })
+    }
+
     pub(super) fn is_trait(&self, symbol: SymbolId) -> bool {
         self.mir.symbols[symbol.index()].kind == SymbolKind::Declaration(BindingKind::Trait)
     }
@@ -24,6 +52,21 @@ impl Solver<'_> {
                 let declaration = self.mir.symbols[index].declarations[0];
                 self.mir.diagnostics.push(Diagnostic::error(
                     "impl target must be a trait application",
+                    self.mir.hir[declaration.index()].location,
+                ));
+                continue;
+            }
+            if self.from_dyn_fields_trait(trait_type)
+                && self.mir.symbols[index].module.is_none_or(|module| {
+                    self.mir.modules[module.index()]
+                        .native
+                        .as_ref()
+                        .is_none_or(|native| native.id != 2)
+                })
+            {
+                let declaration = self.mir.symbols[index].declarations[0];
+                self.mir.diagnostics.push(Diagnostic::error(
+                    "FromDynFields is a compiler-owned trait and cannot be implemented by user code",
                     self.mir.hir[declaration.index()].location,
                 ));
                 continue;

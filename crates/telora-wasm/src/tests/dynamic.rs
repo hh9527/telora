@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn dyn_fields_construct_closed_structs_and_newtypes() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/from-dyn-fields.telora"
+    ))
+    .unwrap();
+    let bytes = compile_export(&source, "inspect").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            session.call(&[]).unwrap(),
+            serde_json::json!(vec![true; 10])
+        );
+    }
+    assert!(session.diagnostics().unwrap().is_empty());
+    let bytes = compile_export(&source, "inspect_checks").unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    assert_eq!(session.call(&[]).unwrap(), serde_json::json!([true, true]));
+}
+
+#[test]
 fn dyn_array_observation_honors_the_abi_slice_range() {
     let bytes = compile_export(
         &std::fs::read_to_string(concat!(
