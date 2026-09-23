@@ -1,6 +1,6 @@
 # RFC 0307：Trait Codec 与可选 Property Evidence
 
-- 状态：已实现并验证，待合入
+- 状态：已实现
 - 跟踪：[#221](https://github.com/hh9527/telora/issues/221)
 - 分支：`feat/rfc-0306-static-modules-paths`
 - 日期：2026-09-22
