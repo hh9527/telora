@@ -37,7 +37,7 @@ seal 的 MIR；执行入口必须通过 seal。后续阶段直接使用静态结
 | 封闭与只读查询 | `mir/seal.rs`、`mir_query.rs` |
 | 静态执行闭包与类型镜像 | `mir/executable.rs`、`type_image.rs` |
 | Wasm 生成与内存组装 | `crates/telora-wasm/src/{codegen,compose,template}.rs` |
-| 初始化、需求求值 | `crates/telora-wasm/src/{entry,properties,session}.rs` |
+| 初始化、需求求值 | `crates/telora-wasm/src/{transform_service,properties,session}.rs` |
 | Rust RT、值与复制回收 | `crates/telora-wasm/rt/`、`rt/collect.rs`、`rt/collect_trace.rs` |
 | RT 共享 ABI、JSON 文本原语 | `crates/telora-wasm-shared/src/` |
 | package 与 Host 契约 | `package.rs`、`runtime_host.rs` |
@@ -332,7 +332,7 @@ pattern 使用单独的 member selection 事实，不执行值物化。
 enum 构造器代码按封闭签名和 variant 复用。其函数值的 environment 为 0，invoke
 将函数值地址作为第一个参数交给构造器胶水，用于复制 12 字节 Loc；payload
 仍按原布局搬运，不重写其来源。普通闭包使用非零环境句柄，调用约定不变。
-内部 ABI 版本为 25；旧 Wasm 制品需重新生成，不能混用旧布局或调用约定。
+内部 ABI 版本为 28；旧 Wasm 制品需重新生成，不能混用旧布局或调用约定。
 `interpreter!` 在构造时捕获输入函数，工厂和适配器使用普通值引用环境；
 没有适配器 memo 槽或 raw-parent 环境，回收不再扫描、修补冻结环境中的该类缓存。
 
@@ -436,8 +436,9 @@ workspace 配置的 `runtime.fuel` 和 `runtime.memoryLimit` 提供会话默认�
 100 和 1024，单位为 1,000,000 fuel 和 MiB（`1 << 20` 字节，16 个 Wasm 页）。CLI 正式参数
 `--with-fuel N`、`--with-memory-limit N` 仅在显式传入时逐项覆盖对应配置。
 N 必须为正整数，超出可表示范围的输入在配置或参数解析时拒绝。
-参数适用于所有执行命令；批量 roots、初始化与后续执行共享预算，不按模块数量放大，
-也不在用例或请求之间重置。`check --only-types` 不创建执行会话，因此没有执行用量报告。
+参数适用于所有执行命令。`check`/`test` 的批量 roots、初始化与用例在同一会话内共享
+预算，不按模块数量放大，也不在用例之间重置；`run`/`serve` 在每次请求前 reset，每个
+请求获得独立预算，初始化不占用请求预算。`check --only-types` 不创建执行会话，因此没有执行用量报告。
 `--report-usage` 在执行会话结束时向 stderr 输出合法的 info 级 JSON 诊断
 （`schema: telora.execution/v1`、`record: diagnostic`、`code: execution-usage`）。
 `usage.fuel` 包含原始单位的 `limit`、`consumed`、`remaining`；`usage.linear_memory`
@@ -468,7 +469,7 @@ words/content，保留容量；Host 恢复执行 globals、debug 游标和每次
 恢复初始化快照及全部 mutable globals（包括 Rust stack pointer）。函数表固定。
 两条恢复路径都不重复 codegen、数据加载或 init；保留快照是异常恢复策略，不是旧值布局。
 
-## 9. CLI## 9. CLI 与 LSP 的阶段边界
+## 9. CLI 与 LSP 的阶段边界
 
 | 命令 | 消费边界 |
 | --- | --- |
@@ -514,7 +515,7 @@ LSP 的 `mir_workspace` 把文档覆盖内容和磁盘清单送入同一静态�
 - query/LSP 可观察失败图，执行入口只能接受成功 seal 的图。
 
 验证入口包括三个 resolve 模块的单元测试、`crates/telora-wasm/src/tests/` 的
-执行与回收测试，以及 `crates/telora/tests/cli.rs`、`tests/runtime/` 和
+执行与回收测试，以及 `crates/telora/tests/cli/`、`tests/runtime/` 和
 `tests/language/`。语言规则与诊断回归优先使用 Telora 用例，检查成功、拒绝、来源、
 泛型实例以及构造/解码/更新边界。
 

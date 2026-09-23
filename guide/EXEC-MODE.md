@@ -55,7 +55,7 @@ Context 只有 `sources: Dict(Value)`。没有隐式环境变量、字符串参�
 需要这些信息时，由业务宿主明确转成输入数据。初始化来源只加载一次，逐次请求的数据
 直接进入 transform 的第二个参数。
 
-来源诊断使用 `@service/name`，特殊名称按 UTF-8 字节百分号编码；请求使用 `@request`。
+来源诊断使用 `@service/name`；逐次请求输入不注册独立的来源路径。
 物理文件位置只属于 Host，不进入数据来源身份。
 
 顺序为：模块与 property 初始化 → 准备来源 → init → 固定实例 → transform。

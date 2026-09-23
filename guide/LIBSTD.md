@@ -116,10 +116,6 @@ newtype 的 JSON 表示使用载荷契约。
 ## 工具协议
 
 - `std/argv`：检查、过滤和组合命令参数 Array。
-- `std/rt-types/exec`：描述平台、下载解包、环境和可执行入口的纯数据计划。
-
-`std/rt-types/exec` 只定义计划类型，不执行下载、解包或子进程。执行这些计划属于 Host
-或 native component 的职责。
 
 ## 按任务发现接口
 

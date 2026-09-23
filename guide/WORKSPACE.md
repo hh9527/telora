@@ -116,7 +116,8 @@ Telora 不进行语义版本求解，也不在同一 workspace 中安装同名 c
 
 运行时限制按字段分别采用 **CLI 显式参数 > workspace 配置 > 内置默认值**：
 `--with-fuel N` 覆盖 `runtime.fuel`，`--with-memory-limit N` 覆盖 `runtime.memoryLimit`。
-显式传入默认数值也属于覆盖。初始化和后续运行共享会话预算；普通 `check` 使用
+显式传入默认数值也属于覆盖。`check`/`test` 的初始化与用例在同一会话内共享预算，
+`run`/`serve` 每个请求在 reset 后获得独立预算；普通 `check` 使用
 运行时配置，`check --only-types` 不创建 VM。
 
 这两类配置不写入 `telora-lock.json`，调整限制不需要重新生成 lock。超出编译限制
