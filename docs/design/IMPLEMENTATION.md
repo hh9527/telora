@@ -374,6 +374,12 @@ SealedExecutable 确定全局值、具体函数实例与 property 初始化集�
 TypeId、carrier TypeId 和 member/site 身份建立键。同一键的 provider 按既定顺序
 fold，最终只有一个有效结果；不同成员仍是不同键。
 
+类型阶段证明 `Property(P)` 只检查声明关系，不执行 provider。执行阶段的需求表虽然
+允许依赖在首次读取时求值，但当前选入制品的具体 property 都是初始化根：生成的
+`telora_initialize` 会在服务发布前主动读取这些根，并完成其依赖。因此成功发布的
+service 不会在某次请求中首次计算这批 property；运行期通过 `Type` 和 member index
+反射查询的也是已初始化结果。这不意味着未进入执行闭包的 property 也被计算。
+
 生成代码访问 Wasm 内的需求状态表：Pending、Running、Ready、Failed。读取已完成值
 直接复用结果；再次请求 Running 节点报告依赖环，Failed 传播已有失败。
 codegen 不与运行时共用可变推导状态。
@@ -391,7 +397,9 @@ Host 缓冲区和 Rust 临时对象不经过这层语言对象存储。
 分类表的 payload 指向 words；Regex 等 Rust 资源独立持有。复制回收释放旧 words/content，
 不覆盖分配器元数据。释放允许分配器复用空间，不意味着 Wasm 线性内存缩页。
 
-初始化采用保守根集合进行 copy-collect；测试等显式保活边界继续支持 work copy-collect。
+初始化采用保守根集合进行 copy-collect，所有 Ready demand（包括 property 结果）
+均作为根保留；这不是按 service 实际会查询的 property 行进行的精确裁剪。
+测试等显式保活边界继续支持 work copy-collect。
 遍历依据闭合类型布局，更新所有移动句柄，保留共享与环。冻结前缀引用保持稳定。
 正常服务请求没有需要延续的临时根，直接 truncate 请求后缀，复用容量而不重建实例。
 线性内存允许保留高水位；只有 trap/poisoned 状态使用初始化快照恢复。

@@ -772,6 +772,10 @@ owner Type、canonical member index、name 和 member type/payload。所有 memb
 property 完成后才执行 type provider，所以 `summarize` 可以读取封闭的 member
 结果。同一 property 链只在完整计算成功后就绪；初始化失败阻止对外发布。
 
+`Property(P)` 的静态证明不会执行 provider。当前进入执行制品的具体 property 会作为
+初始化根，在 service 发布前求值；查询时复用结果，而不是在请求中首次运行 provider。
+初始化后的回收保守保留所有已就绪的 property 结果，并未按后续查询范围精确裁剪。
+
 显式反射使用 `get_type_prop`、`get_field_prop` 和 `get_variant_prop`，返回
 `Option(P)`。当 API 要求 imported property 必须存在时，使用静态 `Property(P)`
 bound；MIR 证明声明关系，运行时读取对应的 property 结果，不重新选择 impl：
