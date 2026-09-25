@@ -149,15 +149,15 @@ fn query_modules_lists_the_crate_view_as_stable_jsonl() {
 #[test]
 fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
     let cwd = fixture();
-    let dependency = cwd.join("query-builder");
+    let dependency = cwd.join("query_builder");
     fs::create_dir_all(dependency.join("src")).unwrap();
     fs::write(
         cwd.join("telora-config.json"),
-        r#"{"version":1,"members":[".","query-builder"]}"#,
+        r#"{"version":1,"members":[".","query_builder"]}"#,
     )
     .unwrap();
     fs::write(
-        dependency.join("src/query-builder.telora"),
+        dependency.join("src/query_builder.telora"),
         "type Plan = struct {sql: String}; pub use self::{Plan};",
     )
     .unwrap();
@@ -168,21 +168,21 @@ fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
     .unwrap();
     fs::write(
         cwd.join("telora-crate.json"),
-        r#"{"name":"app","dependencies":["query-builder"]}"#,
+        r#"{"name":"app","dependencies":["query_builder"]}"#,
     )
     .unwrap();
     fs::write(
         dependency.join("telora-crate.json"),
-        r#"{"name":"query-builder","dependencies":[]}"#,
+        r#"{"name":"query_builder","dependencies":[]}"#,
     )
     .unwrap();
     fs::write(
         cwd.join("telora-lock.json"),
-        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"dependencies":["query-builder"]},"query-builder":{"source":{"workspace":"query-builder"},"dependencies":[]}}}"#,
+        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"dependencies":["query_builder"]},"query_builder":{"source":{"workspace":"query_builder"},"dependencies":[]}}}"#,
     )
     .unwrap();
 
-    let missing_id = "query-builder/src/query-builder";
+    let missing_id = "query_builder/src/query_builder";
     let missing = telora(&cwd)
         .args(["query", "exports", missing_id])
         .output()
@@ -205,14 +205,14 @@ fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
     );
 
     let found = telora(&cwd)
-        .args(["query", "at", "query-builder/query-builder", "-p", "Plan"])
+        .args(["query", "at", "query_builder/query_builder", "-p", "Plan"])
         .output()
         .unwrap();
     assert!(found.status.success());
     assert_eq!(jsonl(&found.stdout).len(), 1);
 
     let no_match = telora(&cwd)
-        .args(["query", "at", "query-builder/query-builder", "-p", "Absent"])
+        .args(["query", "at", "query_builder/query_builder", "-p", "Absent"])
         .output()
         .unwrap();
     assert!(no_match.status.success());

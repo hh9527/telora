@@ -287,5 +287,5 @@ function result does not reveal the constructed type. Empty generic inputs retai
 an uninhabited witness for undetermined parameters; published generic bindings
 retain their quantified contracts. Performance analysis was completed after the
 functional commit/push; the measured baselines and profiling report are recorded
-in `crates/telora/tests/fixtures/performance/type-structure/PERFORMANCE-2026-09-08.md`.
+in `crates/telora/tests/fixtures/performance/type_structure/PERFORMANCE-2026-09-08.md`.
 Performance optimizations are follow-up work under #170.

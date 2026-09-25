@@ -12,7 +12,7 @@ pub def check: Fn(Value) -> Value = fn(actual) {
             let has_source = array::any(records, fn(record) {
                 match support::record_field(record, "labels") {
                     Some(Value::Array(labels)) => array::any(labels, fn(label) {
-                        support::string_field_equals(label, "source", "@test-ctx/language-tests%2Ftests%2Fnested%2Ftestee/first/0/0")
+                        support::string_field_equals(label, "source", "@test-ctx/language_tests%2Ftests%2Fnested%2Ftestee/first/0/0")
                     }),
                     _ => False,
                 }

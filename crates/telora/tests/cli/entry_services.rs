@@ -4,7 +4,7 @@ fn service_fixture() -> PathBuf {
     let cwd = fixture();
     fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/transform-service/src/main.telora"),
+            .join("tests/fixtures/transform_service/src/main.telora"),
         cwd.join("src/main.telora"),
     )
     .unwrap();

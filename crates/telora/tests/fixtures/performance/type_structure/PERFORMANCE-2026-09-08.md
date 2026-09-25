@@ -29,7 +29,7 @@
 
 ```sh
 valgrind --tool=callgrind --callgrind-out-file=/tmp/telora-startup.callgrind \
-  target/debug/telora -C crates/telora/tests/fixtures/performance/type-structure \
+  target/debug/telora -C crates/telora/tests/fixtures/performance/type_structure \
   check @src/startup
 callgrind_annotate --inclusive=yes --auto=no /tmp/telora-startup.callgrind
 ```

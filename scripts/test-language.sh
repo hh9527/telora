@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
 source_root=${TELORA_LANGUAGE_ROOT:-"$repo_root/tests/language"}
-build_root="$repo_root/target/language-tests"
+build_root="$repo_root/target/language_tests"
 workspace="$build_root/workspace"
 actual_root="$build_root/actual"
 telora_bin=${TELORA_BIN:-"$repo_root/target/debug/telora"}
@@ -167,10 +167,10 @@ generated="$build_root/check-all.telora"
 
 printf '%s\n' '{"version":1,"members":["."]}' >"$workspace/telora-config.json"
 jaq -n \
-    '{name:"language-tests",dependencies:[]}' \
+    '{name:"language_tests",dependencies:[]}' \
     >"$workspace/telora-crate.json"
 jaq -n \
-    '{version:1,packages:{"language-tests":{source:{workspace:""},dependencies:[]}}}' \
+    '{version:1,packages:{"language_tests":{source:{workspace:""},dependencies:[]}}}' \
     >"$workspace/telora-lock.json"
 
 entries="$actual_root/entries.jsonl"

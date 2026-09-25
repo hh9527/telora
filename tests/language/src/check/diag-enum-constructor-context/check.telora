@@ -3,5 +3,5 @@ use crate::support as support;
 use crate::unknown_support::{unknown_at};
 
 pub def check: Fn(Value) -> Value = fn(actual) {
-    support::bool_value(unknown_at(actual, "language-tests/check/diag-enum-constructor-context/testee", 1))
+    support::bool_value(unknown_at(actual, "language_tests/check/diag-enum-constructor-context/testee", 1))
 };

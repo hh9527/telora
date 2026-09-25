@@ -4,6 +4,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::*;
 
 #[test]
+fn crate_names_are_source_identifiers() {
+    for name in ["ontology", "dog_model", "model2", "a_b2", "issue_191"] {
+        assert!(validate_crate_name(name).is_ok(), "{name}");
+    }
+    for name in ["dog-model", "Dog_model", "_model", "model_", "a__b", "2model"] {
+        assert!(validate_crate_name(name).is_err(), "{name}");
+    }
+}
+
+#[test]
 fn compiler_and_runtime_config_are_validated_and_do_not_enter_the_lock() {
     let root = fixture();
     let before = WorkspaceSpec::discover(&root)

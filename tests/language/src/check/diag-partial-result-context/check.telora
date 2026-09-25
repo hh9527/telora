@@ -3,7 +3,7 @@ use crate::support as support;
 use crate::unknown_support::{unknown_at};
 
 pub def check: Fn(Value) -> Value = fn(actual) {
-    support::bool_value(unknown_at(actual, "language-tests/check/diag-partial-result-context/testee", 3)
+    support::bool_value(unknown_at(actual, "language_tests/check/diag-partial-result-context/testee", 3)
         && support::failed_with(actual, "unknown generic argument for parameter \"A\"")
         && support::failed_with(actual, "unknown generic argument for parameter \"B\""))
 };

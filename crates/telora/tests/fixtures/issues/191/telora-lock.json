@@ -1,7 +1,7 @@
 {
   "version": 1,
   "packages": {
-    "issue-191": {
+    "issue_191": {
       "source": {
         "workspace": ""
       },

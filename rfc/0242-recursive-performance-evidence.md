@@ -7,7 +7,7 @@
 ## Summary
 
 Telora will turn the reproductions under
-`crates/telora/tests/fixtures/performance/type-structure` into a stable
+`crates/telora/tests/fixtures/performance/type_structure` into a stable
 performance protocol and targeted correctness regressions. Performance claims
 will identify the command, build profile, fixture, repeated samples, and median
 user time. Tests will assert semantic boundaries; elapsed-time ceilings are

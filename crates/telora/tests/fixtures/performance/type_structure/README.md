@@ -8,13 +8,13 @@ Build the debug CLI and prepare the fixture workspace:
 
 ```sh
 cargo build -p telora
-target/debug/telora -C crates/telora/tests/fixtures/performance/type-structure lock
+target/debug/telora -C crates/telora/tests/fixtures/performance/type_structure lock
 ```
 
 Run the stable suite from the repository root:
 
 ```sh
-python3 crates/telora/tests/fixtures/performance/type-structure/measure.py \
+python3 crates/telora/tests/fixtures/performance/type_structure/measure.py \
   --binary target/debug/telora
 ```
 
@@ -28,7 +28,7 @@ names.
 For an exploratory single sample, run:
 
 ```sh
-target/debug/telora -C crates/telora/tests/fixtures/performance/type-structure \
+target/debug/telora -C crates/telora/tests/fixtures/performance/type_structure \
   check @src/nested-functions
 ```
 
@@ -54,7 +54,7 @@ The modules cover distinct costs:
 Use `query` to isolate workspace recovery from output rendering:
 
 ```sh
-target/debug/telora -C crates/telora/tests/fixtures/performance/type-structure \
+target/debug/telora -C crates/telora/tests/fixtures/performance/type_structure \
   query at @src/query-builder \
   -p definitely_missing_name
 ```

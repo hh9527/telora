@@ -864,14 +864,14 @@ fn contained_directory(root: &Path, relative: &Path, label: &str) -> Result<Path
 
 fn validate_crate_name(name: &str) -> Result<(), PackageError> {
     if name.is_empty()
-        || name.starts_with(['@', '_'])
-        || name.contains(['/', '.', '\\'])
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        || !name.bytes().next().is_some_and(|byte| byte.is_ascii_lowercase())
+        || name.split('_').any(|part| {
+            part.is_empty()
+                || !part.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
     {
         return Err(PackageError::new(format!(
-            "invalid crate name {name:?}; expected ASCII letters, digits, and '-'"
+            "invalid crate name {name:?}; expected snake_case ASCII identifier"
         )));
     }
     Ok(())

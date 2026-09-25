@@ -110,5 +110,5 @@ a generic success check to self-validating testees, invokes explicit check
 functions where present, and reports whether every case passed.
 
 Generated sources, raw streams, observations, and checker output are kept in
-`target/language-tests/` for inspection. Test sources do not participate in the
+`target/language_tests/` for inspection. Test sources do not participate in the
 Rust build, so changing a testee or checker does not recompile Telora.

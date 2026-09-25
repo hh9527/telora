@@ -1283,7 +1283,7 @@ data module 驱动 property，初始化读取其值，然后 entry 消费 source
 单次发布观测：frontend 14.201 ms，codegen_link 59.693 ms，bundle/write
 5.650 ms，文件 1,178,646 bytes。它保存代码/数据，不保存初始化快照。
 
-既有 performance/type-structure 场景的补充观察（2000 次递归，均输出
+既有 performance/type_structure 场景的补充观察（2000 次递归，均输出
 2001000）；此处计算发生在顶层初始化，export 只读取完成值：
 
 | 场景 / 后端 | frontend ms | codegen/link ms | initialize ms | 峰值 RSS KiB |
