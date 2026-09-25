@@ -168,6 +168,9 @@ struct TestArgs {
     /// Path below tests/, without .telora (for example parser/expressions).
     #[arg(value_name = "NAME", value_parser = parse_test_name)]
     name: String,
+    /// Run direct Test exports whose names contain this substring.
+    #[arg(short = 'p', long = "pattern", value_name = "SUBSTRING", value_parser = non_empty)]
+    pattern: Option<String>,
 }
 
 fn parse_test_name(value: &str) -> Result<String, String> {
@@ -321,7 +324,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
         Command::Lock => package_host::lock(&context)
             .and_then(|path| emit(json!(display_host_path(&path))).map(|()| 0)),
         Command::Check(arguments) => check_command(context, arguments, "telora.check/v1"),
-        Command::Test(arguments) => test_cli::run(context, &arguments.name),
+        Command::Test(arguments) => test_cli::run(context, &arguments.name, arguments.pattern.as_deref()),
         Command::Query(arguments) => static_cli::query(context, arguments),
         Command::Lsp => lsp_command(context).map(|()| 0),
     }

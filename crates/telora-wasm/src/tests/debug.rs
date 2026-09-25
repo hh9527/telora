@@ -24,7 +24,7 @@ fn debug_is_observational_and_separate_from_diagnostics() {
             "42",
             "{name: \"é🦀\", value: 42}",
             "<fn>",
-            "('True, (), b\"\\x61\\x62\", [1, 2], {a: 1, b: 2}, 'Some(3), -0.0, <dyn>)",
+            "(True, (), b\"\\x61\\x62\", [1, 2], {a: 1, b: 2}, Some(3), None, Ready, Code(\"ok\"), -0.0, <dyn>)",
             "42",
             "{name: \"é🦀\", value: 42}",
         ]

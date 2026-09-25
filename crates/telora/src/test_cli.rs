@@ -72,7 +72,7 @@ impl TestHost for FileTestHost {
     }
 }
 
-pub(crate) fn run(context: PathBuf, name: &str) -> Result<i32, String> {
+pub(crate) fn run(context: PathBuf, name: &str, pattern: Option<&str>) -> Result<i32, String> {
     let mut inventory = crate::static_input::Inventory::new(&context, false)?;
     let root = inventory.select(&format!("@test/{name}"))?;
     if !inventory.entries.contains_key(&root) {
@@ -84,7 +84,15 @@ pub(crate) fn run(context: PathBuf, name: &str) -> Result<i32, String> {
         let telora_core::mir::ModuleTarget::Bound(module) = mir.roots[0] else {
             unreachable!("sealed root must be resolved");
         };
-        let plan = telora_core::test_plan::TestPlan::from_mir(&sealed, module)?;
+        let mut plan = telora_core::test_plan::TestPlan::from_mir(&sealed, module)?;
+        if let Some(pattern) = pattern {
+            plan.exports.retain(|case| case.name.contains(pattern));
+            if plan.exports.is_empty() {
+                return Err(vec![crate::wasm_cli::error(format!(
+                    "no Test exports match pattern {pattern:?}"
+                ))]);
+            }
+        }
         let session = crate::wasm_cli::compile_tests(sealed, inventory.runtime_options())
             .map_err(|message| vec![crate::wasm_cli::error(message)])?;
         Ok((session, plan))

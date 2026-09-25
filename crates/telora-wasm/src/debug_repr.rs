@@ -58,9 +58,9 @@ impl Formatter {
                 f64::from_le_bytes(output.bytes(pointer + DATA, 8)?.try_into().unwrap())
             )),
             Kind::Bool => self.push(if output.word(pointer + DATA)? == 0 {
-                "'False"
+                "False"
             } else {
-                "'True"
+                "True"
             }),
             Kind::Unit => self.push("()"),
             Kind::String => self.quoted(output.text_str(pointer)?),
@@ -85,7 +85,6 @@ impl Formatter {
                     .variants
                     .get(output.word(pointer + DATA)? as usize)
                     .ok_or("Wasm: invalid debug variant")?;
-                self.push("'");
                 self.push(&branch.name);
                 if branch.ty.is_some() {
                     let value = if branch.boxed {

@@ -4,6 +4,7 @@ use std::_rt as rt;
 
 def seed: Int = dbg!(41, "initialize");
 type Row = struct {name: String, value: Int};
+type Status = enum { Ready, Code(String) };
 def original: Row = {name: "é🦀", value: 42};
 def callback: Fn(Int) -> Int = fn(n) { n + 1 };
 pub def answer: Fn() -> Value = fn() {
@@ -11,7 +12,8 @@ pub def answer: Fn() -> Value = fn() {
     let record = dbg!(original);
     let function = dbg!(callback);
     let dict: Dict(Int) = {b: 2, a: 1};
-    let other = dbg!((True, (), b"ab", [1, 2], dict, Some(3), -0.0, dyn::pack(Int.type, number)));
+    let other = dbg!((True, (), b"ab", [1, 2], dict, Some(3), None.ty!(Option(Int)),
+        Status::Ready, Status::Code("ok"), -0.0, dyn::pack(Int.type, number)));
     let observed = rt::with_diagnostics(fn(ignored: ()) { dbg!(number) })(());
     let origin = rt::with_diagnostics(fn(ignored: ()) { fail!("origin", dbg!(original)) })(());
     encode([number == 42, record == original, function == callback,

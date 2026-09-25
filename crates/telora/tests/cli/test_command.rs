@@ -48,6 +48,36 @@ fn test_command_recovers_expected_failures_and_preserves_warnings() {
 }
 
 #[test]
+fn test_command_filters_exports_by_pattern() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("tests/expectations.telora"),
+        include_str!("../fixtures/test-expectations.telora"),
+    )
+    .unwrap();
+    let matched = telora(&cwd)
+        .args(["test", "expectations", "-p", "a_expected"])
+        .output()
+        .unwrap();
+    assert!(matched.status.success(), "{}", String::from_utf8_lossy(&matched.stdout));
+    let cases = jsonl(&matched.stdout)
+        .into_iter()
+        .filter(|record| record["record"] == "case")
+        .collect::<Vec<_>>();
+    assert_eq!(cases.len(), 1);
+    assert_eq!(cases[0]["test"], "a_expected");
+    let missing = telora(&cwd)
+        .args(["test", "expectations", "--pattern", "not_a_test"])
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(jsonl(&missing.stdout).iter().any(|record| {
+        record["message"].as_str().is_some_and(|message| message.contains("no Test exports match pattern"))
+    }));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn test_command_composes_top_level_and_nested_modules_without_running_unreachable_tests() {
     let cwd = fixture();
     fs::create_dir_all(cwd.join("tests/helpers")).unwrap();
