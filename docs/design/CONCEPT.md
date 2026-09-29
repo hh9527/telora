@@ -184,7 +184,7 @@ fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一�
 
 run 从 stdin 读取一个 JSON，成功输出一个 JSON Value；`run --serve stdio+jsonl://` 读取 JSONL，
 每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
-message、labels、notes；已捕获诊断不重复输出。服务不接受 stdin 初始化 source；单次 run/JSONL 使用 stdin，HTTP 使用请求体。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
+message、locs；已捕获诊断不重复输出。服务不接受 stdin 初始化 source；单次 run/JSONL 使用 stdin，HTTP 使用请求体。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
 初始化来源使用 @service/name；逐次请求输入不注册规范来源路径，物理路径不进入来源身份。
 
 服务不获得环境、进程、网络或任意文件能力；需要的业务输入由 Host 显式转成 Value。

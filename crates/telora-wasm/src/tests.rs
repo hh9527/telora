@@ -159,7 +159,7 @@ fn runtime_diagnostics_preserve_high_line_bits() {
     assert!(session.call(&[]).is_err());
     let diagnostics = session.diagnostics().unwrap();
     let loc = telora_core::source::SourceCoordinates(diagnostics[0].locs[0]);
-    assert_eq!(loc.start() >> 32, 70_000);
+    assert_eq!(loc.start() >> 32, 70_001);
     let name = &session
         .manifest
         .sources
@@ -1053,11 +1053,14 @@ fn point(source: &str, byte: usize) -> u64 {
     let prefix = &source[..byte];
     let line = prefix.bytes().filter(|&byte| byte == b'\n').count();
     let column = prefix.rsplit('\n').next().unwrap().len();
-    ((line as u64) << 32) | column as u64
+    (((line + 1) as u64) << 32) | column as u64
 }
 
 fn source_slice(source: &str, words: [u32; 5]) -> &str {
     let index = telora_core::source::LineIndex::new(source).unwrap();
+    let mut words = words;
+    words[1] -= 1;
+    words[3] -= 1;
     let loc = telora_core::source::SourceCoordinates(words);
     &source[index.byte(loc.start()).unwrap() as usize..index.byte(loc.end()).unwrap() as usize]
 }

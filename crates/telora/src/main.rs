@@ -324,7 +324,9 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
         Command::Lock => package_host::lock(&context)
             .and_then(|path| emit(json!(display_host_path(&path))).map(|()| 0)),
         Command::Check(arguments) => check_command(context, arguments, "telora.check/v1"),
-        Command::Test(arguments) => test_cli::run(context, &arguments.name, arguments.pattern.as_deref()),
+        Command::Test(arguments) => {
+            test_cli::run(context, &arguments.name, arguments.pattern.as_deref())
+        }
         Command::Query(arguments) => static_cli::query(context, arguments),
         Command::Lsp => lsp_command(context).map(|()| 0),
     }

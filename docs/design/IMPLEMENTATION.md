@@ -351,9 +351,10 @@ Host 直接调用时没有 Telora 调用表达式，隐藏来源为 0，不伪�
 全零 Loc 表示无来源；其余位置直接保存实际输入中的 UTF-8 字节范围 `[start,end)`。
 不维护逐位置登记表。静态源码的来源名称和 BOLs 随 Wasm 生成；data-source 在 Guest
 解析时建立 BOLs，随来源记录保存和回收。CRLF、LF、CR 都计作一次换行。
-`with_diagnostics` 在 Guest 内查询来源行索引，生成 `SourcePoint {line, offset}`。
-普通字符串解析继承输入 Loc；临时解析错误只附加输入内的 start/end 字节范围，
-不建立 BOLs、不计算临时行号。`telora build` 在输入端归一化 EOL，使相同文本的 LF/CRLF/CR 构建得到相同制品；
+`with_diagnostics` 在 Guest 内查询普通来源行索引，生成从 1 开始的行号。
+动态解析使用来源 ID 0 及输入内字节跨度；诊断以 `<input>` 展示，展开为 `line: 0` 和整段输入内的
+`offset`，不建立 BOLs。普通字符串解析继承输入 Loc；其局部解析错误仍附带输入内
+的 start/end 字节范围。`telora build` 在输入端归一化 EOL，使相同文本的 LF/CRLF/CR 构建得到相同制品；
 普通源码执行仍用实际输入的字节位置，不改变原文件。
 原始文本片段、UTF-16 列和终端宽度的转换由 Host 负责。
 详细布局见 [RFC 0300](../../rfc/0300-host-guest-abi-and-location-ids.md)。

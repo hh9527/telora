@@ -13,10 +13,7 @@ pub(super) fn diagnostic(message: impl Into<String>, origin: Option<Loc>) -> Dia
 }
 
 pub(super) fn location(sources: &SourceDatabase, words: [u32; 5]) -> Option<Loc> {
-    sources
-        .files()
-        .find(|file| file.id().get() == words[0])
-        .and_then(|file| file.byte_location(telora_core::source::SourceCoordinates(words)))
+    super::diagnostics::location(sources, words)
 }
 
 pub(super) struct Fixtures<'a, 'b> {

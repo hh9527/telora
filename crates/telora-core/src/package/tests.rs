@@ -8,7 +8,14 @@ fn crate_names_are_source_identifiers() {
     for name in ["ontology", "dog_model", "model2", "a_b2", "issue_191"] {
         assert!(validate_crate_name(name).is_ok(), "{name}");
     }
-    for name in ["dog-model", "Dog_model", "_model", "model_", "a__b", "2model"] {
+    for name in [
+        "dog-model",
+        "Dog_model",
+        "_model",
+        "model_",
+        "a__b",
+        "2model",
+    ] {
         assert!(validate_crate_name(name).is_err(), "{name}");
     }
 }

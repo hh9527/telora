@@ -75,7 +75,10 @@ fn expected(mir: &Mir, sources: &BTreeMap<String, String>) -> BTreeMap<String, [
                     start: start as u32,
                     end: (start + token.len()) as u32,
                 };
-                markers.insert(label.into(), source.coordinates(location).0);
+                let mut words = source.coordinates(location).0;
+                words[1] += 1;
+                words[3] += 1;
+                markers.insert(label.into(), words);
             }
             offset += line.len();
         }
@@ -115,10 +118,11 @@ fn variants_materialize_at_use_and_value_forwarding_preserves_origins() {
                     .files()
                     .find(|source| source.name.as_ref() == "origins/main")
                     .unwrap();
+                let mut words = diagnostics[0].locs[0];
+                words[1] -= 1;
+                words[3] -= 1;
                 let location = source
-                    .byte_location(telora_core::source::SourceCoordinates(
-                        diagnostics[0].locs[0],
-                    ))
+                    .byte_location(telora_core::source::SourceCoordinates(words))
                     .unwrap();
                 assert!(
                     source

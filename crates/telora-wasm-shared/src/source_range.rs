@@ -27,7 +27,6 @@ impl SourceRange {
             || end >= OFFSET_LIMIT
             || start > end
             || end > source_len
-            || (source == 0 && (start != 0 || end != 0))
         {
             return None;
         }
@@ -51,9 +50,7 @@ impl SourceRange {
             start: ((packed >> OFFSET_BITS) & mask) as u32,
             end: (packed & mask) as u32,
         };
-        (result.start <= result.end
-            && (result.source != 0 || (result.start == 0 && result.end == 0)))
-            .then_some(result)
+        (result.start <= result.end).then_some(result)
     }
 
     pub fn decode(bytes: &[u8], source_len: u32) -> Option<Self> {
@@ -86,7 +83,14 @@ mod tests {
         );
         assert_eq!(SourceRange::checked(1, 9, 8, 10), None);
         assert_eq!(SourceRange::checked(1, 0, 11, 10), None);
-        assert_eq!(SourceRange::checked(0, 1, 1, 10), None);
+        assert_eq!(
+            SourceRange::checked(0, 1, 1, 10),
+            Some(SourceRange {
+                source: 0,
+                start: 1,
+                end: 1
+            })
+        );
         assert_eq!(SourceRange::checked(0, 0, 0, 0), Some(SourceRange::NONE));
         assert_eq!(SourceRange::checked(SOURCE_LIMIT, 0, 0, 0), None);
         assert_eq!(SourceRange::checked(1, 0, OFFSET_LIMIT, OFFSET_LIMIT), None);

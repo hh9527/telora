@@ -298,11 +298,9 @@ fn run_and_serve_share_the_same_static_entry_and_preserve_diagnostics() {
         !locs.is_empty(),
         "the static failure rule still has a location"
     );
-    assert!(
-        locs
-            .iter()
-            .all(|loc| loc["source"] != "@request")
-    );
+    assert!(locs.iter().any(|loc| loc["source"] == "<input>"
+        && loc["start"]["line"] == 0
+        && loc["end"]["line"] == 0));
     assert_eq!(replies[2]["ok"], 43);
     assert_eq!(replies[3]["error"], true);
     assert_eq!(replies[4]["ok"], 44);
@@ -481,7 +479,13 @@ fn initialization_sources_are_separate_from_each_transform_input() {
             .to_string()
             .contains("positive input required")
     );
-    assert!(!replies[1]["diagnostics"].to_string().contains("@request"));
+    assert!(
+        replies[1]["diagnostics"][0]["locs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|loc| loc["source"] == "<input>" && loc["start"]["line"] == 0)
+    );
     assert_eq!(replies[2]["ok"][2]["answer"], 2);
     for extra in [
         vec![],

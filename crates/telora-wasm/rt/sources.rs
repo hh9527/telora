@@ -89,6 +89,7 @@ unsafe fn register_index(id: u32, pointer: u32, count: u32, static_storage: bool
 /// Expand only when emitting diagnostics; ordinary values carry byte offsets.
 pub(crate) unsafe fn position(id: u32, byte: u32) -> (u32, u32) {
     unsafe {
+        if id == 0 { return (0, byte); }
         for source in registry::records() {
             if source.id != id { continue; }
             assert_ne!(source.line_count, 0, "source lacks index");
@@ -103,7 +104,7 @@ pub(crate) unsafe fn position(id: u32, byte: u32) -> (u32, u32) {
             let line = lo - 1;
             let start = raw_word(source.lines + line * 8, 0);
             let end = raw_word(source.lines + line * 8, 4);
-            return (line, byte.min(end) - start);
+            return (line + 1, byte.min(end) - start);
         }
         panic!("unregistered source");
     }
@@ -118,10 +119,6 @@ pub unsafe extern "C" fn telora_source_range(range: u32) -> u32 {
         let id = range.source;
         let start = range.start;
         let end = range.end;
-        if id == 0 {
-            assert_eq!((start, end), (0, 0), "invalid empty source range");
-            return 0;
-        }
         assert!(start <= end);
         let start = position(id, start);
         let end = position(id, end);
@@ -137,6 +134,14 @@ pub unsafe extern "C" fn telora_source_range(range: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_source_name(id: u32) -> u32 {
     unsafe {
+        if id == 0 {
+            let name = b"<input>";
+            let result = telora_alloc(8 + name.len() as u32);
+            crate::heap::write(result, result + 8);
+            crate::heap::write(result + 4, name.len() as u32);
+            core::ptr::copy_nonoverlapping(name.as_ptr(), crate::heap::ptr::<u8>(result + 8), name.len());
+            return result;
+        }
         for item in registry::records() {
             if item.id == id {
                 let result = telora_alloc(8 + item.length);

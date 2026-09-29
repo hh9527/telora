@@ -17,9 +17,10 @@ impl Diagnostic {
             let (source, start, end) = (loc.source(), loc.start(), loc.end());
             let file = manifest.sources.iter().find(|s| s.id == source);
             rendered = match file {
+                None if source == 0 => format!("<input>:{start}..{end}: {}", self.message),
                 Some(file) => {
-                    let (line, column) = file.position(start);
-                    format!("{}:{line}:{column}: {}", file.name, self.message)
+                    let (line, offset) = telora_core::source::SourceCoordinates::position(start);
+                    format!("{}:{line}:{}: {}", file.name, offset + 1, self.message)
                 }
                 None => format!("<unknown>:{start}..{end}: {}", self.message),
             };
@@ -28,9 +29,19 @@ impl Diagnostic {
             let loc = telora_core::source::SourceCoordinates(words);
             let file = manifest.sources.iter().find(|s| s.id == loc.source());
             match file {
+                None if loc.source() == 0 => rendered.push_str(&format!(
+                    "\n  locs[{index}] <input>:{}..{}",
+                    loc.start(),
+                    loc.end()
+                )),
                 Some(file) => {
-                    let (line, column) = file.position(loc.start());
-                    rendered.push_str(&format!("\n  locs[{index}] {}:{line}:{column}", file.name));
+                    let (line, offset) =
+                        telora_core::source::SourceCoordinates::position(loc.start());
+                    rendered.push_str(&format!(
+                        "\n  locs[{index}] {}:{line}:{}",
+                        file.name,
+                        offset + 1
+                    ));
                 }
                 None => rendered.push_str(&format!(
                     "\n  locs[{index}] <unknown>:{}..{}",
@@ -102,14 +113,18 @@ impl Session {
             } else {
                 error_message(code).into()
             };
-            let mut locs = if origin[0] == 0 { vec![] } else { vec![origin] };
+            let mut locs = if origin == [0; 5] {
+                vec![]
+            } else {
+                vec![origin]
+            };
             let base = output.word(pointer + DIAG_SUBJECTS)? as u64;
             let count = output.word(pointer + DIAG_COUNT)? as u64;
             output.bytes(base, count * u64::from(LOC_BYTES))?;
             for index in 0..count {
                 let offset = base + index * u64::from(LOC_BYTES);
                 let subject = output.location_words(offset)?;
-                if subject[0] != 0 && origin[0] != 0 {
+                if subject != [0; 5] {
                     locs.push(subject);
                 }
             }

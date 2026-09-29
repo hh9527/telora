@@ -1,5 +1,5 @@
 type Severity = enum {Error, Warning, Info};
-# start/end: zero-based line and UTF-8 byte offset; end is exclusive.
+# Source lines start at 1; line 0 denotes unpartitioned input with absolute byte offsets.
 type SourcePoint = struct {line: Int, offset: Int};
 type SourceRange = struct {source: String, start: SourcePoint, end: SourcePoint};
 type Diagnostic = struct {

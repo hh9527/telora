@@ -65,7 +65,7 @@ fn collection_keeps_initialization_locations_without_registering_request_sources
     assert!(session.invoke_values(closure, &[]).is_err());
     let diagnostics = session.diagnostics().unwrap();
     assert_eq!(diagnostics[0].message, "retained input");
-    assert_eq!(diagnostics[0].locs[1..], [[retained.get(), 0, 0, 0, 2]]);
+    assert_eq!(diagnostics[0].locs[1..], [[retained.get(), 1, 0, 1, 2]]);
 }
 
 #[test]

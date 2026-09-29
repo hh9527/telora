@@ -4,13 +4,14 @@ use telora_wasm_shared::source_range::SourceRange;
 
 pub(super) enum Origins {
     Inherit(SourceRange),
+    Dynamic,
     Source { id: u32 },
 }
 
 impl Origins {
     pub fn new(source: u32, input: &str) -> Self {
         if source == 0 {
-            Self::Inherit(SourceRange::NONE)
+            Self::Dynamic
         } else {
             let lines = LineIndex::new(input).unwrap();
             let ranges = lines.ranges().collect::<alloc::vec::Vec<_>>();
@@ -22,6 +23,7 @@ impl Origins {
     pub unsafe fn write(&self, pointer: u32, location: Location) {
         let range = match self {
             Self::Inherit(range) => *range,
+            Self::Dynamic => SourceRange { source: 0, start: location.start, end: location.end },
             Self::Source { id } => SourceRange { source: *id, start: location.start, end: location.end },
         };
         unsafe { core::ptr::copy_nonoverlapping(range.encode().as_ptr(), crate::heap::ptr::<u8>(pointer), 8); }

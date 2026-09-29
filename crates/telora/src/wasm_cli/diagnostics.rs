@@ -1,6 +1,19 @@
 use telora_core::{Diagnostic, SourceDatabase, source::Severity};
 use telora_wasm::session::Session;
 
+pub(super) fn location(sources: &SourceDatabase, words: [u32; 5]) -> Option<telora_core::Loc> {
+    if words[1] == 0 || words[3] == 0 {
+        return None;
+    }
+    let mut words = words;
+    words[1] -= 1;
+    words[3] -= 1;
+    sources
+        .files()
+        .find(|file| file.id().get() == words[0])
+        .and_then(|file| file.byte_location(telora_core::source::SourceCoordinates(words)))
+}
+
 /// Convert Guest protocol coordinates for the CLI renderer; no data parsing.
 pub(super) fn parsed(
     events: serde_json::Value,
@@ -35,17 +48,16 @@ pub(super) fn parsed(
                 .files()
                 .find(|file| file.name.as_ref() == name)
                 .ok_or("unknown diagnostic source")?;
-            let coordinates = telora_core::source::SourceCoordinates([
+            let coordinates = [
                 file.id().get(),
                 number(&range["start"]["line"])?,
                 number(&range["start"]["offset"])?,
                 number(&range["end"]["line"])?,
                 number(&range["end"]["offset"])?,
-            ]);
-            diagnostic.locs.push(
-                file.byte_location(coordinates)
-                    .ok_or("invalid diagnostic range")?,
-            );
+            ];
+            diagnostic
+                .locs
+                .push(location(sources, coordinates).ok_or("invalid diagnostic range")?);
         }
         result.push(diagnostic);
     }
@@ -74,22 +86,16 @@ pub(super) fn convert(
     events: Vec<telora_wasm::diagnostic_output::Diagnostic>,
     sources: &SourceDatabase,
 ) -> Vec<Diagnostic> {
-    let location = |words: [u32; 5]| {
-        sources
-            .files()
-            .find(|file| file.id().get() == words[0])
-            .and_then(|file| file.byte_location(telora_core::source::SourceCoordinates(words)))
-    };
     events
         .into_iter()
         .map(|event| {
-            let mut diagnostic = match event.locs.first().and_then(|loc| location(*loc)) {
+            let mut diagnostic = match event.locs.first().and_then(|loc| location(sources, *loc)) {
                 Some(loc) => Diagnostic::error(&event.message, loc),
                 None => super::error(&event.message),
             };
             diagnostic.severity = event.severity;
             for subject in event.locs.into_iter().skip(1) {
-                if let Some(loc) = location(subject) {
+                if let Some(loc) = location(sources, subject) {
                     diagnostic.locs.push(loc);
                 }
             }

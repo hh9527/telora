@@ -79,7 +79,7 @@ JSONL 服务每条请求恰好输出一行；HTTP 使用相同响应封装：
 {"schema":"telora.service/v1","ok":42,"error":false,"diagnostics":[]}
 ```
 
-失败时 `error` 为 true、`ok` 为 null。diagnostics 保留 severity、message、labels 和 notes；
+失败时 `error` 为 true、`ok` 为 null。diagnostics 保留 severity、message 和 locs；
 其中来源坐标保留行与 UTF-8 字节偏移信息。业务返回 null 与执行失败由 error 区分。
 请求成功、语言失败或配额耗尽后，下一条请求都获得独立的执行机会。
 

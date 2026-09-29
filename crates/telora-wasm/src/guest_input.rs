@@ -34,7 +34,7 @@ impl Session {
             .map_err(|error| format!("{}: {error}", file.name))
     }
 
-    /// source=0 is a request/temporary input, never an independently registered source.
+    /// source=0 is dynamically parsed input, never an independently registered source.
     pub fn parse_data_text(
         &mut self,
         input: &str,

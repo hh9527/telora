@@ -1296,12 +1296,14 @@ diagnostics.with_diagnostics:
         -> Fn(A) -> Result(Tuple([R, Array(diagnostics::Diagnostic)]), Array(diagnostics::Diagnostic))
 ```
 
-`diagnostics::Diagnostic` 是类型化快照，包含 `severity`、`message`、`labels` 和 `notes`。
-每个标签包含 `location`、`message` 和 `primary`；位置记录源码名称以及起止位置。
-`start/end` 均为 `SourcePoint { line: Int, offset: Int }`，每个分量的有效范围是 u32。
-行号和行内 UTF-8 字节偏移从 0 开始，范围为 `[start,end)`，并非文件绝对字节偏移。
-两个分量分别序列化为整数，不通过 JavaScript Number 传递打包的 u64。
-CRLF、LF、单独 CR 都计作一次换行；面向用户显示时再将行号转换为从 1 开始。
+`diagnostics::Diagnostic` 是类型化快照，包含 `severity`、`message` 和有序 `locs`。
+`fail!` 的 `locs[0]` 是规则位置，后续位置按参数顺序保留来源，包括重复位置。
+每个位置包含 `source`、`start` 和 `end`；端点为 `SourcePoint { line: Int, offset: Int }`。
+普通源码行号从 1 开始，`offset` 是行内 UTF-8 字节偏移；范围为 `[start,end)`。
+动态解析输入使用内部来源 ID 0，对外名称为 `<input>`；`line: 0` 表示不分行，
+`offset` 是相对整段输入的 UTF-8 字节偏移，不为临时输入建立行索引。
+全零来源跨度仍表示无位置。端点分别序列化为整数，不传递打包的 u64。
+CRLF、LF、单独 CR 都计作一次换行。
 公开模块使用同一捕获机制；特权 Entry 仍用内部 `std/_rt` 执行服务边界捕获。
 
 调用成功时返回值和该作用域内产生的 Warning；可恢复 failure 时返回该 failure 以及
@@ -1613,7 +1615,7 @@ fuel/memory 耗尽由执行器结束当前请求，下一个请求仍从同一�
 
 run 从 stdin 读取一个 `{method: String, input: Value}` JSON，成功输出一个 JSON Value；`run --serve stdio+jsonl://` 读取 JSONL，
 每条输入对应 {ok, error, diagnostics} 响应，按输入顺序处理。diagnostics 包含 severity、
-message、labels、notes；已捕获诊断不重复输出。初始化 source 不接受 stdin；JSONL 和单次 run 使用 stdin 作为请求通道，HTTP 使用请求体。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
+message、locs；已捕获诊断不重复输出。初始化 source 不接受 stdin；JSONL 和单次 run 使用 stdin 作为请求通道，HTTP 使用请求体。--source name=path.json 或 file+FORMAT://path 使用已有格式验证和来源管线。
 初始化来源使用 @service/name；逐次请求输入不注册规范来源路径，物理路径不进入来源身份。
 
 服务不获得环境、进程、网络或任意文件能力；需要的业务输入由 Host 显式转成 Value。
@@ -1721,7 +1723,7 @@ Ontology、analytics、build、deployment 或 Agent workflow 目前都不是语�
 - `interpreter!` 只提升直接 A 参数的消费型解释器，不能适配高阶或返回 A 的位置；
 - 反射只观察封闭类型，不能在运行时产生新的泛型实例；Func 描述符当前不公开子类型；
 - 普通 CLI 严格失败输出不保证一次展示 recovery 已收集的全部独立诊断；
-- Host-observed diagnostic 具有 severity/message/location/labels，但还没有稳定的领域
+- Host-observed diagnostic 具有 severity/message/locs，但还没有稳定的领域
   category、cause graph 或 repair schema；
 - 工具可以保守丢失精度，不能以猜测填补缺失语法或失败依赖。
 

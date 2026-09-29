@@ -197,12 +197,7 @@ pub(crate) fn check_diagnostics(
         if !diagnostics.iter().any(|d| d.severity == Severity::Error) {
             let mut diagnostic = error(message);
             if let Ok(Some(root)) = session.active_initialization_root() {
-                let coordinates = telora_core::source::SourceCoordinates(root.origin);
-                if let Some(location) = sources
-                    .files()
-                    .find(|file| file.id().get() == coordinates.source())
-                    .and_then(|file| file.byte_location(coordinates))
-                {
+                if let Some(location) = diagnostics::location(sources, root.origin) {
                     diagnostic.locs.push(location);
                 }
                 let root_name = match root.name {

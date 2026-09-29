@@ -194,13 +194,15 @@ fn parser_diagnostics_preserve_individual_errors_and_relative_coordinates() {
     let errors = output["diagnostics"].as_array().unwrap();
     assert_eq!(errors.len(), 2, "{output}");
     for error in errors {
-        assert!(error["locs"].as_array().unwrap().is_empty());
+        let locs = error["locs"].as_array().unwrap();
+        assert!(!locs.is_empty(), "{error}");
         assert!(
-            error["message"]
-                .as_str()
-                .unwrap()
-                .contains("input range (UTF-8 bytes):")
+            locs.iter().all(|loc| loc["source"] == "<input>"
+                && loc["start"]["line"] == 0
+                && loc["end"]["line"] == 0),
+            "{error}"
         );
+        assert!(!error["message"].as_str().unwrap().contains("input range"));
     }
     assert_eq!(
         transform(&mut service, b"7").unwrap()["ok"],
@@ -238,7 +240,7 @@ fn source_parser_diagnostics_keep_registered_source_ranges() {
         let locs = errors[0]["locs"].as_array().unwrap();
         assert!(!locs.is_empty(), "{}", result.diagnostics);
         assert!(locs.iter().all(|loc| loc["source"] == "@service/a"));
-        assert!(locs.iter().any(|loc| loc["start"]["line"] == 1));
+        assert!(locs.iter().any(|loc| loc["start"]["line"] == 2));
         assert!(service.seal_initialization().is_err());
     }
 }
@@ -267,12 +269,10 @@ fn static_service_initializes_and_captures_each_request() {
             assert_eq!(diagnostics[2]["severity"], "Error");
         } else if input == "null" {
             assert_eq!(output["diagnostics"][0]["message"], "missing query");
-            assert!(
-                !output["diagnostics"][0]["locs"]
-                    .as_array()
-                    .unwrap()
-                    .is_empty()
-            );
+            let locs = output["diagnostics"][0]["locs"].as_array().unwrap();
+            assert!(locs.iter().any(|loc| loc["source"] == "<input>"
+                && loc["start"] == serde_json::json!({"line": 0, "offset": 0})
+                && loc["end"] == serde_json::json!({"line": 0, "offset": 4})));
         } else {
             assert_eq!(
                 output["ok"],

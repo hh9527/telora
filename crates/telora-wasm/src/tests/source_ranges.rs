@@ -32,12 +32,12 @@ fn register(session: &mut Session, input: &str) -> u32 {
 }
 
 #[test]
-fn parsers_write_inline_ranges_and_requests_have_no_source() {
+fn parsers_write_inline_ranges_and_dynamic_inputs_use_unpartitioned_source() {
     let bytes = artifact();
     for (format, input, line, offset) in [
-        (1, "{\r\n  \"a\": 42\r\n}", 1, 7),
-        (2, "a: 42\r\n", 0, 3),
-        (3, "a = 42\r\n", 0, 4),
+        (1, "{\r\n  \"a\": 42\r\n}", 2, 7),
+        (2, "a: 42\r\n", 1, 3),
+        (3, "a = 42\r\n", 1, 4),
     ] {
         let mut session = Session::load(&bytes, 10_000_000).unwrap();
         for name in [
@@ -86,11 +86,15 @@ fn parsers_write_inline_ranges_and_requests_have_no_source() {
                 .unwrap();
             let output = session.output();
             let rows = output.word(packet as u64).unwrap();
-            for index in 0..count {
-                for field in [4, 8, 12] {
-                    assert_eq!(output.word((rows + index * 24 + field) as u64).unwrap(), 0);
-                }
-            }
+            let integer = (0..count)
+                .find(|i| output.word((rows + i * 24) as u64).unwrap() == 3)
+                .unwrap();
+            let origin = (rows + integer * 24 + 4) as u64;
+            let byte = input.find("42").unwrap() as u32;
+            assert_eq!(
+                output.location_words(origin).unwrap(),
+                [0, 0, byte, 0, byte + 2]
+            );
         }
         session
             .exports
@@ -197,7 +201,6 @@ fn diagnostic_ranges_keep_full_width_columns_and_reject_invalid_origins() {
         telora_wasm_shared::source_range::OFFSET_LIMIT - 1
     );
     for packed in [
-        1u64,
         (1u64 << 50) | (2u64 << 25) | 1,
         u64::from(telora_wasm_shared::source_range::SOURCE_LIMIT - 1) << 50,
     ] {

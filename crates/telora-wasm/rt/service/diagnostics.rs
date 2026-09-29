@@ -42,7 +42,7 @@ unsafe fn event(output: &mut String, pointer: u32) {
         for index in 0..word(pointer, DIAG_COUNT) {
             let pointer = subjects + index * LOC_BYTES;
             let id: u64 = crate::heap::read(pointer);
-            if id == 0 || origin == 0 { continue; }
+            if id == 0 { continue; }
             output.push(',');
             location(output, pointer);
         }

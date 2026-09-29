@@ -59,7 +59,11 @@ fn test_command_filters_exports_by_pattern() {
         .args(["test", "expectations", "-p", "a_expected"])
         .output()
         .unwrap();
-    assert!(matched.status.success(), "{}", String::from_utf8_lossy(&matched.stdout));
+    assert!(
+        matched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&matched.stdout)
+    );
     let cases = jsonl(&matched.stdout)
         .into_iter()
         .filter(|record| record["record"] == "case")
@@ -72,7 +76,9 @@ fn test_command_filters_exports_by_pattern() {
         .unwrap();
     assert_eq!(missing.status.code(), Some(1));
     assert!(jsonl(&missing.stdout).iter().any(|record| {
-        record["message"].as_str().is_some_and(|message| message.contains("no Test exports match pattern"))
+        record["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("no Test exports match pattern"))
     }));
     fs::remove_dir_all(cwd).unwrap();
 }

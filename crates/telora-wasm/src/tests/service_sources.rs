@@ -191,7 +191,7 @@ fn guest_slots_own_names_inputs_and_location_identity() {
                 .unwrap();
             assert_eq!(session.output().word(record as u64).unwrap(), id);
             // BOLs survive buffer overwrite, including CRLF interpretation.
-            assert_eq!(session.output().word(record as u64 + 4).unwrap(), 0);
+            assert_eq!(session.output().word(record as u64 + 4).unwrap(), 1);
             assert!(session.output().word(record as u64 + 12).unwrap() >= 1);
             session
                 .instance

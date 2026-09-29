@@ -864,10 +864,15 @@ fn contained_directory(root: &Path, relative: &Path, label: &str) -> Result<Path
 
 fn validate_crate_name(name: &str) -> Result<(), PackageError> {
     if name.is_empty()
-        || !name.bytes().next().is_some_and(|byte| byte.is_ascii_lowercase())
+        || !name
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase())
         || name.split('_').any(|part| {
             part.is_empty()
-                || !part.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+                || !part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
         })
     {
         return Err(PackageError::new(format!(

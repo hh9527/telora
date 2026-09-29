@@ -1,5 +1,5 @@
 //! Error descriptors carry text for language Result and structured diagnostics
-//! for service ABI consumers. Neither path registers request locations.
+//! for service ABI consumers. Dynamic input uses byte offsets, not an index.
 use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
 use telora_data::source::{Diagnostic, Severity};
@@ -22,17 +22,18 @@ pub(super) unsafe fn export(errors: Vec<Diagnostic>, origins: &Origins, name: &s
         write!(&mut json, "{{\"severity\":\"{severity}\",\"message\":").unwrap();
         crate::json_text::quoted(&mut json, &message).unwrap();
         json.push_str(",\"locs\":[");
-        if let Origins::Source { id, .. } = origins {
+        if !matches!(origins, Origins::Inherit(_)) {
+            let id = match origins { Origins::Source { id } => *id, Origins::Dynamic => 0, _ => unreachable!() };
             for (index, loc) in error.locs.iter().enumerate() {
                 if index != 0 { json.push(','); }
                 let source = unsafe {
-                    let span = crate::sources::telora_source_name(*id);
+                    let span = crate::sources::telora_source_name(id);
                     super::error_text(span)
                 };
                 json.push_str("{\"source\":");
                 crate::json_text::quoted(&mut json, source).unwrap();
-                let start = unsafe { crate::sources::position(*id, loc.start) };
-                let end = unsafe { crate::sources::position(*id, loc.end) };
+                let start = unsafe { crate::sources::position(id, loc.start) };
+                let end = unsafe { crate::sources::position(id, loc.end) };
                 write!(&mut json, ",\"start\":{{\"line\":{},\"offset\":{}}},\"end\":{{\"line\":{},\"offset\":{}}}}}", start.0, start.1, end.0, end.1).unwrap();
             }
         }

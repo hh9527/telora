@@ -15,7 +15,7 @@ fn debug_is_observational_and_separate_from_diagnostics() {
     assert_eq!(initial.len(), 1);
     assert_eq!(initial[0].repr, "41");
     assert_eq!(initial[0].message.as_deref(), Some("initialize"));
-    assert_eq!(initial[0].line, 5);
+    assert_eq!(initial[0].line, 6);
     assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 5]));
     let events = session.take_debug_events().unwrap();
     assert_eq!(

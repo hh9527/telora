@@ -23,15 +23,15 @@ impl Output<'_> {
 
     pub(crate) fn location(&self, range: [u32; 3]) -> Result<Option<[u32; 5]>, String> {
         let [id, start, end] = range;
+        if start > end {
+            return Err("Wasm: invalid source range".into());
+        }
         if id == 0 {
             return if start == 0 && end == 0 {
                 Ok(None)
             } else {
-                Err("Wasm: invalid empty origin".into())
+                Ok(Some([0, 0, start, 0, end]))
             };
-        }
-        if start > end {
-            return Err("Wasm: invalid source range".into());
         }
         let registry = self.word(SOURCE_REGISTRY as u64)? as u64;
         let count = self.word(SOURCE_REGISTRY as u64 + 4)?;
@@ -71,7 +71,7 @@ impl Output<'_> {
         };
         let (sl, so) = point(start)?;
         let (el, eo) = point(end)?;
-        Ok(Some([id, sl, so, el, eo]))
+        Ok(Some([id, sl + 1, so, el + 1, eo]))
     }
 
     pub(crate) fn field(&self, pointer: u64, ty: u32, name: &str) -> Result<(u32, u32), String> {

@@ -132,7 +132,7 @@ stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增
 - `eval module:name` 读取 Value 导出。
 - `run module` 选择 MainService，读取 stdin JSON，输出一个 JSON Value。
 - `run module --serve stdio+jsonl://` 持续处理 JSONL，响应含 ok/error/diagnostics；诊断保留
-  severity、message、labels、notes。语言失败和请求配额耗尽不影响下一条请求。
+  severity、message、locs。语言失败和请求配额耗尽不影响下一条请求。
 - `@service::source("name")` 声明初始化来源，--source 的名称集合须精确匹配。
   来源使用文件 JSON/YAML/TOML，stdin 保留给请求。逻辑来源为 @service/name。
   参见 [执行模式](EXEC-MODE.md)。
