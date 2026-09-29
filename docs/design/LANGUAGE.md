@@ -1287,22 +1287,22 @@ match codec.decode@[User](raw) {
 Result，错误的 value 为原始 Dyn。`type-desc.resolve` 使用 `ResolveError`，value
 为输入 Type。这些错误都具有 message 字段，并直接保留原输入的来源。
 
-被选中的 Entry 可以通过 `std/_rt` 将一次普通函数调用放入独立诊断
+普通模块可以通过 `std::diagnostics` 将一次函数调用放入独立诊断
 作用域：
 
 ```telora
-rt.with_diagnostics:
+diagnostics.with_diagnostics:
     for(A, R) Fn(Fn(A) -> R)
-        -> Fn(A) -> Result(Tuple([R, Array(rt::Diagnostic)]), Array(rt::Diagnostic))
+        -> Fn(A) -> Result(Tuple([R, Array(diagnostics::Diagnostic)]), Array(diagnostics::Diagnostic))
 ```
 
-`rt::Diagnostic` 是类型化快照，包含 `severity`、`message`、`labels` 和 `notes`。
+`diagnostics::Diagnostic` 是类型化快照，包含 `severity`、`message`、`labels` 和 `notes`。
 每个标签包含 `location`、`message` 和 `primary`；位置记录源码名称以及起止位置。
 `start/end` 均为 `SourcePoint { line: Int, offset: Int }`，每个分量的有效范围是 u32。
 行号和行内 UTF-8 字节偏移从 0 开始，范围为 `[start,end)`，并非文件绝对字节偏移。
 两个分量分别序列化为整数，不通过 JavaScript Number 传递打包的 u64。
 CRLF、LF、单独 CR 都计作一次换行；面向用户显示时再将行号转换为从 1 开始。
-这些类型和捕获能力限于已有的特权 Entry 边界。
+公开模块使用同一捕获机制；特权 Entry 仍用内部 `std/_rt` 执行服务边界捕获。
 
 调用成功时返回值和该作用域内产生的 Warning；可恢复 failure 时返回该 failure 以及
 此前产生的 Warning。返回的诊断从 evaluation account 中消费，不再由外层 Host 重复

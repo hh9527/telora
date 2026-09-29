@@ -60,6 +60,56 @@ pub def answer: Value = Value.Object({"kind": Value.String("pure"), "value": Val
 }
 
 #[test]
+fn public_diagnostics_capture_collects_independent_failures() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/capture.telora"),
+        r#"use std::array as array;
+use std::codec as codec;
+use std::diagnostics as diagnostics;
+use std::value::{Value};
+
+def check: Fn(Int) -> Int = fn(value) {
+    if value < 0 { fail!("invalid item", value) }
+    else {
+        let warning: Option(Int) = if value == 2 { warn!("accepted with warning") } else { None };
+        value + 1
+    }
+};
+pub def answer: Value = codec::encode(array::map(array::enumerate([-1, 2, -3]), fn(entry) {
+    match diagnostics::with_diagnostics(check)(entry.1) {
+        Ok((value, reports)) => (entry.0, True, value, array::map(reports, fn(report) { report.message })),
+        Err(reports) => (entry.0, False, 0, array::map(reports, fn(report) { report.message })),
+    }
+}));"#,
+    )
+    .unwrap();
+    refresh_fixture_workspace(&cwd);
+
+    let output = telora(&cwd)
+        .args(["eval", "@src/capture:answer"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        serde_json::json!([
+            [0, false, 0, ["invalid item"]],
+            [1, true, 3, ["accepted with warning"]],
+            [2, false, 0, ["invalid item"]],
+        ])
+    );
+    assert!(
+        jsonl(&output.stderr).is_empty(),
+        "captured reports must not escape"
+    );
+}
+
+#[test]
 fn eval_contracts_require_value_results() {
     let cwd = fixture();
     fs::write(

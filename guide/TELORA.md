@@ -1116,6 +1116,20 @@ result.ok_or_warn!() : Option(R)
   `raise!(blame!(message, subjects...))`。
 - `panic!(message)` 只用于实现错误或不变量破坏。
 
+普通模块可以用 `std::diagnostics::with_diagnostics` 为一次函数调用建立可恢复的
+诊断作用域：
+
+```telora
+use std::diagnostics as diagnostics;
+
+let result = diagnostics::with_diagnostics(validate)(input);
+# Ok((value, reports)) 包含成功值和 Warning；Err(reports) 包含普通失败及此前的 Warning。
+```
+
+捕获到的报告从外层诊断作用域移出，不会被服务入口重复报告；调用方应显式保留或
+呈现它们。嵌套调用可各自捕获并继续执行。fuel、内存、调用深度等终止性失败不可
+捕获，仍结束当前请求；诊断捕获也不回滚已经发生的其他效果。
+
 仅需报告警告时可以直接使用返回 Option 的表达式：
 
 ```telora

@@ -449,7 +449,7 @@ expression。其状态至少区分：
 | `raise!`、`unwrap!`、`fail!` | 当前结果不能产生；保留结构化原因和显式 subject 来源 | VM 与 Host |
 | `panic!` | 实现不变量破坏，不是普通领域拒绝 | VM 与 Host |
 | `dbg!` | 不影响值与资源核算的 Host-only observation | Host observer |
-| `rt.with_diagnostics` | Entry 对一次调用建立可恢复诊断作用域 | Entry orchestration |
+| `std::diagnostics::with_diagnostics` | 对一次调用建立可恢复诊断作用域 | 普通 Telora caller 或 Entry |
 
 结构化 failure diagnostic 的核心是 `rule + data_sources`。rule 包含拒绝消息与规则
 应用位置；data sources 是显式 subjects 的有序来源位置。函数边界内触发的 contextual
@@ -458,7 +458,7 @@ failure 的 rule 是实际执行的报告宏位置；宏位于 helper 内时，�
 Host 如何把这些位置显示为 primary/secondary 属于呈现策略。失败在初始化依赖之间
 传播时继续引用原 root diagnostic，不增加新的根因。
 
-`rt.with_diagnostics` 把一次调用的成功值与 Warning 作为 `Ok((value, diagnostics))`
+`std::diagnostics::with_diagnostics` 把一次调用的成功值与 Warning 作为 `Ok((value, diagnostics))`
 返回，把可恢复 failure 作为 `Err(diagnostics)` 返回并消费这些诊断。资源耗尽、取消与
 其他终止性 runtime failure 仍向外传播。
 

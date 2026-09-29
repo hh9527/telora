@@ -1,4 +1,4 @@
-use std::_rt as rt;
+use std::diagnostics as rt;
 
 def subject: Int = -7;
 type Captured(T) = Result((T, Array(rt::Diagnostic)), Array(rt::Diagnostic));

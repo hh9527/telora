@@ -45,6 +45,8 @@ blame 的 failure，具体契约可通过 `telora query exports` 查看。
 - `std/path`：纯字符串的路径连接、规范化、父路径和文件名操作，不访问文件系统。
 - `std/hash`：SHA-256 一次性摘要和增量摘要状态。
 - `std/test`：延迟 Test、正常/预期失败断言与 Host fixture 分组，由 `telora test` 执行。
+- `std/diagnostics`：通过 `with_diagnostics` 在普通代码中捕获一次调用的 Warning
+  或可恢复失败，返回类型化诊断；资源耗尽等终止性失败不可捕获。
 
 `should_ok` 只要求正常返回，返回 False 或 Err 也会通过；业务断言必须显式检查结果。
 测试组织、错误语义和 fixtures 示例见 [测试最佳实践](TESTING.md)。

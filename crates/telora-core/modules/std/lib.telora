@@ -6,6 +6,7 @@ pub mod argv;
 pub mod array;
 pub mod blame;
 pub mod codec;
+pub mod diagnostics;
 pub mod dict;
 pub mod dyn;
 pub mod eq;

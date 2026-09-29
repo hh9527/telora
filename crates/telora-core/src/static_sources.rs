@@ -15,6 +15,7 @@ pub const BUILTINS: &[(&str, &str)] = sources![
     "std/array" => "array",
     "std/blame" => "blame",
     "std/codec" => "codec",
+    "std/diagnostics" => "diagnostics",
     "std/dict" => "dict",
     "std/dyn" => "dyn",
     "std/eq" => "eq",
