@@ -151,10 +151,9 @@ fn resolve_with_scheduler(mir: &mut Mir, scheduler: Scheduler) {
     // Discovery timing is an implementation detail; presentation is ordered
     // by source evidence before the type pass attaches diagnostic indices.
     pass.mir.diagnostics.sort_by(|a, b| {
-        a.labels
+        a.locs
             .first()
-            .map(|label| label.location)
-            .cmp(&b.labels.first().map(|label| label.location))
+            .cmp(&b.locs.first())
             .then_with(|| a.message.cmp(&b.message))
     });
     pass.mir.diagnostics.dedup();

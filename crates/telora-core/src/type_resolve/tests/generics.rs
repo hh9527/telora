@@ -1232,7 +1232,7 @@ fn generic_call_conflicts_keep_the_use_site_and_other_instances_stay_independent
     assert!(
         mir.diagnostics
             .iter()
-            .any(|d| !d.labels.is_empty() && d.message.contains("type mismatch"))
+            .any(|d| !d.locs.is_empty() && d.message.contains("type mismatch"))
     );
     let TypeState::Known(good) = symbol_type(&mir, "good") else {
         panic!("{}", mir.dump());

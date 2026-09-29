@@ -38,8 +38,7 @@ impl Solver<'_> {
                     self.mir.diagnostics.push(Diagnostic {
                         severity: crate::source::Severity::Error,
                         message: "Unchecked application requires a named-field struct type".into(),
-                        labels: vec![],
-                        notes: vec![],
+                        locs: vec![],
                     });
                 }
                 continue;

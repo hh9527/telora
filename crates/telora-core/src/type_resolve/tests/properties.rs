@@ -93,7 +93,7 @@ fn invalid_check_signatures_keep_the_original_conflict_and_contract_context() {
         assert_eq!(diagnostics.len(), 1, "{}", mir.dump());
         assert!(diagnostics[0].message.contains("Result((), BlameError)"));
         assert!(diagnostics[0].message.contains("type mismatch"));
-        assert!(!diagnostics[0].labels.is_empty());
+        assert!(!diagnostics[0].locs.is_empty());
         assert!(matches!(
             symbol_type(&mir, "independent"),
             TypeState::Known(_)
@@ -733,7 +733,7 @@ fn missing_property_bound_is_rejected_with_all_type_slots_known() {
     assert!(
         mir.diagnostics
             .iter()
-            .any(|d| d.message.contains("no static evidence") && !d.labels.is_empty())
+            .any(|d| d.message.contains("no static evidence") && !d.locs.is_empty())
     );
 }
 

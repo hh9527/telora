@@ -22,12 +22,11 @@ fn location(mir: &Mir, loc: Location) -> Value {
 
 pub(crate) fn diagnostic(mir: &Mir, schema: &str, root: &str, d: &Diagnostic) -> Value {
     let module = d
-        .labels
-        .iter()
-        .filter(|label| label.primary)
-        .find_map(|label| {
+        .locs
+        .first()
+        .and_then(|loc| {
             mir.modules.iter().find_map(|module| match module.state {
-                ModuleState::Source { source, .. } if source == label.location.source => {
+                ModuleState::Source { source, .. } if source == loc.source => {
                     Some(module.name.as_str())
                 }
                 _ => None,
@@ -39,9 +38,9 @@ pub(crate) fn diagnostic(mir: &Mir, schema: &str, root: &str, d: &Diagnostic) ->
             conflict.diagnostic.and_then(|index| mir.diagnostics.get(index))
                 .filter(|original| std::ptr::eq(*original, d)).map(|_| id)).collect::<Vec<_>>(),
         "severity": match d.severity { Severity::Error => "error", Severity::Warning => "warning", Severity::Info => "info" },
-        "message": d.message, "notes": d.notes,
-        "labels": d.labels.iter().map(|l| json!({"source": mir.sources.get(l.location.source).name.as_ref(),
-            "location": location(mir, l.location), "message": l.message, "primary": l.primary})).collect::<Vec<_>>()})
+        "message": d.message,
+        "locs": d.locs.iter().map(|loc| json!({"source": mir.sources.get(loc.source).name.as_ref(),
+            "location": location(mir, *loc)})).collect::<Vec<_>>()})
 }
 
 pub fn check(context: PathBuf, args: crate::CheckArgs, schema: &str) -> Result<i32, String> {
@@ -342,7 +341,7 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
         Err(message) => {
             emit(
                 json!({"schema": QUERY_SCHEMA, "module": selector, "record": "diagnostic",
-                "severity": "error", "message": message, "labels": [], "notes": []}),
+                "severity": "error", "message": message, "locs": []}),
             )?;
             return Ok(1);
         }

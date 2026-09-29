@@ -261,10 +261,7 @@ impl Solver<'_> {
                                 );
                                 let location = self.mir.hir[node.index()].location;
                                 if !self.mir.diagnostics.iter().any(|d| {
-                                    d.message == message
-                                        && d.labels.iter().any(|label| {
-                                            label.primary && label.location == location
-                                        })
+                                    d.message == message && d.locs.first() == Some(&location)
                                 }) {
                                     self.mir
                                         .diagnostics

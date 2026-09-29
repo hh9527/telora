@@ -122,7 +122,7 @@ pub(super) fn validate(raw: RawPlan, ctx: &mut ParseCtx<'_>) -> Result<JsonPlan,
             root: raw.root.expect("parsed root"),
         })
     } else {
-        diagnostics.sort_by_key(|diagnostic| diagnostic.labels[0].location.start);
+        diagnostics.sort_by_key(|diagnostic| diagnostic.locs[0].start);
         Err(diagnostics)
     }
 }

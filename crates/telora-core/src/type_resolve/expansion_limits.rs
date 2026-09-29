@@ -54,14 +54,13 @@ impl Solver<'_> {
                 let mut diagnostic = Diagnostic {
                     severity: crate::source::Severity::Error,
                     message,
-                    labels: vec![],
-                    notes: vec![],
+                    locs: vec![],
                 };
                 if let Some(location) = location {
                     diagnostic = Diagnostic::error(diagnostic.message, location);
                 }
-                diagnostic.notes.push(
-                    "This is a static resource limit, not proof of infinite expansion.".into(),
+                diagnostic.message.push_str(
+                    "; This is a static resource limit, not proof of infinite expansion.",
                 );
                 self.mir.diagnostics.push(diagnostic);
                 self.expansion_exhausted = true;

@@ -211,8 +211,7 @@ pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
         mir.diagnostics.push(Diagnostic {
             severity: crate::source::Severity::Error,
             message,
-            labels: vec![],
-            notes: vec![],
+            locs: vec![],
         });
         return;
     }
@@ -355,11 +354,7 @@ pub fn resolve_with_options(mir: &mut Mir, options: crate::CompilerOptions) {
             {
                 let location = solver.mir.hir[node.index()].location;
                 if !solver.mir.diagnostics.iter().any(|diagnostic| {
-                    diagnostic.message == message
-                        && diagnostic
-                            .labels
-                            .iter()
-                            .any(|label| label.primary && label.location == location)
+                    diagnostic.message == message && diagnostic.locs.first() == Some(&location)
                 }) {
                     solver
                         .mir

@@ -105,7 +105,7 @@ fn independent_errors_accumulate_and_syntax_exhaustion_stops() {
     assert!(
         errors
             .windows(2)
-            .all(|p| p[0].labels[0].location.start <= p[1].labels[0].location.start)
+            .all(|p| p[0].locs[0].start <= p[1].locs[0].start)
     );
     let errors = parse_structure(
         id,

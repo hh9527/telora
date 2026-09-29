@@ -13,35 +13,28 @@ pub(super) unsafe fn export(errors: Vec<Diagnostic>, origins: &Origins, name: &s
         if index != 0 { json.push(','); summary.push('\n'); }
         summary.push_str(&error.message);
         let severity = match error.severity { Severity::Error => "Error", Severity::Warning => "Warning", Severity::Info => "Info" };
+        let mut message = error.message.clone();
+        if matches!(origins, Origins::Inherit(_)) {
+            for loc in &error.locs {
+                message.push_str(&alloc::format!("; input range (UTF-8 bytes): {}..{}", loc.start, loc.end));
+            }
+        }
         write!(&mut json, "{{\"severity\":\"{severity}\",\"message\":").unwrap();
-        crate::json_text::quoted(&mut json, &error.message).unwrap();
-        json.push_str(",\"labels\":[");
+        crate::json_text::quoted(&mut json, &message).unwrap();
+        json.push_str(",\"locs\":[");
         if let Origins::Source { id, .. } = origins {
-            for (index, label) in error.labels.iter().enumerate() {
+            for (index, loc) in error.locs.iter().enumerate() {
                 if index != 0 { json.push(','); }
                 let source = unsafe {
                     let span = crate::sources::telora_source_name(*id);
                     super::error_text(span)
                 };
-                json.push_str("{\"location\":{\"source\":");
+                json.push_str("{\"source\":");
                 crate::json_text::quoted(&mut json, source).unwrap();
-                let start = unsafe { crate::sources::position(*id, label.location.start) };
-                let end = unsafe { crate::sources::position(*id, label.location.end) };
-                write!(&mut json, ",\"start\":{{\"line\":{},\"offset\":{}}},\"end\":{{\"line\":{},\"offset\":{}}}}},\"message\":", start.0, start.1, end.0, end.1).unwrap();
-                crate::json_text::quoted(&mut json, &label.message).unwrap();
-                write!(&mut json, ",\"primary\":{}}}", label.primary).unwrap();
+                let start = unsafe { crate::sources::position(*id, loc.start) };
+                let end = unsafe { crate::sources::position(*id, loc.end) };
+                write!(&mut json, ",\"start\":{{\"line\":{},\"offset\":{}}},\"end\":{{\"line\":{},\"offset\":{}}}}}", start.0, start.1, end.0, end.1).unwrap();
             }
-        }
-        json.push_str("],\"notes\":[");
-        let mut notes = error.notes.clone();
-        if matches!(origins, Origins::Inherit(_)) {
-            for label in &error.labels {
-                notes.push(alloc::format!("input range (UTF-8 bytes): {}..{}; {}", label.location.start, label.location.end, label.message));
-            }
-        }
-        for (index, note) in notes.iter().enumerate() {
-            if index != 0 { json.push(','); }
-            crate::json_text::quoted(&mut json, note).unwrap();
         }
         json.push_str("]}");
     }

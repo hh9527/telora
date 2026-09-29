@@ -20,7 +20,7 @@ fn delimiter_recovery_preserves_following_declarations_and_missing_position() {
     assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
     let issue = &parsed.diagnostics[0];
     assert!(issue.message.contains(']'));
-    let location = issue.labels[0].location;
+    let location = issue.locs[0];
     assert_eq!(location.start as usize, text.find(')').unwrap());
     assert_eq!(location.start, location.end);
 }

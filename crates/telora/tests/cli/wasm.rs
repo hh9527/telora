@@ -264,7 +264,7 @@ fn wasm_check_preserves_warning_error_and_subject_labels() {
         assert_eq!(diagnostics[0]["severity"], "warning");
         assert_eq!(diagnostics[0]["message"], "checker initialized");
         assert_eq!(diagnostics[1]["message"], "positive required");
-        assert_eq!(diagnostics[1]["labels"].as_array().unwrap().len(), 2);
+        assert_eq!(diagnostics[1]["locs"].as_array().unwrap().len(), 2);
     }
     fs::remove_dir_all(cwd).unwrap();
 }

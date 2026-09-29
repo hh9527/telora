@@ -41,7 +41,7 @@ fn source_check_obeys_phase_boundaries_and_preserves_failure_location() {
         .filter(|record| record["message"] == "observed initializer failed")
         .collect::<Vec<_>>();
     assert_eq!(failures.len(), 1, "{records:?}");
-    assert_eq!(failures[0]["labels"][0]["location"]["line"], 1);
+    assert_eq!(failures[0]["locs"][0]["location"]["line"], 1);
     for (source, message, line) in [
         (
             &std::fs::read_to_string(concat!(
@@ -79,7 +79,7 @@ fn source_check_obeys_phase_boundaries_and_preserves_failure_location() {
             errors[0]["message"].as_str().unwrap().contains(message),
             "{records:?}"
         );
-        assert_eq!(errors[0]["labels"][0]["location"]["line"], line);
+        assert_eq!(errors[0]["locs"][0]["location"]["line"], line);
     }
     fs::write(
         cwd.join("src/main.telora"),
@@ -101,10 +101,11 @@ fn source_check_obeys_phase_boundaries_and_preserves_failure_location() {
         .iter()
         .find(|r| r["message"] == "computed message")
         .unwrap();
-    assert_eq!(diagnostic["labels"].as_array().unwrap().len(), 3);
-    assert_eq!(diagnostic["labels"][0]["location"]["line"], 4);
-    assert_eq!(diagnostic["labels"][1]["location"]["line"], 2);
-    assert_eq!(diagnostic["labels"][2]["location"]["line"], 3);
+    assert_eq!(diagnostic["locs"].as_array().unwrap().len(), 4);
+    assert_eq!(diagnostic["locs"][0]["location"]["line"], 4);
+    assert_eq!(diagnostic["locs"][1]["location"]["line"], 2);
+    assert_eq!(diagnostic["locs"][2]["location"]["line"], 3);
+    assert_eq!(diagnostic["locs"][3], diagnostic["locs"][1]);
     let help = telora(&cwd).args(["check", "--help"]).output().unwrap();
     assert!(!String::from_utf8(help.stdout).unwrap().contains("--native"));
     let help = telora(&cwd).args(["eval", "--help"]).output().unwrap();

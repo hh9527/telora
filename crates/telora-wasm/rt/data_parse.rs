@@ -56,7 +56,7 @@ fn retained_bytes(bytes: &[u8]) -> (u32, u32) {
 unsafe fn export_error(message: String) -> u32 {
     let diagnostic = telora_data::source::Diagnostic {
         severity: telora_data::source::Severity::Error, message,
-        labels: alloc::vec::Vec::new(), notes: alloc::vec::Vec::new(),
+        locs: alloc::vec::Vec::new(),
     };
     unsafe { errors::export(alloc::vec![diagnostic], &Origins::Inherit(telora_wasm_shared::source_range::SourceRange::NONE), "") }
 }

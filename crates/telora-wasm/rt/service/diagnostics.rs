@@ -1,5 +1,5 @@
 //! Initialization diagnostics expand inline byte ranges inside Guest.
-use alloc::{format, string::String, vec::Vec};
+use alloc::string::String;
 use core::fmt::Write;
 use crate::{abi::*, json_text::quoted, tables::telora_table_get, values::word};
 
@@ -8,44 +8,45 @@ unsafe fn span(pointer: u32) -> &'static str {
         crate::heap::ptr::<u8>(word(pointer, 0)), word(pointer, 4) as usize)).unwrap() }
 }
 
-unsafe fn label(output: &mut String, id: u32, message: &str, primary: bool) {
+unsafe fn location(output: &mut String, id: u32) {
     unsafe {
         let record = crate::sources::telora_source_range(id);
-        output.push_str("{\"location\":{\"source\":");
+        output.push_str("{\"source\":");
         quoted(output, span(crate::sources::telora_source_name(word(record, 0)))).unwrap();
-        write!(output, ",\"start\":{{\"line\":{},\"offset\":{}}},\"end\":{{\"line\":{},\"offset\":{}}}}},\"message\":",
+        write!(output, ",\"start\":{{\"line\":{},\"offset\":{}}},\"end\":{{\"line\":{},\"offset\":{}}}}}",
             word(record, 4), word(record, 8), word(record, 12), word(record, 16)).unwrap();
-        quoted(output, message).unwrap();
-        write!(output, ",\"primary\":{primary}}}").unwrap();
     }
 }
 
 unsafe fn event(output: &mut String, pointer: u32) {
     unsafe {
-        let warning = word(pointer, DIAG_WARNING) != 0;
-        output.push_str(if warning { "{\"severity\":\"Warning\",\"message\":" }
-            else { "{\"severity\":\"Error\",\"message\":" });
+        let severity = match word(pointer, DIAG_SEVERITY) {
+            0 => "Error",
+            1 => "Warning",
+            2 => "Info",
+            _ => "Error",
+        };
+        output.push_str("{\"severity\":");
+        quoted(output, severity).unwrap();
+        output.push_str(",\"message\":");
         let code = word(pointer, DIAG_CODE);
         let message = String::from(if code == 9 { crate::text::text(word(pointer, DIAG_MESSAGE)) }
             else { telora_wasm_shared::diagnostics::error_message(code) });
         quoted(output, &message).unwrap();
-        output.push_str(",\"labels\":[");
+        output.push_str(",\"locs\":[");
         let origin: u64 = crate::heap::read(pointer);
-        let mut seen = Vec::new();
         if origin != 0 {
-            label(output, pointer, &message, true);
-            seen.push(origin);
+            location(output, pointer);
         }
         let subjects = word(pointer, DIAG_SUBJECTS);
         for index in 0..word(pointer, DIAG_COUNT) {
             let pointer = subjects + index * LOC_BYTES;
             let id: u64 = crate::heap::read(pointer);
-            if id == 0 || seen.contains(&id) { continue; }
-            if !seen.is_empty() { output.push(','); }
-            label(output, pointer, &format!("subject {} originated here", index + 1), false);
-            seen.push(id);
+            if id == 0 || origin == 0 { continue; }
+            output.push(',');
+            location(output, pointer);
         }
-        output.push_str("],\"notes\":[]}");
+        output.push_str("]}");
     }
 }
 
@@ -65,7 +66,7 @@ pub unsafe extern "C" fn get(output: u32, cap: u32, result: u32) {
             if count != 0 || index != 0 { json.push(','); }
             json.push_str("{\"severity\":\"Error\",\"message\":");
             quoted(&mut json, message).unwrap();
-            json.push_str(",\"labels\":[],\"notes\":[]}");
+            json.push_str(",\"locs\":[]}");
         }
         let has_errors = count != 0 || !super::service().errors.is_empty();
         for (index, diagnostics) in super::service().parse_errors.iter().enumerate() {

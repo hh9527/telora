@@ -11,16 +11,13 @@ pub def answer: Value = match captured {
     Err(reports) => Value::Array(array::map(reports, fn(report) {
         Value::Object({
             message: Value::String(report.message),
-            labels: Value::Array(array::map(report.labels, fn(label) {
+            locs: Value::Array(array::map(report.locs, fn(loc) {
                 Value::Object({
-                    source: Value::String(label.location.source),
-                    start: Value::Object({line: Value::Int(label.location.start.line), offset: Value::Int(label.location.start.offset)}),
-                    end: Value::Object({line: Value::Int(label.location.end.line), offset: Value::Int(label.location.end.offset)}),
-                    message: Value::String(label.message),
-                    primary: if label.primary { Value::True } else { Value::False },
+                    source: Value::String(loc.source),
+                    start: Value::Object({line: Value::Int(loc.start.line), offset: Value::Int(loc.start.offset)}),
+                    end: Value::Object({line: Value::Int(loc.end.line), offset: Value::Int(loc.end.offset)}),
                 })
             })),
-            notes: Value::Array(array::map(report.notes, fn(note) { Value::String(note) })),
         })
     })),
     Ok(_) => Value::None,

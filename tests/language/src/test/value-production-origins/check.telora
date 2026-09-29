@@ -15,27 +15,33 @@ def line: Fn(Array(Value), Int) -> Int = fn(labels, index) {
     }
 };
 def verify: Fn(Value) -> Bool = fn(record) {
-    let labels = match support::record_field(record, "labels") {
+    let labels = match support::record_field(record, "locs") {
         Some(Value::Array(labels)) => labels,
         _ => [],
     };
     # Every subject here was produced in this module, never a native declaration.
     array::all(labels, fn(label) { support::string_field_contains(label, "source", "value-production-origins/testee") })
         && match support::record_field(record, "message") {
-            # Repeated locations are deduplicated: all forwards collapse to the input.
-            Some(Value::String("forwarded")) => array::length(labels) == 3
-                && line(labels, 2) == line(labels, 1) + 2,
-            Some(Value::String("materialized")) => array::length(labels) == 5
-                && line(labels, 2) == line(labels, 1) + 1
-                && line(labels, 4) == line(labels, 3) + 1,
-            Some(Value::String("computed")) => array::length(labels) == 6
+            # Every argument keeps its own position, including repeated origins.
+            Some(Value::String("forwarded")) => array::length(labels) == 9
+                && line(labels, 2) == line(labels, 1)
+                && line(labels, 8) == line(labels, 1) + 2,
+            Some(Value::String("materialized")) => array::length(labels) == 6
                 && line(labels, 2) == line(labels, 1) + 1
                 && line(labels, 4) == line(labels, 3) + 1
-                && line(labels, 5) == line(labels, 3) + 2,
-            Some(Value::String("native")) => array::length(labels) == 4
+                && line(labels, 5) == line(labels, 3),
+            Some(Value::String("computed")) => array::length(labels) == 7
                 && line(labels, 2) == line(labels, 1) + 1
-                && line(labels, 3) == 8,
-            Some(Value::String("parsed")) => array::length(labels) == 2,
+                && line(labels, 4) == line(labels, 3) + 1
+                && line(labels, 5) == line(labels, 4) + 1
+                && line(labels, 6) == line(labels, 5),
+            Some(Value::String("native")) => array::length(labels) == 6
+                && line(labels, 2) == line(labels, 1) + 1
+                && line(labels, 3) == line(labels, 2)
+                && line(labels, 4) == line(labels, 2)
+                && line(labels, 5) == 8,
+            Some(Value::String("parsed")) => array::length(labels) == 3
+                && line(labels, 2) == line(labels, 1),
             _ => False,
         }
 };

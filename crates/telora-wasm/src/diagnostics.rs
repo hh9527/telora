@@ -26,7 +26,7 @@ impl Emitter<'_> {
         let packet = self.alloc(DIAGNOSTIC_BYTES);
         let loc = self.mir.hir[node.index()].location;
         self.store_location(packet, loc);
-        for (offset, word) in [(DIAG_CODE, ERROR_USER), (DIAG_WARNING, u32::from(warning))] {
+        for (offset, word) in [(DIAG_CODE, ERROR_USER), (DIAG_SEVERITY, u32::from(warning))] {
             self.store32(packet, offset, word);
         }
         self.store32(

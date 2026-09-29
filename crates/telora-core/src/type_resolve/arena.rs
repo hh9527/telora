@@ -177,23 +177,18 @@ impl Solver<'_> {
             self.mir.diagnostics.push(Diagnostic {
                 severity: crate::source::Severity::Error,
                 message,
-                labels: vec![],
-                notes: vec![],
+                locs: vec![],
             });
         }
         for annotation in contracts {
             let location = self.mir.hir[annotation.index()].location;
             let diagnostic = self.mir.diagnostics.last_mut().unwrap();
-            if !diagnostic
-                .labels
-                .iter()
-                .any(|label| label.location == location)
-            {
-                diagnostic.labels.push(crate::source::Label {
-                    location,
-                    message: "type contract declared here".into(),
-                    primary: false,
-                });
+            if !diagnostic.locs.contains(&location) {
+                diagnostic.message.push_str(&format!(
+                    "; type contract declared here (locs[{}])",
+                    diagnostic.locs.len()
+                ));
+                diagnostic.locs.push(location);
             }
         }
         id
@@ -347,13 +342,7 @@ impl Solver<'_> {
             .mir
             .diagnostics
             .iter()
-            .flat_map(|diagnostic| {
-                diagnostic
-                    .labels
-                    .iter()
-                    .filter(|label| label.primary)
-                    .map(|label| label.location)
-            })
+            .flat_map(|diagnostic| diagnostic.locs.first().copied())
             .collect::<BTreeSet<_>>();
         for (index, required) in self.mir.required_types.iter().enumerate() {
             if *required && self.mir.ty_slots[index] == TypeState::Unknown {

@@ -151,7 +151,7 @@ fn transform(service: &mut TransformSession, input: &[u8]) -> Vec<u8> {
 fn failure_bytes(message: &str) -> Vec<u8> {
     serde_json::to_vec(
         &serde_json::json!({"schema":"telora.service/v1","ok":null,"error":true,"diagnostics":[{
-            "severity":"Error", "message":message, "labels":[], "notes":[]
+            "severity":"Error", "message":message, "locs":[]
         }]}),
     )
     .expect("serializable service failure")
@@ -161,6 +161,6 @@ fn emit_diagnostic(diagnostic: &serde_json::Value) -> Result<(), String> {
     crate::emit_stderr(
         serde_json::json!({"schema":"telora.execution/v1", "record":"diagnostic",
         "severity":diagnostic["severity"], "message":diagnostic["message"],
-        "labels":diagnostic["labels"], "notes":diagnostic["notes"]}),
+        "locs":diagnostic["locs"]}),
     )
 }

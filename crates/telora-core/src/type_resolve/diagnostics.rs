@@ -14,13 +14,7 @@ impl Solver<'_> {
             .mir
             .diagnostics
             .iter()
-            .flat_map(|diagnostic| {
-                diagnostic
-                    .labels
-                    .iter()
-                    .filter(|label| label.primary)
-                    .map(|label| label.location)
-            })
+            .flat_map(|diagnostic| diagnostic.locs.first().copied())
             .collect::<BTreeSet<_>>();
         for task in &self.tasks {
             let (node, operand, message) = match task {

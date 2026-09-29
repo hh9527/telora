@@ -64,7 +64,7 @@ fn records_project_and_update_closed_fields_while_dicts_merge_sorted_columns() {
         (8, "31"),
     ] {
         assert_eq!(
-            diagnostic_point(&result[index]["labels"][1]["location"]["start"]),
+            diagnostic_point(&result[index]["locs"][1]["start"]),
             point(source, source.find(text).unwrap()),
             "{text}"
         );
@@ -96,5 +96,9 @@ fn records_project_and_update_closed_fields_while_dicts_merge_sorted_columns() {
             "last"
         ]
     );
-    assert!(diagnostics.iter().all(|d| d.warning));
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.severity == telora_core::source::Severity::Warning)
+    );
 }

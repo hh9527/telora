@@ -10,10 +10,9 @@ pub def check: Fn(Value) -> Value = fn(actual) {
                     support::string_field_equals(record, "record", "diagnostic")
                         && support::string_field_equals(record, "test", "propagated")
                         && support::string_field_contains(record, "message", "nonnegative required")
-                        && match support::record_field(record, "labels") {
+                        && match support::record_field(record, "locs") {
                             Some(Value::Array(labels)) => array::any(labels, fn(label) {
                                 support::string_field_contains(label, "source", "check-result-provenance/testee/provider")
-                                    && support::string_field_equals(label, "message", "subject 1 originated here")
                                     && match support::record_field(label, "location") {
                                         Some(location) => support::record_field(location, "line") == Some(Value::Int(3)),
                                         _ => False,

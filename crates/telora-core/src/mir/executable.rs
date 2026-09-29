@@ -73,8 +73,7 @@ impl<'a> SealedMir<'a> {
             vec![Diagnostic {
                 severity: crate::source::Severity::Error,
                 message: message.into(),
-                labels: vec![],
-                notes: vec![],
+                locs: vec![],
             }]
         };
         let symbol = mir
@@ -181,8 +180,7 @@ impl<'a> SealedMir<'a> {
             return Err(vec![Diagnostic {
                 severity: crate::source::Severity::Error,
                 message: "module execution plan has no concrete root".into(),
-                labels: vec![],
-                notes: vec![],
+                locs: vec![],
             }]);
         };
         for (id, instance) in mir.generic_instances() {
@@ -397,8 +395,7 @@ impl SealedMir<'_> {
                 diagnostics.push(Diagnostic {
                     severity: crate::source::Severity::Error,
                     message: "execution root has no HIR node".into(),
-                    labels: vec![],
-                    notes: vec![],
+                    locs: vec![],
                 });
                 continue;
             };

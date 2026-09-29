@@ -31,13 +31,13 @@ fn reports_precise_duplicate_and_number_ranges() {
     let mut sources = SourceDatabase::default();
     let duplicate = sources.add("duplicate.json", r#"{"a":1,"a":2}"#);
     let parsed = validate_json_registered(&sources, duplicate).unwrap_err();
-    assert_eq!(parsed[0].labels[0].location.range(), 7..10);
-    assert_eq!(parsed[0].labels[1].location.range(), 1..4);
+    assert_eq!(parsed[0].locs[0].range(), 7..10);
+    assert_eq!(parsed[0].locs[1].range(), 1..4);
 
     let large = sources.add("large.json", "9223372036854775808");
     let parsed = validate_json_registered(&sources, large).unwrap_err();
     assert!(parsed[0].message.contains("outside the i64 range"));
-    assert_eq!(parsed[0].labels[0].location.range(), 0..19);
+    assert_eq!(parsed[0].locs[0].range(), 0..19);
 
     let non_finite = sources.add("non-finite.json", "1e9999");
     let parsed = validate_json_registered(&sources, non_finite).unwrap_err();

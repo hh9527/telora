@@ -263,7 +263,7 @@ fn reports_invalid_and_unterminated_string_parts() {
     let error = |text| parse(text).0.diagnostics.into_iter().next().unwrap();
     let invalid = error(r#""bad\q""#);
     assert!(invalid.message.contains("unsupported string escape"));
-    assert_eq!(invalid.labels[0].location.start, 4);
+    assert_eq!(invalid.locs[0].start, 4);
     assert!(error(r#""unfinished"#).message.contains("expected"));
     assert!(error(r#""\xff""#).message.contains("must be ASCII"));
     assert!(error(r#""\u{d800}""#).message.contains("Unicode scalar"));

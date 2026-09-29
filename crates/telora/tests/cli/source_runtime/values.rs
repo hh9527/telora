@@ -71,7 +71,7 @@ fn source_warnings_do_not_block_publication_or_entry_output() {
         .collect::<Vec<_>>();
     assert_eq!(warnings.len(), 1, "{records:?}");
     assert_eq!(warnings[0]["message"], "initialization warning");
-    assert_eq!(warnings[0]["labels"].as_array().unwrap().len(), 2);
+    assert_eq!(warnings[0]["locs"].as_array().unwrap().len(), 2);
     for (command, _export, expected) in [("eval", "answer", 42), ("run", "main", 43)] {
         let output = execute_value(
             &cwd,

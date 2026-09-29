@@ -37,7 +37,7 @@ fn collects_independent_diagnostics_but_resource_failure_stops_immediately() {
         .iter()
         .filter(|error| error.message.contains("comma"))
     {
-        assert_eq!(&input[error.labels[0].location.range()], ",");
+        assert_eq!(&input[error.locs[0].range()], ",");
     }
     let errors = super::super::parse_structure(
         source,

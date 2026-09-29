@@ -572,12 +572,12 @@ async fn publish_diagnostics(state: &Rc<RefCell<State>>, snapshot: &Snapshot) {
             .diagnostics
             .iter()
             .filter_map(|diagnostic| {
-                let primary = diagnostic.labels.iter().find(|label| label.primary)?;
-                if primary.location.source != file.id() {
+                let primary = *diagnostic.locs.first()?;
+                if primary.source != file.id() {
                     return None;
                 }
                 Some(lsp::Diagnostic {
-                    range: to_lsp_range(snapshot, primary.location, encoding)?,
+                    range: to_lsp_range(snapshot, primary, encoding)?,
                     severity: Some(match diagnostic.severity {
                         telora_core::source::Severity::Error => lsp::DiagnosticSeverity::ERROR,
                         telora_core::source::Severity::Warning => lsp::DiagnosticSeverity::WARNING,
@@ -586,13 +586,13 @@ async fn publish_diagnostics(state: &Rc<RefCell<State>>, snapshot: &Snapshot) {
                     message: diagnostic.message.clone(),
                     related_information: Some(
                         diagnostic
-                            .labels
+                            .locs
                             .iter()
-                            .filter(|label| !label.primary)
-                            .filter_map(|label| {
+                            .skip(1)
+                            .filter_map(|loc| {
                                 Some(lsp::DiagnosticRelatedInformation {
-                                    location: to_location(snapshot, label.location, encoding)?,
-                                    message: label.message.clone(),
+                                    location: to_location(snapshot, *loc, encoding)?,
+                                    message: "related diagnostic location".into(),
                                 })
                             })
                             .collect(),

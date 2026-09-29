@@ -365,22 +365,20 @@ fn rejected_uses_preserve_shared_contracts_and_independent_diagnostics() {
         );
         assert_eq!(mir.type_conflicts.len(), 2, "{:?}", mir.diagnostics);
         assert_eq!(mir.diagnostics.len(), 2, "{:?}", mir.diagnostics);
-        assert!(mir.diagnostics.iter().all(|d| d.labels.iter().any(|label| {
-            label.primary
-                && mir
-                    .sources
-                    .get(label.location.source)
-                    .name
-                    .ends_with("/bad")
-        })));
+        assert!(
+            mir.diagnostics.iter().all(|d| mir
+                .sources
+                .get(d.locs[0].source)
+                .name
+                .ends_with("/bad"))
+        );
         assert!(
             mir.diagnostics
                 .iter()
-                .all(|d| d.labels.iter().any(|label| !label.primary
-                    && label.message == "type contract declared here"
-                    && mir
+                .all(|d| d.message.contains("type contract declared here")
+                    && d.locs[1..].iter().any(|loc| mir
                         .sources
-                        .get(label.location.source)
+                        .get(loc.source)
                         .name
                         .ends_with("/shared"))),
             "{:?}",

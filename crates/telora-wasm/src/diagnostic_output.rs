@@ -3,25 +3,43 @@ use crate::{abi::*, artifact::Manifest, output::Output, session::Session};
 
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
-    pub warning: bool,
-    pub origin: [u32; 5],
+    pub severity: telora_core::source::Severity,
     pub message: String,
-    pub subjects: Vec<[u32; 5]>,
+    pub locs: Vec<[u32; 5]>,
     pub initialization: Option<crate::artifact::InitializationRoot>,
 }
 
 impl Diagnostic {
     pub fn render(&self, manifest: &Manifest) -> String {
-        let loc = telora_core::source::SourceCoordinates(self.origin);
-        let (source, start, end) = (loc.source(), loc.start(), loc.end());
-        let file = manifest.sources.iter().find(|s| s.id == source);
-        match file {
-            Some(file) => {
-                let (line, column) = file.position(start);
-                format!("{}:{line}:{column}: {}", file.name, self.message)
-            }
-            None => format!("<unknown>:{start}..{end}: {}", self.message),
+        let mut rendered = self.message.clone();
+        if let Some(&primary) = self.locs.first() {
+            let loc = telora_core::source::SourceCoordinates(primary);
+            let (source, start, end) = (loc.source(), loc.start(), loc.end());
+            let file = manifest.sources.iter().find(|s| s.id == source);
+            rendered = match file {
+                Some(file) => {
+                    let (line, column) = file.position(start);
+                    format!("{}:{line}:{column}: {}", file.name, self.message)
+                }
+                None => format!("<unknown>:{start}..{end}: {}", self.message),
+            };
         }
+        for (index, &words) in self.locs.iter().enumerate().skip(1) {
+            let loc = telora_core::source::SourceCoordinates(words);
+            let file = manifest.sources.iter().find(|s| s.id == loc.source());
+            match file {
+                Some(file) => {
+                    let (line, column) = file.position(loc.start());
+                    rendered.push_str(&format!("\n  locs[{index}] {}:{line}:{column}", file.name));
+                }
+                None => rendered.push_str(&format!(
+                    "\n  locs[{index}] <unknown>:{}..{}",
+                    loc.start(),
+                    loc.end()
+                )),
+            }
+        }
+        rendered
     }
 }
 
@@ -84,22 +102,26 @@ impl Session {
             } else {
                 error_message(code).into()
             };
-            let mut subjects = vec![];
+            let mut locs = if origin[0] == 0 { vec![] } else { vec![origin] };
             let base = output.word(pointer + DIAG_SUBJECTS)? as u64;
             let count = output.word(pointer + DIAG_COUNT)? as u64;
             output.bytes(base, count * u64::from(LOC_BYTES))?;
             for index in 0..count {
                 let offset = base + index * u64::from(LOC_BYTES);
                 let subject = output.location_words(offset)?;
-                if subject[0] != 0 && !subjects.contains(&subject) {
-                    subjects.push(subject);
+                if subject[0] != 0 && origin[0] != 0 {
+                    locs.push(subject);
                 }
             }
             diagnostics.push(Diagnostic {
-                warning: output.word(pointer + DIAG_WARNING)? != 0,
-                origin,
+                severity: match output.word(pointer + DIAG_SEVERITY)? {
+                    0 => telora_core::source::Severity::Error,
+                    1 => telora_core::source::Severity::Warning,
+                    2 => telora_core::source::Severity::Info,
+                    other => return Err(format!("Wasm: invalid diagnostic severity {other}")),
+                },
                 message,
-                subjects,
+                locs,
                 initialization: match output.word(pointer + DIAG_ROOT)? {
                     0 => None,
                     index => Some(

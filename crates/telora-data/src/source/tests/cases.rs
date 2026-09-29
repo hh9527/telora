@@ -35,7 +35,7 @@ fn resolves_utf8_byte_offsets_to_character_columns() {
 }
 
 #[test]
-fn validation_diagnostic_can_label_data_and_rule_sources() {
+fn validation_diagnostic_links_data_and_rule_sources() {
     let mut sources = SourceDatabase::default();
     let data = sources.add("user.json", "{\"age\":\"old\"}");
     let rule = sources.add("schema.telora", "type User = Int;");
@@ -49,6 +49,6 @@ fn validation_diagnostic_can_label_data_and_rule_sources() {
     );
     assert_eq!(
         sources.render(&diagnostic),
-        "user.json:1:8: expected Int\n  schema.telora:1:13: required by User"
+        "user.json:1:8: expected Int; required by User (locs[1])\n  locs[1] schema.telora:1:13"
     );
 }

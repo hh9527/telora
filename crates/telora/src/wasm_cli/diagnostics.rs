@@ -28,11 +28,8 @@ pub(super) fn parsed(
             Some("Info") => Severity::Info,
             _ => return Err("invalid diagnostic severity".into()),
         };
-        for label in event["labels"]
-            .as_array()
-            .ok_or("invalid diagnostic labels")?
-        {
-            let range = &label["location"];
+        for loc in event["locs"].as_array().ok_or("invalid diagnostic locs")? {
+            let range = loc;
             let name = text(&range["source"])?;
             let file = sources
                 .files()
@@ -45,21 +42,10 @@ pub(super) fn parsed(
                 number(&range["end"]["line"])?,
                 number(&range["end"]["offset"])?,
             ]);
-            diagnostic.labels.push(telora_core::source::Label {
-                location: file
-                    .byte_location(coordinates)
+            diagnostic.locs.push(
+                file.byte_location(coordinates)
                     .ok_or("invalid diagnostic range")?,
-                message: text(&label["message"])?,
-                primary: label["primary"]
-                    .as_bool()
-                    .ok_or("invalid diagnostic label")?,
-            });
-        }
-        for note in event["notes"]
-            .as_array()
-            .ok_or("invalid diagnostic notes")?
-        {
-            diagnostic.notes.push(text(note)?);
+            );
         }
         result.push(diagnostic);
     }
@@ -97,22 +83,14 @@ pub(super) fn convert(
     events
         .into_iter()
         .map(|event| {
-            let mut diagnostic = match location(event.origin) {
+            let mut diagnostic = match event.locs.first().and_then(|loc| location(*loc)) {
                 Some(loc) => Diagnostic::error(&event.message, loc),
                 None => super::error(&event.message),
             };
-            diagnostic.severity = if event.warning {
-                Severity::Warning
-            } else {
-                Severity::Error
-            };
-            for (index, subject) in event.subjects.into_iter().enumerate() {
-                if subject == event.origin {
-                    continue;
-                }
+            diagnostic.severity = event.severity;
+            for subject in event.locs.into_iter().skip(1) {
                 if let Some(loc) = location(subject) {
-                    diagnostic = diagnostic
-                        .with_secondary(format!("subject {} originated here", index + 1), loc);
+                    diagnostic.locs.push(loc);
                 }
             }
             diagnostic

@@ -31,7 +31,7 @@ fn load_session(
             let _ = crate::emit_stderr(serde_json::json!({
                 "schema": "telora.execution/v1", "record": "diagnostic",
                 "severity": "info", "code": "execution-usage",
-                "message": "Wasm execution resource usage", "labels": [], "notes": [],
+                "message": "Wasm execution resource usage", "locs": [],
                 "usage": {
                     "fuel": {"limit": usage.fuel_budget,
                         "consumed": usage.fuel_budget.saturating_sub(usage.fuel_remaining),
@@ -48,8 +48,7 @@ pub(crate) fn error(message: impl Into<String>) -> Diagnostic {
     Diagnostic {
         severity: Severity::Error,
         message: message.into(),
-        labels: vec![],
-        notes: vec![],
+        locs: vec![],
     }
 }
 
@@ -204,23 +203,19 @@ pub(crate) fn check_diagnostics(
                     .find(|file| file.id().get() == coordinates.source())
                     .and_then(|file| file.byte_location(coordinates))
                 {
-                    diagnostic.labels.push(telora_core::source::Label {
-                        location,
-                        message: match root.name {
-                            Some(name) => format!("while initializing {name}"),
-                            None => format!("while initializing MIR node {}", root.node),
-                        },
-                        primary: true,
-                    });
+                    diagnostic.locs.push(location);
                 }
-                diagnostic.notes.push(format!(
-                    "initialization root: {}#{}",
-                    root.module, root.node
-                ));
+                let root_name = match root.name {
+                    Some(name) => format!("{name} ({}#{})", root.module, root.node),
+                    None => format!("{}#{}", root.module, root.node),
+                };
+                diagnostic
+                    .message
+                    .push_str(&format!("; initialization root: {root_name}"));
             }
             if let Ok(usage) = session.arena_usage() {
-                diagnostic.notes.push(format!(
-                    "language arenas: words={} bytes, content={} bytes",
+                diagnostic.message.push_str(&format!(
+                    "; language arenas: words={} bytes, content={} bytes",
                     usage.words, usage.content
                 ));
             }

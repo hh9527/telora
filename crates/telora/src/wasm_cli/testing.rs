@@ -242,10 +242,10 @@ pub(crate) fn run(
                 Some(None) => language_failed,
                 Some(Some(text)) => {
                     language_failed
-                        && execution
-                            .diagnostics
-                            .iter()
-                            .any(|d| !d.warning && d.message.contains(text))
+                        && execution.diagnostics.iter().any(|d| {
+                            d.severity == telora_core::source::Severity::Error
+                                && d.message.contains(text)
+                        })
                 }
             };
         let diagnostics = super::diagnostics::convert(execution.diagnostics, fixtures.sources);

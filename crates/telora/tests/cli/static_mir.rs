@@ -591,7 +591,7 @@ fn static_mir_generic_native_signatures_determine_check_outcome() {
         if expected_code == 1 {
             assert!(summary["type_conflicts"].as_u64().unwrap() > 0);
             assert!(records.iter().any(|r| r["record"] == "diagnostic"
-                && r["labels"].as_array().is_some_and(|l| !l.is_empty())));
+                && r["locs"].as_array().is_some_and(|l| !l.is_empty())));
         }
     }
     fs::remove_dir_all(cwd).unwrap();
@@ -728,7 +728,7 @@ pub def bad: Int = "wrong";
         assert!(summary["type_conflicts"].as_u64().unwrap() > 0);
         assert!(!String::from_utf8_lossy(&output.stdout).contains("division by zero"));
         assert!(!records.iter().any(|r| {
-            r["labels"]
+            r["locs"]
                 .as_array()
                 .is_some_and(|labels| labels.iter().any(|l| l["source"] == "fixture/data.json"))
         }));

@@ -101,10 +101,8 @@ fn conflicts_render_both_type_shapes_before_poisoning_the_slots() {
     assert!(conflict.message.contains("Bool"), "{}", conflict.message);
     assert!(!conflict.message.contains("SymbolId"));
     assert!(mir.diagnostics.iter().any(|d| {
-        d.message == conflict.message
-            && d.labels
-                .iter()
-                .any(|label| Some(label.location) == conflict.location)
+        d.message.starts_with(&conflict.message)
+            && d.locs.iter().any(|loc| Some(*loc) == conflict.location)
     }));
     assert!(matches!(
         symbol_type(&mir, "independent"),

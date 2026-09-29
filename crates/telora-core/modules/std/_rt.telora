@@ -2,23 +2,21 @@ type Severity = enum {Error, Warning, Info};
 # start/end: zero-based line and UTF-8 byte offset; end is exclusive.
 type SourcePoint = struct {line: Int, offset: Int};
 type SourceRange = struct {source: String, start: SourcePoint, end: SourcePoint};
-type Label = struct {location: SourceRange, message: String, primary: Bool};
 type Diagnostic = struct {
     severity: Severity,
     message: String,
-    labels: Array(Label),
-    notes: Array(String),
+    locs: Array(SourceRange),
 };
 
 native call_with_diagnostics:
-    for(A, R) Fn(Fn(A) -> R, A, TypeOf(Diagnostic), TypeOf(Severity), TypeOf(Label), TypeOf(SourceRange))
+    for(A, R) Fn(Fn(A) -> R, A, TypeOf(Diagnostic), TypeOf(Severity), TypeOf(SourceRange))
         -> Result(Tuple([R, Array(Diagnostic)]), Array(Diagnostic));
 
 def with_diagnostics:
     for(A, R) Fn(Fn(A) -> R)
         -> Fn(A) -> Result(Tuple([R, Array(Diagnostic)]), Array(Diagnostic)) =
-    fn(callable) { fn(argument) { call_with_diagnostics(callable, argument, (Diagnostic).type, (Severity).type, (Label).type, (SourceRange).type) } };
+    fn(callable) { fn(argument) { call_with_diagnostics(callable, argument, (Diagnostic).type, (Severity).type, (SourceRange).type) } };
 
 native service_reply: Fn(String, Bool, Array(Diagnostic)) -> String;
 
-pub use self::{Severity, SourcePoint, SourceRange, Label, Diagnostic, with_diagnostics, service_reply};
+pub use self::{Severity, SourcePoint, SourceRange, Diagnostic, with_diagnostics, service_reply};

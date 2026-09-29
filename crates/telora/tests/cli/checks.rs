@@ -31,12 +31,12 @@ fn initialization_diagnostic_separates_rule_subject_and_triggering_root() {
     assert_eq!(root["name"], "wrong");
     assert!(root["symbol"].as_u64().is_some() && root["node"].as_u64().is_some());
     assert!(
-        error["labels"]
+        error["locs"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|label| label["primary"] == false
-                && label["source"].as_str().unwrap().ends_with("/bad"))
+            .skip(1)
+            .any(|loc| loc["source"].as_str().unwrap().ends_with("/bad"))
     );
     assert_eq!(records.last().unwrap()["status"], "error");
     fs::remove_dir_all(cwd).unwrap();

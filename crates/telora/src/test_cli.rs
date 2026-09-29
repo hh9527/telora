@@ -165,26 +165,26 @@ fn emit_report(
             telora_core::source::Severity::Warning => "warning",
             telora_core::source::Severity::Info => "info",
         };
-        let labels = diagnostic
-            .labels
+        let locs = diagnostic
+            .locs
             .iter()
-            .map(|label| {
-                let source = sources.get(label.location.source);
-                let start = source.utf8_position(label.location.start);
-                let end = source.utf8_position(label.location.end);
+            .map(|loc| {
+                let source = sources.get(loc.source);
+                let start = source.utf8_position(loc.start);
+                let end = source.utf8_position(loc.end);
                 json!({"source": source.name.as_ref(), "location": {
-                "line": start.line + 1, "column": start.character,
-                "end_line": end.line + 1, "end_column": end.character,
-            }, "message": label.message, "primary": label.primary})
+                    "line": start.line + 1, "column": start.character,
+                    "end_line": end.line + 1, "end_column": end.character,
+                }})
             })
             .collect::<Vec<_>>();
         json!({"schema": "telora.test/v2", "record": "diagnostic", "module": module,
-            "severity": severity, "message": diagnostic.message, "labels": labels, "notes": diagnostic.notes})
+            "severity": severity, "message": diagnostic.message, "locs": locs})
     };
     for message in warnings {
         crate::emit(json!({"schema": "telora.test/v2", "record": "diagnostic",
             "module": module, "severity": "warning", "message": message,
-            "labels": [], "notes": []}))?;
+            "locs": []}))?;
     }
     for diagnostic in &outcome.diagnostics {
         crate::emit(diagnostic_record(diagnostic))?;

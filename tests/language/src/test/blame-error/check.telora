@@ -5,20 +5,20 @@ use std::value::{Value};
 pub def check: Fn(Value) -> Value = fn(actual) {
     match support::record_field(actual, "stdout") {
         Some(Value::Array(records)) => {
-            let located = fn(message, line, column) {
+            let located = fn(index, line, column) {
                 array::any(records, fn(record) {
                     support::string_field_equals(record, "record", "diagnostic")
                         && support::string_field_equals(record, "test", "source")
-                        && match support::record_field(record, "labels") {
-                            Some(Value::Array(labels)) => array::any(labels, fn(label) {
+                        && match support::record_field(record, "locs") {
+                            Some(Value::Array(labels)) => array::length(labels) > index && {
+                                let label = labels[index];
                                 support::string_field_contains(label, "source", "blame-error/testee/provider")
-                                    && support::string_field_equals(label, "message", message)
                                     && match support::record_field(label, "location") {
                                         Some(location) => support::record_field(location, "line") == Some(Value::Int(line))
                                             && support::record_field(location, "column") == Some(Value::Int(column)),
                                         _ => False,
                                     }
-                            }),
+                            },
                             _ => False,
                         }
                 })
@@ -30,8 +30,8 @@ pub def check: Fn(Value) -> Value = fn(actual) {
                 && array::length(array::filter(records, fn(record) {
                     support::string_field_equals(record, "severity", "warning")
                 })) == 2
-                && located("subject 1 originated here", 3, 21)
-                && located("subject 2 originated here", 4, 25)
+                && located(1, 3, 21)
+                && located(2, 4, 25)
                 && array::any(records, fn(record) {
                     support::string_field_equals(record, "record", "summary")
                         && support::record_field(record, "passed") == Some(Value::Int(3))

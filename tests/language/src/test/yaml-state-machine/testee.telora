@@ -101,7 +101,7 @@ pub def shared_decoding_and_trimmed_flow: test::Test = test::should_ok(fn() {
 
 pub def multiple_semantic_errors: test::Test = test::should_fail_with(fn() {
     yaml::parse("a: 9223372036854775808\n\"\\u0061\": 1e999\nnested: {x: 0xZZ, 'x': .inf}").unwrap!()
-}, "YAML integer is outside the i64 range\nduplicate YAML key \"a\"\nYAML Float must be finite\ninvalid YAML integer\nduplicate YAML key \"x\"\nYAML Float must be finite");
+}, "YAML integer is outside the i64 range\nduplicate YAML key \"a\"; first defined here (locs[1])\nYAML Float must be finite\ninvalid YAML integer\nduplicate YAML key \"x\"; first defined here (locs[1])\nYAML Float must be finite");
 
 pub def extra_commas_do_not_hide_numeric_errors: test::Test = test::should_fail_with(fn() {
     yaml::parse("[,1e999,,9223372036854775808]").unwrap!()

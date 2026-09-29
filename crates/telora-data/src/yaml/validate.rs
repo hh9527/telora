@@ -178,7 +178,7 @@ pub(super) fn validate(
         })
         .collect();
     if !diagnostics.is_empty() {
-        diagnostics.sort_by_key(|d| d.labels[0].location.start);
+        diagnostics.sort_by_key(|d| d.locs[0].start);
         return Err(diagnostics);
     }
     Ok((

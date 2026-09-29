@@ -21,10 +21,9 @@ pub def unknown_at: Fn(Value, String, Int) -> Bool = fn(actual, source, line) {
     });
     let located = array::fold(items, False, fn(found, item) {
         found || (support::string_field_equals(item, "message", "unknown type")
-            && match support::record_field(item, "labels") {
+            && match support::record_field(item, "locs") {
                 Some(Value::Array(labels)) => array::fold(labels, False, fn(found, label) {
                     found || (support::string_field_equals(label, "source", source)
-                        && support::record_field(label, "primary") == Some(Value::True)
                         && match support::record_field(label, "location") {
                             Some(location) => support::record_field(location, "line") == Some(Value::Int(line)),
                             _ => False,

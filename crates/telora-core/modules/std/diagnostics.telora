@@ -1,3 +1,3 @@
-use std::_rt::{Severity, SourcePoint, SourceRange, Label, Diagnostic, with_diagnostics};
+use std::_rt::{Severity, SourcePoint, SourceRange, Diagnostic, with_diagnostics};
 
-pub use self::{Severity, SourcePoint, SourceRange, Label, Diagnostic, with_diagnostics};
+pub use self::{Severity, SourcePoint, SourceRange, Diagnostic, with_diagnostics};

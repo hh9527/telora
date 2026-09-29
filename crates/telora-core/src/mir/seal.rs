@@ -768,8 +768,7 @@ impl Mir {
             return Err(vec![Diagnostic {
                 severity: Severity::Error,
                 message: "sealing requires a closed, valid MIR".into(),
-                labels: vec![],
-                notes: vec![],
+                locs: vec![],
             }]);
         }
         Ok(SealedMir {

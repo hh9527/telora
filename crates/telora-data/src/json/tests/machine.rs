@@ -114,7 +114,7 @@ fn construction_rejects_limits_and_accepts_exact_boundaries() {
     ] {
         let errors = parse_with_limits(&sources, id, limits).unwrap_err();
         assert!(errors[0].message.contains(name), "{errors:?}");
-        assert_eq!(errors[0].labels[0].location.source, id);
+        assert_eq!(errors[0].locs[0].source, id);
     }
     // Decoded UTF-8 lengths, including keys and surrogate pairs, not token widths.
     let text = fixture("chunks.json");

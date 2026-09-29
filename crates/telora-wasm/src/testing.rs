@@ -126,12 +126,17 @@ impl TestSession {
         match execution {
             Ok(value) => {
                 if value.is_none() {
-                    if !diagnostics.iter().any(|d| !d.warning)
+                    if !diagnostics
+                        .iter()
+                        .any(|d| d.severity == telora_core::source::Severity::Error)
                         && let Some(event) = self.session.active_failure()?
                     {
                         diagnostics.push(event);
                     }
-                    if !diagnostics.iter().any(|d| !d.warning) {
+                    if !diagnostics
+                        .iter()
+                        .any(|d| d.severity == telora_core::source::Severity::Error)
+                    {
                         self.failed = true;
                         return Ok(Invocation {
                             value,

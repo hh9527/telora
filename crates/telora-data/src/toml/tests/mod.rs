@@ -95,8 +95,8 @@ fn duplicate_and_unicode_spans_are_preserved() {
     let errors = parse(&text, DataLimits::default()).unwrap_err();
     let first = text.find("name").unwrap();
     let second = text.rfind("name").unwrap();
-    assert_eq!(errors[0].labels[0].location.range(), second..second + 4);
-    assert_eq!(errors[0].labels[1].location.range(), first..first + 4);
+    assert_eq!(errors[0].locs[0].range(), second..second + 4);
+    assert_eq!(errors[0].locs[1].range(), first..first + 4);
     let plan = parse(&text[..second], DataLimits::default()).unwrap();
     let DataPlanNodeKind::Object(fields) = &plan.node(plan.root()).kind else {
         panic!()

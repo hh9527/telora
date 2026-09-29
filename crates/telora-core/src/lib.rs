@@ -40,8 +40,7 @@ pub use package::{
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
 pub use runtime_host::{DataLimits, ServiceSource, SystemDataFormat, SystemDataSource};
 pub use source::{
-    Diagnostic, Label, Loc, Located, Location, Origin, SourceDatabase, SourceId, TextRange,
-    WithOrigin,
+    Diagnostic, Loc, Located, Location, Origin, SourceDatabase, SourceId, TextRange, WithOrigin,
 };
 #[cfg(test)]
 mod test_graph;

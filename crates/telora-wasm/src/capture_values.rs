@@ -80,21 +80,10 @@ impl Emitter<'_> {
         ]);
         Ok(value)
     }
-    fn same_origin(&mut self, a: u32, b: u32) {
-        self.extend([
-            I::LocalGet(a),
-            I::I64Load(memory(0, 3)),
-            I::LocalGet(b),
-            I::I64Load(memory(0, 3)),
-            I::I64Eq,
-        ]);
-    }
-    fn append_label(
+    fn append_location(
         &mut self,
-        label: TypeId,
+        range: TypeId,
         origin: u32,
-        message: u32,
-        primary: bool,
         data: u32,
         count: u32,
     ) -> Result<(), String> {
@@ -105,7 +94,6 @@ impl Emitter<'_> {
             I::I64Ne,
             I::If(BlockType::Empty),
         ]);
-        let range = self.diagnostic_field_type(label, "location")?;
         let string = self.diagnostic_field_type(range, "source")?;
         let coordinates = self.local(ValType::I32);
         let span = self.local(ValType::I32);
@@ -145,22 +133,9 @@ impl Emitter<'_> {
         let (start, end) = (points[0], points[1]);
         let location =
             self.diagnostic_record(range, &[("source", source), ("start", start), ("end", end)])?;
-        let bool_ty = self.diagnostic_field_type(label, "primary")?;
-        if self.mir.types[bool_ty.index()].constructor != T::Bool {
-            return Err("Wasm: label primary must be Bool".into());
-        }
-        let flag = self.scalar_as(self.key.node, bool_ty, i64::from(primary))?;
-        let value = self.diagnostic_record(
-            label,
-            &[
-                ("location", location),
-                ("message", message),
-                ("primary", flag),
-            ],
-        )?;
-        let width = self.width(label)?;
+        let width = self.width(range)?;
         let destination = self.array_item(data, count, width);
-        self.copy(destination, 0, value, width);
+        self.copy(destination, 0, location, width);
         self.extend([
             I::LocalGet(count),
             I::I32Const(1),
@@ -205,11 +180,8 @@ impl Emitter<'_> {
             self.extend([I::LocalGet(value), I::LocalSet(message), I::End]);
         }
         self.emit(I::End);
-        let labels_ty = self.diagnostic_field_type(ty, "labels")?;
-        let label = self.mir.types[labels_ty.index()].arguments[0];
-        if self.diagnostic_field_type(label, "message")? != string {
-            return Err("Wasm: diagnostic label message type mismatch".into());
-        }
+        let locs_ty = self.diagnostic_field_type(ty, "locs")?;
+        let range = self.mir.types[locs_ty.index()].arguments[0];
         let total = self.local(ValType::I32);
         self.extend([
             I::LocalGet(packet),
@@ -218,11 +190,11 @@ impl Emitter<'_> {
             I::I32Add,
             I::LocalSet(total),
         ]);
-        let labels_data = self.array_storage(total, self.width(label)?);
+        let locs_data = self.array_storage(total, self.width(range)?);
         let count = self.local(ValType::I32);
         // This code executes once per packet inside the enclosing scope loop.
         self.extend([I::I32Const(0), I::LocalSet(count)]);
-        self.append_label(label, packet, message, true, labels_data, count)?;
+        self.append_location(range, packet, locs_data, count)?;
         let index = self.local(ValType::I32);
         self.extend([
             I::I32Const(0),
@@ -245,56 +217,8 @@ impl Emitter<'_> {
             I::I32Add,
             I::LocalSet(subject),
         ]);
-        self.same_origin(subject, packet);
-        let duplicate = self.local(ValType::I32);
-        self.emit(I::LocalSet(duplicate));
-        let earlier = self.local(ValType::I32);
-        let prior = self.local(ValType::I32);
+        self.append_location(range, subject, locs_data, count)?;
         self.extend([
-            I::I32Const(0),
-            I::LocalSet(earlier),
-            I::Block(BlockType::Empty),
-            I::Loop(BlockType::Empty),
-            I::LocalGet(earlier),
-            I::LocalGet(index),
-            I::I32GeU,
-            I::BrIf(1),
-            I::LocalGet(packet),
-            I::I32Load(memory(DIAG_SUBJECTS, 2)),
-            I::LocalGet(earlier),
-            I::I32Const(LOC_BYTES as i32),
-            I::I32Mul,
-            I::I32Add,
-            I::LocalSet(prior),
-        ]);
-        self.same_origin(subject, prior);
-        self.extend([
-            I::LocalGet(duplicate),
-            I::I32Or,
-            I::LocalSet(duplicate),
-            I::LocalGet(earlier),
-            I::I32Const(1),
-            I::I32Add,
-            I::LocalSet(earlier),
-            I::Br(0),
-            I::End,
-            I::End,
-            I::LocalGet(duplicate),
-            I::I32Eqz,
-            I::If(BlockType::Empty),
-        ]);
-        let label_span = self.local(ValType::I32);
-        self.extend([
-            I::LocalGet(index),
-            I::I32Const(1),
-            I::I32Add,
-            I::Call(SUBJECT_LABEL),
-            I::LocalSet(label_span),
-        ]);
-        let label_message = self.text_span_value(string, label_span)?;
-        self.append_label(label, subject, label_message, false, labels_data, count)?;
-        self.extend([
-            I::End,
             I::LocalGet(index),
             I::I32Const(1),
             I::I32Add,
@@ -303,16 +227,7 @@ impl Emitter<'_> {
             I::End,
             I::End,
         ]);
-        let labels = self.array_result(labels_ty, labels_data, count, self.width(label)?)?;
-        let notes_ty = self.diagnostic_field_type(ty, "notes")?;
-        if self.mir.types[notes_ty.index()].constructor != T::Array
-            || self.mir.types[notes_ty.index()].arguments != [string]
-        {
-            return Err("Wasm: diagnostic notes type mismatch".into());
-        }
-        let zero = self.local(ValType::I32);
-        let empty = self.alloc(0);
-        let notes = self.array_result(notes_ty, empty, zero, self.width(string)?)?;
+        let locs = self.array_result(locs_ty, locs_data, count, self.width(range)?)?;
         let severity_ty = self.diagnostic_field_type(ty, "severity")?;
         let variants = &self.plan.layouts[severity_ty.index()].variants;
         let error = variants
@@ -323,26 +238,35 @@ impl Emitter<'_> {
             .iter()
             .position(|v| v.name == "Warning")
             .ok_or("Wasm: Severity.Warning missing")?;
+        let info = variants
+            .iter()
+            .position(|v| v.name == "Info")
+            .ok_or("Wasm: Severity.Info missing")?;
         let severity = self.value_as(node, severity_ty, self.width(severity_ty)?)?;
         self.extend([
             I::LocalGet(severity),
             I::LocalGet(packet),
-            I::I32Load(memory(DIAG_WARNING, 2)),
+            I::I32Load(memory(DIAG_SEVERITY, 2)),
+            I::I32Const(1),
+            I::I32Eq,
             I::If(BlockType::Result(ValType::I64)),
             I::I64Const(warning as i64),
             I::Else,
+            I::LocalGet(packet),
+            I::I32Load(memory(DIAG_SEVERITY, 2)),
+            I::I32Const(2),
+            I::I32Eq,
+            I::If(BlockType::Result(ValType::I64)),
+            I::I64Const(info as i64),
+            I::Else,
             I::I64Const(error as i64),
+            I::End,
             I::End,
             I::I64Store(memory(DATA, 3)),
         ]);
         self.diagnostic_record(
             ty,
-            &[
-                ("severity", severity),
-                ("message", message),
-                ("labels", labels),
-                ("notes", notes),
-            ],
+            &[("severity", severity), ("message", message), ("locs", locs)],
         )
     }
 }

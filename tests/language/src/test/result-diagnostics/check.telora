@@ -37,13 +37,12 @@ pub def check: Fn(Value) -> Value = fn(actual) {
                 array::length(found) == 1
                     && support::string_field_equals(found[0], "message", "rejected")
                     && support::string_field_equals(found[0], "severity", row.1)
-                    && match support::record_field(found[0], "labels") {
+                    && match support::record_field(found[0], "locs") {
                         Some(Value::Array(labels)) => {
-                            array::length(labels) == (if row.4 { 2 } else { 1 })
-                                && support::record_field(labels[0], "primary") == Some(Value::True)
+                            array::length(labels) == (if row.4 { 3 } else { 1 })
                                 && located(labels[0], row.2, row.3)
                                 && (!row.4 || (located(labels[1], "result-diagnostics/testee/provider", 4)
-                                    && support::string_field_equals(labels[1], "message", "subject 1 originated here")))
+                                    && labels[1] == labels[2]))
                         },
                         _ => False,
                     }

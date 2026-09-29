@@ -283,7 +283,7 @@ pub def check: test::Test = test::should_ok(fn() -> Bool { if j == y && y == t &
     assert!(
         records
             .iter()
-            .filter_map(|record| record["labels"].as_array())
+            .filter_map(|record| record["locs"].as_array())
             .flatten()
             .any(|label| label["source"] == "fixture/tests/data/input.json"),
         "{records:?}"
@@ -482,7 +482,7 @@ fn test_command_expands_fixture_factories_relative_to_their_declaring_module() {
     assert!(
         records
             .iter()
-            .filter_map(|r| r["labels"].as_array())
+            .filter_map(|r| r["locs"].as_array())
             .flatten()
             .any(|label| {
                 label["source"].as_str().is_some_and(|name| {
@@ -538,7 +538,7 @@ fn test_command_reports_all_invalid_data_modules_before_executing_user_code() {
         assert!(
             records
                 .iter()
-                .filter_map(|record| record["labels"].as_array())
+                .filter_map(|record| record["locs"].as_array())
                 .flatten()
                 .any(|label| label["source"] == expected),
             "{records:?}"

@@ -254,9 +254,7 @@ fn empty_record_fields_receive_context_before_bottom_and_seal_checks_the_boundar
         .expect("invalid field boundary must reject seal");
     assert!(errors.iter().any(|d| {
         d.message.contains("diagnostics")
-            && d.labels
-                .iter()
-                .any(|label| label.location == mir.hir[arrays[0]].location)
+            && d.locs.iter().any(|loc| *loc == mir.hir[arrays[0]].location)
     }));
 }
 

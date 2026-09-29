@@ -28,22 +28,26 @@ pub fn convert_diagnostics(
                 | codespan_reporting::diagnostic::Severity::Error => crate::source::Severity::Error,
                 _ => crate::source::Severity::Warning,
             };
-            let labels = diagnostic
+            let mut message = diagnostic.message;
+            let locs = diagnostic
                 .labels
                 .into_iter()
                 .enumerate()
-                .map(|(index, label)| crate::source::Label {
-                    location: crate::source::Location::from_usize(source, label.range)
-                        .expect("lexer span fits registered source"),
-                    message: label.message,
-                    primary: index == 0,
+                .map(|(index, label)| {
+                    if !label.message.is_empty() {
+                        message.push_str(&format!("; {} (locs[{index}])", label.message));
+                    }
+                    crate::source::Location::from_usize(source, label.range)
+                        .expect("lexer span fits registered source")
                 })
                 .collect();
+            for note in diagnostic.notes {
+                message.push_str(&format!("; {note}"));
+            }
             Diagnostic {
                 severity,
-                message: diagnostic.message,
-                labels,
-                notes: diagnostic.notes,
+                message,
+                locs,
             }
         })
         .collect()

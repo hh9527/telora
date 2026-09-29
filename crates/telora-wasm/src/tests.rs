@@ -158,7 +158,7 @@ fn runtime_diagnostics_preserve_high_line_bits() {
     session.initialize().unwrap();
     assert!(session.call(&[]).is_err());
     let diagnostics = session.diagnostics().unwrap();
-    let loc = telora_core::source::SourceCoordinates(diagnostics[0].origin);
+    let loc = telora_core::source::SourceCoordinates(diagnostics[0].locs[0]);
     assert_eq!(loc.start() >> 32, 70_000);
     let name = &session
         .manifest
@@ -241,13 +241,17 @@ fn sequence_contributions_use_sealed_layouts_and_preserve_evaluation_order() {
             .collect::<Vec<_>>(),
         ["first", "middle", "last", "a", "b", "c"]
     );
-    assert!(diagnostics.iter().all(|d| d.warning));
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.severity == telora_core::source::Severity::Warning)
+    );
     assert_eq!(
-        diagnostic_point(&result[2]["labels"][1]["location"]["start"]),
+        diagnostic_point(&result[2]["locs"][1]["start"]),
         point(source, source.find("42").unwrap())
     );
     assert_eq!(
-        diagnostic_point(&result[3]["labels"][1]["location"]["start"]),
+        diagnostic_point(&result[3]["locs"][1]["start"]),
         point(source, source.find("(...original, 3)").unwrap())
     );
 }
@@ -323,7 +327,7 @@ fn dictionary_operations_use_sorted_columns_and_closed_callbacks() {
             .diagnostics()
             .unwrap()
             .iter()
-            .all(|d| d.warning && d.message == "visited")
+            .all(|d| d.severity == telora_core::source::Severity::Warning && d.message == "visited")
     );
     let bytes = compile_export(
         &std::fs::read_to_string(concat!(
@@ -371,15 +375,9 @@ fn diagnostic_scopes_capture_reports_and_resume_outer_execution() {
     assert_eq!(value[0]["Ok"][1][0]["severity"], "Warning");
     assert_eq!(value[1]["Err"].as_array().unwrap().len(), 2);
     assert_eq!(value[1]["Err"][1]["message"], "captured failure");
-    assert_eq!(value[1]["Err"][1]["labels"].as_array().unwrap().len(), 2);
-    assert_eq!(
-        value[1]["Err"][1]["labels"][1]["location"]["source"],
-        "@src/main"
-    );
-    assert_eq!(
-        value[1]["Err"][1]["labels"][1]["message"],
-        "subject 1 originated here"
-    );
+    assert_eq!(value[1]["Err"][1]["locs"].as_array().unwrap().len(), 3);
+    assert_eq!(value[1]["Err"][1]["locs"][1]["source"], "@src/main");
+    assert_eq!(value[1]["Err"][1]["locs"][1], value[1]["Err"][1]["locs"][2]);
     assert_eq!(value[2]["Ok"][0], 7);
     assert_eq!(value[2]["Ok"][1].as_array().unwrap().len(), 2);
     assert_eq!(value[2]["Ok"][1][0]["message"], "outer before");
@@ -441,7 +439,8 @@ fn array_callbacks_execute_in_wasm_with_closed_element_types() {
     assert!(
         diagnostics
             .iter()
-            .all(|d| d.warning && d.message == "flat_map once")
+            .all(|d| d.severity == telora_core::source::Severity::Warning
+                && d.message == "flat_map once")
     );
 }
 
@@ -574,7 +573,7 @@ fn construction_checks_run_sealed_generic_checkers() {
     assert_eq!(session.call(&[]).unwrap(), serde_json::json!(42));
     let diagnostics = session.diagnostics().unwrap();
     assert_eq!(diagnostics.len(), 1);
-    assert!(diagnostics[0].warning);
+    assert!(diagnostics[0].severity == telora_core::source::Severity::Warning);
     assert_eq!(diagnostics[0].message, "checker initialized");
 }
 
@@ -598,11 +597,11 @@ fn checks_and_macros_record_one_failure_with_rule_and_subject_origins() {
         assert!(session.call(&[]).unwrap_err().contains(message));
         let ds = session.diagnostics().unwrap();
         assert_eq!(ds.len(), 1);
-        assert!(!ds[0].warning);
+        assert_eq!(ds[0].severity, telora_core::source::Severity::Error);
         assert_eq!(ds[0].message, message);
-        assert_eq!(ds[0].subjects.len(), 1);
-        assert_ne!(ds[0].origin, ds[0].subjects[0]);
-        assert_eq!(source_slice(source, ds[0].subjects[0]), "-7");
+        assert_eq!(ds[0].locs.len(), 2);
+        assert_ne!(ds[0].locs[0], ds[0].locs[1]);
+        assert_eq!(source_slice(source, ds[0].locs[1]), "-7");
         assert!(session.call(&[]).is_err());
         assert_eq!(session.diagnostics().unwrap().len(), 1);
     }
@@ -615,10 +614,13 @@ fn checks_and_macros_record_one_failure_with_rule_and_subject_origins() {
         ds.iter().map(|d| d.message.as_str()).collect::<Vec<_>>(),
         ["string warning", "blame warning", "result warning"]
     );
-    assert!(ds.iter().all(|d| d.warning));
-    assert!(ds[0].subjects.is_empty());
-    assert_eq!(ds[1].subjects.len(), 1);
-    assert_eq!(ds[2].subjects.len(), 1);
+    assert!(
+        ds.iter()
+            .all(|d| d.severity == telora_core::source::Severity::Warning)
+    );
+    assert_eq!(ds[0].locs.len(), 1);
+    assert_eq!(ds[1].locs.len(), 2);
+    assert_eq!(ds[2].locs.len(), 2);
 }
 
 #[test]

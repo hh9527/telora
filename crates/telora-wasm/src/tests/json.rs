@@ -31,7 +31,7 @@ fn data_parse_rejection_preserves_original_input_location() {
         let result = session.call(&[]).unwrap();
         assert!(result["message"].as_str().unwrap().contains("duplicate"));
         assert_eq!(
-            diagnostic_point(&result["labels"][1]["location"]["start"]),
+            diagnostic_point(&result["locs"][1]["start"]),
             point(source, source.find(input).unwrap())
         );
         assert!(session.diagnostics().unwrap().is_empty());
@@ -153,7 +153,7 @@ fn codec_decode_untagged_keeps_rejection_evidence_and_propagates_failure() {
         "$: value matches no untagged Enum variant ($.number: expected Int; $: expected String)"
     );
     assert_eq!(
-        diagnostic_point(&result[0][0]["labels"][1]["location"]["start"]),
+        diagnostic_point(&result[0][0]["locs"][1]["start"]),
         point(source, source.find("Value::String(\"bad\")").unwrap())
     );
     assert_eq!(
@@ -191,7 +191,7 @@ fn codec_decode_check_blames_are_reported_only_when_raised() {
         assert_eq!(result[index].as_array().unwrap().len(), 1);
         assert_eq!(result[index][0]["message"], message);
         assert_eq!(
-            diagnostic_point(&result[index][0]["labels"][1]["location"]["start"]),
+            diagnostic_point(&result[index][0]["locs"][1]["start"]),
             point(source, source.find(needle).unwrap())
         );
     }
@@ -263,7 +263,7 @@ fn codec_decode_nested_error_keeps_path_and_leaf_origin() {
     let result = session.call(&[]).unwrap();
     assert_eq!(result["message"], "$[0][1]: expected Int");
     assert_eq!(
-        diagnostic_point(&result["labels"][1]["location"]["start"]),
+        diagnostic_point(&result["locs"][1]["start"]),
         point(source, source.find("Value::String(").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());
@@ -282,7 +282,7 @@ fn codec_decode_mismatch_retains_input_origin() {
     let result = session.call(&[]).unwrap();
     assert_eq!(result["message"], "$: expected Int");
     assert_eq!(
-        diagnostic_point(&result["labels"][1]["location"]["start"]),
+        diagnostic_point(&result["locs"][1]["start"]),
         point(source, source.find("Value::String(").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());
@@ -338,7 +338,7 @@ fn codec_record_encoding_preserves_field_origins_and_empty_records() {
     let result = session.call(&[]).unwrap();
     assert_eq!(result[0], serde_json::json!({}));
     assert_eq!(
-        diagnostic_point(&result[1]["labels"][1]["location"]["start"]),
+        diagnostic_point(&result[1]["locs"][1]["start"]),
         point(source, source.find("12345").unwrap())
     );
     assert!(session.diagnostics().unwrap().is_empty());
@@ -415,7 +415,7 @@ fn json_parse_error_blames_the_original_text() {
     session.initialize().unwrap();
     let result = session.call(&[]).unwrap();
     assert_eq!(
-        diagnostic_point(&result["labels"][1]["location"]["start"]),
+        diagnostic_point(&result["locs"][1]["start"]),
         point(source, source.find("\"[1,]\"").unwrap())
     );
     assert_eq!(
@@ -476,7 +476,7 @@ fn stringify_rejections_are_captured_once_and_preserve_subjects() {
         assert_eq!(result[index]["message"], *message);
     }
     assert_eq!(
-        diagnostic_point(&result[0]["labels"][1]["location"]["start"]),
+        diagnostic_point(&result[0]["locs"][1]["start"]),
         point(source, source.find("Value::Bytes(b").unwrap())
     );
     assert_eq!(result[3], "true");

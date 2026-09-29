@@ -194,12 +194,13 @@ fn parser_diagnostics_preserve_individual_errors_and_relative_coordinates() {
     let errors = output["diagnostics"].as_array().unwrap();
     assert_eq!(errors.len(), 2, "{output}");
     for error in errors {
-        assert!(error["labels"].as_array().unwrap().is_empty());
-        assert!(error["notes"].as_array().unwrap().iter().any(|note| {
-            note.as_str()
+        assert!(error["locs"].as_array().unwrap().is_empty());
+        assert!(
+            error["message"]
+                .as_str()
                 .unwrap()
                 .contains("input range (UTF-8 bytes):")
-        }));
+        );
     }
     assert_eq!(
         transform(&mut service, b"7").unwrap()["ok"],
@@ -234,18 +235,10 @@ fn source_parser_diagnostics_keep_registered_source_ranges() {
         assert!(!result.success);
         let errors = result.diagnostics.as_array().unwrap();
         assert!(!errors.is_empty());
-        let labels = errors[0]["labels"].as_array().unwrap();
-        assert!(!labels.is_empty(), "{}", result.diagnostics);
-        assert!(
-            labels
-                .iter()
-                .all(|label| label["location"]["source"] == "@service/a")
-        );
-        assert!(
-            labels
-                .iter()
-                .any(|label| label["location"]["start"]["line"] == 1)
-        );
+        let locs = errors[0]["locs"].as_array().unwrap();
+        assert!(!locs.is_empty(), "{}", result.diagnostics);
+        assert!(locs.iter().all(|loc| loc["source"] == "@service/a"));
+        assert!(locs.iter().any(|loc| loc["start"]["line"] == 1));
         assert!(service.seal_initialization().is_err());
     }
 }
@@ -269,13 +262,13 @@ fn static_service_initializes_and_captures_each_request() {
             assert_eq!(diagnostics[1]["message"], "second warning");
             for diagnostic in &diagnostics[..2] {
                 assert_eq!(diagnostic["severity"], "Warning");
-                assert!(diagnostic["labels"].as_array().unwrap().len() >= 2);
+                assert!(diagnostic["locs"].as_array().unwrap().len() >= 2);
             }
             assert_eq!(diagnostics[2]["severity"], "Error");
         } else if input == "null" {
             assert_eq!(output["diagnostics"][0]["message"], "missing query");
             assert!(
-                !output["diagnostics"][0]["labels"]
+                !output["diagnostics"][0]["locs"]
                     .as_array()
                     .unwrap()
                     .is_empty()

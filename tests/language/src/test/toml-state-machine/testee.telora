@@ -121,7 +121,7 @@ pub def multiple_semantic_errors: test::Test = test::should_fail_with(fn() {
 when = 2025-02-29
 nested = { x = 0xZZ, x = 1 }
 "#).unwrap!()
-}, "TOML integer is outside the i64 range\nduplicate TOML key \"a\"\nTOML Float must be finite\ninvalid TOML day\ninvalid TOML integer\nduplicate TOML key \"x\"");
+}, "TOML integer is outside the i64 range\nduplicate TOML key \"a\"; first defined here (locs[1])\nTOML Float must be finite\ninvalid TOML day\ninvalid TOML integer\nduplicate TOML key \"x\"; first defined here (locs[1])");
 
 pub def extra_commas_keep_independent_errors: test::Test = test::should_fail_with(fn() {
     toml::parse("a=[,1e999,,9223372036854775808]").unwrap!()

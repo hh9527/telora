@@ -18,5 +18,5 @@ pub def answer: Fn() -> (Array(Bool), rt::SourcePoint) = fn() {
       match dyn::project_with((Fn(Int) -> Id).type, factory) {
         Some(make) => make(7).0 == 7, None => False,
       }],
-      match origin { Err(reports) => reports[0].labels[1].location.start, Ok(_) => {line: 0, offset: 0} })
+      match origin { Err(reports) => reports[0].locs[1].start, Ok(_) => {line: 0, offset: 0} })
 };

@@ -7,11 +7,11 @@ impl Emitter<'_> {
     pub fn capture_diagnostics(&mut self) -> Result<u32, String> {
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
-        if args.len() != 7 {
+        if args.len() != 6 {
             return Err("Wasm: diagnostic scope arity mismatch".into());
         }
         let callback = self.mir.types[args[0].index()].clone();
-        let output = self.mir.types[args[6].index()].clone();
+        let output = self.mir.types[args[5].index()].clone();
         if callback.constructor != T::Function
             || callback.arguments.len() != 2
             || callback.arguments[0] != args[1]
@@ -32,13 +32,12 @@ impl Emitter<'_> {
         }
         let diagnostic = reports.arguments[0];
         let severity = self.diagnostic_field_type(diagnostic, "severity")?;
-        let labels = self.diagnostic_field_type(diagnostic, "labels")?;
-        if self.mir.types[labels.index()].constructor != T::Array {
-            return Err("Wasm: diagnostic labels are not Array".into());
+        let locs = self.diagnostic_field_type(diagnostic, "locs")?;
+        if self.mir.types[locs.index()].constructor != T::Array {
+            return Err("Wasm: diagnostic locs are not Array".into());
         }
-        let label = self.mir.types[labels.index()].arguments[0];
-        let range = self.diagnostic_field_type(label, "location")?;
-        for (&witness, expected) in args[2..6].iter().zip([diagnostic, severity, label, range]) {
+        let range = self.mir.types[locs.index()].arguments[0];
+        for (&witness, expected) in args[2..5].iter().zip([diagnostic, severity, range]) {
             let ty = &self.mir.types[witness.index()];
             if ty.constructor != T::TypeOf || ty.arguments != [expected] {
                 return Err("Wasm: diagnostic witness differs from sealed result".into());
@@ -122,13 +121,13 @@ impl Emitter<'_> {
         ]);
         let result = self.local(ValType::I32);
         self.extend([I::LocalGet(returned), I::I32Eqz, I::If(BlockType::Empty)]);
-        let failure = self.enum_value(node, args[6], 0, Some(reports))?;
+        let failure = self.enum_value(node, args[5], 0, Some(reports))?;
         self.extend([I::LocalGet(failure), I::LocalSet(result), I::Else]);
         if self.width(callback.arguments[1])? == 0 {
             self.emit(I::Unreachable);
         } else {
             let payload = self.packed_tuple(success, &[returned, reports])?;
-            let value = self.enum_value(node, args[6], 1, Some(payload))?;
+            let value = self.enum_value(node, args[5], 1, Some(payload))?;
             self.extend([I::LocalGet(value), I::LocalSet(result)]);
         }
         self.emit(I::End);

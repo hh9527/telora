@@ -293,15 +293,15 @@ fn run_and_serve_share_the_same_static_entry_and_preserve_diagnostics() {
     assert_eq!(replies[0]["ok"], 42);
     assert_eq!(replies[1]["error"], true);
     assert_eq!(replies[1]["diagnostics"][0]["message"], "missing input");
-    let labels = replies[1]["diagnostics"][0]["labels"].as_array().unwrap();
+    let locs = replies[1]["diagnostics"][0]["locs"].as_array().unwrap();
     assert!(
-        !labels.is_empty(),
+        !locs.is_empty(),
         "the static failure rule still has a location"
     );
     assert!(
-        labels
+        locs
             .iter()
-            .all(|label| label["location"]["source"] != "@request")
+            .all(|loc| loc["source"] != "@request")
     );
     assert_eq!(replies[2]["ok"], 43);
     assert_eq!(replies[3]["error"], true);

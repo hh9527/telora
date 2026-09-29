@@ -164,7 +164,7 @@ fn test_description_rejects_empty_expectation_before_callback() {
     let diagnostics = session.diagnostics().unwrap();
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(
-        telora_core::source::SourceCoordinates(diagnostics[0].subjects[0]).start(),
+        telora_core::source::SourceCoordinates(diagnostics[0].locs[1]).start(),
         point(source, source.rfind("\"\"").unwrap())
     );
 }

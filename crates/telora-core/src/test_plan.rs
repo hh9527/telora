@@ -70,8 +70,7 @@ impl TestPlan {
             vec![Diagnostic {
                 severity: Severity::Error,
                 message: message.into(),
-                labels: vec![],
-                notes: vec![],
+                locs: vec![],
             }]
         };
         let exports = mir

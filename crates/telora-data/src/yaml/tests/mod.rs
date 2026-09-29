@@ -119,8 +119,8 @@ fn precise_duplicate_key_location_in_compact_mapping() {
     assert!(errors[0].message.contains("duplicate YAML key"));
     let first = text.find("next:").unwrap();
     let second = text.rfind("next:").unwrap();
-    assert_eq!(errors[0].labels[0].location.range(), second..second + 4);
-    assert_eq!(errors[0].labels[1].location.range(), first..first + 4);
+    assert_eq!(errors[0].locs[0].range(), second..second + 4);
+    assert_eq!(errors[0].locs[1].range(), first..first + 4);
     let text = text[..second - 2].trim_end();
     let plan = parse(text, DataLimits::default()).unwrap();
     let key = plan
@@ -191,7 +191,7 @@ fn resource_limits_apply_to_decoded_data_before_postprocessing() {
     ] {
         let error = parse(&text, limits).unwrap_err();
         assert!(error[0].message.contains(name), "{name}: {error:?}");
-        assert!(!error[0].labels.is_empty());
+        assert!(!error[0].locs.is_empty());
     }
     // Quotas count final block-scalar content, not stripped trailing newlines.
     let limits = DataLimits {

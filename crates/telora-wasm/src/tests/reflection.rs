@@ -100,7 +100,7 @@ fn reflection_errors_are_captured_and_dyn_fields_keep_their_origins() {
         assert_eq!(result[index], *expected);
     }
     assert_eq!(
-        diagnostic_point(&result[6]["labels"][1]["location"]["start"]),
+        diagnostic_point(&result[6]["locs"][1]["start"]),
         point(source, source.find("42").unwrap())
     );
     for (index, expected) in [
@@ -115,20 +115,20 @@ fn reflection_errors_are_captured_and_dyn_fields_keep_their_origins() {
         assert_eq!(result[index + 7], *expected);
     }
     assert_eq!(
-        diagnostic_point(&result[11]["labels"][1]["location"]["start"]),
+        diagnostic_point(&result[11]["locs"][1]["start"]),
         point(source, source.find("12345").unwrap())
     );
     assert_eq!(
-        diagnostic_point(&result[12]["labels"][1]["location"]["start"]),
+        diagnostic_point(&result[12]["locs"][1]["start"]),
         point(source, source.find("23456").unwrap())
     );
     assert_eq!(
-        diagnostic_point(&result[13]["labels"][1]["location"]["start"]),
+        diagnostic_point(&result[13]["locs"][1]["start"]),
         point(source, source.find("34567").unwrap())
     );
     for index in [14, 15] {
         assert_eq!(
-            diagnostic_point(&result[index]["labels"][1]["location"]["start"]),
+            diagnostic_point(&result[index]["locs"][1]["start"]),
             point(source, source.find("42").unwrap())
         );
     }

@@ -92,8 +92,7 @@ pub fn resolve_with_discovery_cancellable(
                     }
                     ModuleTarget::Bound(_) => unreachable!(),
                 },
-                labels: vec![],
-                notes: vec![],
+                locs: vec![],
             });
         }
     }
@@ -121,8 +120,7 @@ pub fn resolve_with_discovery_cancellable(
                 mir.diagnostics.push(crate::source::Diagnostic {
                     severity: crate::source::Severity::Error,
                     message: format!("cannot read module {spec_name}: {message}"),
-                    labels: vec![],
-                    notes: vec![],
+                    locs: vec![],
                 });
                 mir.modules[id.index()].state = ModuleState::Unavailable(message);
                 continue;
@@ -140,8 +138,7 @@ pub fn resolve_with_discovery_cancellable(
                 mir.diagnostics.push(crate::source::Diagnostic {
                     severity: crate::source::Severity::Error,
                     message: message.clone(),
-                    labels: vec![],
-                    notes: vec![],
+                    locs: vec![],
                 });
                 mir.modules[id.index()].state = ModuleState::Unavailable(message);
                 continue;

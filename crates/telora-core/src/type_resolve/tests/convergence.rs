@@ -186,7 +186,7 @@ fn explicit_type_depth_and_tuple_width_are_guarded() {
                 .filter(|d| d.message.contains(expected))
                 .collect::<Vec<_>>();
             assert_eq!(diagnostics.len(), 1, "{:?}", mir.diagnostics);
-            assert!(!diagnostics[0].labels.is_empty());
+            assert!(!diagnostics[0].locs.is_empty());
             assert!(mir.seal().is_err());
             assert!(mir.generic_instances.is_empty());
         } else {

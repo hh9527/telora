@@ -154,18 +154,10 @@ pub enum Severity {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Label {
-    pub location: Location,
-    pub message: String,
-    pub primary: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub message: String,
-    pub labels: Vec<Label>,
-    pub notes: Vec<String>,
+    pub locs: Vec<Location>,
 }
 
 impl Diagnostic {
@@ -173,12 +165,7 @@ impl Diagnostic {
         Self {
             severity,
             message: message.into(),
-            labels: vec![Label {
-                location,
-                message: String::new(),
-                primary: true,
-            }],
-            notes: Vec::new(),
+            locs: vec![location],
         }
     }
 
@@ -187,16 +174,14 @@ impl Diagnostic {
     }
 
     pub fn with_secondary(mut self, message: impl Into<String>, location: Location) -> Self {
-        self.labels.push(Label {
-            location,
-            message: message.into(),
-            primary: false,
-        });
+        self.message
+            .push_str(&format!("; {} (locs[{}])", message.into(), self.locs.len()));
+        self.locs.push(location);
         self
     }
 
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
-        self.notes.push(note.into());
+        self.message.push_str(&format!("; {}", note.into()));
         self
     }
 }
@@ -436,25 +421,25 @@ impl SourceDatabase {
     }
 
     pub fn render(&self, diagnostic: &Diagnostic) -> String {
-        let Some(label) = diagnostic.labels.iter().find(|label| label.primary) else {
+        let Some(&primary) = diagnostic.locs.first() else {
             return diagnostic.message.clone();
         };
-        let Some(file) = self.files.get(label.location.source.index() as usize) else {
+        let Some(file) = self.files.get(primary.source.index() as usize) else {
             return diagnostic.message.clone();
         };
-        let position = file.position(label.location.start);
+        let position = file.position(primary.start);
         let mut rendered = format!(
             "{}:{}:{}: {}",
             file.name, position.line, position.column, diagnostic.message
         );
-        for secondary in diagnostic.labels.iter().filter(|label| !label.primary) {
-            let Some(file) = self.files.get(secondary.location.source.index() as usize) else {
+        for (index, secondary) in diagnostic.locs.iter().enumerate().skip(1) {
+            let Some(file) = self.files.get(secondary.source.index() as usize) else {
                 continue;
             };
-            let position = file.position(secondary.location.start);
+            let position = file.position(secondary.start);
             rendered.push_str(&format!(
-                "\n  {}:{}:{}: {}",
-                file.name, position.line, position.column, secondary.message
+                "\n  locs[{index}] {}:{}:{}",
+                file.name, position.line, position.column
             ));
         }
         rendered

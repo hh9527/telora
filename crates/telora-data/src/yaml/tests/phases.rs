@@ -61,7 +61,7 @@ fn semantic_errors_accumulate_after_structure_and_quota_is_fail_fast() {
     assert!(
         errors
             .windows(2)
-            .all(|p| p[0].labels[0].location.start <= p[1].labels[0].location.start)
+            .all(|p| p[0].locs[0].start <= p[1].locs[0].start)
     );
     let limits = DataLimits {
         container_size: 1,

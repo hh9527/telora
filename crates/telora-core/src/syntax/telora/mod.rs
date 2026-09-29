@@ -39,24 +39,19 @@ fn finish_parse_cancellable(
     let mut diagnostics = super::convert_diagnostics(source_id, diagnostics);
     let mut starts: std::collections::BTreeSet<_> = diagnostics
         .iter()
-        .filter_map(|diagnostic| diagnostic.labels.first().map(|label| label.location.start))
+        .filter_map(|diagnostic| diagnostic.locs.first().map(|loc| loc.start))
         .collect();
     for issue in ast::validate_cancellable(source_id, &syntax, cancelled)? {
         if cancelled() {
             return None;
         }
         let diagnostic = issue.into_diagnostic();
-        let start = diagnostic.labels[0].location.start;
+        let start = diagnostic.locs[0].start;
         if starts.insert(start) {
             diagnostics.push(diagnostic);
         }
     }
-    diagnostics.sort_by_key(|diagnostic| {
-        diagnostic
-            .labels
-            .first()
-            .map_or(u32::MAX, |label| label.location.start)
-    });
+    diagnostics.sort_by_key(|diagnostic| diagnostic.locs.first().map_or(u32::MAX, |loc| loc.start));
     if cancelled() {
         return None;
     }

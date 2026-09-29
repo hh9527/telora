@@ -157,16 +157,12 @@ impl Solver<'_> {
                         diagnostic.message
                     );
                     let location = self.mir.hir[decorator.index()].location;
-                    if !diagnostic
-                        .labels
-                        .iter()
-                        .any(|label| label.location == location)
-                    {
-                        diagnostic.labels.push(crate::source::Label {
-                            location,
-                            message: "@check contract required here".into(),
-                            primary: false,
-                        });
+                    if !diagnostic.locs.contains(&location) {
+                        diagnostic.message.push_str(&format!(
+                            "; @check contract required here (locs[{}])",
+                            diagnostic.locs.len()
+                        ));
+                        diagnostic.locs.push(location);
                     }
                 }
             }

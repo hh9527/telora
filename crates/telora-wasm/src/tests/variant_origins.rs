@@ -109,7 +109,7 @@ fn variants_materialize_at_use_and_value_forwarding_preserves_origins() {
                 assert!(session.call(&[]).is_err());
                 let diagnostics = session.diagnostics().unwrap();
                 assert_eq!(diagnostics.len(), 1);
-                assert_eq!(diagnostics[0].subjects, [expected["rejected"]]);
+                assert_eq!(diagnostics[0].locs[1..], [expected["rejected"]]);
                 let source = mir
                     .sources
                     .files()
@@ -117,7 +117,7 @@ fn variants_materialize_at_use_and_value_forwarding_preserves_origins() {
                     .unwrap();
                 let location = source
                     .byte_location(telora_core::source::SourceCoordinates(
-                        diagnostics[0].origin,
+                        diagnostics[0].locs[0],
                     ))
                     .unwrap();
                 assert!(
@@ -148,16 +148,13 @@ fn variants_materialize_at_use_and_value_forwarding_preserves_origins() {
             ];
             assert_eq!(diagnostics.len(), cases.len());
             for (diagnostic, (message, origins)) in diagnostics.iter().zip(cases) {
-                assert!(diagnostic.warning);
+                assert!(diagnostic.severity == telora_core::source::Severity::Warning);
                 assert_eq!(&diagnostic.message, message);
-                let mut locations = Vec::new();
-                for label in *origins {
-                    let location = expected[*label];
-                    if !locations.contains(&location) {
-                        locations.push(location);
-                    }
-                }
-                assert_eq!(diagnostic.subjects, locations, "{message}");
+                let locations = origins
+                    .iter()
+                    .map(|label| expected[*label])
+                    .collect::<Vec<_>>();
+                assert_eq!(&diagnostic.locs[1..], locations, "{message}");
             }
         }
     }

@@ -119,7 +119,7 @@ pub(super) fn validate(
         .map_err(|error| vec![error])?;
     diagnostics.append(&mut build.diagnostics);
     if !diagnostics.is_empty() {
-        diagnostics.sort_by_key(|d| d.labels[0].location.start);
+        diagnostics.sort_by_key(|d| d.locs[0].start);
         return Err(diagnostics);
     }
     let plan = build.plan.finish(root, &canonical, &ctx);

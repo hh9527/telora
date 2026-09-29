@@ -369,7 +369,7 @@ impl Session {
             Ok(diagnostics) => diagnostics
                 .iter()
                 .rev()
-                .find(|d| !d.warning)
+                .find(|d| d.severity == telora_core::source::Severity::Error)
                 .map(|d| d.render(&self.manifest))
                 .unwrap_or_else(|| "Wasm session is not initialized or has failed".into()),
             Err(message) => message,
