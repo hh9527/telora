@@ -20,6 +20,14 @@ pub unsafe extern "C" fn telora_initialization_stat(index: u32) -> u32 {
 }
 
 pub(crate) unsafe fn collect() {
+    unsafe { collect_phase(true); }
+}
+
+pub(crate) unsafe fn collect_data() {
+    unsafe { collect_phase(false); }
+}
+
+unsafe fn collect_phase(service_ready: bool) {
     unsafe {
         // Source names and BOLs have independent ownership and remain available
         // even when no retained language value currently mentions that source.
@@ -36,7 +44,7 @@ pub(crate) unsafe fn collect() {
                 gc.demand(index);
             }
         }
-        crate::service::collect_initialization(&mut gc);
+        if service_ready { crate::service::collect_initialization(&mut gc); }
         // Initialization callers still need to read these events. Preserving
         // their order also preserves Host diagnostic/debug cursors.
         for table in [DIAGNOSTICS, DEBUG_EVENTS] {

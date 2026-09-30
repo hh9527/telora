@@ -8,6 +8,7 @@ use alloc::{collections::BTreeMap, vec, vec::Vec};
 use telora_wasm_shared::layout_image as layout;
 mod initialization;
 pub(crate) use initialization::collect as collect_initialization;
+pub(crate) use initialization::collect_data;
 
 static mut TRACE_TYPES: u32 = 0;
 static mut DEMANDS: (u32, u32) = (0, 0);

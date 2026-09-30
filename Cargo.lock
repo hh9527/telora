@@ -1683,6 +1683,7 @@ dependencies = [
  "tokio-util",
  "tower-service",
  "url",
+ "wasmparser 0.259.0",
 ]
 
 [[package]]

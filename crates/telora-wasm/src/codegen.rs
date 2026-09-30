@@ -357,7 +357,7 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         data: Cow::Owned(VERSION.to_le_bytes().to_vec()),
     });
     module.section(&CustomSection {
-        name: Cow::Borrowed("telora.manifest"),
+        name: Cow::Borrowed("telora.tooling"),
         data: Cow::Owned(serde_json::to_vec(&manifest).map_err(|e| e.to_string())?),
     });
     let service = if matches!(mode, Mode::Service) {

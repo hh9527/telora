@@ -113,7 +113,6 @@ impl Session {
     pub fn load_with_limits(bytes: &[u8], fuel: u64, memory_limit: usize) -> Result<Self, String> {
         let metadata_timer = timing::Timer::new("load_metadata");
         let manifest = Manifest::read(bytes)?;
-        let bundled_data = crate::bundle::read(bytes, &manifest)?;
         drop(metadata_timer);
         let module_timer = timing::Timer::new("load_module");
         let mut config = wasmi::Config::default();
@@ -145,7 +144,7 @@ impl Session {
         let registered_sources = manifest.sources.len();
         let exports = exports::Exports::bind(instance, &store)?;
         drop(instance_timer);
-        let mut session = Self {
+        let session = Self {
             exports,
             module,
             fuel_budget: fuel,
@@ -162,27 +161,6 @@ impl Session {
             registered_sources,
             emitted_debug: std::cell::Cell::new(0),
         };
-        for module in bundled_data {
-            if !session
-                .manifest
-                .sources
-                .iter()
-                .any(|source| source.id == module.source.id)
-            {
-                session.manifest.sources.push(module.source.clone());
-                session.register_sources()?;
-            }
-            let format = match module.format {
-                1 => telora_core::data_plan::Format::Json,
-                2 => telora_core::data_plan::Format::Yaml,
-                3 => telora_core::data_plan::Format::Toml,
-                _ => unreachable!("validated bundle format"),
-            };
-            let value = session
-                .parse_data_text(&module.text, format, module.source.id)?
-                .map_err(|diagnostics| diagnostics.to_string())?;
-            session.inject_data_value(module.symbol, value)?;
-        }
         Ok(session)
     }
     pub fn initialize(&mut self) -> Result<(), String> {

@@ -98,3 +98,10 @@ pub(crate) unsafe fn restore(bytes: &[u8]) {
         publish();
     }
 }
+
+pub(crate) unsafe fn restore_data(bytes: &[u8]) {
+    unsafe {
+        *core::ptr::addr_of_mut!(CONTENT) = Content::from_data(bytes);
+        publish();
+    }
+}

@@ -217,6 +217,14 @@ impl Content {
             work_base: Some(bytes.len()),
         }
     }
+
+    /// Restore compiled module data before initialization establishes a baseline.
+    pub fn from_data(bytes: &[u8]) -> Self {
+        Self {
+            bytes: bytes.to_vec(),
+            work_base: None,
+        }
+    }
 }
 
 fn inline(bytes: &[u8]) -> Bytes {

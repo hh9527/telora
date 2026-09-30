@@ -90,6 +90,161 @@ fn collection_runs_from_source_artifact_and_snapshot() {
 }
 
 #[test]
+fn publication_compiles_modules_and_snapshot_sources_without_original_files() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
+        # SOURCE_ONLY_PROGRAM_230
+        use std::transform_service as service;
+        use std::value::{Value};
+        data js = import(json) "@src/module.json";
+        data ya = import(yaml) "@src/module.yaml";
+        data to = import(toml) "@src/module.toml";
+        @service::source("external")
+        type Model = struct {external: Value};
+        impl service::TransformService for Model {
+            init: fn(ctx) { {external: ctx.sources.external}.ty!(Self) },
+            transform: fn(self, input) {
+                Value::Object({modules: Value::Array([js, ya, to]), external: self.external, input})
+            },
+        };
+        @service::collection
+        pub type MainService = struct { @service::slot("transform") model: Model };
+    "#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/module.json"),
+        r#"{"number":9223372036854775807,"text":"decoded\ntext"}"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/module.yaml"),
+        "# SOURCE_ONLY_YAML_230\nbase: [1, 2]\ncopy: [1, 2]\n",
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/module.toml"),
+        "# SOURCE_ONLY_TOML_230\nflag = true\n",
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("external.yaml"),
+        "# SOURCE_ONLY_EXTERNAL_230\nvalue: \"external_value_only_230\"\n",
+    )
+    .unwrap();
+    let mut artifacts = Vec::new();
+    for (name, snapshot) in [("ordinary.wasm", false), ("snapshot.wasm", true)] {
+        let mut build = telora(&cwd);
+        build.args(["build", "@src/main", "-o", name]);
+        if snapshot {
+            build.args(["--snapshot", "--source", "external=external.yaml"]);
+        }
+        let output = build.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let bytes = fs::read(cwd.join(name)).unwrap();
+        for marker in [
+            "SOURCE_ONLY_PROGRAM_230",
+            "SOURCE_ONLY_YAML_230",
+            "SOURCE_ONLY_TOML_230",
+            "SOURCE_ONLY_EXTERNAL_230",
+        ] {
+            assert!(
+                !bytes
+                    .windows(marker.len())
+                    .any(|part| part == marker.as_bytes()),
+                "source leaked: {marker}"
+            );
+        }
+        let mut manifest = None;
+        let mut passive = 0;
+        for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+            match payload.unwrap() {
+                wasmparser::Payload::CustomSection(section) => {
+                    assert!(!matches!(
+                        section.name(),
+                        "telora.data" | "telora.tooling" | "telora.modules" | "name"
+                    ));
+                    if section.name() == "telora.manifest" {
+                        assert!(section.data().len() < 32);
+                        manifest = Some(serde_json::from_slice::<Value>(section.data()).unwrap());
+                    }
+                }
+                wasmparser::Payload::DataSection(reader) => {
+                    for segment in reader {
+                        if matches!(segment.unwrap().kind, wasmparser::DataKind::Passive) {
+                            passive += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(manifest.unwrap().as_object().unwrap().len(), 1);
+        assert_eq!(passive, if snapshot { 0 } else { 1 });
+        if !snapshot {
+            assert!(
+                !bytes
+                    .windows(b"external_value_only_230".len())
+                    .any(|part| part == b"external_value_only_230")
+            );
+        }
+        artifacts.push((bytes, snapshot));
+    }
+    fs::remove_dir_all(cwd.join("src")).unwrap();
+    fs::remove_file(cwd.join("external.yaml")).unwrap();
+    for (bytes, snapshot) in artifacts {
+        let mut runner = telora_run::Runner::load(&bytes, telora_run::Options::default()).unwrap();
+        let external = telora_run::SourceInput {
+            name: "external".into(),
+            format: 1,
+            data: br#"{"value":"external_value_only_230"}"#.to_vec(),
+        };
+        assert!(
+            runner
+                .initialize(if snapshot {
+                    &[]
+                } else {
+                    std::slice::from_ref(&external)
+                })
+                .unwrap()
+                .is_empty()
+        );
+        for input in [41, 42] {
+            let response: Value = serde_json::from_slice(
+                &runner
+                    .request(method_request(&input.to_string()).as_bytes())
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                response["ok"],
+                serde_json::json!({
+                    "modules": [{"number":i64::MAX,"text":"decoded\ntext"}, {"base":[1,2],"copy":[1,2]}, {"flag":true}],
+                    "external":{"value":"external_value_only_230"}, "input":input,
+                })
+            );
+        }
+        if snapshot {
+            let mut runner =
+                telora_run::Runner::load(&bytes, telora_run::Options::default()).unwrap();
+            assert!(
+                runner
+                    .initialize(&[external])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("already compiled")
+            );
+        }
+    }
+}
+
+#[test]
 fn collection_http_transport_routes_and_reports_missing_endpoints() {
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};

@@ -1,4 +1,4 @@
-//! Persistent metadata contains identities and positions, never source text.
+//! Compiler tooling metadata. Publication removes it; Guest owns runtime types.
 use serde::{Deserialize, Serialize};
 use telora_core::mir::{SealedExecutable, TypeConstructor as T, TypeState};
 
@@ -290,14 +290,13 @@ impl Manifest {
         for payload in wasmparser::Parser::new(0).parse_all(bytes) {
             if let wasmparser::Payload::CustomSection(section) =
                 payload.map_err(|e| e.to_string())?
-                && section.name() == "telora.manifest"
+                && section.name() == "telora.tooling"
             {
                 if manifest.is_some() {
                     return Err("Wasm: duplicate manifest".into());
                 }
                 manifest = Some(
-                    telora_data::json_serde::from_slice::<Self>(section.data())
-                        .map_err(|e| e.to_string())?,
+                    serde_json::from_slice::<Self>(section.data()).map_err(|e| e.to_string())?,
                 );
             }
         }

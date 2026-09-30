@@ -122,6 +122,10 @@ pub(crate) unsafe fn snapshot() -> (u32, Vec<u8>) {
 }
 
 pub(crate) unsafe fn restore(origin: u32, bytes: &[u8]) {
+    unsafe { restore_data(origin, bytes); WORK_BASE = Some(bytes.len() / 8); }
+}
+
+pub(crate) unsafe fn restore_data(origin: u32, bytes: &[u8]) {
     unsafe {
         assert_eq!(
             origin,
@@ -133,7 +137,6 @@ pub(crate) unsafe fn restore(origin: u32, bytes: &[u8]) {
         let mut words = vec![0u64; bytes.len() / 8];
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr().cast(), bytes.len());
         *core::ptr::addr_of_mut!(WORDS) = words;
-        WORK_BASE = Some(bytes.len() / 8);
         publish();
     }
 }

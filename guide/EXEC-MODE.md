@@ -102,20 +102,23 @@ telora-run app.wasm --source knowledge=model.json --serve stdio+jsonl:// < reque
 
 telora build @src/lib --snapshot --source knowledge=model.json -o app.wasm
 telora-run app.wasm < request.json
-# 显式来源覆盖固化来源，并走普通初始化路径
-telora-run app.wasm --source knowledge=replacement.json < request.json
+# 更换固化来源需要重新构建快照
+telora build @src/lib --snapshot --source knowledge=replacement.json -o app.wasm
 ```
 
 build 需要已更新的 workspace lock；从输入端将源码和静态数据模块中的 CRLF/CR
 归一化为 LF，不修改原文件。编译成功后原子发布制品，失败不会覆盖旧文件。
-普通制品包含程序、运行时和静态数据，不执行服务初始化，也不固化动态 --source。
+普通制品包含编译后的程序、运行时和数据模块，不执行服务初始化，也不固化外部 --source。
+数据模块在构建时解析并物化，经回收后以二进制语言值镜像进入 Wasm 数据段；启动时
+装载镜像，不再解析源文件。源码和数据文件原文均不进入发布制品。
 `--snapshot` 要求构建时完整提供服务声明的来源，完成初始化与 copy-collect 后，
 把 ready service 状态作为 `telora.snapshot` custom section 嵌入同一个制品。
-原始代码和静态数据 bundle 仍然保留，因此 snapshot 不是另一种不可逆制品格式。
+快照覆盖的数据模块镜像被移除，不重复保存。发布 manifest 仅保留 ABI 版本；
+完整类型、布局和诊断描述仅供编译器工具使用，发布时移除，语言反射继续读取 Guest 类型镜像。
 
-telora-run 使用 wasmi，不需要源码、workspace 或编译器。普通制品启动时注入数据并初始化；
-包含 snapshot 且未传 `--source` 时直接恢复 ready service。只要命令行出现 `--source`，
-runner 就忽略 snapshot，按照声明校验完整来源集合并重新初始化。因此文件名不参与识别，
+telora-run 使用 wasmi，不需要源码、workspace 或编译器。普通制品装载数据模块镜像，
+接受完整外部来源集合后初始化；snapshot 制品直接恢复 ready service，拒绝新的 `--source`。
+更换固化来源需要重新构建。因此文件名不参与识别，
 普通和 snapshot 制品均可使用 `.wasm` 后缀。
 不传 --serve 则读完 stdin 的一个 JSON（直到 EOF），执行一次并退出。
 制品保留构建时的初始化及请求预算；runner 的

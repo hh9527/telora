@@ -274,9 +274,10 @@ telora lsp                 启动语言服务器
 `http+unix:///tmp/telora.sock`。HTTP 路由由字段上的 `@http::get/post` 声明。
 `telora-run` 不传 `--serve` 时从 stdin 读取一个完整 JSON，输出一个结果；
 传入时持续服务。`--source name=file.json` 提供初始化数据，与请求输入分开。
-普通 Wasm 制品每次启动 runner 都进行初始化。`build --snapshot` 在同一制品中保留
-普通初始化代码和 ready service：runner 无 `--source` 时直接恢复快照，提供
-`--source` 时忽略快照并以新来源重新初始化。当前不提供 Wasmtime 后端。
+普通 Wasm 制品将数据模块保存为编译后的二进制数据段，每次启动 runner 都进行初始化。
+`build --snapshot` 固化外部来源和 ready service，移除被覆盖的数据模块镜像；
+runner 直接恢复快照，更换来源需要重新构建。发布制品不携带源文件原文或完整宿主类型表。
+当前不提供 Wasmtime 后端。
 详细示例见 [执行模式](guide/EXEC-MODE.md)。
 
 `query` 包含：

@@ -16,7 +16,7 @@ pub struct BuildArgs {
     module: String,
     #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
-    /// Initialize and embed a ready service while retaining the ordinary code path.
+    /// Initialize and embed a ready service with compiled external sources.
     #[arg(long)]
     snapshot: bool,
     #[arg(long = "source", requires = "snapshot", value_name = "NAME=SOURCE", value_parser = crate::parse_named_source)]
@@ -75,7 +75,13 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
             .map_err(|e| e.to_string())?;
         plans.push((data.symbol, source, format));
     }
-    let bytes = telora_wasm::bundle::build(&bytes, &mir.sources, &plans)?;
+    let bytes = telora_wasm::bundle::build_with_limits(
+        &bytes,
+        &mir.sources,
+        &plans,
+        config.initialization_fuel,
+        config.memory_limit,
+    )?;
     drop(plans);
     drop(mir);
     drop(inventory);

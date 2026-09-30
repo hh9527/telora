@@ -71,7 +71,6 @@ pub struct Runner {
     guest: Guest,
     pub publication: Publication,
     pub timings: Timings,
-    modules: Vec<artifact::ModuleData>,
     artifact_snapshot: Option<telora_wasm_shared::snapshot_artifact::Snapshot>,
     baseline: Option<Baseline>,
     initialization_fuel: u64,
@@ -110,7 +109,6 @@ impl Runner {
         Ok(Self {
             guest,
             publication: artifact.publication,
-            modules: artifact.modules,
             artifact_snapshot: artifact.snapshot,
             baseline: None,
             timings: Timings {
@@ -159,6 +157,10 @@ impl Runner {
     /// Call once before requests. Failure never publishes a usable service.
     pub fn initialize(&mut self, sources: &[SourceInput]) -> Result<Vec<serde_json::Value>> {
         ensure!(
+            self.artifact_snapshot.is_none() || sources.is_empty(),
+            "snapshot sources are already compiled; rebuild to change them"
+        );
+        ensure!(
             !self.ready && !self.poisoned,
             "initialization cannot be repeated"
         );
@@ -172,7 +174,6 @@ impl Runner {
         {
             self.guest.import_snapshot(&snapshot.guest)?;
             let globals = restore_artifact_globals(&mut self.guest, snapshot.globals)?;
-            self.modules.clear();
             self.baseline = Some(Baseline {
                 snapshot: snapshot.guest,
                 memory_bytes: self.guest.memory.data_size(&self.guest.store),
@@ -187,11 +188,7 @@ impl Runner {
             return Ok(vec![]);
         }
         self.artifact_snapshot = None;
-        for module in &self.modules {
-            self.guest
-                .inject_module(module, self.initialization_quota.as_mut().unwrap())?;
-        }
-        self.record_phase("bundled-modules-injected")?;
+        self.record_phase("compiled-modules-loaded")?;
         let names = self
             .guest
             .sources(self.initialization_quota.as_mut().unwrap())?;
@@ -212,7 +209,6 @@ impl Runner {
         if status != 0 {
             return Err(InitializationError { diagnostics }.into());
         }
-        self.modules.clear();
         let globals = backend::globals(self.guest.instance, &mut self.guest.store);
         let snapshot = self.guest.export_snapshot()?;
         let mut compact = Guest::instantiate(

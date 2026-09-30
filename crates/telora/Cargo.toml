@@ -26,3 +26,4 @@ tempfile = "3"
 
 [dev-dependencies]
 url = "2"
+wasmparser = "0.259"

@@ -199,12 +199,16 @@ JSON/YAML 节点天然子节点优先；TOML 在 parse-1 完成后序整理。�
 
 代码来源保留可编辑的 Rope；数据来源直接接管读入的连续 String。Host 将原始数据字节传入 Guest，
 静态数据模块、注入来源及测试 fixture 均在 Guest 完成 JSON/YAML/TOML 解析和语言值构造，
-不在 Host 构造并复制数据树。内部实验数据包携带原始文本及来源元数据，加载时也走同一 Guest 解析路径。
+不在 Host 构造并复制数据树。发布时，数据模块在 Guest 中解析、物化并回收临时对象，
+以二进制语言值镜像保存到 Wasm passive data segment。启动仅装载镜像，不重复解析。
+外部静态来源仅在快照构建时固化；源码及数据文件原文不进入制品。
 内置 `json.parse` / `yaml.parse` / `toml.parse` 借用 VM
 中的输入字符串并直接导出 Span，每次解析的转换文本共用该次解析上下文中的缓冲区，
 不创建临时 Rope 或逐字符串的 owned-plan。
 
 Host 的 workspace/package 配置经共享 JSON 解析及 `json_serde` 适配取得 Rust 结构。
+编译器侧完整宿主描述属于 `telora.tooling`，使用类型固定的 serde 协议读取；发布时移除。
+发布 `telora.manifest` 仅保留 ABI 版本，类型反射与回收使用 Guest 内的编译后镜像。
 Guest 中的数据解析使用 telora-data。独立 runner 的制品 envelope、服务响应与 LSP
 协议使用 serde_json；这些 Host 协议与 Telora 的 JSON 数据解析不是同一入口。
 数据字节先传入 Guest，再接受格式与 DataLimits 检查；只有成功解析才安装为语言值。
@@ -533,8 +537,8 @@ LSP 的 `mir_workspace` 把文档覆盖内容和磁盘清单送入同一静态�
 
 完整构建的确定性覆盖静态身份与所选执行闭包；Wasm 测试覆盖生成代码、初始化、
 数据来源和长期服务根。Wasm 制品由 `telora build` 发布；`--snapshot` 可在 custom
-section 中携带 ready service 状态，同时保留原始代码与数据 bundle。`telora-run`
-使用 wasmi 独立加载；无显式 source 时恢复快照，有 source 时忽略快照并重新注入、初始化。
+section 中携带 ready service 状态，移除被其覆盖的数据模块镜像。`telora-run`
+使用 wasmi 独立加载；普通制品接收外部来源并初始化，快照制品恢复固化状态，拒绝来源覆盖。
 两个 CLI 共用 `telora-run::transport` 的 JSONL/TCP HTTP/Unix socket HTTP 传输层，
 执行回调保持串行，各自执行入口负责 reset 和资源配额。HTTP 分帧由 Hyper 处理。
 引擎替换与进一步减少复制不属于当前路径。

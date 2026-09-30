@@ -101,24 +101,6 @@ impl Guest {
     pub fn raw_word(&self, ptr: u32) -> Result<u32> {
         Ok(u32::from_le_bytes(self.bytes(ptr, 4)?.try_into()?))
     }
-    pub fn address(&self, reference: u32, len: u32) -> Result<u32> {
-        use telora_wasm_shared::abi::{WORDS_ORIGIN, WORDS_VIEW};
-        let origin = self.raw_word(WORDS_ORIGIN)?;
-        if reference < origin {
-            return Ok(reference);
-        }
-        let offset = reference - origin;
-        ensure!(
-            u64::from(offset) + u64::from(len) <= u64::from(self.raw_word(WORDS_VIEW + 4)?),
-            "language heap range out of bounds"
-        );
-        self.raw_word(WORDS_VIEW)?
-            .checked_add(offset)
-            .ok_or_else(|| anyhow::anyhow!("heap address overflow"))
-    }
-    pub fn word(&self, reference: u32) -> Result<u32> {
-        self.raw_word(self.address(reference, 4)?)
-    }
     pub fn response(&mut self, record: u32) -> Result<Vec<u8>> {
         let ptr = self.raw_word(record)?;
         let len = self.raw_word(record + 4)?;
