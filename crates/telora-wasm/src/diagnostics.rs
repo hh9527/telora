@@ -7,6 +7,62 @@ use telora_core::{
 use wasm_encoder::{Instruction as I, ValType};
 
 impl Emitter<'_> {
+    pub(crate) fn blame_native(&mut self, name: &str) -> Result<u32, String> {
+        let original = self.parameter(0);
+        let (data, _, count) = self.blame_parts(original);
+        if name == "message" {
+            let signature = self.ty(self.key.node)?;
+            let output = *self.mir.types[signature.index()]
+                .arguments
+                .last()
+                .ok_or("Wasm: blame message signature missing output")?;
+            let result = self.value_as(self.key.node, output, STRING_BYTES)?;
+            self.copy(result, 0, data, STRING_BYTES);
+            return Ok(result);
+        }
+        if name != "with_message" {
+            return Err(format!("Wasm: unknown blame native {name}"));
+        }
+        let replacement = self.parameter(1);
+        let bytes = self.local(ValType::I32);
+        let object = self.local(ValType::I32);
+        let id = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(count),
+            I::I32Const(LOC_BYTES as i32),
+            I::I32Mul,
+            I::I32Const(BLAME_SUBJECTS as i32),
+            I::I32Add,
+            I::LocalTee(bytes),
+            I::Call(ALLOC),
+            I::LocalSet(object),
+            I::LocalGet(object),
+            I::LocalGet(data),
+            I::LocalGet(bytes),
+            I::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            },
+        ]);
+        self.copy(object, 0, replacement, STRING_BYTES);
+        self.extend([
+            I::I32Const(table_address(BLAMES) as i32),
+            I::LocalGet(object),
+            I::LocalGet(bytes),
+            I::Call(TABLE_PUSH),
+            I::LocalSet(id),
+        ]);
+        let result = self.alloc(SCALAR_BYTES);
+        self.copy(result, 0, original, SCALAR_BYTES);
+        self.extend([
+            I::LocalGet(result),
+            I::LocalGet(id),
+            I::I64ExtendI32U,
+            I::I64Store(memory(DATA, 3)),
+        ]);
+        Ok(result)
+    }
+
     pub fn blame_parts(&mut self, value: u32) -> (u32, u32, u32) {
         let message = self.table_data(BLAMES, value, DATA);
         let subjects = self.local(ValType::I32);

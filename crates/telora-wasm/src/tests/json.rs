@@ -289,6 +289,28 @@ fn codec_decode_mismatch_retains_input_origin() {
 }
 
 #[test]
+fn blame_context_keeps_codec_path_and_leaf_origin() {
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/blame-context.telora"
+    ))
+    .expect("read test source");
+    let bytes = compile(source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    session.initialize().unwrap();
+    let result = session.call(&[]).unwrap();
+    assert_eq!(
+        result["message"],
+        "$.op: expected String; see info topic syntax/graph/filter"
+    );
+    assert_eq!(
+        diagnostic_point(&result["locs"][1]["start"]),
+        point(source, source.find("Value::Int(7)").unwrap())
+    );
+    assert!(session.diagnostics().unwrap().is_empty());
+}
+
+#[test]
 fn codec_display_failure_propagates_without_duplicate_diagnostics() {
     let bytes = compile(
         &std::fs::read_to_string(concat!(

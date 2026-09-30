@@ -1282,6 +1282,10 @@ match codec.decode@[User](raw) {
 }
 ```
 
+`std::blame::with_context(error, context)` 在原消息后追加 `; context`，返回新的
+`BlameError`，不改变其 subjects 或来源。领域解码器可借此补充知识 topic，同时
+保留 codec 给出的字段路径和错误叶子位置。
+
 `string::parse` 返回 `Result(A, string::ParseError)`，错误的 value 为原始 String。
 `dyn::field/fields/array_items/tuple_items/tag/payload` 返回带 `dyn::AccessError` 的
 Result，错误的 value 为原始 Dyn。`type-desc.resolve` 使用 `ResolveError`，value

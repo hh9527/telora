@@ -1,2 +1,11 @@
 native type BlameError @0;
-pub use self::{BlameError};
+use std::string as string;
+
+native message: Fn(BlameError) -> String;
+native with_message: Fn(BlameError, String) -> BlameError;
+
+def with_context: Fn(BlameError, String) -> BlameError = fn(error, context) {
+    with_message(error, string::join([message(error), context], "; "))
+};
+
+pub use self::{BlameError, with_context};

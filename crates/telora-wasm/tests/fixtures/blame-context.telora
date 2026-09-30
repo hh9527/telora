@@ -1,0 +1,19 @@
+use std::blame as blame;
+use std::codec as codec;
+use std::value::{ Value };
+use std::_rt as rt;
+
+type Request = struct { op: String };
+
+pub def answer: Fn() -> rt::Diagnostic = fn() {
+    let input = Value::Object({op: Value::Int(7)});
+    match rt::with_diagnostics(fn(value: Value) {
+        match codec::decode@[Request](value) {
+            Ok(_) => (),
+            Err(error) => raise!(blame::with_context(error, "see info topic syntax/graph/filter")),
+        }
+    })(input) {
+        Err(reports) => reports[0],
+        Ok(_) => fail!("expected mismatch"),
+    }
+};
