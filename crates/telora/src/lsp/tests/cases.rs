@@ -18,7 +18,7 @@ fn negotiates_supported_position_encodings() {
 
 #[test]
 fn initialize_uses_client_root_and_advertises_incremental_sync() {
-    let (root, state) = fixture();
+    let (_directory, root, state) = fixture();
     let result = initialize_state(&root, &state);
     assert_eq!(state.borrow().lifecycle, Lifecycle::Running);
     assert_eq!(
@@ -45,13 +45,11 @@ fn initialize_uses_client_root_and_advertises_incremental_sync() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn configured_workspace_rebuild_uses_the_locked_package_graph() {
-    let root = std::env::temp_dir().join(format!(
-        "telora-lsp-package-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos()
-    ));
+    let directory = tempfile::Builder::new()
+        .prefix("telora-lsp-package-test-")
+        .tempdir()
+        .expect("create fixture root");
+    let root = directory.path();
     let app = root.join("app");
     let dependency = root.join("dependency");
     std::fs::create_dir_all(app.join("src")).expect("create app source");
@@ -96,12 +94,11 @@ async fn configured_workspace_rebuild_uses_the_locked_package_graph() {
         .await
         .expect("rebuild configured workspace");
     assert!(workspace.published().is_some());
-    std::fs::remove_dir_all(root).expect("remove fixture");
 }
 
 #[test]
 fn applies_ordered_utf16_changes_transactionally() {
-    let (root, state) = fixture();
+    let (_directory, root, state) = fixture();
     initialize_state(&root, &state);
     let path = root.join("src/main.telora");
     let uri = lsp::Url::from_file_path(&path).expect("document URI");
@@ -160,7 +157,7 @@ fn applies_ordered_utf16_changes_transactionally() {
 async fn notifications_apply_full_changes_and_reject_bad_transactions() {
     tokio::task::LocalSet::new()
         .run_until(async {
-            let (root, state) = fixture();
+            let (_directory, root, state) = fixture();
             initialize_state(&root, &state);
             let path = root.join("src/new.telora");
             let uri = lsp::Url::from_file_path(&path).expect("document URI");
@@ -251,7 +248,7 @@ async fn notifications_apply_full_changes_and_reject_bad_transactions() {
 
 #[test]
 fn cancel_notification_sets_registered_telora_token() {
-    let (_, state) = fixture();
+    let (_directory, _, state) = fixture();
     let token = CancellationToken::default();
     state
         .borrow()
@@ -273,7 +270,7 @@ fn cancel_notification_sets_registered_telora_token() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn cancellation_reaches_a_pending_query_checkpoint() {
-    let (_, state, uri) = semantic_fixture("let value = 1;\nvalue").await;
+    let (_directory, _, state, uri) = semantic_fixture("let value = 1;\nvalue").await;
     let mut future = Box::pin(dispatch_request(
         Rc::clone(&state),
         request(
@@ -311,7 +308,7 @@ async fn cancellation_reaches_a_pending_query_checkpoint() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn edit_makes_a_pending_query_content_modified() {
-    let (path, state, uri) = semantic_fixture("let value = 1;\nvalue").await;
+    let (_directory, path, state, uri) = semantic_fixture("let value = 1;\nvalue").await;
     let mut future = Box::pin(dispatch_request(
         Rc::clone(&state),
         request(
@@ -342,7 +339,7 @@ async fn edit_makes_a_pending_query_content_modified() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn duplicate_ids_and_shutdown_with_pending_work_are_deterministic() {
-    let (root, state) = fixture();
+    let (_directory, root, state) = fixture();
     initialize_state(&root, &state);
     let original = CancellationToken::default();
     state
@@ -381,7 +378,7 @@ async fn duplicate_ids_and_shutdown_with_pending_work_are_deterministic() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn hover_definition_and_references_use_the_published_snapshot() {
-    let (_, state, uri) = semantic_fixture("let value = 1;\nvalue").await;
+    let (_directory, _, state, uri) = semantic_fixture("let value = 1;\nvalue").await;
     let position = serde_json::json!({
         "textDocument": { "uri": uri },
         "position": { "line": 1, "character": 1 }
@@ -441,7 +438,7 @@ async fn hover_definition_and_references_use_the_published_snapshot() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn hover_reports_an_ordinary_expression_type() {
-    let (_, state, uri) =
+    let (_directory, _, state, uri) =
         semantic_fixture("let count = 1 + 2;\npub use self::{ count as output };").await;
     let hover: Option<lsp::Hover> = serde_json::from_value(
         dispatch_request(
@@ -467,7 +464,7 @@ async fn hover_reports_an_ordinary_expression_type() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn language_server_solves_types_without_evaluating_user_initializers() {
-    let (_, state, uri) = semantic_fixture(
+    let (_directory, _, state, uri) = semantic_fixture(
             "def crash: Int = panic!(\"LSP must never execute\");\npub def output: Int = crash + 1 / 0;"
         ).await;
     let snapshot = state
@@ -504,7 +501,7 @@ async fn language_server_solves_types_without_evaluating_user_initializers() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn hover_preserves_the_local_function_principal_signature() {
-    let (_, state, uri) = semantic_fixture(
+    let (_directory, _, state, uri) = semantic_fixture(
         "pub def output: Int = do { let identity = fn(value) { value };\nidentity(1) };",
     )
     .await;
@@ -544,7 +541,7 @@ pub def render: for(T: Display) Fn(T) -> String = fn(value) {
     Display.display(value)
 };
 pub def output: String = render(1);"#;
-    let (_, state, uri) = semantic_fixture(source).await;
+    let (_directory, _, state, uri) = semantic_fixture(source).await;
     let hover: Option<lsp::Hover> = serde_json::from_value(
         dispatch_request(
             state,
@@ -570,7 +567,7 @@ pub def output: String = render(1);"#;
 
 #[tokio::test(flavor = "current_thread")]
 async fn protocol_encodings_map_unicode_and_crlf_to_the_same_bytes() {
-    let (_, state, uri) = semantic_fixture("\"😀\";\r\n1").await;
+    let (_directory, _, state, uri) = semantic_fixture("\"😀\";\r\n1").await;
     let snapshot = state
         .borrow()
         .workspace
@@ -620,7 +617,7 @@ async fn lsp_completion_maps_struct_fields_and_utf16_text_edits() {
     let source =
         "let face = \"😀\"; let value = {alpha: 1, beta: \"x\"}; let selected = value.alpha";
     let module_source = format!("{source}; pub use self::{{ selected as output }};");
-    let (_, state, uri) = disk_semantic_fixture(&module_source).await;
+    let (_directory, _, state, uri) = disk_semantic_fixture(&module_source).await;
     let document = state
         .borrow()
         .workspace
@@ -665,7 +662,7 @@ async fn lsp_completion_maps_struct_fields_and_utf16_text_edits() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn lsp_completion_maps_module_exports() {
-    let (root, state) = fixture();
+    let (_directory, root, state) = fixture();
     let model = root.join("src/model.telora");
     let main = root.join("src/main.telora");
     std::fs::write(
@@ -694,7 +691,7 @@ async fn lsp_completion_maps_module_exports() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn lsp_completion_supports_an_empty_prefix_in_recovered_source() {
-    let (root, state) = fixture();
+    let (_directory, root, state) = fixture();
     let model = root.join("src/model.telora");
     let main = root.join("src/main.telora");
     std::fs::write(
@@ -738,7 +735,7 @@ async fn lsp_completion_supports_an_empty_prefix_in_recovered_source() {
 #[tokio::test(flavor = "current_thread")]
 async fn completion_observes_cancellation_and_stale_revisions() {
     let source = "let value = {alpha: 1, beta: 2}; value.alpha";
-    let (path, state, uri) = disk_semantic_fixture(source).await;
+    let (_directory, path, state, uri) = disk_semantic_fixture(source).await;
     let completion_request = || {
         request(
             82,
@@ -788,7 +785,7 @@ async fn completion_observes_cancellation_and_stale_revisions() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn transport_eof_cancels_pending_tokens() {
-    let (_, state, main_loop) = fixture_loop();
+    let (_directory, _, state, main_loop) = fixture_loop();
     let token = CancellationToken::default();
     state
         .borrow()
@@ -806,8 +803,7 @@ async fn transport_eof_cancels_pending_tokens() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn exit_before_shutdown_is_a_protocol_error() {
-    let (root, _, main_loop) = fixture_loop();
-    let _ = root;
+    let (_directory, _, _, main_loop) = fixture_loop();
     let input = frame(serde_json::json!({
         "jsonrpc": "2.0",
         "method": "exit"
@@ -822,7 +818,7 @@ async fn exit_before_shutdown_is_a_protocol_error() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn diagnostics_publish_current_errors_and_an_empty_clear() {
-    let (root, state, main_loop) = fixture_loop();
+    let (_directory, root, state, main_loop) = fixture_loop();
     initialize_state(&root, &state);
     let path = root.join("src/main.telora");
     let workspace = Rc::new(Workspace::new(&path).expect("create document workspace"));
@@ -889,12 +885,11 @@ async fn diagnostics_publish_current_errors_and_an_empty_clear() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn main_loop_completes_initialize_shutdown_and_exit() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("telora-lsp-loop-test-{unique}"));
-    std::fs::create_dir_all(&root).expect("create fixture root");
+    let directory = tempfile::Builder::new()
+        .prefix("telora-lsp-loop-test-")
+        .tempdir()
+        .expect("create fixture root");
+    let root = directory.path().to_path_buf();
     let uri = lsp::Url::from_directory_path(&root).expect("fixture URI");
     let mut input = Vec::new();
     input.extend(frame(serde_json::json!({

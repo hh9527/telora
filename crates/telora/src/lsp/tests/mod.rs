@@ -1,15 +1,19 @@
 use std::task::{Context, Poll, Waker};
-use std::time::{SystemTime, UNIX_EPOCH};
+use tempfile::TempDir;
 
 use super::*;
 
-fn fixture_loop() -> (PathBuf, Rc<RefCell<State>>, async_lsp::MainLoop<Server>) {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("telora-lsp-test-{unique}"));
-    std::fs::create_dir_all(&root).expect("create fixture root");
+fn fixture_loop() -> (
+    TempDir,
+    PathBuf,
+    Rc<RefCell<State>>,
+    async_lsp::MainLoop<Server>,
+) {
+    let directory = tempfile::Builder::new()
+        .prefix("telora-lsp-test-")
+        .tempdir()
+        .expect("create fixture root");
+    let root = directory.path().to_path_buf();
     std::fs::create_dir(root.join("src")).unwrap();
     std::fs::write(
         root.join("telora-config.json"),
@@ -51,12 +55,12 @@ fn fixture_loop() -> (PathBuf, Rc<RefCell<State>>, async_lsp::MainLoop<Server>) 
         }
     });
     let state = captured.borrow_mut().take().expect("captured server state");
-    (root, state, main_loop)
+    (directory, root, state, main_loop)
 }
 
-fn fixture() -> (PathBuf, Rc<RefCell<State>>) {
-    let (root, state, _) = fixture_loop();
-    (root, state)
+fn fixture() -> (TempDir, PathBuf, Rc<RefCell<State>>) {
+    let (directory, root, state, _) = fixture_loop();
+    (directory, root, state)
 }
 
 fn initialize_state(root: &Path, state: &Rc<RefCell<State>>) -> lsp::InitializeResult {
@@ -94,8 +98,8 @@ fn frame(message: serde_json::Value) -> Vec<u8> {
     framed
 }
 
-async fn semantic_fixture(source: &str) -> (PathBuf, Rc<RefCell<State>>, lsp::Url) {
-    let (root, state) = fixture();
+async fn semantic_fixture(source: &str) -> (TempDir, PathBuf, Rc<RefCell<State>>, lsp::Url) {
+    let (directory, root, state) = fixture();
     initialize_state(&root, &state);
     let path = root.join("src/main.telora");
     let uri = lsp::Url::from_file_path(&path).expect("document URI");
@@ -117,11 +121,11 @@ async fn semantic_fixture(source: &str) -> (PathBuf, Rc<RefCell<State>>, lsp::Ur
     state.borrow_mut().documents.insert(path.clone(), 1);
     let context = workspace.context();
     workspace.rebuild(&context).await.expect("build snapshot");
-    (path, state, uri)
+    (directory, path, state, uri)
 }
 
-async fn disk_semantic_fixture(source: &str) -> (PathBuf, Rc<RefCell<State>>, lsp::Url) {
-    let (root, state) = fixture();
+async fn disk_semantic_fixture(source: &str) -> (TempDir, PathBuf, Rc<RefCell<State>>, lsp::Url) {
+    let (directory, root, state) = fixture();
     let path = root.join("src/main.telora");
     std::fs::write(&path, source).expect("write source");
     initialize_state(&root, &state);
@@ -130,7 +134,7 @@ async fn disk_semantic_fixture(source: &str) -> (PathBuf, Rc<RefCell<State>>, ls
     workspace.rebuild(&context).await.expect("build snapshot");
     state.borrow_mut().workspace = Some(workspace);
     let uri = lsp::Url::from_file_path(&path).expect("document URI");
-    (path, state, uri)
+    (directory, path, state, uri)
 }
 
 async fn completion_response(
