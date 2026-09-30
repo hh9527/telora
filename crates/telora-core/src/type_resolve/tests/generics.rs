@@ -1315,6 +1315,62 @@ fn sealed_function_bodies_record_resolved_behavioral_dependencies() {
 }
 
 #[test]
+fn sealed_function_bodies_propagate_multiple_targets_through_recursive_forwarding() {
+    let mut mir = graph(&[(
+        "@src/main",
+        r#"
+        def first_base: Int = 1;
+        def second_base: Int = 2;
+        def unrelated_base: Int = 3;
+        def first: Fn(Int) -> Int = fn(value) { value + first_base };
+        def second: Fn(Int) -> Int = fn(value) { value + second_base };
+        def unused: Fn(Int) -> Int = fn(value) { value + unrelated_base };
+        def apply: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, value) { f(value) };
+        def recurse: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, value) {
+            if value > 0 { recurse(f, value - 1) } else { apply(f, value) }
+        };
+        def forward: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, value) { recurse(f, value) };
+        def dispatch: Fn(Fn(Fn(Int) -> Int, Int) -> Int, Fn(Int) -> Int, Int) -> Int =
+            fn(g, f, value) { g(f, value) };
+        def relay: Fn(Fn(Int) -> Int, Int) -> Int = fn(f, value) {
+            dispatch(if value > 0 { forward } else { recurse }, f, value)
+        };
+        pub def answer: Fn(Int) -> Int = fn(value) {
+            relay(if value > 0 { first } else { second }, value)
+        };
+    "#,
+    )]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    let symbol = |name: &str| {
+        SymbolId(
+            mir.symbols
+                .iter()
+                .position(|symbol| {
+                    symbol.name == name && matches!(symbol.kind, SymbolKind::Declaration(_))
+                })
+                .unwrap() as u32,
+        )
+    };
+    let executable = mir.seal_export(symbol("answer")).unwrap();
+    let graph = executable.function_dependencies();
+    let entry = graph
+        .functions()
+        .iter()
+        .find(|function| {
+            function
+                .dependencies
+                .contains(&FunctionBodyDependency::TopLevel(symbol("relay")))
+        })
+        .unwrap();
+    let (globals, _, fallbacks) = graph.reachable_state(entry.id);
+    assert!(globals.contains(&symbol("first_base")));
+    assert!(globals.contains(&symbol("second_base")));
+    assert!(!globals.contains(&symbol("unrelated_base")));
+    assert!(fallbacks.is_empty(), "{}", graph.dump());
+}
+
+#[test]
 fn local_closure_captures_remain_data_edges() {
     let mut mir = graph(&[(
         "@src/main",
