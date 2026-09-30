@@ -1194,9 +1194,9 @@ let model = codec.decode@[Model](request).unwrap!();
 let value = codec.encode(model);
 ```
 
-解码 named record 时，未知字段和缺少必填字段的错误包含该 record 的外部字段名集合
-（应用 `rename_all` 后的名称，按稳定字母序列出）；错误路径仍指向具体字段，
-subject 保留原输入来源。调用方不必另行维护允许键白名单。
+解码 named record 时，未知字段和缺少必填字段的错误路径指向具体的外部字段名
+（包括 `rename_all` 后的名称），subject 保留原输入来源。codec 不在诊断中内联
+允许键集合；应用可将错误关联到提供完整字段说明的知识点。
 
 `Dyn` 是带 canonical witness 的存在类型，公共数据交换
 使用 `Value`。JSON stringify 只接受 Value，但 JSON
