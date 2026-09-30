@@ -442,6 +442,12 @@ std/path 的 join、normalize、parent、file_name 已接通。固定 Rust ABI
 Option(String)。路径不访问文件系统，不使用宿主平台的路径规则，保留
 绝对路径覆盖、相对 ..、根目录、空路径、Unicode 与反斜杠普通字符语义。
 
+std/uri 的 encode_component 与 decode_component 使用独立 native 模块身份
+35，复用文本范围 ABI。编码按 RFC 3986 只保留 unreserved 字符，UTF-8
+字节使用大写百分号转义；解码严格拒绝不完整/非法转义和非法 UTF-8，
+返回 Option(String)。`+` 保持字面含义，不采用表单编码规则。组件编码
+不访问文件系统，也不替代路径规范化、遍历防护或宿主授权。
+
 数组和元组构造统一处理普通项及展开项，移除原来的仅普通项生成路径。
 所有项依次求值一次；数组按已知元素宽度拼接，元组按封闭字段偏移构造。
 TypeOf 到 Type 的合法适配由静态证据生成；元素来源头保留，新容器记录

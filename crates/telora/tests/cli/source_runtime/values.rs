@@ -138,6 +138,46 @@ fn source_path_operations_survive_initialization() {
 }
 
 #[test]
+fn source_uri_components_are_strict_and_round_trip_utf8() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/runtime/uri.telora"
+        ))
+        .expect("read URI test source"),
+    )
+    .unwrap();
+    for (command, selector) in [("eval", "@src/main:answer"), ("run", "@src/main")] {
+        let observed = execute_value(&cwd, command, selector);
+        assert!(
+            observed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&observed.stderr)
+        );
+        let value: Value = serde_json::from_slice(&observed.stdout).unwrap();
+        assert_eq!(
+            value["encoded"],
+            serde_json::json!([
+                "",
+                "index",
+                "A-z_0.~",
+                "a%2Fb%25%3F%23%20%2B",
+                "%E8%AE%BE%E5%A4%87%2F%E4%BD%8D%E7%BD%AE",
+                "%00"
+            ])
+        );
+        assert_eq!(value["round_trip"], true);
+        assert_eq!(
+            value["decoded"],
+            serde_json::json!(["a+b", "//", "设备", null, null, null, null, null, null])
+        );
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn source_hash_states_are_persistent_across_initialization_and_entry() {
     let cwd = fixture();
     fs::write(

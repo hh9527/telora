@@ -8,13 +8,27 @@ impl Emitter<'_> {
             .iter()
             .position(|&candidate| candidate == name)
             .ok_or_else(|| format!("Wasm: unknown Path native: {name}"))?;
+        self.path_operation_native(operation)
+    }
+
+    pub fn uri_native(&mut self, name: &str) -> Result<u32, String> {
+        let operation = match name {
+            "encode_component" => 4,
+            "decode_component" => 5,
+            _ => return Err(format!("Wasm: unknown URI native: {name}")),
+        };
+        self.path_operation_native(operation)
+    }
+
+    fn path_operation_native(&mut self, operation: usize) -> Result<u32, String> {
+        let optional = matches!(operation, 2 | 3 | 5);
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
         if args.len() != 2 {
             return Err("Wasm: Path signature arity mismatch".into());
         }
         let output = args[1];
-        let string = if operation >= 2 {
+        let string = if optional {
             let shape = &self.mir.types[output.index()];
             if shape.constructor != T::Option || shape.arguments.len() != 1 {
                 return Err("Wasm: Path result must be sealed Option(String)".into());
@@ -41,7 +55,7 @@ impl Emitter<'_> {
             I::Call(PATH),
             I::LocalSet(span),
         ]);
-        if operation < 2 {
+        if !optional {
             return self.text_span_value(string, span);
         }
         let result = self.local(ValType::I32);

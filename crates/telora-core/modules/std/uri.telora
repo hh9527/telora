@@ -1,0 +1,6 @@
+# RFC 3986 component encoding, not filesystem path normalization.
+native encode_component: Fn(String) -> String;
+# Strict percent decoding: malformed escapes or invalid UTF-8 return None.
+# A plus sign is literal, not application/x-www-form-urlencoded whitespace.
+native decode_component: Fn(String) -> Option(String);
+pub use self::{ encode_component, decode_component };

@@ -1,6 +1,36 @@
 //! Platform-independent lexical paths. Results are raw UTF-8 spans, not Options.
 use crate::{abi::*, text::text, values::word};
 
+fn encode_component(input: &str) -> alloc::string::String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut output = alloc::string::String::new();
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            output.push(byte as char);
+        } else {
+            output.push('%');
+            output.push(HEX[(byte >> 4) as usize] as char);
+            output.push(HEX[(byte & 15) as usize] as char);
+        }
+    }
+    output
+}
+
+fn decode_component(input: &str) -> Option<alloc::string::String> {
+    let mut output = alloc::vec::Vec::with_capacity(input.len());
+    let mut bytes = input.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte == b'%' {
+            let high = (bytes.next()? as char).to_digit(16)?;
+            let low = (bytes.next()? as char).to_digit(16)?;
+            output.push((high * 16 + low) as u8);
+        } else {
+            output.push(byte);
+        }
+    }
+    alloc::string::String::from_utf8(output).ok()
+}
+
 unsafe fn join(array: u32) -> alloc::string::String {
     unsafe {
         let base = word(word(array, DATA), 4);
@@ -79,11 +109,22 @@ unsafe fn normalize(input: &str) -> alloc::string::String {
     }
 }
 
-/// 0 join, 1 normalize, 2 parent, 3 file_name. Zero denotes no path component;
+/// 0 join, 1 normalize, 2 parent, 3 file_name, 4 URI encode, 5 URI decode.
+/// Zero denotes no path component or invalid URI component;
 /// the generated caller constructs the sealed Option(String) representation.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_path(operation: u32, input: u32) -> u32 {
     unsafe {
+        if operation == 4 || operation == 5 {
+            let value = if operation == 4 { Some(encode_component(text(input))) }
+                else { decode_component(text(input)) };
+            let Some(value) = value else { return 0 };
+            let span = crate::telora_alloc(8 + value.len() as u32);
+            crate::heap::write(span, span + 8);
+            crate::heap::write(span + 4, value.len() as u32);
+            core::ptr::copy_nonoverlapping(value.as_ptr(), crate::heap::ptr::<u8>(span + 8), value.len());
+            return span;
+        }
         let value = if operation == 0 { normalize(&join(input)) } else { normalize(text(input)) };
         let value = value.as_str();
         let result = match operation {

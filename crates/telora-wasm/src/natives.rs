@@ -36,6 +36,7 @@ impl Emitter<'_> {
             Some((7, name)) => self.string_native(name),
             Some((27, "parse_with")) => self.parse_native(),
             Some((8, name)) => self.path_native(name),
+            Some((35, name)) => self.uri_native(name),
             Some((19, name)) => self.regex_native(name),
             Some((16, name)) => self.hash_native(name),
             Some((13, "encode_with")) => self.codec_encode_native(),

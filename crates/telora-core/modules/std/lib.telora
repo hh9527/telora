@@ -25,5 +25,6 @@ pub mod toml;
 pub mod transform_service;
 pub mod type_desc;
 pub mod type_property;
+pub mod uri;
 pub mod value;
 pub mod yaml;

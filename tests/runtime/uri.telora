@@ -1,0 +1,21 @@
+use std::uri as uri;
+use std::array as array;
+use std::codec::{ encode, Value };
+use std::transform_service as entry;
+
+def inputs: Array(String) = ["", "index", "A-z_0.~", "a/b%?# +", "设备/位置", "\u{0}"];
+type UriResult = struct { encoded: Array(String), round_trip: Bool, decoded: Array(Option(String)) };
+pub def answer: Value = encode({
+    encoded: array::map(inputs, uri::encode_component),
+    round_trip: array::all(inputs, fn(input) {
+        uri::decode_component(uri::encode_component(input)) == Some(input)
+    }),
+    decoded: array::map(["a+b", "%2f%2F", "%E8%AE%BE%E5%A4%87", "%", "%0", "%GG", "%FF", "%C0%AF", "%ED%A0%80"], uri::decode_component),
+}.ty!(UriResult));
+type UriService = struct {};
+impl entry::TransformService for UriService {
+    init: fn(ctx) { {}.ty!(Self) },
+    transform: fn(self, input) { answer },
+};
+@entry::collection
+pub type MainService = struct { @entry::slot("transform") service: UriService };

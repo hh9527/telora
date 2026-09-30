@@ -34,6 +34,7 @@ pub const BUILTINS: &[(&str, &str)] = sources![
     "std/transform_service" => "transform_service",
     "std/type_desc" => "type_desc",
     "std/type_property" => "type_property",
+    "std/uri" => "uri",
     "std/value" => "value",
     "std/yaml" => "yaml",
 ];
@@ -95,6 +96,7 @@ pub fn native_module(name: &str) -> Option<crate::mir::NativeModule> {
         "std/type_property" => (25, vec![]),
         "std/_rt" => (26, vec![]),
         "std/_parse" => (27, vec![]),
+        "std/uri" => (35, vec![]),
         _ => return None,
     };
     Some(NativeModule { id, types })
