@@ -311,6 +311,48 @@ fn blame_context_keeps_codec_path_and_leaf_origin() {
 }
 
 #[test]
+fn codec_record_diagnostics_name_allowed_keys_and_keep_origins() {
+    let source = &std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/telora-wasm/tests/fixtures/codec-record-diagnostics.telora"
+    ))
+    .expect("read test source");
+    for (export, message, marker) in [
+        (
+            "unknown",
+            "$.typo: unknown field; allowed keys: dimension, node",
+            "Value::Int(7)}",
+        ),
+        (
+            "missing",
+            "$.dimension: missing required field; allowed keys: dimension, node",
+            "Value::Object({node: Value::String(\"n\")})",
+        ),
+        (
+            "wrong_type",
+            "$.dimension: expected String",
+            "Value::Int(9)",
+        ),
+        (
+            "renamed",
+            "$.some_value: unknown field; allowed keys: someValue",
+            "Value::Int(1)",
+        ),
+    ] {
+        let bytes = compile_export(source, export).unwrap();
+        let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+        session.initialize().unwrap();
+        let result = session.call(&[]).unwrap();
+        assert_eq!(result["message"], message);
+        assert_eq!(
+            diagnostic_point(&result["locs"][1]["start"]),
+            point(source, source.find(marker).unwrap())
+        );
+        assert!(session.diagnostics().unwrap().is_empty());
+    }
+}
+
+#[test]
 fn codec_display_failure_propagates_without_duplicate_diagnostics() {
     let bytes = compile(
         &std::fs::read_to_string(concat!(

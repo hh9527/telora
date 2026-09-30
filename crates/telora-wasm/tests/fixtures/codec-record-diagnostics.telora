@@ -1,0 +1,39 @@
+use std::codec as codec;
+use std::json as json;
+use std::value::{ Value };
+use std::_rt as rt;
+
+type Request = struct { node: String, dimension: String };
+@json::rename_all(json::RenameCase::CamelCase)
+type CamelRequest = struct { some_value: Int };
+
+def diagnose: Fn(Value) -> rt::Diagnostic = fn(input) {
+    match rt::with_diagnostics(fn(value: Value) {
+        codec::decode@[Request](value).unwrap!()
+    })(input) {
+        Err(reports) => reports[0],
+        Ok(_) => fail!("expected a record decoding error"),
+    }
+};
+
+pub def unknown: Fn() -> rt::Diagnostic = fn() {
+    diagnose(Value::Object({node: Value::String("n"), typo: Value::Int(7)}))
+};
+
+pub def missing: Fn() -> rt::Diagnostic = fn() {
+    diagnose(Value::Object({node: Value::String("n")}))
+};
+
+pub def wrong_type: Fn() -> rt::Diagnostic = fn() {
+    diagnose(Value::Object({node: Value::String("n"), dimension: Value::Int(9)}))
+};
+
+pub def renamed: Fn() -> rt::Diagnostic = fn() {
+    let input = Value::Object({some_value: Value::Int(1)});
+    match rt::with_diagnostics(fn(value: Value) {
+        codec::decode@[CamelRequest](value).unwrap!()
+    })(input) {
+        Err(reports) => reports[0],
+        Ok(_) => fail!("expected an unknown renamed field"),
+    }
+};

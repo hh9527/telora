@@ -27,6 +27,11 @@ impl Emitter<'_> {
                     return Ok(self.local(ValType::I32));
                 }
             };
+        let allowed = if names.is_empty() {
+            "(none)".to_owned()
+        } else {
+            names.join(", ")
+        };
         let index = self.plan.layouts[source.index()]
             .variants
             .iter()
@@ -101,7 +106,11 @@ impl Emitter<'_> {
             I::I32Add,
             I::LocalSet(child),
         ]);
-        self.codec_decode_reject_at("unknown field", child, child_path)?;
+        self.codec_decode_reject_at(
+            &format!("unknown field; allowed keys: {allowed}"),
+            child,
+            child_path,
+        )?;
         self.extend([
             I::End,
             I::LocalGet(cursor),
@@ -118,7 +127,11 @@ impl Emitter<'_> {
             }
             self.extend([I::LocalGet(*field), I::I32Eqz, I::If(BlockType::Empty)]);
             let child_path = self.parse_text(7, path, *key)?;
-            self.codec_decode_reject_at("missing required field", input, child_path)?;
+            self.codec_decode_reject_at(
+                &format!("missing required field; allowed keys: {allowed}"),
+                input,
+                child_path,
+            )?;
             self.emit(I::End);
         }
         let context = self.alloc(32);
