@@ -80,7 +80,7 @@ impl Session {
                 name: site.name.clone(),
                 repr: output.debug_repr(value, site.ty)?,
                 module: source.name.clone(),
-                line: loc[1].checked_add(1).ok_or("Wasm: debug line overflow")?,
+                line: loc[1],
                 message: site.message.clone(),
             });
         }
