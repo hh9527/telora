@@ -68,11 +68,7 @@ impl Session {
             .instance
             .get_typed_func::<(i32, i32), i32>(&self.store, "telora_inject_data")
             .map_err(|e| e.to_string())?;
-        if inject
-            .call(&mut self.store, (symbol as i32, pointer as i32))
-            .map_err(|e| e.to_string())?
-            != 1
-        {
+        if self.guest_call(inject, (symbol as i32, pointer as i32))? != 1 {
             return Err(
                 "Wasm: data module must be injected exactly once before initialization".into(),
             );

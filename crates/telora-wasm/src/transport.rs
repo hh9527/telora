@@ -4,6 +4,8 @@ use crate::{artifact::Kind, output::Output, session::Session};
 /// A borrowed language handle. Initialization compacts its owned graph: inject
 /// pre-initialization inputs into their demand slots, then acquire fresh handles
 /// afterwards. Work collection similarly returns replacements for explicit roots.
+/// Use [`crate::pinned::PinnedValue`] through `Session::pin_value` to keep a value
+/// owned across these boundaries; resolve the pin to acquire its current handle.
 #[derive(Clone, Copy, Debug)]
 pub struct Value {
     pub(crate) pointer: u32,
@@ -90,6 +92,7 @@ impl Session {
         closure: Value,
         arguments: &[Value],
     ) -> Result<Option<Value>, String> {
+        self.ensure_live()?;
         self.expect_value(closure, closure.ty)?;
         let desc = &self.manifest.types[closure.ty as usize];
         if desc.kind != Kind::Function || desc.arguments.len() != arguments.len() + 1 {
@@ -111,9 +114,10 @@ impl Session {
             self.write(args as usize + index * 4, &value.pointer.to_le_bytes())?;
         }
         self.write(args as usize + arguments.len() * 4, &0u32.to_le_bytes())?;
+        let output = self.allocate(self.manifest.types[ty as usize].bytes as usize)?;
         let invoke = self
             .instance
-            .get_typed_func::<(i32, i32), i32>(&self.store, "telora_invoke")
+            .get_typed_func::<(i32, i32, i32), i32>(&self.store, "telora_invoke")
             .map_err(|e| e.to_string())?;
         if self.execution_quota.is_none() {
             self.start_execution()?;
@@ -121,12 +125,15 @@ impl Session {
         let called = self.execution_quota.as_mut().unwrap().call(
             &mut self.store,
             invoke,
-            (closure.pointer as i32, args as i32),
+            (closure.pointer as i32, args as i32, output as i32),
         );
         self.metered_fuel = self.execution_quota.as_ref().map(|quota| quota.consumed());
         let pointer = called? as u32;
         if pointer == 0 {
             return Ok(None);
+        }
+        if pointer != output {
+            return Err("Wasm: callee did not publish caller-owned output".into());
         }
         let value = Value { pointer, ty };
         self.expect_value(value, ty)?;

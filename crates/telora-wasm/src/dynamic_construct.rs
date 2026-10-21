@@ -125,15 +125,7 @@ impl Emitter<'_> {
             value
         } else {
             self.construction_check(node, target, PropertySite::Type, fields[0])?;
-            let id = self.table_push(NEWTYPES, fields[0], self.width(members[0])?, Some(target))?;
-            let value = self.value_as(node, target, self.width(target)?)?;
-            self.extend([
-                I::LocalGet(value),
-                I::LocalGet(id),
-                I::I64ExtendI32U,
-                I::I64Store(memory(DATA, 3)),
-            ]);
-            value
+            self.aggregate_result(node, target, NEWTYPES, fields[0], self.width(members[0])?)?
         };
         let ok = self.plan.layouts[result_ty.index()]
             .variants

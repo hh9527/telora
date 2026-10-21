@@ -88,7 +88,7 @@ impl Output<'_> {
             .iter()
             .find(|f| f.name == name)
             .ok_or_else(|| format!("Wasm: contract field {name:?} missing"))?;
-        let (base, bytes) = self.payload(RECORDS, self.word(pointer + DATA)?)?;
+        let (base, bytes) = self.aggregate_payload(pointer, desc)?;
         if field.offset as u64 + self.manifest.types[field.ty as usize].bytes as u64 > bytes {
             return Err("Wasm: contract field exceeds record".into());
         }
@@ -100,6 +100,31 @@ impl Output<'_> {
     }
     pub(crate) fn bytes(&self, address: u64, length: u64) -> Result<&[u8], String> {
         self.raw_bytes(self.address(address, length)?, length)
+    }
+    pub(crate) fn aggregate_payload(
+        &self,
+        pointer: u64,
+        ty: &crate::artifact::TypeDesc,
+    ) -> Result<(u64, u64), String> {
+        if ty.inline_fields {
+            if self.word(pointer + DATA)? != INLINE_FIELDS || ty.bytes < INLINE_DATA {
+                return Err("Wasm: invalid inline aggregate".into());
+            }
+            self.bytes(pointer, u64::from(ty.bytes))?;
+            Ok((
+                pointer + u64::from(INLINE_DATA),
+                u64::from(ty.bytes - INLINE_DATA),
+            ))
+        } else {
+            self.payload(
+                if ty.kind == Kind::Newtype {
+                    NEWTYPES
+                } else {
+                    RECORDS
+                },
+                self.word(pointer + DATA)?,
+            )
+        }
     }
     pub(crate) fn address(&self, reference: u64, length: u64) -> Result<u64, String> {
         let origin = u64::from(self.raw_word(u64::from(WORDS_ORIGIN))?);
@@ -230,7 +255,7 @@ impl Output<'_> {
                 Value::Array(result)
             }
             Kind::Tuple | Kind::Record => {
-                let (base, bytes) = self.payload(RECORDS, self.word(pointer + DATA)?)?;
+                let (base, bytes) = self.aggregate_payload(pointer, ty)?;
                 let mut items = vec![];
                 let mut fields = serde_json::Map::new();
                 for field in &ty.fields {
@@ -335,7 +360,7 @@ impl Output<'_> {
                     .fields
                     .first()
                     .ok_or("Wasm: newtype has no payload layout")?;
-                let (address, _) = self.payload(NEWTYPES, self.word(pointer + DATA)?)?;
+                let (address, _) = self.aggregate_payload(pointer, ty)?;
                 self.json(address, field.ty, depth + 1)?
             }
             _ => return Err("Wasm: result JSON encoding is not implemented for this type".into()),

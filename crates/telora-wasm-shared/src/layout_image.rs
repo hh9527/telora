@@ -1,5 +1,7 @@
 //! Closed physical layout metadata shared by codegen, Guest tracing and Host sealing.
 
+pub mod gc;
+
 pub const ENTRY_BYTES: u32 = 32;
 pub const DETAIL_BYTES: u32 = 12;
 
@@ -35,6 +37,8 @@ pub enum Kind {
     Resource = 9,
     Newtype = 10,
     CompileTime = 11,
+    InlineRecord = 12,
+    InlineNewtype = 13,
 }
 
 impl Kind {
@@ -52,6 +56,8 @@ impl Kind {
             9 => Self::Resource,
             10 => Self::Newtype,
             11 => Self::CompileTime,
+            12 => Self::InlineRecord,
+            13 => Self::InlineNewtype,
             _ => return None,
         })
     }

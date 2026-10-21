@@ -1,0 +1,10 @@
+use std::regex as regex;
+use std::fmt as fmt;
+
+pub def answer: Fn(String) -> Fn(String) -> String = fn(pattern) {
+    let compiled = regex::compile(pattern);
+    let formatted = fmt::from_int(42);
+    fn(input) {
+        if regex::is_match(compiled, input) { fmt::render(formatted) } else { "no" }
+    }
+};

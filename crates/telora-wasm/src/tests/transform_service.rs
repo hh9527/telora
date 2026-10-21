@@ -286,7 +286,9 @@ fn static_service_initializes_and_captures_each_request() {
 fn reset_restores_initialized_service_after_fuel_and_memory_traps() {
     let bytes = artifact();
     let mut session = Session::load(&bytes, 100_000_000).unwrap();
-    session.memory_limit = 1024 * 1024;
+    // Include paged heap, root metadata and collection working memory. The
+    // grow branch still exceeds this fixed engine boundary by a wide margin.
+    session.memory_limit = 2 * 1024 * 1024;
     let mut service = TransformSession::new(session).unwrap();
     initialize(&mut service);
     for input in ["ok", "loop", "ok", "grow", "ok"] {
@@ -304,7 +306,10 @@ fn reset_restores_initialized_service_after_fuel_and_memory_traps() {
         match input {
             "loop" => assert!(result.unwrap_err().contains("fuel")),
             "grow" => assert!(result.unwrap_err().contains("growth")),
-            _ => assert_eq!(result.unwrap()["ok"], serde_json::json!([42, "ok"])),
+            _ => assert_eq!(
+                result.unwrap_or_else(|e| panic!("request {input}: {e}"))["ok"],
+                serde_json::json!([42, "ok"])
+            ),
         }
     }
     let mut size = None;
@@ -349,4 +354,47 @@ fn source_parse_failure_returns_guest_diagnostics_and_cannot_publish_a_baseline(
 fn transform(service: &mut TransformSession, input: &[u8]) -> Result<serde_json::Value, String> {
     let bytes = service.transform(input)?;
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+}
+
+#[test]
+fn forced_gc_survives_service_initialization_snapshot_requests_and_reset() {
+    let bytes = artifact();
+    let mut session = Session::load(&bytes, 100_000_000).unwrap();
+    let config = crate::gc::GcConfig {
+        allocation_interval: 1,
+        heap_limit: 4 * 1024 * 1024,
+    };
+    session.configure_gc(config).unwrap();
+    let mut service = TransformSession::new(session).unwrap();
+    initialize(&mut service);
+    assert_eq!(service.session().gc_config, config);
+    for _ in 0..4 {
+        service.reset().unwrap();
+        assert_eq!(
+            transform(&mut service, b"\"ok\"").unwrap()["ok"],
+            serde_json::json!([42, "ok"])
+        );
+        assert_eq!(service.session().gc_config, config);
+    }
+    service.session_mut().fuel_budget = 10_000;
+    service.session_mut().store.set_fuel(10_000).unwrap();
+    assert!(
+        transform(&mut service, b"\"loop\"")
+            .unwrap_err()
+            .contains("fuel")
+    );
+    assert!(
+        service
+            .session_mut()
+            .eval()
+            .unwrap_err()
+            .contains("terminated after trap")
+    );
+    service.session_mut().fuel_budget = 100_000_000;
+    service.reset().unwrap();
+    assert_eq!(service.session().gc_config, config);
+    assert_eq!(
+        transform(&mut service, b"\"ok\"").unwrap()["ok"],
+        serde_json::json!([42, "ok"])
+    );
 }

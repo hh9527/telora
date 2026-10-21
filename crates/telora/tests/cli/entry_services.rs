@@ -271,7 +271,8 @@ fn collection_http_transport_routes_and_reports_missing_endpoints() {
     command.args(["run", "@src/main", "--serve", &format!("http://{addr}")]);
     let mut server = Server(command.spawn().unwrap());
     let mut send = |method: &str, path: &str, body: &str| {
-        let mut stream = (0..100)
+        // Startup includes source compilation and competes with other CLI cases.
+        let mut stream = (0..500)
             .find_map(|_| match TcpStream::connect(addr) {
                 Ok(stream) => Some(stream),
                 Err(_) => {

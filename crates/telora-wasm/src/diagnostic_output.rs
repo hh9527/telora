@@ -69,14 +69,7 @@ impl Session {
         if pointer == 0 {
             return Ok(None);
         }
-        let output = self.output();
-        let events = self.diagnostics()?;
-        for (index, event) in events.into_iter().enumerate() {
-            if output.payload(DIAGNOSTICS, index as u32)?.0 == pointer as u64 {
-                return Ok(Some(event));
-            }
-        }
-        Err("Wasm: failure does not reference a diagnostic event".into())
+        self.diagnostic_packet(pointer as u64).map(Some)
     }
 
     pub fn diagnostics(&self) -> Result<Vec<Diagnostic>, String> {
@@ -91,64 +84,69 @@ impl Session {
             if bytes != DIAGNOSTIC_BYTES as u64 {
                 return Err("Wasm: invalid diagnostic record size".into());
             }
-            output.bytes(pointer, bytes)?;
-            let origin = output.location_words(pointer)?;
-            let code = output.word(pointer + DIAG_CODE)?;
-            let message = if code == ERROR_USER {
-                output.text(output.word(pointer + DIAG_MESSAGE)? as u64)?
-            } else if code == ERROR_CYCLE {
-                let mut affected = vec![];
-                for global in &self.manifest.globals {
-                    if output.word(global.demand as u64)? == 3
-                        && output.word(global.demand as u64 + 4)? as u64 == pointer
-                    {
-                        affected.push(global.name.as_str());
-                    }
-                }
-                format!(
-                    "{}; affected globals: {}",
-                    error_message(code),
-                    affected.join(", ")
-                )
-            } else {
-                error_message(code).into()
-            };
-            let mut locs = if origin == [0; 5] {
-                vec![]
-            } else {
-                vec![origin]
-            };
-            let base = output.word(pointer + DIAG_SUBJECTS)? as u64;
-            let count = output.word(pointer + DIAG_COUNT)? as u64;
-            output.bytes(base, count * u64::from(LOC_BYTES))?;
-            for index in 0..count {
-                let offset = base + index * u64::from(LOC_BYTES);
-                let subject = output.location_words(offset)?;
-                if subject != [0; 5] {
-                    locs.push(subject);
-                }
-            }
-            diagnostics.push(Diagnostic {
-                severity: match output.word(pointer + DIAG_SEVERITY)? {
-                    0 => telora_core::source::Severity::Error,
-                    1 => telora_core::source::Severity::Warning,
-                    2 => telora_core::source::Severity::Info,
-                    other => return Err(format!("Wasm: invalid diagnostic severity {other}")),
-                },
-                message,
-                locs,
-                initialization: match output.word(pointer + DIAG_ROOT)? {
-                    0 => None,
-                    index => Some(
-                        self.manifest
-                            .initialization_roots
-                            .get(index as usize - 1)
-                            .ok_or("Wasm: invalid initialization root identity")?
-                            .clone(),
-                    ),
-                },
-            });
+            diagnostics.push(self.diagnostic_packet(pointer)?);
         }
         Ok(diagnostics)
+    }
+    /// A Failed demand owns its packet independently of feedback history.
+    fn diagnostic_packet(&self, pointer: u64) -> Result<Diagnostic, String> {
+        let output = self.output();
+        output.bytes(pointer, DIAGNOSTIC_BYTES as u64)?;
+        let origin = output.location_words(pointer)?;
+        let code = output.word(pointer + DIAG_CODE)?;
+        let message = if code == ERROR_USER {
+            output.text(output.word(pointer + DIAG_MESSAGE)? as u64)?
+        } else if code == ERROR_CYCLE {
+            let mut affected = vec![];
+            for global in &self.manifest.globals {
+                if output.word(global.demand as u64)? == 3
+                    && output.word(global.demand as u64 + 4)? as u64 == pointer
+                {
+                    affected.push(global.name.as_str());
+                }
+            }
+            format!(
+                "{}; affected globals: {}",
+                error_message(code),
+                affected.join(", ")
+            )
+        } else {
+            error_message(code).into()
+        };
+        let mut locs = if origin == [0; 5] {
+            vec![]
+        } else {
+            vec![origin]
+        };
+        let base = output.word(pointer + DIAG_SUBJECTS)? as u64;
+        let count = output.word(pointer + DIAG_COUNT)? as u64;
+        output.bytes(base, count * u64::from(LOC_BYTES))?;
+        for index in 0..count {
+            let offset = base + index * u64::from(LOC_BYTES);
+            let subject = output.location_words(offset)?;
+            if subject != [0; 5] {
+                locs.push(subject);
+            }
+        }
+        Ok(Diagnostic {
+            severity: match output.word(pointer + DIAG_SEVERITY)? {
+                0 => telora_core::source::Severity::Error,
+                1 => telora_core::source::Severity::Warning,
+                2 => telora_core::source::Severity::Info,
+                other => return Err(format!("Wasm: invalid diagnostic severity {other}")),
+            },
+            message,
+            locs,
+            initialization: match output.word(pointer + DIAG_ROOT)? {
+                0 => None,
+                index => Some(
+                    self.manifest
+                        .initialization_roots
+                        .get(index as usize - 1)
+                        .ok_or("Wasm: invalid initialization root identity")?
+                        .clone(),
+                ),
+            },
+        })
     }
 }

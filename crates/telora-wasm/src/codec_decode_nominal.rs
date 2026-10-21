@@ -63,15 +63,9 @@ impl Emitter<'_> {
             decoded,
             Some(error),
         )?;
-        let id = self.table_push(NEWTYPES, decoded, self.width(inner)?, Some(target))?;
-        let value = self.value_as(self.key.node, target, self.width(target)?)?;
+        let value =
+            self.aggregate_result(self.key.node, target, NEWTYPES, decoded, self.width(inner)?)?;
         self.copy(value, 0, input, LOC_BYTES);
-        self.extend([
-            I::LocalGet(value),
-            I::LocalGet(id),
-            I::I64ExtendI32U,
-            I::I64Store(memory(DATA, 3)),
-        ]);
         Ok(value)
     }
 

@@ -6,21 +6,21 @@ use telora_core::{
     test_plan::{TestNotice, TestPlan, TestReport, TestResult},
 };
 use telora_wasm::{
+    pinned::PinnedValue,
     session::Session,
     testing::{Description, TestSession},
-    transport::Value,
 };
 
 enum Work {
     Value {
-        value: Value,
+        value: PinnedValue,
         result: TestResult,
         depth: usize,
         origin: Option<Loc>,
     },
     Fixture {
         plan: Result<Input, Vec<Diagnostic>>,
-        factory: Value,
+        factory: PinnedValue,
         result: TestResult,
         depth: usize,
         origin: Option<Loc>,
@@ -28,10 +28,10 @@ enum Work {
 }
 
 impl Work {
-    fn root(&mut self) -> &mut Value {
+    fn root(&self) -> PinnedValue {
         match self {
-            Self::Value { value, .. } => value,
-            Self::Fixture { factory, .. } => factory,
+            Self::Value { value, .. } => *value,
+            Self::Fixture { factory, .. } => *factory,
         }
     }
 }
@@ -47,10 +47,12 @@ pub(crate) fn run(
     let mut report = TestReport::default();
     let mut pending = vec![];
     for case in plan.exports.into_iter().rev() {
+        let value = testing
+            .session()
+            .initialized_global(case.target.index() as u32)?;
+        let value = testing.session_mut().pin_value(value)?;
         pending.push(Work::Value {
-            value: testing
-                .session()
-                .initialized_global(case.target.index() as u32)?,
+            value,
             result: TestResult {
                 name: case.name,
                 fixtures: vec![],
@@ -70,36 +72,36 @@ pub(crate) fn run(
         admitted_bytes: 0,
     };
     let mut expanded = 0;
+    let mut active = None;
     while !pending.is_empty() {
         if report.aborted {
             break;
         }
-        // Keep only pending descriptions/factories and their exact closure graph.
-        // Consumed case temporaries and diagnostics cannot accumulate between cases.
-        let roots = pending
-            .iter_mut()
-            .map(|work| *work.root())
-            .collect::<Vec<_>>();
-        match testing.session_mut().collect_work(&roots) {
-            Ok((relocated, _)) => {
-                for (work, root) in pending.iter_mut().zip(relocated) {
-                    *work.root() = root;
-                }
-            }
-            Err(message) => {
-                report.diagnostics.push(super::error(message));
-                report.aborted = true;
-                break;
-            }
+        // Queue entries own pins across every callback, including sibling work.
+        // Nonmoving collection preserves every pending capability.
+        if let Some(pin) = active.take() {
+            testing.session_mut().unpin_value(pin)?;
+        }
+        testing.session_mut().release_feedback()?;
+        if let Err(message) = testing.session_mut().collect_garbage() {
+            report.diagnostics.push(super::error(message));
+            report.aborted = true;
+            break;
         }
         let work = pending.pop().unwrap();
+        active = Some(work.root());
         let (value, mut result, depth, fallback) = match work {
             Work::Value {
                 value,
                 result,
                 depth,
                 origin,
-            } => (value, result, depth, origin),
+            } => (
+                testing.session_mut().pinned_value(value)?,
+                result,
+                depth,
+                origin,
+            ),
             Work::Fixture {
                 plan,
                 factory,
@@ -145,6 +147,7 @@ pub(crate) fn run(
                     }
                 };
                 result.phase = "factory";
+                let factory = testing.session_mut().pinned_value(factory)?;
                 let execution = testing.invoke(factory, &[input])?;
                 result.diagnostics.extend(super::diagnostics::convert(
                     execution.diagnostics,
@@ -156,6 +159,7 @@ pub(crate) fn run(
                 } else if let Some(value) = execution.value {
                     notice(&mut report, &mut result);
                     result.phase = "discovery";
+                    let value = testing.session_mut().pin_value(value)?;
                     pending.push(Work::Value {
                         value,
                         result,
@@ -216,7 +220,7 @@ pub(crate) fn run(
                 }
                 children.push(Work::Fixture {
                     plan,
-                    factory,
+                    factory: testing.session_mut().pin_value(factory)?,
                     result: child,
                     depth,
                     origin,

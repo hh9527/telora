@@ -55,7 +55,7 @@ impl Emitter<'_> {
             I::I32Add,
             I::LocalSet(callback),
         ]);
-        let formatted = self.invoke(callback, &[input])?;
+        let formatted = self.invoke(callback, &[input], shape.arguments[1])?;
         let span = self.local(ValType::I32);
         self.extend([
             I::LocalGet(formatted),

@@ -1,6 +1,7 @@
 use std::transform_service as service;
 use std::value::{Value};
 use std::regex as regex;
+use std::http as http;
 data constants = import(json) "@src/constants.json";
 
 def spin: Fn(Int) -> Int = fn(value) { spin(value) };
@@ -10,7 +11,7 @@ def grow: Fn(Array(Int)) -> Int = fn(values) { grow([...values, ...values]) };
 type Model = struct {prefix: Value, pattern: regex::Regex, constant: Value};
 impl service::TransformService for Model {
     init: fn(ctx) {
-        {prefix: ctx.sources["model"], pattern: regex::compile("^[a-z]+[0-9]+$"), constant: constants.data}.ty!(Self)
+        {prefix: ctx.sources["model"], pattern: regex::compile("^[a-z]+[0-9]+$"), constant: constants}.ty!(Self)
     },
     transform: fn(self, input) {
         if input == Value::None {
@@ -27,4 +28,4 @@ impl service::TransformService for Model {
     },
 };
 @service::collection
-pub type MainService = struct { @service::slot("transform") service: Model };
+pub type MainService = struct { @service::slot("transform") @http::post("/transform") service: Model };

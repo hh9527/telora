@@ -143,14 +143,6 @@ impl Emitter<'_> {
             I::LocalGet(bits),
             I::I64Store(memory(DATA, 3)),
         ]);
-        let id = self.table_push(RECORDS, field, self.width(integer)?, Some(output))?;
-        let result = self.value_as(node, output, self.width(output)?)?;
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(id),
-            I::I64ExtendI32U,
-            I::I64Store(memory(DATA, 3)),
-        ]);
-        Ok(result)
+        self.aggregate_result(node, output, RECORDS, field, self.width(integer)?)
     }
 }

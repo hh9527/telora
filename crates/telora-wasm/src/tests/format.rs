@@ -106,7 +106,7 @@ fn format_nodes_and_interpolation_use_fixed_rust_rt_operations() {
         .expect("read test source"),
     )
     .unwrap();
-    let mut session = crate::session::Session::load(&bytes, 20_000_000).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(
         session.call(&[]).unwrap(),

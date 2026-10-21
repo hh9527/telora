@@ -190,16 +190,7 @@ impl Emitter<'_> {
                     telora_core::mir::PropertySite::Type,
                     payload,
                 )?;
-                let id =
-                    self.table_push(NEWTYPES, payload, self.width(arguments[0])?, Some(output))?;
-                let result = self.value_as(node, output, self.width(output)?)?;
-                self.extend([
-                    I::LocalGet(result),
-                    I::LocalGet(id),
-                    I::I64ExtendI32U,
-                    I::I64Store(memory(DATA, 3)),
-                ]);
-                Ok(result)
+                self.aggregate_result(node, output, NEWTYPES, payload, self.width(arguments[0])?)
             }
             _ => Err("Wasm: not a callable constructor".into()),
         }

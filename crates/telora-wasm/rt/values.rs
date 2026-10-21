@@ -5,7 +5,7 @@ pub(crate) unsafe fn word(pointer: u32, offset: u64) -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn telora_invoke(value: u32, args: u32) -> u32 {
+pub unsafe extern "C" fn telora_invoke(value: u32, args: u32, output: u32) -> u32 {
     unsafe {
         let environment = word(value, ENVIRONMENT);
         let environment = if environment == 0 {
@@ -13,9 +13,9 @@ pub unsafe extern "C" fn telora_invoke(value: u32, args: u32) -> u32 {
             // pointer while the value head supplies the materialization origin.
             value
         } else { environment };
-        let callback: unsafe extern "C" fn(u32, u32) -> u32 =
+        let callback: unsafe extern "C" fn(u32, u32, u32) -> u32 =
             core::mem::transmute(word(value, DATA));
-        callback(environment, args)
+        callback(environment, args, output)
     }
 }
 

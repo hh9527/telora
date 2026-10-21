@@ -154,11 +154,24 @@ pub unsafe extern "C" fn create() -> i32 {
         if context == 0 { return 1; }
         let args = crate::telora_alloc(8);
         crate::heap::write(args, context);
-        let handler = telora_invoke(service().initializer, args);
+        let output = crate::telora_alloc(FUNCTION_BYTES);
+        let handler = telora_invoke(service().initializer, args, output);
         if handler == 0 { return 1; }
         service().handler = handler;
         service().phase = Phase::Ready;
         tables::telora_freeze();
         0
+    }
+}
+
+pub(crate) unsafe fn execution_roots() -> alloc::vec::Vec<(u32, u32)> {
+    unsafe {
+        let mut roots = alloc::vec::Vec::new();
+        if let Some(service) = (&*core::ptr::addr_of!(SERVICE)).as_ref() {
+            if service.initializer != 0 { roots.push((service.initializer, service.contract.initializer_type)); }
+            if service.handler != 0 { roots.push((service.handler, service.contract.handler_type)); }
+            roots.extend(inputs::execution_roots(service.contract.string_type, service.contract.value_type));
+        }
+        roots
     }
 }

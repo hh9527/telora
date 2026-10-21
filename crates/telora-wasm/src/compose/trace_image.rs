@@ -16,29 +16,35 @@ pub(super) fn encode(types: &[TypeDesc]) -> Result<Vec<u8>, String> {
             .ok_or("Wasm: trace image overflow")?
     ];
     for (index, ty) in types.iter().enumerate() {
-        let kind = match ty.kind {
-            Kind::Int | Kind::Float | Kind::Bool | Kind::Unit | Kind::Metadata => {
-                layout::Kind::Scalar
+        let kind = if ty.bytes == 0 {
+            layout::Kind::CompileTime
+        } else {
+            match ty.kind {
+                Kind::Int | Kind::Float | Kind::Bool | Kind::Unit | Kind::Metadata => {
+                    layout::Kind::Scalar
+                }
+                Kind::String => layout::Kind::String,
+                Kind::Bytes => layout::Kind::Bytes,
+                Kind::Record | Kind::Tuple if ty.inline_fields => layout::Kind::InlineRecord,
+                Kind::Record | Kind::Tuple => layout::Kind::Record,
+                Kind::Array => layout::Kind::Array,
+                Kind::Dict => layout::Kind::Dict,
+                Kind::Enum | Kind::Option | Kind::Value => layout::Kind::Enum,
+                Kind::Dyn => layout::Kind::Dyn,
+                Kind::Function => layout::Kind::Function,
+                Kind::Unsupported if ty.resource_table.is_some() => layout::Kind::Resource,
+                Kind::Newtype if ty.inline_fields => layout::Kind::InlineNewtype,
+                Kind::Newtype => layout::Kind::Newtype,
+                Kind::Unsupported => layout::Kind::CompileTime,
             }
-            Kind::String => layout::Kind::String,
-            Kind::Bytes => layout::Kind::Bytes,
-            Kind::Record | Kind::Tuple => layout::Kind::Record,
-            Kind::Array => layout::Kind::Array,
-            Kind::Dict => layout::Kind::Dict,
-            Kind::Enum | Kind::Option | Kind::Value => layout::Kind::Enum,
-            Kind::Dyn => layout::Kind::Dyn,
-            Kind::Function => layout::Kind::Function,
-            Kind::Unsupported if ty.resource_table.is_some() => layout::Kind::Resource,
-            Kind::Newtype => layout::Kind::Newtype,
-            Kind::Unsupported => layout::Kind::CompileTime,
         };
         let details = u32::try_from(image.len()).map_err(|_| "Wasm: layout image overflow")?;
         let count = match kind {
-            layout::Kind::Record => ty.fields.len(),
+            layout::Kind::Record | layout::Kind::InlineRecord => ty.fields.len(),
             layout::Kind::Enum => ty.variants.len(),
             layout::Kind::Array => ty.arguments.len(),
             layout::Kind::Dict => ty.arguments.len() + 1,
-            layout::Kind::Newtype => {
+            layout::Kind::Newtype | layout::Kind::InlineNewtype => {
                 if ty.fields.is_empty() {
                     ty.arguments.len()
                 } else {
@@ -65,7 +71,7 @@ pub(super) fn encode(types: &[TypeDesc]) -> Result<Vec<u8>, String> {
             image[base + offset * 4..base + offset * 4 + 4].copy_from_slice(&word.to_le_bytes());
         }
         match kind {
-            layout::Kind::Record => {
+            layout::Kind::Record | layout::Kind::InlineRecord => {
                 for field in &ty.fields {
                     detail(&mut image, Some(field.ty), field.offset, 0);
                 }
@@ -91,7 +97,7 @@ pub(super) fn encode(types: &[TypeDesc]) -> Result<Vec<u8>, String> {
                     detail(&mut image, Some(ty), index as u32 + 1, 0);
                 }
             }
-            layout::Kind::Newtype => {
+            layout::Kind::Newtype | layout::Kind::InlineNewtype => {
                 if ty.fields.is_empty() {
                     for (index, ty) in ty.arguments.iter().copied().enumerate() {
                         detail(&mut image, Some(ty), index as u32, 0);
@@ -104,6 +110,12 @@ pub(super) fn encode(types: &[TypeDesc]) -> Result<Vec<u8>, String> {
             }
             _ => {}
         }
+    }
+    let flags =
+        layout::gc::classify(&image, types.len()).ok_or("Wasm: invalid closed GC layouts")?;
+    for (id, flags) in flags.into_iter().enumerate() {
+        let at = id * layout::ENTRY_BYTES as usize + layout::FLAGS as usize;
+        image[at..at + 4].copy_from_slice(&flags.to_le_bytes());
     }
     Ok(image)
 }

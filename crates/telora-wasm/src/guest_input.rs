@@ -60,9 +60,7 @@ impl Session {
             .instance
             .get_typed_func::<(u32, u32), u32>(&self.store, "telora_materialize_data")
             .map_err(|e| e.to_string())?;
-        let pointer = alloc
-            .call(&mut self.store, (cap, 1))
-            .map_err(|e| e.to_string())?;
+        let pointer = self.guest_call(alloc, (cap, 1))?;
         self.memory
             .write(&mut self.store, pointer as usize, input.as_bytes())
             .map_err(|e| e.to_string())?;
@@ -71,12 +69,9 @@ impl Session {
             Format::Yaml => 2,
             Format::Toml => 3,
         };
-        let packet = parse
-            .call(&mut self.store, (pointer, length, format, source))
-            .map_err(|e| e.to_string())?;
+        let packet = self.guest_call(parse, (pointer, length, format, source))?;
         // The parser now owns its text spans. It cannot retain the transfer buffer.
-        free.call(&mut self.store, (pointer, cap, 1))
-            .map_err(|e| e.to_string())?;
+        self.guest_call(free, (pointer, cap, 1))?;
         let output = self.output();
         let error = output.word(packet as u64 + 12)?;
         if error != 0 {
@@ -88,9 +83,7 @@ impl Session {
                 serde_json::from_str(&format!("[{records}]")).map_err(|e| e.to_string())?
             ));
         }
-        let pointer = materialize
-            .call(&mut self.store, (packet, 0))
-            .map_err(|e| e.to_string())?;
+        let pointer = self.guest_call(materialize, (packet, 0))?;
         Ok(Ok(Value { pointer, ty }))
     }
 }

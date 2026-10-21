@@ -112,6 +112,8 @@ impl Emitter<'_> {
             let key = self.text_as(self.key.node, self.string_type()?, name.as_bytes())?;
             self.copy(key, 0, input, LOC_BYTES);
             self.copy(keys, index as u32 * STRING_BYTES, key, STRING_BYTES);
+            self.root_array_constant(keys, self.string_type()?, (index as u32 + 1) * STRING_BYTES);
+            self.root_array_constant(values, target, index as u32 * width);
             let field = self.local(ValType::I32);
             self.extend([
                 I::LocalGet(base),

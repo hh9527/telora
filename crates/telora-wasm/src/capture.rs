@@ -59,12 +59,14 @@ impl Emitter<'_> {
         let argument = self.parameter(1);
         let origin = self.computation_origin(node)?;
         let arguments = self.argument_array(&[argument], Some(origin));
+        let output_buffer = self.output_alloc(callback.arguments[1])?;
         let returned = self.local(ValType::I32);
         // Deliberately no checked(): zero is the captured language failure.
         // Engine traps still unwind the engine and are not converted to Err.
         self.extend([
             I::LocalGet(callable),
             I::LocalGet(arguments),
+            I::LocalGet(output_buffer),
             I::Call(INVOKE),
             I::LocalSet(returned),
         ]);

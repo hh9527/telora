@@ -41,18 +41,13 @@ pub struct TransformSession {
 
 impl TransformSession {
     pub fn new(mut session: Session) -> Result<Self, String> {
-        let count = session
-            .exports
-            .source_count
-            .call(&mut session.store, ())
-            .map_err(|e| e.to_string())?;
+        let count = session.guest_call(session.exports.source_count, ())?;
         let result = buffers::alloc(&mut session, 12, 4)?;
         let get = session.exports.source_name;
         let mut sources = Vec::new();
         let mut source_ids = Vec::new();
         for index in 0..count {
-            get.call(&mut session.store, (index, result))
-                .map_err(|e| e.to_string())?;
+            session.guest_call(get, (index, result))?;
             let [id, pointer, length] = buffers::words(&session, result)?;
             sources.push(
                 String::from_utf8(buffers::bytes(&session, pointer, length)?)
@@ -187,10 +182,7 @@ impl TransformSession {
     fn initialization_diagnostics(&mut self) -> Result<serde_json::Value, String> {
         let result = buffers::alloc(&mut self.session, 12, 4)?;
         self.session
-            .exports
-            .diagnostics
-            .call(&mut self.session.store, (1, 0, result))
-            .map_err(|e| e.to_string())?;
+            .guest_call(self.session.exports.diagnostics, (1, 0, result))?;
         let bytes = buffers::response(&mut self.session, result)?;
         let diagnostics: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| format!("invalid initialization diagnostics: {e}"))?;
@@ -255,7 +247,7 @@ impl TransformSession {
     pub fn reset(&mut self) -> Result<(), String> {
         let baseline = self.baseline.as_ref().ok_or("service is not initialized")?;
         let limit = self.session.memory_limit;
-        if !self.poisoned {
+        if !self.poisoned && self.session.ensure_live().is_ok() {
             // Cleanup is not charged to the next request, and must not inherit
             // the previous request's nearly exhausted fuel.
             self.session
@@ -335,6 +327,7 @@ impl TransformSession {
             (pointer, length, 1, 0, result),
         );
         self.session.metered_fuel = Some(quota.consumed());
+        self.session.trapped |= called.is_err();
         called?;
         // No free after a trap: the next reset discards the entire failed instance.
         buffers::free(&mut self.session, pointer, length, 1)?;
@@ -346,11 +339,7 @@ impl TransformSession {
 
 fn export_snapshot(session: &mut Session) -> Result<Vec<u8>, String> {
     let result = buffers::alloc(session, 12, 4)?;
-    session
-        .exports
-        .snapshot_export
-        .call(&mut session.store, result)
-        .map_err(|error| error.to_string())?;
+    session.guest_call(session.exports.snapshot_export, result)?;
     let [pointer, length, _] = buffers::words(session, result)?;
     let bytes = buffers::bytes(session, pointer, length)?;
     buffers::free(session, pointer, length, 1)?;
@@ -365,10 +354,6 @@ fn import_snapshot(session: &mut Session, snapshot: &[u8]) -> Result<(), String>
         .memory
         .write(&mut session.store, pointer as usize, snapshot)
         .map_err(|error| error.to_string())?;
-    session
-        .exports
-        .snapshot_import
-        .call(&mut session.store, (pointer, length))
-        .map_err(|error| error.to_string())?;
+    session.guest_call(session.exports.snapshot_import, (pointer, length))?;
     buffers::free(session, pointer, length, 1)
 }

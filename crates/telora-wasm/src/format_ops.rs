@@ -97,7 +97,8 @@ impl Emitter<'_> {
             self.report(node, message, first, count, false);
             self.emit(I::End);
         }
-        // Retain stable immutable value pointers, not copies of their heap data.
+        // Deferred nodes own plain operands after their caller's frame ends.
+        let first = self.escape_plain(first, args[0])?;
         let data = self.alloc(20);
         self.store32(data, 0, operation as u32);
         for (offset, value) in [(4, first), (8, second)] {

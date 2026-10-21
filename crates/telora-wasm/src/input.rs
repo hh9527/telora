@@ -19,9 +19,7 @@ impl Session {
                 .instance
                 .get_typed_func::<(u32, u32, u32), u32>(&self.store, "telora_content_write")
                 .map_err(|e| e.to_string())?;
-            write
-                .call(&mut self.store, (pointer + DATA as u32, data, length))
-                .map_err(|e| e.to_string())?;
+            self.guest_call(write, (pointer + DATA as u32, data, length))?;
         }
         Ok(())
     }
@@ -31,11 +29,10 @@ impl Session {
             .instance
             .get_typed_func::<i32, i32>(&self.store, "telora_alloc")
             .map_err(|e| e.to_string())?;
-        Ok(allocate
-            .call(&mut self.store, bytes as i32)
-            .map_err(|e| e.to_string())? as u32)
+        Ok(self.guest_call(allocate, bytes as i32)? as u32)
     }
     pub(crate) fn write(&mut self, address: usize, bytes: &[u8]) -> Result<(), String> {
+        self.ensure_live()?;
         let address = self.output().address(address as u64, bytes.len() as u64)? as usize;
         self.memory
             .write(&mut self.store, address, bytes)
@@ -85,12 +82,10 @@ impl Session {
             .instance
             .get_typed_func::<(i32, i32, i32), i32>(&self.store, "telora_table_push")
             .map_err(|e| e.to_string())?;
-        Ok(push
-            .call(
-                &mut self.store,
-                (table_address(table) as i32, payload as i32, bytes as i32),
-            )
-            .map_err(|e| e.to_string())? as u32)
+        Ok(self.guest_call(
+            push,
+            (table_address(table) as i32, payload as i32, bytes as i32),
+        )? as u32)
     }
     pub(crate) fn copy_input(&mut self, to: u32, from: u32, bytes: usize) -> Result<(), String> {
         let to = self.output().address(to.into(), bytes as u64)? as usize;
@@ -188,7 +183,11 @@ impl Session {
                         .map(|n| end.max(n))
                         .ok_or("Wasm: record input size overflow")
                 })?;
-                let data = self.allocate(bytes as usize)?;
+                let data = if descriptor.inline_fields {
+                    pointer + INLINE_DATA
+                } else {
+                    self.allocate(bytes as usize)?
+                };
                 for (index, field) in descriptor.fields.iter().enumerate() {
                     let item = match descriptor.kind {
                         Kind::Record => value.get(&field.name),
@@ -199,7 +198,11 @@ impl Session {
                     let width = self.manifest.types[field.ty as usize].bytes;
                     self.copy_input(data + field.offset, value, width as usize)?;
                 }
-                let id = self.push_input(RECORDS, data, bytes, Some(ty))?;
+                let id = if descriptor.inline_fields {
+                    INLINE_FIELDS
+                } else {
+                    self.push_input(RECORDS, data, bytes, Some(ty))?
+                };
                 self.write(pointer as usize + (DATA as usize), &id.to_le_bytes())?;
             }
             Kind::Dict => self.input_dict(pointer, &descriptor, value, depth)?,
@@ -212,12 +215,21 @@ impl Session {
                     .first()
                     .ok_or("Wasm: missing newtype payload")?;
                 let payload = self.input(field.ty, value, depth + 1)?;
-                let id = self.push_input(
-                    NEWTYPES,
-                    payload,
-                    self.manifest.types[field.ty as usize].bytes,
-                    Some(ty),
-                )?;
+                let id = if descriptor.inline_fields {
+                    self.copy_input(
+                        pointer + INLINE_DATA,
+                        payload,
+                        self.manifest.types[field.ty as usize].bytes as usize,
+                    )?;
+                    INLINE_FIELDS
+                } else {
+                    self.push_input(
+                        NEWTYPES,
+                        payload,
+                        self.manifest.types[field.ty as usize].bytes,
+                        Some(ty),
+                    )?
+                };
                 self.write(pointer as usize + (DATA as usize), &id.to_le_bytes())?;
             }
             _ => return Err("Wasm: input encoding is not implemented for this type".into()),

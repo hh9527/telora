@@ -35,8 +35,8 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
     let helpers = vec![
         ("telora_initialize", 2),
         ("telora_entry", 2),
-        ("telora_inject_data", CALL_TYPE),
-        ("telora_materialize_data", CALL_TYPE),
+        ("telora_inject_data", BINARY_TYPE),
+        ("telora_materialize_data", BINARY_TYPE),
     ];
     plan.generated_helpers = helpers.len() as u32;
     let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
@@ -95,26 +95,27 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
     types
         .ty()
         .function([ValType::F64, ValType::F64], [ValType::F64]);
+    types.ty().function([ValType::I32; 5], [ValType::I32]);
     module.section(&types);
     let mut imports = ImportSection::new();
     for (name, ty) in [
         ("telora_alloc", 0),
         ("telora_invoke", CALL_TYPE),
         ("telora_table_push", 3),
-        ("telora_table_get", CALL_TYPE),
+        ("telora_table_get", BINARY_TYPE),
         ("telora_freeze", 2),
-        ("telora_string_compare", CALL_TYPE),
+        ("telora_string_compare", BINARY_TYPE),
         ("telora_source_name", 0),
         ("telora_subject_label", 0),
-        ("telora_sort_pairs", CALL_TYPE),
+        ("telora_sort_pairs", BINARY_TYPE),
         ("telora_duplicate_key_message", 0),
         ("telora_text_query", 3),
         ("telora_text_build", 4),
         ("telora_text_split", 3),
-        ("telora_path", CALL_TYPE),
+        ("telora_path", BINARY_TYPE),
         ("telora_format_render", 0),
-        ("telora_format_message", CALL_TYPE),
-        ("telora_format_join", CALL_TYPE),
+        ("telora_format_message", BINARY_TYPE),
+        ("telora_format_join", BINARY_TYPE),
         ("telora_template_prepare", 0),
         ("telora_member_message", 3),
         ("telora_regex", 3),
@@ -129,6 +130,14 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         ("telora_content_slice", 4),
         ("telora_heap_address", 0),
         ("telora_heap_copy", 3),
+        ("telora_frame_enter", BINARY_TYPE),
+        ("telora_frame_leave", 2),
+        ("telora_frame_tail", 3),
+        ("telora_frame_slot", BINARY_TYPE),
+        ("telora_roots_enter", 0),
+        ("telora_roots_leave", 2),
+        ("telora_roots_set", 6),
+        ("telora_roots_safepoint", 2),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }
@@ -218,6 +227,7 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
             Instruction::GlobalSet(INITIALIZATION_ROOT_GLOBAL),
             Instruction::I32Const(0),
             Instruction::I32Const(0),
+            Instruction::I32Const(0),
             Instruction::Call(plan.functions[key]),
             Instruction::I32Const(0),
             Instruction::GlobalSet(INITIALIZATION_ROOT_GLOBAL),
@@ -273,6 +283,7 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         root.instruction(&instruction);
     }
     root.instruction(&Instruction::I32Const(0))
+        .instruction(&Instruction::I32Const(0))
         .instruction(&Instruction::I32Const(0))
         .instruction(&Instruction::Call(plan.functions[&plan.root]))
         .instruction(&Instruction::End);

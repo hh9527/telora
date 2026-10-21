@@ -1,0 +1,11 @@
+type Point = struct { x: Int, y: (Int, Int) };
+def saved: Point = { x: 11, y: (12, 13) };
+def forward: Fn(Point, Int) -> Point = fn(point, remaining) {
+    if remaining == 0 { point } else { backward(point, remaining - 1) }
+};
+def backward: Fn(Point, Int) -> Point = fn(point, remaining) { forward(point, remaining) };
+pub def answer: Fn(Point, Int) -> Point = fn(point, remaining) {
+    let ignored = if remaining < 0 { return saved; } else { () };
+    let result = forward(point, remaining);
+    result
+};

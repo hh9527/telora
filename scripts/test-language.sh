@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
 source_root=${TELORA_LANGUAGE_ROOT:-"$repo_root/tests/language"}
-build_root="$repo_root/target/language_tests"
+build_root=${TELORA_LANGUAGE_BUILD_ROOT:-"$repo_root/target/language_tests"}
 workspace="$build_root/workspace"
 actual_root="$build_root/actual"
 telora_bin=${TELORA_BIN:-"$repo_root/target/debug/telora"}

@@ -1,0 +1,5 @@
+use std::array as array;
+def grow: Fn(Int, Array(String)) -> Array(String) = fn(count, values) {
+    if count == 0 { values } else { grow(count - 1, array::push(values, "a live array element")) }
+};
+pub def answer: Fn(Int) -> Array(String) = fn(count) { grow(count, []) };

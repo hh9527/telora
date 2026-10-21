@@ -103,6 +103,7 @@ impl Emitter<'_> {
             ]);
             self.parse_reject("input does not match regular expression")?;
             self.emit(I::End);
+            self.root_storage(captures);
             let path = self.read32(0, 4);
             let mut fields = Vec::new();
             for (index, member) in members.iter().enumerate() {

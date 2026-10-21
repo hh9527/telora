@@ -88,6 +88,8 @@ impl Emitter<'_> {
             I::LocalGet(child_path),
             I::I32Store(memory(24, 2)),
         ]);
+        self.root_array_prefix(data, inner, position)?;
+        self.extend([I::Call(ROOTS_SAFEPOINT), I::Drop]);
         let decoded = self.codec_decode_call(source, inner, item, context)?;
         self.parse_propagate(decoded);
         self.extend([

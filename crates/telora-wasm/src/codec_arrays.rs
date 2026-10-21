@@ -31,6 +31,7 @@ impl Emitter<'_> {
         if !members.is_empty() {
             let base = self.table_data(RECORDS, input, DATA);
             for (index, (ty, offset)) in members.iter().enumerate() {
+                self.root_array_constant(data, target, index as u32 * width);
                 let ty = self.plan.layouts[ty.ok_or("Wasm: tuple element type missing")?].id();
                 let value = self.local(ValType::I32);
                 self.extend([
@@ -43,6 +44,7 @@ impl Emitter<'_> {
                 self.copy(data, index as u32 * width, encoded, width);
             }
         }
+        self.root_array_constant(data, target, bytes);
         let payload_ty = self.plan.layouts[target.index()]
             .variants
             .iter()
@@ -124,6 +126,15 @@ impl Emitter<'_> {
             I::I32Add,
             I::LocalSet(item),
         ]);
+        let initialized = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(cursor),
+            I::LocalGet(start),
+            I::I32Sub,
+            I::LocalSet(initialized),
+        ]);
+        self.root_array_prefix(data, target, initialized)?;
+        self.extend([I::Call(ROOTS_SAFEPOINT), I::Drop]);
         let encoded = self.codec_encode_scalar(inner, target, item)?;
         self.extend([
             I::LocalGet(data),

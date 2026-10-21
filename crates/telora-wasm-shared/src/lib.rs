@@ -4,9 +4,13 @@ extern crate alloc;
 
 pub mod abi;
 pub mod arena;
+pub mod frame_scratch;
+pub mod gc_heap;
+pub mod gc_roots;
 pub mod json_text;
 pub mod layout_image;
 pub mod source_range;
+pub mod trace;
 
 pub mod service;
 pub mod snapshot_artifact;

@@ -84,6 +84,6 @@ impl Emitter<'_> {
             ]);
             inputs.push(packed);
         }
-        self.invoke(callee, &inputs)
+        self.invoke(callee, &inputs, *erased.last().unwrap())
     }
 }

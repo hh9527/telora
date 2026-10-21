@@ -11,6 +11,9 @@ pub(crate) struct Emitter<'a> {
     pub plan: &'a Plan,
     pub key: Key,
     code: Vec<I<'static>>,
+    pub parameter_count: u32,
+    frame_base: Option<u32>,
+    scratch_bytes: u32,
     function_pointers: BTreeMap<usize, u32>,
     static_pointers: BTreeSet<usize>,
     pub locals: Vec<ValType>,
@@ -27,9 +30,16 @@ impl<'a> Emitter<'a> {
             plan,
             key,
             code: vec![],
+            parameter_count: 3,
+            frame_base: key.callable.then_some(3),
+            scratch_bytes: 0,
             function_pointers: BTreeMap::new(),
             static_pointers: BTreeSet::new(),
-            locals: vec![],
+            locals: if key.callable {
+                vec![ValType::I32]
+            } else {
+                vec![]
+            },
             local_scopes: Default::default(),
             bindings: BTreeMap::new(),
             local_instances: BTreeMap::new(),
@@ -37,7 +47,10 @@ impl<'a> Emitter<'a> {
         }
     }
     pub fn local(&mut self, ty: ValType) -> u32 {
-        if let Some(index) = self.local_scopes.take(&self.locals, ty) {
+        if let Some(index) = self
+            .local_scopes
+            .take(&self.locals, ty, self.parameter_count)
+        {
             // Existing emitters can rely on Wasm's default-zero local value.
             // A recycled slot must provide the same starting value.
             self.emit(match ty {
@@ -46,19 +59,56 @@ impl<'a> Emitter<'a> {
                 _ => unreachable!("codegen scratch locals are integer words"),
             });
             self.emit(I::LocalSet(index));
+            self.root_clear(index);
             self.local_scopes.track(index);
             return index;
         }
-        let index = self.locals.len() as u32 + 2;
+        let index = self.locals.len() as u32 + self.parameter_count;
         self.locals.push(ty);
         self.local_scopes.track(index);
         index
     }
     pub fn emit(&mut self, instruction: I<'static>) {
+        if let I::Call(index) = instruction
+            && let Some(&result) = self.plan.function_results.get(&index)
+        {
+            let output = result.and_then(|ty| {
+                if self.plan.demand_functions.contains(&index)
+                    && !self.plan.layouts[ty.index()].plain
+                {
+                    // Ready demands own these persistent heads; borrowing one
+                    // avoids per-reference allocation for global callables.
+                    None
+                } else {
+                    Some(
+                        self.output_alloc(ty)
+                            .expect("sealed function result layout"),
+                    )
+                }
+            });
+            self.code.push(output.map_or(I::I32Const(0), I::LocalGet));
+        }
+        let allocation = matches!(self.code.last(), Some(I::Call(ALLOC)));
+        let result_type = match self.code.last() {
+            Some(I::Call(index)) => self.plan.function_results.get(index).copied().flatten(),
+            _ => None,
+        };
+        let assigned = match instruction {
+            I::LocalSet(local) | I::LocalTee(local) => Some(local),
+            _ => None,
+        };
         self.code.push(instruction);
+        if allocation && let Some(local) = assigned {
+            self.root_storage(local);
+        }
+        if let (Some(ty), Some(local)) = (result_type, assigned) {
+            self.root_value(local, ty);
+        }
     }
     pub fn extend(&mut self, code: impl IntoIterator<Item = I<'static>>) {
-        self.code.extend(code);
+        for instruction in code {
+            self.emit(instruction);
+        }
     }
     pub fn function_pointer(&mut self, index: u32) {
         self.function_pointers.insert(self.code.len(), index);
@@ -72,32 +122,52 @@ impl<'a> Emitter<'a> {
     }
     pub fn finish(mut self) -> crate::object::ObjectFunction {
         let demand = (!self.key.callable).then(|| self.plan.demands[&self.key]);
-        let result = self.locals.len() as u32 + 2;
-        if demand.is_some() {
+        let frame = self.frame_base.filter(|_| self.parameter_count == 3);
+        let result = self.locals.len() as u32 + self.parameter_count;
+        let result_width = (self.parameter_count == 3)
+            .then(|| self.key.result_type(self.mir).expect("sealed result type"))
+            .flatten()
+            .map(|ty| self.width(ty).expect("sealed result layout"));
+        if demand.is_some() || result_width.is_some() || frame.is_some() {
             self.locals.push(ValType::I32);
         }
-        let scratch = self.locals.len() as u32 + 2;
+        let scratch = self.locals.len() as u32 + self.parameter_count;
         self.locals.extend([ValType::I32, ValType::I64]);
+        let root_slots = self.parameter_count + self.locals.len() as u32;
         let mut function = crate::object::ObjectFunction::new(
-            Function::new(self.locals.into_iter().map(|ty| (1, ty))),
+            Function::new(self.locals.drain(..).map(|ty| (1, ty))),
             scratch,
         );
         let count = FIRST_FUNCTION + self.plan.functions.len() as u32 + self.plan.generated_helpers;
-        if demand.is_some() {
-            function.instruction(&I::Block(wasm_encoder::BlockType::Result(ValType::I32)));
+        if let Some(base) = frame {
+            for instruction in [
+                I::I32Const(self.scratch_bytes as i32),
+                I::LocalGet(1),
+                I::Call(FRAME_ENTER),
+                I::LocalTee(base),
+                I::I32Const(8),
+                I::I32Sub,
+                I::I32Load(memory(0, 2)),
+                I::LocalSet(1),
+            ] {
+                function.linked_instruction(&instruction, count);
+            }
         }
+        self.root_prologue(&mut function, count, root_slots);
+        // All ordinary exits share one epilogue, including raw-result helpers.
+        // This is the boundary for frame cleanup and caller-owned result handoff.
+        // ReturnCallIndirect remains a separate tail-transfer path.
+        function.instruction(&I::Block(wasm_encoder::BlockType::Result(ValType::I32)));
         let mut depth = 0;
         for (index, instruction) in self.code.into_iter().enumerate() {
-            if demand.is_some() {
-                match instruction {
-                    I::Return => {
-                        function.instruction(&I::Br(depth));
-                        continue;
-                    }
-                    I::Block(_) | I::Loop(_) | I::If(_) => depth += 1,
-                    I::End => depth -= 1,
-                    _ => {}
+            match instruction {
+                I::Return => {
+                    function.instruction(&I::Br(depth));
+                    continue;
                 }
+                I::Block(_) | I::Loop(_) | I::If(_) => depth += 1,
+                I::End => depth -= 1,
+                _ => {}
             }
             if let Some(&symbol) = self.function_pointers.get(&index) {
                 function.function_pointer(symbol);
@@ -107,11 +177,11 @@ impl<'a> Emitter<'a> {
                 function.linked_instruction(&instruction, count);
             }
         }
+        function.instruction(&I::End);
         if let Some(offset) = demand {
             // All exits, including failure propagation, pass through this
             // boundary. The second word holds either a value or failure origin.
             for instruction in [
-                I::End,
                 I::LocalSet(result),
                 I::I32Const(offset as i32),
                 I::LocalGet(result),
@@ -136,11 +206,97 @@ impl<'a> Emitter<'a> {
                 function.linked_instruction(&instruction, count);
             }
         }
+        if let Some(bytes) = result_width {
+            if frame.is_some() {
+                for instruction in [
+                    I::LocalSet(result),
+                    I::LocalGet(result),
+                    I::I32Eqz,
+                    I::I32Eqz,
+                    I::LocalGet(2),
+                    I::I32Eqz,
+                    I::I32And,
+                    I::If(BlockType::Empty),
+                    I::I32Const(bytes as i32),
+                    I::Call(ALLOC),
+                    I::LocalSet(2),
+                    I::End,
+                    I::LocalGet(result),
+                ] {
+                    function.linked_instruction(&instruction, count);
+                }
+            }
+            // Publish demand state before copying: a Ready demand owns its
+            // persistent value and never retains the caller's output buffer.
+            for instruction in [
+                I::LocalSet(result),
+                I::LocalGet(result),
+                I::I32Eqz,
+                I::LocalGet(2),
+                I::I32Eqz,
+                I::I32Or,
+                I::If(BlockType::Result(ValType::I32)),
+                I::LocalGet(result),
+                I::Else,
+                I::LocalGet(2),
+                I::LocalGet(result),
+                I::I32Const(bytes as i32),
+                I::Call(HEAP_COPY),
+                I::End,
+            ] {
+                function.linked_instruction(&instruction, count);
+            }
+        }
+        if frame.is_some() {
+            for instruction in [
+                I::LocalSet(result),
+                I::Call(FRAME_LEAVE),
+                I::Drop,
+                I::LocalGet(result),
+            ] {
+                function.linked_instruction(&instruction, count);
+            }
+        }
+        function.linked_instruction(&I::Call(ROOTS_LEAVE), count);
+        function.instruction(&I::Drop);
         function.instruction(&I::End);
         function
     }
     pub fn ty(&self, node: HirId) -> Result<TypeId, String> {
         self.key.ty(self.mir, node)
+    }
+    pub fn scratch_alloc(&mut self, bytes: u32, clear: bool) -> u32 {
+        let Some(base) = self.frame_base.filter(|_| self.parameter_count == 3) else {
+            return self.alloc(bytes);
+        };
+        let offset = self.scratch_bytes;
+        self.scratch_bytes = offset
+            .checked_add(bytes.max(1).checked_add(7).expect("scratch extent") & !7)
+            .expect("scratch function extent");
+        let result = self.local(ValType::I32);
+        self.extend([I::LocalGet(base), I::I32Const(offset as i32), I::I32Add]);
+        if clear {
+            self.extend([I::I32Const(bytes as i32), I::Call(FRAME_SLOT)]);
+        }
+        self.emit(I::LocalSet(result));
+        result
+    }
+    pub fn output_alloc(&mut self, ty: TypeId) -> Result<u32, String> {
+        let bytes = self.width(ty)?;
+        Ok(if self.plan.layouts[ty.index()].plain {
+            self.scratch_alloc(bytes, false)
+        } else {
+            self.alloc(bytes)
+        })
+    }
+    pub fn escape_plain(&mut self, value: u32, ty: TypeId) -> Result<u32, String> {
+        if !self.plan.layouts[ty.index()].plain {
+            return Ok(value);
+        }
+        let bytes = self.width(ty)?;
+        let owned = self.alloc(bytes);
+        self.copy(owned, 0, value, bytes);
+        Ok(owned)
     }
     pub fn alloc(&mut self, bytes: u32) -> u32 {
         let result = self.local(ValType::I32);
@@ -183,7 +339,11 @@ impl<'a> Emitter<'a> {
         if self.width(ty)? != bytes {
             return Err(format!("Wasm: value width mismatch at {node:?}"));
         }
-        let result = self.alloc(bytes);
+        let result = if self.plan.layouts[ty.index()].plain {
+            self.scratch_alloc(bytes, true)
+        } else {
+            self.alloc(bytes)
+        };
         self.produced_origin(result, node)?;
         Ok(result)
     }
@@ -263,7 +423,7 @@ impl<'a> Emitter<'a> {
         // Prefix and else-if chains have no delimiter nesting limit. Keep
         // continuations on the heap, including each node's value adjustment.
         enum Pending {
-            Release(Option<crate::stack_values::ExpressionBindings>),
+            Release(HirId, Option<crate::stack_values::ExpressionBindings>),
             Unary(HirId, telora_core::syntax::kinds::UnaryOperator),
             Binary(HirId, telora_core::syntax::kinds::BinaryOperator),
             If(HirId, u32),
@@ -297,7 +457,7 @@ impl<'a> Emitter<'a> {
             let mut prepared = None;
             loop {
                 let saved = self.enter_expression(current);
-                pending.push(Pending::Release(saved));
+                pending.push(Pending::Release(current, saved));
                 match self.mir.hir[current.index()].kind {
                     HirKind::Raise(_) | HirKind::Panic => {
                         let action = match self.mir.hir[current.index()].kind {
@@ -410,7 +570,8 @@ impl<'a> Emitter<'a> {
             };
             while let Some(frame) = pending.pop() {
                 let node = match frame {
-                    Pending::Release(saved) => {
+                    Pending::Release(node, saved) => {
+                        self.root_value(value, self.effective_ty(node)?);
                         self.leave_expression(value, saved);
                         continue;
                     }

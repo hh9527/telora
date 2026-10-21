@@ -171,3 +171,24 @@ pub(crate) unsafe fn missing() -> Vec<alloc::string::String> {
             .collect()
     }
 }
+
+pub(crate) unsafe fn execution_roots(string_type: u32, value_type: u32) -> Vec<(u32, u32)> {
+    unsafe {
+        let mut roots = Vec::new();
+        if let Some(state) = (&*core::ptr::addr_of!(SOURCES)).as_ref() {
+            for slot in &state.slots {
+                if slot.key != 0 { roots.push((slot.key, string_type)); }
+                if slot.value != 0 { roots.push((slot.value, value_type)); }
+            }
+        }
+        roots
+    }
+}
+
+pub(crate) unsafe fn source_roots() -> Vec<u32> {
+    unsafe {
+        (&*core::ptr::addr_of!(SOURCES)).as_ref()
+            .map(|state| state.slots.iter().map(|slot| slot.id).collect())
+            .unwrap_or_default()
+    }
+}

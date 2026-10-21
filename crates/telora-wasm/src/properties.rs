@@ -60,7 +60,7 @@ impl Emitter<'_> {
                         value,
                     )?);
                 }
-                closure = self.invoke(closure, &values)?;
+                closure = self.invoke(closure, &values, *expected.last().unwrap())?;
                 signature = *expected.last().unwrap();
             }
             let shape = &self.mir.types[signature.index()];
@@ -80,7 +80,7 @@ impl Emitter<'_> {
             let owner = self.property_context(provider, index, owner_ty)?;
             let prior =
                 self.enum_value(provider, optional, u32::from(previous.is_some()), previous)?;
-            previous = Some(self.invoke(closure, &[owner, prior])?);
+            previous = Some(self.invoke(closure, &[owner, prior], record.property)?);
         }
         let value = previous.ok_or_else(|| "Wasm: empty property chain".to_owned())?;
         if crate::regex_property::property_type(self.mir) == Some(record.property) {
@@ -162,15 +162,7 @@ impl Emitter<'_> {
             };
             self.copy(data, offset, value, self.width(field_ty)?);
         }
-        let id = self.table_push(RECORDS, data, bytes, Some(ty))?;
-        let result = self.value_as(node, ty, self.width(ty)?)?;
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(id),
-            I::I64ExtendI32U,
-            I::I64Store(memory(DATA, 3)),
-        ]);
-        Ok(result)
+        self.aggregate_result(node, ty, RECORDS, data, bytes)
     }
     pub fn property_query(&mut self, name: &str) -> Result<u32, String> {
         let node = self.key.node;

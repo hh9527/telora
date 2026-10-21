@@ -1,0 +1,17 @@
+use std::json as json;
+use std::codec as codec;
+type Item = struct { name: String, children: Array(String) };
+pub def answer: Fn() -> String = fn() {
+    let encoded = codec::encode([
+        { name: "first record with a long name", children: ["child with long non-inline content", "another long child with content"] }.ty!(Item),
+        { name: "second record with a long name", children: ["a third long non-inline child"] }.ty!(Item),
+    ]);
+    let text = json::stringify(encoded);
+    match json::parse(text) {
+        Ok(parsed) => match codec::decode@[Array(Item)](parsed) {
+            Ok(items) => items[1].children[0],
+            Err(error) => raise!(error),
+        },
+        Err(error) => raise!(error),
+    }
+};

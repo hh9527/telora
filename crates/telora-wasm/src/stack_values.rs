@@ -12,11 +12,11 @@ pub(crate) struct LocalScopes {
 }
 
 impl LocalScopes {
-    pub fn take(&mut self, types: &[ValType], ty: ValType) -> Option<u32> {
+    pub fn take(&mut self, types: &[ValType], ty: ValType, parameters: u32) -> Option<u32> {
         let position = self
             .free
             .iter()
-            .rposition(|&id| types[id as usize - 2] == ty)?;
+            .rposition(|&id| types[(id - parameters) as usize] == ty)?;
         Some(self.free.swap_remove(position))
     }
 
@@ -30,11 +30,12 @@ impl LocalScopes {
         self.scopes.push(Vec::new());
     }
 
-    fn leave(&mut self) {
-        self.leave_preserving(&BTreeSet::new());
+    fn leave(&mut self) -> Vec<u32> {
+        self.leave_preserving(&BTreeSet::new())
     }
 
-    pub fn leave_preserving(&mut self, live: &BTreeSet<u32>) {
+    pub fn leave_preserving(&mut self, live: &BTreeSet<u32>) -> Vec<u32> {
+        let mut released = Vec::new();
         for id in self.scopes.pop().expect("balanced local scope") {
             if live.contains(&id) {
                 // Transfer ownership to the consumer's scope, rather than
@@ -42,8 +43,10 @@ impl LocalScopes {
                 self.track(id);
             } else {
                 self.free.push(id);
+                released.push(id);
             }
         }
+        released
     }
 }
 
@@ -74,7 +77,9 @@ impl Emitter<'_> {
             .chain(self.bindings.values().copied())
             .chain(self.local_instances.values().copied())
             .collect();
-        self.local_scopes.leave_preserving(&live);
+        for slot in self.local_scopes.leave_preserving(&live) {
+            self.root_clear(slot);
+        }
     }
 
     /// Leave an adapted value address on the stack. Only lexical bindings that
@@ -93,7 +98,9 @@ impl Emitter<'_> {
         })();
         self.bindings = bindings;
         self.local_instances = instances;
-        self.local_scopes.leave();
+        for slot in self.local_scopes.leave() {
+            self.root_clear(slot);
+        }
         emitted
     }
 }

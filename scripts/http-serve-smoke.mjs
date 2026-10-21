@@ -5,10 +5,12 @@ import {createServer} from 'node:net';
 import {join, resolve} from 'node:path';
 import {rmSync} from 'node:fs';
 import assert from 'node:assert/strict';
+const compilerBin=resolve(process.env.TELORA_BIN ?? 'target/release/telora');
+const runnerBin=resolve(process.env.TELORA_RUN_BIN ?? 'target/release/telora-run');
 const root=process.argv[2];
 assert.ok(root,'expected build-run-smoke root');
 const dir=join(root,'crlf');
-const stdio=spawnSync(resolve('target/release/telora'),['-C',dir,'run','@src/main','--source',`model=${join(dir,'source.json')}`,'--serve','stdio+jsonl://'],{input:'"query"\n"query"\n',encoding:'utf8',timeout:120000});
+const stdio=spawnSync(compilerBin,['-C',dir,'run','@src/main','--source',`model=${join(dir,'source.json')}`,'--serve','stdio+jsonl://'],{input:JSON.stringify({method:'transform',input:'query'})+'\n'+JSON.stringify({method:'transform',input:'query'})+'\n',encoding:'utf8',timeout:120000});
 assert.equal(stdio.status,0,stdio.stderr);
 const lines=stdio.stdout.trim().split('\n').map(JSON.parse);
 assert.equal(lines.length,2); assert.equal(lines[0].error,false); assert.deepEqual(lines[0],lines[1]);
@@ -34,9 +36,9 @@ for(const compiler of [false,true]) for(const unix of [false,true]) {
   const p=await port(), socket=join(root,`serve-${compiler}.sock`);
   const uri=unix?`http+unix://${socket}`:`http://127.0.0.1:${p}`;
   const address=unix?{socketPath:socket}:{host:'127.0.0.1',port:p};
-  const args=compiler?['-C',dir,'--request-fuel','100','run','@src/main']: [join(dir,'original.wasm'),'--request-fuel','1'];
+  const args=compiler?['-C',dir,'--request-fuel','10','run','@src/main']: [join(dir,'original.wasm'),'--request-fuel','10'];
   args.push('--source',`model=${join(dir,'source.json')}`,'--serve',uri);
-  const child=spawn(resolve(`target/release/${compiler?'telora':'telora-run'}`),args,{stdio:['ignore','ignore','pipe']});
+  const child=spawn(compiler?compilerBin:runnerBin,args,{stdio:['ignore','ignore','pipe']});
   let errors='';child.stderr.on('data',s=>errors+=s);
   try {
     let first;
@@ -51,7 +53,7 @@ for(const compiler of [false,true]) for(const unix of [false,true]) {
     assert.equal((await send(address,'{')).value.error,true);
     assert.deepEqual(await send(address),first);
     assert.equal((await send(address,'',{method:'GET'})).status,405);
-    assert.equal((await send(address,'',{path:'/missing'})).status,404);
+    assert.equal((await send(address,'"query"',{path:'/missing'})).status,404);
     assert.equal((await send(address,'',{headers:{'content-length':'999999999999'}})).status,413);
     const replies=await Promise.all(Array.from({length:8},()=>send(address)));
     for(const reply of replies) assert.deepEqual(reply,first);

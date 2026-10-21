@@ -12,11 +12,13 @@ mod equality;
 mod expression_locals;
 mod format;
 mod host_memory;
+mod inline_aggregates;
 mod interpreters;
 mod json;
 mod records;
 mod reflection;
 mod regex;
+mod root_lifetimes;
 mod service_sources;
 mod services;
 mod source_ranges;
@@ -427,7 +429,12 @@ fn array_callbacks_execute_in_wasm_with_closed_element_types() {
         .expect("read test source"),
     )
     .unwrap();
-    let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+    let audit = session
+        .instance
+        .get_typed_func::<i32, i32>(&session.store, "telora_roots_audit")
+        .unwrap();
+    audit.call(&mut session.store, 1).unwrap();
     session.initialize().unwrap();
     assert_eq!(
         session.eval().unwrap(),
@@ -442,6 +449,18 @@ fn array_callbacks_execute_in_wasm_with_closed_element_types() {
             .all(|d| d.severity == telora_core::source::Severity::Warning
                 && d.message == "flat_map once")
     );
+    let marks = session
+        .instance
+        .get_typed_func::<(), i32>(&session.store, "telora_roots_marks")
+        .unwrap();
+    assert!(marks.call(&mut session.store, ()).unwrap() > 10);
+    for export in ["telora_roots_depth", "telora_roots_count"] {
+        let stat = session
+            .instance
+            .get_typed_func::<(), i32>(&session.store, export)
+            .unwrap();
+        assert_eq!(stat.call(&mut session.store, ()).unwrap(), 0);
+    }
 }
 
 #[test]
@@ -840,8 +859,45 @@ fn failed_demands_keep_failure_identity_instead_of_running_state() {
     }
     assert!(failed > 0);
     assert_eq!(session.diagnostics().unwrap().len(), 1);
-    assert!(session.initialize().is_err());
+    let failure = session.initialize().unwrap_err();
     assert_eq!(session.diagnostics().unwrap().len(), 1);
+    for _ in 0..3 {
+        session.release_feedback().unwrap();
+        session.collect_garbage().unwrap();
+        assert_eq!(
+            session.active_failure().unwrap().unwrap().message,
+            "integer division by zero"
+        );
+        assert_eq!(session.initialize().unwrap_err(), failure);
+        assert_eq!(session.diagnostics().unwrap().len(), 1);
+    }
+    // A recoverable test boundary clears the transient global before releasing
+    // history. A later force of a Failed demand republishes this same packet.
+    let active = session
+        .instance
+        .get_global(&session.store, "telora_error")
+        .unwrap();
+    let packet = active.get(&session.store);
+    active.set(&mut session.store, wasmi::Val::I32(0)).unwrap();
+    session.release_feedback().unwrap();
+    session.collect_garbage().unwrap();
+    assert!(session.diagnostics().unwrap().is_empty());
+    active.set(&mut session.store, packet).unwrap();
+    assert!(
+        session
+            .active_failure()
+            .unwrap()
+            .unwrap()
+            .message
+            .contains("division by zero")
+    );
+    assert_eq!(session.initialize().unwrap_err(), failure);
+    assert!(
+        session
+            .collect_work(&[])
+            .unwrap_err()
+            .contains("active failure")
+    );
 }
 
 #[test]

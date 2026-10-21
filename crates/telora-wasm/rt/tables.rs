@@ -53,7 +53,9 @@ pub(crate) unsafe fn reset() {
 pub unsafe extern "C" fn telora_table_push(address: u32, payload: u32, bytes: u32) -> u32 {
     unsafe {
         let mut table = crate::heap::read::<Table>(address);
-        let id = table.length;
+        let id = (table.frozen..table.length)
+            .find(|&id| crate::heap::read::<Slot>(table.buffer + id * 8).payload == 0)
+            .unwrap_or(table.length);
         if id == table.capacity {
             if table.capacity > 0x0fff_ffff {
                 core::arch::wasm32::unreachable();
@@ -77,9 +79,29 @@ pub unsafe extern "C" fn telora_table_push(address: u32, payload: u32, bytes: u3
         crate::heap::ptr::<Slot>(table.buffer)
             .add(id as usize)
             .write(Slot { payload, bytes });
-        table.length = id + 1;
+        table.length = table.length.max(id + 1);
         crate::heap::write(address, table);
         id
+    }
+}
+
+pub(crate) unsafe fn sweep(live: &alloc::collections::BTreeSet<(u32, u32, u32)>) {
+    unsafe {
+        for tag in 0..TABLE_COUNT {
+            let address = table_address(tag);
+            let mut table: Table = crate::heap::read(address);
+            for id in table.frozen..table.length {
+                if live.range((tag, id, 0)..=(tag, id, u32::MAX)).next().is_some() { continue; }
+                let at = table.buffer + id * 8;
+                let slot: Slot = crate::heap::read(at);
+                if tag == REGEXES { crate::regex::release(slot.payload); }
+                crate::heap::write(at, Slot { payload: 0, bytes: 0 });
+            }
+            while table.length > table.frozen && crate::heap::read::<Slot>(table.buffer + (table.length - 1) * 8).payload == 0 {
+                table.length -= 1;
+            }
+            crate::heap::write(address, table);
+        }
     }
 }
 

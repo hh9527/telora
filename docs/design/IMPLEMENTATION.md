@@ -310,14 +310,22 @@ codegen 的公开编译入口接受 SealedExecutable。表达式类型、泛型�
 typed handle 提供封闭类型；Dyn payload 保留具体 TypeId。标量值为 16 字节；函数保存
 函数表索引与闭包环境。闭包环境将捕获指针和对应封闭 TypeId 分列存储，collector 不从
 被捕获值反查类型。
-Array、Record 等对象位于各自 typed table；Tuple/Record 共用 Record table。
+有限且不含普通 GC 引用或内部动态所有权的 struct/tuple/newtype 将字段内联在值中；
+payload 的首个字为固定 `INLINE_FIELDS` 标记，字段区从完整值偏移 16 开始，字段
+各自保留完整来源头。按值复制不依赖原值的载荷地址。递归存储及含引用聚合使用
+间接载荷；Array 的动态元素区也使用带封闭布局的直接对象引用。普通对象的扫描
+角色与资源表索引分开，Regex/Fmt 等资源仍通过各自的表槽访问。
 String/Bytes 共用独立的 `Vec<u8>` 内容池：不足 16 字节时直接内联，最后一字节保存
 长度；其余值保存 `start/end/raw_start` 三个绝对偏移，最后一字节为 16。
 共享切片保留 raw_start；回收先汇总同组存活区间，再复制包围区间并重定位全部视图。
 没有独立 String/Bytes 表。Host 的只读内容视图位于线性内存 48/52（地址/长度），
-不可跨 Guest 调用缓存内容地址。结构化对象与表缓冲区已迁入单个 `Vec<u64>`。
-语言引用编码为 `origin + byte_offset`，origin 是链接后静态镜像末端；小于 origin
-的引用指向永久 Wasm 静态区，其余通过当前 words 基址访问。Host 交换缓冲区和来源
+不可跨 Guest 调用缓存内容地址。结构化对象与表缓冲区存放在单个 `Vec<u64>`；分页元数据按 size class 管理动态
+分配，准确内部引用保活所属块。空槽复用，空页合并后再分配时拆分剩余范围。
+backing 保留容量，committed 包含保留容量和页/槽元数据；RT words 默认预算为 32 MiB，
+内容、来源和 Rust 资源另受 Guest 线性内存上限约束。
+持久 words 引用编码为 `origin + byte_offset`，origin 是链接后静态镜像末端；
+小于 origin 的引用指向永久 Wasm 静态区，`[origin, 0x80000000)` 内的引用通过
+当前 words 基址访问，scratch 引用见下文。Host 交换缓冲区和来源
 记录仍使用独立的真实线性内存地址，不能当作语言引用传入。
 只读 words 视图位于 40/44（地址/字节数），origin 位于 56；扩容后必须重新取基址。
 类型追踪描述与反射描述在编译时进入永久静态镜像，Guest 启动时登记；words 中
@@ -334,9 +342,61 @@ codegen 不沿 def/let initializer 追溯构造器。类型域别名不作为初
 pattern 使用单独的 member selection 事实，不执行值物化。
 
 enum 构造器代码按封闭签名和 variant 复用。其函数值的 environment 为 0，invoke
-将函数值地址作为第一个参数交给构造器胶水，用于复制 12 字节 Loc；payload
-仍按原布局搬运，不重写其来源。普通闭包使用非零环境句柄，调用约定不变。
-内部 ABI 版本为 28；旧 Wasm 制品需重新生成，不能混用旧布局或调用约定。
+将函数值地址作为第一个参数交给构造器胶水，用于复制 8 字节 Loc；payload
+仍按原布局搬运，不重写其来源。普通闭包使用非零环境句柄。
+生成函数使用 `(environment, arguments, output) -> i32`；成功时将完整值复制到
+非零 output 并返回该地址，语言失败返回 0。尾调用传递同一个 output。
+Equal/Json 内部 helper 返回原始状态，不把其结果解释为值。Host、高阶回调和
+service 调用提供结果区；初始化入口使用 0，由 demand 保留持久结果。Ready
+demand 的存储先于调用方结果复制发布，不保存调用方 output 地址。对非纯值的
+Ready demand 引用使用 0 借用其持久值头，避免读取全局函数也分配新的值头。
+
+生成的 callable 帧使用独立的可复用 scratch 区。纯标量、有限纯聚合的普通构造、
+纯值调用结果和临时参数包按编译期分配点占槽，循环复用；来源仍存放在完整值中。
+逻辑 scratch 引用从 0x80000000 开始，与持久 words 分离；普通返回先完成结果
+复制，再释放帧。语言失败走同一个退出边界；引擎 trap 后由会话终止或 reset
+清理临时区。闭包捕获和延迟 debug 事件复制纯值，保留自己的完整值副本。
+
+尾调用先把参数包及纯值参数复制到受保护 transfer 区，再释放旧帧。callee 进入
+时采用完整包并修正包内引用，之后可正常嵌套调用；无环境构造器继续接收函数值
+本身以保留来源。临时区容量按最大活动帧需求复用，不随尾调用次数增长。调用结果
+槽在调用前保留旧内容，使 fold 的上轮结果可同时作为本轮输入。
+初始化 demand、二参数 materializer 及含动态所有权的值仍使用持久 words 路径。
+生成函数发布独立 shadow frame：参数、返回值和表达式结果使用封闭类型根，原始
+分配仅保留 storage，数组构造和回调输出发布已初始化前缀，local 复用时清空根槽。
+普通退出和可恢复失败退出释放根帧，尾调用在受保护参数交接后释放旧根帧。
+运行时标记审计默认关闭，可在 callable 入口安全点遍历活动帧、Host pin、Ready
+demand、service 初始化输入以及待消费的诊断/debug 事件。审计不执行 sweep；
+显式 `telora_gc_collect` 则标记并回收动态 words、内容、未引用资源槽及动态来源，
+释放失活 Regex 的 Rust 资源。资源空槽可复用。执行中收集在 callable 入口及 parser/codec 数组循环安全点
+触发。默认分配间隔下限为 64 KiB；每次收集后，间隔取配置下限与当前 managed
+占用一半的较大值，并以 words 预算剩余余量的四分之一封顶（最少 1 字节），
+使大存活图的扫描成本得到摊销。`telora_gc_interval` 配置间隔下限，0 关闭
+自动触发，1 在每个安全点强制收集。`telora_gc_heap_limit` 可设 words
+预算，预算不足时停止执行。parser/codec 上下文、Regex 捕获缓冲区和 postorder
+parser plan 使用独立根角色，按实际字段/已初始化前缀扫描。物化会消费 plan：
+packet 只保留未处理的 rows 后缀，子节点使用计数使临时值头在最后一个父节点
+复制后退出根集合；共享语言值仍由准确 mark-sweep 追踪。
+Host 使用 `Session::pin_value` 取得 Session 所有的 generation 句柄；解析 pin
+取得当前借用值，边界复制回收会更新 pin，unpin 后的句柄副本及跨 Session 使用会
+被拒绝。reset 使活动 pin 失效。延迟格式节点持有纯值参数副本，诊断事件持有
+来源范围副本，均独立于生产它们的 scratch 帧。制品静态来源索引由代码镜像
+持有，生命周期与制品一致；动态来源仍由值/来源根保活。service initializer、
+handler、已注入值和所有声明的 source 身份由服务阶段拥有。
+`Session::configure_gc` 配置间隔和 words 预算，服务 snapshot 重建保留配置。
+`gc_stats` 分别报告累计分配、当前 managed 占用、words 保留空间、收集次数和
+线性内存高水位；managed 占用包含尚未清扫的临时分配，不能当作准确存活量。
+`collect_garbage` 在 Host 边界执行非移动收集；测试队列持有 pin，使用此接口
+回收已完成任务。`release_feedback` 在 Host 复制反馈后释放 Guest 历史，保留当前活动失败事件；
+Failed demand 独立拥有其错误包，即使历史已释放也能再次报告。只读反馈接口
+保留历史直到显式释放。活动失败期间仅允许非移动收集，`collect_work` 拒绝
+压缩，避免移动诊断协议持有的原始错误地址。
+Guest trap 使 Session 终止，拒绝继续执行、分配或改变根；语言失败仍按状态码
+返回。服务 reset 以初始化 snapshot 替换陷阱实例，普通 Session 通过重新 load 恢复。
+冻结和恢复镜像前缀有明确所有者，不按字节猜测其中的分配边界。snapshot/data
+image 保存有效分配字节计数；恢复后动态页元数据从前缀末端重新建立。service
+reset 清空动态元数据并截断 words，同时复用 backing。内部 ABI 版本为 36；
+旧 Wasm 制品需重新生成，不能混用旧布局或调用约定。
 `interpreter!` 在构造时捕获输入函数，工厂和适配器使用普通值引用环境；
 没有适配器 memo 槽或 raw-parent 环境，回收不再扫描、修补冻结环境中的该类缓存。
 

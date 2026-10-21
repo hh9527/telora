@@ -86,6 +86,7 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
+        self.root_array_prefix(values, into, index)?;
         let item = self.array_item(source, index, self.width(from)?);
         let item = self.adapt(node, from, into, item)?;
         let destination = self.array_item(values, index, width);
@@ -99,6 +100,7 @@ impl Emitter<'_> {
             I::End,
             I::End,
         ]);
+        self.root_array_prefix(values, into, count)?;
         self.dict_result_at(node, target, keys, values, count, width)
     }
 

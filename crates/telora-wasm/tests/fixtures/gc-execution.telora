@@ -1,0 +1,15 @@
+use std::array as array;
+use std::string as string;
+type Item = struct { name: String, children: Array(String) };
+def iterate: Fn(Int, Item) -> Item = fn(count, item) {
+    if count == 0 { item } else {
+        let next: Item = {
+            name: string::join([item.name, ""], ""),
+            children: array::map(item.children, fn(child) { string::join([child, ""], "") }),
+        };
+        iterate(count - 1, next)
+    }
+};
+pub def answer: Fn(Int) -> Item = fn(count) {
+    iterate(count, { name: "a repeated live name that needs non-inline content", children: ["first child needing a content slice", "second child needing a content slice"] })
+};

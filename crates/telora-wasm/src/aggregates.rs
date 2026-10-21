@@ -6,6 +6,34 @@ use telora_core::{
 use wasm_encoder::{Instruction as I, ValType};
 
 impl Emitter<'_> {
+    pub fn inline_fields(&self, ty: TypeId) -> bool {
+        matches!(&self.plan.layouts[ty.index()].layout, State::Known { shape } if shape.inline_fields)
+    }
+    pub fn aggregate_result(
+        &mut self,
+        node: HirId,
+        ty: TypeId,
+        table: u32,
+        payload: u32,
+        bytes: u32,
+    ) -> Result<u32, String> {
+        if self.inline_fields(ty) {
+            let result = self.value_as(node, ty, self.width(ty)?)?;
+            self.store64(result, DATA, u64::from(INLINE_FIELDS));
+            self.copy(result, INLINE_DATA, payload, bytes);
+            Ok(result)
+        } else {
+            let id = self.table_push(table, payload, bytes, Some(ty))?;
+            let result = self.value_as(node, ty, self.width(ty)?)?;
+            self.extend([
+                I::LocalGet(result),
+                I::LocalGet(id),
+                I::I64ExtendI32U,
+                I::I64Store(memory(DATA, 3)),
+            ]);
+            Ok(result)
+        }
+    }
     pub fn effective_ty(&self, node: HirId) -> Result<TypeId, String> {
         self.key.effective_ty(self.mir, node)
     }
@@ -82,12 +110,28 @@ impl Emitter<'_> {
     pub fn table_data(&mut self, table: u32, value: u32, field: u64) -> u32 {
         let result = self.local(ValType::I32);
         if matches!(table, RECORDS | VALUES | NEWTYPES) {
+            if table != VALUES {
+                self.extend([
+                    I::LocalGet(value),
+                    I::I32Load(memory(field, 2)),
+                    I::I32Const(INLINE_FIELDS as i32),
+                    I::I32Eq,
+                    I::If(wasm_encoder::BlockType::Result(ValType::I32)),
+                    I::LocalGet(value),
+                    I::I32Const(INLINE_DATA as i32),
+                    I::I32Add,
+                    I::Else,
+                ]);
+            }
             self.extend([
                 I::LocalGet(value),
                 I::I32Load(memory(field, 2)),
                 I::I32Const(8),
                 I::I32Add,
             ]);
+            if table != VALUES {
+                self.emit(I::End);
+            }
         } else if table == ARRAYS {
             self.extend([
                 I::LocalGet(value),

@@ -122,7 +122,12 @@ impl Session {
             .into_iter()
             .max()
             .unwrap_or(0);
-        let data = self.allocate(bytes as usize)?;
+        let result = self.input_header(ty)?;
+        let data = if desc.inline_fields {
+            result + INLINE_DATA
+        } else {
+            self.allocate(bytes as usize)?
+        };
         for field in &desc.fields {
             let pointer = *fields
                 .get(field.name.as_str())
@@ -133,8 +138,11 @@ impl Session {
                 self.manifest.types[field.ty as usize].bytes as usize,
             )?;
         }
-        let id = self.push_input(RECORDS, data, bytes, Some(ty))?;
-        let result = self.input_header(ty)?;
+        let id = if desc.inline_fields {
+            INLINE_FIELDS
+        } else {
+            self.push_input(RECORDS, data, bytes, Some(ty))?
+        };
         self.write(result as usize + (DATA as usize), &id.to_le_bytes())?;
         Ok(result)
     }

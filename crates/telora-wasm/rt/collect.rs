@@ -10,8 +10,8 @@ mod initialization;
 pub(crate) use initialization::collect as collect_initialization;
 pub(crate) use initialization::collect_data;
 
-static mut TRACE_TYPES: u32 = 0;
-static mut DEMANDS: (u32, u32) = (0, 0);
+pub(crate) static mut TRACE_TYPES: u32 = 0;
+pub(crate) static mut DEMANDS: (u32, u32) = (0, 0);
 static mut FUNCTION_DEMANDS: (u32, u32, u32) = (0, 0, 0);
 
 pub(crate) unsafe fn snapshot_demands() -> Vec<u8> {
@@ -257,6 +257,7 @@ impl Collector {
     }
     pub unsafe fn finish(mut self) {
         unsafe {
+            crate::gc_runtime::collect_pins(&mut self);
             while let Some((table, old, at, bytes, layout)) = self.pending.pop() {
                 self.trace_object(table, old, at, bytes, layout);
             }

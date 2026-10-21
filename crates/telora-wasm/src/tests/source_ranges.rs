@@ -32,6 +32,52 @@ fn register(session: &mut Session, input: &str) -> u32 {
 }
 
 #[test]
+fn collection_retains_source_owned_only_by_an_inline_enum_payload() {
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/collected-inline-origin.telora"
+    ))
+    .unwrap();
+    let bytes = super::compile(&text).unwrap();
+    let mut session = Session::load(&bytes, 10_000_000).unwrap();
+    session.initialize().unwrap();
+    let callable = Value {
+        pointer: session.entry().unwrap(),
+        ty: session.manifest.entry_type,
+    };
+    // Register after freeze: the source must survive because of the payload,
+    // rather than because it belongs to the immutable initialization prefix.
+    let source = register(&mut session, " 42 ");
+    let ty = session.manifest.types[callable.ty as usize].arguments[0];
+    let input = session.input_value(ty, &42.into()).unwrap();
+    let range = telora_wasm_shared::source_range::SourceRange::checked(source, 1, 3, 4).unwrap();
+    session
+        .write(input.pointer as usize, &range.encode())
+        .unwrap();
+    let mut result = session.invoke_values(callable, &[input]).unwrap();
+    for _ in 0..3 {
+        result = session.collect_work(&[result]).unwrap().0[0];
+        // The enum head has the constructor's static source; the source above
+        // is reachable only through its inline Int payload at header + tag.
+        assert_ne!(
+            session
+                .output()
+                .location_words(result.pointer as u64)
+                .unwrap()[0],
+            source
+        );
+        assert_eq!(
+            session
+                .output()
+                .location_words(result.pointer as u64 + 16)
+                .unwrap(),
+            [source, 1, 1, 1, 3]
+        );
+        assert!(session.manifest.sources.iter().any(|s| s.id == source));
+    }
+}
+
+#[test]
 fn parsers_write_inline_ranges_and_dynamic_inputs_use_unpartitioned_source() {
     let bytes = artifact();
     for (format, input, line, offset) in [

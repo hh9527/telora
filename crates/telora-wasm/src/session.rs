@@ -6,9 +6,23 @@ mod timing;
 // Generous execution boundaries, not an allocation accounting model. The engine
 // refuses growth before allocating; its ordinary stack limits remain in force.
 const MEMORY_BOUND: usize = 64 * 1024 * 1024;
+static NEXT_SESSION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+fn session_id() -> u64 {
+    NEXT_SESSION_ID
+        .try_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |id| id.checked_add(1),
+        )
+        .expect("session identity exhausted")
+}
+
 const TABLE_BOUND: usize = 1_000_000;
 
 pub struct Session {
+    pub(crate) identity: u64,
+    pub(crate) trapped: bool,
+    pub(crate) gc_config: crate::gc::GcConfig,
     pub(crate) exports: exports::Exports,
     pub(crate) fuel_budget: u64,
     pub(crate) request_fuel: u64,
@@ -43,6 +57,34 @@ impl Drop for Session {
 }
 
 impl Session {
+    /// A trap may interrupt publication, sweep or scratch cleanup. Only a fresh
+    /// instance (or a service snapshot restore) may execute afterwards.
+    pub(crate) fn ensure_live(&self) -> Result<(), String> {
+        if self.trapped
+            || self
+                .initialization_quota
+                .as_ref()
+                .is_some_and(|q| q.trapped())
+            || self.execution_quota.as_ref().is_some_and(|q| q.trapped())
+        {
+            return Err(
+                "Wasm: session terminated after trap; reload or restore its snapshot".into(),
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn guest_call<P: wasmi::WasmParams, R: wasmi::WasmResults>(
+        &mut self,
+        func: wasmi::TypedFunc<P, R>,
+        params: P,
+    ) -> Result<R, String> {
+        self.ensure_live()?;
+        let result = func.call(&mut self.store, params);
+        self.trapped |= result.is_err();
+        result.map_err(|error| error.to_string())
+    }
+
     pub fn usage(&self) -> Usage {
         Usage {
             fuel_budget: self.fuel_budget,
@@ -85,7 +127,10 @@ impl Session {
             .write(&mut store, abi::DEBUG_ENABLED as usize, &debug_enabled)
             .map_err(|error| error.to_string())?;
         let exports = exports::Exports::bind(instance, &store)?;
-        Ok(Self {
+        let mut session = Self {
+            identity: session_id(),
+            trapped: false,
+            gc_config: crate::gc::GcConfig::default(),
             exports,
             fuel_budget: self.fuel_budget,
             request_fuel: self.request_fuel,
@@ -103,7 +148,9 @@ impl Session {
             memory,
             registered_sources: self.registered_sources,
             emitted_debug: std::cell::Cell::new(self.emitted_debug.get()),
-        })
+        };
+        session.configure_gc(self.gc_config)?;
+        Ok(session)
     }
     /// Load a persistent artifact without MIR, a source loader, or a type solver.
     pub fn load(bytes: &[u8], fuel: u64) -> Result<Self, String> {
@@ -145,6 +192,9 @@ impl Session {
         let exports = exports::Exports::bind(instance, &store)?;
         drop(instance_timer);
         let session = Self {
+            identity: session_id(),
+            trapped: false,
+            gc_config: crate::gc::GcConfig::default(),
             exports,
             module,
             fuel_budget: fuel,
@@ -164,6 +214,7 @@ impl Session {
         Ok(session)
     }
     pub fn initialize(&mut self) -> Result<(), String> {
+        self.ensure_live()?;
         self.initialization_quota = Some(crate::fuel_quota::FuelQuota::new(self.fuel_budget));
         self.register_sources()?;
         let initialize = self
@@ -190,6 +241,7 @@ impl Session {
     }
 
     pub(crate) fn start_execution(&mut self) -> Result<(), String> {
+        self.ensure_live()?;
         self.fuel_budget = self.request_fuel;
         self.store
             .set_fuel(self.request_fuel)
@@ -239,25 +291,18 @@ impl Session {
                 .instance
                 .get_typed_func::<(i32, i32, i32), i32>(&self.store, "telora_register_source")
                 .map_err(|e| e.to_string())?;
-            if register
-                .call(
-                    &mut self.store,
-                    (id as i32, pointer as i32, name.len() as i32),
-                )
-                .map_err(|e| e.to_string())?
-                == 0
-            {
+            if self.guest_call(register, (id as i32, pointer as i32, name.len() as i32))? == 0 {
                 return Err("Wasm: source identity was registered with a different name".into());
             }
             if !lines.is_empty() {
                 let pointer = self.allocate(lines.len())?;
                 self.write(pointer as usize, &lines)?;
                 let pointer = self.output().address(pointer.into(), lines.len() as u64)? as u32;
-                self.instance
+                let index = self
+                    .instance
                     .get_typed_func::<(u32, u32, u32), ()>(&self.store, "telora_source_index")
-                    .map_err(|e| e.to_string())?
-                    .call(&mut self.store, (id, pointer, (lines.len() / 8) as u32))
                     .map_err(|e| e.to_string())?;
+                self.guest_call(index, (id, pointer, (lines.len() / 8) as u32))?;
             }
             self.manifest.sources[self.registered_sources].lines.clear();
             self.registered_sources += 1;
@@ -315,14 +360,16 @@ impl Session {
         }
         // Host invocation has no Telora computation expression to blame.
         self.write(args as usize + arguments.len() * 4, &0u32.to_le_bytes())?;
+        let output =
+            self.allocate(self.manifest.types[*signature.last().unwrap() as usize].bytes as usize)?;
         let invoke = self
             .instance
-            .get_typed_func::<(i32, i32), i32>(&self.store, "telora_invoke")
+            .get_typed_func::<(i32, i32, i32), i32>(&self.store, "telora_invoke")
             .map_err(|e| e.to_string())?;
         let called = self.execution_quota.as_mut().unwrap().call(
             &mut self.store,
             invoke,
-            (pointer as i32, args as i32),
+            (pointer as i32, args as i32, output as i32),
         );
         self.metered_fuel = self.execution_quota.as_ref().map(|quota| quota.consumed());
         let result = called? as u32;
@@ -343,6 +390,11 @@ impl Session {
         .json(pointer as u64, self.manifest.entry_type, 0)
     }
     pub(crate) fn failure(&self) -> String {
+        match self.active_failure() {
+            Ok(Some(diagnostic)) => return diagnostic.render(&self.manifest),
+            Err(message) => return message,
+            Ok(None) => {}
+        }
         match self.diagnostics() {
             Ok(diagnostics) => diagnostics
                 .iter()

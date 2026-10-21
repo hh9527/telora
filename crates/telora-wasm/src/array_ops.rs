@@ -175,6 +175,17 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
+        if let Some(data) = data {
+            let stored = if name == "map" {
+                self.mir.types[output.index()].arguments[0]
+            } else {
+                element
+            };
+            self.root_array_prefix(data, stored, used)?;
+        }
+        if let Some(accumulator) = accumulator {
+            self.root_value(accumulator, callback_type.arguments[0]);
+        }
         let item = self.array_item(base, index, width);
         let result = self.invoke(
             callback,
@@ -183,6 +194,7 @@ impl Emitter<'_> {
             } else {
                 vec![item]
             },
+            *callback_type.arguments.last().unwrap(),
         )?;
         match name {
             "map" | "filter" => {

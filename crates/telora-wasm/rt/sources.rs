@@ -40,6 +40,10 @@ pub(crate) unsafe fn collect(gc: &mut crate::collect::Collector) {
     }
 }
 
+pub(crate) unsafe fn sweep(live: &alloc::collections::BTreeSet<u32>) {
+    unsafe { registry::collect(live); }
+}
+
 pub(crate) unsafe fn snapshot() -> alloc::vec::Vec<Snapshot> {
     unsafe { registry::snapshot() }
 }

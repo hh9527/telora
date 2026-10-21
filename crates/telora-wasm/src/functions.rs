@@ -3,7 +3,7 @@ use crate::{
     emit::Emitter,
     plan::{Key, Special, child},
 };
-use telora_core::mir::{HirId, Role, TypeConstructor};
+use telora_core::mir::{HirId, Role, TypeConstructor, TypeId};
 use wasm_encoder::{Instruction as I, ValType};
 
 impl Emitter<'_> {
@@ -80,6 +80,7 @@ impl Emitter<'_> {
         self.store32(environment, 0, captures.len() as u32);
         self.store32(environment, 4, 0);
         for (index, &(capture, capture_ty)) in captures.iter().enumerate() {
+            let capture = self.escape_plain(capture, capture_ty)?;
             self.extend([
                 I::LocalGet(environment),
                 I::LocalGet(capture),
@@ -146,13 +147,21 @@ impl Emitter<'_> {
             None
         };
         if self.tail_calls.contains(&node) {
-            self.tail_invoke(callee, values, origin)
+            self.tail_invoke(
+                callee,
+                values,
+                origin,
+                &self.mir.types[self.ty(target)?.index()].arguments[..values.len()].to_vec(),
+            )
         } else {
-            self.invoke_at(callee, values, origin)
+            self.invoke_at(callee, values, origin, self.effective_ty(node)?)
         }
     }
     pub fn argument_array(&mut self, values: &[u32], origin: Option<u32>) -> u32 {
-        let args = self.alloc((values.len() as u32 + u32::from(origin.is_some())) * 4);
+        let args = self.scratch_alloc(
+            (values.len() as u32 + u32::from(origin.is_some())) * 4,
+            true,
+        );
         for (index, &value) in values.iter().enumerate() {
             self.extend([
                 I::LocalGet(args),
@@ -169,25 +178,30 @@ impl Emitter<'_> {
         }
         args
     }
-    pub fn invoke(&mut self, callee: u32, values: &[u32]) -> Result<u32, String> {
+    pub fn invoke(&mut self, callee: u32, values: &[u32], output: TypeId) -> Result<u32, String> {
         let origin = self.computation_origin(self.key.node)?;
-        self.invoke_at(callee, values, Some(origin))
+        self.invoke_at(callee, values, Some(origin), output)
     }
     fn invoke_at(
         &mut self,
         callee: u32,
         values: &[u32],
         origin: Option<u32>,
+        output: TypeId,
     ) -> Result<u32, String> {
         let args = self.argument_array(values, origin);
+        let output_type = output;
+        let output = self.output_alloc(output)?;
         let result = self.local(ValType::I32);
         self.extend([
             I::LocalGet(callee),
             I::LocalGet(args),
+            I::LocalGet(output),
             I::Call(INVOKE),
             I::LocalSet(result),
         ]);
         self.checked(result);
+        self.root_value(result, output_type);
         Ok(result)
     }
 }

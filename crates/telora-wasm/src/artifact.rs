@@ -53,6 +53,8 @@ pub struct DataModule {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypeDesc {
+    #[serde(default)]
+    pub inline_fields: bool,
     pub kind: Kind,
     pub arguments: Vec<u32>,
     pub bytes: u32,
@@ -143,6 +145,7 @@ impl Manifest {
             .iter()
             .enumerate()
             .map(|(index, ty)| TypeDesc {
+                inline_fields: matches!(&layouts[index].layout, telora_core::candidate_layout::State::Known { shape } if shape.inline_fields),
                 resource_table: match ty.constructor {
                     T::Native(id) => match (id.module, id.slot) {
                         (19, 0) => Some(crate::abi::REGEXES),

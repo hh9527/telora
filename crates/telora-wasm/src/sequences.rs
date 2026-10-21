@@ -27,6 +27,7 @@ impl Emitter<'_> {
                 .ok_or("Wasm: array size overflow")?;
             let data = self.alloc(bytes);
             for (index, item) in items.into_iter().enumerate() {
+                self.root_array_constant(data, element, index as u32 * width);
                 self.extend([
                     I::LocalGet(data),
                     I::I32Const((index as u32 * width) as i32),
@@ -41,6 +42,7 @@ impl Emitter<'_> {
                     },
                 ]);
             }
+            self.root_array_constant(data, element, bytes);
             let length = self.local(ValType::I32);
             self.extend([I::I32Const(count as i32), I::LocalSet(length)]);
             return self.array_result_at(node, ty, data, length, length, width);
@@ -83,6 +85,7 @@ impl Emitter<'_> {
         self.extend([I::LocalGet(total), I::I32WrapI64, I::LocalSet(count)]);
         let data = self.array_storage(count, width);
         let cursor = self.local(ValType::I32);
+        let initialized = self.local(ValType::I32);
         self.extend([I::LocalGet(data), I::LocalSet(cursor)]);
         for (item, base, length, actual) in parts {
             if actual == element {
@@ -116,6 +119,17 @@ impl Emitter<'_> {
                     I::I32GeU,
                     I::BrIf(1),
                 ]);
+                self.extend([
+                    I::LocalGet(cursor),
+                    I::LocalGet(data),
+                    I::I32Sub,
+                    I::LocalGet(index),
+                    I::I32Const(width as i32),
+                    I::I32Mul,
+                    I::I32Add,
+                    I::LocalSet(initialized),
+                ]);
+                self.root_prefix(data, ARRAYS, element, initialized);
                 let source = self.array_item(base, index, self.width(actual)?);
                 let value = self.adapt(item, actual, element, source)?;
                 let target = self.array_item(cursor, index, width);
@@ -139,6 +153,7 @@ impl Emitter<'_> {
                 I::LocalSet(cursor),
             ]);
         }
+        self.root_array_prefix(data, element, count)?;
         self.array_result_at(node, ty, data, count, count, width)
     }
 

@@ -26,7 +26,7 @@ fn compiled_data_roundtrip_preserves_values_without_source_text() {
     .unwrap();
     let text = format!("# SOURCE_ONLY_COMMENT_230\n{text}");
     let id = sources.try_add_data("bundled.yaml", text.clone()).unwrap();
-    let mut session = crate::session::Session::load(&bytes, 2_000_000).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 20_000_000).unwrap();
     let symbol = session.manifest.data_modules[0].symbol;
     assert!(crate::bundle::build(&bytes, &sources, &[]).is_err());
     let modules = [(symbol, id, Format::Yaml)];
@@ -48,7 +48,7 @@ fn compiled_data_roundtrip_preserves_values_without_source_text() {
         .unwrap();
     let mut damaged = bundled.clone();
     damaged[image_start] ^= 1;
-    assert!(crate::session::Session::load(&damaged, 2_000_000).is_err());
+    assert!(crate::session::Session::load(&damaged, 20_000_000).is_err());
     assert!(
         !bundled
             .windows(b"SOURCE_ONLY_COMMENT_230".len())
@@ -71,7 +71,7 @@ fn compiled_data_roundtrip_preserves_values_without_source_text() {
     assert_eq!(session.eval().unwrap(), expected);
     drop(session);
     drop(sources);
-    let mut loaded = crate::session::Session::load(&bundled, 2_000_000).unwrap();
+    let mut loaded = crate::session::Session::load(&bundled, 20_000_000).unwrap();
     loaded.initialize().unwrap();
     assert_eq!(loaded.eval().unwrap(), expected);
 }

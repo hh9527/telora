@@ -6,6 +6,7 @@ struct Owned {
     source: Source,
     _name: Box<[u8]>,
     lines: Option<Box<[u32]>>,
+    permanent: bool,
 }
 
 pub(crate) struct Snapshot {
@@ -43,7 +44,7 @@ pub(super) unsafe fn register(id: u32, name: &[u8]) -> u32 {
         let name = name.to_vec().into_boxed_slice();
         let source = Source { id, pointer: name.as_ptr() as u32,
             length: u32::try_from(name.len()).unwrap(), lines: 0, line_count: 0 };
-        owned.push(Owned { source, _name: name, lines: None });
+        owned.push(Owned { source, _name: name, lines: None, permanent: false });
         publish();
         1
     }
@@ -54,6 +55,7 @@ pub(super) unsafe fn index(id: u32, pointer: u32, count: u32, static_storage: bo
         let owned = &mut *core::ptr::addr_of_mut!(OWNED);
         let item = owned.iter_mut().find(|item| item.source.id == id)
             .expect("unregistered source index");
+        item.permanent |= static_storage;
         let bytes = count.checked_mul(8).unwrap() as usize;
         if item.source.line_count != 0 {
             assert_eq!(item.source.line_count, count, "source index changed");
@@ -82,7 +84,7 @@ pub(super) unsafe fn collect(live: &BTreeSet<u32>) {
     unsafe {
         let mut index = 0;
         (&mut *core::ptr::addr_of_mut!(OWNED)).retain(|item| {
-            let keep = index < FROZEN || live.contains(&item.source.id);
+            let keep = item.permanent || index < FROZEN || live.contains(&item.source.id);
             index += 1;
             keep
         });

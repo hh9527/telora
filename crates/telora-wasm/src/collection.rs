@@ -37,18 +37,47 @@ impl Session {
             .get_typed_func::<u32, u32>(&self.store, "telora_initialization_stat")
             .map_err(|e| e.to_string())?;
         Ok(InitializationStats {
-            heap_before: metric.call(&mut self.store, 0).map_err(|e| e.to_string())?,
-            heap_after: metric.call(&mut self.store, 1).map_err(|e| e.to_string())?,
-            demand_roots: metric.call(&mut self.store, 2).map_err(|e| e.to_string())?,
-            memory_before: metric.call(&mut self.store, 3).map_err(|e| e.to_string())?,
-            memory_high_water: metric.call(&mut self.store, 4).map_err(|e| e.to_string())?,
+            heap_before: self.guest_call(metric, 0)?,
+            heap_after: self.guest_call(metric, 1)?,
+            demand_roots: self.guest_call(metric, 2)?,
+            memory_before: self.guest_call(metric, 3)?,
+            memory_high_water: self.guest_call(metric, 4)?,
         })
+    }
+
+    pub(crate) fn prune_sources(&mut self) -> Result<(), String> {
+        let retained = self
+            .instance
+            .get_typed_func::<i32, i32>(&self.store, "telora_source_retained")
+            .map_err(|e| e.to_string())?;
+        let mut live = std::collections::BTreeSet::new();
+        for id in self
+            .manifest
+            .sources
+            .iter()
+            .map(|source| source.id)
+            .collect::<Vec<_>>()
+        {
+            if self.guest_call(retained, id as i32)? != 0 {
+                live.insert(id);
+            }
+        }
+        self.manifest
+            .sources
+            .retain(|source| live.contains(&source.id));
+        self.registered_sources = self.manifest.sources.len();
+        Ok(())
     }
 
     pub fn collect_work(
         &mut self,
         roots: &[Value],
     ) -> Result<(Vec<Value>, CollectionStats), String> {
+        // The boundary copier relocates value roots, while a terminal failure
+        // is owned by the diagnostic protocol. Keep its raw global stable.
+        if self.active_failure()?.is_some() {
+            return Err("Wasm: cannot compact a session with an active failure".into());
+        }
         for &root in roots {
             self.expect_value(root, root.ty)?;
         }
@@ -56,9 +85,7 @@ impl Session {
             .instance
             .get_typed_func::<(), i32>(&self.store, "telora_heap_bytes")
             .map_err(|e| e.to_string())?;
-        let before = heap_end
-            .call(&mut self.store, ())
-            .map_err(|e| e.to_string())? as u32;
+        let before = self.guest_call(heap_end, ())? as u32;
         let pointers = self.allocate(
             roots
                 .len()
@@ -73,9 +100,7 @@ impl Session {
             .instance
             .get_typed_func::<(i32, i32), i32>(&self.store, "telora_collect")
             .map_err(|e| e.to_string())?;
-        let relocated = collect
-            .call(&mut self.store, (pointers as i32, roots.len() as i32))
-            .map_err(|e| e.to_string())? as u32;
+        let relocated = self.guest_call(collect, (pointers as i32, roots.len() as i32))? as u32;
         let values = roots
             .iter()
             .enumerate()
@@ -86,27 +111,8 @@ impl Session {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let after = heap_end
-            .call(&mut self.store, ())
-            .map_err(|e| e.to_string())? as u32;
-        let retained = self
-            .instance
-            .get_typed_func::<i32, i32>(&self.store, "telora_source_retained")
-            .map_err(|e| e.to_string())?;
-        let mut live = std::collections::BTreeSet::new();
-        for source in &self.manifest.sources {
-            if retained
-                .call(&mut self.store, source.id as i32)
-                .map_err(|e| e.to_string())?
-                != 0
-            {
-                live.insert(source.id);
-            }
-        }
-        self.manifest
-            .sources
-            .retain(|source| live.contains(&source.id));
-        self.registered_sources = self.manifest.sources.len();
+        let after = self.guest_call(heap_end, ())? as u32;
+        self.prune_sources()?;
         self.emitted_debug.set(
             self.output()
                 .word(abi::table_address(abi::DEBUG_EVENTS) as u64 + 4)?,

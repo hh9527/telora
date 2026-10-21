@@ -52,7 +52,10 @@ fn test_command_filters_exports_by_pattern() {
     let cwd = fixture();
     fs::write(
         cwd.join("tests/expectations.telora"),
-        include_str!("../fixtures/test-expectations.telora"),
+        fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test-expectations.telora"),
+        )
+        .unwrap(),
     )
     .unwrap();
     let matched = telora(&cwd)

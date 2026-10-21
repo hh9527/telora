@@ -1,0 +1,8 @@
+type Count = struct(Int);
+type Point = struct { x: Int, y: (Int, Count) };
+type Empty = struct {};
+
+pub def answer: Fn(Point) -> (Array(Point), Point, Count, Empty) = fn(point: Point) {
+    let empty: Empty = {};
+    ([point, point], point, point.y.1, empty)
+};

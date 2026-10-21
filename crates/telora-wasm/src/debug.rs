@@ -1,4 +1,4 @@
-//! Observational event transport. No user code, inference or value copies.
+//! Observational event transport with owned values for deferred consumption.
 use crate::{abi::*, emit::Emitter, output::Output, session::Session};
 use telora_core::mir::HirId;
 use wasm_encoder::{BlockType, Instruction as I};
@@ -20,12 +20,13 @@ impl Emitter<'_> {
             I::I32Load(memory(0, 2)),
             I::If(BlockType::Empty),
         ]);
+        let observed = self.escape_plain(input, self.effective_ty(node)?)?;
         let event = self.alloc(12);
         self.store32(event, 0, node.index() as u32);
         self.store32(event, 8, self.effective_ty(node)?.index() as u32);
         self.extend([
             I::LocalGet(event),
-            I::LocalGet(input),
+            I::LocalGet(observed),
             I::I32Store(memory(4, 2)),
         ]);
         self.table_push(DEBUG_EVENTS, event, 12, None)?;

@@ -36,6 +36,92 @@ impl Emitter<'_> {
     ) -> Result<u32, String> {
         self.array_object(base, count, count, ty)
     }
+    /// Count incoming plan edges so a shared node stays rooted until its last
+    /// parent copies it. This loop only writes its preallocated counter buffer.
+    fn parse_uses(&mut self, rows: u32, count: u32) -> u32 {
+        let uses = self.parse_buffer(count, 4);
+        self.root_storage(uses);
+        let index = self.local(ValType::I32);
+        self.extend([
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(index),
+            I::LocalGet(count),
+            I::I32GeU,
+            I::BrIf(1),
+        ]);
+        let row = self.parse_address(rows, index, 24);
+        let kind = self.read32(row, 0);
+        self.extend([
+            I::LocalGet(kind),
+            I::I32Const(6),
+            I::I32Eq,
+            I::LocalGet(kind),
+            I::I32Const(7),
+            I::I32Eq,
+            I::I32Or,
+            I::If(BlockType::Empty),
+        ]);
+        let entries = self.read32(row, 16);
+        let length = self.read32(row, 20);
+        let child_index = self.local(ValType::I32);
+        let entry = self.local(ValType::I32);
+        self.extend([
+            I::I32Const(0),
+            I::LocalSet(child_index),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(child_index),
+            I::LocalGet(length),
+            I::I32GeU,
+            I::BrIf(1),
+            I::LocalGet(entries),
+            I::LocalGet(child_index),
+            I::I32Const(24),
+            I::I32Const(4),
+            I::LocalGet(kind),
+            I::I32Const(7),
+            I::I32Eq,
+            I::Select,
+            I::I32Mul,
+            I::I32Add,
+            I::I32Const(8),
+            I::I32Const(0),
+            I::LocalGet(kind),
+            I::I32Const(7),
+            I::I32Eq,
+            I::Select,
+            I::I32Add,
+            I::LocalSet(entry),
+        ]);
+        let child = self.read32(entry, 0);
+        let slot = self.parse_address(uses, child, 4);
+        self.extend([
+            I::LocalGet(slot),
+            I::LocalGet(slot),
+            I::I32Load(memory(0, 2)),
+            I::I32Const(1),
+            I::I32Add,
+            I::I32Store(memory(0, 2)),
+            I::LocalGet(child_index),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(child_index),
+            I::Br(0),
+            I::End,
+            I::End,
+            I::End,
+            I::LocalGet(index),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(index),
+            I::Br(0),
+            I::End,
+            I::End,
+        ]);
+        uses
+    }
+
     pub fn data_parse_native(&mut self, parser: u32) -> Result<u32, String> {
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
@@ -70,9 +156,11 @@ impl Emitter<'_> {
         packet: u32,
     ) -> Result<u32, String> {
         let node = self.key.node;
+        self.root_plan(packet);
         let rows = self.read32(packet, 0);
         let count = self.read32(packet, 4);
         let values = self.parse_buffer(count, 4);
+        let uses = self.parse_uses(rows, count);
         let index = self.local(ValType::I32);
         self.extend([
             I::Block(BlockType::Empty),
@@ -82,6 +170,8 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
+        self.root_prefix(values, ROOT_REFERENCES, target, index);
+        self.extend([I::Call(ROOTS_SAFEPOINT), I::Drop]);
         let row = self.parse_address(rows, index, 24);
         let kind = self.read32(row, 0);
         let value = self.local(ValType::I32);
@@ -139,7 +229,7 @@ impl Emitter<'_> {
                         ]);
                         self.text_span_value(ty, span)?
                     }
-                    6 | 7 => self.parse_collection(ty, target, row, values, code == 7)?,
+                    6 | 7 => self.parse_collection(ty, target, row, values, uses, code == 7)?,
                     12 => {
                         let pointer = self.read32(row, 16);
                         let count = self.read32(row, 20);
@@ -158,6 +248,25 @@ impl Emitter<'_> {
         }
         let slot = self.parse_address(values, index, 4);
         self.extend([
+            I::LocalGet(packet),
+            I::LocalGet(count),
+            I::LocalGet(index),
+            I::I32Sub,
+            I::I32Const(1),
+            I::I32Sub,
+            I::I32Store(memory(4, 2)),
+            I::LocalGet(packet),
+            I::LocalGet(row),
+            I::I32Const(24),
+            I::I32Add,
+            I::I32Const(0),
+            I::LocalGet(index),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalGet(count),
+            I::I32LtU,
+            I::Select,
+            I::I32Store(memory(0, 2)),
             I::LocalGet(slot),
             I::LocalGet(value),
             I::I32Store(memory(0, 2)),
@@ -187,6 +296,7 @@ impl Emitter<'_> {
         target: TypeId,
         row: u32,
         values: u32,
+        uses: u32,
         object: bool,
     ) -> Result<u32, String> {
         let count = self.read32(row, 20);
@@ -209,6 +319,11 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
+        self.root_array_prefix(data, target, index)?;
+        if let Some(keys) = keys {
+            self.root_array_prefix(keys, self.string_type()?, index)?;
+        }
+        self.extend([I::Call(ROOTS_SAFEPOINT), I::Drop]);
         let entry = self.parse_address(entries, index, if object { 24 } else { 4 });
         let child = self.read32(entry, if object { 8 } else { 0 });
         let slot = self.parse_address(values, child, 4);
@@ -221,6 +336,29 @@ impl Emitter<'_> {
             let destination = self.parse_address(keys, index, STRING_BYTES);
             self.copy(destination, 0, key, STRING_BYTES);
         }
+        let use_slot = self.parse_address(uses, child, 4);
+        let remaining = self.read32(use_slot, 0);
+        self.extend([
+            I::LocalGet(remaining),
+            I::I32Eqz,
+            I::If(BlockType::Empty),
+            I::Unreachable,
+            I::End,
+            I::LocalGet(remaining),
+            I::I32Const(1),
+            I::I32Sub,
+            I::LocalSet(remaining),
+            I::LocalGet(use_slot),
+            I::LocalGet(remaining),
+            I::I32Store(memory(0, 2)),
+            I::LocalGet(remaining),
+            I::I32Eqz,
+            I::If(BlockType::Empty),
+            I::LocalGet(slot),
+            I::I32Const(0),
+            I::I32Store(memory(0, 2)),
+            I::End,
+        ]);
         self.extend([
             I::LocalGet(index),
             I::I32Const(1),
@@ -273,6 +411,7 @@ pub(crate) fn materializer(
             ..plan.root
         },
     );
+    emit.parameter_count = 2;
     if let Some(target) = target {
         let error = emit.read32(0, 12);
         emit.extend([

@@ -26,14 +26,26 @@ fn tail_calls_bound_stack_and_preserve_pending_work_and_failures() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].message.as_deref(), Some("after tail recursion"));
     assert_eq!(events[0].repr, "40");
+    assert_roots_released(&mut session);
     let bytes = compile_export(source, "failing").unwrap();
     let mut session = crate::session::Session::load(&bytes, 500_000_000).unwrap();
     session.initialize().unwrap();
     assert!(session.call(&[]).unwrap_err().contains("tail failure"));
+    assert_roots_released(&mut session);
     let diagnostics = session.diagnostics().unwrap();
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(
         telora_core::source::SourceCoordinates(diagnostics[0].locs[0]).start(),
         point(source, source.find("fail!(").unwrap())
     );
+}
+
+fn assert_roots_released(session: &mut crate::session::Session) {
+    for export in ["telora_roots_depth", "telora_roots_count"] {
+        let metric = session
+            .instance
+            .get_typed_func::<(), i32>(&session.store, export)
+            .unwrap();
+        assert_eq!(metric.call(&mut session.store, ()).unwrap(), 0, "{export}");
+    }
 }

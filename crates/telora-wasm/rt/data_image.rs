@@ -47,8 +47,9 @@ pub unsafe extern "C" fn telora_data_image_export(result: u32) {
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
         word(&mut out, VERSION);
-        let (origin, words) = crate::heap::snapshot();
+        let (origin, allocated, words) = crate::heap::snapshot();
         word(&mut out, origin);
+        word(&mut out, allocated);
         bytes(&mut out, &words);
         bytes(&mut out, &crate::content::snapshot());
         let tables = crate::tables::snapshot();
@@ -86,7 +87,8 @@ pub unsafe extern "C" fn telora_data_image_import(pointer: u32, length: u32) {
         assert_eq!(input.take(MAGIC.len()), MAGIC);
         assert_eq!(input.word(), VERSION, "data image ABI mismatch");
         let origin = input.word();
-        crate::heap::restore_data(origin, input.bytes());
+        let allocated = input.word();
+        crate::heap::restore_data(origin, allocated, input.bytes());
         crate::content::restore_data(input.bytes());
         let raw = input.bytes();
         assert_eq!(

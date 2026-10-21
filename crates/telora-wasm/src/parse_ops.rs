@@ -237,7 +237,7 @@ impl Emitter<'_> {
             I::I32Add,
             I::LocalSet(callback),
         ]);
-        let result = self.invoke(callback, &[1])?;
+        let result = self.invoke(callback, &[1], result_ty)?;
         self.extend([
             I::LocalGet(result),
             I::I32Load(memory(DATA, 2)),

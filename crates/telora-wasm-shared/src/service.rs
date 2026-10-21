@@ -8,6 +8,7 @@ pub struct Contract {
     pub materialize: u32,
     pub names_offset: u32,
     pub initializer_offset: u32,
+    pub initializer_type: u32,
     pub context_type: u32,
     pub dict_type: u32,
     pub handler_type: u32,
@@ -18,13 +19,14 @@ pub struct Contract {
 }
 
 impl Contract {
-    pub fn words(self) -> [u32; 12] {
+    pub fn words(self) -> [u32; 13] {
         [
             self.initialize,
             self.entry,
             self.materialize,
             self.names_offset,
             self.initializer_offset,
+            self.initializer_type,
             self.context_type,
             self.dict_type,
             self.handler_type,

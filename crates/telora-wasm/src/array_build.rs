@@ -24,7 +24,25 @@ impl Emitter<'_> {
         }
         let bytes = u32::try_from(layout.bytes.ok_or("Wasm: tuple size missing")?)
             .map_err(|_| "Wasm: tuple size overflow")?;
-        let object = self.alloc(bytes);
+        let result = if self.inline_fields(ty) {
+            let result = self.value_as(node, ty, self.width(ty)?)?;
+            self.store64(result, DATA, u64::from(INLINE_FIELDS));
+            Some(result)
+        } else {
+            None
+        };
+        let object = if let Some(result) = result {
+            let object = self.local(ValType::I32);
+            self.extend([
+                I::LocalGet(result),
+                I::I32Const(INLINE_DATA as i32),
+                I::I32Add,
+                I::LocalSet(object),
+            ]);
+            object
+        } else {
+            self.alloc(bytes)
+        };
         for (field, member) in fields.iter().zip(&layout.members) {
             let ty =
                 self.plan.layouts[member.type_id.ok_or("Wasm: tuple field type missing")?].id();
@@ -35,15 +53,11 @@ impl Emitter<'_> {
                 self.width(ty)?,
             );
         }
-        let id = self.table_push(RECORDS, object, bytes, Some(ty))?;
-        let result = self.value_as(node, ty, self.width(ty)?)?;
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(id),
-            I::I64ExtendI32U,
-            I::I64Store(memory(DATA, 3)),
-        ]);
-        Ok(result)
+        if let Some(result) = result {
+            Ok(result)
+        } else {
+            self.aggregate_result(node, ty, RECORDS, object, bytes)
+        }
     }
     pub fn array_build(
         &mut self,
@@ -290,9 +304,14 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
+        self.root_prefix(arrays, ROOT_REFERENCES, output, index);
         let item = self.array_item(base, index, width);
         let array = if let Some(callback) = callback {
-            self.invoke(callback, &[item])?
+            self.invoke(
+                callback,
+                &[item],
+                *self.mir.types[args[1].index()].arguments.last().unwrap(),
+            )?
         } else {
             item
         };
@@ -321,6 +340,7 @@ impl Emitter<'_> {
             I::End,
             I::End,
         ]);
+        self.root_prefix(arrays, ROOT_REFERENCES, output, count);
         let data = self.array_storage(total, stride);
         let written = self.local(ValType::I32);
         self.extend([

@@ -15,6 +15,10 @@ fn language_acceptance_fixtures_pass() {
             "TELORA_BIN",
             env!("CARGO_BIN_EXE_telora").replace('\\', "/"),
         )
+        .env(
+            "TELORA_LANGUAGE_BUILD_ROOT",
+            std::env::temp_dir().join(format!("telora-language-{}", std::process::id())),
+        )
         .output()
         .unwrap();
     assert!(

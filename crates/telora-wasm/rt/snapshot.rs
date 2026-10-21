@@ -51,8 +51,9 @@ unsafe fn encode() -> Vec<u8> {
         let mut out = Writer(Vec::new());
         out.0.extend_from_slice(&MAGIC);
         out.word(VERSION);
-        let (origin, words) = crate::heap::snapshot();
+        let (origin, allocated, words) = crate::heap::snapshot();
         out.word(origin);
+        out.word(allocated);
         out.bytes(&words);
         out.bytes(&crate::content::snapshot());
 
@@ -100,7 +101,8 @@ unsafe fn decode(bytes: &[u8]) {
         assert_eq!(input.take(MAGIC.len()), MAGIC);
         assert_eq!(input.word(), VERSION, "snapshot ABI mismatch");
         let origin = input.word();
-        crate::heap::restore(origin, input.bytes());
+        let allocated = input.word();
+        crate::heap::restore(origin, allocated, input.bytes());
         crate::content::restore(input.bytes());
 
         let raw_tables = input.bytes();

@@ -185,12 +185,28 @@ impl Emitter<'_> {
             I::I32GeU,
             I::BrIf(1),
         ]);
+        if name == "fold" {
+            self.root_value(accumulator, output);
+        } else {
+            self.root_array_prefix(
+                out_values,
+                output_element,
+                if name == "filter" { used } else { index },
+            )?;
+            if name == "filter" {
+                self.root_array_prefix(out_keys, self.string_type()?, used)?;
+            }
+        }
         let key = self.array_item(keys, index, STRING_BYTES);
         let item = self.array_item(values, index, width);
         let mapped = match name {
             "pairs" => self.packed_tuple(output_element, &[key, item])?,
-            "map_values" | "filter" => self.invoke(callback.unwrap(), &[item])?,
-            "fold" => self.invoke(callback.unwrap(), &[accumulator, key, item])?,
+            "map_values" | "filter" => self.invoke(
+                callback.unwrap(),
+                &[item],
+                *self.mir.types[args[1].index()].arguments.last().unwrap(),
+            )?,
+            "fold" => self.invoke(callback.unwrap(), &[accumulator, key, item], output)?,
             _ => return Err(format!("Wasm: unsupported Dict native {name}")),
         };
         if name == "filter" {

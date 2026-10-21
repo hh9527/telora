@@ -181,10 +181,10 @@ fn dyn_array_observation_honors_the_abi_slice_range() {
     session.write(args as usize, &value.to_le_bytes()).unwrap();
     let invoke = session
         .instance
-        .get_typed_func::<(i32, i32), i32>(&session.store, "telora_invoke")
+        .get_typed_func::<(i32, i32, i32), i32>(&session.store, "telora_invoke")
         .unwrap();
     let result = invoke
-        .call(&mut session.store, (function as i32, args as i32))
+        .call(&mut session.store, (function as i32, args as i32, 0))
         .unwrap();
     let output = crate::output::Output {
         memory: session.memory.data(&session.store),

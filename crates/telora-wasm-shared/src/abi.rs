@@ -1,5 +1,8 @@
 //! Shared physical layout; consumed by both codegen and Rust-compiled RT.
-pub const VERSION: u32 = 28;
+pub const VERSION: u32 = 36;
+/// Pointer-free aggregates carry a copy-stable marker, followed by inline fields.
+pub const INLINE_FIELDS: u32 = u32::MAX;
+pub const INLINE_DATA: u32 = 16;
 pub const HEADER_BYTES: u32 = 8;
 pub const SCALAR_BYTES: u32 = 16;
 pub const FUNCTION_BYTES: u32 = 16;
@@ -54,3 +57,12 @@ pub const DIAG_ROOT: u64 = 32;
 pub const DIAG_MESSAGE_TYPE: u64 = 36;
 pub const BLAME_COUNT: u32 = STRING_BYTES;
 pub const BLAME_SUBJECTS: u32 = STRING_BYTES + 8;
+
+// Accurate root publication protocol. Object roles use the existing table tags.
+pub const ROOT_VALUE: u32 = 0xffff_fff0;
+pub const ROOT_STORAGE: u32 = 0xffff_fff1;
+pub const ROOT_SOURCE: u32 = 0xffff_fff2;
+pub const ROOT_REFERENCES: u32 = 0xffff_fff3;
+pub const ROOT_PARSE_CONTEXT: u32 = 0xffff_fff4;
+pub const ROOT_CODEC_CONTEXT: u32 = 0xffff_fff5;
+pub const ROOT_PARSE_PLAN: u32 = 0xffff_fff6;

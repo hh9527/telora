@@ -33,6 +33,7 @@ impl Emitter<'_> {
                 return Err("Wasm: checker must have a sealed unary signature".into());
             }
             let argument = signature.arguments[0];
+            self.root_value(value, argument);
             let output = signature.arguments[1];
             let result = &self.mir.types[output.index()];
             if result.constructor != T::Result
@@ -55,9 +56,10 @@ impl Emitter<'_> {
                 }
                 argument_value = self.value_as(node, argument, self.width(argument)?)?;
                 self.copy(argument_value, 0, value, self.width(argument)?);
+                self.root_value(argument_value, argument);
             }
             let closure = self.call_key(key)?;
-            let value = self.invoke(closure, &[argument_value])?;
+            let value = self.invoke(closure, &[argument_value], output)?;
             let index = self.plan.layouts[output.index()]
                 .variants
                 .iter()

@@ -63,6 +63,26 @@ impl Key {
             _ => Err(format!("Wasm: node {node:?} has no sealed type")),
         }
     }
+    /// None denotes an unboxed helper status, never a language value address.
+    pub fn result_type(self, mir: &Mir) -> Result<Option<TypeId>, String> {
+        let ty = match self.special {
+            Special::Equal(_) | Special::Json(_) => return Ok(None),
+            Special::Parse(target)
+            | Special::Encode(_, target)
+            | Special::Decode(_, target)
+            | Special::DecodeVariant(_, target, _) => target,
+            Special::Property(index) => mir.properties[index].property,
+            Special::Normal | Special::Configured if self.callable => {
+                let signature = self.ty(mir, self.node)?;
+                *mir.types[signature.index()]
+                    .arguments
+                    .last()
+                    .ok_or("Wasm: missing sealed function result")?
+            }
+            Special::Normal | Special::Configured => self.effective_ty(mir, self.node)?,
+        };
+        Ok(Some(ty))
+    }
     pub fn reference(self, mir: &Mir, node: HirId) -> Option<GenericInstanceId> {
         match self.instance {
             Some(instance) => mir.generic_instances[instance.index()].reference(node),
@@ -73,6 +93,8 @@ impl Key {
 
 pub(crate) struct Plan {
     pub generated_helpers: u32,
+    pub demand_functions: BTreeSet<u32>,
+    pub function_results: BTreeMap<u32, Option<TypeId>>,
     pub constructor_aliases: BTreeMap<Key, Key>,
     pub functions: BTreeMap<Key, u32>,
     pub globals: BTreeMap<SymbolId, Key>,
@@ -111,6 +133,8 @@ impl Plan {
         };
         let mut plan = Self {
             generated_helpers: 4,
+            function_results: BTreeMap::new(),
+            demand_functions: BTreeSet::new(),
             constructor_aliases: BTreeMap::new(),
             functions: BTreeMap::new(),
             globals: BTreeMap::new(),
@@ -448,6 +472,12 @@ impl Plan {
                 && crate::natives::identity(mir, key.node).is_some()
             {
                 plan.native_signatures.insert(key.ty(mir, key.node)?);
+            }
+        }
+        for (&key, &index) in &plan.functions {
+            plan.function_results.insert(index, key.result_type(mir)?);
+            if !key.callable {
+                plan.demand_functions.insert(index);
             }
         }
         Ok(plan)

@@ -1,0 +1,1 @@
+pub def answer: Fn(Int) -> Option(Int) = fn(value: Int) { Some(value) };

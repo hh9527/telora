@@ -9,6 +9,8 @@ const VALUE_HEADER_BYTES: u64 = 8;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Shape {
+    /// Finite, pointer-free aggregate fields live inside the full value.
+    pub inline_fields: bool,
     pub data_bytes: u64,
     pub data_alignment: u64,
     pub value_bytes: u64,
@@ -109,6 +111,8 @@ impl Storage {
 }
 #[derive(Debug, Serialize)]
 pub struct Entry {
+    /// Finite values without managed or internal dynamic ownership.
+    pub plain: bool,
     pub type_id: usize,
     pub constructor: &'static str,
     pub arguments: Vec<usize>,
@@ -187,6 +191,7 @@ fn shape(
 ) -> Result<State, String> {
     Ok(State::Known {
         shape: Shape {
+            inline_fields: false,
             data_bytes: bytes,
             data_alignment: alignment,
             value_bytes: add(VALUE_HEADER_BYTES, align(bytes, 8)?)?,
@@ -205,6 +210,7 @@ struct Builder<'a> {
     fields: Vec<Vec<(String, TypeId)>>,
     indirect: Vec<Vec<bool>>,
     module_records: Vec<bool>,
+    plain: Vec<bool>,
 }
 impl<'a> Builder<'a> {
     fn new(image: &'a TypeImage, module_records: Vec<bool>) -> Result<Self, String> {
@@ -218,6 +224,7 @@ impl<'a> Builder<'a> {
             fields: vec![vec![]; n],
             indirect: vec![vec![]; n],
             module_records,
+            plain: vec![false; n],
         };
         for (i, ty) in image.types.iter().enumerate() {
             let id = TypeId(i as u32);
@@ -409,6 +416,37 @@ impl<'a> Builder<'a> {
                 .map(|(_, p)| p.is_some_and(|p| reaches(&edges, p.index(), i)))
                 .collect();
         }
+        // Least fixed point: recursive representations and dynamic owners are
+        // excluded even when their public type contains no String/Array/Dict.
+        loop {
+            let mut changed = false;
+            for (i, ty) in image.types.iter().enumerate() {
+                if b.plain[i] || b.templates[i] || !b.inhabited[i] || b.module_records[i] {
+                    continue;
+                }
+                let plain = if b.is_fields(i) {
+                    b.fields[i].iter().all(|(_, t)| b.plain[t.index()])
+                } else if b.is_enum(i) {
+                    b.variants[i]
+                        .iter()
+                        .all(|(_, t)| t.is_none_or(|t| b.plain[t.index()]))
+                } else if ty.constructor == T::Unchecked {
+                    b.plain[ty.arguments[0].index()]
+                } else {
+                    matches!(
+                        ty.constructor,
+                        T::Int | T::Float | T::Bool | T::Type | T::TypeOf
+                    )
+                };
+                if plain {
+                    b.plain[i] = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         Ok(b)
     }
     fn is_enum(&self, i: usize) -> bool {
@@ -458,6 +496,35 @@ impl<'a> Builder<'a> {
             State::Uninhabited {
                 reason: "no finite value constructor (least fixed point)",
             }
+        } else if self.plain[i]
+            && self.is_fields(i)
+            && !matches!(ty.constructor, T::Tuple if ty.arguments.is_empty())
+            && !matches!(ty.constructor, T::Nominal(s) if self.image.definition(s).is_some_and(|d| d.operation == TypeOperation::Unit))
+        {
+            let mut bytes = 8; // Stable inline marker; no self-relative pointer to patch.
+            for (_, field) in self.fields[i].clone() {
+                let State::Known { shape } = self.value(field)? else {
+                    return Err("inline field has no finite layout".into());
+                };
+                bytes = add(bytes, shape.value_bytes)?;
+            }
+            let table = if matches!(ty.constructor, T::Newtype)
+                || matches!(ty.constructor, T::Nominal(s) if self.image.definition(s).is_some_and(|d| d.operation == TypeOperation::Newtype))
+            {
+                "NewtypeTable"
+            } else {
+                "RecordTable"
+            };
+            let mut state = shape(
+                bytes,
+                8,
+                Some(table),
+                "inline_marker:u64,fields:full_values",
+            )?;
+            if let State::Known { shape } = &mut state {
+                shape.inline_fields = true;
+            }
+            state
         } else {
             match &ty.constructor {
                 T::Int | T::Float | T::Bool => shape(8, 8, None, "scalar_bits")?,
@@ -724,6 +791,7 @@ fn calculate_image(image: &TypeImage, module_records: Vec<bool>) -> Result<Vec<E
                 })
                 .collect();
             Ok(Entry {
+                plain: b.plain[i],
                 type_id: i,
                 constructor: constructor_name(&image.types[i].constructor),
                 arguments: image.types[i]

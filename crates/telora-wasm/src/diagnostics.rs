@@ -79,6 +79,26 @@ impl Emitter<'_> {
         (message, subjects, count)
     }
     pub fn report(&mut self, node: HirId, message: u32, subjects: u32, count: u32, warning: bool) {
+        // A single subject can be a value in a frame that failure will release.
+        // Diagnostic events own their packed source ranges until consumed.
+        let owned_subjects = self.local(ValType::I32);
+        self.extend([
+            I::LocalGet(count),
+            I::I32Const(LOC_BYTES as i32),
+            I::I32Mul,
+            I::Call(ALLOC),
+            I::LocalSet(owned_subjects),
+            I::LocalGet(owned_subjects),
+            I::LocalGet(subjects),
+            I::LocalGet(count),
+            I::I32Const(LOC_BYTES as i32),
+            I::I32Mul,
+            I::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            },
+        ]);
+        let subjects = owned_subjects;
         let packet = self.alloc(DIAGNOSTIC_BYTES);
         let loc = self.mir.hir[node.index()].location;
         self.store_location(packet, loc);

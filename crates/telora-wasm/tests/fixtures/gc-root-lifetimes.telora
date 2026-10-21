@@ -1,0 +1,8 @@
+use std::array as array;
+use std::string as string;
+type Item = struct { name: String, children: Array(String) };
+pub def answer: Fn(Array(Item)) -> Array(Item) = fn(items) {
+    array::map(items, fn(item) {
+        { name: string::join([item.name, "!"], ""), children: array::map(item.children, fn(child) { string::join([child, "?"], "") }) }
+    })
+};

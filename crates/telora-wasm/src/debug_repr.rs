@@ -98,7 +98,7 @@ impl Formatter {
                 }
             }
             Kind::Newtype => {
-                let (value, _) = output.payload(NEWTYPES, output.word(pointer + DATA)?)?;
+                let (value, _) = output.aggregate_payload(pointer, desc)?;
                 let inner = desc
                     .fields
                     .first()
@@ -162,7 +162,7 @@ impl Formatter {
                 self.push(if dict { "}" } else { "]" });
             }
             Kind::Tuple | Kind::Record => {
-                let (base, bytes) = output.payload(RECORDS, output.word(pointer + DATA)?)?;
+                let (base, bytes) = output.aggregate_payload(pointer, desc)?;
                 let record = desc.kind == Kind::Record;
                 self.push(if record { "{" } else { "(" });
                 for (index, field) in desc.fields.iter().take(32).enumerate() {

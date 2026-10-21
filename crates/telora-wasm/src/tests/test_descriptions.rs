@@ -56,6 +56,12 @@ fn test_boundary_recovers_language_failures_but_never_traps() {
     assert!(failed.terminal.is_none());
     assert_eq!(failed.diagnostics.len(), 1);
     assert_eq!(failed.diagnostics[0].message, expected);
+    let session = testing.session_mut();
+    let depth = session
+        .instance
+        .get_typed_func::<(), i32>(&session.store, "telora_frame_depth")
+        .unwrap();
+    assert_eq!(depth.call(&mut session.store, ()).unwrap(), 0);
     let passed = testing.invoke(success, &[]).unwrap();
     assert!(passed.terminal.is_none());
     assert!(passed.diagnostics.is_empty());
@@ -131,10 +137,10 @@ fn test_descriptions_preserve_identity_and_defer_callbacks() {
     let callback = word(memory, description + 8);
     let invoke = session
         .instance
-        .get_typed_func::<(i32, i32), i32>(&session.store, "telora_invoke")
+        .get_typed_func::<(i32, i32, i32), i32>(&session.store, "telora_invoke")
         .unwrap();
     let result = invoke
-        .call(&mut session.store, (callback as i32, 0))
+        .call(&mut session.store, (callback as i32, 0, 0))
         .unwrap() as usize;
     assert_ne!(result, 0);
     assert_eq!(

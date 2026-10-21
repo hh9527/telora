@@ -72,7 +72,7 @@ pub(crate) unsafe fn restore(patterns: &[alloc::string::String]) {
 }
 
 pub(crate) unsafe fn release(pointer: u32) {
-    unsafe { drop(Box::from_raw(pointer as *mut Compiled)); }
+    if pointer != 0 { unsafe { drop(Box::from_raw(pointer as *mut Compiled)); } }
 }
 
 unsafe fn get(id: u32) -> *mut Compiled {
