@@ -1,0 +1,10 @@
+[package]
+name = "telora-raw-initialize-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+wasmi = "=2.0.0"

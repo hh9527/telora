@@ -22,6 +22,7 @@ mod root_lifetimes;
 mod sequences;
 mod service_sources;
 mod services;
+mod small_arrays;
 mod source_ranges;
 mod tail_calls;
 mod test_descriptions;
@@ -1012,6 +1013,14 @@ fn typed_input_and_post_initialization_calls_keep_main_ids() {
     )
     .unwrap();
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    // This checks physical arena relocation with an untyped Host marker.
+    // The marker has no published value layout and is intentionally not a GC root.
+    session
+        .configure_gc(crate::gc::GcConfig {
+            allocation_interval: 0,
+            ..Default::default()
+        })
+        .unwrap();
     session.initialize().unwrap();
     let before = session.memory.data(&session.store)
         [crate::abi::TABLE_BASE as usize..crate::abi::STATIC_BASE as usize]

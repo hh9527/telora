@@ -1,0 +1,11 @@
+{
+  "baseline_commit": "dae6de25",
+  "candidate_runtime_commit": "9087e6e7",
+  "application_commit": "5a870224d56208fad97bdc37e72d5f82a0ca6276",
+  "sha256": {
+    "baseline_compiler": "267a4c04a6f7d83e4f22e71c41ca62c102ba51e4e44e86dff81ff88295eb8d87",
+    "candidate_compiler": "24a5bba09d2fc38e09f941185616a7ee0525a8011586fd7f3e26972ae5028474",
+    "baseline_artifact": "4bd78c31db8aa133532cade78323f7ec35695781708d2656507110f3891c88ce",
+    "candidate_artifact": "ab0879e17c34bbc9a0efa965600d9f2b2501e61e1e52599d7dd7cd422b0d9c68"
+  }
+}

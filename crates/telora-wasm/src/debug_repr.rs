@@ -110,16 +110,6 @@ impl Formatter {
             }
             Kind::Array | Kind::Dict => {
                 let dict = desc.kind == Kind::Dict;
-                let (base, bytes) = output.payload(
-                    ARRAYS,
-                    output.word(pointer + if dict { DATA + 8 } else { DATA })?,
-                )?;
-                let start = if dict {
-                    0
-                } else {
-                    output.word(pointer + DATA + 4)? as u64
-                };
-                let end = output.word(pointer + if dict { DATA + 4 } else { DATA + 8 })? as u64;
                 let element = *desc
                     .arguments
                     .first()
@@ -130,9 +120,17 @@ impl Formatter {
                     .get(element as usize)
                     .ok_or("Wasm: invalid debug element type")?
                     .bytes as u64;
-                if start > end || end * stride > bytes || (stride == 0 && end != 0) {
-                    return Err("Wasm: invalid debug sequence".into());
-                }
+                let (base, start, end) = if dict {
+                    let (base, bytes) = output.payload(ARRAYS, output.word(pointer + DATA + 8)?)?;
+                    let end = u64::from(output.word(pointer + DATA + 4)?);
+                    if end * stride > bytes || (stride == 0 && end != 0) {
+                        return Err("Wasm: invalid debug sequence".into());
+                    }
+                    (base, 0, end)
+                } else {
+                    let (base, count) = output.array_parts(pointer, stride)?;
+                    (base, 0, count)
+                };
                 let keys = if dict {
                     let (keys, bytes) = output.payload(ARRAYS, output.word(pointer + DATA)?)?;
                     if end * u64::from(STRING_BYTES) > bytes {

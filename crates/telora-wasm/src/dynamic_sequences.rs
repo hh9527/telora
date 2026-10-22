@@ -51,7 +51,7 @@ impl Emitter<'_> {
         let (_, child_row) = self.type_row(child_ty);
         let width = self.read32(child_row, 32);
         let value = self.table_data(VALUES, input, DATA + 8);
-        let data = self.table_data(ARRAYS, value, DATA);
+        let data = self.array_base(value);
         let start = self.read32(value, DATA + 4);
         let count = self.read32(value, DATA + 8);
         self.extend([

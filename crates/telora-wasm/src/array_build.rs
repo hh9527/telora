@@ -164,12 +164,18 @@ impl Emitter<'_> {
         let object = self.read32(value, DATA);
         let end = self.read32(value, DATA + 8);
         self.extend([
-            I::LocalGet(end),
-            I::LocalGet(object),
-            I::I32Load(memory(8, 2)),
-            I::I32Eq,
+            I::LocalGet(value),
+            I::Call(ARRAY_CAN_APPEND),
             I::If(BlockType::Empty),
         ]);
+        self.extend([
+            I::LocalGet(end),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalTee(length),
+            I::I32Eqz,
+        ]);
+        self.fail_if(node, ERROR_OVERFLOW);
         let capacity = self.read32(object, 12);
         self.extend([
             I::LocalGet(length),
@@ -244,7 +250,7 @@ impl Emitter<'_> {
             I::LocalGet(length),
             I::I32Store(memory(DATA + 8, 2)),
             I::LocalGet(result),
-            I::I32Const(0),
+            I::I32Const(ARRAY_SLICE as i32),
             I::I32Store(memory(DATA + 12, 2)),
             I::LocalGet(result),
             I::Return,

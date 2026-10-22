@@ -25,7 +25,9 @@ impl Emitter<'_> {
             let bytes = count
                 .checked_mul(width)
                 .ok_or("Wasm: array size overflow")?;
-            let data = self.alloc(bytes);
+            let length = self.local(ValType::I32);
+            self.extend([I::I32Const(count as i32), I::LocalSet(length)]);
+            let data = self.array_storage(length, width);
             for (index, item) in items.into_iter().enumerate() {
                 self.root_array_constant(data, element, index as u32 * width);
                 self.extend([
@@ -43,8 +45,6 @@ impl Emitter<'_> {
                 ]);
             }
             self.root_array_constant(data, element, bytes);
-            let length = self.local(ValType::I32);
-            self.extend([I::I32Const(count as i32), I::LocalSet(length)]);
             return self.array_result_at(node, ty, data, length, length, width);
         }
         let total = self.local(ValType::I64);

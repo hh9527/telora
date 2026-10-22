@@ -33,7 +33,7 @@ fn decode_component(input: &str) -> Option<alloc::string::String> {
 
 unsafe fn join(array: u32) -> alloc::string::String {
     unsafe {
-        let base = word(word(array, DATA), 4);
+        let base = crate::values::array_base(array);
         let end = word(array, DATA + 8);
         let mut start = word(array, DATA + 4);
         for index in start..end {

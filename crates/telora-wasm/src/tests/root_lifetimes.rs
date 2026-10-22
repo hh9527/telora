@@ -1,6 +1,43 @@
 use crate::{session::Session, transport::Value};
 
 #[test]
+fn decoder_array_diagnostic_paths_survive_collection_before_child_handoff() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/gc-codec-array-path.telora"
+    ))
+    .unwrap();
+    for export in ["answer", "rejected"] {
+        let bytes = super::compile_export(&source, export).unwrap();
+        let evaluate = |interval| {
+            let mut session = Session::load(&bytes, 100_000_000).unwrap();
+            session
+                .configure_gc(crate::gc::GcConfig {
+                    allocation_interval: interval,
+                    ..Default::default()
+                })
+                .unwrap();
+            session.initialize().unwrap();
+            let result = session.call(&[]);
+            if export == "answer" {
+                assert_eq!(
+                    result.unwrap(),
+                    serde_json::json!({"field_roles": [
+                        {"title": "first long title"}, {"title": "second long title"}
+                    ]})
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert!(error.contains("$.field_roles[0].title"), "{error}");
+                assert!(error.contains("expected String"), "{error}");
+            }
+        };
+        evaluate(0);
+        evaluate(1);
+    }
+}
+
+#[test]
 fn host_pins_follow_collection_and_reject_stale_or_foreign_capabilities() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

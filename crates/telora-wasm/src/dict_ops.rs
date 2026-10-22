@@ -70,15 +70,25 @@ impl Emitter<'_> {
                 return Err("Wasm: Dict column type mismatch".into());
             }
             let result = self.value_as(node, output, STRING_BYTES)?;
+            let column = self.read32(value, if name == "keys" { DATA } else { DATA + 8 });
             self.extend([
+                I::LocalGet(count),
+                I::I32Const(1),
+                I::I32GtU,
+                I::If(BlockType::Empty),
                 I::LocalGet(result),
-                I::LocalGet(value),
-                I::I32Load(memory(if name == "keys" { DATA } else { DATA + 8 }, 2)),
+                I::LocalGet(column),
                 I::I32Store(memory(DATA, 2)),
                 I::LocalGet(result),
                 I::LocalGet(count),
                 I::I32Store(memory(DATA + 8, 2)),
             ]);
+            self.store32(result, DATA + 12, ARRAY_SLICE);
+            self.emit(I::Else);
+            let data = self.read32(column, 4);
+            let zero = self.local(ValType::I32);
+            self.array_payload(result, data, count, zero, expected)?;
+            self.emit(I::End);
             return Ok(result);
         }
         if name == "get" {

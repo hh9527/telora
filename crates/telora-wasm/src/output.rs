@@ -205,6 +205,27 @@ impl Output<'_> {
         let item = self.word(descriptor)? as u64 + id as u64 * 8;
         Ok((self.word(item)? as u64, self.word(item + 4)? as u64))
     }
+    pub(crate) fn array_parts(&self, pointer: u64, width: u64) -> Result<(u64, u64), String> {
+        let reference = self.word(pointer + DATA)?;
+        let start = u64::from(self.word(pointer + DATA + 4)?);
+        let end = u64::from(self.word(pointer + DATA + 8)?);
+        let kind = self.word(pointer + DATA + 12)?;
+        match kind {
+            ARRAY_EMPTY if reference == 0 && start == 0 && end == 0 => Ok((0, 0)),
+            ARRAY_SINGLE if reference != 0 && start == 0 && end == 1 && width != 0 => {
+                self.bytes(u64::from(reference), width)?;
+                Ok((u64::from(reference), 1))
+            }
+            ARRAY_SLICE => {
+                let (base, bytes) = self.payload(ARRAYS, reference)?;
+                if start > end || end * width > bytes || width == 0 {
+                    return Err("Wasm: invalid array slice".into());
+                }
+                Ok((base + start * width, end - start))
+            }
+            _ => Err("Wasm: invalid array representation".into()),
+        }
+    }
     pub fn json(&self, pointer: u64, expected: u32, depth: usize) -> Result<Value, String> {
         if depth > 512 {
             return Err("Wasm: JSON output nesting limit".into());
@@ -229,12 +250,6 @@ impl Output<'_> {
             }
             Kind::String => self.text(pointer)?.into(),
             Kind::Array => {
-                let object = self.word(pointer + DATA)?;
-                let (base, bytes) = self.payload(ARRAYS, object).map_err(|error| {
-                    format!("{error}; Array value={pointer} type={expected} object={object}")
-                })?;
-                let start = self.word(pointer + DATA + 4)? as u64;
-                let end = self.word(pointer + DATA + 8)? as u64;
                 let element = *ty
                     .arguments
                     .first()
@@ -245,11 +260,9 @@ impl Output<'_> {
                     .get(element as usize)
                     .ok_or("Wasm: invalid element type")?
                     .bytes as u64;
-                if start > end || end * stride > bytes || (stride == 0 && end != 0) {
-                    return Err("Wasm: invalid array slice".into());
-                }
+                let (base, count) = self.array_parts(pointer, stride)?;
                 let mut result = vec![];
-                for index in start..end {
+                for index in 0..count {
                     result.push(self.json(base + index * stride, element, depth + 1)?);
                 }
                 Value::Array(result)
@@ -378,20 +391,21 @@ impl Output<'_> {
         match header[15] {
             len @ 0..=15 => Ok(&header[..usize::from(len)]),
             16 => {
-                let base = u64::from(self.word(u64::from(CONTENT_VIEW))?);
-                let length = u64::from(self.word(u64::from(CONTENT_VIEW + 4))?);
-                let start = u64::from(self.word(pointer + DATA)?);
-                let end = u64::from(self.word(pointer + DATA + 4)?);
-                let raw = u64::from(self.word(pointer + DATA + 8)?);
-                if raw > start
+                let raw = u64::from(self.word(pointer + DATA)?);
+                let start = u64::from(self.word(pointer + DATA + 4)?);
+                let end = u64::from(self.word(pointer + DATA + 8)?);
+                let len = u64::from(self.word(raw)?);
+                let cap = u64::from(self.word(raw + 4)?);
+                if raw == 0
                     || start > end
-                    || end > length
+                    || end > len
+                    || len > cap
                     || end - start < 16
                     || header[12..15] != [0; 3]
                 {
                     return Err("Wasm: invalid content slice".into());
                 }
-                self.raw_bytes(base + start, end - start)
+                self.bytes(raw + 8 + start, end - start)
             }
             _ => Err("Wasm: invalid content representation".into()),
         }

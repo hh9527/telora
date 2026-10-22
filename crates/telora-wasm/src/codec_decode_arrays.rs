@@ -37,7 +37,11 @@ impl Emitter<'_> {
         let inner = self.mir.types[target.index()].arguments[0];
         let stride = self.width(source)?;
         let width = self.width(inner)?;
-        let base = self.table_data(ARRAYS, collection, if dict { DATA + 8 } else { DATA });
+        let base = if dict {
+            self.table_data(ARRAYS, collection, DATA + 8)
+        } else {
+            self.array_base(collection)
+        };
         let start = if dict {
             self.local(ValType::I32)
         } else {
@@ -57,8 +61,11 @@ impl Emitter<'_> {
             I::I32Const(width as i32),
             I::I32Mul,
             I::LocalTee(bytes),
+            I::If(BlockType::Empty),
+            I::LocalGet(bytes),
             I::Call(ALLOC),
             I::LocalSet(data),
+            I::End,
             I::LocalGet(start),
             I::LocalSet(cursor),
             I::Block(BlockType::Empty),
@@ -83,6 +90,9 @@ impl Emitter<'_> {
             I::LocalSet(position),
         ]);
         let child_path = self.parse_text(8, path, position)?;
+        // The safepoint below precedes the child decoder's context roots.
+        // Keep the freshly built diagnostic path typed until that handoff.
+        self.root_value(child_path, self.string_type()?);
         self.extend([
             I::LocalGet(context),
             I::LocalGet(child_path),
@@ -119,10 +129,10 @@ impl Emitter<'_> {
             I::I32Sub,
             I::LocalSet(count),
         ]);
-        let id = self.array_object(data, count, count, inner)?;
         let value = self.value_as(self.key.node, target, STRING_BYTES)?;
         self.copy(value, 0, input, LOC_BYTES);
         if dict {
+            let id = self.array_object(data, count, count, inner)?;
             let keys = self.read32(collection, DATA);
             for (offset, local) in [(DATA, keys), (DATA + 4, end), (DATA + 8, id)] {
                 self.extend([
@@ -131,20 +141,10 @@ impl Emitter<'_> {
                     I::I32Store(memory(offset, 2)),
                 ]);
             }
+            self.store32(value, DATA + 12, 0);
         } else {
-            self.extend([
-                I::LocalGet(value),
-                I::LocalGet(id),
-                I::I32Store(memory(DATA, 2)),
-                I::LocalGet(value),
-                I::LocalGet(end),
-                I::LocalGet(start),
-                I::I32Sub,
-                I::I32Store(memory(DATA + 8, 2)),
-            ]);
-            self.store32(value, DATA + 4, 0);
+            self.array_payload(value, data, count, count, inner)?;
         }
-        self.store32(value, DATA + 12, 0);
         Ok(value)
     }
 }

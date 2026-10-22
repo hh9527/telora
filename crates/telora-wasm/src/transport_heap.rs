@@ -36,13 +36,8 @@ impl Session {
         let ty = self.element_type(value.ty)?;
         let width = self.manifest.types[ty as usize].bytes;
         let output = self.output();
-        let (base, bytes) = output.payload(ARRAYS, output.word(value.pointer as u64 + DATA)?)?;
-        let start = output.word(value.pointer as u64 + (DATA + 4))?;
-        let end = output.word(value.pointer as u64 + (DATA + 8))?;
-        if start > end || width == 0 || end as u64 * width as u64 > bytes {
-            return Err("Wasm: invalid protocol array".into());
-        }
-        (start..end)
+        let (base, count) = output.array_parts(u64::from(value.pointer), u64::from(width))?;
+        (0..count)
             .map(|i| {
                 Ok(Value {
                     pointer: u32::try_from(base + i as u64 * width as u64)

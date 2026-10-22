@@ -26,7 +26,11 @@ impl Emitter<'_> {
         let bytes = item_count
             .checked_mul(width)
             .ok_or("Wasm: codec tuple size overflow")?;
-        let data = self.alloc(bytes);
+        let data = if bytes == 0 {
+            self.local(ValType::I32)
+        } else {
+            self.alloc(bytes)
+        };
         // Unit has no object handle in its value header.
         if !members.is_empty() {
             let base = self.table_data(RECORDS, input, DATA);
@@ -53,21 +57,13 @@ impl Emitter<'_> {
             .ok_or("Wasm: codec Array payload missing")?;
         let count = self.local(ValType::I32);
         self.extend([I::I32Const(item_count as i32), I::LocalSet(count)]);
-        let id = self.array_object(data, count, count, target)?;
         let payload = self.value_as(
             self.key.node,
             self.plan.layouts[payload_ty].id(),
             STRING_BYTES,
         )?;
         self.copy(payload, 0, input, LOC_BYTES);
-        self.extend([
-            I::LocalGet(payload),
-            I::LocalGet(id),
-            I::I32Store(memory(DATA, 2)),
-        ]);
-        self.store32(payload, DATA + 4, 0);
-        self.store32(payload, DATA + 8, members.len() as u32);
-        self.store32(payload, DATA + 12, 0);
+        self.array_payload(payload, data, count, count, target)?;
         self.codec_variant(target, "Array", Some(payload), input)
     }
     pub(crate) fn codec_encode_array(
@@ -89,7 +85,11 @@ impl Emitter<'_> {
         let payload_ty = self.plan.layouts[payload_ty].id();
         let stride = self.width(inner)?;
         let width = self.width(target)?;
-        let base = self.table_data(ARRAYS, input, if dictionary { DATA + 8 } else { DATA });
+        let base = if dictionary {
+            self.table_data(ARRAYS, input, DATA + 8)
+        } else {
+            self.array_base(input)
+        };
         let start = if dictionary {
             self.local(ValType::I32)
         } else {
@@ -106,8 +106,11 @@ impl Emitter<'_> {
             I::I32Const(width as i32),
             I::I32Mul,
             I::LocalTee(bytes),
+            I::If(BlockType::Empty),
+            I::LocalGet(bytes),
             I::Call(ALLOC),
             I::LocalSet(data),
+            I::End,
             I::LocalGet(start),
             I::LocalSet(cursor),
             I::Block(BlockType::Empty),
@@ -165,10 +168,10 @@ impl Emitter<'_> {
             I::I32Sub,
             I::LocalSet(count),
         ]);
-        let id = self.array_object(data, count, count, target)?;
         let payload = self.value_as(self.key.node, payload_ty, STRING_BYTES)?;
         self.copy(payload, 0, input, LOC_BYTES);
         if dictionary {
+            let id = self.array_object(data, count, count, target)?;
             let keys = self.read32(input, DATA);
             for (offset, value) in [(DATA, keys), (DATA + 4, end), (DATA + 8, id)] {
                 self.extend([
@@ -180,18 +183,7 @@ impl Emitter<'_> {
             self.store32(payload, DATA + 12, 0);
             return self.codec_variant(target, "Object", Some(payload), input);
         }
-        self.extend([
-            I::LocalGet(payload),
-            I::LocalGet(id),
-            I::I32Store(memory(DATA, 2)),
-            I::LocalGet(payload),
-            I::LocalGet(end),
-            I::LocalGet(start),
-            I::I32Sub,
-            I::I32Store(memory(DATA + 8, 2)),
-        ]);
-        self.store32(payload, DATA + 4, 0);
-        self.store32(payload, DATA + 12, 0);
+        self.array_payload(payload, data, count, count, target)?;
         self.codec_variant(target, "Array", Some(payload), input)
     }
 }

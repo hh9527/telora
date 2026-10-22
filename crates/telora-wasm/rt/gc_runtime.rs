@@ -33,8 +33,6 @@ pub unsafe extern "C" fn telora_gc_collect() -> u32 {
         let mark = crate::gc_mark::Mark::trace(snapshot());
         crate::tables::sweep(&mark.objects);
         crate::sources::sweep(&mark.sources);
-        let patches: Vec<u32> = mark.content.into_iter().collect();
-        crate::content::collect(&patches, !crate::heap::frozen());
         crate::heap::sweep(mark.storage);
         COLLECTIONS = COLLECTIONS.checked_add(1).unwrap();
     }

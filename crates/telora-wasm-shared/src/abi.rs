@@ -1,5 +1,5 @@
 //! Shared physical layout; consumed by both codegen and Rust-compiled RT.
-pub const VERSION: u32 = 36;
+pub const VERSION: u32 = 37;
 /// Pointer-free aggregates carry a copy-stable marker, followed by inline fields.
 pub const INLINE_FIELDS: u32 = u32::MAX;
 pub const INLINE_DATA: u32 = 16;
@@ -37,7 +37,7 @@ pub const DEBUG_EVENTS: u32 = 6;
 pub const DEBUG_ENABLED: u32 = 16;
 // Read-only Host view of Guest source records: pointer/count, records of 5 u32.
 pub const SOURCE_REGISTRY: u32 = 32;
-// Read-only content base/length. Re-read after every Guest call.
+// Raw byte storage usage: reserved zero word / live managed bytes (including headers).
 pub const CONTENT_VIEW: u32 = 48;
 pub const WORDS_VIEW: u32 = 40;
 pub const WORDS_ORIGIN: u32 = 56;
@@ -66,3 +66,8 @@ pub const ROOT_REFERENCES: u32 = 0xffff_fff3;
 pub const ROOT_PARSE_CONTEXT: u32 = 0xffff_fff4;
 pub const ROOT_CODEC_CONTEXT: u32 = 0xffff_fff5;
 pub const ROOT_PARSE_PLAN: u32 = 0xffff_fff6;
+
+/// Array payload kind; Dict raw columns do not use this discriminant.
+pub const ARRAY_EMPTY: u32 = 0;
+pub const ARRAY_SINGLE: u32 = 1;
+pub const ARRAY_SLICE: u32 = 2;

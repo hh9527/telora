@@ -38,3 +38,26 @@ pub unsafe extern "C" fn telora_string_compare(a: u32, b: u32) -> i32 {
         i32::from(a_len > b_len) - i32::from(a_len < b_len)
     }
 }
+
+/// Array storage base before applying view.start. Empty arrays have no storage.
+pub(crate) unsafe fn array_base(value: u32) -> u32 {
+    unsafe {
+        let reference = word(value, DATA);
+        match word(value, DATA + 12) {
+            ARRAY_EMPTY => 0,
+            ARRAY_SINGLE => reference,
+            ARRAY_SLICE => word(reference, 4),
+            _ => panic!("invalid array kind"),
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_array_can_append(value: u32) -> u32 {
+    unsafe {
+        let reference = word(value, DATA);
+        u32::from(word(value, DATA + 12) == ARRAY_SLICE
+            && !crate::heap::is_frozen(reference)
+            && word(value, DATA + 8) == word(reference, 8))
+    }
+}

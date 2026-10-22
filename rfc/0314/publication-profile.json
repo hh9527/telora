@@ -1,0 +1,18 @@
+{
+  "scope": "dynamic calls through array_payload during create-service; excludes Host input, raw Dict columns, reused views and constructors bypassing array_payload",
+  "counts": {
+    "empty": 111941,
+    "single": 105685,
+    "many": 66984
+  },
+  "total": 284610,
+  "percent": {
+    "empty": 39.33136572854081,
+    "single": 37.133270088893575,
+    "many": 23.535364182565615
+  },
+  "unprofiled_allocated": 134472073,
+  "profiled_allocated": 134472073,
+  "unprofiled_collections": 197,
+  "profiled_collections": 197
+}

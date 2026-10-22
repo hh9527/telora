@@ -40,7 +40,7 @@ impl Emitter<'_> {
         self.emit(I::End);
         let mut fields = Vec::with_capacity(children.len());
         if !children.is_empty() {
-            let base = self.table_data(ARRAYS, collection, DATA);
+            let base = self.array_base(collection);
             let stride = self.width(source)?;
             let path = self.read32(0, 24);
             let context = self.alloc(32);

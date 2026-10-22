@@ -51,7 +51,7 @@ pub unsafe extern "C" fn telora_data_image_export(result: u32) {
         word(&mut out, origin);
         word(&mut out, allocated);
         bytes(&mut out, &words);
-        bytes(&mut out, &crate::content::snapshot());
+        word(&mut out, crate::content::len());
         let tables = crate::tables::snapshot();
         bytes(
             &mut out,
@@ -89,7 +89,7 @@ pub unsafe extern "C" fn telora_data_image_import(pointer: u32, length: u32) {
         let origin = input.word();
         let allocated = input.word();
         crate::heap::restore_data(origin, allocated, input.bytes());
-        crate::content::restore_data(input.bytes());
+        crate::content::restore(input.word(), false);
         let raw = input.bytes();
         assert_eq!(
             raw.len(),

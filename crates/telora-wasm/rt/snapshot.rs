@@ -55,7 +55,7 @@ unsafe fn encode() -> Vec<u8> {
         out.word(origin);
         out.word(allocated);
         out.bytes(&words);
-        out.bytes(&crate::content::snapshot());
+        out.word(crate::content::len());
 
         let tables = crate::tables::snapshot();
         out.bytes(core::slice::from_raw_parts(
@@ -103,7 +103,7 @@ unsafe fn decode(bytes: &[u8]) {
         let origin = input.word();
         let allocated = input.word();
         crate::heap::restore(origin, allocated, input.bytes());
-        crate::content::restore(input.bytes());
+        crate::content::restore(input.word(), true);
 
         let raw_tables = input.bytes();
         assert_eq!(

@@ -1,0 +1,16 @@
+{
+  "source_commit": "5a870224d56208fad97bdc37e72d5f82a0ca6276",
+  "matching_requests": 8,
+  "field_roles": {
+    "passed": 27,
+    "total": 27,
+    "request_fuel_millions": 100000,
+    "candidate_consumed": 3169192448,
+    "baseline_consumed": 3329058565
+  },
+  "knowledge_address": {
+    "passed": 4,
+    "total": 4
+  },
+  "note": "field_roles default budget and 1000M exhausted after 15 cases; whole suite shares one execution budget"
+}

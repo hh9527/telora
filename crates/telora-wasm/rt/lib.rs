@@ -5,6 +5,7 @@ mod frame_scratch;
 mod gc_runtime;
 mod gc_mark;
 mod content;
+mod content_append;
 mod host_memory;
 mod collect;
 mod collect_trace;

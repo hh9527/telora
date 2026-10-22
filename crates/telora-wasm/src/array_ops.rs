@@ -4,8 +4,23 @@ use telora_core::mir::{HirId, TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
+    pub(crate) fn array_base(&mut self, value: u32) -> u32 {
+        let reference = self.read32(value, DATA);
+        self.extend([
+            I::LocalGet(value),
+            I::I32Load(memory(DATA + 12, 2)),
+            I::I32Const(ARRAY_SLICE as i32),
+            I::I32Eq,
+            I::If(BlockType::Empty),
+            I::LocalGet(reference),
+            I::I32Load(memory(4, 2)),
+            I::LocalSet(reference),
+            I::End,
+        ]);
+        reference
+    }
     pub fn array_parts(&mut self, value: u32, width: u32) -> (u32, u32) {
-        let base = self.table_data(ARRAYS, value, DATA);
+        let base = self.array_base(value);
         let count = self.local(ValType::I32);
         self.extend([
             I::LocalGet(base),
@@ -24,6 +39,66 @@ impl Emitter<'_> {
         ]);
         (base, count)
     }
+    /// Publish the initialized prefix, normalizing empty and singleton storage.
+    pub(crate) fn array_payload(
+        &mut self,
+        result: u32,
+        data: u32,
+        count: u32,
+        capacity: u32,
+        element: TypeId,
+    ) -> Result<(), String> {
+        let reference = self.local(ValType::I32);
+        let kind = self.local(ValType::I32);
+        // This publication may execute repeatedly inside a generated loop.
+        self.extend([
+            I::I32Const(0),
+            I::LocalSet(reference),
+            I::I32Const(ARRAY_EMPTY as i32),
+            I::LocalSet(kind),
+            I::LocalGet(count),
+            I::If(BlockType::Empty),
+            I::LocalGet(count),
+            I::I32Const(1),
+            I::I32Eq,
+            I::If(BlockType::Empty),
+            I::LocalGet(data),
+            I::LocalSet(reference),
+            I::LocalGet(capacity),
+            I::I32Const(1),
+            I::I32Ne,
+            I::If(BlockType::Empty),
+        ]);
+        let width = self.width(element)?;
+        let single = self.alloc(width);
+        self.copy(single, 0, data, width);
+        self.extend([
+            I::LocalGet(single),
+            I::LocalSet(reference),
+            I::End,
+            I::I32Const(ARRAY_SINGLE as i32),
+            I::LocalSet(kind),
+            I::Else,
+        ]);
+        let object = self.array_object(data, count, capacity, element)?;
+        self.extend([
+            I::LocalGet(object),
+            I::LocalSet(reference),
+            I::I32Const(ARRAY_SLICE as i32),
+            I::LocalSet(kind),
+            I::End,
+            I::End,
+        ]);
+        for (offset, local) in [(DATA, reference), (DATA + 8, count), (DATA + 12, kind)] {
+            self.extend([
+                I::LocalGet(result),
+                I::LocalGet(local),
+                I::I32Store(memory(offset, 2)),
+            ]);
+        }
+        self.store32(result, DATA + 4, 0);
+        Ok(())
+    }
     pub fn array_storage(&mut self, count: u32, width: u32) -> u32 {
         if width != 0 {
             self.extend([
@@ -35,11 +110,16 @@ impl Emitter<'_> {
         }
         let data = self.local(ValType::I32);
         self.extend([
+            I::I32Const(0),
+            I::LocalSet(data),
+            I::LocalGet(count),
+            I::If(BlockType::Empty),
             I::LocalGet(count),
             I::I32Const(width as i32),
             I::I32Mul,
             I::Call(ALLOC),
             I::LocalSet(data),
+            I::End,
         ]);
         data
     }
@@ -72,18 +152,8 @@ impl Emitter<'_> {
         _width: u32,
     ) -> Result<u32, String> {
         let element = self.mir.types[ty.index()].arguments[0];
-        let id = self.array_object(data, count, capacity, element)?;
         let result = self.value_as(node, ty, self.width(ty)?)?;
-        self.extend([
-            I::LocalGet(result),
-            I::LocalGet(id),
-            I::I32Store(memory(DATA, 2)),
-            I::LocalGet(result),
-            I::LocalGet(count),
-            I::I32Store(memory(DATA + 8, 2)),
-        ]);
-        self.store32(result, DATA + 4, 0);
-        self.store32(result, DATA + 12, 0);
+        self.array_payload(result, data, count, capacity, element)?;
         Ok(result)
     }
     pub fn array_item(&mut self, base: u32, index: u32, width: u32) -> u32 {
@@ -161,7 +231,14 @@ impl Emitter<'_> {
         } else {
             width
         };
-        let data = packed.then(|| self.array_storage(count, output_width));
+        let capacity = self.local(ValType::I32);
+        let data = packed.then(|| {
+            if name == "filter" {
+                self.local(ValType::I32)
+            } else {
+                self.array_storage(count, output_width)
+            }
+        });
         let accumulator = if folding {
             Some(self.parameter(1))
         } else {
@@ -202,23 +279,21 @@ impl Emitter<'_> {
                     self.bits(result);
                     self.extend([I::I64Eqz, I::I32Eqz, I::If(BlockType::Empty)]);
                 }
-                let destination = self.array_item(data.unwrap(), used, output_width);
-                self.copy(
-                    destination,
-                    0,
-                    if name == "map" { result } else { item },
-                    output_width,
-                );
-                self.extend([
-                    I::LocalGet(used),
-                    I::I32Const(1),
-                    I::I32Add,
-                    I::LocalSet(used),
-                ]);
                 if name == "filter" {
+                    self.sequence_append(data.unwrap(), used, capacity, element, item)?;
                     self.emit(I::End);
+                } else {
+                    let destination = self.array_item(data.unwrap(), used, output_width);
+                    self.copy(destination, 0, result, output_width);
+                    self.extend([
+                        I::LocalGet(used),
+                        I::I32Const(1),
+                        I::I32Add,
+                        I::LocalSet(used),
+                    ]);
                 }
             }
+
             "fold" => self.extend([I::LocalGet(result), I::LocalSet(accumulator.unwrap())]),
             "fold_control" => {
                 self.extend([
@@ -261,7 +336,7 @@ impl Emitter<'_> {
         match name {
             "map" => self.array_result(output, data.unwrap(), used, output_width),
             "filter" => {
-                self.array_result_with_capacity(output, data.unwrap(), used, count, output_width)
+                self.array_result_with_capacity(output, data.unwrap(), used, capacity, output_width)
             }
             "fold" => Ok(accumulator.unwrap()),
             "fold_control" => self.enum_value(node, output, 1, accumulator),

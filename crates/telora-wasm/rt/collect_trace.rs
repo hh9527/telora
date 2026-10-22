@@ -14,7 +14,24 @@ impl Visitor for Collector {
                     self.pending.push((crate::abi::VALUES, old, at, 0, ty));
                 }
                 Edge::Source(reference) => self.trace_location(self.old_location(reference)),
-                Edge::Content { at, .. } => self.content.push(at),
+                Edge::Content { old, at } => {
+                    let bytes: [u8; 16] = self.heap.read(old);
+                    if let telora_wasm_shared::arena::content::Bytes::Slice(s) =
+                        telora_wasm_shared::arena::content::Bytes::decode(bytes).unwrap()
+                    {
+                        let raw = if crate::heap::is_frozen(s.raw) { s.raw }
+                        else if let Some(&(next, _)) = self.objects.get(&(crate::abi::CONTENT_VIEW, s.raw)) { next }
+                        else {
+                            let len = self.old_word(s.raw, 0);
+                            let next = crate::content::allocate_capacity(len);
+                            core::ptr::copy_nonoverlapping(self.heap.ptr::<u8>(s.raw), crate::heap::ptr::<u8>(next), len.checked_add(8).unwrap() as usize);
+                            self.put(next + 4, len);
+                            self.objects.insert((crate::abi::CONTENT_VIEW, s.raw), (next, 0));
+                            next
+                        };
+                        self.put(at, raw);
+                    }
+                },
                 Edge::Object { table, id, ty, at } => {
                     let next = self.object(table, id, ty);
                     self.put(at, next);

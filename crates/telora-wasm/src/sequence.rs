@@ -208,7 +208,7 @@ impl Emitter<'_> {
         }
     }
 
-    fn sequence_append(
+    pub(crate) fn sequence_append(
         &mut self,
         data: u32,
         count: u32,
@@ -233,7 +233,7 @@ impl Emitter<'_> {
             I::LocalGet(capacity),
             I::I32Eqz,
             I::If(BlockType::Result(ValType::I32)),
-            I::I32Const(8),
+            I::I32Const(1),
             I::Else,
             I::LocalGet(capacity),
             I::I32Const(2),

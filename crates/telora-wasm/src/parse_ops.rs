@@ -88,6 +88,23 @@ impl Emitter<'_> {
         Ok(())
     }
     pub(crate) fn parse_text(&mut self, operation: i32, a: u32, b: u32) -> Result<u32, String> {
+        if operation == 9 {
+            let value = self.value_as(self.key.node, self.string_type()?, STRING_BYTES)?;
+            self.extend([
+                I::LocalGet(value),
+                I::I32Const(DATA as i32),
+                I::I32Add,
+                I::LocalGet(a),
+                I::I32Const(DATA as i32),
+                I::I32Add,
+                I::LocalGet(b),
+                I::I32Const(DATA as i32),
+                I::I32Add,
+                I::Call(CONTENT_APPEND),
+                I::Drop,
+            ]);
+            return Ok(value);
+        }
         let span = self.local(ValType::I32);
         self.extend([
             I::I32Const(operation),

@@ -15,7 +15,6 @@ use telora_wasm_shared::{
 pub(crate) struct Mark {
     pub storage: BTreeSet<u32>,
     pub objects: BTreeSet<(u32, u32, u32)>,
-    pub content: BTreeSet<u32>,
     pub sources: BTreeSet<u32>,
     values: BTreeSet<(u32, u32)>,
     pending: Vec<(u32, u32, u32, u32)>,
@@ -28,7 +27,6 @@ impl Mark {
             let mut mark = Self {
                 storage: BTreeSet::new(),
                 objects: BTreeSet::new(),
-                content: BTreeSet::new(),
                 sources: BTreeSet::new(),
                 values: BTreeSet::new(),
                 pending: Vec::new(),
@@ -256,7 +254,9 @@ impl Visitor for Mark {
                     }
                 }
                 Edge::Content { old, .. } => {
-                    self.content.insert(old);
+                    if let telora_wasm_shared::arena::content::Bytes::Slice(s) = crate::content::read(old) {
+                        self.span(s.raw);
+                    }
                 }
                 Edge::Inline { old, ty, .. }
                 | Edge::Value {

@@ -338,7 +338,7 @@ impl Emitter<'_> {
             I::I64GeU,
         ]);
         self.fail_if(node, ERROR_INDEX);
-        let data = self.table_data(ARRAYS, receiver, DATA);
+        let data = self.array_base(receiver);
         let result = self.local(ValType::I32);
         self.extend([
             I::LocalGet(data),

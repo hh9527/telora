@@ -138,6 +138,8 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         ("telora_roots_leave", 2),
         ("telora_roots_set", 6),
         ("telora_roots_safepoint", 2),
+        ("telora_array_can_append", 0),
+        ("telora_content_append", 3),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }

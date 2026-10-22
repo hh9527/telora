@@ -315,25 +315,35 @@ payload 的首个字为固定 `INLINE_FIELDS` 标记，字段区从完整值偏�
 各自保留完整来源头。按值复制不依赖原值的载荷地址。递归存储及含引用聚合使用
 间接载荷；Array 的动态元素区也使用带封闭布局的直接对象引用。普通对象的扫描
 角色与资源表索引分开，Regex/Fmt 等资源仍通过各自的表槽访问。
-String/Bytes 共用独立的 `Vec<u8>` 内容池：不足 16 字节时直接内联，最后一字节保存
-长度；其余值保存 `start/end/raw_start` 三个绝对偏移，最后一字节为 16。
-共享切片保留 raw_start；回收先汇总同组存活区间，再复制包围区间并重定位全部视图。
-没有独立 String/Bytes 表。Host 的只读内容视图位于线性内存 48/52（地址/长度），
-不可跨 Guest 调用缓存内容地址。结构化对象与表缓冲区存放在单个 `Vec<u64>`；分页元数据按 size class 管理动态
-分配，准确内部引用保活所属块。空槽复用，空页合并后再分配时拆分剩余范围。
-backing 保留容量，committed 包含保留容量和页/槽元数据；RT words 默认预算为 32 MiB，
-内容、来源和 Rust 资源另受 Guest 线性内存上限约束。
+String/Bytes 不足 16 字节时直接内联，最后一字节保存长度；其余值保存
+`raw/start/end`，最后一字节为 16。raw 是受管堆中稳定的逻辑引用，指向
+`len:u32/cap:u32/bytes:[u8;cap]`；start/end 相对字节区。小切片复制内联，
+长切片保活完整 Raw。执行期间 mark-sweep 只标记底层分配，不搬移内容或修补视图；
+显式边界压缩将共享 Raw 复制一次并重定位引用。没有独立内容池或 String/Bytes 表。
+线性内存 48/52 保存保留零字与活 Raw 分配字节数（含头），该占用已经包含在 words
+和 managed 统计中。结构化对象、Raw 内容与表缓冲区存放在单个 `Vec<u64>`；
+分页元数据按 size class 管理动态分配，准确内部引用保活所属块。空槽复用，
+空页合并后再分配时拆分剩余范围。backing 保留容量，committed 包含保留容量和
+页/槽元数据；RT 受管堆默认预算为 32 MiB，来源和 Rust 资源另受 Guest 线性内存上限约束。
 持久 words 引用编码为 `origin + byte_offset`，origin 是链接后静态镜像末端；
 小于 origin 的引用指向永久 Wasm 静态区，`[origin, 0x80000000)` 内的引用通过
 当前 words 基址访问，scratch 引用见下文。Host 交换缓冲区和来源
 记录仍使用独立的真实线性内存地址，不能当作语言引用传入。
 只读 words 视图位于 40/44（地址/字节数），origin 位于 56；扩容后必须重新取基址。
 类型追踪描述与反射描述在编译时进入永久静态镜像，Guest 启动时登记；words 中
-无需再分配一份类型描述。成功初始化后先移动回收，再冻结 words/content 前缀。
+无需再分配一份类型描述。成功初始化后先移动回收，再冻结 words 前缀（包含 Raw 内容）。
 保守根为全部 Ready demand、service handler，以及尚待消费的诊断/debug 事件；
 顶层值、property/check、已实例化泛型值通过 demand 保留。初始化专用句柄清空。
 工作区显式回收保留冻结前缀，并返回调用方显式根的替代句柄。
-Dict 使用有序 keys/values，字段操作与构造胶水消费已闭合的布局证据。
+Array 完整值固定 24 字节，payload 为 reference/start/end/kind。Empty 没有底层
+存储；Single 引用一个独立完整元素槽，按元素布局扫描；Slice 引用 RawArray 头和
+共享缓冲。Dict 使用有序 keys/values 的 RawArray 列，列自身不带 Array kind。
+数组发布按长度 0/1/其余规范化，dict::keys/values 也产生合法的 Array 值。
+filter 和 Seq/Sink collect 从零容量开始，第一个结果分配单槽，第二个结果才建立
+增长缓冲；不对谓词做第二遍求值。GC 仅扫描有效元素，不扫描剩余容量。
+内部 push 仅在可写 RawArray 的 view.end 等于 raw.len 时复用尾部；历史视图和
+冻结初始化对象均分叉。非零 start 的视图保持自身计数与 raw end 分开计算。
+字段操作与构造胶水消费已闭合的布局证据。
 具体尺寸与表示以 `telora-wasm-shared/src/abi.rs` 和生成器为准，不构成发布 ABI。
 
 MIR 的 value_materializations 按表达式记录 enum/Bool 与 newtype 构造事实，类型

@@ -152,17 +152,33 @@ impl Session {
                 let bytes = length
                     .checked_mul(stride)
                     .ok_or("Wasm: array input size overflow")?;
-                let data = self.allocate(bytes as usize)?;
+                let mut data = if length < 2 {
+                    0
+                } else {
+                    self.allocate(bytes as usize)?
+                };
                 for (index, item) in items.iter().enumerate() {
                     let value = self.input(element, item, depth + 1)?;
-                    self.copy_input(data + index as u32 * stride, value, stride as usize)?;
+                    if length == 1 {
+                        data = value;
+                    } else {
+                        self.copy_input(data + index as u32 * stride, value, stride as usize)?;
+                    }
                 }
-                let id = self.push_input(ARRAYS, data, bytes, Some(element))?;
-                self.write(pointer as usize + (DATA as usize), &id.to_le_bytes())?;
+                let (id, kind) = match length {
+                    0 => (0, ARRAY_EMPTY),
+                    1 => (data, ARRAY_SINGLE),
+                    _ => (
+                        self.push_input(ARRAYS, data, bytes, Some(element))?,
+                        ARRAY_SLICE,
+                    ),
+                };
+                self.write(pointer as usize + DATA as usize, &id.to_le_bytes())?;
                 self.write(
                     pointer as usize + (DATA + 8) as usize,
                     &length.to_le_bytes(),
                 )?;
+                self.write(pointer as usize + (DATA + 12) as usize, &kind.to_le_bytes())?;
             }
             Kind::Record | Kind::Tuple => {
                 let valid = match descriptor.kind {

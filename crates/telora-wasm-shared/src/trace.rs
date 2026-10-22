@@ -113,7 +113,22 @@ fn data(v: &mut impl Visitor, mut ty: u32, mut old: u32, mut at: u32) -> Result<
                 }
                 return Ok(());
             }
-            layout::Kind::Array => return handle(v, ARRAYS, old, at, detail_type(v, ty, 0)?),
+            layout::Kind::Array => {
+                return match word(v, old, 12)? {
+                    ARRAY_EMPTY
+                        if v.read(old)? == 0 && word(v, old, 4)? == 0 && word(v, old, 8)? == 0 =>
+                    {
+                        Ok(())
+                    }
+                    ARRAY_SINGLE
+                        if v.read(old)? != 0 && word(v, old, 4)? == 0 && word(v, old, 8)? == 1 =>
+                    {
+                        indirect(v, old, at, detail_type(v, ty, 0)?)
+                    }
+                    ARRAY_SLICE => handle(v, ARRAYS, old, at, detail_type(v, ty, 0)?),
+                    _ => Err(Error::Layout),
+                };
+            }
             layout::Kind::Dict => {
                 handle(v, ARRAYS, old, at, detail_type(v, ty, 0)?)?;
                 return handle(v, ARRAYS, add(old, 8)?, add(at, 8)?, detail_type(v, ty, 1)?);

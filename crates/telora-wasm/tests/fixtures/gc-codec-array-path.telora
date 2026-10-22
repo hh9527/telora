@@ -1,0 +1,12 @@
+use std::codec as codec;
+use std::json as json;
+
+type Item = struct { title: String };
+type Model = struct { field_roles: Array(Item) };
+
+pub def answer: Fn() -> Model = fn() {
+    codec::decode@[Model](json::parse(r#"{"field_roles":[{"title":"first long title"},{"title":"second long title"}]}"#).unwrap!()).unwrap!()
+};
+pub def rejected: Fn() -> Model = fn() {
+    codec::decode@[Model](json::parse(r#"{"field_roles":[{"title":1}]}"#).unwrap!()).unwrap!()
+};

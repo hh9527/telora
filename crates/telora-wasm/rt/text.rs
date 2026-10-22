@@ -52,7 +52,7 @@ pub unsafe extern "C" fn telora_text_build(operation: u32, a: u32, b: u32, c: u3
             match operation {
                 0 | 1 => {
                     let separator = if operation == 0 { text(b) } else { "\n" };
-                    let base = word(word(a, DATA), 4);
+                    let base = crate::values::array_base(a);
                     let start = word(a, DATA + 4);
                     for index in start..word(a, DATA + 8) {
                         if index != start {

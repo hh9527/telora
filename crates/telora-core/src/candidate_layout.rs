@@ -70,14 +70,19 @@ impl Storage {
         };
         match (self, extent) {
             (Self::Fixed { bytes }, Extent::Fixed) => Ok(*bytes),
-            (Self::ByteContent, Extent::Sequence { length }) => {
-                Ok(if length < 16 { 0 } else { u64::from(length) })
-            }
+            (Self::ByteContent, Extent::Sequence { length }) => Ok(if length < 16 {
+                0
+            } else {
+                u64::from(length) + 8
+            }),
             (Self::Sequence { stride, empty_only }, Extent::Sequence { length }) => {
                 if *empty_only && length != 0 {
                     return Err("uninhabited elements require an empty sequence".into());
                 }
-                mul(*stride, length as u64)
+                add(
+                    mul(*stride, length as u64)?,
+                    if length >= 2 { 16 } else { 0 },
+                )
             }
             (
                 Self::Dictionary {
@@ -533,9 +538,14 @@ impl<'a> Builder<'a> {
                     16,
                     8,
                     Some("Content"),
-                    "inline:[u8;15],length:u8 (length<16) OR start:u32,end:u32,raw_start:u32,reserved:[u8;3]=0,tag:u8=16",
+                    "inline:[u8;15],length:u8 (length<16) OR raw:u32,start:u32,end:u32,reserved:[u8;3]=0,tag:u8=16",
                 )?,
-                T::Array => shape(12, 4, Some("ArrayTable"), "heap:u32,start:u32,end:u32")?,
+                T::Array => shape(
+                    16,
+                    4,
+                    Some("ArrayTable"),
+                    "reference:u32,start:u32,end:u32,kind:u32 (0=empty,1=single full-value slot,2=raw slice)",
+                )?,
                 T::Dict => shape(
                     16,
                     4,
@@ -656,7 +666,7 @@ impl<'a> Builder<'a> {
             "Content" => {
                 o.element_stride = Some(1);
                 o.storage = Storage::ByteContent;
-                o.storage_rule="byte_length<16: inline, no content allocation; otherwise byte_length bytes in shared content Vec; absolute start/end/raw_start offsets; slices retain raw_start; no table entry or length header".into();
+                o.storage_rule="byte_length<16: inline, no content allocation; otherwise managed raw {len:u32,cap:u32,bytes:[u8;cap]}; stable logical raw reference and relative start/end offsets; slices retain the raw allocation".into();
             }
             "ArrayTable" if ty.constructor != T::Dict => {
                 let t = ty.arguments[0];
@@ -671,7 +681,7 @@ impl<'a> Builder<'a> {
                     "length must be 0 for an uninhabited element type".into()
                 } else {
                     format!(
-                        "length * {stride} bytes; table entry stores length:u32; each element is a full value"
+                        "length=0: no backing storage; length=1: {stride}-byte standalone full value; length>=2: 16-byte raw header plus length * {stride} bytes at exact capacity; allocator metadata excluded"
                     )
                 };
             }
@@ -880,7 +890,7 @@ mod tests {
     }
     #[test]
     fn storage_extents_are_checked() {
-        for (length, bytes) in [(0, 0), (15, 0), (16, 16)] {
+        for (length, bytes) in [(0, 0), (15, 0), (16, 24)] {
             assert_eq!(
                 Storage::ByteContent
                     .allocation_bytes(Extent::Sequence { length })

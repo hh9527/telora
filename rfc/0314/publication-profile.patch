@@ -1,0 +1,19 @@
+--- a/crates/telora-wasm/src/abi.rs
++++ b/crates/telora-wasm/src/abi.rs
+@@ -51 +51 @@
+-pub const GLOBAL_COUNT: u32 = 3;
++pub const GLOBAL_COUNT: u32 = 6;
+--- a/crates/telora-wasm/src/array_ops.rs
++++ b/crates/telora-wasm/src/array_ops.rs
+@@ -98,0 +99,5 @@
++        self.extend([
++            I::GlobalGet(3), I::LocalGet(count), I::I32Eqz, I::I32Add, I::GlobalSet(3),
++            I::GlobalGet(4), I::LocalGet(count), I::I32Const(1), I::I32Eq, I::I32Add, I::GlobalSet(4),
++            I::GlobalGet(5), I::LocalGet(count), I::I32Const(2), I::I32GeU, I::I32Add, I::GlobalSet(5),
++        ]);
+--- a/crates/telora-wasm/src/compose.rs
++++ b/crates/telora-wasm/src/compose.rs
+@@ -379,0 +380,3 @@
++    for (offset, name) in ["rfc0314_array_empty", "rfc0314_array_single", "rfc0314_array_many"].iter().enumerate() {
++        exports.export(name, ExportKind::Global, rt.globals + 3 + offset as u32);
++    }

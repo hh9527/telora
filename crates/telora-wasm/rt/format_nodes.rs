@@ -5,7 +5,7 @@ use core::fmt::{self, Write};
 
 unsafe fn array_item(value: u32, index: u32, width: u32) -> u32 {
     unsafe {
-        let base = word(word(value, DATA), 4);
+        let base = crate::values::array_base(value);
         base + (word(value, DATA + 4) + index) * width
     }
 }

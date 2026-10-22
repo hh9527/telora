@@ -1,0 +1,3 @@
+pub def answer: (
+    Array(Int), Array(String), Array((String, Array(Int))), Array(Array(Int))
+) = ([1], ["a string"], [("row", [1])], [[1]]);

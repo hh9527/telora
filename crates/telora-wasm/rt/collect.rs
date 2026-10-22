@@ -78,7 +78,6 @@ pub(crate) struct Collector {
     // table, old pointer, destination, bytes, closed payload layout
     pub pending: Vec<(u32, u32, u32, u32, u32)>,
     pub sources: alloc::collections::BTreeSet<u32>,
-    pub content: Vec<u32>,
     pub demands: alloc::collections::BTreeSet<u32>,
 }
 
@@ -261,7 +260,6 @@ impl Collector {
             while let Some((table, old, at, bytes, layout)) = self.pending.pop() {
                 self.trace_object(table, old, at, bytes, layout);
             }
-            crate::content::collect(&self.content, self.initialization);
             // Sources are Host metadata, but RT may render their names in captures.
             crate::sources::collect(&mut self);
             let mut tables = self.old;
@@ -312,6 +310,7 @@ impl Collector {
         // Keep the old arena alive until all traversal and patching finishes.
         let old_work = if initialization { crate::heap::take_initialization() }
             else { crate::heap::take_work() };
+        crate::content::begin(initialization);
         let old = core::array::from_fn(|i| (table_address(i as u32) as *const Table).read());
         let slots = old
             .iter()
@@ -334,7 +333,6 @@ impl Collector {
             values: BTreeMap::new(),
             pending: vec![],
             sources: alloc::collections::BTreeSet::new(),
-            content: vec![],
             demands: alloc::collections::BTreeSet::new(),
         }
       }

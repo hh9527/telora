@@ -17,16 +17,9 @@ impl Emitter<'_> {
         result
     }
     fn parse_buffer(&mut self, count: u32, stride: u32) -> u32 {
-        let result = self.local(ValType::I32);
-        self.extend([
-            I::LocalGet(count),
-            I::I32Const(stride as i32),
-            I::I32Mul,
-            I::Call(ALLOC),
-            I::LocalSet(result),
-        ]);
-        result
+        self.array_storage(count, stride)
     }
+
     fn parse_column(
         &mut self,
         base: u32,
@@ -369,9 +362,9 @@ impl Emitter<'_> {
             I::End,
         ]);
         let element = self.mir.types[ty.index()].arguments[0];
-        let id = self.parse_column(data, count, width, element)?;
         let output = self.value_as(self.key.node, ty, STRING_BYTES)?;
         if let Some(keys) = keys {
+            let id = self.parse_column(data, count, width, element)?;
             let key_id = self.parse_column(keys, count, STRING_BYTES, self.string_type()?)?;
             for (offset, local) in [(DATA, key_id), (DATA + 4, count), (DATA + 8, id)] {
                 self.extend([
@@ -380,18 +373,10 @@ impl Emitter<'_> {
                     I::I32Store(memory(offset, 2)),
                 ]);
             }
+            self.store32(output, DATA + 12, 0);
         } else {
-            self.extend([
-                I::LocalGet(output),
-                I::LocalGet(id),
-                I::I32Store(memory(DATA, 2)),
-                I::LocalGet(output),
-                I::LocalGet(count),
-                I::I32Store(memory(DATA + 8, 2)),
-            ]);
-            self.store32(output, DATA + 4, 0);
+            self.array_payload(output, data, count, count, element)?;
         }
-        self.store32(output, DATA + 12, 0);
         Ok(output)
     }
 }

@@ -8,3 +8,7 @@ pub def answer: Fn(String) -> Array(String) = fn(text) {
 pub def inline_bytes: Fn() -> (Bytes, Bytes, Bytes) = fn() {
     (b"", b"123456789012345", b"1234567890123456")
 };
+
+pub def short_view: Fn(String) -> String = fn(text) {
+    string::split(text, "|")[1]
+};

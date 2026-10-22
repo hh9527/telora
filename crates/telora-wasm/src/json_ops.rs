@@ -143,8 +143,11 @@ impl Emitter<'_> {
                 "Array" | "Object" => {
                     let object = branch == "Object";
                     let payload = self.enum_payload(ty, index as u32, 1)?;
-                    let base =
-                        self.table_data(ARRAYS, payload, if object { DATA + 8 } else { DATA });
+                    let base = if object {
+                        self.table_data(ARRAYS, payload, DATA + 8)
+                    } else {
+                        self.array_base(payload)
+                    };
                     let keys = if object {
                         Some(self.table_data(ARRAYS, payload, DATA))
                     } else {

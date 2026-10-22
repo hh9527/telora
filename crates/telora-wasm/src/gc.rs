@@ -7,8 +7,8 @@ pub struct GcConfig {
     /// the live graph and is capped by remaining words budget. One forces every
     /// safe point; zero disables automatic collection. Explicit roots still apply.
     pub allocation_interval: u32,
-    /// Retained words backing and allocation metadata; content and other Guest
-    /// allocations are additionally bounded by the Session memory limit.
+    /// Managed objects (including RawString/Bytes), backing and allocator metadata.
+    /// Other Guest allocations are additionally bounded by the Session memory limit.
     pub heap_limit: u32,
 }
 

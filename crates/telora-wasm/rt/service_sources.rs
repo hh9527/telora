@@ -87,7 +87,7 @@ unsafe fn sources() -> &'static mut Sources {
 pub unsafe extern "C" fn telora_service_sources_prepare(names: u32) -> u32 {
     unsafe {
         assert!((&*core::ptr::addr_of!(SOURCES)).is_none());
-        let base = word(word(names, DATA), 4);
+        let base = crate::values::array_base(names);
         let start = word(names, DATA + 4);
         let end = word(names, DATA + 8);
         assert!(start <= end);

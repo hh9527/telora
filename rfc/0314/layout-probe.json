@@ -1,0 +1,21 @@
+{
+  "note": "static layouts; excludes allocator metadata and multiplicity",
+  "rows": [
+    {
+      "element_bytes": 16,
+      "array_type_count": 2,
+      "existing_single_bytes": 56,
+      "indirect_single_bytes": 40,
+      "direct_inline_array_bytes": 32,
+      "array_copy_increase": 8
+    },
+    {
+      "element_bytes": 24,
+      "array_type_count": 2,
+      "existing_single_bytes": 64,
+      "indirect_single_bytes": 48,
+      "direct_inline_array_bytes": 40,
+      "array_copy_increase": 16
+    }
+  ]
+}

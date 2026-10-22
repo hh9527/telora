@@ -20,6 +20,7 @@ pub struct InitializationStats {
 #[derive(Debug)]
 pub struct ArenaUsage {
     pub words: u32,
+    /// Managed RawString/Bytes bytes including headers; already included in words.
     pub content: u32,
 }
 

@@ -45,8 +45,11 @@ pub unsafe fn set_static_end(end: u32) {
     }
 }
 pub unsafe fn allocate(bytes: u32) -> u32 {
+    unsafe { allocate_tagged(bytes, 0) }
+}
+pub(crate) unsafe fn allocate_tagged(bytes: u32, descriptor: u32) -> u32 {
     unsafe {
-        let reference = heap().allocate(bytes, 0).expect("managed heap budget");
+        let reference = heap().allocate(bytes, descriptor).expect("managed heap budget");
         ALLOCATION_CLOCK = ALLOCATION_CLOCK
             .checked_add(u64::from(bytes.max(1)))
             .expect("allocation clock exhausted");
@@ -244,11 +247,7 @@ pub(crate) unsafe fn restore_data(origin: u32, allocated: u32, bytes: &[u8]) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_heap_bytes() -> u32 {
     unsafe {
-        ((BASE_ALLOCATED + heap().usage().allocated) as usize)
-            .checked_add(crate::content::len())
-            .unwrap()
-            .try_into()
-            .unwrap()
+        u32::try_from(BASE_ALLOCATED + heap().usage().allocated).unwrap()
     }
 }
 
@@ -261,7 +260,11 @@ pub(crate) unsafe fn sweep(references: impl IntoIterator<Item = u32>) {
                     .expect("root outside live managed allocation");
             }
         }
-        heap().sweep(|_| {});
+        heap().sweep(|block| {
+            if block.descriptor == crate::abi::CONTENT_VIEW {
+                crate::content::release(block.bytes);
+            }
+        });
     }
 }
 
