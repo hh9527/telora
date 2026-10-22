@@ -83,6 +83,9 @@ impl Emitter<'_> {
             I::LocalSet(position),
         ]);
         let child_path = self.parse_text(8, path, position)?;
+        // The safepoint below precedes the child decoder's context roots.
+        // Keep the freshly built diagnostic path typed until that handoff.
+        self.root_value(child_path, self.string_type()?);
         self.extend([
             I::LocalGet(context),
             I::LocalGet(child_path),
