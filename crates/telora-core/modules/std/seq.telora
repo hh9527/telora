@@ -1,0 +1,32 @@
+use std::sink as sink;
+
+# Immutable plans retain their concrete representation in the closed type.
+type Seq(A, P) = struct { plan: P };
+type Map(A, B, P) = struct { source: Seq(A, P), callback: Fn(A) -> B };
+type Filter(A, P) = struct { source: Seq(A, P), callback: Fn(A) -> Bool };
+type FilterMap(A, B, P) = struct { source: Seq(A, P), callback: Fn(A) -> Option(B) };
+
+def from_array: for(A) Fn(Array(A)) -> Seq(A, Array(A)) = fn(items) {
+    {plan: items}.ty!(Seq(A, Array(A)))
+};
+def map: for(A, B, P) Fn(Seq(A, P), Fn(A) -> B) -> Seq(B, Map(A, B, P)) = fn(source, callback) {
+    {plan: {source, callback}.ty!(Map(A, B, P))}.ty!(Seq(B, Map(A, B, P)))
+};
+def filter: for(A, P) Fn(Seq(A, P), Fn(A) -> Bool) -> Seq(A, Filter(A, P)) = fn(source, callback) {
+    {plan: {source, callback}.ty!(Filter(A, P))}.ty!(Seq(A, Filter(A, P)))
+};
+def filter_map: for(A, B, P) Fn(Seq(A, P), Fn(A) -> Option(B)) -> Seq(B, FilterMap(A, B, P)) = fn(source, callback) {
+    {plan: {source, callback}.ty!(FilterMap(A, B, P))}.ty!(Seq(B, FilterMap(A, B, P)))
+};
+native compute: for(A, P, R, Q) Fn(Seq(A, P), sink::Sink(A, R, Q)) -> R;
+
+def collect: for(A, P) Fn(Seq(A, P)) -> Array(A) = fn(source) { compute(source, sink::collect()) };
+def count: for(A, P) Fn(Seq(A, P)) -> Int = fn(source) { compute(source, sink::count()) };
+def fold: for(A, P, S) Fn(Seq(A, P), S, Fn(S, A) -> S) -> S = fn(source, initial, callback) {
+    compute(source, sink::fold(initial, callback))
+};
+def any: for(A, P) Fn(Seq(A, P), Fn(A) -> Bool) -> Bool = fn(source, callback) { compute(source, sink::any(callback)) };
+def all: for(A, P) Fn(Seq(A, P), Fn(A) -> Bool) -> Bool = fn(source, callback) { compute(source, sink::all(callback)) };
+def find: for(A, P) Fn(Seq(A, P), Fn(A) -> Bool) -> Option(A) = fn(source, callback) { compute(source, sink::find(callback)) };
+
+pub use self::{ Seq, Map, Filter, FilterMap, from_array, map, filter, filter_map, compute, collect, count, fold, any, all, find };

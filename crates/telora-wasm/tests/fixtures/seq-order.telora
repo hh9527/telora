@@ -1,0 +1,37 @@
+use std::seq as seq;
+use std::sink as sink;
+use std::array as array;
+use std::codec as codec;
+use std::diagnostics as diagnostics;
+
+def note: Fn(String, Int) -> Int = fn(tag, x) {
+    let ignored: Option(Int) = warn!(tag);
+    x
+};
+def answer: codec::Value = codec::encode(do {
+    let observed = diagnostics::with_diagnostics(fn(ignored: ()) {
+        let s = seq::map(seq::from_array([1, 2, 3, 4]), fn(x) { note("source", x) });
+        seq::compute(s, sink::both(
+            sink::find(fn(x) { note("left", x) == 1 }),
+            sink::any(fn(x) { note("right", x) == 3 })
+        ))
+    })(());
+    match observed {
+        Ok((value, reports)) => (value, array::map(reports, fn(r) { r.message })),
+        Err(_) => fail!("unexpected failure"),
+    }
+});
+def failed: codec::Value = codec::encode(do {
+    let observed = diagnostics::with_diagnostics(fn(ignored: ()) {
+        let s = seq::map(seq::from_array([1, 2, 3]), fn(x) { note("source", x) });
+        seq::compute(s, sink::both(
+            sink::fold(0, fn(acc, x) { note("left", x); if x == 2 { fail!("stop") } else { acc + x } }),
+            sink::fold(0, fn(acc, x) { note("right", x); acc + x })
+        ))
+    })(());
+    match observed {
+        Err(reports) => array::map(reports, fn(r) { r.message }),
+        Ok(_) => fail!("expected failure"),
+    }
+});
+pub use self::{answer, failed};

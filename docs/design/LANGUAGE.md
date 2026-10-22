@@ -303,6 +303,27 @@ x 和 Y。源值须是静态字段集合已知的具名 Struct；源字段须存
 新投影容器的位置来自投影表达式，普通构造附加目标类型身份，更新字段容器
 由外层更新消费。空投影仍求值接收者，随后构造空目标或提供空更新。
 
+### 3.1.1 不可变惰性序列与消费者
+
+`std::seq::Seq(A, P)` 和 `std::sink::Sink(A, R, P)` 是普通参数化 struct，
+P 保留具体处理结构。Array 来源与回调在构造描述时按普通参数规则取得；
+map/filter/filter_map 的逐元素回调延迟到 collect/fold/count/any/all/find
+或 compute 执行。不同 plan 结构具有不同封闭类型，不提供隐式类型擦除。
+
+每次求值创建独立执行状态，从头遍历，重复执行回调和其诊断。没有用户可见
+可变游标、消费失效或隐式记忆。需要共享结果时显式物化 Array。
+`compute(source, sink::both(left, right))` 共享公共前缀，结果为有序 pair；
+both 可嵌套，分支适配器 map/filter/filter_map 先取得回调和下游消费者。
+
+遍历按输入顺序，对每项先执行公共处理，再从左到右执行活动分支。
+find/any/all 完成后不再执行该分支的适配器或回调，其他分支继续；所有分支
+完成才停止输入。失败立即截断后续分支及后续输入。该顺序也是诊断契约，
+不授权将已有 Array 的整批回调顺序自动重排为逐元素顺序。
+
+源、捕获和初值保持值语义，求值不会改变调用者保留的值。Seq/Sink 按普通
+struct 参与反射、Dyn、GC 和 service snapshot；codec 是否成功由其字段决定，
+函数字段沿用无 JSON codec 的失败规则。当前来源限于 Array，不提供 flat_map。
+
 ### 3.2 Sum 值
 
 具名成员提供 enum 的无 payload 值或带 payload 的构造函数：

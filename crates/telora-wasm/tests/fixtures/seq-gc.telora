@@ -1,0 +1,19 @@
+use std::seq as seq;
+use std::sink as sink;
+use std::string as string;
+use std::array as array;
+use std::codec as codec;
+
+type Item = struct { text: String, children: Array(String), labels: Dict(String) };
+def answer: Fn(Array(Item)) -> codec::Value = fn(items) {
+    let suffix = " a captured suffix long enough to require content storage";
+    let s = seq::filter_map(seq::from_array(items), fn(item) {
+        Some({...item, text: string::join([item.text, suffix], "")}.ty!(Item))
+    });
+    let result = seq::compute(s, sink::both(
+        sink::find(fn(item: Item) { True }),
+        sink::both(sink::collect(), sink::fold([].ty!(Array(String)), fn(acc, item: Item) { array::push(acc, item.text) }))
+    ));
+    codec::encode((result, seq::count(s)))
+};
+pub use self::{answer};

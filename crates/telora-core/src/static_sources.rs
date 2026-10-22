@@ -28,6 +28,8 @@ pub const BUILTINS: &[(&str, &str)] = sources![
     "std/prelude" => "prelude",
     "std/regex" => "regex",
     "std/result" => "result",
+    "std/seq" => "seq",
+    "std/sink" => "sink",
     "std/string" => "string",
     "std/test" => "test",
     "std/toml" => "toml",
@@ -97,6 +99,8 @@ pub fn native_module(name: &str) -> Option<crate::mir::NativeModule> {
         "std/_rt" => (26, vec![]),
         "std/_parse" => (27, vec![]),
         "std/uri" => (35, vec![]),
+        "std/seq" => (36, vec![]),
+        "std/sink" => (37, vec![]),
         _ => return None,
     };
     Some(NativeModule { id, types })

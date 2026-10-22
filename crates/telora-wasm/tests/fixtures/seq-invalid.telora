@@ -1,0 +1,8 @@
+use std::seq as seq;
+use std::sink as sink;
+
+def wrong_source: Int = seq::count({plan: ["text"]}.ty!(seq::Seq(Int, Array(String))));
+def wrong_result: String = seq::compute(seq::from_array([1]), {plan: {}.ty!(sink::Count)}.ty!(sink::Sink(Int, String, sink::Count)));
+type Count = struct {};
+def wrong_identity: Int = seq::compute(seq::from_array([1]), {plan: {}.ty!(Count)}.ty!(sink::Sink(Int, Int, Count)));
+pub use self::{wrong_source, wrong_result, wrong_identity};

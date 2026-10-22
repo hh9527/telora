@@ -1,0 +1,40 @@
+use std::seq as seq;
+use std::sink as sink;
+use std::array as array;
+use std::test as test;
+use std::codec as codec;
+use crate::test_support::{expect};
+
+pub def lazy_transform_and_type_change: test::Test = test::should_ok(fn() {
+    let s = seq::filter_map(seq::from_array([1,2,3]), fn(x) { if x > 1 {Some(if x == 2 {"two"} else {"three"})} else {None} });
+    expect(seq::collect(s) == ["two","three"] && seq::count(s) == 2)
+});
+pub def multiple_answers: test::Test = test::should_ok(fn() {
+    let s = seq::filter(seq::map(seq::from_array([1,2,3]), fn(x) {x * 2}), fn(x) {x > 2});
+    let answers = seq::compute(s, sink::both(sink::collect(), sink::both(sink::count(), sink::fold(0, fn(acc, x: Int) {acc + x}))));
+    expect(answers == ([4,6], (2,10)))
+});
+pub def branches_and_empty_input: test::Test = test::should_ok(fn() {
+    let s = seq::from_array([1,2,3]);
+    let answers = seq::compute(s, sink::both(
+        sink::map(fn(x: Int) {x+10}, sink::find(fn(x) {x>11})),
+        sink::filter(fn(x: Int) {x>1}, sink::collect())
+    ));
+    let empty = seq::from_array([].ty!(Array(Int)));
+    expect(answers == (Some(12), [2,3]) && !seq::any(empty, fn(x) {True}) && seq::all(empty, fn(x) {False}) && seq::find(empty, fn(x) {True}) == None)
+});
+pub def reused_sink_preserves_initial_value: test::Test = test::should_ok(fn() {
+    let initial = [9];
+    let consumer = sink::fold(initial, fn(acc, x: Int) {array::push(acc, x)});
+    let s = seq::from_array([1,2]);
+    let first = seq::compute(s, consumer);
+    let second = seq::compute(s, consumer);
+    expect(initial == [9] && first == [9,1,2] && second == first)
+});
+pub def short_circuit_skips_later_callbacks: test::Test = test::should_ok(fn() {
+    let s = seq::map(seq::from_array([1,2]), fn(x) {if x == 1 {x} else {fail!("must stop")}});
+    expect(seq::compute(s, sink::both(sink::any(fn(x: Int) {True}), sink::find(fn(x: Int) {True}))) == (True, Some(1)))
+});
+pub def callback_plans_have_no_json_codec: test::Test = test::should_fail_with(fn() {
+    codec::encode(seq::map(seq::from_array([1]), fn(x) {x+1}))
+}, "Function has no JSON codec");

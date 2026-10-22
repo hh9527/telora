@@ -1,0 +1,41 @@
+# A Sink describes a result; execution state belongs to each compute call.
+type Sink(A, R, P) = struct { plan: P };
+type Collect = struct {};
+type Count = struct {};
+type Fold(A, S) = struct { initial: S, callback: Fn(S, A) -> S };
+type Any(A) = struct { callback: Fn(A) -> Bool };
+type All(A) = struct { callback: Fn(A) -> Bool };
+type Find(A) = struct { callback: Fn(A) -> Bool };
+type Map(A, B, R, P) = struct { callback: Fn(A) -> B, downstream: Sink(B, R, P) };
+type Filter(A, R, P) = struct { callback: Fn(A) -> Bool, downstream: Sink(A, R, P) };
+type FilterMap(A, B, R, P) = struct { callback: Fn(A) -> Option(B), downstream: Sink(B, R, P) };
+type Both(A, L, R, P, Q) = struct { left: Sink(A, L, P), right: Sink(A, R, Q) };
+
+def collect: for(A) Fn() -> Sink(A, Array(A), Collect) = fn() { {plan: {}.ty!(Collect)}.ty!(Sink(A, Array(A), Collect)) };
+def count: for(A) Fn() -> Sink(A, Int, Count) = fn() { {plan: {}.ty!(Count)}.ty!(Sink(A, Int, Count)) };
+def fold: for(A, S) Fn(S, Fn(S, A) -> S) -> Sink(A, S, Fold(A, S)) = fn(initial, callback) {
+    {plan: {initial, callback}.ty!(Fold(A, S))}.ty!(Sink(A, S, Fold(A, S)))
+};
+def any: for(A) Fn(Fn(A) -> Bool) -> Sink(A, Bool, Any(A)) = fn(callback) {
+    {plan: {callback}.ty!(Any(A))}.ty!(Sink(A, Bool, Any(A)))
+};
+def all: for(A) Fn(Fn(A) -> Bool) -> Sink(A, Bool, All(A)) = fn(callback) {
+    {plan: {callback}.ty!(All(A))}.ty!(Sink(A, Bool, All(A)))
+};
+def find: for(A) Fn(Fn(A) -> Bool) -> Sink(A, Option(A), Find(A)) = fn(callback) {
+    {plan: {callback}.ty!(Find(A))}.ty!(Sink(A, Option(A), Find(A)))
+};
+def map: for(A, B, R, P) Fn(Fn(A) -> B, Sink(B, R, P)) -> Sink(A, R, Map(A, B, R, P)) = fn(callback, downstream) {
+    {plan: {callback, downstream}.ty!(Map(A, B, R, P))}.ty!(Sink(A, R, Map(A, B, R, P)))
+};
+def filter: for(A, R, P) Fn(Fn(A) -> Bool, Sink(A, R, P)) -> Sink(A, R, Filter(A, R, P)) = fn(callback, downstream) {
+    {plan: {callback, downstream}.ty!(Filter(A, R, P))}.ty!(Sink(A, R, Filter(A, R, P)))
+};
+def filter_map: for(A, B, R, P) Fn(Fn(A) -> Option(B), Sink(B, R, P)) -> Sink(A, R, FilterMap(A, B, R, P)) = fn(callback, downstream) {
+    {plan: {callback, downstream}.ty!(FilterMap(A, B, R, P))}.ty!(Sink(A, R, FilterMap(A, B, R, P)))
+};
+def both: for(A, L, R, P, Q) Fn(Sink(A, L, P), Sink(A, R, Q)) -> Sink(A, (L, R), Both(A, L, R, P, Q)) = fn(left, right) {
+    {plan: {left, right}.ty!(Both(A, L, R, P, Q))}.ty!(Sink(A, (L, R), Both(A, L, R, P, Q)))
+};
+
+pub use self::{ Sink, Collect, Count, Fold, Any, All, Find, Map, Filter, FilterMap, Both, collect, count, fold, any, all, find, map, filter, filter_map, both };

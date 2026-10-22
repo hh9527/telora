@@ -1,8 +1,8 @@
 # RFC 0313：不可变惰性序列与可组合消费者
 
-- 状态：已接受，待实现；表示原型须按本文门槛修订具体接口
+- 状态：实现完成，最终验收通过；实现 PR #239
 - 跟踪：[#237](https://github.com/hh9527/telora/issues/237)
-- 分支：`rfc/0313-immutable-seq-sink`
+- 实现分支：`feat/237-immutable-seq-sink`；RFC 已由 #238 合入
 - 日期：2026-10-22
 - 前置：RFC 0312 的准确根、执行期间 GC 与 fuel 停机
 
@@ -200,3 +200,81 @@ std 承载可组合接口；编译器提供必要的受信任 lowering，所有�
 - 自动合并分散终结调用：需要跨使用点调度，可能改变失败时机，延后。
 - 完整 move/aliasing 系统：本能力不依赖它；原地复用和字典构建另行设计。
 - 只用闭包包装而不检查分配：无法满足本 RFC 的性能目的，不作为完成条件。
+
+## 2026-10-22：表示原型结果
+
+首个类型原型通过：Seq(A, P) 与 Sink(A, R, P) 为普通泛型 struct，
+P 是具体嵌套 plan；source 与回调均为普通字段。from_array 的 P 为 Array(A)，
+map/filter/filter_map 以对应泛型 plan 包装前一层。both 以普通 Both plan
+保存左右 Sink；compute 是准入 std/seq 模块中唯一的 native 消费入口。
+模块编号暂分配 36（seq）和 37（sink），通过准入身份识别。
+
+`ordinary_generic_plans_preserve_types_through_functions_and_branches` 已验证
+局部复用、泛型函数传参与返回、同一封闭类型的条件选择、filter_map 与
+异构 collect/count both 可解析并 seal。该阶段尚未生成或执行 compute Wasm，
+不据此宣称性能、GC、不同结构的条件分支或持久性已经验收。
+不同 plan 结构有不同类型；首版不引入将任意不同结构擦除为相同 Seq(T) 的机制。
+
+## 2026-10-22：单循环与资源边界阶段
+
+已实现静态 plan 解码及 compute 的单输入循环。both 共用公共前缀，左右分支
+按序更新；完成分支跳过自身适配器。collect 使用按输出容量倍增的私有缓冲，
+count/any/all 使用局部标量状态，find 保存独立答案而不是借用可复用 scratch。
+fold 的旧初值保持普通值语义。手工构造的 phantom 类型不匹配及冒名 plan
+在生成 Wasm 前拒绝，遍历深度上限为 128。
+
+针对性 11 项测试通过（日志 `/tmp/rfc0313-stage2-complete.log`），覆盖全部
+首版操作、泛型传递/条件选择、嵌套异构 both、共享前缀诊断次数和顺序、
+分支停止、立即失败、复用初值、Dyn 投影/反射/可编码源的 codec 往返、
+强制 GC、service 初始化压缩与 snapshot/reset、fuel 与增长输出预算终止。
+
+分配对照扣除输入装载，输入 16/256/1024 个 Int：
+
+| 路径 | 16 | 256 | 1024 |
+| --- | ---: | ---: | ---: |
+| Seq map/filter + both(count, fold) | 888 B | 888 B | 888 B |
+| eager map/filter + length/fold | 768 B | 8448 B | 33024 B |
+
+此表只证明该标量流水线的框架分配不随元素数增长，不代表真实模型收益或
+所有回调零分配。完整回归、用户指南与真实模型对照尚未完成。
+
+强制初始化暴露并修复空对象追踪问题：空 payload 可以位于对象末尾之外，
+其 header 需要保活，但零字节 payload 不应作为 managed 存储根交给 sweep。
+该修复不改变布局或 ABI；带捕获 plan 的强制 GC service 用例覆盖此路径。
+
+
+## 2026-10-22：集成与真实模型验收
+
+首版 API 已冻结为上述普通 `Seq(A,P)` / `Sink(A,R,P)` 表示，公开签名见
+`std/seq.telora` 与 `std/sink.telora`。LANGUAGE、IMPLEMENTATION 与指南已同步。
+新增六项语言用例通过；release build、build/run smoke、HTTP 与 Unix socket
+服务 smoke 通过。原始模型与两个隔离迁移版本的八个实际请求输出全部相同，
+原 lab-ontology 源码与运行二进制保持原状。
+
+同一 release 编译器的单次初始化对照：原应用 68.66 秒，Seq 迁移 66.68 秒，
+额外应用调整 67.31 秒。Seq 累计分配下降 9.96%，fuel 下降 4.49%，Guest 峰值
+由 32.25 MiB 降到 24.44 MiB；单次耗时不能承诺稳定加速。额外应用调整未见
+明显增益。这一批迁移不足以大幅降低初始化成本，应用迁移仍作为独立交付。
+完整参数、数据与可复现脚本见 [对照实验](0313/README.md)。
+
+补充分配验收：16/256/1024 项的单 count、both(count,fold)、分别 count/fold
+分别为固定 480/888/696 B；eager 为 768/8448/33024 B。调用后的保留 scratch
+容量分别为固定 336/304/672/336 B。该指标是包含缓冲和元数据的高水位容量
+上界；不宣称独立测得瞬时 live scratch。标量回调不构造容器，分配表含 plan
+及结果固定开销，未逐节点计费。both 的固定构造成本可高于分别消费。
+
+最终 workspace 全量验收通过：572 项测试、0 失败，含 CLI 95、core 207、
+Wasm 133；语言汇总覆盖 441 个 fixture，全部通过。完整命令为
+`CARGO_TARGET_DIR=/tmp/telora-rfc0312-target CARGO_BUILD_JOBS=4 cargo test --workspace --no-fail-fast --offline`，
+日志 `/tmp/rfc0313-workspace.log`。补充的单消费者/分别消费分配测试独立通过
+（`/tmp/rfc0313-allocation-final.log`）；它仅扩展测试和 fixture，未改动生产实现。
+格式、diff 与源文件规模
+检查通过（已有 generics.rs 软提示保留）；telora-wasm clippy 完成，既有警告
+如实保留，新增 sequence 文件未产生警告。
+
+
+验收归档：release 构建 `/tmp/rfc0313-release.log`；build/run 与服务 smoke
+`/tmp/rfc0313-build-run-smoke.log`、`/tmp/rfc0313-http-smoke.log`；
+三制品八请求输出重验 `/tmp/rfc0313-check-repro.log`。复现 probe 独立 release
+构建通过，prepare 脚本的两份差异补丁与实测完全相同。实验数据见版本化的
+`rfc/0313/results.json`；临时日志仅为本次本机验收记录。

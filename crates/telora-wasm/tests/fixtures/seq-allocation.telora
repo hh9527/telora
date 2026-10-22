@@ -1,0 +1,31 @@
+use std::seq as seq;
+use std::sink as sink;
+use std::array as array;
+
+def answer: Fn(Array(Int)) -> (Int, Int) = fn(items) {
+    let s = seq::filter(seq::map(seq::from_array(items), fn(x) { x + 1 }), fn(x) { x > 0 });
+    seq::compute(s, sink::both(sink::count(), sink::fold(0, fn(acc, x) { acc + x })))
+};
+def eager: Fn(Array(Int)) -> (Int, Int) = fn(items) {
+    let values = array::filter(array::map(items, fn(x) { x + 1 }), fn(x) { x > 0 });
+    (array::length(values), array::fold(values, 0, fn(acc, x) { acc + x }))
+};
+pub use self::{answer, eager};
+
+pub def single: Fn(Array(Int)) -> Int = fn(items) {
+    seq::count(seq::filter(seq::map(seq::from_array(items), fn(x) {x+1}), fn(x) {x>0}))
+};
+pub def separate: Fn(Array(Int)) -> (Int, Int) = fn(items) {
+    let s = seq::filter(seq::map(seq::from_array(items), fn(x) {x+1}), fn(x) {x>0});
+    (seq::count(s), seq::fold(s, 0, fn(acc, x) {acc+x}))
+};
+
+def spin: Fn(Int) -> Int = fn(x) { spin(x) };
+pub def looping_callback: Fn(Array(Int)) -> Int = fn(items) {
+    seq::fold(seq::from_array(items), 0, fn(acc, x) { spin(x) })
+};
+pub def growing_output: Fn(Array(Int)) -> Array(Array(Int)) = fn(items) {
+    seq::collect(seq::map(seq::from_array(items), fn(x) {
+        array::map(items, fn(y) { x + y })
+    }))
+};

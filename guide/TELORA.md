@@ -544,6 +544,53 @@ array::enumerate(["a", "b"])   # [(0, "a"), (1, "b")]
 
 图或集合等任何必要的有界结构，都使用有类型的不可变值和普通库函数构建。
 
+## 惰性序列与多个答案
+
+`std::seq` 用不可变的处理描述组织逐元素计算。Array 源保持原值，
+`map/filter/filter_map` 在终结操作执行时才调用回调，不生成中间 Array：
+
+```telora
+use std::seq as seq;
+use std::sink as sink;
+
+let source = seq::from_array([1, 2, 3, 4]);
+let selected = seq::filter_map(source, fn(x) {
+    if x > 2 { Some(x * 10) } else { None }
+});
+let values = seq::collect(selected);  # [30, 40]
+let count = seq::count(selected);     # 2；独立重新执行，不读取隐式缓存
+```
+
+终结操作有 `collect/fold/count/any/all/find`；参数顺序与对应 Array 操作相同。
+Seq 的具体类型为 `seq::Seq(A, P)`，`P` 保留处理结构，通常由推导确定。
+同结构的序列可经过普通函数、条件选择、闭包捕获及集合字段传递；不同结构
+具有不同类型。需要统一为 Array 时显式 `collect`。序列不暴露 `next`、
+游标或消费后失效状态，也不会因一次求值改变后续求值。
+
+多个答案使用 `seq::compute` 与 `sink::both`，共享的处理前缀每项只执行一次：
+
+```telora
+let answers = seq::compute(selected, sink::both(
+    sink::collect(),
+    sink::fold(0, fn(total, item: Int) { total + item }),
+));  # ([30, 40], 70)
+```
+
+`sink::collect/fold/count/any/all/find` 构造消费者。`sink::map/filter/filter_map`
+先接收回调，再接收下游消费者，可为分支添加变换；`both` 可以嵌套。
+Sink 的具体类型为 `sink::Sink(A, R, P)`，描述输入、结果与处理结构。
+
+求值顺序是每项先经过公共处理，再从左到右执行分支。`find/any/all` 的分支
+得到答案后停止自身回调，其他分支继续；全部分支完成才停止遍历。
+失败立即终止，诊断保留这个顺序。Array 的分步物化顺序与之不同，迁移代码时
+应核对诊断和失败行为。需要多处复用结果时，可在分叉处物化并共享 Array，
+也可显式组合消费者；分别终结同一 Seq 会重复计算。
+
+Seq/Sink 是普通 struct，支持对应的反射和 Dyn 机制；codec 按实际字段处理。
+只有数据字段的 Array 源可编码往返，含函数回调的 plan 沿用 Function 无 JSON
+codec 的失败规则。服务状态可保存 plan，源和捕获按普通对象图保活及快照恢复。
+流水线的局部状态、输出缓冲、回调执行均受 Guest 内存和 fuel 限制。
+
 ## Tuple 元数据
 
 Tuple 类型、Tuple 数据和类型元数据分别写作：

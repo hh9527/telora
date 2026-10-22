@@ -1,0 +1,100 @@
+{
+  "source_commit": "ad2465bb2bb28939d84a99d7bec45fd5bed141c9",
+  "implementation_commit": "475718c3",
+  "guest_mib": 64,
+  "words_mib": 32,
+  "gc_interval_kib": 64,
+  "fuel_budget": 250000000000,
+  "repetitions": 1,
+  "variants": {
+    "baseline": {
+      "seconds": 68.657526088,
+      "fuel": 144362306505,
+      "peak_guest_bytes": 33816576,
+      "final_managed_bytes": 3311487,
+      "words_committed_bytes": 4099440,
+      "gc_collections": 214,
+      "allocated_bytes": 152439695,
+      "artifact_sha256": "99c3a67c681bf8687689eb2cd272dd63191317ccb42d029262ecded49a595af5",
+      "matching_requests": 8
+    },
+    "seq": {
+      "seconds": 66.676483869,
+      "fuel": 137887016417,
+      "peak_guest_bytes": 25624576,
+      "final_managed_bytes": 3315183,
+      "words_committed_bytes": 4115824,
+      "gc_collections": 193,
+      "allocated_bytes": 137256736,
+      "artifact_sha256": "552a150bfd3723cdaf22901ee07c541c8886a936779aa1954d5feba704074083",
+      "matching_requests": 8
+    },
+    "application": {
+      "seconds": 67.305118024,
+      "fuel": 137895163090,
+      "peak_guest_bytes": 25362432,
+      "final_managed_bytes": 3315159,
+      "words_committed_bytes": 4115824,
+      "gc_collections": 193,
+      "allocated_bytes": 137256754,
+      "artifact_sha256": "4543dabe848d4961d4662e2c8a24d6582e377b53a70ef5bf0b78fc1bcd269cf7",
+      "matching_requests": 8
+    }
+  },
+  "microbenchmark": {
+    "input_sizes": [
+      16,
+      256,
+      1024
+    ],
+    "input_transport_included": false,
+    "both": {
+      "allocated_bytes": [
+        888,
+        888,
+        888
+      ],
+      "retained_scratch_bytes": [
+        304,
+        304,
+        304
+      ]
+    },
+    "single_count": {
+      "allocated_bytes": [
+        480,
+        480,
+        480
+      ],
+      "retained_scratch_bytes": [
+        336,
+        336,
+        336
+      ]
+    },
+    "separate_count_fold": {
+      "allocated_bytes": [
+        696,
+        696,
+        696
+      ],
+      "retained_scratch_bytes": [
+        672,
+        672,
+        672
+      ]
+    },
+    "eager": {
+      "allocated_bytes": [
+        768,
+        8448,
+        33024
+      ],
+      "retained_scratch_bytes": [
+        336,
+        336,
+        336
+      ]
+    }
+  }
+}

@@ -1,0 +1,26 @@
+use std::seq as seq;
+use std::sink as sink;
+use std::array as array;
+use std::codec as codec;
+use std::dyn as dyn;
+use std::type_desc as desc;
+
+type Simple = seq::Seq(Int, Array(Int));
+type Mapped = seq::Seq(Int, seq::Map(Int, Int, Array(Int)));
+def answer: codec::Value = codec::encode(do {
+    let source = seq::from_array([1, 2, 3]);
+    let initial = [9];
+    let consumer = sink::fold(initial, fn(acc, x: Int) { array::push(acc, x) });
+    let first = seq::compute(source, consumer);
+    let second = seq::compute(source, consumer);
+    let restored = match codec::decode@[Simple](codec::encode(source)) {
+        Ok(value) => value, Err(_) => fail!("source roundtrip failed"),
+    };
+    let projected = match dyn::project@[Mapped](dyn::pack(Mapped.type, seq::map(source, fn(x) { x + 10 }))) {
+        Some(value) => value, None => fail!("plan projection failed"),
+    };
+    let captured = fn() { seq::collect(projected) };
+    (initial, first, second, seq::collect(restored), captured(),
+        array::map(desc::fields(Mapped.type), fn(field) { field.name }))
+});
+pub use self::{answer};

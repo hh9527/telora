@@ -32,6 +32,7 @@ impl Emitter<'_> {
             Some((2, name)) => self.dynamic_native(name),
             Some((3, name)) => self.reflect_native(name),
             Some((5, name)) => self.array_native(name),
+            Some((36, "compute")) => self.sequence_compute(),
             Some((6, name)) => self.dict_native(name),
             Some((7, name)) => self.string_native(name),
             Some((27, "parse_with")) => self.parse_native(),

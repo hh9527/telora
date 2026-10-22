@@ -1,0 +1,12 @@
+use std::seq as seq;
+use std::sink as sink;
+
+def pass: for(A, P) Fn(seq::Seq(A, P)) -> seq::Seq(A, P) = fn(s) { s };
+def choose: for(A, P) Fn(Bool, seq::Seq(A, P), seq::Seq(A, P)) -> seq::Seq(A, P) = fn(flag, a, b) { if flag { a } else { b } };
+def answer: (Array(Int), Int) = do {
+    let source = seq::from_array([1, 2, 3]);
+    let s = seq::filter_map(pass(source), fn(x) { if x > 1 { Some(x + 1) } else { None } });
+    let selected = choose(True, s, s);
+    seq::compute(selected, sink::both(sink::collect(), sink::count()))
+};
+pub use self::{answer};

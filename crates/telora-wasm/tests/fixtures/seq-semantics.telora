@@ -1,0 +1,28 @@
+use std::seq as seq;
+use std::sink as sink;
+use std::array as array;
+use std::codec as codec;
+
+def answer: codec::Value = codec::encode(do {
+    let source = seq::from_array([1, 2, 3, 4]);
+    let mapped = seq::map(source, fn(x) { x * 2 });
+    let selected = seq::filter(mapped, fn(x) { x > 4 });
+    let compact = seq::filter_map(source, fn(x) { if x > 2 { Some(x * 3) } else { None } });
+    let folded = seq::fold(source, [9], fn(acc, x) { array::push(acc, x) });
+    let branch = sink::both(
+        sink::map(fn(x: Int) { x * 10 }, sink::collect()),
+        sink::both(
+            sink::filter(fn(x: Int) { x > 2 }, sink::collect()),
+            sink::filter_map(fn(x: Int) { if x < 3 { Some(x + 10) } else { None } }, sink::collect())
+        )
+    );
+    (seq::collect(selected), seq::collect(compact), seq::count(compact),
+        seq::fold(source, 0, fn(acc, x) { acc + x }), folded,
+        seq::any(source, fn(x) { x == 2 }), seq::all(source, fn(x) { x > 0 }),
+        seq::find(source, fn(x) { x > 2 }), seq::find(source, fn(x) { x > 9 }),
+        seq::compute(source, branch), seq::collect(source),
+        seq::count(seq::from_array([].ty!(Array(Int)))),
+        seq::all(seq::from_array([].ty!(Array(Int))), fn(x) { False }),
+        seq::collect(seq::filter(source, fn(x) { False })))
+});
+pub use self::{ answer };

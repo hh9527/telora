@@ -221,7 +221,9 @@ impl Mark {
                     }
                     _ => (id + 8, word(id, 4), stored),
                 };
-                self.span(payload);
+                // Empty object payloads may point one byte past their header.
+                // The header is live; there is no backing payload to retain.
+                if bytes != 0 { self.span(payload); }
                 self.pending.push((table, payload, bytes, closed));
             } else {
                 let descriptor: Table = crate::heap::read(table_address(table));

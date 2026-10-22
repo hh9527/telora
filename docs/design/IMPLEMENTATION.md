@@ -429,6 +429,26 @@ Host 通过带类型的 session 句柄传递根；仅输入、输出、资源和
 typed equality 使用类型身份及对应值表示，来源位置不参与相等；Dyn 的投影与 codec
 通过已确定的见证检查契约。动态值检查属于运行时行为，不是重新推断表达式类型。
 
+### 不可变流水线 lowering
+
+std/seq（准入模块 36）和 std/sink（37）以普通泛型 struct 保存处理图。
+compute 是唯一消费 native，构造和便捷入口是普通 .telora 函数。
+`sequence_contract.rs` 验证 nominal 准入身份、phantom 输入/结果参数、回调及
+嵌套 plan 的一致性；`sequence_plan.rs` 从封闭布局解码字段和结构。
+用户同名结构不激活该 lowering，非法手工构造在发射循环前拒绝。
+嵌套深度上限 128，不引入运行时类型推断或 Host 执行用户代码。
+
+`sequence.rs` 为具体 plan 生成一个输入循环，公共前缀执行一次，分支从左
+到右更新私有局部状态；完成标志沿组合树传播。不同 plan 类型生成各自代码，
+同类型的条件值和函数返回值使用同一 lowering，不要求源表达式在调用点可见。
+collect 的私有存储按实际输出倍增，发布已初始化前缀；标量终结状态在循环外
+分配并复用。find 复制保存答案，避免引用下一轮复用的 scratch。最终才构造
+组合结果。没有隐式 memoization，也不依赖 move/aliasing 系统。
+
+源与捕获由普通参数根追踪，当前回调值、fold 状态、已停止答案和部分输出
+显式发布准确根。零字节对象 payload 可位于 header 末尾之外，仅保活 header，
+不将无存储的 payload 作为 managed 根。普通 plan 图支持边界压缩和快照恢复。
+
 ## 6. Property 与初始化/请求生命周期
 
 静态 property 记录说明某个 owner/member 是否具有特定 carrier，以及 provider 的

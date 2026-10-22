@@ -1,0 +1,26 @@
+use std::seq as seq;
+use std::sink as sink;
+use std::transform_service as service;
+use std::_entry::transform as entry;
+use std::codec as codec;
+use std::value::{Value};
+
+def spin: Fn(Int) -> Int = fn(x) { spin(x) };
+type Model = struct {
+    source: seq::Seq(Int, seq::Map(Int, Int, Array(Int))),
+    consumer: sink::Sink(Int, Int, sink::Count),
+};
+impl service::TransformService for Model {
+    init: fn(ctx) {
+        let offset = 10;
+        {source: seq::map(seq::from_array([1, 2, 3]), fn(x) { x + offset }), consumer: sink::count()}.ty!(Self)
+    },
+    transform: fn(self, input) {
+        if input == Value::None {
+            codec::encode(seq::fold(self.source, 0, fn(acc, x) { spin(x) }))
+        } else {
+            codec::encode((seq::collect(self.source), seq::compute(self.source, self.consumer)))
+        }
+    },
+};
+pub def answer: entry::Plan = entry::prepare(Model.type);
