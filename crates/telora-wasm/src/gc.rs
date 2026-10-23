@@ -4,10 +4,11 @@ use crate::session::Session;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GcConfig {
     /// Minimum allocation interval. After collection the threshold grows with
-    /// the live graph and is capped by remaining words budget. One forces every
+    /// the live graph and is capped by remaining managed budget. One forces every
     /// safe point; zero disables automatic collection. Explicit roots still apply.
     pub allocation_interval: u32,
-    /// Managed objects (including RawString/Bytes), backing and allocator metadata.
+    /// Aligned object storage (including RawString/Bytes) and registry capacity.
+    /// Excludes hidden default-allocator overhead, bounded by Guest memory.
     /// Other Guest allocations are additionally bounded by the Session memory limit.
     pub heap_limit: u32,
 }
@@ -16,6 +17,7 @@ pub struct GcConfig {
 #[derive(Clone, Copy, Debug)]
 pub struct GcStats {
     pub managed_bytes: u32,
+    /// Aligned storage plus registry capacity; name retained for API compatibility.
     pub words_committed: u32,
     pub allocated_total: u64,
     pub collections: u32,

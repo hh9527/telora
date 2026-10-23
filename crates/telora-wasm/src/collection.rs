@@ -8,6 +8,7 @@ pub struct CollectionStats {
     pub memory_bytes: usize,
 }
 
+/// Last explicit initialization/restore relocation; zero before any relocation.
 #[derive(Debug)]
 pub struct InitializationStats {
     pub heap_before: u32,
@@ -19,6 +20,7 @@ pub struct InitializationStats {
 
 #[derive(Debug)]
 pub struct ArenaUsage {
+    /// Requested managed bytes; field name retained for API compatibility.
     pub words: u32,
     /// Managed RawString/Bytes bytes including headers; already included in words.
     pub content: u32,

@@ -26,6 +26,7 @@ mod sources;
 mod service_sources;
 mod service;
 mod snapshot;
+mod image_packing;
 mod data_image;
 mod tables;
 mod template;

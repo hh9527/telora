@@ -1,0 +1,6092 @@
+[
+  {
+    "sample": 1,
+    "version": "baseline",
+    "workload": "empty",
+    "artifact_sha256": "d8d9db0e2e7899fadefab512781e5627409feb09183c5fd5a54b8bfc09abed21",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.0476606041193008,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.967682844,
+        "fuel": 1830343206,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 4,
+        "allocated_total": 313235,
+        "memory": 1310720
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000460646,
+        "fuel": 261020,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 4,
+        "allocated_total": 313235,
+        "memory": 1310720
+      },
+      {
+        "image_bytes": 92888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.000538996,
+        "fuel": 397457,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 851968
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004726348,
+        "fuel": 545449,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 315498,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000603555,
+        "fuel": 585740,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 2263,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000342845,
+        "fuel": 539711,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 317761,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000326935,
+        "fuel": 539863,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 4526,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000333363,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 320024,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000333942,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 6789,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000323616,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 322287,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000334681,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 9052,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000334126,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 324550,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000323205,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 11315,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000329922,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 326813,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000331653,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 13578,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.001004535,
+        "fuel": 2551477,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 329076,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000325033,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 15841,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000332775,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 331339,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000336768,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 18104,
+        "memory": 1179648
+      }
+    ]
+  },
+  {
+    "sample": 1,
+    "version": "candidate",
+    "workload": "empty",
+    "artifact_sha256": "753b309089f764d6778f4829e0615332f4f1c7206442a269ab4f2d35c34ace81",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.0343330558389425,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.952514016,
+        "fuel": 1868348278,
+        "managed": 52280,
+        "committed": 176264,
+        "collections": 4,
+        "allocated_total": 308956,
+        "memory": 983040
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.002306235,
+        "fuel": 2196086,
+        "managed": 52280,
+        "committed": 176264,
+        "collections": 4,
+        "allocated_total": 313228,
+        "memory": 983040
+      },
+      {
+        "image_bytes": 15240
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001561201,
+        "fuel": 2621357,
+        "managed": 4272,
+        "committed": 11544,
+        "collections": 0,
+        "allocated_total": 4272,
+        "memory": 720896
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004119886,
+        "fuel": 504941,
+        "managed": 54543,
+        "committed": 178568,
+        "collections": 4,
+        "allocated_total": 315491,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00037711,
+        "fuel": 533973,
+        "managed": 6535,
+        "committed": 17472,
+        "collections": 0,
+        "allocated_total": 6535,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00026671,
+        "fuel": 502381,
+        "managed": 56806,
+        "committed": 180872,
+        "collections": 4,
+        "allocated_total": 317754,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000284013,
+        "fuel": 502972,
+        "managed": 8798,
+        "committed": 19776,
+        "collections": 0,
+        "allocated_total": 8798,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000272395,
+        "fuel": 502381,
+        "managed": 59069,
+        "committed": 183176,
+        "collections": 4,
+        "allocated_total": 320017,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000266221,
+        "fuel": 501113,
+        "managed": 11061,
+        "committed": 22080,
+        "collections": 0,
+        "allocated_total": 11061,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00025957,
+        "fuel": 502381,
+        "managed": 61332,
+        "committed": 185480,
+        "collections": 4,
+        "allocated_total": 322280,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000282518,
+        "fuel": 502358,
+        "managed": 13324,
+        "committed": 29832,
+        "collections": 0,
+        "allocated_total": 13324,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000258264,
+        "fuel": 502381,
+        "managed": 63595,
+        "committed": 187784,
+        "collections": 4,
+        "allocated_total": 324543,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000260007,
+        "fuel": 501875,
+        "managed": 15587,
+        "committed": 32136,
+        "collections": 0,
+        "allocated_total": 15587,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000274911,
+        "fuel": 502381,
+        "managed": 65858,
+        "committed": 190088,
+        "collections": 4,
+        "allocated_total": 326806,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00027549,
+        "fuel": 501827,
+        "managed": 17850,
+        "committed": 34440,
+        "collections": 0,
+        "allocated_total": 17850,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002506904,
+        "fuel": 6780151,
+        "managed": 6007,
+        "committed": 130016,
+        "collections": 5,
+        "allocated_total": 329069,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000279188,
+        "fuel": 502358,
+        "managed": 20113,
+        "committed": 44904,
+        "collections": 0,
+        "allocated_total": 20113,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00027284,
+        "fuel": 500729,
+        "managed": 8270,
+        "committed": 132320,
+        "collections": 5,
+        "allocated_total": 331332,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000258831,
+        "fuel": 501843,
+        "managed": 22376,
+        "committed": 47208,
+        "collections": 0,
+        "allocated_total": 22376,
+        "memory": 786432
+      }
+    ]
+  },
+  {
+    "sample": 1,
+    "version": "baseline",
+    "workload": "single",
+    "artifact_sha256": "b6b9e4fd2e26c09e9cb8cf4ef4b8c11a33f3b0159e7a7b290514eb667651a8a7",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.2497313891071826,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.173091575,
+        "fuel": 2153251597,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 5,
+        "allocated_total": 378771,
+        "memory": 1179648
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000479329,
+        "fuel": 261126,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 5,
+        "allocated_total": 378771,
+        "memory": 1179648
+      },
+      {
+        "image_bytes": 92888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.000482191,
+        "fuel": 397457,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 851968
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004212619,
+        "fuel": 552401,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 381043,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00059564,
+        "fuel": 587205,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 2272,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000360109,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 383315,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000336915,
+        "fuel": 542111,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 4544,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000325202,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 385587,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000341733,
+        "fuel": 540409,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 6816,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000324623,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 387859,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000324281,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 9088,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000343781,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 390131,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000321536,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 11360,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00032114,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 392403,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000341568,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 13632,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.001003139,
+        "fuel": 2559820,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 6,
+        "allocated_total": 394675,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000325527,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 15904,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000320106,
+        "fuel": 548148,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 6,
+        "allocated_total": 396947,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000344292,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 18176,
+        "memory": 1179648
+      }
+    ]
+  },
+  {
+    "sample": 1,
+    "version": "candidate",
+    "workload": "single",
+    "artifact_sha256": "d1a41eb8cae09697957237fe816bf216c2569c94f1226db11cf5549b09af685b",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.2437365360092372,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.163430659,
+        "fuel": 2196643904,
+        "managed": 52192,
+        "committed": 176176,
+        "collections": 5,
+        "allocated_total": 374492,
+        "memory": 983040
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.002322105,
+        "fuel": 2206500,
+        "managed": 52192,
+        "committed": 176176,
+        "collections": 5,
+        "allocated_total": 378764,
+        "memory": 983040
+      },
+      {
+        "image_bytes": 15240
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001149529,
+        "fuel": 2621357,
+        "managed": 4272,
+        "committed": 11544,
+        "collections": 0,
+        "allocated_total": 4272,
+        "memory": 720896
+      },
+      {
+        "phase": "request",
+        "seconds": 0.005218709,
+        "fuel": 507769,
+        "managed": 54464,
+        "committed": 178480,
+        "collections": 5,
+        "allocated_total": 381036,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000495315,
+        "fuel": 536945,
+        "managed": 6544,
+        "committed": 17472,
+        "collections": 0,
+        "allocated_total": 6544,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000291147,
+        "fuel": 505065,
+        "managed": 56736,
+        "committed": 180784,
+        "collections": 5,
+        "allocated_total": 383308,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000294472,
+        "fuel": 503900,
+        "managed": 8816,
+        "committed": 19776,
+        "collections": 0,
+        "allocated_total": 8816,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000265134,
+        "fuel": 505117,
+        "managed": 59008,
+        "committed": 183088,
+        "collections": 5,
+        "allocated_total": 385580,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000270286,
+        "fuel": 503653,
+        "managed": 11088,
+        "committed": 22080,
+        "collections": 0,
+        "allocated_total": 11088,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000291869,
+        "fuel": 505117,
+        "managed": 61280,
+        "committed": 185392,
+        "collections": 5,
+        "allocated_total": 387852,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000279815,
+        "fuel": 504898,
+        "managed": 13360,
+        "committed": 29832,
+        "collections": 0,
+        "allocated_total": 13360,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000263359,
+        "fuel": 505117,
+        "managed": 63552,
+        "committed": 187696,
+        "collections": 5,
+        "allocated_total": 390124,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000285804,
+        "fuel": 504641,
+        "managed": 15632,
+        "committed": 32136,
+        "collections": 0,
+        "allocated_total": 15632,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000288852,
+        "fuel": 505117,
+        "managed": 65824,
+        "committed": 190000,
+        "collections": 5,
+        "allocated_total": 392396,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000272067,
+        "fuel": 504655,
+        "managed": 17904,
+        "committed": 34440,
+        "collections": 0,
+        "allocated_total": 17904,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002432055,
+        "fuel": 6417453,
+        "managed": 6016,
+        "committed": 130016,
+        "collections": 6,
+        "allocated_total": 394668,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000287188,
+        "fuel": 505042,
+        "managed": 20176,
+        "committed": 44904,
+        "collections": 0,
+        "allocated_total": 20176,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000264577,
+        "fuel": 503557,
+        "managed": 8288,
+        "committed": 132320,
+        "collections": 6,
+        "allocated_total": 396940,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000265681,
+        "fuel": 504527,
+        "managed": 22448,
+        "committed": 47208,
+        "collections": 0,
+        "allocated_total": 22448,
+        "memory": 786432
+      }
+    ]
+  },
+  {
+    "sample": 1,
+    "version": "baseline",
+    "workload": "many",
+    "artifact_sha256": "87326071968133b55da9bd9e7e9f8c53df8cf85c019d2c5a1b245680a2e08562",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.3332768769469112,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.256602511,
+        "fuel": 2283655379,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 132,
+        "allocated_total": 8701843,
+        "memory": 1179648
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000451968,
+        "fuel": 260184,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 132,
+        "allocated_total": 8701843,
+        "memory": 1179648
+      },
+      {
+        "image_bytes": 92888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.000493627,
+        "fuel": 397457,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 851968
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004219955,
+        "fuel": 549627,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8704121,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000597054,
+        "fuel": 587121,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 2278,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000331144,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8706399,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000344509,
+        "fuel": 542027,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 4556,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000324126,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8708677,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00033567,
+        "fuel": 540325,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 6834,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000331242,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8710955,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000325262,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 9112,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00033261,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8713233,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000333977,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 11390,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000322646,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8715511,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00033624,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 13668,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00033065,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8717789,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000323598,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 15946,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000332662,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8720067,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000350221,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 18224,
+        "memory": 1179648
+      }
+    ]
+  },
+  {
+    "sample": 1,
+    "version": "candidate",
+    "workload": "many",
+    "artifact_sha256": "4f187f0e0c292cd8e1f448cb919552975c4c8ebe0d2e690d7ff55596695ae158",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.34478365117684,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.266964705,
+        "fuel": 2376993633,
+        "managed": 26440,
+        "committed": 50944,
+        "collections": 132,
+        "allocated_total": 8697564,
+        "memory": 786432
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.002343838,
+        "fuel": 2178553,
+        "managed": 26440,
+        "committed": 50944,
+        "collections": 132,
+        "allocated_total": 8701836,
+        "memory": 786432
+      },
+      {
+        "image_bytes": 15240
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001123721,
+        "fuel": 2621357,
+        "managed": 4272,
+        "committed": 11544,
+        "collections": 0,
+        "allocated_total": 4272,
+        "memory": 720896
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004132737,
+        "fuel": 507272,
+        "managed": 28718,
+        "committed": 53264,
+        "collections": 132,
+        "allocated_total": 8704114,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000387266,
+        "fuel": 536717,
+        "managed": 6550,
+        "committed": 17488,
+        "collections": 0,
+        "allocated_total": 6550,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000279219,
+        "fuel": 504764,
+        "managed": 30996,
+        "committed": 55584,
+        "collections": 132,
+        "allocated_total": 8706392,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.0002779,
+        "fuel": 505860,
+        "managed": 8828,
+        "committed": 19808,
+        "collections": 0,
+        "allocated_total": 8828,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000275697,
+        "fuel": 504764,
+        "managed": 33274,
+        "committed": 57904,
+        "collections": 132,
+        "allocated_total": 8708670,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000269572,
+        "fuel": 503713,
+        "managed": 11106,
+        "committed": 22128,
+        "collections": 0,
+        "allocated_total": 11106,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000268794,
+        "fuel": 504764,
+        "managed": 35552,
+        "committed": 60224,
+        "collections": 132,
+        "allocated_total": 8710948,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000264309,
+        "fuel": 504814,
+        "managed": 13384,
+        "committed": 29896,
+        "collections": 0,
+        "allocated_total": 13384,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000278508,
+        "fuel": 504764,
+        "managed": 37830,
+        "committed": 62544,
+        "collections": 132,
+        "allocated_total": 8713226,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000268925,
+        "fuel": 504557,
+        "managed": 15662,
+        "committed": 32216,
+        "collections": 0,
+        "allocated_total": 15662,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000263374,
+        "fuel": 504764,
+        "managed": 40108,
+        "committed": 64864,
+        "collections": 132,
+        "allocated_total": 8715504,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000263651,
+        "fuel": 504126,
+        "managed": 17940,
+        "committed": 34536,
+        "collections": 0,
+        "allocated_total": 17940,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000281883,
+        "fuel": 504476,
+        "managed": 42386,
+        "committed": 67184,
+        "collections": 132,
+        "allocated_total": 8717782,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000273075,
+        "fuel": 504958,
+        "managed": 20218,
+        "committed": 45016,
+        "collections": 0,
+        "allocated_total": 20218,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000267112,
+        "fuel": 503649,
+        "managed": 44664,
+        "committed": 69504,
+        "collections": 132,
+        "allocated_total": 8720060,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000276107,
+        "fuel": 504443,
+        "managed": 22496,
+        "committed": 47336,
+        "collections": 0,
+        "allocated_total": 22496,
+        "memory": 786432
+      }
+    ]
+  },
+  {
+    "sample": 1,
+    "version": "baseline",
+    "workload": "strings",
+    "artifact_sha256": "4393585ab42d6ebf5558a98d741bfd09d5cd65016cfd5b7fcf969d5da30dc784",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 0.7127055039163679,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.20502843,
+        "fuel": 264563945,
+        "managed": 397551,
+        "committed": 507920,
+        "collections": 4,
+        "allocated_total": 1834435,
+        "memory": 3407872
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000617745,
+        "fuel": 280889,
+        "managed": 397551,
+        "committed": 507920,
+        "collections": 4,
+        "allocated_total": 1834435,
+        "memory": 3407872
+      },
+      {
+        "image_bytes": 518888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001140491,
+        "fuel": 425959,
+        "managed": 397551,
+        "committed": 507920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 1769472
+      },
+      {
+        "phase": "request",
+        "seconds": 0.025040882,
+        "fuel": 64307888,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 5,
+        "allocated_total": 2672227,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.024007166,
+        "fuel": 64408346,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 1,
+        "allocated_total": 837792,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026864628,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 7,
+        "allocated_total": 3510019,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.027115914,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 3,
+        "allocated_total": 1675584,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.02718986,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 9,
+        "allocated_total": 4347811,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.027339447,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 5,
+        "allocated_total": 2513376,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026809711,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 11,
+        "allocated_total": 5185603,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.02739589,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 7,
+        "allocated_total": 3351168,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026887825,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 13,
+        "allocated_total": 6023395,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.027026557,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 9,
+        "allocated_total": 4188960,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026710453,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 15,
+        "allocated_total": 6861187,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.027196364,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 11,
+        "allocated_total": 5026752,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026990035,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 17,
+        "allocated_total": 7698979,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.027265373,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 13,
+        "allocated_total": 5864544,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026913764,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 19,
+        "allocated_total": 8536771,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.027288571,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 15,
+        "allocated_total": 6702336,
+        "memory": 4259840
+      }
+    ]
+  },
+  {
+    "sample": 1,
+    "version": "candidate",
+    "workload": "strings",
+    "artifact_sha256": "0eb2c6b7b955405aa2456c1b1c570ef58c060692f534db538e1608d2494918cc",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 0.7808248561341316,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.196035917,
+        "fuel": 267881080,
+        "managed": 922712,
+        "committed": 1341136,
+        "collections": 4,
+        "allocated_total": 1436884,
+        "memory": 2752512
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.015586712,
+        "fuel": 38471316,
+        "managed": 922712,
+        "committed": 1341136,
+        "collections": 4,
+        "allocated_total": 1834428,
+        "memory": 4980736
+      },
+      {
+        "image_bytes": 408512
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.01371391,
+        "fuel": 45127417,
+        "managed": 397544,
+        "committed": 521528,
+        "collections": 0,
+        "allocated_total": 397544,
+        "memory": 2228224
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026846221,
+        "fuel": 76200797,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 5,
+        "allocated_total": 2672220,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.031951804,
+        "fuel": 99794883,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 2,
+        "allocated_total": 1235336,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029548038,
+        "fuel": 99295721,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 7,
+        "allocated_total": 3510012,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030303083,
+        "fuel": 100017992,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 4,
+        "allocated_total": 2073128,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029663826,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 9,
+        "allocated_total": 4347804,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030027605,
+        "fuel": 100044066,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 6,
+        "allocated_total": 2910920,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029860364,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 11,
+        "allocated_total": 5185596,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030209703,
+        "fuel": 100101799,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 8,
+        "allocated_total": 3748712,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029530008,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 13,
+        "allocated_total": 6023388,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030184366,
+        "fuel": 99995398,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 10,
+        "allocated_total": 4586504,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029666522,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 15,
+        "allocated_total": 6861180,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030199963,
+        "fuel": 99865154,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 12,
+        "allocated_total": 5424296,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029527238,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 17,
+        "allocated_total": 7698972,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030003056,
+        "fuel": 99771967,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 14,
+        "allocated_total": 6262088,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029396213,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 19,
+        "allocated_total": 8536764,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030859787,
+        "fuel": 99869491,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 16,
+        "allocated_total": 7099880,
+        "memory": 2752512
+      }
+    ]
+  },
+  {
+    "sample": 1,
+    "version": "baseline",
+    "workload": "ic",
+    "artifact_sha256": "96280b3e8e4183f06a317c3d9a99b75ae13e89a81c207a53f491dfa0d43acc32",
+    "requests_sha256": "105563213679bd1b9ab2d356d6fdf033f336b532ab996922c629ebc33379db47",
+    "process_seconds": 61.330710113979876,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 60.236461735,
+        "fuel": 124113304405,
+        "managed": 3139679,
+        "committed": 4541808,
+        "collections": 197,
+        "allocated_total": 134472073,
+        "memory": 25624576
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.026901131,
+        "fuel": 2362888,
+        "managed": 3139679,
+        "committed": 4541808,
+        "collections": 197,
+        "allocated_total": 134472073,
+        "memory": 30408704
+      },
+      {
+        "image_bytes": 4772581
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.006951149,
+        "fuel": 12982681,
+        "managed": 3139679,
+        "committed": 4541808,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 11337728
+      },
+      {
+        "phase": "request",
+        "seconds": 0.166021311,
+        "fuel": 525979664,
+        "managed": 3139679,
+        "committed": 4659808,
+        "collections": 198,
+        "allocated_total": 134510477,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.004136118,
+        "fuel": 3087620,
+        "managed": 3139679,
+        "committed": 4659808,
+        "collections": 0,
+        "allocated_total": 38404,
+        "memory": 15990784
+      },
+      {
+        "phase": "request",
+        "seconds": 0.008909898,
+        "fuel": 5425356,
+        "managed": 3139679,
+        "committed": 4705648,
+        "collections": 198,
+        "allocated_total": 134551564,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.159466046,
+        "fuel": 514769488,
+        "managed": 3139679,
+        "committed": 4689264,
+        "collections": 1,
+        "allocated_total": 79235,
+        "memory": 15990784
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002625936,
+        "fuel": 2797424,
+        "managed": 3139679,
+        "committed": 4705648,
+        "collections": 198,
+        "allocated_total": 134569987,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.001819039,
+        "fuel": 2802246,
+        "managed": 3139679,
+        "committed": 4689264,
+        "collections": 1,
+        "allocated_total": 97658,
+        "memory": 15990784
+      },
+      {
+        "phase": "request",
+        "seconds": 0.03345479,
+        "fuel": 51851970,
+        "managed": 3139679,
+        "committed": 4854992,
+        "collections": 198,
+        "allocated_total": 134734770,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.032638435,
+        "fuel": 51822663,
+        "managed": 3139679,
+        "committed": 4854992,
+        "collections": 1,
+        "allocated_total": 262441,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.096078789,
+        "fuel": 165430357,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135071688,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.094261465,
+        "fuel": 165104674,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 599359,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.007190687,
+        "fuel": 9008473,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135122114,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.005619352,
+        "fuel": 9014782,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 649785,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.006114547,
+        "fuel": 10097383,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135174867,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.006027567,
+        "fuel": 10097423,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 702538,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.05625093,
+        "fuel": 14935443,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135232876,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.009434524,
+        "fuel": 14942971,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 760547,
+        "memory": 20709376
+      }
+    ]
+  },
+  {
+    "sample": 1,
+    "version": "candidate",
+    "workload": "ic",
+    "artifact_sha256": "d361036c9b71fce7121b3af66eb5017a3dd0778b764d9f3c42794b4447273829",
+    "requests_sha256": "105563213679bd1b9ab2d356d6fdf033f336b532ab996922c629ebc33379db47",
+    "process_seconds": 60.50189407495782,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 58.951645537,
+        "fuel": 128679465234,
+        "managed": 5307520,
+        "committed": 8544336,
+        "collections": 197,
+        "allocated_total": 131332394,
+        "memory": 14024704
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.230560221,
+        "fuel": 506040820,
+        "managed": 5307520,
+        "committed": 8544336,
+        "collections": 197,
+        "allocated_total": 134472067,
+        "memory": 30670848
+      },
+      {
+        "image_bytes": 3401381
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.190140236,
+        "fuel": 605347911,
+        "managed": 3139673,
+        "committed": 4112032,
+        "collections": 0,
+        "allocated_total": 3139673,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.214561793,
+        "fuel": 625640309,
+        "managed": 3258260,
+        "committed": 6466536,
+        "collections": 198,
+        "allocated_total": 134510471,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.185857908,
+        "fuel": 593522278,
+        "managed": 3178076,
+        "committed": 4150488,
+        "collections": 1,
+        "allocated_total": 3178077,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.009207314,
+        "fuel": 6417665,
+        "managed": 3298899,
+        "committed": 6507352,
+        "collections": 198,
+        "allocated_total": 134551110,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.003408097,
+        "fuel": 6401844,
+        "managed": 3219163,
+        "committed": 4191752,
+        "collections": 1,
+        "allocated_total": 3219164,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002486672,
+        "fuel": 3239876,
+        "managed": 3317130,
+        "committed": 6525744,
+        "collections": 198,
+        "allocated_total": 134569341,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.001752807,
+        "fuel": 3200470,
+        "managed": 3237394,
+        "committed": 4210144,
+        "collections": 1,
+        "allocated_total": 3237395,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.033798324,
+        "fuel": 56261623,
+        "managed": 3479929,
+        "committed": 6689848,
+        "collections": 198,
+        "allocated_total": 134732140,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.031841403,
+        "fuel": 56085643,
+        "managed": 3403777,
+        "committed": 4848544,
+        "collections": 1,
+        "allocated_total": 3403778,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.096437565,
+        "fuel": 176748770,
+        "managed": 3808719,
+        "committed": 7021216,
+        "collections": 198,
+        "allocated_total": 135060930,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.097150202,
+        "fuel": 176670240,
+        "managed": 3736663,
+        "committed": 5184008,
+        "collections": 1,
+        "allocated_total": 3736664,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.007689945,
+        "fuel": 11669056,
+        "managed": 3858697,
+        "committed": 7071664,
+        "collections": 198,
+        "allocated_total": 135110908,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.005987699,
+        "fuel": 11638703,
+        "managed": 3786641,
+        "committed": 5234456,
+        "collections": 1,
+        "allocated_total": 3786642,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.006636603,
+        "fuel": 12888243,
+        "managed": 3911002,
+        "committed": 7124288,
+        "collections": 198,
+        "allocated_total": 135163213,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.006526446,
+        "fuel": 12845843,
+        "managed": 3838946,
+        "committed": 5287080,
+        "collections": 1,
+        "allocated_total": 3838947,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.055294285,
+        "fuel": 18004758,
+        "managed": 3968563,
+        "committed": 7182336,
+        "collections": 198,
+        "allocated_total": 135220774,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.009913419,
+        "fuel": 17964019,
+        "managed": 3904699,
+        "committed": 5353320,
+        "collections": 1,
+        "allocated_total": 3904700,
+        "memory": 14286848
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "version": "candidate",
+    "workload": "empty",
+    "artifact_sha256": "753b309089f764d6778f4829e0615332f4f1c7206442a269ab4f2d35c34ace81",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.0534623698331416,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.97426852,
+        "fuel": 1868348278,
+        "managed": 52280,
+        "committed": 176264,
+        "collections": 4,
+        "allocated_total": 308956,
+        "memory": 983040
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.002326255,
+        "fuel": 2196086,
+        "managed": 52280,
+        "committed": 176264,
+        "collections": 4,
+        "allocated_total": 313228,
+        "memory": 983040
+      },
+      {
+        "image_bytes": 15240
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001130908,
+        "fuel": 2621357,
+        "managed": 4272,
+        "committed": 11544,
+        "collections": 0,
+        "allocated_total": 4272,
+        "memory": 720896
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004100706,
+        "fuel": 504941,
+        "managed": 54543,
+        "committed": 178568,
+        "collections": 4,
+        "allocated_total": 315491,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000381873,
+        "fuel": 533973,
+        "managed": 6535,
+        "committed": 17472,
+        "collections": 0,
+        "allocated_total": 6535,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000267261,
+        "fuel": 502381,
+        "managed": 56806,
+        "committed": 180872,
+        "collections": 4,
+        "allocated_total": 317754,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000273968,
+        "fuel": 502972,
+        "managed": 8798,
+        "committed": 19776,
+        "collections": 0,
+        "allocated_total": 8798,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00028491,
+        "fuel": 502381,
+        "managed": 59069,
+        "committed": 183176,
+        "collections": 4,
+        "allocated_total": 320017,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000269864,
+        "fuel": 501113,
+        "managed": 11061,
+        "committed": 22080,
+        "collections": 0,
+        "allocated_total": 11061,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000261292,
+        "fuel": 502381,
+        "managed": 61332,
+        "committed": 185480,
+        "collections": 4,
+        "allocated_total": 322280,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000282447,
+        "fuel": 502358,
+        "managed": 13324,
+        "committed": 29832,
+        "collections": 0,
+        "allocated_total": 13324,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000261031,
+        "fuel": 502381,
+        "managed": 63595,
+        "committed": 187784,
+        "collections": 4,
+        "allocated_total": 324543,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000262803,
+        "fuel": 501875,
+        "managed": 15587,
+        "committed": 32136,
+        "collections": 0,
+        "allocated_total": 15587,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00025838,
+        "fuel": 502381,
+        "managed": 65858,
+        "committed": 190088,
+        "collections": 4,
+        "allocated_total": 326806,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000287408,
+        "fuel": 501827,
+        "managed": 17850,
+        "committed": 34440,
+        "collections": 0,
+        "allocated_total": 17850,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002499282,
+        "fuel": 6780151,
+        "managed": 6007,
+        "committed": 130016,
+        "collections": 5,
+        "allocated_total": 329069,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000268699,
+        "fuel": 502358,
+        "managed": 20113,
+        "committed": 44904,
+        "collections": 0,
+        "allocated_total": 20113,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000278272,
+        "fuel": 500729,
+        "managed": 8270,
+        "committed": 132320,
+        "collections": 5,
+        "allocated_total": 331332,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000264098,
+        "fuel": 501843,
+        "managed": 22376,
+        "committed": 47208,
+        "collections": 0,
+        "allocated_total": 22376,
+        "memory": 786432
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "version": "baseline",
+    "workload": "empty",
+    "artifact_sha256": "d8d9db0e2e7899fadefab512781e5627409feb09183c5fd5a54b8bfc09abed21",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.0594450179487467,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.983138793,
+        "fuel": 1830343206,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 4,
+        "allocated_total": 313235,
+        "memory": 1310720
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000442558,
+        "fuel": 261020,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 4,
+        "allocated_total": 313235,
+        "memory": 1310720
+      },
+      {
+        "image_bytes": 92888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.000521799,
+        "fuel": 397457,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 851968
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004213489,
+        "fuel": 545449,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 315498,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000614436,
+        "fuel": 585740,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 2263,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000330372,
+        "fuel": 539711,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 317761,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000324553,
+        "fuel": 539863,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 4526,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000344263,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 320024,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000325019,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 6789,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000324834,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 322287,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000346368,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 9052,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000323661,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 324550,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000325411,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 11315,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000338105,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 326813,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000322732,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 13578,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.001001892,
+        "fuel": 2551477,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 329076,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000341616,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 15841,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000336508,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 331339,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000326771,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 18104,
+        "memory": 1179648
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "version": "candidate",
+    "workload": "single",
+    "artifact_sha256": "d1a41eb8cae09697957237fe816bf216c2569c94f1226db11cf5549b09af685b",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.2323809780646116,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.154151076,
+        "fuel": 2196643904,
+        "managed": 52192,
+        "committed": 176176,
+        "collections": 5,
+        "allocated_total": 374492,
+        "memory": 983040
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.002347528,
+        "fuel": 2206500,
+        "managed": 52192,
+        "committed": 176176,
+        "collections": 5,
+        "allocated_total": 378764,
+        "memory": 983040
+      },
+      {
+        "image_bytes": 15240
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001119667,
+        "fuel": 2621357,
+        "managed": 4272,
+        "committed": 11544,
+        "collections": 0,
+        "allocated_total": 4272,
+        "memory": 720896
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004112322,
+        "fuel": 507769,
+        "managed": 54464,
+        "committed": 178480,
+        "collections": 5,
+        "allocated_total": 381036,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000368692,
+        "fuel": 536945,
+        "managed": 6544,
+        "committed": 17472,
+        "collections": 0,
+        "allocated_total": 6544,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000297416,
+        "fuel": 505065,
+        "managed": 56736,
+        "committed": 180784,
+        "collections": 5,
+        "allocated_total": 383308,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000278023,
+        "fuel": 503900,
+        "managed": 8816,
+        "committed": 19776,
+        "collections": 0,
+        "allocated_total": 8816,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000264905,
+        "fuel": 505117,
+        "managed": 59008,
+        "committed": 183088,
+        "collections": 5,
+        "allocated_total": 385580,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00027977,
+        "fuel": 503653,
+        "managed": 11088,
+        "committed": 22080,
+        "collections": 0,
+        "allocated_total": 11088,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000265729,
+        "fuel": 505117,
+        "managed": 61280,
+        "committed": 185392,
+        "collections": 5,
+        "allocated_total": 387852,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00026656,
+        "fuel": 504898,
+        "managed": 13360,
+        "committed": 29832,
+        "collections": 0,
+        "allocated_total": 13360,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000263655,
+        "fuel": 505117,
+        "managed": 63552,
+        "committed": 187696,
+        "collections": 5,
+        "allocated_total": 390124,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000288065,
+        "fuel": 504641,
+        "managed": 15632,
+        "committed": 32136,
+        "collections": 0,
+        "allocated_total": 15632,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000262778,
+        "fuel": 505117,
+        "managed": 65824,
+        "committed": 190000,
+        "collections": 5,
+        "allocated_total": 392396,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000266815,
+        "fuel": 504655,
+        "managed": 17904,
+        "committed": 34440,
+        "collections": 0,
+        "allocated_total": 17904,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002423692,
+        "fuel": 6417453,
+        "managed": 6016,
+        "committed": 130016,
+        "collections": 6,
+        "allocated_total": 394668,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000271945,
+        "fuel": 505042,
+        "managed": 20176,
+        "committed": 44904,
+        "collections": 0,
+        "allocated_total": 20176,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000263468,
+        "fuel": 503557,
+        "managed": 8288,
+        "committed": 132320,
+        "collections": 6,
+        "allocated_total": 396940,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000279617,
+        "fuel": 504527,
+        "managed": 22448,
+        "committed": 47208,
+        "collections": 0,
+        "allocated_total": 22448,
+        "memory": 786432
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "version": "baseline",
+    "workload": "single",
+    "artifact_sha256": "b6b9e4fd2e26c09e9cb8cf4ef4b8c11a33f3b0159e7a7b290514eb667651a8a7",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.245789049193263,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.17009193,
+        "fuel": 2153251597,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 5,
+        "allocated_total": 378771,
+        "memory": 1179648
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.00046247,
+        "fuel": 261126,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 5,
+        "allocated_total": 378771,
+        "memory": 1179648
+      },
+      {
+        "image_bytes": 92888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.000478048,
+        "fuel": 397457,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 851968
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004200953,
+        "fuel": 552401,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 381043,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000594437,
+        "fuel": 587205,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 2272,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000353446,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 383315,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00034195,
+        "fuel": 542111,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 4544,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000331855,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 385587,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000339321,
+        "fuel": 540409,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 6816,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000340648,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 387859,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000329206,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 9088,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000345094,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 390131,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000336497,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 11360,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00032878,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 392403,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000341108,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 13632,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.001002446,
+        "fuel": 2559820,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 6,
+        "allocated_total": 394675,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000345831,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 15904,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000326815,
+        "fuel": 548148,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 6,
+        "allocated_total": 396947,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00035007,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 18176,
+        "memory": 1179648
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "version": "candidate",
+    "workload": "many",
+    "artifact_sha256": "4f187f0e0c292cd8e1f448cb919552975c4c8ebe0d2e690d7ff55596695ae158",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.3225802469532937,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.24652956,
+        "fuel": 2376993633,
+        "managed": 26440,
+        "committed": 50944,
+        "collections": 132,
+        "allocated_total": 8697564,
+        "memory": 786432
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.002310991,
+        "fuel": 2178553,
+        "managed": 26440,
+        "committed": 50944,
+        "collections": 132,
+        "allocated_total": 8701836,
+        "memory": 786432
+      },
+      {
+        "image_bytes": 15240
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001123271,
+        "fuel": 2621357,
+        "managed": 4272,
+        "committed": 11544,
+        "collections": 0,
+        "allocated_total": 4272,
+        "memory": 720896
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004139227,
+        "fuel": 507272,
+        "managed": 28718,
+        "committed": 53264,
+        "collections": 132,
+        "allocated_total": 8704114,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000366049,
+        "fuel": 536717,
+        "managed": 6550,
+        "committed": 17488,
+        "collections": 0,
+        "allocated_total": 6550,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000282916,
+        "fuel": 504764,
+        "managed": 30996,
+        "committed": 55584,
+        "collections": 132,
+        "allocated_total": 8706392,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000289061,
+        "fuel": 505860,
+        "managed": 8828,
+        "committed": 19808,
+        "collections": 0,
+        "allocated_total": 8828,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000262114,
+        "fuel": 504764,
+        "managed": 33274,
+        "committed": 57904,
+        "collections": 132,
+        "allocated_total": 8708670,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000267782,
+        "fuel": 503713,
+        "managed": 11106,
+        "committed": 22128,
+        "collections": 0,
+        "allocated_total": 11106,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000282015,
+        "fuel": 504764,
+        "managed": 35552,
+        "committed": 60224,
+        "collections": 132,
+        "allocated_total": 8710948,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000266697,
+        "fuel": 504814,
+        "managed": 13384,
+        "committed": 29896,
+        "collections": 0,
+        "allocated_total": 13384,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000261668,
+        "fuel": 504764,
+        "managed": 37830,
+        "committed": 62544,
+        "collections": 132,
+        "allocated_total": 8713226,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000277567,
+        "fuel": 504557,
+        "managed": 15662,
+        "committed": 32216,
+        "collections": 0,
+        "allocated_total": 15662,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000267994,
+        "fuel": 504764,
+        "managed": 40108,
+        "committed": 64864,
+        "collections": 132,
+        "allocated_total": 8715504,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000269072,
+        "fuel": 504126,
+        "managed": 17940,
+        "committed": 34536,
+        "collections": 0,
+        "allocated_total": 17940,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000268661,
+        "fuel": 504476,
+        "managed": 42386,
+        "committed": 67184,
+        "collections": 132,
+        "allocated_total": 8717782,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000279492,
+        "fuel": 504958,
+        "managed": 20218,
+        "committed": 45016,
+        "collections": 0,
+        "allocated_total": 20218,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000275474,
+        "fuel": 503649,
+        "managed": 44664,
+        "committed": 69504,
+        "collections": 132,
+        "allocated_total": 8720060,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000265435,
+        "fuel": 504443,
+        "managed": 22496,
+        "committed": 47336,
+        "collections": 0,
+        "allocated_total": 22496,
+        "memory": 786432
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "version": "baseline",
+    "workload": "many",
+    "artifact_sha256": "87326071968133b55da9bd9e7e9f8c53df8cf85c019d2c5a1b245680a2e08562",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.2945386948995292,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.219544719,
+        "fuel": 2283655379,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 132,
+        "allocated_total": 8701843,
+        "memory": 1179648
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000434821,
+        "fuel": 260184,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 132,
+        "allocated_total": 8701843,
+        "memory": 1179648
+      },
+      {
+        "image_bytes": 92888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.000518698,
+        "fuel": 397457,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 851968
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004184921,
+        "fuel": 549627,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8704121,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000604278,
+        "fuel": 587121,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 2278,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000330107,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8706399,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000321056,
+        "fuel": 542027,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 4556,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000344253,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8708677,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000322028,
+        "fuel": 540325,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 6834,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000319456,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8710955,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000342965,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 9112,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00031865,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8713233,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000320695,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 11390,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000343877,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8715511,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000321564,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 13668,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000317866,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8717789,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000340136,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 15946,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000320346,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8720067,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000319646,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 18224,
+        "memory": 1179648
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "version": "candidate",
+    "workload": "strings",
+    "artifact_sha256": "0eb2c6b7b955405aa2456c1b1c570ef58c060692f534db538e1608d2494918cc",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 0.780401156982407,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.195968674,
+        "fuel": 267881080,
+        "managed": 922712,
+        "committed": 1341136,
+        "collections": 4,
+        "allocated_total": 1436884,
+        "memory": 2752512
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.015359719,
+        "fuel": 38471316,
+        "managed": 922712,
+        "committed": 1341136,
+        "collections": 4,
+        "allocated_total": 1834428,
+        "memory": 4980736
+      },
+      {
+        "image_bytes": 408512
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.01413731,
+        "fuel": 45127417,
+        "managed": 397544,
+        "committed": 521528,
+        "collections": 0,
+        "allocated_total": 397544,
+        "memory": 2228224
+      },
+      {
+        "phase": "request",
+        "seconds": 0.02655377,
+        "fuel": 76200797,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 5,
+        "allocated_total": 2672220,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.031957688,
+        "fuel": 99794883,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 2,
+        "allocated_total": 1235336,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029523514,
+        "fuel": 99295721,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 7,
+        "allocated_total": 3510012,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030660771,
+        "fuel": 100017992,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 4,
+        "allocated_total": 2073128,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029136513,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 9,
+        "allocated_total": 4347804,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030390275,
+        "fuel": 100044066,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 6,
+        "allocated_total": 2910920,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029545744,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 11,
+        "allocated_total": 5185596,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030275597,
+        "fuel": 100101799,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 8,
+        "allocated_total": 3748712,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029759552,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 13,
+        "allocated_total": 6023388,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030617228,
+        "fuel": 99995398,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 10,
+        "allocated_total": 4586504,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029624786,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 15,
+        "allocated_total": 6861180,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030574506,
+        "fuel": 99865154,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 12,
+        "allocated_total": 5424296,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029593442,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 17,
+        "allocated_total": 7698972,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.03025108,
+        "fuel": 99771967,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 14,
+        "allocated_total": 6262088,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029592092,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 19,
+        "allocated_total": 8536764,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030598714,
+        "fuel": 99869491,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 16,
+        "allocated_total": 7099880,
+        "memory": 2752512
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "version": "baseline",
+    "workload": "strings",
+    "artifact_sha256": "4393585ab42d6ebf5558a98d741bfd09d5cd65016cfd5b7fcf969d5da30dc784",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 0.6961255869828165,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.20210288,
+        "fuel": 264563945,
+        "managed": 397551,
+        "committed": 507920,
+        "collections": 4,
+        "allocated_total": 1834435,
+        "memory": 3407872
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000602331,
+        "fuel": 280889,
+        "managed": 397551,
+        "committed": 507920,
+        "collections": 4,
+        "allocated_total": 1834435,
+        "memory": 3407872
+      },
+      {
+        "image_bytes": 518888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001123597,
+        "fuel": 425959,
+        "managed": 397551,
+        "committed": 507920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 1769472
+      },
+      {
+        "phase": "request",
+        "seconds": 0.023019856,
+        "fuel": 64307888,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 5,
+        "allocated_total": 2672227,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.02325781,
+        "fuel": 64408346,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 1,
+        "allocated_total": 837792,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026203114,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 7,
+        "allocated_total": 3510019,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.026517512,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 3,
+        "allocated_total": 1675584,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026306229,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 9,
+        "allocated_total": 4347811,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.02650458,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 5,
+        "allocated_total": 2513376,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026112025,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 11,
+        "allocated_total": 5185603,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.026463134,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 7,
+        "allocated_total": 3351168,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.025966319,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 13,
+        "allocated_total": 6023395,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.026431121,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 9,
+        "allocated_total": 4188960,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026101058,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 15,
+        "allocated_total": 6861187,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.026460811,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 11,
+        "allocated_total": 5026752,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026153316,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 17,
+        "allocated_total": 7698979,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.026303999,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 13,
+        "allocated_total": 5864544,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026066038,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 19,
+        "allocated_total": 8536771,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.026331414,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 15,
+        "allocated_total": 6702336,
+        "memory": 4259840
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "version": "candidate",
+    "workload": "ic",
+    "artifact_sha256": "d361036c9b71fce7121b3af66eb5017a3dd0778b764d9f3c42794b4447273829",
+    "requests_sha256": "105563213679bd1b9ab2d356d6fdf033f336b532ab996922c629ebc33379db47",
+    "process_seconds": 60.56256150198169,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 59.003611656,
+        "fuel": 128679465234,
+        "managed": 5307520,
+        "committed": 8544336,
+        "collections": 197,
+        "allocated_total": 131332394,
+        "memory": 14024704
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.231815152,
+        "fuel": 506040820,
+        "managed": 5307520,
+        "committed": 8544336,
+        "collections": 197,
+        "allocated_total": 134472067,
+        "memory": 30670848
+      },
+      {
+        "image_bytes": 3401381
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.193485891,
+        "fuel": 605347911,
+        "managed": 3139673,
+        "committed": 4112032,
+        "collections": 0,
+        "allocated_total": 3139673,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.21776466,
+        "fuel": 625640309,
+        "managed": 3258260,
+        "committed": 6466536,
+        "collections": 198,
+        "allocated_total": 134510471,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.192235376,
+        "fuel": 593522278,
+        "managed": 3178076,
+        "committed": 4150488,
+        "collections": 1,
+        "allocated_total": 3178077,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.008837201,
+        "fuel": 6417665,
+        "managed": 3298899,
+        "committed": 6507352,
+        "collections": 198,
+        "allocated_total": 134551110,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.003339203,
+        "fuel": 6401844,
+        "managed": 3219163,
+        "committed": 4191752,
+        "collections": 1,
+        "allocated_total": 3219164,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002416645,
+        "fuel": 3239876,
+        "managed": 3317130,
+        "committed": 6525744,
+        "collections": 198,
+        "allocated_total": 134569341,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.001721649,
+        "fuel": 3200470,
+        "managed": 3237394,
+        "committed": 4210144,
+        "collections": 1,
+        "allocated_total": 3237395,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.034984556,
+        "fuel": 56261623,
+        "managed": 3479929,
+        "committed": 6689848,
+        "collections": 198,
+        "allocated_total": 134732140,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.031624109,
+        "fuel": 56085643,
+        "managed": 3403777,
+        "committed": 4848544,
+        "collections": 1,
+        "allocated_total": 3403778,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.097316618,
+        "fuel": 176748770,
+        "managed": 3808719,
+        "committed": 7021216,
+        "collections": 198,
+        "allocated_total": 135060930,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.094934783,
+        "fuel": 176670240,
+        "managed": 3736663,
+        "committed": 5184008,
+        "collections": 1,
+        "allocated_total": 3736664,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.007726971,
+        "fuel": 11669056,
+        "managed": 3858697,
+        "committed": 7071664,
+        "collections": 198,
+        "allocated_total": 135110908,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.005984313,
+        "fuel": 11638703,
+        "managed": 3786641,
+        "committed": 5234456,
+        "collections": 1,
+        "allocated_total": 3786642,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.006705574,
+        "fuel": 12888243,
+        "managed": 3911002,
+        "committed": 7124288,
+        "collections": 198,
+        "allocated_total": 135163213,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.006507367,
+        "fuel": 12845843,
+        "managed": 3838946,
+        "committed": 5287080,
+        "collections": 1,
+        "allocated_total": 3838947,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.056196054,
+        "fuel": 18004758,
+        "managed": 3968563,
+        "committed": 7182336,
+        "collections": 198,
+        "allocated_total": 135220774,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00972203,
+        "fuel": 17964019,
+        "managed": 3904699,
+        "committed": 5353320,
+        "collections": 1,
+        "allocated_total": 3904700,
+        "memory": 14286848
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "version": "baseline",
+    "workload": "ic",
+    "artifact_sha256": "96280b3e8e4183f06a317c3d9a99b75ae13e89a81c207a53f491dfa0d43acc32",
+    "requests_sha256": "105563213679bd1b9ab2d356d6fdf033f336b532ab996922c629ebc33379db47",
+    "process_seconds": 61.45058019598946,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 60.368058845,
+        "fuel": 124113304405,
+        "managed": 3139679,
+        "committed": 4541808,
+        "collections": 197,
+        "allocated_total": 134472073,
+        "memory": 25624576
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.027225918,
+        "fuel": 2362888,
+        "managed": 3139679,
+        "committed": 4541808,
+        "collections": 197,
+        "allocated_total": 134472073,
+        "memory": 30408704
+      },
+      {
+        "image_bytes": 4772581
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.007402032,
+        "fuel": 12982681,
+        "managed": 3139679,
+        "committed": 4541808,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 11337728
+      },
+      {
+        "phase": "request",
+        "seconds": 0.168552877,
+        "fuel": 525979664,
+        "managed": 3139679,
+        "committed": 4659808,
+        "collections": 198,
+        "allocated_total": 134510477,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.004212139,
+        "fuel": 3087620,
+        "managed": 3139679,
+        "committed": 4659808,
+        "collections": 0,
+        "allocated_total": 38404,
+        "memory": 15990784
+      },
+      {
+        "phase": "request",
+        "seconds": 0.008886242,
+        "fuel": 5425356,
+        "managed": 3139679,
+        "committed": 4705648,
+        "collections": 198,
+        "allocated_total": 134551564,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.160835216,
+        "fuel": 514769488,
+        "managed": 3139679,
+        "committed": 4689264,
+        "collections": 1,
+        "allocated_total": 79235,
+        "memory": 15990784
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002622634,
+        "fuel": 2797424,
+        "managed": 3139679,
+        "committed": 4705648,
+        "collections": 198,
+        "allocated_total": 134569987,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.001799554,
+        "fuel": 2802246,
+        "managed": 3139679,
+        "committed": 4689264,
+        "collections": 1,
+        "allocated_total": 97658,
+        "memory": 15990784
+      },
+      {
+        "phase": "request",
+        "seconds": 0.033732376,
+        "fuel": 51851970,
+        "managed": 3139679,
+        "committed": 4854992,
+        "collections": 198,
+        "allocated_total": 134734770,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.033206252,
+        "fuel": 51822663,
+        "managed": 3139679,
+        "committed": 4854992,
+        "collections": 1,
+        "allocated_total": 262441,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.094769994,
+        "fuel": 165430357,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135071688,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.095310766,
+        "fuel": 165104674,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 599359,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00713784,
+        "fuel": 9008473,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135122114,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.005703861,
+        "fuel": 9014782,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 649785,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.006127098,
+        "fuel": 10097383,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135174867,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.006026162,
+        "fuel": 10097423,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 702538,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.056479074,
+        "fuel": 14935443,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135232876,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.009991028,
+        "fuel": 14942971,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 760547,
+        "memory": 20709376
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "version": "baseline",
+    "workload": "empty",
+    "artifact_sha256": "d8d9db0e2e7899fadefab512781e5627409feb09183c5fd5a54b8bfc09abed21",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.0575702949427068,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.98134307,
+        "fuel": 1830343206,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 4,
+        "allocated_total": 313235,
+        "memory": 1310720
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000455377,
+        "fuel": 261020,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 4,
+        "allocated_total": 313235,
+        "memory": 1310720
+      },
+      {
+        "image_bytes": 92888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.000496684,
+        "fuel": 397457,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 851968
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004202991,
+        "fuel": 545449,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 315498,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000597991,
+        "fuel": 585740,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 2263,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000327324,
+        "fuel": 539711,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 317761,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000359476,
+        "fuel": 539863,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 4526,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000323686,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 320024,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000337132,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 6789,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000333408,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 322287,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000323886,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 9052,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000329622,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 324550,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000335955,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 11315,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000326714,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 4,
+        "allocated_total": 326813,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000345811,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 13578,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.001018635,
+        "fuel": 2551477,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 329076,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000334457,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 15841,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000324987,
+        "fuel": 539735,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 331339,
+        "memory": 1310720
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00032952,
+        "fuel": 539696,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 18104,
+        "memory": 1179648
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "version": "candidate",
+    "workload": "empty",
+    "artifact_sha256": "753b309089f764d6778f4829e0615332f4f1c7206442a269ab4f2d35c34ace81",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.0557454510126263,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.976411559,
+        "fuel": 1868348278,
+        "managed": 52280,
+        "committed": 176264,
+        "collections": 4,
+        "allocated_total": 308956,
+        "memory": 983040
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.002343424,
+        "fuel": 2196086,
+        "managed": 52280,
+        "committed": 176264,
+        "collections": 4,
+        "allocated_total": 313228,
+        "memory": 983040
+      },
+      {
+        "image_bytes": 15240
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001127682,
+        "fuel": 2621357,
+        "managed": 4272,
+        "committed": 11544,
+        "collections": 0,
+        "allocated_total": 4272,
+        "memory": 720896
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00410769,
+        "fuel": 504941,
+        "managed": 54543,
+        "committed": 178568,
+        "collections": 4,
+        "allocated_total": 315491,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000378526,
+        "fuel": 533973,
+        "managed": 6535,
+        "committed": 17472,
+        "collections": 0,
+        "allocated_total": 6535,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000266527,
+        "fuel": 502381,
+        "managed": 56806,
+        "committed": 180872,
+        "collections": 4,
+        "allocated_total": 317754,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000274708,
+        "fuel": 502972,
+        "managed": 8798,
+        "committed": 19776,
+        "collections": 0,
+        "allocated_total": 8798,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000262444,
+        "fuel": 502381,
+        "managed": 59069,
+        "committed": 183176,
+        "collections": 4,
+        "allocated_total": 320017,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000274694,
+        "fuel": 501113,
+        "managed": 11061,
+        "committed": 22080,
+        "collections": 0,
+        "allocated_total": 11061,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000259023,
+        "fuel": 502381,
+        "managed": 61332,
+        "committed": 185480,
+        "collections": 4,
+        "allocated_total": 322280,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000271553,
+        "fuel": 502358,
+        "managed": 13324,
+        "committed": 29832,
+        "collections": 0,
+        "allocated_total": 13324,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000266057,
+        "fuel": 502381,
+        "managed": 63595,
+        "committed": 187784,
+        "collections": 4,
+        "allocated_total": 324543,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000261781,
+        "fuel": 501875,
+        "managed": 15587,
+        "committed": 32136,
+        "collections": 0,
+        "allocated_total": 15587,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000259464,
+        "fuel": 502381,
+        "managed": 65858,
+        "committed": 190088,
+        "collections": 4,
+        "allocated_total": 326806,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000274033,
+        "fuel": 501827,
+        "managed": 17850,
+        "committed": 34440,
+        "collections": 0,
+        "allocated_total": 17850,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002489152,
+        "fuel": 6780151,
+        "managed": 6007,
+        "committed": 130016,
+        "collections": 5,
+        "allocated_total": 329069,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.0002684,
+        "fuel": 502358,
+        "managed": 20113,
+        "committed": 44904,
+        "collections": 0,
+        "allocated_total": 20113,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000268744,
+        "fuel": 500729,
+        "managed": 8270,
+        "committed": 132320,
+        "collections": 5,
+        "allocated_total": 331332,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00037945,
+        "fuel": 501843,
+        "managed": 22376,
+        "committed": 47208,
+        "collections": 0,
+        "allocated_total": 22376,
+        "memory": 786432
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "version": "baseline",
+    "workload": "single",
+    "artifact_sha256": "b6b9e4fd2e26c09e9cb8cf4ef4b8c11a33f3b0159e7a7b290514eb667651a8a7",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.2277049510739744,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.1517814020000001,
+        "fuel": 2153251597,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 5,
+        "allocated_total": 378771,
+        "memory": 1179648
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000447498,
+        "fuel": 261126,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 5,
+        "allocated_total": 378771,
+        "memory": 1179648
+      },
+      {
+        "image_bytes": 92888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.00049969,
+        "fuel": 397457,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 851968
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004201755,
+        "fuel": 552401,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 381043,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000602008,
+        "fuel": 587205,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 2272,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000346673,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 383315,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000323245,
+        "fuel": 542111,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 4544,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000334425,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 385587,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000335862,
+        "fuel": 540409,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 6816,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000323229,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 387859,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000332895,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 9088,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000334145,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 390131,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000320797,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 11360,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000328568,
+        "fuel": 548802,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 5,
+        "allocated_total": 392403,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000333109,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 13632,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.001013643,
+        "fuel": 2559820,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 6,
+        "allocated_total": 394675,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000326495,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 15904,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00033275,
+        "fuel": 548148,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 6,
+        "allocated_total": 396947,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000334363,
+        "fuel": 546274,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 18176,
+        "memory": 1179648
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "version": "candidate",
+    "workload": "single",
+    "artifact_sha256": "d1a41eb8cae09697957237fe816bf216c2569c94f1226db11cf5549b09af685b",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.2418204080313444,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.163926559,
+        "fuel": 2196643904,
+        "managed": 52192,
+        "committed": 176176,
+        "collections": 5,
+        "allocated_total": 374492,
+        "memory": 983040
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.002319693,
+        "fuel": 2206500,
+        "managed": 52192,
+        "committed": 176176,
+        "collections": 5,
+        "allocated_total": 378764,
+        "memory": 983040
+      },
+      {
+        "image_bytes": 15240
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001132757,
+        "fuel": 2621357,
+        "managed": 4272,
+        "committed": 11544,
+        "collections": 0,
+        "allocated_total": 4272,
+        "memory": 720896
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004084977,
+        "fuel": 507769,
+        "managed": 54464,
+        "committed": 178480,
+        "collections": 5,
+        "allocated_total": 381036,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000370281,
+        "fuel": 536945,
+        "managed": 6544,
+        "committed": 17472,
+        "collections": 0,
+        "allocated_total": 6544,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000266246,
+        "fuel": 505065,
+        "managed": 56736,
+        "committed": 180784,
+        "collections": 5,
+        "allocated_total": 383308,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000285524,
+        "fuel": 503900,
+        "managed": 8816,
+        "committed": 19776,
+        "collections": 0,
+        "allocated_total": 8816,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000273996,
+        "fuel": 505117,
+        "managed": 59008,
+        "committed": 183088,
+        "collections": 5,
+        "allocated_total": 385580,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000267302,
+        "fuel": 503653,
+        "managed": 11088,
+        "committed": 22080,
+        "collections": 0,
+        "allocated_total": 11088,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000272564,
+        "fuel": 505117,
+        "managed": 61280,
+        "committed": 185392,
+        "collections": 5,
+        "allocated_total": 387852,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000269248,
+        "fuel": 504898,
+        "managed": 13360,
+        "committed": 29832,
+        "collections": 0,
+        "allocated_total": 13360,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000261325,
+        "fuel": 505117,
+        "managed": 63552,
+        "committed": 187696,
+        "collections": 5,
+        "allocated_total": 390124,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000265423,
+        "fuel": 504641,
+        "managed": 15632,
+        "committed": 32136,
+        "collections": 0,
+        "allocated_total": 15632,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000270341,
+        "fuel": 505117,
+        "managed": 65824,
+        "committed": 190000,
+        "collections": 5,
+        "allocated_total": 392396,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000272086,
+        "fuel": 504655,
+        "managed": 17904,
+        "committed": 34440,
+        "collections": 0,
+        "allocated_total": 17904,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002380112,
+        "fuel": 6417453,
+        "managed": 6016,
+        "committed": 130016,
+        "collections": 6,
+        "allocated_total": 394668,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000278293,
+        "fuel": 505042,
+        "managed": 20176,
+        "committed": 44904,
+        "collections": 0,
+        "allocated_total": 20176,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000273188,
+        "fuel": 503557,
+        "managed": 8288,
+        "committed": 132320,
+        "collections": 6,
+        "allocated_total": 396940,
+        "memory": 983040
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000261559,
+        "fuel": 504527,
+        "managed": 22448,
+        "committed": 47208,
+        "collections": 0,
+        "allocated_total": 22448,
+        "memory": 786432
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "version": "baseline",
+    "workload": "many",
+    "artifact_sha256": "87326071968133b55da9bd9e7e9f8c53df8cf85c019d2c5a1b245680a2e08562",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.3150908639654517,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.240827941,
+        "fuel": 2283655379,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 132,
+        "allocated_total": 8701843,
+        "memory": 1179648
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000444253,
+        "fuel": 260184,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 132,
+        "allocated_total": 8701843,
+        "memory": 1179648
+      },
+      {
+        "image_bytes": 92888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.000514272,
+        "fuel": 397457,
+        "managed": 4279,
+        "committed": 81920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 851968
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004200716,
+        "fuel": 549627,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8704121,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000597788,
+        "fuel": 587121,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 2278,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000347706,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8706399,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000326227,
+        "fuel": 542027,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 4556,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000334469,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8708677,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000335817,
+        "fuel": 540325,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 6834,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00032129,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8710955,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000332497,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 9112,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.00033455,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8713233,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00032599,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 11390,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000331005,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8715511,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000334376,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 13668,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000322689,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8717789,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000347333,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 15946,
+        "memory": 1179648
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000321626,
+        "fuel": 546052,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 132,
+        "allocated_total": 8720067,
+        "memory": 1179648
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000325422,
+        "fuel": 546190,
+        "managed": 4279,
+        "committed": 163840,
+        "collections": 0,
+        "allocated_total": 18224,
+        "memory": 1179648
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "version": "candidate",
+    "workload": "many",
+    "artifact_sha256": "4f187f0e0c292cd8e1f448cb919552975c4c8ebe0d2e690d7ff55596695ae158",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 1.3008772619068623,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 1.2254055209999999,
+        "fuel": 2376993633,
+        "managed": 26440,
+        "committed": 50944,
+        "collections": 132,
+        "allocated_total": 8697564,
+        "memory": 786432
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.002301911,
+        "fuel": 2178553,
+        "managed": 26440,
+        "committed": 50944,
+        "collections": 132,
+        "allocated_total": 8701836,
+        "memory": 786432
+      },
+      {
+        "image_bytes": 15240
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001117088,
+        "fuel": 2621357,
+        "managed": 4272,
+        "committed": 11544,
+        "collections": 0,
+        "allocated_total": 4272,
+        "memory": 720896
+      },
+      {
+        "phase": "request",
+        "seconds": 0.004120462,
+        "fuel": 507272,
+        "managed": 28718,
+        "committed": 53264,
+        "collections": 132,
+        "allocated_total": 8704114,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000382945,
+        "fuel": 536717,
+        "managed": 6550,
+        "committed": 17488,
+        "collections": 0,
+        "allocated_total": 6550,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000267554,
+        "fuel": 504764,
+        "managed": 30996,
+        "committed": 55584,
+        "collections": 132,
+        "allocated_total": 8706392,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000285059,
+        "fuel": 505860,
+        "managed": 8828,
+        "committed": 19808,
+        "collections": 0,
+        "allocated_total": 8828,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000269541,
+        "fuel": 504764,
+        "managed": 33274,
+        "committed": 57904,
+        "collections": 132,
+        "allocated_total": 8708670,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000265761,
+        "fuel": 503713,
+        "managed": 11106,
+        "committed": 22128,
+        "collections": 0,
+        "allocated_total": 11106,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000261481,
+        "fuel": 504764,
+        "managed": 35552,
+        "committed": 60224,
+        "collections": 132,
+        "allocated_total": 8710948,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000272122,
+        "fuel": 504814,
+        "managed": 13384,
+        "committed": 29896,
+        "collections": 0,
+        "allocated_total": 13384,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000270685,
+        "fuel": 504764,
+        "managed": 37830,
+        "committed": 62544,
+        "collections": 132,
+        "allocated_total": 8713226,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000260048,
+        "fuel": 504557,
+        "managed": 15662,
+        "committed": 32216,
+        "collections": 0,
+        "allocated_total": 15662,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000260126,
+        "fuel": 504764,
+        "managed": 40108,
+        "committed": 64864,
+        "collections": 132,
+        "allocated_total": 8715504,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00027403,
+        "fuel": 504126,
+        "managed": 17940,
+        "committed": 34536,
+        "collections": 0,
+        "allocated_total": 17940,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000275337,
+        "fuel": 504476,
+        "managed": 42386,
+        "committed": 67184,
+        "collections": 132,
+        "allocated_total": 8717782,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.000261379,
+        "fuel": 504958,
+        "managed": 20218,
+        "committed": 45016,
+        "collections": 0,
+        "allocated_total": 20218,
+        "memory": 786432
+      },
+      {
+        "phase": "request",
+        "seconds": 0.000275218,
+        "fuel": 503649,
+        "managed": 44664,
+        "committed": 69504,
+        "collections": 132,
+        "allocated_total": 8720060,
+        "memory": 786432
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.0002675,
+        "fuel": 504443,
+        "managed": 22496,
+        "committed": 47336,
+        "collections": 0,
+        "allocated_total": 22496,
+        "memory": 786432
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "version": "baseline",
+    "workload": "strings",
+    "artifact_sha256": "4393585ab42d6ebf5558a98d741bfd09d5cd65016cfd5b7fcf969d5da30dc784",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 0.7173068460542709,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.20570919,
+        "fuel": 264563945,
+        "managed": 397551,
+        "committed": 507920,
+        "collections": 4,
+        "allocated_total": 1834435,
+        "memory": 3407872
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.000585274,
+        "fuel": 280889,
+        "managed": 397551,
+        "committed": 507920,
+        "collections": 4,
+        "allocated_total": 1834435,
+        "memory": 3407872
+      },
+      {
+        "image_bytes": 518888
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.001141033,
+        "fuel": 425959,
+        "managed": 397551,
+        "committed": 507920,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 1769472
+      },
+      {
+        "phase": "request",
+        "seconds": 0.023690448,
+        "fuel": 64307888,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 5,
+        "allocated_total": 2672227,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.025852204,
+        "fuel": 64408346,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 1,
+        "allocated_total": 837792,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026901014,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 7,
+        "allocated_total": 3510019,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.026979553,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 3,
+        "allocated_total": 1675584,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.028157194,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 9,
+        "allocated_total": 4347811,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.02703011,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 5,
+        "allocated_total": 2513376,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.0269599,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 11,
+        "allocated_total": 5185603,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.026739925,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 7,
+        "allocated_total": 3351168,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.028720318,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 13,
+        "allocated_total": 6023395,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.026991164,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 9,
+        "allocated_total": 4188960,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.027305445,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 15,
+        "allocated_total": 6861187,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.027105487,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 11,
+        "allocated_total": 5026752,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.028775803,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 17,
+        "allocated_total": 7698979,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.026982756,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 13,
+        "allocated_total": 5864544,
+        "memory": 4259840
+      },
+      {
+        "phase": "request",
+        "seconds": 0.027115771,
+        "fuel": 88623287,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 19,
+        "allocated_total": 8536771,
+        "memory": 3407872
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.02739929,
+        "fuel": 88628549,
+        "managed": 397551,
+        "committed": 1425616,
+        "collections": 15,
+        "allocated_total": 6702336,
+        "memory": 4259840
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "version": "candidate",
+    "workload": "strings",
+    "artifact_sha256": "0eb2c6b7b955405aa2456c1b1c570ef58c060692f534db538e1608d2494918cc",
+    "requests_sha256": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec",
+    "process_seconds": 0.7832098659127951,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 0.196421609,
+        "fuel": 267881080,
+        "managed": 922712,
+        "committed": 1341136,
+        "collections": 4,
+        "allocated_total": 1436884,
+        "memory": 2752512
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.015293929,
+        "fuel": 38471316,
+        "managed": 922712,
+        "committed": 1341136,
+        "collections": 4,
+        "allocated_total": 1834428,
+        "memory": 4980736
+      },
+      {
+        "image_bytes": 408512
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.01579935,
+        "fuel": 45127417,
+        "managed": 397544,
+        "committed": 521528,
+        "collections": 0,
+        "allocated_total": 397544,
+        "memory": 2228224
+      },
+      {
+        "phase": "request",
+        "seconds": 0.026406634,
+        "fuel": 76200797,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 5,
+        "allocated_total": 2672220,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.031673223,
+        "fuel": 99794883,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 2,
+        "allocated_total": 1235336,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.028917654,
+        "fuel": 99295721,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 7,
+        "allocated_total": 3510012,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.031886044,
+        "fuel": 100017992,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 4,
+        "allocated_total": 2073128,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029155364,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 9,
+        "allocated_total": 4347804,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.030046906,
+        "fuel": 100044066,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 6,
+        "allocated_total": 2910920,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.030656673,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 11,
+        "allocated_total": 5185596,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.029801066,
+        "fuel": 100101799,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 8,
+        "allocated_total": 3748712,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029244317,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 13,
+        "allocated_total": 6023388,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.029844781,
+        "fuel": 99995398,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 10,
+        "allocated_total": 4586504,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.030772882,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 15,
+        "allocated_total": 6861180,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.029585975,
+        "fuel": 99865154,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 12,
+        "allocated_total": 5424296,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029249338,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 17,
+        "allocated_total": 7698972,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.031716282,
+        "fuel": 99771967,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 14,
+        "allocated_total": 6262088,
+        "memory": 2752512
+      },
+      {
+        "phase": "request",
+        "seconds": 0.029291727,
+        "fuel": 99330821,
+        "managed": 1024751,
+        "committed": 1443192,
+        "collections": 19,
+        "allocated_total": 8536764,
+        "memory": 4980736
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.029829108,
+        "fuel": 99869491,
+        "managed": 1024671,
+        "committed": 1148680,
+        "collections": 16,
+        "allocated_total": 7099880,
+        "memory": 2752512
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "version": "baseline",
+    "workload": "ic",
+    "artifact_sha256": "96280b3e8e4183f06a317c3d9a99b75ae13e89a81c207a53f491dfa0d43acc32",
+    "requests_sha256": "105563213679bd1b9ab2d356d6fdf033f336b532ab996922c629ebc33379db47",
+    "process_seconds": 61.684804246993735,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 60.60859712,
+        "fuel": 124113304405,
+        "managed": 3139679,
+        "committed": 4541808,
+        "collections": 197,
+        "allocated_total": 134472073,
+        "memory": 25624576
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.027115739,
+        "fuel": 2362888,
+        "managed": 3139679,
+        "committed": 4541808,
+        "collections": 197,
+        "allocated_total": 134472073,
+        "memory": 30408704
+      },
+      {
+        "image_bytes": 4772581
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.007425606,
+        "fuel": 12982681,
+        "managed": 3139679,
+        "committed": 4541808,
+        "collections": 0,
+        "allocated_total": 0,
+        "memory": 11337728
+      },
+      {
+        "phase": "request",
+        "seconds": 0.166329429,
+        "fuel": 525979664,
+        "managed": 3139679,
+        "committed": 4659808,
+        "collections": 198,
+        "allocated_total": 134510477,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.004158859,
+        "fuel": 3087620,
+        "managed": 3139679,
+        "committed": 4659808,
+        "collections": 0,
+        "allocated_total": 38404,
+        "memory": 15990784
+      },
+      {
+        "phase": "request",
+        "seconds": 0.008852436,
+        "fuel": 5425356,
+        "managed": 3139679,
+        "committed": 4705648,
+        "collections": 198,
+        "allocated_total": 134551564,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.159205349,
+        "fuel": 514769488,
+        "managed": 3139679,
+        "committed": 4689264,
+        "collections": 1,
+        "allocated_total": 79235,
+        "memory": 15990784
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002633825,
+        "fuel": 2797424,
+        "managed": 3139679,
+        "committed": 4705648,
+        "collections": 198,
+        "allocated_total": 134569987,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00180248,
+        "fuel": 2802246,
+        "managed": 3139679,
+        "committed": 4689264,
+        "collections": 1,
+        "allocated_total": 97658,
+        "memory": 15990784
+      },
+      {
+        "phase": "request",
+        "seconds": 0.033573959,
+        "fuel": 51851970,
+        "managed": 3139679,
+        "committed": 4854992,
+        "collections": 198,
+        "allocated_total": 134734770,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.033055518,
+        "fuel": 51822663,
+        "managed": 3139679,
+        "committed": 4854992,
+        "collections": 1,
+        "allocated_total": 262441,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.094393074,
+        "fuel": 165430357,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135071688,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.094021128,
+        "fuel": 165104674,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 599359,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.007132936,
+        "fuel": 9008473,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135122114,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.005570265,
+        "fuel": 9014782,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 649785,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.006049233,
+        "fuel": 10097383,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135174867,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.006054952,
+        "fuel": 10097423,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 702538,
+        "memory": 20709376
+      },
+      {
+        "phase": "request",
+        "seconds": 0.055998484,
+        "fuel": 14935443,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 198,
+        "allocated_total": 135232876,
+        "memory": 30408704
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.009740958,
+        "fuel": 14942971,
+        "managed": 3139679,
+        "committed": 5086224,
+        "collections": 1,
+        "allocated_total": 760547,
+        "memory": 20709376
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "version": "candidate",
+    "workload": "ic",
+    "artifact_sha256": "d361036c9b71fce7121b3af66eb5017a3dd0778b764d9f3c42794b4447273829",
+    "requests_sha256": "105563213679bd1b9ab2d356d6fdf033f336b532ab996922c629ebc33379db47",
+    "process_seconds": 60.36113692284562,
+    "measurements": [
+      {
+        "phase": "initialize",
+        "seconds": 58.826729122,
+        "fuel": 128679465234,
+        "managed": 5307520,
+        "committed": 8544336,
+        "collections": 197,
+        "allocated_total": 131332394,
+        "memory": 14024704
+      },
+      {
+        "phase": "pack",
+        "seconds": 0.229348669,
+        "fuel": 506040820,
+        "managed": 5307520,
+        "committed": 8544336,
+        "collections": 197,
+        "allocated_total": 134472067,
+        "memory": 30670848
+      },
+      {
+        "image_bytes": 3401381
+      },
+      {
+        "phase": "restore",
+        "seconds": 0.191270535,
+        "fuel": 605347911,
+        "managed": 3139673,
+        "committed": 4112032,
+        "collections": 0,
+        "allocated_total": 3139673,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.212810929,
+        "fuel": 625640309,
+        "managed": 3258260,
+        "committed": 6466536,
+        "collections": 198,
+        "allocated_total": 134510471,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.186439617,
+        "fuel": 593522278,
+        "managed": 3178076,
+        "committed": 4150488,
+        "collections": 1,
+        "allocated_total": 3178077,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.008889924,
+        "fuel": 6417665,
+        "managed": 3298899,
+        "committed": 6507352,
+        "collections": 198,
+        "allocated_total": 134551110,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.003400113,
+        "fuel": 6401844,
+        "managed": 3219163,
+        "committed": 4191752,
+        "collections": 1,
+        "allocated_total": 3219164,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.002491488,
+        "fuel": 3239876,
+        "managed": 3317130,
+        "committed": 6525744,
+        "collections": 198,
+        "allocated_total": 134569341,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.001731883,
+        "fuel": 3200470,
+        "managed": 3237394,
+        "committed": 4210144,
+        "collections": 1,
+        "allocated_total": 3237395,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.033693416,
+        "fuel": 56261623,
+        "managed": 3479929,
+        "committed": 6689848,
+        "collections": 198,
+        "allocated_total": 134732140,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.031753144,
+        "fuel": 56085643,
+        "managed": 3403777,
+        "committed": 4848544,
+        "collections": 1,
+        "allocated_total": 3403778,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.09579719,
+        "fuel": 176748770,
+        "managed": 3808719,
+        "committed": 7021216,
+        "collections": 198,
+        "allocated_total": 135060930,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.09293899,
+        "fuel": 176670240,
+        "managed": 3736663,
+        "committed": 5184008,
+        "collections": 1,
+        "allocated_total": 3736664,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.007767184,
+        "fuel": 11669056,
+        "managed": 3858697,
+        "committed": 7071664,
+        "collections": 198,
+        "allocated_total": 135110908,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.00598703,
+        "fuel": 11638703,
+        "managed": 3786641,
+        "committed": 5234456,
+        "collections": 1,
+        "allocated_total": 3786642,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.006759825,
+        "fuel": 12888243,
+        "managed": 3911002,
+        "committed": 7124288,
+        "collections": 198,
+        "allocated_total": 135163213,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.006384613,
+        "fuel": 12845843,
+        "managed": 3838946,
+        "committed": 5287080,
+        "collections": 1,
+        "allocated_total": 3838947,
+        "memory": 14286848
+      },
+      {
+        "phase": "request",
+        "seconds": 0.054883532,
+        "fuel": 18004758,
+        "managed": 3968563,
+        "committed": 7182336,
+        "collections": 198,
+        "allocated_total": 135220774,
+        "memory": 30670848
+      },
+      {
+        "phase": "restored_request",
+        "seconds": 0.009758742,
+        "fuel": 17964019,
+        "managed": 3904699,
+        "committed": 5353320,
+        "collections": 1,
+        "allocated_total": 3904700,
+        "memory": 14286848
+      }
+    ]
+  }
+]

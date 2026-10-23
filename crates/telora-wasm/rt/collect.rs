@@ -35,7 +35,9 @@ pub(crate) unsafe fn snapshot_stats() -> [u32; 5] {
 }
 
 pub(crate) unsafe fn restore_stats(stats: [u32; 5]) {
-    unsafe { initialization::restore_stats(stats); }
+    unsafe {
+        initialization::restore_stats(stats);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -61,15 +63,12 @@ pub unsafe extern "C" fn telora_function_dependencies_bootstrap(
 
 pub(crate) unsafe fn freeze() {
     unsafe {
-        crate::heap::freeze();
-        crate::content::freeze();
         crate::sources::freeze();
     }
 }
 
 pub(crate) struct Collector {
-    pub initialization: bool,
-    pub heap: crate::heap::OldWords,
+    pub heap: crate::heap::SourceHeap,
     pub types: u32,
     pub old: [Table; TABLE_COUNT as usize],
     pub slots: Vec<Vec<Slot>>,
@@ -129,22 +128,27 @@ impl Collector {
         unsafe { crate::telora_alloc(bytes) }
     }
     pub unsafe fn copy_bytes(&mut self, pointer: u32, bytes: u32) -> u32 {
+        self.heap.span(pointer, bytes as usize);
         let at = self.reserve(bytes);
         unsafe {
-            core::ptr::copy_nonoverlapping(
-                self.heap.ptr::<u8>(pointer),
-                crate::heap::ptr::<u8>(at),
-                bytes as usize,
-            );
+            if bytes != 0 {
+                core::ptr::copy_nonoverlapping(
+                    self.heap.ptr::<u8>(pointer),
+                    crate::heap::ptr::<u8>(at),
+                    bytes as usize,
+                );
+            }
         }
         at
     }
     pub fn put(&mut self, at: u32, value: u32) {
-        unsafe { crate::heap::write(at, value); }
+        unsafe {
+            crate::heap::write(at, value);
+        }
     }
     pub unsafe fn value(&mut self, pointer: u32, ty: u32) -> u32 {
         unsafe {
-            if pointer == 0 || crate::heap::is_frozen(pointer) {
+            if pointer == 0 || crate::heap::is_static(pointer) {
                 return pointer;
             }
             if let Some(&(at, previous)) = self.values.get(&pointer) {
@@ -156,7 +160,10 @@ impl Collector {
                     self.types + ty * layout::ENTRY_BYTES,
                     layout::VALUE_BYTES as u64,
                 );
-                assert_eq!(previous_bytes, bytes, "value reached through incompatible layouts");
+                assert_eq!(
+                    previous_bytes, bytes,
+                    "value reached through incompatible layouts"
+                );
                 return at;
             }
             self.trace_location(self.old_location(pointer));
@@ -174,7 +181,7 @@ impl Collector {
     pub unsafe fn object(&mut self, table: u32, id: u32, layout: u32) -> u32 {
         unsafe {
             if matches!(table, RECORDS | ARRAYS | VALUES | ENVIRONMENTS | NEWTYPES) {
-                if crate::heap::is_frozen(id) {
+                if crate::heap::is_static(id) {
                     return id;
                 }
                 if let Some(&(next, _)) = self.objects.get(&(table, id)) {
@@ -205,13 +212,15 @@ impl Collector {
                     self.objects.insert((table, id), (at, layout));
                     let old_data = self.old_word(id, 4);
                     if bytes != 0 {
+                        self.heap.span(old_data, bytes as usize);
                         core::ptr::copy_nonoverlapping(
                             self.heap.ptr::<u8>(old_data),
                             crate::heap::ptr::<u8>(at + 16),
                             bytes as usize,
                         );
                     }
-                    self.pending.push((ARRAYS, old_data, at + 16, bytes, stored));
+                    self.pending
+                        .push((ARRAYS, old_data, at + 16, bytes, stored));
                     at
                 } else {
                     let bytes = self.old_word(id, 4);
@@ -224,9 +233,6 @@ impl Collector {
             }
             let old = self.old[table as usize];
             assert!(id < old.length);
-            if id < old.frozen {
-                return id;
-            }
             if let Some(&(next, _)) = self.objects.get(&(table, id)) {
                 return next;
             }
@@ -249,23 +255,32 @@ impl Collector {
                 bytes: slot.bytes,
             };
             if table != REGEXES {
-                self.pending.push((table, slot.payload, at, slot.bytes, layout));
+                self.pending
+                    .push((table, slot.payload, at, slot.bytes, layout));
             }
             next
         }
     }
     pub unsafe fn finish(mut self) {
         unsafe {
-            crate::gc_runtime::collect_pins(&mut self);
+            if !crate::heap::packing() {
+                crate::gc_runtime::collect_pins(&mut self);
+            }
             while let Some((table, old, at, bytes, layout)) = self.pending.pop() {
                 self.trace_object(table, old, at, bytes, layout);
             }
             // Sources are Host metadata, but RT may render their names in captures.
-            crate::sources::collect(&mut self);
+            if !crate::heap::packing() {
+                crate::sources::collect(&mut self);
+            }
             let mut tables = self.old;
             for i in 0..TABLE_COUNT as usize {
                 let count = self.slots[i].len() as u32;
-                let at = self.reserve(count * 8);
+                let at = if count == 0 {
+                    0
+                } else {
+                    self.reserve(count * 8)
+                };
                 for index in 0..count as usize {
                     let slot = self.slots[i][index];
                     self.put(at + index as u32 * 8, slot.payload);
@@ -279,11 +294,17 @@ impl Collector {
                 (table_address(i) as *mut Table).write(tables[i as usize]);
             }
             let old_regex = self.old[REGEXES as usize];
-            for id in old_regex.frozen..old_regex.length {
+            for id in 0..old_regex.length {
+                if crate::heap::packing() {
+                    break;
+                }
                 if !self.objects.contains_key(&(REGEXES, id)) {
                     let slot: Slot = self.heap.read(old_regex.buffer + id * 8);
                     crate::regex::release(slot.payload);
                 }
+            }
+            if crate::heap::packing() {
+                crate::heap::retain_source(self.heap);
             }
         }
     }
@@ -292,12 +313,26 @@ impl Collector {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_collect(roots: u32, count: u32) -> u32 {
     unsafe {
-        let mut gc = Collector::begin(false);
+        let mut gc = Collector::begin();
         let result = gc.reserve(count * 4);
         for index in 0..count {
             let root = roots + index * 8;
             let pointer = gc.value(gc.old_word(root, 0), gc.old_word(root, 4));
             gc.put(result + index * 4, pointer);
+        }
+        let (demands, count) = DEMANDS;
+        for index in 0..count {
+            if word(demands + index * DEMAND_BYTES, 0) == 2 {
+                gc.demand(index);
+            }
+        }
+        crate::service::collect_ready(&mut gc);
+        // Read-only feedback remains owned until explicit release. Preserve its
+        // order and IDs so Host cursors remain valid across boundary copying.
+        for table in [DIAGNOSTICS, DEBUG_EVENTS] {
+            for id in 0..gc.old[table as usize].length {
+                assert_eq!(gc.object(table, id, u32::MAX), id);
+            }
         }
         gc.finish();
         result
@@ -305,36 +340,24 @@ pub unsafe extern "C" fn telora_collect(roots: u32, count: u32) -> u32 {
 }
 
 impl Collector {
-    unsafe fn begin(initialization: bool) -> Self {
-      unsafe {
-        // Keep the old arena alive until all traversal and patching finishes.
-        let old_work = if initialization { crate::heap::take_initialization() }
-            else { crate::heap::take_work() };
-        crate::content::begin(initialization);
-        let old = core::array::from_fn(|i| (table_address(i as u32) as *const Table).read());
-        let slots = old
-            .iter()
-            .map(|table| {
-                if table.frozen == 0 {
-                    vec![]
-                } else {
-                    core::slice::from_raw_parts(old_work.ptr::<Slot>(table.buffer), table.frozen as usize)
-                        .to_vec()
-                }
-            })
-            .collect();
+    unsafe fn begin() -> Self {
+        unsafe {
+            // Keep source allocations alive until traversal and patching finish.
+            let old_work = crate::heap::take_source();
+            crate::content::begin();
+            let old = core::array::from_fn(|i| (table_address(i as u32) as *const Table).read());
+            let slots = (0..TABLE_COUNT).map(|_| vec![]).collect();
         Collector {
-            initialization,
-            heap: old_work,
-            types: TRACE_TYPES,
-            old,
-            slots,
-            objects: BTreeMap::new(),
-            values: BTreeMap::new(),
-            pending: vec![],
-            sources: alloc::collections::BTreeSet::new(),
-            demands: alloc::collections::BTreeSet::new(),
+                heap: old_work,
+                types: TRACE_TYPES,
+                old,
+                slots,
+                objects: BTreeMap::new(),
+                values: BTreeMap::new(),
+                pending: vec![],
+                sources: alloc::collections::BTreeSet::new(),
+                demands: alloc::collections::BTreeSet::new(),
+            }
         }
-      }
     }
 }

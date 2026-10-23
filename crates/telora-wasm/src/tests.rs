@@ -19,6 +19,7 @@ mod records;
 mod reflection;
 mod regex;
 mod root_lifetimes;
+mod runtime_allocation;
 mod sequences;
 mod service_sources;
 mod services;

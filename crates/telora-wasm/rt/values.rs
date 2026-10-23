@@ -57,7 +57,7 @@ pub unsafe extern "C" fn telora_array_can_append(value: u32) -> u32 {
     unsafe {
         let reference = word(value, DATA);
         u32::from(word(value, DATA + 12) == ARRAY_SLICE
-            && !crate::heap::is_frozen(reference)
+            && !crate::heap::is_static(reference)
             && word(value, DATA + 8) == word(reference, 8))
     }
 }

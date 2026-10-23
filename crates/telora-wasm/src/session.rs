@@ -82,7 +82,68 @@ impl Session {
         self.ensure_live()?;
         let result = func.call(&mut self.store, params);
         self.trapped |= result.is_err();
-        result.map_err(|error| error.to_string())
+        result.map_err(|error| {
+            self.allocation_error_with_growth(
+                error.to_string(),
+                error.as_trap_code() == Some(wasmi::TrapCode::GrowthOperationLimited),
+            )
+        })
+    }
+
+    pub(crate) fn allocation_error(&self, error: String) -> String {
+        let growth_failure = self
+            .execution_quota
+            .as_ref()
+            .is_some_and(|quota| quota.growth_failure())
+            || self
+                .initialization_quota
+                .as_ref()
+                .is_some_and(|quota| quota.growth_failure());
+        self.allocation_error_with_growth(error, growth_failure)
+    }
+
+    pub(crate) fn allocation_error_with_growth(
+        &self,
+        error: String,
+        growth_failure: bool,
+    ) -> String {
+        let memory = self.memory.data(&self.store);
+        let word = |at: usize| -> Option<u32> {
+            Some(u32::from_le_bytes(
+                memory.get(at..at.checked_add(4)?)?.try_into().ok()?,
+            ))
+        };
+        let detail = (|| {
+            let pointer = word(abi::ALLOCATION_FAILURE as usize)? as usize;
+            if pointer == 0 {
+                return None;
+            }
+            let phase = match word(pointer)? {
+                1 => "dynamic",
+                2 => "image",
+                _ => return None,
+            };
+            let category = match word(pointer.checked_add(4)?)? {
+                0 if growth_failure => "allocator-failure",
+                0 => "interrupted",
+                1 => "capacity-overflow",
+                2 => "managed-budget",
+                3 => "allocator-failure",
+                4 => "invalid-reference",
+                _ => return None,
+            };
+            Some(format!(
+                "allocation phase={phase} category={category} requested={} limit={} allocated={} committed={}",
+                word(pointer.checked_add(8)?)?,
+                word(pointer.checked_add(12)?)?,
+                word(pointer.checked_add(16)?)?,
+                word(pointer.checked_add(20)?)?
+            ))
+        })();
+        match detail {
+            Some(detail) => format!("Wasm: {detail}: {error}"),
+            None => error.to_string(),
+        }
     }
 
     pub fn usage(&self) -> Usage {
@@ -225,7 +286,8 @@ impl Session {
             self.initialization_quota
                 .as_mut()
                 .unwrap()
-                .call(&mut self.store, initialize, ())?;
+                .call(&mut self.store, initialize, ());
+        let status = status.map_err(|error| self.allocation_error(error))?;
         self.metered_fuel = self
             .initialization_quota
             .as_ref()
@@ -328,7 +390,7 @@ impl Session {
             .unwrap()
             .call(&mut self.store, entry, ());
         self.metered_fuel = self.execution_quota.as_ref().map(|quota| quota.consumed());
-        let pointer = result? as u32;
+        let pointer = result.map_err(|error| self.allocation_error(error))? as u32;
         if pointer == abi::NULL {
             return Err(self.failure());
         }
@@ -372,7 +434,7 @@ impl Session {
             (pointer as i32, args as i32, output as i32),
         );
         self.metered_fuel = self.execution_quota.as_ref().map(|quota| quota.consumed());
-        let result = called? as u32;
+        let result = called.map_err(|error| self.allocation_error(error))? as u32;
         if result == abi::NULL {
             return Err(self.failure());
         }

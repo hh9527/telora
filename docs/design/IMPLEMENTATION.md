@@ -18,8 +18,8 @@ workspace/package 清单 + 所选根模块
   -> SealedMir / SealedExecutable：类型镜像与所选执行闭包
   -> Wasm codegen：在预链接 Rust RT 模板上纯内存追加代码和数据
   -> Wasmi Session：加载内存模块、注入已验证的数据
-  -> 求值初始化根，冻结 main 区
-  -> work 区：eval 调用、Test 或 Entry 调度，安全边界精确回收
+  -> 求值初始化根，注册长期保活根
+  -> eval 调用、Test 或 Entry 调度，安全边界准确回收
 ```
 
 前三个 Pass 不持有 VM 或运行时 heap，不执行 Telora 代码。Query/LSP 可以读取未成功
@@ -320,21 +320,18 @@ String/Bytes 不足 16 字节时直接内联，最后一字节保存长度；其
 `len:u32/cap:u32/bytes:[u8;cap]`；start/end 相对字节区。小切片复制内联，
 长切片保活完整 Raw。执行期间 mark-sweep 只标记底层分配，不搬移内容或修补视图；
 显式边界压缩将共享 Raw 复制一次并重定位引用。没有独立内容池或 String/Bytes 表。
-线性内存 48/52 保存保留零字与活 Raw 分配字节数（含头），该占用已经包含在 words
-和 managed 统计中。结构化对象、Raw 内容与表缓冲区存放在单个 `Vec<u64>`；
-分页元数据按 size class 管理动态分配，准确内部引用保活所属块。空槽复用，
-空页合并后再分配时拆分剩余范围。backing 保留容量，committed 包含保留容量和
-页/槽元数据；RT 受管堆默认预算为 32 MiB，来源和 Rust 资源另受 Guest 线性内存上限约束。
-持久 words 引用编码为 `origin + byte_offset`，origin 是链接后静态镜像末端；
-小于 origin 的引用指向永久 Wasm 静态区，`[origin, 0x80000000)` 内的引用通过
-当前 words 基址访问，scratch 引用见下文。Host 交换缓冲区和来源
-记录仍使用独立的真实线性内存地址，不能当作语言引用传入。
-只读 words 视图位于 40/44（地址/字节数），origin 位于 56；扩容后必须重新取基址。
-类型追踪描述与反射描述在编译时进入永久静态镜像，Guest 启动时登记；words 中
-无需再分配一份类型描述。成功初始化后先移动回收，再冻结 words 前缀（包含 Raw 内容）。
-保守根为全部 Ready demand、service handler，以及尚待消费的诊断/debug 事件；
-顶层值、property/check、已实例化泛型值通过 demand 保留。初始化专用句柄清空。
-工作区显式回收保留冻结前缀，并返回调用方显式根的替代句柄。
+线性内存 48/52 保存保留零字与活 Raw 分配字节数（含头），已包含在 managed
+统计中。结构化对象、Raw 内容与表缓冲区通过 Guest 默认 Rust 分配器独立零初始化
+分配；准确 GC 的登记表记录 Layout、范围、扫描描述和标记，内部引用保活所属分配。
+committed 包含分配的对齐存储和登记表容量，不包含底层分配器隐藏开销。
+RT 受管堆默认预算为 32 MiB，来源和 Rust 资源另受 Guest 线性内存上限约束。
+动态引用为稳定 Guest 地址；小于 origin 的引用指向永久 Wasm 静态区，origin 是链接后
+静态镜像末端。动态分配的地址及范围必须小于 0x80000000，高位命名空间用于 scratch。
+Host 交换缓冲区和来源记录使用真实线性内存地址，不能当作语言引用传入。
+40/44 为保留零字与当前受管分配字节数，56 保存 origin；这不是动态存储映射表。
+类型追踪与反射描述在编译时进入永久静态镜像。全部 Ready demand、service handler、
+活动调用根、Host pin 以及尚待消费的诊断/debug 事件保活各自可达图。初始化专用句柄
+在成功初始化后清空。显式复制回收会更新移动句柄；普通准确 GC 保持地址稳定。
 Array 完整值固定 24 字节，payload 为 reference/start/end/kind。Empty 没有底层
 存储；Single 引用一个独立完整元素槽，按元素布局扫描；Slice 引用 RawArray 头和
 共享缓冲。Dict 使用有序 keys/values 的 RawArray 列，列自身不带 Array kind。
@@ -342,7 +339,7 @@ Array 完整值固定 24 字节，payload 为 reference/start/end/kind。Empty �
 filter 和 Seq/Sink collect 从零容量开始，第一个结果分配单槽，第二个结果才建立
 增长缓冲；不对谓词做第二遍求值。GC 仅扫描有效元素，不扫描剩余容量。
 内部 push 仅在可写 RawArray 的 view.end 等于 raw.len 时复用尾部；历史视图和
-冻结初始化对象均分叉。非零 start 的视图保持自身计数与 raw end 分开计算。
+代码静态对象均分叉。非零 start 的视图保持自身计数与 raw end 分开计算。
 字段操作与构造胶水消费已闭合的布局证据。
 具体尺寸与表示以 `telora-wasm-shared/src/abi.rs` 和生成器为准，不构成发布 ABI。
 
@@ -363,7 +360,7 @@ Ready demand 引用使用 0 借用其持久值头，避免读取全局函数也�
 
 生成的 callable 帧使用独立的可复用 scratch 区。纯标量、有限纯聚合的普通构造、
 纯值调用结果和临时参数包按编译期分配点占槽，循环复用；来源仍存放在完整值中。
-逻辑 scratch 引用从 0x80000000 开始，与持久 words 分离；普通返回先完成结果
+逻辑 scratch 引用从 0x80000000 开始，与动态对象分离；普通返回先完成结果
 复制，再释放帧。语言失败走同一个退出边界；引擎 trap 后由会话终止或 reset
 清理临时区。闭包捕获和延迟 debug 事件复制纯值，保留自己的完整值副本。
 
@@ -371,18 +368,18 @@ Ready demand 引用使用 0 借用其持久值头，避免读取全局函数也�
 时采用完整包并修正包内引用，之后可正常嵌套调用；无环境构造器继续接收函数值
 本身以保留来源。临时区容量按最大活动帧需求复用，不随尾调用次数增长。调用结果
 槽在调用前保留旧内容，使 fold 的上轮结果可同时作为本轮输入。
-初始化 demand、二参数 materializer 及含动态所有权的值仍使用持久 words 路径。
+初始化 demand、二参数 materializer 及含动态所有权的值仍使用独立受管分配。
 生成函数发布独立 shadow frame：参数、返回值和表达式结果使用封闭类型根，原始
 分配仅保留 storage，数组构造和回调输出发布已初始化前缀，local 复用时清空根槽。
 普通退出和可恢复失败退出释放根帧，尾调用在受保护参数交接后释放旧根帧。
 运行时标记审计默认关闭，可在 callable 入口安全点遍历活动帧、Host pin、Ready
 demand、service 初始化输入以及待消费的诊断/debug 事件。审计不执行 sweep；
-显式 `telora_gc_collect` 则标记并回收动态 words、内容、未引用资源槽及动态来源，
+显式 `telora_gc_collect` 则标记并回收动态对象、内容、未引用资源槽及动态来源，
 释放失活 Regex 的 Rust 资源。资源空槽可复用。执行中收集在 callable 入口及 parser/codec 数组循环安全点
 触发。默认分配间隔下限为 64 KiB；每次收集后，间隔取配置下限与当前 managed
-占用一半的较大值，并以 words 预算剩余余量的四分之一封顶（最少 1 字节），
+占用一半的较大值，并以受管预算剩余余量的四分之一封顶；压力下间隔至少为配置下限与预算十六分之一的较小值（最少 1 字节），
 使大存活图的扫描成本得到摊销。`telora_gc_interval` 配置间隔下限，0 关闭
-自动触发，1 在每个安全点强制收集。`telora_gc_heap_limit` 可设 words
+自动触发，1 在每个安全点强制收集。`telora_gc_heap_limit` 可设受管
 预算，预算不足时停止执行。parser/codec 上下文、Regex 捕获缓冲区和 postorder
 parser plan 使用独立根角色，按实际字段/已初始化前缀扫描。物化会消费 plan：
 packet 只保留未处理的 rows 后缀，子节点使用计数使临时值头在最后一个父节点
@@ -393,8 +390,8 @@ Host 使用 `Session::pin_value` 取得 Session 所有的 generation 句柄；�
 来源范围副本，均独立于生产它们的 scratch 帧。制品静态来源索引由代码镜像
 持有，生命周期与制品一致；动态来源仍由值/来源根保活。service initializer、
 handler、已注入值和所有声明的 source 身份由服务阶段拥有。
-`Session::configure_gc` 配置间隔和 words 预算，服务 snapshot 重建保留配置。
-`gc_stats` 分别报告累计分配、当前 managed 占用、words 保留空间、收集次数和
+`Session::configure_gc` 配置间隔和受管预算，服务 snapshot 重建保留配置。
+`gc_stats` 分别报告累计分配、当前 managed 占用、对齐存储与登记容量、收集次数和
 线性内存高水位；managed 占用包含尚未清扫的临时分配，不能当作准确存活量。
 `collect_garbage` 在 Host 边界执行非移动收集；测试队列持有 pin，使用此接口
 回收已完成任务。`release_feedback` 在 Host 复制反馈后释放 Guest 历史，保留当前活动失败事件；
@@ -403,12 +400,12 @@ Failed demand 独立拥有其错误包，即使历史已释放也能再次报告
 压缩，避免移动诊断协议持有的原始错误地址。
 Guest trap 使 Session 终止，拒绝继续执行、分配或改变根；语言失败仍按状态码
 返回。服务 reset 以初始化 snapshot 替换陷阱实例，普通 Session 通过重新 load 恢复。
-冻结和恢复镜像前缀有明确所有者，不按字节猜测其中的分配边界。snapshot/data
-image 保存有效分配字节计数；恢复后动态页元数据从前缀末端重新建立。service
-reset 清空动态元数据并截断 words，同时复用 backing。内部 ABI 版本为 36；
-旧 Wasm 制品需重新生成，不能混用旧布局或调用约定。
+快照和数据镜像从发布根复制可达图至连续空间，修补引用并保留共享与环。导出期间
+源图保持原址和所有权；导入将镜像重定位为普通独立分配，并通过长期根保活。
+恢复后的对象参与准确 GC。服务 reset 清理调用状态、scratch、pin 和已消费反馈，
+对象回收由 GC 决定。内部 ABI 版本为 38；旧 Wasm 制品需重新生成。
 `interpreter!` 在构造时捕获输入函数，工厂和适配器使用普通值引用环境；
-没有适配器 memo 槽或 raw-parent 环境，回收不再扫描、修补冻结环境中的该类缓存。
+没有适配器 memo 槽或 raw-parent 环境，回收按实际闭包环境布局追踪。
 
 Loc 标记值的产生处：字面量、类型域物化、计算和构造写入对应表达式的位置；
 绑定、字段/元素读取及返回已有值转发原来源。native 计算的新值使用调用处，
@@ -480,24 +477,18 @@ service 不会在某次请求中首次计算这批 property；运行期通过 `T
 codegen 不与运行时共用可变推导状态。
 
 数据注入后主动完成初始化根，顶层值与 property 的相互依赖由需求求值处理。
-初始化不调用普通函数体，除非某个初始化计算实际调用它。成功后固定语言堆的 main
-对象集合，后续语言对象属于 work。words/content 的冻结长度标识保留前缀；语言逻辑引用
-与分配器使用的线性内存地址不同。
-执行阶段不重新启动初始化。
+初始化不调用普通函数体，除非某个初始化计算实际调用它。成功后，顶层 demand、
+property 与 handler 作为长期根保留普通对象；执行阶段复用这些初始化结果。
 
 Guest 使用 wasm32-unknown-unknown 标准库默认分配器，不自定义全局分配器。
-mem-alloc/realloc/free 只是把这套分配器暴露给 Host，与 Rust Vec/String 共用。
-语言小对象追加到零初始化 words Vec，引用使用逻辑偏移，避免每个标量触发一次标准分配；
-Host 缓冲区和 Rust 临时对象不经过这层语言对象存储。
-分类表的 payload 指向 words；Regex 等 Rust 资源独立持有。复制回收释放旧 words/content，
-不覆盖分配器元数据。释放允许分配器复用空间，不意味着 Wasm 线性内存缩页。
+mem-alloc/realloc/free 将这套分配器暴露给 Host，与 Rust Vec/String 共用。
+语言对象独立分配，登记表负责准确标记和 sweep；Regex 等 Rust 资源独立持有，
+死亡资源随准确追踪结果释放。free 允许分配器复用空间，不意味着 Wasm 线性内存缩页。
 
-初始化采用保守根集合进行 copy-collect，所有 Ready demand（包括 property 结果）
-均作为根保留；这不是按 service 实际会查询的 property 行进行的精确裁剪。
-测试等显式保活边界继续支持 work copy-collect。
-遍历依据闭合类型布局，更新所有移动句柄，保留共享与环。冻结前缀引用保持稳定。
-正常服务请求没有需要延续的临时根，直接 truncate 请求后缀，复用容量而不重建实例。
-线性内存允许保留高水位；只有 trap/poisoned 状态使用初始化快照恢复。
+镜像重整保留全部 Ready demand（包括 property 结果）及 service handler，按闭合
+类型布局遍历，更新所有移动句柄并保持共享与环。测试等显式边界也支持复制回收。
+正常服务请求结束清理调用根与反馈；允许按阈值收集。只有 trap/poisoned 状态使用
+初始化快照恢复新实例。
 
 运行期数据的来源记录也参与回收：值、内联 enum payload、闭包及 Blame 的来源
 标记决定哪些记录仍存活。静态/初始化来源固定保留；动态来源从 RT 和 Host manifest
@@ -567,8 +558,8 @@ fixture 仅累计已接受的源文本字节作为粗略输入边界，保留展
 实例由静态 trait 证据选择。Plan 是内部 (sources, initializer)；initializer 构造集合并返回
 按静态路由选择字段服务的 handler，with_diagnostics 包装每次调用。Host 不解码服务状态。
 
-正常完成请求后，reset-service 先释放请求 Regex 资源，再恢复分类表基线并 truncate
-words/content，保留容量；Host 恢复执行 globals、debug 游标和每次请求的 fuel。
+正常完成请求后，reset-service 清理 scratch、pin 和已消费反馈；GC 按可达性释放
+动态对象与资源。Host 恢复执行 globals、debug 游标和每次请求的 fuel。
 输出及 Host ABI 缓冲区必须先消费并释放。临时 parse 不登记请求来源，来源表保留
 初始化时的名称/BOLs。JSON writer 在普通语言失败路径也显式释放。
 只有 trap/poisoned 状态或清理本身失败时，才复用 wasmi Module 创建新 store/instance，

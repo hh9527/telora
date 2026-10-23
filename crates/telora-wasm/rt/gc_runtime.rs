@@ -235,7 +235,7 @@ pub unsafe extern "C" fn telora_gc_release_feedback(active: u32) -> u32 {
         assert!(frames().is_empty(), "feedback release during execution");
         for tag in [DIAGNOSTICS, DEBUG_EVENTS] {
             crate::heap::write(table_address(tag), crate::tables::Table {
-                buffer: 0, length: 0, capacity: 0, frozen: 0,
+                buffer: 0, length: 0, capacity: 0, reserved: 0,
             });
         }
         if active != 0 {

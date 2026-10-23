@@ -528,9 +528,19 @@ fn service_resets_after_request_resource_exhaustion() {
             reports[2]["usage"]["fuel"]["limit"]
         );
         assert!(reports[2]["usage"]["fuel"]["remaining"].as_u64().unwrap() > 0);
+        // Recovery relocates only the published graph; its allocator history
+        // can have a smaller high-water mark than the original live instance.
+        assert!(
+            reports[2]["usage"]["linear_memory"]["bytes"]
+                .as_u64()
+                .unwrap()
+                <= reports[0]["usage"]["linear_memory"]["bytes"]
+                    .as_u64()
+                    .unwrap()
+        );
         assert_eq!(
-            reports[0]["usage"]["linear_memory"],
-            reports[2]["usage"]["linear_memory"]
+            reports[0]["usage"]["linear_memory"]["limit_bytes"],
+            reports[2]["usage"]["linear_memory"]["limit_bytes"]
         );
     }
 }

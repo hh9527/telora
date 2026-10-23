@@ -1,6 +1,6 @@
 # RFC 0315：运行时独立分配、准确 GC 与初始化对象静态镜像
 
-- 状态：Proposed，RFC PR #246 评审中
+- 状态：Accepted，RFC PR #246 已合入；实现由 #245 跟踪
 - 跟踪：[#245](https://github.com/hh9527/telora/issues/245)
 - 日期：2026-10-23
 - 基线：`a7f5e7f5`；RFC 0312、0313、0314

@@ -128,7 +128,7 @@ impl Session {
             (closure.pointer as i32, args as i32, output as i32),
         );
         self.metered_fuel = self.execution_quota.as_ref().map(|quota| quota.consumed());
-        let pointer = called? as u32;
+        let pointer = called.map_err(|error| self.allocation_error(error))? as u32;
         if pointer == 0 {
             return Ok(None);
         }

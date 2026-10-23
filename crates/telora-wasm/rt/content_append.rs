@@ -35,7 +35,7 @@ pub unsafe extern "C" fn telora_content_append(destination: u32, owner: u32, suf
         } else {
             if let Bytes::Slice(s) = owner {
                 let end = s.end.checked_add(right).unwrap();
-                if !crate::heap::is_frozen(s.raw)
+                if !crate::heap::is_static(s.raw)
                     && s.end == crate::heap::read::<u32>(s.raw)
                     && end <= crate::heap::read::<u32>(s.raw + 4)
                 {

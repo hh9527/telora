@@ -78,30 +78,39 @@ fn interpreter_adapters_capture_operand_at_construction_without_memoization() {
     let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
     session.initialize().unwrap();
     assert_eq!(session.diagnostics().unwrap().len(), 1);
-    // Requests must never write memoized work pointers into initialized captures.
-    let frozen_heap = |session: &crate::session::Session, length: Option<usize>| {
-        use crate::abi::WORDS_VIEW;
-        let output = session.output();
-        let pointer = output.word(WORDS_VIEW as u64).unwrap() as u64;
-        let bytes = output.word(WORDS_VIEW as u64 + 4).unwrap() as usize;
-        output
-            .raw_bytes(pointer, length.unwrap_or(bytes) as u64)
-            .unwrap()
-            .to_vec()
+    // Capture heads must remain unchanged by calls. They need not occupy a
+    // continuous/frozen backing, and explicit boundary collection may relocate.
+    let capture_heads = |session: &crate::session::Session| {
+        session
+            .manifest
+            .globals
+            .iter()
+            .map(|global| {
+                let value = session.initialized_global(global.symbol).unwrap();
+                session
+                    .output()
+                    .bytes(
+                        u64::from(value.pointer),
+                        u64::from(session.manifest.types[value.ty as usize].bytes),
+                    )
+                    .unwrap()
+                    .to_vec()
+            })
+            .collect::<Vec<_>>()
     };
-    let baseline = frozen_heap(&session, None);
-    assert!(!baseline.is_empty());
+    let baseline = capture_heads(&session);
     assert_eq!(
         session.call(&[]).unwrap(),
         serde_json::json!(vec![true; 12])
     );
     assert_eq!(session.diagnostics().unwrap().len(), 1);
-    assert_eq!(frozen_heap(&session, Some(baseline.len())), baseline);
+    assert_eq!(capture_heads(&session), baseline);
     session.collect_work(&[]).unwrap();
+    let baseline = capture_heads(&session);
     assert_eq!(
         session.call(&[]).unwrap(),
         serde_json::json!(vec![true; 12])
     );
     assert_eq!(session.diagnostics().unwrap().len(), 1);
-    assert_eq!(frozen_heap(&session, Some(baseline.len())), baseline);
+    assert_eq!(capture_heads(&session), baseline);
 }

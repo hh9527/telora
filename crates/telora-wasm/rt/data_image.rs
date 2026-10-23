@@ -43,7 +43,7 @@ pub unsafe extern "C" fn telora_data_image_export(result: u32) {
     unsafe {
         crate::host_memory::range(result, 8, 4);
         // Ready data demands are roots; parse plans and copied source spans are not.
-        crate::collect::collect_data();
+        let _packing = crate::image_packing::Packing::begin(false);
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
         word(&mut out, VERSION);
@@ -89,7 +89,7 @@ pub unsafe extern "C" fn telora_data_image_import(pointer: u32, length: u32) {
         let origin = input.word();
         let allocated = input.word();
         crate::heap::restore_data(origin, allocated, input.bytes());
-        crate::content::restore(input.word(), false);
+        crate::content::restore(input.word());
         let raw = input.bytes();
         assert_eq!(
             raw.len(),
@@ -100,7 +100,7 @@ pub unsafe extern "C" fn telora_data_image_import(pointer: u32, length: u32) {
             .cast::<[Table; TABLE_COUNT as usize]>()
             .read_unaligned();
         for (index, table) in tables.into_iter().enumerate() {
-            assert_eq!(table.frozen, 0, "data image is already initialized");
+            assert_eq!(table.reserved, 0, "invalid data image table descriptor");
             (table_address(index as u32) as *mut Table).write(table);
         }
         crate::collect::restore_demands(input.bytes());
@@ -117,5 +117,6 @@ pub unsafe extern "C" fn telora_data_image_import(pointer: u32, length: u32) {
         }
         assert_eq!(input.at, input.input.len(), "trailing data image bytes");
         crate::sources::restore(sources);
+        crate::collect::collect_data();
     }
 }

@@ -231,7 +231,7 @@ fn growing_sequence_outputs_respect_the_managed_heap_limit() {
     let mut session = crate::session::Session::load(&bytes, 200_000_000).unwrap();
     session
         .configure_gc(crate::gc::GcConfig {
-            heap_limit: 256 * 1024,
+            heap_limit: 64 * 1024,
             ..Default::default()
         })
         .unwrap();

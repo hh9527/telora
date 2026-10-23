@@ -3,7 +3,9 @@ use crate::collect::Collector;
 use telora_wasm_shared::trace::{self, Edge, Error, Visitor};
 
 impl Visitor for Collector {
-    fn types(&self) -> u32 { self.types }
+    fn types(&self) -> u32 {
+        self.types
+    }
     fn read(&self, reference: u32) -> Result<u32, Error> {
         unsafe { Ok(self.old_word(reference, 0)) }
     }
@@ -19,19 +21,29 @@ impl Visitor for Collector {
                     if let telora_wasm_shared::arena::content::Bytes::Slice(s) =
                         telora_wasm_shared::arena::content::Bytes::decode(bytes).unwrap()
                     {
-                        let raw = if crate::heap::is_frozen(s.raw) { s.raw }
-                        else if let Some(&(next, _)) = self.objects.get(&(crate::abi::CONTENT_VIEW, s.raw)) { next }
-                        else {
+                        let raw = if crate::heap::is_static(s.raw) {
+                            s.raw
+                        } else if let Some(&(next, _)) =
+                            self.objects.get(&(crate::abi::CONTENT_VIEW, s.raw))
+                        {
+                            next
+                        } else {
                             let len = self.old_word(s.raw, 0);
+                            self.heap.span(s.raw, len.checked_add(8).unwrap() as usize);
                             let next = crate::content::allocate_capacity(len);
-                            core::ptr::copy_nonoverlapping(self.heap.ptr::<u8>(s.raw), crate::heap::ptr::<u8>(next), len.checked_add(8).unwrap() as usize);
+                            core::ptr::copy_nonoverlapping(
+                                self.heap.ptr::<u8>(s.raw),
+                                crate::heap::ptr::<u8>(next),
+                                len.checked_add(8).unwrap() as usize,
+                            );
                             self.put(next + 4, len);
-                            self.objects.insert((crate::abi::CONTENT_VIEW, s.raw), (next, 0));
+                            self.objects
+                                .insert((crate::abi::CONTENT_VIEW, s.raw), (next, 0));
                             next
                         };
                         self.put(at, raw);
                     }
-                },
+                }
                 Edge::Object { table, id, ty, at } => {
                     let next = self.object(table, id, ty);
                     self.put(at, next);
@@ -40,8 +52,16 @@ impl Visitor for Collector {
                     let next = self.value(reference, ty);
                     self.put(at, next);
                 }
-                Edge::Storage { reference, bytes, at } => {
-                    let next = if bytes == 0 { 0 } else { self.copy_bytes(reference, bytes) };
+                Edge::Storage {
+                    reference,
+                    bytes,
+                    at,
+                } => {
+                    let next = if bytes == 0 {
+                        0
+                    } else {
+                        self.copy_bytes(reference, bytes)
+                    };
                     self.put(at, next);
                 }
                 Edge::Function(function) => self.trace_function_demands(function),
@@ -53,7 +73,9 @@ impl Visitor for Collector {
 
 impl Collector {
     pub unsafe fn trace_location(&mut self, id: u32) {
-        if id != 0 { self.sources.insert(id); }
+        if id != 0 {
+            self.sources.insert(id);
+        }
     }
     pub unsafe fn trace_object(&mut self, table: u32, old: u32, at: u32, bytes: u32, ty: u32) {
         trace::object(self, table, old, at, bytes, ty).expect("invalid closed trace layout");

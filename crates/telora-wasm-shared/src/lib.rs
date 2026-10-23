@@ -4,8 +4,8 @@ extern crate alloc;
 
 pub mod abi;
 pub mod arena;
+pub mod direct_heap;
 pub mod frame_scratch;
-pub mod gc_heap;
 pub mod gc_roots;
 pub mod json_text;
 pub mod layout_image;

@@ -9,10 +9,12 @@ pub(super) unsafe fn snapshot_stats() -> [u32; 5] {
 }
 
 pub(super) unsafe fn restore_stats(stats: [u32; 5]) {
-    unsafe { STATS = stats; }
+    unsafe {
+        STATS = stats;
+    }
 }
 
-/// Arena bytes before/after, demand roots, and linear memory before/after GC.
+/// Managed bytes before/after relocation, demand roots, and linear memory.
 /// Wasm cannot shrink its memory, so the latter includes the collection peak.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn telora_initialization_stat(index: u32) -> u32 {
@@ -20,21 +22,27 @@ pub unsafe extern "C" fn telora_initialization_stat(index: u32) -> u32 {
 }
 
 pub(crate) unsafe fn collect() {
-    unsafe { collect_phase(true); }
+    unsafe {
+        collect_phase(true);
+    }
 }
 
 pub(crate) unsafe fn collect_data() {
-    unsafe { collect_phase(false); }
+    unsafe {
+        collect_phase(false);
+    }
 }
 
 unsafe fn collect_phase(service_ready: bool) {
     unsafe {
         // Source names and BOLs have independent ownership and remain available
         // even when no retained language value currently mentions that source.
-        crate::sources::freeze();
+        if !crate::heap::packing() {
+            crate::sources::freeze();
+        }
         let before = crate::heap::telora_heap_bytes();
         let memory_before = crate::telora_heap_end();
-        let mut gc = Collector::begin(true);
+        let mut gc = Collector::begin();
         let (demands, count) = DEMANDS;
         let mut roots = 0;
         for index in 0..count {
@@ -44,7 +52,9 @@ unsafe fn collect_phase(service_ready: bool) {
                 gc.demand(index);
             }
         }
-        if service_ready { crate::service::collect_initialization(&mut gc); }
+        if service_ready {
+            crate::service::collect_initialization(&mut gc);
+        }
         // Initialization callers still need to read these events. Preserving
         // their order also preserves Host diagnostic/debug cursors.
         for table in [DIAGNOSTICS, DEBUG_EVENTS] {
@@ -53,7 +63,12 @@ unsafe fn collect_phase(service_ready: bool) {
             }
         }
         gc.finish();
-        STATS = [before, crate::heap::telora_heap_bytes(), roots,
-            memory_before, crate::telora_heap_end()];
+        STATS = [
+            before,
+            crate::heap::telora_heap_bytes(),
+            roots,
+            memory_before,
+            crate::telora_heap_end(),
+        ];
     }
 }

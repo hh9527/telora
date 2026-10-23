@@ -1,0 +1,40 @@
+{
+  "baseline_commit": "92058f4c",
+  "candidate_runtime_commit": "71d17fa4",
+  "parser_commit": "8bc3d9a17926d506a9d41f35947b72ff6125ce31",
+  "application_commit": "5a870224d56208fad97bdc37e72d5f82a0ca6276",
+  "probe_binary_sha256": "006f9aea563760648153d1ccd3a8b6d84b9323ffc0e7c3fecede4bff861eaaea",
+  "probe_source_sha256": "ed216da46c343a899ff924811a41e7f1f9facb4aa42c79794268f4b5a5c1e208",
+  "artifacts": {
+    "baseline-empty.wasm": "d8d9db0e2e7899fadefab512781e5627409feb09183c5fd5a54b8bfc09abed21",
+    "baseline-ic.wasm": "96280b3e8e4183f06a317c3d9a99b75ae13e89a81c207a53f491dfa0d43acc32",
+    "baseline-many.wasm": "87326071968133b55da9bd9e7e9f8c53df8cf85c019d2c5a1b245680a2e08562",
+    "baseline-single.wasm": "b6b9e4fd2e26c09e9cb8cf4ef4b8c11a33f3b0159e7a7b290514eb667651a8a7",
+    "baseline-strings.wasm": "4393585ab42d6ebf5558a98d741bfd09d5cd65016cfd5b7fcf969d5da30dc784",
+    "candidate-empty.wasm": "753b309089f764d6778f4829e0615332f4f1c7206442a269ab4f2d35c34ace81",
+    "candidate-ic.wasm": "d361036c9b71fce7121b3af66eb5017a3dd0778b764d9f3c42794b4447273829",
+    "candidate-many.wasm": "4f187f0e0c292cd8e1f448cb919552975c4c8ebe0d2e690d7ff55596695ae158",
+    "candidate-single.wasm": "d1a41eb8cae09697957237fe816bf216c2569c94f1226db11cf5549b09af685b",
+    "candidate-strings.wasm": "0eb2c6b7b955405aa2456c1b1c570ef58c060692f534db538e1608d2494918cc"
+  },
+  "requests": {
+    "ic-requests.jsonl": "105563213679bd1b9ab2d356d6fdf033f336b532ab996922c629ebc33379db47",
+    "micro-requests.jsonl": "19431ccb7d225efb135961bacbda1d90b73d2d71d321f99da9469ddbe2b36aec"
+  },
+  "micro_sources": {
+    "empty.telora": "f76246d702c10d97649253a2b33a7a27706a6fbdda78d2f5ca2658dd4c635002",
+    "lib.telora": "f4cb896473646c8b6db7ec6b4f41bfc7ba41380ed01fa0b0af7c61e3eac2551a",
+    "many.telora": "bb6be1aedb7e3047f667f87229190b27588637d877350afc02444d1869dc3609",
+    "single.telora": "f8c6532c5d45337db9d511cc2757d4cf4875ecdfbb6a2c8418d1ce967f359745",
+    "strings.telora": "2cf0cb05584077f1d854607f79284106a407e7b4196265b0f3bdc01102ee9654"
+  },
+  "note": "Artifacts were generated before the later Host recovery fix and test-only fault injection; their Guest allocation, GC and image implementation is 71d17fa4.",
+  "churn": {
+    "heap_bytes": 524288,
+    "allocation_interval": 16384,
+    "candidate_commit": "4f8f2261",
+    "probe_source_sha256": "7bb8f5ba86d0066df9161746348c19d7858056efa85f6d43bfaea00c45530449",
+    "source_sha256": "235126205da19676b7712c5e21f8fcb44518c27c4e14c69f8bc459c7797cd67b",
+    "note": "Service initializer wrapper around 10000-iteration GC workload; v2 probe adds optional policy arguments."
+  }
+}

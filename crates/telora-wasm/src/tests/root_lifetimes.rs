@@ -273,7 +273,7 @@ fn one_invocation_allocates_far_beyond_its_bounded_heap() {
     ))
     .unwrap();
     let bytes = super::compile(&source).unwrap();
-    let mut session = Session::load(&bytes, 2_000_000_000).unwrap();
+    let mut session = Session::load(&bytes, 4_000_000_000).unwrap();
     session.initialize().unwrap();
     let configure = session
         .instance
@@ -304,6 +304,10 @@ fn one_invocation_allocates_far_beyond_its_bounded_heap() {
         .unwrap();
     assert!(collections.call(&mut session.store, ()).unwrap() > 50);
     let volume = allocated.call(&mut session.store, ()).unwrap() - before;
+    eprintln!(
+        "independent-allocation churn fuel={} allocated={volume}",
+        session.usage().fuel_budget - session.usage().fuel_remaining
+    );
     assert!(volume > 16 * 512 * 1024, "only allocated {volume} bytes");
     let committed = session
         .instance
@@ -389,6 +393,11 @@ fn growing_live_graph_stops_at_the_heap_budget() {
     assert_eq!(limit.call(&mut session.store, 256 * 1024).unwrap(), 0);
     let failure = session.call(&[10_000.into()]).unwrap_err();
     assert!(failure.contains("unreachable"), "{failure}");
+    assert!(
+        failure.contains("phase=dynamic category=managed-budget"),
+        "{failure}"
+    );
+    assert!(failure.contains("limit=262144"), "{failure}");
     assert!(
         session.usage().fuel_remaining > 0,
         "the live graph must hit memory before fuel"

@@ -9,7 +9,8 @@ struct Baseline {
     globals: Vec<(String, wasmi::Val)>,
     manifest: Manifest,
     registered_sources: usize,
-    emitted_debug: u32,
+    debug_events: u32,
+    recovery_fuel: u64,
 }
 
 pub struct SourceInput<'a> {
@@ -148,22 +149,33 @@ impl TransformSession {
                 Format::Yaml => 2,
                 Format::Toml => 3,
             };
-            self.session.initialization_quota.as_mut().unwrap().call(
-                &mut self.session.store,
-                set,
-                (id, buffer.pointer, length, format),
-            )?;
+            self.session
+                .initialization_quota
+                .as_mut()
+                .unwrap()
+                .call(
+                    &mut self.session.store,
+                    set,
+                    (id, buffer.pointer, length, format),
+                )
+                .map_err(|error| self.session.allocation_error(error))?;
             supplied += 1;
         }
         buffer.free(&mut self.session)?;
         if supplied != self.sources.len() {
             return Err("service sources do not match declared sources".into());
         }
-        let status = self.session.initialization_quota.as_mut().unwrap().call(
-            &mut self.session.store,
-            self.session.exports.create_service,
-            (),
-        )?;
+        let status = self
+            .session
+            .initialization_quota
+            .as_mut()
+            .unwrap()
+            .call(
+                &mut self.session.store,
+                self.session.exports.create_service,
+                (),
+            )
+            .map_err(|error| self.session.allocation_error(error))?;
         let diagnostics = self.initialization_diagnostics()?;
         self.ready = status == 0;
         self.session.metered_fuel = self
@@ -219,31 +231,23 @@ impl TransformSession {
             })
             .collect();
         let snapshot = export_snapshot(&mut self.session)?;
-        let mut compact = self.session.fresh_instance()?;
-        import_snapshot(&mut compact, &snapshot)?;
-        for (name, value) in &globals {
-            compact
-                .instance
-                .get_global(&compact.store, name)
-                .ok_or("missing reset global")?
-                .set(&mut compact.store, value.clone())
-                .map_err(|error| error.to_string())?;
-        }
-        compact.usage_reporter = self.session.usage_reporter.take();
-        self.session = compact;
         self.baseline = Some(Baseline {
             snapshot,
             globals,
             manifest: self.session.manifest.clone(),
             registered_sources: self.session.registered_sources,
-            emitted_debug: self.session.emitted_debug.get(),
+            debug_events: self
+                .session
+                .output()
+                .word(crate::abi::table_address(crate::abi::DEBUG_EVENTS) as u64 + 4)?,
+            recovery_fuel: self.session.fuel_budget,
         });
         self.session.start_execution()?;
         Ok(())
     }
 
-    /// Completed calls truncate the language arenas in the existing instance.
-    /// A trapped/poisoned instance is restored from the initialization snapshot.
+    /// Completed calls release invocation roots and execution state. Dynamic
+    /// garbage is collected by the allocation policy; traps restore the actor.
     pub fn reset(&mut self) -> Result<(), String> {
         let baseline = self.baseline.as_ref().ok_or("service is not initialized")?;
         let limit = self.session.memory_limit;
@@ -278,13 +282,19 @@ impl TransformSession {
                     .store
                     .set_fuel(self.session.fuel_budget)
                     .map_err(|e| e.to_string())?;
-                self.session.emitted_debug.set(baseline.emitted_debug);
+                self.session.emitted_debug.set(0);
                 self.session.metered_fuel = None;
                 return Ok(());
             }
             self.poisoned = true;
         }
         let mut compact = self.session.fresh_instance()?;
+        // Relocation is recovery work, bounded by the initialization budget.
+        // A small per-request budget must remain available for the next call.
+        compact
+            .store
+            .set_fuel(baseline.recovery_fuel)
+            .map_err(|error| error.to_string())?;
         import_snapshot(&mut compact, &baseline.snapshot)?;
         for (name, value) in &baseline.globals {
             compact
@@ -300,7 +310,9 @@ impl TransformSession {
             .map_err(|e| e.to_string())?;
         compact.manifest = baseline.manifest.clone();
         compact.registered_sources = baseline.registered_sources;
-        compact.emitted_debug.set(baseline.emitted_debug);
+        compact
+            .emitted_debug
+            .set(self.session.emitted_debug.get().min(baseline.debug_events));
         compact.metered_fuel = None;
         compact.usage_reporter = self.session.usage_reporter.take();
         self.session = compact;
@@ -328,7 +340,10 @@ impl TransformSession {
         );
         self.session.metered_fuel = Some(quota.consumed());
         self.session.trapped |= called.is_err();
-        called?;
+        called.map_err(|error| {
+            self.session
+                .allocation_error_with_growth(error, quota.growth_failure())
+        })?;
         // No free after a trap: the next reset discards the entire failed instance.
         buffers::free(&mut self.session, pointer, length, 1)?;
         let response = buffers::response(&mut self.session, result)?;

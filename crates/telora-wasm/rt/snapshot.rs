@@ -48,6 +48,7 @@ impl<'a> Reader<'a> {
 
 unsafe fn encode() -> Vec<u8> {
     unsafe {
+        let _packing = crate::image_packing::Packing::begin(true);
         let mut out = Writer(Vec::new());
         out.0.extend_from_slice(&MAGIC);
         out.word(VERSION);
@@ -63,8 +64,10 @@ unsafe fn encode() -> Vec<u8> {
             core::mem::size_of_val(&tables),
         ));
         out.bytes(&crate::collect::snapshot_demands());
-        for stat in crate::collect::snapshot_stats() {
-            out.word(stat);
+        // Execution telemetry describes the source instance, not the published
+        // graph. Keep these reserved words canonical across allocation histories.
+        for _ in 0..5 {
+            out.word(0);
         }
         out.word(crate::service::snapshot());
 
@@ -103,7 +106,7 @@ unsafe fn decode(bytes: &[u8]) {
         let origin = input.word();
         let allocated = input.word();
         crate::heap::restore(origin, allocated, input.bytes());
-        crate::content::restore(input.word(), true);
+        crate::content::restore(input.word());
 
         let raw_tables = input.bytes();
         assert_eq!(
@@ -145,6 +148,9 @@ unsafe fn decode(bytes: &[u8]) {
         input.finish();
         crate::regex::restore(&regexes);
         crate::service::restore(handler);
+        // Imported coordinates are only a transport representation. Rebuild the
+        // graph into independently owned allocations and register normal roots.
+        crate::collect::collect_initialization();
     }
 }
 
@@ -167,6 +173,9 @@ pub unsafe extern "C" fn telora_snapshot_export(result: u32) {
 pub unsafe extern "C" fn telora_snapshot_import(pointer: u32, length: u32) {
     unsafe {
         crate::host_memory::range(pointer, length, 1);
-        decode(core::slice::from_raw_parts(pointer as *const u8, length as usize));
+        decode(core::slice::from_raw_parts(
+            pointer as *const u8,
+            length as usize,
+        ));
     }
 }

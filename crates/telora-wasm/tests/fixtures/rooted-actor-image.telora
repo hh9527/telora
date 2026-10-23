@@ -1,0 +1,52 @@
+use std::transform_service as service;
+use std::_entry::transform as entry;
+use std::type_property as props;
+use std::array as array;
+use std::string as string;
+use std::codec as codec;
+use std::value::{Value};
+
+# This demand is reached from a function body, as well as initialization.
+def retained_data: Array(Int) = array::map([20, 21], fn(value) { value + 1 });
+def dependency: Fn() -> Int = fn() { retained_data[0] + retained_data[1] - 1 };
+
+@property(PropertyTarget::Type)
+type Retained = struct {
+    first: Fn(Int) -> Int,
+    alias: Fn(Int) -> Int,
+    second: Fn(Int) -> Int,
+};
+
+def retain: Fn(Type, Option(Retained)) -> Retained = fn(target, previous) {
+    let warning: Option(Int) = warn!("property initialized once");
+    let temporary = string::join(["RFC0315 garbage", "outside publication roots"], " :: ");
+    let offset = if string::length(temporary) > 0 { dependency() } else { -1 };
+    def even: Fn(Int) -> Int = fn(n) {
+        if n == 0 { offset } else { odd(n - 1) }
+    };
+    def odd: Fn(Int) -> Int = fn(n) {
+        if n == 0 { 0 } else { even(n - 1) }
+    };
+    {first: even, alias: even, second: odd}
+};
+
+@retain
+type Model = struct { first: Fn(Int) -> Int };
+
+impl service::TransformService for Model {
+    init: fn(ctx) {
+        let retained = match props::get_type_prop(Model.type, Retained.type) { Some(value) => value, None => fail!("missing retained property") };
+        {first: retained.first}.ty!(Self)
+    },
+    transform: fn(self, input) {
+        let retained = match props::get_type_prop(Model.type, Retained.type) { Some(value) => value, None => fail!("missing retained property") };
+        codec::encode([
+            retained.first == retained.alias,
+            retained.first == self.first,
+            self.first(6) == 42,
+            retained.second(5) == 42,
+            dependency() == 42,
+        ])
+    },
+};
+pub def answer: entry::Plan = entry::prepare(Model.type);

@@ -2,6 +2,7 @@ pub(crate) struct FuelQuota {
     limit: u64,
     consumed: u64,
     trapped: bool,
+    growth_failure: bool,
 }
 
 impl FuelQuota {
@@ -10,6 +11,7 @@ impl FuelQuota {
             limit,
             consumed: 0,
             trapped: false,
+            growth_failure: false,
         }
     }
 
@@ -19,6 +21,10 @@ impl FuelQuota {
 
     pub(crate) fn consumed(&self) -> u64 {
         self.consumed
+    }
+
+    pub(crate) fn growth_failure(&self) -> bool {
+        self.growth_failure
     }
 
     pub(crate) fn call<P: wasmi::WasmParams, R: wasmi::WasmResults>(
@@ -32,6 +38,8 @@ impl FuelQuota {
         }
         let result = func.call(&mut *store, params);
         self.trapped |= result.is_err();
+        self.growth_failure = result.as_ref().err().and_then(|error| error.as_trap_code())
+            == Some(wasmi::TrapCode::GrowthOperationLimited);
         self.consumed = self
             .limit
             .saturating_sub(store.get_fuel().map_err(|e| e.to_string())?);

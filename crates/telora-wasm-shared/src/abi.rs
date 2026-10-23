@@ -1,5 +1,5 @@
 //! Shared physical layout; consumed by both codegen and Rust-compiled RT.
-pub const VERSION: u32 = 37;
+pub const VERSION: u32 = 38;
 /// Pointer-free aggregates carry a copy-stable marker, followed by inline fields.
 pub const INLINE_FIELDS: u32 = u32::MAX;
 pub const INLINE_DATA: u32 = 16;
@@ -35,6 +35,9 @@ pub const TESTS: u32 = 5;
 pub const DEBUG_EVENTS: u32 = 6;
 // Reserved protocol word below the table descriptors; disabled by default.
 pub const DEBUG_ENABLED: u32 = 16;
+/// Pointer to six u32 words: phase, error, requested bytes, managed limit,
+/// requested live bytes and committed storage. Phase zero means inactive.
+pub const ALLOCATION_FAILURE: u32 = 24;
 // Read-only Host view of Guest source records: pointer/count, records of 5 u32.
 pub const SOURCE_REGISTRY: u32 = 32;
 // Raw byte storage usage: reserved zero word / live managed bytes (including headers).

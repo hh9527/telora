@@ -127,24 +127,15 @@ impl Output<'_> {
         }
     }
     pub(crate) fn address(&self, reference: u64, length: u64) -> Result<u64, String> {
-        let origin = u64::from(self.raw_word(u64::from(WORDS_ORIGIN))?);
-        if reference < origin {
-            return Ok(reference);
-        }
-        let offset = reference - origin;
-        let end = offset
+        let end = reference
             .checked_add(length)
-            .ok_or("Wasm: heap range overflow")?;
-        let heap_length = u64::from(self.raw_word(u64::from(WORDS_VIEW + 4))?);
-        if end > heap_length {
-            return Err(format!(
-                "Wasm: reference {reference}+{length} exceeds language heap origin {origin} length {heap_length}"
-            ));
+            .ok_or("Wasm: address range overflow")?;
+        if end > self.memory.len() as u64 {
+            return Err("Wasm: address range exceeds Guest memory".into());
         }
-        u64::from(self.raw_word(u64::from(WORDS_VIEW))?)
-            .checked_add(offset)
-            .ok_or_else(|| "Wasm: heap address overflow".into())
+        Ok(reference)
     }
+
     pub(crate) fn raw_word(&self, address: u64) -> Result<u32, String> {
         Ok(u32::from_le_bytes(
             self.raw_bytes(address, 4)?.try_into().unwrap(),
