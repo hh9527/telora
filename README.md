@@ -277,6 +277,9 @@ telora lsp                 启动语言服务器
 普通 Wasm 制品将数据模块保存为编译后的二进制数据段，每次启动 runner 都进行初始化。
 `build --snapshot` 固化外部来源和 ready service，移除被覆盖的数据模块镜像；
 runner 直接恢复快照，更换来源需要重新构建。发布制品不携带源文件原文或完整宿主类型表。
+`telora build --report-usage` 向 stderr 输出 JSONL 阶段耗时诊断，覆盖前端类型检查、
+代码生成与链接、数据模块打包、引擎加载、Service 准备、服务初始化与封存、快照封装、文件输出及总耗时。
+引擎加载、Service 准备、初始化和快照阶段只在 `--snapshot` 构建中出现。
 当前不提供 Wasmtime 后端。
 详细示例见 [执行模式](guide/EXEC-MODE.md)。
 

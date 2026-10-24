@@ -219,39 +219,63 @@ impl Session {
     }
 
     pub fn load_with_limits(bytes: &[u8], fuel: u64, memory_limit: usize) -> Result<Self, String> {
-        let metadata_timer = timing::Timer::new("load_metadata");
-        let manifest = Manifest::read(bytes)?;
-        drop(metadata_timer);
-        let module_timer = timing::Timer::new("load_module");
-        let mut config = wasmi::Config::default();
-        config.consume_fuel(true);
-        // Lazy translation cannot be resumed on fuel exhaustion; meter execution only.
-        config.fuel_cost(wasmi::CustomFuelCosts {
-            bytes_copied_per_fuel: 64,
-            fuel_per_bytes_translated: 0,
-            fuel_per_bytes_validated: 0,
-        });
-        let engine = wasmi::Engine::new(&config);
-        let module = wasmi::Module::new(&engine, bytes).map_err(|e| e.to_string())?;
-        drop(module_timer);
-        let instance_timer = timing::Timer::new("load_instance");
-        let limits = wasmi::StoreLimitsBuilder::new()
-            .memory_size(memory_limit)
-            .table_elements(TABLE_BOUND)
-            .trap_on_grow_failure(true)
-            .build();
-        let mut store = wasmi::Store::new(&engine, limits);
-        store.limiter(|limits| limits);
-        store.set_fuel(fuel).map_err(|e| e.to_string())?;
-        let instance = wasmi::Linker::new(&engine)
-            .instantiate_and_start(&mut store, &module)
-            .map_err(|e| e.to_string())?;
-        let memory = instance
-            .get_memory(&store, "memory")
-            .ok_or("Wasm: missing memory export")?;
+        Self::load_with_limits_observed(bytes, fuel, memory_limit, &mut |phase, elapsed| {
+            if std::env::var_os("TELORA_WASM_TIMINGS").is_some() {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"wasm_phase": phase, "elapsed_ns": elapsed.as_nanos()})
+                );
+            }
+        })
+    }
+
+    /// Load with synchronous phase observations, independent of process-wide settings.
+    /// Instantiation includes the Wasm start function under the engine's public API.
+    pub fn load_with_limits_observed(
+        bytes: &[u8],
+        fuel: u64,
+        memory_limit: usize,
+        observer: &mut dyn FnMut(&'static str, std::time::Duration),
+    ) -> Result<Self, String> {
+        let manifest = timing::observe("load_metadata", observer, || Manifest::read(bytes))?;
+        let engine = timing::observe("load_engine", observer, || {
+            let mut config = wasmi::Config::default();
+            config.consume_fuel(true);
+            // Lazy translation cannot be resumed on fuel exhaustion; meter execution only.
+            config.fuel_cost(wasmi::CustomFuelCosts {
+                bytes_copied_per_fuel: 64,
+                fuel_per_bytes_translated: 0,
+                fuel_per_bytes_validated: 0,
+            });
+            Ok(wasmi::Engine::new(&config))
+        })?;
+        let module = timing::observe("load_module", observer, || {
+            wasmi::Module::new(&engine, bytes).map_err(|e| e.to_string())
+        })?;
+        let mut store = timing::observe("load_store", observer, || {
+            let limits = wasmi::StoreLimitsBuilder::new()
+                .memory_size(memory_limit)
+                .table_elements(TABLE_BOUND)
+                .trap_on_grow_failure(true)
+                .build();
+            let mut store = wasmi::Store::new(&engine, limits);
+            store.limiter(|limits| limits);
+            store.set_fuel(fuel).map_err(|e| e.to_string())?;
+            Ok(store)
+        })?;
+        let instance = timing::observe("load_instance_start", observer, || {
+            wasmi::Linker::new(&engine)
+                .instantiate_and_start(&mut store, &module)
+                .map_err(|e| e.to_string())
+        })?;
+        let (memory, exports) = timing::observe("load_exports", observer, || {
+            let memory = instance
+                .get_memory(&store, "memory")
+                .ok_or("Wasm: missing memory export")?;
+            let exports = exports::Exports::bind(instance, &store)?;
+            Ok((memory, exports))
+        })?;
         let registered_sources = manifest.sources.len();
-        let exports = exports::Exports::bind(instance, &store)?;
-        drop(instance_timer);
         let session = Self {
             identity: session_id(),
             trapped: false,

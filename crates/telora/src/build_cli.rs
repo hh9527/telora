@@ -23,7 +23,63 @@ pub struct BuildArgs {
     sources: Vec<crate::NamedSource>,
 }
 
+// Build phases include cleanup and publication; diagnostics stay on stderr.
+struct PhaseTimer {
+    phase: &'static str,
+    start: Option<std::time::Instant>,
+}
+
+impl PhaseTimer {
+    fn new(phase: &'static str) -> Self {
+        let enabled = crate::execution_config().report_usage
+            || std::env::var_os("TELORA_WASM_TIMINGS").as_deref()
+                == Some(std::ffi::OsStr::new("1"));
+        Self {
+            phase,
+            start: enabled.then(std::time::Instant::now),
+        }
+    }
+}
+
+impl Drop for PhaseTimer {
+    fn drop(&mut self) {
+        if let Some(start) = self.start {
+            let elapsed = start.elapsed();
+            report_phase(self.phase, elapsed);
+        }
+    }
+}
+
+fn report_phase(phase: &str, elapsed: std::time::Duration) {
+    if crate::execution_config().report_usage
+        || std::env::var_os("TELORA_WASM_TIMINGS").as_deref() == Some(std::ffi::OsStr::new("1"))
+    {
+        let parent = match phase {
+            "total" => None,
+            "load_metadata"
+            | "load_engine"
+            | "load_module"
+            | "load_store"
+            | "load_instance_start"
+            | "load_exports" => Some("engine_load"),
+            _ => Some("total"),
+        };
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "schema": "telora.build.timing/v1", "record": "diagnostic",
+                "parent_phase": parent,
+                "severity": "info", "code": "build-phase-timing",
+                "message": "Build phase elapsed time", "locs": [],
+                "phase": phase, "elapsed_seconds": elapsed.as_secs_f64(),
+            })
+        );
+    }
+}
+
 pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
+    let _total = PhaseTimer::new("total");
+    let frontend = PhaseTimer::new("frontend");
     if args.module.contains(':') {
         return Err("build expects a module exporting MainService".into());
     }
@@ -63,7 +119,11 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
             .collect::<Vec<_>>()
             .join("\n")
     })?;
+    drop(frontend);
+    let codegen = PhaseTimer::new("codegen_link");
     let bytes = telora_wasm::compile_service(&executable)?;
+    drop(codegen);
+    let bundle = PhaseTimer::new("data_bundle");
     drop(executable);
     let config = crate::execution_config_for(inventory.runtime_options())?;
     let mut plans = vec![];
@@ -85,14 +145,22 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
     drop(plans);
     drop(mir);
     drop(inventory);
+    drop(bundle);
     let bytes = if args.snapshot {
-        let mut session = telora_wasm::session::Session::load_with_limits(
+        let engine = PhaseTimer::new("engine_load");
+        let mut session = telora_wasm::session::Session::load_with_limits_observed(
             &bytes,
             config.initialization_fuel,
             config.memory_limit,
+            &mut |phase, elapsed| report_phase(phase, elapsed),
         )?;
         session.set_request_fuel(config.request_fuel);
+        drop(engine);
+        // Source enumeration prepares the static Service definition and its entry.
+        let prepare = PhaseTimer::new("service_prepare");
         let mut service = TransformSession::new(session)?;
+        drop(prepare);
+        let initialize = PhaseTimer::new("service_initialize");
         let names = crate::source_arg::service_source_names(&args.sources)?;
         if names != service.sources() {
             return Err(format!(
@@ -124,11 +192,16 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
         if !result.success {
             return Ok(1);
         }
+        drop(initialize);
+        let seal = PhaseTimer::new("service_seal");
         service.seal_initialization()?;
+        drop(seal);
+        let _snapshot = PhaseTimer::new("snapshot");
         telora_wasm::publication::attach_snapshot(&bytes, &service.publication_snapshot()?)?
     } else {
         bytes
     };
+    let _output = PhaseTimer::new("artifact_output");
     let bytes = telora_wasm::publication::finish(
         &bytes,
         config.memory_limit,

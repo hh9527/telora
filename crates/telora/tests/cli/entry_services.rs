@@ -674,3 +674,80 @@ fn initialization_sources_are_separate_from_each_transform_input() {
     assert!(error.contains("@service/config"), "{error}");
     assert!(!error.contains("config.json"), "{error}");
 }
+
+#[test]
+fn build_phase_timings_are_opt_in_and_preserve_artifacts() {
+    let cwd = service_fixture();
+    for snapshot in [false, true] {
+        let build = |report: bool| {
+            let mut command = telora(&cwd);
+            command.env_remove("TELORA_WASM_TIMINGS").args([
+                "build",
+                "@src/main",
+                "-o",
+                "timed.wasm",
+            ]);
+            if snapshot {
+                command.arg("--snapshot");
+            }
+            if report {
+                command.arg("--report-usage");
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(output.stdout.is_empty());
+            (output, fs::read(cwd.join("timed.wasm")).unwrap())
+        };
+        let (plain, plain_bytes) = build(false);
+        assert!(plain.stderr.is_empty());
+        let (timed, timed_bytes) = build(true);
+        assert_eq!(plain_bytes, timed_bytes);
+        let diagnostics: Vec<Value> = String::from_utf8(timed.stderr)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let phases: Vec<&str> = diagnostics
+            .iter()
+            .map(|d| {
+                assert_eq!(d["schema"], "telora.build.timing/v1");
+                assert_eq!(d["code"], "build-phase-timing");
+                assert_eq!(d["record"], "diagnostic");
+                let phase = d["phase"].as_str().unwrap();
+                let parent = if phase == "total" {
+                    Value::Null
+                } else if phase.starts_with("load_") {
+                    serde_json::json!("engine_load")
+                } else {
+                    serde_json::json!("total")
+                };
+                assert_eq!(d["parent_phase"], parent);
+                assert!(d["elapsed_seconds"].as_f64().unwrap() >= 0.0);
+                d["phase"].as_str().unwrap()
+            })
+            .collect();
+        let mut expected = vec!["frontend", "codegen_link", "data_bundle"];
+        if snapshot {
+            expected.extend([
+                "load_metadata",
+                "load_engine",
+                "load_module",
+                "load_store",
+                "load_instance_start",
+                "load_exports",
+                "engine_load",
+                "service_prepare",
+                "service_initialize",
+                "service_seal",
+                "snapshot",
+            ]);
+        }
+        expected.extend(["artifact_output", "total"]);
+        assert_eq!(phases, expected);
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}

@@ -543,6 +543,22 @@ workspace 配置的 `runtime.initializationFuel` 与 `runtime.requestFuel` 默�
 按 Wasm 页增长，不是存活对象大小或进程 RSS。已创建的会话即使执行失败也报告用量；
 实例创建前的失败没有可报告的会话。这不是精确计费信息，也不进入命令的结果流。
 
+`build --report-usage` 还报告构建阶段耗时（`schema: telora.build.timing/v1`、
+`record: diagnostic`、`code: build-phase-timing`），`phase` 标识阶段，`elapsed_seconds` 使用秒。
+`parent_phase` 标识父阶段：总阶段为 null，引擎子阶段为 `engine_load`，其余阶段为 `total`。
+`frontend` 包含源码加载、类型求解和入口闭包检查；`codegen_link` 为代码生成与链接；
+`data_bundle` 包含数据模块打包和前端资源清理；`engine_load` 为引擎加载与实例化；
+`service_prepare` 求值静态 Service 定义，准备来源与初始化入口；
+`service_initialize` 包含来源读取与服务初始化回调；`service_seal` 封存初始化状态；`snapshot` 提取并附加快照；
+`artifact_output` 完成发布封装和原子写入；`total` 覆盖整个构建调用。
+`engine_load` 的子阶段包括元数据解析 `load_metadata`、引擎创建 `load_engine`、
+模块加载与验证／翻译 `load_module`、Store 创建 `load_store`、实例化与启动函数
+`load_instance_start`、导出绑定 `load_exports`。
+子阶段包含在 `engine_load` 内，汇总时只累加同一层级；Wasmi 公开 API 将实例化与启动合并执行。
+普通构建跳过 `engine_load`、`service_prepare`、`service_initialize`、`service_seal`、`snapshot`；已进入的阶段即使失败也报告耗时，
+构建是否成功仍以退出码为准。`TELORA_WASM_TIMINGS=1` 也可开启构建阶段计时。
+引擎采用惰性翻译，因此初始化耗时可能包含首次执行函数的翻译成本。
+
 验收用持续尾递归与持续扩大数组的语言用例，验证分别因 fuel 和内存边界终止。
 测试使用较小内存边界，避免真实耗尽默认配额；不断言精确扣费次数。
 
