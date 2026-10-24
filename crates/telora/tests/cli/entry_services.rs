@@ -948,3 +948,126 @@ fn snapshot_specialization_preserves_conservative_provider_failures() {
         );
     }
 }
+
+fn service_metadata(bytes: &[u8]) -> Value {
+    let sections = wasmparser::Parser::new(0)
+        .parse_all(bytes)
+        .filter_map(|part| match part.unwrap() {
+            wasmparser::Payload::CustomSection(section)
+                if section.name() == "telora.service.metadata" =>
+            {
+                Some(serde_json::from_slice::<Value>(section.data()).unwrap())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sections.len(), 1);
+    sections.into_iter().next().unwrap()
+}
+
+#[test]
+fn snapshot_service_metadata_is_static_and_matches_both_modes() {
+    let cwd = service_fixture();
+    let source = fs::read_to_string(cwd.join("src/main.telora"))
+        .unwrap()
+        .replace(
+            "init: fn(ctx) { {}.ty!(Self) }",
+            r#"init: fn(ctx) {
+            service::publish_metadata("facts", Value::Object({answer: Value::Int(42)}));
+            service::publish_metadata("labels", Value::String("实体"));
+            {}.ty!(Self)
+        }"#,
+        );
+    fs::write(cwd.join("src/main.telora"), source).unwrap();
+    for mode in ["--snapshot", "--snapshot=full"] {
+        let output = telora(&cwd)
+            .args(["build", "@src/main", mode, "-o", "metadata.wasm"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let bytes = fs::read(cwd.join("metadata.wasm")).unwrap();
+        assert_eq!(
+            service_metadata(&bytes),
+            serde_json::json!({"version":1,"entries":{"facts":{"answer":42},"labels":"实体"}})
+        );
+        let mut runner = telora_run::Runner::load(&bytes, telora_run::Options::default()).unwrap();
+        assert!(runner.initialize(&[]).unwrap().is_empty());
+        let response: Value =
+            serde_json::from_slice(&runner.request(method_request("42").as_bytes()).unwrap())
+                .unwrap();
+        assert_eq!(response["ok"], 42);
+    }
+}
+
+#[test]
+fn snapshot_service_metadata_rejects_duplicate_and_empty_names_without_overwrite() {
+    for name in ["", "facts"] {
+        let cwd = service_fixture();
+        let source = fs::read_to_string(cwd.join("src/main.telora"))
+            .unwrap()
+            .replace(
+                "init: fn(ctx) { {}.ty!(Self) }",
+                &format!(
+                    r#"init: fn(ctx) {{
+                service::publish_metadata("facts", Value::Int(42));
+                service::publish_metadata("{name}", Value::Int(43));
+                {{}}.ty!(Self)
+            }}"#
+                ),
+            );
+        fs::write(cwd.join("src/main.telora"), source).unwrap();
+        for mode in ["--snapshot", "--snapshot=full"] {
+            fs::write(cwd.join("existing.wasm"), b"previous artifact").unwrap();
+            let output = telora(&cwd)
+                .args(["build", "@src/main", mode, "-o", "existing.wasm"])
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("unique nonempty name"),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                fs::read(cwd.join("existing.wasm")).unwrap(),
+                b"previous artifact"
+            );
+        }
+    }
+}
+
+#[test]
+fn snapshot_service_metadata_cannot_be_published_by_runtime_handler() {
+    let cwd = service_fixture();
+    let source = fs::read_to_string(cwd.join("src/main.telora"))
+        .unwrap()
+        .replace(
+            "transform: fn(self, input) {",
+            "transform: fn(self, input) { service::publish_metadata(\"late\", input);",
+        );
+    fs::write(cwd.join("src/main.telora"), source).unwrap();
+    for mode in ["--snapshot", "--snapshot=full"] {
+        let output = telora(&cwd)
+            .args(["build", "@src/main", mode, "-o", "late.wasm"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let bytes = fs::read(cwd.join("late.wasm")).unwrap();
+        let mut runner = telora_run::Runner::load(&bytes, telora_run::Options::default()).unwrap();
+        assert!(runner.initialize(&[]).unwrap().is_empty());
+        let response = runner.request(method_request("42").as_bytes()).unwrap();
+        assert!(
+            String::from_utf8_lossy(&response).contains("unique nonempty name"),
+            "{}",
+            String::from_utf8_lossy(&response)
+        );
+    }
+}

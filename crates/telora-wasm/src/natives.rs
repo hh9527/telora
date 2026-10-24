@@ -48,6 +48,7 @@ impl Emitter<'_> {
             Some((24, "parse_raw")) => self.data_parse_native(YAML_PARSE),
             Some((20, name)) => self.format_native(name),
             Some((26, "call_with_diagnostics")) => self.capture_diagnostics(),
+            Some((26, "publish_service_metadata")) => self.service_metadata_native(),
             Some((26, "service_reply")) => self.service_reply_native(),
             Some((34, name @ ("message" | "with_message"))) => self.blame_native(name),
             Some((33, name)) => self.test_native(name),
@@ -60,6 +61,31 @@ impl Emitter<'_> {
             other => Err(format!("Wasm: native ABI not implemented: {other:?}")),
         }
     }
+    fn service_metadata_native(&mut self) -> Result<u32, String> {
+        let node = self.key.node;
+        let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
+        if args.len() != 3
+            || args[..2]
+                .iter()
+                .any(|ty| self.mir.types[ty.index()].constructor != T::String)
+            || self.mir.types[args[2].index()].constructor != T::Bool
+        {
+            return Err("Wasm: invalid Service metadata signature".into());
+        }
+        let name = self.parameter(0);
+        let value = self.parameter(1);
+        let result = self.value_as(node, args[2], SCALAR_BYTES)?;
+        self.extend([
+            I::LocalGet(result),
+            I::LocalGet(name),
+            I::LocalGet(value),
+            I::Call(SERVICE_METADATA),
+            I::I64ExtendI32U,
+            I::I64Store(memory(DATA, 3)),
+        ]);
+        Ok(result)
+    }
+
     fn property_factory(&mut self) -> Result<u32, String> {
         let node = self.key.node;
         let signature = self.ty(node)?;

@@ -136,7 +136,7 @@ impl Emitter<'_> {
         }
         let shape = &self.mir.types[output.index()];
         let result = self.local(ValType::I32);
-        if name == "opaque_name" {
+        if name == "name" || name == "opaque_name" {
             if shape.constructor != T::Option
                 || shape.arguments.len() != 1
                 || self.mir.types[shape.arguments[0].index()].constructor != T::String
@@ -144,11 +144,19 @@ impl Emitter<'_> {
                 return Err("Wasm: opaque name result signature mismatch".into());
             }
             let string = shape.arguments[0];
-            self.extend([
-                I::LocalGet(row),
-                I::I32Load(memory(28, 2)),
-                I::If(BlockType::Empty),
-            ]);
+            self.extend([I::LocalGet(row), I::I32Load(memory(28, 2))]);
+            if name == "opaque_name" {
+                self.extend([
+                    I::I32Const(0),
+                    I::I32Ne,
+                    I::LocalGet(row),
+                    I::I32Load(memory(0, 2)),
+                    I::I32Const(14),
+                    I::I32Eq,
+                    I::I32And,
+                ]);
+            }
+            self.extend([I::If(BlockType::Empty)]);
             let value = self.reflected_text(string, base, row, 24, input)?;
             let some = self.enum_value(node, output, 1, Some(value))?;
             self.extend([I::LocalGet(some), I::LocalSet(result), I::Else]);

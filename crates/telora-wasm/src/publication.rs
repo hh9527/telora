@@ -93,3 +93,35 @@ pub fn attach_snapshot(
     });
     Ok(module.finish())
 }
+
+/// Static JSON published by this Service's own initialization.
+pub(crate) fn attach_metadata(
+    bytes: &[u8],
+    entries: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Result<Vec<u8>, String> {
+    if entries.is_empty() {
+        return Ok(bytes.to_vec());
+    }
+    let mut module = wasm_encoder::Module::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        let payload = payload.map_err(|e| e.to_string())?;
+        if let wasmparser::Payload::CustomSection(section) = &payload {
+            if section.name() == "telora.service.metadata" {
+                return Err("Service metadata already attached".into());
+            }
+        }
+        if let Some((id, range)) = payload.as_section() {
+            module.section(&wasm_encoder::RawSection {
+                id,
+                data: &bytes[range.start as usize..range.end as usize],
+            });
+        }
+    }
+    module.section(&wasm_encoder::CustomSection {
+        name: "telora.service.metadata".into(),
+        data: serde_json::to_vec(&serde_json::json!({"version":1,"entries":entries}))
+            .map_err(|e| e.to_string())?
+            .into(),
+    });
+    Ok(module.finish())
+}

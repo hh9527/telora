@@ -125,16 +125,19 @@ unsafe fn prepare() -> bool {
             Phase::Unprepared => {}
         }
         service().phase = Phase::Preparing;
+        crate::service_metadata::open();
         let contract = service().contract;
         let initialize: unsafe extern "C" fn() -> u32 = core::mem::transmute(contract.initialize);
         let entry: unsafe extern "C" fn() -> u32 = core::mem::transmute(contract.entry);
         if initialize() == 0 {
             service().phase = Phase::Failed;
+            crate::service_metadata::close();
             return false;
         }
         let plan = entry();
         if plan == 0 {
             service().phase = Phase::Failed;
+            crate::service_metadata::close();
             return false;
         }
         let fields = word(plan, DATA).checked_add(8).unwrap();
@@ -200,6 +203,7 @@ pub unsafe extern "C" fn create() -> i32 {
         if !prepare() {
             return 1;
         }
+        let _metadata = crate::service_metadata::Close;
         assert!(
             service().phase == Phase::Prepared,
             "service already created"

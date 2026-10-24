@@ -25,6 +25,7 @@ mod sort;
 mod sources;
 mod service_sources;
 mod service;
+mod service_metadata;
 mod snapshot;
 mod image_packing;
 mod data_image;

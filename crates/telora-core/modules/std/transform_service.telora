@@ -180,3 +180,12 @@ def source: Fn(String) -> Fn(Type, Option(Sources)) -> Sources = fn(name) {
 };
 
 pub use self::{Context, TransformService, ServiceCollection, ServiceCollectionProp, RouteEntry, Slot, Sources, collection, path_matches, path_captures, routing, slot, source};
+
+# Initialization-only, JSON metadata owned by the Service build; not a handler root.
+use std::_rt as rt;
+use std::json as json;
+def publish_metadata: Fn(String, Value) -> () = fn(name, value) {
+    if rt::publish_service_metadata(name, json::stringify(value)) { () }
+    else { fail!("Service metadata requires initialization and a unique nonempty name", name) }
+};
+pub use self::{publish_metadata};

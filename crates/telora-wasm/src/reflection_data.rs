@@ -83,6 +83,7 @@ pub fn build(image: &TypeImage, layouts: &[Entry]) -> Result<Vec<u8>, String> {
                 | T::Option
                 | T::Result
                 | T::FoldControl
+                | T::Nominal(_)
         ) {
             let children = ty
                 .arguments
@@ -151,9 +152,14 @@ pub fn build(image: &TypeImage, layouts: &[Entry]) -> Result<Vec<u8>, String> {
         let offset = append(&mut data, &encoded)?;
         put(&mut data, row + 16, offset);
         put(&mut data, row + 20, members.len() as u32);
-        if let T::Native(id) = ty.constructor
-            && let Some(name) = image.native_name(id)
-        {
+        let name = match ty.constructor {
+            T::Native(id) => image.native_name(id),
+            T::Nominal(symbol) => image
+                .definition(symbol)
+                .map(|definition| definition.name.as_str()),
+            _ => None,
+        };
+        if let Some(name) = name {
             let offset = append(&mut data, name.as_bytes())?;
             put(&mut data, row + 24, offset);
             put(&mut data, row + 28, name.len() as u32);

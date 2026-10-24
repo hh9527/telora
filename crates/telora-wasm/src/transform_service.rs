@@ -204,6 +204,56 @@ impl TransformSession {
         Ok(diagnostics)
     }
 
+    pub(crate) fn take_initialization_metadata(
+        &mut self,
+    ) -> Result<std::collections::BTreeMap<String, serde_json::Value>, String> {
+        if !self.ready || self.poisoned || self.baseline.is_some() {
+            return Err("Service metadata requires successful unsealed initialization".into());
+        }
+        let export = self
+            .session
+            .instance
+            .get_typed_func::<u32, ()>(&self.session.store, "telora_service_metadata_export")
+            .map_err(|e| e.to_string())?;
+        let result = buffers::alloc(&mut self.session, 12, 4)?;
+        self.session.guest_call(export, result)?;
+        let [pointer, length, _] = buffers::words(&self.session, result)?;
+        let bytes = buffers::bytes(&self.session, pointer, length)?;
+        buffers::free(&mut self.session, pointer, length, 1)?;
+        buffers::free(&mut self.session, result, 12, 4)?;
+        fn word(input: &mut &[u8]) -> Result<usize, String> {
+            let (word, rest) = input
+                .split_first_chunk::<4>()
+                .ok_or("truncated Service metadata")?;
+            *input = rest;
+            Ok(u32::from_le_bytes(*word) as usize)
+        }
+        fn field<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], String> {
+            let size = word(input)?;
+            let value = input
+                .get(..size)
+                .ok_or("truncated Service metadata field")?;
+            *input = &input[size..];
+            Ok(value)
+        }
+        let mut input = bytes.as_slice();
+        let count = word(&mut input)?;
+        let mut metadata = std::collections::BTreeMap::new();
+        for _ in 0..count {
+            let name = std::str::from_utf8(field(&mut input)?)
+                .map_err(|e| e.to_string())?
+                .to_owned();
+            let value = serde_json::from_slice(field(&mut input)?).map_err(|e| e.to_string())?;
+            if name.is_empty() || metadata.insert(name, value).is_some() {
+                return Err("invalid Service metadata name".into());
+            }
+        }
+        if !input.is_empty() {
+            return Err("trailing Service metadata".into());
+        }
+        Ok(metadata)
+    }
+
     /// All Host-owned ABI buffers have been freed before sealing initialization or reset.
     pub fn seal_initialization(&mut self) -> Result<(), String> {
         self.seal_initialization_mode(false).map(|_| ())

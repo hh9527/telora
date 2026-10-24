@@ -34,6 +34,7 @@ pub struct PreparedService<'build> {
     build: &'build ServiceBuild,
     snapshot: telora_wasm_shared::snapshot_artifact::Snapshot,
     dependencies: Option<RuntimeDependencies>,
+    metadata: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl ServiceBuild {
@@ -104,6 +105,7 @@ impl<'build> ServicePreparation<'build> {
     }
 
     pub fn seal(mut self, mode: SnapshotMode) -> Result<PreparedService<'build>, String> {
+        let metadata = self.service.take_initialization_metadata()?;
         let dependencies = match mode {
             SnapshotMode::Runtime => Some(self.service.seal_runtime_initialization()?),
             SnapshotMode::Full => {
@@ -115,6 +117,7 @@ impl<'build> ServicePreparation<'build> {
             build: self.build,
             snapshot: self.service.publication_snapshot()?,
             dependencies,
+            metadata,
         })
     }
 }
@@ -139,8 +142,9 @@ impl PreparedService<'_> {
         } else {
             (self.build.bytes.clone(), None)
         };
+        let bytes = crate::publication::attach_snapshot(&bytes, &self.snapshot)?;
         Ok((
-            crate::publication::attach_snapshot(&bytes, &self.snapshot)?,
+            crate::publication::attach_metadata(&bytes, &self.metadata)?,
             report,
         ))
     }

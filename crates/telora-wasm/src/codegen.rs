@@ -149,6 +149,7 @@ fn compile(
         ("telora_roots_safepoint", 2),
         ("telora_array_can_append", 0),
         ("telora_content_append", 3),
+        ("telora_service_metadata_publish", BINARY_TYPE),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }
