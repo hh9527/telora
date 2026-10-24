@@ -1,0 +1,29 @@
+pub mod schema;
+use self::schema as model;
+use std::codec as codec;
+use std::value::{Value};
+
+@model::dataset("devices", "device_rows")
+@model::description("Managed devices")
+type Device = struct { id: String, name: String };
+
+@model::dataset("alarms", "alarm_rows")
+type Alarm = struct { id: Int, device: String };
+
+# exact impl 无需 DatasetSpec，不需要为每个类型手写实例包装
+type Manual = struct { value: String };
+impl model::Dataset for Manual {
+    describe: fn() {
+        {id: "manual", table: "manual_rows", fields: ["value"], description: None}.ty!(model::DatasetInfo)
+    },
+};
+
+# Property 支撑的派生实现与手写实现产生同一种描述，可放入异构模型集合
+def datasets: Array(model::DatasetInfo) = [
+    model::describe(Device.type),
+    model::describe(Alarm.type),
+    model::describe(Manual.type),
+];
+
+pub def result: Value = codec::encode(datasets);
+pub def tables: Value = codec::encode(model::table_names(datasets));

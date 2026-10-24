@@ -1,0 +1,3 @@
+def erased: Fn(Type) -> model::DatasetInfo = fn(target) {
+    model::describe(target)
+};

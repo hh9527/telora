@@ -1,0 +1,2 @@
+type Missing = struct { id: String };
+pub def rejected: Value = codec::encode(model::describe(Missing.type));

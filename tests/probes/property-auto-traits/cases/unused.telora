@@ -1,0 +1,10 @@
+@property(PropertyTarget::Type)
+type Unrelated = struct { text: String };
+
+def broken: Fn(Type, Option(Unrelated)) -> Unrelated = fn(owner, previous) {
+    fail!("unused Property provider was initialized", owner)
+};
+
+@broken
+type NeverUsed = struct {};
+pub use self::{NeverUsed};

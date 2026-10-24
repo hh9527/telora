@@ -1,0 +1,59 @@
+use std::type_property as props;
+use std::type_desc as type_desc;
+use std::array as array;
+
+@property(PropertyTarget::Type)
+type DatasetSpec = struct { id: String, table: String };
+
+@property(PropertyTarget::Type)
+type Description = struct { text: String };
+
+def dataset: Fn(String, String) -> Fn(Type, Option(DatasetSpec)) -> DatasetSpec = fn(id, table) {
+    fn(owner, previous) { {id, table} }
+};
+
+def description: Fn(String) -> Fn(Type, Option(Description)) -> Description = fn(text) {
+    fn(owner, previous) { {text} }
+};
+
+type DatasetInfo = struct {
+    id: String,
+    table: String,
+    fields: Array(String),
+    description: Option(String),
+};
+
+trait Dataset {
+    describe: Fn() -> DatasetInfo,
+};
+
+# 用显式 blanket impl 原型化 Property 支撑的自动能力；没有引入 AutoTrait 新语法
+impl(T: Property(DatasetSpec) + ?Property(Description)) Dataset for T {
+    describe: fn() {
+        let spec = props::required@[DatasetSpec, T]();
+        let note = match props::optional@[Description, T]() {
+            Some(value) => Some(value.text),
+            None => None,
+        };
+        {
+            id: spec.id,
+            table: spec.table,
+            fields: array::map(type_desc::fields(T.type), fn(field) { field.name }),
+            description: note,
+        }.ty!(DatasetInfo)
+    },
+};
+
+# 调用者传递 T.type 来推导 T；读取属性的权限来自 Dataset impl 中的 bound
+def describe: for(T: Dataset) Fn(TypeOf(T)) -> DatasetInfo = fn(target) {
+    Dataset(T).describe()
+};
+
+def table_names: Fn(Array(DatasetInfo)) -> Array(String) = fn(datasets) {
+    array::map(datasets, fn(dataset) { dataset.table })
+};
+
+pub use self::{
+    DatasetSpec, Description, DatasetInfo, Dataset,
+    dataset, description, describe, table_names,
+};

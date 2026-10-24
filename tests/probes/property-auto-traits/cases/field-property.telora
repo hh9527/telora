@@ -1,0 +1,15 @@
+use std::type_property as props;
+
+@property(PropertyTarget::Field)
+type Column = struct { name: String };
+def column: Fn(String) -> Fn(props::FieldPropertyCtx, Option(Column)) -> Column = fn(name) {
+    fn(ctx, previous) { {name} }
+};
+
+type Record = struct { @column("DEVICE_ID") id: String };
+
+# T 的 type-site bound 不表达 T.id 的 field-site 属性
+def field_value: for(T: Property(Column)) Fn(TypeOf(T)) -> String = fn(target) {
+    props::required@[Column, T]().name
+};
+pub def rejected: Value = codec::encode(field_value(Record.type));
