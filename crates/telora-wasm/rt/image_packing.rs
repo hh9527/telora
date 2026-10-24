@@ -4,6 +4,7 @@ use crate::{abi::*, tables::Table};
 use alloc::vec::Vec;
 
 pub(crate) struct Packing {
+    pub dependencies: crate::collect::PublicationDependencies,
     tables: [Table; TABLE_COUNT as usize],
     demands: Vec<u8>,
     handler: Option<u32>,
@@ -12,8 +13,13 @@ pub(crate) struct Packing {
 }
 impl Packing {
     pub(crate) unsafe fn begin(service: bool) -> Self {
+        unsafe { Self::begin_mode(service, false) }
+    }
+    pub(crate) unsafe fn begin_mode(service: bool, runtime: bool) -> Self {
         unsafe {
-            let saved = Self {
+            assert!(!runtime || service);
+            let mut saved = Self {
+                dependencies: crate::collect::PublicationDependencies::default(),
                 tables: crate::tables::snapshot(),
                 demands: crate::collect::snapshot_demands(),
                 handler: service.then(|| crate::service::snapshot()),
@@ -21,7 +27,9 @@ impl Packing {
                 stats: crate::collect::snapshot_stats(),
             };
             crate::heap::start_packing();
-            if service {
+            if runtime {
+                saved.dependencies = crate::collect::collect_runtime();
+            } else if service {
                 crate::collect::collect_initialization();
             } else {
                 crate::collect::collect_data();

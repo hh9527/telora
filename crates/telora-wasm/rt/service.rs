@@ -33,6 +33,9 @@ pub(crate) unsafe fn collect_initialization(gc: &mut crate::collect::Collector) 
     unsafe {
         if let Some(service) = (&mut *core::ptr::addr_of_mut!(SERVICE)).as_mut() {
             assert!(service.phase == Phase::Ready);
+            // RT invokes this generated callback directly through the table;
+            // it is a runtime root even without a captured language closure.
+            gc.trace_function_demands(service.contract.materialize);
             service.handler = gc.value(service.handler, service.contract.handler_type);
             if !crate::heap::packing() {
                 service.initializer = 0;

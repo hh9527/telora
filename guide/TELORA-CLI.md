@@ -204,3 +204,16 @@ build 选择导出 `@service::collection` MainService struct 的模块，输出�
 stdin JSON。--serve 支持 stdio+jsonl://、http://IP:PORT 和
 http+unix:///absolute/path.sock；HTTP 路由由集合字段的 `@http::get/post` 声明。
 完整生命周期、响应和配额说明见 [执行模式](EXEC-MODE.md)。
+
+快照构建在发布前完成初始化，默认按初始化结果专门化运行期代码：
+
+```sh
+telora build @src/lib --snapshot -o runtime.wasm
+telora build @src/lib --snapshot=full -o full.wasm
+```
+
+构建在同一进程内保守生成并执行初始化 A，再以本次 A.result 专门化 B。没有单独导入可修改的准备结果文件。B 通过 snapshot 恢复类型化状态，并保留运行期输入校验。初始化失败不会发布 B。
+
+`--snapshot` 与 `--snapshot=runtime` 等价；`--snapshot=full` 保留完整生成代码作为对照。不传 `--snapshot` 时，初始化留给运行时。
+
+当前实现将 Ready 全局读取替换为 getter，将不可达生成函数体替换为 trap stub，保留原函数表和类型编号；完整 RT 和静态镜像仍保留。快照专门化主要减少制品代码及加载成本，尚不避免保守生成或 A 的执行成本。实现说明见 [运行期专门化](../discuss/snapshot-runtime-specialization.md)。

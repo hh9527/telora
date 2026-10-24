@@ -60,11 +60,19 @@ fn collection_runs_from_source_artifact_and_snapshot() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), 42);
-    for (name, snapshot) in [("app.wasm", false), ("snapshot.wasm", true)] {
+    for (name, snapshot) in [
+        ("app.wasm", false),
+        ("snapshot.wasm", true),
+        ("runtime.wasm", true),
+    ] {
         let mut build = telora(&cwd);
         build.args(["build", "@src/main", "-o", name]);
         if snapshot {
-            build.arg("--snapshot");
+            build.arg(if name == "runtime.wasm" {
+                "--snapshot"
+            } else {
+                "--snapshot=full"
+            });
         }
         let output = build.output().unwrap();
         assert!(
@@ -135,11 +143,20 @@ fn publication_compiles_modules_and_snapshot_sources_without_original_files() {
     )
     .unwrap();
     let mut artifacts = Vec::new();
-    for (name, snapshot) in [("ordinary.wasm", false), ("snapshot.wasm", true)] {
+    for (name, snapshot) in [
+        ("ordinary.wasm", false),
+        ("snapshot.wasm", true),
+        ("runtime.wasm", true),
+    ] {
         let mut build = telora(&cwd);
         build.args(["build", "@src/main", "-o", name]);
         if snapshot {
-            build.args(["--snapshot", "--source", "external=external.yaml"]);
+            build.arg(if name == "runtime.wasm" {
+                "--snapshot"
+            } else {
+                "--snapshot=full"
+            });
+            build.args(["--source", "external=external.yaml"]);
         }
         let output = build.output().unwrap();
         assert!(
@@ -222,6 +239,7 @@ fn publication_compiles_modules_and_snapshot_sources_without_original_files() {
                     .unwrap(),
             )
             .unwrap();
+            assert_eq!(response["error"], false, "{response}");
             assert_eq!(
                 response["ok"],
                 serde_json::json!({
@@ -713,6 +731,7 @@ fn build_phase_timings_are_opt_in_and_preserve_artifacts() {
             .collect();
         let phases: Vec<&str> = diagnostics
             .iter()
+            .filter(|d| d["schema"] == "telora.build.timing/v1")
             .map(|d| {
                 assert_eq!(d["schema"], "telora.build.timing/v1");
                 assert_eq!(d["code"], "build-phase-timing");
@@ -720,6 +739,8 @@ fn build_phase_timings_are_opt_in_and_preserve_artifacts() {
                 let phase = d["phase"].as_str().unwrap();
                 let parent = if phase == "total" {
                     Value::Null
+                } else if phase == "runtime_specialization" {
+                    serde_json::json!("snapshot")
                 } else if phase.starts_with("load_") {
                     serde_json::json!("engine_load")
                 } else {
@@ -743,6 +764,7 @@ fn build_phase_timings_are_opt_in_and_preserve_artifacts() {
                 "service_prepare",
                 "service_initialize",
                 "service_seal",
+                "runtime_specialization",
                 "snapshot",
             ]);
         }
@@ -750,4 +772,179 @@ fn build_phase_timings_are_opt_in_and_preserve_artifacts() {
         assert_eq!(phases, expected);
     }
     fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
+fn specialized_snapshot_preserves_type_identity_and_runtime_checks() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), r#"
+        use std::transform_service as service;
+        use std::codec as codec;
+        use std::value::{Value};
+        def minimum: Int = 0;
+        @check(fn(value) { if value > minimum { Ok(()) } else { Err(blame!("positive required", value)) } })
+        type Id = struct(Int);
+        def offsets: Array(Int) = [10, 20];
+        use std::type_property as props;
+        @property(PropertyTarget.Type) type Mark = struct { value: Int };
+        def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { {value: 0} };
+        @mark type Tagged = struct {};
+        type Untagged = struct {};
+        def even: Fn(Int) -> Bool = fn(n) { if n == 0 { True } else { odd(n - 1) } };
+        def odd: Fn(Int) -> Bool = fn(n) { if n == 0 { False } else { even(n - 1) } };
+        type Model = struct { kind: Type, offset: Int, choices: Array(Fn(Int) -> Bool) };
+        impl service::TransformService for Model {
+            init: fn(ctx) { {kind: Id.type, offset: offsets[1], choices: [even, odd]}.ty!(Self) },
+            transform: fn(self, input) {
+                match codec::decode@[Id](input) {
+                    Ok(id) => if self.kind == Id.type && self.choices[0](4) && self.choices[1](3)
+                        && props::optional@[Mark, Untagged]() == None {
+                        Value::Int(id.0 + self.offset + props::required@[Mark, Tagged]().value)
+                    } else { fail!("type identity or captured behavior changed") },
+                    Err(_) => Value::False,
+                }
+            },
+        };
+        @service::collection
+        pub type MainService = struct { @service::slot("transform") model: Model };
+    "#).unwrap();
+    let mut build = telora(&cwd);
+    build.env("TELORA_WASM_TIMINGS", "1");
+    build.args(["build", "@src/main", "--snapshot", "-o", "runtime.wasm"]);
+    let output = build.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|record| record["schema"] == "telora.runtime-specialization/v1")
+        .unwrap();
+    assert!(report["prepared_getters"].as_u64().unwrap() > 0, "{report}");
+    let bytes = fs::read(cwd.join("runtime.wasm")).unwrap();
+    fs::remove_dir_all(cwd.join("src")).unwrap();
+    let mut runner = telora_run::Runner::load(&bytes, telora_run::Options::default()).unwrap();
+    assert!(runner.initialize(&[]).unwrap().is_empty());
+    for (input, expected) in [
+        ("1", serde_json::json!(21)),
+        ("0", serde_json::json!(false)),
+        ("null", serde_json::json!(false)),
+        ("2", serde_json::json!(22)),
+    ] {
+        let response: Value =
+            serde_json::from_slice(&runner.request(method_request(input).as_bytes()).unwrap())
+                .unwrap();
+        assert_eq!(response["error"], false, "{response}");
+        assert_eq!(response["ok"], expected);
+    }
+}
+
+#[test]
+fn specialized_snapshot_does_not_publish_failed_initialization() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
+        use std::transform_service as service;
+        type Model = struct {};
+        impl service::TransformService for Model {
+            init: fn(ctx) { fail!("A failed") },
+            transform: fn(self, input) { input },
+        };
+        @service::collection
+        pub type MainService = struct { @service::slot("transform") model: Model };
+    "#,
+    )
+    .unwrap();
+    fs::write(cwd.join("runtime.wasm"), b"previous artifact").unwrap();
+    let mut build = telora(&cwd);
+    build.args(["build", "@src/main", "--snapshot", "-o", "runtime.wasm"]);
+    let output = build.output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("A failed"));
+    assert_eq!(
+        fs::read(cwd.join("runtime.wasm")).unwrap(),
+        b"previous artifact"
+    );
+}
+
+#[test]
+fn specialized_snapshot_recovers_after_recursive_fuel_and_memory_traps() {
+    let cwd = service_fixture();
+    let output = telora(&cwd)
+        .args(["build", "@src/main", "--snapshot", "-o", "runtime.wasm"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(cwd.join("runtime.wasm")).unwrap();
+    for (fuel, memory, input) in [
+        (10_000, 64 * 1024 * 1024, "\"loop\""),
+        (1_000_000_000, 8 * 1024 * 1024, "\"grow\""),
+    ] {
+        let mut runner = telora_run::Runner::load(
+            &bytes,
+            telora_run::Options {
+                request_fuel: Some(fuel),
+                memory_limit: Some(memory),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(runner.initialize(&[]).unwrap().is_empty());
+        let first: Value =
+            serde_json::from_slice(&runner.request(method_request("42").as_bytes()).unwrap())
+                .unwrap();
+        assert_eq!(first["ok"], 42);
+        let failed = runner
+            .request(method_request(input).as_bytes())
+            .unwrap_err();
+        let reason = failed.to_string();
+        assert!(
+            reason.contains(if input == "\"loop\"" {
+                "fuel"
+            } else {
+                "growth"
+            }),
+            "{reason}"
+        );
+        let recovered: Value =
+            serde_json::from_slice(&runner.request(method_request("43").as_bytes()).unwrap())
+                .unwrap();
+        assert_eq!(recovered["ok"], 43);
+    }
+}
+
+#[test]
+fn snapshot_specialization_preserves_conservative_provider_failures() {
+    let cwd = service_fixture();
+    let mut source = fs::read_to_string(cwd.join("src/main.telora")).unwrap();
+    source.push_str(r#"
+        @property(PropertyTarget.Type) type Mark = struct { value: Int };
+        def mark: Fn(Type, Option(Mark)) -> Mark = fn(owner, previous) { fail!("provider must run in A") };
+        @mark type Unused = struct {};
+    "#);
+    fs::write(cwd.join("src/main.telora"), source).unwrap();
+    for mode in ["--snapshot", "--snapshot=full"] {
+        fs::write(cwd.join("existing.wasm"), b"previous artifact").unwrap();
+        let output = telora(&cwd)
+            .args(["build", "@src/main", mode, "-o", "existing.wasm"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("provider must run in A"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read(cwd.join("existing.wasm")).unwrap(),
+            b"previous artifact"
+        );
+    }
 }

@@ -9,8 +9,14 @@ use telora_wasm_shared::layout_image as layout;
 mod initialization;
 pub(crate) use initialization::collect as collect_initialization;
 pub(crate) use initialization::collect_data;
+pub(crate) use initialization::collect_runtime;
 
 pub(crate) static mut TRACE_TYPES: u32 = 0;
+#[derive(Default)]
+pub(crate) struct PublicationDependencies {
+    pub functions: Vec<u32>,
+    pub ready_demands: Vec<u32>,
+}
 pub(crate) static mut DEMANDS: (u32, u32) = (0, 0);
 static mut FUNCTION_DEMANDS: (u32, u32, u32) = (0, 0, 0);
 
@@ -78,6 +84,8 @@ pub(crate) struct Collector {
     pub pending: Vec<(u32, u32, u32, u32, u32)>,
     pub sources: alloc::collections::BTreeSet<u32>,
     pub demands: alloc::collections::BTreeSet<u32>,
+    pub functions: alloc::collections::BTreeSet<u32>,
+    pub runtime_publication: bool,
 }
 
 impl Collector {
@@ -98,6 +106,9 @@ impl Collector {
 
     pub unsafe fn trace_function_demands(&mut self, function: u32) {
         unsafe {
+            if self.runtime_publication {
+                self.functions.insert(function);
+            }
             let (dependencies, table_base, count) = FUNCTION_DEMANDS;
             let Some(index) = function.checked_sub(table_base) else {
                 return;
@@ -261,7 +272,7 @@ impl Collector {
             next
         }
     }
-    pub unsafe fn finish(mut self) {
+    pub unsafe fn finish(mut self) -> PublicationDependencies {
         unsafe {
             if !crate::heap::packing() {
                 crate::gc_runtime::collect_pins(&mut self);
@@ -269,6 +280,29 @@ impl Collector {
             while let Some((table, old, at, bytes, layout)) = self.pending.pop() {
                 self.trace_object(table, old, at, bytes, layout);
             }
+            let dependencies = if self.runtime_publication {
+                assert!(crate::heap::packing());
+                let ready_demands = self
+                    .demands
+                    .iter()
+                    .copied()
+                    .filter(|&index| word(DEMANDS.0 + index * DEMAND_BYTES, 0) == 2)
+                    .collect();
+                let (demands, count) = DEMANDS;
+                for index in 0..count {
+                    if !self.demands.contains(&index) {
+                        let slot = demands + index * DEMAND_BYTES;
+                        self.put(slot, 0);
+                        self.put(slot + 4, 0);
+                    }
+                }
+                PublicationDependencies {
+                    functions: self.functions.iter().copied().collect(),
+                    ready_demands,
+                }
+            } else {
+                PublicationDependencies::default()
+            };
             // Sources are Host metadata, but RT may render their names in captures.
             if !crate::heap::packing() {
                 crate::sources::collect(&mut self);
@@ -306,6 +340,7 @@ impl Collector {
             if crate::heap::packing() {
                 crate::heap::retain_source(self.heap);
             }
+            dependencies
         }
     }
 }
@@ -340,14 +375,14 @@ pub unsafe extern "C" fn telora_collect(roots: u32, count: u32) -> u32 {
 }
 
 impl Collector {
-    unsafe fn begin() -> Self {
+    pub(super) unsafe fn begin() -> Self {
         unsafe {
             // Keep source allocations alive until traversal and patching finish.
             let old_work = crate::heap::take_source();
             crate::content::begin();
             let old = core::array::from_fn(|i| (table_address(i as u32) as *const Table).read());
             let slots = (0..TABLE_COUNT).map(|_| vec![]).collect();
-        Collector {
+            Collector {
                 heap: old_work,
                 types: TRACE_TYPES,
                 old,
@@ -357,6 +392,8 @@ impl Collector {
                 pending: vec![],
                 sources: alloc::collections::BTreeSet::new(),
                 demands: alloc::collections::BTreeSet::new(),
+                functions: alloc::collections::BTreeSet::new(),
+                runtime_publication: false,
             }
         }
     }
