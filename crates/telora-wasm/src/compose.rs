@@ -4,6 +4,7 @@ use crate::{
     template::{self, Parts},
 };
 use wasm_encoder::*;
+mod compact;
 mod trace_image;
 
 pub(crate) fn static_base() -> Result<u32, String> {
@@ -418,5 +419,12 @@ pub(crate) fn link(
             .into_iter()
             .filter(|(name, _)| name.starts_with("telora.")),
     );
+    // Relocations use fixed-width slots until all indices and addresses are final.
+    // Re-encode only code: function identities and metadata remain unchanged.
+    let code = output
+        .sections
+        .get_mut(&10)
+        .ok_or("Wasm: linked code missing")?;
+    *code = compact::code(code)?;
     Ok(output.module())
 }

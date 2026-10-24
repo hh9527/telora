@@ -15,6 +15,7 @@ mod host_memory;
 mod inline_aggregates;
 mod interpreters;
 mod json;
+mod linked_encoding;
 mod records;
 mod reflection;
 mod regex;

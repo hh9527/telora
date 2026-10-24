@@ -46,6 +46,8 @@ seal 的 MIR；执行入口必须通过 seal。后续阶段直接使用静态结
 
 codegen 消费 SealedExecutable，生成 Wasm 指令和类型确定的胶水。Rust RT 在 Cargo
 构建期间预编译、预链接并嵌入 Telora；用户执行期间无需外部 linker，不写临时代码文件。
+链接阶段用固定宽度的 LEB 字段填入重定位结果，完成全部编号和地址分配后，将最终代码段
+重新编码为最短 LEB 形式。压紧保持函数索引、指令语义和其他段的内容，适用于所有编译入口。
 执行统一为 Wasm/wasmi；`telora build` 可保存普通 Wasm，也可嵌入初始化 snapshot，
 `telora-run` 独立执行制品。没有运行后端选择开关。
 
