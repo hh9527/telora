@@ -1,0 +1,15 @@
+use std::type_memorizer as memo;
+use std::diagnostics as diagnostics;
+use std::array as array;
+def cyclic: memo::TypeMemorizer(String) = memo::type_memorizer(fn(ty) { memo::computed_with_type(cyclic, ty) });
+def failing: memo::TypeMemorizer(String) = memo::type_memorizer(fn(ty) {
+    if ty == Int.type { fail!("calculation failed") } else { "ok" }
+});
+def errors: Fn(memo::TypeMemorizer(String), Type) -> String = fn(m, ty) {
+    match diagnostics::with_diagnostics(fn(value: Type) { memo::computed_with_type(m, value) })(ty) {
+        Ok(_) => "unexpected success", Err(reports) => reports[0].message,
+    }
+};
+pub def answer: Fn() -> Array(String) = fn() {
+    [errors(cyclic, Int.type), errors(cyclic, Int.type), errors(failing, Int.type), errors(failing, Int.type), memo::computed_with_type(failing, String.type)]
+};

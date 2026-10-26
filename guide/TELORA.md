@@ -1316,3 +1316,17 @@ pub def answer: Fn(Int) -> Int = build::stage(
 普通运行环境不允许执行 `stage`。目前普通函数通过 Rust `StagedBuild`／
 `staged_build::load` API 发布和加载；Service 模型使用 `telora build <module> --staged -o model.wasm`。
 后者不接受运行期源声明或 `--source`，不能与 `--snapshot` 混用。声明的数据模块须先打包为构建输入。
+
+### 类型信息缓存
+
+`std::type_memorizer` 提供以精确类型身份索引的 `TypeMemorizer(R)`。构造时固定计算函数，使用 `computed_with_type` 查询：
+
+```telora
+use std::type_memorizer as memo;
+use std::type_desc as td;
+
+def names: memo::TypeMemorizer(Option(String)) = memo::type_memorizer(td::name);
+def inspect: Fn(Type) -> Option(String) = fn(ty) { memo::computed_with_type(names, ty) };
+```
+
+每个实例独立缓存成功结果，内部槽位、命中和数量没有公开接口。查询闭包只暴露 Type → R 的行为，计算函数应只依赖类型及不可变捕获值。同一 key 的递归计算报告循环依赖；语言失败不缓存。缓存由闭包可达性管理，可用于构建期，也可显式保留在运行程序中。实现首版为封闭类型空间分配稠密槽位，查询成本固定，存储成本随类型空间和结果槽宽增长。

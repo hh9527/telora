@@ -31,6 +31,7 @@ impl Emitter<'_> {
             Some((1, "equal")) => self.equal_native(),
             Some((2, name)) => self.dynamic_native(name),
             Some((3, name)) => self.reflect_native(name),
+            Some((38, name)) => self.type_memorizer_native(name),
             Some((5, name)) => self.array_native(name),
             Some((36, "compute")) => self.sequence_compute(),
             Some((6, name)) => self.dict_native(name),

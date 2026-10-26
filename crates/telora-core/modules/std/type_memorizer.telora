@@ -1,0 +1,16 @@
+# A type-indexed function with private memoized implementation state.
+# The computation is fixed at construction; there are no cache observation APIs.
+type TypeMemorizer(R) = struct { computed_with_type: Fn(Type) -> R };
+# Storage is captured by the query closure, never returned to applications.
+type Slot(R) = enum { Empty, Pending, Ready(R) };
+native new_slots: for(R) Fn() -> Array(Slot(R));
+native lookup: for(R) Fn(Array(Slot(R)), Type, Fn(Type) -> R) -> R;
+
+def type_memorizer: for(R) Fn(Fn(Type) -> R) -> TypeMemorizer(R) = fn(calc) {
+    let slots = new_slots@[R]();
+    {computed_with_type: fn(ty) { lookup(slots, ty, calc) }}.ty!(TypeMemorizer(R))
+};
+def computed_with_type: for(R) Fn(TypeMemorizer(R), Type) -> R = fn(memorizer, ty) {
+    memorizer.computed_with_type(ty)
+};
+pub use self::{TypeMemorizer, type_memorizer, computed_with_type};

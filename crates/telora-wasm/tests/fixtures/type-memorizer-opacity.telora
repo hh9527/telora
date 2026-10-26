@@ -1,0 +1,17 @@
+use std::type_memorizer as memo;
+use std::type_desc as td;
+use std::dyn as dyn;
+use std::array as array;
+def m: memo::TypeMemorizer(String) = memo::type_memorizer(fn(ty: Type) { "value" });
+pub def answer: Fn() -> Array(Bool) = fn() {
+    let first = memo::computed_with_type(m, Int.type);
+    let again = memo::computed_with_type(m, Int.type);
+    let public_fields = match dyn::fields(dyn::pack(memo::TypeMemorizer(String).type, m)) {
+        Ok(fields) => fields,
+        Err(_) => fail!("cannot inspect memorizer"),
+    };
+    [first == "value" && again == first,
+     array::map(td::fields(memo::TypeMemorizer(String).type), fn(f) { f.name }) == ["computed_with_type"],
+     array::map(public_fields, fn(f) { f.0 }) == ["computed_with_type"],
+     match dyn::fields(public_fields[0].1) { Err(_) => True, Ok(_) => False }]
+};

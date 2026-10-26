@@ -106,6 +106,7 @@ pub mod testing;
 pub mod transform_service;
 pub mod transport;
 mod transport_heap;
+mod type_memorizer;
 
 pub use codegen::{compile_check, compile_executable, compile_service};
 

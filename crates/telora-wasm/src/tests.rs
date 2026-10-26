@@ -29,6 +29,7 @@ mod source_ranges;
 mod tail_calls;
 mod test_descriptions;
 mod transform_service;
+mod type_memorizer;
 mod variant_origins;
 
 #[test]

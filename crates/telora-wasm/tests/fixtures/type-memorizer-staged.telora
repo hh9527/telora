@@ -1,0 +1,9 @@
+use std::type_memorizer as memo;
+use std::build as build;
+def calc: Fn(Type) -> String = fn(ty) { if ty == Int.type { "integer" } else { "other" } };
+pub def answer: Fn(Bool) -> String = build::stage(fn() {
+    let m = memo::type_memorizer(calc);
+    let warmed = memo::computed_with_type(m, Int.type);
+    if warmed != "integer" { fail!("warmup failed") } else { () };
+    {runtime: m, information: {}}
+}, fn(m) { fn(other: Bool) { memo::computed_with_type(m, if other { String.type } else { Int.type }) } });

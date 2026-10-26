@@ -1,0 +1,15 @@
+use std::type_memorizer as memo;
+use std::type_desc as td;
+type First = struct(String);
+type Second = struct(String);
+def burn: Fn(Int) -> Int = fn(n) { if n == 0 { 0 } else { 1 + burn(n - 1) } };
+def cached: memo::TypeMemorizer(Array(String)) = memo::type_memorizer(fn(ty) {
+    let work = burn(200);
+    [match td::name(ty) { Some(name) => name, None => "anonymous" }, `work=\{work}`]
+});
+def another: memo::TypeMemorizer(String) = memo::type_memorizer(fn(ty) { "independent" });
+pub def answer: Fn(Int) -> Array(String) = fn(key) {
+    let ty: Type = if key == 0 { First.type } else { Second.type };
+    let result = memo::computed_with_type(cached, ty);
+    if memo::computed_with_type(another, ty) != "independent" { fail!("cache instances mixed") } else { result }
+};
