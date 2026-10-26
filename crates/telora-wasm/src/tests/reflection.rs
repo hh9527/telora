@@ -134,3 +134,31 @@ fn reflection_errors_are_captured_and_dyn_fields_keep_their_origins() {
     }
     assert!(session.diagnostics().unwrap().is_empty());
 }
+
+#[test]
+fn nominal_names_preserve_identity_and_generic_arguments() {
+    let source = r#"
+        use std::type_desc as td;
+        use std::hash as hash;
+        type CustomerId = struct(Int);
+        type OrderId = struct(Int);
+        type Box(A) = struct { value: A };
+        pub def answer: Fn() -> Array(Bool) = fn() {
+            [td::name(CustomerId.type) != None,
+             td::name(CustomerId.type) != td::name(OrderId.type),
+             td::opaque_name(CustomerId.type) == None,
+             td::name(Int.type) == None,
+             td::name(Box(Int).type) == td::name(Box(String).type),
+             td::children(Box(Int).type) == [Int.type],
+             td::children(Box(String).type) == [String.type],
+             td::opaque_name(hash::HashState.type) == Some("std/hash#HashState")]
+
+        };
+    "#;
+    for _ in 0..2 {
+        let bytes = compile(source).unwrap();
+        let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+        session.initialize().unwrap();
+        assert_eq!(session.call(&[]).unwrap(), serde_json::json!(vec![true; 8]));
+    }
+}

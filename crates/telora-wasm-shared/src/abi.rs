@@ -1,5 +1,5 @@
 //! Shared physical layout; consumed by both codegen and Rust-compiled RT.
-pub const VERSION: u32 = 38;
+pub const VERSION: u32 = 39;
 /// Pointer-free aggregates carry a copy-stable marker, followed by inline fields.
 pub const INLINE_FIELDS: u32 = u32::MAX;
 pub const INLINE_DATA: u32 = 16;

@@ -94,7 +94,9 @@ use telora_wasm_shared::abi as runtime_abi;
 pub mod publication;
 mod scalars;
 mod sequences;
+pub mod service_build;
 pub mod session;
+mod specialization;
 mod stack_values;
 mod string_ops;
 mod tail_calls;
@@ -109,3 +111,5 @@ pub use codegen::{compile_check, compile_executable, compile_service};
 
 #[cfg(test)]
 mod tests;
+
+pub mod staged_build;

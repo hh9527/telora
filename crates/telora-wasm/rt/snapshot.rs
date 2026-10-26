@@ -46,9 +46,9 @@ impl<'a> Reader<'a> {
     }
 }
 
-unsafe fn encode() -> Vec<u8> {
+unsafe fn encode(runtime: bool) -> (Vec<u8>, crate::collect::PublicationDependencies) {
     unsafe {
-        let _packing = crate::image_packing::Packing::begin(true);
+        let mut packing = crate::image_packing::Packing::begin_mode(true, runtime);
         let mut out = Writer(Vec::new());
         out.0.extend_from_slice(&MAGIC);
         out.word(VERSION);
@@ -69,7 +69,7 @@ unsafe fn encode() -> Vec<u8> {
         for _ in 0..5 {
             out.word(0);
         }
-        out.word(crate::service::snapshot());
+        out.word(crate::program_root::snapshot());
 
         let sources = crate::sources::snapshot();
         out.word(sources.len().try_into().unwrap());
@@ -94,7 +94,7 @@ unsafe fn encode() -> Vec<u8> {
         for pattern in regexes {
             out.text(&pattern);
         }
-        out.0
+        (out.0, core::mem::take(&mut packing.dependencies))
     }
 }
 
@@ -147,7 +147,7 @@ unsafe fn decode(bytes: &[u8]) {
         let regexes = (0..regex_count).map(|_| input.text()).collect::<Vec<_>>();
         input.finish();
         crate::regex::restore(&regexes);
-        crate::service::restore(handler);
+        crate::program_root::restore(handler);
         // Imported coordinates are only a transport representation. Rebuild the
         // graph into independently owned allocations and register normal roots.
         crate::collect::collect_initialization();
@@ -159,7 +159,7 @@ unsafe fn decode(bytes: &[u8]) {
 pub unsafe extern "C" fn telora_snapshot_export(result: u32) {
     unsafe {
         crate::host_memory::range(result, 8, 4);
-        let bytes = encode();
+        let (bytes, _) = encode(false);
         let len = u32::try_from(bytes.len()).expect("snapshot exceeds wasm32");
         let pointer = crate::host_memory::alloc(len, 1);
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer as *mut u8, bytes.len());
@@ -178,4 +178,29 @@ pub unsafe extern "C" fn telora_snapshot_import(pointer: u32, length: u32) {
             length as usize,
         ));
     }
+}
+
+// One build-internal transfer: snapshot, exact function slots, and Ready demand
+// indices. Each pair is an owned byte buffer with exact length/capacity.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_snapshot_runtime_export(result: u32) {
+    unsafe {
+        crate::host_memory::range(result, 24, 4);
+        let (snapshot, dependencies) = encode(true);
+        let buffers = [
+            snapshot,
+            words(dependencies.functions),
+            words(dependencies.ready_demands),
+        ];
+        for (index, bytes) in buffers.iter().enumerate() {
+            let length = u32::try_from(bytes.len()).expect("publication field exceeds wasm32");
+            let pointer = crate::host_memory::alloc(length, 1);
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer as *mut u8, bytes.len());
+            (result as *mut u32).add(index * 2).write(pointer);
+            (result as *mut u32).add(index * 2 + 1).write(length);
+        }
+    }
+}
+fn words(values: Vec<u32>) -> Vec<u8> {
+    values.into_iter().flat_map(u32::to_le_bytes).collect()
 }

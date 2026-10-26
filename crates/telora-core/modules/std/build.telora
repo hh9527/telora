@@ -1,0 +1,18 @@
+use std::value::{Value};
+use std::_rt as rt;
+use std::json as json;
+use std::dict as dict;
+
+type Output(P1) = struct {runtime: P1, information: Dict(Value)};
+
+def stage: for(P1, B) Fn(Fn() -> Output(P1), Fn(P1) -> B) -> B = fn(prepare, program) {
+    if rt::build_time_active() {
+        let output = prepare();
+        let published = dict::fold(output.information, (), fn(acc, name, value) {
+            if rt::publish_build_information(name, json::stringify(value)) { () }
+            else { fail!("Build information requires a unique nonempty name", name) }
+        });
+        program(output.runtime)
+    } else { fail!("stage requires an explicit build-time scope") }
+};
+pub use self::{Output, stage};

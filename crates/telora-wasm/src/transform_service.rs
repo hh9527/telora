@@ -1,7 +1,7 @@
 //! Byte-only service host. Guest owns Context, initialization and the handler.
 use crate::{artifact::Manifest, session::Session};
 use telora_core::data_plan::Format;
-mod buffers;
+pub(crate) mod buffers;
 mod input;
 
 struct Baseline {
@@ -204,8 +204,31 @@ impl TransformSession {
         Ok(diagnostics)
     }
 
+    pub(crate) fn take_initialization_metadata(
+        &mut self,
+    ) -> Result<std::collections::BTreeMap<String, serde_json::Value>, String> {
+        if !self.ready || self.poisoned || self.baseline.is_some() {
+            return Err("Service metadata requires successful unsealed initialization".into());
+        }
+        crate::staged_build::take_information(&mut self.session)
+    }
+
     /// All Host-owned ABI buffers have been freed before sealing initialization or reset.
     pub fn seal_initialization(&mut self) -> Result<(), String> {
+        self.seal_initialization_mode(false).map(|_| ())
+    }
+
+    pub(crate) fn seal_runtime_initialization(
+        &mut self,
+    ) -> Result<crate::specialization::RuntimeDependencies, String> {
+        self.seal_initialization_mode(true)?
+            .ok_or_else(|| "missing runtime publication dependencies".into())
+    }
+
+    fn seal_initialization_mode(
+        &mut self,
+        runtime_only: bool,
+    ) -> Result<Option<crate::specialization::RuntimeDependencies>, String> {
         if self.baseline.is_some() {
             return Err("service initialization is already sealed".into());
         }
@@ -230,7 +253,7 @@ impl TransformSession {
                     .then(|| (name, global.get(&self.session.store)))
             })
             .collect();
-        let snapshot = export_snapshot(&mut self.session)?;
+        let (snapshot, dependencies) = export_snapshot_mode(&mut self.session, runtime_only)?;
         self.baseline = Some(Baseline {
             snapshot,
             globals,
@@ -243,7 +266,7 @@ impl TransformSession {
             recovery_fuel: self.session.fuel_budget,
         });
         self.session.start_execution()?;
-        Ok(())
+        Ok(dependencies)
     }
 
     /// Completed calls release invocation roots and execution state. Dynamic
@@ -352,17 +375,51 @@ impl TransformSession {
     }
 }
 
-fn export_snapshot(session: &mut Session) -> Result<Vec<u8>, String> {
-    let result = buffers::alloc(session, 12, 4)?;
-    session.guest_call(session.exports.snapshot_export, result)?;
-    let [pointer, length, _] = buffers::words(session, result)?;
-    let bytes = buffers::bytes(session, pointer, length)?;
-    buffers::free(session, pointer, length, 1)?;
-    buffers::free(session, result, 12, 4)?;
-    Ok(bytes)
+pub(crate) fn export_snapshot_mode(
+    session: &mut Session,
+    runtime_only: bool,
+) -> Result<(Vec<u8>, Option<crate::specialization::RuntimeDependencies>), String> {
+    if !runtime_only {
+        let result = buffers::alloc(session, 12, 4)?;
+        session.guest_call(session.exports.snapshot_export, result)?;
+        let [pointer, length, _] = buffers::words(session, result)?;
+        let snapshot = buffers::bytes(session, pointer, length)?;
+        buffers::free(session, pointer, length, 1)?;
+        buffers::free(session, result, 12, 4)?;
+        return Ok((snapshot, None));
+    }
+    let export = session
+        .instance
+        .get_typed_func::<u32, ()>(&session.store, "telora_snapshot_runtime_export")
+        .map_err(|e| e.to_string())?;
+    let result = buffers::alloc(session, 24, 4)?;
+    session.guest_call(export, result)?;
+    let fields = buffers::bytes(session, result, 24)?;
+    let mut values = Vec::with_capacity(3);
+    for pair in fields.chunks_exact(8) {
+        let pointer = u32::from_le_bytes(pair[..4].try_into().unwrap());
+        let length = u32::from_le_bytes(pair[4..].try_into().unwrap());
+        values.push(buffers::bytes(session, pointer, length)?);
+        buffers::free(session, pointer, length, 1)?;
+    }
+    buffers::free(session, result, 24, 4)?;
+    let indices = |bytes: &[u8]| -> Result<Vec<u32>, String> {
+        if bytes.len() % 4 != 0 {
+            return Err("invalid runtime dependency transfer".into());
+        }
+        Ok(bytes
+            .chunks_exact(4)
+            .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+            .collect())
+    };
+    let dependencies = crate::specialization::RuntimeDependencies {
+        functions: indices(&values[1])?,
+        ready_demands: indices(&values[2])?.into_iter().collect(),
+    };
+    Ok((values.remove(0), Some(dependencies)))
 }
 
-fn import_snapshot(session: &mut Session, snapshot: &[u8]) -> Result<(), String> {
+pub(crate) fn import_snapshot(session: &mut Session, snapshot: &[u8]) -> Result<(), String> {
     let length = u32::try_from(snapshot.len()).map_err(|_| "service snapshot exceeds wasm32")?;
     let pointer = buffers::alloc(session, length, 1)?;
     session

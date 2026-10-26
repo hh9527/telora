@@ -41,9 +41,8 @@ pub(crate) unsafe fn release_initialization_values() {
 
 pub(crate) unsafe fn snapshot() -> Vec<Snapshot> {
     unsafe {
-        sources()
-            .slots
-            .iter()
+        let Some(state) = (&*core::ptr::addr_of!(SOURCES)).as_ref() else { return Vec::new(); };
+        state.slots.iter()
             .map(|slot| Snapshot {
                 id: slot.id,
                 name: slot._name.to_vec(),

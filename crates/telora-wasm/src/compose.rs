@@ -17,15 +17,41 @@ pub(crate) fn link(
     sources: &[crate::artifact::Source],
     types: &[crate::artifact::TypeDesc],
     demands: &[u32],
-    function_demands: &[Vec<u32>],
+    demand_functions: Vec<crate::specialization::Demand>,
     service: Option<telora_wasm_shared::service::Contract>,
     generated_exports: &[(&str, u32)],
-) -> Result<Vec<u8>, String> {
+) -> Result<crate::specialization::LinkedProgram, String> {
     let rt = template::runtime()?;
     let mut program = Parts::read(object)?;
     let mut output = Parts::read(rt.bytes)?;
     let generated = program.count(3)?;
     let type_count = program.count(1)?;
+    let dependencies = code_dependencies(&program, generated)?;
+    let demand_indices = demand_functions
+        .iter()
+        .map(|demand| (demand.function, demand.index))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    // A runtime read of a Ready demand depends on its value, not on the code
+    // that originally computed it. Include generated codecs and data modules.
+    let function_demands = (0..generated)
+        .map(|function| {
+            let mut pending = vec![function];
+            let mut seen = std::collections::BTreeSet::new();
+            let mut demands = std::collections::BTreeSet::new();
+            while let Some(function) = pending.pop() {
+                if !seen.insert(function) {
+                    continue;
+                }
+                if let Some(&index) = demand_indices.get(&function) {
+                    demands.insert(index);
+                } else {
+                    pending.extend(dependencies[function as usize].iter().copied());
+                }
+            }
+            demands.into_iter().collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
     let table_base = u32::try_from(rt.table.initial).map_err(|_| "Wasm: table exceeds wasm32")?;
     let image_base = reserved_bytes
         .checked_add(7)
@@ -82,7 +108,7 @@ pub(crate) fn link(
     let mut roots_pointer = function_demands_base
         .checked_add(header_bytes)
         .ok_or("Wasm: dependency root address overflow")?;
-    for roots in function_demands {
+    for roots in &function_demands {
         data.extend_from_slice(&roots_pointer.to_le_bytes());
         let count = u32::try_from(roots.len()).map_err(|_| "Wasm: too many function roots")?;
         data.extend_from_slice(&count.to_le_bytes());
@@ -94,7 +120,7 @@ pub(crate) fn link(
             )
             .ok_or("Wasm: dependency root address overflow")?;
     }
-    for roots in function_demands {
+    for roots in &function_demands {
         for root in roots {
             data.extend_from_slice(&root.to_le_bytes());
         }
@@ -419,6 +445,17 @@ pub(crate) fn link(
             .into_iter()
             .filter(|(name, _)| name.starts_with("telora.")),
     );
+    let runtime_plan = crate::specialization::RuntimePlan {
+        function_base: rt.functions,
+        table_base,
+        count: generated,
+        dependencies,
+        heap_address: rt.exports["telora_heap_address"],
+        runtime_roots: service
+            .map(|contract| vec![contract.materialize])
+            .unwrap_or_default(),
+        demands: demand_functions,
+    };
     // Relocations use fixed-width slots until all indices and addresses are final.
     // Re-encode only code: function identities and metadata remain unchanged.
     let code = output
@@ -426,5 +463,58 @@ pub(crate) fn link(
         .get_mut(&10)
         .ok_or("Wasm: linked code missing")?;
     *code = compact::code(code)?;
-    Ok(output.module())
+    Ok(crate::specialization::LinkedProgram {
+        bytes: output.module(),
+        runtime_plan,
+    })
+}
+
+fn code_dependencies(
+    program: &Parts,
+    generated: u32,
+) -> Result<Vec<std::collections::BTreeSet<u32>>, String> {
+    let code = program
+        .sections
+        .get(&10)
+        .ok_or("Wasm: generated code missing")?;
+    let bodies = wasmparser::CodeSectionReader::new(wasmparser::BinaryReader::new(code, 0))
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|body| body.map(|b| b.range()).map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let relocation = &program
+        .custom
+        .iter()
+        .find(|(name, _)| name == "reloc.CODE")
+        .ok_or("Wasm: generated code lacks relocations")?
+        .1;
+    let mut reader = wasmparser::BinaryReader::new(relocation, 0);
+    reader.read_var_u32().map_err(|e| e.to_string())?;
+    let count = reader.read_var_u32().map_err(|e| e.to_string())?;
+    let mut dependencies = vec![std::collections::BTreeSet::new(); generated as usize];
+    for _ in 0..count {
+        let kind = reader.read_u8().map_err(|e| e.to_string())?;
+        let offset = reader.read_var_u32().map_err(|e| e.to_string())? as u64;
+        let symbol = reader.read_var_u32().map_err(|e| e.to_string())?;
+        if matches!(kind, 0 | 1) && symbol >= FIRST_FUNCTION {
+            let target = symbol - FIRST_FUNCTION;
+            if target >= generated {
+                return Err("Wasm: invalid generated dependency".into());
+            }
+            let source = bodies.partition_point(|range| range.end <= offset);
+            if !bodies
+                .get(source)
+                .is_some_and(|range| range.contains(&offset))
+            {
+                return Err("Wasm: relocation outside function body".into());
+            }
+            dependencies[source].insert(target);
+        }
+        if kind == 4 {
+            reader.read_var_i32().map_err(|e| e.to_string())?;
+        } else if !matches!(kind, 0 | 1 | 6 | 7 | 20) {
+            return Err("Wasm: unsupported dependency relocation".into());
+        }
+    }
+    Ok(dependencies)
 }

@@ -10,17 +10,17 @@ use wasm_encoder::*;
 
 /// Generate a self-contained Wasm module from already sealed execution evidence.
 pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, String> {
-    compile(executable, Mode::Value)
+    compile(executable, Mode::Value).map(|linked| linked.bytes)
 }
 
 /// Check continues independent initialization demands, never a failed function body.
 pub fn compile_check(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, String> {
-    compile(executable, Mode::Check)
+    compile(executable, Mode::Check).map(|linked| linked.bytes)
 }
 
 /// A service has an additional initialization phase after module evaluation.
 pub fn compile_service(executable: &SealedExecutable<'_>) -> Result<Vec<u8>, String> {
-    compile(executable, Mode::Service)
+    compile_service_build(executable).map(|linked| linked.bytes)
 }
 
 #[derive(Clone, Copy)]
@@ -30,7 +30,22 @@ enum Mode {
     Service,
 }
 
-fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, String> {
+pub(crate) fn compile_service_build(
+    executable: &SealedExecutable<'_>,
+) -> Result<crate::specialization::LinkedProgram, String> {
+    compile(executable, Mode::Service)
+}
+
+pub(crate) fn compile_staged_build(
+    executable: &SealedExecutable<'_>,
+) -> Result<crate::specialization::LinkedProgram, String> {
+    compile(executable, Mode::Value)
+}
+
+fn compile(
+    executable: &SealedExecutable<'_>,
+    mode: Mode,
+) -> Result<crate::specialization::LinkedProgram, String> {
     let mut plan = Plan::new(executable)?;
     let helpers = vec![
         ("telora_initialize", 2),
@@ -140,6 +155,9 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
         ("telora_roots_safepoint", 2),
         ("telora_array_can_append", 0),
         ("telora_content_append", 3),
+        ("telora_service_metadata_publish", BINARY_TYPE),
+        ("telora_build_time_active", 2),
+        ("telora_build_information_publish", BINARY_TYPE),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }
@@ -381,6 +399,29 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
     } else {
         None
     };
+    let ready_demands = plan
+        .demands
+        .iter()
+        .enumerate()
+        .map(|(index, (&key, &address))| {
+            let ty = key
+                .result_type(executable.sealed_mir().mir())?
+                .ok_or("Wasm: demand has no result")?;
+            let width = match &plan.layouts[ty.index()].layout {
+                telora_core::candidate_layout::State::Known { shape } => {
+                    u32::try_from(shape.value_bytes).map_err(|_| "Wasm: demand too wide")?
+                }
+                telora_core::candidate_layout::State::Uninhabited { .. } => 0,
+                _ => return Err("Wasm: demand has no closed layout".into()),
+            };
+            Ok(crate::specialization::Demand {
+                index: index as u32,
+                function: plan.functions[&key] - FIRST_FUNCTION,
+                address,
+                width,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     crate::compose::link(
         &module.finish(),
         heap_start,
@@ -394,7 +435,7 @@ fn compile(executable: &SealedExecutable<'_>, mode: Mode) -> Result<Vec<u8>, Str
                     .map(|ty| ty.index() as u32)
             })
             .collect::<Result<Vec<_>, _>>()?,
-        &plan.function_demand_roots,
+        ready_demands,
         service,
         &helpers
             .iter()

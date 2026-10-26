@@ -641,3 +641,28 @@ section 中携带 ready service 状态，移除被其覆盖的数据模块镜像
 两个 CLI 共用 `telora-run::transport` 的 JSONL/TCP HTTP/Unix socket HTTP 传输层，
 执行回调保持串行，各自执行入口负责 reset 和资源配额。HTTP 分帧由 Hyper 处理。
 引擎替换与进一步减少复制不属于当前路径。
+
+
+### 构建期双路产出
+
+`std::build::stage(prepare, program)` 独立于 Service。`prepare: Fn() -> Output(P1)`
+返回 `{runtime: P1, information: Dict(Value)}`；`program: Fn(P1) -> B` 在同一个受限
+构建作用域装配运行程序 B。P1 可含类型与闭包，保持同一次编译的 TypeId 和函数表坐标，
+不通过 JSON 重导入。普通运行环境中的 `stage` 失败；作用域只能由显式构建入口打开。
+
+`telora-wasm::staged_build::StagedBuild` 支持普通函数导出。通用带类型程序根参与封存、
+运行期裁剪及两种 GC，加载 API 从同一制品恢复状态，直接读取运行根而不重跑模块初始化。
+首版普通函数 API 保留完整 tooling manifest，须使用 `staged_build::load` 加载；
+它不是 `telora-run` 的 Service 文件格式；首版普通函数 API 暂不支持数据模块，
+也尚未提供普通函数的 CLI 发布入口。
+
+Service 使用 `build --staged` 适配，默认裁剪运行代码；`--staged=full` 保留全部函数体用于
+对照。与 `--snapshot` 互斥，拒绝 `--source` 和任何 Service 运行期源声明，并检查 Guest
+无 Host imports。源码和显式编入制品的数据模块属于构建输入。旧 snapshot 保留原有来源约定，
+不会自动获得执行 `stage` 的权限。所有构建步骤成功后才原子替换输出文件。
+
+P2 使用 UTF-8 JSON 信封 `{version:1,entries:{name:value}}` 写入唯一
+`telora.build.information` custom section，名称非空且唯一。RT collector 仅持有编码后的
+Rust 字符串，不把语言信息对象当作 B 的根。旧 `telora.service.metadata` 继续兼容，
+同一制品禁止重复附加新旧信息段。当前保留不可达 trap stub 与必要的 Ready getter，
+尚不保证得到最小制品，也不意味着知识生成算法的耗时已优化。

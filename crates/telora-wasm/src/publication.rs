@@ -93,3 +93,53 @@ pub fn attach_snapshot(
     });
     Ok(module.finish())
 }
+
+/// Static JSON published by this Service's own initialization.
+pub(crate) fn attach_metadata(
+    bytes: &[u8],
+    entries: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Result<Vec<u8>, String> {
+    attach_named_information(bytes, entries, "telora.service.metadata")
+}
+
+pub(crate) fn attach_information(
+    bytes: &[u8],
+    entries: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Result<Vec<u8>, String> {
+    attach_named_information(bytes, entries, "telora.build.information")
+}
+
+fn attach_named_information(
+    bytes: &[u8],
+    entries: &std::collections::BTreeMap<String, serde_json::Value>,
+    name: &str,
+) -> Result<Vec<u8>, String> {
+    if entries.is_empty() {
+        return Ok(bytes.to_vec());
+    }
+    let mut module = wasm_encoder::Module::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        let payload = payload.map_err(|e| e.to_string())?;
+        if let wasmparser::Payload::CustomSection(section) = &payload {
+            if matches!(
+                section.name(),
+                "telora.service.metadata" | "telora.build.information"
+            ) {
+                return Err("Service metadata already attached".into());
+            }
+        }
+        if let Some((id, range)) = payload.as_section() {
+            module.section(&wasm_encoder::RawSection {
+                id,
+                data: &bytes[range.start as usize..range.end as usize],
+            });
+        }
+    }
+    module.section(&wasm_encoder::CustomSection {
+        name: name.into(),
+        data: serde_json::to_vec(&serde_json::json!({"version":1,"entries":entries}))
+            .map_err(|e| e.to_string())?
+            .into(),
+    });
+    Ok(module.finish())
+}

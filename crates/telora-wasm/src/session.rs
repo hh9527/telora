@@ -20,6 +20,7 @@ fn session_id() -> u64 {
 const TABLE_BOUND: usize = 1_000_000;
 
 pub struct Session {
+    pub(crate) entry_export: &'static str,
     pub(crate) identity: u64,
     pub(crate) trapped: bool,
     pub(crate) gc_config: crate::gc::GcConfig,
@@ -189,6 +190,7 @@ impl Session {
             .map_err(|error| error.to_string())?;
         let exports = exports::Exports::bind(instance, &store)?;
         let mut session = Self {
+            entry_export: "telora_entry",
             identity: session_id(),
             trapped: false,
             gc_config: crate::gc::GcConfig::default(),
@@ -277,6 +279,7 @@ impl Session {
         })?;
         let registered_sources = manifest.sources.len();
         let session = Self {
+            entry_export: "telora_entry",
             identity: session_id(),
             trapped: false,
             gc_config: crate::gc::GcConfig::default(),
@@ -406,7 +409,7 @@ impl Session {
         }
         let entry = self
             .instance
-            .get_typed_func::<(), i32>(&self.store, "telora_entry")
+            .get_typed_func::<(), i32>(&self.store, self.entry_export)
             .map_err(|e| e.to_string())?;
         let result = self
             .execution_quota

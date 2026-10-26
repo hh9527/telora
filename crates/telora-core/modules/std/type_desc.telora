@@ -11,6 +11,7 @@ native kind: Fn(Type) -> TypeDescKind;
 native children: Fn(Type) -> Array(Type);
 native fields: Fn(Type) -> Array(FieldDesc);
 native variants: Fn(Type) -> Array(VariantDesc);
+native name: Fn(Type) -> Option(String);
 native opaque_name: Fn(Type) -> Option(String);
 type ResolveError = struct {message: String, value: Type};
 native resolve_raw: Fn(Type) -> Result(Type, String);
@@ -32,5 +33,6 @@ pub use self::{
     fields,
     variants,
     opaque_name,
+    name,
     resolve,
 };

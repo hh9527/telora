@@ -5,6 +5,7 @@ macro_rules! sources {
 }
 pub const BUILTINS: &[(&str, &str)] = sources![
     "std" => "lib",
+    "std/build" => "build",
     "std/_codec" => "_codec",
     "std/_entry" => "_entry",
     "std/_entry/collection" => "_entry/collection",

@@ -23,17 +23,24 @@ pub unsafe extern "C" fn telora_initialization_stat(index: u32) -> u32 {
 
 pub(crate) unsafe fn collect() {
     unsafe {
-        collect_phase(true);
+        collect_phase(true, false);
     }
 }
 
 pub(crate) unsafe fn collect_data() {
     unsafe {
-        collect_phase(false);
+        collect_phase(false, false);
     }
 }
 
-unsafe fn collect_phase(service_ready: bool) {
+pub(crate) unsafe fn collect_runtime() -> super::PublicationDependencies {
+    unsafe { collect_phase(true, true) }
+}
+
+unsafe fn collect_phase(
+    service_ready: bool,
+    runtime_publication: bool,
+) -> super::PublicationDependencies {
     unsafe {
         // Source names and BOLs have independent ownership and remain available
         // even when no retained language value currently mentions that source.
@@ -43,17 +50,18 @@ unsafe fn collect_phase(service_ready: bool) {
         let before = crate::heap::telora_heap_bytes();
         let memory_before = crate::telora_heap_end();
         let mut gc = Collector::begin();
+        gc.runtime_publication = runtime_publication;
         let (demands, count) = DEMANDS;
         let mut roots = 0;
         for index in 0..count {
             let slot = demands + index * DEMAND_BYTES;
-            if word(slot, 0) == 2 {
+            if !runtime_publication && word(slot, 0) == 2 {
                 roots += 1;
                 gc.demand(index);
             }
         }
         if service_ready {
-            crate::service::collect_initialization(&mut gc);
+            crate::program_root::collect(&mut gc);
         }
         // Initialization callers still need to read these events. Preserving
         // their order also preserves Host diagnostic/debug cursors.
@@ -62,7 +70,7 @@ unsafe fn collect_phase(service_ready: bool) {
                 assert_eq!(gc.object(table, id, u32::MAX), id);
             }
         }
-        gc.finish();
+        let dependencies = gc.finish();
         STATS = [
             before,
             crate::heap::telora_heap_bytes(),
@@ -70,5 +78,6 @@ unsafe fn collect_phase(service_ready: bool) {
             memory_before,
             crate::telora_heap_end(),
         ];
+        dependencies
     }
 }

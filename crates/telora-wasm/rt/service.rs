@@ -33,6 +33,9 @@ pub(crate) unsafe fn collect_initialization(gc: &mut crate::collect::Collector) 
     unsafe {
         if let Some(service) = (&mut *core::ptr::addr_of_mut!(SERVICE)).as_mut() {
             assert!(service.phase == Phase::Ready);
+            // RT invokes this generated callback directly through the table;
+            // it is a runtime root even without a captured language closure.
+            gc.trace_function_demands(service.contract.materialize);
             service.handler = gc.value(service.handler, service.contract.handler_type);
             if !crate::heap::packing() {
                 service.initializer = 0;
@@ -122,16 +125,19 @@ unsafe fn prepare() -> bool {
             Phase::Unprepared => {}
         }
         service().phase = Phase::Preparing;
+        crate::information::open();
         let contract = service().contract;
         let initialize: unsafe extern "C" fn() -> u32 = core::mem::transmute(contract.initialize);
         let entry: unsafe extern "C" fn() -> u32 = core::mem::transmute(contract.entry);
         if initialize() == 0 {
             service().phase = Phase::Failed;
+            crate::information::close();
             return false;
         }
         let plan = entry();
         if plan == 0 {
             service().phase = Phase::Failed;
+            crate::information::close();
             return false;
         }
         let fields = word(plan, DATA).checked_add(8).unwrap();
@@ -197,6 +203,7 @@ pub unsafe extern "C" fn create() -> i32 {
         if !prepare() {
             return 1;
         }
+        let _metadata = crate::information::Close;
         assert!(
             service().phase == Phase::Prepared,
             "service already created"

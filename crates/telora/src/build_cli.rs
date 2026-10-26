@@ -1,13 +1,13 @@
 //! File publication is separate from source execution.
-use clap::Args;
+use clap::{Args, ValueEnum};
 use std::{
     io::{Cursor, Write},
     path::PathBuf,
 };
 use telora_core::{mir::ModuleTarget, source::Severity};
 use telora_wasm::{
-    artifact::Manifest,
-    transform_service::{SourceReader, TransformSession},
+    service_build::{ServiceBuild, SnapshotMode},
+    transform_service::SourceReader,
 };
 
 #[derive(Args)]
@@ -16,11 +16,20 @@ pub struct BuildArgs {
     module: String,
     #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
-    /// Initialize and embed a ready service with compiled external sources.
-    #[arg(long)]
-    snapshot: bool,
+    /// Embed initialized state; runtime specializes code, full keeps all bodies.
+    #[arg(long, value_enum, num_args = 0..=1, default_missing_value = "runtime", require_equals = true)]
+    snapshot: Option<SnapshotArg>,
+    /// Execute a closed build-time stage and publish its runtime and information.
+    #[arg(long, value_enum, num_args = 0..=1, default_missing_value = "runtime", require_equals = true, conflicts_with_all = ["snapshot", "sources"])]
+    staged: Option<SnapshotArg>,
     #[arg(long = "source", requires = "snapshot", value_name = "NAME=SOURCE", value_parser = crate::parse_named_source)]
     sources: Vec<crate::NamedSource>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SnapshotArg {
+    Runtime,
+    Full,
 }
 
 // Build phases include cleanup and publication; diagnostics stay on stderr.
@@ -56,6 +65,7 @@ fn report_phase(phase: &str, elapsed: std::time::Duration) {
     {
         let parent = match phase {
             "total" => None,
+            "runtime_specialization" => Some("snapshot"),
             "load_metadata"
             | "load_engine"
             | "load_module"
@@ -121,13 +131,17 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
     })?;
     drop(frontend);
     let codegen = PhaseTimer::new("codegen_link");
-    let bytes = telora_wasm::compile_service(&executable)?;
+    let build = if args.staged.is_some() {
+        ServiceBuild::compile_staged(&executable)?
+    } else {
+        ServiceBuild::compile(&executable)?
+    };
     drop(codegen);
     let bundle = PhaseTimer::new("data_bundle");
     drop(executable);
     let config = crate::execution_config_for(inventory.runtime_options())?;
     let mut plans = vec![];
-    for data in Manifest::read(&bytes)?.data_modules {
+    for data in build.manifest()?.data_modules {
         let (format, text) = inventory.read_data_text(&data.name, config.data_limits.file_size)?;
         let source = mir
             .sources
@@ -135,8 +149,7 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
             .map_err(|e| e.to_string())?;
         plans.push((data.symbol, source, format));
     }
-    let bytes = telora_wasm::bundle::build_with_limits(
-        &bytes,
+    let build = build.bundle_data(
         &mir.sources,
         &plans,
         config.initialization_fuel,
@@ -146,19 +159,18 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
     drop(mir);
     drop(inventory);
     drop(bundle);
-    let bytes = if args.snapshot {
+    let bytes = if let Some(mode) = args.snapshot.or(args.staged) {
         let engine = PhaseTimer::new("engine_load");
-        let mut session = telora_wasm::session::Session::load_with_limits_observed(
-            &bytes,
+        let loaded = build.load(
             config.initialization_fuel,
             config.memory_limit,
+            config.request_fuel,
             &mut |phase, elapsed| report_phase(phase, elapsed),
         )?;
-        session.set_request_fuel(config.request_fuel);
         drop(engine);
         // Source enumeration prepares the static Service definition and its entry.
         let prepare = PhaseTimer::new("service_prepare");
-        let mut service = TransformSession::new(session)?;
+        let mut service = loaded.prepare()?;
         drop(prepare);
         let initialize = PhaseTimer::new("service_initialize");
         let names = crate::source_arg::service_source_names(&args.sources)?;
@@ -194,12 +206,28 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
         }
         drop(initialize);
         let seal = PhaseTimer::new("service_seal");
-        service.seal_initialization()?;
+        let prepared = service.seal(match mode {
+            SnapshotArg::Runtime => SnapshotMode::Runtime,
+            SnapshotArg::Full => SnapshotMode::Full,
+        })?;
         drop(seal);
         let _snapshot = PhaseTimer::new("snapshot");
-        telora_wasm::publication::attach_snapshot(&bytes, &service.publication_snapshot()?)?
-    } else {
+        let (bytes, report) =
+            prepared.publish_observed(&mut |phase, elapsed| report_phase(phase, elapsed))?;
+        if let Some(report) = report {
+            if crate::execution_config().report_usage
+                || std::env::var_os("TELORA_WASM_TIMINGS").as_deref()
+                    == Some(std::ffi::OsStr::new("1"))
+            {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&report).map_err(|e| e.to_string())?
+                );
+            }
+        }
         bytes
+    } else {
+        build.bytes().to_vec()
     };
     let _output = PhaseTimer::new("artifact_output");
     let bytes = telora_wasm::publication::finish(

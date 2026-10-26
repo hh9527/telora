@@ -1136,3 +1136,5 @@ fn source_slice(source: &str, words: [u32; 5]) -> &str {
 fn diagnostic_point(value: &serde_json::Value) -> u64 {
     (value["line"].as_u64().unwrap() << 32) | value["offset"].as_u64().unwrap()
 }
+
+mod staged_build;

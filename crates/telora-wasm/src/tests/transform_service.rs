@@ -4,7 +4,7 @@ use crate::{
 };
 use telora_core::data_plan::Format;
 
-fn artifact() -> Vec<u8> {
+fn linked_artifact() -> crate::specialization::LinkedProgram {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/transform-service.telora"
@@ -18,7 +18,11 @@ fn artifact() -> Vec<u8> {
         .copied()
         .find(|id| mir.symbols[id.index()].name == "answer")
         .unwrap();
-    crate::compile_service(&mir.seal_export(export).unwrap()).unwrap()
+    crate::codegen::compile_service_build(&mir.seal_export(export).unwrap()).unwrap()
+}
+
+fn artifact() -> Vec<u8> {
+    linked_artifact().bytes
 }
 
 fn initialize(service: &mut TransformSession) {
@@ -339,6 +343,81 @@ fn forced_gc_survives_service_initialization_snapshot_requests_and_reset() {
             .eval()
             .unwrap_err()
             .contains("terminated after trap")
+    );
+    service.session_mut().fuel_budget = 100_000_000;
+    service.reset().unwrap();
+    assert_eq!(service.session().gc_config, config);
+    assert_eq!(
+        transform(&mut service, b"\"ok\"").unwrap()["ok"],
+        serde_json::json!([42, "ok"])
+    );
+}
+
+#[test]
+fn specialized_ready_values_survive_forced_gc_and_trap_recovery() {
+    let linked = linked_artifact();
+    let mut service =
+        TransformSession::new(Session::load(&linked.bytes, 100_000_000).unwrap()).unwrap();
+    let initialized = service
+        .initialize(&[
+            SourceInput {
+                name: "a",
+                data: b"42",
+                format: Format::Json,
+            },
+            SourceInput {
+                name: "b",
+                data: b"null",
+                format: Format::Json,
+            },
+        ])
+        .unwrap();
+    assert!(initialized.success, "{}", initialized.diagnostics);
+    let dependencies = service.seal_runtime_initialization().unwrap();
+    let snapshot = service.publication_snapshot().unwrap();
+    let (bytes, report) =
+        crate::specialization::runtime(&linked.bytes, &linked.runtime_plan, &dependencies).unwrap();
+    assert!(report.prepared_getters > 0);
+    assert!(report.stubbed_functions > 0);
+    let mut session = Session::load(&bytes, 100_000_000).unwrap();
+    let pointer = session
+        .guest_call(session.exports.alloc, (snapshot.guest.len() as u32, 1))
+        .unwrap();
+    session
+        .memory
+        .write(&mut session.store, pointer as usize, &snapshot.guest)
+        .unwrap();
+    session
+        .guest_call(
+            session.exports.snapshot_import,
+            (pointer, snapshot.guest.len() as u32),
+        )
+        .unwrap();
+    let free = session
+        .instance
+        .get_typed_func::<(u32, u32, u32), ()>(&session.store, "mem-free")
+        .unwrap();
+    session
+        .guest_call(free, (pointer, snapshot.guest.len() as u32, 1))
+        .unwrap();
+    let config = crate::gc::GcConfig {
+        allocation_interval: 1,
+        heap_limit: 4 * 1024 * 1024,
+    };
+    session.configure_gc(config).unwrap();
+    *service.session_mut() = session;
+    for _ in 0..4 {
+        service.reset().unwrap();
+        let reply = transform(&mut service, b"\"ok\"").unwrap();
+        assert_eq!(reply["ok"], serde_json::json!([42, "ok"]));
+    }
+    assert!(service.session_mut().gc_stats().unwrap().collections > 0);
+    service.session_mut().fuel_budget = 10_000;
+    service.session_mut().store.set_fuel(10_000).unwrap();
+    assert!(
+        transform(&mut service, b"\"loop\"")
+            .unwrap_err()
+            .contains("fuel")
     );
     service.session_mut().fuel_budget = 100_000_000;
     service.reset().unwrap();

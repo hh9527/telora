@@ -1295,3 +1295,24 @@ Telora 支持带显式契约的递归函数。调用和 back-edge 消耗 fuel；
 - 优先让类型表达静态约束；动态失败使用 `fail!` 并携带原始证据。
 - 纯导出使用 `eval` 验收，应用 service 使用严格 `run` 验收；失败排查时
   使用 `check` 收集初始化诊断。
+
+
+## 构建期间计算
+
+实验接口 `std::build::stage` 将构建期计算和运行期程序的装配显式分开：
+
+```telora
+use std::build as build;
+use std::value::{Value};
+
+pub def answer: Fn(Int) -> Int = build::stage(
+    fn() { {runtime: 7, information: {"example": Value::Int(42)}} },
+    fn(offset) { fn(input) { input + offset } }
+);
+```
+
+两段函数都在构建期间执行，返回的查询函数才是运行期入口。`runtime` 可包含类型、
+闭包和对象关系；`information` 必须能编码为 JSON，供外部工具从 Wasm 字节直接读取。
+普通运行环境不允许执行 `stage`。目前普通函数通过 Rust `StagedBuild`／
+`staged_build::load` API 发布和加载；Service 模型使用 `telora build <module> --staged -o model.wasm`。
+后者不接受运行期源声明或 `--source`，不能与 `--snapshot` 混用。声明的数据模块须先打包为构建输入。

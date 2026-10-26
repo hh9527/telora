@@ -49,7 +49,7 @@ impl Mark {
                     }
                 }
             }
-            for (reference, ty) in crate::service::execution_roots() {
+            for (reference, ty) in crate::program_root::execution_roots() {
                 mark.value(reference, ty);
             }
             mark.sources.extend(crate::service_sources::source_roots());

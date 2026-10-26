@@ -1,11 +1,11 @@
 //! Public byte ABI only: no type descriptors or language-value decoding.
 use crate::session::Session;
 
-pub(super) fn alloc(session: &mut Session, cap: u32, align: u32) -> Result<u32, String> {
+pub(crate) fn alloc(session: &mut Session, cap: u32, align: u32) -> Result<u32, String> {
     session.guest_call(session.exports.alloc, (cap, align))
 }
 
-pub(super) fn free(
+pub(crate) fn free(
     session: &mut Session,
     pointer: u32,
     cap: u32,
@@ -14,7 +14,7 @@ pub(super) fn free(
     session.guest_call(session.exports.free, (pointer, cap, align))
 }
 
-pub(super) fn words(session: &Session, pointer: u32) -> Result<[u32; 3], String> {
+pub(crate) fn words(session: &Session, pointer: u32) -> Result<[u32; 3], String> {
     let mut bytes = [0; 12];
     session
         .memory
@@ -25,7 +25,7 @@ pub(super) fn words(session: &Session, pointer: u32) -> Result<[u32; 3], String>
     }))
 }
 
-pub(super) fn bytes(session: &Session, pointer: u32, length: u32) -> Result<Vec<u8>, String> {
+pub(crate) fn bytes(session: &Session, pointer: u32, length: u32) -> Result<Vec<u8>, String> {
     let start = pointer as usize;
     let end = start
         .checked_add(length as usize)
@@ -39,7 +39,7 @@ pub(super) fn bytes(session: &Session, pointer: u32, length: u32) -> Result<Vec<
 }
 
 /// Consume returned ownership before any reset can reclaim the allocation.
-pub(super) fn response(session: &mut Session, result: u32) -> Result<Vec<u8>, String> {
+pub(crate) fn response(session: &mut Session, result: u32) -> Result<Vec<u8>, String> {
     let [pointer, length, cap] = words(session, result)?;
     if length > cap {
         return Err("service output length exceeds capacity".into());
