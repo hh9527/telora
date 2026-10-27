@@ -111,8 +111,36 @@ fn recursion_and_overflow() {
 #[test]
 fn unsupported_constructs_fail_at_compile_time() {
     assert!(
-        compile("pub def answer: Array(Int) = [1,2];")
+        compile("pub def answer: Int = panic!(\"probe\");")
             .unwrap_err()
             .contains("unsupported")
+    );
+}
+
+#[test]
+fn aggregate_types_and_generic_instances() {
+    run(
+        "def id: for(T) Fn(T) -> T = fn(x) { x }; pub def answer: (Int, String) = (id(42), id(\"ok\"));",
+        "if(answer[0]!==42n || answer[1]!=='ok') throw Error('generic');",
+    );
+    run(
+        "type Pair = struct {a: Int, b: Int}; pub def answer: Int = {a: 2, b: 3}.ty!(Pair).a;",
+        "if(answer!==2n) throw Error('record');",
+    );
+    run(
+        "pub def answer: Int = match Some(42) { Some(x) => x, None => 0 };",
+        "if(answer!==42n) throw Error('pattern');",
+    );
+}
+
+#[test]
+fn immutable_collections_and_callbacks() {
+    run(
+        "use std::array as a; pub def answer: Array(Int) = a::map([1,2,3], fn(x) {x * 2});",
+        "if(answer.join(',')!=='2,4,6'||!Object.isFrozen(answer)) throw Error('map');",
+    );
+    run(
+        "use std::dict as d; pub def answer: Int = match d::get({x:42}, \"x\") {Some(v)=>v,None=>0};",
+        "if(answer!==42n) throw Error('dict');",
     );
 }

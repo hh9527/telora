@@ -12,6 +12,9 @@ use telora_wasm::{
 
 #[derive(Args)]
 pub struct BuildArgs {
+    /// Experimental direct JavaScript backend.
+    #[arg(long, value_enum, default_value = "wasm")]
+    backend: Backend,
     #[arg(value_name = "MODULE")]
     module: String,
     #[arg(short, long, value_name = "FILE")]
@@ -24,6 +27,12 @@ pub struct BuildArgs {
     staged: Option<SnapshotArg>,
     #[arg(long = "source", requires = "snapshot", value_name = "NAME=SOURCE", value_parser = crate::parse_named_source)]
     sources: Vec<crate::NamedSource>,
+}
+
+#[derive(Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum Backend {
+    Wasm,
+    Js,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -90,6 +99,9 @@ fn report_phase(phase: &str, elapsed: std::time::Duration) {
 pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
     let _total = PhaseTimer::new("total");
     let frontend = PhaseTimer::new("frontend");
+    if args.backend == Backend::Js {
+        return build_js(context, args);
+    }
     if args.module.contains(':') {
         return Err("build expects a module exporting MainService".into());
     }
@@ -257,5 +269,54 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
     let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
     file.write_all(&bytes).map_err(|e| e.to_string())?;
     file.persist(&args.output).map_err(|e| e.to_string())?;
+    Ok(0)
+}
+
+fn build_js(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
+    if args.snapshot.is_some() || args.staged.is_some() || !args.sources.is_empty() {
+        return Err(
+            "JS backend: snapshot/staged/source CLI options are not implemented yet".into(),
+        );
+    }
+    let (module, export) = args
+        .module
+        .rsplit_once(':')
+        .map(|(m, e)| (m, Some(e)))
+        .unwrap_or((&args.module, None));
+    let mut inventory = crate::static_input::Inventory::new(&context, module.starts_with("std/"))?;
+    inventory.normalize_eol();
+    let root = inventory.select(module)?;
+    let mir = if export.is_some() {
+        inventory.solve(&root)
+    } else {
+        inventory.solve_transform(&root)?
+    };
+    if mir
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+    {
+        return Err(mir
+            .diagnostics
+            .iter()
+            .map(|d| mir.sources.render(d))
+            .collect::<Vec<_>>()
+            .join("\n"));
+    }
+    let ModuleTarget::Bound(root) = mir.roots[0] else {
+        return Err("unresolved JS entry".into());
+    };
+    let symbol = *mir.exports[root.index()]
+        .iter()
+        .find(|s| mir.symbols[s.index()].name == export.unwrap_or("main"))
+        .ok_or("missing JS export")?;
+    let executable = mir.seal_export(symbol).map_err(|ds| {
+        ds.iter()
+            .map(|d| mir.sources.render(d))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+    let js = telora_js::compile_executable(&executable)?;
+    std::fs::write(args.output, js).map_err(|e| e.to_string())?;
     Ok(0)
 }

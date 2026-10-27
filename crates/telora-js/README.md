@@ -20,12 +20,14 @@ pub def answer: Fn(Int) -> Int = fn(x: Int) {
 };
 ```
 
-测试依赖 PATH 中可用的 Node.js。示例编译器接受单文件及标准库模块，正式 workspace/CLI 集成尚未实现。
+测试依赖 PATH 中可用的 Node.js。示例编译器接受单文件及标准库模块。正式 workspace 可通过 `telora -C <workspace> build --backend js <module>:<export> -o output.mjs` 构建指定导出；省略 `:<export>` 时选择 Service 入口。
 
 ## 已验证范围
 
 - Int、Float、String 字面量与标量运算、条件分支
-- 函数调用、闭包捕获和递归
+- 函数调用、闭包捕获、递归与封闭泛型实例
+- Array/Dict/Tuple/结构、枚举构造和模式匹配
+- Array/Dict/String 标准库基本操作，集合结果被冻结
 - 严格求值的局部绑定、按需记忆化的全局引用
 - BigInt 表达 Int，保留有符号 64 位范围检查
 - 不支持的可执行节点在生成时返回错误
@@ -44,4 +46,4 @@ pub def answer: Fn(Int) -> Int = fn(x: Int) {
 
 运行期 fuel 和内存 quota 不能直接映射到 JS 引擎；需单独设计，不以浏览器或 Node.js 堆限额冒充等价实现。尾递归目前也受 JS 调用栈约束。
 
-当前原型不支持集合、泛型实例、构造校验、反射、Service 和 build-time staging，因此没有 IC/NS 的可比性能数据。独立的 property 初始化尚未实现；本原型仅验证所选入口的基础表达式子集。
+当前原型尚不支持构造校验、反射、完整 Service 和 build-time staging，因此没有 IC/NS 的可比性能数据。独立的 property 初始化尚未实现；本原型仅验证所选入口的基础表达式子集。

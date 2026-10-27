@@ -1676,6 +1676,7 @@ dependencies = [
  "serde",
  "serde_json",
  "telora-core",
+ "telora-js",
  "telora-run",
  "telora-wasm",
  "tempfile",

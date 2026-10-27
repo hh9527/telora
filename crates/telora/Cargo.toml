@@ -12,6 +12,7 @@ async-lsp = { version = "0.2.4", default-features = false, features = ["stdio", 
 clap = { version = "4", features = ["derive"] }
 regex = "1"
 telora-core = { path = "../telora-core" }
+telora-js = { path = "../telora-js" }
 telora-wasm = { path = "../telora-wasm" }
 telora-run = { path = "../telora-run" }
 imos = { path = "../imos" }
