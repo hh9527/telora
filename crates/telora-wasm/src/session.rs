@@ -278,7 +278,7 @@ impl Session {
             Ok((memory, exports))
         })?;
         let registered_sources = manifest.sources.len();
-        let session = Self {
+        let mut session = Self {
             entry_export: "telora_entry",
             identity: session_id(),
             trapped: false,
@@ -299,6 +299,10 @@ impl Session {
             registered_sources,
             emitted_debug: std::cell::Cell::new(0),
         };
+        session.configure_gc(crate::gc::GcConfig {
+            heap_limit: u32::try_from(memory_limit).unwrap_or(u32::MAX),
+            ..crate::gc::GcConfig::default()
+        })?;
         Ok(session)
     }
     pub fn initialize(&mut self) -> Result<(), String> {

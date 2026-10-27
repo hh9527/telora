@@ -14,11 +14,19 @@ use eval_cli::EvalArgs;
 use source_arg::{NamedSource, parse_named_source};
 use telora::package_host;
 
-static EXECUTION_OPTIONS: std::sync::OnceLock<(Option<u64>, Option<u64>, Option<u64>, bool)> =
-    std::sync::OnceLock::new();
+static EXECUTION_OPTIONS: std::sync::OnceLock<(
+    Option<u64>,
+    Option<u64>,
+    Option<u64>,
+    bool,
+    Option<u64>,
+    Option<u64>,
+)> = std::sync::OnceLock::new();
 const QUERY_SCHEMA: &str = "telora.query/v1";
 
 struct ExecutionConfig {
+    buildtime_fuel: u64,
+    buildtime_memory_limit: usize,
     initialization_fuel: u64,
     request_fuel: u64,
     memory_limit: usize,
@@ -33,9 +41,10 @@ fn execution_config() -> ExecutionConfig {
 fn execution_config_for(
     mut runtime: telora_core::RuntimeOptions,
 ) -> Result<ExecutionConfig, String> {
-    let (initialization_fuel, request_fuel, memory, report_usage) = *EXECUTION_OPTIONS
-        .get()
-        .unwrap_or(&(None, None, None, false));
+    let (initialization_fuel, request_fuel, memory, report_usage, buildtime_fuel, buildtime_memory) =
+        *EXECUTION_OPTIONS
+            .get()
+            .unwrap_or(&(None, None, None, false, None, None));
     if let Some(fuel) = initialization_fuel {
         runtime.initialization_fuel = fuel;
     }
@@ -45,8 +54,17 @@ fn execution_config_for(
     if let Some(memory) = memory {
         runtime.memory_limit = memory;
     }
+    if let Some(fuel) = buildtime_fuel {
+        runtime.buildtime_fuel = fuel;
+    }
+    if let Some(memory) = buildtime_memory {
+        runtime.buildtime_memory_limit = memory;
+    }
+    let (buildtime_fuel, buildtime_memory_limit) = runtime.buildtime_limits()?;
     let (initialization_fuel, request_fuel, memory_limit) = runtime.limits()?;
     Ok(ExecutionConfig {
+        buildtime_fuel,
+        buildtime_memory_limit,
         initialization_fuel,
         request_fuel,
         memory_limit,
@@ -63,6 +81,8 @@ fn main() {
             cli.request_fuel,
             cli.with_memory_limit,
             cli.report_usage,
+            cli.buildtime_fuel,
+            cli.buildtime_memory_limit,
         ))
         .expect("execution configuration is initialized once");
     match run_cli(cli) {
@@ -83,13 +103,19 @@ fn main() {
 #[derive(Parser)]
 #[command(name = "telora", version, about = "The Telora language toolchain")]
 struct Cli {
+    /// Build-time computation fuel in millions, independent of initialization/run.
+    #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..=u64::MAX / 1_000_000))]
+    buildtime_fuel: Option<u64>,
+    /// Build-time Wasm memory budget in MiB; also bounds managed allocation.
+    #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..=(usize::MAX as u64) / (1 << 20)))]
+    buildtime_memory_limit: Option<u64>,
     /// Initialization fuel budget in millions (1 = 1,000,000 fuel).
     #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..=u64::MAX / 1_000_000))]
     initialization_fuel: Option<u64>,
     /// Request fuel budget in millions (1 = 1,000,000 fuel).
     #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..=u64::MAX / 1_000_000))]
     request_fuel: Option<u64>,
-    /// Wasm linear memory limit in MiB (1 = 1,048,576 bytes).
+    /// Shared runtime initialization/request memory budget in MiB.
     #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..=(usize::MAX as u64) / (1 << 20)))]
     with_memory_limit: Option<u64>,
     /// Emit an informational JSON diagnostic with execution usage to stderr.

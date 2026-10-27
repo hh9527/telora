@@ -1128,3 +1128,74 @@ type Model = struct {};
         );
     }
 }
+
+#[test]
+fn buildtime_limits_are_independent_of_published_runtime_limits() {
+    let cwd = service_fixture();
+    fs::write(
+        cwd.join("telora-config.json"),
+        r#"{
+        "version":1,"members":["."],"runtime":{
+            "buildtimeFuel":5000,"buildtimeMemoryLimit":128,
+            "initializationFuel":23,"requestFuel":31,"memoryLimit":64
+        }
+    }"#,
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args([
+            "build",
+            "@src/main",
+            "--snapshot",
+            "-o",
+            "runtime.wasm",
+            "--report-usage",
+            "--buildtime-fuel",
+            "6000",
+            "--buildtime-memory-limit",
+            "256",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let usage: Value = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|value| value["record"] == "buildtime-usage")
+        .unwrap();
+    assert_eq!(usage["fuel_budget"], 6_000_000_000u64);
+    assert_eq!(usage["memory_limit_bytes"], 256u64 << 20);
+    let bytes = fs::read(cwd.join("runtime.wasm")).unwrap();
+    let mut runner = telora_run::Runner::load(&bytes, Default::default()).unwrap();
+    assert!(runner.initialize(&[]).unwrap().is_empty());
+    runner.request(method_request("42").as_bytes()).unwrap();
+    let usage = runner.usage();
+    assert_eq!(usage.fuel_limit, 31_000_000);
+    assert_eq!(usage.memory_limit_bytes, 64 << 20);
+    let mut overridden = telora_run::Runner::load(
+        &bytes,
+        telora_run::Options {
+            memory_limit: Some(32 << 20),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(overridden.initialize(&[]).unwrap().is_empty());
+    overridden.request(method_request("43").as_bytes()).unwrap();
+    assert_eq!(overridden.usage().memory_limit_bytes, 32 << 20);
+    assert!(
+        telora_run::Runner::load(
+            &bytes,
+            telora_run::Options {
+                memory_limit: Some(1),
+                ..Default::default()
+            }
+        )
+        .is_err()
+    );
+    fs::remove_dir_all(cwd).unwrap();
+}

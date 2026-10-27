@@ -46,6 +46,13 @@ impl Guest {
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| anyhow::anyhow!("missing memory"))?;
+        // One phase budget: the managed heap is bounded by the same total
+        // memory ceiling, rather than a second fixed 32 MiB quota.
+        let heap_limit = instance.get_typed_func::<u32, u32>(&mut store, "telora_gc_heap_limit")?;
+        ensure!(
+            heap_limit.call(&mut store, u32::try_from(memory_limit).unwrap_or(u32::MAX))? == 0,
+            "managed memory limit cannot be configured"
+        );
         let exports = Exports {
             alloc: instance.get_typed_func(&mut store, "mem-alloc")?,
             free: instance.get_typed_func(&mut store, "mem-free")?,

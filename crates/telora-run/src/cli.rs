@@ -26,7 +26,7 @@ pub struct Cli {
     /// Per-request fuel budget in millions (overrides the artifact).
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..=u64::MAX / 1_000_000))]
     request_fuel: Option<u64>,
-    /// Per-request memory allowance in MiB, in addition to the initialized memory.
+    /// Shared initialization/request total Wasm memory budget in MiB.
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..=(usize::MAX as u64)/(1<<20)))]
     with_memory_limit: Option<u64>,
     #[arg(long)]

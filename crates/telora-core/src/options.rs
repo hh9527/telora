@@ -37,6 +37,10 @@ impl CompilerOptions {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimeOptions {
+    /// Build-time computation fuel, in millions; independent of runtime initialization.
+    pub buildtime_fuel: u64,
+    /// Build-time Wasm memory budget in MiB.
+    pub buildtime_memory_limit: u64,
     /// Budgets in millions of Wasm fuel units.
     pub initialization_fuel: u64,
     pub request_fuel: u64,
@@ -47,6 +51,8 @@ pub struct RuntimeOptions {
 impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
+            buildtime_fuel: 5000,
+            buildtime_memory_limit: 256,
             initialization_fuel: 5000,
             request_fuel: 1000,
             memory_limit: 64,
@@ -55,6 +61,20 @@ impl Default for RuntimeOptions {
 }
 
 impl RuntimeOptions {
+    pub fn buildtime_limits(self) -> Result<(u64, usize), String> {
+        let fuel = self
+            .buildtime_fuel
+            .checked_mul(1_000_000)
+            .filter(|&n| n != 0)
+            .ok_or("runtime.buildtimeFuel must be positive and fit u64 fuel units")?;
+        let memory = self
+            .buildtime_memory_limit
+            .checked_mul(1 << 20)
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|&n| n != 0)
+            .ok_or("runtime.buildtimeMemoryLimit must be positive and fit usize bytes")?;
+        Ok((fuel, memory))
+    }
     pub fn limits(self) -> Result<(u64, u64, usize), String> {
         let fuel = |value: u64, name: &str| {
             value.checked_mul(1_000_000).filter(|&n| n != 0).ok_or_else(|| {
@@ -72,5 +92,47 @@ impl RuntimeOptions {
                 "runtime.memoryLimit must be a positive integer whose value in bytes fits usize",
             )?;
         Ok((initialization_fuel, request_fuel, memory))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phase_limits_are_independent_and_use_cli_units() {
+        let options: RuntimeOptions = serde_json::from_str(
+            r#"{
+            "buildtimeFuel":150000,"buildtimeMemoryLimit":256,
+            "initializationFuel":5000,"requestFuel":10000,"memoryLimit":64
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            options.buildtime_limits().unwrap(),
+            (150_000_000_000, 256 << 20)
+        );
+        assert_eq!(
+            options.limits().unwrap(),
+            (5_000_000_000, 10_000_000_000, 64 << 20)
+        );
+        for value in [0, u64::MAX] {
+            assert!(
+                RuntimeOptions {
+                    buildtime_fuel: value,
+                    ..options
+                }
+                .buildtime_limits()
+                .is_err()
+            );
+            assert!(
+                RuntimeOptions {
+                    buildtime_memory_limit: value,
+                    ..options
+                }
+                .buildtime_limits()
+                .is_err()
+            );
+        }
     }
 }

@@ -63,7 +63,6 @@ pub struct PhaseUsage {
 
 struct Baseline {
     snapshot: Vec<u8>,
-    memory_bytes: usize,
     globals: Vec<(String, backend::runtime::Val)>,
 }
 
@@ -98,12 +97,12 @@ impl Runner {
             .memory_limit
             .unwrap_or(usize::try_from(artifact.publication.memory_limit)?);
         ensure!(memory_limit > 0, "execution limits must be positive");
-        let load_limit = usize::try_from(artifact.publication.memory_limit)?;
+        let load_limit = memory_limit;
         let now = Instant::now();
         let module = backend::compile(bytes)?;
         let module_ms = now.elapsed().as_secs_f64() * 1000.;
         let now = Instant::now();
-        // CLI overrides constrain requests; ordinary initialization retains its build budget.
+        // Initialization and requests share the same total runtime memory budget.
         let guest = Guest::instantiate(module, initialization_fuel, load_limit)?;
         let instance_ms = now.elapsed().as_secs_f64() * 1000.;
         Ok(Self {
@@ -176,7 +175,6 @@ impl Runner {
             let globals = restore_artifact_globals(&mut self.guest, snapshot.globals)?;
             self.baseline = Some(Baseline {
                 snapshot: snapshot.guest,
-                memory_bytes: self.guest.memory.data_size(&self.guest.store),
                 globals,
             });
             self.record_phase("snapshot-imported")?;
@@ -214,7 +212,7 @@ impl Runner {
         let mut compact = Guest::instantiate(
             self.guest.module.clone(),
             self.initialization_fuel,
-            usize::try_from(self.publication.memory_limit)?,
+            self.memory_limit,
         )?;
         compact.import_snapshot(&snapshot)?;
         for (name, value) in &globals {
@@ -225,11 +223,7 @@ impl Runner {
                 .set(&mut compact.store, value.clone())?;
         }
         self.guest = compact;
-        self.baseline = Some(Baseline {
-            snapshot,
-            memory_bytes: self.guest.memory.data_size(&self.guest.store),
-            globals,
-        });
+        self.baseline = Some(Baseline { snapshot, globals });
         self.record_phase("instance-compacted")?;
         self.ready = true;
         self.poisoned = false;
@@ -262,10 +256,7 @@ impl Runner {
             .baseline
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("service is not initialized"))?;
-        let limit = baseline
-            .memory_bytes
-            .checked_add(self.memory_limit)
-            .ok_or_else(|| anyhow::anyhow!("memory limit overflow"))?;
+        let limit = self.memory_limit;
         // Cleanup/bootstrap is outside the next request's quota.
         self.guest.store.set_fuel(self.initialization_fuel)?;
         if self.poisoned
@@ -309,9 +300,7 @@ impl Runner {
             fuel_limit: self.request_fuel,
             fuel_consumed: self.request_fuel_consumed,
             memory_bytes: self.guest.memory.data_size(&self.guest.store),
-            memory_limit_bytes: self
-                .memory_limit
-                .saturating_add(self.baseline.as_ref().map_or(0, |b| b.memory_bytes)),
+            memory_limit_bytes: self.memory_limit,
             initialization,
             phases: std::mem::take(&mut self.phases),
         }

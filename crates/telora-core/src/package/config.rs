@@ -6,6 +6,7 @@ impl WorkspaceConfig {
         let invalid = |message| PackageError::new(format!("{}: {message}", path.display()));
         config.compiler.validate().map_err(invalid)?;
         config.runtime.limits().map_err(invalid)?;
+        config.runtime.buildtime_limits().map_err(invalid)?;
         if config.version != 1 {
             return Err(invalid(format!(
                 "unsupported version {}; expected 1",

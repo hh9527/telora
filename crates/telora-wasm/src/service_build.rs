@@ -110,6 +110,13 @@ impl<'build> LoadedService<'build> {
 }
 
 impl<'build> ServicePreparation<'build> {
+    pub fn usage(&self) -> crate::session::Usage {
+        self.service.usage()
+    }
+    pub fn gc_stats(&mut self) -> Result<crate::gc::GcStats, String> {
+        self.service.session_mut().gc_stats()
+    }
+
     pub fn sources(&self) -> &[String] {
         self.service.sources()
     }

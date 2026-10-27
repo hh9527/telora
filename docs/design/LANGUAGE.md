@@ -1471,6 +1471,11 @@ Fuel 用于对抗执行能否收敛的不确定性，而不是对执行成本精
 算法的内部操作次数扣减。指令融合、数据复制方式或库内部实现的变化，不应成为
 重新定义 fuel 计费规则的理由。
 
+构建期间计算采用独立的 `runtime.buildtimeFuel` 与 `runtime.buildtimeMemoryLimit`，
+默认分别为 5000 百万 fuel 和 256 MiB，可用 `--buildtime-fuel` 与
+`--buildtime-memory-limit` 覆盖。运行期初始化与请求共享 `runtime.memoryLimit`
+总内存预算（默认 64 MiB），托管堆也受同一内存边界约束。
+
 初始化与单次服务请求分别采用 fuel 预算：`runtime.initializationFuel` 和
 `runtime.requestFuel`，配置单位为百万 fuel，默认分别为 5000 和 1000。
 `--initialization-fuel`、`--request-fuel` 以相同单位直接覆盖配置值；构建制品

@@ -152,8 +152,8 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
     let build = build.bundle_data(
         &mir.sources,
         &plans,
-        config.initialization_fuel,
-        config.memory_limit,
+        config.buildtime_fuel,
+        config.buildtime_memory_limit,
     )?;
     drop(plans);
     drop(mir);
@@ -162,8 +162,8 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
     let bytes = if let Some(mode) = args.snapshot.or(args.staged) {
         let engine = PhaseTimer::new("engine_load");
         let loaded = build.load(
-            config.initialization_fuel,
-            config.memory_limit,
+            config.buildtime_fuel,
+            config.buildtime_memory_limit,
             config.request_fuel,
             &mut |phase, elapsed| report_phase(phase, elapsed),
         )?;
@@ -172,6 +172,18 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
         let prepare = PhaseTimer::new("service_prepare");
         let mut service = loaded.prepare()?;
         drop(prepare);
+        if config.report_usage {
+            let usage = service.usage();
+            let gc = service.gc_stats()?;
+            crate::emit_stderr(
+                serde_json::json!({"schema":"telora.build.usage/v1", "record":"buildtime-usage",
+                "fuel_budget":usage.fuel_budget,"fuel_consumed":usage.fuel_budget.saturating_sub(usage.fuel_remaining),
+                "linear_memory_bytes":usage.memory_bytes,"memory_limit_bytes":usage.memory_limit,
+                "managed_live_bytes":gc.managed_bytes,"managed_committed_bytes":gc.words_committed,
+                "allocated_total_bytes":gc.allocated_total,"collections":gc.collections}),
+            )?;
+        }
+
         let initialize = PhaseTimer::new("service_initialize");
         let names = crate::source_arg::service_source_names(&args.sources)?;
         if names != service.sources() {

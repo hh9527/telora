@@ -542,6 +542,14 @@ Wasmi 提供 fuel、内存增长与调用栈限制，Session 管理诊断和终�
 调用栈沿用引擎限制。增长超限直接 trap，不模拟逻辑分配量，也不核算每次复制。
 这些是私有实现阈值；Wasm 内存边界不是进程 RSS 上限。
 
+构建期间计算独立采用 `runtime.buildtimeFuel`（默认 5000 百万 fuel）和
+`runtime.buildtimeMemoryLimit`（默认 256 MiB）。`--buildtime-fuel` 与
+`--buildtime-memory-limit` 覆盖这两个预算；它们用于构建期间求值，不写入运行期预算。
+初始化与请求共享 `runtime.memoryLimit` 总内存边界，托管堆上限采用同一个边界，
+初始化占用也计入请求可用的总量。内存 override 同时作用于初始化和请求。
+`build --report-usage` 的 `telora.build.usage/v1` 记录包含准备阶段消耗的 fuel、
+线性内存、托管堆及 GC 用量；此记录在运行期预算重置前采集。
+
 workspace 配置的 `runtime.initializationFuel` 与 `runtime.requestFuel` 默认分别为
 5000 和 1000（单位：百万 fuel）。`telora` CLI 的 `--initialization-fuel N` 与
 `--request-fuel N` 直接覆盖相应配置值；`telora build` 将最终预算写入制品，
