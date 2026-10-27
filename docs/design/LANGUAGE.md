@@ -324,6 +324,20 @@ find/any/all 完成后不再执行该分支的适配器或回调，其他分支�
 struct 参与反射、Dyn、GC 和 service snapshot；codec 是否成功由其字段决定，
 函数字段沿用无 JSON codec 的失败规则。当前来源限于 Array，不提供 flat_map。
 
+### 3.1.2 惰性共享 pipeline
+
+`std::pipeline` 提供普通不可变 Node(A) 与 Output(R)。from_array 建立来源，
+map／filter／filter_map／distinct_by 是可经 `|>` 组合的操作符，merge 连接两个来源。
+collect／collect_dict／collect_string 只建立终端计划，run 才执行；both 组合不同终端。
+同一次 run 中，同一节点的多个下游共享结果；不同 run 默认重算。显式 cache()
+保留一个成功结果，之后跨 run 复用；失败不缓存。共享按节点身份，不比较表达式。
+
+操作符保持输入顺序。distinct_by 以 String key 去重并保留首项，collect_dict 对同键
+保留最后值，collect_string 按序连接字符串。公开接口只返回不可变值；ArrayMut、
+DictMut、StringMut 及缓存槽均由标准库内部管理。当前原型以数组物化每个节点，
+不是流式融合执行器；缓存与节点最近一次结果随节点存活，可能增加保留内存。
+完整设计及演进记录见 RFC 0320。
+
 ### 3.2 Sum 值
 
 具名成员提供 enum 的无 payload 值或带 payload 的构造函数：

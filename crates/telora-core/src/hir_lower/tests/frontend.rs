@@ -268,3 +268,17 @@ fn reports_invalid_and_unterminated_string_parts() {
     assert!(error(r#""\xff""#).message.contains("must be ASCII"));
     assert!(error(r#""\u{d800}""#).message.contains("Unicode scalar"));
 }
+
+#[test]
+fn pipeline_write_handle_syntax_is_not_available() {
+    for source in [
+        "pipeline { sink a = []; *a }",
+        "do { sink a = []; a <- 1; *a }",
+    ] {
+        let (mir, _, _) = parse(source);
+        assert!(
+            !mir.diagnostics.is_empty(),
+            "accepted write handles: {source}"
+        );
+    }
+}

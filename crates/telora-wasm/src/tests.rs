@@ -16,6 +16,7 @@ mod inline_aggregates;
 mod interpreters;
 mod json;
 mod linked_encoding;
+mod pipeline;
 mod records;
 mod reflection;
 mod regex;

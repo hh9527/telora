@@ -458,6 +458,20 @@ collect 的私有存储按实际输出倍增，发布已初始化前缀；标量
 显式发布准确根。零字节对象 payload 可位于 header 末尾之外，仅保活 header，
 不将无存储的 payload 作为 managed 根。普通 plan 图支持边界压缩和快照恢复。
 
+### 惰性 pipeline 与内部 builder
+
+std/pipeline 是准入模块 39，公开组合函数使用普通 HIR／闭包实现。节点闭包捕获私有
+类型化 memo 槽；每次 run 分配独立 token，以 token 存储身份判定命中。memo 槽为
+Empty／Pending／Ready，Ready 保存 token 和不可变结果。递归 Pending 报错，语言
+失败清除 Pending；trap 沿用 Session 不可继续执行的约定。显式 cache 使用独立槽及
+固定 token，不受来源在其他 run 中更新槽位的影响。所有引用沿用类型化 GC 与快照。
+
+内部 MutBuilder(Item, Result, P) 保存类型化 Array(P)，P 为 DictMut／ArrayMut。
+代码生成检查标准库名义身份与类型一致性。DictMut 用 entries＋整数哈希索引，完成
+时转换现有 Dict 列布局；ArrayMut 增长私有缓冲，关闭后经新不可变 header 转移
+缓冲区。StringMut 内含字符串块 ArrayMut，完成时一次 join。私有入口只由标准库
+实现调用，应用只持有节点与终端计划。首版每个节点完整物化，未做融合或按需前缀缓存。
+
 ## 6. Property 与初始化/请求生命周期
 
 静态 property 记录说明某个 owner/member 是否具有特定 carrier，以及 provider 的

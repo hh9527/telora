@@ -18,3 +18,16 @@ pub unsafe extern "C" fn telora_sort_pairs(pointer: u32, count: u32) -> u32 {
         0
     }
 }
+
+/// Private builder index hash; collisions are resolved by full key comparison.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn telora_dict_key_hash(value: u32) -> u32 {
+    unsafe {
+        let (pointer, length) = crate::values::string_span(value);
+        let mut hash = 2166136261u32;
+        for index in 0..length {
+            hash = (hash ^ u32::from(*((pointer + index) as *const u8))).wrapping_mul(16777619);
+        }
+        hash
+    }
+}

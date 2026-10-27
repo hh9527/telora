@@ -91,6 +91,7 @@ mod service_reply;
 mod template;
 mod value_origins;
 use telora_wasm_shared::abi as runtime_abi;
+mod pipeline;
 pub mod publication;
 mod scalars;
 mod sequences;

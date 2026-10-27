@@ -1330,3 +1330,21 @@ def inspect: Fn(Type) -> Option(String) = fn(ty) { memo::computed_with_type(name
 ```
 
 每个实例独立缓存成功结果，内部槽位、命中和数量没有公开接口。查询闭包只暴露 Type → R 的行为，计算函数应只依赖类型及不可变捕获值。同一 key 的递归计算报告循环依赖；语言失败不缓存。缓存由闭包可达性管理，可用于构建期，也可显式保留在运行程序中。实现首版为封闭类型空间分配稠密槽位，查询成本固定，存储成本随类型空间和结果槽宽增长。
+
+### 惰性共享 pipeline
+
+```telora
+use std::pipeline as p;
+let c = p::merge(p::from_array([1, 2, 1]), p::from_array([3]))
+    |> p::distinct_by(fn(n) { `key\{n}` });
+let values = c |> p::map(fn(n) { n * 2 }) |> p::collect();
+let text = c |> p::map(fn(n) { `value\{n}` }) |> p::collect_string();
+let result = p::run(p::both(values, text));
+```
+
+绑定和操作符只建立计划，run 才执行。同一次 run 共享同一节点 c 的计算；both
+组合终端输出，可嵌套。独立 run 默认重算；`let cached = c |> p::cache();` 显式
+跨 run 保留成功结果。缓存没有读取状态、计数、清理或修改接口，失败不缓存。
+collect_dict(key, value) 对重复 key 保留最后值；distinct_by(key) 保留首项和顺序。
+公开结果均不可变，内部 ArrayMut／DictMut／StringMut 不可导入。
+当前原型完整物化各节点，尚不进行流式融合，最近结果随节点存活，需评估内存成本。

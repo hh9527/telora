@@ -1,0 +1,99 @@
+# Private collection backends, accessible only within this module.
+type Edit(V) = enum { Thunk((String, Fn() -> V)), Update((String, V)) };
+def merge_update: for(V) Fn(String, V) -> Edit(V) = fn(key, value) { Edit::Update((key, value)) };
+def merge_thunk: for(V) Fn(String, Fn() -> V) -> Edit(V) = fn(key, calc) { Edit::Thunk((key, calc)) };
+type Plan(A, R, P) = struct { initial: R };
+# Concrete implementation states are private, precisely traced ordinary values.
+type DictMut(V) = struct { entries: Array((String, V)), index: Array(Int), sealed: Bool };
+type ArrayMut(A) = struct { entries: Array(A), sealed: Bool };
+type MutBuilder(A, R, P) = struct { states: Array(P) };
+def dict_plan: for(V) Fn(Dict(V)) -> Plan(Edit(V), Dict(V), DictMut(V)) = fn(initial) {
+    {initial}.ty!(Plan(Edit(V), Dict(V), DictMut(V)))
+};
+def array_plan: for(A) Fn(Array(A)) -> Plan(A, Array(A), ArrayMut(A)) = fn(initial) {
+    {initial}.ty!(Plan(A, Array(A), ArrayMut(A)))
+};
+native create_mut_builder: for(A, R, P) Fn(Plan(A, R, P)) -> MutBuilder(A, R, P);
+native extend: for(A, R, P) Fn(MutBuilder(A, R, P), A) -> Bool;
+native finish: for(A, R, P) Fn(MutBuilder(A, R, P)) -> R;
+
+use std::array as arrays;
+use std::string as strings;
+
+# Private typed memo slots own all references; Run identity is opaque to callers.
+type Run = struct { token: Array(Int) };
+type Entry(R) = struct { run: Run, value: R };
+type Slot(R) = enum { Empty, Pending, Ready(Entry(R)) };
+native new_run: Fn() -> Run;
+native new_slots: for(R) Fn() -> Array(Slot(R));
+native memo: for(R) Fn(Array(Slot(R)), Run, Fn() -> R) -> R;
+type Node(A) = struct { evaluate: Fn(Run) -> Array(A) };
+type Output(R) = struct { evaluate: Fn(Run) -> R };
+
+def node: for(A) Fn(Fn(Run) -> Array(A)) -> Node(A) = fn(calc) {
+    let slots: Array(Slot(Array(A))) = new_slots();
+    {evaluate: fn(run) { memo(slots, run, fn() { calc(run) }) }}.ty!(Node(A))
+};
+def from_array: for(A) Fn(Array(A)) -> Node(A) = fn(items) { node(fn(run) { items }) };
+def map: for(A, B) Fn(Fn(A) -> B) -> Fn(Node(A)) -> Node(B) = fn(callback) {
+    fn(source) { node(fn(run) { arrays::map(source.evaluate(run), callback) }) }
+};
+def filter: for(A) Fn(Fn(A) -> Bool) -> Fn(Node(A)) -> Node(A) = fn(callback) {
+    fn(source) { node(fn(run) { arrays::filter(source.evaluate(run), callback) }) }
+};
+def filter_map: for(A, B) Fn(Fn(A) -> Option(B)) -> Fn(Node(A)) -> Node(B) = fn(callback) {
+    fn(source) { node(fn(run) { arrays::flat_map(source.evaluate(run), fn(item) {
+        match callback(item) { Some(value) => [value], None => [] }
+    }) }) }
+};
+def merge: for(A) Fn(Node(A), Node(A)) -> Node(A) = fn(left, right) {
+    node(fn(run) { arrays::concat([left.evaluate(run), right.evaluate(run)]) })
+};
+def distinct_items: for(A) Fn(Array(A), Fn(A) -> String) -> Array(A) = fn(items, key) {
+    let seen = create_mut_builder(dict_plan({}.ty!(Dict(Bool))));
+    let output = create_mut_builder(array_plan([].ty!(Array(A))));
+    let ignored = arrays::fold(items, False, fn(previous, item) {
+        extend(seen, merge_thunk(key(item), fn() { extend(output, item) }))
+    });
+    let closed = finish(seen);
+    finish(output)
+};
+def distinct_by: for(A) Fn(Fn(A) -> String) -> Fn(Node(A)) -> Node(A) = fn(key) {
+    fn(source) { node(fn(run) { distinct_items(source.evaluate(run), key) }) }
+};
+def cache: for(A) Fn() -> Fn(Node(A)) -> Node(A) = fn() {
+    fn(source) {
+        let permanent = new_run();
+        let slots: Array(Slot(Array(A))) = new_slots();
+        {evaluate: fn(run) { memo(slots, permanent, fn() { source.evaluate(run) }) }}.ty!(Node(A))
+    }
+};
+def collect: for(A) Fn() -> Fn(Node(A)) -> Output(Array(A)) = fn() {
+    fn(source) { {evaluate: source.evaluate}.ty!(Output(Array(A))) }
+};
+def dict_items: for(A, V) Fn(Array(A), Fn(A) -> String, Fn(A) -> V) -> Dict(V) = fn(items, key, value) {
+    let output = create_mut_builder(dict_plan({}.ty!(Dict(V))));
+    let ignored = arrays::fold(items, False, fn(previous, item) { extend(output, merge_update(key(item), value(item))) });
+    finish(output)
+};
+def collect_dict: for(A, V) Fn(Fn(A) -> String, Fn(A) -> V) -> Fn(Node(A)) -> Output(Dict(V)) = fn(key, value) {
+    fn(source) { {evaluate: fn(run) { dict_items(source.evaluate(run), key, value) }}.ty!(Output(Dict(V))) }
+};
+# StringMut owns an ArrayMut of chunks and joins exactly once at completion.
+type StringMut = struct { chunks: MutBuilder(String, Array(String), ArrayMut(String)) };
+def string_mut: Fn() -> StringMut = fn() {
+    {chunks: create_mut_builder(array_plan([].ty!(Array(String))))}.ty!(StringMut)
+};
+def string_finish: Fn(StringMut) -> String = fn(buffer) { strings::join(finish(buffer.chunks), "") };
+def collect_string: Fn() -> Fn(Node(String)) -> Output(String) = fn() {
+    fn(source) { {evaluate: fn(run) {
+        let buffer = string_mut();
+        let ignored = arrays::fold(source.evaluate(run), False, fn(previous, chunk) { extend(buffer.chunks, chunk) });
+        string_finish(buffer)
+    }}.ty!(Output(String)) }
+};
+def both: for(A, B) Fn(Output(A), Output(B)) -> Output((A, B)) = fn(left, right) {
+    {evaluate: fn(run) { (left.evaluate(run), right.evaluate(run)) }}.ty!(Output((A, B)))
+};
+def run: for(R) Fn(Output(R)) -> R = fn(output) { output.evaluate(new_run()) };
+pub use self::{Node, Output, from_array, map, filter, filter_map, merge, distinct_by, cache, collect, collect_dict, collect_string, both, run};

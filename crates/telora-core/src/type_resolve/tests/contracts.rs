@@ -395,3 +395,11 @@ fn rejected_uses_preserve_shared_contracts_and_independent_diagnostics() {
         assert!(mir.seal().is_err());
     }
 }
+
+#[test]
+fn lazy_pipeline_operators_preserve_element_and_result_types() {
+    let source = "use std::pipeline as p; pub def answer: Fn() -> (Array(Int), String) = fn() { let a = p::from_array([1,2,1]) |> p::distinct_by(fn(n) { `key\\{n}` }); p::run(p::both(a |> p::collect(), a |> p::map(fn(n) { `value\\{n}` }) |> p::collect_string())) };";
+    let mut mir = graph(&[("@src/main", source)]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+}

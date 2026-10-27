@@ -4,6 +4,14 @@ use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub(crate) fn dict_from_pairs(&mut self, args: &[TypeId]) -> Result<u32, String> {
+        let input = self.parameter(0);
+        self.dict_from_pairs_value(args, input)
+    }
+    pub(crate) fn dict_from_pairs_value(
+        &mut self,
+        args: &[TypeId],
+        input: u32,
+    ) -> Result<u32, String> {
         let node = self.key.node;
         if args.len() != 2
             || self.mir.types[args[0].index()].constructor != T::Array
@@ -34,7 +42,6 @@ impl Emitter<'_> {
         let value_offset = layout.members[1]
             .offset
             .ok_or("Wasm: pair value offset missing")? as i32;
-        let input = self.parameter(0);
         let (base, count) = self.array_parts(input, self.width(pair)?);
         let pointers = self.array_storage(count, 8);
         let index = self.local(ValType::I32);
