@@ -109,15 +109,6 @@ fn recursion_and_overflow() {
     );
 }
 #[test]
-fn unsupported_constructs_fail_at_compile_time() {
-    assert!(
-        compile("pub def answer: Int = panic!(\"probe\");")
-            .unwrap_err()
-            .contains("unsupported")
-    );
-}
-
-#[test]
 fn aggregate_types_and_generic_instances() {
     run(
         "def id: for(T) Fn(T) -> T = fn(x) { x }; pub def answer: (Int, String) = (id(42), id(\"ok\"));",
@@ -142,5 +133,65 @@ fn immutable_collections_and_callbacks() {
     run(
         "use std::dict as d; pub def answer: Int = match d::get({x:42}, \"x\") {Some(v)=>v,None=>0};",
         "if(answer!==42n) throw Error('dict');",
+    );
+}
+
+#[test]
+fn metadata_properties_and_type_memoization() {
+    run(
+        "use std::type_desc as t; type Pair = struct {a:Int,b:String}; pub def answer: Int = t::fields(Pair.type)[0].index;",
+        "if(answer!==0n) throw Error('fields');",
+    );
+    run(
+        "use std::type_property as p; @property(PropertyTarget::Type) type Mark = struct {label:String}; def mark: Fn(Type,Option(Mark))->Mark = fn(t,prev){{label:\"ok\"}}; @mark type Test = struct {}; pub def answer: String = match p::get_type_prop(Test.type,Mark.type){Some(x)=>x.label,None=>\"missing\"};",
+        "if(answer!=='ok') throw Error('property');",
+    );
+    run(
+        "use std::type_memorizer as m; pub def answer: Int = { let cache=m::type_memorizer(fn(ty){42}); m::computed_with_type(cache,Int.type) };",
+        "if(answer!==42n) throw Error('memo');",
+    );
+}
+
+#[test]
+fn json_codecs_preserve_validation() {
+    run(
+        "use std::json as j; type Query=struct {count:Int,label:Option(String)}; pub def answer: Int = match j::decode@[Query](\"{\\\"count\\\":42}\") {Ok(q)=>q.count,Err(e)=>0};",
+        "if(answer!==42n)throw Error('decode');",
+    );
+    run(
+        "use std::json as j; type Query=struct {count:Int}; pub def answer: Bool = match j::decode@[Query](\"{\\\"count\\\":42,\\\"extra\\\":1}\") {Ok(q)=>False,Err(e)=>True};",
+        "if(answer!==true)throw Error('unknown field accepted');",
+    );
+    run(
+        "type Id = struct(Int); pub def answer: Int = Id(42).0;",
+        "if(answer!==42n)throw Error('newtype');",
+    );
+}
+
+#[test]
+fn pipeline_regex_hash_and_checked_decode() {
+    run(
+        "use std::pipeline as p; pub def answer: Array(Int) = p::run([1,2,1] |> p::from_array |> p::distinct_by(fn(x){`\\{x}`}) |> p::collect());",
+        "if(answer.join(',')!=='1,2')throw Error('pipeline');",
+    );
+    run(
+        "use std::hash as h; pub def answer: String = h::sha256(\"abc\");",
+        "if(answer!=='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')throw Error('sha256');",
+    );
+    run(
+        "use std::regex as r; use std::string as s; @r::parse_by(r::compile(r\"^(?P<year>[0-9]{4})$\")) type Year=struct{year:Int}; pub def answer: Int = match s::parse@[Year](\"2026\"){Ok(v)=>v.year,Err(e)=>0};",
+        "if(answer!==2026n)throw Error('regex');",
+    );
+    run(
+        "use std::json as j; use std::blame::{BlameError}; def positive: Fn(Int)->Result((),BlameError)=fn(v){if v>0{Ok(())}else{Err(blame!(\"expected positive\",v))}}; @check(positive) type Positive=struct(Int); pub def answer: Bool = match j::decode@[Positive](\"0\"){Ok(v)=>False,Err(e)=>True};",
+        "if(answer!==true)throw Error('check');",
+    );
+}
+
+#[test]
+fn warnings_remain_successful_diagnostics() {
+    run(
+        "use std::_rt as rt; use std::array as a; pub def answer: Bool = match rt::with_diagnostics(fn(v:Int){let ignored:Option(Int)=warn!(\"warning only\");v})(42) {Ok((v,ds))=>v==42 && a::length(ds)==1,Err(ds)=>False};",
+        "if(answer!==true)throw Error('warning became failure');",
     );
 }

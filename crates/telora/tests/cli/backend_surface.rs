@@ -32,3 +32,38 @@ fn execution_commands_reject_removed_backend_and_artifact_interfaces() {
     assert!(output.stdout.is_empty());
     fs::remove_dir_all(cwd).unwrap();
 }
+
+#[test]
+fn javascript_build_uses_the_workspace_frontend_and_runs_in_node() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        "pub def answer: Fn(Int) -> Int = fn(x) { x + 1 };",
+    )
+    .unwrap();
+    let artifact = cwd.join("model.mjs");
+    let output = telora(&cwd)
+        .args(["build", "--backend", "js", "@src/main:answer", "-o"])
+        .arg(&artifact)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let script = format!(
+        "import answer from {}; if(answer(41n)!==42n)throw Error('wrong result');",
+        serde_json::to_string(&format!("file://{}", artifact.display())).unwrap()
+    );
+    let output = Command::new("node")
+        .args(["--input-type=module", "-e", &script])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(cwd).unwrap();
+}

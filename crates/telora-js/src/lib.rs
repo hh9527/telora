@@ -1,4 +1,5 @@
-//! Experimental direct JavaScript emission from sealed frontend evidence.
+mod metadata;
+// Experimental direct JavaScript emission from sealed frontend evidence.
 use std::collections::BTreeSet;
 use telora_core::mir::*;
 use telora_core::syntax::kinds::{BinaryOperator as B, BindingKind, UnaryOperator as U};
@@ -6,9 +7,6 @@ use telora_core::syntax::kinds::{BinaryOperator as B, BindingKind, UnaryOperator
 /// Emit a standalone ES module exporting the selected value as `default`.
 /// Unsupported constructs fail compilation rather than falling back to Wasm.
 pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<String, String> {
-    if !executable.checks().is_empty() {
-        return Err("JS prototype: construction checks are unsupported".into());
-    }
     let mir = executable.sealed_mir().mir();
     let mut emit = Emit {
         mir,
@@ -18,6 +16,8 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<String, S
         instance: None,
     };
     let entry = emit.expr(executable.root())?;
+    let metadata = metadata::emit(executable)?;
+    let property_code = emit.properties(executable)?;
     let mut definitions = String::new();
     while let Some((symbol, instance)) = emit.pending.pop() {
         emit.instance = instance;
@@ -32,9 +32,11 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<String, S
         ));
     }
     Ok(format!(
-        "{RUNTIME}\n{COLLECTION_RUNTIME}\n{definitions}\nexport default {entry};\n"
+        "{RUNTIME}\n{COLLECTION_RUNTIME}\n{metadata}\n{property_code}\n{definitions}\nconst entry = {entry};\nexport default entry;\n{SERVICE_RUNTIME}\n"
     ))
 }
+
+const SERVICE_RUNTIME: &str = include_str!("service.js");
 
 const COLLECTION_RUNTIME: &str = include_str!("runtime.js");
 
@@ -133,7 +135,14 @@ impl Emit<'_> {
                         Ok(format!("variant({index})"))
                     }
                 }
-                ValueMaterialization::NewtypeConstructor => Ok("(x => x)".into()),
+                ValueMaterialization::NewtypeConstructor => {
+                    let ty = self.type_id(node)?;
+                    let owner = self.mir.types[ty.index()]
+                        .arguments
+                        .last()
+                        .ok_or("JS: missing newtype owner")?;
+                    Ok(format!("(x => check({}, 'type', x))", owner.index()))
+                }
             };
         }
         Ok(match &hir.kind {
@@ -150,6 +159,26 @@ impl Emit<'_> {
                 .as_ref()
                 .ok_or("JS: untrusted native declaration")?;
                 let key = format!("{}:{}", module.id, symbol.name);
+                if module.id == 25 && matches!(symbol.name.as_str(), "required" | "optional") {
+                    let instance = self.instance.ok_or("JS: missing property instance")?;
+                    let record = &self.mir.generic_instances[instance.index()];
+                    let params = &self.mir.symbol_generics[record.symbol.index()];
+                    let arg = |i: usize| {
+                        record
+                            .arguments
+                            .iter()
+                            .find(|(s, _)| *s == params[i])
+                            .map(|(_, t)| t.index())
+                            .ok_or("JS: missing property argument")
+                    };
+                    return Ok(format!(
+                        "(() => property({}, 'type', {}, {}))",
+                        arg(1)?,
+                        arg(0)?,
+                        symbol.name == "required"
+                    ));
+                }
+
                 if !COLLECTION_RUNTIME.contains(&format!("'{}':", key)) {
                     return Err(format!("JS: unsupported native {key}"));
                 }
@@ -162,16 +191,60 @@ impl Emit<'_> {
             HirKind::Int(x) => format!("{x}n"),
             HirKind::Float(x) => serde_json::to_string(x).map_err(|e| e.to_string())?,
             HirKind::String(x) => serde_json::to_string(x).unwrap(),
+            HirKind::InterpolatedString => {
+                let parts = hir
+                    .children
+                    .iter()
+                    .filter(|e| e.role == Role::Part)
+                    .map(|e| self.expr(e.node))
+                    .collect::<Result<Vec<_>, _>>()?;
+                format!("[{}].join('')", parts.join(","))
+            }
+
+            HirKind::Binding {
+                kind: BindingKind::Type,
+                ..
+            } => {
+                let ty = self
+                    .instance
+                    .map(|id| self.mir.generic_instances[id.index()].signature)
+                    .unwrap_or(self.type_id(node)?);
+                let shape = &self.mir.types[ty.index()];
+                if shape.constructor == TypeConstructor::Function {
+                    let owner = shape
+                        .arguments
+                        .last()
+                        .ok_or("JS: missing constructor result")?;
+                    format!("(value => check({}, 'type', value))", owner.index())
+                } else if shape.constructor == TypeConstructor::Meta {
+                    shape
+                        .arguments
+                        .first()
+                        .ok_or("JS: missing type value")?
+                        .index()
+                        .to_string()
+                } else if matches!(shape.constructor, TypeConstructor::Nominal(_)) {
+                    ty.index().to_string()
+                } else {
+                    return Err(format!(
+                        "JS: type declaration used as value at {node:?}: {shape:?}, instance {:?}",
+                        self.instance
+                    ));
+                }
+            }
             HirKind::Binding {
                 kind: BindingKind::Let | BindingKind::Def | BindingKind::Impl,
                 ..
             } => self.sub(node, Role::Value)?,
             HirKind::TypeApply if self.reference(node).is_none() => self.sub(node, Role::Callee)?,
             HirKind::Variable(_) | HirKind::TypeApply | HirKind::Field
-                if !matches!(hir.kind, HirKind::Field)
+                if !matches!(
+                    self.mir.member_selections[node.index()],
+                    Some(MemberSelection::TraitMember { .. })
+                ) && (!matches!(hir.kind, HirKind::Field)
                     || hir.resolution.is_some_and(|slot| {
                         matches!(self.mir.resolve_slots[slot.index()], ResolveState::Bound(_))
-                    }) =>
+                    })) =>
             {
                 if let Some(instance) = self.reference(node) {
                     let symbol = self.mir.generic_instances[instance.index()].symbol;
@@ -206,7 +279,11 @@ impl Emit<'_> {
             }
             HirKind::TypeAscription => {
                 if let Ok(value) = self.child(node, Role::Value) {
-                    self.expr(value)?
+                    format!(
+                        "check({}, 'type', {})",
+                        self.type_id(node)?.index(),
+                        self.expr(value)?
+                    )
                 } else {
                     self.sub(node, Role::Receiver)?
                 }
@@ -252,15 +329,17 @@ impl Emit<'_> {
                 format!("Object.freeze({{{}}})", fields.join(","))
             }
             HirKind::Field => {
-                if let Some(MemberSelection::TraitMember {
-                    implementation: Some(symbol),
-                    ..
-                }) = self.mir.member_selections[node.index()]
+                if let Some(MemberSelection::TraitMember { implementation, .. }) =
+                    self.mir.member_selections[node.index()]
                 {
                     let instance = match self.instance {
                         Some(id) => self.mir.generic_instances[id.index()].implementation(node),
                         None => self.mir.implementation_instances[node.index()],
                     };
+                    let symbol = instance
+                        .map(|id| self.mir.generic_instances[id.index()].symbol)
+                        .or(implementation)
+                        .ok_or("JS: missing trait implementation")?;
                     if self.globals.insert((symbol, instance)) {
                         self.pending.push((symbol, instance));
                     }
@@ -285,7 +364,50 @@ impl Emit<'_> {
                 }
             }
             HirKind::TupleProjection(index) => {
-                format!("({})[{index}]", self.sub(node, Role::Receiver)?)
+                let receiver = self.child(node, Role::Receiver)?;
+                let ty = self.type_id(receiver)?;
+                let body = self.mir.type_layouts[ty.index()].as_ref().map(|x| x.body);
+                let newtype = body.is_some_and(|b| {
+                    self.mir.types[b.index()].constructor == TypeConstructor::Newtype
+                });
+                if newtype {
+                    self.expr(receiver)?
+                } else {
+                    format!("({})[{index}]", self.expr(receiver)?)
+                }
+            }
+            HirKind::FieldProjection => {
+                let receiver = self.sub(node, Role::Receiver)?;
+                let sources = hir
+                    .children
+                    .iter()
+                    .filter(|e| e.role == Role::Name)
+                    .map(|e| e.node)
+                    .collect::<Vec<_>>();
+                let targets = hir
+                    .children
+                    .iter()
+                    .filter(|e| e.role == Role::Target)
+                    .map(|e| e.node)
+                    .collect::<Vec<_>>();
+                let mut fields = vec![];
+                for (source, target) in sources.iter().zip(targets) {
+                    let (HirKind::Name(source), HirKind::Name(target)) = (
+                        &self.mir.hir[source.index()].kind,
+                        &self.mir.hir[target.index()].kind,
+                    ) else {
+                        return Err("JS: missing projection name".into());
+                    };
+                    fields.push(format!(
+                        "[{}]:value[{}]",
+                        serde_json::to_string(target).unwrap(),
+                        serde_json::to_string(source).unwrap()
+                    ));
+                }
+                format!(
+                    "((value)=>Object.freeze({{{}}}))({receiver})",
+                    fields.join(",")
+                )
             }
             HirKind::Index => format!(
                 "index({}, {})",
@@ -293,6 +415,100 @@ impl Emit<'_> {
                 self.sub(node, Role::Index)?
             ),
             HirKind::Match => self.match_expr(node)?,
+            HirKind::IfLet | HirKind::LetElse => {
+                let input = self.sub(node, Role::Value)?;
+                let mut bindings = String::new();
+                let cond =
+                    self.pattern(self.child(node, Role::Pattern)?, "matched", &mut bindings)?;
+                let yes = self.sub(
+                    node,
+                    if matches!(hir.kind, HirKind::IfLet) {
+                        Role::Then
+                    } else {
+                        Role::Body
+                    },
+                )?;
+                let no = self.sub(node, Role::Else)?;
+                format!(
+                    "(() => {{const matched={input}; if({cond}){{{bindings}return {yes};}}return {no};}})()"
+                )
+            }
+
+            HirKind::Panic | HirKind::Raise(_) => {
+                use telora_core::syntax::kinds::BlameAction;
+                let value = self.sub(node, Role::Value)?;
+                let file = self.mir.sources.get(hir.location.source);
+                let coords = file.coordinates(hir.location).0;
+                let location = format!(
+                    "Object.freeze({{source:{},start:Object.freeze({{line:{}n,offset:{}n}}),end:Object.freeze({{line:{}n,offset:{}n}})}})",
+                    serde_json::to_string(file.name.as_ref()).unwrap(),
+                    coords[1] + 1,
+                    coords[2],
+                    coords[3] + 1,
+                    coords[4]
+                );
+                match hir.kind {
+                    HirKind::Raise(BlameAction::Build) => {
+                        format!(
+                            "Object.freeze({{message:{value},locs:Object.freeze([{location}])}})"
+                        )
+                    }
+                    HirKind::Raise(BlameAction::Warn) => format!("warning({value}, [{location}])"),
+                    _ => format!("failure({value}, [{location}])"),
+                }
+            }
+            HirKind::Debug { .. } => self.sub(node, Role::Value)?,
+            HirKind::Decorator { configured } | HirKind::ConstructionCheck { configured } => {
+                let callee = self.sub(node, Role::Callee)?;
+                if *configured {
+                    let args = hir
+                        .children
+                        .iter()
+                        .filter(|e| e.role == Role::Argument)
+                        .map(|e| self.expr(e.node))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    format!("({callee})({})", args.join(","))
+                } else {
+                    callee
+                }
+            }
+            HirKind::Interpreter => {
+                let plan = self.mir.interpreter_plans[node.index()]
+                    .as_ref()
+                    .ok_or("JS: missing interpreter plan")?;
+                let inputs = plan
+                    .parameters
+                    .iter()
+                    .enumerate()
+                    .map(|(i, w)| match w {
+                        Some(w) => format!("Object.freeze({{ty:ws[{w}],value:xs[{i}]}})"),
+                        None => format!("xs[{i}]"),
+                    })
+                    .collect::<Vec<_>>();
+                format!(
+                    "((f) => (...ws) => (...xs) => f({}))({})",
+                    inputs.join(","),
+                    self.sub(node, Role::Operand)?
+                )
+            }
+            HirKind::Propagate => {
+                let boundary = self.mir.propagation_boundaries[node.index()]
+                    .ok_or("JS: missing propagation boundary")?;
+                format!(
+                    "propagate({}, {})",
+                    self.sub(node, Role::Operand)?,
+                    boundary.index()
+                )
+            }
+            HirKind::Return => {
+                let boundary = self.mir.propagation_boundaries[node.index()]
+                    .ok_or("JS: missing return boundary")?;
+                format!(
+                    "escape({}, {})",
+                    self.sub(node, Role::Value)?,
+                    boundary.index()
+                )
+            }
             HirKind::Closure => {
                 let mut params = vec![];
                 for edge in &hir.children {
@@ -303,8 +519,9 @@ impl Emit<'_> {
                     }
                 }
                 format!(
-                    "(({}) => {})",
+                    "(({}) => boundary({}, () => {}))",
                     params.join(","),
+                    node.index(),
                     self.sub(node, Role::Body)?
                 )
             }
@@ -513,5 +730,61 @@ impl Emit<'_> {
         Ok(format!(
             "(() => {{{body}throw new Error('Telora nonexhaustive match');}})()"
         ))
+    }
+}
+
+impl Emit<'_> {
+    fn properties(&mut self, executable: &SealedExecutable<'_>) -> Result<String, String> {
+        let mut code = String::from(
+            "const properties = Object.create(null);\nconst checkers = Object.create(null);\n",
+        );
+        for &i in executable.properties() {
+            let record = &self.mir.properties[i];
+            self.instance = record.instance;
+            let site = match record.site {
+                PropertySite::Type => "type".into(),
+                PropertySite::Field(i) => format!("field:{i}"),
+                PropertySite::Variant(i) => format!("variant:{i}"),
+            };
+            let context = match record.site {
+                PropertySite::Type => record.owner.index().to_string(),
+                PropertySite::Field(index) | PropertySite::Variant(index) => format!(
+                    "propertyContext({}, {}, {})",
+                    record.owner.index(),
+                    index,
+                    matches!(record.site, PropertySite::Variant(_))
+                ),
+            };
+            let mut value = "none()".to_string();
+            for &provider in &record.providers {
+                let provider = self.expr(provider)?;
+                value = format!("some(({provider})({context}, {value}))");
+            }
+            let key = serde_json::to_string(&format!(
+                "{}:{site}:{}",
+                record.owner.index(),
+                record.property.index()
+            ))
+            .unwrap();
+            code.push_str(&format!(
+                "properties[{key}] = memo(() => ({value}).value);\n"
+            ));
+        }
+        for &i in executable.checks() {
+            let record = &self.mir.construction_checks[i];
+            self.instance = record.instance;
+            let callee = self.expr(record.checker)?;
+            let site = match record.site {
+                PropertySite::Type => "type".into(),
+                PropertySite::Field(i) => format!("field:{i}"),
+                PropertySite::Variant(i) => format!("variant:{i}"),
+            };
+            let key = serde_json::to_string(&format!("{}:{site}", record.owner.index())).unwrap();
+            code.push_str(&format!(
+                "(checkers[{key}] ??= []).push(memo(() => {callee}));\n"
+            ));
+        }
+        self.instance = None;
+        Ok(code)
     }
 }
