@@ -1713,6 +1713,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "telora-js"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "telora-core",
+]
+
+[[package]]
 name = "telora-run"
 version = "0.1.0"
 dependencies = [

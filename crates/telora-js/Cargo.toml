@@ -1,0 +1,8 @@
+[package]
+name = "telora-js"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+telora-core = { path = "../telora-core" }
+serde_json = "1"
