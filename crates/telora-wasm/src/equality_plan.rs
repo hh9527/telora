@@ -57,7 +57,7 @@ impl Plan {
                 continue;
             }
             if matches!(mir.types[ty.index()].constructor, T::Array | T::Dict) {
-                pending.push(mir.types[ty.index()].arguments[0]);
+                pending.extend(mir.types[ty.index()].arguments.iter().copied());
             } else if !self.layouts[ty.index()].variants.is_empty() {
                 pending.extend(
                     self.layouts[ty.index()]

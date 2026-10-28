@@ -1042,6 +1042,7 @@ fn concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types() {
         pub def unchecked: Fn(Unchecked(Rec)) -> Int = fn(x) { x.item };
         pub def empty: Array(Never) = [];
         pub def dictionary: Dict(Int) = {x: 1};
+        pub def keyed: Map(Int,String) = std::map::from_pairs([(1,"one")]);
         pub def accepts_dyn: Fn(Dyn) -> Dyn = fn(value: Dyn) { value };
         pub def dynamics: Array(Dyn) = [];
     "#,
@@ -1134,6 +1135,7 @@ fn concrete_layouts_close_recursive_wrapped_callable_and_dynamic_types() {
         .iter()
         .find(|r| r["type_name"] == "Dict(Int)")
         .unwrap();
+    assert!(entries.iter().any(|r| r["type_name"] == "Map(Int, String)"));
     assert_eq!(dict["entry"]["object"]["element_stride"], 16);
     assert_eq!(dict["entry"]["layout"]["shape"]["value_bytes"], 24);
     assert_eq!(dict["entry"]["layout"]["shape"]["table"], "ArrayTable");

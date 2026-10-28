@@ -33,7 +33,8 @@ pub(crate) fn contract(manifest: &Manifest, initialize: u32) -> Result<Contract,
     if sources.name != "sources"
         || dict.kind != Kind::Dict
         || dict.bytes != STRING_BYTES
-        || dict.arguments.len() != 1
+        || dict.arguments.len() != 2
+        || manifest.types[dict.arguments[1] as usize].kind != Kind::String
         || Some(dict.arguments[0]) != manifest.value_type
     {
         return Err("Wasm: service Context requires sources: Dict(Value)".into());

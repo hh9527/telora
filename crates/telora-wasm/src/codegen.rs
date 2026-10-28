@@ -159,6 +159,7 @@ fn compile(
         ("telora_build_time_active", 2),
         ("telora_build_information_publish", BINARY_TYPE),
         ("telora_dict_key_hash", 0),
+        ("telora_column_map", 0),
     ] {
         imports.import("env", name, EntityType::Function(ty));
     }

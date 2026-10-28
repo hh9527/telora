@@ -1,6 +1,6 @@
 //! Explicit shadow slots mirror typed ownership, never the bits in arbitrary locals.
 use crate::{abi::*, emit::Emitter, object::ObjectFunction, plan::Special};
-use telora_core::mir::{HirKind, TypeId};
+use telora_core::mir::TypeId;
 use wasm_encoder::Instruction as I;
 
 impl Emitter<'_> {
@@ -135,12 +135,9 @@ impl Emitter<'_> {
                 parameter(1, ROOT_STORAGE, 0);
             }
             Special::Normal | Special::Configured if self.key.callable => {
-                let constructor = self.key.special == Special::Normal
-                    && crate::natives::identity(self.mir, self.key.node).is_none()
-                    && !matches!(
-                        self.mir.hir[self.key.node.index()].kind,
-                        HirKind::Closure | HirKind::Interpreter
-                    );
+                // Canonical constructor literals receive the callable value;
+                // ordinary closures (including newtype constructors) receive an environment.
+                let constructor = self.plan.constructor_aliases.contains_key(&self.key);
                 parameter(
                     0,
                     if constructor {

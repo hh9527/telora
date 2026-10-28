@@ -1,14 +1,16 @@
 # Private collection backends, accessible only within this module.
-type Edit(V) = enum { Thunk((String, Fn() -> V)), Update((String, V)) };
-def merge_update: for(V) Fn(String, V) -> Edit(V) = fn(key, value) { Edit::Update((key, value)) };
-def merge_thunk: for(V) Fn(String, Fn() -> V) -> Edit(V) = fn(key, calc) { Edit::Thunk((key, calc)) };
+type Edit(K, V) = enum { Thunk((K, Fn() -> V)), Update((K, V)) };
+def merge_update: for(K,V) Fn(K, V) -> Edit(K,V) = fn(key, value) { Edit::Update((key, value)) };
+def merge_thunk: for(K,V) Fn(K, Fn() -> V) -> Edit(K,V) = fn(key, calc) { Edit::Thunk((key, calc)) };
 type Plan(A, R, P) = struct { initial: R };
 # Concrete implementation states are private, precisely traced ordinary values.
-type DictMut(V) = struct { entries: Array((String, V)), index: Array(Int), sealed: Bool };
 type ArrayMut(A) = struct { entries: Array(A), sealed: Bool };
 type MutBuilder(A, R, P) = struct { states: Array(P) };
-def dict_plan: for(V) Fn(Dict(V)) -> Plan(Edit(V), Dict(V), DictMut(V)) = fn(initial) {
-    {initial}.ty!(Plan(Edit(V), Dict(V), DictMut(V)))
+def dict_plan: for(V) Fn(Dict(V)) -> Plan(Edit(String,V), Dict(V), (Array(String),Array(V),Bytes,Bool)) = fn(initial) {
+    {initial}.ty!(Plan(Edit(String,V), Dict(V), (Array(String),Array(V),Bytes,Bool)))
+};
+def map_plan: for(K,V) Fn(Map(K,V)) -> Plan(Edit(K,V), Map(K,V), (Array(K),Array(V),Bytes,Bool)) = fn(initial) {
+    {initial}.ty!(Plan(Edit(K,V), Map(K,V), (Array(K),Array(V),Bytes,Bool)))
 };
 def array_plan: for(A) Fn(Array(A)) -> Plan(A, Array(A), ArrayMut(A)) = fn(initial) {
     {initial}.ty!(Plan(A, Array(A), ArrayMut(A)))
@@ -97,3 +99,13 @@ def both: for(A, B) Fn(Output(A), Output(B)) -> Output((A, B)) = fn(left, right)
 };
 def run: for(R) Fn(Output(R)) -> R = fn(output) { output.evaluate(new_run()) };
 pub use self::{Node, Output, from_array, map, filter, filter_map, merge, distinct_by, cache, collect, collect_dict, collect_string, both, run};
+
+use std::map as maps;
+def collect_map: for(A,K,V) Fn(Fn(A)->K,Fn(A)->V)->Fn(Node(A))->Output(Map(K,V)) = fn(key,value){
+ fn(source){{evaluate:fn(run){
+  let output=create_mut_builder(map_plan(maps::empty()));
+  let ignored=arrays::fold(source.evaluate(run),False,fn(previous,item){extend(output,merge_update(key(item),value(item)))});
+  finish(output)
+ }}.ty!(Output(Map(K,V)))}
+};
+pub use self::{collect_map};

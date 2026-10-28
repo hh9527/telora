@@ -314,7 +314,14 @@ impl Emitter<'_> {
         if self.mir.types[ty.index()].constructor == T::Dict {
             let width = self.width(self.mir.types[ty.index()].arguments[0])?;
             let key = self.expression(child(self.mir, node, Role::Index)?)?;
-            let result = self.dictionary_lookup(receiver, key, width);
+            let result = if self.mir.types[self.mir.types[ty.index()].arguments[1].index()]
+                .constructor
+                == T::String
+            {
+                self.dictionary_lookup(receiver, key, width)
+            } else {
+                self.column_lookup(receiver, key, ty)?
+            };
             self.extend([I::LocalGet(result), I::I32Eqz]);
             self.fail_if(node, ERROR_KEY);
             return Ok(result);

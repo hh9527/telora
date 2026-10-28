@@ -65,6 +65,7 @@ mod input_types;
 mod interpreters;
 mod json_ops;
 mod local_instances;
+mod map_order;
 mod natives;
 pub mod object;
 mod output;
@@ -115,3 +116,7 @@ pub use codegen::{compile_check, compile_executable, compile_service};
 mod tests;
 
 pub mod staged_build;
+
+mod column_map;
+mod column_search;
+mod map_order_kind;

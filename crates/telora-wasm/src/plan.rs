@@ -131,6 +131,7 @@ impl Plan {
             callable: false,
             special: Special::Normal,
         };
+        let layouts = telora_core::candidate_layout::calculate(executable.sealed_mir())?;
         let mut plan = Self {
             generated_helpers: 4,
             function_results: BTreeMap::new(),
@@ -144,7 +145,7 @@ impl Plan {
             capture_types: BTreeMap::new(),
             instance_captures: BTreeMap::new(),
             local_instances: BTreeSet::new(),
-            layouts: telora_core::candidate_layout::calculate(executable.sealed_mir())?,
+            layouts,
             root,
             properties: BTreeMap::new(),
             checks: BTreeMap::new(),

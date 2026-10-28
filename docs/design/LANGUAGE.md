@@ -182,6 +182,10 @@ Option variant 和空集合都按完整的共同契约检查。
 分支为无元素分支提供类型证据；该合并与分支顺序无关。若所有可达分支均无元素且
 没有 expected item type，必须用类型注解提供元素类型。
 
+`std::map::Map(K,V)` 是独立标准库中的不可变有序映射，通过显式导入使用。更新和删除返回新版本，旧版本内容保持不变。有序遍历遵循 Map 自带的稳定全序比较器。默认 key 支持 Int、String、Bool、Type/TypeOf；其他 key 使用显式比较器，比较结果的符号表示次序，零表示 key 等价。覆盖等价 key 时保留已有 key 代表，`from_pairs` 最后值生效。Type 次序限于本次封闭编译，不作为跨制品稳定排序。
+
+首版 Map 与 Dict 独立，不提供 Map 字面量、内建相等运算或隐式 JSON object codec。Map 的树形布局和比较器闭包不能作为映射内容相等的判据；外部表示使用有序 pairs。默认 Float 全序、Dict 桥接和 aliasing 优化另行设计。
+
 Tuple 是固定长度的异质积：
 
 ```telora

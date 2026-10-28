@@ -14,6 +14,9 @@ impl Session {
         value: &Value,
         depth: usize,
     ) -> Result<(), String> {
+        if self.manifest.types[desc.arguments[1] as usize].kind != Kind::String {
+            return Err("Map with non-String keys requires explicit pairs input".into());
+        }
         let items = value.as_object().ok_or("Wasm: expected Dict input")?;
         let element = *desc
             .arguments

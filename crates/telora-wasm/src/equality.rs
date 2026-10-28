@@ -230,14 +230,16 @@ impl Emitter<'_> {
         let dict = *kind == T::Dict;
         let element = self.mir.types[ty.index()].arguments[0];
         let width = self.width(element)?;
-        let (left, a) = self.comparison_parts(0, width, dict);
-        let (right, b) = self.comparison_parts(1, width, dict);
+        let left_input = 0;
+        let right_input = 1;
+        let (left, a) = self.comparison_parts(left_input, width, dict);
+        let (right, b) = self.comparison_parts(right_input, width, dict);
         self.extend([I::LocalGet(a), I::LocalGet(b), I::I32Ne]);
         self.unequal_if();
         let keys = if dict {
             Some((
-                self.table_data(ARRAYS, 0, DATA),
-                self.table_data(ARRAYS, 1, DATA),
+                self.table_data(ARRAYS, left_input, DATA),
+                self.table_data(ARRAYS, right_input, DATA),
             ))
         } else {
             None
@@ -252,14 +254,10 @@ impl Emitter<'_> {
             I::BrIf(1),
         ]);
         if let Some((left, right)) = keys {
-            let left = self.array_item(left, index, STRING_BYTES);
-            let right = self.array_item(right, index, STRING_BYTES);
-            self.extend([
-                I::LocalGet(left),
-                I::LocalGet(right),
-                I::Call(STRING_COMPARE),
-            ]);
-            self.unequal_if();
+            let key = self.mir.types[ty.index()].arguments[1];
+            let left = self.array_item(left, index, self.width(key)?);
+            let right = self.array_item(right, index, self.width(key)?);
+            self.compare_child(key, left, right)?;
         }
         let left = self.array_item(left, index, width);
         let right = self.array_item(right, index, width);

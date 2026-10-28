@@ -346,7 +346,7 @@ pub enum TypeConstructor {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeFunction {
     Array,
-    Dict,
+    Map,
     Option,
     Result,
     FoldControl,

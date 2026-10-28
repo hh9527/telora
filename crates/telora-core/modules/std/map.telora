@@ -1,0 +1,27 @@
+# Compact immutable ordered maps. Keys and values are separate sorted columns.
+use std::array as array;
+native compare: for(K) Fn(K,K)->Int;
+native order_kind: for(K) Fn(TypeOf(K))->Int;
+pub use self::{compare, order_kind};
+pub use std::prelude::{Map};
+native rt_from_pairs: for(K,V) Fn(Array((K,V)),Fn(K,K)->Int,Int)->Map(K,V);
+native rt_get: for(K,V) Fn(Map(K,V),K,Fn(K,K)->Int,Int)->Option(V);
+native rt_insert: for(K,V) Fn(Map(K,V),K,V,Fn(K,K)->Int,Int)->Map(K,V);
+native rt_remove: for(K,V) Fn(Map(K,V),K,Fn(K,K)->Int,Int)->Map(K,V);
+native rt_merge: for(K,V) Fn(Map(K,V),Map(K,V),Fn(K,K)->Int,Int)->Map(K,V);
+native keys: for(K,V) Fn(Map(K,V))->Array(K);
+native values: for(K,V) Fn(Map(K,V))->Array(V);
+native pairs: for(K,V) Fn(Map(K,V))->Array((K,V));
+native length: for(K,V) Fn(Map(K,V))->Int;
+def from_pairs: for(K,V) Fn(Array((K,V)))->Map(K,V) = fn(items) {rt_from_pairs(items,compare@[K],order_kind(K.type))};
+def empty: for(K,V) Fn()->Map(K,V) = fn(){from_pairs([].ty!(Array((K,V))))};
+def get: for(K,V) Fn(Map(K,V),K)->Option(V) = fn(map,key){rt_get(map,key,compare@[K],order_kind(K.type))};
+def contains_key: for(K,V) Fn(Map(K,V),K)->Bool = fn(map,key){match get(map,key){Some(value)=>True,None=>False}};
+def is_empty: for(K,V) Fn(Map(K,V))->Bool = fn(map){length(map)==0};
+def insert: for(K,V) Fn(Map(K,V),K,V)->Map(K,V) = fn(map,key,value){rt_insert(map,key,value,compare@[K],order_kind(K.type))};
+def remove: for(K,V) Fn(Map(K,V),K)->Map(K,V) = fn(map,key){rt_remove(map,key,compare@[K],order_kind(K.type))};
+def merge: for(K,V) Fn(Map(K,V),Map(K,V))->Map(K,V) = fn(left,right){rt_merge(left,right,compare@[K],order_kind(K.type))};
+def fold: for(K,V,A) Fn(Map(K,V),A,Fn(A,K,V)->A)->A = fn(map,initial,callback){array::fold(pairs(map),initial,fn(acc,item){callback(acc,item.0,item.1)})};
+def map_values: for(K,V,W) Fn(Map(K,V),Fn(V)->W)->Map(K,W) = fn(map,callback){from_pairs(array::map(pairs(map),fn(item){(item.0,callback(item.1))}))};
+def filter: for(K,V) Fn(Map(K,V),Fn(V)->Bool)->Map(K,V) = fn(map,callback){from_pairs(array::filter(pairs(map),fn(item){callback(item.1)}))};
+pub use self::{empty,from_pairs,get,contains_key,is_empty,insert,remove,merge,keys,values,pairs,length,fold,map_values,filter};

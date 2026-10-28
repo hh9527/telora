@@ -94,6 +94,12 @@ impl Emitter<'_> {
             self.emit(I::Unreachable);
             return Ok(self.local(ValType::I32));
         }
+        if *kind == T::Dict
+            && self.mir.types[self.mir.types[source.index()].arguments[1].index()].constructor
+                != T::String
+        {
+            return Err("Map with non-String keys requires an explicit pairs codec".into());
+        }
         if matches!(kind, T::Array | T::Dict) {
             return self.codec_encode_array(source, target, input);
         }

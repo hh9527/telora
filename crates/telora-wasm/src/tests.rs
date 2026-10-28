@@ -346,7 +346,7 @@ fn dictionary_operations_use_sorted_columns_and_closed_callbacks() {
         "sort_input",
     )
     .unwrap();
-    let mut session = crate::session::Session::load(&bytes, 10_000_000).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 30_000_000).unwrap();
     session.initialize().unwrap();
     let pairs = (0..200)
         .rev()
@@ -1140,3 +1140,5 @@ fn diagnostic_point(value: &serde_json::Value) -> u64 {
 }
 
 mod staged_build;
+
+mod column_map;

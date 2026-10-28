@@ -40,18 +40,30 @@ impl Emitter<'_> {
         {
             return Err("Wasm: invalid MutBuilder storage".into());
         }
-        let kind = self.builder_name(state)?;
+        let kind = if self.mir.types[result.index()].constructor == T::Dict
+            && self.mir.types[state.index()].constructor == T::Tuple
+        {
+            "MapMut".into()
+        } else {
+            self.builder_name(state)?
+        };
         let parameters = &self.mir.types[state.index()].arguments;
-        if parameters.len() != 1 {
+        if parameters.is_empty() {
             return Err("Wasm: invalid concrete MutBuilder arity".into());
         }
         let value = parameters[0];
         let valid = match kind.as_str() {
-            "DictMut" => {
-                self.mir.types[result.index()].constructor == T::Dict
-                    && self.mir.types[result.index()].arguments == [value]
+            "MapMut" if parameters.len() == 4 => {
+                let args = &self.mir.types[result.index()].arguments;
+                let (value, key) = (args[0], args[1]);
+                self.mir.types[parameters[0].index()].constructor == T::Array
+                    && self.mir.types[parameters[0].index()].arguments == [key]
+                    && self.mir.types[parameters[1].index()].constructor == T::Array
+                    && self.mir.types[parameters[1].index()].arguments == [value]
+                    && self.mir.types[parameters[2].index()].constructor == T::Bytes
+                    && self.mir.types[parameters[3].index()].constructor == T::Bool
                     && self.builder_name(item)? == "Edit"
-                    && self.mir.types[item.index()].arguments == [value]
+                    && self.mir.types[item.index()].arguments == [key, value]
             }
             "ArrayMut" => {
                 item == value
@@ -86,7 +98,7 @@ impl Emitter<'_> {
             }
             let plan = self.parameter(0);
             let (initial, _) = self.sequence_field(plan, plan_ty, "initial")?;
-            let states = if kind == "DictMut" {
+            let states = if kind == "MapMut" {
                 let layout = self.pipeline_layout(storage)?;
                 self.pipeline_new(&[result, storage], &layout, initial)?
             } else {
@@ -108,7 +120,7 @@ impl Emitter<'_> {
             "finish" if args.len() == 2 && output == result => "dict_finish",
             _ => return Err("Wasm: invalid restricted MutBuilder operation".into()),
         };
-        if kind == "DictMut" {
+        if kind == "MapMut" {
             self.pipeline_dict_native(
                 native,
                 &[

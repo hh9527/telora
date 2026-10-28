@@ -1346,5 +1346,27 @@ let result = p::run(p::both(values, text));
 组合终端输出，可嵌套。独立 run 默认重算；`let cached = c |> p::cache();` 显式
 跨 run 保留成功结果。缓存没有读取状态、计数、清理或修改接口，失败不缓存。
 collect_dict(key, value) 对重复 key 保留最后值；distinct_by(key) 保留首项和顺序。
-公开结果均不可变，内部 ArrayMut／DictMut／StringMut 不可导入。
+公开结果均不可变；MapMut 是编译器/RT 的内部机制，不是语言类型。内部 ArrayMut／StringMut 布局不可导入。
 当前原型完整物化各节点，尚不进行流式融合，最近结果随节点存活，需评估内存成本。
+
+
+### 列式 Map 与持久化映射
+
+`Map(K,V)` 是不可变有序映射，`Dict(V)` 是 `Map(String,V)` 的透明别名。keys 和 values 是按 key 排序的两列；查询使用二分查找。普通不可变更新复制结果，历史值保持不变。
+
+```telora
+use std::map as map;
+let a: Map(Int,String) = map::from_pairs([(3,"three"),(1,"one")]);
+let b = map::insert(a,3,"THREE");
+let value = b[3];
+let ordered = map::pairs(b); # [(1,"one"),(3,"THREE")]
+let same = Dict(Int).type == Map(String,Int).type; # True
+```
+
+`empty`、`from_pairs`、`get`、`contains_key`、`insert`、`remove`、`merge`、`length`、`is_empty`、`keys`、`values`、`pairs`、`fold`、`map_values`、`filter` 由 `std::map` 提供。from_pairs 重复 key 保留首 key 代表、最后 value；merge 采用右侧 value。`std::dict::from_pairs` 保留重复 key 报错约定。
+
+默认全序支持 Int、String、Bytes、Bool、Type/TypeOf，以及由这些类型组成的有限 tuple、struct 和 newtype。产品类型按字段声明顺序比较。Float、函数、递归 key 等没有隐式默认排序。Type 的排序编号仅在同一个封闭编译中稳定。
+
+String key 的字面量、字段访问、JSON object codec 与 Dict API 共用同一存储；非 String key 在外部通过 `map::pairs` 和 `map::from_pairs` 显式转换，直接 JSON codec 和 host typed input 会给出明确错误。Host 输出将非 String Map 表达为有序 pairs。反射对 String 特化使用 Dict(value)，其余使用 Map(key,value)。
+
+`pipeline::collect_map(key,value)` 在一次 pipeline 执行中使用私有 MapMut 批量构造。内部 keys/values 分列追加，有序 u32 index 使用二分查找与插入；finish 一次整理成不可变两列。不暴露可变对象或操作符。

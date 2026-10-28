@@ -466,9 +466,9 @@ Empty／Pending／Ready，Ready 保存 token 和不可变结果。递归 Pending
 失败清除 Pending；trap 沿用 Session 不可继续执行的约定。显式 cache 使用独立槽及
 固定 token，不受来源在其他 run 中更新槽位的影响。所有引用沿用类型化 GC 与快照。
 
-内部 MutBuilder(Item, Result, P) 保存类型化 Array(P)，P 为 DictMut／ArrayMut。
-代码生成检查标准库名义身份与类型一致性。DictMut 用 entries＋整数哈希索引，完成
-时转换现有 Dict 列布局；ArrayMut 增长私有缓冲，关闭后经新不可变 header 转移
+内部 MutBuilder(Item, Result, P) 保存类型化 Array(P)，P 为普通状态 tuple 或 ArrayMut。
+代码生成检查标准库名义身份与类型一致性。MapMut 用独立 keys/values 数组及排序的 u32 index，完成
+时整理为 Map 的两列布局；ArrayMut 增长私有缓冲，关闭后经新不可变 header 转移
 缓冲区。StringMut 内含字符串块 ArrayMut，完成时一次 join。私有入口只由标准库
 实现调用，应用只持有节点与终端计划。首版每个节点完整物化，未做融合或按需前缀缓存。
 
@@ -688,3 +688,16 @@ P2 使用 UTF-8 JSON 信封 `{version:1,entries:{name:value}}` 写入唯一
 Rust 字符串，不把语言信息对象当作 B 的根。旧 `telora.service.metadata` 继续兼容，
 同一制品禁止重复附加新旧信息段。当前保留不可达 trap stub 与必要的 Ready getter，
 尚不保证得到最小制品，也不意味着知识生成算法的耗时已优化。
+
+
+## 列式 Map 与私有 MapMut
+
+内置 Map(K,V) 沿用 collection element 在前的内部 MIR 参数排列 `[V,K]`，Dict(V) 透明展开为 Map(String,V)。24 字节 value header 保存来源、key 列对象、长度和 value 列对象。GC 的两条 detail 分别指向实际 K 和 V，复用普通数组追踪、固化与恢复。反射对 String 特化提供 Dict(value)，其余提供 Map(key,value)。
+
+可信 native 模块 41 经 `telora_column_map` 向 RT 传入 column_map::Request，包含封闭 key/value/pair 类型编号、宽度、偏移和比较函数。内部 MapMut 用追加的 key/value 引用列和有序 Vec<u32> 索引进行二分插入，finish 整理成紧凑两列。普通 insert/remove/merge 使用私有副本，不改动输入版本。
+
+MapMut 只存在于编译器生成的构造/更新/finish 指令及 RT 中，标准库不声明 MapMut 类型。pipeline 仅使用普通不可变 tuple `(Array(K),Array(V),Bytes,Bool)` 描述 GC 状态布局，内部指令识别受信任 MutBuilder 的封闭结果及布局合同。Bytes 独占缓冲区保存 packed u32 index，按几何级数扩容；只使用计数以内的索引。其原始容量至少 16 bytes，确保统一采用 out-of-line byte view，GC 能追踪缓冲所有权。keys/values 的初始值先复制，finish 关闭 builder 并按 index 复制发布。任何用户可观察的 Map 保持不可变。
+
+公开 collect_map 与 collect_dict 使用同一泛型 builder；ArrayMut 和 StringMut 保持独立。aliasing 优化不作为批量构造的前置条件。自定义 key 默认顺序支持标量与有限产品/newtype；Float 等无隐式全序。非 String Map 的直接 JSON codec 和 host typed input 要求应用显式转为 pairs，Host 输出支持有序 pairs。
+
+构造器 GC 根依据实际调用约定区分：canonical constructor literal 接收函数值，普通闭包及 newtype 构造器接收环境对象。共享 ABI 为 42，编译器与 runner 必须匹配。

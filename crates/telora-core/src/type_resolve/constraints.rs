@@ -789,18 +789,11 @@ impl Solver<'_> {
                         | TypeConstructor::Dict,
                     ) => {
                         let key = self.child(node, Role::Index).expect("index");
-                        self.assign(
-                            key,
-                            if matches!(
-                                term.constructor,
-                                TypeConstructor::Array | TypeConstructor::ArrayLiteral
-                            ) {
-                                TypeConstructor::Int
-                            } else {
-                                TypeConstructor::String
-                            },
-                            vec![],
-                        );
+                        if term.constructor == TypeConstructor::Dict {
+                            self.same(key, term.arguments[1]);
+                        } else {
+                            self.assign(key, TypeConstructor::Int, vec![]);
+                        }
                         self.same(node, term.arguments[0]);
                     }
                     _ => self.conflict(
@@ -1009,7 +1002,7 @@ impl Solver<'_> {
                 }
                 let (cons, arity) = match function {
                     TypeFunction::Array => (TypeConstructor::Array, 1),
-                    TypeFunction::Dict => (TypeConstructor::Dict, 1),
+                    TypeFunction::Map => (TypeConstructor::Dict, 2),
                     TypeFunction::Option => (TypeConstructor::Option, 1),
                     TypeFunction::Result => (TypeConstructor::Result, 2),
                     TypeFunction::FoldControl => (TypeConstructor::FoldControl, 2),
@@ -1040,6 +1033,10 @@ impl Solver<'_> {
                             node,
                             argument: raw[0],
                         });
+                    }
+                    // Column maps store value first internally, preserving the collection element convention.
+                    if function == TypeFunction::Map {
+                        raw.swap(0, 1);
                     }
                     let ty = self.structure(cons, raw);
                     self.assign(node, TypeConstructor::Meta, vec![ty]);

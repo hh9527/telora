@@ -53,7 +53,7 @@ impl Emitter<'_> {
             return Ok(value);
         }
         let source = &self.mir.types[actual.index()];
-        if source.constructor != T::Dict || source.arguments.len() != 1 {
+        if source.constructor != T::Dict || source.arguments.len() != 2 {
             return Err("Wasm: dictionary spread source is not sealed Dict".into());
         }
         let from = source.arguments[0];

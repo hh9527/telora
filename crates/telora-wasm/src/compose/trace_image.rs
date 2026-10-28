@@ -43,7 +43,7 @@ pub(super) fn encode(types: &[TypeDesc]) -> Result<Vec<u8>, String> {
             layout::Kind::Record | layout::Kind::InlineRecord => ty.fields.len(),
             layout::Kind::Enum => ty.variants.len(),
             layout::Kind::Array => ty.arguments.len(),
-            layout::Kind::Dict => ty.arguments.len() + 1,
+            layout::Kind::Dict => 2,
             layout::Kind::Newtype | layout::Kind::InlineNewtype => {
                 if ty.fields.is_empty() {
                     ty.arguments.len()
@@ -92,10 +92,13 @@ pub(super) fn encode(types: &[TypeDesc]) -> Result<Vec<u8>, String> {
                 }
             }
             layout::Kind::Dict => {
-                detail(&mut image, Some(string), 0, 0);
-                for (index, ty) in ty.arguments.iter().copied().enumerate() {
-                    detail(&mut image, Some(ty), index as u32 + 1, 0);
-                }
+                detail(
+                    &mut image,
+                    Some(*ty.arguments.get(1).unwrap_or(&string)),
+                    0,
+                    0,
+                );
+                detail(&mut image, Some(ty.arguments[0]), 1, 0);
             }
             layout::Kind::Newtype | layout::Kind::InlineNewtype => {
                 if ty.fields.is_empty() {

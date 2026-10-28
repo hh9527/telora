@@ -87,7 +87,8 @@ impl Solver<'_> {
                     self.equal(element, actual, Some(self.mir.hir[node.index()].location));
                 }
             }
-            self.assign(node, TypeConstructor::Dict, vec![element]);
+            let key = self.structure(TypeConstructor::String, vec![]);
+            self.assign(node, TypeConstructor::Dict, vec![element, key]);
             return None;
         }
         // Only winners receive the contextual field requirements. All authored

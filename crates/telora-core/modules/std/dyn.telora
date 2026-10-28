@@ -1,7 +1,7 @@
 type ValueKind = enum {
     Int, Float, String, Bytes, Type, Opaque,
     Dict, Array, Atom, Tagged,
-    Tuple, Func, Dyn,
+    Tuple, Func, Dyn, Map,
 };
 native pack: for(A) Fn(TypeOf(A), A) -> Dyn;
 native project_with: for(A) Fn(TypeOf(A), Dyn) -> Option(A);

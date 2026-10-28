@@ -48,6 +48,7 @@ impl Emitter<'_> {
             (13, "Func"),
             (14, "Opaque"),
             (16, "Dyn"),
+            (18, "Map"),
         ] {
             self.extend([
                 I::LocalGet(kind),

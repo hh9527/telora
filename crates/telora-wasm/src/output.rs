@@ -299,6 +299,26 @@ impl Output<'_> {
                     .get(element as usize)
                     .ok_or("Wasm: invalid dictionary value type")?
                     .bytes as u64;
+                let key_type = *ty.arguments.get(1).ok_or("Wasm: missing Map key type")?;
+                let key_desc = self
+                    .manifest
+                    .types
+                    .get(key_type as usize)
+                    .ok_or("Wasm: invalid Map key type")?;
+                let key_stride = key_desc.bytes as u64;
+                if key_desc.kind != Kind::String {
+                    if length * key_stride != key_bytes || length * stride != value_bytes {
+                        return Err("Wasm: invalid Map columns".into());
+                    }
+                    let mut pairs = Vec::new();
+                    for index in 0..length {
+                        pairs.push(Value::Array(vec![
+                            self.json(keys + index * key_stride, key_type, depth + 1)?,
+                            self.json(values + index * stride, element, depth + 1)?,
+                        ]));
+                    }
+                    return Ok(Value::Array(pairs));
+                }
                 if length * u64::from(STRING_BYTES) != key_bytes || length * stride != value_bytes {
                     return Err("Wasm: invalid dictionary columns".into());
                 }

@@ -378,6 +378,17 @@ impl<'a> MirQuery<'a> {
             .map(|&id| self.display_type(id, depth + 1))
             .collect::<Vec<_>>();
         match &ty.constructor {
+            TypeConstructor::Dict => {
+                let value = &args[0];
+                let key = ty.arguments.get(1).copied();
+                if key.is_none_or(|key| {
+                    self.mir.types[key.index()].constructor == TypeConstructor::String
+                }) {
+                    format!("Dict({value})")
+                } else {
+                    format!("Map({}, {value})", args[1])
+                }
+            }
             TypeConstructor::Tuple => format!(
                 "({}{})",
                 args.join(", "),

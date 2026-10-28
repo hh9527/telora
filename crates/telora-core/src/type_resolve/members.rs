@@ -55,6 +55,12 @@ impl Solver<'_> {
         }
         let payload = match &term.constructor {
             TypeConstructor::Dict if !metadata => {
+                let string = self.structure(TypeConstructor::String, vec![]);
+                self.equal(
+                    term.arguments[1],
+                    string,
+                    Some(self.mir.hir[node.index()].location),
+                );
                 self.same(node, term.arguments[0]);
                 self.mir.member_selections[node.index()] = Some(MemberSelection::DictField);
                 return None;

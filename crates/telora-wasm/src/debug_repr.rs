@@ -133,7 +133,8 @@ impl Formatter {
                 };
                 let keys = if dict {
                     let (keys, bytes) = output.payload(ARRAYS, output.word(pointer + DATA)?)?;
-                    if end * u64::from(STRING_BYTES) > bytes {
+                    let key_width = output.manifest.types[desc.arguments[1] as usize].bytes as u64;
+                    if end * key_width > bytes {
                         return Err("Wasm: invalid debug Dict keys".into());
                     }
                     keys
@@ -149,7 +150,18 @@ impl Formatter {
                         self.push(", ");
                     }
                     if dict {
-                        self.push(output.text_str(keys + index * u64::from(STRING_BYTES))?);
+                        let key_ty = desc.arguments[1];
+                        let key_desc = &output.manifest.types[key_ty as usize];
+                        if key_desc.kind == Kind::String {
+                            self.push(output.text_str(keys + index * key_desc.bytes as u64)?);
+                        } else {
+                            self.value(
+                                output,
+                                keys + index * key_desc.bytes as u64,
+                                key_ty,
+                                depth + 1,
+                            )?;
+                        }
                         self.push(": ");
                     }
                     self.value(output, base + index * stride, element, depth + 1)?;

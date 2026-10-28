@@ -1,9 +1,9 @@
 //! Flat, relocatable metadata. Every internal reference is image-relative.
 use telora_core::{candidate_layout::Entry, mir::TypeConstructor as T, type_image::TypeImage};
 
-pub const KINDS: [&str; 18] = [
+pub const KINDS: [&str; 19] = [
     "Never", "Type", "TypeOf", "Int", "Float", "String", "Bytes", "Array", "Dict", "Tuple",
-    "Struct", "Newtype", "Enum", "Func", "Opaque", "Bound", "Dyn", "Ref",
+    "Struct", "Newtype", "Enum", "Func", "Opaque", "Bound", "Dyn", "Ref", "Map",
 ];
 pub const ROW: u32 = 40;
 pub const MEMBER: u32 = 20;
@@ -62,7 +62,14 @@ pub fn build(image: &TypeImage, layouts: &[Entry]) -> Result<Vec<u8>, String> {
             _ => 0,
         };
         put(&mut data, row + 32, width);
-        let tag = kind(&ty.constructor).and_then(|kind| KINDS.iter().position(|&k| k == kind));
+        let map_key = (ty.constructor == T::Dict).then(|| ty.arguments[1]);
+        let string_map = map_key.is_some_and(|k| image.types[k.index()].constructor == T::String);
+        let tag = (if map_key.is_some() && !string_map {
+            Some("Map")
+        } else {
+            kind(&ty.constructor)
+        })
+        .and_then(|kind| KINDS.iter().position(|&k| k == kind));
         put(&mut data, row, tag.map_or(u32::MAX, |n| n as u32));
         put(
             &mut data,
@@ -85,14 +92,22 @@ pub fn build(image: &TypeImage, layouts: &[Entry]) -> Result<Vec<u8>, String> {
                 | T::FoldControl
                 | T::Nominal(_)
         ) {
-            let children = ty
-                .arguments
+            let reflected = if map_key.is_some() {
+                if string_map {
+                    vec![ty.arguments[0]]
+                } else {
+                    vec![ty.arguments[1], ty.arguments[0]]
+                }
+            } else {
+                ty.arguments.clone()
+            };
+            let children = reflected
                 .iter()
                 .flat_map(|id| (id.index() as u32).to_le_bytes())
                 .collect::<Vec<_>>();
             let offset = append(&mut data, &children)?;
             put(&mut data, row + 8, offset);
-            put(&mut data, row + 12, ty.arguments.len() as u32);
+            put(&mut data, row + 12, reflected.len() as u32);
         }
         let bool_members = ["False", "True"].map(|name| telora_core::candidate_layout::Member {
             name: name.into(),

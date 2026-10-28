@@ -9,7 +9,8 @@ native type Bytes @7;
 native type Bool @8;
 native type PropertyTarget @9;
 native type Array @10;
-native type Dict @11;
+native type Map @11;
+type Dict(V) = Map(String, V);
 native type TypeOf @12;
 native type Unchecked @13;
 native type Tuple @14;
@@ -22,7 +23,7 @@ native type Property @19;
 native property: Fn(PropertyTarget) -> Fn(Type, Option(PropertyAttr)) -> PropertyAttr;
 
 pub use self::{ Type, Dyn, Never, Unit, Int, Float, String, Bytes, Bool,
-    PropertyTarget, Array, Dict, TypeOf, Unchecked, Tuple, Func,
+    PropertyTarget, Array, Map, Dict, TypeOf, Unchecked, Tuple, Func,
     Option, Result, FoldControl, Property, property };
 
 @property(PropertyTarget::Type)

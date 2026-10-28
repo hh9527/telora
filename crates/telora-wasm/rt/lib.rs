@@ -59,3 +59,5 @@ pub unsafe extern "C" fn telora_reserve_static(end: u32) {
 pub unsafe extern "C" fn telora_alloc(bytes: u32) -> u32 {
     unsafe { heap::allocate(bytes) }
 }
+
+mod column_map;

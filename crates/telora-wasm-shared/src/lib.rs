@@ -16,3 +16,5 @@ pub mod service;
 pub mod snapshot_artifact;
 
 pub mod diagnostics;
+
+pub mod column_map;

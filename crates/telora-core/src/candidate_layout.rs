@@ -48,10 +48,19 @@ pub struct Object {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Storage {
-    Fixed { bytes: u64 },
+    Fixed {
+        bytes: u64,
+    },
     ByteContent,
-    Sequence { stride: u64, empty_only: bool },
-    Dictionary { value_stride: u64, empty_only: bool },
+    Sequence {
+        stride: u64,
+        empty_only: bool,
+    },
+    Dictionary {
+        key_stride: u64,
+        value_stride: u64,
+        empty_only: bool,
+    },
     Captures,
     FullValue,
 }
@@ -86,6 +95,7 @@ impl Storage {
             }
             (
                 Self::Dictionary {
+                    key_stride,
                     value_stride,
                     empty_only,
                 },
@@ -94,7 +104,7 @@ impl Storage {
                 if *empty_only && length != 0 {
                     return Err("invalid dictionary extent".into());
                 }
-                mul(add(24, *value_stride)?, length.into())
+                mul(add(*key_stride, *value_stride)?, length.into())
             }
             (Self::Captures, Extent::Captures(sizes)) => {
                 let count = u64::try_from(sizes.len()).map_err(|_| "capture count overflow")?;
@@ -706,12 +716,14 @@ impl<'a> Builder<'a> {
                 let stride = self.stride(t)?;
                 o.element_type = Some(t.index());
                 o.element_stride = Some(stride);
+                let key_stride = self.stride(ty.arguments[1])?;
                 o.storage = Storage::Dictionary {
+                    key_stride,
                     value_stride: stride,
-                    empty_only: stride == 0,
+                    empty_only: stride == 0 || key_stride == 0,
                 };
                 o.storage_rule = format!(
-                    "two whole ArrayTable slots; keys: length * 32 bytes (full String values), strictly increasing UTF-8 byte order; values: length * {stride} bytes; equal column lengths; binary search; no slice offsets; reserved=0; uninhabited values require length=0"
+                    "two whole ArrayTable slots; keys: length * {key_stride} bytes, strictly increasing key order; values: length * {stride} bytes; equal column lengths; binary search; no slice offsets; reserved=0; uninhabited values require length=0"
                 );
             }
             "ClosureEnvTable" => {
@@ -899,6 +911,7 @@ mod tests {
             );
         }
         let dict = Storage::Dictionary {
+            key_stride: 24,
             value_stride: 24,
             empty_only: false,
         };
@@ -909,6 +922,7 @@ mod tests {
         );
         assert!(
             Storage::Dictionary {
+                key_stride: 24,
                 value_stride: 0,
                 empty_only: true
             }

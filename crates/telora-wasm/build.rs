@@ -8,7 +8,8 @@ fn main() {
     let rustc = env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
     let output_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let target_dir = output_dir.join("rt-target");
-    let status = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+    let mut runtime = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    let status = runtime
         .args([
             "build",
             "--manifest-path",
@@ -67,7 +68,7 @@ fn main() {
         telora_parse_data telora_json_write telora_json_parse telora_toml_parse telora_yaml_parse
         telora_float_remainder telora_register_source telora_source_index telora_static_source_index telora_source_retained telora_collection_bootstrap telora_function_dependencies_bootstrap telora_initialization_stat telora_collect telora_heap_end telora_heap_bytes reset-service
         telora_reserve_static telora_source_range telora_content_write telora_content_slice telora_content_append telora_array_can_append telora_snapshot_export telora_snapshot_import telora_snapshot_runtime_export telora_service_metadata_publish telora_service_metadata_export telora_build_time_scope telora_build_time_active telora_program_root telora_program_entry telora_build_information_publish telora_build_information_export
-        telora_data_image_export telora_data_image_import telora_dict_key_hash
+        telora_data_image_export telora_data_image_import telora_dict_key_hash telora_column_map
         telora_heap_address telora_heap_committed telora_gc_collect telora_gc_release_feedback telora_gc_interval telora_gc_collections telora_gc_heap_limit telora_gc_allocated_total telora_heap_copy telora_frame_enter telora_frame_leave telora_frame_tail telora_frame_slot telora_frame_depth telora_frame_bytes telora_roots_enter telora_roots_leave telora_roots_set telora_roots_safepoint telora_roots_audit telora_roots_depth telora_roots_count telora_roots_marks telora_gc_pin telora_gc_pinned telora_gc_unpin __heap_base __indirect_function_table";
     let status = Command::new(&linker)
         .args([

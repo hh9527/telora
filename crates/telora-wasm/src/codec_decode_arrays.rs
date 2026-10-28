@@ -11,6 +11,12 @@ impl Emitter<'_> {
         input: u32,
     ) -> Result<u32, String> {
         let dict = self.mir.types[target.index()].constructor == T::Dict;
+        if dict
+            && self.mir.types[self.mir.types[target.index()].arguments[1].index()].constructor
+                != T::String
+        {
+            return Err("Map with non-String keys requires an explicit pairs codec".into());
+        }
         let tag = if dict { "Object" } else { "Array" };
         let index = self.plan.layouts[source.index()]
             .variants
