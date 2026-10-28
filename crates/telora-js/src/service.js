@@ -1,5 +1,6 @@
 // The host may instantiate multiple isolated service states from one module.
 export function createService(sources = {}) {
+  if(typeof stageRuntimeOnly!=='undefined' && stageRuntimeOnly && Object.keys(sources).length)throw Error('Staged JS rejects runtime Service sources');
   if (!Array.isArray(entry) || typeof entry[1] !== 'function')
     throw new TypeError('Selected export is not a Telora Service plan');
   const valueType = findType('std/value::Value');

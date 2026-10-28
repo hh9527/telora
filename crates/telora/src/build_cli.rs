@@ -273,10 +273,8 @@ pub fn execute(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
 }
 
 fn build_js(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
-    if args.snapshot.is_some() || args.staged.is_some() || !args.sources.is_empty() {
-        return Err(
-            "JS backend: snapshot/staged/source CLI options are not implemented yet".into(),
-        );
+    if args.snapshot.is_some() || !args.sources.is_empty() {
+        return Err("JS backend supports --staged, but not snapshot/source CLI options".into());
     }
     let (module, export) = args
         .module
@@ -316,7 +314,115 @@ fn build_js(context: PathBuf, args: BuildArgs) -> Result<i32, String> {
             .collect::<Vec<_>>()
             .join("\n")
     })?;
-    let js = telora_js::compile_executable(&executable)?;
-    std::fs::write(args.output, js).map_err(|e| e.to_string())?;
+    let js = if args.staged.is_some() {
+        let source = telora_js::compile_staging(&executable)?;
+        let config = crate::execution_config_for(inventory.runtime_options())?;
+        build_staged_js(
+            &source,
+            export.is_none(),
+            config.buildtime_memory_limit,
+            matches!(args.staged, Some(SnapshotArg::Full)),
+        )?
+    } else {
+        telora_js::compile_executable(&executable)?
+    };
+    let parent = args
+        .output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    file.write_all(js.as_bytes()).map_err(|e| e.to_string())?;
+    file.persist(&args.output).map_err(|e| e.to_string())?;
     Ok(0)
+}
+
+// A runs in an isolated cgroup; runtime JS only restores its closed result graph.
+fn build_staged_js(
+    source: &str,
+    service: bool,
+    memory: usize,
+    full: bool,
+) -> Result<String, String> {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    let temp_root = std::env::var_os("TMPDIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/tmp")))
+        .ok_or("TMPDIR or HOME is required for JS build staging")?;
+    std::fs::create_dir_all(&temp_root).map_err(|e| e.to_string())?;
+    let dir = tempfile::Builder::new()
+        .prefix("telora-js-stage-")
+        .tempdir_in(temp_root)
+        .map_err(|e| e.to_string())?;
+    let model = dir.path().join("prepare-model.mjs");
+    let script = dir.path().join("prepare.mjs");
+    let image = dir.path().join("image.json");
+    let errors = dir.path().join("errors.log");
+    std::fs::write(&model, source).map_err(|e| e.to_string())?;
+    std::fs::write(&script, telora_js::staging::PREPARE).map_err(|e| e.to_string())?;
+    let unit = format!(
+        "telora-js-build-{}-{}",
+        std::process::id(),
+        dir.path().file_name().unwrap().to_string_lossy()
+    );
+    let mut child = Command::new("systemd-run")
+        .args([
+            "--user",
+            "--scope",
+            "--quiet",
+            "--collect",
+            "--unit",
+            &unit,
+            "-p",
+            &format!("MemoryMax={memory}"),
+            "-p",
+            "MemorySwapMax=0",
+            "-p",
+            "TasksMax=32",
+            "--",
+            "node",
+        ])
+        .arg(format!(
+            "--max-old-space-size={}",
+            (memory / 1024 / 1024 * 6 / 10).max(16)
+        ))
+        .args(["--max-semi-space-size=8"])
+        .arg(&script)
+        .arg(&model)
+        .arg(&image)
+        .arg(if service { "service" } else { "value" })
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(std::fs::File::create(&errors).map_err(|e| e.to_string())?)
+        .spawn()
+        .map_err(|e| format!("JS build process: {e}"))?;
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            if !status.success() {
+                return Err(format!(
+                    "JS build stage failed: {}",
+                    std::fs::read_to_string(&errors).unwrap_or_default()
+                ));
+            }
+            break;
+        }
+        if started.elapsed() > Duration::from_secs(60) {
+            let _ = Command::new("systemctl")
+                .args([
+                    "--user",
+                    "kill",
+                    "--kill-whom=all",
+                    &format!("{unit}.scope"),
+                ])
+                .status();
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("JS build stage exceeded 60 second wall-clock budget".into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let image = std::fs::read_to_string(image).map_err(|e| e.to_string())?;
+    telora_js::staging::residual(source, &image, service, full)
 }

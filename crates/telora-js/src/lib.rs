@@ -1,4 +1,5 @@
 mod metadata;
+pub mod staging;
 // Experimental direct JavaScript emission from sealed frontend evidence.
 use std::collections::BTreeSet;
 use telora_core::mir::*;
@@ -7,6 +8,14 @@ use telora_core::syntax::kinds::{BinaryOperator as B, BindingKind, UnaryOperator
 /// Emit a standalone ES module exporting the selected value as `default`.
 /// Unsupported constructs fail compilation rather than falling back to Wasm.
 pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<String, String> {
+    compile_mode(executable, false)
+}
+
+pub fn compile_staging(executable: &SealedExecutable<'_>) -> Result<String, String> {
+    compile_mode(executable, true)
+}
+
+fn compile_mode(executable: &SealedExecutable<'_>, staging: bool) -> Result<String, String> {
     let mir = executable.sealed_mir().mir();
     let mut emit = Emit {
         mir,
@@ -14,9 +23,23 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<String, S
         locals: BTreeSet::new(),
         pending: vec![],
         instance: None,
+        staging,
+        factories: std::collections::BTreeMap::new(),
     };
     let entry = emit.expr(executable.root())?;
     let metadata = metadata::emit(executable)?;
+    let metadata = if staging {
+        let json = metadata
+            .strip_prefix("const types = ")
+            .and_then(|s| s.strip_suffix(";\n"))
+            .ok_or("invalid metadata")?;
+        format!(
+            "const types = JSON.parse({});\n",
+            serde_json::to_string(json).map_err(|e| e.to_string())?
+        )
+    } else {
+        metadata
+    };
     let property_code = emit.properties(executable)?;
     let mut definitions = String::new();
     while let Some((symbol, instance)) = emit.pending.pop() {
@@ -31,8 +54,24 @@ pub fn compile_executable(executable: &SealedExecutable<'_>) -> Result<String, S
             global_name(symbol, instance)
         ));
     }
+    let factories = emit
+        .factories
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let stage_runtime = if staging {
+        include_str!("staging.js")
+    } else {
+        ""
+    };
+    let stage_export = if staging {
+        "export { stagePack, stageUnpack, buildInformation };"
+    } else {
+        ""
+    };
     Ok(format!(
-        "{RUNTIME}\n{COLLECTION_RUNTIME}\n{metadata}\n{property_code}\n{definitions}\nconst entry = {entry};\nexport default entry;\n{SERVICE_RUNTIME}\n"
+        "{RUNTIME}\n{COLLECTION_RUNTIME}\n{stage_runtime}\n{metadata}\n{property_code}\n{definitions}\n{factories}\nconst entry = {entry};\nexport default entry;\n{SERVICE_RUNTIME}\n{stage_export}\n"
     ))
 }
 
@@ -59,13 +98,14 @@ const index = (a,i) => {
 };
 const memo = f => {
   let state = 0, value;
-  return () => {
+  const getter = () => {
     if (state === 2) return value;
     if (state === 1) throw new Error('Telora cyclic initialization');
     state = 1;
     try { value = f(); state = 2; return value; }
     catch (error) { state = 0; throw error; }
   };
+  return typeof stageDescribe==='function'?stageDescribe(getter,()=>state===2?({kind:'memo',state,value}):({kind:'memo',state,calc:f})):getter;
 };
 "#;
 
@@ -80,6 +120,8 @@ fn global_name(symbol: SymbolId, instance: Option<GenericInstanceId>) -> String 
 }
 
 struct Emit<'a> {
+    staging: bool,
+    factories: std::collections::BTreeMap<String, String>,
     instance: Option<GenericInstanceId>,
     mir: &'a Mir,
     globals: BTreeSet<(SymbolId, Option<GenericInstanceId>)>,
@@ -87,6 +129,38 @@ struct Emit<'a> {
     locals: BTreeSet<SymbolId>,
 }
 impl Emit<'_> {
+    fn captures(&self, node: HirId) -> Vec<SymbolId> {
+        let mut pending = vec![node];
+        let mut defined = BTreeSet::new();
+        let mut used = BTreeSet::new();
+        while let Some(n) = pending.pop() {
+            let h = &self.mir.hir[n.index()];
+            if let Some(s) = self.mir.hir_symbols[n.index()] {
+                defined.insert(s);
+            }
+            if let Some(slot) = h.resolution {
+                if let ResolveState::Bound(mut s) = self.mir.resolve_slots[slot.index()] {
+                    let mut seen = BTreeSet::new();
+                    while let ResolveState::Bound(next) = self.mir.symbols[s.index()].resolution {
+                        if next == s || !seen.insert(s) {
+                            break;
+                        }
+                        s = next;
+                    }
+                    if self.locals.contains(&s)
+                        || matches!(
+                            self.mir.symbols[s.index()].kind,
+                            SymbolKind::Parameter | SymbolKind::Pattern
+                        )
+                    {
+                        used.insert(s);
+                    }
+                }
+            }
+            pending.extend(h.children.iter().map(|e| e.node));
+        }
+        used.difference(&defined).copied().collect()
+    }
     fn child(&self, node: HirId, role: Role) -> Result<HirId, String> {
         self.mir.hir[node.index()]
             .children
@@ -130,7 +204,11 @@ impl Emit<'_> {
                 ValueMaterialization::EnumVariant { index } => {
                     let ty = self.type_id(node)?;
                     if self.mir.types[ty.index()].constructor == TypeConstructor::Function {
-                        Ok(format!("(x => variant({index}, x))"))
+                        if self.staging {
+                            Ok(format!("stageBuiltin('variant', [{index}])"))
+                        } else {
+                            Ok(format!("(x => variant({index}, x))"))
+                        }
                     } else {
                         Ok(format!("variant({index})"))
                     }
@@ -141,7 +219,11 @@ impl Emit<'_> {
                         .arguments
                         .last()
                         .ok_or("JS: missing newtype owner")?;
-                    Ok(format!("(x => check({}, 'type', x))", owner.index()))
+                    Ok(if self.staging {
+                        format!("stageBuiltin('check', [{}])", owner.index())
+                    } else {
+                        format!("(x => check({}, 'type', x))", owner.index())
+                    })
                 }
             };
         }
@@ -171,6 +253,14 @@ impl Emit<'_> {
                             .map(|(_, t)| t.index())
                             .ok_or("JS: missing property argument")
                     };
+                    if self.staging {
+                        return Ok(format!(
+                            "stageBuiltin('property', [{}, 'type', {}, {}])",
+                            arg(1)?,
+                            arg(0)?,
+                            symbol.name == "required"
+                        ));
+                    }
                     return Ok(format!(
                         "(() => property({}, 'type', {}, {}))",
                         arg(1)?,
@@ -215,7 +305,11 @@ impl Emit<'_> {
                         .arguments
                         .last()
                         .ok_or("JS: missing constructor result")?;
-                    format!("(value => check({}, 'type', value))", owner.index())
+                    if self.staging {
+                        format!("stageBuiltin('check', [{}])", owner.index())
+                    } else {
+                        format!("(value => check({}, 'type', value))", owner.index())
+                    }
                 } else if shape.constructor == TypeConstructor::Meta {
                     shape
                         .arguments
@@ -518,12 +612,41 @@ impl Emit<'_> {
                         params.push(format!("v{}", symbol.index()));
                     }
                 }
-                format!(
+                let body = self.sub(node, Role::Body)?;
+                let function = format!(
                     "(({}) => boundary({}, () => {}))",
                     params.join(","),
                     node.index(),
-                    self.sub(node, Role::Body)?
-                )
+                    body
+                );
+                if !self.staging {
+                    function
+                } else {
+                    let captures = self.captures(node);
+                    let names = captures
+                        .iter()
+                        .map(|s| format!("v{}", s.index()))
+                        .collect::<Vec<_>>();
+                    let aliases = captures
+                        .iter()
+                        .map(|s| format!("const {} = () => v{};", global_name(*s, None), s.index()))
+                        .collect::<String>();
+                    let id = format!(
+                        "c{}_{}",
+                        node.index(),
+                        self.instance
+                            .map(|x| x.index().to_string())
+                            .unwrap_or_else(|| "v".into())
+                    );
+                    self.factories.insert(
+                        id.clone(),
+                        format!(
+                            "stageFactories[{id:?}] = ([{}]) => {{{aliases}return {function};}};",
+                            names.join(",")
+                        ),
+                    );
+                    format!("stageClosure({id:?}, () => [{}])", names.join(","))
+                }
             }
             HirKind::Call => {
                 let callee = self.sub(node, Role::Callee)?;

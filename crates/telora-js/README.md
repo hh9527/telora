@@ -57,8 +57,19 @@ JS 的时间预算不等价于 Wasm 的确定性 fuel。
 
 ## 当前边界
 
-构建只完成前端与 JS 代码生成。模型的 A 阶段准备和信息生成仍在子进程初始化时执行；尚未将构建期计算结果序列化为 B 阶段静态数据，`--snapshot/--staged/--source` 选项不适用于该后端。
-因此 JS 构建时间和已执行 A 阶段的 Wasm staged 构建时间不代表相同工作量。
+普通 `build --backend js` 在子进程初始化时执行模型准备。`--staged` 在构建时执行闭合的 A 阶段及 Service 工厂，把 B handler 或普通导出值的可达对象图固化到单一 JS 制品。
+
+```sh
+cargo run --release -p telora -- --buildtime-memory-limit 768 -C <workspace> build --backend js --staged <module> -o model.mjs
+```
+
+A 在独立 systemd/cgroup 进程执行，硬内存上限采用配置或 CLI 的 `buildtime_memory_limit`，墙钟上限为 60 秒；JS 不提供确定性 fuel。构建域不接受运行期 Service sources。失败时不覆盖目标制品。
+
+P1 保留闭包与捕获环境、共享/循环引用、精确整数、TypeId、Map、预热 memo/WeakMap、正则及冻结状态。TypeId 沿用同一次封闭编译的编号。无法序列化的对象使构建失败。
+P2 作为静态 JSON 内嵌，通过导出的 `buildInformation` 按键读取时解析，transform 初始化不展开整张知识图。
+
+默认 `--staged`/`--staged=runtime` 从恢复图和保守的 property/checker 根裁剪不可达函数；`--staged=full` 保留函数定义。类型元数据仍保守保留，尚未做完整 B 阶段元数据裁剪。B 禁止重新进入构建域或发布构建信息，内部缓存保持私有，运行期 WeakMap 不增加强引用追踪。
+`--snapshot/--source` 不适用于该后端。
 
 诊断具有静态源码位置，输入值的来源位置与完整 blame 传播尚未对齐。
 回归对照验证接受/拒绝、SQL、bindings、列描述、警告消息和 severity；位置列表的差异单独记录。
@@ -69,7 +80,7 @@ JS 的时间预算不等价于 Wasm 的确定性 fuel。
 
 ```sh
 cargo test -p telora-js
-cargo test -p telora --test cli backend_surface
+TELORA_JS_HARD_LIMIT_TESTS=1 cargo test -p telora --test cli backend_surface
 node --test crates/telora-js/host/process.test.mjs
 TELORA_JS_HARD_LIMIT_TESTS=1 node --test crates/telora-js/host/process.test.mjs
 ```

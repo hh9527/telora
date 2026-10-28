@@ -43,7 +43,8 @@ const natives = {
 const native = (key,signature) => {
   const impl = natives[key];
   if(!impl) throw Error(`Telora JS native not implemented: ${key}`);
-  return (...args) => impl(signature,...args);
+  const fn=(...args) => {const value=impl(signature,...args);return typeof value==='function' && typeof stageDescribe==='function'?stageDescribe(value,()=>({kind:'nativeResult',key,signature,args})):value;};
+  return typeof stageDescribe==='function'?stageDescribe(fn,()=>({kind:'native',key,signature})):fn;
 };
 class TeloraFailure extends Error {}
 const failure = (message,locs=[]) => { const e=new TeloraFailure(typeof message==='string'?message:(message?.message??String(message))); e.locs=message?.locs??locs; throw e; };
@@ -93,8 +94,8 @@ Object.assign(natives,{
   '38:new_slots': () => new Map(),
   '38:lookup': (s,slots,ty,calc) => {if(!slots.has(ty))slots.set(ty,memo(()=>calc(ty)));return slots.get(ty)();},
   '39:new_run': () => immutable({}),
-  '39:new_slots': () => new WeakMap(),
-  '39:memo': (s,slots,run,calc) => {if(!slots.has(run))slots.set(run,memo(calc));return slots.get(run)();},
+  '39:new_slots': () => {const m=new WeakMap();if(typeof stageWeakEntries!=='undefined' && (typeof stageRuntimeOnly==='undefined'||!stageRuntimeOnly))stageWeakEntries.set(m,[]);return m;},
+  '39:memo': (s,slots,run,calc) => {if(!slots.has(run)){const v=memo(calc);slots.set(run,v);if(typeof stageWeakEntries!=='undefined')stageWeakEntries.get(slots)?.push([run,v]);}return slots.get(run)();},
   '39:create_mut_builder': (s,plan) => ({value:Array.isArray(plan.initial)?[...plan.initial]:new Map(Object.entries(plan.initial)),sealed:false}),
   '39:extend': (s,b,item) => {
     if(b.sealed)failure('Builder already finished');
@@ -120,9 +121,9 @@ Object.assign(natives,{
     const out={};for(let i=0;i<members.length;i++){if(members[i].ty!==fields[i].ty)return err(enumNamed(types[returnType(s)].args[1],'Field',immutable([BigInt(i),members[i].ty,fields[i].ty])));out[members[i].name]=fields[i].value;}
     return ok(check(ty,'type',immutable(out)));
   },
-  '26:build_time_active': () => true,
-  '26:publish_service_metadata': (s,key,text) => {buildInformation[key]=JSON.parse(text);return true;},
-  '26:publish_build_information': (s,key,text) => {if(!key||Object.hasOwn(buildInformation,key))return false;buildInformation[key]=JSON.parse(text);return true;},
+  '26:build_time_active': () => typeof stageRuntimeOnly==='undefined' || !stageRuntimeOnly,
+  '26:publish_service_metadata': (s,key,text) => {if(!natives['26:build_time_active']()||!key||Object.hasOwn(buildInformation,key))return false;buildInformation[key]=JSON.parse(text);return true;},
+  '26:publish_build_information': (s,key,text) => {if(!natives['26:build_time_active']()||!key||Object.hasOwn(buildInformation,key))return false;buildInformation[key]=JSON.parse(text);return true;},
   '26:call_with_diagnostics': (s,f,a) => {const diagnostics=[];diagnosticFrames.push(diagnostics);try{return ok(immutable([f(a),immutable(diagnostics)]));}catch(e){if(!(e instanceof TeloraFailure))throw e;diagnostics.push(immutable({message:e.message,severity:variant(0),locs:immutable(e.locs??[])}));return err(immutable(diagnostics));}finally{diagnosticFrames.pop();}},
   '26:service_reply': (s,text,failed,diagnostics) => jsonText({schema:'telora.service/v1',ok:failed?null:JSON.parse(text,(_,v,c)=>typeof v==='number'&&c?.source&&/^-?\d+$/.test(c.source)?BigInt(c.source):v),error:failed,diagnostics:encodeTyped(types[s].args[2],diagnostics)}),
   '34:message': (s,error) => error.message,

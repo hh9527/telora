@@ -5,6 +5,10 @@ use telora_core::{
 };
 
 fn compile(source: &str) -> Result<String, String> {
+    compile_mode(source, false)
+}
+
+fn compile_mode(source: &str, staged: bool) -> Result<String, String> {
     let inventory = std::iter::once("@src/main")
         .chain(static_sources::BUILTINS.iter().map(|(name, _)| *name))
         .map(|name| ModuleSpec {
@@ -52,7 +56,11 @@ fn compile(source: &str) -> Result<String, String> {
             .collect::<Vec<_>>()
             .join("\n")
     })?;
-    telora_js::compile_executable(&executable)
+    if staged {
+        telora_js::compile_staging(&executable)
+    } else {
+        telora_js::compile_executable(&executable)
+    }
 }
 
 fn run(source: &str, assertion: &str) {
@@ -194,4 +202,83 @@ fn warnings_remain_successful_diagnostics() {
         "use std::_rt as rt; use std::array as a; pub def answer: Bool = match rt::with_diagnostics(fn(v:Int){let ignored:Option(Int)=warn!(\"warning only\");v})(42) {Ok((v,ds))=>v==42 && a::length(ds)==1,Err(ds)=>False};",
         "if(answer!==true)throw Error('warning became failure');",
     );
+}
+
+#[test]
+fn build_graph_preserves_closures_types_shared_references_and_memo() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let source = r#"
+use std::build as build;
+use std::codec as codec;
+use std::type_desc as td;
+type Count = struct(Int);
+type Prepared = struct {apply: Fn(Int) -> Int, token: Type};
+pub def answer: Fn(Int) -> Int = build::stage(
+    fn() { let offset = 7; {runtime: {apply: fn(x: Int) { x + offset }, token: Count.type}.ty!(Prepared), information: {"example": codec::encode(True)}} },
+    fn(prepared) { fn(input) { if td::name(prepared.token) == td::name(Count.type) { prepared.apply(input) } else { fail!("type identity lost") } } }
+);
+"#;
+    let js = compile_mode(source, true).unwrap();
+    let mut child = Command::new("node")
+        .args(["--input-type=module"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    write!(child.stdin.take().unwrap(), "{js}\nconst restored=stageUnpack(JSON.parse(JSON.stringify(stagePack(entry)))); if(restored(5n)!==12n || restored(8n)!==15n)throw Error('closure restore failed'); const x=Object.freeze({{n:9007199254740993n}}); const graph=stageUnpack(stagePack([x,x,-0,undefined,Infinity])); if(graph[0]!==graph[1] || graph[0].n!==9007199254740993n || !Object.is(graph[2],-0) || graph[3]!==undefined || graph[4]!==Infinity)throw Error('identity lost'); const slots=native('38:new_slots',0)();native('38:lookup',0)(slots,1,()=>7n);const weak=native('39:new_slots',0)(),run=native('39:new_run',0)();native('39:memo',0)(weak,run,()=>9n);const cycle={{}};cycle.self=cycle;const bundle=stageUnpack(stagePack([slots,weak,run,cycle,/(?<id>a+)/u,native('18:property',0)(variant(0))]));if(bundle[0].get(1)()!==7n||bundle[1].get(bundle[2])()!==9n||bundle[3]!==bundle[3].self||bundle[4].exec('aa').groups.id!=='aa'||bundle[5](0,none()).bits!==4n)throw Error('memo/regex restore failed');").unwrap();
+    // Warm native memo caches before transfer; restored keys keep their identity.
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn staged_runtime_executes_in_fresh_process_without_prepare_code() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    fn node(script: &str) -> String {
+        let mut child = Command::new("node")
+            .args(["--input-type=module"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    }
+    let source = r#"
+use std::build as build;
+use std::codec as codec;
+pub def answer: Fn(Int) -> Int = build::stage(
+    fn() { let label = "A_ONLY_UNIQUE_PREPARE_MARKER"; let offset = 7; {runtime: fn(x: Int) {x+offset}, information: {"example":codec::encode(label)}} },
+    fn(prepared) { fn(x) { prepared(x) } }
+);
+"#;
+    let compiled = compile_mode(source, true).unwrap();
+    let image = node(&format!(
+        "{compiled}\nconsole.log(JSON.stringify({{schema:'telora.js.archive/v1',image:stagePack(entry),information:{{}}}}));"
+    ));
+    let runtime = telora_js::staging::residual(&compiled, &image, false, false).unwrap();
+    assert!(!runtime.contains("A_ONLY_UNIQUE_PREPARE_MARKER"));
+    assert!(runtime.len() < compiled.len());
+    node(&format!(
+        "{runtime}\nif(entry(5n)!==12n || entry(8n)!==15n)throw Error('wrong runtime');if(natives['26:build_time_active']())throw Error('build scope leaked');"
+    ));
 }
